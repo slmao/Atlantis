@@ -21,7 +21,7 @@ reviewed. That is the single failure mode this document exists to prevent.
 Every significant piece of work follows one path, no exceptions:
 
 ```
-Spec  →  Plan  →  Implementation  →  Verification  →  PR
+Spec  →  Plan  →  Human Review  →  Implementation  →  Verification  →  PR  →  Merge
 ```
 
 ## What counts as "significant"
@@ -57,28 +57,44 @@ guessing.
    checklist that maps back to the spec. A plan is not implementation-ready
    until a human has approved it. Use [plans/template.md](plans/template.md).
 
-3. **ADR** (`adr/`) — Any architectural decision identified by a spec gets
+3. **Human Review** — The explicit gate between planning and coding: a
+   human has read the spec and plan together and signed off that
+   implementation may begin. This is a distinct checkpoint, not implied by
+   the individual spec/plan approvals above — an agent does not start
+   Implementation on its own judgment that "the spec and plan look
+   approved enough."
+
+4. **ADR** (`adr/`) — Any architectural decision identified by a spec gets
    its own ADR: context, decision, consequences, alternatives considered.
    ADRs are the permanent record of *why*; specs and plans may be
    superseded, ADRs are not silently rewritten. Use
-   [adr/template.md](adr/template.md).
+   [adr/template.md](adr/template.md). An ADR is drafted alongside the spec
+   that identifies the decision (see [specs/template.md](specs/template.md)
+   Architectural Impact section) and must reach `Accepted` before or during
+   Human Review — not discovered as a gap during implementation.
 
-4. **Implementation** — Code written strictly against the approved plan.
+5. **Implementation** — Code written strictly against the approved plan.
    If reality forces a deviation from the plan, stop and call it out
    explicitly in the PR rather than silently drifting — a deviation that
-   changes architecture means back to step 1.
+   changes architecture means back to step 1. Do not modify the spec to
+   make implementation easier; a spec that turns out to be wrong gets a
+   revision or follow-up spec, reviewed like any other change, not a
+   silent edit to match what got built. Do not fold in unrelated
+   refactoring — a plan's file list is the scope, not a starting point for
+   opportunistic cleanup.
 
-5. **Verification** — Executed against the plan's verification checklist
+6. **Verification** — Executed against the plan's verification checklist
    and [docs/process/testing-strategy.md](docs/process/testing-strategy.md).
    Vulkan Validation Layers must run clean; see
    [docs/process/definition-of-done.md](docs/process/definition-of-done.md).
+   Build and run the test suite after implementation — verification is not
+   optional or assumed-passing.
 
-6. **PR** — Opened using the repository's
+7. **PR → Merge** — A PR is opened using the repository's
    [PR template](.github/PULL_REQUEST_TEMPLATE.md), linking the spec, plan,
    and any ADRs. See [docs/process/git-workflow.md](docs/process/git-workflow.md).
-
-An agent never merges its own PR to `main` and never pushes directly to
-`main`. A human approves and merges.
+   An agent never merges its own PR to `main` and never pushes directly to
+   `main`. A human reviews and merges.
 
 ## Phase 1 constraints (do not silently expand these)
 
@@ -95,14 +111,223 @@ An agent never merges its own PR to `main` and never pushes directly to
   are not the first milestone. Don't block the windowed path on headless
   infrastructure, and don't skip headless once windowed is working — see
   [docs/process/testing-strategy.md](docs/process/testing-strategy.md).
-- Development target: Linux. CI is build-verification only until headless
-  rendering lands; see [docs/process/ci-strategy.md](docs/process/ci-strategy.md).
+- **Target platforms — Primary: Windows and Android. Future: iOS** (not
+  started, not designed). Vulkan is the graphics API on both primary
+  platforms. iOS, when it starts, may use Vulkan via MoltenVK or a native
+  Metal RHI backend — that choice is explicitly undecided and is not to be
+  designed or scaffolded for now (see below).
+- **Linux is not a target platform for Atlantis.** Do not add Linux-
+  specific source code, build configuration, CI jobs, or runtime
+  dependencies. Where prior drafts of this repository's docs referenced
+  Linux as the target/dev platform, treat those as superseded by this
+  section; see [docs/process/ci-strategy.md](docs/process/ci-strategy.md)
+  for what is still pending alignment.
+- CI is build-verification only until headless rendering lands; see
+  [docs/process/ci-strategy.md](docs/process/ci-strategy.md).
 - GPU-driven rendering, neural rendering/shading, 3D Gaussian Splatting,
   and world-model workloads are **future phases**. Do not start
   implementing them, and do not let them shape Phase 1 abstractions beyond
   what an approved spec explicitly calls for. If you see a clean
   opportunity to "future-proof" for one of these, write it up as a spec
   question instead of coding it in.
+
+## Architecture principles
+
+These hold across every subsystem and every phase; a spec may add detail,
+none should ever need to contradict these:
+
+- **RHI is backend-agnostic in interface; Vulkan is Phase 1's only
+  implementation.** Do not scaffold for a second backend "for later" — see
+  Phase 1 constraints above.
+- **Render Graph is the mandatory path for GPU work.** No subsystem
+  submits ad hoc, hand-scheduled GPU work outside it.
+- **The Renderer does not fundamentally depend on Window, Platform, or
+  Swapchain.** It consumes RHI + Render Graph + a `RenderTarget` handed to
+  it by its caller, nothing more. See Module Boundaries below.
+- **Platform-specific code stays outside the core Renderer, on every
+  target.** Win32, Android NDK, and (future) iOS/UIKit APIs are owned by
+  the Atlantis Platform module, never referenced by Renderer or
+  RenderGraph.
+- **Windowed and headless rendering share the same Renderer/RHI stack.**
+  Headless is a second way to produce a `RenderTarget`, not a fork of the
+  rendering code.
+- **No speculative abstraction.** GPU-driven rendering, neural rendering/
+  shading, 3D Gaussian Splatting, and world-model workloads are future
+  phases; do not let them shape Phase 1 interfaces beyond what an approved
+  spec explicitly calls for.
+- **Every module boundary, public API shape, threading model, and
+  dependency choice is a reviewed decision**, recorded in a spec/ADR — see
+  the Golden Rule.
+
+## Module boundaries
+
+Top-level modules: **Atlantis Core, Atlantis Platform, Atlantis RHI,
+Atlantis Vulkan Backend, Atlantis RenderGraph, Atlantis Renderer, Atlantis
+Shader System, Atlantis Runtime, Atlantis Tools.**
+
+**Atlantis Platform** is the per-OS windowing/surface/lifecycle
+abstraction — it is to *operating systems* what RHI is to *graphics
+backends*: an interface with concrete per-OS implementations (Windows
+Platform, Android Platform, and — future, not implemented —  iOS
+Platform). It owns Win32/Android NDK/(future) UIKit types so nothing else
+has to.
+
+The hard boundary rule: **Renderer must not directly depend on Win32, the
+Android NDK, GLFW/SDL, `VkSurfaceKHR`, or `VkSwapchainKHR`** (or any `Vk*`
+type, or the Vulkan Backend module directly). It depends only on RHI,
+RenderGraph, and Core. Only the Vulkan Backend module may include Vulkan
+headers; only the Atlantis Platform module may include Win32/Android
+NDK/(future) iOS platform headers or reference a windowing library.
+**RHI does not depend on Atlantis Platform either** — it receives an
+opaque native-surface handle (produced by Platform, threaded through
+Runtime) at `Presentation`-creation time and never references Platform's
+types, keeping Platform and RHI siblings composed by Runtime rather than
+coupled to each other.
+
+Full per-module responsibility/dependency/ownership detail — drafted as a
+`PROPOSED`, not-yet-approved architecture baseline — lives in
+[docs/architecture/module_boundaries.md](docs/architecture/module_boundaries.md),
+with the boundary decisions themselves recorded in
+[ADR-0001](adr/0001-rhi-backend-independence.md),
+[ADR-0002](adr/0002-presentation-rendertarget-unification.md), and
+[ADR-0005](adr/0005-platform-module-multi-os-windowing.md) (all
+`Proposed`, not `Accepted`). Treat that document as the detailed
+reference; this section is the summary an agent should hold in mind by
+default.
+
+## C++ coding conventions
+
+- **Standard:** C++20. Do not rely on compiler-specific extensions.
+- **Files:** one primary type (or tightly-coupled cluster) per header/
+  source pair; `snake_case.h` / `snake_case.cpp`; `#pragma once` header
+  guards.
+- **Naming (proposed default — confirm before the first real module
+  lands):** types/classes/structs/enums in `PascalCase`; functions and
+  methods in `camelCase`; member variables in `camelCase` with a trailing
+  underscore (`value_`); constants and enumerators in `PascalCase`;
+  namespaces in `lower_snake_case` (`atlantis`, `atlantis::rhi`,
+  `atlantis::rg`, `atlantis::platform`, ...) mirroring the module list
+  above.
+- **Formatting:** no `clang-format` configuration exists yet (tracked as
+  an open question in [docs/process/ci-strategy.md](docs/process/ci-strategy.md));
+  until one is checked in, match surrounding code rather than inventing a
+  new style per file.
+- **Includes:** own header first, then C++ standard library, then
+  third-party, then project headers, each group blank-line separated. No
+  `using namespace` in headers.
+- **`auto`:** prefer explicit types in public API signatures (return types,
+  parameters); `auto` is fine for local variables where the type is
+  obvious from the initializer (iterators, lambdas).
+- **Ownership types over raw ownership:** no raw `new`/`delete` outside an
+  allocator's own implementation; prefer RAII types, smart pointers, and
+  standard containers.
+
+## Error handling
+
+- **Programmer errors are assertions, not error returns.** A violated
+  precondition/invariant fails fast (assert/abort in debug); it is not
+  silently handled or swallowed.
+- **Recoverable runtime errors use explicit result/error types, not
+  exceptions**, in Core, RHI, RenderGraph, Renderer, and Runtime — this
+  matches Vulkan's own error model (`VkResult`) and keeps the render path
+  exception-free. Whether offline tooling (Shader System compilation,
+  asset pipeline, Tools) may use exceptions is left to that module's own
+  spec — it is not part of the render path.
+- **Every `VkResult` is checked.** No Vulkan call's return value is
+  discarded, including ones "expected" to always succeed.
+- Vulkan Validation Layer output is treated as an error, not advisory
+  logging — see Vulkan-specific rules below.
+
+## Ownership and lifetime rules
+
+- **RAII by default.** Every resource (heap memory, GPU handle, file
+  handle, thread) has one clear owner type responsible for its release.
+- **Borrowed access never implies ownership transfer.** Passing a raw
+  pointer/reference/view means "you may use this, you do not own it."
+  Ownership transfer is expressed by moving an owning type or returning by
+  value, never implied by convention alone.
+- **No global mutable engine-state singletons** (no global `Device`, no
+  global `RenderTarget`, no global scene state). Ownership lives in the
+  composition root (Runtime) and is threaded down explicitly. A narrowly-
+  scoped, deliberate exception may exist for logging/diagnostics
+  infrastructure in Core — that is a stated exception, not a precedent for
+  further singletons.
+- Subsystem-specific ownership models (e.g., how RHI resources and
+  `RenderTarget`s are owned) are decided by that subsystem's own spec/ADR,
+  not invented ad hoc in implementation — see
+  [ADR-0003](adr/0003-resource-rendertarget-ownership-model.md) (currently
+  `Proposed`) for the RHI baseline.
+
+## Threading rules
+
+- **Phase 1 baseline is single-threaded frame orchestration**: Runtime's
+  event loop, `Presentation` acquire/present, RenderGraph construction, and
+  RHI command recording all happen on one logical thread. See
+  [docs/architecture/threading.md](docs/architecture/threading.md) and
+  [ADR-0004](adr/0004-phase1-threading-baseline.md) (both `Proposed`).
+- **Every type used across threads documents its thread-safety contract**
+  at its public API — one line in the header ("not thread-safe", "safe for
+  concurrent reads", etc.) is enough, but silence is not an acceptable
+  contract.
+- Do not add multi-threaded submission, a job/task system, or lock-free
+  data structures ahead of a spec that actually needs them — see
+  Architecture principles (no speculative abstraction).
+
+## Vulkan-specific rules
+
+- **Validation Layers are always enabled** in debug builds and in any CI
+  job that touches a GPU. A validation error or warning fails the build/
+  test, it is not logged and ignored — see
+  [docs/process/ci-strategy.md](docs/process/ci-strategy.md) and
+  [docs/process/testing-strategy.md](docs/process/testing-strategy.md).
+- **Only the Vulkan Backend module may include Vulkan headers or reference
+  `Vk*` types.** See [ADR-0001](adr/0001-rhi-backend-independence.md).
+- **No global `VkInstance`/`VkDevice` singleton.** These are owned by the
+  RHI `Device` construction path and passed down explicitly.
+- **No direct `vkCmd*` calls outside the Vulkan Backend's `CommandList`
+  implementation.** All command recording goes through RHI/RenderGraph.
+- **Swapchain (`VkSwapchainKHR`) lifetime and recreation logic lives
+  entirely inside the `Presentation` implementation** — see
+  [ADR-0002](adr/0002-presentation-rendertarget-unification.md). Renderer
+  never sees a swapchain object.
+- **Platform-specific WSI surface creation** (`vkCreateWin32SurfaceKHR` /
+  `VK_KHR_win32_surface` on Windows, `vkCreateAndroidSurfaceKHR` /
+  `VK_KHR_android_surface` on Android) happens inside the Vulkan Backend's
+  `Presentation` implementation, consuming the opaque native handle
+  Atlantis Platform produced — never inside Atlantis Platform itself, and
+  never inside Renderer. Future iOS/MoltenVK (`VK_MVK_ios_surface` /
+  `VK_EXT_metal_surface`) follows the same pattern if that path is chosen;
+  not implemented now.
+- GPU memory management strategy (VMA vs. a hand-rolled suballocator) is
+  **not yet decided** — an open question for the RHI/Vulkan Backend spec,
+  not to be picked implicitly by whichever code needs an allocation first.
+
+## Testing requirements
+
+- Every new piece of GPU-independent logic (render graph scheduling, RHI
+  bookkeeping, math/containers) gets unit tests that run without a Vulkan
+  device — see [docs/process/testing-strategy.md](docs/process/testing-strategy.md).
+- Any change to rendered output requires image regression tests once that
+  harness exists (blocked on headless rendering landing, per Phase 1
+  constraints above); until then, the gate is manual verification plus a
+  clean Vulkan Validation Layers run.
+- No PR merges with failing tests, or with validation-layer warnings/
+  errors on any GPU-touching path.
+- Build and run the relevant tests after every implementation step, not
+  only right before opening a PR.
+
+## Git workflow
+
+- `main` is protected: no direct pushes or commits by anyone, human or
+  agent. All changes land via PR, cut from a branch off `main`.
+- Branch prefixes: `spec/`, `plan/`, `feature/`, `fix/`, `docs/`, `chore/`
+  — `<slug>` matches the corresponding spec/plan filename for
+  traceability. Commit messages use
+  [Conventional Commits](https://www.conventionalcommits.org/) prefixes
+  (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `spec:`,
+  `plan:`, `adr:`).
+- An agent opens PRs but never merges them, and never pushes to `main`.
+  Full detail: [docs/process/git-workflow.md](docs/process/git-workflow.md).
 
 ## Repository map
 
