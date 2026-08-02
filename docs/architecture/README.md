@@ -1,6 +1,19 @@
 # Architecture (as-built)
 
-This directory is intentionally empty of design content right now.
+> **Bootstrap exception (2026-08-02):** this directory (and the new
+> `docs/rhi/`, `docs/render_graph/`, `docs/renderer/` directories) now
+> contain `PROPOSED` architecture-baseline content, written directly here
+> ahead of an approved spec, at explicit human direction after being told
+> this contradicts the as-built-only policy below. Every such file is
+> headed with a `PROPOSED — pending spec/ADR approval, not as-built`
+> banner. This is a one-time, human-directed exception, not a standing
+> change to the policy — whether to formally amend this README's policy
+> (e.g. to allow a `Proposed` status here going forward) is itself an open
+> question for human review; until decided, treat the policy below as
+> still in force for anything not already marked `PROPOSED`.
+
+This directory is otherwise intentionally empty of design content right
+now.
 
 Atlantis has no implemented architecture yet — no RHI, no render graph, no
 headless rendering path. Writing design docs for these ahead of an approved

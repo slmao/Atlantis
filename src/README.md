@@ -1,12 +1,18 @@
 # src/
 
-Empty by design.
+**`core/`** — Atlantis Core: logging, assertions, and a minimal
+result/error utility type. Implemented per
+[specs/0001-project-foundation.md](../specs/0001-project-foundation.md),
+[plans/0001-project-foundation.md](../plans/0001-project-foundation.md),
+and [ADR-0006](../adr/0006-dependency-management.md)–[ADR-0010](../adr/0010-cmake-structure.md).
 
-This project follows Spec-Driven Development (see
-[AGENTS.md](../AGENTS.md)): the internal structure of `src/` — module
-boundaries, the shape of the RHI, how the render graph is organized — is
-itself an architectural decision. It gets established by the first
-approved spec + plan + ADR for that subsystem, not invented ahead of time
-by whoever happens to create the first file here.
+Every other module — RHI, Vulkan Backend, RenderGraph, Renderer,
+Platform, Shader System, Runtime, Tools (see
+[docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md))
+— is still empty by design, per Spec-Driven Development (see
+[AGENTS.md](../AGENTS.md)): each module's internal structure is itself an
+architectural decision established by that module's own approved
+spec + plan + ADR, not invented ahead of time.
 
-Do not add source files here without a linked spec and plan.
+Do not add source files for those modules here without a linked spec and
+plan.
