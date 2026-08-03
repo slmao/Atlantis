@@ -176,8 +176,16 @@ The hard boundary rule: **Renderer must not directly depend on Win32, the
 Android NDK, GLFW/SDL, `VkSurfaceKHR`, or `VkSwapchainKHR`** (or any `Vk*`
 type, or the Vulkan Backend module directly). It depends only on RHI,
 RenderGraph, and Core. Only the Vulkan Backend module may include Vulkan
-headers; only the Atlantis Platform module may include Win32/Android
-NDK/(future) iOS platform headers or reference a windowing library.
+headers. Platform-specific window creation, destruction, and event-loop
+handling belong solely to the Atlantis Platform module. A graphics
+backend may additionally have a **private WSI boundary** including the
+OS headers its own graphics API's platform-surface extension requires
+(for Vulkan: `vulkan_win32.h`/`vulkan_android.h` and the OS SDK headers
+those declarations need) — strictly to consume Platform's
+`NativeWindowHandle` (borrowed, not owned) and produce a `VkSurfaceKHR`;
+those OS-specific types stay private to that WSI boundary and never reach
+RHI's public API, Renderer, or RenderGraph. See
+[ADR-0005](adr/0005-platform-module-multi-os-windowing.md).
 **RHI does not depend on Atlantis Platform either** — it receives an
 opaque native-surface handle (produced by Platform, threaded through
 Runtime) at `Presentation`-creation time and never references Platform's

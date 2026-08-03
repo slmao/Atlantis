@@ -12,6 +12,7 @@ option(ATLANTIS_BUILD_EXAMPLES "Build Atlantis example programs" ON)
 include(cmake/CompilerWarnings.cmake)
 
 add_subdirectory(src/core)
+add_subdirectory(src/platform)
 
 if(ATLANTIS_BUILD_EXAMPLES)
   add_subdirectory(examples/foundation_demo)
@@ -19,5 +20,7 @@ endif()
 
 if(ATLANTIS_BUILD_TESTS)
   enable_testing()
+  include(cmake/AtlantisDependencies.cmake)
   add_subdirectory(tests/core)
+  add_subdirectory(tests/platform)
 endif()
