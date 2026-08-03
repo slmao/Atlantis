@@ -31,11 +31,47 @@ platform first.
   for per-OS windowing/surface/lifecycle, with one concrete implementation
   per OS — **Windows Platform**, **Android Platform**, and (future, not
   implemented) **iOS Platform**.
-- Atlantis Platform owns all OS-specific types (Win32, Android NDK,
-  future UIKit) and exposes only an opaque native-surface handle plus
-  lifecycle events to its caller (Runtime). No other module — RHI, Vulkan
-  Backend, RenderGraph, Renderer — depends on Atlantis Platform or
-  includes any OS-specific header.
+- Atlantis Platform owns all OS-specific window/surface **lifecycle and
+  event-loop** code (Win32, Android NDK, future UIKit): window/view
+  creation, destruction, and the OS event pump. It exposes only an
+  opaque, **non-owning/borrowed** native-surface handle
+  (`NativeWindowHandle`) — Platform alone remains responsible for the
+  underlying native window's lifetime, regardless of who else reads the
+  handle — plus lifecycle events, to its caller (Runtime).
+
+  **Boundary (amended 2026-08-02 — see
+  [platform-vulkan-wsi-boundary.md](../docs/architecture/platform-vulkan-wsi-boundary.md)
+  for the analysis; this replaces the original, overly broad "no other
+  module ... includes any OS-specific header" wording, which a Vulkan
+  Backend could not actually satisfy once it must call Vulkan's own
+  platform surface-creation functions):**
+  - Renderer and RenderGraph must not include OS-specific headers or
+    expose OS-specific types.
+  - RHI's public API must not expose OS-specific types.
+  - Platform-specific window creation, destruction, and lifecycle
+    management belong to Platform, and only Platform.
+  - A graphics backend may have a **private WSI boundary** that includes
+    the OS headers its own graphics API's platform-surface extension
+    requires. For Vulkan specifically, the Vulkan Backend WSI layer may
+    include `vulkan_win32.h`, `vulkan_android.h`, and the OS SDK headers
+    those declarations themselves require (`HWND`, `ANativeWindow*`,
+    etc.) — solely to call `vkCreateWin32SurfaceKHR`/
+    `vkCreateAndroidSurfaceKHR`.
+  - Those OS-specific types must remain **private to the Vulkan WSI
+    implementation** — never exposed in generic RHI's public API,
+    Renderer, or RenderGraph.
+  - Vulkan WSI may **consume** `NativeWindowHandle` to produce a
+    `VkSurfaceKHR`, but must never destroy the native window itself —
+    only Platform does that. Vulkan WSI may create and destroy
+    graphics-API objects associated with the native window
+    (`VkSurfaceKHR` and downstream objects); that ownership belongs to
+    Vulkan Backend/RHI, not Platform.
+  - Dependency direction stays one-way:
+    `Platform → NativeWindowHandle → Vulkan WSI → VkSurfaceKHR → Vulkan RHI → Renderer`.
+    **Platform must never depend on Vulkan headers or Vulkan types** —
+    this is a narrow, one-directional exception letting Vulkan Backend's
+    WSI code read Platform's already-opaque handle; it creates no
+    dependency the other way.
 - RHI's `Presentation` interface accepts the opaque native-surface handle
   as a parameter at creation time; it does not depend on Atlantis
   Platform's types. Vulkan Backend's `Presentation` implementation
