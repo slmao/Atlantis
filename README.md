@@ -1,5 +1,9 @@
 # Atlantis
 
+<p align="center">
+  <img src="assets/branding/Atlantis_Logo.png" alt="Atlantis Logo" width="400"/>
+</p>
+
 Atlantis is a long-term, real-time rendering engine project. It is currently
 in its **engineering-foundation stage**: no rendering code exists yet. This
 repository holds the process and structure the project will be built with.
