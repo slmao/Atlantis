@@ -4,22 +4,22 @@
 - **Author:** Drafted by Claude Code (AI agent) at explicit human direction;
   human authorship/ownership pending confirmation at Human Review.
 - **Created:** 2026-08-02
-- **Related Plan(s):** None yet — a plan is written only after this spec
-  reaches `Approved` (see [AGENTS.md](../AGENTS.md); explicitly not
-  created as part of this task).
+- **Related Plan(s):** [plans/0002-platform-foundation.md](../plans/0002-platform-foundation.md)
+  (`Approved / Ready for Implementation`, Windows portion).
 - **Related ADR(s):** Builds on
   [ADR-0001](../adr/0001-rhi-backend-independence.md),
   [ADR-0002](../adr/0002-presentation-rendertarget-unification.md), and
   [ADR-0005](../adr/0005-platform-module-multi-os-windowing.md) (all
-  currently `Proposed`, not yet `Accepted`), and on already-`Accepted`
-  [ADR-0010](../adr/0010-cmake-structure.md). See **ADRs Required Before
-  Approval** below — three new decisions are identified and must reach
-  `Accepted` before this spec can move to `Approved`. None have been
-  drafted yet (out of scope for this task). A fourth decision this spec
-  originally identified (the Platform/Vulkan WSI header-visibility
-  boundary) has since been resolved by amending
-  [ADR-0005](../adr/0005-platform-module-multi-os-windowing.md) — see
-  Architecture / Design Constraints, below.
+  `Accepted`), and on [ADR-0010](../adr/0010-cmake-structure.md)
+  (`Accepted`). See **ADRs Required Before Approval** below — the three
+  decisions identified there were filed as
+  [ADR-0011](../adr/0011-native-window-handle-representation.md),
+  [ADR-0012](../adr/0012-application-lifecycle-and-event-model.md), and
+  [ADR-0013](../adr/0013-platform-window-ownership-and-lifetime.md), all
+  `Accepted`. A fourth decision this spec originally identified (the
+  Platform/Vulkan WSI header-visibility boundary) was resolved instead by
+  amending [ADR-0005](../adr/0005-platform-module-multi-os-windowing.md)
+  — see Architecture / Design Constraints, below.
 
 ## Context
 
@@ -572,12 +572,12 @@ this spec.
 ## ADRs Required Before Approval
 
 None of the following are decided by this spec — each names a decision
-that materially affects architecture and must reach `Accepted` before
-this spec can move past `In Review`. (Not numbered here — see
+that materially affects architecture and was required to reach `Accepted`
+before this spec could move past `In Review`. (Not numbered here — see
 `specs/0001-project-foundation.md`'s experience: informal numbering in
 spec prose has previously drifted from the ADRs' real, sequentially
-assigned file numbers. These will be filed as the next available
-sequential `adr/NNNN` files at drafting time.)
+assigned file numbers.) All three were filed and are now `Accepted`; see
+the ADR link appended to each item below.
 
 1. **Native window handle representation.** Decision: the tagged,
    opaque-`void*`-payload `NativeWindowHandle` design described in
@@ -587,7 +587,9 @@ sequential `adr/NNNN` files at drafting time.)
    weigh: a fully untagged opaque object (rejected here, reasoning
    given); exposing real typed OS handles directly (rejected here,
    reasoning given); a `std::variant`-based payload instead of raw
-   `void*` fields (not evaluated in depth by this spec).
+   `void*` fields (not evaluated in depth by this spec). Filed as
+   [ADR-0011](../adr/0011-native-window-handle-representation.md)
+   (`Accepted`).
 
 2. **Application lifecycle / event-model abstraction.** Decision: the
    shared `initialize`/`processEvents`/`shouldQuit`/`shutdown` interface
@@ -599,7 +601,9 @@ sequential `adr/NNNN` files at drafting time.)
    Runtime-level code and the eventual Android Platform implementation
    are built against. Alternatives to weigh: callback/observer
    registration instead of a polled event queue; a richer event set vs.
-   this spec's deliberately minimal one.
+   this spec's deliberately minimal one. Filed as
+   [ADR-0012](../adr/0012-application-lifecycle-and-event-model.md)
+   (`Accepted`).
 
 3. **Platform ownership model for native windows/surfaces.** Decision:
    the per-OS creator/owner/destroyer split and the "native window
@@ -612,7 +616,9 @@ sequential `adr/NNNN` files at drafting time.)
    control. Alternatives to weigh: whether Windows should also emit
    `SurfaceCreated`/`SurfaceDestroyed` (this spec proposes yes, for a
    uniform Runtime-side contract) vs. Windows-only using `WindowResize`
-   with a zero extent to represent "unavailable."
+   with a zero extent to represent "unavailable." Filed as
+   [ADR-0013](../adr/0013-platform-window-ownership-and-lifetime.md)
+   (`Accepted`).
 
 A fourth decision — the boundary between "only Platform includes Win32/
 Android NDK headers" and Vulkan Backend's necessary use of Vulkan's own
