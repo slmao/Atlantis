@@ -1,10 +1,11 @@
 # ADR 0003: RHI Resource & RenderTarget Ownership Model (Explicit Ownership, Renderer Borrows)
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-02
-- **Deciders:** _pending human review_
-- **Related Spec:** _none yet — drafted as part of the architecture-baseline
-  documentation task; a formal spec should precede `Accepted` status_
+- **Deciders:** _Human approval confirmed 2026-08-04_
+- **Related Spec:** _none — drafted as part of the architecture-baseline
+  documentation task; accepted 2026-08-04 by direct human confirmation
+  rather than gated on a preceding formal spec._
 
 ## Context
 

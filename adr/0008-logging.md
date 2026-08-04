@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-02
-- **Deciders:** _pending human review_
+- **Deciders:** _Human approval confirmed 2026-08-04_
 - **Related Spec:** [specs/0001-project-foundation.md](../specs/0001-project-foundation.md)
 
 ## Context

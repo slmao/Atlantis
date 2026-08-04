@@ -10,13 +10,13 @@
   (future) target-platform decision; Linux is not a target platform for
   Atlantis (see [AGENTS.md](../AGENTS.md) Phase 1 constraints). This spec
   was still `Draft`, so revised in place rather than superseded.
-- **Related Plan(s):** None yet — a plan is written only after this spec
-  reaches `Approved` (see [AGENTS.md](../AGENTS.md); explicitly not
-  created as part of this task).
-- **Related ADR(s):** None yet. See **Architectural Impact** below — five
-  ADRs are identified as required and must reach `Accepted` before this
-  spec can move to `Approved`. None have been drafted yet (out of scope
-  for this task — see the final report).
+- **Related Plan(s):** [plans/0001-project-foundation.md](../plans/0001-project-foundation.md)
+  (`Approved / Ready for Implementation`).
+- **Related ADR(s):** [ADR-0006](../adr/0006-dependency-management.md),
+  [ADR-0007](../adr/0007-test-framework.md),
+  [ADR-0008](../adr/0008-logging.md), [ADR-0009](../adr/0009-assertion.md),
+  and [ADR-0010](../adr/0010-cmake-structure.md) — the five ADRs
+  identified in **Architectural Impact** below, all now `Accepted`.
 
 ## Summary
 
@@ -202,27 +202,33 @@ application-loop concerns.
 
 This spec does introduce architecture — it is the first real code in the
 repository and fixes conventions every later module inherits. The
-following decisions are identified as requiring their own ADR before this
-spec can move from `In Review` to `Approved` (per
-[AGENTS.md](../AGENTS.md)); **none are decided by this spec, and none of
-these ADRs have been drafted yet**:
+following decisions were identified as requiring their own ADR before
+this spec could move from `In Review` to `Approved` (per
+[AGENTS.md](../AGENTS.md)); **none are decided by this spec itself** —
+each was filed as its own ADR (linked below) and is now `Accepted`:
 
 1. **Dependency management strategy** (vcpkg / Conan / CMake
    `FetchContent` / git submodules) — already flagged open in
    [ci-strategy.md](../docs/process/ci-strategy.md); this spec is the
    first to actually need it, at minimum to pull in a test framework.
+   Filed as [ADR-0006](../adr/0006-dependency-management.md)
+   (`Accepted`).
 2. **Unit test framework choice** (Catch2 / GoogleTest / custom) —
    already flagged open in
    [testing-strategy.md](../docs/process/testing-strategy.md); this spec
-   is what first requires the decision.
+   is what first requires the decision. Filed as
+   [ADR-0007](../adr/0007-test-framework.md) (`Accepted`).
 3. **Logging abstraction design** — interface shape, sink model, and
    whether it wraps a third-party library (e.g. spdlog) or is hand-rolled.
+   Filed as [ADR-0008](../adr/0008-logging.md) (`Accepted`).
 4. **Assertion abstraction design** — macro semantics and Debug vs.
    Release behavior, and how it embodies AGENTS.md's "programmer errors
-   are assertions" rule concretely.
+   are assertions" rule concretely. Filed as
+   [ADR-0009](../adr/0009-assertion.md) (`Accepted`).
 5. **CMake target/library structure convention** — how `src/` divides
    into CMake targets going forward; this spec's `core` target sets the
    precedent every later module (RHI, RenderGraph, ...) will follow.
+   Filed as [ADR-0010](../adr/0010-cmake-structure.md) (`Accepted`).
 
 ## Alternatives Considered
 
