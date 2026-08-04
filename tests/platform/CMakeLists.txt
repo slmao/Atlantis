@@ -5,6 +5,13 @@ add_executable(atlantis_platform_tests
   platform_tests.cpp
 )
 
+if(WIN32)
+  # Mirrors src/platform/CMakeLists.txt's WIN32-gated windows_platform.cpp:
+  # this is the only other file allowed to include <windows.h>, and must
+  # not be built for Android or any future non-Windows target.
+  target_sources(atlantis_platform_tests PRIVATE windows_platform_smoke_tests.cpp)
+endif()
+
 target_link_libraries(atlantis_platform_tests
   PRIVATE
     Atlantis::Platform
