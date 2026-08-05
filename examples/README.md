@@ -9,3 +9,10 @@ program can never be mistaken for a shipping engine module; see
   [specs/0001-project-foundation.md](../specs/0001-project-foundation.md).
   Links `Atlantis::Core` and exercises the logging and assertion
   abstractions. Not a preview of Atlantis Runtime.
+- **`platform_demo/`** — Windows Platform lifecycle demo for
+  [specs/0002-platform-foundation.md](../specs/0002-platform-foundation.md).
+  Links `Atlantis::Platform`, opens a real top-level window, and logs
+  every `PlatformEvent` (resize, focus, close request, shutdown ordering)
+  and elapsed monotonic time. The window stays entirely blank — no
+  Vulkan, RHI, Renderer, or RenderGraph code is involved. Not a preview of
+  Atlantis Runtime.
