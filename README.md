@@ -77,9 +77,9 @@ docs/               Architecture records (as-built) and process docs
 specs/              Proposed work, pre-implementation
 plans/              Approved implementation plans
 adr/                Architectural decision records
-src/                Source — src/core/ implements Atlantis Core (spec/plan/ADR 0001, 0006-0010); every other module still empty, pending its own spec/plan/ADR
-examples/           Non-shipping demo programs (foundation_demo/) — see ADR-0010
-tests/              Tests — tests/core/ (Catch2 v3); other layers pending their own spec
+src/                Source — src/core/ implements Atlantis Core (spec/plan/ADR 0001, 0006-0010); src/platform/ implements Atlantis Platform's Windows path (spec/plan 0002, ADR-0005/0010-0013) — Android/iOS are specified architecturally but not implemented; every other module still empty, pending its own spec/plan/ADR
+examples/           Non-shipping demo programs (foundation_demo/, platform_demo/) — see ADR-0010
+tests/              Tests — tests/core/ and tests/platform/ (Catch2 v3, plus Windows-only integration smoke tests); other layers pending their own spec
 shaders/            Shader sources (empty — structure pending first spec/plan/ADR)
 assets/             Engine/sample assets (empty — structure pending first spec/plan/ADR)
 tools/              Offline/dev tooling (empty — structure pending first spec/plan/ADR)
@@ -102,7 +102,11 @@ cmake --build build --config Release
 ctest --test-dir build -C Debug
 ```
 
-Run the demo: `build/examples/foundation_demo/Debug/atlantis_foundation_demo.exe`
+Run the foundation demo: `build/examples/foundation_demo/Debug/atlantis_foundation_demo.exe`
+(path varies by generator/configuration).
+
+Run the Windows Platform demo (opens a real, blank window; no rendering):
+`build/examples/platform_demo/Debug/atlantis_platform_demo.exe`
 (path varies by generator/configuration).
 
 ## Status
@@ -110,9 +114,15 @@ Run the demo: `build/examples/foundation_demo/Debug/atlantis_foundation_demo.exe
 Engineering foundation stage. `specs/0001-project-foundation.md` is
 implemented: a minimal C++20/CMake project (`Atlantis Core` — logging,
 assertions, a result/error type — plus its unit tests and a proof-of-build
-demo). No renderer, no RHI, no CI pipeline yet. See [docs/](docs/) for
-what's documented so far and the open architectural questions still
-awaiting human decisions.
+demo). `specs/0002-platform-foundation.md`'s Windows path is also
+implemented: `Atlantis Platform` (application lifecycle, window
+creation/destruction, `PlatformEvent` delivery, monotonic timing), its
+Catch2 unit tests and Windows-only integration smoke tests, and a
+non-rendering `platform_demo` that opens a real, blank window. Android and
+iOS remain specified architecturally only (not implemented). No Vulkan, no
+RHI, no Renderer, and no CI pipeline yet. See [docs/](docs/) for what's
+documented so far and the open architectural questions still awaiting
+human decisions.
 
 ## License
 

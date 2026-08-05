@@ -16,6 +16,7 @@ add_subdirectory(src/platform)
 
 if(ATLANTIS_BUILD_EXAMPLES)
   add_subdirectory(examples/foundation_demo)
+  add_subdirectory(examples/platform_demo)
 endif()
 
 if(ATLANTIS_BUILD_TESTS)
