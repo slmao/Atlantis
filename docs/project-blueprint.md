@@ -166,7 +166,7 @@ ADR or the architecture docs above — see the links inline):
 
 ## 4. Current repository state (verified against source and history)
 
-This section reflects the state of this repository as of 2026-08-06,
+This section reflects the state of this repository as of 2026-08-07,
 verified by reading the spec/plan/ADR files, the `src/`/`tests/`/
 `examples/` trees, and `git log`/`git status` — not inferred from file
 names or intent.
@@ -178,6 +178,8 @@ names or intent.
 | **Spec 0002 — Platform Foundation** | `Approved`, **Windows path Implemented**; Android/iOS architecture-only, not implemented | [specs/0002-platform-foundation.md](../specs/0002-platform-foundation.md); `src/platform/` (Windows implementation, `windows_platform.cpp`), `tests/platform/` (including Windows-only smoke tests), `examples/platform_demo/` all exist. No `src/platform/src/android/` or `src/platform/src/ios/` directory exists. |
 | Plan 0002 | `Approved / Ready for Implementation` (Windows portion) | [plans/0002-platform-foundation.md](../plans/0002-platform-foundation.md) |
 | **Spec 0003 — RHI and Vulkan Windowed Foundation** | `Approved`; **not implemented, no Plan exists yet** | [specs/0003-rhi-vulkan-windowed-foundation.md](../specs/0003-rhi-vulkan-windowed-foundation.md) status field states "Related Plan(s): None yet"; no `plans/0003-*.md` file exists in this repository (verified by directory listing and `git log`); no `src/rhi/`, `src/vulkan_backend/`, `src/render_graph/`, or `src/renderer/` directory exists |
+| **Spec 0004 — Context-Efficient Documentation and Code Comment Guidelines** | `Approved`, **Implemented** | [specs/0004-context-efficiency-guidelines.md](../specs/0004-context-efficiency-guidelines.md); `AGENTS.md` now contains the `## Documentation and code comments` section, merged via PR #11. Governance/documentation convention only — no architecture or runtime module changed. |
+| Plan 0004 | `Approved / Ready for Implementation` | [plans/0004-context-efficiency-guidelines.md](../plans/0004-context-efficiency-guidelines.md) |
 | ADR-0001 through ADR-0016 | All 16 `Accepted` | Verified by grepping each ADR file's `Status:` field |
 | `docs/architecture/{overview,module_boundaries,threading,resource_lifetime}.md` | Still carry their own `PROPOSED — pending spec/ADR approval. Not as-built` banner | Read in full; banners unrevised as of this document |
 | `docs/rhi/README.md`, `docs/render_graph/README.md`, `docs/renderer/README.md` | Same `PROPOSED`, no-code status | Read in full |
