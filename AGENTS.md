@@ -348,6 +348,54 @@ default.
   is itself an architectural decision and will be established by the first
   approved spec + plan + ADR, not invented ahead of time
 
+## Documentation and code comments
+
+Applies repository-wide: to this file, `README.md`,
+`docs/project-blueprint.md`, specs, plans, ADRs, and code comments
+alike. See [specs/0004-context-efficiency-guidelines.md](specs/0004-context-efficiency-guidelines.md)
+for the full rationale; this section states the rule, not the reasoning.
+
+**Documentation:**
+
+- A given decision, rule, or status has **one authoritative source** —
+  an Accepted ADR for *why*, an Approved Spec for *what*, an Approved
+  Plan for *how/sequencing*, this file for repository-wide governance
+  and coding rules. Every other document links to that source with a
+  short summary, rather than restating its detail.
+- Navigation/index documents (README, blueprint, spec/plan registries,
+  and similar) stay focused on index, status, dependency, and roadmap
+  content — not full design rationale or argumentation.
+- Read documentation proportional to the task at hand rather than
+  defaulting to the entire historical set. This does not authorize
+  skipping a document a task genuinely needs, and does not loosen this
+  file's own read-in-full-every-session rule above.
+- Concision never justifies omitting a requirement, constraint, design
+  rationale, risk, verification step, or governance status that a
+  document's own role or template requires it to state. No mechanical
+  line/word/token/size limit is used to judge this — it is a reviewed
+  judgment call, like the rest of this document's qualitative rules.
+
+**Code comments:**
+
+- A comment explains what the code cannot: non-obvious rationale,
+  invariants, ownership/lifetime/borrowing rules, thread-safety
+  contracts, protocol/platform requirements, or easy-to-misuse
+  behavior — not what clear naming, structure, and types already say.
+  Prefer a better name, type, or a small extracted function before
+  reaching for a comment.
+- Required public-API contract documentation — thread-safety (see
+  Threading rules), ownership/lifetime (see Ownership and lifetime
+  rules), error semantics (see Error handling) — stays fully
+  documented; this narrows *how* it is written, never *whether*.
+- Complex algorithms, Vulkan synchronization, WSI boundary code,
+  resource lifetime, and non-obvious workarounds keep comments
+  sufficient to understand them, with a link to the backing spec/ADR
+  where one exists.
+- Update or remove a comment in the same change that makes it stale —
+  a stale comment is worse than none.
+- Never trade correctness or completeness of a documented contract for
+  brevity.
+
 ## Definition of Done
 
 See [docs/process/definition-of-done.md](docs/process/definition-of-done.md).
