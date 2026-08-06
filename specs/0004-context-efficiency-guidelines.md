@@ -1,13 +1,20 @@
 # Spec: Context-Efficient Documentation and Code Comment Guidelines
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
   direction; human authorship/ownership of this spec is pending
   confirmation at Human Review.
 - **Created:** 2026-08-06
-- **Related Plan(s):** None yet — a plan is written only after this
-  spec reaches `Approved` (see [AGENTS.md](../AGENTS.md); not created as
-  part of this spec).
+- **Approved:** 2026-08-06 — human approval of this Spec's problem
+  statement, goals/non-goals, proposed rule content, and Acceptance
+  Criteria. This is **Spec Approval only**: it does not constitute Plan
+  0004 approval, does not constitute the distinct joint Spec + Plan
+  Human Review checkpoint [AGENTS.md](../AGENTS.md)'s workflow requires
+  before implementation, and does not authorize any edit to
+  `AGENTS.md`. See Architectural Impact.
+- **Related Plan(s):** None yet — drafting Plan 0004 against this now-
+  `Approved` spec is the next step (see [AGENTS.md](../AGENTS.md)); it
+  has not been created, reviewed, or approved as of this Spec Approval.
 - **Related ADR(s):** None — see Architectural Impact.
 
 ## Summary
@@ -329,6 +336,15 @@ future, separately-verified implementation step following an `Approved`
 spec and an `Approved / Ready for Implementation` plan, with Human Review
 explicitly recorded, may do that (see this spec's Out of Scope / Future
 Work).
+
+**Current status of these prerequisites, as of this Spec's Approval on
+2026-08-06:** only the first — an Approved Spec — is satisfied. Plan
+0004 does not yet exist; drafting it against this now-`Approved` spec
+is the next step. The distinct, joint Spec + Plan Human Review
+checkpoint this section describes has not occurred. `AGENTS.md` remains
+unmodified and must remain unmodified until Plan 0004 is independently
+drafted and reaches `Approved / Ready for Implementation`, and that
+joint checkpoint is explicitly recorded.
 
 If implementation-time work under the approved plan discovers that
 achieving this spec's goals actually requires reclassifying an existing
