@@ -21,6 +21,7 @@ add_subdirectory(src/vulkan_backend)
 if(ATLANTIS_BUILD_EXAMPLES)
   add_subdirectory(examples/foundation_demo)
   add_subdirectory(examples/platform_demo)
+  add_subdirectory(examples/rhi_vulkan_demo)
 endif()
 
 if(ATLANTIS_BUILD_TESTS)
