@@ -1,9 +1,9 @@
 #pragma once
 
+#include <variant>
+
 #include <atlantis/result.h>
 #include <atlantis/rhi/types.h>
-
-#include <variant>
 
 namespace atlantis::rhi {
 

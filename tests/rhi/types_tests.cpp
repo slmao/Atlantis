@@ -1,9 +1,9 @@
 #include <atlantis/rhi/types.h>
 
-#include <catch2/catch_test_macros.hpp>
-
 #include <cstddef>
 #include <iterator>
+
+#include <catch2/catch_test_macros.hpp>
 
 using atlantis::rhi::Extent2D;
 using atlantis::rhi::Format;
