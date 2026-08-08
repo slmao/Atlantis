@@ -3,6 +3,7 @@ add_library(atlantis_vulkan_backend STATIC
   src/validation.cpp
   src/vulkan_instance.cpp
   src/vulkan_device.cpp
+  src/vulkan_presentation.cpp
   src/wsi/win32_surface.cpp
 )
 add_library(Atlantis::VulkanBackend ALIAS atlantis_vulkan_backend)

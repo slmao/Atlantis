@@ -1,9 +1,16 @@
 #pragma once
 
 #include <optional>
+#include <variant>
 
+#include <vulkan/vulkan_core.h>
+
+#include <atlantis/result.h>
+#include <atlantis/rhi/presentation.h>
 #include <atlantis/rhi/types.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
+
+#include "vulkan_device.h"
 
 namespace atlantis::vulkan_backend::detail {
 
@@ -28,5 +35,49 @@ enum class RecreateAction { Skip, NoOp, Recreate };
   if (!supported) return PresentationCreateError::UnsupportedDevice;
   return std::nullopt;
 }
+
+// Concrete Vulkan implementation of atlantis::rhi::Presentation
+// (ADR-0014), scoped to its non-frame lifecycle only (ADR-0016). See
+// vulkan_presentation.cpp for the full recreateIfNeeded() implementation.
+//
+// Exclusively owns its VkSurfaceKHR and (once one exists) its
+// VkSwapchainKHR. Holds a borrowed, non-owning reference to the
+// VulkanDevice it was constructed from -- that device must outlive this
+// object (caller-enforced; ADR-0003's explicit-ownership model, matching
+// rhi::Presentation's own documented contract). Not copyable, not
+// movable -- held exclusively behind
+// std::unique_ptr<atlantis::rhi::Presentation>. Not internally
+// thread-safe; every method here is caller-thread-only, the single
+// Phase 1 logical frame thread (ADR-0004). No global mutable state.
+// Stores nothing beyond this non-frame lifecycle: no swapchain image
+// handle, no per-image view, no RenderTarget, no synchronization
+// primitive, no command pool/buffer -- see ADR-0016.
+class VulkanPresentation final : public atlantis::rhi::Presentation {
+ public:
+  // Takes ownership of an already-created surface; constructs in a
+  // "recreation needed" state with no swapchain (Section 5's construction
+  // sequence). Makes no Vulkan call itself -- surface must already be a
+  // valid VkSurfaceKHR the caller created and is transferring ownership
+  // of.
+  VulkanPresentation(VulkanDevice& device, VkSurfaceKHR surface);
+  ~VulkanPresentation() override;
+
+  VulkanPresentation(const VulkanPresentation&) = delete;
+  VulkanPresentation& operator=(const VulkanPresentation&) = delete;
+  VulkanPresentation(VulkanPresentation&&) = delete;
+  VulkanPresentation& operator=(VulkanPresentation&&) = delete;
+
+  void notifyResized(atlantis::rhi::Extent2D extent) override;
+  [[nodiscard]] atlantis::Result<std::monostate, atlantis::rhi::PresentationError> recreateIfNeeded() override;
+  [[nodiscard]] atlantis::rhi::SwapchainMetadata metadata() const override;
+
+ private:
+  VulkanDevice& device_;
+  VkSurfaceKHR surface_;
+  VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
+  atlantis::rhi::Extent2D trackedExtent_;
+  bool recreationNeeded_ = true;
+  atlantis::rhi::SwapchainMetadata metadata_;
+};
 
 }  // namespace atlantis::vulkan_backend::detail
