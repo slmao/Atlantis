@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <variant>
+#include <vector>
 
 #include <vulkan/vulkan_core.h>
 
@@ -35,6 +36,29 @@ enum class RecreateAction { Skip, NoOp, Recreate };
   if (!supported) return PresentationCreateError::UnsupportedDevice;
   return std::nullopt;
 }
+
+struct FormatSelection {
+  VkFormat vkFormat;
+  VkColorSpaceKHR colorSpace;
+  atlantis::rhi::Format approvedFormat;
+};
+
+// Selects one of Atlantis's four RHI-approved (format, color space) pairs
+// from the surface's own reported list -- see vulkan_presentation.cpp for
+// the fixed backend-private preference order and the VK_FORMAT_UNDEFINED
+// special case, which examines the surface's reported color space rather
+// than assuming VK_COLOR_SPACE_SRGB_NONLINEAR_KHR unconditionally. GPU-
+// independent and pure: takes only already-obtained data, calls no
+// Vulkan function. Declared here (rather than kept file-local) so
+// GPU-independent unit tests can exercise it directly.
+[[nodiscard]] std::optional<FormatSelection> selectSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& formats);
+
+// True when capabilities reports support for the one swapchain image
+// usage this module requires (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) --
+// Spec 0003's non-frame lifecycle needs nothing else (no transfer,
+// storage, or sampled usage). GPU-independent and pure. Declared here for
+// the same testability reason as selectSurfaceFormat() above.
+[[nodiscard]] bool supportsRequiredSwapchainUsage(const VkSurfaceCapabilitiesKHR& capabilities);
 
 // Concrete Vulkan implementation of atlantis::rhi::Presentation
 // (ADR-0014), scoped to its non-frame lifecycle only (ADR-0016). See

@@ -68,34 +68,35 @@ class SwapchainGuard {
   VkSwapchainKHR swapchain_;
 };
 
+using FormatsResultT = atlantis::Result<std::vector<VkSurfaceFormatKHR>, atlantis::rhi::PresentationError>;
+
 // Two-call idiom for vkGetPhysicalDeviceSurfaceFormatsKHR. Same
 // VK_INCOMPLETE/failure handling and final-count-resize rationale
 // established in vulkan_instance.cpp/vulkan_device.cpp's own enumeration
-// helpers: partial data is never treated as a complete result.
-[[nodiscard]] std::optional<std::vector<VkSurfaceFormatKHR>> querySurfaceFormats(VkPhysicalDevice physicalDevice,
-                                                                                  VkSurfaceKHR surface) {
+// helpers: partial data is never treated as a complete result. Unlike
+// those helpers, this one preserves the specific VkResult each call
+// failed with (via toSwapchainCreationError()) rather than collapsing
+// every failure into a single generic error -- callers can still
+// distinguish SurfaceLost/DeviceLost/Unknown from a genuine "the surface
+// has no compatible format" outcome.
+[[nodiscard]] FormatsResultT querySurfaceFormats(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface) {
   std::uint32_t count = 0;
-  if (vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &count, nullptr) != VK_SUCCESS) {
-    return std::nullopt;
+  const VkResult countResult = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &count, nullptr);
+  if (countResult != VK_SUCCESS) {
+    return FormatsResultT::Err(toSwapchainCreationError(countResult));
   }
   if (count == 0) {
-    return std::vector<VkSurfaceFormatKHR>{};
+    return FormatsResultT::Ok(std::vector<VkSurfaceFormatKHR>{});
   }
 
   std::vector<VkSurfaceFormatKHR> formats(count);
   const VkResult fillResult = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &count, formats.data());
   if (fillResult != VK_SUCCESS) {
-    return std::nullopt;
+    return FormatsResultT::Err(toSwapchainCreationError(fillResult));
   }
   formats.resize(count);
-  return formats;
+  return FormatsResultT::Ok(std::move(formats));
 }
-
-struct FormatSelection {
-  VkFormat vkFormat;
-  VkColorSpaceKHR colorSpace;
-  atlantis::rhi::Format approvedFormat;
-};
 
 // Fixed, deterministic backend-private preference order -- the Approved
 // Plan does not fix a literal priority among the four RHI-approved
@@ -112,16 +113,28 @@ constexpr FormatSelection kApprovedFormatsInPreferenceOrder[] = {
     {VK_FORMAT_R8G8B8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, atlantis::rhi::Format::Rgba8Srgb},
 };
 
+}  // namespace
+
 // Selects the first entry of kApprovedFormatsInPreferenceOrder (in this
 // module's own preference order, not the surface's returned order) whose
 // (format, colorSpace) pair the surface actually reports. Handles
 // Vulkan's documented special case: exactly one entry with
 // VK_FORMAT_UNDEFINED means the surface has no preferred format and the
-// application may choose freely -- still only from Atlantis's four
-// RHI-approved formats, never a general format outside them.
+// application may choose freely -- but only the *format* is
+// unconstrained in that case, not the color space: formats[0].colorSpace
+// is still the surface's own reported value and must be checked, not
+// assumed. Only when it equals VK_COLOR_SPACE_SRGB_NONLINEAR_KHR (the one
+// color space this module supports) does this function pick its top
+// preference; any other reported color space means none of Atlantis's
+// four RHI-approved (format, color space) pairs is actually usable here,
+// so no selection is made -- never a color space the surface did not
+// report support for.
 [[nodiscard]] std::optional<FormatSelection> selectSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& formats) {
   if (formats.size() == 1 && formats[0].format == VK_FORMAT_UNDEFINED) {
-    return kApprovedFormatsInPreferenceOrder[0];
+    if (formats[0].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+      return kApprovedFormatsInPreferenceOrder[0];
+    }
+    return std::nullopt;
   }
   for (const FormatSelection& candidate : kApprovedFormatsInPreferenceOrder) {
     for (const VkSurfaceFormatKHR& available : formats) {
@@ -132,6 +145,16 @@ constexpr FormatSelection kApprovedFormatsInPreferenceOrder[] = {
   }
   return std::nullopt;
 }
+
+// True when capabilities.supportedUsageFlags reports
+// VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT -- the only swapchain image usage
+// Spec 0003's non-frame lifecycle needs (no transfer, storage, sampled,
+// or any usage a future Renderer might want).
+[[nodiscard]] bool supportsRequiredSwapchainUsage(const VkSurfaceCapabilitiesKHR& capabilities) {
+  return (capabilities.supportedUsageFlags & static_cast<VkFlags>(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) != 0;
+}
+
+namespace {
 
 // capabilities.currentExtent.width != UINT32_MAX means the surface
 // dictates its own extent (typical on Windows) -- use it as-is. The
@@ -255,16 +278,18 @@ atlantis::Result<std::monostate, atlantis::rhi::PresentationError> VulkanPresent
     return ResultT::Err(toSwapchainCreationError(capabilitiesResult));
   }
 
-  const std::optional<std::vector<VkSurfaceFormatKHR>> formats =
-      querySurfaceFormats(device_.physicalDevice(), surface_);
-  if (!formats.has_value()) {
-    return ResultT::Err(atlantis::rhi::PresentationError::SwapchainCreationFailed);
+  const FormatsResultT formatsResult = querySurfaceFormats(device_.physicalDevice(), surface_);
+  if (formatsResult.isErr()) {
+    // Propagates the specific error querySurfaceFormats() mapped the
+    // failing VkResult to (SurfaceLost/DeviceLost/Unknown/...) --
+    // never collapsed into a single generic failure.
+    return ResultT::Err(formatsResult.error());
   }
-  const std::optional<FormatSelection> formatSelection = selectSurfaceFormat(*formats);
+  const std::optional<FormatSelection> formatSelection = selectSurfaceFormat(formatsResult.value());
   if (!formatSelection.has_value()) {
-    // None of Atlantis's four RHI-approved formats is available on this
-    // surface -- a genuine, explicit failure, never silently mapped to a
-    // format outside the approved set.
+    // None of Atlantis's four RHI-approved (format, color space) pairs is
+    // available on this surface -- a genuine, explicit failure, never
+    // silently mapped to a format or color space outside the approved set.
     return ResultT::Err(atlantis::rhi::PresentationError::SwapchainCreationFailed);
   }
 
@@ -273,7 +298,27 @@ atlantis::Result<std::monostate, atlantis::rhi::PresentationError> VulkanPresent
     return ResultT::Err(atlantis::rhi::PresentationError::SwapchainCreationFailed);
   }
 
+  if (!supportsRequiredSwapchainUsage(capabilities)) {
+    return ResultT::Err(atlantis::rhi::PresentationError::SwapchainCreationFailed);
+  }
+
   const VkExtent2D swapchainExtent = selectSwapchainExtent(capabilities, trackedExtent_);
+  if (swapchainExtent.width == 0 || swapchainExtent.height == 0) {
+    // The tracked extent itself was non-zero (the structural Skip branch
+    // above already handles {0, 0}), but the surface's own capabilities --
+    // queried after that check, so genuinely racy against a live window --
+    // report an actual zero extent right now (e.g. the window was
+    // minimized between the notifyResized() that set trackedExtent_ and
+    // this query). ADR-0016's zero-extent rule ("no code path from a zero
+    // extent to a Vulkan call, at any point") is honored for the extent
+    // Vulkan would actually use, not only the caller-tracked one: this is
+    // treated identically to the structural Skip branch -- deferred, not
+    // failed. recreationNeeded_ stays set so the next recreateIfNeeded()
+    // call retries; metadata_ is already at its reset default; swapchain_
+    // is already VK_NULL_HANDLE (reset above). No vkCreateSwapchainKHR
+    // call is made, and no 1x1 or other substitute swapchain is created.
+    return ResultT::Ok(std::monostate{});
+  }
   const std::uint32_t imageCount = selectImageCount(capabilities);
 
   VkSwapchainCreateInfoKHR createInfo{};
