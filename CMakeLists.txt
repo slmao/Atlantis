@@ -13,6 +13,7 @@ include(cmake/CompilerWarnings.cmake)
 
 add_subdirectory(src/core)
 add_subdirectory(src/platform)
+add_subdirectory(src/rhi)
 
 if(ATLANTIS_BUILD_EXAMPLES)
   add_subdirectory(examples/foundation_demo)
@@ -24,4 +25,5 @@ if(ATLANTIS_BUILD_TESTS)
   include(cmake/AtlantisDependencies.cmake)
   add_subdirectory(tests/core)
   add_subdirectory(tests/platform)
+  add_subdirectory(tests/rhi)
 endif()
