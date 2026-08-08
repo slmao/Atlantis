@@ -5,9 +5,11 @@
   human authorship/ownership of this spec is pending confirmation at
   Human Review.
 - **Created:** 2026-08-06
-- **Related Plan(s):** None yet — a plan is written only after this spec
-  reaches `Approved` (see [AGENTS.md](../AGENTS.md); explicitly not
-  created as part of this task).
+- **Related Plan(s):**
+  [Plan 0003](../plans/0003-rhi-vulkan-windowed-foundation.md) —
+  `Approved / Ready for Implementation`. Joint Spec + Plan Human Review
+  completed 2026-08-08; implementation merged via
+  [PR #14](https://github.com/slmao/Atlantis/pull/14).
 - **Related ADR(s):** Builds on
   [ADR-0001](../adr/0001-rhi-backend-independence.md),
   [ADR-0002](../adr/0002-presentation-rendertarget-unification.md),

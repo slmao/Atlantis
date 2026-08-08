@@ -91,8 +91,8 @@ graph TD
     Core["Atlantis Core<br/>(Implemented)"]
 
     Platform["Atlantis Platform<br/>(Windows: Implemented<br/>Android/iOS: architecture-only)"]
-    RHI["Atlantis RHI<br/>(Approved — Spec 0003,<br/>Plan not yet written)"]
-    VulkanBackend["Atlantis Vulkan Backend<br/>(Approved — Spec 0003,<br/>Plan not yet written)"]
+    RHI["Atlantis RHI<br/>(Implemented — Spec/Plan 0003)"]
+    VulkanBackend["Atlantis Vulkan Backend<br/>(Implemented — Spec/Plan 0003)"]
     RenderGraph["Atlantis RenderGraph<br/>(Candidate — no Spec)"]
     Renderer["Atlantis Renderer<br/>(Candidate — no Spec)"]
     ShaderSystem["Atlantis Shader System<br/>(Candidate — no Spec)"]
@@ -125,8 +125,8 @@ graph TD
 
     class Core implemented
     class Platform implemented
-    class RHI approved
-    class VulkanBackend approved
+    class RHI implemented
+    class VulkanBackend implemented
     class RenderGraph candidate
     class Renderer candidate
     class ShaderSystem candidate
@@ -166,10 +166,10 @@ ADR or the architecture docs above — see the links inline):
 
 ## 4. Current repository state (verified against source and history)
 
-This section reflects the state of this repository as of 2026-08-07,
-verified by reading the spec/plan/ADR files, the `src/`/`tests/`/
-`examples/` trees, and `git log`/`git status` — not inferred from file
-names or intent.
+This section reflects the state of this repository as of 2026-08-08
+(PR #14 merged 2026-08-08T15:24:57Z), verified by reading the
+spec/plan/ADR files, the `src/`/`tests/`/`examples/` trees, and
+`git log`/`git status` — not inferred from file names or intent.
 
 | Item | Status | Evidence |
 |---|---|---|
@@ -177,52 +177,60 @@ names or intent.
 | Plan 0001 | `Approved / Ready for Implementation` | [plans/0001-project-foundation.md](../plans/0001-project-foundation.md) |
 | **Spec 0002 — Platform Foundation** | `Approved`, **Windows path Implemented**; Android/iOS architecture-only, not implemented | [specs/0002-platform-foundation.md](../specs/0002-platform-foundation.md); `src/platform/` (Windows implementation, `windows_platform.cpp`), `tests/platform/` (including Windows-only smoke tests), `examples/platform_demo/` all exist. No `src/platform/src/android/` or `src/platform/src/ios/` directory exists. |
 | Plan 0002 | `Approved / Ready for Implementation` (Windows portion) | [plans/0002-platform-foundation.md](../plans/0002-platform-foundation.md) |
-| **Spec 0003 — RHI and Vulkan Windowed Foundation** | `Approved`; **not implemented, no Plan exists yet** | [specs/0003-rhi-vulkan-windowed-foundation.md](../specs/0003-rhi-vulkan-windowed-foundation.md) status field states "Related Plan(s): None yet"; no `plans/0003-*.md` file exists in this repository (verified by directory listing and `git log`); no `src/rhi/`, `src/vulkan_backend/`, `src/render_graph/`, or `src/renderer/` directory exists |
+| **Spec 0003 — RHI and Vulkan Windowed Foundation** | `Approved`, **Implemented** (windowed Vulkan presentation foundation; no acquire/present, no `RenderTarget`, no rendered output) | [specs/0003-rhi-vulkan-windowed-foundation.md](../specs/0003-rhi-vulkan-windowed-foundation.md) status field; `src/rhi/`, `src/vulkan_backend/`, `tests/rhi/`, `tests/vulkan_backend/`, `examples/rhi_vulkan_demo/` all exist and match the spec/plan's file list; implementation merged via [PR #14](https://github.com/slmao/Atlantis/pull/14). No `src/render_graph/` or `src/renderer/` directory exists. |
+| Plan 0003 | `Approved / Ready for Implementation` | [plans/0003-rhi-vulkan-windowed-foundation.md](../plans/0003-rhi-vulkan-windowed-foundation.md); records a joint Spec + Plan Human Review completed 2026-08-08 |
 | **Spec 0004 — Context-Efficient Documentation and Code Comment Guidelines** | `Approved`, **Implemented** | [specs/0004-context-efficiency-guidelines.md](../specs/0004-context-efficiency-guidelines.md); `AGENTS.md` now contains the `## Documentation and code comments` section, merged via PR #11. Governance/documentation convention only — no architecture or runtime module changed. |
 | Plan 0004 | `Approved / Ready for Implementation` | [plans/0004-context-efficiency-guidelines.md](../plans/0004-context-efficiency-guidelines.md) |
 | ADR-0001 through ADR-0016 | All 16 `Accepted` | Verified by grepping each ADR file's `Status:` field |
 | `docs/architecture/{overview,module_boundaries,threading,resource_lifetime}.md` | Still carry their own `PROPOSED — pending spec/ADR approval. Not as-built` banner | Read in full; banners unrevised as of this document |
 | `docs/rhi/README.md`, `docs/render_graph/README.md`, `docs/renderer/README.md` | Same `PROPOSED`, no-code status | Read in full |
-| **Human Review** for Spec 0003 / a future Plan 0003 | **Not evidenced in this repository.** Specs 0001 and 0002's plans record an explicit Human Review approval note (with dates); no equivalent Plan/Human-Review record exists yet for Spec 0003, because no Plan 0003 exists | Repository search; no claim of Human Review for Spec 0003 is made here |
-| Working tree | Clean at time of writing | `git status --short` |
-| Current branch | `docs/project-blueprint` (this document's own branch) | `git status --short --branch` |
+| **Human Review** for Spec 0003 / Plan 0003 | Recorded | Plan 0003 records a joint Spec + Plan Human Review approval note, dated 2026-08-08, consistent with how Specs 0001 and 0002's plans record theirs |
 
 **What is implemented today, concretely:** `Atlantis Core` (logging,
-assertions, a `Result<T,E>` type) and `Atlantis Platform`'s Windows
-path (application lifecycle, `HWND` window creation/ownership/
-destruction, `PlatformEvent` delivery, monotonic timing), each with
-Catch2 unit tests and a non-shipping demo executable
-(`examples/foundation_demo`, `examples/platform_demo`).
+assertions, a `Result<T,E>` type); `Atlantis Platform`'s Windows path
+(application lifecycle, `HWND` window creation/ownership/destruction,
+`PlatformEvent` delivery, monotonic timing); `Atlantis RHI`'s
+non-frame public interfaces (`Device`/`Presentation` construction
+types); and `Atlantis Vulkan Backend`'s Windows presentation
+foundation (instance/device initialization, Windows WSI surface
+creation, swapchain creation/metadata queries/destruction, and
+resize-driven lazy recreation) — each with Catch2 unit tests
+(GPU-independent for RHI/Vulkan Backend logic, GPU-required
+integration tests for the real Vulkan/WSI path) and a non-shipping
+demo executable (`examples/foundation_demo`, `examples/platform_demo`,
+`examples/rhi_vulkan_demo`). **There is still no rendered output**: no
+frame acquire/present loop, no `RenderTarget`, and no command
+recording exist anywhere in the repository.
 
-**What is approved but not yet implemented:** the RHI public interface
-and the Vulkan Backend's Windows `Device`/`Presentation` non-frame
-lifecycle, per Spec 0003. The next governance step for this work is
-**writing Plan 0003 against the approved spec, then clearing Human
-Review** — per [AGENTS.md](../AGENTS.md), implementation must not begin
-before that.
+**What is approved but not yet implemented:** nothing at Spec 0003's
+scope remains unimplemented — see the Spec 0003 row above. No other
+spec is currently `Approved` without matching implementation.
 
 **What has no spec yet:** RenderGraph, Renderer, Shader System,
 Runtime (the module), Tools, Android Platform implementation, iOS
 Platform, headless rendering, image regression testing, and everything
 in Section 5's later milestones and Section 5's "further candidate
-phases."
-
-No untracked or unrelated files were observed in the working tree at
-the time of this document's creation; nothing outside this task's two
-deliverables was treated as project progress.
+phases." These remain backlog candidates (see
+[specs/README.md](../specs/README.md) Section B) and are not
+`Approved`.
 
 ## 5. Phased roadmap
 
 Each milestone below states its governance state explicitly. A
 milestone being listed does not authorize starting it — see Section 1.
 
-### Milestone 1 — Windows Vulkan windowed foundation
+### Milestone 1 — Windows Vulkan windowed presentation foundation
 
 - **Governance state:** Spec `Approved`
   ([specs/0003-rhi-vulkan-windowed-foundation.md](../specs/0003-rhi-vulkan-windowed-foundation.md)).
-  **No Plan exists yet.** Per [AGENTS.md](../AGENTS.md), the next step
-  is to write Plan 0003 against this approved spec and take it through
-  Human Review — not to begin implementation directly against the spec.
+  Plan `Approved / Ready for Implementation`
+  ([plans/0003-rhi-vulkan-windowed-foundation.md](../plans/0003-rhi-vulkan-windowed-foundation.md)),
+  with a joint Spec + Plan Human Review completed 2026-08-08.
+  Implementation merged via
+  [PR #14](https://github.com/slmao/Atlantis/pull/14); verification
+  complete. This milestone delivers a **windowed Vulkan presentation
+  foundation**, not complete windowed rendering — see the Non-Goals
+  below.
 - **Scope (per the approved spec):** minimal RHI public interface for
   `Device`/`Presentation` construction; Vulkan device/queue
   initialization; Windows WSI surface creation; swapchain creation,
@@ -241,7 +249,13 @@ milestone being listed does not authorize starting it — see Section 1.
 ### Milestone 2 — RenderGraph foundation
 
 - **Governance state:** Candidate — **requires a new Spec and, per its
-  Architectural Impact, likely a new ADR.** Not started.
+  Architectural Impact, likely a new ADR.** Not started. Its
+  dependency, Spec 0003 (RHI/Vulkan windowed presentation foundation),
+  is now implemented (see Milestone 1), so the next governance step is
+  a human-authorized decision to draft a RenderGraph Foundation spec —
+  this does not itself authorize drafting that spec or any
+  implementation; the spec number, public API shape, and pass/resource/
+  barrier/lifetime design remain undecided.
 - **Problem domain** (described, not designed — no API is fixed by this
   document): pass/resource declaration; dependency analysis across a
   frame's passes; resource state/barrier resolution; command
