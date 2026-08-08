@@ -101,6 +101,17 @@ int main() {
   namespace rhi = atlantis::rhi;
   namespace vulkan_backend = atlantis::vulkan_backend;
 
+  // atlantis::log's own default minimum level differs by build
+  // configuration (Trace in Debug, Info in Release -- src/core/src/log.cpp).
+  // Left at that Debug-build default, the per-resize-event DEBUG logging
+  // below would still print unfiltered during interactive live resize.
+  // Setting it explicitly to Info here, via Core's existing level API (no
+  // new logging mechanism), makes this demo's default console output
+  // resize-quiet in both configurations alike; lowering it back to Debug
+  // (e.g. temporarily, for investigation) shows the same per-event detail
+  // this file already logs, just filtered by level rather than removed.
+  atlantis::log::setMinLevel(atlantis::LogLevel::Info);
+
   ATLANTIS_LOG_INFO("Atlantis RHI Vulkan demo starting");
   ATLANTIS_LOG_INFO(
       "This is Spec 0003's non-shipping verification composition, not the Atlantis Runtime module and not a "
@@ -164,8 +175,16 @@ int main() {
         presentation = std::move(presentationResult.value());
         ATLANTIS_LOG_INFO("Presentation created (surface only, no swapchain yet)");
       } else if (const auto* resize = std::get_if<platform::WindowResize>(&event)) {
-        ATLANTIS_LOG_INFO("WindowResize: logical={}x{} framebuffer={}x{}", resize->logical.width,
-                           resize->logical.height, resize->framebuffer.width, resize->framebuffer.height);
+        // Win32 live resize (dragging an edge/corner) delivers a
+        // WindowResize event per intermediate size, not just the final
+        // one -- logging every one at INFO would flood the console during
+        // ordinary interactive use. Per-event size and per-event
+        // successful-recreation detail below are therefore DEBUG; the
+        // lifecycle transitions (Presentation/Device creation, close,
+        // surface destroyed, quit), the zero-extent deferral case, and
+        // every error stay INFO/ERROR regardless of resize frequency.
+        ATLANTIS_LOG_DEBUG("WindowResize: logical={}x{} framebuffer={}x{}", resize->logical.width,
+                            resize->logical.height, resize->framebuffer.width, resize->framebuffer.height);
         if (!presentation) {
           ATLANTIS_LOG_INFO("WindowResize observed before Presentation exists -- ignoring (waiting for "
                              "SurfaceCreated, which Windows Platform always delivers first)");
@@ -196,8 +215,11 @@ int main() {
               "recreateIfNeeded() returned Ok for a non-zero extent but metadata is still at its default state");
           failed = true;
         } else {
-          ATLANTIS_LOG_INFO("Swapchain (re)created: imageCount={} format={} extent={}x{}", metadata.imageCount,
-                             formatToString(metadata.format), metadata.extent.width, metadata.extent.height);
+          // Same per-event-frequency reasoning as the WindowResize log
+          // above: an ordinary non-zero recreation during live resize
+          // happens once per intermediate size, so this stays DEBUG.
+          ATLANTIS_LOG_DEBUG("Swapchain (re)created: imageCount={} format={} extent={}x{}", metadata.imageCount,
+                              formatToString(metadata.format), metadata.extent.width, metadata.extent.height);
         }
       } else if (std::holds_alternative<platform::WindowCloseRequested>(event)) {
         ATLANTIS_LOG_INFO("WindowCloseRequested");
