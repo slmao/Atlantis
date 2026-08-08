@@ -24,7 +24,11 @@ constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
 // partial data as a complete result; a size change between the two calls
 // (astronomically unlikely with no concurrent Vulkan call in between, per
 // the Phase 1 single-logical-frame-thread baseline, ADR-0004) is surfaced
-// as a failure, not silently worked around with a retry loop.
+// as a failure, not silently worked around with a retry loop. On success,
+// the vector is resized to the second call's own returned count -- that
+// count may be smaller than the first call's count, and the vector must
+// never be returned with trailing, never-written default-constructed
+// elements past it.
 [[nodiscard]] std::optional<std::vector<VkExtensionProperties>> enumerateInstanceExtensions() {
   std::uint32_t count = 0;
   if (vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr) != VK_SUCCESS) {
@@ -35,14 +39,17 @@ constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
   }
 
   std::vector<VkExtensionProperties> extensions(count);
-  if (vkEnumerateInstanceExtensionProperties(nullptr, &count, extensions.data()) != VK_SUCCESS) {
+  const VkResult fillResult = vkEnumerateInstanceExtensionProperties(nullptr, &count, extensions.data());
+  if (fillResult != VK_SUCCESS) {
     return std::nullopt;
   }
+  extensions.resize(count);
   return extensions;
 }
 
 // Two-call idiom for vkEnumerateInstanceLayerProperties. Same
-// VK_INCOMPLETE/failure handling as enumerateInstanceExtensions() above.
+// VK_INCOMPLETE/failure-handling and final-count-resize rationale as
+// enumerateInstanceExtensions() above.
 [[nodiscard]] std::optional<std::vector<VkLayerProperties>> enumerateInstanceLayers() {
   std::uint32_t count = 0;
   if (vkEnumerateInstanceLayerProperties(&count, nullptr) != VK_SUCCESS) {
@@ -53,9 +60,11 @@ constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
   }
 
   std::vector<VkLayerProperties> layers(count);
-  if (vkEnumerateInstanceLayerProperties(&count, layers.data()) != VK_SUCCESS) {
+  const VkResult fillResult = vkEnumerateInstanceLayerProperties(&count, layers.data());
+  if (fillResult != VK_SUCCESS) {
     return std::nullopt;
   }
+  layers.resize(count);
   return layers;
 }
 

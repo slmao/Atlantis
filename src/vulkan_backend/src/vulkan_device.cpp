@@ -22,7 +22,10 @@ constexpr const char* kSwapchainExtension = "VK_KHR_swapchain";
 // Two-call idiom for vkEnumeratePhysicalDevices. Same VK_INCOMPLETE/
 // failure handling rationale as vulkan_instance.cpp's
 // enumerateInstanceExtensions(): partial data is never treated as a
-// complete result.
+// complete result, and the vector is resized to the second call's own
+// returned count -- that count may be smaller than the first call's
+// count, and the vector must never be returned with trailing, never-
+// written default-constructed elements past it.
 [[nodiscard]] std::optional<std::vector<VkPhysicalDevice>> enumeratePhysicalDevices(VkInstance instance) {
   std::uint32_t count = 0;
   if (vkEnumeratePhysicalDevices(instance, &count, nullptr) != VK_SUCCESS) {
@@ -33,14 +36,17 @@ constexpr const char* kSwapchainExtension = "VK_KHR_swapchain";
   }
 
   std::vector<VkPhysicalDevice> devices(count);
-  if (vkEnumeratePhysicalDevices(instance, &count, devices.data()) != VK_SUCCESS) {
+  const VkResult fillResult = vkEnumeratePhysicalDevices(instance, &count, devices.data());
+  if (fillResult != VK_SUCCESS) {
     return std::nullopt;
   }
+  devices.resize(count);
   return devices;
 }
 
 // Two-call idiom for vkEnumerateDeviceExtensionProperties (pLayerName ==
-// nullptr: the device's own extensions, not a specific layer's).
+// nullptr: the device's own extensions, not a specific layer's). Same
+// final-count-resize rationale as enumeratePhysicalDevices() above.
 [[nodiscard]] std::optional<std::vector<VkExtensionProperties>> enumerateDeviceExtensions(
     VkPhysicalDevice physicalDevice) {
   std::uint32_t count = 0;
@@ -52,9 +58,11 @@ constexpr const char* kSwapchainExtension = "VK_KHR_swapchain";
   }
 
   std::vector<VkExtensionProperties> extensions(count);
-  if (vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, extensions.data()) != VK_SUCCESS) {
+  const VkResult fillResult = vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, extensions.data());
+  if (fillResult != VK_SUCCESS) {
     return std::nullopt;
   }
+  extensions.resize(count);
   return extensions;
 }
 
@@ -73,7 +81,9 @@ constexpr const char* kSwapchainExtension = "VK_KHR_swapchain";
 
 // vkGetPhysicalDeviceQueueFamilyProperties returns void -- no VkResult
 // exists for this function, so none is fabricated. Ordinary count-then-
-// fill two-call form.
+// fill two-call form; the second call may still update count, so the
+// vector is resized to that final count rather than returned at the
+// first call's (possibly larger) size.
 [[nodiscard]] std::vector<VkQueueFamilyProperties> queryQueueFamilies(VkPhysicalDevice physicalDevice) {
   std::uint32_t count = 0;
   vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &count, nullptr);
@@ -82,6 +92,7 @@ constexpr const char* kSwapchainExtension = "VK_KHR_swapchain";
   }
   std::vector<VkQueueFamilyProperties> families(count);
   vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &count, families.data());
+  families.resize(count);
   return families;
 }
 
@@ -136,9 +147,13 @@ struct PhysicalDeviceSelection {
 // used in createDevice() strictly in creation order, so C++'s automatic
 // reverse-destruction-order tears them down device -> messenger ->
 // instance on any early-return failure -- exactly the order Section 6's
-// destruction-boundary table requires. release() transfers ownership out
-// on success, so nothing already handed to VulkanDevice is destroyed a
-// second time.
+// destruction-boundary table requires. Each guard still owns its handle
+// (and will destroy it on scope exit) through get()'s non-owning read;
+// only release() relinquishes ownership, and createDevice() below calls
+// release() only after VulkanDevice has already been successfully
+// constructed and holds its own copy of every handle value -- never
+// earlier, and never as a side effect of evaluating a constructor's
+// argument list.
 
 class InstanceGuard {
  public:
@@ -176,6 +191,7 @@ class MessengerGuard {
   MessengerGuard(const MessengerGuard&) = delete;
   MessengerGuard& operator=(const MessengerGuard&) = delete;
 
+  [[nodiscard]] VkDebugUtilsMessengerEXT get() const noexcept { return messenger_; }
   [[nodiscard]] VkDebugUtilsMessengerEXT release() noexcept {
     VkDebugUtilsMessengerEXT released = messenger_;
     messenger_ = VK_NULL_HANDLE;
@@ -199,6 +215,7 @@ class DeviceGuard {
   DeviceGuard(const DeviceGuard&) = delete;
   DeviceGuard& operator=(const DeviceGuard&) = delete;
 
+  [[nodiscard]] VkDevice get() const noexcept { return device_; }
   [[nodiscard]] VkDevice release() noexcept {
     VkDevice released = device_;
     device_ = VK_NULL_HANDLE;
@@ -309,9 +326,28 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
   VkQueue queue = VK_NULL_HANDLE;
   vkGetDeviceQueue(device, selection->queueFamilyIndex, 0, &queue);
 
+  // Two-phase ownership transfer. Phase 1: the guards still own every
+  // handle here -- VulkanDevice is constructed from their non-owning
+  // get() values only, so if std::make_unique's allocation or
+  // VulkanDevice's constructor were ever to fail, every guard is still
+  // intact and its destructor still runs (device -> messenger -> instance,
+  // per the guard-declaration-order comment above), leaking nothing.
   std::unique_ptr<atlantis::rhi::Device> vulkanDevice = std::make_unique<detail::VulkanDevice>(
-      instanceGuard.release(), selection->physicalDevice, deviceGuard.release(), queue, selection->queueFamilyIndex,
-      messengerGuard.release(), destroyMessengerFn);
+      instanceGuard.get(), selection->physicalDevice, deviceGuard.get(), queue, selection->queueFamilyIndex,
+      messengerGuard.get(), destroyMessengerFn);
+
+  // Phase 2: std::make_unique returned successfully, so VulkanDevice now
+  // holds its own copy of every handle value and is the sole owner going
+  // forward. Only now do the guards relinquish ownership -- each release()
+  // is its own statement, not folded into an expression whose evaluation
+  // order this code would otherwise have to rely on. Order among these
+  // three calls does not matter: release() only clears each guard's own
+  // internal handle to VK_NULL_HANDLE, it does not call any Vulkan
+  // function, so there is no dependency between the three calls to
+  // sequence.
+  (void)instanceGuard.release();
+  (void)deviceGuard.release();
+  (void)messengerGuard.release();
 
   return ResultT::Ok(std::move(vulkanDevice));
 }
