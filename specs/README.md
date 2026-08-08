@@ -31,18 +31,22 @@ this registry feeds into, see
 |---|---|---|---|---|---|
 | 0001 | [Project Foundation](0001-project-foundation.md) | `Approved` | [plans/0001-project-foundation.md](../plans/0001-project-foundation.md) (`Approved / Ready for Implementation`) | **Implemented** — `src/core/`, `tests/core/`, `examples/foundation_demo/` exist and match the spec/plan | ADR-0006–0010 (`Accepted`). No dependencies on other specs. |
 | 0002 | [Platform Foundation](0002-platform-foundation.md) | `Approved` | [plans/0002-platform-foundation.md](../plans/0002-platform-foundation.md) (`Approved / Ready for Implementation`, Windows portion) | **Windows portion implemented** — `src/platform/` (Windows), `tests/platform/` (incl. Windows smoke tests), `examples/platform_demo/`. Android and iOS remain architecture-only; no `src/platform/src/android/` or `.../ios/` directory exists | Depends on Spec 0001 (Core). ADR-0005 (amended), ADR-0010–0013 (`Accepted`). |
-| 0003 | [RHI and Vulkan Windowed Foundation](0003-rhi-vulkan-windowed-foundation.md) | `Approved` | **Not yet created** — the spec's own header states "Related Plan(s): None yet"; no `plans/0003-*.md` file exists in this repository | **Not implemented** — no `src/rhi/`, `src/vulkan_backend/`, `src/render_graph/`, or `src/renderer/` directory exists. Next step per [AGENTS.md](../AGENTS.md) is writing Plan 0003 and clearing Human Review, not implementation. | Depends on Specs 0001, 0002 (Windows). ADR-0001–0005 (amended), ADR-0011, ADR-0013, ADR-0014–0016 (`Accepted`). |
+| 0003 | [RHI and Vulkan Windowed Foundation](0003-rhi-vulkan-windowed-foundation.md) | `Approved` | [plans/0003-rhi-vulkan-windowed-foundation.md](../plans/0003-rhi-vulkan-windowed-foundation.md) (`Approved / Ready for Implementation`) | **Implemented and merged** via [PR #14](https://github.com/slmao/Atlantis/pull/14) — `src/rhi/`, `src/vulkan_backend/`, `tests/rhi/`, `tests/vulkan_backend/`, `examples/rhi_vulkan_demo/` exist and match the spec/plan. This is a non-frame, windowed Vulkan presentation *foundation*: swapchain/surface construction and recreation only — no frame acquire/present loop, no `RenderTarget`, and no rendered output are implemented. `src/render_graph/` and `src/renderer/` still do not exist. | Depends on Specs 0001, 0002 (Windows). ADR-0001–0005 (amended), ADR-0011, ADR-0013, ADR-0014–0016 (`Accepted`). |
 | 0004 | [Context-Efficient Documentation and Code Comment Guidelines](0004-context-efficiency-guidelines.md) | `Approved` | [plans/0004-context-efficiency-guidelines.md](../plans/0004-context-efficiency-guidelines.md) (`Approved / Ready for Implementation`) | **Implemented** — `AGENTS.md` now contains the `## Documentation and code comments` section; merged via PR #11 | Governance/documentation convention only; no ADR required (see Architectural Impact). No runtime architecture impact. No dependencies on other specs. |
 
 No spec above is marked `Complete` — this registry only uses the status
 values `specs/README.md` and `plans/README.md` already define
 (`Draft` / `In Review` / `Approved` / `Rejected` / `Superseded`, and for
 plans additionally `Approved / Ready for Implementation`). Where a
-spec's Plan records an explicit Human Review approval note (Specs 0001
-and 0002 do, with dates, in their own Plan files), that is the
+spec's Plan records an explicit Human Review approval note (Specs 0001,
+0002, and 0003 do, with dates, in their own Plan files), that is the
 authoritative record — this table does not restate it, only points to
-it. Spec 0003 currently has no Plan and therefore no recorded Human
-Review; this table does not assert one occurred.
+it. Plan 0003 records a joint Spec + Plan Human Review completed
+2026-08-08; Spec 0003 itself remains `Approved` (an approved spec does
+not change status when its plan is implemented). This table's
+Implementation column records the fact that PR #14 merged Spec 0003's
+implementation into `main`; the registry itself grants no new approval
+and is not a substitute for reading the Plan or PR.
 
 ### B. Candidate Spec Backlog
 
@@ -56,7 +60,7 @@ assigned only when a real spec is drafted.
 
 | Candidate Order | Working Title | Depends On | Intended Outcome | Governance State |
 |---|---|---|---|---|
-| 1 | RenderGraph Foundation | Spec 0003 (RHI/Vulkan windowed foundation) | Pass declaration, resource dependency tracking, barrier/lifetime resolution, execution ordering — the mandatory path for all GPU work | Candidate — spec not yet drafted |
+| 1 | RenderGraph Foundation | Spec 0003 (RHI/Vulkan windowed foundation) — implemented, dependency satisfied | Pass declaration, resource dependency tracking, barrier/lifetime resolution, execution ordering — the mandatory path for all GPU work | Candidate — spec not yet drafted |
 | 2 | Minimal Renderer | Candidate 1 (RenderGraph) | Minimal mesh/depth/camera/material closed loop, built only on Core, RHI, and RenderGraph | Candidate — spec not yet drafted |
 | 3 | Shader System Foundation | Candidate 2 (Renderer, for a real consumer) | Phase 1 shader source compilation to SPIR-V, reflection, pipeline layout — Vulkan/SPIR-V only, no other backend target | Candidate — spec not yet drafted |
 | 4 | Android Platform and Vulkan Presentation | Spec 0002 (Platform interface), Spec 0003 (RHI/Vulkan Backend construction boundary) | Android Activity/Surface lifecycle, `ANativeWindow` borrowed semantics, `VK_KHR_android_surface` WSI, reusing the existing RHI/RenderGraph/Renderer stack unchanged | Candidate — spec not yet drafted |
