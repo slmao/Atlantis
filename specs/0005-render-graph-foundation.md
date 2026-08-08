@@ -1,26 +1,64 @@
 # Spec: Atlantis RenderGraph Foundation (GPU-Independent Graph Core)
 
-- **Status:** In Review
-- **Author:** Drafted by Claude Code (AI agent) at explicit human direction;
-  human authorship/ownership of this spec is pending confirmation at
-  Human Review.
+- **Status:** Approved
+- **Author:** Drafted by Claude Code (AI agent) at explicit human
+  direction; content authored by the agent, reviewed and approved by a
+  human per the Human Review Approval note below.
 - **Created:** 2026-08-09
-- **Transition note (2026-08-09, Draft → In Review):** The internal
-  Draft-consistency review is complete across four revisions (dependency-
-  model contradiction, explicit-dependency removal, ownership/handle/
-  `CompiledGraph`-lifetime model, and identity error-classification
-  cleanup) and the spec's own content is now internally self-consistent.
-  Moving to `In Review` reflects that this document is ready for a human
-  to read, **not** that it has been reviewed or approved. Sixteen
-  architectural decisions spanning this spec's scope boundary, resource
-  and dependency model, ownership/handle model, and governance status —
-  both the ones this revision proposes as settled (see each section's own
-  Decision content) and the ones its Risks & Open Questions section still
-  leaves open — remain **explicitly pending Human Review**; none is
-  marked approved by this transition. `In Review`
-  status does **not** authorize a Plan or implementation; per
-  [AGENTS.md](../AGENTS.md), both still require a completed Human Review
-  and, for the two ADRs below, `Accepted` status.
+- **Human Review Approval (2026-08-09):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer for this branch) on 2026-08-09. All sixteen architectural
+  decisions this spec's four revisions settled were reviewed and are
+  **accepted as-is, unchanged from this document's own content**:
+
+  1. GPU-independent graph-core scope for this spec (no RHI resource/
+     command extension bundled in).
+  2. Core-only module dependency for this round (no RHI dependency).
+  3. The single-producer logical-resource model (producer→reader is the
+     only derived edge kind).
+  4. Producer-less logical resources as a legal, ownership-free
+     externally-provided input token.
+  5. An unconditional compile error for more than one producer of the
+     same logical resource.
+  6. No same-resource in-place read/write (rejected as a programmer
+     error, no read-modify-write concept in this round).
+  7. No caller-authored explicit pass-to-pass dependency edge of any
+     kind — producer-derived edges are the only ordering mechanism.
+  8. No automatic pass culling — every successfully declared pass is
+     retained in the compiled result exactly once.
+  9. Declaration order used **only** as the deterministic tie-break for
+     otherwise-unordered passes, never for hazard/version inference.
+  10. The builder is non-copyable, non-movable, and purely additive
+      (append-only, no in-place declaration removal/editing API).
+  11. `compile()` is non-consuming and non-mutating on the builder; the
+      resulting `CompiledGraph` independently owns its own data.
+  12. Builder-scoped handle provenance (default/invalid and cross-
+      builder-while-live cases are guaranteed-detectable programmer
+      errors) and the lifetime boundary (use-after-builder-destruction is
+      an undetected lifetime precondition violation, not a guaranteed
+      error).
+  13. Non-unique, caller-provided diagnostic labels, and a deterministic
+      dependency-cycle witness that identifies participating passes
+      unambiguously even under duplicate labels.
+  14. Phase 1's single-logical-frame-thread contract, with no declared
+      concurrent-access guarantee for the builder or `CompiledGraph`.
+  15. No resource-lifetime analysis, no physical resource
+      binding/allocation, and no RHI/GPU execution capability anywhere in
+      this spec's scope.
+  16. Exactly two new ADRs are required for this spec —
+      [ADR-0017](../adr/0017-render-graph-construction-compile-layering.md)
+      and
+      [ADR-0018](../adr/0018-render-graph-dependency-derivation-and-ordering.md)
+      — no others.
+
+  Following this approval: both ADRs above move to `Accepted` (see each
+  ADR's own header) and this spec moves to `Approved`. **This is not a
+  joint Spec + Plan Human Review** — no Plan exists yet, and none of the
+  16 items above authorizes implementation. Per
+  [AGENTS.md](../AGENTS.md), a Plan may now be drafted against this
+  Approved spec, but implementation still requires that Plan to itself be
+  written, reviewed, and pass its own (or a joint Spec+Plan) Human Review
+  before any code is written.
 - **Revision history:**
   - **2026-08-09 (revision 4):** Fixed a residual error-classification gap
     in revision 3: cross-type misuse among a pass handle, a logical
@@ -123,9 +161,11 @@ record or submit a command, or touch Vulkan in any way, and it does
 classify resources as imported vs. transient, or cull any pass — it is
 scope-limited to exactly the pass/dependency/ordering/ownership logic
 that can be unit-tested without a Vulkan SDK or a GPU. This spec is now
-**In Review**: its own internal consistency has been checked, but it has
-**not been reviewed or approved by a human**, does not authorize a Plan,
-and does not authorize implementation.
+**Approved**, per the Human Review Approval note above: a human has
+reviewed and accepted all sixteen architectural decisions it settles.
+Approval authorizes drafting a Plan against this spec; it does **not**
+itself authorize implementation, which still requires that future Plan
+to pass its own (or a joint Spec+Plan) Human Review.
 
 ## Motivation / Problem Statement
 
@@ -897,10 +937,12 @@ concrete type/spelling.
 
 ## Architectural Impact
 
-This spec introduces architecture and requires **two** new ADRs before it
-can move from `Draft`/`In Review` to `Approved`, per
-[AGENTS.md](../AGENTS.md). Neither is decided by this spec's prose
-alone — each is filed as its own ADR, both currently `Proposed`:
+This spec introduced architecture and required **two** new ADRs before it
+could move from `Draft`/`In Review` to `Approved`, per
+[AGENTS.md](../AGENTS.md). Neither was decided by this spec's prose
+alone — each was filed as its own ADR, and both reached `Accepted`
+alongside this spec's own approval (see the Human Review Approval note
+above):
 
 1. **RenderGraph construction/compilation layering and ownership** — how
    graph declaration (a non-copyable, non-movable, purely-additive
@@ -1286,40 +1328,44 @@ for.
       anywhere in this spec's public API or compiled graph output.
 - [ ] No `src/renderer/`, Shader System, or RHI resource/command source
       is created or modified by this spec's implementation.
-- [ ] Both ADRs listed in Architectural Impact
+- [x] Both ADRs listed in Architectural Impact
       ([ADR-0017](../adr/0017-render-graph-construction-compile-layering.md),
       [ADR-0018](../adr/0018-render-graph-dependency-derivation-and-ordering.md))
-      reach `Accepted` before this spec is marked `Approved`.
+      reach `Accepted` before this spec is marked `Approved` — satisfied
+      2026-08-09 (see Human Review Approval note above); this checkbox
+      gates spec approval, not implementation, and every other checkbox
+      in this section still describes a property the future
+      implementation must satisfy, not one already verified.
 
 ## Risks & Open Questions
 
-All of the following are **Human Review questions this Draft surfaces,
-not implementation latitude an agent may resolve unilaterally**:
+**Resolved by Human Review Approval (2026-08-09)** — see the Human Review
+Approval note above for the full 16-item record. These were architectural
+questions this spec surfaced for a human to decide; a human has now
+decided each of them, and none is reopened by this section:
 
-- **Whether the single-producer logical resource model is the right cut**
-  for this round, versus adopting a versioned/history resource model now
-  instead of deferring it — see
+- **The single-producer logical resource model is accepted** as this
+  round's dependency model, over adopting a versioned/history resource
+  model now — see checklist item 3 and
   [ADR-0018](../adr/0018-render-graph-dependency-derivation-and-ordering.md)
-  Alternatives Considered. This revision's recommendation is to defer
-  versioning; Human Review may disagree.
-- **Whether a producer-less logical resource (an externally-provided
-  input token with no producer pass) is an acceptable capability to
-  include at this round's scope**, given it establishes no binding or
-  ownership contract to anything real yet. This revision's conclusion is
-  yes (see Proposed Design's "Logical resources" Functional Requirements
-  subsection) — Human Review may disagree.
-- **Scope boundary itself:** is the GPU-independent graph core the right
-  cut, or should this round instead (or additionally) extend RHI with a
-  minimal resource/command surface so RenderGraph can execute something
-  real? See Alternatives Considered above for the case against bundling;
-  Human Review may disagree with that judgment.
-- **Whether a non-copyable, non-movable builder is too restrictive**,
-  versus designing a more elaborate stable-identity scheme that would
-  allow a movable (or even copyable) builder. This revision's judgment is
-  that no current use case needs it and the restriction meaningfully
-  simplifies the ownership/provenance model — see
+  Alternatives Considered for the deferred alternative.
+- **Producer-less logical resources (externally-provided input tokens
+  with no producer pass) are accepted** as a capability at this round's
+  scope — see checklist item 4 and Proposed Design's "Logical resources"
+  Functional Requirements subsection.
+- **The GPU-independent-graph-core scope boundary is accepted** — this
+  spec does not extend RHI with a resource/command surface; that remains
+  a future spec's work — see checklist item 1 and Alternatives Considered
+  above.
+- **The non-copyable, non-movable builder is accepted** as this round's
+  ownership model, over a more elaborate stable-identity scheme that
+  would allow a movable or copyable builder — see checklist item 10 and
   [ADR-0017](../adr/0017-render-graph-construction-compile-layering.md)
-  Alternatives Considered; Human Review may disagree.
+  Alternatives Considered.
+
+**Remaining open — Plan-level detail, not an architectural question
+requiring further Human Review:**
+
 - **Whether `CompiledGraph` should additionally be copyable**, beyond the
   minimum movability this spec requires. Left to the Plan, provided
   whatever is chosen preserves independent ownership and immutability —

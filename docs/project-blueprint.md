@@ -93,7 +93,7 @@ graph TD
     Platform["Atlantis Platform<br/>(Windows: Implemented<br/>Android/iOS: architecture-only)"]
     RHI["Atlantis RHI<br/>(Implemented — Spec/Plan 0003)"]
     VulkanBackend["Atlantis Vulkan Backend<br/>(Implemented — Spec/Plan 0003)"]
-    RenderGraph["Atlantis RenderGraph<br/>(In Review — Spec 0005, not Approved, not implemented)"]
+    RenderGraph["Atlantis RenderGraph<br/>(Approved — Spec 0005, no Plan yet, not implemented)"]
     Renderer["Atlantis Renderer<br/>(Candidate — no Spec)"]
     ShaderSystem["Atlantis Shader System<br/>(Candidate — no Spec)"]
     Runtime["Atlantis Runtime<br/>(Candidate — no Spec)"]
@@ -127,7 +127,7 @@ graph TD
     class Platform implemented
     class RHI implemented
     class VulkanBackend implemented
-    class RenderGraph candidate
+    class RenderGraph approved
     class Renderer candidate
     class ShaderSystem candidate
     class Runtime candidate
@@ -181,9 +181,9 @@ spec/plan/ADR files, the `src/`/`tests/`/`examples/` trees, and
 | Plan 0003 | `Approved / Ready for Implementation` | [plans/0003-rhi-vulkan-windowed-foundation.md](../plans/0003-rhi-vulkan-windowed-foundation.md); records a joint Spec + Plan Human Review completed 2026-08-08 |
 | **Spec 0004 — Context-Efficient Documentation and Code Comment Guidelines** | `Approved`, **Implemented** | [specs/0004-context-efficiency-guidelines.md](../specs/0004-context-efficiency-guidelines.md); `AGENTS.md` now contains the `## Documentation and code comments` section, merged via PR #11. Governance/documentation convention only — no architecture or runtime module changed. |
 | Plan 0004 | `Approved / Ready for Implementation` | [plans/0004-context-efficiency-guidelines.md](../plans/0004-context-efficiency-guidelines.md) |
-| **Spec 0005 — RenderGraph Foundation (GPU-Independent Graph Core)** | `In Review` — **not yet Human-Reviewed, not Approved** | [specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md); `In Review` reflects the spec's own completed internal consistency review, not a human review outcome — sixteen architectural decisions remain pending Human Review; no Plan exists; no implementation exists; requires [ADR-0017](../adr/0017-render-graph-construction-compile-layering.md) and [ADR-0018](../adr/0018-render-graph-dependency-derivation-and-ordering.md) (both `Proposed`) to reach `Accepted` before this spec can move to `Approved` |
+| **Spec 0005 — RenderGraph Foundation (GPU-Independent Graph Core)** | `Approved` — **Human Review Approval recorded 2026-08-09** | [specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md); all 16 architectural decisions this spec settles were reviewed and accepted (see the spec's own Human Review Approval note); **no Plan exists yet, and this is not a joint Spec+Plan Human Review** — implementation is not authorized; [ADR-0017](../adr/0017-render-graph-construction-compile-layering.md) and [ADR-0018](../adr/0018-render-graph-dependency-derivation-and-ordering.md) both reached `Accepted` alongside this approval |
 | ADR-0001 through ADR-0016 | All 16 `Accepted` | Verified by grepping each ADR file's `Status:` field |
-| ADR-0017 and ADR-0018 | Both `Proposed`, none `Accepted` | Drafted alongside Spec 0005; verified by grepping each ADR file's `Status:` field |
+| ADR-0017 and ADR-0018 | Both `Accepted` (2026-08-09) | Filed alongside Spec 0005's Human Review Approval; verified by grepping each ADR file's `Status:` field |
 | `docs/architecture/{overview,module_boundaries,threading,resource_lifetime}.md` | Still carry their own `PROPOSED — pending spec/ADR approval. Not as-built` banner | Read in full; banners unrevised as of this document |
 | `docs/rhi/README.md`, `docs/render_graph/README.md`, `docs/renderer/README.md` | Same `PROPOSED`, no-code status | Read in full |
 | **Human Review** for Spec 0003 / Plan 0003 | Recorded | Plan 0003 records a joint Spec + Plan Human Review approval note, dated 2026-08-08, consistent with how Specs 0001 and 0002's plans record theirs |
@@ -213,11 +213,11 @@ Tools, Android Platform implementation, iOS Platform, headless rendering,
 image regression testing, and everything in Section 5's later milestones
 and Section 5's "further candidate phases." These remain backlog
 candidates (see [specs/README.md](../specs/README.md) Section B) and are
-not `Approved`. RenderGraph now has an `In Review` spec (Spec 0005 — see
-the table above) that is likewise **not** `Approved`: `In Review` means
-its own internal consistency review is complete, not that a human has
-reviewed it — it still has no Plan, no completed Human Review, and no
-implementation authorization.
+not `Approved`. RenderGraph now has an `Approved` spec (Spec 0005 — see
+the table above), reviewed and accepted by a human on 2026-08-09. This is
+**not** a joint Spec+Plan Human Review: it still has no Plan, and Spec
+approval alone does not authorize implementation — see AGENTS.md's
+Spec → Plan → Human Review → Implementation path.
 
 ## 5. Phased roadmap
 
@@ -253,32 +253,33 @@ milestone being listed does not authorize starting it — see Section 1.
 
 ### Milestone 2 — RenderGraph foundation
 
-- **Governance state:** **`In Review` Spec —
-  [specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md).
-  Not Approved.** `In Review` reflects that the spec's own internal
-  consistency review (across four revisions) is complete — it does
-  **not** mean a human has reviewed or approved it. No Plan exists. No
-  Human Review has occurred. **No implementation is authorized.** Its
-  Architectural Impact identifies two new decisions, drafted as
+- **Governance state:** **`Approved` Spec —
+  [specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md).**
+  Human Review Approval recorded 2026-08-09: all sixteen architectural
+  decisions the spec enumerates were reviewed and accepted (see the
+  spec's own Human Review Approval note). Its Architectural Impact
+  identified two new decisions, filed as
   [ADR-0017](../adr/0017-render-graph-construction-compile-layering.md)
   and
-  [ADR-0018](../adr/0018-render-graph-dependency-derivation-and-ordering.md)
-  (both `Proposed`, neither `Accepted`) — these must reach `Accepted`
-  before Spec 0005 can move to `Approved`. Sixteen architectural decisions
-  the spec itself enumerates remain explicitly pending Human Review (see
-  the spec's own Risks & Open Questions). Its dependency, Spec 0003
-  (RHI/Vulkan windowed presentation foundation), is implemented (see
+  [ADR-0018](../adr/0018-render-graph-dependency-derivation-and-ordering.md),
+  both of which reached `Accepted` alongside this approval. **This is not
+  a joint Spec+Plan Human Review — no Plan exists yet, and Spec approval
+  alone does not authorize implementation.** The next governance step is
+  drafting a Plan against this Approved spec, per
+  [AGENTS.md](../AGENTS.md); implementation still requires that Plan to
+  pass its own (or a joint Spec+Plan) Human Review. Its dependency, Spec
+  0003 (RHI/Vulkan windowed presentation foundation), is implemented (see
   Milestone 1).
-- **Scope proposed by the spec** (candidate semantics pending Human
-  Review, not fixed by this document): a GPU-independent graph core
-  only — pass declaration, a single-producer-per-resource usage model,
-  dependency derivation, cycle detection, and deterministic compiled
-  ordering. The spec deliberately excludes resource lifetime, command
-  recording/submission, resource-state/barrier resolution, and any
-  integration with `Presentation`'s acquire/present (the bundle
-  Milestone 1 deferred) — RHI does not yet expose the resource/command
-  surface that would require, and the spec treats extending RHI (and,
-  separately, resource lifetime/versioning) as
+- **Scope fixed by the Approved spec** (still candidate semantics for the
+  Plan to turn into concrete C++, not architecture the Plan may
+  reopen): a GPU-independent graph core only — pass declaration, a
+  single-producer-per-resource usage model, dependency derivation, cycle
+  detection, and deterministic compiled ordering. The spec deliberately
+  excludes resource lifetime, command recording/submission, resource-
+  state/barrier resolution, and any integration with `Presentation`'s
+  acquire/present (the bundle Milestone 1 deferred) — RHI does not yet
+  expose the resource/command surface that would require, and the spec
+  treats extending RHI (and, separately, resource lifetime/versioning) as
   future specs' scope. See the spec's own Non-Goals and Alternatives
   Considered for the full reasoning.
 - Per [AGENTS.md](../AGENTS.md), no ad hoc direct-submission path may

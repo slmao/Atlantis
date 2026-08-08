@@ -1,9 +1,13 @@
 # ADR 0018: RenderGraph Dependency Derivation and Deterministic Ordering
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-09
-- **Deciders:** _Pending Human Review_
-- **Related Spec:** [specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md) (`In Review`)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+  Approval recorded 2026-08-09; see
+  [specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md)'s
+  Human Review Approval note for the full 16-item approval record this
+  ADR's Decision is part of.
+- **Related Spec:** [specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md) (`Approved`)
 
 ## Context
 
