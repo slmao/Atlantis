@@ -11,12 +11,17 @@ option(ATLANTIS_BUILD_EXAMPLES "Build Atlantis example programs" ON)
 
 include(cmake/CompilerWarnings.cmake)
 
+find_package(Vulkan REQUIRED)
+
 add_subdirectory(src/core)
 add_subdirectory(src/platform)
+add_subdirectory(src/rhi)
+add_subdirectory(src/vulkan_backend)
 
 if(ATLANTIS_BUILD_EXAMPLES)
   add_subdirectory(examples/foundation_demo)
   add_subdirectory(examples/platform_demo)
+  add_subdirectory(examples/rhi_vulkan_demo)
 endif()
 
 if(ATLANTIS_BUILD_TESTS)
@@ -24,4 +29,6 @@ if(ATLANTIS_BUILD_TESTS)
   include(cmake/AtlantisDependencies.cmake)
   add_subdirectory(tests/core)
   add_subdirectory(tests/platform)
+  add_subdirectory(tests/rhi)
+  add_subdirectory(tests/vulkan_backend)
 endif()

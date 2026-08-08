@@ -17,8 +17,40 @@ Android and iOS are specified architecturally (ADR-0005, ADR-0012,
 ADR-0013) but **not implemented** — `src/platform/src/windows/` is the
 only per-OS implementation directory that currently exists.
 
-Every other module — RHI, Vulkan Backend, RenderGraph, Renderer, Shader
-System, Runtime, Tools (see
+**`rhi/`** — Atlantis RHI: backend-independent, non-frame RHI interfaces.
+Target `atlantis_rhi`, alias `Atlantis::RHI`. Currently provides `Device`
+(an opaque logical-GPU handle) and `Presentation` (construction, resize
+notification, conditional swapchain recreation, and a read-only metadata
+query only — no acquire, no present, no `RenderTarget`, no command
+recording, and no synchronization object), plus the supporting value
+types `Extent2D`, `Format`, `SwapchainMetadata`, and `PresentationError`.
+RHI's public headers reference no Vulkan or Platform type. Implemented
+per [specs/0003-rhi-vulkan-windowed-foundation.md](../specs/0003-rhi-vulkan-windowed-foundation.md),
+[plans/0003-rhi-vulkan-windowed-foundation.md](../plans/0003-rhi-vulkan-windowed-foundation.md),
+and [ADR-0001](../adr/0001-rhi-backend-independence.md),
+[ADR-0002](../adr/0002-presentation-rendertarget-unification.md),
+[ADR-0003](../adr/0003-resource-rendertarget-ownership-model.md),
+[ADR-0014](../adr/0014-rhi-device-presentation-construction-boundary.md),
+[ADR-0016](../adr/0016-presentation-acquire-present-and-recreation-contract.md).
+
+**`vulkan_backend/`** — Atlantis Vulkan Backend: Phase 1's sole graphics
+backend, implementing RHI's interfaces. Target `atlantis_vulkan_backend`,
+alias `Atlantis::VulkanBackend`. Currently implements Vulkan instance/
+device construction, Validation Layer enforcement, Windows-only private
+WSI surface creation, swapchain ownership and resize-driven recreation,
+and read-only swapchain metadata — no acquire/present, no swapchain
+image vending, no command buffers, no rendering, and no GPU memory
+allocator. Vulkan and Win32 WSI types stay private to this module's own
+implementation files; Windows is currently the only implemented WSI path
+(Android is not implemented). Implemented per
+[specs/0003-rhi-vulkan-windowed-foundation.md](../specs/0003-rhi-vulkan-windowed-foundation.md),
+[plans/0003-rhi-vulkan-windowed-foundation.md](../plans/0003-rhi-vulkan-windowed-foundation.md),
+and [ADR-0014](../adr/0014-rhi-device-presentation-construction-boundary.md),
+[ADR-0015](../adr/0015-vulkan-memory-allocation-deferred.md),
+[ADR-0016](../adr/0016-presentation-acquire-present-and-recreation-contract.md).
+
+Every other module — RenderGraph, Renderer, Shader System, Runtime,
+Tools (see
 [docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md))
 — is still empty by design, per Spec-Driven Development (see
 [AGENTS.md](../AGENTS.md)): each module's internal structure is itself an

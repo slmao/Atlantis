@@ -3,12 +3,19 @@
 #include <catch2/catch_test_macros.hpp>
 
 // Task 2.3: Windows integration/smoke tests, per
-// plans/0002-platform-foundation.md Section 11. Along with
-// windows_platform.cpp itself, this is the only other file in the
-// repository permitted to include <windows.h> or use Win32 window-
-// management APIs -- strictly confined to the #if defined(_WIN32) block
-// below. No Linux test, build configuration, or conditional branch is
-// added anywhere in this file.
+// plans/0002-platform-foundation.md Section 11. This file tests Atlantis
+// Platform's own lifecycle/event contract specifically -- a separate,
+// explicit Windows test boundary from
+// tests/vulkan_backend/vulkan_presentation_gpu_tests.cpp (Spec 0003's
+// approved Vulkan GPU integration test, which drives the same real
+// window's HWND to exercise Presentation's non-frame lifecycle, strictly
+// confined to its own #if defined(_WIN32) block). Neither test's code or
+// behavior is changed by the other's existence; windows_platform.cpp,
+// this file, src/vulkan_backend/src/wsi/win32_surface.cpp, and that GPU
+// test file are the only files in the repository permitted to include
+// <windows.h> or use Win32 window-management APIs, each strictly
+// confined to its own #if defined(_WIN32) block. No Linux test, build
+// configuration, or conditional branch is added anywhere in this file.
 #if defined(_WIN32)
 
 #define WIN32_LEAN_AND_MEAN
