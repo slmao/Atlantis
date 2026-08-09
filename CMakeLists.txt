@@ -23,6 +23,7 @@ if(ATLANTIS_BUILD_EXAMPLES)
   add_subdirectory(examples/foundation_demo)
   add_subdirectory(examples/platform_demo)
   add_subdirectory(examples/rhi_vulkan_demo)
+  add_subdirectory(examples/frame_execution_demo)
 endif()
 
 if(ATLANTIS_BUILD_TESTS)
