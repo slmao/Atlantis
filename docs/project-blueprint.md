@@ -91,9 +91,9 @@ graph TD
     Core["Atlantis Core<br/>(Implemented)"]
 
     Platform["Atlantis Platform<br/>(Windows: Implemented<br/>Android/iOS: architecture-only)"]
-    RHI["Atlantis RHI<br/>(Implemented — Spec/Plan 0003)"]
-    VulkanBackend["Atlantis Vulkan Backend<br/>(Implemented — Spec/Plan 0003)"]
-    RenderGraph["Atlantis RenderGraph<br/>(Implemented — Spec/Plan 0005, GPU-independent construction/compilation foundation)"]
+    RHI["Atlantis RHI<br/>(Implemented — Spec/Plan 0003;<br/>Spec 0006 RenderTarget/CommandList<br/>extension Approved, no Plan yet)"]
+    VulkanBackend["Atlantis Vulkan Backend<br/>(Implemented — Spec/Plan 0003;<br/>Spec 0006 extension Approved, no Plan yet)"]
+    RenderGraph["Atlantis RenderGraph<br/>(Implemented — Spec/Plan 0005, GPU-independent construction/compilation foundation;<br/>Spec 0006 execution extension Approved, no Plan yet)"]
     Renderer["Atlantis Renderer<br/>(Candidate — no Spec)"]
     ShaderSystem["Atlantis Shader System<br/>(Candidate — no Spec)"]
     Runtime["Atlantis Runtime<br/>(Candidate — no Spec)"]
@@ -163,11 +163,19 @@ ADR or the architecture docs above — see the links inline):
   Renderer/RHI/RenderGraph stack** — headless is a second way to
   produce a `RenderTarget`, not a fork of the rendering code. See
   [docs/architecture/overview.md](architecture/overview.md#windowed-vs-headless-the-shared-path-across-platforms).
+- **RenderGraph's dependency on RHI (already drawn in the diagram above)
+  is now a reviewed decision, not only an anticipated one** — Spec 0006
+  ([ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md))
+  realizes it for the frame-execution slice (`CommandList`,
+  `ResourceState`, `RenderTarget`), splitting responsibility so
+  RenderGraph decides *when*/*between what states* a resource transition
+  is needed and RHI/Vulkan Backend decides *how* to perform it. Not yet
+  implemented — see Section 4.
 
 ## 4. Current repository state (verified against source and history)
 
-This section reflects the state of this repository as of 2026-08-08
-(PR #14 merged 2026-08-08T15:24:57Z), verified by reading the
+This section reflects the state of this repository as of 2026-08-09
+(PR #20 merged 2026-08-09T20:23:21+08:00), verified by reading the
 spec/plan/ADR files, the `src/`/`tests/`/`examples/` trees, and
 `git log`/`git status` — not inferred from file names or intent.
 
@@ -183,12 +191,16 @@ spec/plan/ADR files, the `src/`/`tests/`/`examples/` trees, and
 | Plan 0004 | `Approved / Ready for Implementation` | [plans/0004-context-efficiency-guidelines.md](../plans/0004-context-efficiency-guidelines.md) |
 | **Spec 0005 — RenderGraph Foundation (GPU-Independent Graph Core)** | `Approved`, **Implemented** (GPU-independent RenderGraph construction/compilation foundation; no RHI resource binding, command recording, GPU execution, barriers, pass culling, or resource lifetime/aliasing) | [specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md) status field; all 16 architectural decisions this spec settles were reviewed and accepted (see the spec's own Human Review Approval note); `src/render_graph/`, `tests/render_graph/` exist and match the spec/plan's file list; implementation merged via [PR #18](https://github.com/slmao/Atlantis/pull/18). No `src/renderer/` directory exists. |
 | Plan 0005 | `Approved / Ready for Implementation` | [plans/0005-render-graph-foundation.md](../plans/0005-render-graph-foundation.md); records a joint Spec + Plan Human Review completed 2026-08-09, accepting all 19 Plan-stage details in Section 7's disposition table with zero Human Review blockers |
+| **Spec 0006 — RHI / RenderGraph Frame Execution Foundation** | `Approved`, **not implemented** — no Plan drafted yet | [specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md) status field and its own Human Review Approval note (all four confirmed points recorded there); merged via [PR #20](https://github.com/slmao/Atlantis/pull/20). Fixes the concrete `RenderTarget`, `Presentation` acquire/present, minimal `CommandList`/`Device::submit()`, and RenderGraph execution contract a real frame needs — the prerequisite the "Minimal Renderer" backlog entry ([specs/README.md](../specs/README.md) Section B) needs in addition to Spec 0005. No `src/` change exists yet: this row records approval, not implementation. |
+| Plan 0006 | **Not drafted** | No `plans/0006-*.md` file exists. Per [AGENTS.md](../AGENTS.md), drafting may begin now that the spec is `Approved`; implementation still requires that future Plan to pass its own (or a joint Spec+Plan) Human Review. |
 | ADR-0001 through ADR-0016 | All 16 `Accepted` | Verified by grepping each ADR file's `Status:` field |
 | ADR-0017 and ADR-0018 | Both `Accepted` (2026-08-09) | Filed alongside Spec 0005's Human Review Approval; verified by grepping each ADR file's `Status:` field |
-| `docs/architecture/{overview,module_boundaries,threading,resource_lifetime}.md` | Still carry their own `PROPOSED — pending spec/ADR approval. Not as-built` banner | Read in full; banners unrevised as of this document |
-| `docs/rhi/README.md`, `docs/render_graph/README.md`, `docs/renderer/README.md` | Same `PROPOSED`, no-code status | Read in full |
+| ADR-0019, ADR-0020, and ADR-0021 | All three `Accepted` (2026-08-09) | Filed alongside Spec 0006's Human Review Approval; verified by grepping each ADR file's `Status:` field |
+| `docs/architecture/{overview,module_boundaries,threading,resource_lifetime}.md` | Still carry their own `PROPOSED — pending spec/ADR approval. Not as-built` banner | Read in full; banners unrevised as of this document — a known, still-open documentation gap (see above), not resolved by Spec 0006 |
+| `docs/rhi/README.md`, `docs/render_graph/README.md`, `docs/renderer/README.md` | Same `PROPOSED`, no-code status | Read in full; also unrevised — same known gap |
 | **Human Review** for Spec 0003 / Plan 0003 | Recorded | Plan 0003 records a joint Spec + Plan Human Review approval note, dated 2026-08-08, consistent with how Specs 0001 and 0002's plans record theirs |
 | **Human Review** for Spec 0005 / Plan 0005 | Recorded | Plan 0005 records a joint Spec + Plan Human Review approval note, dated 2026-08-09 |
+| **Human Review** for Spec 0006 | Recorded | Spec 0006 records its own Human Review Approval note directly (no Plan exists yet to record it in — same pattern as Spec 0005's spec-level note), dated 2026-08-09, confirming: `Device::submit()` command-list-ownership/single-frame-in-flight model; the ADR-0019/0020/0021 three-way split and both `execute()`-time guard checks; the four Phase 1 simplifications (single frame-in-flight, write-only `RenderTarget`, `clearColor()`-only, no same-frame acquire retry); and that roadmap/backlog updates are deferred to a separate docs PR (this section) |
 
 **What is implemented today, concretely:** `Atlantis Core` (logging,
 assertions, a `Result<T,E>` type); `Atlantis Platform`'s Windows path
@@ -211,9 +223,14 @@ rendered output**: no frame acquire/present loop, no `RenderTarget`, no
 RHI resource binding, no command recording, and no GPU execution exist
 anywhere in the repository.
 
-**What is approved but not yet implemented:** no spec is currently
-`Approved` without matching implementation — Spec 0005's scope (see the
-Spec 0005 row above) is now implemented, following Spec 0003's example.
+**What is approved but not yet implemented:** **Spec 0006** (RHI /
+RenderGraph Frame Execution Foundation — see the Spec 0006 row above) is
+`Approved` with no Plan drafted and no matching implementation. It fixes
+the concrete `RenderTarget`, acquire/present, `CommandList`/submission,
+and RenderGraph-execution contract; none of it exists in `src/` yet.
+Every other currently-`Approved` spec (0001–0005) has matching
+implementation, following the same Spec → Plan → Human Review →
+Implementation sequence Spec 0006 is next in line for.
 
 **What has no spec yet:** Renderer, Shader System, Runtime (the module),
 Tools, Android Platform implementation, iOS Platform, headless rendering,
@@ -251,9 +268,12 @@ milestone being listed does not authorize starting it — see Section 1.
 - **Explicitly not in this milestone's scope** (per the spec's own
   Non-Goals): any acquire/present operation, any `RenderTarget`, any
   command buffer, any draw call — the whole frame-level acquire →
-  graph-recorded work → present cycle is bundled and deferred to
-  Milestone 2, per
+  graph-recorded work → present cycle is bundled and deferred, per
   [ADR-0016](../adr/0016-presentation-acquire-present-and-recreation-contract.md).
+  That bundle landed as its own Milestone 3 (Frame Execution Foundation,
+  below) once RenderGraph's own compilation core (Milestone 2) existed to
+  build execution against — not folded into Milestone 2 itself, whose
+  `Approved`/implemented scope stayed GPU-independent.
 
 ### Milestone 2 — RenderGraph foundation
 
@@ -289,11 +309,68 @@ milestone being listed does not authorize starting it — see Section 1.
 - Per [AGENTS.md](../AGENTS.md), no ad hoc direct-submission path may
   bypass this module once it exists — and no code before it exists may
   invent one either.
+- **This milestone alone does not yet unblock Minimal Renderer (now
+  Milestone 4).** RenderGraph's own Non-Goals explicitly excluded
+  execution, RHI resource binding, and any acquire/present integration —
+  see Milestone 3 below, which fills exactly that gap.
 
-### Milestone 3 — Minimal Renderer
+### Milestone 3 — Frame Execution Foundation
+
+- **Governance state:** **`Approved` Spec, no Plan drafted yet, not
+  implemented —
+  [specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md).**
+  Human Review Approval recorded 2026-08-09 (see the spec's own Human
+  Review Approval note; also summarized in Section 4's table above).
+  Its Architectural Impact identified three new decisions, filed as
+  [ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md),
+  [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md),
+  and
+  [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md),
+  all `Accepted` alongside this approval, merged via
+  [PR #20](https://github.com/slmao/Atlantis/pull/20). Its dependencies,
+  Spec 0003 (RHI/Vulkan windowed foundation) and Spec 0005 (RenderGraph
+  Foundation), are both implemented (see Milestones 1–2). **Approval is
+  not implementation** — a Plan must still be drafted against this spec
+  and pass its own Human Review before any code is written.
+- **This milestone is why "Minimal Renderer" cannot be built directly
+  against Milestone 2's output alone** — Spec 0005's own Non-Goals
+  explicitly excluded "real GPU submission," "Vulkan barriers, image
+  layout transitions, or any synchronization primitive," and
+  "`Presentation` acquire/present, or any change to `Presentation`'s
+  existing non-frame lifecycle contract." This milestone is where all
+  three get designed and (once implemented) built — inserted here,
+  between RenderGraph Foundation and Minimal Renderer, correcting an
+  earlier version of this document's roadmap that positioned Minimal
+  Renderer directly after Milestone 2 without this prerequisite.
+- **Scope fixed by the Approved spec:** a concrete `RenderTarget` type
+  (non-owning, frame-scoped, write-only); `Presentation::acquireNextTarget()`/
+  `present()` covering zero-extent, resize, and out-of-date/suboptimal
+  handling; a minimal RHI `CommandList` (`transitionResource`,
+  `clearColor` only) and `Device::submit()` on a single-frame-in-flight
+  baseline, with `Device` owning `CommandList`/fence lifetime internally;
+  and a RenderGraph execution capability (`ResourceState`-tagged usages,
+  a per-pass execution callback, frame-scoped external resource binding,
+  automatic dependency-derived transitions) — RenderGraph records GPU
+  work but never submits or presents. Explicitly excludes: Renderer,
+  Shader System, pipeline/shader objects, general `Buffer`/`Texture`
+  resources, a GPU memory allocator, resource lifetime/versioning, any
+  caller-authored dependency edge or pass culling, multiple frames in
+  flight, and multi-threading. See the spec's own Non-Goals for the full
+  list.
+- **Minimal acceptance target:** acquire a frame target from Windows
+  Vulkan `Presentation`, execute at least one GPU pass through
+  RenderGraph and RHI, submit and present a visible frame; correct
+  behavior across resize and minimize/restore; Vulkan Validation Layers
+  clean throughout.
+
+### Milestone 4 — Minimal Renderer
 
 - **Governance state:** Candidate — requires a new Spec/ADR. Not
   started.
+- **Depends on:** Milestone 2 (RenderGraph Foundation, implemented) *and*
+  Milestone 3 (Frame Execution Foundation, `Approved`, not yet
+  implemented) — both are prerequisites, not Milestone 2 alone. See
+  Milestone 3's own notes above for why.
 - **Constraints this future spec must honor** (already fixed by
   Accepted ADRs, not decided by this document): Renderer receives a
   caller-supplied `RenderTarget` and has no knowledge of Platform,
@@ -303,7 +380,7 @@ milestone being listed does not authorize starting it — see Section 1.
   targets is mesh + depth + camera + material, not a feature-complete
   renderer.
 
-### Milestone 4 — Shader System
+### Milestone 5 — Shader System
 
 - **Governance state:** Candidate — requires a new Spec/ADR. Not
   started.
@@ -315,7 +392,7 @@ milestone being listed does not authorize starting it — see Section 1.
   MSL/WGSL output — Phase 1 has one backend (Vulkan/SPIR-V only), per
   [AGENTS.md](../AGENTS.md).
 
-### Milestone 5 — Android platform and Vulkan presentation
+### Milestone 6 — Android platform and Vulkan presentation
 
 - **Governance state:** Candidate — requires a new Spec (Android
   Platform implementation) and likely an amendment/new ADR for the
@@ -329,10 +406,10 @@ milestone being listed does not authorize starting it — see Section 1.
   borrowed-not-owned semantics; surface destroy/recreate as full
   `Presentation` object teardown and reconstruction (not an in-place
   resize, per ADR-0013); `VK_KHR_android_surface`-based WSI; reuses the
-  same RHI, RenderGraph, and Renderer built by Milestones 1–3, forking
+  same RHI, RenderGraph, and Renderer built by Milestones 1–4, forking
   no rendering code.
 
-### Milestone 6 — Headless rendering
+### Milestone 7 — Headless rendering
 
 - **Governance state:** Candidate — requires a new Spec/ADR. Not
   started. Must follow the windowed path, per
@@ -341,12 +418,12 @@ milestone being listed does not authorize starting it — see Section 1.
 - **Scope:** offscreen `RenderTarget` construction (no `Presentation`
   object involved); shares Renderer/RHI/RenderGraph unchanged with the
   windowed path; GPU readback; the foundation image regression testing
-  (Milestone 7) depends on.
+  (Milestone 8) depends on.
 
-### Milestone 7 — Image regression testing
+### Milestone 8 — Image regression testing
 
 - **Governance state:** Candidate — requires a new Spec. Depends on
-  Milestone 6. Not started.
+  Milestone 7. Not started.
 - **Scope:** golden-image storage and comparison; tolerance/diff
   methodology (not yet decided, per
   [docs/process/testing-strategy.md](process/testing-strategy.md));
@@ -387,13 +464,14 @@ anything architectural, its own ADR before any of the below moves past
 
 | Milestone | Observable acceptance signal |
 |---|---|
-| M1 | A Windows window continuously displays a live Vulkan swapchain lifecycle (create/recreate/destroy) surviving interactive resize and minimize/restore, with Vulkan Validation Layers clean throughout. (Per the approved spec's own scope, this milestone alone does not yet present a cleared color — that is bundled into M2, see Section 5.) |
-| M2 | A RenderGraph-scheduled frame acquires a swapchain image, executes at least one graph-recorded pass, and presents it — the first actual pixels on screen, Validation Layers clean. |
-| M3 | A first mesh is drawn end-to-end through Renderer → RenderGraph → RHI → Vulkan Backend, with a working camera and at least one material, Validation Layers clean. |
-| M4 | A shader authored in Phase 1's chosen source form compiles to SPIR-V, is reflected, and backs a working pipeline used by M3's mesh draw. |
-| M5 | The same Renderer output from M3 appears on an Android device/emulator via the Android Platform + Vulkan Backend path, with no Renderer/RenderGraph code fork. |
-| M6 | The same rendering stack from M3, driven headlessly, produces a GPU-readback image comparable to the windowed output, with no window or swapchain involved. |
-| M7 | A CI-enforced golden-image comparison catches an intentionally introduced rendering regression and passes on a known-good build, gating merges. |
+| M1 | A Windows window continuously displays a live Vulkan swapchain lifecycle (create/recreate/destroy) surviving interactive resize and minimize/restore, with Vulkan Validation Layers clean throughout. (Per the approved spec's own scope, this milestone alone does not yet present a cleared color — that is bundled into M3, see Section 5.) |
+| M2 | A RenderGraph-compiled graph exists and is unit-tested (GPU-independent construction/compilation only — this milestone's own scope does not yet execute, submit, or present anything; see M3). |
+| M3 | A RenderGraph-scheduled frame acquires a swapchain image via `Presentation::acquireNextTarget()`, executes at least one graph-recorded pass through RHI's `CommandList`, submits, and presents it — the first actual pixels on screen, correct across resize and minimize/restore, Validation Layers clean. |
+| M4 | A first mesh is drawn end-to-end through Renderer → RenderGraph → RHI → Vulkan Backend, with a working camera and at least one material, Validation Layers clean. |
+| M5 | A shader authored in Phase 1's chosen source form compiles to SPIR-V, is reflected, and backs a working pipeline used by M4's mesh draw. |
+| M6 | The same Renderer output from M4 appears on an Android device/emulator via the Android Platform + Vulkan Backend path, with no Renderer/RenderGraph code fork. |
+| M7 | The same rendering stack from M4, driven headlessly, produces a GPU-readback image comparable to the windowed output, with no window or swapchain involved. |
+| M8 | A CI-enforced golden-image comparison catches an intentionally introduced rendering regression and passes on a known-good build, gating merges. |
 
 ## 7. Explicitly deferred or off-limits for now
 
