@@ -45,4 +45,23 @@ enum class VulkanFailureCategory {
 // Presentation::recreateIfNeeded().
 [[nodiscard]] atlantis::rhi::PresentationError toSwapchainCreationError(VkResult result);
 
+// vkAcquireNextImageKHR, for any result other than VK_SUCCESS,
+// VK_ERROR_OUT_OF_DATE_KHR, and VK_SUBOPTIMAL_KHR -- those three are
+// handled by acquireNextTarget()'s own branching (Plan 0006 Section 10)
+// before this function is ever called.
+[[nodiscard]] atlantis::rhi::PresentationError toAcquireFailureError(VkResult result);
+
+// vkQueuePresentKHR, for any result other than VK_SUCCESS,
+// VK_ERROR_OUT_OF_DATE_KHR, and VK_SUBOPTIMAL_KHR -- same split as
+// toAcquireFailureError() above.
+[[nodiscard]] atlantis::rhi::PresentationError toPresentFailureError(VkResult result);
+
+// vkQueueSubmit, vkWaitForFences, vkResetFences, vkDeviceWaitIdle,
+// vkEndCommandBuffer -- Device::submit()/waitIdle()'s own Vulkan calls.
+[[nodiscard]] atlantis::rhi::SubmitError toSubmitError(VkResult result);
+
+// vkAllocateCommandBuffers, vkBeginCommandBuffer --
+// Device::createCommandList()'s own Vulkan calls.
+[[nodiscard]] atlantis::rhi::CommandListCreateError toCommandListCreateError(VkResult result);
+
 }  // namespace atlantis::vulkan_backend::detail

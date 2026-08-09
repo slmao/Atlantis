@@ -11,6 +11,7 @@ add_executable(atlantis_vulkan_backend_tests
   vulkan_result_tests.cpp
   presentation_logic_tests.cpp
   validation_policy_tests.cpp
+  resource_state_mapping_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_tests
