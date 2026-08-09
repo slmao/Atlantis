@@ -276,3 +276,41 @@ introduces.
   "recording GPU work" (RenderGraph's job) and "frame orchestration"
   (Runtime's future job) that Spec 0005 and this spec both otherwise
   preserve.
+
+## Clarification (2026-08-09, not a change in conclusion)
+
+Plan 0006's own review surfaced that this ADR's Decision text — "a
+caller must bind each **producer-less** logical resource used by the
+graph to a concrete RHI object" — reads ambiguously against the minimal
+acceptance scenario this Decision exists to enable, where a pass **writes**
+(clears) the bound `RenderTarget`, which gives that logical resource a
+producer under Spec 0005's model. This clarification resolves the
+ambiguity without changing this ADR's Decision or Consequences in any
+way — it states what "producer-less" was always meant to describe, per
+Human Review confirmation recorded in
+[plans/0006-rhi-render-graph-frame-execution-foundation.md](../plans/0006-rhi-render-graph-frame-execution-foundation.md)'s
+"Human Review Confirmations Received" section:
+
+- **"Producer-less" describes the bound *physical* RHI object's origin**
+  — a `RenderTarget` is supplied by `Presentation`, never created by
+  RenderGraph itself, unlike a hypothetical future resource type
+  RenderGraph might someday allocate on its own. It is not a constraint
+  on the *logical* resource's producer count within the graph.
+- **The logical resource a `RenderTarget` is bound to may have exactly
+  one write producer** (e.g. the pass that clears it), governed by
+  Spec 0005's single-producer rule
+  ([ADR-0018](0018-render-graph-dependency-derivation-and-ordering.md))
+  exactly as it governs every other logical resource in this codebase —
+  unchanged, not reopened by this clarification.
+- **The one additional, structurally-enforced constraint a bound
+  resource carries is exactly [ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)'s
+  own guard: no read usage anywhere in the graph.** This was always the
+  operative rule; this clarification makes it the *only* stated
+  constraint on binding, removing the "producer-less" phrase's potential
+  to be read as an additional, conflicting requirement.
+
+This is a documentation clarification of already-Accepted intent, not a
+new decision, a superseding ADR, or a reopening of Human Review — the
+`execute()` design this ADR's Decision section already describes
+(dependency-to-barrier responsibility split, the two `execute()`-time
+guard checks) is unaffected.

@@ -3,6 +3,24 @@
 - **Spec:** [specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md) (`Approved`)
 - **Status:** Draft
 - **Author:** Drafted by Claude Code (AI agent) at explicit human direction; pending Human Review.
+- **Revision history:**
+  - **2026-08-09 (revision 2):** Joint review pass. Resolved both
+    revision-1 open questions as Human-Review-confirmed decisions (see
+    "Human Review Confirmations Received" below) and added a short,
+    non-substantive clarifying note to
+    [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)
+    (its Decision/Consequences unchanged). Fixed a UB-unsafe fallback
+    path in `execute()`'s Guard 1 (§7); documented a previously-
+    undocumented `submit()`-without-`present()` semaphore-reuse
+    precondition (§9, §3, §12); extracted `decideAcquireAction()` as a
+    concrete pure function to close a vague test-coverage reference
+    (§10, §13); clarified why `RenderTarget`'s move-only Acceptance
+    Criterion needs no dedicated test (§13); fixed inaccurate/
+    self-contradictory CMake wording for the two `tests/vulkan_backend/`
+    additions and the `tests/render_graph/` link line (§1, §15). No
+    architectural conclusion changed; still `Draft`.
+  - **2026-08-09 (revision 1):** Initial draft against Approved Spec
+    0006 and Accepted ADR-0019–0021.
 
 ## Objective
 
@@ -53,43 +71,37 @@ testing, any caller-authored dependency edge or pass culling. This Plan
 does not touch `src/renderer/`, does not add a dependency, and does not
 reopen any `Accepted` ADR's conclusions.
 
-## Open Design Tensions Flagged for Human Review
+## Human Review Confirmations Received (2026-08-09)
 
-Two implementation-level questions surfaced while drafting this Plan that
-affect public API shape or cross-ADR consistency. Both are given a
-candidate resolution below so the Plan is concrete and reviewable, but
-**neither is this Plan's to decide unilaterally** — flagged per the task
-instruction that any implementation detail changing public API,
-ownership, synchronization, or module boundaries goes to Human Review,
-not silent resolution.
+Two implementation-level questions surfaced while drafting this Plan's
+first revision, affecting public API shape and cross-ADR consistency.
+Both have since been explicitly confirmed by Human Review and are
+recorded here as **decided**, not open — this is this Plan's own
+authoritative record of that confirmation; ADR-0021 additionally carries
+a short clarifying note (not a rewrite of its Decision) cross-referencing
+this record, per the "single authoritative source, everything else
+points to it" documentation rule.
 
-1. **"Producer-less" binding vs. ADR-0019's write-usage guard.** ADR-0021's
-   prose describes the frame-scoped binding mechanism as binding
-   "producer-less" logical resources. But the minimal acceptance scenario
-   (clear the acquired `RenderTarget`) requires a pass to **write** the
-   bound resource — which gives it a producer in Spec 0005's model, not
-   "producer-less." ADR-0019's actual operative guard is narrower and
-   consistent with the scenario: "no **read** usage" on a bound
-   `RenderTarget" — it says nothing about forbidding a write/producer.
-   **This Plan's candidate resolution:** a binding may target any compiled
-   resource, produced or not; the only structurally-enforced rule is
-   ADR-0019's actual guard (no read usage), matching Section 7's
-   `execute()` design. ADR-0021's "producer-less" language is read as
-   describing the common case (an externally-supplied resource with no
-   in-graph producer), not a hard requirement. **Human Review should
-   confirm this reading does not contradict the intent behind either
-   ADR's Accepted text**, since the two ADRs' prose is not perfectly
-   reconciled on this point.
-2. **`RenderTarget`/`CommandList`/`SubmissionSignal` mechanism.** ADR-0014
-   fixed "abstract C++ base class behind `std::unique_ptr`" as RHI's
-   interface mechanism and explicitly named `RenderTarget` as covered by
-   it — but that mention predates Spec 0006, and Spec 0003 explicitly left
-   `RenderTarget` fully undefined. ADR-0019 describes `RenderTarget` as
-   "move-only," which this Plan reads as describing the
-   `std::unique_ptr<RenderTarget>` handle pattern already used for
-   `Device`/`Presentation` (Section 3), not a request for a new,
-   non-polymorphic value-type mechanism. **Human Review should confirm**
-   this reading is what ADR-0019's Human Review approval actually intended.
+1. **"Producer-less" in ADR-0021 describes the bound physical resource's
+   external origin, not a constraint on the logical resource's producer
+   count.** Confirmed: `RenderTarget` is supplied by `Presentation`, not
+   created by RenderGraph — that is what "producer-less" refers to at the
+   *physical* (RHI-object) level. The *logical* resource a `RenderTarget`
+   is bound to may have exactly one write producer (e.g. the clear pass)
+   — Spec 0005's single-producer rule (ADR-0018) governs that exactly as
+   it governs every other logical resource, unchanged. The only
+   additional, structurally-enforced constraint a bound resource carries
+   is ADR-0019's actual guard: **no read usage anywhere in the graph**.
+   This is Section 7's `execute()` design exactly as originally drafted —
+   confirmed as correct, not merely a Plan-stage candidate. See the
+   clarifying note appended to
+   [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md#clarification-2026-08-09-not-a-change-in-conclusion).
+2. **`RenderTarget`, `CommandList`, and `SubmissionSignal` follow
+   ADR-0014's established mechanism exactly**: public RHI abstract base
+   classes, unique ownership and move-only semantics expressed through
+   `std::unique_ptr`, with every concrete Vulkan type and `Vk*` detail
+   kept inside Vulkan Backend. Section 3's design (as originally drafted)
+   is confirmed, not merely a candidate reading.
 
 ## 1. Module and CMake Target Boundaries
 
@@ -114,8 +126,8 @@ src/vulkan_backend/src/resource_state_mapping.h/.cpp # pure ResourceState -> VkI
 src/render_graph/include/atlantis/render_graph/execution.h   # execute(), ResourceBinding, ExecuteError-free (void)
 src/render_graph/src/execution.cpp
 
-tests/vulkan_backend/resource_state_mapping_tests.cpp
-tests/vulkan_backend/frame_execution_gpu_tests.cpp   # new GPU-required suite (acquire/execute/submit/present)
+tests/vulkan_backend/resource_state_mapping_tests.cpp  # new source, existing atlantis_vulkan_backend_tests target
+tests/vulkan_backend/frame_execution_gpu_tests.cpp      # new source, existing atlantis_vulkan_backend_gpu_tests target
 tests/render_graph/execution_tests.cpp               # GPU-independent, fake CommandList test double
 tests/render_graph/fake_command_list.h               # test-only rhi::CommandList implementation
 
@@ -145,10 +157,13 @@ src/render_graph/CMakeLists.txt                     # + execution.cpp, PUBLIC li
 
 tests/rhi/CMakeLists.txt                    # unaffected structurally; types_tests.cpp gets new cases
 tests/rhi/types_tests.cpp                   # + ResourceState/enum sanity (trivial, GPU-independent)
-tests/vulkan_backend/CMakeLists.txt         # + 2 new test executables/sources
-tests/vulkan_backend/presentation_logic_tests.cpp   # + pure acquire-outcome decision-logic cases
-tests/render_graph/CMakeLists.txt           # + execution_tests.cpp, fake_command_list.h, PRIVATE link Atlantis::RHI... 
-                                             #   (already PUBLIC via atlantis_render_graph; test target needs it too)
+tests/vulkan_backend/CMakeLists.txt         # + 2 new source files added to existing targets (no new target) --
+                                             #   resource_state_mapping_tests.cpp -> atlantis_vulkan_backend_tests;
+                                             #   frame_execution_gpu_tests.cpp -> atlantis_vulkan_backend_gpu_tests
+tests/vulkan_backend/presentation_logic_tests.cpp   # + pure acquire-outcome decision-logic cases (decideAcquireAction(), Section 10)
+tests/render_graph/CMakeLists.txt           # + execution_tests.cpp, fake_command_list.h -- no new link line needed
+                                             #   (atlantis_render_graph now PUBLIC-links Atlantis::RHI, already
+                                             #   propagates transitively to this test target)
 
 CMakeLists.txt (root)                       # + add_subdirectory(examples/frame_execution_demo)
 ```
@@ -204,7 +219,7 @@ duplication. `acquireNextTarget()`'s signature is therefore
 
 ## 3. RHI Candidate API — `RenderTarget`, `CommandList`, `SubmissionSignal`
 
-Per Section "Open Design Tensions" item 2, these follow the existing
+Per Human Review Confirmation 2 above, these follow the existing
 `Device`/`Presentation` mechanism (ADR-0014): abstract base class in an
 RHI public header, concrete subclass in Vulkan Backend, held by the
 caller as `std::unique_ptr<Interface>`. "Move-only" (ADR-0019) describes
@@ -283,7 +298,10 @@ namespace atlantis::rhi {
 // (ADR-0019, ADR-0020). No public method beyond the destructor --
 // mirrors Device's own "intentionally declares no method" precedent.
 // A caller never constructs, inspects, or stores one beyond passing it
-// from submit() straight to present().
+// from submit() straight to present(). Precondition, not enforced here:
+// a caller must present() (or otherwise consume) the SubmissionSignal
+// from one submit() call before calling submit() again -- see Section 9's
+// "Real gap found in review" note for why.
 class SubmissionSignal {
  public:
   virtual ~SubmissionSignal() = default;
@@ -502,7 +520,12 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
      for i in [0, graph.usageCount(pass)):
        usage = graph.usage(pass, i)
        if !usage.state.has_value(): continue         // untagged -- no transition bookkeeping
-       binding = find in bindings by usage.resource   // guaranteed present by step 1
+       binding = find in bindings by usage.resource
+       if binding not found: continue                // step 1's ATLANTIS_CHECK_MSG already reported this;
+                                                       // under a non-terminating handler (test), skip this
+                                                       // usage's transition rather than dereferencing a
+                                                       // missing binding -- the same UB-safe check-then-
+                                                       // early-return pattern RenderGraphBuilder already uses
        previous = currentState.count(usage.resource) ? currentState[usage.resource]
                                                        : ResourceState::Undefined
        if previous != *usage.state:
@@ -660,6 +683,30 @@ fence before this call's own `vkQueueSubmit` (step 5) reuses
 `submit()` call returns, per the single-logical-frame-thread ordering).
 No second in-flight submission ever exists to collide with.
 
+**Real gap found in review, now documented as an explicit precondition:**
+the fence wait in step 2 only proves the *previous submission's command
+buffer* finished executing — it does **not** prove `renderFinishedSemaphore_`
+was ever *waited on* by anything. A binary semaphore must be unsignaled
+before it is used as a signal operand again; if a caller called `submit()`
+twice in a row without an intervening `present()` (which alone waits on
+that semaphore), the second `vkQueueSubmit`'s signal operation would be
+signaling an already-signaled-but-unconsumed semaphore — a Vulkan valid-
+usage violation Validation Layers would catch, not something the fence
+wait above protects against. **Precondition, not enforced by the type
+system or by an `ATLANTIS_CHECK`:** a caller must not call `submit()`
+again before the previous call's returned `SubmissionSignal` has been
+consumed by a matching `present()` call. This holds structurally on the
+ordinary per-frame path (§11: `submit()` then always `present()` before
+the next `acquireNextTarget()`/`submit()`), and is moot on the mid-frame-
+exit path (§11: no second `submit()` ever happens there at all). It is a
+documented caller obligation, the same undetected-precondition tier as
+`RenderTarget`'s own frame-window misuse (§12) — not something this round
+adds cross-class bookkeeping between `VulkanDevice` and
+`VulkanPresentation` to detect, since nothing in this Plan's own
+Testing Strategy (§13) exercises calling `submit()` twice without an
+intervening `present()`, matching how genuinely-undetected preconditions
+are tested elsewhere in this codebase (i.e. not tested, by design).
+
 ### `waitIdle()`
 
 ```
@@ -721,6 +768,36 @@ successful `recreateIfNeeded()`) to be added to `VulkanPresentation`'s
 existing state — the current implementation queries only image *count*
 for metadata, not the handles themselves; this is a genuinely new field
 `recreateIfNeeded()`'s existing recreation branch must also populate.
+
+Steps 6–7's branching is extracted into a pure, GPU-independent function
+in `presentation_logic.h` (a new private header, alongside the existing
+`decideRecreateAction()` in `vulkan_presentation.h`, or added to that
+same file — Plan does not fix which, Implementation's choice), mirroring
+that function's existing extraction pattern exactly:
+
+```cpp
+enum class AcquireAction {
+  Proceed,                  // VK_SUCCESS -- use the acquired image, no recreation flag change
+  SkipAndAwaitNextCall,     // VK_ERROR_OUT_OF_DATE_KHR -- Ok(nullptr) this call, recreation marked needed
+  ProceedButMarkRecreate,   // VK_SUBOPTIMAL_KHR -- use the acquired image, recreation marked needed for next call
+  Fail,                     // any other non-VK_SUCCESS result -- Err(toAcquireFailureError(result))
+};
+
+// result must be the direct return of vkAcquireNextImageKHR. Pure
+// classification -- takes only an already-obtained VkResult, calls no
+// Vulkan function, testable with literal VkResult enumerators and no
+// device (same reasoning as decideRecreateAction() and
+// classifyFailure()).
+[[nodiscard]] AcquireAction decideAcquireAction(VkResult result);
+```
+
+**Note for §13's test list:** `decideAcquireAction()` above is the "new
+pure decision logic" `presentation_logic_tests.cpp` gains — concretely:
+`VK_SUCCESS`
+→ `Proceed`; `VK_ERROR_OUT_OF_DATE_KHR` → `SkipAndAwaitNextCall`;
+`VK_SUBOPTIMAL_KHR` → `ProceedButMarkRecreate`; every other non-success
+`VkResult` this codebase's existing `classifyFailure()` already handles
+(e.g. `VK_ERROR_DEVICE_LOST`, `VK_ERROR_SURFACE_LOST_KHR`) → `Fail`.
 
 ### `present(target, renderFinished)`
 
@@ -788,7 +865,7 @@ is inserted into the existing pattern at exactly the point
 
 | Case | Tier | Mechanism |
 |---|---|---|
-| `RenderTarget`/`CommandList` used outside its frame/lifetime window; `Presentation`/`Device` destroyed with an outstanding acquire/submission | Lifetime precondition violation | Not detected; caller obligation (documented, tested via correct-discipline manual verification only) |
+| `RenderTarget`/`CommandList` used outside its frame/lifetime window; `Presentation`/`Device` destroyed with an outstanding acquire/submission; `submit()` called again before the previous `SubmissionSignal` was consumed by `present()` (§9) | Lifetime/sequencing precondition violation | Not detected; caller obligation (documented, tested via correct-discipline manual verification only) |
 | Binding missing for a `ResourceState`-tagged usage; a bound resource has a read usage | Guaranteed-detectable programmer error | `ATLANTIS_CHECK_MSG` inside `execute()` |
 | `vkAcquireNextImageKHR`/`vkQueuePresentKHR` unrecoverable failure | Recoverable | `Result::Err(PresentationError)` |
 | `vkQueueSubmit`/`vkWaitForFences`/`vkDeviceWaitIdle`/`vkAllocateCommandBuffers`/`vkBeginCommandBuffer`/`vkEndCommandBuffer` failure | Recoverable | `Result::Err(SubmitError)` / `Result::Err(CommandListCreateError)` |
@@ -815,11 +892,12 @@ functions.
 - `tests/vulkan_backend/vulkan_result_tests.cpp` — extended with cases
   for the four new mapping functions (each `VkResult` enumerator this
   round needs to classify → its documented error).
-- `tests/vulkan_backend/presentation_logic_tests.cpp` — extended with any
-  new pure decision logic extracted from `acquireNextTarget()`'s
-  zero-extent/out-of-date/suboptimal branching (mirroring
-  `decideRecreateAction()`'s existing extraction pattern), exercised
-  without a real device.
+- `tests/vulkan_backend/presentation_logic_tests.cpp` — extended with
+  `decideAcquireAction()` (§10) cases for every `VkResult` this round
+  needs to classify (`VK_SUCCESS`, `VK_ERROR_OUT_OF_DATE_KHR`,
+  `VK_SUBOPTIMAL_KHR`, and at least one representative unrecoverable
+  failure), mirroring `decideRecreateAction()`'s existing extraction
+  pattern, exercised without a real device.
 - `tests/render_graph/execution_tests.cpp` — every bullet from Spec
   0006's own Testing & Verification Plan "RenderGraph execution
   integration" list (Section 7 above enumerates them), run against
@@ -830,6 +908,17 @@ functions.
 - `tests/rhi/types_tests.cpp` — trivial `ResourceState`/`ClearColorValue`
   sanity (equality/default values), consistent with existing
   `Extent2D`/`Format` coverage.
+
+**Spec 0006's `RenderTarget`-is-move-only Acceptance Criterion needs no
+dedicated static-assert test.** Under the abstract-base-class-behind-
+`std::unique_ptr` mechanism this Plan uses (§3, Human Review Confirmation
+2), move-only-ness is a property of `std::unique_ptr<RenderTarget>`
+itself — a standard-library guarantee, not Atlantis code to verify. This
+differs from `CompiledGraph` (Spec 0005), which is a concrete value type
+whose move/copy special members genuinely are Atlantis's own code and
+therefore did need an explicit `std::is_move_constructible`-style check.
+No such check is meaningful or needed here; this is a structural
+consequence of the mechanism, not an oversight.
 
 ### GPU-required integration tests (real Windows Vulkan device, no window)
 
@@ -992,10 +1081,13 @@ target_link_libraries(atlantis_render_graph
 # line needed for the test executable itself.
 
 # tests/vulkan_backend/CMakeLists.txt -- add resource_state_mapping_tests.cpp
-# to the existing GPU-independent atlantis_vulkan_backend_tests target
-# (same Vulkan::Vulkan link it already has, for VkImageLayout etc. types);
-# add a new frame_execution_gpu_tests target/source alongside the existing
-# atlantis_vulkan_backend_gpu_tests pattern, LABELS "gpu", DISCOVERY_MODE PRE_TEST.
+# as an additional source to the existing GPU-independent
+# atlantis_vulkan_backend_tests target (same Vulkan::Vulkan link it
+# already has, for VkImageLayout etc. types); add frame_execution_gpu_tests.cpp
+# as an additional source to the existing atlantis_vulkan_backend_gpu_tests
+# target (already LABELS "gpu", DISCOVERY_MODE PRE_TEST) -- no new CMake
+# target of either kind, matching this file's existing two-target
+# structure exactly.
 
 # examples/frame_execution_demo/CMakeLists.txt -- mirrors
 # examples/rhi_vulkan_demo/CMakeLists.txt exactly, new executable name.
@@ -1079,7 +1171,7 @@ needs both 5 and 7 complete. Step 9 needs 8. Step 10 is last, always.
 | No `Vk*`/Vulkan header in RHI/RenderGraph public headers | §1 file list (headers listed contain no Vulkan type), §14 grep |
 | No `vkCmd*`/barrier construction outside Vulkan Backend's `CommandList` impl | §8 (`VulkanCommandList` is the only site), §14 grep |
 | `RenderTarget` non-owning, frame-scoped, write-only; no read-back capability | §3 (doc comment), §7 guard 2 (structural enforcement) |
-| `RenderTarget` move-only | §3 (`std::unique_ptr<RenderTarget>` handle pattern) |
+| `RenderTarget` move-only (compile-time property) | §3 (mechanism), §13 (why no dedicated test is needed — structural via `std::unique_ptr`) |
 | Binding a read-used resource to a `RenderTarget` rejected as programmer error | §7 algorithm step 2 |
 | Unbound `ResourceState`-tagged usage rejected as programmer error | §7 algorithm step 1 |
 | `acquireNextTarget()` returns `Ok(nullptr)` at zero extent, first call and every later call | §10 step 3 |
@@ -1155,9 +1247,12 @@ Walked against Spec 0006 in full:
   backend, no caller-authored dependency edge/culling, no
   `src/renderer/`).
 - **Every Acceptance Criterion** is mapped in §17.
-- **Both flagged tensions** (§Open Design Tensions) are candidate
-  resolutions only, explicitly not decided by this Plan — carried
-  forward to Human Review, not buried in implementation prose.
+- **Both implementation-level questions raised during drafting** are now
+  recorded as Human-Review-confirmed decisions (§Human Review
+  Confirmations Received), not open tensions — carried forward
+  transparently, not silently buried in implementation prose, and
+  additionally cross-referenced from a short ADR-0021 clarifying note
+  that changes none of that ADR's Decision content.
 - **No Accepted ADR's conclusion is restated, reopened, or contradicted**
   — ADR-0017/0018's dependency-derivation/ordering model is extended
   additively (§6), never altered; ADR-0016's `recreateIfNeeded()`
