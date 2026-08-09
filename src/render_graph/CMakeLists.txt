@@ -1,5 +1,6 @@
 add_library(atlantis_render_graph STATIC
   src/compiled_graph.cpp
+  src/render_graph_builder.cpp
 )
 add_library(Atlantis::RenderGraph ALIAS atlantis_render_graph)
 

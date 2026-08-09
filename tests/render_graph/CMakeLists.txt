@@ -1,5 +1,6 @@
 add_executable(atlantis_render_graph_tests
   handle_ownership_tests.cpp
+  dependency_derivation_tests.cpp
 )
 
 # PRIVATE to this test target only -- needed once compile_algorithm_tests.cpp

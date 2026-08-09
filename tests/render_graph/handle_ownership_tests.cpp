@@ -1,11 +1,15 @@
+#include <atlantis/assert.h>
 #include <atlantis/render_graph/compile_error.h>
 #include <atlantis/render_graph/compiled_graph.h>
 #include <atlantis/render_graph/handles.h>
 #include <atlantis/render_graph/render_graph_builder.h>
 
-#include <catch2/catch_test_macros.hpp>
-
+#include <string>
 #include <type_traits>
+#include <utility>
+#include <vector>
+
+#include <catch2/catch_test_macros.hpp>
 
 namespace {
 
@@ -17,8 +21,42 @@ using atlantis::render_graph::DependencyCycleError;
 using atlantis::render_graph::MultipleProducersError;
 using atlantis::render_graph::PassDiagnostic;
 using atlantis::render_graph::PassHandle;
+using atlantis::render_graph::RenderGraphBuilder;
 using atlantis::render_graph::ResourceDiagnostic;
 using atlantis::render_graph::ResourceHandle;
+
+struct RecordedFailure {
+  std::string expression;
+  std::string message;
+};
+
+// Installs a recording, non-terminating replacement failure handler for
+// the lifetime of one test, and restores whatever handler was previously
+// installed on destruction -- so one test's replacement handler can never
+// leak into another (Core's own tests/core/assert_tests.cpp establishes
+// this pattern; this is its RAII form).
+class ScopedFailureHandler {
+ public:
+  explicit ScopedFailureHandler(std::vector<RecordedFailure>& recorded)
+      : previous_(atlantis::assertions::setFailureHandler([&recorded](const atlantis::AssertFailureInfo& info) {
+          recorded.push_back({std::string(info.expression), std::string(info.message)});
+        })) {}
+
+  ~ScopedFailureHandler() { atlantis::assertions::setFailureHandler(std::move(previous_)); }
+
+  ScopedFailureHandler(const ScopedFailureHandler&) = delete;
+  ScopedFailureHandler& operator=(const ScopedFailureHandler&) = delete;
+
+ private:
+  atlantis::AssertFailureHandler previous_;
+};
+
+// RenderGraphBuilder is the sole, exclusive owner of its accumulated
+// declarations (ADR-0017) -- neither copyable nor movable.
+static_assert(!std::is_copy_constructible_v<RenderGraphBuilder>);
+static_assert(!std::is_copy_assignable_v<RenderGraphBuilder>);
+static_assert(!std::is_move_constructible_v<RenderGraphBuilder>);
+static_assert(!std::is_move_assignable_v<RenderGraphBuilder>);
 
 // PassHandle/ResourceHandle/CompiledPassId are pairwise distinct types
 // with no implicit conversion between any pair (Spec 0005 Error Model,
@@ -95,6 +133,94 @@ TEST_CASE("CompileError can hold a DependencyCycleError alternative", "[render_g
   REQUIRE(std::holds_alternative<DependencyCycleError>(error));
   REQUIRE_FALSE(std::holds_alternative<MultipleProducersError>(error));
   REQUIRE(std::get<DependencyCycleError>(error).passes.size() == 2);
+}
+
+TEST_CASE("Handles vended by a builder are accepted by that same builder", "[render_graph][render_graph_builder]") {
+  std::vector<RecordedFailure> recorded;
+  ScopedFailureHandler guard(recorded);
+
+  RenderGraphBuilder builder;
+  const PassHandle pass = builder.declarePass("pass");
+  const ResourceHandle resource = builder.declareResource("resource");
+
+  builder.reads(pass, resource);
+
+  REQUIRE(recorded.empty());
+}
+
+TEST_CASE("A default-constructed PassHandle passed to reads() triggers the assertion policy without crashing",
+          "[render_graph][render_graph_builder]") {
+  std::vector<RecordedFailure> recorded;
+  ScopedFailureHandler guard(recorded);
+
+  RenderGraphBuilder builder;
+  const ResourceHandle resource = builder.declareResource();
+
+  builder.reads(PassHandle{}, resource);
+
+  REQUIRE(recorded.size() == 1);
+}
+
+TEST_CASE("A default-constructed ResourceHandle passed to writes() triggers the assertion policy without crashing",
+          "[render_graph][render_graph_builder]") {
+  std::vector<RecordedFailure> recorded;
+  ScopedFailureHandler guard(recorded);
+
+  RenderGraphBuilder builder;
+  const PassHandle pass = builder.declarePass();
+
+  builder.writes(pass, ResourceHandle{});
+
+  REQUIRE(recorded.size() == 1);
+}
+
+TEST_CASE("A PassHandle from a different, live builder triggers the assertion policy",
+          "[render_graph][render_graph_builder]") {
+  std::vector<RecordedFailure> recorded;
+  ScopedFailureHandler guard(recorded);
+
+  RenderGraphBuilder builderA;
+  RenderGraphBuilder builderB;
+  const PassHandle passFromA = builderA.declarePass();
+  const ResourceHandle resourceOnB = builderB.declareResource();
+
+  builderB.reads(passFromA, resourceOnB);
+
+  REQUIRE(recorded.size() == 1);
+}
+
+TEST_CASE("A ResourceHandle from a different, live builder triggers the assertion policy",
+          "[render_graph][render_graph_builder]") {
+  std::vector<RecordedFailure> recorded;
+  ScopedFailureHandler guard(recorded);
+
+  RenderGraphBuilder builderA;
+  RenderGraphBuilder builderB;
+  const ResourceHandle resourceFromA = builderA.declareResource();
+  const PassHandle passOnB = builderB.declarePass();
+
+  builderB.reads(passOnB, resourceFromA);
+
+  REQUIRE(recorded.size() == 1);
+}
+
+TEST_CASE("Duplicate and empty pass/resource labels are legal", "[render_graph][render_graph_builder]") {
+  std::vector<RecordedFailure> recorded;
+  ScopedFailureHandler guard(recorded);
+
+  RenderGraphBuilder builder;
+  const PassHandle p1 = builder.declarePass("same");
+  const PassHandle p2 = builder.declarePass("same");
+  const PassHandle p3 = builder.declarePass();
+  const ResourceHandle r1 = builder.declareResource("same");
+  const ResourceHandle r2 = builder.declareResource("same");
+  const ResourceHandle r3 = builder.declareResource();
+
+  REQUIRE(recorded.empty());
+  REQUIRE_FALSE(p1 == p2);
+  REQUIRE_FALSE(p2 == p3);
+  REQUIRE_FALSE(r1 == r2);
+  REQUIRE_FALSE(r2 == r3);
 }
 
 }  // namespace
