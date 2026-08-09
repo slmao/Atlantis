@@ -257,29 +257,6 @@ class CommandPoolGuard {
   VkCommandPool commandPool_;
 };
 
-class SemaphoreGuard {
- public:
-  SemaphoreGuard(VkDevice device, VkSemaphore semaphore) : device_(device), semaphore_(semaphore) {}
-  ~SemaphoreGuard() {
-    if (semaphore_ != VK_NULL_HANDLE) {
-      vkDestroySemaphore(device_, semaphore_, nullptr);
-    }
-  }
-  SemaphoreGuard(const SemaphoreGuard&) = delete;
-  SemaphoreGuard& operator=(const SemaphoreGuard&) = delete;
-
-  [[nodiscard]] VkSemaphore get() const noexcept { return semaphore_; }
-  [[nodiscard]] VkSemaphore release() noexcept {
-    VkSemaphore released = semaphore_;
-    semaphore_ = VK_NULL_HANDLE;
-    return released;
-  }
-
- private:
-  VkDevice device_;
-  VkSemaphore semaphore_;
-};
-
 class FenceGuard {
  public:
   FenceGuard(VkDevice device, VkFence fence) : device_(device), fence_(fence) {}
@@ -308,7 +285,7 @@ class FenceGuard {
 VulkanDevice::VulkanDevice(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, VkQueue queue,
                             std::uint32_t queueFamilyIndex, VkDebugUtilsMessengerEXT explicitMessenger,
                             PFN_vkDestroyDebugUtilsMessengerEXT destroyMessengerFn, VkCommandPool commandPool,
-                            VkSemaphore renderFinishedSemaphore, VkFence submissionFence)
+                            VkFence submissionFence)
     : instance_(instance),
       physicalDevice_(physicalDevice),
       device_(device),
@@ -317,7 +294,6 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkPhysicalDevice physicalDevice,
       explicitMessenger_(explicitMessenger),
       destroyMessengerFn_(destroyMessengerFn),
       commandPool_(commandPool),
-      renderFinishedSemaphore_(renderFinishedSemaphore),
       submissionFence_(submissionFence) {}
 
 VulkanDevice::~VulkanDevice() {
@@ -337,7 +313,6 @@ VulkanDevice::~VulkanDevice() {
   }
 
   vkDestroyFence(device_, submissionFence_, nullptr);
-  vkDestroySemaphore(device_, renderFinishedSemaphore_, nullptr);
   vkDestroyCommandPool(device_, commandPool_, nullptr);
 
   // Destruction order: the three objects above, then VkDevice, then the
@@ -420,6 +395,11 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::SubmissionSignal>, atlantis::rhi
 
   const auto& vulkanTarget = static_cast<const VulkanRenderTarget&>(target);
   const VkSemaphore waitSemaphore = vulkanTarget.acquireCompleteSemaphore();
+  // Plan 0006 (found via GPU testing): read per-image-index render-
+  // finished semaphore from the target itself, rather than a single
+  // Device-owned one -- see VulkanPresentation's own header comment for
+  // why a single shared semaphore is not safe to reuse across frames.
+  const VkSemaphore signalSemaphore = vulkanTarget.renderFinishedSemaphore();
   const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
   const VkCommandBuffer commandBuffer = vulkanCommandList.commandBuffer();
 
@@ -431,7 +411,7 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::SubmissionSignal>, atlantis::rhi
   submitInfo.commandBufferCount = 1;
   submitInfo.pCommandBuffers = &commandBuffer;
   submitInfo.signalSemaphoreCount = 1;
-  submitInfo.pSignalSemaphores = &renderFinishedSemaphore_;
+  submitInfo.pSignalSemaphores = &signalSemaphore;
 
   const VkResult submitResult = vkQueueSubmit(queue_, 1, &submitInfo, submissionFence_);
   if (submitResult != VK_SUCCESS) {
@@ -441,7 +421,7 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::SubmissionSignal>, atlantis::rhi
   retainedSubmission_ = std::move(commandList);
   hasRetainedSubmission_ = true;
 
-  return ResultT::Ok(std::make_unique<VulkanSubmissionSignal>(renderFinishedSemaphore_));
+  return ResultT::Ok(std::make_unique<VulkanSubmissionSignal>(signalSemaphore));
 }
 
 atlantis::Result<std::monostate, atlantis::rhi::SubmitError> VulkanDevice::waitIdle() {
@@ -538,11 +518,14 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
   VkQueue queue = VK_NULL_HANDLE;
   vkGetDeviceQueue(device, selection->queueFamilyIndex, 0, &queue);
 
-  // Plan 0006 Section 9: the three objects VulkanDevice's own
+  // Plan 0006 Section 9: the two objects VulkanDevice's own
   // createCommandList()/submit()/waitIdle() need, created once here and
   // owned by VulkanDevice for its whole lifetime. RESET_COMMAND_BUFFER_BIT
   // allows individual vkFreeCommandBuffers calls (VulkanCommandList's own
-  // destructor) rather than only whole-pool resets.
+  // destructor) rather than only whole-pool resets. No render-finished
+  // semaphore is created here -- VulkanPresentation owns a per-swapchain-
+  // image pool instead (found via GPU testing; see that class's own
+  // header comment).
   VkCommandPoolCreateInfo commandPoolCreateInfo{};
   commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
   commandPoolCreateInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -553,15 +536,6 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
     return ResultT::Err(DeviceCreateError::DeviceCreationFailed);
   }
   detail::CommandPoolGuard commandPoolGuard(device, commandPool);
-
-  VkSemaphoreCreateInfo semaphoreCreateInfo{};
-  semaphoreCreateInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
-  VkSemaphore renderFinishedSemaphore = VK_NULL_HANDLE;
-  if (vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS) {
-    return ResultT::Err(DeviceCreateError::DeviceCreationFailed);
-  }
-  detail::SemaphoreGuard semaphoreGuard(device, renderFinishedSemaphore);
 
   // No VK_FENCE_CREATE_SIGNALED_BIT: initially unsignaled, matching "no
   // submission retained yet" -- VulkanDevice's own hasRetainedSubmission_
@@ -582,26 +556,25 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
   // handle here -- VulkanDevice is constructed from their non-owning
   // get() values only, so if std::make_unique's allocation or
   // VulkanDevice's constructor were ever to fail, every guard is still
-  // intact and its destructor still runs (fence -> semaphore -> command
-  // pool -> device -> messenger -> instance, reverse declaration order),
-  // leaking nothing.
+  // intact and its destructor still runs (fence -> command pool -> device
+  // -> messenger -> instance, reverse declaration order), leaking
+  // nothing.
   std::unique_ptr<atlantis::rhi::Device> vulkanDevice = std::make_unique<detail::VulkanDevice>(
       instanceGuard.get(), selection->physicalDevice, deviceGuard.get(), queue, selection->queueFamilyIndex,
-      messengerGuard.get(), destroyMessengerFn, commandPoolGuard.get(), semaphoreGuard.get(), fenceGuard.get());
+      messengerGuard.get(), destroyMessengerFn, commandPoolGuard.get(), fenceGuard.get());
 
   // Phase 2: std::make_unique returned successfully, so VulkanDevice now
   // holds its own copy of every handle value and is the sole owner going
   // forward. Only now do the guards relinquish ownership -- each release()
   // is its own statement, not folded into an expression whose evaluation
   // order this code would otherwise have to rely on. Order among these
-  // six calls does not matter: release() only clears each guard's own
+  // five calls does not matter: release() only clears each guard's own
   // internal handle to VK_NULL_HANDLE, it does not call any Vulkan
   // function, so there is no dependency between the calls to sequence.
   (void)instanceGuard.release();
   (void)deviceGuard.release();
   (void)messengerGuard.release();
   (void)commandPoolGuard.release();
-  (void)semaphoreGuard.release();
   (void)fenceGuard.release();
 
   return ResultT::Ok(std::move(vulkanDevice));
