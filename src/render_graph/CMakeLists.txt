@@ -1,4 +1,5 @@
 add_library(atlantis_render_graph STATIC
+  src/compile_algorithm.cpp
   src/compiled_graph.cpp
   src/render_graph_builder.cpp
 )
