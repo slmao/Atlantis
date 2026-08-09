@@ -1,13 +1,59 @@
 # Spec: RHI / RenderGraph Frame Execution Foundation
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
   direction; human authorship/ownership of this spec is pending
   confirmation at Human Review.
 - **Created:** 2026-08-09
-- **Related Plan(s):** None yet — a plan may be drafted only after this
-  spec (and the ADRs below) reach `Approved`/`Accepted` and pass Human
-  Review, per [AGENTS.md](../AGENTS.md).
+- **Human Review Approval (2026-08-09):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer for this branch) on 2026-08-09, following a joint
+  architecture review of this spec and ADR-0019–0021 (see each
+  document's own revision history for the issues that review raised and
+  resolved before this approval). Four points were confirmed explicitly
+  as part of this approval, and are **accepted as-is**, per this
+  document's own content as revised by that review:
+
+  1. **`Device::submit()` takes ownership of the `CommandList` passed to
+     it and manages the single-frame-in-flight submission's lifetime
+     internally** (waiting on, then releasing, any previously-retained
+     submission before accepting a new one) — confirmed over the
+     alternative of leaving `CommandList`/fence lifetime as a
+     caller-managed obligation. See Requirements' "Minimal RHI GPU
+     resource, command recording, and submission" subsection and
+     [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md).
+  2. **The three-way ADR split (ADR-0019/ADR-0020/ADR-0021) is retained
+     as drafted**, and the two `execute()`-time guard checks this spec's
+     review added — a `ResourceState`-tagged usage must have a supplied
+     binding; a bound `RenderTarget` must carry no declared read usage in
+     the compiled graph — are adopted exactly as specified in
+     Requirements' "RenderGraph execution integration" subsection and
+     [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md).
+  3. **Four Phase 1 simplifications are accepted as this round's scope**,
+     not reopened: single frame-in-flight; a write-only `RenderTarget`
+     (always-`ResourceState::Undefined` incoming layout); `clearColor()`
+     as the sole recordable GPU operation; and no immediate, same-frame
+     retry of `acquireNextTarget()` on an out-of-date result. See
+     Non-Goals, the relevant Requirements subsections, and each ADR's own
+     Alternatives Considered for the reasoning already on record.
+  4. **Roadmap/backlog documents are explicitly out of this spec's own
+     change** — updating `specs/README.md`'s Candidate Spec Backlog and
+     `docs/project-blueprint.md`'s Milestone 3 entry to reflect this
+     spec's outcome as a Minimal Renderer prerequisite is deferred to a
+     separate, later docs PR, not bundled into this spec's branch or
+     commits. See this spec's own Motivation and Alternatives Considered,
+     which already state this position; this approval confirms it, it
+     does not change it.
+
+  Following this approval: ADR-0019, ADR-0020, and ADR-0021 each move to
+  `Accepted` (see each ADR's own header) and this spec moves to
+  `Approved`. Per [AGENTS.md](../AGENTS.md), a Plan may now be drafted
+  against this spec; this approval does not itself write or authorize any
+  implementation, which still requires that future Plan to pass its own
+  (or a joint Spec+Plan) Human Review before any code is written.
+- **Related Plan(s):** None yet — a plan may now be drafted against this
+  `Approved` spec, per [AGENTS.md](../AGENTS.md); none has been drafted by
+  this document.
 - **Related ADR(s):** Builds on
   [ADR-0001](../adr/0001-rhi-backend-independence.md),
   [ADR-0002](../adr/0002-presentation-rendertarget-unification.md),
@@ -20,7 +66,7 @@
   [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md),
   and
   [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)
-  — all `Proposed`, none yet `Accepted`.
+  — all `Accepted` alongside this spec's own approval above.
 
 ## Summary
 
@@ -536,10 +582,12 @@ guarantee.
 
 ## Architectural Impact
 
-This spec introduces architecture and requires three new ADRs before it
-can move from `Draft`/`In Review` to `Approved`, per
-[AGENTS.md](../AGENTS.md). None of the following is decided by this
-spec's prose alone — each is filed as its own ADR:
+This spec introduced architecture and required three new ADRs before it
+could move from `Draft`/`In Review` to `Approved`, per
+[AGENTS.md](../AGENTS.md). None of the following was decided by this
+spec's prose alone — each was filed as its own ADR, and all three reached
+`Accepted` alongside this spec's own approval (see the Human Review
+Approval note above):
 
 1. **Presentation acquire/present protocol and `RenderTarget` frame-borrow
    contract** — resolves in full the bundle
@@ -549,12 +597,12 @@ spec's prose alone — each is filed as its own ADR:
    graph-to-present synchronization, image layout handoff, and present's
    own shape and out-of-date/suboptimal handling. Filed as
    [ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)
-   (`Proposed`).
+   (`Accepted`).
 2. **Minimal RHI GPU resource, command recording, and submission
    interface** — `ResourceState`, `CommandList`, `Device::createCommandList()`/
    `submit()`, and the single-frame-in-flight baseline. Filed as
    [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md)
-   (`Proposed`).
+   (`Accepted`).
 3. **RenderGraph/RHI execution integration and dependency-to-barrier
    responsibility** — RenderGraph's new RHI dependency, the
    `ResourceState`-tagged usage model, the per-pass execution callback,
@@ -562,7 +610,7 @@ spec's prose alone — each is filed as its own ADR:
    RenderGraph (deciding when/between what states) and RHI/Vulkan Backend
    (deciding how) for every resource-state transition. Filed as
    [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)
-   (`Proposed`).
+   (`Accepted`).
 
 No existing `Accepted` ADR's conclusions are restated, reopened, or
 modified by this spec or by the three new ADRs above — each new ADR
@@ -572,7 +620,9 @@ altering them. Architectural Impact for this spec is not "None" —
 `RenderTarget`, `CommandList`, and RenderGraph's execution capability are
 each a new public API surface, exactly the kind of change AGENTS.md's
 "What counts as significant" section requires the full Spec → Plan →
-Human Review path for.
+Human Review path for. **This checkbox-level approval is not itself an
+authorization to implement** — see the Human Review Approval note above
+and the Acceptance Criteria's own checklist item on this point below.
 
 ## Alternatives Considered
 
@@ -769,11 +819,15 @@ Human Review path for.
       previously-submitted `CommandList` at a time, and the
       single-frame-in-flight baseline is a structural property of the
       implementation, not merely a documented intention.
-- [ ] All three ADRs listed in Architectural Impact
+- [x] All three ADRs listed in Architectural Impact
       ([ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md),
       [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md),
       [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md))
-      reach `Accepted` before this spec is marked `Approved`.
+      reach `Accepted` before this spec is marked `Approved` — satisfied
+      2026-08-09 (see Human Review Approval note above); this checkbox
+      gates spec approval, not implementation, and every other checkbox
+      in this section still describes a property the future
+      implementation must satisfy, not one already verified.
 
 ## Risks & Open Questions
 

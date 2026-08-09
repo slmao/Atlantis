@@ -1,9 +1,16 @@
 # ADR 0021: RenderGraph/RHI Execution Integration and Dependency-to-Barrier Responsibility
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-09
-- **Deciders:** _Pending Human Review_
-- **Related Spec:** [specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+  Approval recorded 2026-08-09; see
+  [specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md)'s
+  Human Review Approval note for the full approval record this ADR's
+  Decision is part of, including the explicit confirmation that the two
+  `execute()`-time guard checks (unbound `ResourceState`-tagged usage;
+  a bound `RenderTarget` with a declared read usage) are adopted as
+  specified.
+- **Related Spec:** [specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md) (`Approved`)
 
 ## Context
 

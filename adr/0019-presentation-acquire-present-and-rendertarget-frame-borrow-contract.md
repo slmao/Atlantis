@@ -1,9 +1,13 @@
 # ADR 0019: Presentation Acquire/Present Protocol and RenderTarget Frame-Borrow Contract
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-09
-- **Deciders:** _Pending Human Review_
-- **Related Spec:** [specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+  Approval recorded 2026-08-09; see
+  [specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md)'s
+  Human Review Approval note for the full approval record this ADR's
+  Decision is part of.
+- **Related Spec:** [specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md) (`Approved`)
 
 ## Context
 
