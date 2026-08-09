@@ -82,6 +82,12 @@ class PlatformLifecycleGuard {
 
 constexpr int kMaxEventDrainIterations = 8;
 
+// Precondition, caller-enforced: width/height must differ from the
+// window's current size. Windows does not send WM_SIZE for a
+// SetWindowPos call that does not actually change the size (a no-op
+// resize request) -- found via GPU testing, this is why every call site
+// below uses a size distinct from whatever the single, shared window
+// (reused across this file's scenarios) was left at by the previous one.
 [[nodiscard]] Extent2D resizeWindowAndReadFramebufferExtent(HWND hwnd, int width, int height) {
   SetWindowPos(hwnd, nullptr, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER);
   for (int i = 0; i < kMaxEventDrainIterations; ++i) {
@@ -201,7 +207,16 @@ TEST_CASE(
   }
   std::unique_ptr<Device> device = std::move(deviceResult.value());
 
-  SECTION("Acquire, execute, submit, present at least one real frame") {
+  // Phase 1 does not support re-initializing Platform after shutdown()
+  // within one process (mirrors vulkan_presentation_gpu_tests.cpp's own
+  // PlatformLifecycleGuard comment), so this test shares one
+  // initialize()->shutdown() lifecycle across every scenario below via
+  // plain scoped blocks, not Catch2 SECTIONs -- a SECTION re-runs this
+  // entire TEST_CASE body (and therefore platform::initialize()) once per
+  // leaf SECTION, which the Windows Platform singleton does not support.
+
+  // --- Scenario 1: acquire, execute, submit, present at least one real frame. ---
+  {
     auto presentationResult = createPresentation(*device, windowHandle);
     if (presentationResult.isErr()) {
       FAIL("createPresentation() failed");
@@ -221,30 +236,36 @@ TEST_CASE(
     REQUIRE(idleResult.isOk());
   }
 
-  SECTION("Resize mid-stream: frames continue after the swapchain recreates at a new extent") {
+  // --- Scenario 2: resize mid-stream, frames continue after recreation. ---
+  {
     auto presentationResult = createPresentation(*device, windowHandle);
     if (presentationResult.isErr()) {
       FAIL("createPresentation() failed");
     }
     std::unique_ptr<Presentation> presentation = std::move(presentationResult.value());
 
-    presentation->notifyResized(resizeWindowAndReadFramebufferExtent(hwnd, 400, 300));
+    presentation->notifyResized(resizeWindowAndReadFramebufferExtent(hwnd, 520, 360));
     REQUIRE(drawOneFrame(*presentation, *device));
 
-    presentation->notifyResized(resizeWindowAndReadFramebufferExtent(hwnd, 500, 350));
+    presentation->notifyResized(resizeWindowAndReadFramebufferExtent(hwnd, 620, 410));
     REQUIRE(drawOneFrame(*presentation, *device));
 
     REQUIRE(device->waitIdle().isOk());
   }
 
-  SECTION("Zero extent (minimize): acquire returns nothing to draw, no crash, resumes on restore") {
+  // --- Scenario 3: zero extent (minimize) -- Ok(nullptr), no crash, resumes on restore. ---
+  {
     auto presentationResult = createPresentation(*device, windowHandle);
     if (presentationResult.isErr()) {
       FAIL("createPresentation() failed");
     }
     std::unique_ptr<Presentation> presentation = std::move(presentationResult.value());
 
-    presentation->notifyResized(resizeWindowAndReadFramebufferExtent(hwnd, 400, 300));
+    // Each scenario resizes the one shared window to a size distinct from
+    // wherever the previous scenario left it -- Windows does not send
+    // WM_SIZE for a same-size SetWindowPos request (see
+    // resizeWindowAndReadFramebufferExtent()'s own comment).
+    presentation->notifyResized(resizeWindowAndReadFramebufferExtent(hwnd, 720, 460));
     REQUIRE(drawOneFrame(*presentation, *device));
 
     minimizeWindowAndObserveZeroExtent(hwnd);
@@ -259,14 +280,15 @@ TEST_CASE(
     REQUIRE(device->waitIdle().isOk());
   }
 
-  SECTION("Mid-frame exit: acquire succeeds but submit/present are never called for that frame") {
+  // --- Scenario 4: mid-frame exit -- acquired but never submitted/presented. ---
+  {
     auto presentationResult = createPresentation(*device, windowHandle);
     if (presentationResult.isErr()) {
       FAIL("createPresentation() failed");
     }
     std::unique_ptr<Presentation> presentation = std::move(presentationResult.value());
 
-    presentation->notifyResized(resizeWindowAndReadFramebufferExtent(hwnd, 400, 300));
+    presentation->notifyResized(resizeWindowAndReadFramebufferExtent(hwnd, 820, 510));
     REQUIRE(drawOneFrame(*presentation, *device));
 
     {
@@ -283,14 +305,15 @@ TEST_CASE(
     REQUIRE(device->waitIdle().isOk());
   }
 
-  SECTION("Submit-then-exit: submit() succeeds but present() is never called") {
+  // --- Scenario 5: submit-then-exit -- submitted but never presented. ---
+  {
     auto presentationResult = createPresentation(*device, windowHandle);
     if (presentationResult.isErr()) {
       FAIL("createPresentation() failed");
     }
     std::unique_ptr<Presentation> presentation = std::move(presentationResult.value());
 
-    presentation->notifyResized(resizeWindowAndReadFramebufferExtent(hwnd, 400, 300));
+    presentation->notifyResized(resizeWindowAndReadFramebufferExtent(hwnd, 920, 560));
     REQUIRE(drawOneFrame(*presentation, *device));
 
     {
