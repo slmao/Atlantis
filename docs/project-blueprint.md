@@ -93,7 +93,7 @@ graph TD
     Platform["Atlantis Platform<br/>(Windows: Implemented<br/>Android/iOS: architecture-only)"]
     RHI["Atlantis RHI<br/>(Implemented — Spec/Plan 0003)"]
     VulkanBackend["Atlantis Vulkan Backend<br/>(Implemented — Spec/Plan 0003)"]
-    RenderGraph["Atlantis RenderGraph<br/>(Spec/Plan 0005 Approved / Ready for Implementation, not yet implemented)"]
+    RenderGraph["Atlantis RenderGraph<br/>(Implemented — Spec/Plan 0005, GPU-independent construction/compilation foundation)"]
     Renderer["Atlantis Renderer<br/>(Candidate — no Spec)"]
     ShaderSystem["Atlantis Shader System<br/>(Candidate — no Spec)"]
     Runtime["Atlantis Runtime<br/>(Candidate — no Spec)"]
@@ -127,7 +127,7 @@ graph TD
     class Platform implemented
     class RHI implemented
     class VulkanBackend implemented
-    class RenderGraph approved
+    class RenderGraph implemented
     class Renderer candidate
     class ShaderSystem candidate
     class Runtime candidate
@@ -181,7 +181,7 @@ spec/plan/ADR files, the `src/`/`tests/`/`examples/` trees, and
 | Plan 0003 | `Approved / Ready for Implementation` | [plans/0003-rhi-vulkan-windowed-foundation.md](../plans/0003-rhi-vulkan-windowed-foundation.md); records a joint Spec + Plan Human Review completed 2026-08-08 |
 | **Spec 0004 — Context-Efficient Documentation and Code Comment Guidelines** | `Approved`, **Implemented** | [specs/0004-context-efficiency-guidelines.md](../specs/0004-context-efficiency-guidelines.md); `AGENTS.md` now contains the `## Documentation and code comments` section, merged via PR #11. Governance/documentation convention only — no architecture or runtime module changed. |
 | Plan 0004 | `Approved / Ready for Implementation` | [plans/0004-context-efficiency-guidelines.md](../plans/0004-context-efficiency-guidelines.md) |
-| **Spec 0005 — RenderGraph Foundation (GPU-Independent Graph Core)** | `Approved` — **Human Review Approval recorded 2026-08-09** | [specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md); all 16 architectural decisions this spec settles were reviewed and accepted (see the spec's own Human Review Approval note); [ADR-0017](../adr/0017-render-graph-construction-compile-layering.md) and [ADR-0018](../adr/0018-render-graph-dependency-derivation-and-ordering.md) both reached `Accepted` alongside this approval. [plans/0005-render-graph-foundation.md](../plans/0005-render-graph-foundation.md) is now `Approved / Ready for Implementation` — a joint Spec+Plan Human Review completed 2026-08-09 |
+| **Spec 0005 — RenderGraph Foundation (GPU-Independent Graph Core)** | `Approved`, **Implemented** (GPU-independent RenderGraph construction/compilation foundation; no RHI resource binding, command recording, GPU execution, barriers, pass culling, or resource lifetime/aliasing) | [specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md) status field; all 16 architectural decisions this spec settles were reviewed and accepted (see the spec's own Human Review Approval note); `src/render_graph/`, `tests/render_graph/` exist and match the spec/plan's file list; implementation merged via [PR #18](https://github.com/slmao/Atlantis/pull/18). No `src/renderer/` directory exists. |
 | Plan 0005 | `Approved / Ready for Implementation` | [plans/0005-render-graph-foundation.md](../plans/0005-render-graph-foundation.md); records a joint Spec + Plan Human Review completed 2026-08-09, accepting all 19 Plan-stage details in Section 7's disposition table with zero Human Review blockers |
 | ADR-0001 through ADR-0016 | All 16 `Accepted` | Verified by grepping each ADR file's `Status:` field |
 | ADR-0017 and ADR-0018 | Both `Accepted` (2026-08-09) | Filed alongside Spec 0005's Human Review Approval; verified by grepping each ADR file's `Status:` field |
@@ -195,34 +195,33 @@ assertions, a `Result<T,E>` type); `Atlantis Platform`'s Windows path
 (application lifecycle, `HWND` window creation/ownership/destruction,
 `PlatformEvent` delivery, monotonic timing); `Atlantis RHI`'s
 non-frame public interfaces (`Device`/`Presentation` construction
-types); and `Atlantis Vulkan Backend`'s Windows presentation
+types); `Atlantis Vulkan Backend`'s Windows presentation
 foundation (instance/device initialization, Windows WSI surface
 creation, swapchain creation/metadata queries/destruction, and
-resize-driven lazy recreation) — each with Catch2 unit tests
-(GPU-independent for RHI/Vulkan Backend logic, GPU-required
-integration tests for the real Vulkan/WSI path) and a non-shipping
-demo executable (`examples/foundation_demo`, `examples/platform_demo`,
-`examples/rhi_vulkan_demo`). **There is still no rendered output**: no
-frame acquire/present loop, no `RenderTarget`, and no command
-recording exist anywhere in the repository.
+resize-driven lazy recreation); and `Atlantis RenderGraph`'s
+GPU-independent construction/compilation foundation (pass/logical-resource
+declaration, single-producer dependency derivation, deterministic
+compilation to a `CompiledGraph` or a `CompileError`) — each with Catch2
+unit tests (GPU-independent for RHI/Vulkan Backend/RenderGraph logic,
+GPU-required integration tests for the real Vulkan/WSI path) and, for
+Core/Platform/RHI, a non-shipping demo executable
+(`examples/foundation_demo`, `examples/platform_demo`,
+`examples/rhi_vulkan_demo`; RenderGraph has none). **There is still no
+rendered output**: no frame acquire/present loop, no `RenderTarget`, no
+RHI resource binding, no command recording, and no GPU execution exist
+anywhere in the repository.
 
-**What is approved but not yet implemented:** nothing at Spec 0003's
-scope remains unimplemented — see the Spec 0003 row above. No other
-spec is currently `Approved` without matching implementation.
+**What is approved but not yet implemented:** no spec is currently
+`Approved` without matching implementation — Spec 0005's scope (see the
+Spec 0005 row above) is now implemented, following Spec 0003's example.
 
 **What has no spec yet:** Renderer, Shader System, Runtime (the module),
 Tools, Android Platform implementation, iOS Platform, headless rendering,
 image regression testing, and everything in Section 5's later milestones
 and Section 5's "further candidate phases." These remain backlog
 candidates (see [specs/README.md](../specs/README.md) Section B) and are
-not `Approved`. RenderGraph now has an `Approved` spec (Spec 0005 — see
-the table above), reviewed and accepted by a human on 2026-08-09, and an
-`Approved / Ready for Implementation` Plan (Plan 0005 — see the table
-above): the joint Spec+Plan Human Review completed 2026-08-09, so
-Implementation of Spec 0005/Plan 0005 is now authorized, following
-AGENTS.md's Spec → Plan → Human Review → Implementation path. No
-Implementation has begun yet — `src/render_graph/` and
-`tests/render_graph/` do not exist as of this document.
+not `Approved` — no spec number, API shape, or Candidate-status promotion
+is assigned to any of them by this document.
 
 ## 5. Phased roadmap
 
@@ -258,8 +257,10 @@ milestone being listed does not authorize starting it — see Section 1.
 
 ### Milestone 2 — RenderGraph foundation
 
-- **Governance state:** **`Approved` Spec —
-  [specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md).**
+- **Governance state:** **`Approved` Spec, `Approved / Ready for
+  Implementation` Plan, Implemented —
+  [specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md),
+  [plans/0005-render-graph-foundation.md](../plans/0005-render-graph-foundation.md).**
   Human Review Approval recorded 2026-08-09: all sixteen architectural
   decisions the spec enumerates were reviewed and accepted (see the
   spec's own Human Review Approval note). Its Architectural Impact
@@ -267,14 +268,12 @@ milestone being listed does not authorize starting it — see Section 1.
   [ADR-0017](../adr/0017-render-graph-construction-compile-layering.md)
   and
   [ADR-0018](../adr/0018-render-graph-dependency-derivation-and-ordering.md),
-  both of which reached `Accepted` alongside this approval. A `Draft`
-  Plan now exists —
-  [plans/0005-render-graph-foundation.md](../plans/0005-render-graph-foundation.md).
-  **This is not a joint Spec+Plan Human Review — that review has not
-  occurred, and Spec approval alone does not authorize implementation.**
-  Implementation still requires this Plan to pass its own (or a joint
-  Spec+Plan) Human Review. Its dependency, Spec 0003 (RHI/Vulkan windowed
-  presentation foundation), is implemented (see Milestone 1).
+  both `Accepted` alongside this approval. A joint Spec+Plan Human Review
+  completed 2026-08-09; implementation (the GPU-independent
+  `Atlantis::RenderGraph` construction/compilation foundation) merged via
+  [PR #18](https://github.com/slmao/Atlantis/pull/18). Its dependency,
+  Spec 0003 (RHI/Vulkan windowed presentation foundation), is implemented
+  (see Milestone 1).
 - **Scope fixed by the Approved spec** (still candidate semantics for the
   Plan to turn into concrete C++, not architecture the Plan may
   reopen): a GPU-independent graph core only — pass declaration, a

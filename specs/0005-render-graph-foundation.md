@@ -130,9 +130,10 @@
     execution boundary) were retracted, not merely deprioritized.
 - **Related Plan(s):**
   [plans/0005-render-graph-foundation.md](../plans/0005-render-graph-foundation.md)
-  (`Draft`) — not yet through a joint Spec + Plan Human Review; drafting
-  this Plan is not itself an authorization of anything beyond drafting
-  it.
+  — `Approved / Ready for Implementation`. Joint Spec + Plan Human Review
+  completed 2026-08-09; implementation (the GPU-independent
+  `Atlantis::RenderGraph` foundation) merged via
+  [PR #18](https://github.com/slmao/Atlantis/pull/18).
 - **Related ADR(s):** Builds on
   [ADR-0001](../adr/0001-rhi-backend-independence.md),
   [ADR-0002](../adr/0002-presentation-rendertarget-unification.md),
