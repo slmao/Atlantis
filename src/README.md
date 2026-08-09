@@ -49,8 +49,25 @@ and [ADR-0014](../adr/0014-rhi-device-presentation-construction-boundary.md),
 [ADR-0015](../adr/0015-vulkan-memory-allocation-deferred.md),
 [ADR-0016](../adr/0016-presentation-acquire-present-and-recreation-contract.md).
 
-Every other module — RenderGraph, Renderer, Shader System, Runtime,
-Tools (see
+**`render_graph/`** — Atlantis RenderGraph: GPU-independent render graph
+construction and compilation. Target `atlantis_render_graph`, alias
+`Atlantis::RenderGraph`; PUBLIC dependency is `Atlantis::Core` only.
+`RenderGraphBuilder` declares passes/logical resources and their
+read/write usage (single-producer-per-resource model); `compile()`
+derives producer→reader dependency edges, a deterministic
+declaration-order-tie-break pass order, and either a `CompiledGraph` or
+a `CompileError` (`MultipleProducersError`/`DependencyCycleError`,
+with a deterministic cycle witness). `CompiledGraph` is independently
+owned and move-only — it outlives, and never borrows from, the builder
+that produced it. **Not yet implemented:** RHI resource binding, command
+recording, GPU execution, barriers/synchronization, pass culling,
+resource lifetime/aliasing, and the Renderer itself. Implemented per
+[specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md),
+[plans/0005-render-graph-foundation.md](../plans/0005-render-graph-foundation.md),
+and [ADR-0017](../adr/0017-render-graph-construction-compile-layering.md),
+[ADR-0018](../adr/0018-render-graph-dependency-derivation-and-ordering.md).
+
+Every other module — Renderer, Shader System, Runtime, Tools (see
 [docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md))
 — is still empty by design, per Spec-Driven Development (see
 [AGENTS.md](../AGENTS.md)): each module's internal structure is itself an

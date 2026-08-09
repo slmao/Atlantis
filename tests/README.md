@@ -84,6 +84,19 @@ A bare `ctest` runs every registered test regardless of label, including
 the GPU-required ones — prefer the explicit `-LE gpu`/`-L gpu` commands
 above over a bare invocation.
 
+**`render_graph/`** — unit tests for Atlantis RenderGraph, per
+[specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md)
+and [plans/0005-render-graph-foundation.md](../plans/0005-render-graph-foundation.md),
+built as the `atlantis_render_graph_tests` Catch2 v3 executable.
+Entirely GPU-independent — no test in this executable carries the CTest
+`gpu` label. Covers `RenderGraphBuilder`/`CompiledGraph` handle and
+ownership contracts, the dependency-derivation and compile algorithm
+(including its white-box `detail::compile()` layer), cycle detection,
+pass retention/ordering, and `CompiledGraph` lifetime/move semantics. No
+Vulkan device or window is required. Run via
+`ctest --test-dir build -C Debug -LE gpu --output-on-failure`, the same
+GPU-independent command as every other suite in this directory.
+
 Headless integration and image-regression test layers (see
 [docs/process/testing-strategy.md](../docs/process/testing-strategy.md))
 are not implemented — they're blocked on headless rendering, which
