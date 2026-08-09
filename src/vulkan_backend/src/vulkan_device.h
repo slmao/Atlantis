@@ -20,9 +20,14 @@ namespace atlantis::vulkan_backend::detail {
 // validation is enabled) the explicit VkDebugUtilsMessengerEXT installed
 // immediately after instance creation succeeds (see
 // plans/0003-rhi-vulkan-windowed-foundation.md Section 6), and -- new in
-// Plan 0006 -- a persistent VkCommandPool, a persistent render-finished
-// VkSemaphore, and a persistent submission VkFence used by
-// createCommandList()/submit()/waitIdle() below. No separate validation
+// Plan 0006 -- a persistent VkCommandPool and a persistent submission
+// VkFence used by createCommandList()/submit()/waitIdle() below. The
+// render-finished semaphore submit() signals is NOT owned here -- found
+// via GPU testing that a single Device-owned semaphore is not safe to
+// reuse across frames (vkQueuePresentKHR's wait on it has no CPU-visible
+// completion signal); VulkanPresentation owns one per swapchain image
+// instead and threads the correct one through via RenderTarget (see
+// VulkanPresentation's own header comment). No separate validation
 // *state* beyond the messenger handle.
 //
 // Not copyable, not movable -- held exclusively behind
@@ -56,15 +61,18 @@ class VulkanDevice final : public atlantis::rhi::Device {
   // VK_NULL_HANDLE (validation enabled), and is otherwise never
   // dereferenced. Stored rather than re-resolved via vkGetInstanceProcAddr
   // at destruction time -- necessary destruction bookkeeping, not
-  // additional diagnostics state. commandPool/renderFinishedSemaphore/
-  // submissionFence are all already-created, valid handles this
-  // constructor takes ownership of (created by createDevice() below,
-  // guard-protected until this constructor succeeds -- same two-phase
-  // ownership-transfer pattern as instance/device/messenger).
+  // additional diagnostics state. commandPool/submissionFence are both
+  // already-created, valid handles this constructor takes ownership of
+  // (created by createDevice() below, guard-protected until this
+  // constructor succeeds -- same two-phase ownership-transfer pattern as
+  // instance/device/messenger). No render-finished semaphore is owned
+  // here -- found via GPU testing that a single Device-owned one is not
+  // safe to reuse across frames; VulkanPresentation now owns one per
+  // swapchain image instead (see that class's own header comment).
   VulkanDevice(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, VkQueue queue,
                std::uint32_t queueFamilyIndex, VkDebugUtilsMessengerEXT explicitMessenger,
                PFN_vkDestroyDebugUtilsMessengerEXT destroyMessengerFn, VkCommandPool commandPool,
-               VkSemaphore renderFinishedSemaphore, VkFence submissionFence);
+               VkFence submissionFence);
   ~VulkanDevice() override;
 
   VulkanDevice(const VulkanDevice&) = delete;
@@ -84,14 +92,29 @@ class VulkanDevice final : public atlantis::rhi::Device {
   [[nodiscard]] VkQueue queue() const noexcept { return queue_; }
   [[nodiscard]] std::uint32_t queueFamilyIndex() const noexcept { return queueFamilyIndex_; }
 
- private:
   // Waits on submissionFence_ (if a submission is currently retained),
   // resets it, and releases retainedSubmission_ -- the shared first step
   // of submit(), waitIdle(), and the destructor. Returns Err only for a
   // genuine vkWaitForFences/vkResetFences failure; a no-op (Ok) if
   // nothing is currently retained.
+  //
+  // Public (not part of rhi::Device's interface -- a narrow, Vulkan-
+  // Backend-internal accessor, same category as instance()/queue() above)
+  // specifically so VulkanPresentation::acquireNextTarget() can call it
+  // before vkAcquireNextImageKHR re-signals the persistent acquire-
+  // complete semaphore that semaphore's own reuse is only valid once the
+  // previous frame's vkQueueSubmit wait on it has fully retired on the
+  // GPU -- which submissionFence_ signaling guarantees, but only once
+  // this is called. Found via GPU testing (Plan 0006's own Human-Review-
+  // approved single-frame-in-flight design assumed this was already
+  // guaranteed by submit()'s own internal wait; it was not, since that
+  // wait only ran before the *next* submit(), not before the *next*
+  // acquire, which reuses the same semaphore first) --
+  // VK_LAYER_KHRONOS_validation correctly rejected the resulting
+  // "semaphore must not have any pending operations" reuse hazard.
   [[nodiscard]] atlantis::Result<std::monostate, atlantis::rhi::SubmitError> waitAndReleaseRetainedSubmission();
 
+ private:
   VkInstance instance_;
   VkPhysicalDevice physicalDevice_;
   VkDevice device_;
@@ -101,7 +124,6 @@ class VulkanDevice final : public atlantis::rhi::Device {
   PFN_vkDestroyDebugUtilsMessengerEXT destroyMessengerFn_;  // meaningful only when explicitMessenger_ is set
 
   VkCommandPool commandPool_;
-  VkSemaphore renderFinishedSemaphore_;
   VkFence submissionFence_;
   std::unique_ptr<atlantis::rhi::CommandList> retainedSubmission_;  // null until the first submit()
   bool hasRetainedSubmission_ = false;

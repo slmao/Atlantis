@@ -78,8 +78,22 @@ struct FormatSelection {
 // usage this module requires (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) --
 // Spec 0003's non-frame lifecycle needs nothing else (no transfer,
 // storage, or sampled usage). GPU-independent and pure. Declared here for
-// the same testability reason as selectSurfaceFormat() above.
+// the same testability reason as selectSurfaceFormat() above. Unchanged
+// by Plan 0006 -- see supportsClearColorImageUsage() below for the
+// additional check Plan 0006's own clearColor() needs.
 [[nodiscard]] bool supportsRequiredSwapchainUsage(const VkSurfaceCapabilitiesKHR& capabilities);
+
+// True when capabilities also reports support for
+// VK_IMAGE_USAGE_TRANSFER_DST_BIT -- required by vkCmdClearColorImage
+// itself (VUID-vkCmdClearColorImage-image-00002), independent of any
+// barrier layout choice; found via GPU testing that
+// VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT alone (Spec 0003's own swapchain
+// creation contract, unchanged by supportsRequiredSwapchainUsage() above)
+// does not satisfy it. Checked, not assumed, before the swapchain is
+// created with this additional usage bit requested -- COLOR_ATTACHMENT_BIT
+// support is guaranteed for every WSI-compliant swapchain by the Vulkan
+// spec, but TRANSFER_DST_BIT support is not. GPU-independent and pure.
+[[nodiscard]] bool supportsClearColorImageUsage(const VkSurfaceCapabilitiesKHR& capabilities);
 
 // Concrete Vulkan implementation of atlantis::rhi::Presentation
 // (ADR-0014). Non-frame lifecycle per ADR-0016; frame lifecycle
@@ -136,6 +150,12 @@ class VulkanPresentation final : public atlantis::rhi::Presentation {
   atlantis::rhi::SwapchainMetadata metadata_;
   std::vector<VkImage> images_;  // populated by recreateIfNeeded()'s Recreate branch; non-owning (swapchain owns them)
   VkSemaphore acquireCompleteSemaphore_ = VK_NULL_HANDLE;
+  // One owned semaphore per swapchain image, indexed by image index --
+  // not a single shared semaphore (found via GPU testing; see
+  // recreateIfNeeded()'s own comment on why). (Re)created alongside
+  // images_ in recreateIfNeeded()'s Recreate branch; destroyed there
+  // (before recreating) and in this class's own destructor.
+  std::vector<VkSemaphore> renderFinishedSemaphores_;
 };
 
 }  // namespace atlantis::vulkan_backend::detail

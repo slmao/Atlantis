@@ -21,7 +21,8 @@ namespace atlantis::vulkan_backend::detail {
 class VulkanRenderTarget final : public atlantis::rhi::RenderTarget {
  public:
   VulkanRenderTarget(VkImage image, std::uint32_t imageIndex, atlantis::rhi::Extent2D extent,
-                      atlantis::rhi::Format format, VkSemaphore acquireCompleteSemaphore);
+                      atlantis::rhi::Format format, VkSemaphore acquireCompleteSemaphore,
+                      VkSemaphore renderFinishedSemaphore);
   ~VulkanRenderTarget() override = default;
 
   VulkanRenderTarget(const VulkanRenderTarget&) = delete;
@@ -34,18 +35,25 @@ class VulkanRenderTarget final : public atlantis::rhi::RenderTarget {
 
   // Accessors below exist solely for VulkanCommandList (barrier/clear
   // recording) and VulkanDevice::submit()/VulkanPresentation::present()
-  // (reading which image/semaphore this target refers to) -- never
+  // (reading which image/semaphore(s) this target refers to) -- never
   // reached from RHI's public surface, RenderGraph, or Renderer.
   [[nodiscard]] VkImage image() const noexcept { return image_; }
   [[nodiscard]] std::uint32_t imageIndex() const noexcept { return imageIndex_; }
   [[nodiscard]] VkSemaphore acquireCompleteSemaphore() const noexcept { return acquireCompleteSemaphore_; }
+  // The one render-finished semaphore dedicated to this target's own
+  // image index (VulkanPresentation's per-image pool, not a single
+  // shared semaphore -- see that class's own header comment for why).
+  // VulkanDevice::submit() signals this; VulkanSubmissionSignal wraps it
+  // for Presentation::present() to wait on.
+  [[nodiscard]] VkSemaphore renderFinishedSemaphore() const noexcept { return renderFinishedSemaphore_; }
 
  private:
   VkImage image_;
   std::uint32_t imageIndex_;
   atlantis::rhi::Extent2D extent_;
   atlantis::rhi::Format format_;
-  VkSemaphore acquireCompleteSemaphore_;  // non-owning; VulkanPresentation owns it
+  VkSemaphore acquireCompleteSemaphore_;   // non-owning; VulkanPresentation owns it
+  VkSemaphore renderFinishedSemaphore_;    // non-owning; VulkanPresentation owns it
 };
 
 }  // namespace atlantis::vulkan_backend::detail

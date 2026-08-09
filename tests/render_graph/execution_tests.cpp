@@ -61,15 +61,18 @@ class ScopedFailureHandler {
 
 TEST_CASE("execute() inserts no transition when consecutive usages declare the same ResourceState",
           "[render_graph][execution]") {
-  // Two writers of the same resource is a compile error (ADR-0018), so a
-  // same-state adjacency is exercised as producer (write) -> reader
-  // (read), both tagged the same ResourceState -- not two writes.
+  // A bound resource may carry a write producer but must never carry a
+  // read usage (Guard 2) -- so a same-state adjacency cannot legally be
+  // exercised as producer(write) -> reader(read) on a *bound* resource.
+  // Declaring the same (pass, resource) write usage twice is legal and
+  // idempotent (Spec 0005) and produces two usage records with an
+  // identical ResourceState, without any read usage -- the correct way
+  // to exercise a same-state adjacency here.
   RenderGraphBuilder builder;
   const ResourceHandle target = builder.declareResource("target");
   const PassHandle producer = builder.declarePass("producer");
-  const PassHandle reader = builder.declarePass("reader");
   builder.writes(producer, target, ResourceState::ColorAttachmentWrite);
-  builder.reads(reader, target, ResourceState::ColorAttachmentWrite);
+  builder.writes(producer, target, ResourceState::ColorAttachmentWrite);
 
   const auto compiled = builder.compile();
   REQUIRE(compiled.isOk());
@@ -80,8 +83,8 @@ TEST_CASE("execute() inserts no transition when consecutive usages declare the s
 
   execute(compiled.value(), bindings, commandList);
 
-  // Undefined -> ColorAttachmentWrite (producer), then no transition
-  // between producer and reader (same state), then ColorAttachmentWrite
+  // Undefined -> ColorAttachmentWrite (first usage), then no transition
+  // for the second, identically-tagged usage, then ColorAttachmentWrite
   // -> PresentSource (trailing).
   REQUIRE(commandList.transitions.size() == 2);
   REQUIRE(commandList.transitions[0].before == ResourceState::Undefined);
@@ -111,14 +114,20 @@ TEST_CASE("execute() inserts exactly one transition when a resource's declared s
 
 TEST_CASE("execute() inserts exactly one trailing transition regardless of pass count",
           "[render_graph][execution]") {
+  // The bound resource itself may only ever carry a write producer, never
+  // a read usage (Guard 2), so "regardless of pass count" is exercised
+  // here as "regardless of how many *other*, unrelated passes exist in
+  // the same graph" -- two extra passes that touch a second, unbound,
+  // untagged resource, never the bound one.
   RenderGraphBuilder builder;
   const ResourceHandle target = builder.declareResource("target");
+  const ResourceHandle other = builder.declareResource("other");
   const PassHandle producer = builder.declarePass("producer");
-  const PassHandle reader1 = builder.declarePass("reader1");
-  const PassHandle reader2 = builder.declarePass("reader2");
+  const PassHandle unrelatedA = builder.declarePass("unrelatedA");
+  const PassHandle unrelatedB = builder.declarePass("unrelatedB");
   builder.writes(producer, target, ResourceState::ColorAttachmentWrite);
-  builder.reads(reader1, target, ResourceState::ColorAttachmentWrite);
-  builder.reads(reader2, target, ResourceState::ColorAttachmentWrite);
+  builder.writes(unrelatedA, other);
+  builder.reads(unrelatedB, other);
 
   const auto compiled = builder.compile();
   REQUIRE(compiled.isOk());

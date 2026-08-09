@@ -11,6 +11,7 @@ using atlantis::vulkan_backend::detail::checkSurfaceSupported;
 using atlantis::vulkan_backend::detail::decideRecreateAction;
 using atlantis::vulkan_backend::detail::RecreateAction;
 using atlantis::vulkan_backend::detail::selectSurfaceFormat;
+using atlantis::vulkan_backend::detail::supportsClearColorImageUsage;
 using atlantis::vulkan_backend::detail::supportsRequiredSwapchainUsage;
 
 TEST_CASE("decideRecreateAction skips at zero extent regardless of recreationNeeded",
@@ -93,4 +94,20 @@ TEST_CASE("supportsRequiredSwapchainUsage is false when color attachment usage i
   capabilities.supportedUsageFlags = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
   REQUIRE_FALSE(supportsRequiredSwapchainUsage(capabilities));
+}
+
+TEST_CASE("supportsClearColorImageUsage is true when transfer-dst usage is supported",
+          "[vulkan_backend][presentation_logic]") {
+  VkSurfaceCapabilitiesKHR capabilities{};
+  capabilities.supportedUsageFlags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+
+  REQUIRE(supportsClearColorImageUsage(capabilities));
+}
+
+TEST_CASE("supportsClearColorImageUsage is false when transfer-dst usage is not supported",
+          "[vulkan_backend][presentation_logic]") {
+  VkSurfaceCapabilitiesKHR capabilities{};
+  capabilities.supportedUsageFlags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+  REQUIRE_FALSE(supportsClearColorImageUsage(capabilities));
 }

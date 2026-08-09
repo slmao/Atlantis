@@ -156,6 +156,10 @@ constexpr FormatSelection kApprovedFormatsInPreferenceOrder[] = {
   return (capabilities.supportedUsageFlags & static_cast<VkFlags>(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) != 0;
 }
 
+[[nodiscard]] bool supportsClearColorImageUsage(const VkSurfaceCapabilitiesKHR& capabilities) {
+  return (capabilities.supportedUsageFlags & static_cast<VkFlags>(VK_IMAGE_USAGE_TRANSFER_DST_BIT)) != 0;
+}
+
 namespace {
 
 // capabilities.currentExtent.width != UINT32_MAX means the surface
@@ -215,28 +219,28 @@ namespace {
 
 namespace {
 
-// Plan 0006 Section 10: created once at construction, alongside the
-// swapchain-independent state recreateIfNeeded() already manages.
-[[nodiscard]] VkSemaphore createAcquireCompleteSemaphore(VkDevice device) {
+// A fresh, unsignaled binary semaphore. Neither Presentation construction
+// (ADR-0014's factory functions) nor a real recreateIfNeeded() recreation
+// (already past every fallible surface/swapchain query at the point this
+// is called) has a failure path for a plain semaphore creation failing --
+// exactly the kind of "should never happen" condition ATLANTIS_CHECK
+// exists for, not a new PresentationCreateError/PresentationError variant.
+[[nodiscard]] VkSemaphore createSemaphore(VkDevice device, const char* purposeForAssertMessage) {
   VkSemaphoreCreateInfo createInfo{};
   createInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
   VkSemaphore semaphore = VK_NULL_HANDLE;
   const VkResult result = vkCreateSemaphore(device, &createInfo, nullptr, &semaphore);
-  // Presentation construction (ADR-0014's factory functions) has no
-  // failure path for this semaphore specifically -- Spec 0006 does not
-  // introduce one, and a fresh semaphore creation failing immediately
-  // after a device and swapchain-capable surface were already
-  // successfully created is exactly the kind of "should never happen"
-  // condition ATLANTIS_CHECK exists for, not a new PresentationCreateError
-  // variant.
-  ATLANTIS_CHECK_MSG(result == VK_SUCCESS, "vkCreateSemaphore() failed for the acquire-complete semaphore");
+  ATLANTIS_CHECK_MSG(result == VK_SUCCESS, purposeForAssertMessage);
   return semaphore;
 }
 
 }  // namespace
 
 VulkanPresentation::VulkanPresentation(VulkanDevice& device, VkSurfaceKHR surface)
-    : device_(device), surface_(surface), acquireCompleteSemaphore_(createAcquireCompleteSemaphore(device.device())) {}
+    : device_(device),
+      surface_(surface),
+      acquireCompleteSemaphore_(
+          createSemaphore(device.device(), "vkCreateSemaphore() failed for the acquire-complete semaphore")) {}
 
 VulkanPresentation::~VulkanPresentation() {
   // Destruction order: swapchain (if any), acquire-complete semaphore,
@@ -252,6 +256,9 @@ VulkanPresentation::~VulkanPresentation() {
   // lifetime precondition, not something this destructor re-verifies.
   if (swapchain_ != VK_NULL_HANDLE) {
     vkDestroySwapchainKHR(device_.device(), swapchain_, nullptr);
+  }
+  for (VkSemaphore semaphore : renderFinishedSemaphores_) {
+    vkDestroySemaphore(device_.device(), semaphore, nullptr);
   }
   vkDestroySemaphore(device_.device(), acquireCompleteSemaphore_, nullptr);
   vkDestroySurfaceKHR(device_.instance(), surface_, nullptr);
@@ -286,9 +293,30 @@ atlantis::Result<std::monostate, atlantis::rhi::PresentationError> VulkanPresent
     return ResultT::Ok(std::monostate{});
   }
 
-  // RecreateAction::Recreate: destroy the previous swapchain, if any,
-  // before creating a new one (ADR-0016's approved ordering) -- no
-  // alternate oldSwapchain-handoff lifetime is used.
+  // RecreateAction::Recreate. Plan 0006 (found via GPU testing): a prior
+  // frame's present() may still be using this Presentation's per-image
+  // render-finished semaphores (and the swapchain images themselves) on
+  // the presentation engine side even after acquireNextTarget()'s own
+  // step-0 fence wait -- vkQueueSubmit's fence tracks command-buffer
+  // completion only, not the subsequent present operation's own
+  // completion, which has no equivalent CPU-visible signal without the
+  // VK_KHR_swapchain_maintenance1 extension this module does not depend
+  // on. A full device-idle wait, unconditionally on every real
+  // recreation (never on the structural Skip/NoOp branches above, and
+  // effectively free on the very first recreation when nothing is yet in
+  // flight), is what makes destroying/recreating both the swapchain and
+  // the semaphore pool below safe.
+  if (swapchain_ != VK_NULL_HANDLE) {
+    ATLANTIS_CHECK(vkDeviceWaitIdle(device_.device()) == VK_SUCCESS);
+  }
+  for (VkSemaphore semaphore : renderFinishedSemaphores_) {
+    vkDestroySemaphore(device_.device(), semaphore, nullptr);
+  }
+  renderFinishedSemaphores_.clear();
+
+  // Destroy the previous swapchain, if any, before creating a new one
+  // (ADR-0016's approved ordering) -- no alternate oldSwapchain-handoff
+  // lifetime is used.
   if (swapchain_ != VK_NULL_HANDLE) {
     vkDestroySwapchainKHR(device_.device(), swapchain_, nullptr);
     swapchain_ = VK_NULL_HANDLE;
@@ -335,6 +363,13 @@ atlantis::Result<std::monostate, atlantis::rhi::PresentationError> VulkanPresent
   if (!supportsRequiredSwapchainUsage(capabilities)) {
     return ResultT::Err(atlantis::rhi::PresentationError::SwapchainCreationFailed);
   }
+  // Plan 0006: clearColor() records vkCmdClearColorImage, which requires
+  // VK_IMAGE_USAGE_TRANSFER_DST_BIT on the image itself
+  // (VUID-vkCmdClearColorImage-image-00002) -- checked here, alongside
+  // the existing COLOR_ATTACHMENT_BIT check above, before requesting it.
+  if (!supportsClearColorImageUsage(capabilities)) {
+    return ResultT::Err(atlantis::rhi::PresentationError::SwapchainCreationFailed);
+  }
 
   const VkExtent2D swapchainExtent = selectSwapchainExtent(capabilities, trackedExtent_);
   if (swapchainExtent.width == 0 || swapchainExtent.height == 0) {
@@ -363,7 +398,10 @@ atlantis::Result<std::monostate, atlantis::rhi::PresentationError> VulkanPresent
   createInfo.imageColorSpace = formatSelection->colorSpace;
   createInfo.imageExtent = swapchainExtent;
   createInfo.imageArrayLayers = 1;
-  createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  // Plan 0006: COLOR_ATTACHMENT_BIT alone (Spec 0003's own contract) is
+  // not sufficient for clearColor()'s vkCmdClearColorImage -- see
+  // supportsClearColorImageUsage()'s own comment.
+  createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
   // Single combined graphics/present queue family (Step 7/8) -- exclusive
   // sharing needs no queue family index list.
   createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -420,12 +458,56 @@ atlantis::Result<std::monostate, atlantis::rhi::PresentationError> VulkanPresent
   metadata_.extent = atlantis::rhi::Extent2D{swapchainExtent.width, swapchainExtent.height};
   recreationNeeded_ = false;
 
+  // Plan 0006 (found via GPU testing): one render-finished semaphore per
+  // swapchain image, indexed by acquired image index at present() time --
+  // not a single shared semaphore. vkQueuePresentKHR's wait on this
+  // semaphore has no CPU-visible completion signal the way vkQueueSubmit's
+  // fence does, so a single reused semaphore can still be "in use by the
+  // presentation engine" for a previous image when a later frame's
+  // submit() tries to signal it again for a different image index --
+  // VK_LAYER_KHRONOS_validation correctly rejects that
+  // (VUID-vkQueueSubmit-pSignalSemaphores-00067). Per-image indexing
+  // sidesteps this: image index N's semaphore is only ever signaled again
+  // once image index N is itself re-acquired, and vkAcquireNextImageKHR
+  // does not hand back an image index still in use by the presentation
+  // engine -- that guarantee transitively covers the one semaphore
+  // dedicated to that same image index, with no additional explicit wait
+  // needed on the ordinary per-frame path (only swapchain recreation,
+  // above, needs the explicit device-idle wait, since it destroys/
+  // recreates the whole pool outside the normal acquire cycle).
+  renderFinishedSemaphores_.reserve(actualImageCount);
+  for (std::uint32_t i = 0; i < actualImageCount; ++i) {
+    renderFinishedSemaphores_.push_back(
+        createSemaphore(device_.device(), "vkCreateSemaphore() failed for a render-finished semaphore"));
+  }
+
   return ResultT::Ok(std::monostate{});
 }
 
 atlantis::Result<std::unique_ptr<atlantis::rhi::RenderTarget>, atlantis::rhi::PresentationError>
 VulkanPresentation::acquireNextTarget() {
   using ResultT = atlantis::Result<std::unique_ptr<atlantis::rhi::RenderTarget>, atlantis::rhi::PresentationError>;
+
+  // Step 0 (found via GPU testing, not in the original design): wait for
+  // any previously-retained submission to fully complete on the GPU
+  // before this call does anything else. Two reasons this must happen
+  // here, first, rather than only inside Device::submit(): (1) the
+  // persistent acquireCompleteSemaphore_ below is only safe to re-signal
+  // once the previous frame's vkQueueSubmit wait on it has retired --
+  // waiting only inside submit() (as originally implemented) leaves a gap
+  // between this frame's acquire and this frame's own later submit()
+  // call, during which the semaphore could be re-signaled while a prior
+  // wait on it is still pending -- VK_LAYER_KHRONOS_validation correctly
+  // rejects that. (2) recreateIfNeeded() below may destroy the current
+  // swapchain; that swapchain's images must not still be in use by a
+  // previous frame's outstanding GPU work when that happens.
+  const auto drainResult = device_.waitAndReleaseRetainedSubmission();
+  if (drainResult.isErr()) {
+    const atlantis::rhi::SubmitError submitError = drainResult.error();
+    return ResultT::Err(submitError == atlantis::rhi::SubmitError::DeviceLost
+                             ? atlantis::rhi::PresentationError::DeviceLost
+                             : atlantis::rhi::PresentationError::Unknown);
+  }
 
   // Step 1: recreateIfNeeded()'s existing 4-step contract, called as-is,
   // unchanged (ADR-0019). Folds resize/out-of-date recreation timing into
@@ -437,8 +519,17 @@ VulkanPresentation::acquireNextTarget() {
 
   // Step 3 (Plan 0006 Section 10): zero extent -- structurally unreachable
   // to any Vulkan call below, mirroring recreateIfNeeded()'s own
-  // zero-extent guarantee.
-  if (trackedExtent_.isZero()) {
+  // zero-extent guarantee. Checked against swapchain_ itself, not only
+  // trackedExtent_, because recreateIfNeeded() can also legitimately defer
+  // swapchain (re)creation -- leaving swapchain_ VK_NULL_HANDLE -- when the
+  // surface's *actual* capabilities report a zero extent even though
+  // trackedExtent_ was still non-zero (see the "swapchainExtent.width == 0
+  // || ... height == 0" branch above, in recreateIfNeeded() itself, for the
+  // race this covers). Found via interactive GPU testing: minimizing the
+  // window immediately after a resize hits exactly this race, and this
+  // guard previously only checked trackedExtent_, so the ATLANTIS_CHECK
+  // below fired.
+  if (trackedExtent_.isZero() || swapchain_ == VK_NULL_HANDLE) {
     return ResultT::Ok(nullptr);
   }
   ATLANTIS_CHECK(swapchain_ != VK_NULL_HANDLE);
@@ -465,8 +556,10 @@ VulkanPresentation::acquireNextTarget() {
   }
 
   ATLANTIS_CHECK(imageIndex < images_.size());
+  ATLANTIS_CHECK(imageIndex < renderFinishedSemaphores_.size());
   return ResultT::Ok(std::make_unique<VulkanRenderTarget>(images_[imageIndex], imageIndex, metadata_.extent,
-                                                           metadata_.format, acquireCompleteSemaphore_));
+                                                           metadata_.format, acquireCompleteSemaphore_,
+                                                           renderFinishedSemaphores_[imageIndex]));
 }
 
 atlantis::Result<std::monostate, atlantis::rhi::PresentationError> VulkanPresentation::present(
