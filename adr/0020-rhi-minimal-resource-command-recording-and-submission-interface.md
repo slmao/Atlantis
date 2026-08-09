@@ -65,40 +65,81 @@ recorded GPU commands:
   Renderer/Shader System scope untouched by this decision.
 - Recording is only ever performed from inside a RenderGraph pass's
   execution callback
-  ([ADR-0021](0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)) —
-  `CommandList` itself does not enforce this (it is a plain RHI type,
-  usable by anyone holding one), but no code outside RenderGraph's
-  execution path is introduced by this spec to obtain or record into one,
-  preserving AGENTS.md's "RenderGraph is the mandatory path for GPU work"
-  rule in practice, not just by omission.
-- Not thread-safe; not copyable; owned by the caller that requested it
-  from `Device`; must not outlive the `Device` it was created from — same
-  ownership discipline as every other RHI type under
-  [ADR-0003](0003-resource-rendertarget-ownership-model.md).
+  ([ADR-0021](0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)).
+  `CommandList` itself does not enforce this at the type level — it is a
+  plain RHI type, and nothing prevents a caller holding one from calling
+  `transitionResource()`/`clearColor()` directly. This spec's own
+  implementation introduces no code path that does so outside a
+  RenderGraph pass callback, and the spec's Acceptance Criteria require
+  this to hold by inspection — the same enforcement model AGENTS.md
+  already relies on for "no direct `vkCmd*` call outside the Vulkan
+  Backend's `CommandList` implementation" (also a convention verified by
+  review/inspection, not a compiler-enforced guarantee). This is a
+  documented, actively-relied-on discipline, not a structural guarantee —
+  see Consequences.
+- Caller-owned while being recorded into; not thread-safe; not copyable.
+  **Ownership transfers to `Device` at the moment it is passed to
+  `submit()`** (see below) — a caller does not hold, retain, or destroy a
+  `CommandList` after submitting it.
 
 **`Device` gains two new operations:**
 
 - `createCommandList()` — vends a `CommandList` the caller records into
-  and later submits. Phase 1 does not pool or reuse command lists across
-  frames beyond ordinary RAII destruction/recreation; an explicit pooling
-  strategy is left to a future performance-motivated revision.
-- `submit(CommandList, SubmitInfo)` — submits a recorded, non-empty
-  `CommandList` to the device's graphics/present-capable queue.
-  `SubmitInfo` carries: the wait semaphore and wait pipeline stage (the
-  acquire-complete semaphore from
-  [ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)),
-  the signal semaphore (`present()`'s wait target), and a fence the caller
-  uses to know when the submission has finished executing on the GPU.
-  Every `VkResult` along this path is checked and mapped to an explicit
-  `atlantis::Result` error, never discarded.
+  and then submits exactly once. Phase 1 does not pool or reuse command
+  lists across frames beyond `Device`'s own internal single-slot retention
+  described below; an explicit pooling strategy for more than one
+  in-flight command list is left to a future performance-motivated
+  revision.
+- `submit(CommandList commandList, WaitOn waitOn)` — **takes ownership**
+  of `commandList` (moved in, not borrowed) and submits it to the
+  device's graphics/present-capable queue, after first waiting on
+  whatever the *previous* call to `submit()` on this `Device` needs
+  waited on (see "Single frame-in-flight baseline" below — this is what
+  makes ownership transfer safe: the caller never has to decide when a
+  `CommandList` is safe to destroy). `waitOn` is an opaque reference to
+  the acquire-complete signal a `RenderTarget` carries internally (see
+  [ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)) —
+  never a raw semaphore handle the caller constructs or owns itself. On
+  success, `submit()` returns an opaque `SubmissionSignal` value the
+  caller passes to `Presentation::present()` as the "render finished"
+  signal to wait on before presenting.
+  `Device` owns and internally manages whatever semaphore(s)/fence(s) this
+  requires — **this spec does not introduce a general, publicly
+  constructible `Semaphore`/`Fence` RHI type.** Exposing sync objects only
+  as opaque tokens returned by/threaded through `submit()`/`present()`
+  avoids inventing a general synchronization-primitive surface this
+  round's one submission pattern has no second use for. Every `VkResult`
+  along this path is checked and mapped to an explicit `atlantis::Result`
+  error, never discarded.
 
-**Single frame-in-flight baseline.** This round submits and waits on
-exactly one frame's work being in flight at a time: the caller waits on
-the previous frame's fence before recording/submitting the next. This is
-a deliberate simplification, not a performance target — multiple frames
-in flight (double/triple buffering of command lists and sync objects) is
-a natural, anticipated extension, but is not designed or built here; see
-Consequences.
+**Single frame-in-flight baseline, and the exact ownership/lifetime
+sequencing it fixes.** `Device` submits and waits on exactly one frame's
+work being in flight at a time, and owns this bookkeeping entirely
+internally — a caller has no fence or `CommandList` lifetime decision to
+make:
+
+- Internally, `Device` retains at most one previously-submitted
+  `CommandList` (plus its associated fence) at a time.
+- On a `submit()` call, `Device` first checks whether it is holding a
+  prior submission: if so, it waits on that submission's fence, **then**
+  destroys/releases the prior `CommandList` it was retaining, then
+  proceeds with the new submission. If this is the first `submit()` call
+  ever made on this `Device` (no prior submission retained), this wait
+  step is skipped entirely — there is no "first frame has no fence to
+  wait on" special case for a caller to handle, because the caller never
+  sees a fence at all.
+- This fixes, structurally rather than by caller discipline, the
+  otherwise-easy-to-get-wrong ordering hazard of destroying/resetting a
+  `CommandList` (or its underlying command buffer) before the GPU has
+  actually finished executing it — a caller that only ever calls
+  `createCommandList()` → record → `submit()` cannot get this wrong,
+  because `Device` never returns the `CommandList` back to the caller for
+  it to manage.
+
+This is a deliberate simplification, not a performance target — multiple
+frames in flight (a pool of retained command lists/sync objects instead
+of `Device`'s single retained slot) is a natural, anticipated extension,
+but is not designed or built here; see Consequences.
 
 **No general `Buffer`/`Texture`/`Sampler`/pipeline-object type is
 introduced.** [ADR-0015](0015-vulkan-memory-allocation-deferred.md)'s GPU
@@ -123,6 +164,16 @@ round's `CommandList`/`Device` surface has to reason about.
   simple enough to verify by inspection and manual testing, consistent
   with this spec's non-functional goal of "does not stall, leak, or
   busy-spin" without introducing a frame-pacing/performance target.
+- `submit()` taking ownership of `CommandList` and `Device` internally
+  retaining/releasing it against its own fence removes an entire class of
+  caller-discipline bugs (destroying a command buffer the GPU is still
+  executing, mishandling the first-submission-has-no-prior-fence case)
+  without requiring the caller to reason about fence lifetime at all.
+- Keeping `Semaphore`/`Fence` as opaque, `Device`-internal state rather
+  than a new public RHI type keeps this round's public surface to exactly
+  `ResourceState`, `CommandList`, `SubmissionSignal`, and `Device`'s two
+  new methods — no general synchronization-primitive API is introduced
+  ahead of a second use case that would justify one.
 
 ### Negative / Trade-offs
 
@@ -130,6 +181,11 @@ round's `CommandList`/`Device` surface has to reason about.
   than a double/triple-buffered design would — an accepted, explicit
   Phase 1 simplification, not a hidden cost; a future spec must revisit
   this once real frame-time data motivates it.
+- `Device` now holds meaningful internal state across calls (a retained
+  `CommandList` and its fence) rather than being a stateless factory for
+  `CommandList` — a small increase in `Device`'s own implementation
+  complexity, accepted as the cost of removing that complexity from every
+  caller instead.
 - `clearColor()` as the only drawable operation is not a stepping stone to
   a general draw-call API by construction — Minimal Renderer's future spec
   will need to add a real command-recording surface (bound pipeline,
@@ -164,6 +220,25 @@ round's `CommandList`/`Device` surface has to reason about.
   speculative abstraction" principle warns against. Widening
   `transitionResource()`'s parameter type is a natural, low-cost future
   change once `Buffer`/`Texture` exist.
+- **Expose raw `Semaphore`/`Fence` as public RHI types with their own
+  creation functions, and have `SubmitInfo` accept them directly from the
+  caller.** Considered and rejected: this round has exactly one
+  submission pattern (one `CommandList`, one wait signal, one completion
+  signal) with no second use case to validate a general synchronization-
+  primitive type against, and pushing semaphore/fence lifetime
+  correctness onto every caller reintroduces exactly the kind of
+  ordering hazard `Device`-internal ownership (this ADR's actual Decision)
+  exists to remove. A future spec may introduce a real `Semaphore`/`Fence`
+  RHI type once a second consumer (e.g. multiple frames in flight, or a
+  compute/graphics queue handoff) motivates one.
+- **Have the caller (Runtime-equivalent code) retain the previous frame's
+  `CommandList` and explicitly wait on its fence before destroying it**,
+  rather than transferring ownership to `Device` on `submit()`. Rejected:
+  this is exactly the caller-discipline pattern most prone to being
+  silently gotten wrong (an early-return/error branch that skips the wait,
+  a refactor that reorders destruction before the wait) — folding it into
+  `Device`'s own `submit()` implementation makes the correct sequencing
+  structural instead of a documented caller obligation.
 - **Let `Presentation::present()` itself perform the final
   `ColorAttachmentWrite` → `PresentSource` transition internally, hiding
   it from the caller.** Considered, but placed instead on the RenderGraph

@@ -207,8 +207,22 @@ Explicitly excluded from this spec's design and implementation:
   Using it outside that window is a lifetime precondition violation, not
   a guaranteed-detectable error — consistent with this codebase's
   existing handle-misuse tiering (Spec 0005 Error Model).
+- **Move-only: movable, not copyable** — fixed explicitly, not left to
+  implementation-time inference. See
+  [ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md).
 - Exposes read-only extent/format queries; no resize/mutation API of its
-  own.
+  own. Carries an opaque acquire-complete signal internally for
+  `Device::submit()` to consume — never exposed to the caller as a raw
+  handle (see below).
+- **Destruction precondition:** `Presentation`/`Device` must not be
+  destroyed while a `RenderTarget` they vended has been acquired but not
+  yet consumed by a matching `present()` call, nor while a submission that
+  `RenderTarget` participated in has not yet completed on the GPU. A
+  lifetime precondition violation, not a guaranteed-detectable error — see
+  [ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md).
+  Unlike Spec 0003 (where no image was ever acquired, so no such
+  precondition existed), this is a genuinely new caller obligation this
+  spec introduces, not a pre-existing one it merely restates.
 
 **`Presentation` acquire/present**
 
@@ -225,8 +239,10 @@ Explicitly excluded from this spec's design and implementation:
   `Ok(std::nullopt)` for that call and recreation marked needed for the
   next call — no immediate in-call retry. `VK_SUBOPTIMAL_KHR` returns the
   acquired target normally but marks recreation needed for the next call.
-- `present(RenderTarget)` consumes the target by value, waits on the
-  submission's signaled "render finished" semaphore before calling
+- `present(RenderTarget, SubmissionSignal)` consumes the target by value,
+  waits on the opaque `SubmissionSignal`
+  [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md)'s
+  `Device::submit()` returned for that target's submission before calling
   `vkQueuePresentKHR`, and treats `VK_ERROR_OUT_OF_DATE_KHR`/
   `VK_SUBOPTIMAL_KHR` from present itself as routine (marks recreation
   needed, not a `Result::Err`); any other Vulkan error from present is a
@@ -248,17 +264,37 @@ Explicitly excluded from this spec's design and implementation:
 - `CommandList` (RHI interface): `transitionResource(RenderTarget&,
   ResourceState before, ResourceState after)` and `clearColor(RenderTarget&,
   ClearColorValue)` — the only two recordable operations this spec
-  introduces. Not thread-safe, not copyable, caller-owned, must not
-  outlive its `Device`.
+  introduces. Not thread-safe, not copyable; caller-owned only while being
+  recorded into — **ownership transfers to `Device` when passed to
+  `submit()`**; a caller never destroys a `CommandList` it has submitted.
 - `Device::createCommandList()` vends a `CommandList`.
-- `Device::submit(CommandList, SubmitInfo)` submits a recorded command
-  list to the graphics/present-capable queue, with an explicit wait
-  semaphore + wait stage, signal semaphore, and fence, per
+- `Device::submit(CommandList, WaitOn)` **takes ownership** of the
+  `CommandList` (moved in) and submits it to the graphics/present-capable
+  queue. `WaitOn` is the opaque acquire-complete signal carried inside the
+  `RenderTarget` the recorded work targets — never a raw semaphore handle
+  the caller constructs. On success, returns an opaque `SubmissionSignal`
+  the caller passes to `Presentation::present()`. `Device` owns and
+  internally manages whatever semaphore(s)/fence this requires; **no
+  general, publicly constructible `Semaphore`/`Fence` RHI type is
+  introduced this round.** Every `VkResult` is checked; failures surface
+  through `atlantis::Result`, never discarded. Full contract in
   [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md).
-  Every `VkResult` is checked; failures surface through
-  `atlantis::Result`, never discarded.
-- Single frame-in-flight baseline: the caller waits on the previous
-  frame's fence before recording/submitting the next.
+- Single frame-in-flight baseline, enforced by `Device` internally, not by
+  caller discipline: `Device` retains at most one previously-submitted
+  `CommandList` and its fence at a time; each `submit()` call waits on
+  that prior fence (if any — the very first call on a `Device` has none
+  to wait on) and releases the prior `CommandList` before accepting the
+  new submission. A caller never sees or manages a fence.
+- **`Device` exposes a way to drain any outstanding submission and block
+  until the GPU is idle** (e.g. a `waitIdle()`-shaped call, or an
+  equivalent guarantee built into `Device`'s destructor itself) —
+  required so a caller can satisfy `RenderTarget`'s destruction
+  precondition
+  ([ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md))
+  on every exit path, including a mid-frame exit. The exact method name
+  and whether it is caller-invoked or implicit in destruction is left to
+  the Plan; that a mechanism exists and is exercised by this spec's
+  manual verification is fixed here.
 - No `Vk*` type, and no Vulkan header, appears in any RHI public header —
   same structural rule as Spec 0003, verified the same way.
 - No direct `vkCmd*` call exists anywhere outside the Vulkan Backend's
@@ -286,6 +322,17 @@ Explicitly excluded from this spec's design and implementation:
 - A frame-scoped binding mechanism associates each producer-less logical
   resource used by the graph with a concrete RHI `RenderTarget`, valid
   only for that one `execute()` call.
+- **`execute()` validates two binding-related preconditions as
+  guaranteed-detectable programmer errors** (`ATLANTIS_CHECK`/
+  `ATLANTIS_ASSERT`), not silent assumptions: every resource that
+  participates in a `ResourceState`-tagged usage must have a binding
+  supplied; and a bound `RenderTarget` must have no declared read usage
+  anywhere in the compiled graph (protecting
+  [ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)'s
+  write-only/always-`Undefined` premise structurally). See
+  [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md).
+  Spec 0005's plain, untagged logical resources (no `ResourceState`, used
+  purely for ordering) remain legal and require no binding.
 - `execute()` inserts one trailing `transitionResource()` call to
   `ResourceState::PresentSource` for any bound `RenderTarget`, after the
   last pass in compiled order that uses it.
@@ -316,6 +363,14 @@ frame cycle**
   or present time, never crashes, hangs, or produces a Validation Layer
   warning/error — it is absorbed into the recreation-needed bookkeeping
   described above.
+- Every exit path from the manual verification composition (see Testing &
+  Verification Plan), including one that exits mid-frame — after
+  `acquireNextTarget()` returns a target but before `present()` is called
+  — waits for any outstanding GPU work to complete (e.g. draining
+  `Device`'s single retained in-flight submission, per
+  [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md))
+  before destroying `Presentation`/`Device`, satisfying the destruction
+  precondition above.
 
 **Phase 1 single-threaded orchestration and thread-safety contracts**
 
@@ -353,10 +408,13 @@ frame cycle**
 ### Module boundaries (realizing, not moving, an existing one)
 
 This spec does not move or reinterpret any existing module boundary. It
-realizes the RenderGraph → RHI dependency
+realizes the RenderGraph → RHI dependency Spec 0005's own Out of Scope /
+Future Work section already anticipated ("A future RenderGraph-execution
+spec... is expected to extend or complement this spec's compiled graph
+description to actually record and submit GPU work"), which
 [docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md)
-already lists but Spec 0005 deliberately left unrealized for its own
-GPU-independent round:
+(still `PROPOSED`, corroborating rather than authoritative) also already
+lists:
 
 ```
 Windows Platform (existing) -- WindowResize event --> Runtime-equivalent
@@ -386,11 +444,19 @@ Runtime-equivalent code, once per frame:
        callback (which may call CommandList::clearColor(), etc.),
        inserts the final PresentSource transition --
 
-  Device::submit(CommandList, SubmitInfo{acquire-complete semaphore,
-                  render-finished semaphore, fence})
+  Device::submit(CommandList, target's-acquire-complete-signal)
+    -- takes ownership of CommandList; Device internally waits on its own
+       previously-retained submission's fence (if any) before releasing
+       it and accepting this one -- returns SubmissionSignal
 
-  Presentation::present(RenderTarget)  -- waits on render-finished
-    semaphore, calls vkQueuePresentKHR, absorbs out-of-date/suboptimal
+  Presentation::present(RenderTarget, SubmissionSignal)  -- waits on the
+    SubmissionSignal, calls vkQueuePresentKHR, absorbs out-of-date/
+    suboptimal
+
+  -- On every exit path, including a mid-frame exit after acquire but
+     before present: drain Device's outstanding submission (e.g. via a
+     final no-op submit-and-wait, or an explicit Device::waitIdle()-
+     shaped call left to the Plan) before destroying Presentation/Device --
 ```
 
 RHI, RenderGraph, and Vulkan Backend keep exactly the dependency
@@ -446,11 +512,21 @@ guarantee.
   genuine present failure) use `atlantis::Result<T, E>`, consistent with
   every prior spec's convention — no exception is introduced anywhere in
   RHI, Vulkan Backend, or RenderGraph's public or private surface.
-- Programmer errors (using a `RenderTarget` or `CommandList` outside its
-  valid frame/lifetime window in a way this spec claims to detect;
-  calling `execute()` with a binding missing for a resource the graph
-  requires) use `ATLANTIS_CHECK`/`ATLANTIS_ASSERT`, per existing
-  convention.
+- Programmer errors — calling `execute()` with a `ResourceState`-tagged
+  usage missing a binding; binding a `RenderTarget` to a resource that has
+  a declared read usage (see
+  [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)) —
+  use `ATLANTIS_CHECK`/`ATLANTIS_ASSERT`, per
+  [ADR-0009](../adr/0009-assertion.md)'s existing convention.
+  `RenderTarget`/`CommandList` misuse outside their valid frame/lifetime
+  window (using one after it has been presented/submitted; destroying
+  `Presentation`/`Device` with an outstanding acquired `RenderTarget` or
+  unwaited submission) is a **lifetime precondition violation**, the same
+  tier as Spec 0005's builder-handle-after-destruction case — this spec
+  does not claim these are guaranteed-detectable at runtime, and does not
+  test for their detection; it fixes the obligation and requires this
+  spec's own verification composition to satisfy it (see Requirements'
+  destruction-precondition bullet and Testing & Verification Plan).
 - Every `VkResult` along acquire, command recording, submission, and
   present is checked; no `VkResult` is discarded, including ones
   "expected" to always succeed.
@@ -562,8 +638,16 @@ Human Review path for.
   - Every pass's execution callback is invoked, on a fake `CommandList`,
     in exactly the compiled pass order Spec 0005 already guarantees
     deterministic.
-  - Calling `execute()` without a binding for a resource the graph
-    requires triggers the programmer-error/assertion policy.
+  - Calling `execute()` without a binding for a resource that participates
+    in a `ResourceState`-tagged usage triggers the programmer-error/
+    assertion policy.
+  - Binding a `RenderTarget` to a logical resource that has any declared
+    read usage in the compiled graph triggers the programmer-error/
+    assertion policy, whether or not that resource also has a write usage.
+  - A plain, untagged Spec 0005 logical resource (no `ResourceState`, no
+    binding supplied) compiles and executes with no transition and no
+    assertion — confirming the binding-validity checks apply only to
+    `ResourceState`-tagged usages, not to every resource in the graph.
 - **Headless integration tests:** not applicable in
   [testing-strategy.md](../docs/process/testing-strategy.md)'s current
   sense (layer 2 is headless *rendering*, which remains future work); a
@@ -603,6 +687,15 @@ Human Review path for.
     no outstanding acquired `RenderTarget`, no leaked `CommandList`, and
     no Validation Layer warning or error at any point, including at
     shutdown.
+  - **A deliberate mid-frame exit** — closing the window (or otherwise
+    triggering shutdown) immediately after `acquireNextTarget()` returns a
+    `RenderTarget` but before `Device::submit()`/`present()` is called for
+    that frame — is exercised explicitly, at least once, and completes
+    with no Validation Layer warning or error, satisfying the destruction
+    precondition
+    ([ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md))
+    even on this path, not only on the common "acquire → execute → submit
+    → present" path.
 
 ## Acceptance Criteria
 
@@ -614,6 +707,26 @@ Human Review path for.
 - [ ] `RenderTarget` is non-owning, frame-scoped, and write-only in every
       code path this spec implements — no read-back-from-`RenderTarget`
       capability exists anywhere.
+- [ ] `RenderTarget` is move-only (movable, non-copyable) — a compile-time
+      property, verified as such.
+- [ ] Binding a `RenderTarget` to a logical resource that has any declared
+      read usage in the compiled graph is rejected as a programmer error
+      at `execute()` time, in every tested case — enforcing the
+      write-only premise structurally, not only by documentation.
+- [ ] A `ResourceState`-tagged usage against a resource with no supplied
+      binding is rejected as a programmer error at `execute()` time.
+- [ ] `Device::submit()` takes ownership of the `CommandList` passed to
+      it; no code path in this spec's implementation destroys a
+      `CommandList` that has been submitted, and no code path submits a
+      `CommandList` without first waiting (via `Device`'s own internal
+      bookkeeping) on any prior submission's fence — verifiable by
+      inspection that `Device` alone owns this sequencing, not the
+      caller.
+- [ ] `Presentation`/`Device` are never destroyed anywhere in this spec's
+      implementation or manual verification while a `RenderTarget` they
+      vended has been acquired but not yet presented, or while a
+      submission has not yet completed on the GPU — including on the
+      deliberate mid-frame exit path exercised by manual verification.
 - [ ] `acquireNextTarget()` returns `Ok(std::nullopt)` (not an error) at
       zero framebuffer extent, both for a freshly-minimized window and an
       initially-zero-extent window at startup — verifiable by code
@@ -650,9 +763,11 @@ Human Review path for.
       spec's implementation.
 - [ ] No Android NDK build configuration, no second graphics backend, and
       no thread/job system is introduced anywhere this spec touches.
-- [ ] No multiple-frames-in-flight machinery (command list pooling beyond
-      ordinary RAII, per-frame semaphore/fence arrays) is implemented —
-      the single-frame-in-flight baseline is a structural property of the
+- [ ] No multiple-frames-in-flight machinery (more than one retained
+      in-flight `CommandList`/fence inside `Device`, per-frame semaphore/
+      fence arrays) is implemented — `Device` retains at most one
+      previously-submitted `CommandList` at a time, and the
+      single-frame-in-flight baseline is a structural property of the
       implementation, not merely a documented intention.
 - [ ] All three ADRs listed in Architectural Impact
       ([ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md),
@@ -682,6 +797,19 @@ Human Review path for.
 - The concrete representation of `execute()`'s frame-scoped resource
   binding (a small vector of pairs vs. a dedicated map type) is left to
   the Plan.
+- **Whether `AcquireError`/submission failure types reuse and extend the
+  existing `PresentationError` enum** (`SurfaceLost`,
+  `SwapchainCreationFailed`, `DeviceLost`, `Unknown` — already shipped by
+  Spec 0003 in `src/rhi/include/atlantis/rhi/types.h`) **or introduce new
+  sibling error types** is left to the Plan. This spec fixes error
+  *routing* (which failures are `Result::Err` vs. a non-error outcome vs.
+  a precondition violation) and the tri-state acquire-outcome shape, not
+  the concrete enum(s)' spelling or relationship to the existing type.
+- The exact method name and shape for `Device`'s "drain outstanding
+  submission" capability (a caller-invoked `waitIdle()`-shaped call vs. an
+  implicit guarantee inside `Device`'s destructor) is left to the Plan;
+  this spec fixes only that the capability must exist and be exercised on
+  every exit path, including a deliberate mid-frame exit.
 - Whether a future Minimal Renderer spec will need to widen
   `transitionResource()`'s parameter from `RenderTarget&` to a general
   resource reference, and whether `ResourceState` will need meaningfully

@@ -60,6 +60,23 @@ Two additional forces bear directly on this decision:
   violation, the same tier [Spec 0005](../specs/0005-render-graph-foundation.md)'s
   Error Model already established for other borrowed-handle misuse in
   this codebase — not a case this contract claims to detect dynamically.
+  **This precondition's consequence at `Presentation`/`Device`
+  destruction is stated explicitly below**, because unlike Spec 0003 —
+  where no image was ever acquired, so destruction had no synchronization
+  precondition to satisfy — that is no longer true once real acquire
+  exists.
+- **`RenderTarget` is move-only: movable, not copyable.** Fixed
+  explicitly, per AGENTS.md's Ownership and lifetime rules ("ownership
+  transfer is expressed by moving an owning type... not implied by
+  convention alone") — a copyable `RenderTarget` would let a caller
+  produce two values referencing the same one-time acquire/present
+  borrow, making "presented more than once" trivially easy to trigger by
+  accident. `RenderTarget` also carries, opaquely (not as a
+  caller-visible field), a reference to the acquire-complete signal
+  `Device::submit()`
+  ([ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md))
+  needs to wait on before GPU work touching this target begins — the
+  caller never constructs, owns, or manages that signal directly.
 - Its only externally-visible state, as far as this decision fixes, is
   whatever a `CommandList::transitionResource()` call
   ([ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md))
@@ -103,21 +120,55 @@ Two additional forces bear directly on this decision:
   ([ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md)).
   The concrete semaphore/pool count is a Vulkan Backend implementation
   detail, not fixed by this ADR beyond "at least enough to avoid reusing a
-  semaphore still in flight."
+  semaphore still in flight." This signal is never handed to the caller as
+  a raw handle — it travels opaquely inside the returned `RenderTarget`
+  value and is read only by `Device::submit()`
+  ([ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md)),
+  consistent with this ADR's decision that `RenderTarget` carries it
+  internally (see "`RenderTarget`" above).
 
-**`present(RenderTarget)`** is added to `Presentation`:
+**`present(RenderTarget target, SubmissionSignal renderFinished)`** is
+added to `Presentation`:
 
-- Consumes the `RenderTarget` by value (move-only acceptance), ending its
-  borrow. Waits on the caller-supplied "render finished" signal (the
-  semaphore `Device::submit()`
-  ([ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md))
-  signaled for the command list that recorded work against this target)
-  before calling `vkQueuePresentKHR`.
+- Consumes `target` by value (move-only, per above), ending its borrow.
+  `renderFinished` is the opaque `SubmissionSignal`
+  [ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md)'s
+  `Device::submit()` returned for the submission that recorded work
+  against `target` — `present()` waits on it before calling
+  `vkQueuePresentKHR`. Presenting a `target` without having first
+  submitted (and obtained a matching `SubmissionSignal` for) the work that
+  transitions it to `ResourceState::PresentSource`
+  ([ADR-0021](0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md))
+  is a caller precondition violation this ADR does not claim to detect —
+  the same tier as every other cross-object precondition in this
+  contract.
 - `VK_ERROR_OUT_OF_DATE_KHR` or `VK_SUBOPTIMAL_KHR` from the present call
   itself marks recreation needed for the next `acquireNextTarget()` call
   and is **not** surfaced to the caller as a `Result::Err` — this is
   expected, routine swapchain aging, not a failure. Any other Vulkan error
   from present is a genuine `Result::Err`.
+
+**Destruction with an outstanding acquired `RenderTarget`.** Spec 0003's
+`Presentation` could be destroyed safely at any point because no image
+was ever acquired under its contract — that structural guarantee no
+longer holds once `acquireNextTarget()` exists. This ADR fixes the
+resulting precondition explicitly rather than leaving it as a silent gap:
+**a caller must not destroy `Presentation` (or the `Device` it was
+constructed from) while a `RenderTarget` it vended has been acquired but
+not yet consumed by a matching `present()` call**, and must not destroy
+either while a `Device::submit()` this `RenderTarget` participated in has
+not yet been waited on to completion. This is a lifetime precondition
+violation, not a guaranteed-detectable error — consistent with this
+codebase's existing handle-misuse tiering — but the Runtime-equivalent
+verification composition this spec builds (see
+[specs/0006](../specs/0006-rhi-render-graph-frame-execution-foundation.md)
+Testing & Verification Plan) is required to demonstrate the discipline
+that satisfies it: waiting for the device to go idle (e.g. via
+`Device::submit()`'s own internal fence bookkeeping,
+[ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md))
+before tearing down `Presentation`/`Device` on every exit path, including
+one that exits mid-frame (after `acquireNextTarget()` but before
+`present()`).
 
 **Image layout handoff** is resolved by a deliberate simplification: a
 `RenderTarget`'s image is always treated by the Vulkan Backend as
@@ -168,6 +219,12 @@ appears; not designed here.
   back the frame it is drawing (e.g. no post-process-from-swapchain
   pattern) — acceptable because no such use case exists yet, but a real
   constraint any future spec building on this contract must know about.
+- Real acquire genuinely reintroduces a synchronization precondition at
+  `Presentation`/`Device` destruction that Spec 0003 was able to avoid
+  entirely — this ADR fixes the precondition and requires this spec's
+  verification composition to demonstrate satisfying it on every exit
+  path, but it is a real new caller obligation Spec 0003's contract never
+  had, not something this decision can eliminate.
 
 ## Alternatives Considered
 

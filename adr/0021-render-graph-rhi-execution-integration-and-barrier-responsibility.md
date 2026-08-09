@@ -10,10 +10,21 @@
 Spec 0005 shipped RenderGraph's graph-description/compilation core with
 **no RHI dependency**, explicitly deferring execution: "it does not
 execute, submit, or simulate GPU work anywhere in this spec's scope."
+Spec 0005 itself, in its own `Approved` Out of Scope / Future Work
+section, anticipates exactly this: "A future RenderGraph-execution spec...
+is expected to extend or complement this spec's compiled graph
+description to actually record and submit GPU work, consuming both that
+new RHI surface and this spec's compiled pass order and dependency
+relations." This is the primary authority this ADR relies on for treating
+RenderGraph's new RHI dependency as an anticipated continuation rather
+than a boundary invented from nothing.
 [docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md)
-already lists RenderGraph as depending on "RHI, Core" — this was
-anticipated, not decided by Spec 0005, which scoped itself to Core-only
-for that one round.
+also already lists RenderGraph as depending on "RHI, Core" — corroborating,
+but secondary, evidence: that document is explicitly marked "PROPOSED —
+pending spec/ADR approval. Not as-built," so it is not, by itself,
+authoritative under AGENTS.md's "one authoritative source" documentation
+rule. This ADR is what actually makes the RenderGraph → RHI dependency a
+reviewed decision, informed by both.
 
 [ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md)
 now gives RHI a minimal `CommandList`/`transitionResource()` surface.
@@ -36,10 +47,14 @@ requires that binding mechanism to exist for the first time.
 
 ## Decision
 
-**RenderGraph gains a dependency on RHI**, realizing the boundary
-`module_boundaries.md` already anticipated — no new module boundary is
-introduced, this decision fills in the previously-unrealized part of an
-existing one. RenderGraph's execution-phase code references only RHI's
+**RenderGraph gains a dependency on RHI**, realizing the dependency Spec
+0005 itself already anticipated (see Context) — no *new* module boundary
+concept is introduced (RenderGraph does not gain a dependency on Vulkan
+Backend, Atlantis Platform, or Runtime; every existing forbidden-
+dependency rule is unchanged), but this ADR, not a prior document, is
+what makes RenderGraph's RHI dependency an actual, reviewed decision
+rather than a still-open anticipation. RenderGraph's execution-phase code
+references only RHI's
 backend-agnostic types (`CommandList`, `ResourceState`, `RenderTarget`);
 it continues to never reference Vulkan Backend or any `Vk*` type, per
 [ADR-0001](0001-rhi-backend-independence.md) — that rule is unchanged and
@@ -73,6 +88,38 @@ binding mechanism. This binding is scoped to a single `execute()` call
 ([ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)) —
 it is not a persistent registration on the builder or the compiled graph.
 
+**Binding validity is checked, not assumed, at `execute()` time — two
+rules, both guaranteed-detectable programmer errors:**
+
+- **Every logical resource that participates in any `ResourceState`-tagged
+  usage in the compiled graph must have a binding supplied to `execute()`.**
+  A `ResourceState`-tagged usage against an unbound resource (one whose
+  binding was omitted, or one that is not producer-less at all — see
+  below) is a programmer error, checked when `execute()` is called, since
+  that is the first point both the compiled graph's full usage set and the
+  binding map are simultaneously available. Spec 0005's plain, *untagged*
+  producer/reader logical resources (used purely for ordering, with no
+  `ResourceState` and no RHI backing) remain fully legal and require no
+  binding — they participate in no transition, exactly as in Spec 0005.
+- **Binding a `RenderTarget` to a logical resource that has any declared
+  read usage anywhere in the compiled graph is a programmer error.** This
+  is what makes [ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)'s
+  "a `RenderTarget` is exclusively a write target, so discarding from
+  `ResourceState::Undefined` is always correct" claim an *enforced*
+  property of this round's implementation rather than a documented
+  assumption nothing actually checks — without this rule, nothing would
+  stop a caller from declaring a `reads()` usage against the same logical
+  resource a `RenderTarget` is bound to, silently invalidating that
+  claim's premise. `execute()` can check this because binding happens
+  after `compile()`, when the full, final usage set for every resource is
+  already known.
+
+Both checks use `ATLANTIS_CHECK`/`ATLANTIS_ASSERT`, consistent with
+[ADR-0009](0009-assertion.md) and this codebase's existing programmer-
+error tiering — not a `Result`-typed recoverable error, since both
+conditions are fully determinable from the caller's own inputs at the
+call site.
+
 **Dependency-to-barrier responsibility split** — the core of this
 decision:
 
@@ -105,8 +152,10 @@ decision:
   Alternatives Considered).
 
 **RenderGraph records; it does not submit or present.** `execute()` only
-fills the caller-provided `CommandList`. `Device::submit()` and
-`Presentation::present()`
+fills the caller-provided `CommandList` (a borrowed reference — ownership
+of the `CommandList` transfers to `Device` only later, at `submit()`, per
+[ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md)).
+`Device::submit()` and `Presentation::present()`
 ([ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md),
 [ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md))
 remain explicit, separate calls the caller (Runtime-equivalent code)
@@ -138,6 +187,12 @@ introduces.
   present-transition) keeps the barrier-recording code path in exactly
   one place to reason about and test, rather than split across two
   modules.
+- The two binding-validity checks (every `ResourceState`-tagged usage is
+  bound; no bound `RenderTarget` has a read usage) turn
+  [ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)'s
+  write-only/always-`Undefined` premise from a documented assumption into
+  something `execute()` actually enforces, closing a gap an earlier
+  draft of this decision left implicit.
 
 ### Negative / Trade-offs
 
@@ -157,6 +212,10 @@ introduces.
   reader could miss; this ADR states it explicitly and the spec's
   Acceptance Criteria enforce it by inspection, but it remains a boundary
   that must be actively maintained as the codebase grows.
+- The two binding-validity checks add a real, if small, `execute()`-time
+  validation pass over the compiled graph's usage set that did not exist
+  in Spec 0005's own scope — accepted as necessary, not optional, given
+  what they protect (see Positive above).
 
 ## Alternatives Considered
 
@@ -191,6 +250,17 @@ introduces.
   `RenderTarget` would couple a construction-time object to a
   frame-lifetime resource, contradicting the independence Spec 0005's
   Human-Review-approved ownership model established.
+- **Leave binding validity as an undocumented caller obligation, with no
+  `execute()`-time check** (rely on manual verification/inspection alone,
+  the way `RenderTarget`'s destruction precondition is handled). Rejected
+  specifically for the "no read usage on a bound `RenderTarget`" rule: the
+  entire always-`Undefined`-incoming-layout simplification
+  ([ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md))
+  depends on this being true, and `execute()` has everything it needs
+  (the compiled graph's full usage set, the binding map) to check it
+  cheaply — leaving a check this easy to add as an undetected precondition
+  would be an unforced gap, unlike genuinely undetectable cases (e.g.
+  handle-use-after-builder-destruction) where no reasonable check exists.
 - **Let RenderGraph submit and present internally, absorbing
   `Device::submit()`/`Presentation::present()` into `execute()`.**
   Rejected: this would make RenderGraph depend on `Presentation`, which
