@@ -1,8 +1,11 @@
 #pragma once
 
+#include <memory>
 #include <variant>
 
 #include <atlantis/result.h>
+#include <atlantis/rhi/render_target.h>
+#include <atlantis/rhi/submission_signal.h>
 #include <atlantis/rhi/types.h>
 
 namespace atlantis::rhi {
@@ -41,6 +44,21 @@ class Presentation {
   // Reflects the most recently successfully (re)created swapchain. Never
   // hands out an image handle, a RenderTarget, or any per-image resource.
   [[nodiscard]] virtual SwapchainMetadata metadata() const = 0;
+
+  // Tri-state (ADR-0019): Err -- unrecoverable failure (surface/device
+  // lost, or a recreateIfNeeded() failure this call performs internally
+  // as its first step). Ok(nullptr) -- nothing to draw this frame (zero
+  // extent, or an out-of-date swapchain deferred to the next call) --
+  // not an error. Ok(non-null) -- a usable RenderTarget. Never retries
+  // acquisition within the same call on VK_ERROR_OUT_OF_DATE_KHR.
+  [[nodiscard]] virtual atlantis::Result<std::unique_ptr<RenderTarget>, PresentationError> acquireNextTarget() = 0;
+
+  // Consumes target (ends its borrow) and waits on renderFinished before
+  // calling vkQueuePresentKHR internally. Out-of-date/suboptimal from
+  // present itself is routine (marks recreation needed, not Err); any
+  // other Vulkan error is a genuine Err.
+  [[nodiscard]] virtual atlantis::Result<std::monostate, PresentationError> present(
+      std::unique_ptr<RenderTarget> target, std::unique_ptr<SubmissionSignal> renderFinished) = 0;
 };
 
 }  // namespace atlantis::rhi
