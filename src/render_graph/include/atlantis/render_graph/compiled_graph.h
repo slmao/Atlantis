@@ -1,13 +1,26 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include <atlantis/rhi/command_list.h>
+#include <atlantis/rhi/types.h>
+
 namespace atlantis::render_graph {
 
 class RenderGraphBuilder;  // fwd decl; only compile() constructs a CompiledGraph
+
+// A pass's execution callback (Plan 0006, ADR-0021), recorded via
+// RenderGraphBuilder::setExecute() and invoked by render_graph::execute()
+// in compiled pass order. A pass with no callback set (an isolated pass,
+// or one declared purely for its usage/ordering effect) is legal --
+// Spec 0005's pass-retention rule is unaffected; execute() simply invokes
+// nothing for it.
+using PassExecuteFn = std::function<void(atlantis::rhi::CommandList&)>;
 
 // A compiled-local identity for a pass, distinct from PassHandle and
 // distinct from CompileError's PassDiagnostic::declarationIndex.
@@ -91,6 +104,44 @@ class CompiledPassId {
 struct CompiledDependencyEdge {
   CompiledPassId from;  // the producer
   CompiledPassId to;    // the reader
+};
+
+// A compiled-local identity for a logical resource (Plan 0006) --
+// mutually distinct from CompiledPassId, PassHandle, and ResourceHandle;
+// cross-type misuse is a compile-time error, never a runtime condition,
+// same as CompiledPassId's own contract. Unlike CompiledPassId (whose
+// value is a compiled *execution position*), a CompiledResourceId's value
+// is simply the resource's original declaration index -- resources are
+// never reordered by compile() (only passes are), so no separate
+// declaration-to-compiled remapping exists or is needed for resources.
+// Default-constructed to an always-invalid sentinel, same tiering as
+// CompiledPassId: a default/invalid or out-of-range CompiledResourceId is
+// a guaranteed-detectable programmer error (assertion) at every
+// CompiledGraph accessor that takes one; a CompiledResourceId from a
+// *different* CompiledGraph is a graph-scoped identity precondition
+// violation, the caller's obligation to avoid, not detected here.
+class CompiledResourceId {
+ public:
+  CompiledResourceId() noexcept = default;
+  [[nodiscard]] bool operator==(const CompiledResourceId&) const noexcept = default;
+  [[nodiscard]] std::size_t index() const noexcept { return index_; }
+
+ private:
+  friend class CompiledGraph;
+  explicit CompiledResourceId(std::size_t index) noexcept : index_(index) {}
+  std::size_t index_ = static_cast<std::size_t>(-1);  // invalid sentinel, never a real declaration index
+};
+
+// One resource usage a compiled pass declares (Plan 0006, ADR-0021).
+// state is empty for a plain, untagged Spec 0005 usage (no ResourceState
+// -- used purely for producer-derived ordering, never bound, never
+// transitioned by render_graph::execute()); populated for a
+// ResourceState-tagged usage (RenderGraphBuilder::reads()/writes()'
+// tagged overloads).
+struct CompiledResourceUsage {
+  CompiledResourceId resource;
+  bool isWrite = false;
+  std::optional<atlantis::rhi::ResourceState> state;
 };
 
 // The immutable, independently-owned result of a successful compile()
@@ -208,10 +259,82 @@ class CompiledGraph {
   // invalid-sentinel endpoint. See Plan Section 5/8.
   [[nodiscard]] CompiledDependencyEdge dependency(std::size_t i) const;
 
+  // -- Plan 0006 additions below: additive to Spec 0005's own compiled
+  // graph output, sanctioned by that spec's own Out of Scope / Future
+  // Work section ("a future spec may extend... this round's compiled
+  // graph shape"). None of the accessors above are changed in behavior.
+
+  // The number of logical resources declared in the graph this compiled
+  // from -- includes every resource, whether or not it has a producer or
+  // any usage at all (Spec 0005's "declared but never used" case).
+  [[nodiscard]] std::size_t resourceCount() const noexcept;
+
+  // The resource at declaration index `index` (< resourceCount()). A
+  // CompiledResourceId's value is simply its declaration index -- see
+  // that class's own comment for why no separate remapping exists.
+  // Passing index >= resourceCount() is a programmer error (assertion);
+  // fallback is a default-constructed (invalid-sentinel) CompiledResourceId.
+  [[nodiscard]] CompiledResourceId resourceAt(std::size_t index) const;
+
+  // resource's diagnostic label -- same borrow-lifetime, fallback, and
+  // assertion-tiering contract as label(CompiledPassId) above.
+  [[nodiscard]] std::string_view label(CompiledResourceId resource) const;
+
+  // True iff some pass declares a write usage against resource (Spec
+  // 0005's single-producer rule: at most one). Passing an out-of-range
+  // resource is a programmer error (assertion); fallback is false.
+  [[nodiscard]] bool hasProducer(CompiledResourceId resource) const noexcept;
+
+  // True iff resource has at least one ResourceState-tagged usage
+  // anywhere in the graph -- exactly the resources render_graph::execute()
+  // requires a binding for (Plan 0006 Section 7). Passing an out-of-range
+  // resource is a programmer error (assertion); fallback is false.
+  [[nodiscard]] bool requiresRhiBinding(CompiledResourceId resource) const noexcept;
+
+  // The number of resource usages `pass` declares, in declaration order
+  // within that pass. Passing an out-of-range pass is a programmer error
+  // (assertion); fallback is 0.
+  [[nodiscard]] std::size_t usageCount(CompiledPassId pass) const noexcept;
+
+  // The usage at index `index` (< usageCount(pass)) for `pass`. Passing
+  // an out-of-range pass or index is a programmer error (assertion);
+  // fallback is a default-constructed CompiledResourceUsage (invalid-
+  // sentinel resource, isWrite == false, no state).
+  [[nodiscard]] CompiledResourceUsage usage(CompiledPassId pass, std::size_t index) const;
+
+  // `pass`'s execution callback (Plan 0006), as set by
+  // RenderGraphBuilder::setExecute() -- an empty std::function if never
+  // set (a legal, isolated-or-non-executing pass). render_graph::execute()
+  // is this accessor's only intended caller. Passing an out-of-range
+  // pass is a programmer error (assertion); fallback is a reference to a
+  // static, always-empty PassExecuteFn.
+  [[nodiscard]] const PassExecuteFn& passExecuteFn(CompiledPassId pass) const;
+
  private:
   friend class RenderGraphBuilder;
+
+  // A resource usage as a plain declaration-index (not an
+  // already-constructed CompiledResourceId), for the same reason
+  // EdgeRecord below stores plain compiled-position indices rather than
+  // CompiledPassId values: CompiledResourceId's constructor is only
+  // friended to CompiledGraph itself, and RenderGraphBuilder (a friend of
+  // CompiledGraph, not of CompiledResourceId) has no legal way to
+  // construct one directly. usage() converts a stored UsageRecord into a
+  // real CompiledResourceUsage on the fly -- a CompiledGraph member
+  // function, and therefore already permitted.
+  struct UsageRecord {
+    std::size_t resourceIndex;
+    bool isWrite;
+    std::optional<atlantis::rhi::ResourceState> state;
+  };
   struct PassRecord {
     std::string label;
+    std::vector<UsageRecord> usages;
+    PassExecuteFn executeFn;
+  };
+  struct ResourceRecord {
+    std::string label;
+    bool hasProducer = false;
   };
 
   // A dependency edge as two plain compiled-position indices, not two
@@ -231,11 +354,16 @@ class CompiledGraph {
     std::size_t to;
   };
 
-  CompiledGraph(std::vector<PassRecord> passesInOrder, std::vector<EdgeRecord> edges);
+  // resources (Plan 0006): index IS the CompiledResourceId value AND the
+  // resource's original declaration index -- see that class's own
+  // comment.
+  CompiledGraph(std::vector<PassRecord> passesInOrder, std::vector<EdgeRecord> edges,
+                std::vector<ResourceRecord> resources);
 
   std::vector<PassRecord> passesInOrder_;  // index IS the compiled position
                                             // AND the CompiledPassId value
   std::vector<CompiledDependencyEdge> edges_;
+  std::vector<ResourceRecord> resources_;
 };
 
 }  // namespace atlantis::render_graph

@@ -43,10 +43,15 @@ struct RawResource {
 
 // One compiled pass's data, in compiled-position order -- `label` is an
 // owned copy (never borrowed from `passes`), ready for
-// RenderGraphBuilder::compile() (a later implementation step) to move
-// into a public CompiledGraph.
+// RenderGraphBuilder::compile() to move into a public CompiledGraph.
+// declarationIndex (Plan 0006) is the index into the `passes` vector this
+// compiled position came from -- it lets RenderGraphBuilder::compile()
+// correlate a compiled position back to that pass's own accumulated
+// usages (including ResourceState tags) and execution callback, which
+// this purely-structural algorithm has no reason to know about.
 struct CompiledPassData {
   std::string label;
+  std::size_t declarationIndex;
 };
 
 // A single producer -> reader dependency relation, expressed as
