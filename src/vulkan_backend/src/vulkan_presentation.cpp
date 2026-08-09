@@ -10,7 +10,9 @@
 #include <atlantis/assert.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
 
+#include "vulkan_render_target.h"
 #include "vulkan_result.h"
+#include "vulkan_submission_signal.h"
 #include "wsi/win32_surface.h"
 
 namespace atlantis::vulkan_backend::detail {
@@ -211,18 +213,47 @@ namespace {
 
 }  // namespace
 
+namespace {
+
+// Plan 0006 Section 10: created once at construction, alongside the
+// swapchain-independent state recreateIfNeeded() already manages.
+[[nodiscard]] VkSemaphore createAcquireCompleteSemaphore(VkDevice device) {
+  VkSemaphoreCreateInfo createInfo{};
+  createInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+  VkSemaphore semaphore = VK_NULL_HANDLE;
+  const VkResult result = vkCreateSemaphore(device, &createInfo, nullptr, &semaphore);
+  // Presentation construction (ADR-0014's factory functions) has no
+  // failure path for this semaphore specifically -- Spec 0006 does not
+  // introduce one, and a fresh semaphore creation failing immediately
+  // after a device and swapchain-capable surface were already
+  // successfully created is exactly the kind of "should never happen"
+  // condition ATLANTIS_CHECK exists for, not a new PresentationCreateError
+  // variant.
+  ATLANTIS_CHECK_MSG(result == VK_SUCCESS, "vkCreateSemaphore() failed for the acquire-complete semaphore");
+  return semaphore;
+}
+
+}  // namespace
+
 VulkanPresentation::VulkanPresentation(VulkanDevice& device, VkSurfaceKHR surface)
-    : device_(device), surface_(surface) {}
+    : device_(device), surface_(surface), acquireCompleteSemaphore_(createAcquireCompleteSemaphore(device.device())) {}
 
 VulkanPresentation::~VulkanPresentation() {
-  // Destruction order: swapchain (if any), then surface -- never the
-  // Device, PhysicalDevice, Instance, Queue, or native window (those are
-  // the caller's responsibility; ADR-0013). No acquired image can ever be
-  // outstanding under this spec's contract (ADR-0016), so there is no
-  // synchronization precondition (no device-idle wait) to satisfy first.
+  // Destruction order: swapchain (if any), acquire-complete semaphore,
+  // then surface -- never the Device, PhysicalDevice, Instance, Queue, or
+  // native window (those are the caller's responsibility; ADR-0013).
+  // Real acquire exists as of Plan 0006, so -- unlike Spec 0003's own
+  // contract -- an outstanding acquired RenderTarget or unwaited
+  // submission IS a real destruction precondition now (ADR-0019): the
+  // caller must have already called Device::waitIdle() before destroying
+  // this object. This destructor does not itself wait; that discipline
+  // lives on the caller side (Plan 0006 Section 11), matching how
+  // RenderTarget's own frame-window misuse is handled -- an undetected
+  // lifetime precondition, not something this destructor re-verifies.
   if (swapchain_ != VK_NULL_HANDLE) {
     vkDestroySwapchainKHR(device_.device(), swapchain_, nullptr);
   }
+  vkDestroySemaphore(device_.device(), acquireCompleteSemaphore_, nullptr);
   vkDestroySurfaceKHR(device_.instance(), surface_, nullptr);
 }
 
@@ -269,7 +300,10 @@ atlantis::Result<std::monostate, atlantis::rhi::PresentationError> VulkanPresent
   // recreationNeeded_ left set for retry), which resetting metadata_
   // here, before any of the fallible queries, already guarantees
   // structurally rather than needing a reset on every failure branch.
+  // images_ is cleared alongside it -- the old swapchain that owned those
+  // handles was just destroyed above, so they are no longer valid.
   metadata_ = atlantis::rhi::SwapchainMetadata{};
+  images_.clear();
 
   VkSurfaceCapabilitiesKHR capabilities{};
   const VkResult capabilitiesResult =
@@ -354,11 +388,12 @@ atlantis::Result<std::monostate, atlantis::rhi::PresentationError> VulkanPresent
   }
   SwapchainGuard swapchainGuard(device_.device(), newSwapchain);
 
-  // Queries the image count only -- never a second call for the image
-  // handles themselves, never allocated into a std::vector<VkImage>,
-  // never stored. This is not an acquire and creates no per-image
-  // ownership; metadata() only ever exposes the count, format, and
-  // extent below.
+  // Two-call idiom, same final-count-resize rationale as this file's other
+  // enumeration helpers. Plan 0006: unlike Spec 0003 (count-only, no
+  // per-image ownership), acquireNextTarget() needs the actual VkImage
+  // handles to vend a RenderTarget from -- images_ does not transfer any
+  // ownership (the swapchain still owns every image in it), it is purely
+  // a read cache of handles this object already has authority to query.
   std::uint32_t actualImageCount = 0;
   const VkResult imageCountResult =
       vkGetSwapchainImagesKHR(device_.device(), swapchainGuard.get(), &actualImageCount, nullptr);
@@ -368,13 +403,106 @@ atlantis::Result<std::monostate, atlantis::rhi::PresentationError> VulkanPresent
     // VK_NULL_HANDLE, and metadata_ is still its already-reset default.
     return ResultT::Err(toSwapchainCreationError(imageCountResult));
   }
+  std::vector<VkImage> newImages(actualImageCount);
+  if (actualImageCount > 0) {
+    const VkResult imagesResult =
+        vkGetSwapchainImagesKHR(device_.device(), swapchainGuard.get(), &actualImageCount, newImages.data());
+    if (imagesResult != VK_SUCCESS) {
+      return ResultT::Err(toSwapchainCreationError(imagesResult));
+    }
+    newImages.resize(actualImageCount);
+  }
 
   swapchain_ = swapchainGuard.release();
+  images_ = std::move(newImages);
   metadata_.imageCount = actualImageCount;
   metadata_.format = formatSelection->approvedFormat;
   metadata_.extent = atlantis::rhi::Extent2D{swapchainExtent.width, swapchainExtent.height};
   recreationNeeded_ = false;
 
+  return ResultT::Ok(std::monostate{});
+}
+
+atlantis::Result<std::unique_ptr<atlantis::rhi::RenderTarget>, atlantis::rhi::PresentationError>
+VulkanPresentation::acquireNextTarget() {
+  using ResultT = atlantis::Result<std::unique_ptr<atlantis::rhi::RenderTarget>, atlantis::rhi::PresentationError>;
+
+  // Step 1: recreateIfNeeded()'s existing 4-step contract, called as-is,
+  // unchanged (ADR-0019). Folds resize/out-of-date recreation timing into
+  // acquire so the caller no longer needs to call it separately per frame.
+  const auto recreateResult = recreateIfNeeded();
+  if (recreateResult.isErr()) {
+    return ResultT::Err(recreateResult.error());
+  }
+
+  // Step 3 (Plan 0006 Section 10): zero extent -- structurally unreachable
+  // to any Vulkan call below, mirroring recreateIfNeeded()'s own
+  // zero-extent guarantee.
+  if (trackedExtent_.isZero()) {
+    return ResultT::Ok(nullptr);
+  }
+  ATLANTIS_CHECK(swapchain_ != VK_NULL_HANDLE);
+
+  std::uint32_t imageIndex = 0;
+  const VkResult acquireResult = vkAcquireNextImageKHR(device_.device(), swapchain_, UINT64_MAX,
+                                                         acquireCompleteSemaphore_, VK_NULL_HANDLE, &imageIndex);
+
+  switch (decideAcquireAction(acquireResult)) {
+    case AcquireAction::SkipAndAwaitNextCall:
+      // VK_ERROR_OUT_OF_DATE_KHR: no in-call retry (ADR-0019) -- the next
+      // call's recreateIfNeeded() step recreates before acquiring again.
+      recreationNeeded_ = true;
+      return ResultT::Ok(nullptr);
+    case AcquireAction::ProceedButMarkRecreate:
+      // VK_SUBOPTIMAL_KHR: this image is still usable; recreate on the
+      // *next* call's recreateIfNeeded() step.
+      recreationNeeded_ = true;
+      break;
+    case AcquireAction::Fail:
+      return ResultT::Err(toAcquireFailureError(acquireResult));
+    case AcquireAction::Proceed:
+      break;
+  }
+
+  ATLANTIS_CHECK(imageIndex < images_.size());
+  return ResultT::Ok(std::make_unique<VulkanRenderTarget>(images_[imageIndex], imageIndex, metadata_.extent,
+                                                           metadata_.format, acquireCompleteSemaphore_));
+}
+
+atlantis::Result<std::monostate, atlantis::rhi::PresentationError> VulkanPresentation::present(
+    std::unique_ptr<atlantis::rhi::RenderTarget> target, std::unique_ptr<atlantis::rhi::SubmissionSignal> renderFinished) {
+  using ResultT = atlantis::Result<std::monostate, atlantis::rhi::PresentationError>;
+
+  auto& vulkanTarget = static_cast<VulkanRenderTarget&>(*target);
+  auto& vulkanSignal = static_cast<VulkanSubmissionSignal&>(*renderFinished);
+
+  const VkSemaphore waitSemaphore = vulkanSignal.semaphore();
+  const std::uint32_t imageIndex = vulkanTarget.imageIndex();
+
+  VkPresentInfoKHR presentInfo{};
+  presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+  presentInfo.waitSemaphoreCount = 1;
+  presentInfo.pWaitSemaphores = &waitSemaphore;
+  presentInfo.swapchainCount = 1;
+  presentInfo.pSwapchains = &swapchain_;
+  presentInfo.pImageIndices = &imageIndex;
+
+  const VkResult presentResult = vkQueuePresentKHR(device_.queue(), &presentInfo);
+
+  // Both borrows end here, regardless of outcome (ADR-0019) -- target and
+  // renderFinished are destroyed as this function returns either way.
+  target.reset();
+  renderFinished.reset();
+
+  if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
+    // Routine, not Err (ADR-0019): marks recreation needed for the next
+    // acquireNextTarget() call.
+    recreationNeeded_ = true;
+    return ResultT::Ok(std::monostate{});
+  }
+  if (presentResult != VK_SUCCESS) {
+    return ResultT::Err(toPresentFailureError(presentResult));
+  }
   return ResultT::Ok(std::monostate{});
 }
 

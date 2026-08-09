@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -8,6 +9,7 @@
 #include <atlantis/render_graph/compiled_graph.h>
 #include <atlantis/render_graph/handles.h>
 #include <atlantis/result.h>
+#include <atlantis/rhi/types.h>
 
 namespace atlantis::render_graph {
 
@@ -73,6 +75,27 @@ class RenderGraphBuilder {
   // read+write conflict check both methods perform.
   void writes(PassHandle pass, ResourceHandle resource);
 
+  // Plan 0006, ADR-0021: same rules as the untagged reads()/writes()
+  // above, additionally tagging the usage with a ResourceState for
+  // render_graph::execute()'s transition-insertion algorithm. Additive to
+  // Spec 0005's model -- the single-producer rule, dependency derivation,
+  // cycle detection, and deterministic ordering (ADR-0017/ADR-0018) are
+  // unaffected; the tag participates in transition bookkeeping only,
+  // never in dependency derivation or ordering.
+  void reads(PassHandle pass, ResourceHandle resource, atlantis::rhi::ResourceState state);
+  void writes(PassHandle pass, ResourceHandle resource, atlantis::rhi::ResourceState state);
+
+  // Plan 0006: records `fn` as `pass`'s execution callback, invoked by
+  // render_graph::execute() when this pass's turn in the compiled order
+  // arrives. A pass with no callback set is legal (Spec 0005 pass
+  // retention is unaffected) -- execute() simply invokes nothing for it.
+  // `pass` must have been vended by this builder instance and still be
+  // within range; a default/invalid or foreign-live-builder handle is a
+  // programmer error (assertion), same tier as reads()/writes() above.
+  // Calling this more than once for the same pass replaces the
+  // previously-set callback.
+  void setExecute(PassHandle pass, PassExecuteFn fn);
+
   // Reads this builder's accumulated state and produces a result; never
   // mutates, consumes, or invalidates this builder, on either success or
   // failure (ADR-0017) -- enforced by the compiler via `const`, not only
@@ -91,10 +114,12 @@ class RenderGraphBuilder {
   struct ResourceUsage {
     std::size_t resourceIndex;
     UsageKind kind;
+    std::optional<atlantis::rhi::ResourceState> state;  // empty for an untagged Spec 0005 usage
   };
   struct PassRecord {
     std::string label;
     std::vector<ResourceUsage> usages;
+    PassExecuteFn executeFn;  // empty std::function if setExecute() was never called for this pass
   };
   struct ResourceRecord {
     std::string label;
@@ -105,7 +130,8 @@ class RenderGraphBuilder {
   [[nodiscard]] bool owns(PassHandle handle) const noexcept;
   [[nodiscard]] bool owns(ResourceHandle handle) const noexcept;
 
-  void declareUsage(PassHandle pass, ResourceHandle resource, UsageKind kind);
+  void declareUsage(PassHandle pass, ResourceHandle resource, UsageKind kind,
+                     std::optional<atlantis::rhi::ResourceState> state = std::nullopt);
 
   std::vector<PassRecord> passes_;
   std::vector<ResourceRecord> resources_;

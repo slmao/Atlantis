@@ -207,7 +207,8 @@ atlantis::Result<CompiledGraphData, CompileError> compile(const std::vector<RawP
 
     CompiledGraphData data;
     data.passesInOrder.reserve(compiledOrder.size());
-    for (std::size_t declIndex : compiledOrder) data.passesInOrder.push_back(CompiledPassData{passes[declIndex].label});
+    for (std::size_t declIndex : compiledOrder)
+      data.passesInOrder.push_back(CompiledPassData{passes[declIndex].label, declIndex});
 
     data.edges.reserve(declEdges.size());
     for (const DeclEdge& edge : declEdges) {

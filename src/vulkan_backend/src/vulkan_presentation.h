@@ -28,6 +28,27 @@ enum class RecreateAction { Skip, NoOp, Recreate };
   return RecreateAction::Recreate;
 }
 
+enum class AcquireAction {
+  Proceed,                 // VK_SUCCESS -- use the acquired image, no recreation flag change
+  SkipAndAwaitNextCall,    // VK_ERROR_OUT_OF_DATE_KHR -- Ok(nullptr) this call, recreation marked needed
+  ProceedButMarkRecreate,  // VK_SUBOPTIMAL_KHR -- use the acquired image, recreation marked needed for next call
+  Fail,                    // any other non-VK_SUCCESS result -- Err(toAcquireFailureError(result))
+};
+
+// Structural dispatch for Presentation::acquireNextTarget()'s handling of
+// vkAcquireNextImageKHR's own result (ADR-0019, Plan 0006 Section 10):
+// never retries acquisition within the same call. result must be the
+// direct return of vkAcquireNextImageKHR. Pure classification -- takes
+// only an already-obtained VkResult, calls no Vulkan function, testable
+// with literal VkResult enumerators and no device (same reasoning as
+// decideRecreateAction() above).
+[[nodiscard]] inline AcquireAction decideAcquireAction(VkResult result) {
+  if (result == VK_SUCCESS) return AcquireAction::Proceed;
+  if (result == VK_ERROR_OUT_OF_DATE_KHR) return AcquireAction::SkipAndAwaitNextCall;
+  if (result == VK_SUBOPTIMAL_KHR) return AcquireAction::ProceedButMarkRecreate;
+  return AcquireAction::Fail;
+}
+
 // The concrete-surface presentation-support check: supported is
 // vkGetPhysicalDeviceSurfaceSupportKHR's own output parameter, examined
 // here only after that call's own VkResult has already been checked by
@@ -61,26 +82,31 @@ struct FormatSelection {
 [[nodiscard]] bool supportsRequiredSwapchainUsage(const VkSurfaceCapabilitiesKHR& capabilities);
 
 // Concrete Vulkan implementation of atlantis::rhi::Presentation
-// (ADR-0014), scoped to its non-frame lifecycle only (ADR-0016). See
-// vulkan_presentation.cpp for the full recreateIfNeeded() implementation.
+// (ADR-0014). Non-frame lifecycle per ADR-0016; frame lifecycle
+// (acquireNextTarget()/present()) added by Plan 0006 per ADR-0019. See
+// vulkan_presentation.cpp for the full recreateIfNeeded()/
+// acquireNextTarget()/present() implementations.
 //
-// Exclusively owns its VkSurfaceKHR and (once one exists) its
-// VkSwapchainKHR. Holds a borrowed, non-owning reference to the
-// VulkanDevice it was constructed from -- that device must outlive this
-// object (caller-enforced; ADR-0003's explicit-ownership model, matching
-// rhi::Presentation's own documented contract). Not copyable, not
-// movable -- held exclusively behind
+// Exclusively owns its VkSurfaceKHR, (once one exists) its
+// VkSwapchainKHR, and -- new in Plan 0006 -- a persistent acquire-
+// complete VkSemaphore (created once at construction, reused every
+// frame under the single-frame-in-flight discipline -- safe because
+// Device::waitIdle()/submit()'s own retained-submission state machine
+// guarantees no second acquire is ever in flight when this semaphore is
+// reused; see vulkan_device.h). Holds a borrowed, non-owning reference to
+// the VulkanDevice it was constructed from -- that device must outlive
+// this object (caller-enforced; ADR-0003's explicit-ownership model,
+// matching rhi::Presentation's own documented contract). Not copyable,
+// not movable -- held exclusively behind
 // std::unique_ptr<atlantis::rhi::Presentation>. Not internally
 // thread-safe; every method here is caller-thread-only, the single
 // Phase 1 logical frame thread (ADR-0004). No global mutable state.
-// Stores nothing beyond this non-frame lifecycle: no swapchain image
-// handle, no per-image view, no RenderTarget, no synchronization
-// primitive, no command pool/buffer -- see ADR-0016.
 class VulkanPresentation final : public atlantis::rhi::Presentation {
  public:
   // Takes ownership of an already-created surface; constructs in a
   // "recreation needed" state with no swapchain (Section 5's construction
-  // sequence). Makes no Vulkan call itself -- surface must already be a
+  // sequence), and creates the persistent acquire-complete semaphore.
+  // Otherwise makes no Vulkan call itself -- surface must already be a
   // valid VkSurfaceKHR the caller created and is transferring ownership
   // of.
   VulkanPresentation(VulkanDevice& device, VkSurfaceKHR surface);
@@ -95,6 +121,12 @@ class VulkanPresentation final : public atlantis::rhi::Presentation {
   [[nodiscard]] atlantis::Result<std::monostate, atlantis::rhi::PresentationError> recreateIfNeeded() override;
   [[nodiscard]] atlantis::rhi::SwapchainMetadata metadata() const override;
 
+  [[nodiscard]] atlantis::Result<std::unique_ptr<atlantis::rhi::RenderTarget>, atlantis::rhi::PresentationError>
+  acquireNextTarget() override;
+  [[nodiscard]] atlantis::Result<std::monostate, atlantis::rhi::PresentationError> present(
+      std::unique_ptr<atlantis::rhi::RenderTarget> target,
+      std::unique_ptr<atlantis::rhi::SubmissionSignal> renderFinished) override;
+
  private:
   VulkanDevice& device_;
   VkSurfaceKHR surface_;
@@ -102,6 +134,8 @@ class VulkanPresentation final : public atlantis::rhi::Presentation {
   atlantis::rhi::Extent2D trackedExtent_;
   bool recreationNeeded_ = true;
   atlantis::rhi::SwapchainMetadata metadata_;
+  std::vector<VkImage> images_;  // populated by recreateIfNeeded()'s Recreate branch; non-owning (swapchain owns them)
+  VkSemaphore acquireCompleteSemaphore_ = VK_NULL_HANDLE;
 };
 
 }  // namespace atlantis::vulkan_backend::detail

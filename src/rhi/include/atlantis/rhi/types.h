@@ -36,4 +36,32 @@ enum class PresentationError {
   Unknown,
 };
 
+// This round's one resource kind (a RenderTarget's color image) and
+// nothing else -- see ADR-0020. Extending this set for buffers, depth
+// attachments, or shader-read states is future work, gated on a real
+// consumer.
+enum class ResourceState {
+  Undefined,
+  ColorAttachmentWrite,
+  PresentSource,
+};
+
+struct ClearColorValue {
+  float r = 0.0f;
+  float g = 0.0f;
+  float b = 0.0f;
+  float a = 1.0f;
+};
+
+[[nodiscard]] bool operator==(const ClearColorValue& lhs, const ClearColorValue& rhs);
+
+enum class CommandListCreateError {
+  CommandBufferAllocationFailed,
+};
+
+enum class SubmitError {
+  QueueSubmitFailed,
+  DeviceLost,
+};
+
 }  // namespace atlantis::rhi

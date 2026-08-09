@@ -11,6 +11,7 @@ add_executable(atlantis_vulkan_backend_tests
   vulkan_result_tests.cpp
   presentation_logic_tests.cpp
   validation_policy_tests.cpp
+  resource_state_mapping_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_tests
@@ -44,6 +45,7 @@ catch_discover_tests(atlantis_vulkan_backend_tests DISCOVERY_MODE PRE_TEST)
 # link and no private src/vulkan_backend/src include path.
 add_executable(atlantis_vulkan_backend_gpu_tests
   vulkan_presentation_gpu_tests.cpp
+  frame_execution_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_vulkan_backend_gpu_tests
@@ -51,6 +53,7 @@ target_link_libraries(atlantis_vulkan_backend_gpu_tests
     Atlantis::VulkanBackend
     Atlantis::Platform
     Atlantis::RHI
+    Atlantis::RenderGraph
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )

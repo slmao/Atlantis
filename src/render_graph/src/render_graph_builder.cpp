@@ -40,6 +40,31 @@ void RenderGraphBuilder::writes(PassHandle pass, ResourceHandle resource) {
   declareUsage(pass, resource, UsageKind::Write);
 }
 
+void RenderGraphBuilder::reads(PassHandle pass, ResourceHandle resource, atlantis::rhi::ResourceState state) {
+  const bool validPass = owns(pass);
+  const bool validResource = owns(resource);
+  ATLANTIS_CHECK(validPass);
+  ATLANTIS_CHECK(validResource);
+  if (!validPass || !validResource) return;
+  declareUsage(pass, resource, UsageKind::Read, state);
+}
+
+void RenderGraphBuilder::writes(PassHandle pass, ResourceHandle resource, atlantis::rhi::ResourceState state) {
+  const bool validPass = owns(pass);
+  const bool validResource = owns(resource);
+  ATLANTIS_CHECK(validPass);
+  ATLANTIS_CHECK(validResource);
+  if (!validPass || !validResource) return;
+  declareUsage(pass, resource, UsageKind::Write, state);
+}
+
+void RenderGraphBuilder::setExecute(PassHandle pass, PassExecuteFn fn) {
+  const bool validPass = owns(pass);
+  ATLANTIS_CHECK(validPass);
+  if (!validPass) return;
+  passes_[pass.index_].executeFn = std::move(fn);
+}
+
 bool RenderGraphBuilder::owns(PassHandle handle) const noexcept {
   return handle.owner_ == this && handle.index_ < passes_.size();
 }
@@ -48,7 +73,8 @@ bool RenderGraphBuilder::owns(ResourceHandle handle) const noexcept {
   return handle.owner_ == this && handle.index_ < resources_.size();
 }
 
-void RenderGraphBuilder::declareUsage(PassHandle pass, ResourceHandle resource, UsageKind kind) {
+void RenderGraphBuilder::declareUsage(PassHandle pass, ResourceHandle resource, UsageKind kind,
+                                       std::optional<atlantis::rhi::ResourceState> state) {
   PassRecord& passRecord = passes_[pass.index_];
   const UsageKind opposite = (kind == UsageKind::Read) ? UsageKind::Write : UsageKind::Read;
 
@@ -64,7 +90,7 @@ void RenderGraphBuilder::declareUsage(PassHandle pass, ResourceHandle resource, 
   ATLANTIS_CHECK(noConflict);
   if (!noConflict) return;
 
-  passRecord.usages.push_back(ResourceUsage{resource.index_, kind});
+  passRecord.usages.push_back(ResourceUsage{resource.index_, kind, state});
 }
 
 atlantis::Result<CompiledGraph, CompileError> RenderGraphBuilder::compile() const {
@@ -106,10 +132,29 @@ atlantis::Result<CompiledGraph, CompileError> RenderGraphBuilder::compile() cons
   // each dependency endpoint is passed as a plain compiled-position index
   // (CompiledGraph::EdgeRecord), since only CompiledGraph itself may
   // construct a CompiledPassId (see compiled_graph.h's EdgeRecord comment).
+  //
+  // Plan 0006: each compiled pass's declarationIndex (added to
+  // CompiledPassData for exactly this purpose) is used to pull that
+  // pass's own accumulated usages (with their ResourceState tags, if any)
+  // and execution callback out of this builder's own passes_ -- data the
+  // purely-structural detail::compile() algorithm has no reason to know
+  // about. Usage resourceIndex values need no remapping: resources are
+  // never reordered by compile(), so a declaration-index resourceIndex is
+  // already a valid CompiledResourceId value.
   std::vector<CompiledGraph::PassRecord> compiledPasses;
   compiledPasses.reserve(data.passesInOrder.size());
   for (detail::CompiledPassData& passData : data.passesInOrder) {
-    compiledPasses.push_back(CompiledGraph::PassRecord{std::move(passData.label)});
+    const PassRecord& originalPass = passes_[passData.declarationIndex];
+
+    std::vector<CompiledGraph::UsageRecord> compiledUsages;
+    compiledUsages.reserve(originalPass.usages.size());
+    for (const ResourceUsage& usage : originalPass.usages) {
+      compiledUsages.push_back(
+          CompiledGraph::UsageRecord{usage.resourceIndex, usage.kind == UsageKind::Write, usage.state});
+    }
+
+    compiledPasses.push_back(
+        CompiledGraph::PassRecord{std::move(passData.label), std::move(compiledUsages), originalPass.executeFn});
   }
 
   std::vector<CompiledGraph::EdgeRecord> compiledEdges;
@@ -118,8 +163,27 @@ atlantis::Result<CompiledGraph, CompileError> RenderGraphBuilder::compile() cons
     compiledEdges.push_back(CompiledGraph::EdgeRecord{edge.from, edge.to});
   }
 
+  // Plan 0006: hasProducer is computed directly from this builder's own
+  // resources_/passes_ -- detail::compile() already validated the
+  // single-producer rule (a multiple-producer graph never reaches this
+  // point, per the earlier isErr() check above), so a single linear scan
+  // for the (at most one) Write usage per resource is sufficient, no
+  // re-validation needed.
+  std::vector<CompiledGraph::ResourceRecord> compiledResources;
+  compiledResources.reserve(resources_.size());
+  for (const ResourceRecord& resource : resources_) {
+    compiledResources.push_back(CompiledGraph::ResourceRecord{resource.label, false});
+  }
+  for (const PassRecord& pass : passes_) {
+    for (const ResourceUsage& usage : pass.usages) {
+      if (usage.kind == UsageKind::Write) {
+        compiledResources[usage.resourceIndex].hasProducer = true;
+      }
+    }
+  }
+
   return atlantis::Result<CompiledGraph, CompileError>::Ok(
-      CompiledGraph(std::move(compiledPasses), std::move(compiledEdges)));
+      CompiledGraph(std::move(compiledPasses), std::move(compiledEdges), std::move(compiledResources)));
 }
 
 }  // namespace atlantis::render_graph

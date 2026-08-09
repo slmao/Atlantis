@@ -5,9 +5,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+using atlantis::rhi::ClearColorValue;
 using atlantis::rhi::Extent2D;
 using atlantis::rhi::Format;
 using atlantis::rhi::PresentationError;
+using atlantis::rhi::ResourceState;
 using atlantis::rhi::SwapchainMetadata;
 
 TEST_CASE("Extent2D defaults to zero", "[rhi][extent2d]") {
@@ -66,4 +68,28 @@ TEST_CASE("PresentationError enumerators construct and compare", "[rhi][presenta
       REQUIRE((errors[i] == errors[j]) == (i == j));
     }
   }
+}
+
+TEST_CASE("ResourceState enumerators are all distinct and usable", "[rhi][resource_state]") {
+  const ResourceState states[] = {ResourceState::Undefined, ResourceState::ColorAttachmentWrite,
+                                   ResourceState::PresentSource};
+  for (std::size_t i = 0; i < std::size(states); ++i) {
+    for (std::size_t j = 0; j < std::size(states); ++j) {
+      REQUIRE((states[i] == states[j]) == (i == j));
+    }
+  }
+}
+
+TEST_CASE("ClearColorValue defaults to opaque black", "[rhi][clear_color_value]") {
+  const ClearColorValue color;
+  REQUIRE(color.r == 0.0f);
+  REQUIRE(color.g == 0.0f);
+  REQUIRE(color.b == 0.0f);
+  REQUIRE(color.a == 1.0f);
+}
+
+TEST_CASE("ClearColorValue equality and inequality", "[rhi][clear_color_value]") {
+  REQUIRE(ClearColorValue{0.1f, 0.2f, 0.3f, 1.0f} == ClearColorValue{0.1f, 0.2f, 0.3f, 1.0f});
+  REQUIRE_FALSE(ClearColorValue{0.1f, 0.2f, 0.3f, 1.0f} == ClearColorValue{0.9f, 0.2f, 0.3f, 1.0f});
+  REQUIRE_FALSE(ClearColorValue{} == ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f});
 }

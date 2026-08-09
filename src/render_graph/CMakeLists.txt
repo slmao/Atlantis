@@ -2,6 +2,7 @@ add_library(atlantis_render_graph STATIC
   src/compile_algorithm.cpp
   src/compiled_graph.cpp
   src/render_graph_builder.cpp
+  src/execution.cpp
 )
 add_library(Atlantis::RenderGraph ALIAS atlantis_render_graph)
 
@@ -13,6 +14,7 @@ target_include_directories(atlantis_render_graph
 target_link_libraries(atlantis_render_graph
   PUBLIC
     Atlantis::Core
+    Atlantis::RHI
   PRIVATE
     atlantis_compiler_warnings
 )
