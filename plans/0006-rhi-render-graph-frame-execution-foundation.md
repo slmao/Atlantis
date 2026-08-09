@@ -1,9 +1,56 @@
 # Plan: RHI / RenderGraph Frame Execution Foundation
 
 - **Spec:** [specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md) (`Approved`)
-- **Status:** Draft
-- **Author:** Drafted by Claude Code (AI agent) at explicit human direction; pending Human Review.
+- **Status:** Approved / Ready for Implementation
+- **Author:** Drafted by Claude Code (AI agent) at explicit human
+  direction; content authored by the agent, reviewed and approved by a
+  human per the Human Review Approval note below.
+- **Human Review Approval (2026-08-09):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer for this branch) on 2026-08-09, completing a **joint
+  Spec 0006 + Plan 0006 Human Review**. The human reviewed and approved
+  this Plan's candidate public API (§2–§7), state machines (acquire's
+  three-outcome result, `execute()`'s transition-insertion algorithm,
+  `submit()`'s retained-submission state machine, `present()`, and the
+  single-frame-in-flight discipline as a whole — §7, §9–§11), ownership
+  model, synchronization design, implementation order (§16), and
+  verification plan (§13), as this Plan reads after revision 2 (see
+  Revision History below) — including, explicitly:
+
+  1. Both items already recorded in "Human Review Confirmations
+     Received" below (the ADR-0021 "producer-less" clarification, and
+     `RenderTarget`/`CommandList`/`SubmissionSignal` following ADR-0014's
+     mechanism) — reconfirmed as part of this approval, not reopened.
+  2. **The `submit()`/`present()` calling precondition (§3, §9, §12),
+     accepted as a deliberate design constraint, not a defect requiring
+     redesign:**
+     - A caller must call the matching `present()` for a successful
+       `submit()` before calling `submit()` again.
+     - This precondition is a documented caller obligation — the type
+       system does not, and is not required to, prevent an illegal
+       `submit → submit` sequence.
+     - `submit()` followed by application exit with no `present()` call
+       is legal: `Device::waitIdle()` drains any outstanding work and the
+       caller cleans up safely — this is Section 11's mid-frame-exit path
+       (already covers acquire-then-exit; the same reasoning covers
+       submit-then-exit).
+     - Enforcement is via API documentation, the ordinary-sequence tests
+       already specified in Section 13, and code review — no new runtime
+       check is added by this approval.
+
+  **Implementation is authorized by this approval**, but must not begin
+  until this Plan's own PR has merged into `main`, per AGENTS.md's
+  Spec → Plan → Human Review → Implementation ordering — the
+  implementation branch is created from `main` *after* that merge, not
+  from this Plan's own branch.
 - **Revision history:**
+  - **2026-08-09 (revision 3):** Human Review approval recorded (see
+    above). `Status` moves `Draft` → `Approved / Ready for
+    Implementation`. No design content changed from revision 2; wording
+    in the Objective, the `submit()`/`present()` precondition notes
+    (§3, §9), and the Consistency Review's closing note is updated from
+    "candidate, pending review" framing to "reviewed and approved"
+    framing where the underlying content did not otherwise change.
   - **2026-08-09 (revision 2):** Joint review pass. Resolved both
     revision-1 open questions as Human-Review-confirmed decisions (see
     "Human Review Confirmations Received" below) and added a short,
@@ -27,9 +74,12 @@
 Turn Spec 0006's approved contract — a concrete `RenderTarget`, `Presentation`
 acquire/present, a minimal `CommandList`/`Device::submit()`, and a
 RenderGraph execution capability — into an ordered, reviewable
-implementation plan. This plan proposes **candidate** C++ signatures and
-algorithms only; nothing below is final until this Plan itself passes
-Human Review, per [AGENTS.md](../AGENTS.md).
+implementation plan. This plan's candidate C++ signatures and algorithms
+(§2–§7) have been reviewed and approved by the joint Spec 0006 + Plan
+0006 Human Review recorded above — implementation follows them as
+written; per [AGENTS.md](../AGENTS.md), any place reality forces a
+deviation during Implementation must be called out explicitly in the PR,
+not silently drifted from.
 
 ## Authoritative Sources
 
@@ -298,10 +348,11 @@ namespace atlantis::rhi {
 // (ADR-0019, ADR-0020). No public method beyond the destructor --
 // mirrors Device's own "intentionally declares no method" precedent.
 // A caller never constructs, inspects, or stores one beyond passing it
-// from submit() straight to present(). Precondition, not enforced here:
-// a caller must present() (or otherwise consume) the SubmissionSignal
-// from one submit() call before calling submit() again -- see Section 9's
-// "Real gap found in review" note for why.
+// from submit() straight to present(). Precondition, not enforced here,
+// confirmed by Human Review as an accepted design constraint (see the
+// Plan's Human Review Approval note): a caller must call present() for
+// one submit() call before calling submit() again -- see Section 9 for
+// why (submit() followed directly by application exit remains legal).
 class SubmissionSignal {
  public:
   virtual ~SubmissionSignal() = default;
@@ -683,29 +734,35 @@ fence before this call's own `vkQueueSubmit` (step 5) reuses
 `submit()` call returns, per the single-logical-frame-thread ordering).
 No second in-flight submission ever exists to collide with.
 
-**Real gap found in review, now documented as an explicit precondition:**
-the fence wait in step 2 only proves the *previous submission's command
-buffer* finished executing — it does **not** prove `renderFinishedSemaphore_`
-was ever *waited on* by anything. A binary semaphore must be unsignaled
+**Confirmed design constraint, accepted by Human Review (see the Human
+Review Approval note above), not a defect to redesign around:** the fence
+wait in step 2 only proves the *previous submission's command buffer*
+finished executing — it does **not** prove `renderFinishedSemaphore_` was
+ever *waited on* by anything. A binary semaphore must be unsignaled
 before it is used as a signal operand again; if a caller called `submit()`
 twice in a row without an intervening `present()` (which alone waits on
 that semaphore), the second `vkQueueSubmit`'s signal operation would be
 signaling an already-signaled-but-unconsumed semaphore — a Vulkan valid-
 usage violation Validation Layers would catch, not something the fence
 wait above protects against. **Precondition, not enforced by the type
-system or by an `ATLANTIS_CHECK`:** a caller must not call `submit()`
-again before the previous call's returned `SubmissionSignal` has been
-consumed by a matching `present()` call. This holds structurally on the
-ordinary per-frame path (§11: `submit()` then always `present()` before
-the next `acquireNextTarget()`/`submit()`), and is moot on the mid-frame-
-exit path (§11: no second `submit()` ever happens there at all). It is a
-documented caller obligation, the same undetected-precondition tier as
-`RenderTarget`'s own frame-window misuse (§12) — not something this round
-adds cross-class bookkeeping between `VulkanDevice` and
-`VulkanPresentation` to detect, since nothing in this Plan's own
-Testing Strategy (§13) exercises calling `submit()` twice without an
-intervening `present()`, matching how genuinely-undetected preconditions
-are tested elsewhere in this codebase (i.e. not tested, by design).
+system or by an `ATLANTIS_CHECK`:** a caller must call the matching
+`present()` for a successful `submit()` before calling `submit()` again.
+This holds structurally on the ordinary per-frame path (§11: `submit()`
+then always `present()` before the next `acquireNextTarget()`/`submit()`),
+and `submit()` followed directly by application exit (no `present()` at
+all) is explicitly **legal** — `Device::waitIdle()` drains the outstanding
+submission and the caller cleans up safely, the same reasoning §11's
+mid-frame-exit path already establishes for an acquired-but-unsubmitted
+`RenderTarget`. It is a documented caller obligation, the same
+undetected-precondition tier as `RenderTarget`'s own frame-window misuse
+(§12) — not something this round adds cross-class bookkeeping between
+`VulkanDevice` and `VulkanPresentation` to detect. Enforcement is via API
+documentation, the ordinary-sequence tests already specified in §13, and
+code review; nothing in this Plan's own Testing Strategy (§13) exercises
+calling `submit()` twice without an intervening `present()` — a
+deliberate choice, matching how genuinely-undetected preconditions are
+tested elsewhere in this codebase (i.e. not tested, by design), confirmed
+as the intended enforcement model by Human Review.
 
 ### `waitIdle()`
 
@@ -849,6 +906,17 @@ state is untouched by this path. Before destroying `Presentation`/
 to the acquired-but-never-submitted image's semaphore) — this is exactly
 Spec 0006's destruction precondition, satisfied on this path by the same
 one call used on every other exit path.
+
+**`submit()` succeeded, `present()` never called (submit-then-exit):**
+legal, per Human Review's explicit confirmation (see the Plan's Human
+Review Approval note and §9). `hasRetainedSubmission_` is `true`; the
+returned `SubmissionSignal` simply goes out of scope unused (its
+destructor does nothing — it never owned the semaphore, §3). The exact
+same `Device::waitIdle()` call the caller must make before destroying
+`Presentation`/`Device` on every path (§9's `waitIdle()` step 1) waits on
+the retained fence and releases the retained `CommandList` — no separate
+handling is needed for this case versus the ordinary end-of-run cleanup
+already described below.
 
 **Exception/early-return exit inside the frame loop:** this codebase
 does not use exceptions (ADR-0009) — every fallible step already returns
@@ -1258,7 +1326,10 @@ Walked against Spec 0006 in full:
   additively (§6), never altered; ADR-0016's `recreateIfNeeded()`
   contract is called, not reimplemented (§10); ADR-0001/0014's mechanism
   is extended to three new types, not replaced (§3).
-- **Candidate API status:** every signature in §2–§7 is explicitly a
-  Plan-stage candidate per Spec 0006's own "concrete C++ type/method
-  names... left to the Plan" framing (mirroring Spec 0005's identical
-  disclaimer) — none of it is final until this Plan passes Human Review.
+- **Candidate API status:** every signature in §2–§7 was a Plan-stage
+  candidate per Spec 0006's own "concrete C++ type/method names... left
+  to the Plan" framing (mirroring Spec 0005's identical disclaimer) until
+  the joint Spec 0006 + Plan 0006 Human Review reviewed and approved this
+  Plan in full (see the Human Review Approval note at the top of this
+  document) — implementation follows these signatures as written, per
+  AGENTS.md's explicit-deviation rule, not as still-open candidates.
