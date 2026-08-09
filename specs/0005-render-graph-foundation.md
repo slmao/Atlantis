@@ -128,7 +128,11 @@
     [ADR-0018](../adr/0018-render-graph-dependency-derivation-and-ordering.md));
     the two additional ADRs the original Draft filed (lifetime model,
     execution boundary) were retracted, not merely deprioritized.
-- **Related Plan(s):** None yet
+- **Related Plan(s):**
+  [plans/0005-render-graph-foundation.md](../plans/0005-render-graph-foundation.md)
+  (`Draft`) — not yet through a joint Spec + Plan Human Review; drafting
+  this Plan is not itself an authorization of anything beyond drafting
+  it.
 - **Related ADR(s):** Builds on
   [ADR-0001](../adr/0001-rhi-backend-independence.md),
   [ADR-0002](../adr/0002-presentation-rendertarget-unification.md),
