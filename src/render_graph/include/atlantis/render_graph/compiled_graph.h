@@ -213,7 +213,25 @@ class CompiledGraph {
   struct PassRecord {
     std::string label;
   };
-  CompiledGraph(std::vector<PassRecord> passesInOrder, std::vector<CompiledDependencyEdge> edges);
+
+  // A dependency edge as two plain compiled-position indices, not two
+  // already-constructed CompiledPassId values. This exists because
+  // CompiledPassId's constructor is only friended to CompiledGraph
+  // itself (see that class's own header comment) -- RenderGraphBuilder
+  // is a friend of CompiledGraph, but that does not make it a friend of
+  // CompiledPassId, so it has no legal way to construct one directly.
+  // Passing raw indices here and constructing the real CompiledPassId
+  // values inside this constructor's own body (a CompiledGraph member
+  // function, and therefore already permitted) closes that gap without
+  // widening any public API: EdgeRecord is private, never returned or
+  // accepted by any public method, and CompiledPassId's constructor
+  // gains no new friend.
+  struct EdgeRecord {
+    std::size_t from;
+    std::size_t to;
+  };
+
+  CompiledGraph(std::vector<PassRecord> passesInOrder, std::vector<EdgeRecord> edges);
 
   std::vector<PassRecord> passesInOrder_;  // index IS the compiled position
                                             // AND the CompiledPassId value

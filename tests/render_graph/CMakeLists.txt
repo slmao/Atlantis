@@ -2,6 +2,9 @@ add_executable(atlantis_render_graph_tests
   handle_ownership_tests.cpp
   dependency_derivation_tests.cpp
   compile_algorithm_tests.cpp
+  cycle_detection_tests.cpp
+  pass_retention_and_ordering_tests.cpp
+  ownership_lifetime_tests.cpp
 )
 
 # PRIVATE to this test target only -- needed once compile_algorithm_tests.cpp

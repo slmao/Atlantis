@@ -6,8 +6,13 @@
 
 namespace atlantis::render_graph {
 
-CompiledGraph::CompiledGraph(std::vector<PassRecord> passesInOrder, std::vector<CompiledDependencyEdge> edges)
-    : passesInOrder_(std::move(passesInOrder)), edges_(std::move(edges)) {}
+CompiledGraph::CompiledGraph(std::vector<PassRecord> passesInOrder, std::vector<EdgeRecord> edges)
+    : passesInOrder_(std::move(passesInOrder)) {
+  edges_.reserve(edges.size());
+  for (const EdgeRecord& edge : edges) {
+    edges_.push_back(CompiledDependencyEdge{CompiledPassId(edge.from), CompiledPassId(edge.to)});
+  }
+}
 
 std::size_t CompiledGraph::passCount() const noexcept { return passesInOrder_.size(); }
 
