@@ -1,21 +1,89 @@
 # Plan: Minimal Renderer
 
 - **Spec:** [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md) (`Approved`)
-- **Status:** Draft
+- **Status:** Approved / Ready for Implementation
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
-  direction; content authored by the agent, pending Human Review.
+  direction; content authored by the agent, reviewed and approved by a
+  human per the Human Review Approval note below.
+- **Human Review Approval (2026-08-11):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer for this branch) on 2026-08-11, completing a **joint
+  Spec 0007 + Plan 0007 Human Review** conducted across three prior
+  review rounds (see each of this Plan's own commits — `plan: define
+  minimal renderer`, `plan: refine minimal renderer plan`, `plan:
+  finalize minimal renderer implementation details` — for the issues
+  those rounds raised and resolved before this approval). The human
+  reviewed and approved this Plan's candidate public API (§2–§13),
+  ownership model, state machines, module boundaries, implementation
+  order (§18), and verification plan (§15), as this Plan reads after its
+  third revision, including, explicitly:
+
+  1. **The fixed, narrowly-scoped camera uniform descriptor mechanism**
+     (§10's "Camera uniform binding — full candidate design"): exactly
+     one `VkDescriptorSetLayout` binding, one `VulkanDevice`-owned
+     `VkDescriptorPool` with a capacity (`maxSets = 4`) derived from this
+     Plan's own actual peak concurrent descriptor-set count (2 — one
+     `Material` in steady state, plus the prior one momentarily alive
+     during a format-change rebuild), one `VkDescriptorSet` per
+     `VulkanPipeline` freed at that `Pipeline`'s own destruction — never
+     a general descriptor-set/bindless API, and never exposed outside
+     `vulkan_pipeline.*`/`vulkan_device.*`.
+  2. **Shader assets loaded by a plain relative path from each
+     consumer's own build-output working directory** (§12) — no Win32
+     file-path/module API (`GetModuleFileNameW` or otherwise), no new
+     Core/Platform path-resolution API; `catch_discover_tests()`'s
+     `WORKING_DIRECTORY` parameter for the GPU test, the
+     `run_minimal_renderer_demo` convenience CMake target for the demo.
+  3. **Dynamic rendering's capability-detected dual path, including its
+     instance-level query prerequisite** (§8): `VK_KHR_get_physical_device_properties2`
+     queried and conditionally enabled at the instance level, before
+     `vkCreateInstance()`; `vkGetPhysicalDeviceFeatures2KHR` resolved via
+     `vkGetInstanceProcAddr` only once that succeeds, never assumed
+     statically linkable; the instance-level query mechanism and the
+     device-level core-1.3-vs-`VK_KHR_dynamic_rendering` capability kept
+     as two explicitly distinct layers; the Vulkan Backend's overall
+     minimum supported API version left unraised; a device with neither
+     path available returning the existing
+     `DeviceCreateError::DynamicRenderingUnavailable`, never a crash or a
+     `VkRenderPass`/`VkFramebuffer` fallback.
+  4. **`Mesh`/`Material` as caller-owned aggregates and `Renderer` as a
+     stateless, non-caching orchestrator** (§11) — `createMesh()`/
+     `createMaterial()` as free functions, never `Renderer` methods;
+     `Renderer` retaining no GPU resource or frame-to-frame state across
+     calls; the depth `Texture`'s resize responsibility and the
+     `Pipeline`'s format-change responsibility both sitting with the
+     caller, never `Renderer`.
+  5. **This round's vertex/index/uniform `Buffer`s never declared as
+     RenderGraph logical resources** (§6) — confirmed as correct given
+     they are host-write/device-read-only this round with write-before-
+     read already guaranteed by construction, not a bypass of the
+     RenderGraph-mandatory-path rule; explicitly scoped as a conclusion
+     that would not extend to a future GPU-written buffer.
+  6. **The direct, unpooled, per-resource GPU memory allocation policy**
+     (§9), **the create-before-destroy format-change/extent-change
+     rebuild discipline** (§13), and **the single-frame-in-flight-scoped
+     design of every synchronization argument this Plan makes** (§10's
+     descriptor-binding write-timing note, §13's camera-buffer write-
+     timing note) — all confirmed as correct within, and explicitly not
+     generalized beyond, this round's own scope.
+
+  **Implementation is authorized by this approval, but must not begin
+  until this Plan's own PR has merged into `main`** — per
+  [AGENTS.md](../AGENTS.md)'s Spec → Plan → Human Review → Implementation
+  ordering, the implementation branch is created from `main` *after* that
+  merge, not from this Plan's own branch (`plan/0007-minimal-renderer`).
 
 ## Objective
 
 Turn Spec 0007's approved contract — a real, visible, depth-tested mesh
 drawn through `Renderer` → RenderGraph → RHI → Vulkan Backend — into an
-ordered, reviewable implementation plan. This plan's candidate C++
-signatures, algorithms, and file layout (§2–§13) are **Plan-stage
-candidates, not yet Human-Review-approved** — per Spec 0007's own
-"concrete C++ type/method names... left to the Plan" framing (mirroring
-every prior Plan in this line), they are proposed here for review, not
-authorized for implementation until this Plan itself passes Human
-Review, per [AGENTS.md](../AGENTS.md).
+ordered, reviewable implementation plan. This plan's C++ signatures,
+algorithms, and file layout (§2–§13) have been reviewed and approved by
+the joint Spec 0007 + Plan 0007 Human Review recorded above —
+implementation follows them as written; per
+[AGENTS.md](../AGENTS.md), any place reality forces a deviation during
+Implementation must be called out explicitly in the PR, not silently
+drifted from.
 
 ## Authoritative Sources
 
@@ -95,17 +163,19 @@ This Plan does not add a third-party dependency, does not touch
 `docs/project-blueprint.md`/`specs/README.md`, and does not reopen any
 `Accepted` ADR's conclusions.
 
-## Candidate-API Disclaimer
+## Candidate-API Status
 
-Every C++ signature, file name, and algorithm in §2–§13 is a **Plan-stage
-candidate**. Per AGENTS.md and this repository's own precedent (Plan
-0005 §Candidate-API note, Plan 0006's identical disclaimer), naming this
-explicitly is not a hedge against review — it is what makes this
-document reviewable as a plan rather than a fait accompli. Implementation
-may begin only after this Plan reaches `Approved / Ready for
-Implementation` at Human Review, and then only exactly as written unless
-a deviation is called out explicitly in the implementation PR
-(AGENTS.md's explicit-deviation rule).
+Every C++ signature, file name, and algorithm in §2–§13 was a **Plan-
+stage candidate** per AGENTS.md and this repository's own precedent
+(Plan 0005's and Plan 0006's identical disclaimers) — naming that
+explicitly, while this Plan was still `Draft`, was not a hedge against
+review; it was what made this document reviewable as a plan rather than
+a fait accompli. The joint Spec 0007 + Plan 0007 Human Review recorded
+above has since reviewed and approved this Plan in full: Implementation
+now follows §2–§13 exactly as written, per AGENTS.md's explicit-deviation
+rule — any place reality forces a deviation during Implementation must
+be called out explicitly in the implementation PR, not silently drifted
+from or decided unilaterally.
 
 ---
 
@@ -2304,8 +2374,10 @@ Walked against Spec 0007 in full:
   (§9); ADR-0024's dual path is implemented with no minimum-version
   change (§8); ADR-0025's format-change contract is implemented as a
   concrete algorithm (§13), not reinterpreted.
-- **Candidate API status:** every signature in §2–§13 is a Plan-stage
+- **Candidate API status:** every signature in §2–§13 was a Plan-stage
   candidate per Spec 0007's own "concrete C++ type/method names... left
   to the Plan" framing (mirroring Spec 0005's and Spec 0006's identical
-  disclaimer) — pending Human Review of this Plan; implementation may not
-  begin until that review approves it, per AGENTS.md.
+  disclaimer) until the joint Spec 0007 + Plan 0007 Human Review reviewed
+  and approved this Plan in full (see the Human Review Approval note at
+  the top of this document) — implementation follows these signatures as
+  written, per AGENTS.md, not as still-open candidates.
