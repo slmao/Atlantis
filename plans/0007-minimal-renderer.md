@@ -151,12 +151,12 @@ shaders/minimal_renderer/minimal_mesh.frag.glsl
 shaders/minimal_renderer/minimal_mesh.vert.spv            # pre-compiled bytecode (checked in, never built)
 shaders/minimal_renderer/minimal_mesh.frag.spv
 shaders/minimal_renderer/README.md                        # exact compiler/version/command-line note (ADR-0027)
-tests/vulkan_backend/executable_directory.h                # tiny Windows-only helper, duplicated in the demo
-                                                             #   (Section 12) -- deliberately not a shared module
+                                                             # No dedicated "locate my own executable" helper file --
+                                                             #   each consumer's own loadSpirvFile() (Section 12) opens
+                                                             #   a plain relative path, platform-API-free.
 
 examples/minimal_renderer_demo/CMakeLists.txt
 examples/minimal_renderer_demo/main.cpp
-examples/minimal_renderer_demo/executable_directory.h      # tiny Windows-only helper, see Section 12
 ```
 
 ### Files to Modify
@@ -171,9 +171,10 @@ src/rhi/include/atlantis/rhi/command_list.h # + bindPipeline/bindVertexBuffer/bi
 src/rhi/CMakeLists.txt                      # + 3 new headers
 
 src/vulkan_backend/include/atlantis/vulkan_backend/vulkan_backend.h  # + DeviceCreateError::DynamicRenderingUnavailable
-src/vulkan_backend/src/vulkan_instance.cpp   # apiVersion request unchanged (still requests the loader's
-                                             #   highest available -- see §8); no change expected here beyond
-                                             #   what §8 identifies
+src/vulkan_backend/src/vulkan_instance.cpp   # apiVersion request unchanged (stays VK_API_VERSION_1_0); + query/
+                                             #   enable VK_KHR_get_physical_device_properties2 as an instance
+                                             #   extension, + resolve vkGetPhysicalDeviceFeatures2KHR via
+                                             #   vkGetInstanceProcAddr once instance creation succeeds -- see §8
 src/vulkan_backend/src/vulkan_device.h/.cpp  # + dynamic-rendering capability selection in physical-device
                                              #   loop, feature-chain enablement, createBuffer/createTexture/
                                              #   createPipeline, resolved entry-point storage
@@ -330,6 +331,11 @@ enum class TextureCreateError {
 
 enum class PipelineCreateError {
   ShaderModuleCreationFailed,
+  DescriptorSetLayoutCreationFailed,
+  DescriptorSetAllocationFailed,  // vkAllocateDescriptorSets against VulkanDevice's fixed-capacity
+                                   // pool -- see Section 10's camera-uniform-binding design for why
+                                   // this is a distinct enumerator, not folded into PipelineCreationFailed
+  PipelineLayoutCreationFailed,
   PipelineCreationFailed,
 };
 ```
@@ -735,6 +741,14 @@ enum class DynamicRenderingPath { Core, Extension, Unavailable };
 // Vulkan call inside. Mirrors this codebase's existing
 // decideRecreateAction()/decideAcquireAction() extraction pattern.
 [[nodiscard]] DynamicRenderingPath decideDynamicRenderingPath(
+    bool physicalDeviceProperties2InstanceExtensionAvailable,
+                                      // VK_KHR_get_physical_device_properties2 successfully enabled
+                                      // at instance creation (see "Instance-level prerequisite"
+                                      // below) -- a single, instance-wide fact, computed once,
+                                      // never per-candidate-device. If false, none of the four
+                                      // arguments below could have been meaningfully queried for
+                                      // any physical device, and this function returns Unavailable
+                                      // unconditionally, regardless of their values.
     bool apiVersionAtLeast1_3,
     bool coreFeatureSupported,       // VkPhysicalDeviceVulkan13Features::dynamicRendering;
                                       // only meaningful (and only ever queried by the real
@@ -750,14 +764,31 @@ enum class DynamicRenderingPath { Core, Extension, Unavailable };
 Decision logic (candidate):
 
 ```
+if !physicalDeviceProperties2InstanceExtensionAvailable: return Unavailable
 if apiVersionAtLeast1_3 && coreFeatureSupported: return Core
 if extensionAdvertised && extensionFeatureSupported: return Extension
 return Unavailable
 ```
 
-**Instance-level prerequisite — resolved without raising
-`VkApplicationInfo::apiVersion`.** `vulkan_instance.cpp` currently
-requests `VK_API_VERSION_1_0` (Section 1's Authoritative Sources). The
+**Two distinct layers — do not conflate them.** (1) Whether
+`VK_KHR_get_physical_device_properties2` is enabled at the *instance*
+level is purely a **query-mechanism** concern: it determines whether
+`vkGetPhysicalDeviceFeatures2KHR` may be safely called at all, and says
+nothing yet about which rendering path any given physical device
+actually supports. (2) Whether a given physical device supports the
+core-1.3 feature or the `VK_KHR_dynamic_rendering` **device** extension
+is the actual **capability** being detected, using the query mechanism
+(1) makes available. `decideDynamicRenderingPath()`'s first argument is
+layer (1); its remaining four arguments are layer (2) — this Plan keeps
+them as five separate, independently-meaningful booleans specifically so
+this distinction is visible in the function's own signature, not
+collapsed into one combined "is dynamic rendering usable" flag that
+would hide *why* a given candidate failed.
+
+**Instance-level prerequisite — resolved once, before any physical-
+device query, without raising `VkApplicationInfo::apiVersion`.**
+`vulkan_instance.cpp` currently requests `VK_API_VERSION_1_0` (Section 1's
+Authoritative Sources) and this Plan does not change that request. The
 *core* function `vkGetPhysicalDeviceFeatures2` is only unambiguously
 valid to call when the instance itself was created requesting Vulkan
 1.1+ — calling it from a `VK_API_VERSION_1_0` instance is, at best,
@@ -767,25 +798,50 @@ exactly the ambiguity Human Review's confirmed decision was written to
 avoid (whether a higher *instance* request could be read as
 re-introducing a version floor) and, separately, a real (if narrow) risk
 of `vkCreateInstance` returning `VK_ERROR_INCOMPATIBLE_DRIVER` on a very
-old Vulkan 1.0-only loader. **This Plan instead enables
-`VK_KHR_get_physical_device_properties2` as an *instance* extension**
-(checking `vkEnumerateInstanceExtensionProperties()` for its
-availability before requesting it — it has been available since the
-first Vulkan 1.0 loaders and is promoted to core in 1.1, so it is
-absent only on an exceptionally old/incomplete loader) and calls the
-`...KHR`-suffixed query function,
-`vkGetPhysicalDeviceFeatures2KHR`, uniformly for **both** the core-1.3-
-feature check and the extension-feature check below — this function is
-valid to call from a 1.0 instance precisely because it is the extension
-form, sidestepping the instance-version question entirely.
-`VkApplicationInfo::apiVersion` itself is untouched by this Plan,
-remaining exactly `VK_API_VERSION_1_0` as already shipped. If
-`VK_KHR_get_physical_device_properties2` itself is unavailable at the
-instance level, no capability query can be performed for any candidate
-physical device — `decideDynamicRenderingPath()` is never even reached
-for that candidate, and it is treated as though both `coreFeatureSupported`
-and `extensionFeatureSupported` queries were unavailable (folding into
-the ordinary `Unavailable` path below, not a distinct failure mode).
+old Vulkan 1.0-only loader. This Plan instead:
+
+1. **Before `vkCreateInstance()`** (inside `vulkan_instance.cpp`'s
+   existing instance-creation function, extended — the one file this
+   Plan's Authoritative Sources previously, incorrectly, described as
+   needing no change): calls `vkEnumerateInstanceExtensionProperties()`
+   and checks whether `VK_KHR_get_physical_device_properties2` is
+   present in the returned list — `physicalDeviceProperties2InstanceExtensionAvailable`,
+   computed exactly once, here, before the instance exists at all.
+2. **If available:** adds `VK_KHR_get_physical_device_properties2` to
+   `VkInstanceCreateInfo::ppEnabledExtensionNames` alongside whatever
+   extensions this repository's existing instance creation already
+   enables (e.g. the WSI surface extensions, unchanged). **If
+   unavailable:** the extension is simply not requested — `vkCreateInstance()`
+   itself is entirely unaffected either way; only the later capability
+   query (below) is gated by this fact.
+3. **Immediately after `vkCreateInstance()` succeeds, if the extension
+   was enabled:** resolves `vkGetPhysicalDeviceFeatures2KHR`'s function
+   pointer explicitly via `vkGetInstanceProcAddr(instance,
+   "vkGetPhysicalDeviceFeatures2KHR")`, stored once for the instance's
+   whole lifetime — **never assumed to be directly linkable, and never
+   called if this resolution step was skipped or returned `nullptr`.**
+   This mirrors exactly the same "resolve a `KHR` entry point via
+   `vkGet*ProcAddr` rather than assuming static linkage" discipline
+   already applied to the device-level
+   `vkCmdBeginRenderingKHR`/`vkCmdEndRenderingKHR` resolution below — the
+   instance-level and device-level `KHR` entry points are resolved the
+   same way, for the same reason, at their own respective points in
+   `Device` construction.
+4. `physicalDeviceProperties2InstanceExtensionAvailable` (step 1's
+   boolean, narrowed to also require step 3's function-pointer resolution
+   to have actually succeeded) is then passed, **unchanged, to every
+   physical-device candidate** in the selection loop below — it is an
+   instance-wide fact, never re-queried or re-resolved per candidate.
+
+If `VK_KHR_get_physical_device_properties2` is unavailable (or its entry
+point fails to resolve), `decideDynamicRenderingPath()` returns
+`Unavailable` for every candidate without attempting any
+`vkGetPhysicalDeviceFeatures2KHR` call at all — this is not a distinct
+failure mode from "the device itself lacks dynamic rendering," it folds
+into the same `DeviceCreateError::DynamicRenderingUnavailable` outcome
+(below), because from the caller's perspective both mean the same
+actionable thing: this environment cannot serve this spec's rendering
+path.
 
 **Real capability query wrapper** (inside `vulkan_device.cpp`'s existing
 physical-device selection loop, extended — not replaced): for each
@@ -797,15 +853,26 @@ criteria (queue families, etc., unchanged from Spec 0003), additionally:
    reported version is independent of the instance's own requested
    version — a 1.0-requesting instance can still enumerate and query a
    physical device that itself reports a higher `apiVersion`.)
-2. If `apiVersionAtLeast1_3`: `vkGetPhysicalDeviceFeatures2KHR()` with a
-   `VkPhysicalDeviceVulkan13Features` chained into `pNext` →
-   `coreFeatureSupported`.
+2. If `physicalDeviceProperties2InstanceExtensionAvailable` (the same
+   instance-wide value for every candidate) **and** `apiVersionAtLeast1_3`:
+   call the resolved `vkGetPhysicalDeviceFeatures2KHR` function pointer
+   with a `VkPhysicalDeviceVulkan13Features` chained into `pNext` →
+   `coreFeatureSupported`. Otherwise `coreFeatureSupported` stays `false`
+   and this call is skipped entirely — never attempted when the function
+   pointer was never resolved.
 3. `vkEnumerateDeviceExtensionProperties()` → `extensionAdvertised =
-   ` (`VK_KHR_dynamic_rendering` present in the returned list).
-4. If `extensionAdvertised`: `vkGetPhysicalDeviceFeatures2KHR()` with a
+   ` (`VK_KHR_dynamic_rendering` present in the returned list). This
+   call needs no instance extension of its own — device-extension
+   enumeration is core Vulkan 1.0 functionality.
+4. If `physicalDeviceProperties2InstanceExtensionAvailable` **and**
+   `extensionAdvertised`: call the same resolved
+   `vkGetPhysicalDeviceFeatures2KHR` function pointer with a
    `VkPhysicalDeviceDynamicRenderingFeaturesKHR` chained into `pNext` →
-   `extensionFeatureSupported`.
-5. Call `decideDynamicRenderingPath()` with the four booleans above.
+   `extensionFeatureSupported`. Otherwise skipped, same reasoning as
+   step 2.
+5. Call `decideDynamicRenderingPath()` with all five values (the
+   instance-wide availability boolean plus the four per-candidate
+   values above).
 6. If `Core` or `Extension`: this candidate is accepted; record the
    resolved path on the (soon-to-be-constructed) `VulkanDevice` instance.
    If `Unavailable`: this candidate is otherwise-suitable but rejected
@@ -997,29 +1064,58 @@ system:
 - **`VkDescriptorPool`** — owned by `VulkanDevice` (a Device-level
   singleton resource, created once at `VulkanDevice` construction,
   mirroring the existing `VkCommandPool` precedent exactly), created with
-  `VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT` (so an individual
-  `VkDescriptorSet` can be freed independently, at `VulkanPipeline`
-  destruction, without destroying the whole pool) and a small, explicitly
-  fixed capacity: `maxSets = 16`, one pool-size entry
-  `{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 16}`. **This is not a general
-  allocator or a growable pool** — it is a fixed-capacity resource
-  exactly like `VulkanDevice`'s existing command pool, sized generously
-  above this round's actual need (one `Material` in every GPU test/demo
-  this Plan specifies) to avoid a hard cap that would need revisiting for
-  ordinary test variation, without attempting to serve an unbounded
-  future material count. `VulkanDevice::createPipeline()` returning
-  `Err(PipelineCreationFailed)` if this pool is ever exhausted
-  (`vkAllocateDescriptorSets` returning `VK_ERROR_OUT_OF_POOL_MEMORY`) is
-  the explicit, accepted failure mode if that fixed capacity is ever
-  exceeded — not a case this Plan expects to be reachable given its own
-  Non-Goals (single material, no dynamic material creation loop).
-- **`VkDescriptorSet`** — one per `VulkanPipeline`, allocated from
+  `VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT` set (**required**,
+  not optional — without it, `vkFreeDescriptorSets` below is invalid
+  usage and the pool could only ever be reset as a whole via
+  `vkResetDescriptorPool`, which this Plan does not use). **Fixed
+  capacity, tied explicitly to this round's actual concurrent-resource
+  ceiling, not an arbitrary round number:** `maxSets = 4`, one pool-size
+  entry `{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4}`. This ceiling is derived
+  from, not merely larger than, this round's own worst case: exactly one
+  `Material` exists in steady state (Non-Goals: single material, no
+  dynamic material-creation loop), and Section 13's create-before-destroy
+  format-change discipline means the *old* `Material`'s `Pipeline` (and
+  therefore its one `VkDescriptorSet`) remains alive, momentarily,
+  alongside the *new* one during a format-change rebuild — so the true
+  peak concurrent count this Plan's own design can ever produce is **2**,
+  not an unbounded or merely-assumed-small number. `maxSets = 4` is
+  exactly double that peak, a stated, deliberate margin (not unlimited
+  headroom) for the GPU test suite's own possible construction/
+  destruction interleavings (§15), not a number chosen to "be safe" with
+  no accounting behind it. **Why repeated `Material` replacement across
+  many format changes over one session never exhausts this pool:** every
+  `VulkanPipeline` destructor unconditionally calls `vkFreeDescriptorSets`
+  for its own one set (immediately below) — the pool's available capacity
+  is fully restored the moment each superseded `Material`/`Pipeline` is
+  actually destroyed, so steady-state usage never accumulates allocations
+  across format changes; the transient peak stays at 2 no matter how many
+  format changes occur across a session. `VulkanDevice::createPipeline()`
+  returning `Err(PipelineCreateError::DescriptorSetAllocationFailed)` —
+  a new, distinct enumerator (Section 2), not folded into
+  `PipelineCreationFailed`, so this specific failure is diagnosable
+  without guessing which pipeline-creation step failed — is the explicit,
+  checked outcome if `vkAllocateDescriptorSets` ever returns
+  `VK_ERROR_OUT_OF_POOL_MEMORY`/`VK_ERROR_FRAGMENTED_POOL` despite this
+  accounting; not expected to be reachable given the ceiling's own
+  derivation above, but checked, not assumed.
+- **`VkDescriptorSet`** — one per `VulkanPipeline`, allocated via
+  `vkAllocateDescriptorSets` (its `VkResult` checked; failure maps to
+  `PipelineCreateError::DescriptorSetAllocationFailed` above) from
   `VulkanDevice`'s pool at `VulkanPipeline` construction (using the
-  layout above), freed via `vkFreeDescriptorSets` at `VulkanPipeline`
-  destruction — **before** `VulkanDevice`'s pool itself may be destroyed,
-  the same "backed-resource destroyed before its owning pool" precondition
-  tier already established for `VulkanCommandList`/`VulkanDevice`'s
-  command pool (Plan 0006 §9).
+  layout above), freed via `vkFreeDescriptorSets` (its `VkResult` also
+  checked, though `vkFreeDescriptorSets` is documented to only ever
+  return `VK_SUCCESS` — checked anyway, per this Plan's own "every
+  `VkResult` is checked" rule with no silent exceptions) at
+  `VulkanPipeline` destruction — **before** `VulkanDevice`'s pool itself
+  may be destroyed, the same "backed-resource destroyed before its owning
+  pool" precondition tier already established for
+  `VulkanCommandList`/`VulkanDevice`'s command pool (Plan 0006 §9); this
+  Plan does not add any new mechanism to enforce that ordering beyond the
+  caller discipline every other Device-backed resource in this codebase
+  already relies on. **`vkUpdateDescriptorSets` itself returns `void`
+  per the Vulkan specification — there is no `VkResult` to check for
+  that specific call**, stated explicitly here so a reviewer does not
+  expect one.
 - **`bindUniformBuffer(Buffer&)`'s implementation**:
   `ATLANTIS_CHECK(buffer.purpose() == BufferPurpose::Uniform)`, then
   unconditionally (no "skip if unchanged" caching — no cache-invalidation
@@ -1048,6 +1144,29 @@ system:
   this Plan's own `drawFrame()` algorithm (Section 11) re-binds/re-pushes
   every draw item regardless, for simplicity and clarity, not because it
   is strictly required.
+- **Camera `Buffer` lifetime versus the GPU submission that reads it:**
+  the caller (verification composition) must not destroy the camera
+  `Buffer` while any submitted GPU work that read it (via the descriptor
+  set it was bound into) has not yet completed — the same lifetime
+  precondition tier as every other resource `Device::submit()` touches
+  (Section 14), not a new or weaker guarantee specific to uniform
+  binding. In this Plan's own manual-verification and GPU-test scope, the
+  camera `Buffer` is created once and lives for the whole session/test
+  case, destroyed only after the same `Device::waitIdle()` every other
+  exit path already requires — it is never destroyed mid-session, so this
+  precondition, while real, is not exercised at its edge by anything this
+  Plan's own tests do.
+- **Deliberately not generalized beyond this round's single-frame-in-
+  flight baseline** ([ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md)):
+  one `VkDescriptorSet` per `Pipeline`, updated in place every bind call,
+  is only correct because at most one frame's GPU work is ever
+  outstanding at a time — there is never a second, concurrently-in-flight
+  frame that could still be reading a descriptor set this round's next
+  `bindUniformBuffer()` call is about to overwrite. A future spec
+  introducing multiple frames in flight would need to revisit this design
+  (e.g. one descriptor set per frame-in-flight slot, not one per
+  `Pipeline`) — this Plan does not attempt to anticipate that shape, per
+  [AGENTS.md](../AGENTS.md)'s "no speculative abstraction" principle.
 
 `VulkanPipeline final : public rhi::Pipeline` (`vulkan_pipeline.h/.cpp`):
 holds `VkPipeline`, `VkPipelineLayout`, the `VkDescriptorSetLayout` and
@@ -1370,19 +1489,65 @@ carry. Instead:
   resolving per-configuration on the multi-config Visual Studio generator
   this repository already builds with) and `copy_if_different` (a no-op
   on an unchanged file, correct for incremental builds).
-- At runtime, each consumer locates its own executable's directory via a
-  small, Windows-only helper (`GetModuleFileNameW(nullptr, ...)`, then
-  taking the parent directory) — `executable_directory.h` (Section 1),
-  duplicated once in `examples/minimal_renderer_demo/` and once in
-  `tests/vulkan_backend/` rather than factored into a new shared test-
-  utility module for a single ~10-line function. This matches this
-  codebase's own existing precedent of Windows-only code living directly
-  in the test/demo file that needs it (e.g.
-  `windows_platform_smoke_tests.cpp`'s direct `<windows.h>` use), and
-  requires no new module boundary. The resulting path (`executableDirectory()
-  / "shaders" / "minimal_mesh.vert.spv"`) is correct regardless of which
-  machine built or is running the binary, and regardless of Debug/Release
-  or which generator produced the build.
+- **No file-path API of any kind is used to locate the shader files at
+  runtime — not `GetModuleFileNameW`, not any other Win32 call, not a
+  new Core/Platform path-resolution API.** An earlier revision of this
+  Plan proposed a `GetModuleFileNameW`-based helper — rejected on review:
+  it would make both the demo and the GPU test directly depend on a raw
+  Win32 API for something this repository's own module boundaries
+  (`AGENTS.md`'s Platform-isolation rule; ADR-0005) reserve to the
+  Atlantis Platform module, and `examples/minimal_renderer_demo`/
+  `tests/vulkan_backend/minimal_renderer_gpu_tests.cpp` are exactly the
+  kind of code that rule exists to keep Win32-free wherever avoidable —
+  unlike `windows_platform_smoke_tests.cpp`'s own direct `<windows.h>`
+  use (which exists specifically to test Atlantis Platform's own Win32
+  implementation, a different and narrower justification that does not
+  apply here). Instead, each consumer opens the shader files by a plain
+  **relative** path — `"shaders/minimal_mesh.vert.spv"` — and relies on
+  its **current working directory already being its own build output
+  directory** at the moment it runs, which this Plan arranges structurally
+  rather than leaving as an unstated assumption:
+  - **For the GPU test** (`catch_discover_tests`-registered, CTest-driven):
+    `catch_discover_tests()`'s own `WORKING_DIRECTORY` parameter is set to
+    `"$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>"` (Section 17)
+    — CTest itself then launches the test process with that directory as
+    its working directory, for every discovered test case, on every
+    configuration the multi-config generator produces. No code in the
+    test needs to know or compute this path at all; it is simply where
+    the process already is when `main()` starts.
+  - **For the demo** (launched interactively, not through CTest): this
+    Plan adds a convenience CMake target, `run_minimal_renderer_demo`
+    (`add_custom_target(run_minimal_renderer_demo COMMAND
+    $<TARGET_FILE:atlantis_minimal_renderer_demo> WORKING_DIRECTORY
+    "$<TARGET_FILE_DIR:atlantis_minimal_renderer_demo>")`), so
+    `cmake --build build --target run_minimal_renderer_demo` (or the
+    generator's own "run" action on that target) always launches the demo
+    with the correct working directory regardless of where the command
+    was invoked from. A human launching the built `.exe` directly instead
+    (e.g. by double-clicking it, or `cd`-ing to it manually) must do so
+    from its own output directory for the relative shader path to
+    resolve — this Plan's own manual-verification instructions (§15)
+    state this explicitly as an operational precondition, not an
+    implicit assumption a reader has to infer.
+  - **Shader load failure is a recoverable, explicit outcome, never a
+    crash.** Each consumer's own small, local `loadSpirvFile(path) ->
+    std::optional<std::vector<std::uint32_t>>` helper (plain
+    `std::ifstream`-based, C++ standard library only — no Core/Platform
+    API, no new public type) returns an empty optional on any failure to
+    open or read the file; the caller logs the failure and exits
+    gracefully (mirroring `examples/frame_execution_demo`'s own existing
+    `EXIT_FAILURE` pattern), never proceeding to call
+    `Device::createPipeline()` with incomplete bytecode. This is
+    deliberately **not** routed through `PipelineCreateError` (Section
+    2) — that enum describes GPU object-creation failure, a distinct
+    concern from a host-side file-I/O failure that happens strictly
+    before any Vulkan call is made.
+  - This mechanism is correct regardless of which machine built or is
+    running the binary (no absolute path, developer-specific or
+    otherwise, appears anywhere), regardless of Debug/Release, and
+    regardless of which generator produced the build — the working
+    directory is always resolved by CMake/CTest at build or test-run
+    time, never hardcoded.
 
 **Vertex-input/binding layout consistency verification:** this round has
 no automated reflection-based cross-check between the hand-specified
@@ -1509,12 +1674,26 @@ mirroring the four existing ones' pattern exactly.
 ### GPU-independent unit tests (layer 1, no Vulkan device)
 
 - `tests/vulkan_backend/dynamic_rendering_tests.cpp` — `decideDynamicRenderingPath()`'s
-  **exhaustive** 2⁴ = 16-case truth table over
-  `(apiVersionAtLeast1_3, coreFeatureSupported, extensionAdvertised, extensionFeatureSupported)`,
-  including every combination where an argument is documented as "only meaningful when" some
-  other argument is true — confirming the function degrades safely (never crashes, never
-  returns a wrong path) even when a caller passes a logically inconsistent combination it
-  should never actually produce:
+  **exhaustive** truth table over all five boolean parameters. When
+  `physicalDeviceProperties2InstanceExtensionAvailable = false`, every one of the 2⁴ = 16
+  combinations of the remaining four booleans must return `Unavailable` — tested with the four
+  "extreme corner" combinations below (all-false, all-true, and the two single-bit-set cases)
+  as a representative, not exhaustive, sample of that collapse, since the decision logic's own
+  short-circuit (`if !physicalDeviceProperties2InstanceExtensionAvailable: return Unavailable`)
+  makes the remaining four arguments provably irrelevant by inspection, not merely by
+  enumeration. When `physicalDeviceProperties2InstanceExtensionAvailable = true`, the full,
+  **exhaustive** 2⁴ = 16-case table over
+  `(apiVersionAtLeast1_3, coreFeatureSupported, extensionAdvertised, extensionFeatureSupported)`
+  below applies — including every combination where an argument is documented as "only
+  meaningful when" some other argument is true, confirming the function degrades safely (never
+  crashes, never returns a wrong path) even when a caller passes a logically inconsistent
+  combination it should never actually produce:
+
+  `physicalDeviceProperties2InstanceExtensionAvailable = false` (representative sample — all four
+  must return `Unavailable`): `(F,F,F,F)`, `(T,T,T,T)`, `(T,F,F,F)`, `(F,F,T,T)`.
+
+  `physicalDeviceProperties2InstanceExtensionAvailable = true`:
+
   | apiVersionAtLeast1_3 | coreFeatureSupported | extensionAdvertised | extensionFeatureSupported | → |
   |---|---|---|---|---|
   | F | F | F | F | Unavailable |
@@ -1605,7 +1784,12 @@ mirroring the four existing ones' pattern exactly.
 ### Manual verification (`examples/minimal_renderer_demo`)
 
 Mirrors `examples/frame_execution_demo`'s own structure and non-shipping
-disclaimer (Spec 0007 Non-Goals). Confirms, interactively:
+disclaimer (Spec 0007 Non-Goals). **Must be launched via
+`cmake --build build --target run_minimal_renderer_demo` (or by running
+the built executable directly from its own build output directory) —
+Section 12's plain relative shader path only resolves correctly with
+that working directory; launching it from any other directory is a
+usage error, not a defect to work around.** Confirms, interactively:
 
 - A visible window shows a recognizable, correctly-shaded (per-vertex
   color), correctly depth-ordered 3D mesh — front-facing geometry
@@ -1703,6 +1887,25 @@ grep -rln "VkDescriptorSet\|VkDescriptorPool\|VkDescriptorSetLayout" src/vulkan_
 # Shader assets live under shaders/, never under tests/
 find tests -iname "*.glsl" -o -iname "*.spv" 2>/dev/null   # expect: nothing
 find shaders/minimal_renderer -type f 2>/dev/null          # expect: minimal_mesh.{vert,frag}.{glsl,spv}, README.md
+
+# Demo/test never use a raw Win32 file-path/module API to locate shader assets
+grep -rln "GetModuleFileNameW\|GetModuleFileName\b" examples/minimal_renderer_demo tests/vulkan_backend/minimal_renderer_gpu_tests.cpp
+                                                                                # expect: no matches
+grep -n "windows.h" examples/minimal_renderer_demo/main.cpp tests/vulkan_backend/minimal_renderer_gpu_tests.cpp
+                                                                                # expect: no matches -- shader loading
+                                                                                #   in these two files is std::ifstream
+                                                                                #   over a plain relative path only
+
+# vkGetPhysicalDeviceFeatures2KHR is only ever called through the resolved function pointer,
+# never assumed to be statically linkable
+grep -n "vkGetPhysicalDeviceFeatures2KHR" src/vulkan_backend/src/vulkan_instance.cpp src/vulkan_backend/src/vulkan_device.cpp
+                                                                                # expect: exactly one direct call --
+                                                                                #   the vkGetInstanceProcAddr()
+                                                                                #   resolution itself in
+                                                                                #   vulkan_instance.cpp; every other
+                                                                                #   use goes through the stored
+                                                                                #   function pointer, not the bare
+                                                                                #   symbol name
 ```
 
 Code-review checklist (manual, per step):
@@ -1781,7 +1984,19 @@ target_link_libraries(atlantis_vulkan_backend_gpu_tests
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )
-# LABELS "gpu" / DISCOVERY_MODE PRE_TEST unchanged
+# LABELS "gpu" / DISCOVERY_MODE PRE_TEST unchanged -- but this existing
+# catch_discover_tests() call gains a new WORKING_DIRECTORY argument, so
+# every discovered test case (not only minimal_renderer_gpu_tests.cpp's
+# own new cases) launches with this target's own build output directory
+# as its current working directory -- required for the plain relative
+# shader path this Plan uses (Section 12); harmless for every pre-
+# existing test case in this file, none of which opens any file by a
+# relative path today:
+catch_discover_tests(atlantis_vulkan_backend_gpu_tests
+  DISCOVERY_MODE PRE_TEST
+  PROPERTIES LABELS "gpu"
+  WORKING_DIRECTORY "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>"
+)
 
 # Section 12's shared shader artifacts, copied next to this executable's
 # own build output -- see Section 12 for why a copy, not a baked
@@ -1819,7 +2034,28 @@ catch_discover_tests(atlantis_renderer_tests DISCOVERY_MODE PRE_TEST)
 # examples/frame_execution_demo/CMakeLists.txt, + Atlantis::Renderer link,
 # + the same shader-copy add_custom_command() pattern as
 # atlantis_vulkan_backend_gpu_tests above, targeting
-# atlantis_minimal_renderer_demo instead
+# atlantis_minimal_renderer_demo instead, + a convenience run target so
+# a human always launches it with the correct working directory (Section
+# 12) regardless of where the build/run command itself was invoked from:
+add_executable(atlantis_minimal_renderer_demo main.cpp)
+target_link_libraries(atlantis_minimal_renderer_demo PRIVATE
+  Atlantis::Core Atlantis::Platform Atlantis::RHI Atlantis::VulkanBackend
+  Atlantis::RenderGraph Atlantis::Renderer atlantis_compiler_warnings)
+
+add_custom_command(TARGET atlantis_minimal_renderer_demo POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+      "$<TARGET_FILE_DIR:atlantis_minimal_renderer_demo>/shaders"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_SOURCE_DIR}/shaders/minimal_renderer/minimal_mesh.vert.spv"
+      "${CMAKE_SOURCE_DIR}/shaders/minimal_renderer/minimal_mesh.frag.spv"
+      "$<TARGET_FILE_DIR:atlantis_minimal_renderer_demo>/shaders/"
+)
+
+add_custom_target(run_minimal_renderer_demo
+  COMMAND $<TARGET_FILE:atlantis_minimal_renderer_demo>
+  WORKING_DIRECTORY "$<TARGET_FILE_DIR:atlantis_minimal_renderer_demo>"
+  DEPENDS atlantis_minimal_renderer_demo
+)
 
 # CMakeLists.txt (root)
 add_subdirectory(src/core)
@@ -1861,15 +2097,23 @@ Each step ends with the relevant Section 15 build/test commands
    signature additions (declarations only). Build: header compilation
    only.
 2. **`vulkan_memory.{h,cpp}` and `dynamic_rendering.{h,cpp}`** — the two
-   pure decision functions and their real-query wrappers, independent of
-   any concrete resource type yet. GPU-independent unit tests
-   (`vulkan_memory_tests.cpp`, `dynamic_rendering_tests.cpp`) land here.
-3. **`VulkanDevice` dynamic-rendering capability selection** — extends
-   the existing physical-device selection loop (Section 8), adds
-   `DeviceCreateError::DynamicRenderingUnavailable`, resolves and stores
-   entry-point function pointers. Build-verify only this step (no
-   consumer yet); confirm existing `createDevice()` GPU tests still pass
-   unmodified (regression check for the loop extension).
+   pure decision functions, independent of any concrete resource type or
+   real Vulkan call yet. GPU-independent unit tests
+   (`vulkan_memory_tests.cpp`, `dynamic_rendering_tests.cpp`) land here,
+   including the full five-boolean truth table (Section 15).
+3. **`vulkan_instance.cpp`'s instance-extension query/enable + entry-
+   point resolution, then `VulkanDevice`'s dynamic-rendering capability
+   selection** — `vulkan_instance.cpp` gains the
+   `VK_KHR_get_physical_device_properties2` availability check,
+   conditional enablement, and `vkGetPhysicalDeviceFeatures2KHR`
+   resolution via `vkGetInstanceProcAddr` (Section 8); `vulkan_device.cpp`
+   extends the existing physical-device selection loop to call
+   `decideDynamicRenderingPath()` per candidate, adds
+   `DeviceCreateError::DynamicRenderingUnavailable`, and resolves/stores
+   the device-level entry-point function pointers (core vs. `KHR`).
+   Build-verify only this step (no consumer yet); confirm existing
+   `createDevice()` GPU tests still pass unmodified (regression check for
+   both the instance- and device-level loop extensions).
 4. **`VulkanBuffer`/`VulkanTexture` + `resource_state_mapping.{h,cpp}`
    extensions** — concrete resource classes, `VulkanDevice::createBuffer()`/
    `createTexture()`, the two new transition-table rows. GPU-independent:
