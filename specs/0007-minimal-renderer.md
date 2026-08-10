@@ -205,14 +205,18 @@ Explicitly excluded from this spec's design and implementation:
   is stateless across frames: it retains no GPU resource and no
   frame-to-frame state of its own.
 - `Renderer`'s per-frame entry point takes, by borrowed reference: the
-  caller-acquired `RenderTarget`, a caller-owned depth `Texture`, a small
-  camera-data value (view/projection), and a caller-owned collection of
-  draw items (each: a `Mesh` reference, a `Material` reference, an
-  object-to-world transform). It builds, compiles, and executes a
-  RenderGraph description internally, recording into the caller-provided
-  `CommandList` — it never calls `Device::submit()` or
-  `Presentation::present()` itself. Exact type/method names are a
-  Plan-stage detail.
+  caller-acquired `RenderTarget`, a caller-owned depth `Texture`, a
+  reference to the caller-owned, caller-written camera uniform `Buffer`
+  (not a raw camera-data value — the caller writes that frame's view/
+  projection matrices into the `Buffer` before calling `Renderer`; see
+  "Minimal RHI GPU resources" below and
+  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)),
+  and a caller-owned collection of draw items (each: a `Mesh` reference, a
+  `Material` reference, an object-to-world transform). It builds,
+  compiles, and executes a RenderGraph description internally, recording
+  into the caller-provided `CommandList` — it never calls
+  `Device::submit()` or `Presentation::present()` itself. Exact type/
+  method names are a Plan-stage detail.
 
 **`Mesh` and `Material`**
 
@@ -242,38 +246,74 @@ Explicitly excluded from this spec's design and implementation:
 - `Buffer` supports exactly three fixed purposes: vertex, index, uniform
   (camera). `Texture` supports exactly one usage this round: depth
   attachment.
-- The camera uniform `Buffer` is host-visible/host-coherent and is
-  written directly by the caller once per frame, after `acquireNextTarget()`
-  returns (relying on that call's existing drain of any previously-retained
-  submission, per [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md)
+- **All three `Buffer` purposes — not only the uniform buffer — use
+  host-visible, host-coherent memory this round**, avoiding a staging-
+  buffer/upload-copy-command path entirely; each `Buffer` is mapped once,
+  for its whole lifetime, at creation. See
+  [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)
+  for why this is a deliberate simplification, not an oversight, and what
+  a future spec would need to add to move vertex/index data to
+  device-local memory.
+- The camera uniform `Buffer` is written directly by the caller once per
+  frame, after `acquireNextTarget()` returns (relying on that call's
+  existing drain of any previously-retained submission, per
+  [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md)
   and the fix landed in PR #24, to guarantee no GPU work is still reading
   the buffer's previous contents at the moment the caller writes to it).
   No double-buffering or explicit CPU/GPU synchronization beyond that
   existing guarantee is introduced.
+- **The per-draw-item object-to-world transform travels as a Vulkan push
+  constant, not a second uniform buffer — fixed here, not left to the
+  Plan.** A shared uniform buffer, overwritten once per draw item within a
+  single frame's command recording, would have every earlier draw item's
+  transform silently corrupted by a later one by the time the GPU actually
+  executes any of them (recording precedes submission). Push constants are
+  copied into the command buffer's own recorded state at record time,
+  avoiding this. See
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md).
 
 **Minimal RHI graphics pipeline, binding, and draw surface**
 
 - `Pipeline` RHI interface, `Device::createPipeline()`, move-only
   single-owner ownership — one fixed vertex-input layout, depth-test/
-  depth-write enabled, opaque rasterization, targeting attachment formats
-  directly (no `VkRenderPass`) — see
+  depth-write enabled, opaque rasterization, dynamic viewport/scissor
+  state (so one `Pipeline` survives every resize without recreation),
+  targeting attachment formats directly (no `VkRenderPass`) — see
   [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md).
 - `CommandList` gains: an attachment-scoping operation pair (called only
-  by RenderGraph's `execute()`, never by a pass callback — see below),
-  `bindPipeline()`, `bindVertexBuffer()`, `bindIndexBuffer()`, a minimal
-  per-object binding mechanism (camera uniform + one per-draw transform),
-  and `drawIndexed()`. Recording remains legal only from inside a
+  by RenderGraph's `execute()`, never by a pass callback — see below;
+  unconditionally clears both attachments via `VK_ATTACHMENT_LOAD_OP_CLEAR`
+  each frame, so this spec's draw pass never reuses Spec 0006's
+  `clearColor()` mechanism), `bindPipeline()`, `bindVertexBuffer()`,
+  `bindIndexBuffer()`, a minimal per-object binding mechanism (camera
+  uniform buffer binding + a push-constant per-draw transform — see
+  above), and `drawIndexed()`. Recording remains legal only from inside a
   RenderGraph pass execution callback, per
   [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md)'s
   existing (inspection-enforced, not type-enforced) rule.
-- `ResourceState` gains new variants for depth-attachment and buffer-
-  purpose bookkeeping, extending (not replacing) its existing three
-  color-only variants — see
-  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md).
+- `ResourceState` gains two new variants, **each distinct in name and in
+  Vulkan Backend mapping from the existing `ColorAttachmentWrite`**
+  (which remains scoped to Spec 0006's transfer-based `clearColor()` and
+  is never reused here — reusing it would be a genuine layout-correctness
+  bug, not merely a naming ambiguity; see
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)):
+  `ColorAttachmentOutput` (the real graphics-pipeline color-output-merger
+  write state) and `DepthAttachmentReadWrite` (the depth-test-read-plus-
+  depth-write state). The depth `Texture`'s combined read+write behavior
+  is expressed as **exactly one** `writes()` usage tagged
+  `DepthAttachmentReadWrite` — never a paired `reads()` + `writes()` on
+  the same pass, which [ADR-0018](../adr/0018-render-graph-dependency-derivation-and-ordering.md)'s
+  existing, unmodified rule already rejects; that single state's Vulkan
+  Backend mapping is what carries both access directions internally. See
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)/[ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md).
 - The Vulkan Backend scopes every draw exclusively via Vulkan's core
   dynamic rendering (`vkCmdBeginRendering`/`vkCmdEndRendering`) — no
   `VkRenderPass`/`VkFramebuffer` object is created anywhere in this spec's
-  implementation. See
+  implementation. This requires raising the Vulkan Backend's currently-
+  requested API version (today, `VK_API_VERSION_1_0`, per
+  `vulkan_instance.cpp`/`vulkan_device.cpp`) and explicitly enabling the
+  `dynamicRendering` feature at device creation — a Vulkan 1.3+ "core
+  optional" feature is not enabled merely by requesting a 1.3 device. See
   [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md).
 
 **RenderGraph multi-attachment and draw-pass execution integration**
@@ -286,18 +326,28 @@ Explicitly excluded from this spec's design and implementation:
   the bound depth `Texture` — see
   [ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md)
   for why.
-- `execute()` recognizes a **draw pass** from its declared attachment-
-  shaped usages and automatically brackets that pass's execution callback
-  with the attachment-scoping operation pair — a pass author never calls
-  it directly. This spec's own scope needs exactly one draw pass per
-  frame; `execute()`'s derivation rule is not required to support more
-  than one in this round.
+- `execute()` recognizes a **draw pass** from a declared usage carrying
+  `ColorAttachmentOutput` or `DepthAttachmentReadWrite` **and only these
+  two states** — never `ColorAttachmentWrite`, so Spec 0006's existing
+  `clearColor()` pass (which does declare `ColorAttachmentWrite`) is
+  structurally unaffected by this new derivation rule. `execute()`
+  automatically brackets a recognized draw pass's execution callback with
+  the attachment-scoping operation pair — a pass author never calls it
+  directly. This spec's own scope needs exactly one draw pass per frame;
+  `execute()`'s derivation rule is not required to support more than one
+  in this round.
 - Transition-insertion (per-bound-resource "most-recently-recorded state"
   tracking, automatic `transitionResource()` insertion on a state change)
-  is unchanged in mechanism, now running once per bound resource. The
-  trailing `PresentSource` transition remains specific to the bound
-  `RenderTarget`; no trailing transition is inserted for the bound depth
-  `Texture` this round.
+  is unchanged in mechanism, now running once per bound resource. **Every
+  bound resource — including, newly, the depth `Texture` — is treated as
+  entering each `execute()` call from `ResourceState::Undefined`**,
+  extending (not modifying) [ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)'s
+  existing `RenderTarget`-specific rule; valid here because this spec's
+  single draw pass unconditionally clears both attachments via load-op
+  every frame, so discarding prior contents is always safe. The trailing
+  `PresentSource` transition remains specific to the bound `RenderTarget`;
+  no trailing transition is inserted for the bound depth `Texture` this
+  round.
 
 **Resize / depth-resource lifecycle**
 
@@ -378,16 +428,20 @@ Runtime-equivalent verification composition, once per frame:
   Check depth Texture extent against RenderTarget::extent();
     recreate depth Texture via Device::createTexture() if it differs
 
-  Write this frame's camera view/projection into the camera uniform Buffer
+  Write this frame's camera view/projection directly into the camera
+    uniform Buffer's mapped memory (caller-owned; Renderer never touches
+    raw camera matrices, only binds this Buffer -- see Requirements)
 
   Device::createCommandList() -> CommandList
 
   Renderer::drawFrame(commandList, *renderTarget, *depthTexture,
-                       cameraData, drawItems)
+                       cameraBuffer, drawItems)
     -- internally: builds a RenderGraphBuilder description (one draw
-       pass, color + depth attachment usages, execution callback that
-       binds Mesh/Material state and calls drawIndexed() once per draw
-       item), compiles it, calls render_graph::execute() --
+       pass, ColorAttachmentOutput + DepthAttachmentReadWrite usages,
+       execution callback that binds Mesh/Material/cameraBuffer state,
+       pushes each draw item's transform as a push constant, and calls
+       drawIndexed() once per draw item), compiles it, calls
+       render_graph::execute() --
 
   Device::submit(commandList, target's-acquire-complete-signal)
   Presentation::present(target, submissionSignal)
@@ -584,6 +638,17 @@ drafted against it, per [AGENTS.md](../AGENTS.md).
     insertion (begin before the pass's callback runs, end immediately
     after), for a pass with color-only, and for a pass with color+depth,
     attachment-shaped usages.
+  - `execute()`'s draw-pass recognition does *not* fire for a pass whose
+    only attachment-shaped usage is `ColorAttachmentWrite` (Spec 0006's
+    existing clear-pass shape) — confirming this spec's new derivation
+    rule is scoped exactly to `ColorAttachmentOutput`/
+    `DepthAttachmentReadWrite` and leaves Spec 0006's own pass shape
+    unaffected.
+  - Every bound resource (color and depth) is treated as entering each
+    `execute()` call from `ResourceState::Undefined`, including on a
+    second, otherwise-identical `execute()` call against the same bound
+    depth `Texture` — confirming no unintended cross-call state leaks
+    into the "most-recently-recorded state" bookkeeping.
   - Guard 1 (every `ResourceState`-tagged usage must have a binding),
     exercised against a depth `Texture` binding as well as a
     `RenderTarget` binding.
@@ -604,10 +669,22 @@ drafted against it, per [AGENTS.md](../AGENTS.md).
   pattern this repository already uses. Must cover, at minimum: creating
   and destroying a `Buffer` of each of the three purposes; creating and
   destroying a depth `Texture`, including at a resized extent; creating
-  and destroying a `Pipeline` from this spec's fixed SPIR-V pair; and one
-  full draw-pass execution (bind, draw, attachment scope begin/end)
-  against a real acquired `RenderTarget` and a real depth `Texture`, with
-  Validation Layers reporting zero warnings/errors.
+  and destroying a `Pipeline` from this spec's fixed SPIR-V pair; one full
+  draw-pass execution (bind, draw, attachment scope begin/end) against a
+  real acquired `RenderTarget` and a real depth `Texture`, with Validation
+  Layers reporting zero warnings/errors; and a frame with **more than one
+  draw item**, each with a distinct object-to-world transform, confirming
+  every draw item ends up at its own correct position (not all at the
+  last item's position) — this is the concrete regression test for the
+  push-constant-vs-shared-uniform-buffer correctness argument
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)
+  makes. `Pipeline` creation succeeding, drawing without a Validation
+  Layer error, and the manually-observed correct visual output (below)
+  are, together, this round's only available signal that the hand-
+  specified vertex-input/binding layout actually matches the checked-in
+  shader bytecode's own interface — no automated reflection-based
+  cross-check exists this round (see
+  [ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)).
 - **Headless integration tests:** not applicable — headless rendering
   remains unimplemented, per
   [testing-strategy.md](../docs/process/testing-strategy.md)'s sequencing
@@ -690,10 +767,32 @@ drafted against it, per [AGENTS.md](../AGENTS.md).
 - [ ] `execute()` correctly brackets every recognized draw pass's
       execution callback with attachment-scoping begin/end calls, and
       never inserts one for a pass with no attachment-shaped usage.
+- [ ] `execute()`'s draw-pass recognition never triggers on a
+      `ColorAttachmentWrite`-tagged usage — Spec 0006's existing
+      `examples/frame_execution_demo` clear pass continues to compile and
+      execute with no attachment-scoping call inserted around it.
+- [ ] The depth `Texture`'s combined read/write usage is declared as
+      exactly one `writes()` call tagged `DepthAttachmentReadWrite`
+      anywhere this spec's implementation declares it — no pass anywhere
+      in this spec's implementation declares both a `reads()` and a
+      `writes()` usage against the same logical resource (unchanged,
+      pre-existing [ADR-0018](../adr/0018-render-graph-dependency-derivation-and-ordering.md)
+      rule, not reopened by this spec).
+- [ ] The per-draw-item object-to-world transform is recorded as a Vulkan
+      push constant in every draw this spec's implementation records —
+      no second uniform buffer is written more than once per frame for
+      this purpose.
+- [ ] `Pipeline` objects created by this spec's implementation use dynamic
+      viewport/scissor state — no pipeline is recreated solely because the
+      window was resized.
 - [ ] No shader compiler, and no SPIR-V reflection code, is invoked by any
       CMake target or any Atlantis Core/RHI/RenderGraph/Renderer/Tools
       source file this spec's implementation adds — verifiable by
       inspection of the build configuration and source tree.
+- [ ] Every checked-in `.spv` file this spec adds has a corresponding
+      checked-in, human-readable shader source file and a plain-text note
+      of the compiler/version used to produce it — verifiable by
+      inspection of the added files.
 - [ ] Every `VkResult` along resource creation, pipeline creation,
       binding, attachment scoping, drawing, submission, and present is
       checked; no `VkResult` is discarded.
@@ -727,17 +826,35 @@ drafted against it, per [AGENTS.md](../AGENTS.md).
 - **Exact mesh content** (a hand-authored cube, a low-poly sample mesh, or
   an equivalent fixed shape) is left to the Plan, provided it is non-planar
   enough to genuinely exercise depth testing (a flat quad alone would not).
-- **Exact per-object binding mechanism** (Vulkan push constant vs. a
-  second small uniform binding for the object-to-world transform) is left
-  to the Plan, per
-  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md).
-- **Exact `ResourceState` variant set and naming** for depth/buffer-purpose
-  bookkeeping is left to the Plan, per
-  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md).
+- **Exact struct-level `ResourceState` naming/spelling** for
+  `ColorAttachmentOutput`/`DepthAttachmentReadWrite` and for the buffer-
+  purpose bookkeeping states is left to the Plan — this spec and
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)
+  fix the semantics and each state's distinctness from
+  `ColorAttachmentWrite`, not the exact enumerator spelling.
 - **Whether Vulkan Backend raises its minimum core API version to 1.3, or
   instead requires `VK_KHR_dynamic_rendering` explicitly on an older core
   version**, is left to the Plan, per
-  [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md).
+  [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md) —
+  either way, the Plan must both raise/require the version *and*
+  explicitly enable the `dynamicRendering` feature at device creation
+  (two distinct steps; see that ADR's Context).
+- **`Pipeline` attachment-format staleness across a swapchain format
+  change is a known, unresolved gap.** `Pipeline` bakes in its target
+  color/depth attachment formats at creation time
+  ([ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)).
+  If `Presentation`'s swapchain format selection
+  ([ADR-0016](../adr/0016-presentation-acquire-present-and-recreation-contract.md))
+  ever picks a different (format, color space) pair on a later
+  recreation (e.g. the window moves to a monitor with different surface
+  capabilities), an already-created `Material`'s `Pipeline` would be
+  silently invalid against the new format. This spec's own manual
+  verification exercises a single monitor/format for its whole session
+  and does not cover this case — left open for a future spec (or a
+  Plan-stage decision for this one) to resolve, either by detecting a
+  format change and recreating affected `Pipeline`s (mirroring the
+  caller-owns-depth-`Texture`-recreation pattern), or by an explicit
+  constraint on when `Material` construction may safely happen.
 - **Exact checked-in `.spv` file location and naming convention** is left
   to the Plan, per
   [ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md).

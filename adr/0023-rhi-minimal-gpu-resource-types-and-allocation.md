@@ -43,7 +43,27 @@ create a concrete need for pooling or suballocation — only for *some*
   view/projection). No general "any buffer, any usage flags" API — the
   concrete purpose is fixed at creation time (a `BufferPurpose`-shaped enum
   or equivalent, left to the Plan), matching this spec's own
-  minimal-and-honest scope rather than a general resource system.
+  minimal-and-honest scope rather than a general resource system. **All
+  three purposes use host-visible, host-coherent memory this round** —
+  including vertex and index data, not only the uniform buffer. This is a
+  deliberate simplification, not an oversight: a device-local vertex/index
+  buffer would need a staging buffer plus an upload copy command (and the
+  synchronization to know that copy has completed before the first draw
+  reads it), which is real additional complexity this spec's own mesh —
+  small, uploaded exactly once at `Mesh` construction, never re-uploaded —
+  does not need. A future spec with a meaningfully larger mesh, or a real
+  performance motivation, is expected to introduce a staging/upload path
+  and move vertex/index data to device-local memory; this spec does not
+  design that path. Each `Buffer`'s backing memory is mapped exactly once,
+  for its whole lifetime, at creation — never repeatedly mapped/unmapped
+  per write — since host-coherent memory needs no explicit flush/
+  invalidate call between a CPU write and a subsequent GPU read that is
+  otherwise correctly ordered (e.g. by this spec's own acquire-time drain
+  guarantee, see Requirements below). Exact alignment/offset requirements
+  (e.g. respecting `VkPhysicalDeviceLimits::minUniformBufferOffsetAlignment`
+  for the uniform buffer) are a Plan-stage implementation detail this ADR
+  does not enumerate, but must be respected regardless of which concrete
+  values the Plan chooses.
 - **`Texture`** — an RHI interface representing a GPU image used, this
   round, exclusively as a depth attachment. No sampled/shader-read usage,
   no mipmaps, no texture streaming, no general format table beyond
@@ -115,13 +135,23 @@ private, with an explicit migration boundary.** This resolves
   suballocator, exactly as [ADR-0015](0015-vulkan-memory-allocation-deferred.md)
   already anticipated; nothing in this round's implementation may be
   written in a way that presumes which choice that future ADR makes.
-- Host-visible, host-coherent memory is used for the uniform (camera)
-  buffer specifically, so it can be written directly by the caller each
-  frame with no explicit flush/invalidate call — the exact memory-property
-  flags and write-timing safety argument (tied to the single-frame-in-
-  flight baseline's existing acquire-time drain, per
-  [ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md))
-  are elaborated in
+- **This is a genuinely narrow claim, not an abstract one — this spec's
+  own scope creates, at most, a handful of individual GPU allocations
+  total**: one vertex `Buffer`, one index `Buffer`, one uniform `Buffer`,
+  and one depth `Texture` per instance the verification composition
+  constructs (plus one more depth `Texture` allocation on each interactive
+  resize, since the old one is destroyed and a new one created — see
+  [ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)).
+  This is nowhere near a typical driver's `maxMemoryAllocationCount` floor
+  (commonly 4096 or higher) — the migration boundary above exists for
+  when a *future* spec's resource count changes this picture, not because
+  this spec's own scope is already near that limit.
+- The uniform (camera) buffer's memory-write-timing safety argument (why
+  a direct, unsynchronized CPU write into host-coherent memory is safe
+  once per frame) is tied to the single-frame-in-flight baseline's
+  existing acquire-time drain, per
+  [ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md);
+  elaborated in
   [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md)'s
   own Proposed Design, not repeated here.
 

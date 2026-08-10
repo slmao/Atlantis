@@ -49,6 +49,21 @@ the *sourcing model*, not the path.
   the same way this repository already treats, e.g., a hand-authored test
   fixture — the `.spv` files are committed source artifacts, not build
   output.
+- **The human-readable shader source (GLSL or HLSL) each `.spv` file was
+  compiled from is also checked in, alongside the compiled bytecode, as a
+  plain text file — never compiled, parsed, or otherwise consumed by any
+  Atlantis code, purely for human review.** A compiled `.spv` file alone
+  is an unauditable binary blob: a reviewer cannot confirm what a PR
+  introducing one actually does without either trusting it blindly or
+  decompiling it. Checking in the source alongside it (plus a short,
+  plain-text note recording which compiler and version produced the
+  bytecode, e.g. a comment header or a companion file) closes that gap at
+  effectively no cost — it is never built, so it cannot become a hidden
+  build dependency, but it makes this spec's shader artifacts reviewable
+  and reproducible by inspection the same way every other checked-in
+  artifact in this repository already is. This does not weaken "no
+  compiler is invoked by Atlantis code" above: the source file is
+  inert data to every build target, read by humans only.
 - **No reflection is performed on the SPIR-V bytecode, by RHI, Vulkan
   Backend, or Renderer.** Vertex input layout, binding/uniform layout, and
   push-constant layout are all **hand-specified in C++**, alongside the
@@ -124,10 +139,14 @@ the *sourcing model*, not the path.
   Shader-System-shaped questions (which compiler, which flags, where
   intermediate artifacts live) this spec is explicitly not authorized to
   decide.
-- The checked-in `.spv` files' provenance (which compiler, which flags,
-  which source) is not tracked by any Atlantis tooling — a real, accepted
-  gap for this narrow, temporary path; a future Shader System is expected
-  to replace this with a real, tracked build pipeline.
+- The checked-in `.spv` files' provenance (which compiler, which flags)
+  is recorded only as a plain-text note alongside the checked-in source
+  (see Decision above), not by any automated, machine-verified Atlantis
+  tooling — a real, accepted, but now bounded gap for this narrow,
+  temporary path (a human can still audit and manually reproduce the
+  build, unlike an untracked binary with no note at all); a future Shader
+  System is expected to replace this with a real, tracked, automated build
+  pipeline.
 
 ## Alternatives Considered
 

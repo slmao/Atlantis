@@ -52,15 +52,43 @@ exists specifically to protect
 [ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)'s
 always-`Undefined`-incoming-layout premise, which is a `RenderTarget`-
 specific simplification that does not apply to a depth `Texture`'s
-usage pattern (a depth attachment this spec introduces is legitimately
-both read — depth test — and written — depth write — within the same
-pass, by the same fixed-function depth-test/depth-write pipeline state
-[ADR-0025](0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)
-fixed; RenderGraph's own single-producer-per-*logical*-resource model,
-[ADR-0018](0018-render-graph-dependency-derivation-and-ordering.md), is
-unaffected by this — the depth `Texture`'s read+write behavior happens
-inside one pass's fixed-function pipeline state, not as two separate
-declared graph usages).
+usage pattern.
+
+**The depth `Texture`'s combined read (depth test) and write (depth
+write) behavior is expressed as exactly one `RenderGraphBuilder::writes()`
+usage declaration, tagged `ResourceState::DepthAttachmentReadWrite`
+([ADR-0025](0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md))
+— never as a paired `reads()` + `writes()` declaration against the same
+logical resource in the same pass.** This is not a new rule this ADR
+invents: [ADR-0018](0018-render-graph-dependency-derivation-and-ordering.md)
+already, unconditionally, rejects "a pass declaring both a read and a
+write usage against the same logical resource" as an unsupported
+declaration, checked at `RenderGraphBuilder::reads()`/`writes()`
+declaration time — well before `compile()` or `execute()` ever runs. That
+existing rule is what structurally prevents this spec's own
+implementation from ever modeling depth test/write as two separate graph
+usages; this ADR does not modify, reopen, or add an exception to it. What
+this ADR *does* fix is that the *single* `DepthAttachmentReadWrite`
+usage's Vulkan-Backend-mapped access mask legitimately spans both
+directions (`VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT`) — RenderGraph's own
+dependency-derivation model
+([ADR-0018](0018-render-graph-dependency-derivation-and-ordering.md))
+sees one write usage, exactly as it sees any other producer declaration;
+only the *transition mechanism*
+([ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md))
+knows that state's barrier includes a read access bit alongside the write
+one. Guard 2 not applying to depth `Texture` bindings (above) is what
+keeps this legal: banning any declared read usage on a bound depth
+`Texture` (as Guard 2 does for `RenderTarget`) would be moot for this
+single-write-usage model (there is no separate declared read usage to
+ban) but would still be the wrong restriction to state, since a future
+spec introducing a genuine second, separate reader pass for the same
+depth resource (e.g. a depth-sampling post-process pass) is a legal
+extension of Spec 0005's single-producer-multiple-reader model
+([ADR-0018](0018-render-graph-dependency-derivation-and-ordering.md)) that
+this spec's own scope does not need, but must not structurally forbid
+either.
 
 **Transition-insertion generalizes per bound-resource kind, unchanged in
 mechanism.** RenderGraph continues to track "most-recently-recorded
@@ -87,11 +115,18 @@ adds, directly extending
 scoping call, not only resource-state transitions:
 
 - A pass is recognized as a **draw pass** if any of its declared usages
-  targets a resource bound to a color `RenderTarget` or a depth `Texture`
-  with an attachment-shaped `ResourceState` (e.g.
-  `ColorAttachmentWrite`/the new depth-attachment state
-  [ADR-0025](0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)
-  introduces).
+  carries `ResourceState::ColorAttachmentOutput` or
+  `ResourceState::DepthAttachmentReadWrite`
+  ([ADR-0025](0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md))
+  — **and only these two states**. This is deliberately never triggered
+  by `ResourceState::ColorAttachmentWrite`: that state remains scoped to
+  Spec 0006's `clearColor()`/transfer-based mechanism, which must never be
+  wrapped in a `beginRendering()`/`endRendering()` scope (see
+  [ADR-0025](0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)'s
+  own Decision for why conflating the two states would be a genuine
+  correctness bug, not just an ambiguity) — this keeps Spec 0006's
+  existing `examples/frame_execution_demo` pass structurally unaffected by
+  this spec's new recognition rule.
 - For each draw pass, `execute()` calls `beginRendering()` (passing
   whichever bound color/depth resources that pass's usages reference, after
   any transition this pass's usages require has already been recorded),
@@ -114,6 +149,31 @@ scoping call, not only resource-state transitions:
   decision inside a pass's callback delegating to `CommandList`, unchanged
   from [ADR-0021](0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)'s
   existing split.
+
+**The bound depth `Texture`'s "most-recently-recorded state" bookkeeping
+also starts each `execute()` call from `ResourceState::Undefined`,
+extending — not modifying — [ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)'s
+existing always-`Undefined`-incoming rule for `RenderTarget` to this
+spec's newly-introduced depth binding.** `ADR-0019` itself is not amended
+— its Decision remains scoped to `RenderTarget`, and this ADR does not
+reopen it. This spec's own extension is justified independently, by this
+spec's own, narrower fact pattern: [ADR-0025](0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)'s
+attachment-scoping decision unconditionally clears *both* the color and
+depth attachment via `VK_ATTACHMENT_LOAD_OP_CLEAR` at the start of this
+spec's single draw pass, every frame — so, exactly as with `RenderTarget`,
+discarding whatever layout/content the depth `Texture` held before is
+always safe, and treating it as entering the frame `Undefined` (rather
+than tracking its true prior layout across frames) avoids inventing
+cross-frame layout-tracking state this round has no need for. This holds
+uniformly across the first frame after the depth `Texture` is created,
+every subsequent unchanged-extent frame, and the first frame after a
+resize-driven depth-`Texture` recreation (a brand-new `Texture` object,
+whose "prior state" is moot regardless) — no special-casing is needed for
+any of the three. A future spec that stops fully re-clearing the depth
+attachment every frame (e.g. to accumulate or reuse it across frames)
+would need to revisit this extension specifically, without needing to
+revisit [ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)
+itself.
 
 ## Consequences
 

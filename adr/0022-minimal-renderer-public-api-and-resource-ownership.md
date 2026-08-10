@@ -98,10 +98,23 @@ any known future one, that a `Renderer` interface would exist to swap in.
 - **`Renderer`'s per-frame contract** takes: the caller-acquired
   `RenderTarget` (color), a caller-owned depth `Texture`
   ([ADR-0023](0023-rhi-minimal-gpu-resource-types-and-allocation.md)), a
-  small camera-data value (view/projection matrices — exact shape left to
-  the Plan), and a caller-owned collection of draw items (each: a
-  `Mesh` reference, a `Material` reference, and an object-to-world
-  transform). This collection is an ordinary caller-supplied parameter
+  reference to the caller-owned, caller-written camera uniform `Buffer`
+  ([ADR-0023](0023-rhi-minimal-gpu-resource-types-and-allocation.md)) —
+  **not a raw camera-data value** — and a caller-owned collection of draw
+  items (each: a `Mesh` reference, a `Material` reference, and an
+  object-to-world transform). The camera `Buffer` reference, not a value,
+  is deliberate: the caller writes that frame's view/projection matrices
+  directly into the `Buffer`'s mapped memory *before* calling `Renderer`
+  (see [ADR-0023](0023-rhi-minimal-gpu-resource-types-and-allocation.md)
+  for why this write is safe at that point), and `Renderer`'s internally-
+  built RenderGraph pass callback binds that same `Buffer` during
+  recording — `Renderer` never touches raw camera matrices itself, only
+  binds a `Buffer` reference, consistent with every other input to this
+  contract being a borrowed reference to something the caller already
+  owns and already populated. Unlike the depth `Texture` (recreated on
+  resize), the camera `Buffer`'s size never changes with window extent, so
+  the caller creates it once and never needs to recreate it for a resize.
+  The draw-item collection is an ordinary caller-supplied parameter
   (e.g. `std::span<const DrawItem>`), not a scene graph, an entity system,
   or any persistent registration API — `Renderer` iterates it once per
   call and retains nothing from it afterward. Internally, `Renderer`

@@ -31,11 +31,38 @@ silent implementation-time choice, even though it never crosses RHI's
 public interface.
 
 The verified development/CI-relevant environment for this repository
-(per Spec 0006's PR #24 verification record) runs Vulkan API version
-1.4.335 against a `VK_LAYER_KHRONOS_validation` Validation Layer — dynamic
-rendering has been part of core Vulkan since 1.3, so no extension
-availability check beyond the already-required device API version is
-needed on the primary Windows target.
+(per Spec 0006's PR #24 verification record) runs a physical device
+reporting Vulkan API version 1.4.335 against a
+`VK_LAYER_KHRONOS_validation` Validation Layer, so hardware/driver support
+for dynamic rendering is confirmed present. **However, this repository's
+current, already-shipped Vulkan Backend implementation does not yet
+request or require that version**: `vulkan_instance.cpp` sets
+`applicationInfo.apiVersion = VK_API_VERSION_1_0`, and
+`vulkan_device.cpp`'s physical-device selection only requires
+`properties.apiVersion >= VK_API_VERSION_1_0`. Adopting this ADR's
+decision therefore requires two concrete, previously-unstated
+implementation changes this ADR fixes as requirements (exact code
+locations/sequencing left to the Plan):
+
+1. **Raise the requested/required Vulkan API version** to at least 1.3 —
+   either by raising `applicationInfo.apiVersion` and the physical-device
+   minimum-version check both to `VK_API_VERSION_1_3` (adopted this
+   round; see Decision), or, if the Plan finds a reason to keep supporting
+   a pre-1.3 core version, by keeping a lower core version and instead
+   requiring the `VK_KHR_dynamic_rendering` device extension explicitly.
+2. **Explicitly enable the `dynamicRendering` feature at device creation**
+   — Vulkan 1.3 promotes dynamic rendering to core, but, like every
+   Vulkan 1.2+ "core optional" feature, it is **not enabled by default
+   merely by requesting a 1.3 device**: it must be requested via
+   `VkPhysicalDeviceVulkan13Features::dynamicRendering` (or the equivalent
+   `VkPhysicalDeviceDynamicRenderingFeatures` struct, if the
+   extension-route above is chosen instead) chained into
+   `VkDeviceCreateInfo::pNext` at `vkCreateDevice()` time. Omitting this
+   step would make every `vkCmdBeginRendering` call in this spec's
+   implementation invalid despite a sufficient API version being
+   requested — a distinct failure mode from the version question above,
+   and one this ADR calls out explicitly so the Plan does not conflate
+   "requested a high enough version" with "enabled the feature."
 
 ## Decision
 
@@ -72,16 +99,13 @@ attachment-scoping surface.**
   scope) implementing the same RHI interfaces is free to make a different
   choice internally, since RHI's public surface never names either
   mechanism.
-- Minimum Vulkan API version for the Windows/Vulkan Backend target is
-  raised, as a consequence of this decision, to whatever version dynamic
-  rendering requires without the `VK_KHR_dynamic_rendering` extension
-  (Vulkan 1.3) — or, if the Plan finds a reason to support pre-1.3
-  devices, the Vulkan Backend instead requires and enables
-  `VK_KHR_dynamic_rendering` explicitly at device-extension-selection
-  time. Which of these two (raise the minimum core version vs. require the
-  extension on an older core version) is a Plan-stage detail; this ADR
-  fixes only that dynamic rendering, one way or the other, is the adopted
-  mechanism.
+- The requested/required Vulkan API version is raised and the
+  `dynamicRendering` feature is explicitly enabled at device creation, per
+  the two concrete implementation requirements this ADR's Context section
+  fixes above — this ADR decides *that* dynamic rendering is adopted;
+  whether via a raised core version or an explicitly-required
+  `VK_KHR_dynamic_rendering` extension on an older core version is a
+  Plan-stage detail (see Context).
 
 ## Consequences
 
