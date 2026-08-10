@@ -27,6 +27,70 @@
   (RenderGraph multi-attachment/draw-pass integration), and
   [ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)
   (temporary pre-compiled SPIR-V shader sourcing).
+- **Human Review Confirmations Received (2026-08-11):** Three points were
+  confirmed explicitly during joint review of this spec and
+  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)–[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md),
+  and are **accepted as-is**, per this document's and those ADRs' own
+  content as revised by that review. This is a record of confirmed
+  design direction, not itself a full Human Review Approval — this spec
+  remains `Draft` and all six ADRs remain `Proposed` (see each ADR's own
+  header) until a complete joint approval is recorded, per
+  [AGENTS.md](../AGENTS.md).
+
+  1. **Dynamic rendering is adopted via a capability-detected dual path,
+     not by raising the Vulkan Backend's overall minimum supported API
+     version to 1.3.** A Vulkan 1.3+ device uses core dynamic rendering; a
+     lower-version device that advertises `VK_KHR_dynamic_rendering` uses
+     the equivalent extension path. Both paths require the Vulkan Backend
+     to explicitly query and enable the `dynamicRendering` feature at
+     device creation — neither path enables it implicitly. A device with
+     neither path available results in `Device` construction returning an
+     explicit, recoverable `Result::Err`, never a crash or a silent
+     `VkRenderPass`/`VkFramebuffer` fallback (not designed by this spec).
+     See Requirements' "Minimal RHI graphics pipeline, binding, and draw
+     surface" subsection and
+     [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md).
+  2. **Attachment format change is the caller's explicit responsibility,
+     fixed here as a concrete, testable contract — not left as an open
+     risk.** `Pipeline` fixes its target color/depth formats at creation.
+     The caller observes a format change via
+     `Presentation::metadata().format` (no new RHI query), and — after a
+     `Device::waitIdle()`, exactly as every other pre-destruction wait in
+     this codebase already requires — recreates every format-dependent
+     resource it owns (in this spec's own scope, `Material`'s `Pipeline`).
+     An extent-only change (the common resize case) is explicitly
+     narrower: only the depth `Texture` is recreated, because `Pipeline`
+     uses dynamic viewport/scissor state and its baked-in *formats* are
+     unaffected by extent alone. `Renderer` plays no role in either case —
+     it does not observe, cache, or recreate any format- or extent-
+     dependent resource. See Requirements' "Resize / depth-resource and
+     attachment-format lifecycle" subsection,
+     [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md),
+     and
+     [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md).
+  3. **Every other design direction reviewed is confirmed as drafted**:
+     the depth `Texture`'s combined read/write access is declared as
+     exactly one `writes()` usage tagged `DepthAttachmentReadWrite`, never
+     a paired `reads()` + `writes()` on the same pass (unchanged,
+     pre-existing [ADR-0018](../adr/0018-render-graph-dependency-derivation-and-ordering.md)
+     rule, not reopened); the draw pass's color output uses a distinct
+     `ColorAttachmentOutput` state, never Spec 0006's clear-only
+     `ColorAttachmentWrite`; the camera uses a caller-owned uniform
+     `Buffer`, referenced (not copied by value) into `Renderer`'s
+     per-frame call; the per-draw-item object-to-world transform uses a
+     Vulkan push constant, not a second uniform buffer; this round's
+     `Buffer`s are few, host-visible/host-coherent, and each individually
+     allocated (no pooling, no VMA); and this spec's shader bytecode is
+     checked in pre-compiled, alongside its human-readable source and a
+     plain-text compiler/version note, with no compiler, reflection, or
+     caching invoked by any Atlantis build target. See
+     [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md),
+     [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md),
+     [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md),
+     [ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md),
+     and
+     [ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)
+     for each decision's full record.
 
 ## Summary
 
@@ -306,14 +370,27 @@ Explicitly excluded from this spec's design and implementation:
   existing, unmodified rule already rejects; that single state's Vulkan
   Backend mapping is what carries both access directions internally. See
   [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)/[ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md).
-- The Vulkan Backend scopes every draw exclusively via Vulkan's core
-  dynamic rendering (`vkCmdBeginRendering`/`vkCmdEndRendering`) — no
-  `VkRenderPass`/`VkFramebuffer` object is created anywhere in this spec's
-  implementation. This requires raising the Vulkan Backend's currently-
-  requested API version (today, `VK_API_VERSION_1_0`, per
-  `vulkan_instance.cpp`/`vulkan_device.cpp`) and explicitly enabling the
-  `dynamicRendering` feature at device creation — a Vulkan 1.3+ "core
-  optional" feature is not enabled merely by requesting a 1.3 device. See
+- The Vulkan Backend scopes every draw exclusively via dynamic rendering
+  — no `VkRenderPass`/`VkFramebuffer` object is created anywhere in this
+  spec's implementation. **`Device` construction detects, at the physical
+  device the Vulkan Backend selects, which of two paths provides it:
+  core (device reports `apiVersion >= 1.3`) or extension
+  (`VK_KHR_dynamic_rendering`, on a lower core version); either way, the
+  `dynamicRendering` feature is explicitly queried and enabled — a Vulkan
+  1.3+ "core optional" feature is never enabled merely by requesting a 1.3
+  device.** The Vulkan Backend's overall minimum supported API version
+  (today, `VK_API_VERSION_1_0`, per
+  `vulkan_instance.cpp`/`vulkan_device.cpp`) is **not** raised to 1.3 as
+  part of this spec — a device below 1.3 that advertises the extension
+  still succeeds. A device with neither path available results in
+  `createDevice()` returning an explicit `Result::Err` (a new
+  `DeviceCreateError` variant), never a crash or an implicit
+  `VkRenderPass`/`VkFramebuffer` fallback. This detection, the feature
+  enablement, and the resulting choice of entry-point family
+  (`vkCmdBeginRendering` vs. `vkCmdBeginRenderingKHR`) are entirely the
+  Vulkan Backend's own responsibility — no capability type or path
+  indicator crosses into RHI's or RenderGraph's public surface, and no
+  second graphics backend is designed or scaffolded by this decision. See
   [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md).
 
 **RenderGraph multi-attachment and draw-pass execution integration**
@@ -349,15 +426,36 @@ Explicitly excluded from this spec's design and implementation:
   no trailing transition is inserted for the bound depth `Texture` this
   round.
 
-**Resize / depth-resource lifecycle**
+**Resize / depth-resource and attachment-format lifecycle**
 
-- The caller (this spec's verification composition) is responsible for
-  checking, once per frame after a successful `acquireNextTarget()`,
-  whether its owned depth `Texture`'s extent still matches the acquired
-  `RenderTarget`'s extent; if not, it destroys and recreates the depth
-  `Texture` at the new extent before calling `Renderer`'s per-frame entry
-  point. `Renderer` itself has no resize-driven internal state — see
+- **Extent-only change:** the caller (this spec's verification
+  composition) is responsible for checking, once per frame after a
+  successful `acquireNextTarget()`, whether its owned depth `Texture`'s
+  extent still matches the acquired `RenderTarget`'s extent; if not, it
+  destroys and recreates the depth `Texture` at the new extent before
+  calling `Renderer`'s per-frame entry point. `Pipeline` is untouched by
+  an extent-only change (dynamic viewport/scissor state, per
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)).
+  `Renderer` itself has no resize-driven internal state — see
   [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md).
+- **Format change** (the swapchain's color format selection, per
+  [ADR-0016](../adr/0016-presentation-acquire-present-and-recreation-contract.md),
+  changes — e.g. the window moves to a monitor with different surface
+  capabilities): the caller observes this by comparing
+  `Presentation::metadata().format` against the value it last saw, at the
+  same point each frame it already checks the depth `Texture`'s extent.
+  On a change, the caller calls `Device::waitIdle()`, then destroys and
+  recreates every format-dependent resource it owns — in this spec's own
+  scope, `Material`'s `Pipeline` — before calling `Renderer`'s per-frame
+  entry point again. This is a distinct case from an extent-only change,
+  not a superset of it: an extent-only change never requires
+  `Pipeline` recreation, and a format change requires it regardless of
+  whether the extent also changed in the same recreation. `Renderer`
+  plays no role in detecting or acting on either case — see
+  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)
+  and
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)
+  for the full contract.
 - A zero-extent frame (from `acquireNextTarget()`'s existing
   `Ok(std::nullopt)` outcome, per
   [ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md))
@@ -685,6 +783,18 @@ drafted against it, per [AGENTS.md](../AGENTS.md).
   shader bytecode's own interface — no automated reflection-based
   cross-check exists this round (see
   [ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)).
+  Also cover `createDevice()`'s dynamic-rendering capability detection on
+  whichever path the test machine's actual hardware/driver provides
+  ([ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)) —
+  confirming `Device` construction succeeds and the resolved path's entry
+  points work correctly. **This spec's own test environment is expected
+  to exercise exactly one of the two paths** (whichever the available
+  GPU/driver reports); exercising the other path, and the explicit-error
+  case when neither is available, requires hardware/driver combinations
+  this spec does not assume are available, and remains verified by code
+  inspection only where a second real device/driver cannot be obtained —
+  this limitation must be stated explicitly in any verification report,
+  not silently treated as fully covered.
 - **Headless integration tests:** not applicable — headless rendering
   remains unimplemented, per
   [testing-strategy.md](../docs/process/testing-strategy.md)'s sequencing
@@ -718,7 +828,21 @@ drafted against it, per [AGENTS.md](../AGENTS.md).
   - Interactive resize continues to show the mesh correctly (including
     depth correctness) at the new window size, with the depth `Texture`
     visibly/measurably recreated at the matching extent — no stretched,
-    corrupted, or stale depth buffer.
+    corrupted, or stale depth buffer — and with `Pipeline` demonstrably
+    *not* recreated for an extent-only change (e.g. by a log/assertion
+    the verification composition emits, confirming the dynamic viewport/
+    scissor path is actually exercised, not merely declared).
+  - **Format-change handling is exercised if the test environment allows
+    it** (e.g. dragging the window to a second monitor with different
+    surface capabilities): `Presentation::metadata().format` changing is
+    correctly detected by the caller, `Device::waitIdle()` is called, and
+    `Material`'s `Pipeline` is recreated, with no Validation Layer
+    warning or error across the transition. **If the test environment has
+    no second monitor/format to trigger this against, this case is
+    verified by code inspection only** — this spec does not claim a
+    format change was genuinely observed on hardware if it was not; the
+    manual-verification report must state explicitly which of the two
+    (genuinely exercised vs. inspected-only) applied.
   - Minimizing the window results in no crash, no busy-spin, and no
     Vulkan call being made while minimized; restoring resumes correct
     rendering (mesh, depth, camera) with no special recovery step visible
@@ -740,6 +864,19 @@ drafted against it, per [AGENTS.md](../AGENTS.md).
       `vkCmdPipelineBarrier` construction, and no `VkRenderPass`/
       `VkFramebuffer` object, exists anywhere outside the Vulkan Backend's
       `CommandList` implementation — the last clause is new this round,
+      per [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md).
+- [ ] `createDevice()` selects between the core and extension dynamic-
+      rendering paths correctly for whichever physical device is
+      selected, explicitly queries and enables the `dynamicRendering`
+      feature on whichever path applies, and returns an explicit
+      `Result::Err` (never a crash, never an implicit render-pass/
+      framebuffer fallback) when neither path is available — verifiable
+      by inspection of the capability-detection code path, and, where the
+      test environment's hardware allows exercising it, by a GPU
+      integration test.
+- [ ] No Vulkan capability/feature-detection type, and no indication of
+      which dynamic-rendering path a `Device` resolved to, appears in any
+      RHI or RenderGraph public header — verifiable by inspection/grep,
       per [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md).
 - [ ] `Buffer`, `Texture`, and `Pipeline` are each move-only (movable,
       non-copyable) — a compile-time property, verified as such.
@@ -803,6 +940,26 @@ drafted against it, per [AGENTS.md](../AGENTS.md).
       interactive resize, including a correctly-recreated depth `Texture`;
       makes zero Vulkan calls while minimized; and resumes correctly on
       restore.
+- [ ] An extent-only recreation (ordinary interactive resize) never
+      recreates `Pipeline` anywhere in this spec's implementation — only
+      the depth `Texture` is recreated.
+- [ ] A format change is detected by comparing
+      `Presentation::metadata().format` against the caller's last-seen
+      value (no new RHI query introduced for this purpose), and results
+      in `Device::waitIdle()` being called before every format-dependent
+      resource the caller owns (`Material`'s `Pipeline`, in this spec's
+      own scope) is destroyed and recreated — verifiable by inspection of
+      the verification composition's own code, and, if the test
+      environment allows genuinely triggering a format change (e.g. via a
+      second monitor with different surface capabilities), by observing
+      correct, Validation-Layers-clean behavior across it; if the test
+      environment cannot genuinely trigger a format change, this remains
+      verified by inspection/code review only, and that limitation is
+      reported as such rather than claimed as fully exercised.
+- [ ] `Renderer` contains no code path that reads
+      `Presentation::metadata()`, compares a format, or recreates
+      `Pipeline`/`Material`/`Texture` — the format-change contract is
+      entirely caller-side, verifiable by inspection.
 - [ ] No `src/renderer/` code depends on Atlantis Platform, Win32, the
       Android NDK, or any `Vk*` type — verifiable by inspection/grep.
 - [ ] No scene graph, ECS, asset system, model loader, texture, lighting
@@ -832,29 +989,19 @@ drafted against it, per [AGENTS.md](../AGENTS.md).
   [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)
   fix the semantics and each state's distinctness from
   `ColorAttachmentWrite`, not the exact enumerator spelling.
-- **Whether Vulkan Backend raises its minimum core API version to 1.3, or
-  instead requires `VK_KHR_dynamic_rendering` explicitly on an older core
-  version**, is left to the Plan, per
-  [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md) —
-  either way, the Plan must both raise/require the version *and*
-  explicitly enable the `dynamicRendering` feature at device creation
-  (two distinct steps; see that ADR's Context).
-- **`Pipeline` attachment-format staleness across a swapchain format
-  change is a known, unresolved gap.** `Pipeline` bakes in its target
-  color/depth attachment formats at creation time
-  ([ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)).
-  If `Presentation`'s swapchain format selection
-  ([ADR-0016](../adr/0016-presentation-acquire-present-and-recreation-contract.md))
-  ever picks a different (format, color space) pair on a later
-  recreation (e.g. the window moves to a monitor with different surface
-  capabilities), an already-created `Material`'s `Pipeline` would be
-  silently invalid against the new format. This spec's own manual
-  verification exercises a single monitor/format for its whole session
-  and does not cover this case — left open for a future spec (or a
-  Plan-stage decision for this one) to resolve, either by detecting a
-  format change and recreating affected `Pipeline`s (mirroring the
-  caller-owns-depth-`Texture`-recreation pattern), or by an explicit
-  constraint on when `Material` construction may safely happen.
+- ~~Whether Vulkan Backend raises its minimum core API version to 1.3, or
+  requires `VK_KHR_dynamic_rendering` on an older version~~ — **resolved
+  by Human Review (2026-08-11): neither, exclusively — a capability-
+  detected dual path is adopted instead, and the overall minimum version
+  is not raised.** See this spec's own Human Review Confirmations
+  Received note above and
+  [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md).
+- ~~`Pipeline` attachment-format staleness across a swapchain format
+  change~~ — **resolved by Human Review (2026-08-11): a concrete,
+  caller-owned contract, not an open risk.** See this spec's own Human
+  Review Confirmations Received note above, Requirements' "Resize /
+  depth-resource and attachment-format lifecycle" subsection, and
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md).
 - **Exact checked-in `.spv` file location and naming convention** is left
   to the Plan, per
   [ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md).

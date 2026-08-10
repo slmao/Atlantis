@@ -144,6 +144,18 @@ any known future one, that a `Renderer` interface would exist to swap in.
   itself free of any resize-driven internal state or lifecycle logic. See
   [ADR-0023](0023-rhi-minimal-gpu-resource-types-and-allocation.md) for
   `Texture`'s own creation/destruction contract.
+- **Attachment format change carries the same caller-owned, `Renderer`-
+  free responsibility, extended to `Material`'s owned `Pipeline`.** Human
+  Review (2026-08-11) confirmed this explicitly, as its own concrete
+  contract rather than an open risk — see
+  [ADR-0025](0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)
+  for the full decision (how the caller observes a format change via
+  `Presentation::metadata()`, why an extent-only change and a format
+  change are handled differently, and the `Device::waitIdle()` sequencing
+  required before recreating a format-dependent resource). This ADR's own
+  contribution is only the ownership half already stated above: `Renderer`
+  plays no role in detecting or acting on a format change, exactly as it
+  plays none for the depth `Texture`'s extent.
 
 ## Consequences
 

@@ -56,23 +56,71 @@ which nothing in this spec's ownership model
 ([ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md))
 provides for and which this spec does not want to require.
 
-**Attachment format staleness across a swapchain recreation is a known,
-unresolved gap, not silently assumed away.** `Pipeline` bakes in its
-target color/depth attachment *formats* (not extent — see above) at
-creation time, because `VkPipelineRenderingCreateInfo`
+**Attachment format change is an explicit, caller-owned contract — Human
+Review (2026-08-11) confirmed this is fixed here, not left as an open
+risk.** `Pipeline` bakes in its target color/depth attachment *formats*
+(not extent — see above) at creation time, because
+`VkPipelineRenderingCreateInfo`
 ([ADR-0024](0024-vulkan-dynamic-rendering-for-attachments.md)) requires
 them. `Presentation`'s existing swapchain format selection
 ([ADR-0016](0016-presentation-acquire-present-and-recreation-contract.md))
 can, in principle, select a different (format, color space) pair on a
 later recreation (e.g. the window moves to a different monitor with
-different surface capabilities) — if that ever happens after a
-`Material`'s `Pipeline` was already created against the original format,
-that `Pipeline` becomes silently invalid against the new one. This spec's
-own manual verification (see
-[specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md)
-Testing & Verification Plan) exercises a single monitor/format for its
-whole session and does not exercise this case — it is recorded as an
-open risk in that spec's own Risks & Open Questions, not resolved here.
+different surface capabilities). The contract:
+
+- **`Presentation::metadata()`'s existing `SwapchainMetadata::format`
+  field** ([ADR-0016](0016-presentation-acquire-present-and-recreation-contract.md),
+  unchanged by this spec) **is how the caller observes a format change**
+  — no new RHI query is introduced. The caller compares the `Format` it
+  last saw against `Presentation::metadata().format` at the same point
+  each frame it already checks the depth `Texture`'s extent against
+  `RenderTarget::extent()`
+  ([ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)),
+  after a successful `acquireNextTarget()`.
+- **Extent-only change and format change are handled differently, and the
+  caller must distinguish them:** an extent change alone (the common
+  resize case) requires recreating only the depth `Texture` (per
+  [ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md))
+  — `Pipeline` is untouched, because viewport/scissor are dynamic state
+  (see above), and `Pipeline`'s baked-in *formats* are unaffected by an
+  extent-only change. A **format** change additionally requires
+  recreating every `Pipeline` that was created against the old
+  color/depth format pair — in this spec's own scope, that is exactly the
+  one `Material`'s `Pipeline` the verification composition owns
+  ([ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)).
+  If the depth format itself is fixed and chosen independently of the
+  swapchain's color format (the expected case — depth format selection is
+  a Vulkan-Backend-internal Plan-stage detail, not tied to surface
+  capability negotiation the way color format is), only the *color*
+  format half of this check will ever actually change in practice; the
+  contract covers both uniformly regardless.
+- **The caller must call `Device::waitIdle()` before destroying and
+  recreating any format-dependent resource** (the `Pipeline`; the depth
+  `Texture`, if its format is ever affected by the same change — this
+  spec's own depth format does not vary with the swapchain's color
+  format, so only `Pipeline` is affected in practice), for exactly the
+  same reason `RenderTarget`/`Device` destruction already requires it
+  ([ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)):
+  no resource may be destroyed while GPU work still references it. This
+  is not a new synchronization primitive — it is the same `waitIdle()`
+  call the caller already makes on every exit path
+  ([ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md)),
+  used here mid-session instead of only at shutdown.
+- **`Renderer` plays no role in this.** It does not cache, compare, or
+  recreate `Pipeline`, `Material`, or any format-dependent resource — the
+  caller owns `Material` (and therefore `Pipeline`,
+  [ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)),
+  so the caller alone is positioned to detect the format change (via
+  `Presentation::metadata()`, which `Renderer` never touches) and to
+  rebuild what it owns before the next call to `Renderer`'s per-frame
+  entry point. This is the same non-ownership boundary
+  [ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)
+  already fixes for the depth `Texture`'s extent-driven recreation,
+  applied uniformly to the format case.
+- This contract is verified by
+  [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md)'s
+  own Acceptance Criteria and Testing & Verification Plan — see that
+  spec for the concrete, testable form of each point above.
 
 - **`Device` gains `createPipeline(PipelineCreateParams)`**, returning
   `atlantis::Result<std::unique_ptr<Pipeline>, PipelineCreateError>`
@@ -329,3 +377,15 @@ already flagged for the general draw-call surface as a whole.
   `drawIndexed()` calls; adding instancing/indirect-draw plumbing now would
   be exactly the kind of premature generalization AGENTS.md's "No
   speculative abstraction" principle warns against.
+- **Have `Renderer` itself detect a swapchain format change (e.g. by
+  comparing `RenderTarget::format()` against a value it remembers from a
+  prior call) and transparently rebuild the affected `Pipeline`.**
+  Rejected by Human Review (2026-08-11): this would require `Renderer` to
+  retain cross-frame state and to reach into `Material`'s owned `Pipeline`
+  to replace it — directly contradicting
+  [ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)'s
+  "`Renderer` never owns or caches a GPU resource across frames" decision
+  and `Material`'s own single-owner contract. Keeping this the caller's
+  responsibility (the same party that already owns `Material` and already
+  performs the equivalent check for the depth `Texture`'s extent) is
+  consistent, not merely convenient.
