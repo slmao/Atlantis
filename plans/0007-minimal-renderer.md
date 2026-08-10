@@ -146,15 +146,17 @@ tests/vulkan_backend/minimal_renderer_gpu_tests.cpp        # GPU-required: real 
 tests/renderer/renderer_ownership_tests.cpp                # GPU-independent: Renderer statelessness, Mesh/Material ownership (compile-time + fake-CommandList checks)
 tests/renderer/CMakeLists.txt
 
-tests/assets/shaders/minimal_mesh.vert.glsl              # human-readable source (checked in, never built)
-tests/assets/shaders/minimal_mesh.frag.glsl
-tests/assets/shaders/minimal_mesh.vert.spv               # pre-compiled bytecode (checked in, never built)
-tests/assets/shaders/minimal_mesh.frag.spv
-tests/assets/shaders/README.md                           # exact compiler/version/command-line note (ADR-0027)
-tests/vulkan_backend/shader_asset_path.h.in               # CMake-configured absolute path to tests/assets/shaders/
+shaders/minimal_renderer/minimal_mesh.vert.glsl          # human-readable source (checked in, never built)
+shaders/minimal_renderer/minimal_mesh.frag.glsl
+shaders/minimal_renderer/minimal_mesh.vert.spv            # pre-compiled bytecode (checked in, never built)
+shaders/minimal_renderer/minimal_mesh.frag.spv
+shaders/minimal_renderer/README.md                        # exact compiler/version/command-line note (ADR-0027)
+tests/vulkan_backend/executable_directory.h                # tiny Windows-only helper, duplicated in the demo
+                                                             #   (Section 12) -- deliberately not a shared module
 
 examples/minimal_renderer_demo/CMakeLists.txt
 examples/minimal_renderer_demo/main.cpp
+examples/minimal_renderer_demo/executable_directory.h      # tiny Windows-only helper, see Section 12
 ```
 
 ### Files to Modify
@@ -551,7 +553,51 @@ struct ResourceBinding {
 a new **Guard 0**, `ATLANTIS_CHECK_MSG`'d at the top of `execute()`,
 before Guards 1/2 run (a malformed binding with both null or both
 non-null is a programmer error, not a silently-accepted ambiguous case).
-`execution.h` gains `#include <atlantis/rhi/texture.h>`.
+**`bindings` must also contain no two entries for the same
+`CompiledResourceId`** — a second new check, folded into Guard 0 for
+this Plan's own bookkeeping purposes (not a separate ADR-0026 guard,
+since Spec 0007/ADR-0026 never contemplated a caller supplying duplicate,
+possibly-contradictory bindings for one resource): a duplicate would
+otherwise make "which entry does `execute()`'s per-usage binding lookup
+find" an unspecified, implementation-order-dependent question — cheap to
+check once, up front, and it removes an ambiguity this Plan should not
+leave implicit. `execution.h` gains `#include <atlantis/rhi/texture.h>`.
+
+**Why vertex/index/uniform `Buffer`s are never declared as RenderGraph
+logical resources — deliberately, not by oversight.** `Renderer::drawFrame()`
+(Section 11) captures `Mesh`/`Material`/the camera `Buffer` directly in
+its pass's execution-callback closure and calls
+`bindVertexBuffer()`/`bindIndexBuffer()`/`bindUniformBuffer()` on them
+straight from inside that callback — none of the three is ever
+`builder.declareResource()`'d, `reads()`/`writes()`-tagged, or bound via
+`ResourceBinding`. This is not a bypass of "all GPU work goes through
+RenderGraph" (AGENTS.md's Golden Rule): the *drawing itself*
+(`bindPipeline`/`bindVertexBuffer`/`bindIndexBuffer`/`bindUniformBuffer`/
+`pushConstant`/`drawIndexed`) still only ever happens from inside a
+RenderGraph pass execution callback, invoked by `execute()` at the
+correct point in its scheduling algorithm (Section 7's step 4), exactly
+like `clearColor()` already does in Spec 0006. What these three
+`Buffer`s specifically never need is **`ResourceState`/transition
+tracking** — and that omission is deliberate, not silent: every one of
+this round's `Buffer`s is written on the CPU side only (never by a GPU
+command, this round — see Non-Goals) and read on the GPU side only,
+with the write always happening-before the GPU read by construction —
+vertex/index data is written exactly once, at `Mesh` construction,
+before that `Mesh` is ever used in any `drawFrame()` call; the camera
+uniform `Buffer` is written once per frame, by the caller, strictly
+before `Renderer::drawFrame()` is even called that frame (Section 13
+step 3), relying on the same acquire-time-drain guarantee
+([ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md),
+PR #24) already established for exactly this write-timing pattern. No
+resource-state transition or barrier is ever required for a purely
+host-written, device-read-only, always-already-visible-by-submission-
+time resource — there is nothing for RenderGraph's dependency model to
+usefully schedule. **This is a narrow, spec-scoped conclusion, not a
+general rule:** if a future spec ever has a GPU command *write* to a
+`Buffer` (e.g. a compute shader, or a staging-buffer upload copy), that
+write would need real RenderGraph resource declaration and
+`ResourceState` tracking — this Plan does not do that, and does not
+claim the conclusion above extends to that case.
 
 ## 7. RenderGraph Candidate API — `execute()` Algorithm Extension
 
@@ -583,6 +629,8 @@ Spec 0006's existing `clearColor()`-only pass, which does declare
 0. For each entry b in bindings:
      ATLANTIS_CHECK_MSG((b.target != nullptr) != (b.depthTexture != nullptr),
                          "ResourceBinding must bind exactly one of target/depthTexture")
+   ATLANTIS_CHECK_MSG(no two entries in bindings share the same .resource value,
+                       "ResourceBinding must not bind the same resource twice")
 1. For each resource r where graph.requiresRhiBinding(r):
      ATLANTIS_CHECK_MSG(bindings contains an entry for r,
                          "ResourceState-tagged resource has no binding")
@@ -608,7 +656,6 @@ Spec 0006's existing `clearColor()`-only pass, which does declare
        if binding not found: continue                 // Guard 1 already reported this; UB-safe skip under
                                                         // a non-terminating handler, mirroring Plan 0006's
                                                         // existing pattern
-       target = binding.target != nullptr ? binding.target : nullptr       // (as rhi object reference)
        resourceObj = binding.target != nullptr ? *binding.target : *binding.depthTexture
        previous = currentState.count(usage.resource) ? currentState[usage.resource] : ResourceState::Undefined
        if previous != *usage.state:
@@ -620,16 +667,25 @@ Spec 0006's existing `clearColor()`-only pass, which does declare
 
      if isDrawPass:
        colorBinding = the bindings entry (if any) whose resource has a ColorAttachmentOutput usage in pass
-       depthBinding = the bindings entry (if any) whose resource has a DepthAttachmentReadWrite usage in pass
-       commandList.beginRendering(*colorBinding.target,
-                                   depthBinding ? depthBinding.depthTexture : nullptr,
-                                   colorBinding ? colorBinding.colorClear : ClearColorValue{},
-                                   depthBinding ? depthBinding.depthClear : 1.0f)
+       depthUsagePresent = pass has a usage tagged DepthAttachmentReadWrite
+       depthBinding = depthUsagePresent ? the bindings entry whose resource has that usage : n/a
 
-     if pass has an executeFn: executeFn(commandList)
-
-     if isDrawPass:
-       commandList.endRendering()
+       // UB-safe check-then-skip, mirroring step 4's own binding-not-found handling above and
+       // Plan 0006's existing pattern: Guard 1 already ATLANTIS_CHECK_MSG'd that every
+       // ResourceState-tagged usage has a binding, but under a non-terminating handler (test),
+       // execution continues past that check -- colorBinding/depthBinding must never be
+       // dereferenced here without first confirming they were actually found.
+       if colorBinding found AND (!depthUsagePresent OR depthBinding found):
+         commandList.beginRendering(*colorBinding.target,
+                                     depthUsagePresent ? depthBinding.depthTexture : nullptr,
+                                     colorBinding.colorClear,
+                                     depthUsagePresent ? depthBinding.depthClear : 1.0f)
+         if pass has an executeFn: executeFn(commandList)
+         commandList.endRendering()
+       // else: skip beginRendering/executeFn/endRendering entirely for this pass -- Guard 1's
+       // check already reported the missing binding; nothing safe remains to record for it
+     else:
+       if pass has an executeFn: executeFn(commandList)
 
 5. for each entry b in bindings where b.target != nullptr:
      if currentState.count(b.resource):
@@ -638,6 +694,13 @@ Spec 0006's existing `clearColor()`-only pass, which does declare
          commandList.transitionResource(*b.target, last, ResourceState::PresentSource)
    -- no trailing transition for b.depthTexture entries (ADR-0026 -- never presented, never read back this round)
 ```
+
+**`beginRendering()`'s `renderArea` precondition:** derived from
+`colorBinding.target->extent()`; the depth `Texture`'s own `extent()`
+must already match it at this point — guaranteed by the caller's own
+resize contract (Section 13), never validated by `beginRendering()`
+itself (a caller precondition, same tier as every other cross-object
+precondition in this Plan, not a new guaranteed-detectable check).
 
 This satisfies every bullet from Spec 0007's own Testing & Verification
 Plan for "RenderGraph multi-attachment and draw-pass execution
@@ -692,19 +755,54 @@ if extensionAdvertised && extensionFeatureSupported: return Extension
 return Unavailable
 ```
 
+**Instance-level prerequisite — resolved without raising
+`VkApplicationInfo::apiVersion`.** `vulkan_instance.cpp` currently
+requests `VK_API_VERSION_1_0` (Section 1's Authoritative Sources). The
+*core* function `vkGetPhysicalDeviceFeatures2` is only unambiguously
+valid to call when the instance itself was created requesting Vulkan
+1.1+ — calling it from a `VK_API_VERSION_1_0` instance is, at best,
+loader-dependent behavior Validation Layers may legitimately flag.
+Raising the instance's requested `apiVersion` to resolve this would risk
+exactly the ambiguity Human Review's confirmed decision was written to
+avoid (whether a higher *instance* request could be read as
+re-introducing a version floor) and, separately, a real (if narrow) risk
+of `vkCreateInstance` returning `VK_ERROR_INCOMPATIBLE_DRIVER` on a very
+old Vulkan 1.0-only loader. **This Plan instead enables
+`VK_KHR_get_physical_device_properties2` as an *instance* extension**
+(checking `vkEnumerateInstanceExtensionProperties()` for its
+availability before requesting it — it has been available since the
+first Vulkan 1.0 loaders and is promoted to core in 1.1, so it is
+absent only on an exceptionally old/incomplete loader) and calls the
+`...KHR`-suffixed query function,
+`vkGetPhysicalDeviceFeatures2KHR`, uniformly for **both** the core-1.3-
+feature check and the extension-feature check below — this function is
+valid to call from a 1.0 instance precisely because it is the extension
+form, sidestepping the instance-version question entirely.
+`VkApplicationInfo::apiVersion` itself is untouched by this Plan,
+remaining exactly `VK_API_VERSION_1_0` as already shipped. If
+`VK_KHR_get_physical_device_properties2` itself is unavailable at the
+instance level, no capability query can be performed for any candidate
+physical device — `decideDynamicRenderingPath()` is never even reached
+for that candidate, and it is treated as though both `coreFeatureSupported`
+and `extensionFeatureSupported` queries were unavailable (folding into
+the ordinary `Unavailable` path below, not a distinct failure mode).
+
 **Real capability query wrapper** (inside `vulkan_device.cpp`'s existing
 physical-device selection loop, extended — not replaced): for each
 physical-device candidate that already passes the pre-existing suitability
 criteria (queue families, etc., unchanged from Spec 0003), additionally:
 
 1. `vkGetPhysicalDeviceProperties()` → `apiVersionAtLeast1_3 =
-   (properties.apiVersion >= VK_API_VERSION_1_3)`.
-2. If `apiVersionAtLeast1_3`: `vkGetPhysicalDeviceFeatures2()` with a
+   (properties.apiVersion >= VK_API_VERSION_1_3)`. (This physical-device-
+   reported version is independent of the instance's own requested
+   version — a 1.0-requesting instance can still enumerate and query a
+   physical device that itself reports a higher `apiVersion`.)
+2. If `apiVersionAtLeast1_3`: `vkGetPhysicalDeviceFeatures2KHR()` with a
    `VkPhysicalDeviceVulkan13Features` chained into `pNext` →
    `coreFeatureSupported`.
 3. `vkEnumerateDeviceExtensionProperties()` → `extensionAdvertised =
    ` (`VK_KHR_dynamic_rendering` present in the returned list).
-4. If `extensionAdvertised`: `vkGetPhysicalDeviceFeatures2()` with a
+4. If `extensionAdvertised`: `vkGetPhysicalDeviceFeatures2KHR()` with a
    `VkPhysicalDeviceDynamicRenderingFeaturesKHR` chained into `pNext` →
    `extensionFeatureSupported`.
 5. Call `decideDynamicRenderingPath()` with the four booleans above.
@@ -749,13 +847,13 @@ know which path was resolved.
 tests (§15) exercise whichever single path the test machine's actual
 GPU/driver reports (§15 states this limitation explicitly, per Spec
 0007's own Testing & Verification Plan). The capability-query wrapper
-itself makes no Windows-specific Vulkan call — `vkGetPhysicalDeviceFeatures2`,
-`vkEnumerateDeviceExtensionProperties`, and the two feature-chain structs
-are all core/WSI-independent Vulkan API, so this Plan's implementation is
-expected to require no changes for a future Android Platform/Vulkan
-Backend spec to reuse directly — that future spec still owns its own
-decision about Android's actual device/driver support distribution, per
-ADR-0024's own Boundary note.
+itself makes no Windows-specific Vulkan call — `vkGetPhysicalDeviceFeatures2KHR`,
+`vkEnumerateDeviceExtensionProperties`, `vkEnumerateInstanceExtensionProperties`,
+and the two feature-chain structs are all core/WSI-independent Vulkan
+API, so this Plan's implementation is expected to require no changes for
+a future Android Platform/Vulkan Backend spec to reuse directly — that
+future spec still owns its own decision about Android's actual
+device/driver support distribution, per ADR-0024's own Boundary note.
 
 ## 9. Vulkan Backend Implementation — GPU Memory Allocation
 
@@ -810,14 +908,46 @@ not a shared allocation object):
    VK_IMAGE_ASPECT_DEPTH_BIT view -- check VkResult
 ```
 
-**Destruction** (each resource's own destructor, RAII, mirroring
-existing `SwapchainGuard`-style two-phase-construction guard patterns
-already used in `vulkan_presentation.cpp`/`vulkan_device.cpp` for
-partial-construction-failure safety): `vkDestroyImageView()` (Texture
-only) → `vkFreeMemory()` (this resource's own individual allocation,
-`vkMapMemory()`'d Buffer memory needs no explicit unmap before free —
-`vkFreeMemory()` implicitly unmaps) → `vkDestroyBuffer()`/
-`vkDestroyImage()`.
+**Why `HOST_COHERENT` is a required, not merely preferred, property:**
+`selectMemoryTypeIndex()`'s `requiredProperties` argument for every
+`Buffer` purpose is `VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+VK_MEMORY_PROPERTY_HOST_COHERENT_BIT` — both bits are *required*, not a
+preference the caller falls back from. This is what structurally
+excludes a host-visible-but-non-coherent memory type from ever being
+selected: either a coherent type is found (the only path this Plan
+implements — no `vkFlushMappedMemoryRanges`/`vkInvalidateMappedMemoryRanges`
+call exists anywhere in this Plan's design) or none is found and
+`Result::Err(BufferCreateError::AllocationFailed)` is returned. A
+non-coherent memory type is therefore never silently used incorrectly —
+it is simply never a candidate `selectMemoryTypeIndex()` can return for
+a `Buffer` this round.
+
+**No manual alignment arithmetic is needed.** Each `VkDeviceMemory`
+allocation exactly backs one resource, at offset 0, sized to
+`requirements.size` (which already accounts for `requirements.alignment`
+internally, per the Vulkan spec's own guarantee for a single, whole-
+allocation bind) — alignment math only becomes necessary when
+suballocating multiple resources into one shared `VkDeviceMemory` block,
+which this policy (ADR-0023) never does.
+
+**Partial-construction-failure safety** — mirrors this codebase's
+existing two-phase-construction-guard pattern (`vulkan_device.cpp`'s
+`createDevice()`, `vulkan_presentation.cpp`'s `SwapchainGuard`) exactly:
+if `vkAllocateMemory` (step 4) fails after `vkCreateBuffer`/`vkCreateImage`
+(step 1) already succeeded, the already-created `VkBuffer`/`VkImage` is
+destroyed before returning `Err` — never leaked. If `vkBindBufferMemory`/
+`vkBindImageMemory` (step 5) fails after allocation (step 4) already
+succeeded, both the memory and the buffer/image are destroyed/freed
+before returning `Err`. Only once every step through image-view creation
+(Texture, step 7) succeeds does `VulkanBuffer`/`VulkanTexture`'s
+constructor take final, unconditional ownership of every handle.
+
+**Destruction** (each resource's own destructor, RAII, the same guard
+pattern, now unconditional since construction already succeeded):
+`vkDestroyImageView()` (Texture only) → `vkFreeMemory()` (this
+resource's own individual allocation, `vkMapMemory()`'d Buffer memory
+needs no explicit unmap before free — `vkFreeMemory()` implicitly
+unmaps) → `vkDestroyBuffer()`/`vkDestroyImage()`.
 
 **Concrete resource-count bound, per ADR-0023:** this Plan's own
 implementation creates, at most, one vertex `Buffer`, one index
@@ -845,17 +975,97 @@ holds `VkImage`, `VkDeviceMemory`, `VkImageView` (depth aspect),
 `Extent2D`, `DepthFormat`. Constructed only via
 `VulkanDevice::createTexture()`.
 
+### Camera uniform binding — full candidate design (not left to Implementation)
+
+`CommandList::bindUniformBuffer(Buffer&)` (RHI-public, Section 5) is
+this Plan's only new RHI-visible surface for the camera uniform binding
+— no `UniformBinding`-shaped abstraction, no general descriptor-set API
+of any kind is introduced or exposed. Everything below is Vulkan-Backend-
+private, never referenced outside `vulkan_pipeline.{h,cpp}` and
+`vulkan_command_list.cpp`, and never appears in any RHI or `src/renderer/`
+header — this is what keeps this design a fixed, single-purpose binding
+mechanism (ADR-0025's own boundary) rather than a general descriptor-set
+system:
+
+- **`VkDescriptorSetLayout`** — exactly one binding: `binding = 0`,
+  `descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER`,
+  `descriptorCount = 1`, `stageFlags = VK_SHADER_STAGE_VERTEX_BIT`.
+  Created once per `VulkanPipeline` (identical for every `Pipeline` this
+  round, since every material shares the same one-uniform-binding
+  layout), destroyed in `VulkanPipeline`'s own destructor after the
+  descriptor set it backs (below) is freed.
+- **`VkDescriptorPool`** — owned by `VulkanDevice` (a Device-level
+  singleton resource, created once at `VulkanDevice` construction,
+  mirroring the existing `VkCommandPool` precedent exactly), created with
+  `VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT` (so an individual
+  `VkDescriptorSet` can be freed independently, at `VulkanPipeline`
+  destruction, without destroying the whole pool) and a small, explicitly
+  fixed capacity: `maxSets = 16`, one pool-size entry
+  `{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 16}`. **This is not a general
+  allocator or a growable pool** — it is a fixed-capacity resource
+  exactly like `VulkanDevice`'s existing command pool, sized generously
+  above this round's actual need (one `Material` in every GPU test/demo
+  this Plan specifies) to avoid a hard cap that would need revisiting for
+  ordinary test variation, without attempting to serve an unbounded
+  future material count. `VulkanDevice::createPipeline()` returning
+  `Err(PipelineCreationFailed)` if this pool is ever exhausted
+  (`vkAllocateDescriptorSets` returning `VK_ERROR_OUT_OF_POOL_MEMORY`) is
+  the explicit, accepted failure mode if that fixed capacity is ever
+  exceeded — not a case this Plan expects to be reachable given its own
+  Non-Goals (single material, no dynamic material creation loop).
+- **`VkDescriptorSet`** — one per `VulkanPipeline`, allocated from
+  `VulkanDevice`'s pool at `VulkanPipeline` construction (using the
+  layout above), freed via `vkFreeDescriptorSets` at `VulkanPipeline`
+  destruction — **before** `VulkanDevice`'s pool itself may be destroyed,
+  the same "backed-resource destroyed before its owning pool" precondition
+  tier already established for `VulkanCommandList`/`VulkanDevice`'s
+  command pool (Plan 0006 §9).
+- **`bindUniformBuffer(Buffer&)`'s implementation**:
+  `ATLANTIS_CHECK(buffer.purpose() == BufferPurpose::Uniform)`, then
+  unconditionally (no "skip if unchanged" caching — no cache-invalidation
+  bug is possible if there is no cache) `vkUpdateDescriptorSets()` with a
+  `VkDescriptorBufferInfo{buffer.vkBuffer(), 0, VK_WHOLE_SIZE}` targeting
+  the currently-bound `Pipeline`'s `VkDescriptorSet`, then
+  `vkCmdBindDescriptorSets(buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+  pipelineLayout_, 0, 1, &descriptorSet_, 0, nullptr)`. **Write-timing
+  safety:** `vkUpdateDescriptorSets` is an immediate, host-side Vulkan
+  call (not a recorded GPU command) — calling it here is safe under
+  exactly the same single-frame-in-flight reasoning already established
+  for writing the camera `Buffer`'s own mapped memory (Section 13 step 3):
+  by the time `bindUniformBuffer()` is called (inside a pass execution
+  callback, itself only ever invoked after `acquireNextTarget()`'s own
+  drain), no GPU work from a prior frame could still be reading the
+  descriptor set being updated.
+- **Push-constant range coexistence:** `VkPipelineLayout` is built from
+  exactly one `VkDescriptorSetLayout` (above) plus one push-constant
+  range (`VK_SHADER_STAGE_VERTEX_BIT`, offset 0, `pushConstantSizeBytes`
+  — Section 2). Since every `Pipeline` this round uses this same,
+  byte-identical descriptor-set-layout-plus-push-constant-range shape,
+  switching `bindPipeline()` between different `Material`s mid-loop
+  (Section 11's multi-`DrawItem` case) never invalidates a previously
+  bound descriptor set or previously pushed constant range — Vulkan's own
+  "identical layout, no re-bind needed" rule applies uniformly, though
+  this Plan's own `drawFrame()` algorithm (Section 11) re-binds/re-pushes
+  every draw item regardless, for simplicity and clarity, not because it
+  is strictly required.
+
 `VulkanPipeline final : public rhi::Pipeline` (`vulkan_pipeline.h/.cpp`):
-holds `VkPipeline`, `VkPipelineLayout` (owns the push-constant range and
-the — this round, empty, since no descriptor-set system exists —
-descriptor-set-layout list), and the two `VkShaderModule` handles
+holds `VkPipeline`, `VkPipelineLayout`, the `VkDescriptorSetLayout` and
+`VkDescriptorSet` described above, and the two `VkShaderModule` handles
 (destroyed immediately after `vkCreateGraphicsPipelines()` succeeds, per
 standard Vulkan practice — a `VkShaderModule` is not needed after
 pipeline creation). Constructed only via `VulkanDevice::createPipeline()`,
 using `VkPipelineRenderingCreateInfo` (naming `colorFormat`/`depthFormat`
 directly, per ADR-0024) instead of a `VkRenderPass` handle, and
 `VK_DYNAMIC_STATE_VIEWPORT`/`VK_DYNAMIC_STATE_SCISSOR` in
-`VkPipelineDynamicStateCreateInfo` (ADR-0025).
+`VkPipelineDynamicStateCreateInfo` (ADR-0025). **Destruction order**
+(`VulkanPipeline`'s own destructor, two-phase-construction-guard pattern,
+per Section 9's note): `vkDestroyPipeline` → `vkFreeDescriptorSets` (this
+`Pipeline`'s one set, from `VulkanDevice`'s pool) → `vkDestroyDescriptorSetLayout`
+→ `vkDestroyPipelineLayout`. `Material` (Section 11) owning a `Pipeline`
+that outlives the `Device` it was created from is the same lifetime
+precondition violation tier as every other Device-backed RHI resource
+in this codebase (Section 14).
 
 `resource_state_mapping.{h,cpp}` gains two new rows (existing three
 rows, Spec 0006, unchanged):
@@ -881,12 +1091,11 @@ in Phase 1, per ADR-0001, matching Spec 0006's existing precedent):
   `vkCmdBindIndexBuffer(buffer_, vkBuffer, 0, VK_INDEX_TYPE_UINT16)` (index type is a Plan-stage
   detail matching whatever the fixed mesh's index width is — `UINT16` sufficient for this round's
   small vertex counts).
-- `bindUniformBuffer(Buffer&)` → `ATLANTIS_CHECK(buffer.purpose() == BufferPurpose::Uniform)`; this
-  round has no descriptor-set system (ADR-0025), so binding happens via a Vulkan Backend-internal
-  mechanism appropriate to a single, fixed uniform binding slot — exact mechanism (a single
-  pre-allocated descriptor set updated once per bind call, vs. `VK_EXT_descriptor_buffer` if
-  available) is an Implementation-stage detail this Plan does not fix further; either way, no public
-  RHI surface is added beyond `bindUniformBuffer()` itself.
+- `bindUniformBuffer(Buffer&)` → see this section's own "Camera uniform
+  binding — full candidate design" subsection above for the complete,
+  concrete `VkDescriptorSetLayout`/`VkDescriptorPool`/`VkDescriptorSet`
+  design this call implements — not left as an implementation-stage
+  detail.
 - `pushConstant(const void*, sizeBytes)` → `vkCmdPushConstants(buffer_, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, static_cast<uint32_t>(sizeBytes), data)`.
 - `drawIndexed(indexCount)` → `vkCmdDrawIndexed(buffer_, indexCount, 1, 0, 0, 0)`.
 - `beginRendering(RenderTarget&, Texture*, ClearColorValue, float)` →
@@ -1022,15 +1231,24 @@ namespace atlantis::renderer {
 // frame-to-frame state, across calls. Depends only on RHI, RenderGraph,
 // Core -- never Platform, Vulkan Backend, or any Vk* type. Not
 // internally thread-safe; caller-thread-only (ADR-0004).
+//
+// Deliberately copyable and movable, unlike RenderGraphBuilder
+// (Spec 0005/ADR-0017's non-copyable/non-movable builder). That
+// restriction exists specifically because RenderGraphBuilder vends
+// PassHandle/ResourceHandle values whose provenance is tied to the
+// builder's own stable address -- moving it would silently invalidate
+// every handle a caller already holds. Renderer has no handles, no
+// vended identity, and (see above) no member state of any kind: an
+// earlier revision of this Plan deleted Renderer's copy/move
+// constructors anyway, by analogy with RenderGraphBuilder, without a
+// reason of its own that actually applies here -- an unforced,
+// pointless restriction on a class review corrected by leaving every
+// special member at its trivial compiler-generated default (no line
+// needed at all, since an empty class with no user-declared special
+// member already gets defaulted copy/move/destructor).
 class Renderer {
  public:
   Renderer() = default;
-  ~Renderer() = default;
-
-  Renderer(const Renderer&) = delete;
-  Renderer& operator=(const Renderer&) = delete;
-  Renderer(Renderer&&) = delete;
-  Renderer& operator=(Renderer&&) = delete;
 
   // Builds, compiles, and executes one RenderGraph draw pass into
   // commandList -- never calls Device::submit()/Presentation::present()
@@ -1094,8 +1312,21 @@ not merely documented, guarantee (Acceptance Criteria, Spec 0007).
 
 ## 12. Shader Bootstrap
 
-Per ADR-0027, checked in under `tests/assets/shaders/` (shared by both
-the GPU test suite and the demo, avoiding duplicate authoring):
+Per ADR-0027, checked in under `shaders/minimal_renderer/` — **not**
+under `tests/`, corrected from an earlier revision of this Plan that put
+them there. `shaders/` is this repository's own pre-designated,
+neutral, product-level location for shader sources
+([README.md](../README.md)'s repository-layout table: "`shaders/`
+Shader sources (empty — structure pending first spec/plan/ADR)" — this
+Plan is the first to give it real content). Putting a non-shipping
+*example*'s runtime assets under `tests/` would make
+`examples/minimal_renderer_demo` depend on the test tree existing at
+all, which is backwards — an example must not need `tests/` to build or
+run. `shaders/minimal_renderer/` is shared, as a single authoritative
+copy, by both `examples/minimal_renderer_demo` and
+`tests/vulkan_backend/minimal_renderer_gpu_tests.cpp` (Section 17's CMake
+copies it to each consumer's own build output — never duplicated as
+source):
 
 - `minimal_mesh.vert.glsl` / `minimal_mesh.frag.glsl` — human-readable
   GLSL source (GLSL is an arbitrary, non-binding choice for this
@@ -1117,15 +1348,41 @@ the GPU test suite and the demo, avoiding duplicate authoring):
   the `glslc`/Vulkan SDK version used, and regeneration instructions.
   Committed alongside the `.spv` files in the same PR that adds them.
 
-**No CMake target compiles, parses, or reflects any of the above** — the
-`.spv` files are read as raw bytes at runtime by whichever code calls
-`Device::createPipeline()` (the GPU test and the demo, each
-independently), via `tests/vulkan_backend/shader_asset_path.h.in`, a
-`configure_file()`-generated header providing an absolute,
-build-independent path to `tests/assets/shaders/` (a standard pattern
-for test fixtures that must be located by an absolute path regardless of
-the build output directory — never used by any non-test/non-demo
-target).
+**No CMake target compiles, parses, or reflects any of the above.**
+
+**Runtime location — copied next to each consumer's executable, never a
+baked developer-machine absolute path.** An earlier revision of this
+Plan proposed a `configure_file()`-generated header embedding
+`${CMAKE_SOURCE_DIR}`'s absolute path — rejected on review: baking a
+specific developer machine's source-tree path into a generated header
+(and, transitively, into the built binary) is fragile (breaks if the
+binary is copied elsewhere, e.g. to run on the GPU-test machine used for
+PR #23/#24's own verification) and is exactly the kind of hidden,
+environment-specific coupling this repository's own artifacts should not
+carry. Instead:
+
+- Each consumer target (`atlantis_minimal_renderer_demo`,
+  `atlantis_vulkan_backend_gpu_tests`) gets an `add_custom_command(TARGET
+  ... POST_BUILD ...)` step (Section 17) that copies
+  `shaders/minimal_renderer/minimal_mesh.{vert,frag}.spv` into a
+  `shaders/` subdirectory next to that target's own built executable,
+  using `$<TARGET_FILE_DIR:target>` (a generator expression, correctly
+  resolving per-configuration on the multi-config Visual Studio generator
+  this repository already builds with) and `copy_if_different` (a no-op
+  on an unchanged file, correct for incremental builds).
+- At runtime, each consumer locates its own executable's directory via a
+  small, Windows-only helper (`GetModuleFileNameW(nullptr, ...)`, then
+  taking the parent directory) — `executable_directory.h` (Section 1),
+  duplicated once in `examples/minimal_renderer_demo/` and once in
+  `tests/vulkan_backend/` rather than factored into a new shared test-
+  utility module for a single ~10-line function. This matches this
+  codebase's own existing precedent of Windows-only code living directly
+  in the test/demo file that needs it (e.g.
+  `windows_platform_smoke_tests.cpp`'s direct `<windows.h>` use), and
+  requires no new module boundary. The resulting path (`executableDirectory()
+  / "shaders" / "minimal_mesh.vert.spv"`) is correct regardless of which
+  machine built or is running the binary, and regardless of Debug/Release
+  or which generator produced the build.
 
 **Vertex-input/binding layout consistency verification:** this round has
 no automated reflection-based cross-check between the hand-specified
@@ -1166,17 +1423,31 @@ Once per frame, after a successful acquireNextTarget():
 1. currentFormat = presentation->metadata().format
    if currentFormat != lastSeenFormat:
      device->waitIdle()
-     material.reset()  // destroys the old Pipeline
-     material = createMaterial(*device, {..., .colorFormat = currentFormat, .depthFormat = DepthFormat::D32Sfloat, ...})
-     lastSeenFormat = currentFormat
+     newMaterialResult = createMaterial(*device, {..., .colorFormat = currentFormat, .depthFormat = DepthFormat::D32Sfloat, ...})
+     if newMaterialResult.isErr():
+       log the error; KEEP the existing material (still valid, still matches lastSeenFormat) --
+       do NOT update lastSeenFormat, so this same check retries next frame; this frame draws
+       with the old Pipeline against the new format (a real, accepted, transient mismatch this
+       round has no better fallback for -- see Section 14)
+     else:
+       material = std::move(newMaterialResult.value())   // old Pipeline destroyed HERE, only after
+                                                            // the new one already succeeded -- never
+                                                            // destroy-then-create (see note below)
+       lastSeenFormat = currentFormat
      // depthTexture is NOT recreated here solely for a format change --
      // its own format (D32Sfloat) never varies with the swapchain's
      // color format this round
 
 2. currentExtent = renderTarget->extent()
    if currentExtent != lastSeenExtent:
-     depthTexture = device->createTexture({.extent = currentExtent, .format = DepthFormat::D32Sfloat})
-     lastSeenExtent = currentExtent
+     newTextureResult = device->createTexture({.extent = currentExtent, .format = DepthFormat::D32Sfloat})
+     if newTextureResult.isErr():
+       log the error; KEEP the existing depthTexture (mismatched extent -- may itself trigger a
+       Validation Layer warning if drawn against a differently-sized RenderTarget this frame, an
+       accepted transient gap); do NOT update lastSeenExtent, so this check retries next frame
+     else:
+       depthTexture = std::move(newTextureResult.value())   // same create-before-destroy ordering
+       lastSeenExtent = currentExtent
      // Pipeline is NOT recreated here -- dynamic viewport/scissor (Section 3)
 
 3. Write this frame's view/projection into cameraBuffer->mappedData()   -- see Section 9's
@@ -1185,6 +1456,21 @@ Once per frame, after a successful acquireNextTarget():
 
 4. renderer.drawFrame(*commandList, *renderTarget, *depthTexture, *cameraBuffer, drawItems)
 ```
+
+**Create-before-destroy, never destroy-before-create:** both steps 1 and
+2 construct the *new* resource first and only replace the caller's
+`material`/`depthTexture` variable — destroying the old one, via the
+`unique_ptr`/wrapper's own move-assignment — once construction has
+already succeeded. An earlier revision of this Plan destroyed the old
+resource first (`material.reset()`) and then attempted to construct the
+new one — if that construction failed, the demo would have been left
+with *no* `Material` at all, an unrecoverable state for the remainder of
+its run. The corrected ordering above means a transient creation failure
+(e.g. a momentary out-of-memory condition) leaves the caller with a
+still-valid, if temporarily stale, resource to keep rendering with, and a
+retry on the very next frame — never a hard failure from what Spec 0007
+itself classifies as a routine, expected event (a format or extent
+change).
 
 Step 1 and Step 2 are independent checks, in either order, run every
 frame at negligible cost (a single enum/struct comparison) — an extent
@@ -1223,9 +1509,30 @@ mirroring the four existing ones' pattern exactly.
 ### GPU-independent unit tests (layer 1, no Vulkan device)
 
 - `tests/vulkan_backend/dynamic_rendering_tests.cpp` — `decideDynamicRenderingPath()`'s
-  full decision table: `(true, true, *, *) → Core`; `(true, false, true, true) → Extension`;
-  `(false, *, true, true) → Extension`; `(false, *, false, *) → Unavailable`; `(true, false, true, false) → Unavailable`;
-  `(false, *, true, false) → Unavailable`.
+  **exhaustive** 2⁴ = 16-case truth table over
+  `(apiVersionAtLeast1_3, coreFeatureSupported, extensionAdvertised, extensionFeatureSupported)`,
+  including every combination where an argument is documented as "only meaningful when" some
+  other argument is true — confirming the function degrades safely (never crashes, never
+  returns a wrong path) even when a caller passes a logically inconsistent combination it
+  should never actually produce:
+  | apiVersionAtLeast1_3 | coreFeatureSupported | extensionAdvertised | extensionFeatureSupported | → |
+  |---|---|---|---|---|
+  | F | F | F | F | Unavailable |
+  | F | F | F | T | Unavailable |
+  | F | F | T | F | Unavailable |
+  | F | F | T | T | Extension |
+  | F | T | F | F | Unavailable |
+  | F | T | F | T | Unavailable |
+  | F | T | T | F | Unavailable |
+  | F | T | T | T | Extension |
+  | T | F | F | F | Unavailable |
+  | T | F | F | T | Unavailable |
+  | T | F | T | F | Unavailable |
+  | T | F | T | T | Extension |
+  | T | T | F | F | Core |
+  | T | T | F | T | Core |
+  | T | T | T | F | Core |
+  | T | T | T | T | Core |
 - `tests/vulkan_backend/vulkan_memory_tests.cpp` — `selectMemoryTypeIndex()` against a
   synthetic `VkPhysicalDeviceMemoryProperties` with known type/property combinations: exact
   match found; match found among several candidates (first-matching-index chosen); no match
@@ -1274,9 +1581,26 @@ mirroring the four existing ones' pattern exactly.
   case (`DynamicRenderingUnavailable`) remain verified by code inspection only, where a second
   real device/driver combination is unavailable — stated explicitly in any verification report,
   not silently treated as fully covered.
+- **What this automated GPU test can and cannot confirm about depth occlusion:** it confirms
+  every API call succeeds and Validation Layers report zero warnings/errors for a depth-tested
+  draw — it does **not** read back or inspect the rendered pixels, so it cannot by itself
+  confirm the depth test actually *behaved* correctly (e.g. that front-facing geometry visually
+  occludes back-facing geometry, as opposed to, say, an inverted `VkCompareOp` that still runs
+  without a validation error but produces the wrong image). That confirmation is the manual
+  verification's job (below), not this automated test's — no automated test in this Plan claims
+  to substitute for it, consistent with Spec 0007's own stated image-regression limitation.
 - **Headless integration tests:** not applicable — unchanged from Spec 0006's equivalent flag.
 - **Image regression tests:** not applicable — manual visual verification only (below), a real,
   accepted limitation Spec 0007 itself already states.
+- **Known environment constraint, carried forward from PR #23/#24's own verification history:**
+  Windows Smart App Control has previously blocked execution of an unrelated, freshly-compiled
+  test executable (`atlantis_core_tests.exe`) in this repository's own verification environment,
+  and `catch_discover_tests`'s discovery mechanism aborts an entire bare `ctest` run if any single
+  registered executable's discovery invocation fails. Whoever executes this Plan's own
+  verification must, if the same constraint recurs, run `ctest` scoped per test-module
+  subdirectory (`ctest --test-dir build/tests/<module> ...`) rather than a single repository-wide
+  invocation — and must report exactly what was actually run this way, never claim a
+  repository-wide `ctest` pass that did not actually execute.
 
 ### Manual verification (`examples/minimal_renderer_demo`)
 
@@ -1371,6 +1695,14 @@ grep -rn "class Sampler\|VkDescriptorSetLayout\|VkDescriptorPool" src/rhi src/re
 grep -rn "std::vector<VkDeviceMemory>\|VkDeviceMemory\[\]" src/vulkan_backend  # expect: no matches (exactly one
                                                                                 #   VkDeviceMemory member per
                                                                                 #   VulkanBuffer/VulkanTexture instance)
+
+# Descriptor-set/pool machinery never leaks outside vulkan_pipeline.*/vulkan_device.*
+grep -rln "VkDescriptorSet\|VkDescriptorPool\|VkDescriptorSetLayout" src/vulkan_backend | grep -v "vulkan_pipeline\|vulkan_device"
+                                                                                # expect: no matches
+
+# Shader assets live under shaders/, never under tests/
+find tests -iname "*.glsl" -o -iname "*.spv" 2>/dev/null   # expect: nothing
+find shaders/minimal_renderer -type f 2>/dev/null          # expect: minimal_mesh.{vert,frag}.{glsl,spv}, README.md
 ```
 
 Code-review checklist (manual, per step):
@@ -1451,6 +1783,19 @@ target_link_libraries(atlantis_vulkan_backend_gpu_tests
 )
 # LABELS "gpu" / DISCOVERY_MODE PRE_TEST unchanged
 
+# Section 12's shared shader artifacts, copied next to this executable's
+# own build output -- see Section 12 for why a copy, not a baked
+# absolute path. copy_if_different is a no-op when already up to date,
+# safe to re-run on every build.
+add_custom_command(TARGET atlantis_vulkan_backend_gpu_tests POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+      "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_SOURCE_DIR}/shaders/minimal_renderer/minimal_mesh.vert.spv"
+      "${CMAKE_SOURCE_DIR}/shaders/minimal_renderer/minimal_mesh.frag.spv"
+      "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders/"
+)
+
 # tests/rhi/CMakeLists.txt -- add buffer_texture_pipeline_tests.cpp
 # tests/render_graph/CMakeLists.txt -- add attachment_execution_tests.cpp
 
@@ -1470,12 +1815,11 @@ target_link_libraries(atlantis_renderer_tests
 )
 catch_discover_tests(atlantis_renderer_tests DISCOVERY_MODE PRE_TEST)
 
-# tests/vulkan_backend/shader_asset_path.h.in -> configure_file()'d into
-# the build tree; consumed only by minimal_renderer_gpu_tests.cpp and
-# examples/minimal_renderer_demo/main.cpp
-
 # examples/minimal_renderer_demo/CMakeLists.txt -- mirrors
-# examples/frame_execution_demo/CMakeLists.txt, + Atlantis::Renderer link
+# examples/frame_execution_demo/CMakeLists.txt, + Atlantis::Renderer link,
+# + the same shader-copy add_custom_command() pattern as
+# atlantis_vulkan_backend_gpu_tests above, targeting
+# atlantis_minimal_renderer_demo instead
 
 # CMakeLists.txt (root)
 add_subdirectory(src/core)
@@ -1532,10 +1876,14 @@ Each step ends with the relevant Section 15 build/test commands
    extend `resource_state_mapping_tests.cpp`. First GPU-required smoke
    test: create/destroy a `Buffer` of each purpose and a depth `Texture`,
    no drawing yet.
-5. **`VulkanPipeline`** — `VulkanDevice::createPipeline()`, using
-   Section 12's checked-in `.spv` files (this step is when those files
-   are added, alongside their `.glsl` source and `README.md`). GPU
-   test: create/destroy a `Pipeline` successfully.
+5. **`VulkanPipeline`** — `VulkanDevice::createPipeline()`, including
+   `VulkanDevice`'s one-time descriptor pool creation (Section 10's
+   camera-uniform-binding design), using Section 12's checked-in `.spv`
+   files (this step is when those files, and the shader-copy
+   `add_custom_command()`s that reference them, are added, alongside the
+   `.glsl` source and `README.md`). GPU test: create/destroy a `Pipeline`
+   successfully, confirming its one allocated `VkDescriptorSet` is freed
+   without error.
 6. **`VulkanCommandList` draw path** — `bindPipeline`/`bindVertexBuffer`/
    `bindIndexBuffer`/`bindUniformBuffer`/`pushConstant`/`drawIndexed`/
    `beginRendering`/`endRendering`. GPU test: manually record and submit
@@ -1609,6 +1957,8 @@ and 8. Step 10 needs 9. Step 11 is last, always.
 | Manual demo: visible mesh, camera transform, depth occlusion, resize, minimize/restore, clean exit | §15 manual verification |
 | No scene graph/ECS/asset system/second material/instanced draw/multi-frame-in-flight | §Non-Goals, §16 grep |
 | No `src/renderer/` dependency on Platform/Win32/Android NDK/`Vk*` | §1 (link boundary), §16 grep |
+| Camera uniform binding is a fixed, single-purpose mechanism — no general descriptor-set/bindless API | §10 (full descriptor pool/layout/set design), §16 grep |
+| RenderGraph never wraps a non-draw pass in an attachment scope; draw-pass identification is UB-safe under a non-terminating handler | §7 algorithm step 4 (check-then-skip), §15 |
 
 ---
 
