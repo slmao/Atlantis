@@ -1,0 +1,790 @@
+# Spec: Minimal Renderer
+
+- **Status:** Draft
+- **Author:** Drafted by Claude Code (AI agent) at explicit human
+  direction; human authorship/ownership of this spec is pending
+  confirmation at Human Review.
+- **Created:** 2026-08-11
+- **Related Plan(s):** None yet — a plan may be drafted against this spec
+  once it reaches `Approved`, per [AGENTS.md](../AGENTS.md); none has been
+  drafted by this document.
+- **Related ADR(s):** Builds on
+  [ADR-0001](../adr/0001-rhi-backend-independence.md)–[ADR-0004](../adr/0004-phase1-threading-baseline.md),
+  [ADR-0009](../adr/0009-assertion.md),
+  [ADR-0014](../adr/0014-rhi-device-presentation-construction-boundary.md)–[ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)
+  (all `Accepted`). See **Architectural Impact** below — six new
+  decisions are identified and drafted alongside this spec, all currently
+  `Proposed`, pending Human Review:
+  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)
+  (Renderer public API and resource ownership),
+  [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)
+  (RHI `Buffer`/`Texture` and allocation strategy),
+  [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)
+  (Vulkan dynamic rendering),
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)
+  (RHI pipeline/binding/draw surface),
+  [ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md)
+  (RenderGraph multi-attachment/draw-pass integration), and
+  [ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)
+  (temporary pre-compiled SPIR-V shader sourcing).
+
+## Summary
+
+This spec introduces `Atlantis Renderer` (`src/renderer/`) as a real
+module for the first time, built entirely on the RHI and RenderGraph
+foundation Spec 0003, Spec 0005, and Spec 0006 already shipped. It closes
+the gap those three specs deliberately left open: nothing in this
+repository can draw an actual mesh yet, only a solid clear color. This
+spec extends RHI with the minimal GPU resource (`Buffer`, `Texture`),
+pipeline, binding, and draw-command surface a real triangle needs;
+extends RenderGraph to scope a draw pass against a color and a depth
+attachment; and introduces `Renderer` itself as the thin, stateless
+orchestrator that turns a caller-supplied mesh, material, and camera into
+recorded GPU work. It does **not** design a Shader System, a scene graph,
+an asset system, lighting, texturing, or anything beyond the single,
+minimal, solid-shaded, depth-tested mesh its own acceptance target
+requires.
+
+## Motivation / Problem Statement
+
+Spec 0006 closed the "nothing can put a pixel on screen" gap by proving
+the acquire → RenderGraph-recorded work → submit → present cycle with a
+single `clearColor()` pass. It explicitly, deliberately stopped there: no
+pipeline object, no vertex/index buffer, no general RHI resource, and no
+Renderer — all named as future Minimal Renderer scope in that spec's own
+Non-Goals and Out of Scope / Future Work.
+
+[specs/README.md](README.md)'s Candidate Spec Backlog lists Minimal
+Renderer as the very next candidate, and — following the docs-sync work
+that landed after Spec 0006's own verification — records both of its
+declared dependencies, Spec 0005 (RenderGraph Foundation) and Spec 0006
+(RHI / RenderGraph Frame Execution Foundation), as `Approved` and
+implemented. Both dependencies are now genuinely satisfied: this spec is
+the first that can be drafted against a real, GPU-verified frame-execution
+foundation rather than against an anticipated one.
+
+Three architectural gaps stand between "a frame that clears to a solid
+color" and "a frame that draws a real mesh," none of which any existing
+`Accepted` ADR resolves:
+
+- **RHI has no GPU resource beyond `RenderTarget`.** No vertex buffer, no
+  index buffer, no uniform buffer, no depth image, no pipeline object, no
+  draw call. [ADR-0015](../adr/0015-vulkan-memory-allocation-deferred.md)
+  explicitly named "whichever future spec introduces `Buffer`/`Texture`
+  resource creation" as the spec that must resolve GPU memory allocation
+  strategy — this is that spec.
+- **RenderGraph's execution model assumes exactly one bound resource and
+  exactly one drawable operation** (Spec 0006's `clearColor()`). Binding a
+  color attachment and a depth attachment to one pass, and scoping a real
+  draw call to both, is not designed anywhere yet.
+- **`Renderer` itself has no concrete shape.**
+  [docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md)
+  and
+  [docs/architecture/resource_lifetime.md](../docs/architecture/resource_lifetime.md)
+  fixed *principles* (depends only on RHI/RenderGraph/Core; never owns a
+  `RenderTarget`) years before any real consumer existed to validate a
+  concrete API against — this spec is that first real consumer.
+
+A fourth, narrower gap is procedural rather than architectural but still
+requires an explicit, reviewed answer: this spec's minimal material needs
+*some* compiled shader bytecode to exist, and Shader System — the module
+that will eventually own shader compilation — has no spec yet and is
+explicitly a later candidate than this one. Left unaddressed, this spec's
+own implementation pressure would silently answer that question the wrong
+way (see [ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)).
+
+## Goals
+
+- Introduce `Atlantis Renderer` as a real module with a reviewed public
+  API, module boundary, and resource-ownership model
+  ([ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)).
+- Extend RHI with the minimal `Buffer`/`Texture` GPU resource types a
+  mesh and a depth attachment need, with an explicit, reviewed ownership
+  model and GPU memory allocation strategy
+  ([ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)),
+  resolving [ADR-0015](../adr/0015-vulkan-memory-allocation-deferred.md)'s
+  named implementation blocker.
+- Decide, as an explicit reviewed architecture choice rather than a
+  silent implementation detail, how the Vulkan Backend scopes GPU work to
+  a color and depth attachment
+  ([ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)).
+- Extend RHI with a minimal graphics pipeline, binding, and indexed-draw
+  surface sufficient for one fixed-vertex-layout, depth-tested,
+  unlit/solid-shaded material
+  ([ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)).
+- Extend RenderGraph's execution model to bind and scope a pass against
+  more than one resource kind (color + depth), deriving attachment-scoping
+  calls automatically from declared usage data, the same way transitions
+  already are
+  ([ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md)).
+- Fix an explicit, narrowly-bounded, temporary source for this spec's
+  shader bytecode that cannot be mistaken for, or silently evolve into,
+  Shader System
+  ([ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)).
+- Verify all of the above end-to-end on Windows with a real GPU: a real,
+  visible, depth-tested mesh, correctly shaded by a minimal material,
+  drawn through `Renderer` → RenderGraph → RHI → Vulkan Backend, presented
+  to a real window, correct across resize and minimize/restore, Vulkan
+  Validation Layers clean throughout.
+
+## Non-Goals
+
+Explicitly excluded from this spec's design and implementation:
+
+- **Shader System.** No shader source language is chosen, no compiler is
+  invoked by any Atlantis code, no reflection is performed, no shader
+  caching or hot-reload exists. See
+  [ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md).
+- **Runtime (the module), Android, iOS, headless rendering, image
+  regression testing.** This spec's own manual/verification composition
+  (mirroring `examples/frame_execution_demo`) is not a preview of Runtime.
+  Windows/Vulkan only, per [AGENTS.md](../AGENTS.md).
+- **Scene graph, ECS, asset system, or a model/mesh loader.** This
+  spec's mesh data is a small, fixed, hand-authored set of vertices/
+  indices (e.g. a cube or a low-poly mesh) constructed directly in C++ or
+  loaded from a trivial, fixed-format fixture file this spec's own
+  verification composition owns — not a general asset pipeline.
+- **Multiple materials, a material parameter/graph system, lighting of
+  any kind, shadows, texturing/texture streaming, or any shading model
+  beyond a single, fixed, solid/vertex-color material.** See "Minimal
+  material" in Proposed Design for exactly what this spec's one material
+  does and does not do.
+- **GPU-driven rendering, bindless resources, indirect/instanced
+  draws, or any multi-draw batching.** A single, fixed
+  `drawIndexed()` call per draw item, per
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md).
+- **Hot-reload of shaders, pipelines, or any GPU resource.**
+- **Multiple frames in flight.** The single-frame-in-flight baseline
+  [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md)
+  established is unchanged and unreopened by this spec.
+- **Multi-threaded command recording, resource creation, or graph
+  execution; any job/task system.** Phase 1's single-logical-frame-thread
+  baseline ([ADR-0004](../adr/0004-phase1-threading-baseline.md)) is
+  unchanged.
+- **A general GPU memory suballocator (VMA or hand-rolled).**
+  [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)
+  adopts a direct, unpooled, per-resource allocation policy, strictly
+  confined to the Vulkan Backend's private implementation, with an
+  explicit migration boundary — it does not adopt or scaffold for a
+  general allocator.
+- **A second graphics backend of any kind**, and no abstraction knob added
+  "for" one. Windows/Vulkan only.
+- **A general `Sampler` type, a general resource-format table, or a
+  sampled/shader-read `Texture`.** This spec's `Texture` type is scoped
+  exclusively to depth-attachment usage.
+- **Resource lifetime, aliasing, or a resource-versioning model beyond
+  RenderGraph's existing `ResourceState` transition bookkeeping**
+  (extended, not redesigned, by
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)/[ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md)).
+- **A general descriptor-set/binding-slot system, push descriptors, or
+  bindless textures/buffers.** A single, fixed per-object binding
+  mechanism only (camera uniform + one per-draw transform).
+- **Cross-owner shared ownership of `Mesh`/`Material`/`Buffer`/`Texture`/
+  `Pipeline`.** All are single-owner, move-only, RAII types
+  ([ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md),
+  [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)).
+  Reusing a borrowed reference to draw the same `Mesh`/`Material` more
+  than once within a frame is supported and is not "sharing" in the
+  cross-owner sense this Non-Goal excludes.
+- **Editing [specs/README.md](README.md),
+  [docs/project-blueprint.md](../docs/project-blueprint.md), or any other
+  governance/roadmap document.** Reserved for a separate, later docs sync,
+  per the same pattern Spec 0005 and Spec 0006 both followed.
+
+## Requirements
+
+### Functional
+
+**`Atlantis Renderer` module**
+
+- New module `src/renderer/`, target `atlantis_renderer`, alias
+  `Atlantis::Renderer`, depending only on `Atlantis::RHI`,
+  `Atlantis::RenderGraph`, `Atlantis::Core` — see
+  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md).
+- `Renderer` is a concrete class, not an abstract RHI-style interface, and
+  is stateless across frames: it retains no GPU resource and no
+  frame-to-frame state of its own.
+- `Renderer`'s per-frame entry point takes, by borrowed reference: the
+  caller-acquired `RenderTarget`, a caller-owned depth `Texture`, a small
+  camera-data value (view/projection), and a caller-owned collection of
+  draw items (each: a `Mesh` reference, a `Material` reference, an
+  object-to-world transform). It builds, compiles, and executes a
+  RenderGraph description internally, recording into the caller-provided
+  `CommandList` — it never calls `Device::submit()` or
+  `Presentation::present()` itself. Exact type/method names are a
+  Plan-stage detail.
+
+**`Mesh` and `Material`**
+
+- `Mesh` (Renderer-level type): owns exactly one vertex `Buffer` and one
+  index `Buffer`, plus an index count and whatever fixed vertex-layout
+  metadata `Pipeline` creation needs to match against. Constructed once by
+  the caller (this spec's verification composition), from a small, fixed,
+  hand-authored set of vertices/indices; not re-uploaded or mutated after
+  construction.
+- `Material` (Renderer-level type): owns exactly one `Pipeline`.
+  Constructed once by the caller from this spec's fixed, pre-compiled
+  vertex/fragment SPIR-V pair
+  ([ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md))
+  and a hand-specified vertex-input/binding layout matching `Mesh`'s
+  layout.
+- Neither is created, cached, deduplicated, or looked up by `Renderer`
+  itself — see
+  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md).
+
+**Minimal RHI GPU resources**
+
+- `Buffer` and `Texture` RHI interfaces, `Device::createBuffer()`/
+  `createTexture()`, move-only single-owner ownership, direct/unpooled
+  Vulkan Backend allocation — see
+  [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)
+  for the full contract.
+- `Buffer` supports exactly three fixed purposes: vertex, index, uniform
+  (camera). `Texture` supports exactly one usage this round: depth
+  attachment.
+- The camera uniform `Buffer` is host-visible/host-coherent and is
+  written directly by the caller once per frame, after `acquireNextTarget()`
+  returns (relying on that call's existing drain of any previously-retained
+  submission, per [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md)
+  and the fix landed in PR #24, to guarantee no GPU work is still reading
+  the buffer's previous contents at the moment the caller writes to it).
+  No double-buffering or explicit CPU/GPU synchronization beyond that
+  existing guarantee is introduced.
+
+**Minimal RHI graphics pipeline, binding, and draw surface**
+
+- `Pipeline` RHI interface, `Device::createPipeline()`, move-only
+  single-owner ownership — one fixed vertex-input layout, depth-test/
+  depth-write enabled, opaque rasterization, targeting attachment formats
+  directly (no `VkRenderPass`) — see
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md).
+- `CommandList` gains: an attachment-scoping operation pair (called only
+  by RenderGraph's `execute()`, never by a pass callback — see below),
+  `bindPipeline()`, `bindVertexBuffer()`, `bindIndexBuffer()`, a minimal
+  per-object binding mechanism (camera uniform + one per-draw transform),
+  and `drawIndexed()`. Recording remains legal only from inside a
+  RenderGraph pass execution callback, per
+  [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md)'s
+  existing (inspection-enforced, not type-enforced) rule.
+- `ResourceState` gains new variants for depth-attachment and buffer-
+  purpose bookkeeping, extending (not replacing) its existing three
+  color-only variants — see
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md).
+- The Vulkan Backend scopes every draw exclusively via Vulkan's core
+  dynamic rendering (`vkCmdBeginRendering`/`vkCmdEndRendering`) — no
+  `VkRenderPass`/`VkFramebuffer` object is created anywhere in this spec's
+  implementation. See
+  [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md).
+
+**RenderGraph multi-attachment and draw-pass execution integration**
+
+- `render_graph::execute()`'s binding mechanism accepts a color
+  `RenderTarget` binding and a depth `Texture` binding simultaneously.
+  Guard 1 (every `ResourceState`-tagged usage must have a binding) applies
+  uniformly to both kinds; Guard 2 (no declared read usage on a bound
+  resource) continues to apply only to the bound `RenderTarget`, not to
+  the bound depth `Texture` — see
+  [ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md)
+  for why.
+- `execute()` recognizes a **draw pass** from its declared attachment-
+  shaped usages and automatically brackets that pass's execution callback
+  with the attachment-scoping operation pair — a pass author never calls
+  it directly. This spec's own scope needs exactly one draw pass per
+  frame; `execute()`'s derivation rule is not required to support more
+  than one in this round.
+- Transition-insertion (per-bound-resource "most-recently-recorded state"
+  tracking, automatic `transitionResource()` insertion on a state change)
+  is unchanged in mechanism, now running once per bound resource. The
+  trailing `PresentSource` transition remains specific to the bound
+  `RenderTarget`; no trailing transition is inserted for the bound depth
+  `Texture` this round.
+
+**Resize / depth-resource lifecycle**
+
+- The caller (this spec's verification composition) is responsible for
+  checking, once per frame after a successful `acquireNextTarget()`,
+  whether its owned depth `Texture`'s extent still matches the acquired
+  `RenderTarget`'s extent; if not, it destroys and recreates the depth
+  `Texture` at the new extent before calling `Renderer`'s per-frame entry
+  point. `Renderer` itself has no resize-driven internal state — see
+  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md).
+- A zero-extent frame (from `acquireNextTarget()`'s existing
+  `Ok(std::nullopt)` outcome, per
+  [ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md))
+  results in the caller skipping `Renderer`'s per-frame call entirely for
+  that frame, exactly as Spec 0006's own zero-extent handling already
+  requires for the whole acquire/execute/submit/present cycle.
+
+**Minimal material**
+
+- Exactly one material this round: a single fixed vertex shader and
+  fragment shader pair, taking the camera's view/projection and each
+  draw item's object-to-world transform, and either a per-vertex color
+  attribute or a single fixed solid color (exact choice left to the
+  Plan) as the only visual differentiator — no lighting term, no texture
+  sample, no normal, no material parameter beyond what is fixed at shader-
+  authoring time. Sufficient to visually confirm a real, depth-tested 3D
+  mesh is being drawn correctly (including correct depth ordering across
+  its own front/back-facing geometry), and nothing more.
+
+**Phase 1 single-threaded orchestration and thread-safety contracts**
+
+- Every new public type this spec introduces (`Renderer`, `Mesh`,
+  `Material`, `Buffer`, `Texture`, `Pipeline`, and every extended RHI/
+  RenderGraph method) documents its thread-safety contract at its public
+  API — "not thread-safe; caller-thread-only," on the single Phase 1
+  logical frame thread, per
+  [ADR-0004](../adr/0004-phase1-threading-baseline.md). No mutex, atomic,
+  job/task system, or lock-free structure is introduced anywhere in this
+  spec's scope.
+
+### Non-functional
+
+- **Performance:** not a goal beyond "does not stall, leak, or busy-spin
+  unnecessarily," the same bar every prior spec in this line has set. No
+  frame-pacing or micro-benchmark target; direct per-resource allocation
+  and single-frame-in-flight are explicit simplifications, not performance
+  claims.
+- **Memory:** no general GPU memory suballocation strategy is introduced
+  or assumed — see
+  [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md).
+- **Portability (within the Vulkan-only Phase 1 constraint):**
+  implemented and verified on Windows only. RHI's and RenderGraph's public
+  interface shapes must not preclude Android's future implementation,
+  verified by inspection.
+- **Other:** no new third-party dependency — no shader compiler library,
+  no allocator library. Unit tests use the existing Catch2 v3 framework
+  ([ADR-0007](../adr/0007-test-framework.md)).
+
+## Proposed Design
+
+### Module boundaries (realizing, not moving, existing ones)
+
+Realizes exactly the dependency edges
+[module_boundaries.md](../docs/architecture/module_boundaries.md) already
+anticipated for Renderer (depends on RHI, RenderGraph, Core only) and
+extends RHI/RenderGraph/Vulkan Backend along their existing, unchanged
+dependency directions. See
+[ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)
+for the full Renderer-boundary decision.
+
+```
+Runtime-equivalent verification composition, once per frame:
+  Presentation::acquireNextTarget()
+    -> Ok(std::nullopt): skip this frame entirely (unchanged from Spec 0006)
+    -> Err: propagate/log
+    -> Ok(RenderTarget): continue below
+
+  Check depth Texture extent against RenderTarget::extent();
+    recreate depth Texture via Device::createTexture() if it differs
+
+  Write this frame's camera view/projection into the camera uniform Buffer
+
+  Device::createCommandList() -> CommandList
+
+  Renderer::drawFrame(commandList, *renderTarget, *depthTexture,
+                       cameraData, drawItems)
+    -- internally: builds a RenderGraphBuilder description (one draw
+       pass, color + depth attachment usages, execution callback that
+       binds Mesh/Material state and calls drawIndexed() once per draw
+       item), compiles it, calls render_graph::execute() --
+
+  Device::submit(commandList, target's-acquire-complete-signal)
+  Presentation::present(target, submissionSignal)
+
+  -- On every exit path, including a mid-frame exit: drain Device's
+     outstanding submission (Device::waitIdle()) before destroying
+     Presentation/Device/the depth Texture/Mesh/Material --
+```
+
+### RHI resource types, ownership, and allocation
+
+See
+[ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)
+for the full decision: `Buffer`/`Texture`'s shape, move-only ownership,
+`Device::createBuffer()`/`createTexture()`, and the direct/unpooled,
+Vulkan-Backend-private allocation policy that resolves
+[ADR-0015](../adr/0015-vulkan-memory-allocation-deferred.md)'s named
+blocker.
+
+### Attachment scoping mechanism
+
+See
+[ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md) for
+the full decision: Vulkan core dynamic rendering, no `VkRenderPass`/
+`VkFramebuffer`, entirely private to the Vulkan Backend's `CommandList`
+implementation.
+
+### Pipeline, binding, and draw surface
+
+See
+[ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)
+for the full decision: `Pipeline`'s shape, `CommandList`'s new bind/draw
+operations, and the `ResourceState` extension.
+
+### RenderGraph execution generalization
+
+See
+[ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md)
+for the full decision: multi-resource binding, Guard 1/Guard 2's
+generalized/unchanged scope respectively, and draw-pass-derived
+attachment-scoping insertion.
+
+### Shader artifact sourcing
+
+See
+[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)
+for the full decision: pre-compiled, checked-in SPIR-V, no compiler
+invocation, no reflection, explicit migration boundary to a future Shader
+System.
+
+### Threading
+
+Unchanged from Spec 0006: single logical frame thread, per
+[ADR-0004](../adr/0004-phase1-threading-baseline.md). Every new call this
+spec introduces (`Renderer::drawFrame()`, every new RHI method, every
+extended RenderGraph method) happens on that same thread.
+
+### Error handling
+
+- Recoverable runtime errors (resource creation failure, pipeline creation
+  failure) use `atlantis::Result<T, E>`, consistent with every prior
+  spec's convention.
+- Programmer errors — a `bindVertexBuffer()`/`bindIndexBuffer()` call with
+  a `Buffer` of the wrong purpose; a draw-pass usage with no matching
+  binding (Guard 1, generalized); a `RenderTarget` binding with a declared
+  read usage (Guard 2, unchanged scope) — use `ATLANTIS_CHECK`/
+  `ATLANTIS_ASSERT`, per [ADR-0009](../adr/0009-assertion.md)'s existing
+  convention.
+- `Mesh`/`Material`/`Buffer`/`Texture`/`Pipeline` misuse outside their
+  valid lifetime window (using one after the object that owns it has been
+  destroyed; destroying `Device` while any of these it backed are still
+  alive) is a **lifetime precondition violation**, the same tier as every
+  other borrowed/owned-handle misuse case already established in this
+  codebase — not claimed to be guaranteed-detectable, and not tested for
+  detection.
+- Every `VkResult` along resource creation, pipeline creation, binding,
+  and drawing is checked; no `VkResult` is discarded.
+- Vulkan Validation Layers are enabled unconditionally in Debug builds and
+  any GPU-touching CI job; a validation warning or error is a build/test
+  failure.
+
+## Architectural Impact
+
+This spec introduces architecture across six distinct, independently-
+reviewable decisions, filed as six new `Proposed` ADRs — none decided by
+this spec's prose alone:
+
+1. **Minimal Renderer public API, module boundary, and resource
+   ownership** — `Renderer`'s concrete (non-interface) shape, its
+   per-frame contract, and `Mesh`/`Material`'s explicit, no-hidden-cache
+   ownership. Filed as
+   [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md).
+2. **RHI minimal GPU resource types and allocation strategy** —
+   `Buffer`/`Texture`, move-only ownership (resolving
+   [resource_lifetime.md](../docs/architecture/resource_lifetime.md)'s
+   open question), and a direct/unpooled allocation policy (resolving
+   [ADR-0015](../adr/0015-vulkan-memory-allocation-deferred.md)'s named
+   blocker). Filed as
+   [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md).
+3. **Vulkan dynamic rendering for attachment management** — a long-term
+   Vulkan Backend implementation-strategy decision, explicitly reviewed
+   per this spec's own instruction even though it never crosses RHI's
+   public surface. Filed as
+   [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md).
+4. **RHI minimal graphics pipeline, binding, and draw command surface** —
+   `Pipeline`, the new `CommandList` bind/draw operations, and the
+   `ResourceState` extension. Filed as
+   [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md).
+5. **RenderGraph multi-attachment and draw-pass execution integration** —
+   generalizing [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)'s
+   dependency-to-barrier split to a second bound-resource kind and to
+   attachment-scoping derivation. Filed as
+   [ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md).
+6. **Temporary pre-compiled SPIR-V shader artifact sourcing** — an
+   explicit, narrowly-bounded procedural decision preventing this spec's
+   own implementation pressure from silently deciding Shader System's
+   shape. Filed as
+   [ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md).
+
+No existing `Accepted` ADR's conclusions are restated, reopened, or
+modified by this spec or by the six new ADRs above — each new ADR
+references and extends the existing ones (particularly ADR-0001,
+ADR-0003, ADR-0015, ADR-0018, ADR-0019, ADR-0020, ADR-0021) without
+altering them. Architectural Impact is not "None" — `Renderer`, `Buffer`,
+`Texture`, `Pipeline`, and RenderGraph's multi-attachment execution
+capability are each new public API surface, exactly what
+[AGENTS.md](../AGENTS.md)'s "What counts as significant" section requires
+the full Spec → Plan → Human Review path for. **This spec is not itself
+an authorization to implement** — all six ADRs must reach `Accepted`, and
+this spec must reach `Approved`, at Human Review, before any Plan may be
+drafted against it, per [AGENTS.md](../AGENTS.md).
+
+## Alternatives Considered
+
+- **Split this spec into two or more smaller specs** (e.g. "RHI graphics
+  resources" separately from "Renderer + RenderGraph draw integration").
+  Considered, and rejected for this round: the six decisions above are
+  genuinely interdependent — `Buffer`/`Texture`'s shape
+  ([ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md))
+  has no real validation target without a `Pipeline`
+  ([ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md))
+  and a RenderGraph draw pass
+  ([ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md))
+  to actually use them, mirroring Spec 0006's own reasoning for keeping
+  its RHI-execution and RenderGraph-execution halves together. Filing six
+  separate ADRs (rather than six separate specs) already gives Human
+  Review the ability to accept, reject, or send back any one decision
+  independently, without needing six separate spec documents to do it.
+- **Fold shader artifact sourcing
+  ([ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md))
+  into the pipeline/binding ADR
+  ([ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md))
+  rather than filing it separately.** Rejected: the shader-sourcing
+  question's entire purpose is to draw an explicit, auditable boundary
+  against a future Shader System — bundling it into a general RHI-surface
+  ADR would make that boundary harder to find and review on its own
+  terms, and risks it being treated as "just an implementation detail" of
+  pipeline creation rather than the deliberate non-decision it is.
+- **Decide GPU memory allocation strategy generally (VMA or a hand-rolled
+  suballocator) in this spec**, rather than continuing to defer it behind
+  a direct, unpooled policy. Rejected — see
+  [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)
+  Alternatives Considered: this spec's own resource count does not create
+  a concrete pooling/suballocation need, and adopting either strategy
+  without one repeats the exact "scaffold for later" mistake
+  [AGENTS.md](../AGENTS.md) and [ADR-0015](../adr/0015-vulkan-memory-allocation-deferred.md)
+  both warn against.
+- **Design a general material/shader-parameter system now**, so a future
+  spec adding a second material would not need to extend this round's
+  binding mechanism. Rejected — see
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)
+  Alternatives Considered: no second material exists in this spec's own
+  acceptance target to validate a general system against, and this
+  repeats the exact bundling mistake Spec 0005's and Spec 0006's own
+  Alternatives Considered already rejected for their respective rounds.
+- **Silently amend `specs/README.md`'s backlog or
+  `docs/project-blueprint.md`'s Milestone 4 entry to record this spec's
+  own existence/scope.** Rejected: per AGENTS.md, governance/roadmap
+  documents change only through their own review, per this spec's own
+  Non-Goals — a separate, later docs-sync PR is expected, following the
+  same pattern Spec 0005 and Spec 0006 both used.
+
+## Testing & Verification Plan
+
+- **Unit tests:** GPU-independent bookkeeping and validation logic,
+  exercised against a fake/mock `CommandList` where a real device is not
+  required, per
+  [docs/process/testing-strategy.md](../docs/process/testing-strategy.md)
+  layer 1. At minimum, tests must cover:
+  - RenderGraph's generalized transition-insertion algorithm across two
+    simultaneously bound resources (color + depth), including that each
+    resource's own most-recently-recorded state is tracked independently.
+  - `execute()`'s draw-pass recognition and attachment-scoping-call
+    insertion (begin before the pass's callback runs, end immediately
+    after), for a pass with color-only, and for a pass with color+depth,
+    attachment-shaped usages.
+  - Guard 1 (every `ResourceState`-tagged usage must have a binding),
+    exercised against a depth `Texture` binding as well as a
+    `RenderTarget` binding.
+  - Guard 2 (no declared read usage on a bound `RenderTarget`) continuing
+    to hold, and *not* firing for an equivalent declared read usage on a
+    bound depth `Texture` — confirming the guard's scope is exactly as
+    narrow as
+    [ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md)
+    fixes it.
+  - `Buffer`/`Texture`/`Pipeline` construction-parameter validation logic
+    that does not require a real Vulkan device (e.g. purpose/usage
+    mismatch checks), where such logic exists independent of the Vulkan
+    Backend's own device-dependent creation path.
+- **GPU integration tests (Windows/Vulkan):** real `Device`/`Buffer`/
+  `Texture`/`Pipeline`/`CommandList` construction and destruction,
+  Validation-Layers-enabled, mirroring the existing
+  `atlantis_vulkan_backend_gpu_tests`/`atlantis_render_graph_tests`
+  pattern this repository already uses. Must cover, at minimum: creating
+  and destroying a `Buffer` of each of the three purposes; creating and
+  destroying a depth `Texture`, including at a resized extent; creating
+  and destroying a `Pipeline` from this spec's fixed SPIR-V pair; and one
+  full draw-pass execution (bind, draw, attachment scope begin/end)
+  against a real acquired `RenderTarget` and a real depth `Texture`, with
+  Validation Layers reporting zero warnings/errors.
+- **Headless integration tests:** not applicable — headless rendering
+  remains unimplemented, per
+  [testing-strategy.md](../docs/process/testing-strategy.md)'s sequencing
+  note; flagged, not resolved, consistent with every prior spec's
+  equivalent flag.
+- **Image regression tests:** not applicable — this spec's manual
+  verification checks for a visible, correctly-shaped, correctly-depth-
+  ordered mesh by direct observation, not automated pixel comparison,
+  gated on headless rendering per [AGENTS.md](../AGENTS.md) sequencing.
+  This is a real, accepted limitation for this spec's own claim of
+  "correct output": a human visually confirming a mesh looks right is not
+  equivalent to a pixel-exact regression gate, and this spec does not
+  claim otherwise.
+- **Vulkan Validation Layers:** mandatory and must run clean for every
+  manual and automated exercise of resource creation, pipeline creation,
+  binding, attachment scoping, transition, drawing, submission, and
+  present — per [AGENTS.md](../AGENTS.md) and
+  [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
+- **Manual verification:** a minimal, non-shipping composition (mirroring
+  `examples/frame_execution_demo`'s own structure and disclaimer) creates
+  a Windows Platform window, constructs a `Device`/`Presentation`, this
+  spec's fixed `Mesh`/`Material`/camera uniform `Buffer`/depth `Texture`,
+  and — driven by the existing non-blocking Platform event loop — runs
+  the full acquire → recreate-depth-if-needed → update-camera →
+  `Renderer::drawFrame()` → submit → present cycle every frame. It
+  confirms:
+  - A visible window shows a recognizable, correctly-shaded, correctly
+    depth-ordered 3D mesh (front-facing geometry occludes back-facing
+    geometry correctly; no visible z-fighting or inverted depth test),
+    continuously across repeated frames.
+  - Interactive resize continues to show the mesh correctly (including
+    depth correctness) at the new window size, with the depth `Texture`
+    visibly/measurably recreated at the matching extent — no stretched,
+    corrupted, or stale depth buffer.
+  - Minimizing the window results in no crash, no busy-spin, and no
+    Vulkan call being made while minimized; restoring resumes correct
+    rendering (mesh, depth, camera) with no special recovery step visible
+    to the user — mirroring Spec 0006's own equivalent guarantee.
+  - The application exits cleanly at any point in this sequence,
+    including mid-resize, minimized, and after a deliberate mid-frame
+    exit (acquired but not yet submitted/presented), with no outstanding
+    acquired `RenderTarget`, no leaked `CommandList`/`Buffer`/`Texture`/
+    `Pipeline`, and no Validation Layer warning or error at any point,
+    including at shutdown — extending Spec 0006's own destruction-
+    precondition discipline to this spec's new owned resources.
+
+## Acceptance Criteria
+
+- [ ] RHI's and RenderGraph's public headers contain no `Vk*` type and no
+      `#include <vulkan/...>` — verifiable by inspection/grep, unchanged
+      from Spec 0006's own equivalent criterion.
+- [ ] No direct `vkCmd*` call, no `VkImageMemoryBarrier`/
+      `vkCmdPipelineBarrier` construction, and no `VkRenderPass`/
+      `VkFramebuffer` object, exists anywhere outside the Vulkan Backend's
+      `CommandList` implementation — the last clause is new this round,
+      per [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md).
+- [ ] `Buffer`, `Texture`, and `Pipeline` are each move-only (movable,
+      non-copyable) — a compile-time property, verified as such.
+- [ ] Every `Buffer`/`Texture` this spec's implementation creates is
+      backed by its own individual `vkAllocateMemory` call, released by
+      its own individual `vkFreeMemory` call at destruction — no shared
+      `VkDeviceMemory` block backs more than one resource anywhere in this
+      spec's implementation.
+- [ ] `Renderer` retains no `RenderTarget`, `Texture`, `Mesh`, `Material`,
+      or any other GPU resource across two separate calls to its per-frame
+      entry point — verifiable by inspection that `Renderer` holds no such
+      member state.
+- [ ] `Mesh`/`Material` are never created, cached, or looked up by
+      `Renderer` itself anywhere in this spec's implementation —
+      verifiable by inspection that `Renderer` has no such factory method
+      or internal registry.
+- [ ] A `ResourceState`-tagged usage against any bound resource kind
+      (color `RenderTarget` or depth `Texture`) with no supplied binding
+      is rejected as a programmer error at `execute()` time, in every
+      tested case.
+- [ ] Binding a `RenderTarget` to a logical resource with any declared
+      read usage is rejected as a programmer error at `execute()` time,
+      unchanged from Spec 0006; the equivalent declared read usage on a
+      bound depth `Texture` is *not* rejected, in every tested case.
+- [ ] `execute()` correctly brackets every recognized draw pass's
+      execution callback with attachment-scoping begin/end calls, and
+      never inserts one for a pass with no attachment-shaped usage.
+- [ ] No shader compiler, and no SPIR-V reflection code, is invoked by any
+      CMake target or any Atlantis Core/RHI/RenderGraph/Renderer/Tools
+      source file this spec's implementation adds — verifiable by
+      inspection of the build configuration and source tree.
+- [ ] Every `VkResult` along resource creation, pipeline creation,
+      binding, attachment scoping, drawing, submission, and present is
+      checked; no `VkResult` is discarded.
+- [ ] Debug builds and any GPU-touching CI job run with Vulkan Validation
+      Layers enabled; a validation warning or error fails the run.
+- [ ] The manual verification composition shows a visible, correctly-
+      shaded, correctly depth-ordered mesh; continues to do so across
+      interactive resize, including a correctly-recreated depth `Texture`;
+      makes zero Vulkan calls while minimized; and resumes correctly on
+      restore.
+- [ ] No `src/renderer/` code depends on Atlantis Platform, Win32, the
+      Android NDK, or any `Vk*` type — verifiable by inspection/grep.
+- [ ] No scene graph, ECS, asset system, model loader, texture, lighting
+      term, second material, instanced/indirect draw, or multi-frame-in-
+      flight machinery is implemented anywhere this spec's implementation
+      touches.
+- [ ] All six ADRs listed in Architectural Impact
+      ([ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)–[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md))
+      reach `Accepted` before this spec is marked `Approved` — this
+      checkbox gates spec approval, not implementation; every other
+      checkbox in this section describes a property the future
+      implementation must satisfy, not one already verified.
+
+## Risks & Open Questions
+
+- **Exact vertex-input attribute set** (position + one additional
+  attribute, e.g. per-vertex color, vs. position + normal for a simple
+  lighting-adjacent visual check) is left to the Plan — this spec fixes
+  only that the material must visually distinguish geometry and confirm
+  correct depth ordering, not the concrete attribute layout.
+- **Exact mesh content** (a hand-authored cube, a low-poly sample mesh, or
+  an equivalent fixed shape) is left to the Plan, provided it is non-planar
+  enough to genuinely exercise depth testing (a flat quad alone would not).
+- **Exact per-object binding mechanism** (Vulkan push constant vs. a
+  second small uniform binding for the object-to-world transform) is left
+  to the Plan, per
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md).
+- **Exact `ResourceState` variant set and naming** for depth/buffer-purpose
+  bookkeeping is left to the Plan, per
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md).
+- **Whether Vulkan Backend raises its minimum core API version to 1.3, or
+  instead requires `VK_KHR_dynamic_rendering` explicitly on an older core
+  version**, is left to the Plan, per
+  [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md).
+- **Exact checked-in `.spv` file location and naming convention** is left
+  to the Plan, per
+  [ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md).
+- **Whether a GPU-integration test category distinct from the existing
+  `gpu`-labeled pattern is needed** for resource/pipeline creation tests
+  that need a real device but do not fit
+  [testing-strategy.md](../docs/process/testing-strategy.md)'s existing
+  layer boundaries — the same open question Spec 0006 already flagged,
+  now recurring for this spec's own new GPU-dependent test surface;
+  flagged, not resolved.
+- Whether a future spec revisiting the single-frame-in-flight baseline
+  (per [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md)'s
+  own Negative/Trade-offs) will also need to revisit this spec's
+  direct-write-to-uniform-buffer approach is left open — the current
+  design relies specifically on single-frame-in-flight's existing
+  acquire-time drain guarantee, and would need re-examination alongside
+  any future multi-frame-in-flight work.
+- Whether the direct, unpooled per-resource allocation policy
+  ([ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md))
+  will need revisiting sooner than expected, if a future spec's resource
+  count approaches a driver's `maxMemoryAllocationCount` limit before a
+  performance-motivated suballocator spec would otherwise have been
+  written, is left open per that ADR's own stated migration boundary.
+
+## Out of Scope / Future Work
+
+Shader System (next backlog candidate after this spec, per
+[specs/README.md](README.md)'s Section B), Android Platform and Vulkan
+presentation, headless rendering, and image regression testing all remain
+later, separately-specced work per
+[docs/project-blueprint.md](../docs/project-blueprint.md) and are not
+advanced, designed, or unblocked by this spec beyond satisfying this
+minimal-renderer foundation as their own future dependency. A future
+Shader System spec is expected to be the first consumer that needs
+`Device::createPipeline()`'s bytecode-plus-layout contract fed by real
+compilation and reflection rather than this spec's hand-authored,
+checked-in `.spv` files — see
+[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md).
+A future spec introducing a second material, a texture, lighting, or
+multiple draw passes is expected to need to extend — not merely reuse
+unchanged — this spec's binding mechanism
+([ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md))
+and RenderGraph draw-pass derivation rule
+([ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md)).
+A future performance-motivated spec may revisit both the single-frame-in-
+flight baseline and this spec's direct/unpooled GPU memory allocation
+policy ([ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)).
+A future asset-system spec is expected to be the first real consumer that
+needs cross-owner shared ownership of `Mesh`/`Material`/GPU resources,
+which this spec deliberately does not design.
