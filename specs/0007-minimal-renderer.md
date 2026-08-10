@@ -1,20 +1,19 @@
 # Spec: Minimal Renderer
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
-  direction; human authorship/ownership of this spec is pending
-  confirmation at Human Review.
+  direction; approved by human review — see Human Review Approval below.
 - **Created:** 2026-08-11
-- **Related Plan(s):** None yet — a plan may be drafted against this spec
-  once it reaches `Approved`, per [AGENTS.md](../AGENTS.md); none has been
-  drafted by this document.
+- **Related Plan(s):** None yet — a plan may now be drafted against this
+  `Approved` spec, per [AGENTS.md](../AGENTS.md); Plan 0007 has not been
+  drafted by this document, and may only be drafted once this spec's own
+  PR has merged into `main` (see Human Review Approval below).
 - **Related ADR(s):** Builds on
   [ADR-0001](../adr/0001-rhi-backend-independence.md)–[ADR-0004](../adr/0004-phase1-threading-baseline.md),
   [ADR-0009](../adr/0009-assertion.md),
   [ADR-0014](../adr/0014-rhi-device-presentation-construction-boundary.md)–[ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)
   (all `Accepted`). See **Architectural Impact** below — six new
-  decisions are identified and drafted alongside this spec, all currently
-  `Proposed`, pending Human Review:
+  decisions were identified and drafted alongside this spec:
   [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)
   (Renderer public API and resource ownership),
   [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)
@@ -26,16 +25,18 @@
   [ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md)
   (RenderGraph multi-attachment/draw-pass integration), and
   [ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)
-  (temporary pre-compiled SPIR-V shader sourcing).
-- **Human Review Confirmations Received (2026-08-11):** Three points were
-  confirmed explicitly during joint review of this spec and
-  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)–[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md),
-  and are **accepted as-is**, per this document's and those ADRs' own
-  content as revised by that review. This is a record of confirmed
-  design direction, not itself a full Human Review Approval — this spec
-  remains `Draft` and all six ADRs remain `Proposed` (see each ADR's own
-  header) until a complete joint approval is recorded, per
-  [AGENTS.md](../AGENTS.md).
+  (temporary pre-compiled SPIR-V shader sourcing) — all six `Accepted`
+  alongside this spec's own approval below.
+- **Human Review Approval (2026-08-11):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer for this branch) on 2026-08-11, following a joint
+  architecture review of this spec and
+  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)–[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)
+  conducted across two prior review rounds (see each document's own
+  revision history for the issues those rounds raised and resolved before
+  this approval). Three points were confirmed explicitly as part of this
+  approval, and are **accepted as-is**, per this document's own content
+  as revised by that review:
 
   1. **Dynamic rendering is adopted via a capability-detected dual path,
      not by raising the Vulkan Backend's overall minimum supported API
@@ -91,6 +92,22 @@
      and
      [ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)
      for each decision's full record.
+  4. **Plan 0007 is authorized to be drafted, but only once this spec's
+     own PR has merged into `main`** — not before, and not as part of the
+     same branch/PR. **Implementation remains unauthorized.** Per
+     [AGENTS.md](../AGENTS.md), drafting Plan 0007 does not itself
+     authorize writing code; that future Plan must still pass its own (or
+     a joint Spec+Plan) Human Review, per the same Spec → Plan → Human
+     Review → Implementation → Verification → PR → Merge path every prior
+     spec in this line has followed, before any source, test, shader, or
+     build-configuration file for this spec's scope is written.
+
+  Following this approval: ADR-0022 through ADR-0027 each move to
+  `Accepted` (see each ADR's own header) and this spec moves to
+  `Approved`. This checkbox-level approval is not itself an authorization
+  to implement — see point 4 above and this spec's own Acceptance
+  Criteria, which describe properties a future implementation must
+  satisfy, not ones already verified.
 
 ## Summary
 
@@ -663,14 +680,16 @@ No existing `Accepted` ADR's conclusions are restated, reopened, or
 modified by this spec or by the six new ADRs above — each new ADR
 references and extends the existing ones (particularly ADR-0001,
 ADR-0003, ADR-0015, ADR-0018, ADR-0019, ADR-0020, ADR-0021) without
-altering them. Architectural Impact is not "None" — `Renderer`, `Buffer`,
+altering them. Architectural Impact was not "None" — `Renderer`, `Buffer`,
 `Texture`, `Pipeline`, and RenderGraph's multi-attachment execution
 capability are each new public API surface, exactly what
 [AGENTS.md](../AGENTS.md)'s "What counts as significant" section requires
-the full Spec → Plan → Human Review path for. **This spec is not itself
-an authorization to implement** — all six ADRs must reach `Accepted`, and
-this spec must reach `Approved`, at Human Review, before any Plan may be
-drafted against it, per [AGENTS.md](../AGENTS.md).
+the full Spec → Plan → Human Review path for. **This spec's approval is
+not itself an authorization to implement** — see the Human Review
+Approval note above and the Acceptance Criteria's own checklist item on
+this point: a Plan may now be drafted per [AGENTS.md](../AGENTS.md), but
+only once this spec's own PR has merged into `main`, and that future
+Plan must still pass its own Human Review before any code is written.
 
 ## Alternatives Considered
 
@@ -966,12 +985,13 @@ drafted against it, per [AGENTS.md](../AGENTS.md).
       term, second material, instanced/indirect draw, or multi-frame-in-
       flight machinery is implemented anywhere this spec's implementation
       touches.
-- [ ] All six ADRs listed in Architectural Impact
+- [x] All six ADRs listed in Architectural Impact
       ([ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)–[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md))
-      reach `Accepted` before this spec is marked `Approved` — this
-      checkbox gates spec approval, not implementation; every other
-      checkbox in this section describes a property the future
-      implementation must satisfy, not one already verified.
+      reach `Accepted` before this spec is marked `Approved` — satisfied
+      2026-08-11 (see Human Review Approval note above); this checkbox
+      gated spec approval, not implementation — every other checkbox in
+      this section still describes a property the future implementation
+      must satisfy, not one already verified.
 
 ## Risks & Open Questions
 

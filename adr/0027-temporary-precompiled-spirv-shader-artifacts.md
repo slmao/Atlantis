@@ -1,9 +1,16 @@
 # ADR 0027: Temporary Pre-Compiled SPIR-V Shader Artifact Sourcing, Pending Shader System
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-11
-- **Deciders:** Pending Human Review
-- **Related Spec:** [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+  Approval recorded 2026-08-11; see
+  [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md)'s
+  Human Review Approval note for the full approval record this ADR's
+  Decision is part of, including the explicit confirmation that checked-
+  in shader source, pre-compiled SPIR-V, and compiler/version notes are
+  all committed together, with no compiler, reflection, or caching
+  invoked by any Atlantis build target.
+- **Related Spec:** [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md) (`Approved`)
 
 ## Context
 

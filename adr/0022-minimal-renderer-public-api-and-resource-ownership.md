@@ -1,9 +1,13 @@
 # ADR 0022: Minimal Renderer Public API, Module Boundary, and Resource Ownership
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-11
-- **Deciders:** Pending Human Review
-- **Related Spec:** [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+  Approval recorded 2026-08-11; see
+  [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md)'s
+  Human Review Approval note for the full approval record this ADR's
+  Decision is part of.
+- **Related Spec:** [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md) (`Approved`)
 
 ## Context
 

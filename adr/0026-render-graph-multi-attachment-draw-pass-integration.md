@@ -1,9 +1,16 @@
 # ADR 0026: RenderGraph Multi-Attachment (Color + Depth) and Draw-Pass Execution Integration
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-11
-- **Deciders:** Pending Human Review
-- **Related Spec:** [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+  Approval recorded 2026-08-11; see
+  [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md)'s
+  Human Review Approval note for the full approval record this ADR's
+  Decision is part of, including the explicit confirmation that the
+  depth `Texture`'s combined read/write access is declared as exactly
+  one `writes()` usage tagged `DepthAttachmentReadWrite`, never a paired
+  `reads()` + `writes()` on the same pass.
+- **Related Spec:** [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md) (`Approved`)
 
 ## Context
 
