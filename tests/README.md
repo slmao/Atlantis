@@ -40,22 +40,24 @@ registered elsewhere in the same build), or by invoking
 `atlantis_platform_tests "[integration]"`).
 
 **`rhi/`** — unit tests for Atlantis RHI, per
-[specs/0003-rhi-vulkan-windowed-foundation.md](../specs/0003-rhi-vulkan-windowed-foundation.md)
-and [plans/0003-rhi-vulkan-windowed-foundation.md](../plans/0003-rhi-vulkan-windowed-foundation.md),
+[specs/0003-rhi-vulkan-windowed-foundation.md](../specs/0003-rhi-vulkan-windowed-foundation.md)/[plans/0003-rhi-vulkan-windowed-foundation.md](../plans/0003-rhi-vulkan-windowed-foundation.md)
+and
+[specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md)/[plans/0006-rhi-render-graph-frame-execution-foundation.md](../plans/0006-rhi-render-graph-frame-execution-foundation.md),
 built as the `atlantis_rhi_tests` Catch2 v3 executable. GPU-independent:
 covers RHI's value types (`Extent2D`, `Format`, `SwapchainMetadata`,
-`PresentationError`) — defaults, equality, and construction. No Vulkan
-device or window is required.
+`PresentationError`, `ResourceState`, `ClearColorValue`) — defaults,
+equality, and construction. No Vulkan device or window is required.
 
 **`vulkan_backend/`** — tests for Atlantis Vulkan Backend, per the same
-spec/plan, built as two entirely separate executables:
+specs/plans (0003 and 0006), built as two entirely separate executables:
 - `atlantis_vulkan_backend_tests` — GPU-independent, carries no CTest
   `gpu` label. Covers `VkResult` → RHI/Vulkan Backend error mapping,
   `Presentation`'s pure recreation-decision logic (the zero-extent-skip/
-  no-op/recreate dispatch, the concrete-surface support check, format and
-  image-usage selection), and the validation-policy pure functions
-  (effective enablement, severity classification, null-safe message
-  selection). No Vulkan device or window is required.
+  no-op/recreate dispatch, the concrete-surface support check, format,
+  image-usage, and clear-color-image-usage selection), and the
+  validation-policy pure functions (effective enablement, severity
+  classification, null-safe message selection). No Vulkan device or
+  window is required.
 - `atlantis_vulkan_backend_gpu_tests` — GPU-required, Windows-only
   integration executable; every test case carries the CTest label `gpu`.
   Drives a real Atlantis Platform window, a real Vulkan `Device`, and
@@ -64,11 +66,13 @@ spec/plan, built as two entirely separate executables:
   cover: surface-only construction/destruction, the initial zero-extent
   structural skip, first swapchain creation, repeated (idempotent)
   recreation, minimize/restore-driven recreation, and destruction at
-  each of those points. Validation Layers are explicitly enabled; the
-  process aborts on any WARNING/ERROR (see
+  each of those points (`vulkan_presentation_gpu_tests.cpp`); and the
+  full acquire→execute→submit→present frame-execution state machine,
+  including resize, minimize/restore, and cleanup
+  (`frame_execution_gpu_tests.cpp`, Spec 0006). Validation Layers are
+  explicitly enabled; the process aborts on any WARNING/ERROR (see
   `src/vulkan_backend/src/validation.cpp`), so a normal exit is itself
-  the validation-clean signal — no acquire, present, or GPU command of
-  any kind is issued anywhere in this executable.
+  the validation-clean signal.
 
 Run the GPU-independent suite, which excludes
 `atlantis_vulkan_backend_gpu_tests`:
@@ -85,14 +89,19 @@ the GPU-required ones — prefer the explicit `-LE gpu`/`-L gpu` commands
 above over a bare invocation.
 
 **`render_graph/`** — unit tests for Atlantis RenderGraph, per
-[specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md)
-and [plans/0005-render-graph-foundation.md](../plans/0005-render-graph-foundation.md),
+[specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md)/[plans/0005-render-graph-foundation.md](../plans/0005-render-graph-foundation.md)
+and
+[specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md)/[plans/0006-rhi-render-graph-frame-execution-foundation.md](../plans/0006-rhi-render-graph-frame-execution-foundation.md),
 built as the `atlantis_render_graph_tests` Catch2 v3 executable.
 Entirely GPU-independent — no test in this executable carries the CTest
-`gpu` label. Covers `RenderGraphBuilder`/`CompiledGraph` handle and
-ownership contracts, the dependency-derivation and compile algorithm
-(including its white-box `detail::compile()` layer), cycle detection,
-pass retention/ordering, and `CompiledGraph` lifetime/move semantics. No
+`gpu` label; a fake, non-Vulkan `CommandList` (`fake_command_list.h`)
+exercises `execute()`'s logic without a real device. Covers
+`RenderGraphBuilder`/`CompiledGraph` handle and ownership contracts, the
+dependency-derivation and compile algorithm (including its white-box
+`detail::compile()` layer), cycle detection, pass retention/ordering,
+`CompiledGraph` lifetime/move semantics, and `execute()`'s two guard
+checks (unbound tagged usage; a bound `RenderTarget` with a declared read
+usage) plus its transition-insertion and pass-execution behavior. No
 Vulkan device or window is required. Run via
 `ctest --test-dir build -C Debug -LE gpu --output-on-failure`, the same
 GPU-independent command as every other suite in this directory.

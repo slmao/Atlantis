@@ -91,9 +91,9 @@ graph TD
     Core["Atlantis Core<br/>(Implemented)"]
 
     Platform["Atlantis Platform<br/>(Windows: Implemented<br/>Android/iOS: architecture-only)"]
-    RHI["Atlantis RHI<br/>(Implemented — Spec/Plan 0003;<br/>Spec 0006 RenderTarget/CommandList<br/>extension Approved, no Plan yet)"]
-    VulkanBackend["Atlantis Vulkan Backend<br/>(Implemented — Spec/Plan 0003;<br/>Spec 0006 extension Approved, no Plan yet)"]
-    RenderGraph["Atlantis RenderGraph<br/>(Implemented — Spec/Plan 0005, GPU-independent construction/compilation foundation;<br/>Spec 0006 execution extension Approved, no Plan yet)"]
+    RHI["Atlantis RHI<br/>(Implemented — Spec/Plan 0003;<br/>Spec 0006 RenderTarget/CommandList<br/>extension Implemented)"]
+    VulkanBackend["Atlantis Vulkan Backend<br/>(Implemented — Spec/Plan 0003;<br/>Spec 0006 extension Implemented)"]
+    RenderGraph["Atlantis RenderGraph<br/>(Implemented — Spec/Plan 0005, GPU-independent construction/compilation foundation;<br/>Spec 0006 execution extension Implemented)"]
     Renderer["Atlantis Renderer<br/>(Candidate — no Spec)"]
     ShaderSystem["Atlantis Shader System<br/>(Candidate — no Spec)"]
     Runtime["Atlantis Runtime<br/>(Candidate — no Spec)"]
@@ -169,15 +169,18 @@ ADR or the architecture docs above — see the links inline):
   realizes it for the frame-execution slice (`CommandList`,
   `ResourceState`, `RenderTarget`), splitting responsibility so
   RenderGraph decides *when*/*between what states* a resource transition
-  is needed and RHI/Vulkan Backend decides *how* to perform it. Not yet
-  implemented — see Section 4.
+  is needed and RHI/Vulkan Backend decides *how* to perform it.
+  Implemented and merged via
+  [PR #23](https://github.com/slmao/Atlantis/pull/23) and
+  [PR #24](https://github.com/slmao/Atlantis/pull/24) — see Section 4.
 
 ## 4. Current repository state (verified against source and history)
 
 This section reflects the state of this repository as of 2026-08-09
-(PR #20 merged 2026-08-09T20:23:21+08:00), verified by reading the
-spec/plan/ADR files, the `src/`/`tests/`/`examples/` trees, and
-`git log`/`git status` — not inferred from file names or intent.
+(PR #24, the Spec 0006 post-merge GPU-verification fix PR, merged
+2026-08-09T18:32:19Z), verified by reading the spec/plan/ADR files, the
+`src/`/`tests/`/`examples/` trees, and `git log`/`git status` — not
+inferred from file names or intent.
 
 | Item | Status | Evidence |
 |---|---|---|
@@ -191,8 +194,8 @@ spec/plan/ADR files, the `src/`/`tests/`/`examples/` trees, and
 | Plan 0004 | `Approved / Ready for Implementation` | [plans/0004-context-efficiency-guidelines.md](../plans/0004-context-efficiency-guidelines.md) |
 | **Spec 0005 — RenderGraph Foundation (GPU-Independent Graph Core)** | `Approved`, **Implemented** (GPU-independent RenderGraph construction/compilation foundation; no RHI resource binding, command recording, GPU execution, barriers, pass culling, or resource lifetime/aliasing) | [specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md) status field; all 16 architectural decisions this spec settles were reviewed and accepted (see the spec's own Human Review Approval note); `src/render_graph/`, `tests/render_graph/` exist and match the spec/plan's file list; implementation merged via [PR #18](https://github.com/slmao/Atlantis/pull/18). No `src/renderer/` directory exists. |
 | Plan 0005 | `Approved / Ready for Implementation` | [plans/0005-render-graph-foundation.md](../plans/0005-render-graph-foundation.md); records a joint Spec + Plan Human Review completed 2026-08-09, accepting all 19 Plan-stage details in Section 7's disposition table with zero Human Review blockers |
-| **Spec 0006 — RHI / RenderGraph Frame Execution Foundation** | `Approved`, **not implemented** — no Plan drafted yet | [specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md) status field and its own Human Review Approval note (all four confirmed points recorded there); merged via [PR #20](https://github.com/slmao/Atlantis/pull/20). Fixes the concrete `RenderTarget`, `Presentation` acquire/present, minimal `CommandList`/`Device::submit()`, and RenderGraph execution contract a real frame needs — the prerequisite the "Minimal Renderer" backlog entry ([specs/README.md](../specs/README.md) Section B) needs in addition to Spec 0005. No `src/` change exists yet: this row records approval, not implementation. |
-| Plan 0006 | **Not drafted** | No `plans/0006-*.md` file exists. Per [AGENTS.md](../AGENTS.md), drafting may begin now that the spec is `Approved`; implementation still requires that future Plan to pass its own (or a joint Spec+Plan) Human Review. |
+| **Spec 0006 — RHI / RenderGraph Frame Execution Foundation** | `Approved`, **Implemented** — frame-scoped `RenderTarget`; `Presentation::acquireNextTarget()`/`present()`; a minimal RHI `CommandList`/`Device::submit()` single-frame-in-flight baseline; RenderGraph `execute()` with barrier/transition responsibility | [specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md) status field and its own Human Review Approval note; implementation merged via [PR #23](https://github.com/slmao/Atlantis/pull/23), which itself merged before GPU verification could run. [PR #24](https://github.com/slmao/Atlantis/pull/24) is the deferred GPU verification — fresh Debug/Release builds, 138/138 GPU-independent tests, 2/2 GPU-required tests, and an interactive `frame_execution_demo` run (resize, minimize/restore, normal close), all with Vulkan Validation Layers clean — and fixed three real Validation Layer defects (missing `VK_IMAGE_USAGE_TRANSFER_DST_BIT` on swapchain images; an acquire-complete semaphore reuse race; a render-finished semaphore reuse race across `vkQueuePresentKHR`) plus a reproducible resize→minimize crash it found, none of which needed a public API, ownership, synchronization-model, module-boundary, or ADR change. `src/rhi/`, `src/vulkan_backend/`, `src/render_graph/`'s execution extension, and `examples/frame_execution_demo/` all exist and match the spec/plan. This was the prerequisite the "Minimal Renderer" backlog entry ([specs/README.md](../specs/README.md) Section B) needed in addition to Spec 0005 — both dependencies are now satisfied. |
+| Plan 0006 | `Approved / Ready for Implementation` | [plans/0006-rhi-render-graph-frame-execution-foundation.md](../plans/0006-rhi-render-graph-frame-execution-foundation.md) |
 | ADR-0001 through ADR-0016 | All 16 `Accepted` | Verified by grepping each ADR file's `Status:` field |
 | ADR-0017 and ADR-0018 | Both `Accepted` (2026-08-09) | Filed alongside Spec 0005's Human Review Approval; verified by grepping each ADR file's `Status:` field |
 | ADR-0019, ADR-0020, and ADR-0021 | All three `Accepted` (2026-08-09) | Filed alongside Spec 0006's Human Review Approval; verified by grepping each ADR file's `Status:` field |
@@ -206,31 +209,36 @@ spec/plan/ADR files, the `src/`/`tests/`/`examples/` trees, and
 assertions, a `Result<T,E>` type); `Atlantis Platform`'s Windows path
 (application lifecycle, `HWND` window creation/ownership/destruction,
 `PlatformEvent` delivery, monotonic timing); `Atlantis RHI`'s
-non-frame public interfaces (`Device`/`Presentation` construction
-types); `Atlantis Vulkan Backend`'s Windows presentation
-foundation (instance/device initialization, Windows WSI surface
-creation, swapchain creation/metadata queries/destruction, and
-resize-driven lazy recreation); and `Atlantis RenderGraph`'s
-GPU-independent construction/compilation foundation (pass/logical-resource
-declaration, single-producer dependency derivation, deterministic
-compilation to a `CompiledGraph` or a `CompileError`) — each with Catch2
-unit tests (GPU-independent for RHI/Vulkan Backend/RenderGraph logic,
-GPU-required integration tests for the real Vulkan/WSI path) and, for
-Core/Platform/RHI, a non-shipping demo executable
-(`examples/foundation_demo`, `examples/platform_demo`,
-`examples/rhi_vulkan_demo`; RenderGraph has none). **There is still no
-rendered output**: no frame acquire/present loop, no `RenderTarget`, no
-RHI resource binding, no command recording, and no GPU execution exist
-anywhere in the repository.
+frame-scoped interfaces (`Device`/`Presentation` construction,
+`Presentation::acquireNextTarget()`/`present()`, a write-only
+`RenderTarget`, a minimal `CommandList`/`Device::submit()`); `Atlantis
+Vulkan Backend`'s Windows presentation and frame-execution
+implementation (instance/device initialization, Windows WSI surface
+creation, swapchain creation/metadata queries/destruction, resize-driven
+lazy recreation, and the concrete acquire/execute/submit/present state
+machine, including its per-swapchain-image semaphore pool); and
+`Atlantis RenderGraph`'s construction/compilation/execution stack
+(pass/logical-resource declaration, single-producer dependency
+derivation, deterministic compilation to a `CompiledGraph` or a
+`CompileError`, and `execute()`'s `ResourceState`-tagged usage binding,
+per-pass execution callbacks, and automatic dependency-derived
+transitions) — each with Catch2 unit tests (GPU-independent for RHI/
+Vulkan Backend/RenderGraph logic, GPU-required integration tests for the
+real Vulkan/WSI/frame-execution path) and, for Core/Platform/RHI/frame
+execution, a non-shipping demo executable (`examples/foundation_demo`,
+`examples/platform_demo`, `examples/rhi_vulkan_demo`,
+`examples/frame_execution_demo`). **The Windows Vulkan path now produces
+real rendered output**: `frame_execution_demo` acquires a swapchain
+image via RenderGraph-scheduled execution, clears it, submits, and
+presents it every frame, verified interactively across resize, minimize/
+restore, and normal close with Vulkan Validation Layers clean (see the
+Spec 0006 row above). No Renderer, Shader System, mesh/material/camera,
+or headless path exists yet — see below.
 
-**What is approved but not yet implemented:** **Spec 0006** (RHI /
-RenderGraph Frame Execution Foundation — see the Spec 0006 row above) is
-`Approved` with no Plan drafted and no matching implementation. It fixes
-the concrete `RenderTarget`, acquire/present, `CommandList`/submission,
-and RenderGraph-execution contract; none of it exists in `src/` yet.
-Every other currently-`Approved` spec (0001–0005) has matching
-implementation, following the same Spec → Plan → Human Review →
-Implementation sequence Spec 0006 is next in line for.
+**Every currently-`Approved` spec (0001–0006) now has matching
+implementation**, each merged following the same Spec → Plan → Human
+Review → Implementation → Verification → PR → Merge sequence (see the
+Spec 0006 row above for Spec 0006's own two-PR verification history).
 
 **What has no spec yet:** Renderer, Shader System, Runtime (the module),
 Tools, Android Platform implementation, iOS Platform, headless rendering,
@@ -316,9 +324,10 @@ milestone being listed does not authorize starting it — see Section 1.
 
 ### Milestone 3 — Frame Execution Foundation
 
-- **Governance state:** **`Approved` Spec, no Plan drafted yet, not
-  implemented —
-  [specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md).**
+- **Governance state:** **`Approved` Spec, `Approved / Ready for
+  Implementation` Plan, Implemented —
+  [specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md),
+  [plans/0006-rhi-render-graph-frame-execution-foundation.md](../plans/0006-rhi-render-graph-frame-execution-foundation.md).**
   Human Review Approval recorded 2026-08-09 (see the spec's own Human
   Review Approval note; also summarized in Section 4's table above).
   Its Architectural Impact identified three new decisions, filed as
@@ -329,9 +338,18 @@ milestone being listed does not authorize starting it — see Section 1.
   all `Accepted` alongside this approval, merged via
   [PR #20](https://github.com/slmao/Atlantis/pull/20). Its dependencies,
   Spec 0003 (RHI/Vulkan windowed foundation) and Spec 0005 (RenderGraph
-  Foundation), are both implemented (see Milestones 1–2). **Approval is
-  not implementation** — a Plan must still be drafted against this spec
-  and pass its own Human Review before any code is written.
+  Foundation), are both implemented (see Milestones 1–2).
+  Implementation merged via
+  [PR #23](https://github.com/slmao/Atlantis/pull/23); that PR merged
+  before it could be verified on real GPU hardware, and
+  [PR #24](https://github.com/slmao/Atlantis/pull/24) is the deferred
+  GPU verification (fresh Debug/Release builds, 138/138 GPU-independent
+  tests, 2/2 GPU-required tests, an interactive `frame_execution_demo`
+  run across resize/minimize/restore/close, Validation Layers clean
+  throughout) plus three real Validation Layer defect fixes and one
+  crash fix it found — see Section 4's Spec 0006 row for the full list.
+  None of PR #24's fixes required a public API, ownership,
+  synchronization-model, module-boundary, or ADR change.
 - **This milestone is why "Minimal Renderer" cannot be built directly
   against Milestone 2's output alone** — Spec 0005's own Non-Goals
   explicitly excluded "real GPU submission," "Vulkan barriers, image
@@ -357,20 +375,23 @@ milestone being listed does not authorize starting it — see Section 1.
   caller-authored dependency edge or pass culling, multiple frames in
   flight, and multi-threading. See the spec's own Non-Goals for the full
   list.
-- **Minimal acceptance target:** acquire a frame target from Windows
-  Vulkan `Presentation`, execute at least one GPU pass through
+- **Minimal acceptance target — met:** acquire a frame target from
+  Windows Vulkan `Presentation`, execute at least one GPU pass through
   RenderGraph and RHI, submit and present a visible frame; correct
   behavior across resize and minimize/restore; Vulkan Validation Layers
-  clean throughout.
+  clean throughout. `examples/frame_execution_demo` satisfies this,
+  verified interactively as part of PR #24.
 
 ### Milestone 4 — Minimal Renderer
 
 - **Governance state:** Candidate — requires a new Spec/ADR. Not
-  started.
+  started. Both of its dependencies are now satisfied (see below), so
+  this milestone's next step is drafting that Spec — not implementation,
+  and not authorized by this document (see Section 1).
 - **Depends on:** Milestone 2 (RenderGraph Foundation, implemented) *and*
-  Milestone 3 (Frame Execution Foundation, `Approved`, not yet
-  implemented) — both are prerequisites, not Milestone 2 alone. See
-  Milestone 3's own notes above for why.
+  Milestone 3 (Frame Execution Foundation, `Approved`, Implemented) —
+  both are prerequisites, not Milestone 2 alone. See Milestone 3's own
+  notes above for why.
 - **Constraints this future spec must honor** (already fixed by
   Accepted ADRs, not decided by this document): Renderer receives a
   caller-supplied `RenderTarget` and has no knowledge of Platform,

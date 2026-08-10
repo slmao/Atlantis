@@ -80,9 +80,9 @@ docs/               Architecture records (as-built) and process docs
 specs/              Proposed work, pre-implementation
 plans/              Approved implementation plans
 adr/                Architectural decision records
-src/                Source — src/core/ (Atlantis Core, spec/plan/ADR 0001/0006-0010); src/platform/ (Atlantis Platform's Windows path, spec/plan 0002, ADR-0005/0010-0013 — Android/iOS specified but not implemented); src/rhi/ and src/vulkan_backend/ (backend-independent RHI and its sole Phase 1 backend, Windows windowed Vulkan presentation only, spec/plan 0003, ADR-0001-0003/0014-0016); src/render_graph/ (GPU-independent RenderGraph construction/compilation, spec/plan 0005, ADR-0017/0018); every other module still empty, pending its own spec/plan/ADR
-examples/           Non-shipping demo programs (foundation_demo/, platform_demo/, rhi_vulkan_demo/) — see ADR-0010
-tests/              Tests — tests/core/, tests/platform/, tests/rhi/ (Catch2 v3, all GPU-independent), tests/vulkan_backend/ (GPU-independent plus a separate, explicitly gpu-labeled Windows/Vulkan integration executable), tests/render_graph/ (GPU-independent); headless and image-regression layers pending their own spec
+src/                Source — src/core/ (Atlantis Core, spec/plan/ADR 0001/0006-0010); src/platform/ (Atlantis Platform's Windows path, spec/plan 0002, ADR-0005/0010-0013 — Android/iOS specified but not implemented); src/rhi/ and src/vulkan_backend/ (backend-independent RHI and its sole Phase 1 backend — Windows windowed Vulkan presentation, spec/plan 0003, ADR-0001-0003/0014-0016; frame-scoped acquire/present, RenderTarget, and CommandList/submission, spec/plan 0006, ADR-0019-0021); src/render_graph/ (RenderGraph construction/compilation, spec/plan 0005, ADR-0017/0018; execution/barrier integration, spec/plan 0006, ADR-0021); every other module still empty, pending its own spec/plan/ADR
+examples/           Non-shipping demo programs (foundation_demo/, platform_demo/, rhi_vulkan_demo/, frame_execution_demo/) — see ADR-0010
+tests/              Tests — tests/core/, tests/platform/, tests/rhi/ (Catch2 v3, all GPU-independent), tests/vulkan_backend/ (GPU-independent plus a separate, explicitly gpu-labeled Windows/Vulkan integration executable, incl. full frame execution), tests/render_graph/ (GPU-independent, incl. execute()); headless and image-regression layers pending their own spec
 shaders/            Shader sources (empty — structure pending first spec/plan/ADR)
 assets/             Engine/sample assets (empty — structure pending first spec/plan/ADR)
 tools/              Offline/dev tooling (empty — structure pending first spec/plan/ADR)
@@ -168,14 +168,33 @@ and recreates a real swapchain and reports its metadata, but nothing
 acquires a swapchain image, submits a GPU command, or presents a frame —
 an acquire/present API and `RenderTarget` remain unimplemented (see
 [ADR-0016](adr/0016-presentation-acquire-present-and-recreation-contract.md)).
+`specs/0006-rhi-render-graph-frame-execution-foundation.md` subsequently
+implemented exactly that acquire/present API and `RenderTarget` (see
+below).
 
 `specs/0005-render-graph-foundation.md` is also implemented: a
 GPU-independent `Atlantis RenderGraph` — graph construction and
 compilation (single-producer dependency derivation, deterministic pass
 ordering, cycle/multiple-producer diagnostics), plus its GPU-independent
-unit tests. RHI resource binding, command recording, GPU execution,
-pass culling, resource lifetime/aliasing, and the Renderer itself remain
+unit tests. RHI resource binding, command recording, and GPU execution
+were subsequently implemented under Spec 0006 (below); pass culling,
+resource lifetime/aliasing, and the Renderer itself remain
 unimplemented — see [src/README.md](src/README.md).
+
+`specs/0006-rhi-render-graph-frame-execution-foundation.md` is also
+implemented, via [PR #23](https://github.com/slmao/Atlantis/pull/23)
+and a post-merge GPU-verification fix PR,
+[PR #24](https://github.com/slmao/Atlantis/pull/24): a frame-scoped
+`RenderTarget`, `Presentation::acquireNextTarget()`/`present()`, a
+minimal RHI `CommandList`/`Device::submit()` single-frame-in-flight
+baseline, and RenderGraph `execute()` with its two guard checks and
+barrier/transition responsibility — plus GPU-independent and GPU-required
+unit tests and a non-shipping `frame_execution_demo` that acquires,
+clears, submits, and presents a real frame every tick, verified
+interactively across resize/minimize/restore/close with Vulkan
+Validation Layers clean. Renderer, Shader System, and general
+`Buffer`/`Texture` resources remain unimplemented — see
+[src/README.md](src/README.md).
 
 Android and iOS remain specified architecturally only (not implemented);
 Vulkan Backend's Android WSI path is likewise not implemented. No headless
