@@ -257,6 +257,9 @@ VulkanPresentation::~VulkanPresentation() {
   if (swapchain_ != VK_NULL_HANDLE) {
     vkDestroySwapchainKHR(device_.device(), swapchain_, nullptr);
   }
+  for (VkImageView imageView : imageViews_) {
+    vkDestroyImageView(device_.device(), imageView, nullptr);
+  }
   for (VkSemaphore semaphore : renderFinishedSemaphores_) {
     vkDestroySemaphore(device_.device(), semaphore, nullptr);
   }
@@ -313,6 +316,10 @@ atlantis::Result<std::monostate, atlantis::rhi::PresentationError> VulkanPresent
     vkDestroySemaphore(device_.device(), semaphore, nullptr);
   }
   renderFinishedSemaphores_.clear();
+  for (VkImageView imageView : imageViews_) {
+    vkDestroyImageView(device_.device(), imageView, nullptr);
+  }
+  imageViews_.clear();
 
   // Destroy the previous swapchain, if any, before creating a new one
   // (ADR-0016's approved ordering) -- no alternate oldSwapchain-handoff
@@ -451,8 +458,37 @@ atlantis::Result<std::monostate, atlantis::rhi::PresentationError> VulkanPresent
     newImages.resize(actualImageCount);
   }
 
+  // Spec 0007: one color VkImageView per swapchain image -- required by
+  // VkRenderingAttachmentInfo (dynamic rendering), which takes a
+  // VkImageView, not a VkImage. Created here, immediately after the
+  // images themselves; a failure at this point leaves swapchain_/images_
+  // already assigned below, so any created views so far are torn down
+  // and the whole recreation reported failed, matching this function's
+  // existing "no valid swapchain on failure" contract.
+  std::vector<VkImageView> newImageViews;
+  newImageViews.reserve(newImages.size());
+  for (VkImage image : newImages) {
+    VkImageViewCreateInfo viewCreateInfo{};
+    viewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewCreateInfo.image = image;
+    viewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewCreateInfo.format = formatSelection->vkFormat;
+    viewCreateInfo.subresourceRange = VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+    VkImageView imageView = VK_NULL_HANDLE;
+    const VkResult viewResult = vkCreateImageView(device_.device(), &viewCreateInfo, nullptr, &imageView);
+    if (viewResult != VK_SUCCESS) {
+      for (VkImageView created : newImageViews) {
+        vkDestroyImageView(device_.device(), created, nullptr);
+      }
+      return ResultT::Err(toSwapchainCreationError(viewResult));
+    }
+    newImageViews.push_back(imageView);
+  }
+
   swapchain_ = swapchainGuard.release();
   images_ = std::move(newImages);
+  imageViews_ = std::move(newImageViews);
   metadata_.imageCount = actualImageCount;
   metadata_.format = formatSelection->approvedFormat;
   metadata_.extent = atlantis::rhi::Extent2D{swapchainExtent.width, swapchainExtent.height};
@@ -556,9 +592,11 @@ VulkanPresentation::acquireNextTarget() {
   }
 
   ATLANTIS_CHECK(imageIndex < images_.size());
+  ATLANTIS_CHECK(imageIndex < imageViews_.size());
   ATLANTIS_CHECK(imageIndex < renderFinishedSemaphores_.size());
-  return ResultT::Ok(std::make_unique<VulkanRenderTarget>(images_[imageIndex], imageIndex, metadata_.extent,
-                                                           metadata_.format, acquireCompleteSemaphore_,
+  return ResultT::Ok(std::make_unique<VulkanRenderTarget>(images_[imageIndex], imageViews_[imageIndex], imageIndex,
+                                                           metadata_.extent, metadata_.format,
+                                                           acquireCompleteSemaphore_,
                                                            renderFinishedSemaphores_[imageIndex]));
 }
 

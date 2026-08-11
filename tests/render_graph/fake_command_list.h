@@ -2,6 +2,8 @@
 
 #include <atlantis/rhi/command_list.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,6 +39,23 @@ class FakeRenderTarget final : public atlantis::rhi::RenderTarget {
   std::string label_;
 };
 
+struct RecordedBeginRendering {
+  const atlantis::rhi::RenderTarget* color;
+  const atlantis::rhi::Texture* depth;  // nullptr if this scope had no depth attachment
+  atlantis::rhi::ClearColorValue colorClear;
+  float depthClear;
+};
+
+struct RecordedPushConstant {
+  std::size_t sizeBytes;
+};
+
+// Spec 0007 / Plan 0007 Section 15: extended to record the new attachment-
+// scoping and draw-call methods (beginRendering/endRendering/bindPipeline/
+// bindVertexBuffer/bindIndexBuffer/bindUniformBuffer/pushConstant/
+// drawIndexed) so GPU-independent tests (attachment_execution_tests.cpp,
+// renderer_ownership_tests.cpp) can assert on them with no Vulkan device
+// anywhere in this test binary.
 class FakeCommandList final : public atlantis::rhi::CommandList {
  public:
   void transitionResource(atlantis::rhi::RenderTarget& target, atlantis::rhi::ResourceState before,
@@ -50,10 +69,69 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
     events.push_back(EventKind::Clear);
   }
 
-  enum class EventKind { Transition, Clear };
+  void beginRendering(atlantis::rhi::RenderTarget& color, atlantis::rhi::Texture* depth,
+                       atlantis::rhi::ClearColorValue colorClear, float depthClear) override {
+    beginRenderingCalls.push_back(RecordedBeginRendering{&color, depth, colorClear, depthClear});
+    events.push_back(EventKind::BeginRendering);
+  }
+
+  void endRendering() override { events.push_back(EventKind::EndRendering); }
+
+  void bindPipeline(atlantis::rhi::Pipeline& pipeline) override {
+    boundPipelines.push_back(&pipeline);
+    events.push_back(EventKind::BindPipeline);
+  }
+
+  void bindVertexBuffer(atlantis::rhi::Buffer& buffer) override {
+    boundVertexBuffers.push_back(&buffer);
+    events.push_back(EventKind::BindVertexBuffer);
+  }
+
+  void bindIndexBuffer(atlantis::rhi::Buffer& buffer) override {
+    boundIndexBuffers.push_back(&buffer);
+    events.push_back(EventKind::BindIndexBuffer);
+  }
+
+  void bindUniformBuffer(atlantis::rhi::Buffer& buffer) override {
+    boundUniformBuffers.push_back(&buffer);
+    events.push_back(EventKind::BindUniformBuffer);
+  }
+
+  void pushConstant(const void* data, std::size_t sizeBytes) override {
+    const auto* bytes = static_cast<const std::byte*>(data);
+    pushConstants.push_back(RecordedPushConstant{sizeBytes});
+    pushConstantData.emplace_back(bytes, bytes + sizeBytes);
+    events.push_back(EventKind::PushConstant);
+  }
+
+  void drawIndexed(std::uint32_t indexCount) override {
+    drawIndexedCounts.push_back(indexCount);
+    events.push_back(EventKind::DrawIndexed);
+  }
+
+  enum class EventKind {
+    Transition,
+    Clear,
+    BeginRendering,
+    EndRendering,
+    BindPipeline,
+    BindVertexBuffer,
+    BindIndexBuffer,
+    BindUniformBuffer,
+    PushConstant,
+    DrawIndexed,
+  };
 
   std::vector<RecordedTransition> transitions;
   std::vector<RecordedClear> clears;
+  std::vector<RecordedBeginRendering> beginRenderingCalls;
+  std::vector<const atlantis::rhi::Pipeline*> boundPipelines;
+  std::vector<const atlantis::rhi::Buffer*> boundVertexBuffers;
+  std::vector<const atlantis::rhi::Buffer*> boundIndexBuffers;
+  std::vector<const atlantis::rhi::Buffer*> boundUniformBuffers;
+  std::vector<RecordedPushConstant> pushConstants;
+  std::vector<std::vector<std::byte>> pushConstantData;  // parallel to pushConstants -- the actual bytes copied
+  std::vector<std::uint32_t> drawIndexedCounts;
   std::vector<EventKind> events;  // interleaved order across all recorded calls
 };
 

@@ -10,6 +10,9 @@ add_library(atlantis_vulkan_backend STATIC
   src/resource_state_mapping.cpp
   src/vulkan_memory.cpp
   src/dynamic_rendering.cpp
+  src/vulkan_buffer.cpp
+  src/vulkan_texture.cpp
+  src/vulkan_pipeline.cpp
   src/wsi/win32_surface.cpp
 )
 add_library(Atlantis::VulkanBackend ALIAS atlantis_vulkan_backend)

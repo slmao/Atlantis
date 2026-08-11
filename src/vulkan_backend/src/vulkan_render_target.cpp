@@ -2,10 +2,11 @@
 
 namespace atlantis::vulkan_backend::detail {
 
-VulkanRenderTarget::VulkanRenderTarget(VkImage image, std::uint32_t imageIndex, atlantis::rhi::Extent2D extent,
-                                        atlantis::rhi::Format format, VkSemaphore acquireCompleteSemaphore,
-                                        VkSemaphore renderFinishedSemaphore)
+VulkanRenderTarget::VulkanRenderTarget(VkImage image, VkImageView imageView, std::uint32_t imageIndex,
+                                        atlantis::rhi::Extent2D extent, atlantis::rhi::Format format,
+                                        VkSemaphore acquireCompleteSemaphore, VkSemaphore renderFinishedSemaphore)
     : image_(image),
+      imageView_(imageView),
       imageIndex_(imageIndex),
       extent_(extent),
       format_(format),

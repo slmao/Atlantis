@@ -6,7 +6,10 @@
 #include <vulkan/vulkan_core.h>
 
 #include <atlantis/result.h>
+#include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/device.h>
+#include <atlantis/rhi/pipeline.h>
+#include <atlantis/rhi/texture.h>
 
 // Concrete Vulkan implementation of atlantis::rhi::Device (ADR-0014). See
 // vulkan_device.cpp for createDevice()'s full orchestration (instance
@@ -29,6 +32,15 @@ namespace atlantis::vulkan_backend::detail {
 // instead and threads the correct one through via RenderTarget (see
 // VulkanPresentation's own header comment). No separate validation
 // *state* beyond the messenger handle.
+//
+// Plan 0007: also owns the resolved dynamic-rendering entry-point pair
+// (whichever of vkCmdBeginRendering/vkCmdEndRendering (core) or
+// vkCmdBeginRenderingKHR/vkCmdEndRenderingKHR (extension) this Device's
+// selected physical device resolved to, Section 8/ADR-0024) and a
+// Device-level VkDescriptorPool (Section 10's fixed-capacity camera-
+// uniform-binding design, maxSets = 4) -- neither is ever exposed on this
+// class's own public accessor surface beyond the narrow, Vulkan-Backend-
+// internal accessors VulkanCommandList/VulkanPipeline need.
 //
 // Not copyable, not movable -- held exclusively behind
 // std::unique_ptr<atlantis::rhi::Device> (ADR-0014); nothing in this
@@ -72,7 +84,8 @@ class VulkanDevice final : public atlantis::rhi::Device {
   VulkanDevice(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, VkQueue queue,
                std::uint32_t queueFamilyIndex, VkDebugUtilsMessengerEXT explicitMessenger,
                PFN_vkDestroyDebugUtilsMessengerEXT destroyMessengerFn, VkCommandPool commandPool,
-               VkFence submissionFence);
+               VkFence submissionFence, PFN_vkCmdBeginRenderingKHR cmdBeginRendering,
+               PFN_vkCmdEndRenderingKHR cmdEndRendering, VkDescriptorPool descriptorPool);
   ~VulkanDevice() override;
 
   VulkanDevice(const VulkanDevice&) = delete;
@@ -86,11 +99,26 @@ class VulkanDevice final : public atlantis::rhi::Device {
       std::unique_ptr<atlantis::rhi::CommandList> commandList, const atlantis::rhi::RenderTarget& target) override;
   [[nodiscard]] atlantis::Result<std::monostate, atlantis::rhi::SubmitError> waitIdle() override;
 
+  [[nodiscard]] atlantis::Result<std::unique_ptr<atlantis::rhi::Buffer>, atlantis::rhi::BufferCreateError>
+  createBuffer(const atlantis::rhi::BufferCreateParams& params) override;
+  [[nodiscard]] atlantis::Result<std::unique_ptr<atlantis::rhi::Texture>, atlantis::rhi::TextureCreateError>
+  createTexture(const atlantis::rhi::TextureCreateParams& params) override;
+  [[nodiscard]] atlantis::Result<std::unique_ptr<atlantis::rhi::Pipeline>, atlantis::rhi::PipelineCreateError>
+  createPipeline(const atlantis::rhi::PipelineCreateParams& params) override;
+
   [[nodiscard]] VkInstance instance() const noexcept { return instance_; }
   [[nodiscard]] VkPhysicalDevice physicalDevice() const noexcept { return physicalDevice_; }
   [[nodiscard]] VkDevice device() const noexcept { return device_; }
   [[nodiscard]] VkQueue queue() const noexcept { return queue_; }
   [[nodiscard]] std::uint32_t queueFamilyIndex() const noexcept { return queueFamilyIndex_; }
+
+  // Never exposed on rhi::Device's own interface -- narrow, Vulkan-
+  // Backend-internal accessors for VulkanCommandList (beginRendering()/
+  // endRendering(), Section 8/10) and VulkanPipeline (descriptor set
+  // allocation, Section 10) only.
+  [[nodiscard]] PFN_vkCmdBeginRenderingKHR cmdBeginRendering() const noexcept { return cmdBeginRendering_; }
+  [[nodiscard]] PFN_vkCmdEndRenderingKHR cmdEndRendering() const noexcept { return cmdEndRendering_; }
+  [[nodiscard]] VkDescriptorPool descriptorPool() const noexcept { return descriptorPool_; }
 
   // Waits on submissionFence_ (if a submission is currently retained),
   // resets it, and releases retainedSubmission_ -- the shared first step
@@ -127,6 +155,21 @@ class VulkanDevice final : public atlantis::rhi::Device {
   VkFence submissionFence_;
   std::unique_ptr<atlantis::rhi::CommandList> retainedSubmission_;  // null until the first submit()
   bool hasRetainedSubmission_ = false;
+
+  // Plan 0007 Section 8: resolved once at construction, from whichever of
+  // the Core/Extension dynamic-rendering paths createDevice() selected --
+  // never re-resolved, never both non-null (exactly one path is active
+  // per Device instance).
+  PFN_vkCmdBeginRenderingKHR cmdBeginRendering_;
+  PFN_vkCmdEndRenderingKHR cmdEndRendering_;
+
+  // Plan 0007 Section 10: Device-level singleton VkDescriptorPool
+  // (maxSets = 4, one VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER pool-size entry),
+  // created once here, mirroring the existing VkCommandPool precedent.
+  // Backs exactly one VkDescriptorSet per VulkanPipeline (allocated at
+  // that Pipeline's own construction, freed at its own destruction) --
+  // never exposed outside vulkan_pipeline.*/vulkan_device.*.
+  VkDescriptorPool descriptorPool_;
 };
 
 }  // namespace atlantis::vulkan_backend::detail

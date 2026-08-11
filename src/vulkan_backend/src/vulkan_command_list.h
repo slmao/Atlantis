@@ -23,7 +23,13 @@ namespace atlantis::vulkan_backend::detail {
 // thread-safe.
 class VulkanCommandList final : public atlantis::rhi::CommandList {
  public:
-  VulkanCommandList(VkDevice device, VkCommandPool commandPool, VkCommandBuffer commandBuffer);
+  // cmdBeginRendering/cmdEndRendering: VulkanDevice's own resolved
+  // dynamic-rendering entry points (Section 8/10 -- whichever of the
+  // Core/Extension path that Device selected), borrowed for this
+  // CommandList's whole lifetime; VulkanDevice must outlive it (same
+  // caller-enforced tier as device/commandPool below).
+  VulkanCommandList(VkDevice device, VkCommandPool commandPool, VkCommandBuffer commandBuffer,
+                     PFN_vkCmdBeginRenderingKHR cmdBeginRendering, PFN_vkCmdEndRenderingKHR cmdEndRendering);
   ~VulkanCommandList() override;
 
   VulkanCommandList(const VulkanCommandList&) = delete;
@@ -35,6 +41,17 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
                            atlantis::rhi::ResourceState after) override;
   void clearColor(atlantis::rhi::RenderTarget& target, atlantis::rhi::ClearColorValue color) override;
 
+  void beginRendering(atlantis::rhi::RenderTarget& color, atlantis::rhi::Texture* depth,
+                       atlantis::rhi::ClearColorValue colorClear, float depthClear) override;
+  void endRendering() override;
+
+  void bindPipeline(atlantis::rhi::Pipeline& pipeline) override;
+  void bindVertexBuffer(atlantis::rhi::Buffer& buffer) override;
+  void bindIndexBuffer(atlantis::rhi::Buffer& buffer) override;
+  void bindUniformBuffer(atlantis::rhi::Buffer& buffer) override;
+  void pushConstant(const void* data, std::size_t sizeBytes) override;
+  void drawIndexed(std::uint32_t indexCount) override;
+
   // Exists solely for VulkanDevice::submit() (vkEndCommandBuffer,
   // vkQueueSubmit) -- never reached from RHI's public surface.
   [[nodiscard]] VkCommandBuffer commandBuffer() const noexcept { return commandBuffer_; }
@@ -43,6 +60,16 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   VkDevice device_;
   VkCommandPool commandPool_;
   VkCommandBuffer commandBuffer_;
+  PFN_vkCmdBeginRenderingKHR cmdBeginRendering_;
+  PFN_vkCmdEndRenderingKHR cmdEndRendering_;
+
+  // Set by bindPipeline(), read by bindUniformBuffer()/pushConstant() --
+  // the currently-bound Pipeline's own VkPipelineLayout/VkDescriptorSet
+  // (Section 10). Non-owning; null until the first bindPipeline() call in
+  // this recording. A programmer error (ATLANTIS_CHECK) to call
+  // bindUniformBuffer()/pushConstant() before any bindPipeline().
+  VkPipelineLayout boundPipelineLayout_ = VK_NULL_HANDLE;
+  VkDescriptorSet boundDescriptorSet_ = VK_NULL_HANDLE;
 };
 
 }  // namespace atlantis::vulkan_backend::detail
