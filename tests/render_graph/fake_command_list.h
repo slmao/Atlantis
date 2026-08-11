@@ -8,6 +8,9 @@
 #include <string_view>
 #include <vector>
 
+#include <atlantis/rhi/buffer.h>
+#include <atlantis/rhi/pipeline.h>
+
 // Test-only rhi::CommandList implementation (Plan 0006 Section 13) that
 // records which calls it received -- state, target identity, and order --
 // for assertion, with no Vulkan device anywhere in this test binary.
@@ -57,6 +60,32 @@ class FakeTexture final : public atlantis::rhi::Texture {
 
  private:
   std::string label_;
+};
+
+// Also usable as a bindable Buffer/Pipeline stand-in in tests -- carries
+// no real GPU resource. FakeCommandList's own bind*()/pushConstant()/
+// drawIndexed() overrides only ever record a call's pointer/byte
+// arguments, never invoke a virtual method on the bound object, so these
+// stand-ins never need a real backing allocation.
+class FakeBuffer final : public atlantis::rhi::Buffer {
+ public:
+  FakeBuffer(atlantis::rhi::BufferPurpose purpose, std::size_t sizeBytes) : purpose_(purpose), sizeBytes_(sizeBytes) {
+    storage_.resize(sizeBytes);
+  }
+
+  [[nodiscard]] atlantis::rhi::BufferPurpose purpose() const override { return purpose_; }
+  [[nodiscard]] std::size_t sizeBytes() const override { return sizeBytes_; }
+  [[nodiscard]] void* mappedData() override { return storage_.data(); }
+
+ private:
+  atlantis::rhi::BufferPurpose purpose_;
+  std::size_t sizeBytes_;
+  std::vector<std::byte> storage_;
+};
+
+class FakePipeline final : public atlantis::rhi::Pipeline {
+ public:
+  FakePipeline() = default;
 };
 
 struct RecordedBeginRendering {
