@@ -48,6 +48,7 @@ catch_discover_tests(atlantis_vulkan_backend_tests DISCOVERY_MODE PRE_TEST)
 add_executable(atlantis_vulkan_backend_gpu_tests
   vulkan_presentation_gpu_tests.cpp
   frame_execution_gpu_tests.cpp
+  minimal_renderer_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_vulkan_backend_gpu_tests
@@ -56,6 +57,7 @@ target_link_libraries(atlantis_vulkan_backend_gpu_tests
     Atlantis::Platform
     Atlantis::RHI
     Atlantis::RenderGraph
+    Atlantis::Renderer
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )
@@ -63,5 +65,25 @@ target_link_libraries(atlantis_vulkan_backend_gpu_tests
 # LABELS "gpu": the CMake test-property mechanism that actually makes
 # `ctest -L gpu` / `ctest -LE gpu` work -- not a Catch2-level tag filter.
 # PRE_TEST: same multi-config rationale as atlantis_vulkan_backend_tests
-# above.
-catch_discover_tests(atlantis_vulkan_backend_gpu_tests DISCOVERY_MODE PRE_TEST PROPERTIES LABELS "gpu")
+# above. WORKING_DIRECTORY (Plan 0007 Section 12): minimal_renderer_gpu_tests.cpp
+# opens the shader .spv pair by a plain relative path ("shaders/..."),
+# resolved against this target's own build output directory -- harmless
+# for every pre-existing case in this file, none of which opens any file
+# by a relative path.
+catch_discover_tests(atlantis_vulkan_backend_gpu_tests
+  DISCOVERY_MODE PRE_TEST
+  PROPERTIES LABELS "gpu"
+  WORKING_DIRECTORY "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>"
+)
+
+# Plan 0007 Section 12/17: shaders/minimal_renderer's checked-in SPIR-V
+# pair, copied next to this executable's own build output.
+# copy_if_different is a no-op when already up to date.
+add_custom_command(TARGET atlantis_vulkan_backend_gpu_tests POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+      "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_SOURCE_DIR}/shaders/minimal_renderer/minimal_mesh.vert.spv"
+      "${CMAKE_SOURCE_DIR}/shaders/minimal_renderer/minimal_mesh.frag.spv"
+      "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders/"
+)

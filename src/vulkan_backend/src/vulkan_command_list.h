@@ -72,6 +72,30 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   // bindUniformBuffer()/pushConstant() before any bindPipeline().
   VkPipelineLayout boundPipelineLayout_ = VK_NULL_HANDLE;
   VkDescriptorSet boundDescriptorSet_ = VK_NULL_HANDLE;
+
+  // Implementation-forced addition, discovered by Plan 0007 Section 15's
+  // own multi-DrawItem GPU test: Vulkan invalidates a command buffer if
+  // vkUpdateDescriptorSets() is called again on a VkDescriptorSet that
+  // was already vkCmdBindDescriptorSets()'d earlier in the *same*
+  // not-yet-submitted command buffer recording (its layout has no
+  // VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT, per Section 10's fixed,
+  // minimal design). Multiple DrawItems sharing one Material (Section 11
+  // deliberately allows this -- "reference reuse, not a cache") call
+  // bindPipeline()/bindUniformBuffer() again for every item, each with
+  // byte-identical VkDescriptorBufferInfo contents (the one shared
+  // camera Buffer) -- so this narrow, per-recording (not per-frame,
+  // not cross-CommandList, never persisted) memo of "which VkBuffer is
+  // already written into which VkDescriptorSet, in this recording"
+  // lets bindUniformBuffer() skip only the exact redundant
+  // vkUpdateDescriptorSets() call, never the vkCmdBindDescriptorSets()
+  // call itself (always re-issued, matching Section 10's own stated
+  // "re-binds every draw item regardless, for simplicity" design) --
+  // this is not the general resource cache Section 10/ADR-0025
+  // deliberately avoids; it holds no GPU resource, outlives nothing, and
+  // is reset implicitly every time a *different* Buffer or Pipeline is
+  // bound.
+  VkDescriptorSet lastUpdatedDescriptorSet_ = VK_NULL_HANDLE;
+  VkBuffer lastUpdatedUniformBuffer_ = VK_NULL_HANDLE;
 };
 
 }  // namespace atlantis::vulkan_backend::detail

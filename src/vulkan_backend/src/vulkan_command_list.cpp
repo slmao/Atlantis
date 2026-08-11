@@ -118,7 +118,12 @@ void VulkanCommandList::beginRendering(atlantis::rhi::RenderTarget& color, atlan
     auto& vulkanDepth = static_cast<VulkanTexture&>(*depth);
     depthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
     depthAttachment.imageView = vulkanDepth.imageView();
-    depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    // See resource_state_mapping.cpp's undefinedToDepthAttachmentReadWrite()
+    // for why the combined depth/stencil layout is used here rather than
+    // the depth-only layout -- this attachment's own transitionResource()
+    // call already brought the image to this exact layout, so
+    // beginRendering() must name the same one.
+    depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     depthAttachment.clearValue.depthStencil = VkClearDepthStencilValue{depthClear, 0};
@@ -135,6 +140,26 @@ void VulkanCommandList::beginRendering(atlantis::rhi::RenderTarget& color, atlan
 
   ATLANTIS_CHECK(cmdBeginRendering_ != nullptr);
   cmdBeginRendering_(commandBuffer_, &renderingInfo);
+
+  // Pipeline (Section 3/ADR-0025) fixes VK_DYNAMIC_STATE_VIEWPORT/SCISSOR
+  // as dynamic state specifically so it survives a resize without
+  // recreation -- but that means *something* must actually set them
+  // before any draw call each time attachment scope begins, or every
+  // vkCmdDraw* call inside it is undefined behavior. beginRendering() is
+  // the one place that already knows the target's current extent
+  // (renderArea, just above), so it sets both here, once per attachment
+  // scope, covering every draw call recorded until the matching
+  // endRendering().
+  const VkViewport viewport{
+      .x = 0.0f,
+      .y = 0.0f,
+      .width = static_cast<float>(extent.width),
+      .height = static_cast<float>(extent.height),
+      .minDepth = 0.0f,
+      .maxDepth = 1.0f,
+  };
+  vkCmdSetViewport(commandBuffer_, 0, 1, &viewport);
+  vkCmdSetScissor(commandBuffer_, 0, 1, &renderingInfo.renderArea);
 }
 
 void VulkanCommandList::endRendering() {
@@ -167,23 +192,34 @@ void VulkanCommandList::bindUniformBuffer(atlantis::rhi::Buffer& buffer) {
   ATLANTIS_CHECK(buffer.purpose() == atlantis::rhi::BufferPurpose::Uniform);
   ATLANTIS_CHECK(boundDescriptorSet_ != VK_NULL_HANDLE);
   auto& vulkanBuffer = static_cast<VulkanBuffer&>(buffer);
+  const VkBuffer vkBuffer = vulkanBuffer.vkBuffer();
 
-  VkDescriptorBufferInfo bufferInfo{};
-  bufferInfo.buffer = vulkanBuffer.vkBuffer();
-  bufferInfo.offset = 0;
-  bufferInfo.range = VK_WHOLE_SIZE;
+  // See this class's own header comment on lastUpdatedDescriptorSet_/
+  // lastUpdatedUniformBuffer_ for why this call is skipped, and only
+  // this call, when it would be an exact redundant repeat: Vulkan
+  // invalidates a command buffer if a VkDescriptorSet already bound via
+  // vkCmdBindDescriptorSets earlier in this same recording is written
+  // again via vkUpdateDescriptorSets (no UPDATE_AFTER_BIND, Section 10).
+  if (boundDescriptorSet_ != lastUpdatedDescriptorSet_ || vkBuffer != lastUpdatedUniformBuffer_) {
+    VkDescriptorBufferInfo bufferInfo{};
+    bufferInfo.buffer = vkBuffer;
+    bufferInfo.offset = 0;
+    bufferInfo.range = VK_WHOLE_SIZE;
 
-  VkWriteDescriptorSet write{};
-  write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  write.dstSet = boundDescriptorSet_;
-  write.dstBinding = 0;
-  write.descriptorCount = 1;
-  write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-  write.pBufferInfo = &bufferInfo;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = boundDescriptorSet_;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    write.pBufferInfo = &bufferInfo;
 
-  // vkUpdateDescriptorSets returns void -- no VkResult exists for this
-  // call (Plan 0007 Section 10).
-  vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    // vkUpdateDescriptorSets returns void -- no VkResult exists for this
+    // call (Plan 0007 Section 10).
+    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    lastUpdatedDescriptorSet_ = boundDescriptorSet_;
+    lastUpdatedUniformBuffer_ = vkBuffer;
+  }
 
   vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipelineLayout_, 0, 1,
                            &boundDescriptorSet_, 0, nullptr);

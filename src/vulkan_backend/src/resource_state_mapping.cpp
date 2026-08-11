@@ -69,7 +69,14 @@ using atlantis::rhi::ResourceState;
 [[nodiscard]] ImageBarrierPlan undefinedToDepthAttachmentReadWrite() {
   return ImageBarrierPlan{
       .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-      .newLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+      // VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL (depth-only) requires
+      // Vulkan 1.2 core or VK_KHR_separate_depth_stencil_layouts, neither
+      // of which this Plan's instance/device creation raises/enables
+      // (Section 8: apiVersion stays VK_API_VERSION_1_0). The combined
+      // depth/stencil layout below has been valid, unconditionally, since
+      // Vulkan 1.0 core and is correct here even though this round's one
+      // DepthFormat (D32Sfloat) carries no stencil aspect.
+      .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
       .srcAccessMask = 0,
       .dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
       .srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
