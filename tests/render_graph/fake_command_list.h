@@ -19,6 +19,12 @@ struct RecordedTransition {
   atlantis::rhi::ResourceState after;
 };
 
+struct RecordedTextureTransition {
+  const atlantis::rhi::Texture* target;
+  atlantis::rhi::ResourceState before;
+  atlantis::rhi::ResourceState after;
+};
+
 struct RecordedClear {
   const atlantis::rhi::RenderTarget* target;
   atlantis::rhi::ClearColorValue color;
@@ -33,6 +39,20 @@ class FakeRenderTarget final : public atlantis::rhi::RenderTarget {
 
   [[nodiscard]] atlantis::rhi::Extent2D extent() const override { return atlantis::rhi::Extent2D{1, 1}; }
   [[nodiscard]] atlantis::rhi::Format format() const override { return atlantis::rhi::Format::Bgra8Unorm; }
+  [[nodiscard]] std::string_view label() const { return label_; }
+
+ private:
+  std::string label_;
+};
+
+// Also usable as a bindable depth "Texture" stand-in in tests -- carries
+// no real GPU resource, just an identity (label) and fixed extent/format.
+class FakeTexture final : public atlantis::rhi::Texture {
+ public:
+  explicit FakeTexture(std::string_view label) : label_(label) {}
+
+  [[nodiscard]] atlantis::rhi::Extent2D extent() const override { return atlantis::rhi::Extent2D{1, 1}; }
+  [[nodiscard]] atlantis::rhi::DepthFormat format() const override { return atlantis::rhi::DepthFormat::D32Sfloat; }
   [[nodiscard]] std::string_view label() const { return label_; }
 
  private:
@@ -62,6 +82,12 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
                            atlantis::rhi::ResourceState after) override {
     transitions.push_back(RecordedTransition{&target, before, after});
     events.push_back(EventKind::Transition);
+  }
+
+  void transitionResource(atlantis::rhi::Texture& target, atlantis::rhi::ResourceState before,
+                           atlantis::rhi::ResourceState after) override {
+    textureTransitions.push_back(RecordedTextureTransition{&target, before, after});
+    events.push_back(EventKind::TextureTransition);
   }
 
   void clearColor(atlantis::rhi::RenderTarget& target, atlantis::rhi::ClearColorValue color) override {
@@ -111,6 +137,7 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
 
   enum class EventKind {
     Transition,
+    TextureTransition,
     Clear,
     BeginRendering,
     EndRendering,
@@ -123,6 +150,7 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
   };
 
   std::vector<RecordedTransition> transitions;
+  std::vector<RecordedTextureTransition> textureTransitions;
   std::vector<RecordedClear> clears;
   std::vector<RecordedBeginRendering> beginRenderingCalls;
   std::vector<const atlantis::rhi::Pipeline*> boundPipelines;

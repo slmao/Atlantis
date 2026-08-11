@@ -39,6 +39,8 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
 
   void transitionResource(atlantis::rhi::RenderTarget& target, atlantis::rhi::ResourceState before,
                            atlantis::rhi::ResourceState after) override;
+  void transitionResource(atlantis::rhi::Texture& target, atlantis::rhi::ResourceState before,
+                           atlantis::rhi::ResourceState after) override;
   void clearColor(atlantis::rhi::RenderTarget& target, atlantis::rhi::ClearColorValue color) override;
 
   void beginRendering(atlantis::rhi::RenderTarget& color, atlantis::rhi::Texture* depth,

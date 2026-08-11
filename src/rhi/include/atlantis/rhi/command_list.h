@@ -29,6 +29,14 @@ class CommandList {
   virtual void transitionResource(RenderTarget& target, ResourceState before, ResourceState after) = 0;
   virtual void clearColor(RenderTarget& target, ClearColorValue color) = 0;
 
+  // Spec 0007 / ADR-0020's own anticipated low-cost future change: widens
+  // transitionResource() to a depth Texture, via an overload rather than a
+  // widened RenderTarget parameter -- keeps Spec 0006's RenderTarget
+  // overload's own existing surface untouched. Used by
+  // render_graph::execute() for the depth attachment's single
+  // Undefined -> DepthAttachmentReadWrite transition (Section 7).
+  virtual void transitionResource(Texture& target, ResourceState before, ResourceState after) = 0;
+
   // Spec 0007 / ADR-0024 / ADR-0026: attachment scoping via Vulkan
   // dynamic rendering, called only by render_graph::execute() -- never by
   // a pass execution callback. depth may be nullptr (no depth attachment

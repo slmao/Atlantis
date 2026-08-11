@@ -22,6 +22,16 @@ namespace {
   };
 }
 
+[[nodiscard]] VkImageSubresourceRange fullDepthResourceRange() {
+  return VkImageSubresourceRange{
+      .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+      .baseMipLevel = 0,
+      .levelCount = 1,
+      .baseArrayLayer = 0,
+      .layerCount = 1,
+  };
+}
+
 }  // namespace
 
 VulkanCommandList::VulkanCommandList(VkDevice device, VkCommandPool commandPool, VkCommandBuffer commandBuffer,
@@ -51,6 +61,27 @@ void VulkanCommandList::transitionResource(atlantis::rhi::RenderTarget& target, 
       .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
       .image = vulkanTarget.image(),
       .subresourceRange = fullColorResourceRange(),
+  };
+
+  vkCmdPipelineBarrier(commandBuffer_, plan.srcStage, plan.dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+}
+
+void VulkanCommandList::transitionResource(atlantis::rhi::Texture& target, atlantis::rhi::ResourceState before,
+                                            atlantis::rhi::ResourceState after) {
+  auto& vulkanTexture = static_cast<VulkanTexture&>(target);
+  const ImageBarrierPlan plan = planTransition(before, after);
+
+  const VkImageMemoryBarrier barrier{
+      .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+      .pNext = nullptr,
+      .srcAccessMask = plan.srcAccessMask,
+      .dstAccessMask = plan.dstAccessMask,
+      .oldLayout = plan.oldLayout,
+      .newLayout = plan.newLayout,
+      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+      .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+      .image = vulkanTexture.image(),
+      .subresourceRange = fullDepthResourceRange(),
   };
 
   vkCmdPipelineBarrier(commandBuffer_, plan.srcStage, plan.dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
