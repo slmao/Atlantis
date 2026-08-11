@@ -3,9 +3,12 @@
 #include <memory>
 
 #include <atlantis/result.h>
+#include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/command_list.h>
+#include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/render_target.h>
 #include <atlantis/rhi/submission_signal.h>
+#include <atlantis/rhi/texture.h>
 #include <atlantis/rhi/types.h>
 
 namespace atlantis::rhi {
@@ -47,6 +50,19 @@ class Device {
   // submission (ADR-0019) -- including a mid-frame exit (acquired, never
   // submitted) or a submit-then-exit (submitted, never presented).
   [[nodiscard]] virtual atlantis::Result<std::monostate, SubmitError> waitIdle() = 0;
+
+  // Spec 0007 / ADR-0023: stateless factory calls -- Device does not
+  // retain a reference to any Buffer/Texture/Pipeline it creates
+  // (ADR-0003). Each of Buffer/Texture/Pipeline is move-only,
+  // single-owner; the caller owns the returned object exclusively.
+  [[nodiscard]] virtual atlantis::Result<std::unique_ptr<Buffer>, BufferCreateError> createBuffer(
+      const BufferCreateParams& params) = 0;
+
+  [[nodiscard]] virtual atlantis::Result<std::unique_ptr<Texture>, TextureCreateError> createTexture(
+      const TextureCreateParams& params) = 0;
+
+  [[nodiscard]] virtual atlantis::Result<std::unique_ptr<Pipeline>, PipelineCreateError> createPipeline(
+      const PipelineCreateParams& params) = 0;
 };
 
 }  // namespace atlantis::rhi
