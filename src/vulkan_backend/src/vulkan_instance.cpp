@@ -16,6 +16,14 @@ constexpr const char* kSurfaceExtension = "VK_KHR_surface";
 constexpr const char* kWin32SurfaceExtension = "VK_KHR_win32_surface";
 constexpr const char* kDebugUtilsExtension = "VK_EXT_debug_utils";
 constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
+// Spec 0007 / ADR-0024 Section 8: queried and, if present, enabled at the
+// instance level -- purely a query-mechanism prerequisite for the later
+// per-physical-device dynamic-rendering capability query
+// (vkGetPhysicalDeviceFeatures2KHR). Does not raise VkApplicationInfo's
+// requested apiVersion (stays VK_API_VERSION_1_0, unchanged) and does not
+// itself indicate anything about which dynamic-rendering path any given
+// physical device supports.
+constexpr const char* kGetPhysicalDeviceProperties2Extension = "VK_KHR_get_physical_device_properties2";
 
 // Two-call idiom for vkEnumerateInstanceExtensionProperties (pLayerName ==
 // nullptr: the implementation's own extensions, not a specific layer's).
@@ -117,6 +125,12 @@ atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const D
     return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
   }
 
+  // Spec 0007 / ADR-0024 Section 8, step 1: computed exactly once, before
+  // the instance exists at all -- an instance-wide fact, never re-queried
+  // per physical-device candidate below.
+  const bool physicalDeviceProperties2Available =
+      containsExtension(*availableExtensions, kGetPhysicalDeviceProperties2Extension);
+
   if (validationEnabled) {
     const std::optional<std::vector<VkLayerProperties>> availableLayers = enumerateInstanceLayers();
     if (!availableLayers.has_value()) {
@@ -132,6 +146,13 @@ atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const D
   if (validationEnabled) {
     enabledExtensions.push_back(kDebugUtilsExtension);
     enabledLayers.push_back(kValidationLayerName);
+  }
+  // Step 2: if available, requested alongside whatever this repository's
+  // existing instance creation already enables. If unavailable, simply
+  // not requested -- vkCreateInstance() itself is entirely unaffected
+  // either way; only the later capability query is gated by this fact.
+  if (physicalDeviceProperties2Available) {
+    enabledExtensions.push_back(kGetPhysicalDeviceProperties2Extension);
   }
 
   // Copied into a local std::string so the c_str() pointer VkApplicationInfo
@@ -168,7 +189,24 @@ atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const D
     return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
   }
 
-  return ResultT::Ok(InstanceCreateResult{instance});
+  // Step 3: immediately after vkCreateInstance() succeeds, if the
+  // extension was enabled, resolve vkGetPhysicalDeviceFeatures2KHR's
+  // function pointer explicitly via vkGetInstanceProcAddr -- never
+  // assumed to be directly linkable. If resolution fails (returns
+  // nullptr), the feature is treated as unavailable for this instance's
+  // whole lifetime, same as if the extension had never been enabled.
+  PFN_vkGetPhysicalDeviceFeatures2KHR getPhysicalDeviceFeatures2KHR = nullptr;
+  bool physicalDeviceProperties2Resolved = false;
+  if (physicalDeviceProperties2Available) {
+    getPhysicalDeviceFeatures2KHR = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2KHR>(
+        vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceFeatures2KHR"));
+    physicalDeviceProperties2Resolved = getPhysicalDeviceFeatures2KHR != nullptr;
+  }
+
+  InstanceCreateResult result{instance};
+  result.physicalDeviceProperties2ExtensionAvailable = physicalDeviceProperties2Resolved;
+  result.getPhysicalDeviceFeatures2KHR = physicalDeviceProperties2Resolved ? getPhysicalDeviceFeatures2KHR : nullptr;
+  return ResultT::Ok(result);
 }
 
 }  // namespace atlantis::vulkan_backend::detail

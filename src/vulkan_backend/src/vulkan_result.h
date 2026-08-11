@@ -64,4 +64,17 @@ enum class VulkanFailureCategory {
 // Device::createCommandList()'s own Vulkan calls.
 [[nodiscard]] atlantis::rhi::CommandListCreateError toCommandListCreateError(VkResult result);
 
+// vkCreateBuffer/vkAllocateMemory/vkBindBufferMemory --
+// Device::createBuffer()'s own Vulkan calls (Spec 0007).
+[[nodiscard]] atlantis::rhi::BufferCreateError toBufferCreateError(VkResult result);
+
+// vkCreateImage/vkAllocateMemory/vkBindImageMemory/vkCreateImageView --
+// Device::createTexture()'s own Vulkan calls (Spec 0007).
+[[nodiscard]] atlantis::rhi::TextureCreateError toTextureCreateError(VkResult result);
+
+// vkCreateShaderModule/vkCreateDescriptorSetLayout/vkAllocateDescriptorSets/
+// vkCreatePipelineLayout/vkCreateGraphicsPipelines --
+// Device::createPipeline()'s own Vulkan calls (Spec 0007).
+[[nodiscard]] atlantis::rhi::PipelineCreateError toPipelineCreateError(VkResult result);
+
 }  // namespace atlantis::vulkan_backend::detail
