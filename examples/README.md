@@ -36,3 +36,21 @@ program can never be mistaken for a shipping engine module; see
   `INFO`/`ERROR`. Not a preview of Atlantis Runtime.
   `build/examples/rhi_vulkan_demo/Debug/atlantis_rhi_vulkan_demo.exe`
   (path varies by generator/configuration).
+- **`minimal_renderer_demo/`** — Minimal Renderer verification demo
+  (target `atlantis_minimal_renderer_demo`) for
+  [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md).
+  Links `Atlantis::Core`, `Atlantis::Platform`, `Atlantis::RHI`,
+  `Atlantis::VulkanBackend`, `Atlantis::RenderGraph`, and
+  `Atlantis::Renderer`. Opens a real top-level window and, driven by the
+  existing non-blocking Platform event loop, runs the full acquire →
+  recreate-depth-if-needed → update-camera → `Renderer::drawFrame()` →
+  submit → present cycle every frame: a rotating-camera orbit around a
+  fixed RGB-gradient cube, depth-tested and drawn through a single fixed
+  material. Implements Spec 0007's caller-owned resize/attachment-
+  format-change contract exactly (create-before-destroy; logs explicitly
+  when the depth `Texture` is recreated for a resize and confirms
+  `Pipeline` is not). Run via the `run_minimal_renderer_demo` CMake
+  convenience target, which sets the working directory so the demo's
+  checked-in `shaders/minimal_renderer/*.spv` files resolve by relative
+  path with no Win32 module-path API involved. Not a preview of Atlantis
+  Runtime.

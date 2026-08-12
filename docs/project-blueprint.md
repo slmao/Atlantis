@@ -91,10 +91,10 @@ graph TD
     Core["Atlantis Core<br/>(Implemented)"]
 
     Platform["Atlantis Platform<br/>(Windows: Implemented<br/>Android/iOS: architecture-only)"]
-    RHI["Atlantis RHI<br/>(Implemented — Spec/Plan 0003;<br/>Spec 0006 RenderTarget/CommandList<br/>extension Implemented)"]
-    VulkanBackend["Atlantis Vulkan Backend<br/>(Implemented — Spec/Plan 0003;<br/>Spec 0006 extension Implemented)"]
-    RenderGraph["Atlantis RenderGraph<br/>(Implemented — Spec/Plan 0005, GPU-independent construction/compilation foundation;<br/>Spec 0006 execution extension Implemented)"]
-    Renderer["Atlantis Renderer<br/>(Candidate — no Spec)"]
+    RHI["Atlantis RHI<br/>(Implemented — Spec/Plan 0003;<br/>Spec 0006 RenderTarget/CommandList<br/>extension Implemented;<br/>Spec 0007 Buffer/Texture/Pipeline<br/>extension Implemented)"]
+    VulkanBackend["Atlantis Vulkan Backend<br/>(Implemented — Spec/Plan 0003;<br/>Spec 0006 extension Implemented;<br/>Spec 0007 dynamic-rendering<br/>draw path Implemented)"]
+    RenderGraph["Atlantis RenderGraph<br/>(Implemented — Spec/Plan 0005, GPU-independent construction/compilation foundation;<br/>Spec 0006 execution extension Implemented;<br/>Spec 0007 multi-attachment/draw-pass extension Implemented)"]
+    Renderer["Atlantis Renderer<br/>(Implemented — Spec/Plan 0007,<br/>minimal mesh/depth/camera/material draw path)"]
     ShaderSystem["Atlantis Shader System<br/>(Candidate — no Spec)"]
     Runtime["Atlantis Runtime<br/>(Candidate — no Spec)"]
     Tools["Atlantis Tools<br/>(Candidate — no Spec)"]
@@ -128,7 +128,7 @@ graph TD
     class RHI implemented
     class VulkanBackend implemented
     class RenderGraph implemented
-    class Renderer candidate
+    class Renderer implemented
     class ShaderSystem candidate
     class Runtime candidate
     class Tools candidate
@@ -199,6 +199,8 @@ inferred from file names or intent.
 | ADR-0001 through ADR-0016 | All 16 `Accepted` | Verified by grepping each ADR file's `Status:` field |
 | ADR-0017 and ADR-0018 | Both `Accepted` (2026-08-09) | Filed alongside Spec 0005's Human Review Approval; verified by grepping each ADR file's `Status:` field |
 | ADR-0019, ADR-0020, and ADR-0021 | All three `Accepted` (2026-08-09) | Filed alongside Spec 0006's Human Review Approval; verified by grepping each ADR file's `Status:` field |
+| **Spec 0007 — Minimal Renderer** | `Approved`, **Implemented** — `Atlantis Renderer` (`src/renderer/`); RHI `Buffer`/`Texture`/`Pipeline` and draw-command surface; RenderGraph multi-attachment/draw-pass execution; Vulkan dynamic rendering (capability-detected Core/Extension dual path); a Windows Vulkan demo drawing a real, visible, depth-tested mesh with a camera and a minimal material | [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md) status field and Human Review Approval note (2026-08-11); `src/renderer/`, `tests/renderer/`, `shaders/minimal_renderer/`, `examples/minimal_renderer_demo/` all exist and match the spec/plan's file list. Implementation merged via [PR #28](https://github.com/slmao/Atlantis/pull/28). Post-merge review found the shipped dynamic-rendering Core path deviated from [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)'s approved design (it unconditionally depended on `VK_KHR_dynamic_rendering` even on Core-capable devices); [PR #29](https://github.com/slmao/Atlantis/pull/29) is the documentation-only Human Review that accepted a fix amendment (a loader-version-gated instance `apiVersion` strategy), and [PR #30](https://github.com/slmao/Atlantis/pull/30) is the code fix implementing it — Core and Extension dynamic-rendering paths are now fully separated, with the Core path never depending on the `VK_KHR_dynamic_rendering` extension. See [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)'s "Accepted Amendment — 2026-08-13" section for the full design. |
+| ADR-0022 through ADR-0027 | All six `Accepted` (2026-08-11); ADR-0024 additionally carries an Accepted Amendment (2026-08-13) | Filed alongside Spec 0007's Human Review Approval; ADR-0024's amendment recorded via [PR #29](https://github.com/slmao/Atlantis/pull/29), implemented via [PR #30](https://github.com/slmao/Atlantis/pull/30); verified by grepping each ADR file's `Status:` field |
 | `docs/architecture/{overview,module_boundaries,threading,resource_lifetime}.md` | Still carry their own `PROPOSED — pending spec/ADR approval. Not as-built` banner | Read in full; banners unrevised as of this document — a known, still-open documentation gap (see above), not resolved by Spec 0006 |
 | `docs/rhi/README.md`, `docs/render_graph/README.md`, `docs/renderer/README.md` | Same `PROPOSED`, no-code status | Read in full; also unrevised — same known gap |
 | **Human Review** for Spec 0003 / Plan 0003 | Recorded | Plan 0003 records a joint Spec + Plan Human Review approval note, dated 2026-08-08, consistent with how Specs 0001 and 0002's plans record theirs |
@@ -227,26 +229,49 @@ Vulkan Backend/RenderGraph logic, GPU-required integration tests for the
 real Vulkan/WSI/frame-execution path) and, for Core/Platform/RHI/frame
 execution, a non-shipping demo executable (`examples/foundation_demo`,
 `examples/platform_demo`, `examples/rhi_vulkan_demo`,
-`examples/frame_execution_demo`). **The Windows Vulkan path now produces
-real rendered output**: `frame_execution_demo` acquires a swapchain
-image via RenderGraph-scheduled execution, clears it, submits, and
-presents it every frame, verified interactively across resize, minimize/
-restore, and normal close with Vulkan Validation Layers clean (see the
-Spec 0006 row above). No Renderer, Shader System, mesh/material/camera,
-or headless path exists yet — see below.
+`examples/frame_execution_demo`). **The Windows Vulkan path now draws a
+real mesh, not just a cleared color.** Building on `frame_execution_demo`'s
+acquire/clear/submit/present cycle, `Atlantis Renderer`
+(`src/renderer/`, Spec 0007) is now implemented: `Renderer` → RenderGraph
+→ RHI → Vulkan Backend draws a real, visible, depth-tested mesh (a fixed
+cube with a per-vertex-color minimal material) with a working camera
+transform, through RHI's new `Buffer`/`Texture`/`Pipeline` types and
+RenderGraph's new multi-attachment/draw-pass execution support, using
+Vulkan dynamic rendering (a capability-detected Core/Extension dual path —
+see [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)).
+`examples/minimal_renderer_demo` is the non-shipping verification
+composition; this path is verified interactively across resize
+(depth `Texture` recreated, `Pipeline` not) and minimize/restore, with
+Vulkan Validation Layers clean — see the Spec 0007 row above and
+[PR #28](https://github.com/slmao/Atlantis/pull/28)/[PR #30](https://github.com/slmao/Atlantis/pull/30)
+for full verification detail and disclosed limitations (the
+`VK_KHR_dynamic_rendering` Extension path and the swapchain
+attachment-format-change case are both verified by code
+inspection/GPU-independent tests only in this environment, not on real
+hardware — no second GPU/driver combination or second monitor was
+available). No Shader System, Android/iOS, or headless path exists yet —
+see below.
 
-**Every currently-`Approved` spec (0001–0006) now has matching
+**Every currently-`Approved` spec (0001–0007) now has matching
 implementation**, each merged following the same Spec → Plan → Human
 Review → Implementation → Verification → PR → Merge sequence (see the
-Spec 0006 row above for Spec 0006's own two-PR verification history).
+Spec 0006 row above for Spec 0006's own two-PR verification history, and
+the Spec 0007 row above for Spec 0007's own three-PR history — an
+implementation PR, a documentation-only ADR-amendment Human Review, and a
+follow-up code-fix PR).
 
-**What has no spec yet:** Renderer, Shader System, Runtime (the module),
-Tools, Android Platform implementation, iOS Platform, headless rendering,
-image regression testing, and everything in Section 5's later milestones
-and Section 5's "further candidate phases." These remain backlog
-candidates (see [specs/README.md](../specs/README.md) Section B) and are
-not `Approved` — no spec number, API shape, or Candidate-status promotion
-is assigned to any of them by this document.
+**What has no spec yet:** Shader System, Runtime (the module), Tools,
+Android Platform implementation, iOS Platform, headless rendering, image
+regression testing, and everything in Section 5's later milestones and
+Section 5's "further candidate phases." These remain backlog candidates
+(see [specs/README.md](../specs/README.md) Section B) and are not
+`Approved` — no spec number, API shape, or Candidate-status promotion is
+assigned to any of them by this document. Per Spec 0007's own Non-Goals,
+implementing Renderer did not implement or unblock any of these — in
+particular, Shader System still relies on Spec 0007's temporary,
+checked-in, pre-compiled SPIR-V shader artifacts
+([ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)),
+not real compilation.
 
 ## 5. Phased roadmap
 
@@ -384,30 +409,50 @@ milestone being listed does not authorize starting it — see Section 1.
 
 ### Milestone 4 — Minimal Renderer
 
-- **Governance state:** Candidate — requires a new Spec/ADR. Not
-  started. Both of its dependencies are now satisfied (see below), so
-  this milestone's next step is drafting that Spec — not implementation,
-  and not authorized by this document (see Section 1).
+- **Governance state:** **`Approved` Spec, `Approved / Ready for
+  Implementation` Plan, Implemented —
+  [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md),
+  [plans/0007-minimal-renderer.md](../plans/0007-minimal-renderer.md).**
+  Human Review Approval recorded 2026-08-11 (joint Spec 0007 + Plan 0007
+  review). Its Architectural Impact identified six new decisions, filed
+  as [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)–[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md),
+  all `Accepted` alongside this approval. Implementation merged via
+  [PR #28](https://github.com/slmao/Atlantis/pull/28); a post-merge
+  review found the shipped dynamic-rendering Core path deviated from
+  ADR-0024's approved design, which was resolved by a Human-Review-accepted
+  ADR amendment ([PR #29](https://github.com/slmao/Atlantis/pull/29)) and
+  its follow-up code fix ([PR #30](https://github.com/slmao/Atlantis/pull/30))
+  — see the Spec 0007 row in Section 4 above for the full record. Its
+  dependencies, Milestone 2 (RenderGraph Foundation) and Milestone 3
+  (Frame Execution Foundation), are both implemented.
 - **Depends on:** Milestone 2 (RenderGraph Foundation, implemented) *and*
   Milestone 3 (Frame Execution Foundation, `Approved`, Implemented) —
   both are prerequisites, not Milestone 2 alone. See Milestone 3's own
   notes above for why.
-- **Constraints this future spec must honor** (already fixed by
-  Accepted ADRs, not decided by this document): Renderer receives a
-  caller-supplied `RenderTarget` and has no knowledge of Platform,
+- **Scope delivered:** `Atlantis Renderer` (`src/renderer/`) as a real
+  module — `Mesh`/`Material`/`DrawItem`/`Renderer` — receiving a
+  caller-supplied `RenderTarget` and having no knowledge of Platform,
   Window, Swapchain, or any `Vk*` type
   ([ADR-0001](../adr/0001-rhi-backend-independence.md)); all GPU work
   goes through RenderGraph; the minimal closed loop this milestone
-  targets is mesh + depth + camera + material, not a feature-complete
-  renderer.
+  targeted — mesh + depth + camera + material — is drawn end-to-end on
+  Windows/Vulkan, not a feature-complete renderer. See the Spec 0007 row
+  in Section 4 above for verification detail and disclosed limitations.
 
 ### Milestone 5 — Shader System
 
 - **Governance state:** Candidate — requires a new Spec/ADR. Not
-  started.
+  started. Its dependency, Milestone 4 (Minimal Renderer), is now
+  implemented, giving this milestone a real consumer — so this
+  milestone's next step is drafting that Spec, not implementation, and
+  not authorized by this document (see Section 1).
 - **Problem domain** (not decided): Phase 1 shader source language
   choice; SPIR-V compilation; reflection (bindings, push-constant
   layout); pipeline layout construction; cache/debug artifact handling.
+  Spec 0007 deliberately did not resolve any of this — it fixed a
+  narrow, temporary, checked-in-`.spv` sourcing mechanism instead
+  ([ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)),
+  precisely so this milestone's own Spec is the one that decides it.
 - **Explicitly out of scope for this milestone and Phase 1 overall:**
   targeting more than one graphics API. Do not plan or scaffold DXIL/
   MSL/WGSL output — Phase 1 has one backend (Vulkan/SPIR-V only), per
@@ -488,7 +533,7 @@ anything architectural, its own ADR before any of the below moves past
 | M1 | A Windows window continuously displays a live Vulkan swapchain lifecycle (create/recreate/destroy) surviving interactive resize and minimize/restore, with Vulkan Validation Layers clean throughout. (Per the approved spec's own scope, this milestone alone does not yet present a cleared color — that is bundled into M3, see Section 5.) |
 | M2 | A RenderGraph-compiled graph exists and is unit-tested (GPU-independent construction/compilation only — this milestone's own scope does not yet execute, submit, or present anything; see M3). |
 | M3 | A RenderGraph-scheduled frame acquires a swapchain image via `Presentation::acquireNextTarget()`, executes at least one graph-recorded pass through RHI's `CommandList`, submits, and presents it — the first actual pixels on screen, correct across resize and minimize/restore, Validation Layers clean. |
-| M4 | A first mesh is drawn end-to-end through Renderer → RenderGraph → RHI → Vulkan Backend, with a working camera and at least one material, Validation Layers clean. |
+| M4 | **Met.** A first mesh is drawn end-to-end through Renderer → RenderGraph → RHI → Vulkan Backend, with a working camera and one material, Validation Layers clean — see `examples/minimal_renderer_demo` and the Spec 0007 row in Section 4. |
 | M5 | A shader authored in Phase 1's chosen source form compiles to SPIR-V, is reflected, and backs a working pipeline used by M4's mesh draw. |
 | M6 | The same Renderer output from M4 appears on an Android device/emulator via the Android Platform + Vulkan Backend path, with no Renderer/RenderGraph code fork. |
 | M7 | The same rendering stack from M4, driven headlessly, produces a GPU-readback image comparable to the windowed output, with no window or swapchain involved. |
