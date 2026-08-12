@@ -296,20 +296,59 @@ call on Android's actual device/driver support distribution.
   fallback path as its own reviewed decision if a concrete need for one
   appears.
 
-## Proposed Amendment (Under Review) — 2026-08-13
+## Accepted Amendment — 2026-08-13
 
 **Status of this section:** drafted as a documentation-only architectural
 review, per a post-merge verification finding and a subsequent, now-
 abandoned code-fix attempt (branch `fix/0007-dynamic-rendering-core-path`,
-reverted, no commits landed). **This section does not itself change this
-ADR's Status** (`Accepted` above is unchanged, and remains the record of
-what actually shipped in PR #28 for the Extension path and the dual-path
-structure in general). This section is a proposed amendment to one
-sub-decision — the Core path's instance-apiVersion prerequisite — awaiting
-its own Human Review before any further implementation resumes. The
-original Decision, Context, Consequences, and Alternatives Considered
-above are preserved verbatim and are not superseded except where this
-section says so explicitly.
+reverted, no commits landed), and **formally accepted by Human Review on
+2026-08-13** — see "Human Review — Amendment Acceptance (2026-08-13)"
+immediately below for the full approval record. **This section does not
+itself change this ADR's top-level Status** (`Accepted` above is
+unchanged, and remains the record of what actually shipped in PR #28 for
+the Extension path and the dual-path structure in general). This section
+is an accepted amendment to one sub-decision — the Core path's
+instance-apiVersion prerequisite — and its Section 3 is now the binding
+design for the implementation that resumes it. The original Decision,
+Context, Consequences, and Alternatives Considered above are preserved
+verbatim and are not superseded except where this section says so
+explicitly.
+
+### Human Review — Amendment Acceptance (2026-08-13)
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-08-13, reviewing this amendment (Sections 1–6
+below) as drafted by the prior docs-only review.
+
+**What was approved, explicitly and in full:**
+
+1. **The loader-version-gated single-instance `apiVersion` strategy**,
+   exactly as drafted in Section 3 below: request
+   `VkApplicationInfo::apiVersion = VK_API_VERSION_1_3` if and only if
+   `vkEnumerateInstanceVersion` (queried before `vkCreateInstance()`)
+   reports a loader version `>= VK_API_VERSION_1_3`; otherwise continue
+   requesting `VK_API_VERSION_1_0`, unchanged from today. One `VkInstance`
+   that adapts at runtime to whatever loader it finds — the hard build-
+   time/launch-time-config split considered as alternative (b) in Section
+   5 remains rejected.
+2. **The explicit rejection of the literal candidate strategy's "hard
+   error when loader < 1.3" clause** (Section 5, alternative (a)) — the
+   human confirmed that a Vulkan loader reporting below 1.3 is not, by
+   itself, an error condition: a Vulkan 1.1/1.2 loader, or a physical
+   device below 1.3, can still work correctly via the
+   `VK_KHR_dynamic_rendering` Extension path, and
+   `DeviceCreateError::DynamicRenderingUnavailable` is returned only when
+   the actually-selected candidate device qualifies for neither the Core
+   nor the Extension path. This rejection is confirmed specifically to
+   protect the Windows and future-Android device-compatibility range this
+   ADR's original Decision (and its own 2026-08-11 Human Review) was
+   written to serve.
+
+This closes Section 7's open item below and resolves the one open
+Human-Review-Blocker-tier item this amendment carried — no further Human
+Review is pending for this amendment. Section 6's verification plan below
+is confirmed as the binding, mandatory verification requirement for the
+follow-up fix implementation, unmodified by this acceptance.
 
 ### 1. What was found
 
@@ -608,10 +647,9 @@ rejected below) — concretely:
   code (and the unmodified Extension-path branch of this very ADR)
   successfully serves. That would be a real, silent narrowing of the
   Windows/Android device compatibility ADR-0024's original Decision and
-  Human Review explicitly protected, and is flagged in the accompanying
-  report as a **Human-Review-Blocker-tier item**: confirm this rejection,
-  or state a reason the human reviewer sees for wanting it that this
-  review did not surface.
+  Human Review explicitly protected. **Human Review (2026-08-13) confirmed
+  this rejection** — see "Human Review — Amendment Acceptance
+  (2026-08-13)" above and Section 7 below.
 - **No narrowing of AGENTS.md's Android target-platform commitment is
   proposed by this amendment.** This is stated explicitly per the review
   brief's own instruction not to silently narrow it — the amendment's
@@ -627,10 +665,9 @@ rejected below) — concretely:
   loader-version-gated single-instance mechanism is adopted (Section 3);
   the hard-error sub-clause is rejected, per the Compatibility impact
   section above, as an unreviewed narrowing of exactly the compatibility
-  guarantee this ADR exists to provide. Flagged as a Human-Review-Blocker
-  item precisely because the review brief asked for this candidate to be
-  evaluated as stated, not silently modified without flagging the
-  disagreement.
+  guarantee this ADR exists to provide. This rejection was confirmed by
+  Human Review (2026-08-13) — see "Human Review — Amendment Acceptance
+  (2026-08-13)" above and Section 7 below.
 - **(b) Hard split: two separate instance-creation code paths/configs**
   (a "Core-only" build requesting 1.3 outright vs. an "extension-
   compatible" build requesting 1.0/1.1). **Rejected.** This would require
@@ -724,12 +761,19 @@ replacing, Spec 0007's own existing Testing & Verification Plan:
   — the amendment changes instance/device construction, which every one
   of these exercises.
 
-### 7. Open item carried into the accompanying report, not decided here
+### 7. Open item — resolved by Human Review (2026-08-13)
 
-Whether the literal candidate strategy's hard-error-on-loader<1.3 clause
+This section previously flagged, as a Human-Review-Blocker-tier item,
+whether the literal candidate strategy's hard-error-on-loader<1.3 clause
 was actually intended by the human requesting this review, or whether
 Section 3/5's rejection of it (in favor of the zero-net-effect-on-older-
-loaders variant) correctly reads the human's actual intent, is flagged
-explicitly as a **Human-Review-Blocker-tier item** requiring an explicit
-human decision before implementation resumes — this ADR amendment does
-not resolve that question by itself; see the accompanying report.
+loaders variant) correctly read the human's actual intent.
+
+**Resolved.** Human Review (2026-08-13) confirmed Section 3/5's rejection
+was correct: the hard-error-on-loader<1.3 clause is explicitly rejected,
+and Section 3's amended Decision (the loader-gated single-instance
+strategy, without a hard-error clause) is accepted as drafted. See "Human
+Review — Amendment Acceptance (2026-08-13)" near the top of this section
+for the full approval record. No further Human Review is pending for this
+amendment; implementation of the resuming fix is authorized to proceed
+subject to Section 6's verification plan above.

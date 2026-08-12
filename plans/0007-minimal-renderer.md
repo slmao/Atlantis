@@ -2353,18 +2353,18 @@ unilaterally in a PR:
 - Any need for a second graphics backend, a new third-party dependency,
   or a module boundary this Plan does not already list.
 
-## Post-Approval Deviation Record (Under Review) — 2026-08-13
+## Post-Approval Deviation Record — Amendment Accepted 2026-08-13
 
-**This section records a post-approval blocker, per this repository's own
-precedent for a Plan amendment (no distinct "Deviation"/"Blocker" heading
-exists yet in Plan 0005 or Plan 0006 — neither needed one — so this
-section establishes that precedent for Plan 0007, following the same
-principle both plans' own "Human Review Blockers" sections already state:
-a real deviation discovered during implementation stops work and returns
-to Spec/Plan/ADR review, it is not decided unilaterally in a PR.)** This
-Plan's own Status (`Approved / Ready for Implementation`) and its §2–§13
-content are **unchanged** by this record — this is an addendum, not a
-rewrite.
+**This section records a post-approval blocker, now resolved, per this
+repository's own precedent for a Plan amendment (no distinct "Deviation"/
+"Blocker" heading exists yet in Plan 0005 or Plan 0006 — neither needed
+one — so this section establishes that precedent for Plan 0007, following
+the same principle both plans' own "Human Review Blockers" sections
+already state: a real deviation discovered during implementation stops
+work and returns to Spec/Plan/ADR review, it is not decided unilaterally
+in a PR.)** This Plan's own Status (`Approved / Ready for Implementation`)
+and its §2–§13 content are **unchanged** by this record — this is an
+addendum, not a rewrite.
 
 **What happened:** Implementation proceeded against this Plan's §8 as
 approved (Human Review Approval note, point 3, top of this document).
@@ -2389,27 +2389,45 @@ section's own rule, and per AGENTS.md, this was correctly **not** decided
 unilaterally in the fix attempt's PR — the fix attempt was reverted, and
 this docs-only review was conducted instead.
 
-**Current blocker:** Implementation of §8's dynamic-rendering Core path
-(and any dependent §10/§15 work that assumes a working Core path on this
-repository's own development hardware) is **paused** pending Human Review
-of the proposed amendment recorded in
+**Blocker status: resolved 2026-08-13.** Implementation of §8's
+dynamic-rendering Core path (and any dependent §10/§15 work that assumes
+a working Core path on this repository's own development hardware) was
+**paused** pending Human Review of the amendment recorded in
 [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)'s
-"Proposed Amendment (Under Review)" section. That amendment proposes
-raising the *instance's* requested `apiVersion` to 1.3 when (and only
-when) the Vulkan loader itself reports at least 1.3 (queried via
-`vkEnumerateInstanceVersion` before `vkCreateInstance()`), while leaving
-every physical-device-level selection criterion, the Extension path, and
-every device population this Plan's own compatibility analysis already
-committed to serving (per §8's "Windows test coverage / future Android
-boundary" note) unaffected — see that ADR section's own Compatibility
-impact analysis for the full argument, including a Human-Review-Blocker-
-tier open item of its own (whether a literal reading of the reviewed
-candidate strategy's "error when loader version is insufficient" clause
-was actually intended, which this review's own analysis recommends
-rejecting).
+"Accepted Amendment — 2026-08-13" section (formerly "Proposed Amendment
+(Under Review)"). That amendment raises the *instance's* requested
+`apiVersion` to 1.3 when (and only when) the Vulkan loader itself reports
+at least 1.3 (queried via `vkEnumerateInstanceVersion` before
+`vkCreateInstance()`), while leaving every physical-device-level selection
+criterion, the Extension path, and every device population this Plan's
+own compatibility analysis already committed to serving (per §8's
+"Windows test coverage / future Android boundary" note) unaffected. **The
+human formally accepted this amendment on 2026-08-13** — see that ADR
+section's own "Human Review — Amendment Acceptance (2026-08-13)" record —
+including explicit confirmation that the reviewed candidate strategy's
+"hard error when loader version is insufficient" clause is rejected, not
+adopted (ADR-0024's amendment Section 7). **Implementation of the §8
+Core-path fix is now authorized to resume; it is no longer paused or
+blocked.**
 
-**What resuming implementation looks like, once the ADR-0024 amendment is
-approved:** this Plan's own §8, §10, and §15 are expected to need a
+**Sequencing constraint — hard precondition, not a suggestion:** a new
+`fix/` branch for the actual code implementation may be created **only
+from `main`, and only after this very documentation PR (the one
+containing this acceptance record and ADR-0024's accepted amendment) has
+itself been merged into `main`.** It must not be created from this
+`docs/0007-dynamic-rendering-core-path-review` branch, and must not be
+created from a `main` that predates this documentation PR's merge — the
+accepted amendment text must already be present on `main` before the fix
+branch exists.
+
+**PR #28 is historical and immutable.** PR #28 (already merged, containing
+the original Minimal Renderer implementation, including the Core-path
+defect this amendment fixes) is not altered, reference-edited, or in any
+way required to change as a result of this documentation acceptance; this
+record documents what happens *after* PR #28, not a correction to it.
+
+**What resuming implementation looks like, now that the ADR-0024 amendment
+is accepted:** this Plan's own §8, §10, and §15 are expected to need a
 follow-up Plan revision (not a silent implementation-time reinterpretation)
 covering, at minimum:
 
