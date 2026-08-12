@@ -6,10 +6,12 @@
 
 Atlantis is a long-term, real-time rendering engine project. It is currently
 in its **engineering-foundation stage**: Core, Windows Platform, a
-backend-independent RHI, and a Vulkan windowed presentation foundation are
-implemented, but nothing is rendered yet — no acquire, present, or draw
-call exists anywhere in the codebase. This repository holds the process
-and structure the project will be built with.
+backend-independent RHI, a Vulkan windowed presentation foundation, a
+RenderGraph, and a first Renderer are implemented — the Windows Vulkan path
+now draws a real, visible, depth-tested mesh with a working camera and a
+minimal material, not just a cleared color. Shader System, Runtime,
+Android/iOS, and headless rendering remain unimplemented. This repository
+holds the process and structure the project will be built with.
 
 ## Phase 1 technical scope
 
@@ -80,10 +82,10 @@ docs/               Architecture records (as-built) and process docs
 specs/              Proposed work, pre-implementation
 plans/              Approved implementation plans
 adr/                Architectural decision records
-src/                Source — src/core/ (Atlantis Core, spec/plan/ADR 0001/0006-0010); src/platform/ (Atlantis Platform's Windows path, spec/plan 0002, ADR-0005/0010-0013 — Android/iOS specified but not implemented); src/rhi/ and src/vulkan_backend/ (backend-independent RHI and its sole Phase 1 backend — Windows windowed Vulkan presentation, spec/plan 0003, ADR-0001-0003/0014-0016; frame-scoped acquire/present, RenderTarget, and CommandList/submission, spec/plan 0006, ADR-0019-0021); src/render_graph/ (RenderGraph construction/compilation, spec/plan 0005, ADR-0017/0018; execution/barrier integration, spec/plan 0006, ADR-0021); every other module still empty, pending its own spec/plan/ADR
-examples/           Non-shipping demo programs (foundation_demo/, platform_demo/, rhi_vulkan_demo/, frame_execution_demo/) — see ADR-0010
-tests/              Tests — tests/core/, tests/platform/, tests/rhi/ (Catch2 v3, all GPU-independent), tests/vulkan_backend/ (GPU-independent plus a separate, explicitly gpu-labeled Windows/Vulkan integration executable, incl. full frame execution), tests/render_graph/ (GPU-independent, incl. execute()); headless and image-regression layers pending their own spec
-shaders/            Shader sources (empty — structure pending first spec/plan/ADR)
+src/                Source — src/core/ (Atlantis Core, spec/plan/ADR 0001/0006-0010); src/platform/ (Atlantis Platform's Windows path, spec/plan 0002, ADR-0005/0010-0013 — Android/iOS specified but not implemented); src/rhi/ and src/vulkan_backend/ (backend-independent RHI and its sole Phase 1 backend — Windows windowed Vulkan presentation, spec/plan 0003, ADR-0001-0003/0014-0016; frame-scoped acquire/present, RenderTarget, and CommandList/submission, spec/plan 0006, ADR-0019-0021; Buffer/Texture/Pipeline and the draw-command surface, spec/plan 0007, ADR-0023-0025); src/render_graph/ (RenderGraph construction/compilation, spec/plan 0005, ADR-0017/0018; execution/barrier integration, spec/plan 0006, ADR-0021; multi-attachment/draw-pass integration, spec/plan 0007, ADR-0026); src/renderer/ (Atlantis Renderer — Mesh/Material/DrawItem/Renderer, spec/plan 0007, ADR-0022); every other module still empty, pending its own spec/plan/ADR
+examples/           Non-shipping demo programs (foundation_demo/, platform_demo/, rhi_vulkan_demo/, frame_execution_demo/, minimal_renderer_demo/) — see ADR-0010
+tests/              Tests — tests/core/, tests/platform/, tests/rhi/ (Catch2 v3, all GPU-independent), tests/vulkan_backend/ (GPU-independent plus a separate, explicitly gpu-labeled Windows/Vulkan integration executable, incl. full frame execution and the minimal renderer draw path), tests/render_graph/ (GPU-independent, incl. execute()), tests/renderer/ (GPU-independent, Renderer statelessness/ownership); headless and image-regression layers pending their own spec
+shaders/            Shader sources — shaders/minimal_renderer/ (spec/plan 0007, ADR-0027: pre-compiled, checked-in SPIR-V only, no compiler invoked by any build target)
 assets/             Engine/sample assets (empty — structure pending first spec/plan/ADR)
 tools/              Offline/dev tooling (empty — structure pending first spec/plan/ADR)
 cmake/              CMake helper modules (CompilerWarnings.cmake)
@@ -143,6 +145,12 @@ a Vulkan `Device` and `Presentation`; no rendering):
 `build/examples/rhi_vulkan_demo/Debug/atlantis_rhi_vulkan_demo.exe`
 (path varies by generator/configuration).
 
+Run the minimal renderer demo (draws a real, depth-tested mesh with a
+camera and a minimal material; see [specs/0007-minimal-renderer.md](specs/0007-minimal-renderer.md)),
+via the `run_minimal_renderer_demo` CMake convenience target so the
+checked-in shader `.spv` files resolve by relative path from the correct
+working directory.
+
 ## Status
 
 Engineering foundation stage. `specs/0001-project-foundation.md` is
@@ -195,6 +203,31 @@ interactively across resize/minimize/restore/close with Vulkan
 Validation Layers clean. Renderer, Shader System, and general
 `Buffer`/`Texture` resources remain unimplemented — see
 [src/README.md](src/README.md).
+
+`specs/0007-minimal-renderer.md` is also implemented: `Atlantis Renderer`
+(`src/renderer/` — `Mesh`, `Material`, `DrawItem`, a stateless
+`Renderer::drawFrame()`), extending RHI with `Buffer`/`Texture`/`Pipeline`
+and a minimal draw-command surface, and extending RenderGraph to scope a
+draw pass against a color and a depth attachment via Vulkan dynamic
+rendering (a capability-detected Core/Extension dual path — see
+[ADR-0024](adr/0024-vulkan-dynamic-rendering-for-attachments.md)).
+Implementation merged via
+[PR #28](https://github.com/slmao/Atlantis/pull/28); a post-merge review
+found the shipped dynamic-rendering Core path deviated from ADR-0024's
+approved design, resolved by a Human-Review-accepted amendment
+([PR #29](https://github.com/slmao/Atlantis/pull/29)) and its code fix
+([PR #30](https://github.com/slmao/Atlantis/pull/30)), which separated the
+Core and Extension dynamic-rendering paths so Core no longer depends on
+the `VK_KHR_dynamic_rendering` extension. The Windows Vulkan path
+(`Renderer` → RenderGraph → RHI → Vulkan Backend) now draws a real,
+visible, depth-tested mesh with a camera transform and a minimal material,
+verified with a non-shipping `examples/minimal_renderer_demo` across
+resize and minimize/restore, Vulkan Validation Layers clean. The
+`VK_KHR_dynamic_rendering` Extension path has no real-GPU coverage in this
+environment (GPU-independent tests and code review only); see
+[specs/README.md](specs/README.md) for full verification detail. Shader
+System, Runtime, and general asset/scene systems remain unimplemented —
+see [src/README.md](src/README.md).
 
 Android and iOS remain specified architecturally only (not implemented);
 Vulkan Backend's Android WSI path is likewise not implemented. No headless
