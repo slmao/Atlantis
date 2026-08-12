@@ -28,6 +28,13 @@ enum class DeviceCreateError {
   ValidationLayerUnavailable,
   NoSuitablePhysicalDevice,
   DeviceCreationFailed,
+  // Spec 0007 / ADR-0024: no candidate physical device supports either
+  // dynamic-rendering path (core 1.3, or VK_KHR_dynamic_rendering on a
+  // lower core version) -- returned only when at least one candidate
+  // otherwise met every pre-existing suitability criterion (Spec 0003)
+  // but failed specifically on this one. Never a VkRenderPass/
+  // VkFramebuffer fallback.
+  DynamicRenderingUnavailable,
 };
 
 [[nodiscard]] atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> createDevice(

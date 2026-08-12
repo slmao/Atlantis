@@ -23,7 +23,13 @@ namespace atlantis::vulkan_backend::detail {
 // thread-safe.
 class VulkanCommandList final : public atlantis::rhi::CommandList {
  public:
-  VulkanCommandList(VkDevice device, VkCommandPool commandPool, VkCommandBuffer commandBuffer);
+  // cmdBeginRendering/cmdEndRendering: VulkanDevice's own resolved
+  // dynamic-rendering entry points (Section 8/10 -- whichever of the
+  // Core/Extension path that Device selected), borrowed for this
+  // CommandList's whole lifetime; VulkanDevice must outlive it (same
+  // caller-enforced tier as device/commandPool below).
+  VulkanCommandList(VkDevice device, VkCommandPool commandPool, VkCommandBuffer commandBuffer,
+                     PFN_vkCmdBeginRenderingKHR cmdBeginRendering, PFN_vkCmdEndRenderingKHR cmdEndRendering);
   ~VulkanCommandList() override;
 
   VulkanCommandList(const VulkanCommandList&) = delete;
@@ -33,7 +39,20 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
 
   void transitionResource(atlantis::rhi::RenderTarget& target, atlantis::rhi::ResourceState before,
                            atlantis::rhi::ResourceState after) override;
+  void transitionResource(atlantis::rhi::Texture& target, atlantis::rhi::ResourceState before,
+                           atlantis::rhi::ResourceState after) override;
   void clearColor(atlantis::rhi::RenderTarget& target, atlantis::rhi::ClearColorValue color) override;
+
+  void beginRendering(atlantis::rhi::RenderTarget& color, atlantis::rhi::Texture* depth,
+                       atlantis::rhi::ClearColorValue colorClear, float depthClear) override;
+  void endRendering() override;
+
+  void bindPipeline(atlantis::rhi::Pipeline& pipeline) override;
+  void bindVertexBuffer(atlantis::rhi::Buffer& buffer) override;
+  void bindIndexBuffer(atlantis::rhi::Buffer& buffer) override;
+  void bindUniformBuffer(atlantis::rhi::Buffer& buffer) override;
+  void pushConstant(const void* data, std::size_t sizeBytes) override;
+  void drawIndexed(std::uint32_t indexCount) override;
 
   // Exists solely for VulkanDevice::submit() (vkEndCommandBuffer,
   // vkQueueSubmit) -- never reached from RHI's public surface.
@@ -43,6 +62,40 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   VkDevice device_;
   VkCommandPool commandPool_;
   VkCommandBuffer commandBuffer_;
+  PFN_vkCmdBeginRenderingKHR cmdBeginRendering_;
+  PFN_vkCmdEndRenderingKHR cmdEndRendering_;
+
+  // Set by bindPipeline(), read by bindUniformBuffer()/pushConstant() --
+  // the currently-bound Pipeline's own VkPipelineLayout/VkDescriptorSet
+  // (Section 10). Non-owning; null until the first bindPipeline() call in
+  // this recording. A programmer error (ATLANTIS_CHECK) to call
+  // bindUniformBuffer()/pushConstant() before any bindPipeline().
+  VkPipelineLayout boundPipelineLayout_ = VK_NULL_HANDLE;
+  VkDescriptorSet boundDescriptorSet_ = VK_NULL_HANDLE;
+
+  // Implementation-forced addition, discovered by Plan 0007 Section 15's
+  // own multi-DrawItem GPU test: Vulkan invalidates a command buffer if
+  // vkUpdateDescriptorSets() is called again on a VkDescriptorSet that
+  // was already vkCmdBindDescriptorSets()'d earlier in the *same*
+  // not-yet-submitted command buffer recording (its layout has no
+  // VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT, per Section 10's fixed,
+  // minimal design). Multiple DrawItems sharing one Material (Section 11
+  // deliberately allows this -- "reference reuse, not a cache") call
+  // bindPipeline()/bindUniformBuffer() again for every item, each with
+  // byte-identical VkDescriptorBufferInfo contents (the one shared
+  // camera Buffer) -- so this narrow, per-recording (not per-frame,
+  // not cross-CommandList, never persisted) memo of "which VkBuffer is
+  // already written into which VkDescriptorSet, in this recording"
+  // lets bindUniformBuffer() skip only the exact redundant
+  // vkUpdateDescriptorSets() call, never the vkCmdBindDescriptorSets()
+  // call itself (always re-issued, matching Section 10's own stated
+  // "re-binds every draw item regardless, for simplicity" design) --
+  // this is not the general resource cache Section 10/ADR-0025
+  // deliberately avoids; it holds no GPU resource, outlives nothing, and
+  // is reset implicitly every time a *different* Buffer or Pipeline is
+  // bound.
+  VkDescriptorSet lastUpdatedDescriptorSet_ = VK_NULL_HANDLE;
+  VkBuffer lastUpdatedUniformBuffer_ = VK_NULL_HANDLE;
 };
 
 }  // namespace atlantis::vulkan_backend::detail

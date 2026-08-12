@@ -20,7 +20,7 @@ namespace atlantis::vulkan_backend::detail {
 // internally thread-safe; caller-thread-only (ADR-0004).
 class VulkanRenderTarget final : public atlantis::rhi::RenderTarget {
  public:
-  VulkanRenderTarget(VkImage image, std::uint32_t imageIndex, atlantis::rhi::Extent2D extent,
+  VulkanRenderTarget(VkImage image, VkImageView imageView, std::uint32_t imageIndex, atlantis::rhi::Extent2D extent,
                       atlantis::rhi::Format format, VkSemaphore acquireCompleteSemaphore,
                       VkSemaphore renderFinishedSemaphore);
   ~VulkanRenderTarget() override = default;
@@ -38,6 +38,11 @@ class VulkanRenderTarget final : public atlantis::rhi::RenderTarget {
   // (reading which image/semaphore(s) this target refers to) -- never
   // reached from RHI's public surface, RenderGraph, or Renderer.
   [[nodiscard]] VkImage image() const noexcept { return image_; }
+  // Spec 0007: the color VkImageView VulkanCommandList::beginRendering()
+  // needs for VkRenderingAttachmentInfo -- non-owning, owned by the
+  // VulkanPresentation that vended this object, same lifetime tier as
+  // image() above.
+  [[nodiscard]] VkImageView imageView() const noexcept { return imageView_; }
   [[nodiscard]] std::uint32_t imageIndex() const noexcept { return imageIndex_; }
   [[nodiscard]] VkSemaphore acquireCompleteSemaphore() const noexcept { return acquireCompleteSemaphore_; }
   // The one render-finished semaphore dedicated to this target's own
@@ -49,6 +54,7 @@ class VulkanRenderTarget final : public atlantis::rhi::RenderTarget {
 
  private:
   VkImage image_;
+  VkImageView imageView_;  // non-owning; VulkanPresentation owns it
   std::uint32_t imageIndex_;
   atlantis::rhi::Extent2D extent_;
   atlantis::rhi::Format format_;

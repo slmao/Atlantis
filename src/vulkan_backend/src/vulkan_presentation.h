@@ -149,6 +149,13 @@ class VulkanPresentation final : public atlantis::rhi::Presentation {
   bool recreationNeeded_ = true;
   atlantis::rhi::SwapchainMetadata metadata_;
   std::vector<VkImage> images_;  // populated by recreateIfNeeded()'s Recreate branch; non-owning (swapchain owns them)
+  // Spec 0007: one VK_IMAGE_VIEW_TYPE_2D color view per swapchain image,
+  // owned by this class (unlike images_) -- Vulkan dynamic rendering's
+  // VkRenderingAttachmentInfo requires a VkImageView, not a VkImage.
+  // (Re)created alongside images_ in recreateIfNeeded()'s Recreate branch,
+  // destroyed there (before recreating) and in this class's own
+  // destructor -- same lifecycle as renderFinishedSemaphores_ below.
+  std::vector<VkImageView> imageViews_;
   VkSemaphore acquireCompleteSemaphore_ = VK_NULL_HANDLE;
   // One owned semaphore per swapchain image, indexed by image index --
   // not a single shared semaphore (found via GPU testing; see

@@ -23,6 +23,23 @@ namespace atlantis::vulkan_backend::detail {
 
 struct InstanceCreateResult {
   VkInstance instance = VK_NULL_HANDLE;
+
+  // Spec 0007 / ADR-0024 Section 8's instance-level prerequisite for the
+  // dynamic-rendering capability query: true iff
+  // VK_KHR_get_physical_device_properties2 was present in
+  // vkEnumerateInstanceExtensionProperties(), was successfully requested
+  // in VkInstanceCreateInfo, AND vkGetPhysicalDeviceFeatures2KHR resolved
+  // to a non-null function pointer via vkGetInstanceProcAddr() immediately
+  // afterward. An instance-wide fact, computed exactly once here, never
+  // re-queried per physical-device candidate.
+  bool physicalDeviceProperties2ExtensionAvailable = false;
+
+  // Non-null only when physicalDeviceProperties2ExtensionAvailable is
+  // true -- never called if this resolution step was skipped or returned
+  // nullptr (Section 8's "never assumed to be directly linkable"
+  // discipline, mirroring the device-level vkCmdBeginRenderingKHR/
+  // vkCmdEndRenderingKHR resolution).
+  PFN_vkGetPhysicalDeviceFeatures2KHR getPhysicalDeviceFeatures2KHR = nullptr;
 };
 
 // Creates a VkInstance for params.applicationName, requesting

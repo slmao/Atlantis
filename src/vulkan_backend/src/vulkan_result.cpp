@@ -87,4 +87,33 @@ atlantis::rhi::CommandListCreateError toCommandListCreateError(VkResult result) 
   return atlantis::rhi::CommandListCreateError::CommandBufferAllocationFailed;
 }
 
+// Spec 0007: mirrors the fixed-enumerator mapping pattern above at its
+// primary call site (vkCreateBuffer/vkCreateImage/vkCreateGraphicsPipelines)
+// -- unlike the four functions above, BufferCreateError/TextureCreateError/
+// PipelineCreateError carry more than one enumerator (allocation failure
+// vs. object-creation failure vs., for Pipeline, several distinct object
+// types), so the *other* enumerators (AllocationFailed,
+// ImageViewCreationFailed, ShaderModuleCreationFailed,
+// DescriptorSetLayoutCreationFailed, DescriptorSetAllocationFailed,
+// PipelineLayoutCreationFailed) are constructed directly at their own
+// specific call site in vulkan_device.cpp/vulkan_pipeline.cpp, not through
+// one of these three functions -- every VkResult is still checked at every
+// call site, per this module's own rule; these three functions exist for
+// each type's single most-common ("the main object failed to create")
+// case.
+atlantis::rhi::BufferCreateError toBufferCreateError(VkResult result) {
+  ATLANTIS_CHECK(result != VK_SUCCESS);
+  return atlantis::rhi::BufferCreateError::BufferCreationFailed;
+}
+
+atlantis::rhi::TextureCreateError toTextureCreateError(VkResult result) {
+  ATLANTIS_CHECK(result != VK_SUCCESS);
+  return atlantis::rhi::TextureCreateError::ImageCreationFailed;
+}
+
+atlantis::rhi::PipelineCreateError toPipelineCreateError(VkResult result) {
+  ATLANTIS_CHECK(result != VK_SUCCESS);
+  return atlantis::rhi::PipelineCreateError::PipelineCreationFailed;
+}
+
 }  // namespace atlantis::vulkan_backend::detail
