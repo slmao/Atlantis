@@ -4,13 +4,16 @@
 #include <cstring>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <atlantis/assert.h>
 #include <atlantis/log.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
 
+#include "device_extension_list.h"
 #include "dynamic_rendering.h"
+#include "dynamic_rendering_entry_points.h"
 #include "validation.h"
 #include "vulkan_buffer.h"
 #include "vulkan_command_list.h"
@@ -151,7 +154,7 @@ struct PhysicalDeviceSelection {
 // instanceExtensionAvailable is true (vulkan_instance.cpp's own
 // resolution contract) -- never called otherwise.
 [[nodiscard]] DynamicRenderingPath queryDynamicRenderingPath(
-    VkPhysicalDevice physicalDevice, bool instanceExtensionAvailable,
+    VkPhysicalDevice physicalDevice, bool instanceExtensionAvailable, bool instanceRequestedApiVersionAtLeast1_3,
     PFN_vkGetPhysicalDeviceFeatures2KHR getPhysicalDeviceFeatures2KHR) {
   VkPhysicalDeviceProperties properties{};
   vkGetPhysicalDeviceProperties(physicalDevice, &properties);
@@ -182,8 +185,9 @@ struct PhysicalDeviceSelection {
     extensionFeatureSupported = dynamicRenderingFeatures.dynamicRendering == VK_TRUE;
   }
 
-  return decideDynamicRenderingPath(instanceExtensionAvailable, apiVersionAtLeast1_3, coreFeatureSupported,
-                                     extensionAdvertised, extensionFeatureSupported);
+  return decideDynamicRenderingPath(instanceExtensionAvailable, instanceRequestedApiVersionAtLeast1_3,
+                                     apiVersionAtLeast1_3, coreFeatureSupported, extensionAdvertised,
+                                     extensionFeatureSupported);
 }
 
 // Selects the first physical device, in vkEnumeratePhysicalDevices' own
@@ -206,7 +210,7 @@ struct PhysicalDeviceSelectionResult {
 
 [[nodiscard]] PhysicalDeviceSelectionResult selectPhysicalDevice(
     const std::vector<VkPhysicalDevice>& physicalDevices, bool physicalDeviceProperties2ExtensionAvailable,
-    PFN_vkGetPhysicalDeviceFeatures2KHR getPhysicalDeviceFeatures2KHR) {
+    bool instanceRequestedApiVersionAtLeast1_3, PFN_vkGetPhysicalDeviceFeatures2KHR getPhysicalDeviceFeatures2KHR) {
   PhysicalDeviceSelectionResult result;
   for (VkPhysicalDevice physicalDevice : physicalDevices) {
     VkPhysicalDeviceProperties properties{};
@@ -221,8 +225,9 @@ struct PhysicalDeviceSelectionResult {
     if (!queueFamilyIndex.has_value()) {
       continue;
     }
-    const DynamicRenderingPath dynamicRenderingPath = queryDynamicRenderingPath(
-        physicalDevice, physicalDeviceProperties2ExtensionAvailable, getPhysicalDeviceFeatures2KHR);
+    const DynamicRenderingPath dynamicRenderingPath =
+        queryDynamicRenderingPath(physicalDevice, physicalDeviceProperties2ExtensionAvailable,
+                                   instanceRequestedApiVersionAtLeast1_3, getPhysicalDeviceFeatures2KHR);
     if (dynamicRenderingPath == DynamicRenderingPath::Unavailable) {
       result.foundSuitableExceptDynamicRendering = true;
       continue;
@@ -1006,7 +1011,7 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
   }
   const detail::PhysicalDeviceSelectionResult selectionResult = detail::selectPhysicalDevice(
       *physicalDevices, instanceResult.value().physicalDeviceProperties2ExtensionAvailable,
-      instanceResult.value().getPhysicalDeviceFeatures2KHR);
+      instanceResult.value().instanceRequestedApiVersionAtLeast1_3, instanceResult.value().getPhysicalDeviceFeatures2KHR);
   if (!selectionResult.selection.has_value()) {
     return ResultT::Err(selectionResult.foundSuitableExceptDynamicRendering
                              ? DeviceCreateError::DynamicRenderingUnavailable
@@ -1024,50 +1029,27 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
   queueCreateInfo.queueCount = 1;
   queueCreateInfo.pQueuePriorities = &kQueuePriority;
 
-  // Spec 0007 / ADR-0024 Section 8: device extension list and feature
-  // pNext chain depend on which dynamic-rendering path was selected --
-  // Core chains VkPhysicalDeviceVulkan13Features; Extension chains
-  // VkPhysicalDeviceDynamicRenderingFeaturesKHR.
-  //
-  // Implementation-forced deviation from Plan 0007 Section 8's stated
-  // "Core needs no device extension": this Plan deliberately keeps the
-  // *instance's* requested apiVersion at VK_API_VERSION_1_0 (Section 8's
-  // own instance-level constraint, unchanged) even when a Core-path
-  // device's own reported apiVersion is 1.3+. In practice, on this
-  // environment, resolving the *unsuffixed* core entry points
-  // ("vkCmdBeginRendering"/"vkCmdEndRendering") via either static
-  // linkage or vkGetDeviceProcAddr is unreliable when the instance
-  // itself never requested 1.3+ -- only the KHR-suffixed extension
-  // entry points, backed by the KHR extension actually being enabled at
-  // device creation, resolve reliably via vkGetDeviceProcAddr regardless
-  // of the instance's requested apiVersion. So this device creation now
-  // requests "VK_KHR_dynamic_rendering" unconditionally, on *both*
-  // paths, and resolves only the KHR-suffixed entry points below --
-  // Core still chains VkPhysicalDeviceVulkan13Features (matching what
-  // decideDynamicRenderingPath() actually detected), but now also
-  // enables the (always present alongside a promoted core feature, on
-  // every driver this Plan's own physical-device selection loop already
-  // requires to have reported the extension or the core feature -- see
-  // dynamic_rendering.cpp) KHR extension name purely so its aliased
-  // entry points are resolvable. This changes only how the device is
-  // configured and how the function pointers already described in
-  // Section 8 are *obtained* -- not which capability was detected
-  // (`decideDynamicRenderingPath()`'s own pure decision logic, already
-  // exhaustively tested, is untouched), not which path is selected, and
-  // not any public signature -- an implementation detail, not a Human
-  // Review Blocker.
-  // VK_KHR_dynamic_rendering's own extension dependency chain (required
-  // any time the instance/device is below Vulkan 1.2, per the Vulkan
-  // spec's extension-dependency table for VK_KHR_dynamic_rendering ->
-  // VK_KHR_depth_stencil_resolve -> VK_KHR_create_renderpass2 ->
-  // VK_KHR_multiview / VK_KHR_maintenance2) -- all promoted to core in
-  // 1.2/1.3 and so ordinarily implicit, but this Plan's instance never
-  // requests above VK_API_VERSION_1_0 (Section 8), so each dependency
-  // must be listed explicitly for vkCreateDevice() to accept
-  // "VK_KHR_dynamic_rendering" itself.
-  std::vector<const char*> deviceExtensions{"VK_KHR_swapchain",     "VK_KHR_multiview",
-                                             "VK_KHR_maintenance2",  "VK_KHR_create_renderpass2",
-                                             "VK_KHR_depth_stencil_resolve", "VK_KHR_dynamic_rendering"};
+  // ADR-0024 "Accepted Amendment -- 2026-08-13", Section 3, points 5-6:
+  // device extension list and feature pNext chain depend on which
+  // dynamic-rendering path was selected. Core: no device extension at
+  // all (VkPhysicalDeviceVulkan13Features chained, unsuffixed entry
+  // points resolved below -- reliable specifically because this Device's
+  // owning instance requested apiVersion >= 1.3, see
+  // instanceRequestedApiVersionAtLeast1_3's role in
+  // decideDynamicRenderingPath()). Extension: VK_KHR_dynamic_rendering
+  // plus its full prerequisite chain enabled
+  // (VkPhysicalDeviceDynamicRenderingFeaturesKHR chained, KHR-suffixed
+  // entry points resolved below). selection->dynamicRenderingPath is
+  // never Unavailable here -- selectPhysicalDevice() only ever accepts a
+  // candidate whose resolved path is Core or Extension.
+  const std::vector<std::string> deviceExtensionNames =
+      detail::buildDeviceExtensionList(selection->dynamicRenderingPath, {"VK_KHR_swapchain"});
+  std::vector<const char*> deviceExtensions;
+  deviceExtensions.reserve(deviceExtensionNames.size());
+  for (const std::string& name : deviceExtensionNames) {
+    deviceExtensions.push_back(name.c_str());
+  }
+
   VkPhysicalDeviceVulkan13Features vulkan13Features{};
   vulkan13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
   vulkan13Features.dynamicRendering = VK_TRUE;
@@ -1097,15 +1079,21 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
   }
   detail::DeviceGuard deviceGuard(device);
 
-  // Resolved entry points (Plan 0007 Section 8/10, see this function's
-  // own deviation note above for why the KHR-suffixed names are used on
-  // both paths): resolved once, here, via vkGetDeviceProcAddr, for
-  // either dynamic-rendering path -- both are valid to call given
-  // "VK_KHR_dynamic_rendering" is now unconditionally enabled above.
+  // Resolved entry points (ADR-0024 Amendment Section 3, points 5-6):
+  // resolved once, here, via vkGetDeviceProcAddr, using exactly the name
+  // pair selectDynamicRenderingEntryPointNames() selects for the
+  // selected path -- unsuffixed for Core, KHR-suffixed for Extension.
+  // Missing either name for the selected path is a checked, recoverable
+  // failure (never a cross-path fallback, never an unresolved pointer
+  // silently called) -- the same DeviceCreateError::DynamicRenderingUnavailable
+  // tier as every other dynamic-rendering-unavailable outcome.
+  const std::optional<detail::DynamicRenderingEntryPointNames> entryPointNames =
+      detail::selectDynamicRenderingEntryPointNames(selection->dynamicRenderingPath);
+  ATLANTIS_CHECK(entryPointNames.has_value());
   PFN_vkCmdBeginRenderingKHR cmdBeginRendering =
-      reinterpret_cast<PFN_vkCmdBeginRenderingKHR>(vkGetDeviceProcAddr(device, "vkCmdBeginRenderingKHR"));
+      reinterpret_cast<PFN_vkCmdBeginRenderingKHR>(vkGetDeviceProcAddr(device, entryPointNames->beginRenderingName));
   PFN_vkCmdEndRenderingKHR cmdEndRendering =
-      reinterpret_cast<PFN_vkCmdEndRenderingKHR>(vkGetDeviceProcAddr(device, "vkCmdEndRenderingKHR"));
+      reinterpret_cast<PFN_vkCmdEndRenderingKHR>(vkGetDeviceProcAddr(device, entryPointNames->endRenderingName));
   if (cmdBeginRendering == nullptr || cmdEndRendering == nullptr) {
     return ResultT::Err(DeviceCreateError::DynamicRenderingUnavailable);
   }
