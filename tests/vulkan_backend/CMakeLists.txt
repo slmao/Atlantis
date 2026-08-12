@@ -13,6 +13,9 @@ add_executable(atlantis_vulkan_backend_tests
   validation_policy_tests.cpp
   resource_state_mapping_tests.cpp
   dynamic_rendering_tests.cpp
+  instance_api_version_tests.cpp
+  device_extension_list_tests.cpp
+  dynamic_rendering_entry_points_tests.cpp
   vulkan_memory_tests.cpp
 )
 
