@@ -2,6 +2,14 @@
 
 - **Spec:** [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md) (`Approved`)
 - **Status:** Approved / Ready for Implementation
+- **Post-Approval Deviation (2026-08-13):** Implementation of this Plan's
+  §8 dynamic-rendering Core path is **paused** pending Human Review of a
+  proposed amendment to
+  [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)
+  (its "Proposed Amendment (Under Review)" section). This Plan's own
+  Status line and §2–§13 content are unchanged and remain approved — see
+  "Post-Approval Deviation Record" near the end of this document for the
+  full blocker record and what resuming implementation requires.
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
   direction; content authored by the agent, reviewed and approved by a
   human per the Human Review Approval note below.
@@ -2344,6 +2352,108 @@ unilaterally in a PR:
   SPIR-V reflection, or introduce shader caching/hot-reload.
 - Any need for a second graphics backend, a new third-party dependency,
   or a module boundary this Plan does not already list.
+
+## Post-Approval Deviation Record — Amendment Accepted 2026-08-13
+
+**This section records a post-approval blocker, now resolved, per this
+repository's own precedent for a Plan amendment (no distinct "Deviation"/
+"Blocker" heading exists yet in Plan 0005 or Plan 0006 — neither needed
+one — so this section establishes that precedent for Plan 0007, following
+the same principle both plans' own "Human Review Blockers" sections
+already state: a real deviation discovered during implementation stops
+work and returns to Spec/Plan/ADR review, it is not decided unilaterally
+in a PR.)** This Plan's own Status (`Approved / Ready for Implementation`)
+and its §2–§13 content are **unchanged** by this record — this is an
+addendum, not a rewrite.
+
+**What happened:** Implementation proceeded against this Plan's §8 as
+approved (Human Review Approval note, point 3, top of this document).
+Post-merge verification (after PR #28 merged) found the shipped Core path
+does not match §8/ADR-0024's approved design — it unconditionally
+requests, enables, and resolves through `VK_KHR_dynamic_rendering` even
+on a Vulkan 1.3+ Core-path device, a real, called-out implementation
+deviation (see the comment block in `vulkan_device.cpp`'s `createDevice()`
+beginning "Implementation-forced deviation from Plan 0007 Section 8's
+stated 'Core needs no device extension'"). A subsequent fix attempt
+(branch `fix/0007-dynamic-rendering-core-path`, reverted, no commits
+landed) implemented the textbook-correct Core path and, via controlled
+experiments on this repository's real development hardware, found that a
+functioning, genuinely-core (non-`KHR`-suffixed) dynamic-rendering entry
+point is not reliably obtainable while the Vulkan Backend's instance
+keeps requesting `VkApplicationInfo::apiVersion = VK_API_VERSION_1_0` —
+exactly the value §8's own "Instance-level prerequisite" subsection fixed
+and Human Review approved. This is precisely the Human Review Blocker
+this Plan's own list (above) already names: *"Any need... to raise the
+Vulkan Backend's overall minimum supported API version."* Per that
+section's own rule, and per AGENTS.md, this was correctly **not** decided
+unilaterally in the fix attempt's PR — the fix attempt was reverted, and
+this docs-only review was conducted instead.
+
+**Blocker status: resolved 2026-08-13.** Implementation of §8's
+dynamic-rendering Core path (and any dependent §10/§15 work that assumes
+a working Core path on this repository's own development hardware) was
+**paused** pending Human Review of the amendment recorded in
+[ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)'s
+"Accepted Amendment — 2026-08-13" section (formerly "Proposed Amendment
+(Under Review)"). That amendment raises the *instance's* requested
+`apiVersion` to 1.3 when (and only when) the Vulkan loader itself reports
+at least 1.3 (queried via `vkEnumerateInstanceVersion` before
+`vkCreateInstance()`), while leaving every physical-device-level selection
+criterion, the Extension path, and every device population this Plan's
+own compatibility analysis already committed to serving (per §8's
+"Windows test coverage / future Android boundary" note) unaffected. **The
+human formally accepted this amendment on 2026-08-13** — see that ADR
+section's own "Human Review — Amendment Acceptance (2026-08-13)" record —
+including explicit confirmation that the reviewed candidate strategy's
+"hard error when loader version is insufficient" clause is rejected, not
+adopted (ADR-0024's amendment Section 7). **Implementation of the §8
+Core-path fix is now authorized to resume; it is no longer paused or
+blocked.**
+
+**Sequencing constraint — hard precondition, not a suggestion:** a new
+`fix/` branch for the actual code implementation may be created **only
+from `main`, and only after this very documentation PR (the one
+containing this acceptance record and ADR-0024's accepted amendment) has
+itself been merged into `main`.** It must not be created from this
+`docs/0007-dynamic-rendering-core-path-review` branch, and must not be
+created from a `main` that predates this documentation PR's merge — the
+accepted amendment text must already be present on `main` before the fix
+branch exists.
+
+**PR #28 is historical and immutable.** PR #28 (already merged, containing
+the original Minimal Renderer implementation, including the Core-path
+defect this amendment fixes) is not altered, reference-edited, or in any
+way required to change as a result of this documentation acceptance; this
+record documents what happens *after* PR #28, not a correction to it.
+
+**What resuming implementation looks like, now that the ADR-0024 amendment
+is accepted:** this Plan's own §8, §10, and §15 are expected to need a
+follow-up Plan revision (not a silent implementation-time reinterpretation)
+covering, at minimum:
+
+- `vulkan_instance.cpp`: add the loader-version query (§8's existing
+  `VK_KHR_get_physical_device_properties2` query precedent shows the
+  pattern) and the conditional `apiVersion` request, per the amended
+  ADR-0024 Decision.
+- `dynamic_rendering.h`/`.cpp`: extend `decideDynamicRenderingPath()`'s
+  signature with the new `instanceRequestedApiVersionAtLeast1_3` boolean
+  and its added Core-branch condition; extend
+  `tests/vulkan_backend/dynamic_rendering_tests.cpp`'s truth table
+  accordingly.
+- `vulkan_device.cpp`: remove the as-shipped Core-path deviation (the
+  unconditional `VK_KHR_dynamic_rendering`-and-dependency-chain
+  enablement and `KHR`-suffixed-only resolution) — Core path reverts to
+  §8's originally-approved shape (no KHR extension, unsuffixed entry
+  points via `vkGetDeviceProcAddr`), now genuinely correct because the
+  owning instance requests `apiVersion 1.3` whenever the loader supports
+  it.
+- `tests/vulkan_backend/minimal_renderer_gpu_tests.cpp` and the manual
+  verification composition: re-run on this repository's real development
+  hardware to confirm the fix attempt's own crash no longer reproduces,
+  per ADR-0024's amended Section 6 verification plan.
+- No RHI, RenderGraph, or `src/renderer/` public-surface change is
+  expected — this remains entirely Vulkan-Backend-internal, consistent
+  with ADR-0024's original and amended Boundary statement.
 
 ## Consistency Review
 
