@@ -3,12 +3,13 @@
 namespace atlantis::vulkan_backend::detail {
 
 DynamicRenderingPath decideDynamicRenderingPath(bool physicalDeviceProperties2InstanceExtensionAvailable,
+                                                  bool instanceRequestedApiVersionAtLeast1_3,
                                                   bool apiVersionAtLeast1_3, bool coreFeatureSupported,
                                                   bool extensionAdvertised, bool extensionFeatureSupported) {
   if (!physicalDeviceProperties2InstanceExtensionAvailable) {
     return DynamicRenderingPath::Unavailable;
   }
-  if (apiVersionAtLeast1_3 && coreFeatureSupported) {
+  if (apiVersionAtLeast1_3 && coreFeatureSupported && instanceRequestedApiVersionAtLeast1_3) {
     return DynamicRenderingPath::Core;
   }
   if (extensionAdvertised && extensionFeatureSupported) {

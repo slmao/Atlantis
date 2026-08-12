@@ -6,6 +6,9 @@
 #include <string>
 #include <vector>
 
+#include <atlantis/assert.h>
+
+#include "instance_api_version.h"
 #include "validation.h"
 
 namespace atlantis::vulkan_backend::detail {
@@ -160,13 +163,37 @@ atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const D
   // reference into params is retained beyond this function.
   const std::string applicationName = params.applicationName;
 
+  // ADR-0024 "Accepted Amendment -- 2026-08-13", Section 3, point 1:
+  // resolved via vkGetInstanceProcAddr(nullptr, ...) -- a global command,
+  // valid to call with no VkInstance in existence yet. A nullptr result
+  // is itself the Vulkan specification's own documented way to detect a
+  // genuine Vulkan-1.0-only loader; loaderVersion is never read in that
+  // case (decideRequestedInstanceApiVersion() ignores it whenever
+  // loaderVersionQueryAvailable is false).
+  const auto enumerateInstanceVersionFn =
+      reinterpret_cast<PFN_vkEnumerateInstanceVersion>(vkGetInstanceProcAddr(nullptr, "vkEnumerateInstanceVersion"));
+  std::uint32_t loaderVersion = 0;
+  const bool loaderVersionQueryAvailable = enumerateInstanceVersionFn != nullptr;
+  if (loaderVersionQueryAvailable) {
+    // vkEnumerateInstanceVersion's own VkResult is always VK_SUCCESS per
+    // the Vulkan specification (it has no documented failure code) --
+    // still assigned to a named local rather than discarded, matching
+    // this codebase's "every VkResult is checked" discipline, but not
+    // separately branched on since there is no defined failure outcome
+    // to check against.
+    const VkResult versionResult = enumerateInstanceVersionFn(&loaderVersion);
+    ATLANTIS_CHECK(versionResult == VK_SUCCESS);
+  }
+  const std::uint32_t requestedApiVersion =
+      decideRequestedInstanceApiVersion(loaderVersionQueryAvailable, loaderVersion);
+
   VkApplicationInfo applicationInfo{};
   applicationInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
   applicationInfo.pApplicationName = applicationName.c_str();
   applicationInfo.applicationVersion = VK_MAKE_API_VERSION(0, 1, 0, 0);
   applicationInfo.pEngineName = "Atlantis";
   applicationInfo.engineVersion = VK_MAKE_API_VERSION(0, 1, 0, 0);
-  applicationInfo.apiVersion = VK_API_VERSION_1_0;
+  applicationInfo.apiVersion = requestedApiVersion;
 
   const VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo = makeDebugMessengerCreateInfo();
 
@@ -206,6 +233,7 @@ atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const D
   InstanceCreateResult result{instance};
   result.physicalDeviceProperties2ExtensionAvailable = physicalDeviceProperties2Resolved;
   result.getPhysicalDeviceFeatures2KHR = physicalDeviceProperties2Resolved ? getPhysicalDeviceFeatures2KHR : nullptr;
+  result.instanceRequestedApiVersionAtLeast1_3 = requestedApiVersion >= VK_API_VERSION_1_3;
   return ResultT::Ok(result);
 }
 

@@ -40,6 +40,15 @@ struct InstanceCreateResult {
   // discipline, mirroring the device-level vkCmdBeginRenderingKHR/
   // vkCmdEndRenderingKHR resolution).
   PFN_vkGetPhysicalDeviceFeatures2KHR getPhysicalDeviceFeatures2KHR = nullptr;
+
+  // ADR-0024 "Accepted Amendment -- 2026-08-13", Section 3: true iff this
+  // instance actually requested VkApplicationInfo::apiVersion >=
+  // VK_API_VERSION_1_3 (queried via the loader-version check in
+  // createInstance() below, before vkCreateInstance()). An instance-wide
+  // fact, computed exactly once here, passed unchanged into
+  // decideDynamicRenderingPath() (dynamic_rendering.h) for every
+  // physical-device candidate -- never re-derived per candidate.
+  bool instanceRequestedApiVersionAtLeast1_3 = false;
 };
 
 // Creates a VkInstance for params.applicationName, requesting
@@ -50,6 +59,20 @@ struct InstanceCreateResult {
 // vkCreateInstance/vkDestroyInstance themselves are validation-covered.
 // No headless, Android, portability/MoltenVK, or other backend
 // extension is ever requested -- Windows-only, Phase 1 scope.
+//
+// ADR-0024 "Accepted Amendment -- 2026-08-13", Section 3: before ever
+// calling vkCreateInstance(), queries the Vulkan loader's own maximum
+// supported version (vkEnumerateInstanceVersion, resolved via
+// vkGetInstanceProcAddr(nullptr, ...) -- a global command, callable
+// without an instance) and requests
+// VkApplicationInfo::apiVersion = VK_API_VERSION_1_3 if and only if the
+// loader itself reports at least that version; otherwise requests
+// VK_API_VERSION_1_0, unchanged from this repository's original,
+// shipped behavior. A loader reporting below 1.3 (including a genuine
+// Vulkan-1.0-only loader with no vkEnumerateInstanceVersion at all) is
+// not an error condition and never fails this function by itself -- see
+// instance_api_version.h's decideRequestedInstanceApiVersion() for the
+// pure decision logic this step delegates to.
 //
 // validationEnabled must already be the caller's single, already-computed
 // effectiveValidationLayersEnabled(IsDebugBuild, params.enableValidationLayers)
