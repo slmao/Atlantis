@@ -50,9 +50,11 @@ The most significant outcomes of that research:
 
 - **SPIRV-Reflect is dropped entirely** — Slang's own `slangc
   -reflection-json` CLI output covers this spec's full reflection scope,
-  so no second reflection library is introduced. This spec now introduces
-  **zero** new `FetchContent`-acquired third-party dependencies, a
-  strictly smaller footprint than the original draft.
+  so no second reflection library is introduced. This spec introduces
+  **no new dependency acquisition mechanism** (no `FetchContent` entry,
+  no package manager, no separate installer), while being explicit that
+  `slangc` is nevertheless a **newly required build tool** inherited from
+  the already-required Vulkan SDK installation.
 - **Slang's own compiler (`slangc`) is sourced from the same Vulkan SDK
   installation `glslc` was already sourced from** — confirmed bundled
   since Vulkan SDK 1.3.296.0, and present in the exact SDK version
@@ -63,10 +65,10 @@ The most significant outcomes of that research:
   subprocess; Shader System never links Slang's compiler library.
 - **The Shader-System-to-RHI dependency direction is resolved
   explicitly**: `Atlantis::RHI` never depends on `Atlantis::ShaderSystem`;
-  `Atlantis::ShaderSystem`'s own public headers reference no RHI type; a
-  new, narrow, explicitly-named adapter target
-  (`Atlantis::ShaderSystemRhiAdapter`) is the only place a dependency on
-  both exists.
+  Shader System's own core target references no RHI type in any public
+  header; the RHI-shape mapping lives in a **secondary integration target
+  inside the Shader System module — not a new top-level module**, leaving
+  [AGENTS.md](../AGENTS.md)'s nine-module list unchanged.
 - **Vertex-buffer stride and per-attribute offset are explicitly stated
   as Mesh/vertex-schema-owned, never reflected** — no shader reflection
   tool of any kind, Slang included, can derive a host-side interleaved
@@ -82,11 +84,141 @@ The most significant outcomes of that research:
   requiring Human Review confirmation, not a foregone conclusion. See
   Risks & Open Questions.
 
+A second revision the same day added the **Validation Evidence** section
+below, after the design was checked against the real toolchain. That
+evidence **corrected** three claims this Revision Note originally made
+from documentation alone — see that section's own "Results" and "What
+this evidence did not establish" subsections.
+
 Nothing in this spec's Non-Goals, overall scope boundary (spec/ADR-only,
 no Plan, no implementation), or relationship to
 [ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)
 changes from the original draft — only the technical design underneath
 that scope changes.
+
+## Validation Evidence (2026-08-14)
+
+The Slang-based design above was initially written from documentation
+alone. It has since been checked against the actual toolchain. This
+section records what was run, what was observed, and — importantly —
+which earlier claims the evidence **contradicted**, so that a reviewer
+can see the design was corrected by the results rather than filtered
+through them.
+
+**Scope and limits of this evidence.** These are single-machine
+observations on one Slang version, gathered in a scratch directory
+outside the repository. No experiment file is checked in, no Atlantis
+target was built, and no GPU workload was run. Local observations are
+labelled as such and are **never** escalated into vendor guarantees.
+
+### Environment
+
+| Item | Value |
+|---|---|
+| Vulkan SDK | `1.4.357.0` (`%VULKAN_SDK%`) |
+| `slangc.exe` | present in the SDK's `Bin` directory |
+| `spirv-val.exe` / `spirv-dis.exe` | present in the same directory; both report `SPIRV-Tools v2026.3` |
+| Slang version | **`slangc` has no version flag** — `slangc --version` returns `error[E00017]: unknown command-line option '--version'`. Version identified instead from the SDK's `Bin\slang-standard-module-2026.13.1` directory. |
+| Host | Windows |
+
+### What was compiled
+
+A minimal `.slang` module (scratch directory only) containing one vertex
+and one fragment entry point sharing a single varying-interface `struct`,
+with explicit `[[vk::location(0)]]`/`[[vk::location(1)]]` vertex inputs,
+an explicit `[[vk::binding(0, 0)]]` uniform buffer, and a
+`[[vk::push_constant]]` 4x4 matrix. A second, smaller probe module used
+`[[vk::binding(3, 2)]]` specifically to test non-zero descriptor-set
+reporting.
+
+Representative command (fragment stage identical but for `-entry`/
+`-stage`/output names):
+
+```
+slangc -target spirv -profile spirv_1_0 -entry vertexMain -stage vertex \
+       -o out.vert.spv -reflection-json out.vert.refl.json minimal_mesh.slang
+```
+
+### Results
+
+1. **SPIR-V 1.0 compilation succeeds.** Exit code 0; `spirv-dis` reports
+   `; Version: 1.0`. It emits one warning: `warning[E50011]: SPIR-V
+   version too old`. `-profile spirv_1_3` produces no such warning. The
+   warning is suppressible (`-warnings-disable 50011`) with byte-identical
+   output, but this spec does not silently adopt suppression — see Risks.
+2. **Two version-selection findings that materially changed the design:**
+   - **The default, with no `-profile`, emits SPIR-V 1.5** — which
+     requires a Vulkan 1.2 device. Relying on the default would have
+     silently raised Atlantis's device-compatibility floor.
+   - **`-capability spirv_1_0` does not select the output version** — a
+     compile passing only that flag still emitted SPIR-V 1.5. **Only
+     `-profile` selects the version.**
+   Both are now fixed as mandatory requirements in
+   [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md).
+3. **`-reflection-json` produces JSON successfully** for every
+   invocation.
+4. **Reflection field availability** (full classification in
+   [ADR-0030](../adr/0030-shader-system-reflection-strategy-and-rhi-boundary.md)):
+   entry-point name, stage, descriptor binding index, descriptor set
+   (`"space"`), resource type, push-constant offset/size, vertex-input
+   index, and vertex-input element type were **all present**. Two
+   corrections to earlier assumptions:
+   - **Descriptor set appears as `"space"`, and is omitted entirely when
+     the set is 0.** A parser must treat its absence as set 0.
+   - **User-declared vertex inputs carry no `semanticName`.** Only the
+     system-value output `SV_Position` did. The earlier draft's
+     assumption that semantic name/index would identify vertex inputs was
+     wrong.
+5. **Vertex-input location is not a labelled JSON field.** The JSON
+   reports `{"kind": "varyingInput", "index": N}`. Disassembly of the
+   same module showed `OpDecorate %input_position Location 0` /
+   `%input_color Location 1`, matching those indices — **but the source
+   had already pinned them with explicit `[[vk::location(N)]]`**, so this
+   observation cannot prove an independent guarantee. The design
+   consequently treats the explicit authoring attribute as authoritative
+   and the JSON index as a cross-check.
+6. **Push-constant reflection was correct here** (`offset: 0`,
+   `size: 64`); the known upstream concern
+   ([issue #5676](https://github.com/shader-slang/slang/issues/5676)) did
+   not reproduce for this shape. Recorded as one passing observation, not
+   a guarantee.
+7. **Entry-point naming confirmed in both directions.** Without
+   `-fvk-use-entrypoint-name`: `OpEntryPoint Vertex %vertexMain "main"`
+   (and `OpEntryPoint Fragment %fragmentMain "main"`). With the flag:
+   `"vertexMain"`. Documented behavior and observed behavior agree, and
+   the default is compatible with the Vulkan Backend's existing
+   hard-coded `pName = "main"`.
+8. **Reflection granularity is per invocation, not per module.** The
+   top-level `"parameters"` array listed *all* module-scope parameters in
+   both stages' output — including the camera uniform in the fragment
+   stage, where it is unused. The `"entryPoints"` array contained only the
+   entry point named by `-entry`. Per-entry-point usage is separately
+   available via `entryPoints[].bindings[].used` (observed `1` for the
+   vertex stage, `0` for the fragment stage).
+9. **`spirv-val --target-env vulkan1.0` passed (exit 0)** for both the
+   vertex and fragment artifacts.
+10. **`spirv-dis` confirmed** `OpEntryPoint`, `Location`,
+    `DescriptorSet`, `Binding`, and push-constant `Block`/`Offset`
+    decorations, including `DescriptorSet 2` / `Binding 3` on the
+    non-zero-set probe.
+11. **Local determinism observed**: two identical compiles produced
+    SHA-256-identical `.spv` **and** SHA-256-identical reflection JSON.
+    **Single-machine, single-version observation only — not a Slang
+    reproducibility guarantee**, and not treated as one anywhere in this
+    spec.
+
+### What this evidence did not establish
+
+- Whether Slang *guarantees* `varyingInput` index equals SPIR-V
+  `Location` independently of explicit `[[vk::location(N)]]` attributes.
+- Whether the reflection JSON's shape is stable across Slang releases —
+  **no official schema or versioning guarantee was found**, which is
+  precisely why
+  [ADR-0030](../adr/0030-shader-system-reflection-strategy-and-rhi-boundary.md)
+  fixes a version-bound parsing policy.
+- Any runtime/GPU behavior. No Vulkan device was created and no
+  Validation Layer run was performed; Validation Layers remain the
+  mandatory GPU-path gate that only a future implementation can exercise.
 
 ## Summary
 
@@ -227,6 +359,16 @@ Explicitly excluded from this spec's design and implementation:
   is fixed, narrow, and Atlantis-owned, versioned by a single integer
   field, not a general schema-migration framework.
 - **Editor integration.** No tool UI, no live-shader-preview surface.
+- **Shader debug-information generation, source-level shader debugging
+  (e.g. RenderDoc shader source views), per-configuration optimization
+  levels, and any Debug/Release shader permutation system.** Debug and
+  Release C++ configurations use **identical** shader compilation flags,
+  which is exactly why a single configuration-independent artifact is
+  coherent rather than a shortcut — see
+  [ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md).
+  If a future spec introduces configuration-dependent shader flags, both
+  the artifact output-path model and the incremental-build dependency
+  model must be re-examined together.
 - **D3D12/DXIL, Metal/MSL, WebGPU/WGSL, CUDA, or any Slang target beyond
   Vulkan/SPIR-V.** Slang itself officially supports several of these
   targets, but Phase 1 configures and invokes exactly one:
@@ -364,17 +506,69 @@ Explicitly excluded from this spec's design and implementation:
   `layout(location=...)`/`layout(binding=...)` discipline the current
   checked-in GLSL shaders already use, so locations/bindings are
   deterministic and directly knowable from source, not left to Slang's
-  own default declaration-order assignment.
+  own default declaration-order assignment. This is load-bearing, not
+  stylistic: the reflection JSON reports a `varyingInput` index rather
+  than a field labelled as a SPIR-V `Location`, so the explicit
+  attribute — not the reflected index — is what makes the location
+  authoritative.
+
+**Entry-point naming policy — fixed here, not left to the Plan**
+
+Four names must not be conflated; Phase 1 fixes each:
+
+| Concept | Phase 1 value |
+|---|---|
+| Slang source function name | meaningful, e.g. `vertexMain`/`fragmentMain` |
+| `slangc -entry` argument | the same source name |
+| SPIR-V `OpEntryPoint` name in the emitted module | **`"main"`** |
+| `VkPipelineShaderStageCreateInfo::pName` | **`"main"`** (existing Vulkan Backend code, unchanged) |
+
+- **Atlantis Tools' CLI must never pass `-fvk-use-entrypoint-name`.**
+  Slang's documented default, with that flag absent, renames the selected
+  entry point to `"main"` in the SPIR-V output — verified in both
+  directions on the installed toolchain (see Validation Evidence).
+- This keeps the Vulkan Backend's existing hard-coded `pName = "main"`
+  (`src/vulkan_backend/src/vulkan_device.cpp`) working with **no RHI or
+  Vulkan Backend change at all**, while still allowing meaningful source
+  names.
+- The reflection JSON reports the **source** name (`"vertexMain"`), not
+  the emitted SPIR-V name; consumers must not treat them as the same
+  string.
+- **A future spec wanting source entry-point names preserved in SPIR-V
+  must first change the RHI/Vulkan Backend contract** (`pName` is
+  currently a hard-coded literal). Enabling this flag is therefore
+  explicitly **not** a decision a future Plan may make on its own.
 
 **Reflection**
 
 - For each compiled shader stage, reflection extracts: descriptor
-  bindings (set/binding/type/stage), push-constant ranges (offset/size/
-  stage), vertex-input attributes (vertex stage only: location/format —
+  bindings (set/binding/type), push-constant ranges (offset/size),
+  vertex-input attributes (vertex stage only: index/element type —
   **not** stride or byte offset, see below), the stage's entry-point
-  name, and shader stage — see
+  name, and shader stage. Every one of these was observed in a real
+  `slangc -reflection-json` output (see Validation Evidence above); see
   [ADR-0030](../adr/0030-shader-system-reflection-strategy-and-rhi-boundary.md)
-  for the full, deliberately narrow scope.
+  for each field's evidence tier and the two parsing hazards
+  (`"space"` omitted when the descriptor set is 0; user vertex inputs
+  carry no `semanticName`).
+- **Descriptor reflection is consumed for validation only, never for
+  pipeline-layout construction this round.** `PipelineCreateParams`
+  (`src/rhi/include/atlantis/rhi/types.h`) has no descriptor field, and
+  the Vulkan Backend hard-codes its single binding
+  (`src/vulkan_backend/src/vulkan_device.cpp`: set 0, binding 0, uniform
+  buffer, vertex stage). Shader System encodes that same expectation as a
+  fixed expected contract and **compares** reflected descriptor data
+  against it; any deviation (different set, binding, type, or count) is a
+  recoverable mapping error that fails the **build** with a readable
+  diagnostic. Its value is moving a today-silent shader/backend binding
+  mismatch from "maybe caught by Validation Layers at draw time on a GPU
+  machine" to "always caught at build time on every machine" — obtained
+  with **zero** RHI change. Reflection-driven descriptor layout
+  construction is explicitly future work requiring
+  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)
+  to be reopened. See
+  [ADR-0030](../adr/0030-shader-system-reflection-strategy-and-rhi-boundary.md)'s
+  "Descriptor reflection: validation only" section.
 - A supplementary cross-stage interface compatibility check (vertex
   `Output` interface locations must be a superset of fragment `Input`
   interface locations, by location index) runs as part of the Tools
@@ -384,7 +578,9 @@ Explicitly excluded from this spec's design and implementation:
   supplements, and does not duplicate or substitute for, Slang's own
   compile-time guarantee (the primary check).
 - Reflection is obtained via **`slangc -reflection-json`** — an official
-  Slang CLI capability, requiring **no new third-party dependency**.
+  Slang CLI capability, verified working on the installed SDK, requiring
+  **no new dependency acquisition mechanism** (it is the same `slangc`
+  already required for compilation).
   Shader System transforms Slang's own reflection JSON into its own
   small, Atlantis-owned, versioned JSON schema (one `"schemaVersion"`
   integer field), never re-exposing Slang's raw JSON shape as Atlantis's
@@ -418,17 +614,28 @@ Explicitly excluded from this spec's design and implementation:
   `src/rhi/include/atlantis/rhi/types.h`) is not modified by this spec.
   **`Atlantis::RHI` never depends on `Atlantis::ShaderSystem`, in any
   form.**
-- **`Atlantis::ShaderSystem`'s own public headers reference no RHI
-  type.** A new, explicitly-named target,
-  `Atlantis::ShaderSystemRhiAdapter` (depending `PUBLIC` on both
-  `Atlantis::ShaderSystem` and `Atlantis::RHI`), is the only place a
-  dependency on both exists — see
-  [ADR-0030](../adr/0030-shader-system-reflection-strategy-and-rhi-boundary.md)
-  for the full justification of this exact shape, fixed here, not left
-  for a future Plan to choose between architecturally different options.
+- **`Atlantis::ShaderSystem`'s own core library target references no RHI
+  type in any public header**, and must remain fully usable and testable
+  with no knowledge that RHI exists.
+- **The RHI-shape mapping lives in a secondary integration target inside
+  the Atlantis Shader System module — not a new top-level module.**
+  [AGENTS.md](../AGENTS.md)'s nine-module list is **unchanged by this
+  spec**, and neither `AGENTS.md` nor
+  [docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md)
+  is edited. This target establishes no independent subsystem ownership,
+  owns no GPU resource, no `Pipeline`, and no compiler process; its sole
+  job is combining Shader-System-owned metadata with consumer-supplied
+  Mesh/vertex-schema data and validating the result into existing RHI
+  value types. Concrete target/alias naming is a Plan-stage detail,
+  deliberately not fixed here so the name cannot be read as announcing a
+  tenth module. See
+  [ADR-0030](../adr/0030-shader-system-reflection-strategy-and-rhi-boundary.md).
 - `Atlantis::VulkanBackend`'s `createPipeline()` implementation is
-  unchanged and gains no dependency on Shader System, the adapter, or
-  reflection of any kind.
+  unchanged and gains no dependency on Shader System, this integration
+  target, or reflection of any kind.
+- **No Slang type appears in any public header** of Core, RHI,
+  RenderGraph, Renderer, or Shader System itself — Slang is only ever a
+  subprocess.
 
 **Artifact location, versioning, and migration**
 
@@ -466,10 +673,12 @@ Explicitly excluded from this spec's design and implementation:
   introduced.
 - Shader System's library API (the schema, its loader, the command-line-
   construction helper) uses `atlantis::Result<T, E>` throughout, matching
-  every other Phase 1 module's convention. `Atlantis::ShaderSystemRhiAdapter`'s
-  mapping functions do the same, returning `Result<..., MappingError>` on
-  a genuine reflection/Mesh-schema mismatch rather than silently
-  accepting one.
+  every other Phase 1 module's convention. The Shader System module's
+  RHI-integration target does the same, returning
+  `Result<..., MappingError>` on a genuine reflection/Mesh-schema
+  mismatch, or on a reflected descriptor shape that deviates from the
+  fixed expected descriptor contract, rather than silently accepting
+  either.
 - Every new public type/function this spec introduces documents its
   thread-safety contract at its public API, per
   [ADR-0004](../adr/0004-phase1-threading-baseline.md)'s existing
@@ -501,13 +710,28 @@ Explicitly excluded from this spec's design and implementation:
   is not itself evidence Atlantis needs an Android host build in Phase
   1 — it only confirms Slang's own toolchain does not structurally
   preclude one later.
-- **Other:** **zero new third-party dependencies** this round (SPIRV-
-  Reflect, proposed in this spec's original 2026-08-13 draft, is removed
-  entirely). `slangc` is not a new dependency in
-  [AGENTS.md](../AGENTS.md)'s sense — a new *use* of a component already
-  shipped by the Vulkan SDK
-  [ADR-0006](../adr/0006-dependency-management.md) already requires, per
-  [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md).
+- **Other — dependency posture, stated precisely rather than as "zero
+  dependencies":**
+  - **No new independent dependency acquisition mechanism is
+    introduced.** No `FetchContent` entry, no package manager, no
+    from-source build, no separate installer. (SPIRV-Reflect, proposed in
+    this spec's original 2026-08-13 draft, is removed entirely.)
+  - **`slangc` is nevertheless a newly required build tool** and a new
+    component the Atlantis build graph depends on. A machine whose Vulkan
+    SDK installation lacks it could no longer build shader-consuming
+    targets.
+  - **`spirv-val`**, if
+    [ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md)'s
+    recommended static validation is adopted, is likewise a newly
+    required build tool — confirmed present in the same SDK `Bin`
+    directory as `slangc`.
+  - **Both inherit their availability from the supported Vulkan SDK
+    installation** [ADR-0006](../adr/0006-dependency-management.md)
+    already requires, per
+    [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md).
+  - **Missing-tool failure stage is fixed:** absence of either tool fails
+    at **CMake configure time** with an explicit `FATAL_ERROR`, never a
+    silently-skipped target and never a late build-time surprise.
   Unit tests use the existing Catch2 v3 framework
   ([ADR-0007](../adr/0007-test-framework.md)).
 
@@ -552,13 +776,15 @@ atlantis_shader_compiler (Tools CLI), one process per invocation:
 
 Later, at whatever point a caller constructs PipelineCreateParams
 (a future Renderer-level Material-construction call site, not designed
-by this spec), via Atlantis::ShaderSystemRhiAdapter:
+by this spec), via the Shader System module's RHI-integration target:
   ShaderSystem::loadReflectionMetadata(jsonPath) -> Result<ReflectionMetadata, ...>
-  ShaderSystemRhiAdapter::toVertexInputLayout(metadata, meshStrideOffsetTable)
+  ShaderSystemRhiIntegration::toVertexInputLayout(metadata, meshStrideOffsetTable)
     -> Result<rhi::VertexInputLayout, MappingError>
     -- combines reflection-owned (location, format) with Mesh-schema-
        owned (stride, offsets); cross-validates, does not invent --
-  ShaderSystemRhiAdapter::toPushConstantSize(metadata) -> std::size_t
+  ShaderSystemRhiIntegration::toPushConstantSize(metadata) -> std::size_t
+  ShaderSystemRhiIntegration::validateDescriptorContract(metadata)
+    -> Result<void, MappingError>   // validation only; drives nothing
   -- caller loads the corresponding .spv bytes directly --
   Device::createPipeline({ vertexShader, fragmentShader,
                             vertexInputLayout, colorFormat, depthFormat,
@@ -596,7 +822,8 @@ as the sole reflection source (no new dependency); Atlantis's own
 transformed JSON schema; the field-by-field `VertexInputLayout` authority
 table (reflection vs. Mesh-schema vs. attachment-format); the shared-
 varying-struct authoring convention and its supplementary location-index
-check; and the explicit `Atlantis::ShaderSystemRhiAdapter` target that
+check; the descriptor-reflection validation-only consumption scope; and
+the secondary integration target inside the Shader System module that
 alone bridges Shader System and RHI.
 
 ### Artifact location and reproducibility
@@ -659,8 +886,9 @@ this spec's prose alone:
    new dependency); Atlantis's own transformed JSON schema; the explicit,
    field-by-field `VertexInputLayout` authority split between reflection
    and Mesh-schema; the shared-varying-struct cross-stage authoring
-   convention; and the explicit `Atlantis::ShaderSystemRhiAdapter` target
-   resolving the RHI dependency-direction question. Filed as
+   convention; the validation-only scope of descriptor reflection; and
+   the Shader-System-internal integration target resolving the RHI
+   dependency-direction question without adding a top-level module. Filed as
    [ADR-0030](../adr/0030-shader-system-reflection-strategy-and-rhi-boundary.md).
 4. **Artifact location, versioning, and reproducibility** — build-tree,
    configuration-independent output location; no checked-in binary
@@ -679,7 +907,8 @@ Migration Boundary, not its historical correctness for Spec 0007's own
 moment. Architectural Impact was not "None" — a new module
 (`Atlantis Shader System`), a new build-time executable target (Tools'
 CLI), a new explicitly-named adapter target
-(`Atlantis::ShaderSystemRhiAdapter`), and a new generated-artifact
+(a secondary integration target within the existing Shader System
+module, not a new top-level module), and a new generated-artifact
 category (build-tree, non-checked-in shader bytecode/metadata) are each
 exactly what [AGENTS.md](../AGENTS.md)'s "What counts as significant"
 section requires the full Spec → Plan → Human Review path for. **This
@@ -731,7 +960,8 @@ Human Review before any code, CMake target, or shader file is written.
   own Alternatives Considered.
 - **Widen `Device::createPipeline()`'s contract, or fold the RHI-mapping
   helper directly into `Atlantis::ShaderSystem` itself**, rather than
-  introducing a separate `Atlantis::ShaderSystemRhiAdapter` target. See
+  introducing a separate integration target inside the Shader System
+  module. See
   [ADR-0030](../adr/0030-shader-system-reflection-strategy-and-rhi-boundary.md)'s
   own Alternatives Considered — rejected because either would create an
   unwanted dependency edge (`RHI` → `ShaderSystem`, or every reflection
@@ -766,6 +996,28 @@ configuration is written by this round.)*
     causes a **Slang compile error** — verifying the primary, compiler-
     enforced cross-stage guarantee actually fires, not merely the
     supplementary Atlantis-side location check.
+  - **The emitted SPIR-V version is asserted to be exactly the intended
+    one**, not merely assumed from the flags passed. This is a direct
+    regression test for the two version-selection hazards recorded in
+    Validation Evidence (the no-`-profile` default emitting SPIR-V 1.5,
+    and `-capability` not selecting the version at all): a silent
+    reversion to either would otherwise raise Atlantis's device floor
+    undetected.
+  - **Every emitted artifact passes `spirv-val --target-env vulkan1.0`**
+    (if [ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md)'s
+    recommended validation step is adopted), and a deliberately-invalid
+    module is confirmed to make the build fail rather than pass silently.
+  - **The emitted `OpEntryPoint` name is asserted to be `"main"`**,
+    guarding the entry-point compatibility contract against a future
+    change that adds `-fvk-use-entrypoint-name` without also changing the
+    Vulkan Backend's hard-coded `pName`.
+  - **A shader whose `[[vk::binding(...)]]` deviates from the fixed
+    expected descriptor contract fails the build** with a readable
+    diagnostic — the concrete regression test for the descriptor
+    validation-only mechanism.
+  - **Push-constant offset and size reported by reflection are asserted
+    against expected values**, per the issue-#5676 caveat recorded in
+    Risks: one passing observation is not a standing guarantee.
   - Debug and Release configurations (and, if the test environment is a
     multi-config generator, both configurations of the same build tree)
     both build successfully, sharing one compiled shader artifact set.
@@ -782,7 +1034,7 @@ configuration is written by this round.)*
   - Shader System's Slang-raw-JSON-to-Atlantis-schema transformation
     function correctly re-projects a fixture Slang `-reflection-json`
     output into the expected Atlantis-schema value.
-  - `Atlantis::ShaderSystemRhiAdapter`'s `toVertexInputLayout()`/
+  - The Shader System RHI-integration target's `toVertexInputLayout()`/
     `toPushConstantSize()` correctly combine a fixture
     `ReflectionMetadata` with a fixture Mesh-schema stride/offset table
     into the expected `VertexInputLayout`, and correctly return
@@ -825,24 +1077,61 @@ configuration is written by this round.)*
   Plan-stage detail.** Slang's own documentation states SPIR-V 1.3+
   emission is "stable" while SPIR-V 1.0–1.2 emission is "experimental"
   ([docs.shader-slang.org — SPIR-V-Specific Functionalities](https://docs.shader-slang.org/en/latest/external/slang/docs/user-guide/a2-01-spirv-target-specific.html)).
+  **Four axes must not be conflated** (an earlier draft of this spec
+  blurred them): the Vulkan *instance* `apiVersion` request (decided by
+  [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md));
+  the *physical device* selection floor, currently `VK_API_VERSION_1_0`
+  in `src/vulkan_backend/src/vulkan_device.cpp` and never raised by any
+  Accepted ADR; the **SPIR-V binary version** of an emitted module; and
+  `slangc`'s own `-target`/`-profile`/`-capability` flags.
+  **ADR-0024 decides nothing about the SPIR-V binary version** — it does
+  not mention SPIR-V at all. This spec is the first to touch that axis.
+
+  Per the Vulkan specification, a Vulkan 1.0 implementation must support
+  **only** SPIR-V 1.0, while SPIR-V 1.3 first becomes mandatory at
+  **Vulkan 1.1**
+  ([`appendices/spirvenv.adoc`](https://github.com/KhronosGroup/Vulkan-Docs/blob/main/appendices/spirvenv.adoc)).
+  No extension bridges SPIR-V 1.3 onto a Vulkan 1.0 device
+  (`VK_KHR_spirv_1_4` bridges Vulkan **1.1**-to-SPIR-V 1.4, so it does
+  not help). **There is therefore no third option that obtains Slang's
+  "stable" tier while keeping a Vulkan 1.0 device floor** — this spec
+  explicitly does not claim one exists.
+
   Two concrete options exist, and this spec does not pick one unilaterally:
-  1. **Target SPIR-V 1.0** (this spec's stated recommendation in
+  1. **Target SPIR-V 1.0 via `-profile spirv_1_0`** (this spec's stated
+     recommendation in
      [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)),
-     preserving the Vulkan Backend's current, unraised
-     `VK_API_VERSION_1_0` minimum and
+     preserving the Vulkan 1.0 physical-device floor and
      [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)'s
-     explicit prior decision not to raise it — at the cost of relying on
-     a tier Slang's own docs call experimental.
-  2. **Target SPIR-V 1.3** (Slang's "stable" tier), which — per Vulkan's
-     own SPIR-V-environment-to-API-version mapping — would raise the
-     effective minimum device/driver capability the Vulkan Backend can
-     support, a real architectural compatibility-floor change that
-     would need to reopen
-     [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)'s
-     already-`Accepted` decision, which this spec has no authority to do
-     on its own.
+     explicit prior decision not to narrow device compatibility — at the
+     cost of relying on a tier Slang's own docs call experimental, and of
+     the `E50011: SPIR-V version too old` warning this path emits.
+     **Verified working**: the artifact compiles, disassembles as
+     `Version: 1.0`, and passes `spirv-val --target-env vulkan1.0`.
+     Mitigation: adopt that `spirv-val` check in the build
+     ([ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md)),
+     which reduces but **does not eliminate** the risk, and does **not**
+     convert Slang's experimental path into a stable one.
+  2. **Target SPIR-V 1.3** (Slang's "stable" tier), which requires
+     raising the **physical-device** floor from `VK_API_VERSION_1_0` to
+     `VK_API_VERSION_1_1` — a real narrowing of the device population
+     Atlantis serves. This would require its own compatibility-focused
+     Human Review covering
+     [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)
+     (whose Human Review twice declined to narrow device compatibility)
+     and [AGENTS.md](../AGENTS.md)'s Windows/Android platform commitment.
+     This spec has no authority to make that change and does not reopen
+     ADR-0024.
+
   **A human must choose between these before Plan/implementation.** This
   spec does not proceed as if either were already decided.
+- **Whether to suppress the `E50011` warning, and how that interacts with
+  the Definition of Done's "builds cleanly with no new warnings" item.**
+  The warning is suppressible via `-warnings-disable 50011` with
+  byte-identical output, but silently suppressing a "SPIR-V version too
+  old" signal on a path Slang itself calls experimental is a decision
+  that should be made visibly, not by default. Flagged for Human Review,
+  not resolved here.
 - **Exact Tools CLI argument shape, exact Atlantis reflection-JSON schema
   field names, exact build-tree path interpolation syntax, and exact
   CMake target/property names** are left to the Plan — this spec fixes
@@ -853,18 +1142,28 @@ configuration is written by this round.)*
   the Plan, provided the shared-varying-struct authoring convention
   ([ADR-0030](../adr/0030-shader-system-reflection-strategy-and-rhi-boundary.md))
   is honored.
-- **Whether `slangc` exposes its own `-v`/`--version` flag** was not
-  confirmed by the official documentation reviewed for this spec — the
-  provenance mechanism ([ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md))
-  is deliberately anchored on the resolved Vulkan SDK version instead,
-  which *is* officially confirmed. If a future Plan confirms such a flag
-  exists, recording it in addition is a strict improvement this spec does
-  not preclude.
+- ~~**Whether `slangc` exposes its own `-v`/`--version` flag**~~ —
+  **resolved by direct observation: it does not.** `slangc --version`
+  returns `error[E00017]: unknown command-line option '--version'`.
+  Provenance is therefore anchored on the resolved Vulkan SDK version
+  plus the SDK's `slang-standard-module-<version>` directory name, per
+  [ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md).
 - **The disclosed Slang reflection push-constant reporting caveat**
   ([shader-slang/slang issue #5676](https://github.com/shader-slang/slang/issues/5676))
-  must be verified against Atlantis's own actual shader source during
-  Plan-stage/implementation, not assumed resolved by this spec's own
-  research.
+  **did not reproduce** for this spec's own shader shape — push-constant
+  offset and size were reported correctly (see Validation Evidence). This
+  is **one passing observation, not a guarantee**: a future implementation
+  must keep a regression test asserting push-constant offset/size against
+  the real shader, and must not treat this single result as closing the
+  issue.
+- **The reflection JSON has no official schema or versioning guarantee.**
+  None was found in any official Slang material, and the payload carries
+  no version field of its own. The parser is therefore bound to the Slang
+  version pinned by the supported Vulkan SDK, ignores unknown fields,
+  fails hard on missing required fields, and **must be re-verified
+  whenever the supported SDK/Slang version changes** — see
+  [ADR-0030](../adr/0030-shader-system-reflection-strategy-and-rhi-boundary.md).
+  Atlantis does not control this schema.
 - **Whether CI (once it exists) needs its own explicit Vulkan SDK
   provisioning step distinct from whatever it already needs for the
   Vulkan Backend** is a real open question this spec does not resolve —

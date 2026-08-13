@@ -20,6 +20,15 @@
   this revision does not repeat the original's unverified assumption.
   The migration section now describes a GLSL-to-Slang source migration,
   not merely "checked-in bytes to build artifact."
+- **2026-08-14 (second revision — evidence-based):** Updated after the
+  hands-on toolchain experiment recorded in
+  [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md)'s
+  "Validation Evidence" section. Three changes: (1) the absence of a
+  `slangc --version` flag is now a **confirmed** local observation, not
+  an inference, and a concrete alternative version anchor was found;
+  (2) local build determinism was **measured** rather than assumed;
+  (3) the previously-unaddressed Debug/Release shader-debug-info question
+  is now explicitly scoped out, closing an audit-identified gap.
 
 ## Context
 
@@ -93,34 +102,91 @@ build inputs, not through committing binary output.
   authoritative copy other tooling must know about.
 - **Reproducibility model**: a build is reproducible in the sense that
   the same Slang source, compiled by the same `slangc` (i.e. the same
-  Vulkan SDK version) with the same fixed flags (target `spirv`, the
+  Vulkan SDK version) with the same fixed flags (target `spirv`, plus the
   SPIR-V version profile
   [ADR-0028](0028-shader-system-source-language-and-compiler.md)'s
   Decision fixes, pending its own Human-Review-confirmed resolution),
-  produces byte-identical SPIR-V output. This spec does **not** attempt
-  to guarantee bit-for-bit reproducibility across *different* `slangc`/
-  Vulkan SDK versions — Slang's own compiler is not documented anywhere
-  reviewed as making such a cross-version guarantee — instead:
-  - **Every compiled artifact records the resolved Vulkan SDK version**
-    (read from the `find_program()`-located `slangc` binary's own
-    install path, e.g. `%VULKAN_SDK%` or the SDK's own version file/
-    registry entry — exact mechanism a Plan-stage detail) in the
-    reflection JSON sidecar's metadata (a `"vulkanSdkVersion"` field, or
-    equivalent), giving every compiled artifact self-describing
-    provenance without a separate checked-in note — superseding
+  produces byte-identical SPIR-V output.
+  - **Local observation supporting this** (not a vendor guarantee):
+    compiling the same source twice with identical flags produced
+    SHA-256-identical `.spv` output *and* SHA-256-identical reflection
+    JSON. **This is a single-machine, single-Slang-version observation
+    only.** It is deliberately **not** escalated into a claim that Slang
+    guarantees deterministic output — no such guarantee was found in any
+    official Slang material, and none is assumed here.
+  - This spec does **not** attempt to guarantee bit-for-bit
+    reproducibility across *different* `slangc`/Vulkan SDK versions.
+  - **`slangc` exposes no version flag — now confirmed, not inferred.**
+    Invoking `slangc --version` on the installed toolchain returns
+    `error[E00017]: unknown command-line option '--version'`. The
+    provenance anchor is therefore the **resolved Vulkan SDK version**,
+    recorded in the reflection JSON sidecar's metadata (a
+    `"vulkanSdkVersion"` field or equivalent), read from the
+    `find_program()`-located `slangc`'s own install path. This supersedes
     [shaders/minimal_renderer/README.md](../shaders/minimal_renderer/README.md)'s
-    manual, per-directory plain-text compiler-version note. **This is
-    deliberately anchored on the Vulkan SDK version, not an assumed
-    `slangc --version` output**, per this ADR's Revision History and
-    Context above — if a future Plan confirms `slangc` does expose its
-    own version string directly, recording that too is a strict
-    improvement this ADR does not preclude, but does not assume.
+    manual, per-directory plain-text compiler-version note.
+  - **A second, more precise anchor is available and recommended
+    alongside it:** the SDK's `Bin` directory contains a
+    `slang-standard-module-<version>` directory whose name encodes the
+    exact bundled Slang release (observed:
+    `slang-standard-module-2026.13.1`). Recording that string as well
+    gives artifact provenance at Slang-release granularity rather than
+    only SDK granularity. The exact discovery mechanism is a Plan-stage
+    detail; that *some* Slang-release-granular identifier is recorded is
+    fixed here.
   - A recommended/tested Vulkan SDK version range is documented (exact
     text a Plan-stage detail, likely in `shaders/README.md`'s revised
     content) as guidance for contributors and CI image provisioning.
+- **Optional but recommended: static validation of every emitted
+  artifact.** `spirv-val.exe` is present in the same Vulkan SDK `Bin`
+  directory as `slangc.exe` (confirmed on the installed SDK; it reports
+  `SPIRV-Tools v2026.3` and lists "SPIR-V 1.0 (under Vulkan 1.0
+  semantics)" among its supported targets). Running
+  `spirv-val --target-env vulkan1.0` on each emitted module, as part of
+  the same Tools CLI invocation that produced it, is **recommended** — it
+  is the concrete mitigation
+  [ADR-0028](0028-shader-system-source-language-and-compiler.md) relies on
+  for the SPIR-V-1.0-tier risk. Both experiment artifacts passed with
+  exit code 0. Because `spirv-val` ships in the same already-required SDK,
+  it introduces **no new independent dependency acquisition mechanism**,
+  though — like `slangc` — it would become **an additional required build
+  tool** whose absence must fail at configure time, not silently disable
+  validation. **This static validation does not replace Vulkan Validation
+  Layers**, which remain the mandatory gate on any GPU-touching path per
+  [AGENTS.md](../AGENTS.md), and **does not convert Slang's
+  experimental-tier SPIR-V 1.0 path into a stable one.**
 - **Freshness/staleness**: guaranteed correct by
   [ADR-0029](0029-shader-system-build-time-compilation-boundary.md)'s
   `add_custom_command()` `DEPENDS` mechanism.
+
+### Debug/Release and shader debug information — scoped out deliberately
+
+A configuration-independent shader artifact is only coherent if shader
+compilation genuinely does not vary by C++ build configuration. This
+section states that condition explicitly rather than leaving it implied:
+
+- **Shader debug-information generation is out of scope for Spec 0008's
+  Phase 1.** No Slang debug-info flag, no source-level shader debugging
+  support, and no optimization-level selection is configured.
+- **Debug and Release C++ configurations use identical shader
+  compilation flags.** There is exactly one flag set, applied uniformly.
+- **Therefore a single, configuration-independent SPIR-V artifact is a
+  deliberate design consequence, not an oversight** — this closes the
+  gap an audit of the previous revision correctly identified, where
+  "one artifact for all configurations" was asserted without stating
+  that nothing in the compile step varies by configuration.
+- **Explicitly deferred to future work:** RenderDoc/source-level shader
+  debugging, shader debug-info variants, differing optimization levels
+  per configuration, and any shader permutation keyed on build
+  configuration. **No Debug/Release shader permutation system is designed
+  by this ADR.**
+- **Trigger for revisiting:** if any future spec introduces
+  configuration-dependent shader compilation flags, both the artifact
+  output path model (currently one shared, `$<CONFIG>`-independent
+  directory) and the incremental-build dependency model **must** be
+  re-examined together — a configuration-dependent flag set makes the
+  single-shared-output-directory decision above invalid, not merely
+  suboptimal.
 - **No artifact is ever checked into git by this spec's implementation.**
   `.gitignore` is extended (a Plan-stage detail names the exact pattern)
   to exclude the build-tree shader output directory.
@@ -152,8 +218,8 @@ build inputs, not through committing binary output.
   future Plan/implementation switches
   `examples/minimal_renderer_demo`/the GPU test's `Material` construction
   from loading the checked-in `.spv` file to consuming Shader System's
-  build-tree-generated artifact and
-  `Atlantis::ShaderSystemRhiAdapter`-mapped reflection metadata instead.
+  build-tree-generated artifact and the reflection metadata mapped by the
+  Shader System module's RHI-integration target instead.
   **This migration, and the call-site change it requires, is explicitly
   not performed by this spec** — Spec 0008 is a spec/ADR-only round; it
   is scoped as required follow-up for Shader System's implementation

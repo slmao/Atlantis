@@ -21,6 +21,23 @@
   **firms up the RHI dependency direction and the vertex-stride
   authority question explicitly**, rather than leaving either to a
   future Plan, per explicit human direction.
+- **2026-08-14 (second revision — evidence-based):** Revised again after
+  an actual `slangc`/`spirv-dis`/`spirv-val` experiment was run against
+  the installed Vulkan SDK (see
+  [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md)'s
+  "Validation Evidence" section for the full record). Three claims in the
+  previous revision were **not supported by the real reflection JSON** and
+  are corrected here: (1) descriptor-binding reflection was described in
+  a way that implied it feeds pipeline-layout construction, which the
+  unchanged `PipelineCreateParams` cannot express — its consumption is
+  now narrowed to **contract validation only**; (2) the reflection JSON
+  reports a Slang-internal `varyingInput` **index**, not a field labelled
+  as a SPIR-V `Location`, so the location-mapping rule is now stated as
+  an explicitly-verified-by-disassembly correspondence rather than an
+  assumed JSON guarantee; (3) the entry-point naming policy
+  (`-fvk-use-entrypoint-name` must not be passed) is now fixed
+  explicitly, having been verified in both directions. Every reflection
+  field is now classified by how it was actually established.
 
 ## Context
 
@@ -119,45 +136,116 @@ Shader System transforms Slang's own reflection JSON into a small,
 Atlantis-owned, versioned JSON schema; RHI's `Device::createPipeline()`
 contract is unchanged; vertex-buffer stride and byte offsets remain an
 explicitly Mesh/vertex-schema-owned value, never a reflected one; and a
-new, narrowly-scoped RHI-adapter target — not `Atlantis::ShaderSystem`
-itself — is the only place a Shader-System-to-RHI dependency exists.**
+secondary integration target inside the Shader System module — not
+Shader System's own core library target, and not a new top-level module —
+is the only place a Shader-System-to-RHI dependency exists.**
 
-### Reflection scope
+### Reflection scope, classified by how each field was established
 
-Reflection extracts exactly the following from each compiled shader
-stage's Slang reflection output, per stage:
+Every field below is tagged with its evidence tier, per the experiment
+recorded in
+[specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md)'s
+"Validation Evidence" section. **`[JSON-verified]`** = observed in a real
+`slangc -reflection-json` output on Slang 2026.13.1 (Vulkan SDK
+1.4.357.0). **`[SPIRV-verified]`** = established only by disassembling
+the emitted module with `spirv-dis`, not by a labelled JSON field.
+**`[host-owned]`** = not obtainable from any shader reflection, by
+construction.
 
-- **Descriptor bindings**: set/binding index, descriptor type (this
-  round's shaders use exactly one: uniform buffer), and the shader
-  stage(s) that reference it — sourced from Slang's binding-space
-  reflection, per Context above.
-- **Push-constant ranges**: offset, size, and the shader stage(s) that
-  reference the range — sourced from Slang's default ordinary-uniform-
-  parameter-to-push-constant mapping, or an explicit `[vk::push_constant]`
-  annotation.
-- **Vertex input attributes** (vertex stage only): **location** (from
-  the shader's own explicit `[[vk::location(X)]]` attribute, per
-  Atlantis's mandated authoring convention below) and **format**
-  (derived from the Slang type of each vertex-stage entry-point
-  parameter/struct field — e.g. a `float3` field maps to
-  `VertexAttributeFormat::Float3`, mirroring
-  `src/rhi/include/atlantis/rhi/types.h`'s existing enum). **Neither
-  stride nor per-attribute byte offset within an interleaved buffer is
-  part of this data** — see "Vertex input layout: split authority,"
-  below.
-- **Stage entry point name** and **shader stage** (`getStage()`).
-- **Stage interface (varying) variables**, sufficient for the
-  supplementary compatibility check described under "Cross-stage
-  interface validation," below.
+- **Entry-point name** `[JSON-verified]` — `entryPoints[].name`. **This
+  is the Slang *source* function name (e.g. `"vertexMain"`), which is
+  deliberately *not* the name that ends up in the emitted SPIR-V** — see
+  "Entry-point naming policy," below. Consumers must never assume these
+  two strings are the same.
+- **Shader stage** `[JSON-verified]` — `entryPoints[].stage` (observed
+  values `"vertex"`, `"fragment"`).
+- **Descriptor binding index** `[JSON-verified]` —
+  `binding: {"kind": "descriptorTableSlot", "index": N}`.
+- **Descriptor set index** `[JSON-verified, with a parsing hazard]` — the
+  same object's `"space": N` field. **`"space"` is omitted entirely when
+  the set index is 0**, as confirmed by a dedicated probe (a
+  `[[vk::binding(3, 2)]]` resource emitted `{"kind":
+  "descriptorTableSlot", "space": 2, "index": 3}`, while a
+  `[[vk::binding(0, 0)]]` resource emitted no `"space"` key at all). A
+  parser **must** treat an absent `"space"` as set 0 rather than as
+  missing data.
+- **Resource type** `[JSON-verified]` — `type.kind` (observed:
+  `"constantBuffer"`, with a nested `elementType` struct describing its
+  members), sufficient to distinguish this round's only descriptor type
+  (uniform buffer).
+- **Push-constant range offset/size** `[JSON-verified]` — the parameter
+  carries `binding: {"kind": "pushConstantBuffer", "index": 0}` at the
+  container level, and its `elementVarLayout.binding` carries
+  `{"kind": "uniform", "offset": 0, "size": 64}` for this round's single
+  4x4 matrix. **The known upstream push-constant reflection concern
+  ([shader-slang/slang issue #5676](https://github.com/shader-slang/slang/issues/5676))
+  did not reproduce for this shader shape** — recorded as a single
+  passing observation, explicitly *not* generalized into a guarantee;
+  see Consequences.
+- **Per-entry-point usage flag** `[JSON-verified]` —
+  `entryPoints[].bindings[].used` (observed `1` for the camera uniform in
+  the vertex stage, `0` in the fragment stage). Noted because Slang's own
+  Reflection API guide states the base reflection API "*intentionally*
+  does not provide" usage information; the CLI JSON evidently does expose
+  it. Atlantis does **not** depend on this field this round — recorded
+  only so a future spec knows it exists.
+- **Vertex input attribute index** `[JSON-verified]` +
+  **its correspondence to the SPIR-V `Location`** `[SPIRV-verified]` —
+  the JSON reports `binding: {"kind": "varyingInput", "index": N}`. It
+  does **not** contain any field named or documented as a SPIR-V
+  `Location`. Disassembly of the same module confirmed
+  `OpDecorate %input_position Location 0` / `%input_color Location 1`,
+  matching the JSON's `varyingInput` indices 0 and 1 — **but the shader
+  source had already pinned those values with explicit
+  `[[vk::location(0)]]`/`[[vk::location(1)]]` attributes**, so this
+  observation cannot distinguish "Slang guarantees varyingInput index ==
+  Location" from "both simply reflect what the author explicitly wrote."
+  Atlantis therefore relies on the *authoring convention* (explicit
+  `[[vk::location(N)]]` on every vertex input, mandatory per this ADR)
+  as the authority, treating the JSON index as a cross-check of what the
+  author declared — never as an independently-derived location.
+- **Vertex input element type** `[JSON-verified]` — `type: {"kind":
+  "vector", "elementCount": 3, "elementType": {"kind": "scalar",
+  "scalarType": "float32"}}`, sufficient to map to
+  `VertexAttributeFormat::Float3`
+  (`src/rhi/include/atlantis/rhi/types.h`). Any reflected type that does
+  not map onto that enum's currently-single value **must** produce an
+  explicit mapping error, never a silent fallback — see "Vertex input
+  layout," below.
+- **Vertex input *semantic name*** — **not available for ordinary vertex
+  inputs.** The JSON emitted `semanticName` only for the system-value
+  output `SV_Position`; user-declared vertex input fields carried a
+  `varyingInput` binding and no `semanticName`. This corrects an earlier
+  assumption in this ADR's own previous revision, which had inferred from
+  Slang's Reflection API guide that `getSemanticName()`-style data would
+  be the vertex-input identity mechanism.
+- **Vertex-buffer stride and per-attribute byte offset** `[host-owned]` —
+  absent from the reflection output by construction, and correctly so:
+  these describe how *host* code packs an interleaved vertex buffer, which
+  no shader source of any language declares. (The `elementStride` keys
+  that do appear in the JSON belong to *uniform-buffer* layout, not
+  vertex-buffer layout, and must not be confused for it.)
 
-This is deliberately the same, narrow scope
-[module_boundaries.md](../docs/architecture/module_boundaries.md) already
-named ("bindings, push-constant layout") plus vertex input and entry
-point — exactly what `Device::createPipeline()`'s existing parameter
-shape (`VertexInputLayout`, `pushConstantSizeBytes`) already requires a
-source for. **No sampler/combined-image-sampler reflection, no
-specialization-constant reflection, and no compute-shader
-(`local_size`) reflection** — none of Phase 1's shaders use any of these.
+**No sampler/combined-image-sampler reflection, no specialization-constant
+reflection, and no compute-shader (`local_size`) reflection** — none of
+Phase 1's shaders use any of these.
+
+### Reflection output granularity (per invocation, not per module)
+
+Confirmed by compiling the vertex and fragment entry points of the *same*
+`.slang` module in two separate `slangc` invocations:
+
+- The top-level `"parameters"` array is **module-scope**: it listed
+  *both* the camera uniform and the push constant in **both** stages'
+  JSON, including in the fragment stage's output where the camera uniform
+  is unused.
+- The `"entryPoints"` array contained **exactly the one entry point named
+  by that invocation's `-entry` flag** — not every entry point in the
+  module.
+
+Consequently a consumer must read per-stage facts from
+`entryPoints[0]`, and must **not** assume the top-level `"parameters"`
+array describes only what the compiled stage actually uses.
 
 ### Atlantis's own reflection JSON schema — not Slang's raw output
 
@@ -168,14 +256,35 @@ specialization-constant reflection, and no compute-shader
   JSON schema**, versioned by a single top-level `"schemaVersion"`
   integer field this ADR fixes must exist.
 - **This transformation step exists specifically to avoid coupling the
-  rest of Atlantis to Slang's own JSON shape**, which is not documented
-  anywhere as a stable, versioned public contract in its own right (only
-  the CLI flag that produces it is documented) — Slang could change its
-  raw reflection JSON's field names/nesting across releases without
-  breaking any documented compatibility promise; Atlantis's own schema,
-  by contrast, is Shader-System-owned and versioned, and only this one
-  transformation function needs to change if Slang's own JSON shape ever
-  does.
+  rest of Atlantis to Slang's own JSON shape.** **No official schema
+  document, versioning field, or cross-release stability guarantee for
+  `-reflection-json`'s output was found** — the CLI reference documents
+  the flag's existence and purpose, but no accompanying schema contract.
+  The observed payload also carries no version field of its own. Slang
+  could therefore change its raw reflection JSON's field names or nesting
+  across releases without breaking any documented promise. Atlantis's own
+  schema, by contrast, is Shader-System-owned and versioned, and only
+  this one transformation function needs to change if Slang's own JSON
+  shape ever does.
+- **Slang-JSON parsing policy, fixed here rather than left to Plan** —
+  because Atlantis cannot rely on an unversioned external schema:
+  - **The parser is bound to the Slang version shipped by the supported
+    Vulkan SDK**, not to Slang generally. This is workable precisely
+    because [ADR-0028](0028-shader-system-source-language-and-compiler.md)
+    sources `slangc` from the SDK, which pins one Slang release per SDK
+    version (SDK 1.4.357.0 ships Slang 2026.13.1, per the standard-module
+    directory name observed alongside `slangc.exe`).
+  - **Unknown/unrecognized fields are ignored**, not rejected — Slang
+    adding a field must not break an Atlantis build.
+  - **Missing *required* fields are a hard failure**
+    (`Result::Err`), never defaulted or guessed. The one deliberate
+    exception is the descriptor-set `"space"` key, whose absence is
+    *specified* to mean set 0 (see "Reflection scope," above) — this is a
+    known, evidence-backed encoding, not a silent default.
+  - **An SDK/Slang version change must trigger re-verification** of the
+    reflection fixtures and the parser, as a required step in whatever
+    future change raises the supported SDK version. Atlantis does not
+    control this schema and must not pretend otherwise.
 - **Shader System owns this schema and provides the only supported
   loader.** No other module hand-parses either the Slang-raw JSON or the
   Atlantis-schema JSON directly. The loader validates `"schemaVersion"`
@@ -187,6 +296,91 @@ specialization-constant reflection, and no compute-shader
 - **Metadata lifetime**: loaded once, at whatever point the caller needs
   it; Shader System does not cache, retain, or watch the file.
 
+### Descriptor reflection: validation only, never layout construction
+
+**This section resolves a genuine contradiction in this ADR's previous
+revision.** `PipelineCreateParams`
+(`src/rhi/include/atlantis/rhi/types.h`) has **no descriptor set,
+binding, or descriptor-type field at all**, and the Vulkan Backend's
+`createPipeline()` hard-codes its single descriptor binding
+(`src/vulkan_backend/src/vulkan_device.cpp` — binding 0,
+`VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER`, vertex stage only). Reflected
+descriptor data therefore has **nowhere to go** in the unchanged RHI
+contract. Claiming both "we reflect descriptor bindings" and "RHI is
+unchanged" without saying what the reflected data is *for* was
+incoherent. The resolution:
+
+- **The one and only descriptor shape Phase 1 permits** is exactly what
+  the Vulkan Backend already hard-codes: **descriptor set 0, binding 0, a
+  uniform buffer, referenced by the vertex stage**. This expectation is
+  *defined by the Vulkan Backend's existing, already-`Accepted`
+  implementation* ([ADR-0025](0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)),
+  not invented by Shader System.
+- **Shader System encodes that same expectation as a fixed, constant
+  expected-contract value**, and the RHI-adapter helper **compares** the
+  reflected descriptor data against it.
+- **On mismatch** — a different set, a different binding index, a
+  different descriptor type, or more than one descriptor — the adapter
+  returns a **recoverable `Result::Err` (a mapping/validation error, the
+  same tier as every other adapter mismatch)**, which Atlantis Tools'
+  CLI turns into a non-zero exit and therefore a **build-time failure
+  with a readable diagnostic**. It never silently proceeds, and never
+  attempts to reconfigure anything.
+- **Reflected descriptor data is never used to *construct* a pipeline
+  layout, a descriptor set layout, or any RHI parameter this round.** It
+  is consumed exclusively as the input to the equality check above.
+- **Why this is still worth doing, rather than skipping descriptor
+  reflection entirely:** today, a shader author can change a
+  `[[vk::binding(...)]]` in shader source and get a *silent* mismatch
+  against the Backend's hard-coded binding — caught, if at all, only by
+  Vulkan Validation Layers at draw time on a machine with a GPU, which is
+  exactly the fragile "matched by convention and by the human author's
+  own care" gap
+  [ADR-0027](0027-temporary-precompiled-spirv-shader-artifacts.md)
+  accepted as temporary. This check moves that failure to build time, on
+  every machine, with a diagnostic naming the offending binding. That is
+  a real, concrete safety improvement obtained without touching RHI at
+  all.
+- **This is explicitly not a step toward a general descriptor system.**
+  A future spec that wants reflection to genuinely *drive* pipeline-layout
+  construction must extend RHI's public surface, which means reopening
+  [ADR-0025](0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)
+  and re-reviewing `PipelineCreateParams` — explicitly out of scope here,
+  and explicitly not pre-authorized by this ADR.
+
+### Entry-point naming policy
+
+Four distinct names must not be conflated. This policy fixes each:
+
+| Concept | Phase 1 value | Fixed by |
+|---|---|---|
+| Slang source function name | meaningful, e.g. `vertexMain`/`fragmentMain` | shader author |
+| `slangc -entry` argument | the same source name | Atlantis Tools CLI invocation |
+| SPIR-V `OpEntryPoint` name in the emitted module | **`"main"`** | Slang's *default* renaming behavior |
+| `VkPipelineShaderStageCreateInfo::pName` | **`"main"`** | existing Vulkan Backend code, unchanged |
+
+- **Atlantis Tools' CLI must never pass `-fvk-use-entrypoint-name`.**
+  Slang's CLI reference documents that flag as "Uses the entrypoint name
+  from the source instead of 'main' in the spirv output" — i.e. the
+  *default*, with the flag absent, is to emit `"main"`.
+- **Verified in both directions on the installed toolchain.** Compiling
+  `vertexMain` without the flag produced
+  `OpEntryPoint Vertex %vertexMain "main"`; compiling the same entry point
+  *with* the flag produced `OpEntryPoint Vertex %vertexMain "vertexMain"`.
+  The fragment stage behaved identically (`OpEntryPoint Fragment
+  %fragmentMain "main"`). Documented behavior and observed behavior agree.
+- **Consequence:** meaningful source names cost nothing, and the Vulkan
+  Backend's existing hard-coded `pName = "main"` keeps working with **no
+  RHI or Backend change whatsoever**.
+- **The reflection JSON reports the *source* name** (`"vertexMain"`),
+  not the emitted SPIR-V name. Any future consumer that wants the actual
+  `OpEntryPoint` string must not read it from the JSON's
+  `entryPoints[].name`.
+- **A future spec wanting to preserve source entry-point names in SPIR-V
+  must change the RHI/Vulkan Backend contract first** (since `pName` is
+  currently a hard-coded literal). Enabling this flag is therefore
+  **not** a decision a future Plan may make on its own.
+
 ### Vertex input layout: split authority, stated explicitly
 
 `VertexInputLayout` (`src/rhi/include/atlantis/rhi/types.h`) has two
@@ -196,8 +390,8 @@ there first":**
 
 | `VertexInputLayout` field | Authority | Why |
 |---|---|---|
-| `VertexAttribute::location` | **Shader System reflection** (from Slang's `[[vk::location(X)]]`-derived reflection) | The shader source is the sole authority on which location index an input variable occupies — no other source could know this. |
-| `VertexAttribute::format` | **Shader System reflection** (from Slang's per-attribute type info) | The shader source's declared type is the sole authority on what data shape the shader expects at that location. |
+| `VertexAttribute::location` | **Shader source's explicit `[[vk::location(N)]]` attribute**, surfaced through reflection's `varyingInput` index and cross-checkable against the emitted `Location` decoration | The shader source is the sole authority on which location an input occupies. Note the reflection JSON exposes this as a `varyingInput` **index**, not as a field labelled `Location` — the two were observed to agree, but only on a module whose source had already pinned the values explicitly. Atlantis therefore treats the mandatory `[[vk::location(N)]]` authoring convention as the authority and the JSON index as a cross-check, never as an independently-derived location. |
+| `VertexAttribute::format` | **Shader System reflection** (from the JSON's per-attribute `type` object) | The shader source's declared type is the sole authority on what data shape the shader expects at that location. Any reflected type not mapping onto `VertexAttributeFormat`'s currently-single `Float3` value is an explicit mapping error, never a silent fallback. |
 | `VertexAttribute::offsetBytes` | **Mesh/vertex-schema (Atlantis/Renderer-side, C++)** | This is the byte offset of one attribute *within a single interleaved vertex buffer record* — a property of how `Mesh`'s own vertex data is packed in memory, which no shader source declares or could declare (see Context, above). |
 | `VertexInputLayout::strideBytes` | **Mesh/vertex-schema (Atlantis/Renderer-side, C++)** | Same reasoning: the total byte size of one interleaved vertex record is a host-side packing decision, not a shader-source-expressible concept, in Slang or any other shading language. |
 | `PipelineCreateParams::colorFormat`/`depthFormat` | **Neither shader reflection nor Mesh schema** — sourced from `Presentation::metadata().format` / the Vulkan Backend's fixed depth-format choice, exactly as [ADR-0025](0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md) already fixed, entirely unrelated to Shader System | Attachment format is a swapchain/render-target property, not a shader or mesh property; Shader System has zero involvement in this value. |
@@ -279,43 +473,59 @@ there first":**
   owned plain data, entirely independent of `atlantis::rhi::*` types —
   Shader System is fully usable, testable, and meaningful with zero
   knowledge that RHI exists.
-- **A new, explicitly-named, narrowly-scoped adapter target performs the
-  RHI-shape mapping** — not `Atlantis::ShaderSystem` itself. This target
-  (e.g. `atlantis_shader_system_rhi_adapter`, alias
-  `Atlantis::ShaderSystemRhiAdapter`, exact name a Plan-stage detail)
-  depends on **`PUBLIC Atlantis::ShaderSystem`** and **`PUBLIC
-  Atlantis::RHI`** — `PUBLIC` on both because its own public header
-  returns `atlantis::rhi::VertexInputLayout`/`std::size_t` (push-constant
-  size) values built from a `ShaderSystem::ReflectionMetadata` input, so
-  any consumer of this adapter's header necessarily sees both types. This
-  is a real, explicit `Atlantis::ShaderSystemRhiAdapter` → `Atlantis::RHI`
-  dependency edge — **not** an `Atlantis::RHI` → `Atlantis::ShaderSystem`
-  edge, and not a form of "Shader System depends on RHI" in the sense
-  [module_boundaries.md](../docs/architecture/module_boundaries.md)
-  would need to be amended for: `Atlantis::ShaderSystem` itself, the
-  library every other potential consumer of reflection metadata would
-  actually link, remains exactly as RHI-independent as stated above. Only
-  this one, narrow, explicitly-named adapter target — whose entire reason
-  to exist is bridging the two — carries the dependency.
+- **A secondary integration target *inside the Atlantis Shader System
+  module* performs the RHI-shape mapping** — not Shader System's own core
+  library target, and **not a new top-level module.** This is a
+  deliberate, explicitly-scoped positioning:
+  - **It is not a tenth top-level module.**
+    [AGENTS.md](../AGENTS.md)'s module list (Core, Platform, RHI, Vulkan
+    Backend, RenderGraph, Renderer, Shader System, Runtime, Tools) is
+    **unchanged by this ADR**, and neither
+    [AGENTS.md](../AGENTS.md) nor
+    [module_boundaries.md](../docs/architecture/module_boundaries.md) is
+    edited by this spec. This target is an internal build-structure
+    detail of the *Atlantis Shader System* module — the same way a module
+    may have more than one CMake target without that making each target a
+    subsystem.
+  - **It establishes no independent long-term subsystem ownership.**
+    Shader System owns it; it has no separate architectural charter, no
+    separate roadmap position, and no separate entry in any module
+    registry.
+  - **Its responsibility is exactly one thing:** combine
+    Shader-System-owned reflection metadata with consumer-supplied
+    Mesh/vertex-schema data, validate the two against each other and
+    against the fixed descriptor contract, and produce existing RHI
+    value types. It owns **no GPU resource, no `Pipeline`, and no shader
+    compiler process.**
+  - **Dependency shape:** the core Shader System target depends only on
+    `Atlantis::Core` and must remain fully usable with no knowledge that
+    RHI exists; this secondary target may depend on both the core Shader
+    System target and `Atlantis::RHI`. `Atlantis::RHI` still depends on
+    neither. The concrete target/alias naming is a Plan-stage detail and
+    is deliberately not fixed here, precisely so the name cannot be read
+    as announcing a new top-level module.
+  - **No Slang type appears in any public header** of Core, RHI,
+    RenderGraph, or Renderer — nor, indeed, in Shader System's own public
+    headers, since Slang is only ever a subprocess
+    ([ADR-0029](0029-shader-system-build-time-compilation-boundary.md)).
   - Its function: given a loaded `ShaderSystem::ReflectionMetadata`
     (vertex stage) and a caller-supplied Mesh-schema stride/offset table
     (see "Vertex input layout," above), returns a populated
     `atlantis::rhi::VertexInputLayout`; given a loaded
     `ShaderSystem::ReflectionMetadata` (either stage), returns
-    `pushConstantSizeBytes`. Both cross-validate against the reflected
-    data per "Vertex input layout," above, returning
+    `pushConstantSizeBytes`; and validates the reflected descriptor data
+    against the fixed expected descriptor contract (see "Descriptor
+    reflection: validation only," above). All of these return
     `atlantis::Result<..., MappingError>` on a genuine mismatch, not a
     silently-accepted best-effort guess.
   - **Called by whichever future Renderer-level `Material`-construction
     call site builds `PipelineCreateParams`** — not designed by this
     spec (see Non-Goals in
     [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md)).
-    That call site links `Atlantis::ShaderSystemRhiAdapter` (which
-    transitively brings in both `Atlantis::ShaderSystem` and
-    `Atlantis::RHI`); it does not need to link `Atlantis::ShaderSystem`
-    directly.
+    That call site links this secondary target, which transitively brings
+    in both the Shader System core target and `Atlantis::RHI`.
 - **`Atlantis::VulkanBackend` gains no dependency on Shader System,
-  the RHI adapter, or reflection of any kind.** Its `createPipeline()`
+  the RHI-mapping target, or reflection of any kind.** Its `createPipeline()`
   implementation continues to consume exactly the same
   `PipelineCreateParams` it does today.
 - **This decision is a deliberate scope minimization**, not an
@@ -348,8 +558,9 @@ there first":**
   already-reviewed and `Accepted` design is not reopened.
 - The module-dependency-direction question the original version of this
   ADR left to Plan is now a firm, explicit, reviewable decision: a named
-  adapter target, `PUBLIC` on both sides, with `Atlantis::ShaderSystem`
-  itself kept RHI-independent.
+  secondary integration target inside the Shader System module, with
+  Shader System's own core target kept RHI-independent and the top-level
+  module list unchanged.
 - Slang's shared-struct cross-stage authoring convention gives a
   genuinely stronger primary compatibility guarantee (full type-checking)
   than the original GLSL-based design's location-index-only check ever
@@ -384,7 +595,7 @@ there first":**
   emissions of a validated module diverge" case.
 - Keeping `Device::createPipeline()` unchanged still requires *some* call
   site to construct `PipelineCreateParams`, now via
-  `Atlantis::ShaderSystemRhiAdapter` rather than a hand-written literal —
+  Shader System's RHI-mapping target rather than a hand-written literal —
   an improvement over
   [ADR-0027](0027-temporary-precompiled-spirv-shader-artifacts.md)'s
   status quo, but not a fully automatic "shader in, `Pipeline` out" API.
@@ -426,8 +637,8 @@ there first":**
   direction is an architectural decision this ADR must fix, not leave to
   Plan: doing so would make every consumer of Shader System's reflection
   types (including any future consumer with no interest in RHI at all)
-  transitively depend on `Atlantis::RHI` — the narrow adapter target
-  avoids that coupling entirely.
+  transitively depend on `Atlantis::RHI` — the narrow, secondary
+  integration target avoids that coupling entirely.
 - **Derive vertex stride/offset from reflection by assuming a fixed,
   conventional packing rule** (e.g. "attributes are always tightly packed
   in declaration order"). Rejected: this is exactly the kind of silent,

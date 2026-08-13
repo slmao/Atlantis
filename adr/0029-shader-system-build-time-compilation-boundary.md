@@ -20,6 +20,15 @@
   free of any OS-process concept — an explicit, reviewed boundary
   decision, not left open for a future Plan to choose between two
   architecturally different shapes.
+- **2026-08-14 (second revision — evidence-based):** `slangc`'s presence
+  in the installed Vulkan SDK, and the exact CLI flags this ADR's design
+  depends on (`-target`, `-profile`, `-entry`, `-stage`, `-o`,
+  `-reflection-json`), were **directly exercised** rather than only read
+  from documentation — see
+  [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md)'s
+  "Validation Evidence" section. Dependency wording is tightened to stop
+  implying "no new dependency," and the required-tool failure-stage
+  contract is restated precisely.
 
 ## Context
 
@@ -158,13 +167,32 @@ spawns a process, and never touches an OS process API.**
   ([ADR-0006](0006-dependency-management.md),
   [ADR-0028](0028-shader-system-source-language-and-compiler.md)) — the
   same `%VULKAN_SDK%\Bin\` (or platform-equivalent) location `glslc` was
-  already found at, confirmed to also contain Slang as of the currently-
-  installed SDK version
-  ([Vulkan SDK 1.4.357.0 release notes](https://vulkan.lunarg.com/doc/view/latest/windows/release_notes.html)).
-  A missing `slangc` fails CMake **configure**, not build, and not
-  silently: `find_program()` failing produces `message(FATAL_ERROR ...)`
-  naming the missing Vulkan SDK component, before any shader-consuming
-  target is configured.
+  already found at, and **directly confirmed on the installed SDK
+  (1.4.357.0)** to contain `slangc.exe` (alongside `spirv-val.exe` and
+  `spirv-dis.exe`).
+- **Required-tool failure-stage contract, fixed here:**
+  - **`slangc` missing → CMake *configure* fails**, via `find_program()`
+    plus an explicit `message(FATAL_ERROR ...)` naming the missing Vulkan
+    SDK component, before any shader-consuming target is configured.
+    Never a silently-skipped target; never deferred to build time.
+  - **`spirv-val` missing**, if
+    [ADR-0031](0031-shader-system-artifact-versioning-and-reproducibility.md)'s
+    recommended static validation is adopted → **also a configure-time
+    `FATAL_ERROR`**, on the same principle: a validation step that
+    silently disables itself when its tool is absent provides no
+    guarantee at all. It must not degrade to a warning.
+  - **Compilation/validation failure of a specific shader → *build*
+    failure** at that shader's own `add_custom_command()` step, with the
+    tool's own diagnostic surfaced verbatim.
+- **Dependency characterization, stated precisely** (mirroring
+  [ADR-0028](0028-shader-system-source-language-and-compiler.md)):
+  **no new independent dependency acquisition mechanism is introduced** —
+  no `FetchContent`, no package manager, no separate installer. But
+  `slangc` (and `spirv-val`, if adopted) are nevertheless **newly
+  required build tools** and new components the Atlantis build graph
+  depends on; their availability is **inherited from the supported Vulkan
+  SDK installation**. This ADR does not describe the change as
+  "zero new dependencies."
 - Every shader source file to be compiled is declared to CMake via
   `add_custom_command()`, with the source `.slang` file as `DEPENDS`,
   Atlantis Tools' CLI executable as the `COMMAND`, and the `.spv`/

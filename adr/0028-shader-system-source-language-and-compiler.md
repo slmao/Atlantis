@@ -166,45 +166,126 @@ not performed by this ADR or Spec 0008 itself.
   the original GLSL-based design did. Choosing a multi-target-capable
   compiler does not, by itself, authorize using more than one of its
   targets.
-- **SPIR-V version target: SPIR-V 1.0 — a deliberate, disclosed choice,
-  not an oversight, and flagged for explicit Human Review confirmation.**
-  Atlantis's Vulkan Backend's minimum supported API version remains
-  `VK_API_VERSION_1_0`
-  ([ADR-0024](0024-vulkan-dynamic-rendering-for-attachments.md)'s
-  Accepted Amendment), matching the existing GLSL shaders'
-  `--target-env=vulkan1.0` compilation flag
-  ([shaders/minimal_renderer/README.md](../shaders/minimal_renderer/README.md)).
-  Preserving this floor with Slang means targeting **SPIR-V 1.0**
-  output — which Slang's own documentation places in its **"experimental"**
-  support tier, not its "stable" (SPIR-V 1.3+) tier
+- **SPIR-V version target: SPIR-V 1.0, selected explicitly via
+  `-profile spirv_1_0` — a deliberate, disclosed, evidence-backed
+  recommendation, still requiring explicit Human Review confirmation.**
+
+  **The four version axes this decision must not conflate.** These are
+  independent, and prior drafts of this ADR blurred them:
+  1. The Vulkan *instance*'s requested `VkApplicationInfo::apiVersion` —
+     loader-gated (1.3 if the loader supports it, else 1.0), decided by
+     [ADR-0024](0024-vulkan-dynamic-rendering-for-attachments.md)'s
+     Accepted Amendment.
+  2. The *physical device* selection floor —
+     `properties.apiVersion >= VK_API_VERSION_1_0`
+     (`src/vulkan_backend/src/vulkan_device.cpp`), **unchanged since Spec
+     0003 and never raised by any Accepted ADR.** This is Atlantis's real
+     device-compatibility commitment.
+  3. The **SPIR-V binary version** of an emitted shader module. **ADR-0024
+     decides nothing about this axis** — it does not mention SPIR-V at
+     all. This ADR is the first to decide it.
+  4. `slangc`'s own `-target`/`-profile`/`-capability` arguments, which
+     select axis 3.
+
+  **The Vulkan specification's binding constraint on axis 3.** Per the
+  official Vulkan environment appendix, a **Vulkan 1.0 implementation
+  "must: support the 1.0 version of SPIR-V"** and nothing higher, while a
+  **Vulkan 1.1 implementation "must: support the 1.0, 1.1, 1.2, and 1.3
+  versions of SPIR-V"**
+  ([KhronosGroup/Vulkan-Docs `appendices/spirvenv.adoc`](https://github.com/KhronosGroup/Vulkan-Docs/blob/main/appendices/spirvenv.adoc)).
+  **Emitting SPIR-V 1.3 therefore requires a Vulkan 1.1 *physical device*
+  floor — i.e. raising axis 2 from 1.0 to 1.1.** No extension bridges
+  SPIR-V 1.1/1.2/1.3 onto a Vulkan 1.0 device;
+  `VK_KHR_spirv_1_4` exists but bridges Vulkan **1.1**→SPIR-V 1.4, so it
+  does not help a 1.0 device
+  ([`appendices/VK_KHR_spirv_1_4.txt`](https://github.com/KhronosGroup/Vulkan-Docs/blob/master/appendices/VK_KHR_spirv_1_4.txt)).
+
+  **Decision, and the flag that implements it.** Atlantis targets
+  **SPIR-V 1.0**, selected by passing **`-profile spirv_1_0`** to
+  `slangc`. Two experimentally-established facts make this explicit flag
+  mandatory rather than optional:
+  - **`slangc`'s default, with no `-profile`, emits SPIR-V 1.5** —
+    verified by disassembling a default-flags compile. SPIR-V 1.5 requires
+    a Vulkan 1.2 device. **Omitting the profile flag would therefore
+    silently raise Atlantis's device-compatibility floor by two Vulkan
+    versions**, which is precisely the kind of silent narrowing
+    [ADR-0024](0024-vulkan-dynamic-rendering-for-attachments.md)'s own
+    Human Review rejected.
+  - **`-capability spirv_1_0` does *not* control the emitted version** —
+    a compile passing only `-capability spirv_1_0` still emitted SPIR-V
+    1.5. Only `-profile` selects the output version. A future Plan must
+    not substitute one for the other.
+  See
+  [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md)'s
+  "Validation Evidence" section for the exact commands.
+
+  **The disclosed cost, stated plainly.** Slang's own documentation places
+  SPIR-V 1.0–1.2 emission in its **"experimental"** tier, reserving
+  "stable" for 1.3 and later
   ([docs.shader-slang.org — SPIR-V-Specific Functionalities](https://docs.shader-slang.org/en/latest/external/slang/docs/user-guide/a2-01-spirv-target-specific.html)).
-  This ADR's recommendation is to **accept SPIR-V 1.0 targeting, with
-  this experimental-tier status explicitly disclosed**, because the
-  alternative — targeting SPIR-V 1.3 for Slang's "stable" tier — would
-  require raising the minimum SPIR-V *consumption* requirement (per
-  Vulkan's own SPIR-V-environment-to-API-version mapping, SPIR-V 1.3
-  becomes a mandated floor at Vulkan 1.1, not Vulkan 1.0), which is
-  functionally equivalent to raising the Vulkan Backend's own minimum
-  supported device/driver capability — an architectural compatibility-
-  floor decision [ADR-0024](0024-vulkan-dynamic-rendering-for-attachments.md)'s
-  Human Review already explicitly declined to make, and one this ADR is
-  not authorized to reopen unilaterally. **This is stated here as a
-  recommendation requiring explicit Human Review confirmation before
-  Plan/implementation, not a silently resolved question** — see Risks &
-  Open Questions in [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md)
-  for the two concrete options a human must choose between.
+  Consistent with that, **`-profile spirv_1_0` emits a compiler warning,
+  `E50011: SPIR-V version too old`, which `-profile spirv_1_3` does
+  not** — observed directly. The warning is suppressible
+  (`-warnings-disable 50011`) and the emitted module is unaffected by
+  suppression, but **this ADR does not recommend suppressing it silently**:
+  whether to suppress, and how it interacts with
+  [docs/process/definition-of-done.md](../docs/process/definition-of-done.md)'s
+  "builds cleanly with no new warnings" item, is a Plan-stage decision
+  that must be made deliberately and visibly. Note also that
+  "experimental" describes *Slang's own backend maturity on that output
+  path*, not the legality of SPIR-V 1.0 itself — SPIR-V 1.0 remains the
+  version every Vulkan 1.0 implementation is required to support.
+
+  **Mitigation available in the same SDK.** `spirv-val.exe` is present in
+  the installed Vulkan SDK's `Bin` directory and advertises
+  "SPIR-V 1.0 (under Vulkan 1.0 semantics)" among its targets. Both
+  experiment artifacts passed `spirv-val --target-env vulkan1.0` with
+  exit code 0. Adding this static validation to the build is recommended
+  (see [ADR-0031](0031-shader-system-artifact-versioning-and-reproducibility.md));
+  it materially reduces, but **does not eliminate**, the experimental-tier
+  risk, and **must not be described as converting Slang's experimental
+  path into a stable one.**
+
+  **This remains a `Proposed` recommendation requiring explicit Human
+  Review confirmation** — the alternative (SPIR-V 1.3 + a Vulkan 1.1
+  device floor) is retained in Alternatives Considered and would require
+  its own compatibility Human Review, including re-examining
+  [ADR-0024](0024-vulkan-dynamic-rendering-for-attachments.md) and
+  [AGENTS.md](../AGENTS.md)'s Android platform commitment. This ADR does
+  not make that change and does not reopen ADR-0024.
 - **Slang's compiler is sourced as a prebuilt binary from the Vulkan SDK
   already required by [ADR-0006](0006-dependency-management.md)** for
   the Vulkan Backend — confirmed bundled since SDK 1.3.296.0 and present,
   tagged, in the current SDK release (1.4.357.0) this repository's
-  development environment already has installed (see Context, above).
-  This is **not a new third-party dependency acquisition mechanism** in
-  [AGENTS.md](../AGENTS.md)'s sense: it is a new *use* of a tool that
-  ships inside an SDK Atlantis already requires developers and CI
-  machines to install, exactly mirroring how `glslc` was sourced from the
-  same SDK in this ADR's original version. **No `FetchContent`, no
-  from-source Slang build, and no separate Slang SDK/installer download
-  is introduced.** See
+  development environment already has installed (see Context, above), and
+  **directly confirmed present on this machine** at
+  `%VULKAN_SDK%\Bin\slangc.exe` alongside `slang-compiler.dll`,
+  `slang-glslang.dll`, `slang-rt.dll`, and a
+  `slang-standard-module-2026.13.1` directory (the Slang version this SDK
+  pins).
+
+  **Precise dependency characterization — this ADR deliberately does not
+  claim "zero new dependencies":**
+  - **No new independent dependency acquisition mechanism is
+    introduced.** No `FetchContent` entry, no package manager, no
+    from-source Slang build, no separate Slang SDK or installer download.
+  - **`slangc` is nevertheless a newly required build tool**, and a new
+    component the Atlantis build graph depends on. A machine that could
+    previously build Atlantis with a Vulkan SDK installation lacking
+    `slangc` would no longer be able to build shader-consuming targets.
+  - **Its availability is inherited from the supported Vulkan SDK
+    installation** — the same acquisition story
+    [ADR-0006](0006-dependency-management.md) already fixed for the
+    Vulkan SDK as an external system/toolchain dependency, and the same
+    one `glslc` relied on.
+  - **Missing-tool failure stage is fixed, not left open:** absence of
+    `slangc` fails at **CMake configure time**, via `find_program()` plus
+    an explicit `FATAL_ERROR` naming the missing SDK component — never a
+    silently-skipped target, and never a late build-time failure for what
+    is a configure-time precondition. See
+    [ADR-0029](0029-shader-system-build-time-compilation-boundary.md).
+
+  See
   [ADR-0029](0029-shader-system-build-time-compilation-boundary.md) for
   the full compiler-library-vs-CLI decision this acquisition choice
   feeds into.
@@ -289,14 +370,36 @@ not performed by this ADR or Spec 0008 itself.
   better-fit Vulkan/SPIR-V-first design and Khronos governance DXC does
   not have.
 - **Target SPIR-V 1.3 (Slang's "stable" tier) instead of SPIR-V 1.0**,
-  accepting a raised minimum Vulkan/driver floor. Not rejected outright —
-  this is a real, live alternative this ADR flags rather than forecloses,
-  since it trades a real, disclosed technical risk (SPIR-V 1.0's
-  "experimental" tier) for a real, disclosed architectural cost (raising
-  a compatibility floor [ADR-0024](0024-vulkan-dynamic-rendering-for-attachments.md)'s
-  Human Review explicitly chose not to raise). Left as an explicit
-  Human Review decision point, not resolved by this ADR alone — see
-  Decision, above.
+  accepting a raised **Vulkan 1.1 physical-device floor** (the precise
+  requirement, per
+  [`appendices/spirvenv.adoc`](https://github.com/KhronosGroup/Vulkan-Docs/blob/main/appendices/spirvenv.adoc) —
+  not "Vulkan 1.3", as a looser earlier phrasing of this ADR implied).
+  **Considered, and not adopted this round**, but explicitly retained
+  rather than foreclosed. It trades a real, disclosed technical risk
+  (Slang's own experimental tier on the 1.0 path, plus the `E50011`
+  warning) for a real, disclosed architectural cost: raising
+  `src/vulkan_backend/src/vulkan_device.cpp`'s device-selection floor from
+  `VK_API_VERSION_1_0` to `VK_API_VERSION_1_1`, which narrows the
+  device population Atlantis serves. Adopting it in future would require
+  **its own compatibility-focused Human Review**, covering at minimum:
+  re-examining [ADR-0024](0024-vulkan-dynamic-rendering-for-attachments.md)
+  (whose Human Review twice declined to narrow device compatibility),
+  [AGENTS.md](../AGENTS.md)'s Windows/Android target-platform commitment,
+  and whatever verification would demonstrate the excluded device
+  population is genuinely empty for Atlantis's purposes. This ADR does
+  not make, pre-authorize, or lean toward that change.
+- **Rely on `-capability spirv_1_0` rather than `-profile spirv_1_0` to
+  select the output version.** Rejected on direct evidence: a compile
+  passing only `-capability spirv_1_0` still emitted SPIR-V 1.5.
+  `-capability` does not select the emitted SPIR-V version; `-profile`
+  does. Recorded explicitly so a future Plan does not rediscover this the
+  hard way.
+- **Omit the profile flag and accept `slangc`'s default.** Rejected on
+  direct evidence: the default emits SPIR-V 1.5, which requires a Vulkan
+  1.2 device — a two-version silent narrowing of Atlantis's
+  compatibility floor, adopted by inaction rather than by review. This is
+  the single most important reason the profile flag is mandatory rather
+  than advisory.
 - **Support both Slang and GLSL simultaneously**, letting a shader's file
   extension select its compiler (mirroring this ADR's own original
   "support both GLSL and HLSL" rejection). Rejected for the same reason:
