@@ -195,7 +195,9 @@ src/shader_system/src/command_line.cpp
 src/shader_system/src/version_provenance.cpp
 src/shader_system/CMakeLists.txt            # declares BOTH atlantis_shader_system AND
                                             # atlantis_shader_system_rhi_integration (§6) --
-                                            # no separate add_subdirectory() for the latter
+                                            # no separate add_subdirectory() for the latter;
+                                            # ALSO defines atlantis_add_slang_shader_pair()
+                                            # (§7) -- no separate .cmake file for it
 
 src/shader_system/rhi_integration/include/atlantis/shader_system/rhi_integration/vertex_input_mapping.h
                                             # MeshVertexAttributeSchema, toVertexInputLayout(),
@@ -233,14 +235,20 @@ shaders/minimal_renderer/minimal_mesh.slang # NEW -- replaces the two .glsl file
 ### Files to Modify
 
 ```
-CMakeLists.txt (root)                       # + add_subdirectory(src/shader_system)
+CMakeLists.txt (root)                       # + find_program(...) guards for slangc/spirv-val
+                                            #   (§7) -- configure-time FATAL_ERROR if missing
+                                            # + add_subdirectory(src/shader_system)
                                             # + add_subdirectory(src/tools/shader_compiler)
+                                            # + add_subdirectory(shaders/minimal_renderer)
+                                            #   (§8) -- MUST come after
+                                            #   add_subdirectory(src/shader_system) in this
+                                            #   file's own ordering, since
+                                            #   atlantis_add_slang_shader_pair() is defined
+                                            #   there (§7) and this call site invokes it
                                             # + add_subdirectory(tests/shader_system) under
                                             #   ATLANTIS_BUILD_TESTS
                                             # + add_subdirectory(tests/tools/shader_compiler)
                                             #   under ATLANTIS_BUILD_TESTS
-                                            # + find_program(...) guards for slangc/spirv-val
-                                            #   (§7) -- configure-time FATAL_ERROR if missing
 
 examples/minimal_renderer_demo/main.cpp     # loadSpirvFile("shaders/...") -> load build-tree
                                             # artifact via Shader-System-exported path (§8);
@@ -358,12 +366,26 @@ enum class DescriptorType {
 };
 
 // [JSON-verified against a real Slang reflection sample, per Spec 0008's
-// Validation Evidence] set/binding is read from Slang's own
-// "descriptorTableSlot" binding kind; this round's shaders use
-// descriptor set 0 exclusively, so `set` defaults to 0 and is populated
-// from an explicit JSON field only when Slang's own raw output supplies
-// one (see slang_json_transform.cpp's own documented handling of a
-// missing/absent "space"-equivalent field for set 0).
+// Validation Evidence and ADR-0030's own "Descriptor set index
+// [JSON-verified, with a parsing hazard]" entry] set/binding is read
+// from Slang's own "descriptorTableSlot" binding kind's "space"/"index"
+// fields. This is a POSITIVE, evidence-backed rule, not a guess: a
+// dedicated probe compiling a [[vk::binding(3, 2)]] resource emitted
+// {"kind": "descriptorTableSlot", "space": 2, "index": 3}, confirmed
+// against the same module's disassembled SPIR-V (`DescriptorSet 2` /
+// `Binding 3`); a [[vk::binding(0, 0)]] resource emitted no "space" key
+// at all. slang_json_transform.cpp therefore parses ANY set value the
+// JSON reports (0 or otherwise) into this field -- it does not fail
+// closed on a nonzero set, because there is nothing unknown about that
+// shape. What DOES reject a nonzero set is a separate, later step:
+// Minimal Renderer's own fixed expected contract
+// (minimalRendererExpectedDescriptorContract(), descriptor_contract.h)
+// only accepts set 0 / binding 0 -- a nonzero-set shader parses into a
+// perfectly valid ReflectionMetadata and then fails
+// validateDescriptorContract() with a real, specific
+// ContractMismatchError (Section 5). Parsing capability and contract
+// acceptance are deliberately two separate, independently-testable
+// layers -- see Section 3's own restatement of this rule.
 struct DescriptorBinding {
   std::uint32_t set = 0;
   std::uint32_t binding = 0;
@@ -705,25 +727,70 @@ schema, nothing more:**
   real signal that Slang's own JSON shape has changed — see the SDK-
   upgrade handling below.
 
+**Descriptor-set parsing rule — stated once, positively, here (Section 2's
+own comment restates it, not a second, independent source of truth):**
+
+```
+if the reflected binding object has a "space" key:
+    set = (value of "space", parsed as an unsigned integer per the
+           resource-limit rules below)
+else:
+    set = 0
+binding = (value of "index", parsed the same way)
+```
+
+This is a **[JSON-verified]** rule (ADR-0030), not a heuristic — both the
+"absent means 0" case and the "present means that explicit value" case
+were directly observed against real `slangc` output (a `[[vk::binding(0,
+0)]]` resource emitting no `"space"` key; a `[[vk::binding(3, 2)]]`
+resource emitting `"space": 2`), and the latter was independently
+cross-checked against the same module's disassembled SPIR-V
+(`DescriptorSet 2`/`Binding 3`). **`slang_json_transform.cpp` parses a
+nonzero `set` successfully into `ReflectionMetadata` — it does not fail
+closed on this shape.** A malformed `"space"`/`"index"` value (not an
+integer, negative, or outside `std::uint32_t`'s range) is a resource-
+limit-driven parse failure (below), not a nonzero-set-specific case.
+
+**Contract acceptance is a separate, later, independently-testable
+layer.** `minimalRendererExpectedDescriptorContract()`
+(`descriptor_contract.h`) is fixed, this round, to exactly `{set: 0,
+binding: 0}` — a shader reflecting `{set: 2, binding: 3}` parses into a
+perfectly valid `ReflectionMetadata`, then fails
+`validateDescriptorContract()` with `ContractMismatchError::BindingNotFound`
+(the expected `{0, 0}` pair is absent) and/or
+`ContractMismatchError::UnexpectedExtraBinding` (the shader declares a
+pair the contract does not expect) — see Section 5. This split (parser
+accepts and faithfully represents any set/binding the shader actually
+uses; a *separate*, narrower contract check rejects anything Minimal
+Renderer's own fixed material does not need) is what lets a future
+material with a real nonzero-set need extend only
+`minimalRendererExpectedDescriptorContract()`'s equivalent — or a
+material-specific expected-contract value, Section 5's own
+`--expected-contract=` mechanism — without touching the parser at all.
+
 **Fixture-based coverage for known real-world shapes, per Spec 0008's own
-Validation Evidence and disclosed risks:**
+Validation Evidence and ADR-0030's `[JSON-verified]` findings:**
 
 - A fixture matching the actual sample JSON captured during Spec 0008's
-  validation experiment (descriptor set 0, no explicit `"space"`/`"set"`
-  field present — `slang_json_transform.cpp` defaults to `set = 0` when
-  that field is absent, per Section 2's own comment) — this is the
-  **only** descriptor-set shape this Plan has direct evidence for.
-- A **negative-signal fixture for a nonzero descriptor set**: since no
-  real sample with `set != 0` was captured during validation, this Plan
-  does not assume a specific JSON field name/shape for that case —
-  `slang_json_transform.cpp` instead **fails closed**
-  (`TransformError::UnexpectedStructure`) if it observes any explicit
-  set/space-like field with a nonzero value it does not recognize,
-  rather than silently guessing a mapping. Minimal Renderer's own
-  shaders (Section 8) use set 0 exclusively, so this failure-closed
-  behavior does not block this Plan's own scope — it is a deliberate,
-  disclosed limitation for any future material using a nonzero set,
-  flagged again in Section 10.
+  validation experiment (descriptor set 0, no explicit `"space"` field
+  present) — `slang_json_transform.cpp` parses this to `set = 0`.
+- **A positive fixture for a nonzero descriptor set**, reusing the exact
+  JSON shape ADR-0030 already recorded as a static, checked-in test
+  fixture — `{"kind": "descriptorTableSlot", "space": 2, "index": 3}` —
+  requiring no new toolchain run: `slang_json_transform.cpp` parses this
+  to `{set: 2, binding: 3}` in the resulting `ReflectionMetadata` (a
+  parser-level pass); a *second*, separate test then feeds that same
+  `ReflectionMetadata` into `validateDescriptorContract()` against
+  Minimal Renderer's own `{set: 0, binding: 0}`-only expected contract
+  and asserts the specific `ContractMismatchError` this mismatch
+  produces (a contract-level, expected-to-fail case). Both halves of
+  this fixture are required — a Plan that tested only one would leave
+  the parser-vs-contract split (above) unverified.
+- A malformed-`"space"`/`"index"`-value negative fixture (a string where
+  a number is expected, a negative number, a number exceeding
+  `std::uint32_t`) → a resource-limit parse failure (below), distinct
+  from, and not conflated with, the ordinary nonzero-set positive case
+  immediately above.
 - A fixture for the module-level-`"parameters"`-vs-entry-point-level-
   `"bindings"`-with-`"used"` combination rule (Spec 0008's own finding:
   top-level `"parameters"` is module-scope even for parameters the
@@ -739,6 +806,40 @@ Validation Evidence and disclosed risks:**
   regression test asserting the reflected push-constant offset/size
   matches the shader's own declared layout, not merely that *a* value
   was returned.
+
+**Resource limits — conservative, fixed constants, private to this
+module, not a Core-wide configuration surface:**
+
+| Limit | Value | Rationale |
+|---|---|---|
+| Maximum input size | 16 MiB | Every real reflection JSON captured during Spec 0008's Validation Evidence was on the order of a few KB; this is a generous ceiling that rejects a pathological/corrupted input before parsing begins, not a realistic operating limit. |
+| Maximum nesting depth (object/array) | 64 | Real Slang reflection JSON nests a handful of levels deep (parameter → type → elementType → ...); 64 is far beyond any legitimate shape and bounds the parser's own recursion so a malformed/adversarial input cannot cause unbounded recursion or a stack overflow. |
+| Maximum string length | 64 KiB | Reflection field values are short identifiers/paths; generous relative to real data. |
+| Maximum array/object element count (per array/object) | 4096 | Real data has, at most, a handful of parameters/bindings/attributes; generous relative to real data. |
+
+Exceeding any limit above is a recoverable parse error
+(`...MalformedJson`/`...UnexpectedStructure`, matching whichever caller
+context is parsing — never a crash, never silent truncation). These
+constants live in `json_parser.cpp`, are not exposed as a public,
+runtime-configurable API, and are not proposed as a Core-wide facility —
+consistent with this module's own "not generalized into a Core JSON
+facility" rule, below.
+
+**Integer parsing:** every numeric field this module's own schema
+defines (`set`, `binding`, `offsetBytes`, `sizeBytes`, `location`, etc.)
+is declared `std::uint32_t`; a JSON number that is negative, non-integer
+(carries a fractional part), or exceeds `std::uint32_t`'s range is a
+parse failure for that field — never silently truncated, rounded, or
+wrapped.
+
+**Duplicate object keys — "last one wins," a deliberate, reviewed choice,
+not an oversight:** matches the JSON specification's own permissive
+stance (it does not forbid duplicate keys or mandate a specific
+resolution), and matches the behavior of essentially every mainstream
+JSON parser Atlantis's implementers are likely already familiar with.
+Flagged here explicitly, once, for Human Review awareness — Implementation
+does not need to revisit this choice unless Human Review specifically
+asks for stricter (reject-on-duplicate) behavior instead.
 
 **SDK/Slang-version-upgrade handling:** `slang_json_transform.cpp`'s
 parser is **not** validated against, or assumed compatible with, any
@@ -760,6 +861,12 @@ under `include/`), reachable only by this module's own `.cpp` files.
 
 ## 4. Tools CLI — Process Execution
 
+Fully specified against the official `CreateProcessW` documentation
+([Microsoft Learn — CreateProcessW function](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw)),
+cited inline at each design point below — this section fixes the process
+model completely enough that Implementation does not invent it on the
+spot.
+
 `src/tools/shader_compiler/process_launch.h` (private to this target):
 
 ```cpp
@@ -774,67 +881,179 @@ under `include/`), reachable only by this module's own `.cpp` files.
 
 namespace atlantis::tools::shader_compiler {
 
+// A single combined capture -- see "Diagnostic capture model" below for
+// why this is one string, not separate stdout/stderr fields.
 struct ProcessOutput {
-  std::string stdOut;
-  std::string stdErr;
+  std::string diagnostics;
   std::int32_t exitCode = 0;
 };
 
 enum class ProcessLaunchError {
-  ExecutableNotFound,
-  LaunchFailed,        // CreateProcessW itself failed (Windows API error)
-  WaitFailed,
-  OutputCaptureFailed,
+  ExecutableNotFound,       // executablePath did not exist at launch time
+                             // (checked before ever calling CreateProcessW --
+                             // see "Executable resolution" below)
+  DiagnosticFileCreationFailed,
+  LaunchFailed,              // CreateProcessW itself returned FALSE;
+                              // GetLastError() text folded into this
+                              // error's own diagnostic, not a separate variant
+  WaitFailed,                // WaitForSingleObject() returned WAIT_FAILED
+  ExitCodeQueryFailed,       // GetExitCodeProcess() itself failed
+  DiagnosticFileReadFailed,
 };
 
-// Windows-only (WIN32_LEAN_AND_MEAN, CreateProcessW). This is a Tools-
-// internal implementation detail, never an Atlantis::Platform API and
-// never a ShaderSystem type -- see Critical Architectural Boundaries.
-// argv[0] is the executable path; argv[1:] are its arguments, passed as
-// a genuine argument VECTOR, never concatenated into a single shell
-// command string -- this is what makes a path containing spaces (e.g.
-// "C:\Program Files\..." if a Vulkan SDK were ever installed there)
-// safe without ad hoc quoting logic at this call site; the vector-to-
-// Windows-command-line-string conversion this function performs
-// internally follows the documented CommandLineToArgvW-compatible
-// quoting rules exactly once, in one place, not re-derived per call
-// site. Blocking; runs the child process to completion and captures its
-// full stdout/stderr via anonymous pipes. No timeout and no
-// cancellation this round (Non-Goals -- see Section 10 for why this is
-// flagged, not silently assumed acceptable forever). Not thread-safe;
-// caller-thread-only, matching this whole executable's single-threaded,
-// single-invocation model (Section 1).
+// Windows-only (WIN32_LEAN_AND_MEAN, CreateProcessW). Tools-internal
+// implementation detail -- never an Atlantis::Platform API, never a
+// ShaderSystem type (see Critical Architectural Boundaries). Blocking;
+// runs the child process to completion. Not thread-safe; caller-thread-
+// only, matching this whole executable's single-threaded, single-
+// invocation model (Section 1). See "Timeout/cancellation" below for
+// this function's one explicitly accepted limitation.
 [[nodiscard]] atlantis::Result<ProcessOutput, ProcessLaunchError> launchProcess(
     const std::filesystem::path& executablePath, const std::vector<std::string>& arguments);
 
 }  // namespace atlantis::tools::shader_compiler
 ```
 
-**Timeout/cancellation — explicitly out of scope, not silently assumed
-safe.** A hung `slangc`/`spirv-val` invocation would hang the whole
-build with no recovery this round. This Plan accepts that risk rather
-than design a timeout/cancellation mechanism with no observed real-world
-need to size it against — flagged again in Section 10 as a documented,
-accepted limitation, not a Human Review blocker (no architectural
-surface — API, ownership, module boundary — depends on the answer).
+**Executable resolution — `lpApplicationName`, never `NULL`.**
+`executablePath` (already resolved to an absolute path by CMake's own
+`find_program()` at configure time, Section 7 — `launchProcess()` itself
+performs no `PATH` search) is passed as `CreateProcessW`'s
+`lpApplicationName` parameter, **not** left `NULL` with the executable
+name embedded only in `lpCommandLine`'s first token. This is not a
+stylistic preference — the official documentation's own Security Remarks
+name the exact hazard this avoids: *"If the executable or path name has a
+space in it, there is a risk that a different executable could be run
+because of the way the function parses spaces"* — the documented example
+shows `CreateProcess(NULL, "C:\Program Files\MyApp -L -S", ...)`
+attempting to run `C:\Program.exe` if it exists, instead of `MyApp.exe`.
+Passing a resolved path via `lpApplicationName` sidesteps that ambiguity
+entirely, per the same documentation's own recommendation. Before ever
+calling `CreateProcessW`, `launchProcess()` checks
+`std::filesystem::exists(executablePath)` and returns
+`ProcessLaunchError::ExecutableNotFound` directly if it does not — this
+keeps the "missing tool" case cheaply testable without needing to parse
+a `GetLastError()` code, and keeps `CreateProcessW`'s own failure path
+(`LaunchFailed`) scoped to genuine OS-level launch failures.
 
-**Atomic publish / no partial-output-looks-like-success risk:**
-`compile_and_validate.h/.cpp` (below) writes every intermediate and final
-output file to a **temporary path first** (e.g.
-`<final-path>.tmp-<processId>`), and only `std::filesystem::rename()`s it
-to its final, CMake-`OUTPUT`-declared path **after every validation step
-in Section 5 has succeeded**. A failed compile/validate run therefore
-never leaves a stale-but-plausible `.spv`/reflection-JSON at the final
-path from a *previous* successful run being silently reused — CMake's
-own `OUTPUT` staleness tracking (Section 7) already requires the file to
-not exist or be older than its `DEPENDS` for a rebuild to trigger, but
-this atomic-rename discipline additionally guarantees a **failed**
-rebuild does not leave the **previous** successful build's stale output
-sitting at the final path looking like it's current when it is not (a
-scenario CMake's own timestamp tracking alone does not prevent, since a
-failed build target with no output write at all just leaves the OLD file
-where it was, silently, still passing timestamp-freshness checks for
-whatever consumed it before the edit that broke it).
+**Command-line construction — a mutable, owned buffer, never a string
+literal.** The official documentation is explicit: *"The Unicode version
+of this function, CreateProcessW, can modify the contents of this
+string. Therefore, this parameter cannot be a pointer to read-only
+memory (such as a const variable or a literal string). If this parameter
+is a constant string, the function may cause an access violation."*
+`launchProcess()` therefore builds `lpCommandLine` into a **`std::wstring`
+with its own storage** (never a `const wchar_t*` from a literal, and
+never a `.c_str()` result taken from a `const` object elsewhere), and
+passes that string's own non-`const` `data()` (C++17 guarantees
+`std::wstring::data()` is contiguous, mutable, and null-terminated). This
+buffer's lifetime covers the entire `CreateProcessW` call and the
+subsequent `WaitForSingleObject()`/`GetExitCodeProcess()` sequence — it
+is not freed or allowed to go out of scope until the child process has
+been waited on. Quoting follows the standard Windows/MSVC C runtime
+argument-quoting convention (the same one `CommandLineToArgvW()`
+consumes): each argument containing whitespace, a double quote, or being
+otherwise ambiguous is wrapped in `"`; embedded `"` characters are
+escaped as `\"`; a run of `N` backslashes immediately preceding a `"`
+(literal or the argument's own closing quote) is doubled to `2N`
+backslashes; a run of backslashes not immediately followed by a `"` is
+left untouched. This algorithm is implemented exactly once, inside
+`process_launch.cpp`, never re-derived at any call site — `command_line.cpp`
+(Section 2) only ever produces a plain `std::vector<std::string>` argv,
+with no quoting logic of its own.
+
+**Diagnostic capture model — a single temporary file, not pipes.**
+Rejected: two anonymous pipes (one for `stdout`, one for `stderr`) with
+sequential reads — a well-known deadlock hazard (the child can block
+writing to a full pipe buffer while the parent is still blocked reading
+the *other* stream first) that would require either a second reader
+thread or overlapped I/O to avoid safely, either of which is a real-time/
+concurrency mechanism this Plan has no other reason to introduce
+(Non-Goals: no job/task system). **Adopted instead:** `launchProcess()`
+creates one temporary file (unique per invocation — Section 7 gives the
+exact per-invocation temp-path scheme this reuses) via `CreateFileW`,
+with a `SECURITY_ATTRIBUTES` marking **only this one handle** inheritable
+(`bInheritHandle = TRUE`); every other handle this process holds is left
+at its default, non-inheritable state (Windows handles are non-
+inheritable unless explicitly created or marked otherwise — the official
+documentation's own `bInheritHandles` remarks confirm inheritance is
+opt-in per handle, not process-wide once `bInheritHandles = TRUE` is
+passed to a specific handle set), so no unrelated open handle leaks into
+the child. Both `STARTUPINFOW::hStdOutput` and `hStdError` are set to
+this **same** file handle (`hStdInput` left unset/default); the child
+process's stdout and stderr writes therefore interleave into one file in
+their actual chronological write order (the OS serializes writes through
+one underlying file handle), which is simpler and more useful for a
+human reading a build-log diagnostic than two separately-ordered
+captures would be — matching `ProcessOutput::diagnostics` being a single
+field, not separate `stdOut`/`stdErr` fields as an earlier draft of this
+Plan had. `CreateProcessW` is called with `bInheritHandles = TRUE`
+(required for the child to actually receive the inherited diagnostic
+file handle) and `dwCreationFlags = 0` (no console allocated/detached —
+this Plan does not need one). The parent closes its own copy of the
+diagnostic file's handle immediately after `CreateProcessW` returns
+successfully (the child now holds its own inherited copy), then, after
+`WaitForSingleObject()` confirms the child has exited, reopens the same
+temporary file path for reading and reads its full contents into
+`ProcessOutput::diagnostics` as raw bytes, interpreted as UTF-8 (a
+non-UTF-8 byte sequence is tolerated as opaque bytes for logging/
+diagnostic purposes only — this text is never parsed structurally by any
+Atlantis code, only surfaced to a human or a build log). The temporary
+diagnostic file is deleted after being read, on every code path
+(success or failure) — a small RAII guard inside `process_launch.cpp`
+(not part of this header's public surface) owns this cleanup, matching
+the same "clean up on every exit path" discipline Section 7's artifact-
+publish design uses.
+
+**Handle lifetime (`PROCESS_INFORMATION`).** Per the official
+documentation's own explicit requirement (*"Handles in
+PROCESS_INFORMATION must be closed with CloseHandle when they are no
+longer needed"*), both `hProcess` and `hThread` are owned by a small,
+private RAII guard type inside `process_launch.cpp` for the duration of
+the wait/exit-code-query sequence, guaranteeing `CloseHandle()` runs on
+every exit path (including early-return error paths) — this guard is an
+implementation detail, not part of this header's public API.
+
+**Working directory and environment — both inherited, not overridden.**
+`lpCurrentDirectory` and `lpEnvironment` are both passed as `NULL` — the
+child inherits the calling `atlantis_shader_compiler` process's own
+current directory and full environment block (including `VULKAN_SDK`,
+`PATH`, and anything else the calling shell/CI environment already set)
+unchanged. `atlantis_shader_compiler` itself never depends on its own
+current working directory for anything (every path it needs — source,
+output directory, `slangc`/`spirv-val` paths — arrives as an explicit
+CLI argument, Section 7), so there is no reason to override either.
+
+**Exit code retrieval.** After `WaitForSingleObject(hProcess, INFINITE)`
+returns `WAIT_OBJECT_0`, `GetExitCodeProcess()` retrieves the child's
+exit code into `ProcessOutput::exitCode` (`std::int32_t`, matching
+`slangc`'s/`spirv-val`'s own observed exit-code range). A non-zero exit
+code is not itself a `ProcessLaunchError` — `launchProcess()` returns
+`Result::Ok(ProcessOutput{...})` for *any* exit code, successful or not;
+interpreting a non-zero exit code as a compile/validate failure is
+`compile_and_validate.cpp`'s own responsibility (Section 5), keeping
+`launchProcess()` itself a narrow, reusable "run this process and report
+what happened" primitive, not one that also encodes domain-specific
+success/failure semantics for `slangc` specifically.
+
+**Timeout/cancellation — explicitly out of scope, honestly bounded.**
+`WaitForSingleObject()` is called with `INFINITE` — no timeout. The
+diagnostic-capture redesign above **structurally eliminates the pipe-
+buffer-deadlock risk** the original pipe-based design would have carried
+(a single file has no fixed buffer that can fill and block a write), but
+it does **not** eliminate a genuinely different risk this Plan still
+accepts deliberately: a `slangc`/`spirv-val` invocation that itself hangs
+(enters an infinite loop, waits on something that never completes) would
+still hang the whole build indefinitely, with no automatic recovery this
+round. This is stated plainly, not minimized — Section 9/13 record it as
+an accepted Phase 1 limitation, not a silently assumed-safe corner.
+
+**Atomic, all-or-nothing artifact publication.** How the compiled `.spv`/
+reflection-metadata pair is published only after every validation step
+succeeds — and how a partial or failed publish is prevented from ever
+being observable by a consumer or a subsequent build — is specified in
+full in Section 7's stamp-based transaction model, not here; this
+section's own scope is the process-execution primitive that model is
+built on top of.
 
 ## 5. Reflection and Contract-Validation Algorithm
 
@@ -852,16 +1071,17 @@ per compiled shader **stage**, matching RHI's unchanged two-separate-
     ShaderSystem::buildSlangcArgv().
 3.  launchProcess(slangcPath, argv) -> ProcessOutput.
     - Non-zero exit code -> compile_and_validate.cpp exits non-zero,
-      surfacing slangc's own captured stderr verbatim to the build log.
-      No temp file is renamed to a final OUTPUT path (Section 4's atomic-
-      publish discipline).
-4.  Slang emits BOTH the SPIR-V bytes (to a temp .spv path) and its own
-    raw reflection JSON (to a temp path) as part of step 3's single
-    invocation (-o and -reflection-json in the same slangc call,
-    Section 2's SlangCompileRequest already reflects this).
+      surfacing slangc's own captured diagnostics verbatim to the build
+      log. No artifact is published (Section 7's stamp is never
+      created) -- see Section 7 for the full transaction/cleanup model.
+4.  Slang emits BOTH the SPIR-V bytes (to a per-invocation-unique temp
+    path, Section 7) and its own raw reflection JSON (to a temp path) as
+    part of step 3's single invocation (-o and -reflection-json in the
+    same slangc call, Section 2's SlangCompileRequest already reflects
+    this).
 5.  ShaderSystem::transformSlangReflectionJson(tempRawJsonPath,
     entryPointName, stage, sdkProvenance) -> ReflectionMetadata.
-    - TransformError -> exit non-zero; no temp file renamed.
+    - TransformError -> exit non-zero; no artifact published.
 6.  (Folded into step 5's own implementation, per Section 3's grammar
     note): entries in Slang's raw "parameters" not marked used == true
     for THIS entry point are filtered out before they ever reach the
@@ -873,7 +1093,15 @@ per compiled shader **stage**, matching RHI's unchanged two-separate-
     this round has exactly one):
       ShaderSystem::validateDescriptorContract(metadata,
         minimalRendererExpectedDescriptorContract())
-      -> ContractMismatchError -> exit non-zero; no temp file renamed.
+      -> ContractMismatchError -> exit non-zero; no artifact published
+         (Section 7's stamp is never created).
+    Note (Section 2/3): step 5's transform already parses a nonzero
+    descriptor set correctly into `metadata` if the shader actually
+    declares one -- it is exactly THIS step, not the parser, that
+    rejects it, because minimalRendererExpectedDescriptorContract()
+    only accepts {set: 0, binding: 0} this round. A shader declaring
+    {set: 2, binding: 3} fails here with BindingNotFound/
+    UnexpectedExtraBinding, not with a transform-time error.
 8.  Push-constant validation: metadata.pushConstantRanges must contain
     exactly the range(s) this material's own fixed expectation names
     (this round: one range, vertex stage, size == sizeof(float) * 16)
@@ -904,17 +1132,15 @@ per compiled shader **stage**, matching RHI's unchanged two-separate-
     shared varying-interface struct authoring convention, Section 8) --
     per ADR-0030's own framing.
 13. spirv-val --target-env vulkan1.0 <temp .spv path> (mandatory, ADR-0031).
-    Non-zero exit -> exit non-zero; no temp file renamed. Its own
-    stdout/stderr is surfaced verbatim on failure.
-14. Only once every step above has succeeded: write the FINAL
-    ReflectionMetadata (Section 2's Atlantis-schema, via
-    saveReflectionMetadata()) to a temp path, then atomically rename
-    BOTH the .spv and the reflection-JSON temp files to their final,
-    CMake-OUTPUT-declared paths (Section 4/7). Re-loading the just-
-    written reflection JSON via loadReflectionMetadata() immediately
-    after (a cheap, defensive round-trip check) is a Plan-stage nice-to-
-    have, not fixed as required here.
-15. Exit 0.
+    Non-zero exit -> exit non-zero; no artifact published. Its own
+    captured diagnostics are surfaced verbatim on failure.
+14. Only once every step above has succeeded, for BOTH stages: run
+    Section 7's publish transaction (write final ReflectionMetadata via
+    saveReflectionMetadata() to a temp path; publish all four final
+    artifact files; write the stamp last, only after all four are
+    safely in place). Any failure during publication itself is handled
+    entirely by Section 7's own cleanup rules, not repeated here.
+15. Exit 0 only after the stamp has actually been written.
 ```
 
 **What is genuinely build-time vs. genuinely runtime — stated explicitly
@@ -1053,79 +1279,239 @@ into the tool's own source — this keeps the tool itself testable without
 requiring a real Vulkan SDK install for its own pure-logic unit tests
 (Section 9).
 
-**Per-shader-pair custom-command chain** (a CMake function,
-`atlantis_add_slang_shader_pair(NAME ... SOURCE ... VERTEX_ENTRY ...
-FRAGMENT_ENTRY ... OUTPUT_DIR ... EXPECTED_CONTRACT ...)`, defined once
-in `src/shader_system/cmake/AtlantisShaderSystem.cmake` and `include()`'d
-from wherever a shader pair is declared — Minimal Renderer's own
-`shaders/minimal_renderer/CMakeLists.txt`, a new file):
+**Per-shader-pair custom-command chain — stamp-based, all-or-nothing
+transaction** (a CMake function, `atlantis_add_slang_shader_pair(NAME ...
+SOURCE ... VERTEX_ENTRY ... FRAGMENT_ENTRY ... OUTPUT_DIR ...
+EXPECTED_CONTRACT ...)`).
+
+**Where the function lives — resolved, not left as a new directory-level
+pattern.** This repository's existing root `cmake/` directory
+(`CompilerWarnings.cmake`, `AtlantisDependencies.cmake`) holds genuinely
+repository-wide, ADR-backed helpers; a per-module `cmake/` subdirectory
+has no precedent anywhere in this codebase. Rather than introduce that
+new pattern for a single function with exactly one consumer this round,
+**`atlantis_add_slang_shader_pair()` is defined directly inside
+`src/shader_system/CMakeLists.txt` itself** — no separate `.cmake` file
+is created. CMake functions defined in a processed `CMakeLists.txt`
+remain callable by any directory processed later in the same configure
+run, so `shaders/minimal_renderer/CMakeLists.txt` (Section 8) can call it
+directly, **provided the root `CMakeLists.txt`'s
+`add_subdirectory(src/shader_system)` call precedes its
+`add_subdirectory(shaders/minimal_renderer)` call** — this ordering
+requirement is fixed here, not left implicit, and is one of §11's
+Verification Checklist items. (This removes
+`src/shader_system/cmake/AtlantisShaderSystem.cmake` from §1's Files to
+Create list — see the corrected list there.)
 
 ```cmake
-add_custom_command(
-  OUTPUT
-    "${OUTPUT_DIR}/${NAME}.vert.spv" "${OUTPUT_DIR}/${NAME}.vert.refl.json"
-    "${OUTPUT_DIR}/${NAME}.frag.spv" "${OUTPUT_DIR}/${NAME}.frag.refl.json"
-  COMMAND atlantis_shader_compiler
-    --slangc-path=${ATLANTIS_SLANGC_EXECUTABLE}
-    --spirv-val-path=${ATLANTIS_SPIRV_VAL_EXECUTABLE}
-    --source=${SOURCE} --vertex-entry=${VERTEX_ENTRY} --fragment-entry=${FRAGMENT_ENTRY}
-    --output-dir=${OUTPUT_DIR} --expected-contract=${EXPECTED_CONTRACT}
-  DEPENDS ${SOURCE} atlantis_shader_compiler
-  COMMENT "Compiling and validating Slang shader pair: ${NAME}"
-  VERBATIM
-)
-add_custom_target(${NAME}_shaders ALL
-  DEPENDS "${OUTPUT_DIR}/${NAME}.vert.spv" "${OUTPUT_DIR}/${NAME}.frag.spv")
+# Inside src/shader_system/CMakeLists.txt, after the atlantis_shader_system
+# and atlantis_shader_system_rhi_integration target declarations (Section 1/6).
+function(atlantis_add_slang_shader_pair)
+  # ... NAME/SOURCE/VERTEX_ENTRY/FRAGMENT_ENTRY/OUTPUT_DIR/EXPECTED_CONTRACT
+  # argument parsing (cmake_parse_arguments), a Plan-stage mechanical detail.
+
+  set(stamp "${OUTPUT_DIR}/${NAME}.stamp")
+  add_custom_command(
+    OUTPUT "${stamp}"
+    BYPRODUCTS
+      "${OUTPUT_DIR}/${NAME}.vert.spv" "${OUTPUT_DIR}/${NAME}.vert.refl.json"
+      "${OUTPUT_DIR}/${NAME}.frag.spv" "${OUTPUT_DIR}/${NAME}.frag.refl.json"
+    COMMAND atlantis_shader_compiler
+      --slangc-path=${ATLANTIS_SLANGC_EXECUTABLE}
+      --spirv-val-path=${ATLANTIS_SPIRV_VAL_EXECUTABLE}
+      --source=${SOURCE} --vertex-entry=${VERTEX_ENTRY} --fragment-entry=${FRAGMENT_ENTRY}
+      --output-dir=${OUTPUT_DIR} --expected-contract=${EXPECTED_CONTRACT}
+      --stamp=${stamp}
+    DEPENDS ${SOURCE} atlantis_shader_compiler
+    COMMENT "Compiling and validating Slang shader pair: ${NAME}"
+    VERBATIM
+  )
+  add_custom_target(${NAME}_shaders ALL DEPENDS "${stamp}")
+  set(ATLANTIS_${NAME}_SHADER_OUTPUT_DIR "${OUTPUT_DIR}" PARENT_SCOPE)
+endfunction()
 ```
 
-- `DEPENDS ${SOURCE}` gives correct incremental rebuild: editing
-  `minimal_mesh.slang` makes every listed `OUTPUT` stale, triggering
-  exactly this one re-compilation on the next build.
-- `DEPENDS atlantis_shader_compiler` (the target, not a file path) makes
-  CMake rebuild the Tools executable first if its own sources changed,
-  before re-running it — the standard "build a tool, then use it" CMake
-  idiom (ADR-0029).
-- The single `atlantis_shader_compiler` invocation compiles **both**
-  stages internally (looping steps 1–15 of Section 5 once per stage,
-  then running step 12's cross-stage check once both are done) — this is
-  a Plan-stage simplification over "two separate custom commands, one
-  per stage," chosen specifically so the cross-stage check (Section 5
-  step 12) has both reflection results available in the same process
-  invocation without a second, separate "pair them up" build step.
+- **The `OUTPUT` is a single stamp file, not the four real artifacts —
+  this is the load-bearing design decision this revision makes
+  explicit**, not merely an implementation nicety: CMake's own dependency
+  graph only ever asks "does `${NAME}.stamp` exist and is it newer than
+  `DEPENDS`" to decide whether this custom command needs to (re)run.
+  `${NAME}_shaders` (the target every consumer depends on, transitively —
+  Section 1's `PRE_TEST`/`POST_BUILD` consumer wiring) itself depends
+  only on the stamp. The four real files are declared as `BYPRODUCTS` —
+  per the [official CMake documentation](https://cmake.org/cmake/help/latest/command/add_custom_command.html)'s
+  own definition, "the files the command is expected to produce but
+  whose modification time may or may not be newer than the
+  dependencies" — which is exactly this shape: Ninja/Makefile generators
+  need to know these files exist (for their own dependency-graph
+  bookkeeping and `clean` support) without treating *their* individual
+  timestamps as the staleness signal.
+- `DEPENDS ${SOURCE}` (unchanged from the original design) gives correct
+  incremental rebuild: editing `minimal_mesh.slang` makes the stamp
+  stale, triggering exactly this one re-compilation on the next build.
+- `DEPENDS atlantis_shader_compiler` (the target) makes CMake rebuild the
+  Tools executable first if its own sources changed (ADR-0029's "build a
+  tool, then use it" idiom, unchanged).
+- The single `atlantis_shader_compiler` invocation still compiles **both**
+  stages internally, unchanged from the original design (Section 5's own
+  step 12 cross-stage check needs both results in one process
+  invocation).
 
-**Multi-config generator safety — flagged for empirical verification, not
-assumed solved by inspection alone.** The `OUTPUT` paths above are
-configuration-independent (no `$<CONFIG>` in the path), matching
-ADR-0031's Decision. For a single-config generator (Ninja, Makefiles)
-this is unambiguously safe. For a multi-config generator (Visual Studio),
-CMake generates one `.vcxproj` per configuration, each referencing the
-**identical** `OUTPUT` paths and the identical `COMMAND` — MSBuild's own
-incremental-build file-timestamp tracking is expected to treat the
-second configuration's build as a no-op once the first has produced the
-files, but this Plan does **not** claim this is guaranteed race-free
-under a genuinely **parallel** multi-configuration build (e.g.
-`msbuild /m` building Debug and Release in the same invocation) without
-having empirically verified it. **Section 10 lists this as an
-Implementation-stage verification item**, not a Human Review blocker (no
-public API, module boundary, or ownership model depends on the outcome —
-only a build-graph correctness detail with a well-understood, if
-unverified-in-this-repo, mitigation path if a real race is found: adding
-an explicit `add_dependencies()` ordering between configurations, or
-serializing the shader-compile step, neither of which changes anything
-this Plan's Human Review needs to approve).
+**Publish transaction — the exact algorithm CMake's stamp model above
+depends on**, implemented inside `compile_and_validate.cpp` (Section 5's
+own step 14 references this):
+
+```
+14a. Delete any pre-existing stamp at ${stamp} first, defensively --
+     ensures a prior run that somehow left a stamp without this run's
+     own fresh validation cannot be mistaken for "still current" if
+     anything below fails partway (CMake itself already would not have
+     invoked this command unless the stamp was missing/stale, but this
+     is a cheap, explicit belt-and-suspenders guarantee, not reliance on
+     that alone).
+14b. Compile/reflect/validate both stages ENTIRELY into a per-invocation-
+     unique temporary directory: "${OUTPUT_DIR}/.tmp-${NAME}-<pid>-<a
+     monotonically-increasing counter or high-resolution-clock value>/"
+     -- unique per invocation so ordinary parallel builds of DIFFERENT
+     shader pairs (different NAME values) never collide; a single NAME's
+     own custom command is never invoked twice concurrently by
+     construction (CMake serializes a given OUTPUT-producing command
+     against itself). Nothing under OUTPUT_DIR's own final paths is
+     touched during this step.
+14c. Only once ALL of: both slangc compiles (step 3), both transforms
+     (step 5), the descriptor-contract check (step 7), the push-constant
+     check (step 8), the cross-stage check (step 12), and both spirv-val
+     runs (step 13) have succeeded for BOTH stages -- proceed to publish;
+     otherwise skip directly to 14f (cleanup) and exit non-zero.
+14d. Publish: for each of the four final artifact paths (vert.spv,
+     vert.refl.json, frag.spv, frag.refl.json), std::filesystem::rename()
+     the corresponding temp-directory file to its final OUTPUT_DIR path
+     (same-volume rename, atomic per-file). If any single rename fails
+     partway through the four: stop immediately, proceed to 14f, exit
+     non-zero -- the stamp is never written (14e is never reached).
+14e. Only after all four renames in 14d succeeded: write the stamp
+     itself via the same temp-then-rename pattern (content is a plain
+     text record of sdkProvenance, useful for human debugging but never
+     parsed back by any Atlantis code -- the stamp's mere EXISTENCE, not
+     its content, is what CMake's own dependency tracking checks).
+14f. Cleanup (runs on every exit path, success or failure): remove the
+     entire per-invocation temp directory from 14b. On a failure path
+     reached from 14d (a partial publish), additionally best-effort-
+     remove any of the four final-path files that step 14d successfully
+     renamed in THIS invocation before failing -- "best effort" because
+     if this removal itself fails, the process still exits non-zero and
+     still has not written a stamp, so the guarantee below still holds
+     regardless of whether this specific cleanup step fully succeeds.
+```
+
+**Why a consumer can never observe a half-updated pair.** CMake's own
+build-order guarantee (a target depending on `${NAME}_shaders` — which
+itself depends on the stamp `OUTPUT` — is never scheduled to build until
+that `OUTPUT` exists) means no consumer (the demo's `POST_BUILD` copy
+step, a GPU test) ever runs concurrently with, or before, a still-in-
+progress or failed publish — by the time any consumer runs, the stamp
+already exists, which by 14e's own ordering is only possible if all four
+real files were already successfully published first. **Why the next
+build always retries a failure.** A failed run (per 14c/14d/14f above)
+never writes the stamp; CMake therefore always considers this `OUTPUT`
+missing/stale on the next build invocation and re-runs the full command —
+never treats a missing stamp as "nothing to do." A partially-published
+file left behind by a best-effort cleanup failure in 14f does not change
+this: the *stamp's* absence, not the four files' own state, is what
+governs whether CMake reruns the command, and a rerun's own 14d simply
+overwrites whatever stale partial files remain with freshly-published
+ones once it succeeds again.
+
+**Multi-config generator support boundary — a fixed Phase 1 policy, not
+left to Implementation-time discovery.** Per the
+[official CMake documentation](https://cmake.org/cmake/help/latest/command/add_custom_command.html)'s
+own "Generating Files" guidance: *"Do not list the output in more than
+one independent target that may build in parallel or the instances of
+the rule may conflict,"* with configuration-scoped (`$<CONFIG>`-suffixed)
+output paths named as the standard mitigation for multi-config
+generators specifically. This Plan's design already avoids the literal
+documented anti-pattern (the stamp `OUTPUT` is declared by exactly one
+`add_custom_command()`, consumed by exactly one `add_custom_target()` —
+never duplicated across independent targets). What remains genuinely
+unconfirmed by official documentation is the narrower question of
+whether that *one* target, realized as one `.vcxproj` per configuration
+under Visual Studio, is safe when **multiple configurations of the same
+binary tree are built concurrently by independent, simultaneously-running
+build processes** (e.g. two terminal sessions each running
+`cmake --build . --config Debug` / `--config Release` against the same
+tree at the same time, or a single `msbuild /m` invocation that
+parallelizes multiple project configurations together). Rather than
+leave this open, this Plan fixes the supported workflow explicitly:
+
+- **Exactly one, configuration-independent shader-artifact producer
+  exists per binary tree** (unchanged from the original design; ADR-0031
+  is not reopened).
+- **Every configuration's consumer targets depend on that same,
+  single producer.**
+- **Ordinary parallel compilation *within* one configuration** (e.g.
+  MSBuild's own `/m` parallelizing multiple `.cpp` files of the *same*
+  configuration) is unaffected by anything above and remains safe —
+  nothing about this design touches per-file, same-configuration
+  parallelism.
+- **Building different configurations of the *same* binary tree must be
+  sequential, not concurrent, within Phase 1** — e.g. `cmake --build .
+  --config Debug` completing before `cmake --build . --config Release`
+  begins (or vice versa), whether invoked manually, via a script, or via
+  Visual Studio's own "Batch Build" run one configuration at a time.
+  This is safe under CMake's own ordinary, well-established staleness
+  tracking (not a new or unverified mechanism): the second configuration's
+  build checks the same, configuration-independent stamp `OUTPUT`,
+  finds it already up to date relative to `DEPENDS`, and skips
+  re-running the command entirely — exactly the same "second build is a
+  no-op" behavior every other `add_custom_command()` in this build
+  already relies on.
+- **Two independent build processes concurrently building different
+  configurations of the *same* binary tree is explicitly an unsupported
+  Phase 1 workflow.** A contributor who wants to build Debug and Release
+  at the same time must use two separate binary trees (e.g. `-B
+  build-debug` and `-B build-release`) — an already-normal, low-cost
+  CMake practice this Plan does not need to invent anything new to
+  support.
+- **§9/§10/§11 (Testing, Implementation Order, Verification Checklist)
+  each gain an explicit, sequential-build regression test** — building
+  Debug then Release (and, separately, Release then Debug) in the same
+  binary tree, confirming the second configuration's build does not
+  redundantly recompile the shader pair and does not corrupt or
+  regenerate its artifacts.
+- **If Implementation nonetheless observes a conflicting-rule symptom
+  under this *supported* (sequential-only) workflow** — not the
+  explicitly-unsupported concurrent-cross-config case above — **this is
+  a Human Review Blocker** (§12/§13): it would mean CMake's own ordinary
+  staleness tracking does not behave as documented for this specific
+  shape, and Implementation must stop and return to Plan/ADR review
+  rather than silently switch to per-configuration authoritative
+  artifacts (which would conflict with `Accepted` ADR-0031) or invent a
+  cross-process locking mechanism (a new concurrency primitive this Plan
+  does not otherwise need).
+- **This Plan does not claim CMake provides cross-process serialization
+  no official documentation confirms** — the "unsupported" bullet above
+  is a stated *workflow* boundary (contributors must not do this), not a
+  claim that attempting it is verified safe or unsafe; it is simply out
+  of this Plan's own supported scope, exactly the same way this
+  repository already leaves "two independent `cmake` invocations racing
+  against the same build tree for unrelated reasons" unsupported without
+  needing to say so for every other target.
 
 **Consumer artifact discovery — no hardcoded absolute path.** Every
 consuming CMake target (the demo, the GPU test) references the shader
-output directory via a CMake variable this shader-pair function sets as
-a directory property or returns as an out-variable
-(`ATLANTIS_${NAME}_SHADER_OUTPUT_DIR`, exact mechanism a Plan-stage
-detail Human Review may adjust) — never a string literal path a
-developer typed by hand, matching ADR-0031's own rule. The demo's/test's
-own existing `POST_BUILD` `copy_if_different` step (Section 1's Files to
-Modify) is retargeted from `shaders/minimal_renderer/*.spv` (source tree,
-checked-in) to this build-tree variable (generated, not checked in) — the
-copy mechanism itself (copy next to the consumer's own executable) is
-**unchanged**, only its source path changes.
+output directory via `ATLANTIS_${NAME}_SHADER_OUTPUT_DIR` (a variable
+`atlantis_add_slang_shader_pair()` itself sets via `PARENT_SCOPE`, per
+the function body above) — never a string literal path a developer typed
+by hand, matching ADR-0031's own rule — and adds an explicit
+`add_dependencies(<consumer target> ${NAME}_shaders)` so CMake's own
+build-order guarantee (above) actually applies to it, not merely to
+targets that happen to depend on the produced files by path convention.
+The demo's/test's own existing `POST_BUILD` `copy_if_different` step
+(Section 1's Files to Modify) is retargeted from
+`shaders/minimal_renderer/*.spv` (source tree, checked-in) to this
+build-tree variable (generated, not checked in) — the copy mechanism
+itself (copy next to the consumer's own executable) is **unchanged**,
+only its source path changes.
 
 **`.gitignore`:** one line added,
 `/build*/shaders/` (or the exact build-tree shader output pattern,
@@ -1212,14 +1598,29 @@ is.
   Validation Evidence sample transforms to the expected
   `ReflectionMetadata` value exactly; the module-level-`"parameters"`-vs-
   entry-point-`"bindings"`-`"used"`-filtering fixture; the set-0-implicit
-  fixture; the nonzero-set negative fixture (fails closed, per Section
-  3); a push-constant fixture explicitly cross-checked for offset/size
-  correctness (the issue #5676 regression case); malformed/unexpected-
-  structure fixtures → the matching `TransformError` variant, never a
-  crash or a best-effort partial result.
-- **`descriptor_contract_tests.cpp`:** exact-match fixture → `Ok`; each
-  `ContractMismatchError` variant individually exercised (wrong count,
-  missing binding, wrong type, wrong stage, unexpected extra binding).
+  fixture (absent `"space"` → `set = 0`); **the nonzero-set positive
+  fixture** — the exact `{"kind": "descriptorTableSlot", "space": 2,
+  "index": 3}` shape ADR-0030 already recorded — transforms successfully
+  to `{set: 2, binding: 3}` in the resulting `ReflectionMetadata` (this
+  is a parser-level, expected-to-*succeed* case, per Section 2/3 — not a
+  failure case); a malformed-`"space"`/`"index"`-value negative fixture
+  (non-integer/negative/out-of-range) → a resource-limit parse failure,
+  kept distinct from the nonzero-set positive case above; a push-constant
+  fixture explicitly cross-checked for offset/size correctness (the
+  issue #5676 regression case); malformed/unexpected-structure fixtures
+  → the matching `TransformError` variant, never a crash or a best-effort
+  partial result; the four resource limits (Section 3) each individually
+  exercised (an input exceeding each one → the matching parse error, not
+  a crash or a hang).
+- **`descriptor_contract_tests.cpp`:** exact-match fixture ({set: 0,
+  binding: 0}) → `Ok`; **the nonzero-set fixture from
+  `slang_json_transform_tests.cpp` above, fed into
+  `validateDescriptorContract()` against
+  `minimalRendererExpectedDescriptorContract()`, asserts the specific
+  resulting `ContractMismatchError`** (`BindingNotFound`/
+  `UnexpectedExtraBinding`) — the second half of the parser-vs-contract
+  split Section 2/3 both require; every other `ContractMismatchError`
+  variant individually exercised (wrong count, wrong type, wrong stage).
 - **`command_line_tests.cpp`:** `buildSlangcArgv()`'s output contains
   `-profile spirv_1_0`, `-warnings-disable 50011`, and **never**
   `-fvk-use-entrypoint-name`, for every fixture request; `buildSpirvValArgv()`'s
@@ -1238,16 +1639,28 @@ is.
   `AttributeCountMismatch`/`LocationNotFoundInSchema` (exact variant a
   Plan-stage detail); `toPushConstantSize()` sums correctly, including
   the zero-ranges case.
-- **`tests/tools/shader_compiler/process_launch_tests.cpp`:** argv-vector-
-  to-Windows-command-line-string quoting logic (the piece
-  `launchProcess()` owns internally) tested in isolation against known
-  tricky inputs (embedded spaces, embedded quotes, trailing backslashes —
-  the classic `CommandLineToArgvW` edge cases) — **without** actually
-  spawning a process for this specific test file (a fake/mockable seam
-  inside `process_launch.cpp`, exact mechanism a Plan-stage detail); a
-  genuinely-nonexistent executable path → `ExecutableNotFound`, exercised
-  via a real (but trivially fast) `launchProcess()` call, since this
-  particular case needs no real tool to observe.
+- **`tests/tools/shader_compiler/process_launch_tests.cpp`:** the
+  argv-vector-to-Windows-command-line-string quoting algorithm (Section
+  4) exercised as a pure function, in isolation, against every documented
+  edge case — an argument with an embedded space, an embedded double
+  quote, a trailing backslash immediately before the closing quote, an
+  empty-string argument, and a path under a directory whose own name
+  contains a space — asserting the exact expected quoted output for
+  each, not merely "does not crash." A genuinely-nonexistent executable
+  path → `ExecutableNotFound`, exercised via a real (but trivially fast)
+  `launchProcess()` call — this specific case needs no real tool and no
+  process spawn to observe, since Section 4 fixes it as a
+  `std::filesystem::exists()` check performed before `CreateProcessW` is
+  ever called. A real, trivial, always-present Windows executable (e.g.
+  `cmd.exe /c exit 0` / `cmd.exe /c exit 3`, or an equivalently simple
+  fixture binary) is used to exercise `launchProcess()`'s full happy
+  path end-to-end — successful launch, correct `exitCode` capture for
+  both a zero and a nonzero exit, and `diagnostics` correctly capturing
+  text the fixture process writes to both stdout and stderr (confirming
+  the single-file, combined-capture design, Section 4, actually merges
+  both streams as intended) — this does not require the Vulkan SDK and
+  stays in the GPU-independent, no-`tool`-label category, since `cmd.exe`
+  is a standard Windows component, not an SDK-provided tool.
 
 ### Tool integration (`ctest -L tool` — a new label; needs the real
 Vulkan-SDK-provided `slangc`/`spirv-val` on the build machine, but **no**
@@ -1277,16 +1690,40 @@ question, now answered concretely for this Plan's own scope)
     inspects across every code path that reaches `buildSlangcArgv()`.
   - A deliberately-invalid `.slang` fixture fails the real `slangc`
     invocation with a non-zero exit code, and `compile_and_validate.cpp`
-    propagates that failure (no output files written/renamed).
+    propagates that failure — **no stamp file is created, and none of
+    the four final artifact paths exist afterward** (Section 7's publish
+    transaction, step 14c short-circuits before any temp-directory
+    content is ever renamed to a final path).
+  - **Partial-publish recovery**: a fixture that fails specifically
+    during Section 7's step 14d (simulated by making one of the four
+    final-path directories read-only, or an equivalent injectable
+    failure point — a Plan-stage test-harness detail) leaves **no**
+    stamp file, and a subsequent, ordinary re-run (with the injected
+    failure removed) succeeds and produces a complete, correct four-file
+    set plus a stamp — the concrete regression test for Section 7's own
+    "next build always retries a failure" guarantee.
   - `atlantis_shader_compiler`, run twice on identical input/flags,
     produces byte-identical `.spv` and reflection-JSON output — the
     Plan's own standing regression test for Spec 0008's own local
     (not vendor-guaranteed) determinism observation.
   - Incremental rebuild: touching the `.slang` source and re-running
-    `cmake --build` recompiles exactly the affected shader pair; a
-    no-op second build recompiles nothing (verified by build-log/
-    timestamp inspection, mirroring `testing-strategy.md`'s own build/
-    tool-integration layer).
+    `cmake --build` recompiles exactly the affected shader pair (the
+    stamp's timestamp advances); a no-op second build recompiles nothing
+    (the stamp is untouched — verified by build-log/timestamp inspection,
+    mirroring `testing-strategy.md`'s own build/tool-integration layer).
+  - **Sequential Debug→Release and Release→Debug** (§7's multi-config
+    support boundary): building Debug to completion, then building
+    Release in the *same* binary tree (and, as a separate case, the
+    reverse order) — the second configuration's build does not
+    re-invoke `atlantis_shader_compiler` for an unchanged shader pair
+    (the stamp is already up to date), and both configurations' own
+    consumers (the demo, the GPU test) successfully locate and load the
+    one shared artifact set. This is the concrete regression test for
+    §7's supported-workflow guarantee — run manually/via script during
+    Implementation (§10's own gate for this step), not necessarily a
+    standing CTest case if CTest's own multi-config invocation model
+    makes that awkward to express (a Plan-stage detail; a standing CTest
+    case is preferred if practical).
   - Missing `slangc`/`spirv-val` (simulated by pointing `--slangc-path`/
     `--spirv-val-path` at a nonexistent file) fails
     `atlantis_shader_compiler` itself cleanly — this test exercises the
@@ -1303,7 +1740,22 @@ question, now answered concretely for this Plan's own scope)
   back a real `Device::createPipeline()` call; Vulkan Validation Layers
   report zero warnings/errors; a multi-draw-item frame (unchanged from
   Spec 0007's own existing case) still produces correct per-item
-  transforms.
+  transforms. **This test is also this Plan's own designated regression
+  test for the `vulkan_device.cpp`-hard-coded-layout-vs-
+  `minimalRendererExpectedDescriptorContract()` duplication risk (§2's
+  own disclosed, accepted single-source-of-truth gap)**: because it
+  exercises a real `VkPipeline` built from the Vulkan Backend's actual,
+  unchanged hard-coded binding layout, using a shader Shader System has
+  already build-time-validated against its own separate, hand-kept-in-
+  sync copy of that same layout, any future drift between the two
+  (someone edits one without the other) surfaces here as either a real
+  Vulkan Validation Layers error/warning (a genuine binding mismatch) or
+  a pipeline-creation failure — not silently. This does not eliminate
+  the duplication (see §13's own PHR-0008-07 entry for the full,
+  honestly-bounded statement of this risk), but it is the concrete,
+  already-existing test that would actually catch it in practice, and
+  this Plan now says so explicitly rather than leaving that connection
+  implicit.
 - **Manual verification** (`examples/minimal_renderer_demo`, post-
   migration): a visible, correctly-shaded, correctly depth-ordered mesh,
   matching Spec 0007's own already-verified output, confirming the
@@ -1313,13 +1765,23 @@ question, now answered concretely for this Plan's own scope)
 
 ### Explicitly not automated (stated, not silently assumed covered)
 
-- The nonzero-descriptor-set JSON shape (Section 3's fail-closed
-  behavior has no real-SDK-sample-backed positive test this round).
-- Multi-config-generator concurrent-build-race safety (Section 7's own
-  flagged item) — verified by a manual, deliberate parallel Debug+Release
-  build during Implementation, not a standing CTest case (there is no
-  reliable, portable way to force the specific race condition
-  deterministically in an automated test).
+- **Two independent, concurrently-running build processes building
+  different configurations of the same binary tree** — this is an
+  explicitly *unsupported* Phase 1 workflow (§7), not merely an untested
+  one; there is no reliable, portable way to force this specific
+  scenario deterministically in an automated test, and this Plan does
+  not attempt to support or verify it. Contributors needing concurrent
+  Debug/Release builds use separate binary trees (§7).
+- A real Slang/Vulkan-SDK version genuinely different from the one this
+  Plan's own fixtures were captured against (Section 3's own SDK-upgrade
+  re-verification requirement) — by construction, cannot be exercised
+  until such an upgrade actually happens.
+
+(The nonzero-descriptor-set JSON shape is **no longer in this list** —
+it is now covered by a positive fixture in `slang_json_transform_tests.cpp`
+and a contract-rejection fixture in `descriptor_contract_tests.cpp`,
+both reusing ADR-0030's own already-recorded, `[JSON-verified]` sample —
+see this section's own entries above.)
 
 ---
 
@@ -1346,23 +1808,33 @@ implementation step" rule:
    push-constant regression fixture.
 4. **`descriptor_contract.cpp` + `command_line.cpp` + `version_provenance.cpp`.**
    **Gate:** their own unit tests green.
-5. **`process_launch.cpp` (Tools).** **Gate:**
-   `process_launch_tests.cpp` green (quoting logic; no real subprocess
-   needed for most cases).
+5. **`process_launch.cpp` (Tools)**, implementing Section 4's full
+   `CreateProcessW` design (resolved `lpApplicationName`, mutable
+   `lpCommandLine` buffer, single-temp-file diagnostic capture,
+   `PROCESS_INFORMATION` RAII guard). **Gate:** `process_launch_tests.cpp`
+   green, including the `cmd.exe`-based end-to-end happy-path case
+   (Section 9) — this is the first step exercising a real
+   `CreateProcessW` call, but still needs no Vulkan SDK.
 6. **`compile_and_validate.cpp` (Tools) wired to a real `slangc`/
-   `spirv-val`.** This is the first step that actually needs the real
-   Vulkan SDK toolchain. **Gate:** `toolchain_integration_tests.cpp`
+   `spirv-val`**, implementing Section 7's full publish-transaction
+   algorithm (14a–14f). This is the first step that actually needs the
+   real Vulkan SDK toolchain. **Gate:** `toolchain_integration_tests.cpp`
    green against a small, throwaway fixture `.slang` file (not yet
-   Minimal Renderer's own shader) — including the atomic-publish/no-
-   partial-output check and the determinism regression check.
-7. **`atlantis_add_slang_shader_pair()` CMake function + end-to-end
+   Minimal Renderer's own shader) — including the partial-publish-
+   recovery check and the determinism regression check.
+7. **`atlantis_add_slang_shader_pair()` (defined inside
+   `src/shader_system/CMakeLists.txt`, Section 7) + end-to-end
    build-tree pipeline**, still against the throwaway fixture shader.
-   **Gate:** a clean build produces the expected `.spv`/`.refl.json`
-   pair at the expected build-tree path; incremental-rebuild and
-   no-op-rebuild behavior verified; **manual multi-config parallel-build
-   verification performed here** (Section 7's flagged item), with the
-   result (safe, or a concrete mitigation applied) recorded in the
-   implementation PR.
+   **Gate:** a clean build produces the stamp plus the expected
+   `.spv`/`.refl.json` pair (as `BYPRODUCTS`) at the expected build-tree
+   path; incremental-rebuild and no-op-rebuild behavior verified; **the
+   sequential Debug→Release and Release→Debug regression test (Section 9)
+   is run and recorded here** — per Section 7's fixed supported-workflow
+   boundary, this is a required gate, not an optional or deferred
+   verification. If this specific, *sequential*, single-process test
+   reveals a conflicting-rule symptom, Implementation stops and returns
+   to Plan/ADR review per Section 12/13 — it does not silently switch to
+   per-configuration artifacts.
 8. **`ShaderSystemRhiIntegration` (`vertex_input_mapping.cpp`).**
    **Gate:** `vertex_input_mapping_tests.cpp` green.
 9. **Minimal Renderer migration (Section 8), in its own seven sub-steps.**
@@ -1433,7 +1905,33 @@ implementation step" rule:
       `slangc`/`spirv-val`'s own stderr) is checked and propagated —
       no discarded exit code.
 - [ ] Debug and Release builds both succeed, sharing one shader artifact
-      set with no redundant recompilation.
+      set with no redundant recompilation, **built sequentially in the
+      same binary tree** (Section 7's supported-workflow boundary) — the
+      concurrent-cross-config case remains explicitly unsupported and is
+      not verified.
+- [ ] A shader pair's `OUTPUT` is a single stamp file; `.spv`/reflection-
+      JSON are declared `BYPRODUCTS` — verifiable by inspection of
+      `atlantis_add_slang_shader_pair()`'s own `add_custom_command()`
+      call.
+- [ ] A failed compile/reflect/validate run leaves no stamp file and no
+      partially-published final artifact set behind — verified by the
+      partial-publish-recovery test (Section 9) passing.
+- [ ] `slang_json_transform.cpp` parses a nonzero descriptor `"space"`
+      value successfully (never fails closed on it), and
+      `validateDescriptorContract()` separately rejects it against
+      Minimal Renderer's `{set: 0, binding: 0}`-only expected contract —
+      both halves verified by `slang_json_transform_tests.cpp`/
+      `descriptor_contract_tests.cpp` passing (Section 9).
+- [ ] `launchProcess()` passes the resolved executable path via
+      `lpApplicationName` (never `NULL`), builds `lpCommandLine` into an
+      owned, mutable `std::wstring` buffer (never a string literal or a
+      `const`-sourced pointer), and captures combined stdout+stderr via
+      a single temporary file (never two pipes) — verifiable by
+      inspection of `process_launch.cpp`.
+- [ ] `json_parser.cpp` enforces its four documented resource limits
+      (input size, nesting depth, string length, element count) —
+      verifiable by the corresponding `json_parser_tests.cpp` cases
+      passing.
 - [ ] `ctest -LE gpu` (excluding both `gpu` and `tool` labels, or a
       combined `-LE "gpu|tool"` expression, a Plan-stage CTest-label-
       syntax detail) passes with no Vulkan SDK or GPU present beyond
@@ -1503,11 +2001,19 @@ Implementation) if any of the following is discovered:**
   itself anticipated this risk was low (SPIR-V compilation always
   happens on a host, never the Android target device) but did not treat
   it as fully resolved.
-- CMake is found genuinely unable to guarantee configuration-independent
-  artifact safety under Visual Studio's multi-config generator (Section
-  7's flagged item) in a way no add-on mitigation (explicit
-  `add_dependencies()` ordering, serializing the shader-compile step)
-  can resolve without introducing a new architectural concept.
+- The **sequential** Debug→Release/Release→Debug regression test
+  (Section 9, gated at Step 7 of Section 10) demonstrates a genuine
+  conflicting-rule symptom under Section 7's *supported* (single-process,
+  sequential-build) workflow — as distinct from the concurrent-cross-
+  config case, which is already, explicitly out of Phase 1's supported
+  scope and requires no escalation if a contributor simply doesn't
+  attempt it. A sequential-build failure would mean CMake's own ordinary
+  staleness tracking does not behave as documented for this specific
+  configuration-independent-`OUTPUT` shape, and would call into question
+  whether ADR-0031's "configuration-independent artifact" decision
+  remains viable at all — Implementation must stop rather than silently
+  switch to per-configuration authoritative artifacts or invent a new
+  concurrency primitive.
 
 **Not blockers — Implementation may resolve these directly, calling the
 deviation out in the implementation PR per [AGENTS.md](../AGENTS.md):**
@@ -1517,6 +2023,72 @@ sample), exact CMake variable/property names, the exact `--expected-
 contract=` CLI-flag mechanism (Section 5) if a cleaner alternative
 emerges during implementation, and any other detail this Plan's own
 "Candidate-API Status" section already flags as non-binding.
+
+---
+
+## 13. Plan-Stage Design Decisions for Human Review
+
+The decisions below are each a genuine Plan-stage design choice — none
+changes an `Approved` Spec's or an `Accepted` ADR's own conclusions —
+gathered here in one place so Human Review can confirm them explicitly,
+rather than needing to reconstruct them from scattered detail across
+§1–§12. Numbered to match this Plan's own prior review history for
+traceability; gaps in the numbering (e.g. PHR-0008-01, -06, -08 through
+-13) correspond to decisions already confirmed in that prior review round
+and not reopened here.
+
+- **PHR-0008-02 — Nonzero descriptor-set parsing and rejection.**
+  `slang_json_transform.cpp` parses ANY reflected descriptor `"space"`
+  value (0 or otherwise) successfully into `ReflectionMetadata` — this is
+  a `[JSON-verified]` capability (ADR-0030), not a guess. Separately,
+  `validateDescriptorContract()` rejects any set/binding pair outside
+  Minimal Renderer's own fixed `{set: 0, binding: 0}` expectation. Parser
+  capability and contract acceptance are two independent, independently-
+  tested layers (§2, §3, §9).
+- **PHR-0008-03 — `CreateProcessW` model.** Resolved executable path via
+  `lpApplicationName` (never `NULL`); a mutable, owned `std::wstring`
+  `lpCommandLine` buffer; a single temporary file (not two pipes) for
+  combined stdout+stderr capture, with narrowly-scoped handle
+  inheritance and full `PROCESS_INFORMATION`/file-handle RAII (§4).
+- **PHR-0008-04 — Stamp-based artifact-pair transaction.** A single,
+  configuration-independent stamp file is the sole CMake `OUTPUT`
+  driving rebuild/staleness decisions; the four real artifacts are
+  `BYPRODUCTS`, published via temp-directory-then-rename only after
+  every validation step succeeds, with the stamp written strictly last
+  and only after all four real files are already safely in place (§7).
+- **PHR-0008-05 — Multi-config support boundary.** Exactly one,
+  configuration-independent producer per binary tree; sequential (not
+  concurrent) Debug/Release builds within one binary tree are supported
+  and must be verified (§9/§10); two independent, concurrently-running
+  build processes targeting different configurations of the *same*
+  binary tree are an explicitly unsupported Phase 1 workflow, not a gap
+  this Plan attempts to close (§7).
+- **PHR-0008-07 — Descriptor-contract duplication risk and its
+  regression backstop.** `vulkan_device.cpp`'s hard-coded binding layout
+  and `minimalRendererExpectedDescriptorContract()` remain two, hand-
+  kept-in-sync copies — this Plan does not eliminate that duplication
+  (doing so would require an RHI API change outside this Plan's
+  authorized scope). `minimal_renderer_gpu_tests.cpp` (already planned,
+  §9) is this Plan's own designated regression backstop: a real
+  `VkPipeline`, built from the Vulkan Backend's actual layout, using a
+  Shader-System-validated shader, would surface drift as a real Vulkan
+  Validation Layers error or pipeline-creation failure — not silently. A
+  general, single-source-of-truth descriptor system remains explicitly
+  future work, requiring its own Spec/ADR.
+- **PHR-0008-14 — JSON parser resource limits.** Fixed, conservative,
+  non-configurable constants (16 MiB input, 64-level nesting, 64 KiB
+  strings, 4096 array/object elements — §3) bound the hand-rolled
+  parser's worst-case behavior against malformed/adversarial input,
+  without becoming a Core-wide configuration surface.
+- **PHR-0008-15 — CMake helper placement.** `atlantis_add_slang_shader_pair()`
+  is defined directly inside `src/shader_system/CMakeLists.txt` — no new
+  per-module `cmake/` subdirectory pattern is introduced, and it is not
+  placed in the repository's existing, genuinely cross-cutting root
+  `cmake/` directory either, since it has exactly one consumer this
+  round (§7). Human Review may prefer the root-`cmake/` placement instead
+  if a second consumer is anticipated sooner than this Plan assumes —
+  either choice is mechanical and does not change any file outside §1's
+  own list either way.
 
 ---
 
