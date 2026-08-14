@@ -8,10 +8,11 @@
   SPIRV-Reflect, following explicit human direction. See Revision Note
   below. Further revised the same day with hands-on toolchain evidence —
   see Validation Evidence below.
-- **Related Plan(s):** None yet — a plan may now be drafted against this
-  `Approved` spec, per [AGENTS.md](../AGENTS.md); Plan 0008 has not been
-  drafted by this document, and may only be drafted once this spec's own
-  PR has merged into `main` (see Human Review Approval below).
+- **Related Plan(s):** [plans/0008-shader-system-foundation.md](../plans/0008-shader-system-foundation.md)
+  (`Draft`, pending its own Human Review — drafting a Plan against this
+  `Approved` spec is authorized per [AGENTS.md](../AGENTS.md); drafting it
+  is not itself an implementation authorization, see that Plan's own
+  Status).
 - **Related ADR(s):** Builds on
   [ADR-0001](../adr/0001-rhi-backend-independence.md),
   [ADR-0004](../adr/0004-phase1-threading-baseline.md),
