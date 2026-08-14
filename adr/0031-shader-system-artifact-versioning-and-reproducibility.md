@@ -1,9 +1,15 @@
 # ADR 0031: Shader System — Artifact Location, Versioning, and Reproducibility
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-13 (revised 2026-08-14 — see Revision History)
-- **Deciders:** _Pending Human Review_
-- **Related Spec:** [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md) (`Draft`)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+  Approval recorded 2026-08-14; see
+  [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md)'s
+  Human Review Approval note for the full approval record this ADR's
+  Decision is part of, including the explicit confirmation that
+  `spirv-val --target-env vulkan1.0` is a mandatory (not merely
+  recommended) build-time verification step.
+- **Related Spec:** [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md) (`Approved`)
 
 ## Revision History
 
@@ -29,6 +35,12 @@
   (2) local build determinism was **measured** rather than assumed;
   (3) the previously-unaddressed Debug/Release shader-debug-info question
   is now explicitly scoped out, closing an audit-identified gap.
+- **2026-08-14 (third revision — Human Review approval):** Human Review
+  promoted `spirv-val --target-env vulkan1.0` from a recommended to a
+  **mandatory** build-time verification step, on the same configure-time-
+  failure footing as `slangc` — see the Deciders field above and
+  [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md)'s
+  Human Review Approval note. This ADR moves to `Accepted`.
 
 ## Context
 

@@ -1,15 +1,17 @@
 # Spec: Shader System Foundation
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
-  direction; pending Human Review.
+  direction; approved by human review — see Human Review Approval below.
 - **Created:** 2026-08-13
 - **Revised:** 2026-08-14 — re-based on Slang instead of GLSL + `glslc` +
   SPIRV-Reflect, following explicit human direction. See Revision Note
-  below.
-- **Related Plan(s):** None yet — a plan may be drafted once this spec
-  reaches `Approved`, per [AGENTS.md](../AGENTS.md); not before, and not
-  as part of this spec's own PR.
+  below. Further revised the same day with hands-on toolchain evidence —
+  see Validation Evidence below.
+- **Related Plan(s):** None yet — a plan may now be drafted against this
+  `Approved` spec, per [AGENTS.md](../AGENTS.md); Plan 0008 has not been
+  drafted by this document, and may only be drafted once this spec's own
+  PR has merged into `main` (see Human Review Approval below).
 - **Related ADR(s):** Builds on
   [ADR-0001](../adr/0001-rhi-backend-independence.md),
   [ADR-0004](../adr/0004-phase1-threading-baseline.md),
@@ -22,8 +24,9 @@
   [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md),
   [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md),
   and [ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)
-  (all `Accepted`). See **Architectural Impact** below — four new
-  decisions are identified and drafted alongside this spec:
+  (all `Accepted`, none reopened or modified by this spec). See
+  **Architectural Impact** below — four new decisions are identified and
+  drafted alongside this spec:
   [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)
   (Phase 1 shader source language and compiler — Slang),
   [ADR-0029](../adr/0029-shader-system-build-time-compilation-boundary.md)
@@ -34,7 +37,92 @@
   boundary), and
   [ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md)
   (artifact location, versioning, and reproducibility) — all four
-  `Proposed`, pending the same Human Review this spec itself is pending.
+  `Accepted` alongside this spec's own approval below.
+- **Human Review Approval (2026-08-14):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer for this branch) on 2026-08-14, following a joint
+  architecture review of this spec and
+  [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)–[ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md)
+  conducted across this spec's own revision history (an initial
+  GLSL-based draft; a Slang-based re-evaluation; a hands-on toolchain
+  validation pass; and an independent, AI-assisted Human-Review-readiness
+  audit — see each document's own Revision History for what each round
+  raised and resolved before this approval) and a dedicated decision
+  memo enumerating candidates HR-0008-01 through HR-0008-13. Two points
+  were left open through that entire process specifically because they
+  required a human choice rather than a technical recommendation, and are
+  resolved explicitly, in full, as part of this approval:
+
+  1. **SPIR-V compatibility baseline: Option A (compatibility-first)
+     approved.** The Vulkan Backend's physical-device selection floor
+     remains `VK_API_VERSION_1_0`
+     (`src/vulkan_backend/src/vulkan_device.cpp`, unchanged); shader
+     artifacts target **SPIR-V 1.0** via `slangc -profile spirv_1_0`;
+     Slang's own "experimental" support-tier disclosure for that path is
+     accepted and stays recorded, not minimized; and
+     [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)
+     is **not** reopened. **`spirv-val --target-env vulkan1.0` is
+     promoted from a recommendation to a mandatory build-time
+     verification step**, alongside this decision: every emitted shader
+     artifact must pass it, and a missing `spirv-val` tool must fail
+     **CMake configure**, on the same footing as a missing `slangc` — see
+     [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)
+     and
+     [ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md)
+     for the updated Decision text this approval confirms. Option B
+     (SPIR-V 1.3, raising the physical-device floor to Vulkan 1.1,
+     reopening ADR-0024) is confirmed **rejected** for this round —
+     retained in each ADR's Alternatives Considered as a live option a
+     future compatibility-focused Human Review could still choose, not
+     foreclosed permanently.
+  2. **Slang `E50011` ("SPIR-V version too old") warning: Policy S
+     (precise suppression) approved.** Atlantis Tools' CLI invocation of
+     `slangc` passes `-warnings-disable 50011` — suppressing exactly this
+     one, known, Slang-target-maturity warning and no other — with the
+     reason (Slang's own SPIR-V 1.0 "experimental" disclosure) recorded
+     permanently in
+     [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md),
+     not silently dropped. Suppression does not reduce verification
+     coverage: `spirv-val` (now mandatory, per point 1) and, once a GPU
+     path exists, Vulkan Validation Layers remain the substantive checks;
+     suppressing `E50011` only keeps the build free of a known, already
+     zero-information-content repeated warning, consistent with
+     [docs/process/definition-of-done.md](../docs/process/definition-of-done.md)'s
+     "builds cleanly with no new warnings" bar.
+  3. **HR-0008-01 through HR-0008-13, as enumerated in the Human Review
+     decision memo prepared for this PR, are all approved as drafted** —
+     covering, among others: Slang as both Phase 1 shader language and
+     compiler infrastructure; `slangc` sourced from the existing Vulkan
+     SDK with no new dependency-acquisition mechanism; the CLI-subprocess
+     (not library-link) architecture; Slang's own `-reflection-json`
+     replacing the originally-proposed SPIRV-Reflect dependency;
+     descriptor reflection scoped to validation of the existing fixed
+     RHI/Vulkan-Backend descriptor contract only, never general
+     pipeline-layout construction; the `"main"` SPIR-V entry-point
+     compatibility policy; the RHI-integration target's position as a
+     secondary target inside the Shader System module rather than a new
+     top-level module; the version-bound (not self-designed-stable)
+     reflection-JSON parsing policy; the configuration-independent
+     shader-artifact model with shader debug-info explicitly out of
+     Phase 1 scope; and ADR-0027's migration/retirement boundary. No
+     `AGENTS.md` or `docs/architecture/module_boundaries.md` change is
+     approved or implied by any of these.
+  4. **Plan 0008 is authorized to be drafted, but only once this spec's
+     own PR has merged into `main`** — not before, and not as part of the
+     same branch/PR. **Implementation remains unauthorized.** Per
+     [AGENTS.md](../AGENTS.md), drafting Plan 0008 does not itself
+     authorize writing code; that future Plan must still pass its own (or
+     a joint Spec+Plan) Human Review, per the same Spec → Plan → Human
+     Review → Implementation → Verification → PR → Merge path every prior
+     spec in this line has followed, before any source, test, shader, or
+     build-configuration file for this spec's scope is written.
+
+  Following this approval: ADR-0028 through ADR-0031 each move to
+  `Accepted` (see each ADR's own header) and this spec moves to
+  `Approved`. This checkbox-level approval is not itself an authorization
+  to implement — see point 4 above and this spec's own Acceptance
+  criteria throughout, which describe properties a future implementation
+  must satisfy, not ones already verified.
 
 ## Revision Note (2026-08-14)
 
@@ -1072,10 +1160,11 @@ configuration is written by this round.)*
 
 ## Risks & Open Questions
 
-- **SPIR-V version target vs. device-compatibility floor — a genuine,
-  unresolved tension requiring explicit Human Review confirmation, not a
-  Plan-stage detail.** Slang's own documentation states SPIR-V 1.3+
-  emission is "stable" while SPIR-V 1.0–1.2 emission is "experimental"
+- ~~**SPIR-V version target vs. device-compatibility floor**~~ —
+  **resolved by Human Review (2026-08-14): Option A, Vulkan 1.0 / SPIR-V
+  1.0, with `spirv-val --target-env vulkan1.0` mandatory.** Slang's own
+  documentation states SPIR-V 1.3+ emission is "stable" while SPIR-V
+  1.0–1.2 emission is "experimental"
   ([docs.shader-slang.org — SPIR-V-Specific Functionalities](https://docs.shader-slang.org/en/latest/external/slang/docs/user-guide/a2-01-spirv-target-specific.html)).
   **Four axes must not be conflated** (an earlier draft of this spec
   blurred them): the Vulkan *instance* `apiVersion` request (decided by
@@ -1093,13 +1182,14 @@ configuration is written by this round.)*
   ([`appendices/spirvenv.adoc`](https://github.com/KhronosGroup/Vulkan-Docs/blob/main/appendices/spirvenv.adoc)).
   No extension bridges SPIR-V 1.3 onto a Vulkan 1.0 device
   (`VK_KHR_spirv_1_4` bridges Vulkan **1.1**-to-SPIR-V 1.4, so it does
-  not help). **There is therefore no third option that obtains Slang's
-  "stable" tier while keeping a Vulkan 1.0 device floor** — this spec
-  explicitly does not claim one exists.
+  not help). **There is no third option that obtains Slang's "stable"
+  tier while keeping a Vulkan 1.0 device floor** — this spec does not
+  claim one exists.
 
-  Two concrete options exist, and this spec does not pick one unilaterally:
-  1. **Target SPIR-V 1.0 via `-profile spirv_1_0`** (this spec's stated
-     recommendation in
+  Two concrete options were presented to Human Review, which did not pick
+  one unilaterally:
+  1. **Option A — Target SPIR-V 1.0 via `-profile spirv_1_0`**
+     (this spec's stated recommendation in
      [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)),
      preserving the Vulkan 1.0 physical-device floor and
      [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)'s
@@ -1108,30 +1198,44 @@ configuration is written by this round.)*
      the `E50011: SPIR-V version too old` warning this path emits.
      **Verified working**: the artifact compiles, disassembles as
      `Version: 1.0`, and passes `spirv-val --target-env vulkan1.0`.
-     Mitigation: adopt that `spirv-val` check in the build
+     **`spirv-val` is now a mandatory build-time check**
      ([ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md)),
      which reduces but **does not eliminate** the risk, and does **not**
      convert Slang's experimental path into a stable one.
-  2. **Target SPIR-V 1.3** (Slang's "stable" tier), which requires
-     raising the **physical-device** floor from `VK_API_VERSION_1_0` to
-     `VK_API_VERSION_1_1` — a real narrowing of the device population
-     Atlantis serves. This would require its own compatibility-focused
-     Human Review covering
+  2. **Option B — Target SPIR-V 1.3** (Slang's "stable" tier), which
+     requires raising the **physical-device** floor from
+     `VK_API_VERSION_1_0` to `VK_API_VERSION_1_1` — a real narrowing of
+     the device population Atlantis serves. This would require its own
+     compatibility-focused Human Review covering
      [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)
      (whose Human Review twice declined to narrow device compatibility)
      and [AGENTS.md](../AGENTS.md)'s Windows/Android platform commitment.
      This spec has no authority to make that change and does not reopen
      ADR-0024.
 
-  **A human must choose between these before Plan/implementation.** This
-  spec does not proceed as if either were already decided.
-- **Whether to suppress the `E50011` warning, and how that interacts with
-  the Definition of Done's "builds cleanly with no new warnings" item.**
-  The warning is suppressible via `-warnings-disable 50011` with
-  byte-identical output, but silently suppressing a "SPIR-V version too
-  old" signal on a path Slang itself calls experimental is a decision
-  that should be made visibly, not by default. Flagged for Human Review,
-  not resolved here.
+  **Human Review approval (2026-08-14) selected Option A**, promoted
+  `spirv-val` from recommended to mandatory as part of that choice, and
+  explicitly declined Option B for this round (retained as a live future
+  alternative, not foreclosed) — see this spec's own Human Review
+  Approval note above and
+  [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)'s
+  updated Decision.
+- ~~**Whether to suppress the `E50011` warning**~~ — **resolved by Human
+  Review (2026-08-14): Policy S, precise suppression.** The warning is
+  suppressible via `-warnings-disable 50011` with byte-identical output.
+  Human Review approved suppressing exactly this one, known,
+  Slang-target-maturity warning, with the reason (Slang's own SPIR-V 1.0
+  "experimental" disclosure) recorded permanently in
+  [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)
+  rather than left to an implicit Plan-stage default, and with `spirv-val`
+  (now mandatory) and future Vulkan Validation Layers retained as the
+  substantive verification layers this suppression does not weaken —
+  consistent with, not in tension with,
+  [docs/process/definition-of-done.md](../docs/process/definition-of-done.md)'s
+  "builds cleanly with no new warnings" item. The rejected alternative
+  (Policy K — leave `E50011` unsuppressed on every SPIR-V 1.0 compile) is
+  recorded in [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)'s
+  Alternatives Considered.
 - **Exact Tools CLI argument shape, exact Atlantis reflection-JSON schema
   field names, exact build-tree path interpolation syntax, and exact
   CMake target/property names** are left to the Plan — this spec fixes
