@@ -1,9 +1,18 @@
 # ADR 0030: Shader System — Reflection Strategy, Metadata Ownership, and the RHI/Pipeline Boundary
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-13 (revised 2026-08-14 — see Revision History)
-- **Deciders:** _Pending Human Review_
-- **Related Spec:** [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md) (`Draft`)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+  Approval recorded 2026-08-14; see
+  [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md)'s
+  Human Review Approval note for the full approval record this ADR's
+  Decision is part of, including the explicit confirmation that
+  descriptor reflection is scoped to validation of the existing fixed
+  RHI/Vulkan-Backend descriptor contract only (never general pipeline-
+  layout construction), and that the RHI-integration target is a
+  secondary target inside the Shader System module, not a new top-level
+  module.
+- **Related Spec:** [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md) (`Approved`)
 
 ## Revision History
 
@@ -38,6 +47,14 @@
   (`-fvk-use-entrypoint-name` must not be passed) is now fixed
   explicitly, having been verified in both directions. Every reflection
   field is now classified by how it was actually established.
+- **2026-08-14 (third revision — Human Review approval):** The
+  descriptor-reflection consumption scope (validation-only), the
+  `"main"` entry-point compatibility policy, and the RHI-integration
+  target's position as a Shader-System-internal secondary target were
+  all reviewed and approved without change — see the Deciders field
+  above and
+  [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md)'s
+  Human Review Approval note. This ADR moves to `Accepted`.
 
 ## Context
 
