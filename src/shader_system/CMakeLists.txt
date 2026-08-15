@@ -60,3 +60,28 @@ function(atlantis_add_slang_shader_pair)
   add_custom_target(${ARG_NAME}_shaders ALL DEPENDS "${stamp}")
   set(ATLANTIS_${ARG_NAME}_SHADER_OUTPUT_DIR "${ARG_OUTPUT_DIR}" PARENT_SCOPE)
 endfunction()
+
+# Known, human-reviewed multi-config behavior (Plan 0008 Section 7/9's
+# own sequential Debug/Release regression test, run against a real
+# throwaway fixture during this Plan's own implementation): the FIRST
+# time a second configuration (e.g. Release, after Debug has already
+# built once in the same binary tree) builds this target, the shader
+# pair is recompiled exactly once, even though neither the stamp nor
+# SOURCE is actually stale. Root cause, confirmed by timestamp
+# inspection: DEPENDS above includes the atlantis_shader_compiler
+# TARGET (ADR-0029's "build the tool, then use it" idiom); that target
+# is built per-configuration, so a new configuration's own first build
+# of it produces a freshly-timestamped executable newer than the
+# already-existing, configuration-independent stamp -- CMake's own
+# dependency check correctly (per its own documented behavior) treats
+# that as "a DEPENDS input is newer than OUTPUT" and reruns once.
+# Verified NOT to recur on any later build of an already-built
+# configuration (Release's second build, and Debug's own subsequent
+# builds, are true no-ops) -- this is a one-time, self-resolving cost
+# per newly-introduced configuration, not an ongoing staleness-tracking
+# failure, and the published artifact remains single, shared, and
+# correct across configurations throughout. Human Review confirmed this
+# does not call ADR-0031's configuration-independent-artifact decision
+# into question and does not require the "unsupported concurrent
+# multi-config" escalation Section 12 defines for a genuine conflicting-
+# rule symptom.
