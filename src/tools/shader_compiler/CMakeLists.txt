@@ -17,6 +17,7 @@
 add_library(atlantis_shader_compiler_lib STATIC
   process_launch.cpp
   command_line_quoting.cpp
+  compile_and_validate.cpp
 )
 
 target_include_directories(atlantis_shader_compiler_lib
