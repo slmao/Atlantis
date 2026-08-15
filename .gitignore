@@ -17,13 +17,13 @@ compile_commands.json
 *.pdb
 *.ilk
 
-# Compiled shader artifacts (source shaders are tracked, binaries are not)
-# -- except shaders/minimal_renderer/'s checked-in bytecode (Plan 0007
-# Section 12/ADR-0027: no shader compiler is invoked by any Atlantis
-# build target, so the .spv pair this module uses is checked in as a
-# fixture, reviewed like any other binary test asset).
+# Compiled shader artifacts (source shaders are tracked, binaries are
+# not). Plan 0008 superseded ADR-0027's checked-in shaders/minimal_renderer/
+# bytecode exception -- every shader's .spv and reflection JSON is now a
+# generated, configuration-independent build-tree artifact under
+# build*/ (already covered by the build-output rules above), never
+# checked in.
 *.spv
-!shaders/minimal_renderer/*.spv
 
 # Dependency/package manager caches
 .vcpkg/

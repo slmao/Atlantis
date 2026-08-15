@@ -8,18 +8,28 @@ target_link_libraries(atlantis_minimal_renderer_demo
     Atlantis::VulkanBackend
     Atlantis::RenderGraph
     Atlantis::Renderer
+    Atlantis::ShaderSystem
+    Atlantis::ShaderSystemRhiIntegration
     atlantis_compiler_warnings
 )
 
-# Plan 0007 Section 12/17: shaders/minimal_renderer's checked-in SPIR-V
-# pair, copied next to this executable's own build output.
-# copy_if_different is a no-op when already up to date.
+# Plan 0008 Section 7/8: the build-tree, Shader-System-produced artifact
+# set (four files: two .spv, two .refl.json), copied next to this
+# executable's own build output -- replaces Plan 0007's checked-in
+# shaders/minimal_renderer/*.spv copy. copy_if_different is a no-op when
+# already up to date. add_dependencies() (not just the file-path
+# reference below) makes CMake's own build-order guarantee actually
+# apply -- this target is never scheduled to build until the shader
+# pair's own stamp-backed target has finished.
+add_dependencies(atlantis_minimal_renderer_demo minimal_mesh_shaders)
 add_custom_command(TARGET atlantis_minimal_renderer_demo POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_minimal_renderer_demo>/shaders"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      "${CMAKE_SOURCE_DIR}/shaders/minimal_renderer/minimal_mesh.vert.spv"
-      "${CMAKE_SOURCE_DIR}/shaders/minimal_renderer/minimal_mesh.frag.spv"
+      "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.vert.spv"
+      "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.vert.refl.json"
+      "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.spv"
+      "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.refl.json"
       "$<TARGET_FILE_DIR:atlantis_minimal_renderer_demo>/shaders/"
 )
 

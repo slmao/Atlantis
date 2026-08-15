@@ -52,6 +52,10 @@ add_subdirectory(src/renderer)
 # and only directories processed after this one can see it.
 add_subdirectory(src/shader_system)
 add_subdirectory(src/tools/shader_compiler)
+# Must come after add_subdirectory(src/shader_system) (Plan 0008 Section
+# 7/8): atlantis_add_slang_shader_pair() is defined there, and this call
+# site invokes it.
+add_subdirectory(shaders/minimal_renderer)
 
 if(ATLANTIS_BUILD_EXAMPLES)
   add_subdirectory(examples/foundation_demo)

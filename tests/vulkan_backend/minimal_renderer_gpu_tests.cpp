@@ -7,6 +7,8 @@
 #include <atlantis/rhi/device.h>
 #include <atlantis/rhi/presentation.h>
 #include <atlantis/rhi/types.h>
+#include <atlantis/shader_system/reflection_loader.h>
+#include <atlantis/shader_system/rhi_integration/vertex_input_mapping.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -54,9 +56,11 @@ using atlantis::rhi::Device;
 using atlantis::rhi::Extent2D;
 using atlantis::rhi::Presentation;
 using atlantis::rhi::RenderTarget;
-using atlantis::rhi::VertexAttribute;
-using atlantis::rhi::VertexAttributeFormat;
 using atlantis::rhi::VertexInputLayout;
+using atlantis::shader_system::loadReflectionMetadata;
+using atlantis::shader_system::ReflectionMetadata;
+using atlantis::shader_system::rhi_integration::MeshVertexAttributeSchema;
+using atlantis::shader_system::rhi_integration::toVertexInputLayout;
 using atlantis::vulkan_backend::createDevice;
 using atlantis::vulkan_backend::createPresentation;
 using atlantis::vulkan_backend::DeviceCreateParams;
@@ -100,14 +104,17 @@ struct Vertex {
   float color[3];
 };
 
-[[nodiscard]] VertexInputLayout minimalMeshVertexLayout() {
-  VertexInputLayout layout;
-  layout.strideBytes = sizeof(Vertex);
-  layout.attributes = {
-      VertexAttribute{.location = 0, .offsetBytes = offsetof(Vertex, position), .format = VertexAttributeFormat::Float3},
-      VertexAttribute{.location = 1, .offsetBytes = offsetof(Vertex, color), .format = VertexAttributeFormat::Float3},
+// Plan 0008 Section 8: replaces the hand-written minimalMeshVertexLayout()
+// literal -- `vertexMetadata` is loaded once per TEST_CASE from the
+// build-tree reflection JSON the Shader System pipeline produced.
+[[nodiscard]] std::optional<VertexInputLayout> minimalMeshVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+      MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, color)},
   };
-  return layout;
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
 }
 
 // A single flat triangle -- this round's minimal mesh, sufficient to
@@ -160,16 +167,21 @@ TEST_CASE("Buffer/Texture/Pipeline creation and destruction", "[vulkan_backend][
     REQUIRE(resizedResult.value()->extent().height == 384);
   }
 
-  SECTION("A Pipeline can be created from the checked-in SPIR-V pair, and destroyed without error") {
+  SECTION("A Pipeline can be created from the Shader-System-produced SPIR-V pair, and destroyed without error") {
     const auto vertexSpirv = loadSpirvFile("shaders/minimal_mesh.vert.spv");
     const auto fragmentSpirv = loadSpirvFile("shaders/minimal_mesh.frag.spv");
     REQUIRE(vertexSpirv.has_value());
     REQUIRE(fragmentSpirv.has_value());
 
+    const auto vertexReflection = loadReflectionMetadata("shaders/minimal_mesh.vert.refl.json");
+    REQUIRE(vertexReflection.isOk());
+    const auto vertexInputLayout = minimalMeshVertexLayout(vertexReflection.value());
+    REQUIRE(vertexInputLayout.has_value());
+
     auto pipelineResult = device->createPipeline(
         {.vertexShader = {.spirvWords = vertexSpirv->data(), .wordCount = vertexSpirv->size()},
          .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
-         .vertexInputLayout = minimalMeshVertexLayout(),
+         .vertexInputLayout = *vertexInputLayout,
          .colorFormat = atlantis::rhi::Format::Bgra8Unorm,
          .depthFormat = DepthFormat::D32Sfloat,
          .pushConstantSizeBytes = sizeof(float) * 16});
@@ -238,7 +250,12 @@ TEST_CASE("Renderer::drawFrame() draws a real, multi-item frame through a real a
     REQUIRE(vertexSpirv.has_value());
     REQUIRE(fragmentSpirv.has_value());
 
-    auto meshResult = createMesh(*device, minimalMeshVertexLayout(), kTriangleVertices, sizeof(kTriangleVertices),
+    const auto vertexReflection = loadReflectionMetadata("shaders/minimal_mesh.vert.refl.json");
+    REQUIRE(vertexReflection.isOk());
+    const auto vertexInputLayout = minimalMeshVertexLayout(vertexReflection.value());
+    REQUIRE(vertexInputLayout.has_value());
+
+    auto meshResult = createMesh(*device, *vertexInputLayout, kTriangleVertices, sizeof(kTriangleVertices),
                                   kTriangleIndices, 3);
     REQUIRE(meshResult.isOk());
     Mesh mesh = std::move(meshResult.value());
@@ -256,7 +273,7 @@ TEST_CASE("Renderer::drawFrame() draws a real, multi-item frame through a real a
   auto materialResult = createMaterial(
       *device, {.vertexShader = {.spirvWords = vertexSpirv->data(), .wordCount = vertexSpirv->size()},
                 .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
-                .vertexInputLayout = minimalMeshVertexLayout(),
+                .vertexInputLayout = *vertexInputLayout,
                 .colorFormat = target->format(),
                 .depthFormat = DepthFormat::D32Sfloat,
                 .pushConstantSizeBytes = sizeof(float) * 16});
