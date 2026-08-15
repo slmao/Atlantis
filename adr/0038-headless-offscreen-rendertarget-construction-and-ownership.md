@@ -144,11 +144,26 @@ vended `RenderTarget` (short-lived, frame-scoped borrow):**
   ([ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md));
   no new frame-in-flight or pooling semantics are introduced.
 
-**Borrow lifetime contract — RAII, not an explicit consuming call.**
+**Lifetime contract — two distinct, non-equivalent lifetimes, not one.**
 This subsection is the full, authoritative answer to "how does a vended
-`RenderTarget` borrow end, and what may a caller safely do around it,"
-replacing an earlier draft's incorrect claim that
-[ADR-0040](0040-gpu-to-cpu-readback-rhi-capability.md) would define this:
+`RenderTarget` borrow end, when may `OffscreenTarget` itself be safely
+destroyed, and what may a caller do around both," replacing an earlier
+draft's incorrect claim that
+[ADR-0040](0040-gpu-to-cpu-readback-rhi-capability.md) would define the
+former. **A second-round Human Review of this ADR conflated these two
+lifetimes into a single rule; a third-round Human Review found that gap
+by checking `Device::submit()`'s actual implementation and
+`VulkanPresentation`'s actual destructor — the correction below keeps
+them explicitly separate:**
+
+1. **The borrow wrapper** (`std::unique_ptr<RenderTarget>`,
+   `VulkanOffscreenRenderTarget`) — a thin, non-owning, per-cycle C++
+   handle.
+2. **`OffscreenTarget` itself and the Vulkan objects it owns** (the color
+   `VkImage`, its `VkDeviceMemory`, its `VkImageView`) — the actual GPU
+   resources every borrow, every frame, ultimately points at.
+
+**1. Borrow wrapper lifetime.**
 
 - **Ending the borrow.** A caller ends its current borrow by destroying
   or resetting the `std::unique_ptr<RenderTarget>` `acquireTarget()`
@@ -156,85 +171,154 @@ replacing an earlier draft's incorrect claim that
   in this codebase (`Buffer`/`Texture`/`Pipeline`), and **not** an
   explicit method call. There is no real side effect to trigger
   explicitly here (unlike `Presentation::present()`, which must also
-  call `vkQueuePresentKHR`) — the underlying `VulkanOffscreenRenderTarget`
-  (see "Vulkan Backend implementation shape" below) is non-owning and
-  destroying it releases no Vulkan object; its destructor's only
+  call `vkQueuePresentKHR`) — `VulkanOffscreenRenderTarget` is non-owning
+  and destroying it releases no Vulkan object; its destructor's only
   responsibility is to notify its owning `VulkanOffscreenTarget`
   (privately, not via any public API) that the borrow has ended, clearing
-  the same "borrow outstanding" tracking state that also backs the
-  guaranteed-detectable double-acquire check above and the destruction
-  check below. Adding a public `release()`/`consume()` method would
-  duplicate what destruction/`reset()` already does, for no behavioral
-  gain.
-- **The borrow must not outlive its `OffscreenTarget` owner.** Destroying
-  `OffscreenTarget` (or the `Device` it was constructed from) while a
-  borrow it vended is still outstanding is a **guaranteed-detectable
-  programmer error** (`ATLANTIS_CHECK`/`ATLANTIS_ASSERT`) — checkable
-  precisely because the same outstanding-borrow tracking already exists
-  for the double-acquire check above. This is a **deliberate, disclosed
-  improvement over `Presentation`'s equivalent precondition**, which
-  [ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)
-  states is "a lifetime precondition violation, not a guaranteed-
-  detectable error" — `Presentation` does not track outstanding-target
-  state the way `OffscreenTarget` must (to support the double-acquire
-  check), so `OffscreenTarget` can afford a strictly better error signal
-  at destruction time at effectively no added cost. This divergence from
-  `Presentation`'s tier is intentional, not an inconsistency, and does
-  not change `Presentation`'s own contract.
-- **Minimum required borrow lifetime.** The borrow must remain alive from
-  `acquireTarget()`'s return until at least the return of the
-  `Device::submit()` call whose recorded `CommandList` references it —
-  because `Device::submit(std::unique_ptr<CommandList>, const
-  RenderTarget&)` itself takes a `const RenderTarget&`
+  the "borrow outstanding" tracking state that also backs the
+  guaranteed-detectable double-acquire check below. Adding a public
+  `release()`/`consume()` method would duplicate what destruction/
+  `reset()` already does, for no behavioral gain.
+- **Minimum required lifetime: only through `Device::submit()`'s
+  return.** The borrow must remain alive from `acquireTarget()`'s return
+  until at least the return of the `Device::submit()` call whose
+  recorded `CommandList` references it — because
+  `Device::submit(std::unique_ptr<CommandList>, const RenderTarget&)`
+  itself takes a `const RenderTarget&`
   (`src/rhi/include/atlantis/rhi/device.h`), and because every
   `CommandList` recording call that touches this target (via
   `Renderer::drawFrame()`, `transitionResource()`,
   `copyRenderTargetToBuffer()`) captures/dereferences it during
   recording, which happens before `submit()`. **The borrow does *not*
-  need to remain alive through `Device::waitIdle()` or through reading
-  the readback `Buffer`'s contents, and does not need to remain alive
-  until the referencing GPU work has actually finished executing.** This
-  is not a relaxation adopted for convenience — it reflects how Vulkan
-  command recording actually works: `vkCmdCopyImageToBuffer` and every
-  other recorded command bake the underlying `VkImage`/`VkBuffer`
-  *handles* into the command buffer at record time; the GPU, when it
-  later executes those commands, never dereferences the C++
-  `RenderTarget` wrapper object again. Destroying the wrapper early does
-  not invalidate, cancel, or desynchronize already-recorded GPU work —
-  only destroying the underlying Vulkan objects would, and those are
-  owned by `OffscreenTarget`, not by the borrow (see the destruction
-  precondition above for what actually guards that).
-- **GPU-in-flight safety for repeated acquire cycles comes entirely from
-  `Device::submit()`'s existing single-frame-in-flight fence-wait
-  ([ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md)),
-  not from the borrow's own lifetime.** A caller may validly destroy/
-  reset the borrow and immediately call `acquireTarget()` again with no
-  intervening `Device::waitIdle()` call — the new cycle's own
-  `Device::submit()` call will transparently wait on the previous
-  submission's fence before the GPU actually begins the new cycle's
-  work, exactly as it already does for consecutive windowed frames
-  today. Explicitly calling `Device::waitIdle()` before the next acquire
-  is never *required* by this contract for correctness; it is only
-  required, per [ADR-0040](0040-gpu-to-cpu-readback-rhi-capability.md),
-  before *reading* the readback `Buffer`'s contents.
-- **Recommended (not required) convention.** For simplicity, a typical
-  caller — including this spec's own worked example (see
-  [specs/0010-headless-rendering-foundation.md](../specs/0010-headless-rendering-foundation.md)'s
-  Proposed Design) — keeps the borrow alive through the whole
-  acquire → draw → copy → submit → `waitIdle()` → read cycle and drops
-  it (goes out of scope / is reassigned) immediately before the next
-  `acquireTarget()` call. This is a simpler mental model than exploiting
-  the weaker minimum above, not a second, stricter contract — a caller
-  is free to drop the borrow as soon as `submit()` returns if it has a
-  concrete reason to.
-- **Legal ordering summary:** `acquireTarget()` → (record: draw, then
-  copy) → `submit()` → [borrow may be dropped any time from here
-  onward, per the minimum lifetime above] → `waitIdle()` → read the
-  readback `Buffer` → next `acquireTarget()`. `waitIdle()` must precede
-  reading the `Buffer`'s contents (unchanged, per
-  [ADR-0040](0040-gpu-to-cpu-readback-rhi-capability.md)) but has no
-  ordering requirement relative to the borrow's own destruction in
-  either direction.
+  need to remain alive through `Device::waitIdle()`, through reading the
+  readback `Buffer`'s contents, or until the referencing GPU work has
+  actually finished executing.** This reflects how Vulkan command
+  recording actually works: `vkCmdCopyImageToBuffer` and every other
+  recorded command bake the underlying `VkImage`/`VkBuffer` *handles*
+  into the command buffer at record time; the GPU, when it later
+  executes those commands, never dereferences the C++ `RenderTarget`
+  wrapper object again. **This is a claim about the wrapper only** — it
+  says nothing about when the *owner* (`OffscreenTarget`) or the
+  underlying Vulkan objects may be destroyed; see Part 2 below, which
+  this claim does not relax in any way.
+- **The borrow must not outlive its `OffscreenTarget` owner.** Acquiring
+  a second `RenderTarget` from an `OffscreenTarget` while a previously-
+  vended borrow is still outstanding, or destroying `OffscreenTarget`
+  while a borrow it vended is still outstanding, are each a
+  **guaranteed-detectable programmer error** (`ATLANTIS_CHECK`/
+  `ATLANTIS_ASSERT`) — checkable because `OffscreenTarget` tracks
+  "borrow outstanding" as a simple boolean, cleared by the borrow's own
+  destructor (see "Ending the borrow" above). **This check answers only
+  "is a borrow wrapper currently alive," a question about Part 1 above —
+  it does not, and cannot, answer "has the GPU finished executing work
+  that referenced this `OffscreenTarget`'s resources," which is Part 2's
+  concern and requires a separate rule, below.** Conflating the two —
+  treating "no borrow outstanding" as sufficient justification to
+  destroy `OffscreenTarget` — is exactly the mistake this ADR's own
+  second-round revision made and this third-round revision corrects.
+
+**2. `OffscreenTarget` (owner and backing resources) lifetime.**
+
+- **`OffscreenTarget`, and the color `VkImage`/`VkDeviceMemory`/
+  `VkImageView` it owns, must remain alive until every GPU submission
+  that referenced them has finished executing — independently of
+  whether the C++ borrow wrapper that referenced them in that submission
+  has already been destroyed.** Destroying `OffscreenTarget` (or the
+  `Device` it was constructed from) while GPU work that referenced its
+  backing resources is still in flight is a **lifetime precondition
+  violation — the same, undetectable tier as the identical existing
+  rule for `Presentation`** ([ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md);
+  verified directly against `VulkanPresentation::~VulkanPresentation()`,
+  `src/vulkan_backend/src/vulkan_presentation.cpp`, whose own comment
+  states plainly: "This destructor does not itself wait; that discipline
+  lives on the caller side... an undetected lifetime precondition, not
+  something this destructor re-verifies"). This ADR deliberately does
+  **not** introduce anything to make this specific condition
+  guaranteed-detectable: no new assertion, no `Result`-typed error, no
+  implicit wait inside any destructor, and no per-submission resource-
+  tracking system — Phase 1's `Device` exposes only a single, coarse
+  "wait for everything" operation (`Device::waitIdle()`), with no
+  finer-grained, per-resource completion query to check against, and
+  inventing one is explicitly out of this ADR's scope (see Alternatives
+  Considered). This is not a lesser design than the "borrow outstanding"
+  check above — it protects a genuinely different, and genuinely
+  undetectable-with-Phase-1's-current-tools, condition.
+- **How a caller satisfies this precondition in practice: call
+  `Device::waitIdle()` after the last `Device::submit()` call that
+  referenced this `OffscreenTarget`, before destroying (or reusing for a
+  new cycle whose safety does not otherwise already follow from
+  `Device::submit()`'s own fence-wait — see below) `OffscreenTarget`.**
+  `Device::waitIdle()` (`src/rhi/include/atlantis/rhi/device.h`,
+  implemented via `vkDeviceWaitIdle()`,
+  `src/vulkan_backend/src/vulkan_device.cpp`) is the only mechanism
+  Phase 1's `Device` exposes for a caller to establish "the GPU is done
+  with everything I have submitted" — the same mechanism
+  [ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)
+  already requires before destroying `Presentation`/`Device` with an
+  outstanding acquired `RenderTarget` or unwaited submission. Note this
+  is coarser than a per-`OffscreenTarget` wait (it drains the whole
+  `Device`, not just work touching this one resource) — accepted,
+  consistent with Phase 1's single-frame-in-flight baseline
+  ([ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md))
+  having no finer-grained wait primitive to offer instead.
+- **`VulkanDevice`'s own destructor already drains outstanding GPU work
+  before destroying `VulkanDevice`'s own Vulkan objects**
+  (`~VulkanDevice()`, `src/vulkan_backend/src/vulkan_device.cpp`: calls
+  its internal `waitAndReleaseRetainedSubmission()` then
+  `vkDeviceWaitIdle()`) — **but this protects only `Device`'s own
+  teardown, not `OffscreenTarget`'s.** In the ordinary case where a
+  caller destroys `OffscreenTarget` *before* destroying the `Device` it
+  was constructed from (the expected, natural teardown order — see
+  "Destruction order" below), `Device`'s own destructor-time drain runs
+  strictly *after* `OffscreenTarget`'s backing resources are already
+  gone, and does not protect them. A caller must not rely on `Device`'s
+  destructor to make destroying `OffscreenTarget` early safe.
+- **GPU-in-flight safety for repeated *acquire* cycles against the
+  *same, still-alive* `OffscreenTarget` comes entirely from
+  `Device::submit()`'s existing single-frame-in-flight fence-wait**
+  (verified: `VulkanDevice::submit()`,
+  `src/vulkan_backend/src/vulkan_device.cpp`, calls its internal
+  `waitAndReleaseRetainedSubmission()` — a blocking `vkWaitForFences()`
+  on the *previous* retained submission — before issuing the *new*
+  `vkQueueSubmit()`) — **this is a separate claim from, and does not
+  substitute for, the destruction precondition above.** A caller may
+  validly destroy/reset the borrow and immediately call
+  `acquireTarget()` again against the *same, not-yet-destroyed*
+  `OffscreenTarget` with no intervening `Device::waitIdle()` call — the
+  new cycle's own `Device::submit()` call will transparently wait on the
+  previous submission's fence before the GPU actually begins the new
+  cycle's work, exactly as it already does for consecutive windowed
+  frames today. This claim is only about *reusing* a live
+  `OffscreenTarget` for another cycle — it says nothing about, and does
+  not relax, when `OffscreenTarget` itself may be *destroyed*.
+
+**3. Destruction order (avoiding the exact inversion a naive reading
+could produce).** The correct order is: establish GPU completion first
+(`Device::waitIdle()`), *then* destroy `OffscreenTarget` (releasing its
+`VkImage`/`VkDeviceMemory`/`VkImageView`), *then*, whenever the caller is
+done with it, destroy `Device`. **Destroying `OffscreenTarget`'s backing
+resources first and relying on `Device`'s own destructor to "catch up"
+and wait afterward is the wrong order and is not safe** — by the time
+`Device`'s destructor runs, `OffscreenTarget`'s `VkImage`/
+`VkDeviceMemory`/`VkImageView` have already been released by
+`OffscreenTarget`'s own (non-waiting) destructor,
+regardless of whether GPU work referencing them had actually finished.
+
+**Recommended flow (satisfies both lifetimes without exploiting either
+minimum):** `acquireTarget()` → record (draw, then copy) → `submit()` →
+`waitIdle()` → read the readback `Buffer` → drop/reset the borrow →
+destroy or reuse `OffscreenTarget` (both now safe: the borrow's minimum
+lifetime — Part 1 — was already satisfied at `submit()`'s return, and
+the owner's precondition — Part 2 — is satisfied by the `waitIdle()`
+call that already happened). This is this spec's own worked example's
+flow (see
+[specs/0010-headless-rendering-foundation.md](../specs/0010-headless-rendering-foundation.md)'s
+Proposed Design) — not the only legal ordering (the borrow may still be
+dropped as early as right after `submit()` returns, per Part 1, and a
+live `OffscreenTarget` may still be reused for another `acquireTarget()`
+cycle without an intervening `waitIdle()`, per Part 2's repeated-cycle
+claim), but the simplest one to reason about, and the one a caller must
+follow, in substance, before *destroying* `OffscreenTarget` specifically.
 
 **Vulkan Backend implementation shape (named explicitly, resolving this
 ADR's own earlier ambiguity):**
@@ -334,11 +418,16 @@ trigger to revisit — not a reason to decide differently now.
   headless's actually-simpler contract rather than forcing a windowed
   shape that would carry a dead branch.
 - Zero change to the depth `Texture` ownership model.
-- The borrow lifetime contract is RAII-based, adds no new public method,
-  and makes both misuse cases it governs (double-acquire, destruction-
-  while-outstanding) guaranteed-detectable programmer errors — a real,
-  disclosed improvement over `Presentation`'s equivalent, currently-
-  undetectable precondition, achieved at no added public-API cost.
+- The borrow-wrapper lifetime contract is RAII-based, adds no new public
+  method, and makes the double-acquire and destroy-while-borrow-
+  outstanding misuse cases guaranteed-detectable programmer errors — a
+  real, disclosed improvement over `Presentation`'s equivalent,
+  currently-undetectable precondition for that specific case, achieved
+  at no added public-API cost. **This improvement is scoped precisely:
+  it answers "is a borrow wrapper alive," not "has the GPU finished
+  referencing this resource"** — see the Negative/Trade-offs entry below
+  for why the latter remains, correctly, at the same undetectable tier
+  as `Presentation`'s equivalent.
 - The minimum-borrow-lifetime clarification (through `submit()`, not
   through GPU completion) is not merely a convenience — it correctly
   reflects that Vulkan command recording bakes handles, not C++ object
@@ -346,6 +435,15 @@ trigger to revisit — not a reason to decide differently now.
   contract that could otherwise mislead a future reader into believing
   the borrow's C++ lifetime has GPU-synchronization significance it does
   not have.
+- Explicitly separating the borrow wrapper's lifetime from
+  `OffscreenTarget`'s own (backing-resource) lifetime, and stating the
+  latter's `Device::waitIdle()`-based precondition at the same tier as
+  `Presentation`'s identical, existing rule, closes a real gap a second-
+  round revision of this ADR introduced by conflating the two — found
+  and corrected by a third-round Human Review that checked the claim
+  against `VulkanDevice::submit()`'s and `VulkanPresentation`'s actual
+  implementations rather than accepting the second-round text at face
+  value.
 
 ### Negative / Trade-offs
 
@@ -372,14 +470,31 @@ trigger to revisit — not a reason to decide differently now.
   stated purpose that the implementation must carry through to that
   type's own doc comment, not just to this ADR's text.
 - The borrow's C++ lifetime being decoupled from GPU execution
-  completion (see "Minimum required borrow lifetime" above) is a subtle
-  point that a future reader could get wrong in either direction
-  (assuming the borrow must be held longer than required, or — more
-  dangerously — assuming dropping it early is equivalent to a
-  synchronization guarantee it does not provide). This ADR states both
-  the precise minimum and the recommended convention explicitly, and any
-  future documentation referencing this contract must preserve that
-  distinction rather than collapsing it back into a single, vaguer rule.
+  completion (see "Minimum required lifetime: only through
+  `Device::submit()`'s return" above) is a subtle point that a future
+  reader could get wrong in either direction (assuming the borrow must
+  be held longer than required, or — more dangerously — assuming
+  dropping it early says anything at all about whether
+  `OffscreenTarget`'s *backing resources* are safe to destroy). This ADR
+  states the borrow's minimum lifetime and `OffscreenTarget`'s own,
+  separate destruction precondition as two independent rules
+  specifically to prevent that conflation; any future documentation
+  referencing this contract must preserve that separation rather than
+  collapsing it back into a single, vaguer rule — exactly the collapse a
+  second-round revision of this ADR itself made and a third-round Human
+  Review had to catch and correct.
+- `OffscreenTarget`'s own destruction precondition (Part 2 of the
+  lifetime contract above) is, by explicit, deliberate choice, **not**
+  guaranteed-detectable — a real, if unavoidable-given-Phase-1's-tools,
+  gap relative to the borrow-outstanding check's stronger tier. A caller
+  that destroys `OffscreenTarget` without first calling
+  `Device::waitIdle()` after its last relevant `submit()` call gets no
+  assertion, no `Result::Err`, and no other diagnostic — only, at best,
+  a Vulkan Validation Layer error, or at worst silent corruption/a driver
+  crash. This is the same risk profile
+  [ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)
+  already accepts for the identical `Presentation`/`Device` case, not a
+  new or larger one this ADR introduces.
 
 ## Alternatives Considered
 
@@ -460,3 +575,37 @@ trigger to revisit — not a reason to decide differently now.
   at all (which it must, to support the destruction-time check above),
   routing it through the assertion channel is both more consistent with
   precedent and enables the same tracking to serve both checks uniformly.
+- **Make `OffscreenTarget`'s GPU-completion destruction precondition
+  (Part 2 of the lifetime contract above) guaranteed-detectable too** —
+  e.g. by having `Device` track, per outstanding submission, which
+  `OffscreenTarget`(s) it referenced, and have `OffscreenTarget`'s
+  destructor (or an explicit query) check against that; or by having
+  `OffscreenTarget`'s destructor itself call an internal, `Device`-level
+  wait before releasing its Vulkan objects, mirroring `VulkanDevice`'s
+  own destructor's drain. **Rejected for this round, by explicit
+  instruction confirmed during this ADR's third-round Human Review**:
+  Phase 1's `Device`/`ADR-0020` single-frame-in-flight baseline
+  deliberately exposes only one, coarse, whole-`Device` completion
+  signal (`Device::waitIdle()`/`vkDeviceWaitIdle()`) — no per-resource or
+  per-submission tracking of "which `OffscreenTarget`s does this
+  submission touch" exists anywhere in this codebase today, and adding
+  one would be new bookkeeping infrastructure introduced *specifically*
+  for this one precondition, not something this spec's own acceptance
+  target needs for any other reason — exactly the kind of scope creep
+  [AGENTS.md](../AGENTS.md)'s "no speculative abstraction" principle
+  warns against. An implicit wait inside `OffscreenTarget`'s own
+  destructor was also considered and rejected for the same reason
+  [VulkanPresentation](../src/vulkan_backend/src/vulkan_presentation.cpp)'s
+  own destructor already rejected it (see that file's own comment,
+  quoted above): it would silently stall an unrelated caller-visible
+  operation (destruction) with GPU-wait latency the caller did not
+  explicitly ask for, diverging from this codebase's established
+  "destructors do not themselves wait; the caller establishes completion
+  explicitly" convention. This precondition therefore remains,
+  deliberately, at the same undetectable tier
+  [ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)
+  already accepts for `Presentation`'s identical case — a future spec
+  motivated by a real, concrete need (not this one) may reconsider a
+  finer-grained completion-tracking mechanism, at which point it could
+  also make this specific precondition detectable, but this ADR does not
+  design or scaffold for that ahead of such a need.
