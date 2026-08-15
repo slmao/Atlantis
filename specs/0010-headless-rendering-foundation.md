@@ -1,14 +1,147 @@
 # Spec: Headless Rendering Foundation
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
-  direction; human authorship/ownership of this spec is pending
-  confirmation at Human Review.
+  direction; approved by human review — see Human Review Approval below.
 - **Created:** 2026-08-15
-- **Related Plan(s):** None yet — a plan may be drafted once this spec is
-  `Approved`, per [AGENTS.md](../AGENTS.md); this spec's own PR must merge
-  into `main` first (same sequencing every prior spec in this line has
-  followed).
+- **Human Review Approval (2026-08-16):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer for this branch) on 2026-08-16, following **three
+  independent, read-only Human Review rounds**, each conducted against
+  this spec's actual drafted text and the real shipped implementation
+  (`src/renderer/`, `src/render_graph/`, `src/rhi/`,
+  `src/vulkan_backend/`) rather than against the drafter's own summaries
+  — see [PR #42](https://github.com/slmao/Atlantis/pull/42) for the
+  first two rounds' findings and revisions, and
+  [PR #43](https://github.com/slmao/Atlantis/pull/43) for the third
+  round's finding and fix:
+
+  1. **Round 1** found that this spec's first draft incorrectly claimed
+     `Renderer::drawFrame()` requires no change and leaves its color
+     `RenderTarget` in `ResourceState::ColorAttachmentOutput` when it
+     returns — verified false against `src/renderer/src/renderer.cpp`
+     and `src/render_graph/src/execution.cpp`: `Renderer::drawFrame()`
+     calls the same shared `render_graph::execute()` every other caller
+     does, and that function (prior to this spec) unconditionally
+     transitioned any bound, touched `RenderTarget` to
+     `ResourceState::PresentSource`. Resolved by a Proposed Amendment to
+     [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)
+     (`Renderer::drawFrame()` gains a required, backend-agnostic
+     `finalColorState` parameter, passed through uninspected) and a
+     corrected
+     [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md).
+  2. **Round 2** found that [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)
+     promised its vended `RenderTarget` borrow "is consumed by the
+     readback operation ADR-0040 defines," but
+     [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md) never
+     defined any such call —
+     `copyRenderTargetToBuffer(RenderTarget&, Buffer&)` only borrows a
+     reference to record a command, it never takes ownership. Resolved
+     by an explicit, RAII-based borrow-lifetime contract in ADR-0038 and
+     a corresponding disclaimer in ADR-0040.
+  3. **Round 3** found that ADR-0038's round-2 revision conflated the
+     borrow wrapper's lifetime with `OffscreenTarget`'s own (backing-
+     resource) lifetime, leaving no precondition preventing a caller
+     from legally dropping the borrow right after `Device::submit()`
+     returns and then destroying `OffscreenTarget`/`Device` while GPU
+     work referencing its resources was still in flight — verified
+     directly against `VulkanDevice::submit()`'s fence-wait,
+     `VulkanDevice`'s own destructor, and
+     `VulkanPresentation::~VulkanPresentation()`'s established "the
+     caller must call `Device::waitIdle()` first; this destructor does
+     not itself wait" precedent
+     (`src/vulkan_backend/src/vulkan_device.cpp`,
+     `src/vulkan_backend/src/vulkan_presentation.cpp`). Resolved by
+     restructuring ADR-0038's lifetime contract into two explicit,
+     independent parts (borrow wrapper vs. `OffscreenTarget`/backing
+     resources), each stated separately, per
+     [PR #43](https://github.com/slmao/Atlantis/pull/43).
+
+  **Eight design decisions were confirmed explicitly as part of this
+  approval, and are accepted as-is:**
+
+  1. `Renderer::drawFrame()` gains a required, backend-agnostic
+     `finalColorState` parameter — a windowed caller passes
+     `ResourceState::PresentSource`, a headless caller passes
+     `ResourceState::TransferSource` directly (no intermediate
+     presentation-shaped layout ever recorded); `Renderer` itself never
+     observes, validates, or branches on the value, preserving its
+     origin-opacity contract completely. See
+     [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)'s
+     Proposed Amendment (`Accepted Amendment` alongside this approval).
+  2. `OffscreenTarget` is introduced as a second `RenderTarget` source,
+     with no `Presentation` involved; the Vulkan Backend implements it
+     as an owning, private type vending non-owning, per-cycle borrows,
+     directly mirroring the existing `Presentation`/`VulkanRenderTarget`
+     pattern rather than inventing a new ownership shape. See
+     [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md).
+  3. A vended borrow ends via ordinary RAII (destroying/resetting the
+     `std::unique_ptr<RenderTarget>`) — no new public `release()`/
+     `consume()` API is introduced.
+  4. **Two explicitly separate lifetimes govern `OffscreenTarget`.** The
+     borrow wrapper's minimum required lifetime extends only through the
+     `Device::submit()` call that references it. `OffscreenTarget`'s own
+     backing resources (the color `VkImage`/memory/view) must remain
+     alive until the GPU work that referenced them has actually
+     completed — established by the caller via `Device::waitIdle()`
+     before destroying `OffscreenTarget`, a documented, caller-enforced
+     precondition at the same tier as the existing `Presentation`/
+     `Device` rule ([ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)),
+     deliberately **not** guaranteed-detectable (no new assertion,
+     `Result` error, implicit destructor wait, or per-resource tracking
+     system is introduced to make it so).
+  5. Repeated acquisition without returning a prior borrow, destroying
+     `OffscreenTarget`/`Device` while a borrow is still outstanding, and
+     supplying a `finalColorState`/`incomingState`/`finalState` value
+     unsupported by the Vulkan Backend's transition table are each
+     guaranteed-detectable programmer errors via this codebase's
+     existing `ATLANTIS_CHECK`/`ATLANTIS_ASSERT` mechanism — never a
+     compile-time restriction, never a `Result`-typed error.
+  6. RenderGraph's `execute()` binding gains caller-declared
+     `incomingState`/`finalState` `ResourceState` fields;
+     `ColorAttachmentOutput → TransferSource` is confirmed as the one and
+     only new Vulkan Backend transition-table entry this spec's design
+     requires. See
+     [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md).
+  7. `ResourceState::TransferSource`, a fourth `BufferPurpose`
+     (readback), and `CommandList::copyRenderTargetToBuffer()` are
+     introduced as the minimal, narrow GPU-to-CPU readback capability.
+     See [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md).
+  8. No general GPU memory allocator, asynchronous/non-blocking
+     readback, multiple frames in flight, Linux support, Android
+     support, or image-regression comparison/tolerance methodology/CI
+     gating is introduced — all remain explicitly out of this spec's
+     scope, per its own Non-Goals; none of the above is authorized or
+     promised as implemented by this approval.
+
+  Following this approval:
+  [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md),
+  [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md),
+  and [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md) each
+  move to `Accepted`, and
+  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)'s
+  2026-08-15 Proposed Amendment moves to `Accepted Amendment` (see each
+  document's own header/section for the precise record) — and this spec
+  moves to `Approved`. Per [AGENTS.md](../AGENTS.md), a Plan may now be
+  drafted against this spec; **this approval is not itself an
+  authorization to implement** — that future Plan must still pass its
+  own (or a joint Spec+Plan) Human Review before any source, test,
+  shader, or build-configuration file for this spec's scope is written.
+  The following remain **open, Plan-stage questions, not blockers to
+  this approval** (full list in this spec's own Risks & Open Questions
+  section, unchanged by this approval): exact C++ names and parameter
+  positions for `OffscreenTarget`'s acquire method,
+  `Renderer::drawFrame()`'s `finalColorState` parameter, and the Vulkan
+  Backend's owning/non-owning implementation classes; the exact
+  `ResourceBinding` extension's concrete C++ representation; the exact
+  reproducible basic-content-check shape; whether a distinct CI/test-
+  category label for headless GPU integration tests is needed; and row-
+  pitch/alignment handling inside the Vulkan Backend's copy
+  implementation.
+- **Related Plan(s):** None yet — a plan may now be drafted against this
+  `Approved` spec, per [AGENTS.md](../AGENTS.md); Plan 0010 has not been
+  drafted by this document, and may only be drafted once this approval
+  PR has merged into `main`.
 - **Related ADR(s):** Builds on
   [ADR-0001](../adr/0001-rhi-backend-independence.md),
   [ADR-0002](../adr/0002-presentation-rendertarget-unification.md),
@@ -18,18 +151,18 @@
   [ADR-0015](../adr/0015-vulkan-memory-allocation-deferred.md),
   [ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)–[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)
   (all `Accepted`). See **Architectural Impact** below — four new
-  decisions are identified and drafted alongside this spec:
+  decisions were identified and drafted alongside this spec:
   [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)
   (offscreen `RenderTarget` construction and ownership),
   [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
   (RenderGraph execution — caller-specified incoming/final resource
   states), [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md)
-  (GPU-to-CPU readback capability) — all currently `Proposed` — and a
-  **Proposed Amendment (2026-08-15)** to the already-`Accepted`
+  (GPU-to-CPU readback capability) — all `Accepted` alongside this
+  spec's own approval above — and a **Proposed Amendment (2026-08-15)**
+  to the already-`Accepted`
   [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)
   (`Renderer::drawFrame()` gains an explicit `finalColorState`
-  parameter). All four require Human Review alongside this spec; none is
-  `Accepted`/incorporated yet.
+  parameter), now `Accepted Amendment` alongside this same approval.
 
 ## Summary
 
@@ -689,19 +822,21 @@ also own a Platform message pump (headless has none).
 
 ## Architectural Impact
 
-This spec introduces architecture across four distinct, independently-
-reviewable decisions — three new `Proposed` ADRs and one Proposed
-Amendment to an already-`Accepted` ADR — none decided by this spec's
-prose alone:
+This spec introduced architecture across four distinct, independently-
+reviewable decisions — three new ADRs and one Proposed Amendment to an
+already-`Accepted` ADR — none decided by this spec's prose alone. All
+four reached acceptance alongside this spec's own Human Review Approval
+(above):
 
 1. **Headless offscreen `RenderTarget` construction and ownership** —
    `OffscreenTarget`'s concrete shape, its owning/non-owning Vulkan
-   Backend implementation split, its two-outcome acquire contract, and
-   its allocation policy (extending, not reopening,
-   [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)).
-   Filed as
+   Backend implementation split, its two-outcome acquire contract, its
+   allocation policy (extending, not reopening,
+   [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)),
+   and the explicitly-separated borrow-wrapper vs. backing-resource
+   lifetime contract. Filed as
    [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)
-   (`Proposed`).
+   (`Accepted`).
 2. **RenderGraph execution — caller-specified incoming and final resource
    states** — resolves a real, code-verified correctness gap between
    [ADR-0002](../adr/0002-presentation-rendertarget-unification.md)'s
@@ -712,41 +847,41 @@ prose alone:
    names the one new Vulkan Backend transition-table entry required.
    Filed as
    [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
-   (`Proposed`).
+   (`Accepted`).
 3. **`Renderer::drawFrame()`'s new `finalColorState` parameter** — a
    narrow, reviewed change to `Renderer`'s already-`Accepted` public
    API, needed because `Renderer`'s own internal `execute()` call is
    subject to the same hardcoded-`PresentSource` defect as any other
    caller — verified against the shipped implementation, not assumed.
-   Filed as a **Proposed Amendment** to
+   Filed as an **Accepted Amendment** to
    [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md),
    *not* a new ADR number — the original Decision, Consequences, and
    Alternatives Considered in ADR-0022 remain unchanged and unsuperseded;
-   only a new section is appended, clearly marked `Proposed`, not
-   `Accepted`, pending its own Human Review alongside this spec's.
+   a new, separately-dated section is appended and clearly marked as its
+   own acceptance record.
 4. **GPU-to-CPU readback RHI capability** — `TransferSource`, the
    readback `Buffer` purpose, `CommandList::copyRenderTargetToBuffer()`,
    and the synchronous readback synchronization/error model, with an
    explicit, stated dependency on decisions 2 and 3 above for its own
    "no intermediate transition needed" claim. Filed as
    [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md)
-   (`Proposed`).
+   (`Accepted`).
 
-No existing `Accepted` ADR's Decision text is silently rewritten by this
+No existing `Accepted` ADR's Decision text was silently rewritten by this
 spec or by the four decisions above — ADR-0022's amendment is appended as
-its own clearly-marked, not-yet-accepted section, exactly the pattern
+its own clearly-marked, separately-dated section, exactly the pattern
 [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)'s own
-(already-`Accepted`) amendment established, adapted for a still-`Proposed`
-status. Architectural Impact is not "None" — `OffscreenTarget`, the
-readback capability, RenderGraph's generalized binding, and `Renderer`'s
-new parameter are each new or changed public API surface, exactly what
-[AGENTS.md](../AGENTS.md)'s "What counts as significant" section requires
-the full Spec → Plan → Human Review path for. **This spec's own approval
-is not itself an authorization to implement** — a Plan may be drafted per
-[AGENTS.md](../AGENTS.md) only once this spec's own PR has merged into
-`main`, and that future Plan must still pass its own Human Review before
-any code, test, or build-configuration file for this spec's scope is
-written.
+amendment established. Architectural Impact was not "None" —
+`OffscreenTarget`, the readback capability, RenderGraph's generalized
+binding, and `Renderer`'s new parameter are each new or changed public
+API surface, exactly what [AGENTS.md](../AGENTS.md)'s "What counts as
+significant" section requires the full Spec → Plan → Human Review path
+for. **This spec's approval is not itself an authorization to
+implement** — see the Human Review Approval note above: a Plan may now
+be drafted per [AGENTS.md](../AGENTS.md), but only once this approval PR
+has merged into `main`, and that future Plan must still pass its own
+Human Review before any code, test, or build-configuration file for this
+spec's scope is written.
 
 ## Alternatives Considered
 
