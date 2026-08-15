@@ -262,29 +262,66 @@ Explicitly excluded from this spec's design and implementation:
   `VulkanPresentation`) — see
   [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)
   for the full ownership/lifetime split.
-- **`OffscreenTarget` has no `present()` counterpart and no other
-  explicit borrow-ending method — a borrow ends via ordinary RAII**
-  (destroying/resetting the vended `std::unique_ptr<RenderTarget>`), not
-  by any call [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md)
-  defines. The borrow's **minimum required lifetime** extends only
-  through the return of the `Device::submit()` call whose recorded
-  commands reference it — it does **not** need to survive through
+- **Two distinct, non-equivalent lifetimes govern this type — the borrow
+  wrapper's, and `OffscreenTarget`'s own (backing-resource) lifetime.
+  Conflating them is a real correctness risk, not a documentation
+  nicety** — see
+  [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)'s
+  own "Lifetime contract" section, which a third-round Human Review
+  revised specifically to keep the two separate after an earlier
+  revision conflated them.
+- **Borrow wrapper.** `OffscreenTarget` has no `present()` counterpart
+  and no other explicit borrow-ending method — a borrow ends via
+  ordinary RAII (destroying/resetting the vended
+  `std::unique_ptr<RenderTarget>`), not by any call
+  [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md) defines.
+  The borrow's **minimum required lifetime** extends only through the
+  return of the `Device::submit()` call whose recorded commands
+  reference it — it does **not** need to survive through
   `Device::waitIdle()`, reading the readback `Buffer`, or the completion
-  of the GPU work that referenced it; GPU-in-flight correctness across
-  repeated acquire cycles comes entirely from `Device::submit()`'s
-  existing single-frame-in-flight fence-wait, independent of the
-  borrow's own C++ lifetime. Full contract, including the recommended
-  (not required) convention of keeping the borrow alive through the
-  whole cycle for simplicity, in
-  [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md).
+  of the GPU work that referenced it, because Vulkan bakes handles, not
+  C++ object references, into a recorded `CommandList`. **This claim is
+  about the wrapper only; it says nothing about, and does not relax,
+  when `OffscreenTarget` itself may be destroyed** — see below.
 - The same `OffscreenTarget` instance may be acquired-and-borrowed more
   than once across its lifetime, each cycle independent.
-- Destroying `OffscreenTarget` (or its `Device`) while a vended borrow is
-  still outstanding is a guaranteed-detectable programmer error — a
-  deliberate, disclosed improvement over `Presentation`'s equivalent,
-  currently-undetectable precondition, made possible because the same
-  outstanding-borrow tracking already exists for the double-acquire
-  check above.
+  Acquiring a second `RenderTarget` while a previously-vended borrow is
+  still outstanding, or destroying `OffscreenTarget` while a borrow it
+  vended is still outstanding, are each a guaranteed-detectable
+  programmer error — a deliberate, disclosed improvement over
+  `Presentation`'s equivalent, currently-undetectable precondition for
+  that specific case, made possible because the same outstanding-borrow
+  tracking already exists for the double-acquire check. **This check
+  answers only "is a borrow wrapper currently alive" — it is not, and
+  cannot be, a substitute for the separate GPU-completion precondition
+  below.**
+- **`OffscreenTarget` and backing resources (the color `VkImage`, its
+  memory, its view).** `OffscreenTarget` — and the `Device` it was
+  constructed from — must not be destroyed while GPU work that
+  referenced its backing resources is still in flight, **independently
+  of whether the borrow wrapper that referenced them has already been
+  destroyed.** This is a lifetime precondition violation, at the same
+  tier as the identical, existing `Presentation`/`Device` rule
+  ([ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)) —
+  **deliberately not guaranteed-detectable**: Phase 1's `Device` exposes
+  only a single, coarse `Device::waitIdle()` completion signal, with no
+  finer-grained per-resource tracking to check against, and this spec
+  does not introduce one. A caller satisfies this precondition by
+  calling `Device::waitIdle()` after the last `Device::submit()` call
+  that referenced this `OffscreenTarget`, before destroying it — the
+  same, unchanged mechanism already required before destroying
+  `Presentation`/`Device`. **Destroying `OffscreenTarget`'s backing
+  resources first and relying on `Device`'s own destructor to wait
+  afterward is the wrong order and is not safe** — `Device`'s destructor
+  only drains work related to its own teardown; by the time it runs,
+  already-destroyed `OffscreenTarget` resources cannot be protected by
+  it. Correct order: `Device::waitIdle()` → destroy `OffscreenTarget` →
+  (whenever done) destroy `Device`.
+  Full contract, including why re-acquiring against a still-alive
+  `OffscreenTarget` needs no intervening `waitIdle()` (this is a
+  separate claim from the destruction precondition above, backed by
+  `Device::submit()`'s own fence-wait), in
+  [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md).
 - The depth `Texture` used alongside an `OffscreenTarget` is constructed,
   owned, and destroyed via the existing, unchanged
   `Device::createTexture()` path — `OffscreenTarget` itself never owns,
@@ -507,11 +544,15 @@ Headless verification composition, once per render-and-readback cycle:
        the copy pass's callback runs --
 
   Device::submit(commandList, target's-acquire-complete-signal)
-    -- the borrow's minimum required lifetime ends here; this worked
-       example keeps it alive further anyway, per ADR-0038's
-       recommended (not required) convention --
+    -- the borrow WRAPPER's minimum required lifetime ends here (ADR-0038
+       Part 1); this says nothing about OffscreenTarget itself, which
+       remains governed entirely by Part 2 below --
   Device::waitIdle()
-    -- readback Buffer's writes are now host-visible --
+    -- two independent things become true after this call returns:
+       (a) the readback Buffer's writes are now host-visible, and
+       (b) the GPU-completion precondition OffscreenTarget's own
+       destruction requires (ADR-0038 Part 2) is now satisfied for every
+       submission up to and including this cycle's --
 
   Read readbackBuffer's mapped pointer; run this spec's basic,
     reproducible content check (see Testing & Verification Plan)
@@ -521,10 +562,23 @@ Headless verification composition, once per render-and-readback cycle:
     itself via the borrow's own destructor)
     -- only now may the next OffscreenTarget::acquireTarget() call
        succeed; calling it earlier, while this borrow is still alive,
-       is a guaranteed-detectable programmer error --
+       is a guaranteed-detectable programmer error. Re-acquiring against
+       the SAME, still-alive OffscreenTarget needs no further waitIdle()
+       here -- the next cycle's own submit() call serializes against
+       this one's fence internally (ADR-0038 Part 2's repeated-cycle
+       claim) --
 
-  -- On every exit path: Device::waitIdle() before destroying
-     OffscreenTarget/Device/depth Texture/readback Buffer/Mesh/Material --
+  -- If this cycle is the last one: OffscreenTarget may now be safely
+     destroyed or reused for another purpose, because the waitIdle()
+     call above already established GPU completion for every
+     submission that referenced it (ADR-0038 Part 2) -- destroying
+     OffscreenTarget's backing resources BEFORE that waitIdle() call,
+     and relying on Device's own destructor to "catch up" afterward,
+     would be the wrong order and is not safe (Device's destructor only
+     drains its own teardown, not an already-destroyed OffscreenTarget's
+     resources). On every exit path, including an early/error exit:
+     Device::waitIdle() before destroying OffscreenTarget/Device/depth
+     Texture/readback Buffer/Mesh/Material --
 ```
 
 ### Offscreen `RenderTarget` construction and ownership
@@ -580,8 +634,12 @@ also own a Platform message pump (headless has none).
     the first has been returned (destroyed/reset — RAII, see below).
   - Destroying `OffscreenTarget` (or its `Device`) while a vended borrow
     is still outstanding — a deliberate, disclosed improvement over
-    `Presentation`'s equivalent, currently-undetectable precondition
+    `Presentation`'s equivalent, currently-undetectable precondition for
+    this specific case
     ([ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)).
+    **This check answers only "is a borrow wrapper currently alive" — it
+    is a separate condition from, and not a substitute for, the
+    GPU-completion precondition below.**
   - Supplying `finalColorState`/`incomingState`/`finalState` a value for
     which the Vulkan Backend's `planTransition()` table has no
     corresponding entry — not a compile-time restriction (`ResourceState`
@@ -591,21 +649,38 @@ also own a Platform message pump (headless has none).
     ([ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)'s
     Proposed Amendment,
     [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)).
-- Supplying an `incomingState` override that does not match a resource's
-  true prior state (e.g. from an earlier `execute()` call within the same
-  `CommandList`) is a **lifetime/precondition-violation-tier caller
-  error**, not guaranteed-detectable, not tested for detection — see
-  [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md).
+- **Not guaranteed-detectable — documented, caller-enforced lifetime
+  preconditions, matching this codebase's existing handle-misuse
+  tiering:**
+  - Supplying an `incomingState` override that does not match a
+    resource's true prior state (e.g. from an earlier `execute()` call
+    within the same `CommandList`) — see
+    [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md).
+  - **Destroying `OffscreenTarget` (or its `Device`) while GPU work that
+    referenced its backing resources (the color `VkImage`, its memory,
+    its view) is still in flight — independently of whether the borrow
+    wrapper that referenced them has already been reset.** At the same
+    tier as the identical, existing `Presentation`/`Device` rule
+    ([ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)),
+    deliberately not made guaranteed-detectable — Phase 1's `Device`
+    exposes only the single, coarse `Device::waitIdle()` completion
+    signal, with no finer-grained per-resource tracking to check
+    against. A caller satisfies this by calling `Device::waitIdle()`
+    after the last `Device::submit()` call that referenced this
+    `OffscreenTarget`, before destroying it. Full contract, and why
+    relying on `Device`'s own destructor-time drain to protect an
+    already-destroyed `OffscreenTarget` is the wrong order, in
+    [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md).
+  - Other `OffscreenTarget`/readback-`Buffer` misuse outside its valid
+    lifetime window is a lifetime precondition violation, the same tier
+    as every other borrowed/owned-handle misuse case already established
+    in this codebase.
 - **A vended `RenderTarget` borrow ends via ordinary RAII** — destroying
   or resetting the `std::unique_ptr<RenderTarget>` — never an explicit
-  method call; its minimum required lifetime and its independence from
-  GPU-execution completion are fixed contracts, not implementation-time
-  choices, per
-  [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md).
-  Other `OffscreenTarget`/readback-`Buffer` misuse outside its valid
-  lifetime window is a lifetime precondition violation, the same tier as
-  every other borrowed/owned-handle misuse case already established in
-  this codebase.
+  method call. Its minimum required lifetime (only through
+  `Device::submit()`'s return) is a claim about the wrapper only; it does
+  not relax, and is independent of, `OffscreenTarget`'s own destruction
+  precondition above.
 - Every `VkResult` along `OffscreenTarget` construction, copy recording,
   submission, and readback is checked; no `VkResult` is discarded.
 - Vulkan Validation Layers are enabled unconditionally in Debug builds and
@@ -785,7 +860,13 @@ written.
   followed by the copy pass, submission, and `waitIdle()`-gated read)
   with Validation Layers reporting zero warnings/errors, **confirming no
   `VK_IMAGE_LAYOUT_PRESENT_SRC_KHR` transition is ever recorded for the
-  headless target**; and the existing windowed GPU integration tests,
+  headless target**; a full cycle that calls `Device::waitIdle()`
+  immediately after `submit()` (before dropping the borrow, before
+  destroying `OffscreenTarget`), confirming the documented,
+  correct-order flow (`waitIdle()` → destroy `OffscreenTarget` → destroy
+  `Device`) is Validation-Layers-clean, with no reliance on `Device`'s
+  own destructor-time drain to protect `OffscreenTarget`'s already-
+  destroyed resources; and the existing windowed GPU integration tests,
   re-run unmodified in behavior after the three mechanical call-site
   updates, confirming zero regression.
 - **Headless integration tests:** this spec **is** what makes this test
@@ -827,6 +908,13 @@ written.
     `RenderTarget`, no leaked `CommandList`/`Buffer`/`Texture`/
     `OffscreenTarget`, and no Validation Layer warning or error at any
     point.
+  - `Device::waitIdle()` is called, and returns, before `OffscreenTarget`
+    is destroyed on every exit path this composition exercises, including
+    an early/error exit — verifiable by inspection that no code path
+    destroys `OffscreenTarget` without an intervening `waitIdle()` call
+    for the submission(s) that referenced it, satisfying
+    [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)'s
+    documented (not guaranteed-detectable) destruction precondition.
   - Separately, `examples/frame_execution_demo` and
     `examples/minimal_renderer_demo`, after their mechanical updates
     (see Requirements), are re-run interactively and confirmed to
