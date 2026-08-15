@@ -27,3 +27,22 @@ target_link_libraries(atlantis_shader_system_tests
 )
 
 catch_discover_tests(atlantis_shader_system_tests DISCOVERY_MODE PRE_TEST)
+
+# Separate executable (Plan 0008 Section 9): links Atlantis::RHI, no
+# Vulkan device needed -- pure data mapping. Kept separate from
+# atlantis_shader_system_tests above so that target does not gain an
+# RHI link it otherwise has no reason to need (mirroring
+# atlantis_shader_system's own Core-only module boundary).
+add_executable(atlantis_shader_system_rhi_integration_tests
+  rhi_integration/vertex_input_mapping_tests.cpp
+)
+
+target_link_libraries(atlantis_shader_system_rhi_integration_tests
+  PRIVATE
+    Atlantis::ShaderSystemRhiIntegration
+    Atlantis::RHI
+    Catch2::Catch2WithMain
+    atlantis_compiler_warnings
+)
+
+catch_discover_tests(atlantis_shader_system_rhi_integration_tests DISCOVERY_MODE PRE_TEST)

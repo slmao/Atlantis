@@ -24,6 +24,30 @@ target_link_libraries(atlantis_shader_system
     atlantis_compiler_warnings
 )
 
+# See Plan 0008 Section 1/6: the ONLY target in the repository with a
+# compile-time dependency on both Atlantis::ShaderSystem and
+# Atlantis::RHI. PUBLIC on both because its own public header
+# (vertex_input_mapping.h) returns atlantis::rhi::VertexInputLayout,
+# built from an atlantis::shader_system::ReflectionMetadata input -- any
+# consumer of this header necessarily sees both types.
+add_library(atlantis_shader_system_rhi_integration STATIC
+  rhi_integration/src/vertex_input_mapping.cpp
+)
+add_library(Atlantis::ShaderSystemRhiIntegration ALIAS atlantis_shader_system_rhi_integration)
+
+target_include_directories(atlantis_shader_system_rhi_integration
+  PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/rhi_integration/include
+)
+
+target_link_libraries(atlantis_shader_system_rhi_integration
+  PUBLIC
+    Atlantis::ShaderSystem
+    Atlantis::RHI
+  PRIVATE
+    atlantis_compiler_warnings
+)
+
 # Plan 0008 Section 7: a single shader pair's producer, as a stamp-based,
 # all-or-nothing transaction. The OUTPUT is a single stamp file, not the
 # four real artifacts -- CMake's own dependency graph only ever asks
