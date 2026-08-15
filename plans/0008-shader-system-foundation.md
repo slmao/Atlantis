@@ -1,9 +1,40 @@
 # Plan: Shader System Foundation
 
 - **Spec:** [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md) (`Approved`)
-- **Status:** Draft
+- **Status:** Approved / Ready for Implementation
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
-  direction; pending Human Review.
+  direction; approved by human review — see Human Review Approval below.
+- **Human Review Approval (2026-08-15):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer for this branch) on 2026-08-15, at commit `30fecd7` on
+  [PR #35](https://github.com/slmao/Atlantis/pull/35), following a joint
+  review of `Approved` Spec 0008, `Accepted` ADR-0028–0031, and this Plan
+  in full — including two rounds of AI-assisted, read-only Plan
+  Human-Review-readiness audits and the revisions each round produced
+  (see this Plan's own revision history via `git log` on this file for
+  what each round raised and resolved before this approval). All
+  PHR-0008 decisions this Plan's §13 records (PHR-0008-02, -03, -04,
+  -05, -07, -14, -15) are approved as drafted, together with every other
+  design choice in §1–§12 as written at commit `30fecd7`. This approval:
+
+  1. Changes this Plan's own Status from `Draft` to **`Approved / Ready
+     for Implementation`**.
+  2. Authorizes creating an Implementation branch **once this approval
+     record has merged into `main`** — not before — strictly following
+     this Plan's module boundaries, CMake target/dependency graph,
+     public API surface, JSON parsing scope, `CreateProcessW` process
+     model, artifact publish-transaction model, migration steps, and
+     testing plan as written.
+  3. Requires that any architectural deviation discovered during
+     Implementation — in particular anything §12 ("Human Review Blockers
+     and Deviation Rules") lists as a stop condition — return to Spec/ADR
+     review; it may not be resolved unilaterally during Implementation.
+     §12's own separately-listed "not blockers" (exact names, exact CLI
+     flags, and other Plan-stage mechanical details) remain
+     Implementation's to resolve directly, as already specified there.
+  4. Does **not** authorize merging any pull request on the human's
+     behalf. PR #35 and every subsequent Implementation PR are merged by
+     the human, not the Agent.
 
 ## Objective
 
