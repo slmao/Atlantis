@@ -1,9 +1,13 @@
 # ADR 0040: GPU-to-CPU Readback — RHI Capability, Synchronization, and Error Semantics
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-15
-- **Deciders:** _Pending Human Review_
-- **Related Spec:** [specs/0010-headless-rendering-foundation.md](../specs/0010-headless-rendering-foundation.md) (`In Review`)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+  Approval recorded 2026-08-16; see
+  [specs/0010-headless-rendering-foundation.md](../specs/0010-headless-rendering-foundation.md)'s
+  Human Review Approval note for the full, three-round approval record
+  this ADR's Decision is part of.
+- **Related Spec:** [specs/0010-headless-rendering-foundation.md](../specs/0010-headless-rendering-foundation.md) (`Approved`)
 
 ## Context
 

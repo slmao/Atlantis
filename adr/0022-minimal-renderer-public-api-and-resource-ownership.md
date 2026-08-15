@@ -240,19 +240,36 @@ any known future one, that a `Renderer` interface would exist to swap in.
   one once a real need — likely an asset system — motivates its exact
   shape.
 
-## Proposed Amendment — 2026-08-15
+## Accepted Amendment — 2026-08-15
 
-**Status of this section: `Proposed`, not `Accepted`.** Drafted alongside
+**Status of this section:** drafted alongside
 [specs/0010-headless-rendering-foundation.md](../specs/0010-headless-rendering-foundation.md)'s
 own revision, following an independent Human Review of that spec's first
-draft. **This section does not itself change this ADR's top-level Status**
-(`Accepted` above is unchanged — it remains the accurate record of what
-Spec 0007 shipped and how `Renderer::drawFrame()` behaves today, prior to
-this amendment). This amendment requires its own Human Review, alongside
-Spec 0010's, before this ADR's Status can incorporate it and before any
-implementation may act on it. The original Decision, Consequences, and
-Alternatives Considered above are preserved verbatim and are not
+draft, and **formally accepted by Human Review on 2026-08-16** — see
+"Human Review — Amendment Acceptance (2026-08-16)" immediately below for
+the full approval record. **This section does not itself change this
+ADR's top-level Status** (`Accepted` above is unchanged — it remains the
+accurate record of what Spec 0007 shipped and how `Renderer::drawFrame()`
+behaved prior to this amendment). The original Decision, Consequences,
+and Alternatives Considered above are preserved verbatim and are not
 superseded except where this section says so explicitly.
+
+### Human Review — Amendment Acceptance (2026-08-16)
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-08-16; see
+[specs/0010-headless-rendering-foundation.md](../specs/0010-headless-rendering-foundation.md)'s
+own Human Review Approval note for the full, three-round approval record
+this amendment's acceptance is part of (decision 1 of the eight
+confirmed decisions listed there). This amendment (the `finalColorState`
+parameter, its pass-through-only contract, and its windowed/headless
+legal values) is accepted exactly as drafted in this section — no
+further revision was required of this amendment specifically across any
+of the three review rounds; the rounds' findings and fixes landed in
+[ADR-0038](0038-headless-offscreen-rendertarget-construction-and-ownership.md),
+[ADR-0039](0039-render-graph-execution-caller-specified-resource-state-boundaries.md),
+and [ADR-0040](0040-gpu-to-cpu-readback-rhi-capability.md) instead. No
+further Human Review is pending for this amendment.
 
 ### What prompted this amendment
 
