@@ -41,7 +41,8 @@ do not replace each other:
   external client?" — a descriptive, product-level lens.
 - The **module ownership view** (Section 4) answers "which CMake target
   owns this file, and what may it depend on?" — the authoritative
-  source/build structure.
+  source/build structure. Not every named module has an implemented
+  CMake target yet — Section 4 states, module by module, which do.
 
 Neither view supersedes the other, and a given module's position in one
 does not fix its position in the other. The module ownership view is
@@ -116,6 +117,12 @@ diagram — this table is a navigation index, not a second copy of it.
 | **As-built** | `Approved` Spec, implemented, merged. Verifiable against [specs/README.md](../../specs/README.md). |
 | **Approved direction (partially implemented)** | An `Accepted` ADR states a principle or boundary, but no concrete module/system implementing it yet exists. |
 | **Long-term candidate** | Named in [Spec 0009](../../specs/0009-long-term-engine-architecture-alignment.md) or the Candidate Spec Backlog as a future direction; no `Accepted` ADR or `Approved` Spec commits to *building* it yet. |
+
+The labels below describe the implementation state of each
+architectural capability, not the formal status of the ADR that names
+it. Every ADR cited in this section is `Accepted` — acceptance records
+that the decision itself is settled, not that the capability it
+describes has been built.
 
 - **As-built:** Core, Platform (Windows), RHI, Vulkan Backend,
   RenderGraph, Renderer, Shader System, Tools (shader-compiler content).
