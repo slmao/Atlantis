@@ -17,16 +17,19 @@
   [ADR-0009](../adr/0009-assertion.md),
   [ADR-0015](../adr/0015-vulkan-memory-allocation-deferred.md),
   [ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)–[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)
-  (all `Accepted`). See **Architectural Impact** below — three new
+  (all `Accepted`). See **Architectural Impact** below — four new
   decisions are identified and drafted alongside this spec:
   [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)
   (offscreen `RenderTarget` construction and ownership),
   [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
   (RenderGraph execution — caller-specified incoming/final resource
-  states), and
-  [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md)
-  (GPU-to-CPU readback capability) — all currently `Proposed`, pending
-  Human Review alongside this spec.
+  states), [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md)
+  (GPU-to-CPU readback capability) — all currently `Proposed` — and a
+  **Proposed Amendment (2026-08-15)** to the already-`Accepted`
+  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)
+  (`Renderer::drawFrame()` gains an explicit `finalColorState`
+  parameter). All four require Human Review alongside this spec; none is
+  `Accepted`/incorporated yet.
 
 ## Summary
 
@@ -39,10 +42,16 @@ with an offscreen `RenderTarget`-vending type (`OffscreenTarget`, no
 a new `Buffer` purpose, and a new `CommandList` copy operation), and
 generalizes RenderGraph's `execute()` to support both a non-presentable
 bound `RenderTarget` and a second, chained `execute()` call sharing one
-`CommandList` with `Renderer::drawFrame()`'s own internal one. It does
-**not** design golden-image comparison, tolerance methodology, or CI
-gating — this spec is the rendering-and-readback foundation a future
-Image Regression Testing spec depends on, not that spec itself.
+`CommandList` with `Renderer::drawFrame()`'s own internal one.
+**`Renderer::drawFrame()` itself gains one new, required, backend-
+agnostic parameter** (`ResourceState finalColorState`) so it can tell its
+caller-agnostic internal graph what state to leave the color target in —
+without ever learning why; this is the minimal, reviewed change to an
+already-`Accepted` API needed to make headless correct, not an
+unconstrained reopening of it. It does **not** design golden-image
+comparison, tolerance methodology, or CI gating — this spec is the
+rendering-and-readback foundation a future Image Regression Testing spec
+depends on, not that spec itself.
 
 ## Motivation / Problem Statement
 
@@ -73,18 +82,30 @@ none of which any existing `Accepted` ADR resolves:
   copy destination, and `CommandList` has no copy operation.
 - **RenderGraph's `execute()` hardcodes two assumptions that were true
   only because, until now, exactly one origin and exactly one call per
-  frame ever existed:** every bound resource starts each `execute()` call
-  from `ResourceState::Undefined`, and every bound `RenderTarget` ends the
-  frame at `ResourceState::PresentSource`. Both break for a headless
-  target read back via a second, chained `execute()` call — see
-  **Architectural Impact** and
-  [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
-  for the full analysis of why this is a genuine correctness gap, not a
-  hypothetical one, and how this spec resolves it without reopening
-  [ADR-0002](../adr/0002-presentation-rendertarget-unification.md)'s
-  unification promise or
+  frame ever existed — and this includes the target `Renderer` itself
+  draws into, not only a caller's own graph.** Verified against the
+  actual implementation
+  (`src/render_graph/src/execution.cpp`,
+  `src/renderer/src/renderer.cpp`): `Renderer::drawFrame()` calls the
+  same shared `render_graph::execute()` function every other caller
+  does, and that function unconditionally transitions every bound,
+  touched `RenderTarget` to `ResourceState::PresentSource` before
+  returning, and starts every `execute()` call's own state tracking from
+  `ResourceState::Undefined` regardless of any prior `execute()` call
+  that already used the same physical resource within the same
+  `CommandList`. Both assumptions are wrong for a headless target read
+  back via a second, chained `execute()` call. **An earlier draft of this
+  spec incorrectly claimed `Renderer::drawFrame()` requires no change and
+  leaves its color target in `ResourceState::ColorAttachmentOutput`; both
+  claims were checked against the shipped code during this spec's own
+  Human Review and found false — the real, pre-this-spec behavior is
+  `ResourceState::PresentSource`, unconditionally, for every caller
+  including `Renderer`'s own internal one.** See **Architectural Impact**
+  and
   [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)'s
-  already-shipped `Renderer` public API.
+  Proposed Amendment /
+  [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
+  for the corrected design and the full evidence trail.
 
 A fourth question, procedural rather than architectural but requiring an
 explicit answer rather than a silent default: whether this spec's own
@@ -103,7 +124,10 @@ deferral.
 - Introduce `OffscreenTarget` as a concrete RHI public type vending the
   exact same `RenderTarget` value
   [ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)
-  already defines, with no `Presentation` object involved
+  already defines, with no `Presentation` object involved, and an
+  explicitly-resolved ownership/lifetime relationship between the
+  long-lived `OffscreenTarget` and the short-lived `RenderTarget`
+  borrows it vends
   ([ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)).
 - Extend RHI with a minimal, narrow GPU-to-CPU readback capability: one
   new `ResourceState` (`TransferSource`), one new `Buffer` purpose
@@ -111,22 +135,29 @@ deferral.
   ([ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md)).
 - Generalize RenderGraph's `execute()` binding to accept a caller-
   specified incoming and final `ResourceState` per bound resource, fixing
-  the hardcoded-`Undefined`/hardcoded-`PresentSource` assumptions that
-  only ever held because a single origin and a single per-frame
-  `execute()` call previously existed
+  the hardcoded-`Undefined`/hardcoded-`PresentSource` assumptions —
+  precisely enumerating every existing call site this requires updating,
+  including `Renderer`'s own internal one
   ([ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)).
-- Demonstrate, end-to-end, that the **unmodified** `Renderer::drawFrame()`
-  draws the same mesh/material/camera Spec 0007 already verifies, into an
+- **Give `Renderer::drawFrame()` an explicit, backend-agnostic,
+  required `finalColorState` parameter**, as a narrow, reviewed,
+  Proposed Amendment to the already-`Accepted`
+  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md) —
+  the minimal change that lets a headless caller request
+  `ResourceState::TransferSource` directly, with no intermediate,
+  never-observed `PresentSource` transition, while `Renderer` itself
+  remains completely unaware of *why* a particular value was chosen.
+- Demonstrate, end-to-end, that `Renderer::drawFrame()` — its dependency
+  boundary and per-frame responsibilities unchanged, its public
+  signature extended by exactly one caller-supplied parameter — draws
+  the same mesh/material/camera Spec 0007 already verifies, into an
   offscreen `RenderTarget`, with no window, `Presentation`, or swapchain
-  anywhere in the composition — proving
-  [ADR-0002](../adr/0002-presentation-rendertarget-unification.md)'s
-  unification claim for the first time with a real second origin, not
-  just windowed alone.
+  anywhere in the composition.
 - Verify a full render → readback cycle produces a reproducible, basic
   content check (not a golden-image comparison — see Non-Goals) on
   Windows with a real GPU, with Vulkan Validation Layers clean throughout.
-- Resolve the three architectural decisions this spec identifies via
-  dedicated ADRs, so a future Image Regression Testing spec inherits a
+- Resolve the architectural decisions this spec identifies via dedicated
+  ADRs/amendment, so a future Image Regression Testing spec inherits a
   settled headless-rendering-and-readback contract instead of having to
   invent one under its own implementation pressure.
 - Confirm, explicitly, that no general GPU memory allocator decision is
@@ -145,78 +176,62 @@ Explicitly excluded from this spec's design and implementation:
   not design or implement the comparison harness a future Image
   Regression Testing spec (Candidate 3 in
   [specs/README.md](README.md)'s backlog) will build on top of this
-  spec's own output. No golden-image file format, storage location, or
-  diff algorithm is chosen here.
+  spec's own output.
 - **Android Platform, iOS Platform, or a second graphics backend of any
   kind.** Windows/Vulkan only, per [AGENTS.md](../AGENTS.md). This spec's
   headless path uses no Atlantis Platform code at all (no window is
-  created), so it has no Android/iOS-specific content to design in either
-  direction.
+  created).
 - **Linux as a target platform, or any Linux-specific build/CI/runtime
   content.** Per [AGENTS.md](../AGENTS.md), Linux is not a target platform
-  for Atlantis; nothing in this spec's headless rendering path implies or
-  requires one — "headless" here means "no window/swapchain," not "a
-  different operating system."
+  for Atlantis.
 - **A general, sampled/shader-readable `Texture` usage, or a general
   `Sampler` type.** [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md)'s
   readback capability is scoped strictly to a copy-out-to-`Buffer`
   operation, not to making the offscreen color image readable by a
-  shader. Spec 0007's "no general `Sampler`/sampled `Texture`" Non-Goal is
-  unchanged.
+  shader.
+- **Widening the existing `Texture` type to support a color or
+  transfer-source usage.** [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)
+  explicitly rules this out — `Texture` remains exactly as depth-only as
+  [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)
+  already fixed it; the offscreen color resource is a second, distinct
+  RHI concept.
 - **Depth-buffer readback.** Only the color `RenderTarget` gains a
   readback path this round; the depth `Texture`'s existing, unchanged
-  ownership/lifecycle ([ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md))
-  is reused verbatim for depth-testing correctness, but nothing reads its
-  contents back to the CPU.
+  ownership/lifecycle is reused verbatim.
 - **Asynchronous, non-blocking, or multi-frame-latency-amortized
   readback.** Readback this round is synchronous and blocking
-  (`Device::waitIdle()`-based), per
-  [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md). No
-  future/promise-style API, no double-buffered staging.
+  (`Device::waitIdle()`-based).
 - **Multiple frames in flight, multi-threaded command recording/resource
-  creation/graph execution, or any job/task system.** Phase 1's
-  single-logical-thread, single-frame-in-flight baseline
-  ([ADR-0004](../adr/0004-phase1-threading-baseline.md),
-  [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md))
-  is unchanged and unreopened.
+  creation/graph execution, or any job/task system.**
 - **A general GPU memory suballocator (VMA or hand-rolled), or any change
   to [ADR-0015](../adr/0015-vulkan-memory-allocation-deferred.md)'s
   general deferral.**
-  [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)
-  narrowly extends [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)'s
-  already-`Accepted` direct-allocation policy to one more resource kind —
-  it does not adopt or scaffold for a general allocator.
-- **Any change to `Renderer`'s public API**
-  ([ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)).
-  `Renderer::drawFrame()` is called by this spec's verification
-  composition exactly as Spec 0007's windowed composition already calls
-  it — same signature, same borrowed-reference contract, no new
-  parameter, no headless-awareness added to `Renderer` itself. See
-  [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
-  Alternatives Considered for why a shared-state-threading alternative
-  that *would* have touched `Renderer`'s API was rejected in this spec's
-  favor.
+- **Any change to `Renderer`'s dependency boundary, ownership model, or
+  per-frame responsibilities beyond the one new `finalColorState`
+  parameter.** `Renderer` still depends only on `Atlantis::RHI`/
+  `Atlantis::RenderGraph`/`Atlantis::Core`; still never owns a
+  `RenderTarget`, depth `Texture`, `Mesh`, or `Material`; still builds
+  exactly one internal draw pass with unchanged
+  `ColorAttachmentOutput`/`DepthAttachmentReadWrite` usages; still never
+  learns whether it was called by a windowed or headless composition.
+  **This spec does not claim `Renderer`'s public API is unaffected** —
+  see Requirements and
+  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)'s
+  Proposed Amendment for the one, narrow, explicitly-reviewed change it
+  does make.
 - **A second rendering path, a second `RenderGraph`/RHI implementation,
-  or any fork of `Renderer`.** Headless reuses `Renderer`, RenderGraph,
-  RHI, and the Vulkan Backend completely unchanged in their core
-  responsibilities — see Requirements and Proposed Design.
+  or any fork of `Renderer`.**
 - **Multiple simultaneous `OffscreenTarget` instances, or any pooling/
-  reuse-across-instances policy for them.** This spec's own verification
-  composition constructs one `OffscreenTarget` and exercises its
-  acquire/draw/readback cycle; whether/how a future Image Regression
-  Testing harness pools or reuses instances across many test cases is
-  left entirely to that future spec.
+  reuse-across-instances policy for them.**
 - **Any regression to the windowed path.** `examples/frame_execution_demo`
-  and `examples/minimal_renderer_demo` must continue to build and behave
-  identically after this spec's mechanical binding-call-site update (see
-  [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)) —
-  no windowed behavior, output, or Vulkan call sequence changes.
+  and `examples/minimal_renderer_demo`, once mechanically updated (see
+  Requirements), must continue to build and behave identically to their
+  Spec 0006/0007-verified behavior — no windowed output or Vulkan call
+  sequence changes.
 - **Editing [specs/README.md](README.md)'s Section A entries for prior
   specs, [docs/project-blueprint.md](../docs/project-blueprint.md), or any
   other governance/roadmap document beyond this spec's own required
-  backlog-registry update** (see Out of Scope / Future Work and this
-  spec's own PR description for the precise, minimal registry edit this
-  round makes).
+  backlog-registry update.**
 
 ## Requirements
 
@@ -225,44 +240,63 @@ Explicitly excluded from this spec's design and implementation:
 **Offscreen `RenderTarget` construction and ownership**
 
 - A new RHI type, `OffscreenTarget`, constructed via `Device` with a
-  fixed extent and color format (caller-specified, never changed for that
-  instance's lifetime — no resize/recreation concept), owning exactly one
-  color image (and its backing memory) for its whole lifetime. Full
-  contract in
+  fixed extent and color `atlantis::rhi::Format` (caller-specified,
+  never changed for that instance's lifetime — no resize/recreation
+  concept), owning exactly one color image (and its backing memory) for
+  its whole lifetime. Full contract in
   [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md).
-- `OffscreenTarget` vends a `RenderTarget` via a two-outcome (`Err`/`Ok`)
-  acquire-equivalent call — no zero-extent `Ok(std::nullopt)` case, unlike
-  `Presentation`, because an offscreen target's extent cannot become
-  `{0, 0}` after construction.
-- The vended `RenderTarget` is the exact same public type
+- `OffscreenTarget` vends a `RenderTarget` via a two-outcome
+  (`Err`/`Ok`, matching `Presentation`'s real
+  `Result<std::unique_ptr<RenderTarget>, Err>` shape) acquire-equivalent
+  call — no zero-extent case, unlike `Presentation`.
+- The vended `RenderTarget` is the exact same abstract public type
   [ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)
-  already defines — no new field, method, or capability-query is added to
-  it by this spec.
+  already defines — no new field or method on its public interface. A
+  **second concrete Vulkan Backend implementation** of it is introduced
+  (non-owning, borrowing from the owning `OffscreenTarget` implementation,
+  mirroring exactly how the existing `VulkanRenderTarget` borrows from
+  `VulkanPresentation`) — see
+  [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)
+  for the full ownership/lifetime split.
 - `OffscreenTarget` has no `present()` counterpart; the vended borrow is
-  consumed by the readback operation below (see "GPU-to-CPU readback
-  capability"). One acquire, one consuming call, same discipline
-  `Presentation` already enforces.
+  consumed by the readback operation below.
 - The same `OffscreenTarget` instance may be acquired-and-consumed more
-  than once across its lifetime, each cycle independent, following the
-  existing single-frame-in-flight baseline
-  ([ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md)).
-- Destruction preconditions mirror `Presentation`'s exactly (no outstanding
-  acquired-but-unconsumed `RenderTarget`, no outstanding unwaited
-  submission) — same lifetime-precondition tier, same
-  `Device::waitIdle()`-satisfies-it mechanism.
+  than once across its lifetime, each cycle independent.
+- Destruction preconditions mirror `Presentation`'s exactly.
 - The depth `Texture` used alongside an `OffscreenTarget` is constructed,
   owned, and destroyed via the existing, unchanged
-  `Device::createTexture()` path
-  ([ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)) —
-  `OffscreenTarget` itself never owns, creates, or references a depth
-  resource.
+  `Device::createTexture()` path — `OffscreenTarget` itself never owns,
+  creates, or references a depth resource, and `Texture`/`DepthFormat`
+  are entirely untouched by this spec.
 - **GPU memory allocation:** every allocation `OffscreenTarget`'s color
   image requires uses
   [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)'s
-  existing direct, unpooled, Vulkan-Backend-private policy (its own
-  individual `vkAllocateMemory`/`vkFreeMemory` pair) — no VMA dependency,
-  no hand-rolled suballocator, no RHI/Renderer signature shaped around any
-  particular allocation strategy is introduced by this spec.
+  existing direct, unpooled, Vulkan-Backend-private policy.
+
+**`Renderer::drawFrame()`'s new `finalColorState` parameter**
+
+- `Renderer::drawFrame()` gains one new, required parameter:
+  `atlantis::rhi::ResourceState finalColorState` — a Proposed Amendment
+  to [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md),
+  not a silent reinterpretation of it. Exact parameter position is a
+  Plan-stage detail.
+- `Renderer` passes this value through, unmodified and uninspected, as
+  the `finalState` field of its own internal color `ResourceBinding`
+  entry ([ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)).
+  `Renderer`'s draw pass itself is unchanged — it still declares exactly
+  one `writes()` usage tagged `ColorAttachmentOutput`.
+- A windowed caller passes `ResourceState::PresentSource` — the exact
+  value `execute()`'s old hardcoded behavior already produced, a
+  zero-behavior-change update once the one existing call site
+  (`minimal_renderer_demo`) supplies it explicitly.
+- A headless caller passes `ResourceState::TransferSource` directly — no
+  intermediate `PresentSource` transition is ever recorded for a target
+  that will never be presented.
+- `Renderer` does not interpret, validate, or branch on this value in
+  any way, and gains no knowledge of `Presentation`, `VkSwapchainKHR`,
+  `OffscreenTarget`, or any other origin-specific concept — see
+  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)'s
+  Proposed Amendment for the full contract and rationale.
 
 **GPU-to-CPU readback capability**
 
@@ -271,116 +305,118 @@ Explicitly excluded from this spec's design and implementation:
   [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md).
 - `Buffer` gains a fourth, fixed purpose: readback — host-visible,
   host-coherent, mapped once for its whole lifetime, created via the
-  existing, unchanged `Device::createBuffer()`. Sized by the caller to
-  match the source color image's known extent/format; no automatic
-  format negotiation or size query is introduced.
+  existing, unchanged `Device::createBuffer()`.
 - `CommandList` gains exactly one new recordable operation:
-  `copyTextureToBuffer(RenderTarget&, Buffer&)` (exact signature left to
-  the Plan) — copies the full, tightly-packed color image into a
-  readback-purpose `Buffer`; no partial-region copy, no format
-  conversion. Recording remains legal only from inside a RenderGraph pass
-  execution callback, unchanged from
-  [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md)'s
-  existing rule.
+  `copyRenderTargetToBuffer(RenderTarget&, Buffer&)` — named after its
+  actual parameter type, not `Texture` (an earlier draft's
+  `copyTextureToBuffer` name was corrected during this spec's own Human
+  Review, since the parameter is `RenderTarget&`). Copies the full,
+  tightly-packed color image into a readback-purpose `Buffer`; no
+  partial-region copy, no format conversion.
 - The copy is recorded as a RenderGraph pass declaring **exactly one
   `writes()` usage tagged `ResourceState::TransferSource`** against the
-  logical resource the color `RenderTarget` is bound to — never a paired
-  `reads()` + `writes()`, following the identical precedent
-  [ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)
-  already established for the depth `Texture`. `execute()`'s existing
-  draw-pass recognition ([ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md))
-  does not fire for this pass — no attachment-scoping bracketing is
-  inserted around it.
+  logical resource the color `RenderTarget` is bound to, with
+  `incomingState = ResourceState::TransferSource` (matching exactly what
+  `Renderer::drawFrame()` was already told to leave the target in) and
+  `finalState = std::nullopt`. **Because the resource's tracked incoming
+  state already equals this pass's own declared state, `execute()`
+  inserts no `transitionResource()` call for this pass at all** — its
+  callback consists solely of the copy call. `execute()`'s existing
+  draw-pass recognition does not fire for this pass.
 - Readback is synchronous and blocking: the caller submits, calls the
   existing `Device::waitIdle()`, then reads the readback `Buffer`'s
-  already-mapped pointer directly. No new synchronization primitive,
-  signal type, or fence-adjacent concept is introduced.
-- Every `VkResult` along copy recording, submission, and wait is checked;
-  no `VkResult` is discarded. Buffer/image size or format mismatch between
-  what the caller computed and what `OffscreenTarget` actually holds is a
-  caller precondition violation, not a guaranteed-detectable error.
+  already-mapped pointer (`Buffer::mappedData()`) directly.
+- Every `VkResult` along copy recording, submission, and wait is checked.
 
 **RenderGraph execution generalization for non-presentable and chained
 bindings**
 
 - `execute()`'s existing frame-scoped external resource binding
-  ([ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md))
-  gains two additional, caller-supplied pieces of information per bound
-  `RenderTarget` entry: an assumed incoming `ResourceState` (defaulting to
-  `Undefined` — zero required change for every existing single-`execute()`-
-  call windowed usage) and a **required** (no default) final
-  `ResourceState`, expressed as `std::optional<ResourceState>`
-  (`std::nullopt` meaning "no trailing transition beyond the last pass's
-  own declared state"). Full contract in
+  (`ResourceBinding`,
+  `src/render_graph/include/atlantis/render_graph/execution.h`) gains
+  two additional fields, meaningful only for `target`-shaped
+  (`RenderTarget`) entries: `incomingState` (`ResourceState`, defaults to
+  `Undefined` — **safe only for a resource being bound to its first
+  `execute()` call within its current `CommandList`/frame; using the
+  default for a resource already touched by an earlier `execute()` call
+  sharing the same `CommandList` is a caller precondition violation that
+  silently discards the resource's real prior contents, not a
+  guaranteed-detectable error**) and `finalState`
+  (`std::optional<ResourceState>`, **no default — every `target`-shaped
+  binding entry must supply one explicitly**; `std::nullopt` means "no
+  trailing transition beyond whatever the last pass leaves it in"). Full
+  contract, including the exact default/misuse policy, in
   [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md).
-- Every existing windowed call site
-  (`examples/frame_execution_demo`, `examples/minimal_renderer_demo`)
-  must be mechanically updated to pass `ResourceState::PresentSource`
-  explicitly as the final state where it previously received this
-  behavior implicitly — a required, non-behavioral update this spec's
-  future Plan must include; zero observable change to either demo's
-  output or recorded Vulkan calls.
+- **Every existing call site that constructs a `target`-shaped
+  `ResourceBinding` must be mechanically updated — three, not two, named
+  explicitly, none optional:**
+  1. `src/renderer/src/renderer.cpp` — supplies `finalState =
+     finalColorState` (the new parameter above); `incomingState` stays
+     at its default.
+  2. `examples/frame_execution_demo/main.cpp` — its own, direct,
+     non-`Renderer` `execute()` call must supply
+     `finalState = ResourceState::PresentSource` explicitly.
+  3. `examples/minimal_renderer_demo`'s verification composition — must
+     pass `ResourceState::PresentSource` as `Renderer::drawFrame()`'s
+     new `finalColorState` argument.
+  All three are mechanical, non-behavioral updates for the windowed
+  path — each supplies exactly the value the old hardcoded behavior
+  already produced.
+- **Vulkan Backend impact, named explicitly:** `resource_state_mapping.cpp`'s
+  `planTransition()` function is a closed, exhaustively-enumerated
+  lookup table; any `(before, after)` pair not listed triggers an
+  assertion failure, not a computed fallback (verified by inspection).
+  This spec's design requires **exactly one new entry:
+  `ColorAttachmentOutput → TransferSource`** — used by `Renderer`'s own
+  internal trailing transition when a headless caller supplies
+  `finalColorState = TransferSource`. No other new entry is required —
+  the windowed path continues to use the already-existing
+  `ColorAttachmentOutput → PresentSource` entry, and the readback copy
+  pass itself (see above) never calls `transitionResource()` at all.
 - `execute()`'s algorithm (walk compiled pass order, track
   most-recently-recorded state per bound resource, insert
-  `transitionResource()` on a state change, insert one trailing call if a
-  final state is specified and differs from the resource's ending state)
-  is otherwise unchanged from
-  [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)/[ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md).
-  Guard 1 and Guard 2 are unchanged; the bound depth `Texture`'s binding
-  (never trailing-transitioned) is unaffected.
-- `Renderer::drawFrame()`'s own internal `execute()` call is entirely
-  unaffected by this generalization — it continues to build, compile, and
-  execute its own private graph with its own private, per-call state
-  bookkeeping, exactly as Spec 0007 shipped it, using its existing
-  hardcoded `ColorAttachmentOutput`/`DepthAttachmentReadWrite` usages
-  internally. Only the caller's own, separate, second `execute()` call
-  (for the readback copy pass) uses this spec's new incoming/final-state
-  binding fields, supplying `ResourceState::ColorAttachmentOutput` as the
-  documented, fixed incoming state a `RenderTarget` is left in immediately
-  after `Renderer::drawFrame()` returns.
+  `transitionResource()` on a state change, insert one trailing call if
+  a final state is specified and differs from the resource's ending
+  state) is otherwise unchanged. Guard 1 and Guard 2 are unchanged; the
+  bound depth `Texture`'s binding (never trailing-transitioned, and
+  unaffected by either new field) is unaffected.
 
 **Reuse of Renderer, RenderGraph, RHI, and Vulkan Backend — no fork**
 
 - The headless verification composition constructs `Mesh`/`Material`/the
   camera uniform `Buffer` using the same fixed fixture Spec 0007's
   windowed verification composition already uses (exact code-sharing
-  mechanism — shared source file vs. duplicated fixture — left to the
-  Plan), and calls `Renderer::drawFrame()` with the exact same signature
-  and borrowed-reference contract as the windowed composition, passing
-  the `OffscreenTarget`-vended `RenderTarget` and a depth `Texture` in
-  place of the windowed ones.
-- No new `Renderer`, RenderGraph, RHI interface, or Vulkan Backend
-  responsibility is introduced beyond what this spec's Requirements
-  explicitly name above — `Renderer` itself gains zero new code path.
+  mechanism left to the Plan), and calls `Renderer::drawFrame()` with the
+  same borrowed-reference contract as the windowed composition, plus the
+  new `finalColorState` argument, passing the `OffscreenTarget`-vended
+  `RenderTarget` and a depth `Texture` in place of the windowed ones.
+- `Renderer`'s dependency set (`Atlantis::RHI`/`Atlantis::RenderGraph`/
+  `Atlantis::Core` only), ownership model, and per-frame responsibilities
+  are unaffected beyond the one new parameter above.
 
 **Phase 1 single-threaded orchestration and thread-safety contracts**
 
 - Every new public type this spec introduces (`OffscreenTarget`, the
-  extended `execute()` binding, `CommandList::copyTextureToBuffer()`) documents
-  its thread-safety contract at its public API — "not thread-safe;
-  caller-thread-only," on the single Phase 1 logical thread, per
+  extended `execute()` binding, `CommandList::copyRenderTargetToBuffer()`,
+  `Renderer::drawFrame()`'s new parameter) documents its thread-safety
+  contract at its public API — "not thread-safe; caller-thread-only," on
+  the single Phase 1 logical thread, per
   [ADR-0004](../adr/0004-phase1-threading-baseline.md). No mutex, atomic,
-  job/task system, or lock-free structure is introduced anywhere in this
-  spec's scope. Unlike the windowed path, this thread is not required to
-  also own a Platform message pump — a headless composition has no
-  window and no Platform event loop to run — but it remains exactly one
-  logical thread, not a new threading model.
+  job/task system, or lock-free structure is introduced. Unlike the
+  windowed path, this thread is not required to also own a Platform
+  message pump — a headless composition has no window and no Platform
+  event loop to run — but it remains exactly one logical thread.
 
 ### Non-functional
 
 - **Performance:** not a goal beyond "does not stall, leak, or busy-spin
-  unnecessarily" outside the deliberate `waitIdle()`-based readback stall,
-  which is an explicit, accepted simplification (see
-  [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md)), not a
-  performance claim.
+  unnecessarily" outside the deliberate `waitIdle()`-based readback
+  stall, an explicit, accepted simplification, not a performance claim.
 - **Memory:** no general GPU memory suballocation strategy is introduced
-  or assumed — see
-  [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md).
+  or assumed.
 - **Portability (within the Vulkan-only Phase 1 constraint):**
   implemented and verified on Windows only, using no window and no
-  Atlantis Platform code at all. RHI's and RenderGraph's public interface
-  shapes must not preclude Android's future implementation, verified by
-  inspection.
+  Atlantis Platform code at all.
 - **Other:** no new third-party dependency. Unit tests use the existing
   Catch2 v3 framework ([ADR-0007](../adr/0007-test-framework.md)).
 
@@ -393,11 +429,11 @@ Realizes exactly the headless path
 [resource_lifetime.md](../docs/architecture/resource_lifetime.md) already
 anticipated: RHI gains a second `RenderTarget`-vending type
 (`OffscreenTarget`, alongside `Presentation`) and a narrow readback
-extension; RenderGraph's existing RHI dependency
-([ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md))
-is generalized, not widened to a new dependency direction. `Renderer`
-gains no new dependency and no new code path — it is depended on by this
-spec's verification composition exactly as Spec 0007's already is.
+extension; RenderGraph's existing RHI dependency is generalized, not
+widened to a new dependency direction. `Renderer`'s dependency set is
+unchanged; its public signature gains one new parameter, per
+[ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)'s
+Proposed Amendment.
 
 ```
 Headless verification composition, once per render-and-readback cycle:
@@ -417,27 +453,36 @@ Headless verification composition, once per render-and-readback cycle:
   Device::createCommandList() -> CommandList
 
   Renderer::drawFrame(commandList, *renderTarget, *depthTexture,
-                       cameraBuffer, drawItems)
-    -- entirely unchanged from Spec 0007: builds, compiles, and executes
-       its own internal graph (ColorAttachmentOutput + Depth
-       AttachmentReadWrite draw pass) --
+                       cameraBuffer, drawItems,
+                       ResourceState::TransferSource)
+    -- internally: builds its own graph exactly as Spec 0007 does
+       (ColorAttachmentOutput + DepthAttachmentReadWrite draw pass),
+       compiles it, and calls render_graph::execute() with its own
+       binding for the color target carrying
+       finalState = TransferSource (the new argument, passed through
+       unmodified) -- execute() inserts the draw pass's own
+       Undefined -> ColorAttachmentOutput transition, then, because
+       finalState differs from the pass's own ending state, one
+       trailing ColorAttachmentOutput -> TransferSource transition
+       (this spec's one new planTransition() entry) --
+       -- the color RenderTarget is now in TransferSource state; no
+       PresentSource transition ever occurs for this target --
 
   Caller builds a second, small RenderGraphBuilder description: one pass
     declaring a single writes() usage tagged TransferSource against the
     same logical resource the RenderTarget is bound to; execution
-    callback calls CommandList::copyTextureToBuffer(*renderTarget,
+    callback calls CommandList::copyRenderTargetToBuffer(*renderTarget,
     *readbackBuffer)
   Caller compiles that second graph -> CompiledGraph
   render_graph::execute(compiledGraph,
                          bindings{resource -> (RenderTarget,
-                                  incoming=ColorAttachmentOutput,
-                                  final=std::nullopt)},
+                                  incomingState = TransferSource,
+                                  finalState = std::nullopt)},
                          commandList)
-    -- ADR-0039's generalized execute(): seeds this resource's tracked
-       state from the caller-supplied ColorAttachmentOutput (not
-       Undefined), inserts one transitionResource() to TransferSource
-       before the copy pass's callback runs, records the copy, no
-       trailing transition (final = std::nullopt) --
+    -- the resource's tracked state (seeded from incomingState =
+       TransferSource) already equals this pass's own declared state,
+       so execute() inserts no transitionResource() call at all; only
+       the copy pass's callback runs --
 
   Device::submit(commandList, target's-acquire-complete-signal)
   Device::waitIdle()
@@ -454,17 +499,24 @@ Headless verification composition, once per render-and-readback cycle:
 
 See
 [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)
-for the full decision: `OffscreenTarget`'s shape, its two-outcome
-acquire contract, its allocation policy (extending
-[ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)),
-and why depth-`Texture` ownership needs no change.
+for the full decision: `OffscreenTarget`'s shape, the owning/non-owning
+Vulkan Backend implementation split, its two-outcome acquire contract,
+its allocation policy, and why `Texture` is not reused.
+
+### `Renderer::drawFrame()`'s `finalColorState` parameter
+
+See
+[ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)'s
+Proposed Amendment for the full decision: the new parameter's exact
+contract, why it is required (not defaulted or boolean), and why it
+preserves `Renderer`'s origin-opacity completely.
 
 ### GPU-to-CPU readback
 
 See
 [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md) for the
 full decision: `TransferSource`, the readback `Buffer` purpose,
-`copyTextureToBuffer()`, the synchronous `waitIdle()`-based
+`copyRenderTargetToBuffer()`, the synchronous `waitIdle()`-based
 synchronization model, and error semantics.
 
 ### RenderGraph execution generalization
@@ -472,9 +524,8 @@ synchronization model, and error semantics.
 See
 [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
 for the full decision: the caller-specified incoming/final `ResourceState`
-binding fields, why this resolves both the `PresentSource`-for-headless
-defect and the cross-`execute()`-call state-continuity gap, and why
-`Renderer`'s public API needs no change to support it.
+binding fields, their exact default/misuse policy, the full list of
+mechanically-updated call sites, and the one new `planTransition()` entry.
 
 ### Threading
 
@@ -493,13 +544,15 @@ also own a Platform message pump (headless has none).
   `OffscreenTarget` before consuming the first — use
   `ATLANTIS_CHECK`/`ATLANTIS_ASSERT`, per
   [ADR-0009](../adr/0009-assertion.md)'s existing convention.
+- Supplying an `incomingState` override that does not match a resource's
+  true prior state (e.g. from an earlier `execute()` call within the same
+  `CommandList`) is a **lifetime/precondition-violation-tier caller
+  error**, not guaranteed-detectable, not tested for detection — see
+  [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md).
 - `OffscreenTarget`/readback-`Buffer` misuse outside its valid lifetime
-  window (destroying `Device` while either is still alive; reading a
-  readback `Buffer` before `waitIdle()` has been called for the
-  submission that wrote it) is a **lifetime precondition violation**, the
-  same tier as every other borrowed/owned-handle misuse case already
-  established in this codebase — not claimed to be guaranteed-detectable,
-  not tested for detection.
+  window is a lifetime precondition violation, the same tier as every
+  other borrowed/owned-handle misuse case already established in this
+  codebase.
 - Every `VkResult` along `OffscreenTarget` construction, copy recording,
   submission, and readback is checked; no `VkResult` is discarded.
 - Vulkan Validation Layers are enabled unconditionally in Debug builds and
@@ -508,44 +561,64 @@ also own a Platform message pump (headless has none).
 
 ## Architectural Impact
 
-This spec introduces architecture across three distinct, independently-
-reviewable decisions, filed as three new `Proposed` ADRs — none decided
-by this spec's prose alone:
+This spec introduces architecture across four distinct, independently-
+reviewable decisions — three new `Proposed` ADRs and one Proposed
+Amendment to an already-`Accepted` ADR — none decided by this spec's
+prose alone:
 
 1. **Headless offscreen `RenderTarget` construction and ownership** —
-   `OffscreenTarget`'s concrete shape, its two-outcome acquire contract,
-   and its allocation policy (extending, not reopening,
+   `OffscreenTarget`'s concrete shape, its owning/non-owning Vulkan
+   Backend implementation split, its two-outcome acquire contract, and
+   its allocation policy (extending, not reopening,
    [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)).
    Filed as
-   [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md).
+   [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)
+   (`Proposed`).
 2. **RenderGraph execution — caller-specified incoming and final resource
-   states** — resolves a real correctness gap between
+   states** — resolves a real, code-verified correctness gap between
    [ADR-0002](../adr/0002-presentation-rendertarget-unification.md)'s
    origin-opacity requirement and
    [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)'s
-   hardcoded `PresentSource`/`Undefined` assumptions, and enables a
-   second, chained `execute()` call within one frame without changing
-   `Renderer`'s public API. Filed as
-   [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md).
-3. **GPU-to-CPU readback RHI capability** — `TransferSource`, the
-   readback `Buffer` purpose, `CommandList::copyTextureToBuffer()`, and
-   the synchronous readback synchronization/error model. Filed as
-   [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md).
+   hardcoded `PresentSource`/`Undefined` assumptions, enumerates every
+   mechanically-updated call site (including `Renderer`'s own), and
+   names the one new Vulkan Backend transition-table entry required.
+   Filed as
+   [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
+   (`Proposed`).
+3. **`Renderer::drawFrame()`'s new `finalColorState` parameter** — a
+   narrow, reviewed change to `Renderer`'s already-`Accepted` public
+   API, needed because `Renderer`'s own internal `execute()` call is
+   subject to the same hardcoded-`PresentSource` defect as any other
+   caller — verified against the shipped implementation, not assumed.
+   Filed as a **Proposed Amendment** to
+   [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md),
+   *not* a new ADR number — the original Decision, Consequences, and
+   Alternatives Considered in ADR-0022 remain unchanged and unsuperseded;
+   only a new section is appended, clearly marked `Proposed`, not
+   `Accepted`, pending its own Human Review alongside this spec's.
+4. **GPU-to-CPU readback RHI capability** — `TransferSource`, the
+   readback `Buffer` purpose, `CommandList::copyRenderTargetToBuffer()`,
+   and the synchronous readback synchronization/error model, with an
+   explicit, stated dependency on decisions 2 and 3 above for its own
+   "no intermediate transition needed" claim. Filed as
+   [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md)
+   (`Proposed`).
 
-No existing `Accepted` ADR's conclusions are restated, reopened, or
-modified by this spec or by the three new ADRs above — each new ADR
-references and extends the existing ones (particularly ADR-0002,
-ADR-0015, ADR-0019, ADR-0020, ADR-0021, ADR-0022, ADR-0023, ADR-0025,
-ADR-0026) without altering their own Decision text. Architectural Impact
-is not "None" — `OffscreenTarget`, the readback capability, and
-RenderGraph's generalized binding are each new or changed public API
-surface, exactly what [AGENTS.md](../AGENTS.md)'s "What counts as
-significant" section requires the full Spec → Plan → Human Review path
-for. **This spec's own approval is not itself an authorization to
-implement** — a Plan may be drafted per [AGENTS.md](../AGENTS.md) only
-once this spec's own PR has merged into `main`, and that future Plan must
-still pass its own Human Review before any code, test, or build-
-configuration file for this spec's scope is written.
+No existing `Accepted` ADR's Decision text is silently rewritten by this
+spec or by the four decisions above — ADR-0022's amendment is appended as
+its own clearly-marked, not-yet-accepted section, exactly the pattern
+[ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)'s own
+(already-`Accepted`) amendment established, adapted for a still-`Proposed`
+status. Architectural Impact is not "None" — `OffscreenTarget`, the
+readback capability, RenderGraph's generalized binding, and `Renderer`'s
+new parameter are each new or changed public API surface, exactly what
+[AGENTS.md](../AGENTS.md)'s "What counts as significant" section requires
+the full Spec → Plan → Human Review path for. **This spec's own approval
+is not itself an authorization to implement** — a Plan may be drafted per
+[AGENTS.md](../AGENTS.md) only once this spec's own PR has merged into
+`main`, and that future Plan must still pass its own Human Review before
+any code, test, or build-configuration file for this spec's scope is
+written.
 
 ## Alternatives Considered
 
@@ -553,54 +626,49 @@ configuration file for this spec's scope is written.
   comparison in this same spec, rather than deferring it to a separate,
   later spec.** Rejected: [AGENTS.md](../AGENTS.md)'s own sequencing
   treats headless rendering and image regression testing as two
-  Candidate Backlog entries with a real dependency edge between them
-  (Candidate 3 depends on Candidate 2), and this spec's own three ADRs
-  are already independently substantial (offscreen construction, a
-  RenderGraph execution-model generalization, and a new RHI capability) —
-  bundling golden-image methodology in as well repeats exactly the
-  over-scoping mistake Spec 0005's and Spec 0006's own Alternatives
-  Considered already rejected once each, for the same reason.
-- **Resolve the `PresentSource`/`Undefined` hardcoding gap by forking
-  RenderGraph's execution entry point for headless, rather than
+  Candidate Backlog entries with a real dependency edge between them, and
+  this spec's own four architectural decisions are already independently
+  substantial — bundling golden-image methodology in as well repeats
+  exactly the over-scoping mistake Spec 0005's and Spec 0006's own
+  Alternatives Considered already rejected once each, for the same
+  reason.
+- **Resolve the `PresentSource`-for-headless defect entirely on
+  RenderGraph's side, leaving `Renderer::drawFrame()`'s signature
+  unchanged and having the headless caller's own second `execute()` call
+  treat `PresentSource` as the real incoming state.** Considered and
+  rejected — see
+  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)'s
+  Proposed Amendment, Alternatives Considered: this does not eliminate
+  the defect, only relocates it behind a confusing, never-actually-
+  presented intermediate layout, and requires the same amount of new
+  Vulkan Backend transition-table work regardless.
+- **Fork RenderGraph's execution entry point for headless, rather than
   generalizing the existing binding.** Rejected — see
   [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
   Alternatives Considered: this is exactly the kind of fork
   [ADR-0002](../adr/0002-presentation-rendertarget-unification.md) exists
   to prevent.
-- **Change `Renderer::drawFrame()`'s public signature to thread a shared
-  execution-state object through both Renderer's internal `execute()`
-  call and the caller's own second one, avoiding the caller needing to
-  know `Renderer`'s fixed `ColorAttachmentOutput` contract.** Rejected —
-  see
-  [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
-  Alternatives Considered: reopens
+- **Thread a shared execution-state object through both `Renderer`'s
+  internal `execute()` call and the caller's own second one, avoiding any
+  caller-supplied incoming-state override.** Rejected — see
   [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)'s
-  already-`Accepted`, already-implemented contract for a capability only
-  this spec's own second graph needs.
-- **Decide a general GPU memory allocator (VMA or hand-rolled) now, since
-  headless plus a future Image Regression Testing harness could
-  plausibly create many offscreen resources over time.** Rejected — see
+  Proposed Amendment, Alternatives Considered: requires a larger
+  `Renderer` signature change than `finalColorState` alone, for no
+  additional benefit.
+- **Decide a general GPU memory allocator (VMA or hand-rolled) now.**
+  Rejected — see
   [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)
-  Alternatives Considered: this spec's own resource count does not create
-  a concrete pooling/suballocation need; reusing
-  [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)'s
-  existing migration boundary is the correct place for that future
-  decision, not here.
+  Alternatives Considered: no concrete pooling/suballocation need exists
+  at this spec's resource count.
 - **Silently amend [specs/README.md](README.md)'s Candidate Spec
   Backlog ordering (Android Platform vs. this spec) or
   [docs/project-blueprint.md](../docs/project-blueprint.md)'s milestone
   numbering as part of this spec's own PR.** Rejected: per AGENTS.md,
   governance/roadmap documents change only through their own review or
-  explicit, minimal, status-driven registry maintenance (see
-  [specs/README.md](README.md)'s own "Backlog maintenance rules"); this
-  spec's PR makes only the single, status-driven registry edit that rule
-  requires (promoting this spec's own row from Candidate Backlog to the
-  Spec Registry) and records the human-directed reprioritization
-  suggestion (Headless → Image Regression Testing → Android Platform) as
-  an explicit, clearly-labeled, not-yet-approved suggestion — not as a
-  rewrite of `docs/project-blueprint.md`'s milestone numbering, which
-  remains reserved for a separate, later docs-sync PR per the same
-  pattern Spec 0005/0006/0007 all followed.
+  explicit, minimal, status-driven registry maintenance; this spec's PR
+  makes only the single, status-driven registry edit that rule requires
+  and records the human-directed reprioritization suggestion as an
+  explicit, clearly-labeled, not-yet-approved suggestion.
 
 ## Testing & Verification Plan
 
@@ -610,28 +678,30 @@ configuration file for this spec's scope is written.
   [docs/process/testing-strategy.md](../docs/process/testing-strategy.md)
   layer 1. At minimum, tests must cover:
   - `execute()`'s generalized binding correctly seeds a bound resource's
-    tracked state from a caller-supplied incoming state (not
-    `Undefined`) when one is provided, and continues to default to
-    `Undefined` when one is not — confirming zero behavior change for
-    every binding that omits the new field.
-  - `execute()` inserts a trailing transition to a caller-supplied final
-    state when one is provided and differs from the resource's ending
-    state, inserts none when `std::nullopt` is supplied, and (existing,
-    unchanged behavior) inserts none for a resource never used by any
-    pass.
+    tracked state from a caller-supplied `incomingState` when one is
+    provided, and continues to default to `Undefined` when one is not —
+    confirming zero behavior change for every binding that omits the new
+    field.
+  - `execute()` inserts a trailing transition to a caller-supplied
+    `finalState` when one is provided and differs from the resource's
+    ending state, inserts none when `std::nullopt` is supplied, and
+    (existing, unchanged behavior) inserts none for a resource never
+    used by any pass.
+  - `execute()` inserts **no** transition at all when a resource's
+    `incomingState` already equals the state its one usage declares —
+    the specific case this spec's own readback copy pass relies on.
   - A pass declaring a single `writes()` usage tagged `TransferSource`
-    does **not** trigger `execute()`'s draw-pass recognition (no
-    attachment-scoping calls inserted around it) — confirming
-    [ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md)'s
-    existing recognition rule is unaffected by the new state variant.
-  - Guard 1 and Guard 2
-    ([ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md))
-    continue to hold exactly as before, exercised against bindings that
-    do and do not specify the new incoming/final-state fields.
+    does **not** trigger `execute()`'s draw-pass recognition.
+  - Guard 1 and Guard 2 continue to hold exactly as before, exercised
+    against bindings that do and do not specify the new fields.
+  - `Renderer::drawFrame()`'s internal `ResourceBinding` construction
+    (`renderer.cpp`) correctly threads its new `finalColorState`
+    parameter through as `finalState`, for both a `PresentSource`- and a
+    `TransferSource`-valued argument, without inspecting or branching on
+    the value.
   - `Buffer` construction-parameter validation for the new readback
-    purpose (e.g. purpose/usage-mismatch checks not requiring a real
-    Vulkan device), where such logic exists independent of the Vulkan
-    Backend's own device-dependent creation path.
+    purpose, where such logic exists independent of the Vulkan Backend's
+    own device-dependent creation path.
 - **GPU integration tests (Windows/Vulkan):** real `OffscreenTarget`/
   readback-`Buffer`/`CommandList` construction, execution, and
   destruction, Validation-Layers-enabled, mirroring the existing
@@ -640,27 +710,25 @@ configuration file for this spec's scope is written.
   `OffscreenTarget`; acquiring, using, and consuming its vended
   `RenderTarget` more than once across the same instance's lifetime;
   creating and destroying a readback `Buffer`; one full render-and-
-  readback cycle (`Renderer::drawFrame()` into the offscreen target,
-  followed by the copy pass, submission, and `waitIdle()`-gated read) with
-  Validation Layers reporting zero warnings/errors; and the existing
-  windowed GPU integration tests (`frame_execution_demo`/
-  `minimal_renderer_demo`-backing tests) re-run unmodified in behavior
-  after their mechanical binding-call-site update, confirming zero
-  regression.
+  readback cycle (`Renderer::drawFrame()` with
+  `finalColorState = TransferSource`, followed by the copy pass,
+  submission, and `waitIdle()`-gated read) with Validation Layers
+  reporting zero warnings/errors, **confirming no
+  `VK_IMAGE_LAYOUT_PRESENT_SRC_KHR` transition is ever recorded for the
+  headless target**; and the existing windowed GPU integration tests,
+  re-run unmodified in behavior after the three mechanical call-site
+  updates, confirming zero regression.
 - **Headless integration tests:** this spec **is** what makes this test
   layer possible for the first time
-  ([docs/process/testing-strategy.md](../docs/process/testing-strategy.md)
-  layer 2) — its own GPU integration tests above are the first instance
-  of it, though this spec does not yet formalize a distinct CI job
-  category for it (see Risks & Open Questions and
-  [ci-strategy.md](../docs/process/ci-strategy.md)'s own open questions).
+  ([testing-strategy.md](../docs/process/testing-strategy.md) layer 2);
+  its own GPU integration tests above are the first instance of it,
+  though this spec does not yet formalize a distinct CI job category for
+  it (see Risks & Open Questions).
 - **Image regression tests:** not applicable — this spec's own basic
-  content check (below) is explicitly not a golden-image comparison; that
-  remains a future spec's scope, per Non-Goals.
+  content check (below) is explicitly not a golden-image comparison.
 - **Vulkan Validation Layers:** mandatory and must run clean for every
   manual and automated exercise of `OffscreenTarget` construction, draw,
-  copy, submission, and readback — per [AGENTS.md](../AGENTS.md) and
-  [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
+  copy, submission, and readback.
 - **Manual/automated verification composition:** a minimal, non-shipping
   composition (mirroring `examples/minimal_renderer_demo`'s own structure
   and disclaimer, but creating **no window and no Atlantis Platform
@@ -669,73 +737,66 @@ configuration file for this spec's scope is written.
   `Texture`/readback `Buffer`, and runs the full acquire → draw → copy →
   submit → `waitIdle()` → read cycle. It confirms:
   - No window, `HWND`, message pump, or `Presentation`/`VkSwapchainKHR`
-    object is created anywhere in this composition — verifiable by
-    inspection.
+    object is created anywhere in this composition.
+  - `Renderer::drawFrame()` is called with
+    `finalColorState = ResourceState::TransferSource`, and by inspection
+    of the recorded command sequence, no transition to
+    `ResourceState::PresentSource` occurs at any point in this
+    composition's execution.
   - The readback `Buffer`'s contents, after the cycle completes, pass a
     **reproducible basic content check** — not a golden-image comparison
-    (see Non-Goals) — sufficient to demonstrate the mesh actually drew
-    (e.g. the buffer is not uniformly one color/all-zero, and a small,
-    fixed set of known sample positions — e.g. image center vs. a
-    background-only corner — differ from each other in the direction the
-    fixed mesh/camera/material fixture predicts). The exact check's
-    concrete shape is left to the Plan; this spec fixes only that it must
-    be automated and reproducible (same input, same output, every run),
-    not a human eyeballing a screenshot.
+    — sufficient to demonstrate the mesh actually drew (e.g. the buffer
+    is not uniformly one color/all-zero, and a small, fixed set of known
+    sample positions differ from each other in the direction the fixed
+    mesh/camera/material fixture predicts). The exact check's concrete
+    shape is left to the Plan; this spec fixes only that it must be
+    automated and reproducible, not a human eyeballing a screenshot.
   - The same cycle repeated more than once against the same
-    `OffscreenTarget` instance produces consistent results each time
-    (confirming single-frame-in-flight discipline holds across repeated
-    acquire/readback cycles, not just once).
+    `OffscreenTarget` instance produces consistent results each time.
   - The composition exits cleanly with no outstanding acquired
     `RenderTarget`, no leaked `CommandList`/`Buffer`/`Texture`/
     `OffscreenTarget`, and no Validation Layer warning or error at any
-    point, including at shutdown.
+    point.
   - Separately, `examples/frame_execution_demo` and
-    `examples/minimal_renderer_demo`, after their mechanical binding
-    update, are re-run interactively and confirmed to behave identically
-    to their Spec 0006/0007-verified behavior (visible frame, correct
-    resize/minimize/restore, Validation Layers clean) — the explicit
-    regression check this spec's Non-Goals require.
+    `examples/minimal_renderer_demo`, after their mechanical updates
+    (see Requirements), are re-run interactively and confirmed to
+    behave identically to their Spec 0006/0007-verified behavior.
 
 ## Risks & Open Questions
 
 - **Exact concrete C++ shape of `execute()`'s extended binding entry**
-  (a struct with named fields vs. a tuple vs. an overload set) is left to
-  the Plan — this spec and
-  [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
-  fix the conceptual contract (caller-supplied optional incoming state,
-  required optional-typed final state), not its exact C++ representation.
+  and `Renderer::drawFrame()`'s new parameter's exact position/name are
+  left to the Plan — this spec and its ADRs fix the conceptual contracts,
+  not their exact C++ representation.
 - **Exact names** for `OffscreenTarget`'s acquire-equivalent method,
-  `CommandList::copyTextureToBuffer()`, and the readback `BufferPurpose`
-  enumerator are left to the Plan, consistent with every prior spec's own
-  practice of fixing semantics and deferring exact spelling.
-- **Whether a distinct CI/test-category label for headless GPU integration
-  tests is needed**, separate from the existing `gpu`-labeled pattern —
-  the same open question Spec 0006 and Spec 0007 already flagged for
-  windowed GPU tests, now recurring for this spec's own new headless
-  category; flagged, not resolved, left to the Plan or a future
-  testing-strategy amendment.
+  the owning/non-owning Vulkan Backend implementation classes, and the
+  readback `BufferPurpose` enumerator are left to the Plan.
+- **Whether a distinct CI/test-category label for headless GPU
+  integration tests is needed**, separate from the existing
+  `gpu`-labeled pattern — the same open question Spec 0006 and Spec 0007
+  already flagged for windowed GPU tests, now recurring here; flagged,
+  not resolved.
 - **Whether the readback `Buffer`'s tightly-packed byte layout needs any
-  row-pitch/alignment padding handling** for a color format whose
-  per-row byte count doesn't naturally align to a convenient boundary —
-  a real Vulkan Backend implementation concern (`vkCmdCopyImageToBuffer`'s
-  `bufferRowLength`/`bufferImageHeight` parameters), left entirely to the
-  Plan as an implementation detail this ADR/spec does not need to fix,
-  since it is private to the Vulkan Backend's own "how" responsibility per
-  [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md).
+  row-pitch/alignment padding handling** for the Vulkan Backend's own
+  `vkCmdCopyImageToBuffer` parameters — a private Vulkan Backend
+  implementation concern, left entirely to the Plan.
 - **Whether a future Image Regression Testing spec will need
-  `OffscreenTarget` to support more than one simultaneously-live instance,
-  or pooling/reuse across many test cases**, is explicitly left open — see
-  Non-Goals; this spec's own verification composition needs only one.
+  `OffscreenTarget` to support more than one simultaneously-live
+  instance, or pooling/reuse across many test cases**, is explicitly left
+  open — see Non-Goals.
 - **Whether a future spec revisiting the single-frame-in-flight baseline
   will also need to revisit this spec's fully-synchronous `waitIdle()`-
-  based readback model** is left open, mirroring
-  [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md)'s
-  own equivalent, already-accepted open question for the windowed path.
-- **Whether depth-buffer readback will be needed by a future spec** (e.g.
-  for depth-aware image regression comparison) is left open; this spec's
-  own Non-Goals explicitly exclude it, and
-  [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md)'s pattern
-  would need extending, not reusing unchanged, to support it.
+  based readback model** is left open.
+- **Whether depth-buffer readback will be needed by a future spec** is
+  left open; this spec's own Non-Goals explicitly exclude it.
+- **Whether a future spec chaining a third or fourth `execute()` call
+  within one frame should replace the caller-supplied `incomingState`
+  override with automated cross-call state tracking** — considered and
+  rejected for this spec's own narrow, two-call scope (see
+  [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
+  Negative/Trade-offs), but explicitly flagged as a design point a future
+  spec with more chained calls should revisit, not silently assumed to
+  scale indefinitely.
 
 ## Out of Scope / Future Work
 
@@ -743,15 +804,14 @@ Image Regression Testing (Candidate 3 in
 [specs/README.md](README.md)'s backlog, depending on this spec) is the
 direct, named next consumer of this spec's rendering-and-readback
 foundation — golden-image storage, comparison/tolerance methodology, and
-CI gating are entirely its own future scope, not advanced or pre-designed
-here beyond this spec satisfying it as a prerequisite. Android Platform
-and Vulkan presentation (a separate Candidate Backlog entry) is unaffected
-by and does not depend on this spec in either direction; see this spec's
-own accompanying registry update and PR description for the human-
-directed, not-yet-approved suggestion to sequence it after both this spec
-and Image Regression Testing. A future spec wanting `OffscreenTarget`
+CI gating are entirely its own future scope. Android Platform and Vulkan
+presentation (a separate Candidate Backlog entry) is unaffected by and
+does not depend on this spec in either direction; see this spec's own
+accompanying registry update and PR description for the human-directed,
+not-yet-approved suggestion to sequence it after both this spec and
+Image Regression Testing. A future spec wanting `OffscreenTarget`
 pooling, multiple simultaneous instances, depth-buffer readback,
-asynchronous/non-blocking readback, or a distinct headless-GPU-test CI
-category is expected to extend — not merely reuse unchanged — the
-ADRs this spec introduces; none of that shape is predicted or
-pre-designed here.
+asynchronous/non-blocking readback, automated cross-`execute()`-call
+state tracking, or a distinct headless-GPU-test CI category is expected
+to extend — not merely reuse unchanged — the ADRs this spec introduces;
+none of that shape is predicted or pre-designed here.

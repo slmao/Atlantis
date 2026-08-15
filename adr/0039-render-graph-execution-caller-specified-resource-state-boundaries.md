@@ -12,113 +12,185 @@ fixed `execute()`'s trailing-transition behavior as: "any bound resource
 that is a **presentable** `RenderTarget` is considered to carry an
 implicit final required state of `ResourceState::PresentSource`;
 `execute()` inserts one trailing `transitionResource()` call to that
-state." Spec 0006's own Requirements state the same rule unconditionally:
-"`execute()` inserts one trailing `transitionResource()` call to
-`ResourceState::PresentSource` for **any** bound `RenderTarget`." Neither
-document defines how `execute()` would ever distinguish a "presentable"
-`RenderTarget` from any other kind — because until
+state." Spec 0006's own Requirements state the same rule
+unconditionally: "`execute()` inserts one trailing `transitionResource()`
+call to `ResourceState::PresentSource` for **any** bound `RenderTarget`."
+
+**Verified against the actual implementation** (`src/render_graph/src/execution.cpp`,
+the trailing loop at the end of `execute()`): this is exactly what the
+shipped code does — for every entry in the caller-supplied `bindings`
+vector whose `target` field is non-null and was touched by at least one
+usage, `execute()` unconditionally inserts a transition to
+`ResourceState::PresentSource`, with **no parameter, flag, or code path**
+that distinguishes a windowed `RenderTarget` from any other kind. Neither
+[ADR-0021](0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)
+nor Spec 0006 ever defined how `execute()` would tell a "presentable"
+`RenderTarget` apart from a non-presentable one — because until
 [ADR-0038](0038-headless-offscreen-rendertarget-construction-and-ownership.md),
 every bound `RenderTarget` in this codebase *was* presentable, so the
 distinction never had to be made operational.
 
 [ADR-0002](0002-presentation-rendertarget-unification.md) forecloses the
-obvious fix: "Renderer **and RenderGraph** consume only `RenderTarget` and
-cannot observe which path produced it — no member, flag, or capability
-query on `RenderTarget` exposes 'am I a swapchain image or an offscreen
-image.'" `execute()` therefore cannot ask its bound `RenderTarget`
-whether `PresentSource` is even the right final state — for a headless
-target, it is not: nothing ever presents it, and the state a readback copy
-actually needs is `ResourceState::TransferSource`
+obvious fix: "Renderer **and RenderGraph** consume only `RenderTarget`
+and cannot observe which path produced it — no member, flag, or
+capability query on `RenderTarget` exposes 'am I a swapchain image or an
+offscreen image.'" `execute()` therefore cannot ask its bound
+`RenderTarget` whether `PresentSource` is even the right final state —
+for a headless target it is not: nothing ever presents it, and the state
+a readback copy actually needs is `ResourceState::TransferSource`
 ([ADR-0040](0040-gpu-to-cpu-readback-rhi-capability.md)), a different
-Vulkan image layout with a different, semantically-wrong-if-swapped
-meaning. Unconditionally inserting `PresentSource` for a headless bound
-target would be a real correctness defect, not a cosmetic one.
+Vulkan image layout with a different meaning. Unconditionally inserting
+`PresentSource` for a headless bound target would be a real correctness
+defect, not a cosmetic one — and, critically, **this includes the target
+Renderer itself draws into**, because `Renderer::drawFrame()` calls this
+exact same shared `execute()` function for its own internal graph
+(verified against `src/renderer/src/renderer.cpp`) — a fact an earlier
+draft of this ADR and of Spec 0010 missed, incorrectly claiming
+`Renderer::drawFrame()` needed no change. See
+[ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)'s
+own Proposed Amendment (2026-08-15) for the companion decision that fixes
+this on `Renderer`'s side — this ADR fixes RenderGraph's own generalized
+mechanism that amendment relies on.
 
-A second, related gap surfaces once a headless verification composition
-is actually built: [ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)
-fixes `Renderer::drawFrame()` as a sealed call that builds, compiles, and
-executes its **own internal** `RenderGraphBuilder` graph, exposing no way
-for a caller to inject an additional pass into it. A headless composition
-that wants to both draw (via `Renderer::drawFrame()`) and then copy the
-drawn image out ([ADR-0040](0040-gpu-to-cpu-readback-rhi-capability.md))
-must therefore issue **two separate `execute()` calls sharing one
-`CommandList`** — Renderer's own internal call, then the caller's own,
-second, small copy-pass graph — both against the *same* `RenderTarget`
-value (borrowed by reference into `Renderer::drawFrame()`, never
-consumed by it, so the caller still holds it afterward). Spec 0007
-already generalized `execute()`'s incoming-state assumption to "every
-bound resource... is treated as entering **each** `execute()` call from
-`ResourceState::Undefined`" — worded per-call because, until now, exactly
-one `execute()` call had ever touched a given physical resource within one
-frame. A second, chained `execute()` call against the *same* physical
-image would, under that existing rule, incorrectly assume the image's
-prior contents (in this case, the mesh Renderer just drew) don't need
-preserving — `VK_IMAGE_LAYOUT_UNDEFINED` as a barrier's `oldLayout` is
-Vulkan's explicit "the driver need not preserve existing contents" signal.
-Using it here would risk discarding the very pixels the copy is supposed
-to read back, immediately before it reads them.
+A second, related gap: a headless verification composition must call
+both `Renderer::drawFrame()` (which records into its own internal graph)
+**and** a second, caller-built graph recording the readback copy
+([ADR-0040](0040-gpu-to-cpu-readback-rhi-capability.md)) — two separate
+`execute()` calls sharing one `CommandList`, both touching the same
+physical `RenderTarget`.
+**Verified against the actual implementation**: `execute()`'s
+per-resource state-tracking map (`currentState`, a local
+`std::unordered_map` declared fresh at the top of `execute()`'s body) is
+explicitly documented and implemented as "entirely local to this call" —
+a second `execute()` call against the same physical resource has no way
+to know what state the first call actually left it in, and would
+incorrectly assume `ResourceState::Undefined`.
+`VK_IMAGE_LAYOUT_UNDEFINED` as a barrier's `oldLayout` is Vulkan's
+explicit "the driver need not preserve existing contents" signal — using
+it here risks discarding the very pixels the copy is supposed to read
+back, immediately before it reads them. This is confirmed, not
+hypothetical: it is the second, independent way the current
+implementation's assumptions break under headless rendering.
 
 Both gaps are, at root, the same shape: `execute()`'s per-resource state
-bookkeeping currently hardcodes assumptions (`Undefined` incoming,
-`PresentSource` final) that were correct for every case that has existed
-so far, precisely because so far there has only ever been one case. This
-ADR resolves both without reopening
+bookkeeping hardcodes assumptions (`Undefined` incoming, `PresentSource`
+final) that were correct for every case that has existed so far,
+precisely because so far there has only ever been one case. This ADR
+resolves both without reopening
 [ADR-0021](0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)'s
 actual dependency-to-barrier responsibility split (RenderGraph decides
-*when*/*between what states*; RHI/Vulkan Backend decides *how*) — only the
-two hardcoded state values that split currently assumes.
+*when*/*between what states*; RHI/Vulkan Backend decides *how*) — only
+the two hardcoded state values that split currently assumes.
 
 ## Decision
 
-**Each entry in `execute()`'s existing frame-scoped external resource
-binding** (introduced by
-[ADR-0021](0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md),
-its concrete representation already left to the Plan) **gains two
-additional, caller-supplied pieces of information, conceptually attached
-to the `resource → RenderTarget` pair, not to `RenderTarget` itself:**
+**Each `ResourceBinding` entry whose `target` field is non-null**
+(`src/render_graph/include/atlantis/render_graph/execution.h`) **gains
+two additional fields**, meaningful only for `target`-shaped entries —
+ignored, exactly like the existing `colorClear` field, for a
+`depthTexture`-shaped entry:
 
-- **An assumed incoming `ResourceState`, defaulting to `Undefined` when
-  not specified.** This preserves every existing windowed call site's
-  behavior exactly, with zero required change, for the overwhelmingly
-  common case of a `RenderTarget` used by exactly one `execute()` call per
-  frame. A caller chaining a second `execute()` call against a
-  `RenderTarget` an earlier call in the same frame already transitioned
-  (this spec's own headless readback composition is the first such case)
-  overrides this to the resource's true last-known state — which, for the
-  specific case of a `RenderTarget` that just came out of
-  `Renderer::drawFrame()`, is the fixed, already-public
-  `ResourceState::ColorAttachmentOutput`
-  ([ADR-0025](0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)) —
-  a documented, stable fact about what Renderer's one draw-pass usage
-  always declares, not an internal detail the caller has to guess at or
-  that could silently change without a spec revision.
-- **A required (no default) final `ResourceState`, expressed as
-  `std::optional<ResourceState>`** — `std::nullopt` meaning "no trailing
-  transition beyond whatever the last pass that uses this resource already
-  left it in." Every existing windowed call site must now pass
-  `ResourceState::PresentSource` explicitly where it previously received
-  this behavior implicitly — a mechanical, non-behavioral update
-  ([frame_execution_demo](../examples/frame_execution_demo),
-  [minimal_renderer_demo](../examples/minimal_renderer_demo)), required by
-  this spec's Plan, with **zero observable change** to either demo's
-  actual output or Vulkan calls. Requiring an explicit value (rather than
-  defaulting silently to `PresentSource`) is deliberate: a caller must
-  decide this per binding rather than inheriting a windowed-shaped
-  default that would be silently wrong for the next non-presentable
-  binding kind a future spec introduces.
+- **`incomingState` (`ResourceState`, defaults to `Undefined`).** Seeds
+  `execute()`'s per-resource tracking for this resource instead of the
+  current hardcoded `Undefined` constant. **The default (`Undefined`) is
+  correct and safe for exactly one case: a resource being bound to its
+  first `execute()` call within its current `CommandList`/frame** — the
+  overwhelmingly common case, and the only case that exists in this
+  codebase's shipped code today. **The default is not safe, and must be
+  explicitly overridden, for a resource that has already been touched by
+  an earlier `execute()` call sharing the same `CommandList`** — using the
+  default there is a caller precondition violation this decision does not
+  claim to detect (the same lifetime-precondition-violation tier as every
+  other cross-object precondition already in this codebase's Error
+  Model): it produces a structurally-valid but semantically-wrong
+  transition that silently discards the resource's real prior contents,
+  exactly the defect described in Context above. This spec's own headless
+  composition is the first, and so far only, caller required to supply a
+  non-default value — see Requirements' worked example in
+  [specs/0010-headless-rendering-foundation.md](../specs/0010-headless-rendering-foundation.md).
+- **`finalState` (`std::optional<ResourceState>`, no default — every
+  `target`-shaped binding entry must supply one explicitly).**
+  `std::nullopt` means "no trailing transition beyond whatever the last
+  pass that uses this resource already leaves it in." A concrete
+  `ResourceState` value means `execute()` inserts one trailing
+  `transitionResource()` call to it, after the last pass that uses this
+  resource, exactly as today's hardcoded-`PresentSource` mechanism
+  already does — generalized only in *which* state, not in *whether* or
+  *when*. Requiring an explicit value (rather than defaulting silently to
+  `PresentSource`) is deliberate: every caller constructing a
+  `target`-shaped binding must decide this per binding rather than
+  inheriting a windowed-shaped default that would be silently wrong for
+  a non-presentable target.
 
 `execute()`'s existing algorithm is otherwise **completely unchanged**:
 it still walks compiled pass order, tracks each bound resource's
-most-recently-recorded state (now seeded from the caller-supplied incoming
-state instead of a hardcoded constant), and calls `transitionResource()`
-whenever a pass's declared usage state differs from it. The only new step
-is a **trailing pass, after the last pass that uses a bound resource**:
-if that resource's caller-supplied final state is present and differs
-from whatever state it was left in, `execute()` inserts one
-`transitionResource()` call to it (unchanged mechanism from today);
-if `std::nullopt`, no trailing call is inserted at all — a strict
-generalization of today's "if it was never used, no transition"
-short-circuit, not a new kind of check.
+most-recently-recorded state (now seeded from `incomingState` instead of
+a hardcoded constant), and calls `transitionResource()` whenever a pass's
+declared usage state differs from it. The trailing step is unchanged in
+mechanism: if `finalState` is present and differs from whatever state the
+resource was left in by the last pass that used it, `execute()` inserts
+one `transitionResource()` call to it (unchanged from today, just
+parameterized); if `finalState` is `std::nullopt`, no trailing call is
+inserted at all — a strict generalization of today's "if it was never
+used, no transition" short-circuit, not a new kind of check. **If a
+resource's tracked state (seeded from `incomingState`, updated by every
+pass's transition) already equals its own `finalState` value, no
+redundant transition is inserted** — same "insert only on an actual state
+change" rule `execute()` already applies everywhere else.
+
+**Every existing call site that constructs a `target`-shaped
+`ResourceBinding` must be mechanically updated to supply an explicit
+`finalState`** — there are exactly three today, not two as an earlier
+draft of this ADR stated:
+
+1. **`src/renderer/src/renderer.cpp`** (`Renderer::drawFrame()`'s
+   internal `ResourceBinding` construction) — supplies
+   `finalState = finalColorState`, the new parameter
+   [ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)'s
+   Proposed Amendment adds to `Renderer::drawFrame()`'s own public
+   signature. `incomingState` is left at its default (`Undefined`) here —
+   Renderer's own internal draw pass is always the first usage of the
+   color target within its `CommandList`, in both the windowed and
+   headless case.
+2. **`examples/frame_execution_demo/main.cpp`** — its own, direct
+   (non-`Renderer`) `execute()` call must supply
+   `finalState = ResourceState::PresentSource` explicitly, preserving its
+   exact existing, verified windowed behavior.
+3. **`examples/minimal_renderer_demo`'s verification composition** —
+   must pass `ResourceState::PresentSource` as the new
+   `finalColorState` argument to `Renderer::drawFrame()`
+   ([ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)'s
+   Proposed Amendment), preserving its exact existing, verified windowed
+   behavior.
+
+All three updates are **mechanical and non-behavioral** for the windowed
+path — each supplies exactly the value `execute()`'s old hardcoded
+behavior already produced. None of the three is optional or deferred to
+a later spec; all three are required by this spec's future Plan before
+any headless code is written, because `ResourceBinding`'s `finalState`
+field has no default and none of the three would otherwise compile.
+
+**Vulkan Backend impact — the one new state-transition pair this
+decision requires.** `src/vulkan_backend/src/resource_state_mapping.cpp`'s
+`planTransition()` function is a closed, exhaustively-enumerated lookup
+table over `(before, after)` `ResourceState` pairs — verified by
+inspection: any pair not explicitly listed triggers
+`ATLANTIS_CHECK_MSG(false, ...)`, an assertion failure, not a computed
+fallback. Given this decision's actual usage (Renderer's internal draw
+pass always declares `ColorAttachmentOutput`; a headless caller supplies
+`finalColorState = ResourceState::TransferSource`;
+[ADR-0040](0040-gpu-to-cpu-readback-rhi-capability.md)'s copy pass
+supplies `incomingState = TransferSource`, matching exactly what
+`Renderer::drawFrame()` was told to leave the target in, so no further
+transition is inserted for the copy pass itself), **exactly one new
+`planTransition()` entry is required: `ColorAttachmentOutput →
+TransferSource`.** No other new pair is required — the windowed path
+continues to use the already-existing `ColorAttachmentOutput →
+PresentSource` entry unchanged, and no `PresentSource`-involving pair is
+ever needed for a headless target under this design (see
+[ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)'s
+Proposed Amendment for why). This is named explicitly here, rather than
+left purely implicit, so a future Plan does not have to rediscover it.
 
 **This ADR does not change:**
 
@@ -130,66 +202,74 @@ short-circuit, not a new kind of check.
   specifies.
 - The bound depth `Texture`'s binding
   ([ADR-0026](0026-render-graph-multi-attachment-draw-pass-integration.md)),
-  which never receives a trailing transition and is unaffected by this
-  decision.
+  which never receives a trailing transition and does not use either new
+  field.
 - `RenderGraph`'s "decides when/between what states, never how" boundary
   — the Vulkan Backend's `CommandList::transitionResource()`
   implementation is untouched; this ADR only changes which state values
-  RenderGraph's own bookkeeping starts and ends from.
-- `Renderer`'s public API
-  ([ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)).
-  `Renderer::drawFrame()` continues to build, compile, and execute its own
-  internal graph exactly as today, with its own private, per-call state
-  map, unaware of and unmodified by anything this ADR introduces. Only the
-  caller's own, separate, second `execute()` call (for the copy pass) uses
-  this ADR's new incoming-state override — the caller supplies the fixed
-  `ColorAttachmentOutput` value itself, based on Renderer's already-public
-  contract, not on any new signal Renderer emits.
+  RenderGraph's own bookkeeping starts and ends from, and adds one new
+  entry to the Vulkan Backend's own closed transition table (named
+  above).
+- `Renderer`'s own draw-pass usage declarations
+  (`ColorAttachmentOutput`/`DepthAttachmentReadWrite`) — unchanged;
+  [ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)'s
+  Proposed Amendment only changes what `Renderer` passes as `finalState`
+  for its own internal binding, never what its draw pass itself declares.
 
 ## Consequences
 
 ### Positive
 
-- Resolves the `PresentSource`-for-headless correctness defect without
-  giving RenderGraph any way to observe a `RenderTarget`'s origin,
-  preserving [ADR-0002](0002-presentation-rendertarget-unification.md)'s
-  unification promise to the letter — the discriminator lives in the
-  caller-supplied binding, not in `RenderTarget`.
-- Resolves the cross-`execute()`-call state-continuity gap without adding
-  any shared, threaded-through mutable state object, and without changing
-  `Renderer`'s already-`Accepted`, already-implemented public API at all —
-  the fix is entirely confined to the caller's own second graph's binding.
+- Resolves the `PresentSource`-for-headless correctness defect — for
+  every bound `RenderTarget`, including the one `Renderer::drawFrame()`
+  itself draws into — without giving RenderGraph any way to observe a
+  `RenderTarget`'s origin: the discriminator lives entirely in the
+  caller-supplied `finalState`/`incomingState` values, never in anything
+  `RenderTarget` itself exposes, preserving
+  [ADR-0002](0002-presentation-rendertarget-unification.md)'s unification
+  promise to the letter.
+- Resolves the cross-`execute()`-call state-continuity gap with a small,
+  explicit, caller-supplied override rather than a shared, threaded-
+  through mutable state object — no change to `RenderGraphBuilder`'s or
+  `CompiledGraph`'s own contracts.
 - Strictly generalizes, rather than replaces, `execute()`'s existing
   algorithm — for the single-`execute()`-call windowed case (100% of
-  shipped code today), behavior is bit-for-bit identical once call sites
-  are updated to pass `PresentSource` explicitly; there is no regression
-  risk to the windowed path from this decision's mechanism itself.
+  shipped code today), behavior is bit-for-bit identical once the three
+  named call sites are updated; there is no regression risk to the
+  windowed path from this decision's mechanism itself.
+- Names, explicitly, the exact one new Vulkan Backend transition-table
+  entry this decision requires, closing off a class of "discovered
+  mid-implementation" surprise this repository's process exists to
+  avoid.
 - Keeps the "who decides when a transition happens" (RenderGraph) versus
   "who decides how one is performed" (Vulkan Backend) split from
   [ADR-0021](0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)
-  completely intact — this decision only widens which values seed and
-  terminate that bookkeeping.
+  completely intact.
 
 ### Negative / Trade-offs
 
-- Every existing windowed call site must be mechanically touched
-  (`frame_execution_demo`, `minimal_renderer_demo`) to keep working — a
-  real, if small and non-architectural, implementation cost this spec's
-  Plan must account for, not a zero-diff change to already-shipped code.
+- Three existing call sites, not one, must be mechanically touched
+  (`src/renderer/src/renderer.cpp`, `frame_execution_demo`,
+  `minimal_renderer_demo`) to keep working — a real, if small and
+  non-architectural, implementation cost this spec's Plan must account
+  for.
 - The binding's public shape grows from "resource → `RenderTarget`" to
-  "resource → (`RenderTarget`, optional incoming state, optional final
-  state)" — more parameters for a Plan to design a concrete C++
-  representation for, and more surface for a future caller to get wrong
-  (e.g. supplying an incoming-state override that doesn't match the
-  resource's true prior state is a caller precondition violation this
-  decision does not claim to detect, the same tier as every other
-  cross-object precondition already in this codebase's Error Model).
-- A caller building a chained, multi-`execute()`-call frame (this spec's
-  own headless readback composition) must know and correctly state the
-  fixed `ResourceState` a prior call left a resource in — a real, if
-  narrow and documented, coupling between the caller's own graph and
-  Renderer's public `ColorAttachmentOutput` contract that a
-  single-`execute()`-call frame never has to reason about.
+  "resource → (`RenderTarget`, incoming state, final state)" — more
+  parameters for a Plan to design a concrete C++ representation for, and
+  more surface for a future caller to get wrong. Supplying an
+  `incomingState` override that doesn't match a resource's true prior
+  state is a caller precondition violation this decision does not claim
+  to detect — the same tier as every other cross-object precondition
+  already in this codebase's Error Model, but a real, disclosed
+  fragility: each new chained-`execute()`-call caller must correctly
+  know and manually state the resource's true prior state. A future spec
+  introducing a third or fourth chained call within one frame should
+  revisit whether this manual, per-call-site discipline still scales, or
+  whether automated cross-call tracking (considered and rejected here —
+  see Alternatives Considered — specifically because it would have
+  required changing `Renderer`'s public API for no benefit beyond what
+  this narrower mechanism already provides) becomes worth its added
+  complexity at that point.
 
 ## Alternatives Considered
 
@@ -208,32 +288,29 @@ short-circuit, not a new kind of check.
   this round: it is a larger, behavior-visible edit to
   [ADR-0021](0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)'s
   already-shipped, already-verified windowed contract than this gap
-  requires fixing — every existing pass declaration in
-  `frame_execution_demo`/`minimal_renderer_demo` would need a new,
-  synthetic final-state pass added, not just one already-deferred binding
-  field populated. A future spec may still make this case if the trailing-
-  transition mechanism itself, not just its hardcoded target, turns out to
-  need to go.
-- **Thread a single, shared, caller-owned "execution state" object through
-  every `execute()` call in a frame, replacing each call's own private
-  bookkeeping map, so cross-call continuity happens automatically without
-  any caller-supplied incoming-state override.** Considered — this would
-  avoid requiring the caller to know Renderer's fixed
-  `ColorAttachmentOutput` contract. Rejected for this round: it requires
-  changing `Renderer::drawFrame()`'s own public signature to accept and
-  thread through that shared object (since Renderer's own internal
-  `execute()` call would need to participate too), reopening
-  [ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)'s
-  already-`Accepted`, already-implemented contract for a capability only
-  this spec's own second, caller-built graph actually needs — a
-  meaningfully larger blast radius than an explicit, documented
-  incoming-state override on the caller's own binding, which touches
-  nothing inside `Renderer`.
+  requires fixing. A future spec may still make this case if the
+  trailing-transition mechanism itself, not just its hardcoded target,
+  turns out to need to go.
+- **Thread a single, shared, caller-owned "execution state" object
+  through every `execute()` call in a frame, replacing each call's own
+  private bookkeeping map, so cross-call continuity happens automatically
+  without any caller-supplied incoming-state override.** Considered —
+  this would avoid requiring the caller to know
+  `Renderer::drawFrame()`'s exact `finalColorState` value it itself
+  supplied. Rejected for this round: it requires changing
+  `Renderer::drawFrame()`'s own public signature to accept and thread
+  through that shared object regardless (since Renderer's own internal
+  `execute()` call would need to participate too) — no smaller than the
+  [ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)
+  Proposed Amendment's own signature change, and strictly larger in
+  surface area, for no benefit this narrower mechanism does not already
+  provide (the caller only ever needs to remember a value it itself
+  chose one line earlier, not infer a hidden `Renderer`-internal fact).
 - **Let the headless verification composition perform its final
   transition directly via `CommandList::transitionResource()`, called
-  from outside any RenderGraph pass callback.** Rejected — this is exactly
-  the "caller-authored, hand-scheduled GPU work outside RenderGraph"
-  pattern
+  from outside any RenderGraph pass callback.** Rejected — this is
+  exactly the "caller-authored, hand-scheduled GPU work outside
+  RenderGraph" pattern
   [ADR-0021](0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)'s
   own Alternatives Considered already rejected for the same reason;
   `transitionResource()` remains recordable only from inside a pass
