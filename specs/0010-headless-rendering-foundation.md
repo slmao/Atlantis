@@ -248,7 +248,11 @@ Explicitly excluded from this spec's design and implementation:
 - `OffscreenTarget` vends a `RenderTarget` via a two-outcome
   (`Err`/`Ok`, matching `Presentation`'s real
   `Result<std::unique_ptr<RenderTarget>, Err>` shape) acquire-equivalent
-  call — no zero-extent case, unlike `Presentation`.
+  call — no zero-extent case, unlike `Presentation`. `Err` is reserved
+  for genuine, environmental failures; calling this method while a
+  previously-vended borrow is still outstanding is a separate,
+  guaranteed-detectable programmer error (assertion), not part of this
+  `Result::Err` channel.
 - The vended `RenderTarget` is the exact same abstract public type
   [ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)
   already defines — no new field or method on its public interface. A
@@ -258,11 +262,29 @@ Explicitly excluded from this spec's design and implementation:
   `VulkanPresentation`) — see
   [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)
   for the full ownership/lifetime split.
-- `OffscreenTarget` has no `present()` counterpart; the vended borrow is
-  consumed by the readback operation below.
-- The same `OffscreenTarget` instance may be acquired-and-consumed more
+- **`OffscreenTarget` has no `present()` counterpart and no other
+  explicit borrow-ending method — a borrow ends via ordinary RAII**
+  (destroying/resetting the vended `std::unique_ptr<RenderTarget>`), not
+  by any call [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md)
+  defines. The borrow's **minimum required lifetime** extends only
+  through the return of the `Device::submit()` call whose recorded
+  commands reference it — it does **not** need to survive through
+  `Device::waitIdle()`, reading the readback `Buffer`, or the completion
+  of the GPU work that referenced it; GPU-in-flight correctness across
+  repeated acquire cycles comes entirely from `Device::submit()`'s
+  existing single-frame-in-flight fence-wait, independent of the
+  borrow's own C++ lifetime. Full contract, including the recommended
+  (not required) convention of keeping the borrow alive through the
+  whole cycle for simplicity, in
+  [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md).
+- The same `OffscreenTarget` instance may be acquired-and-borrowed more
   than once across its lifetime, each cycle independent.
-- Destruction preconditions mirror `Presentation`'s exactly.
+- Destroying `OffscreenTarget` (or its `Device`) while a vended borrow is
+  still outstanding is a guaranteed-detectable programmer error — a
+  deliberate, disclosed improvement over `Presentation`'s equivalent,
+  currently-undetectable precondition, made possible because the same
+  outstanding-borrow tracking already exists for the double-acquire
+  check above.
 - The depth `Texture` used alongside an `OffscreenTarget` is constructed,
   owned, and destroyed via the existing, unchanged
   `Device::createTexture()` path — `OffscreenTarget` itself never owns,
@@ -485,11 +507,21 @@ Headless verification composition, once per render-and-readback cycle:
        the copy pass's callback runs --
 
   Device::submit(commandList, target's-acquire-complete-signal)
+    -- the borrow's minimum required lifetime ends here; this worked
+       example keeps it alive further anyway, per ADR-0038's
+       recommended (not required) convention --
   Device::waitIdle()
     -- readback Buffer's writes are now host-visible --
 
   Read readbackBuffer's mapped pointer; run this spec's basic,
     reproducible content check (see Testing & Verification Plan)
+
+  Drop/reset the RenderTarget borrow (ordinary RAII -- no explicit
+    method call; OffscreenTarget's outstanding-borrow tracking clears
+    itself via the borrow's own destructor)
+    -- only now may the next OffscreenTarget::acquireTarget() call
+       succeed; calling it earlier, while this borrow is still alive,
+       is a guaranteed-detectable programmer error --
 
   -- On every exit path: Device::waitIdle() before destroying
      OffscreenTarget/Device/depth Texture/readback Buffer/Mesh/Material --
@@ -538,21 +570,42 @@ also own a Platform message pump (headless has none).
 
 - Recoverable runtime errors (`OffscreenTarget`/`Buffer`/`Texture`
   creation failure, submission failure) use `atlantis::Result<T, E>`,
-  consistent with every prior spec's convention.
-- Programmer errors — Guard 1/Guard 2 violations (unchanged scope,
-  generalized mechanism), acquiring a second `RenderTarget` from an
-  `OffscreenTarget` before consuming the first — use
-  `ATLANTIS_CHECK`/`ATLANTIS_ASSERT`, per
-  [ADR-0009](../adr/0009-assertion.md)'s existing convention.
+  consistent with every prior spec's convention. `OffscreenTarget`'s
+  acquire-equivalent call's `Err` is reserved for genuine, environmental
+  failures only.
+- Programmer errors, all `ATLANTIS_CHECK`/`ATLANTIS_ASSERT`
+  (`ADR-0009`), all guaranteed-detectable:
+  - Guard 1/Guard 2 violations (unchanged scope, generalized mechanism).
+  - Acquiring a second `RenderTarget` from an `OffscreenTarget` before
+    the first has been returned (destroyed/reset — RAII, see below).
+  - Destroying `OffscreenTarget` (or its `Device`) while a vended borrow
+    is still outstanding — a deliberate, disclosed improvement over
+    `Presentation`'s equivalent, currently-undetectable precondition
+    ([ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)).
+  - Supplying `finalColorState`/`incomingState`/`finalState` a value for
+    which the Vulkan Backend's `planTransition()` table has no
+    corresponding entry — not a compile-time restriction (`ResourceState`
+    is an unconstrained enum), not a `Result`-typed error; the same,
+    unchanged assertion mechanism `planTransition()` already applies to
+    every other unlisted `(before, after)` pair
+    ([ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)'s
+    Proposed Amendment,
+    [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md)).
 - Supplying an `incomingState` override that does not match a resource's
   true prior state (e.g. from an earlier `execute()` call within the same
   `CommandList`) is a **lifetime/precondition-violation-tier caller
   error**, not guaranteed-detectable, not tested for detection — see
   [ADR-0039](../adr/0039-render-graph-execution-caller-specified-resource-state-boundaries.md).
-- `OffscreenTarget`/readback-`Buffer` misuse outside its valid lifetime
-  window is a lifetime precondition violation, the same tier as every
-  other borrowed/owned-handle misuse case already established in this
-  codebase.
+- **A vended `RenderTarget` borrow ends via ordinary RAII** — destroying
+  or resetting the `std::unique_ptr<RenderTarget>` — never an explicit
+  method call; its minimum required lifetime and its independence from
+  GPU-execution completion are fixed contracts, not implementation-time
+  choices, per
+  [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md).
+  Other `OffscreenTarget`/readback-`Buffer` misuse outside its valid
+  lifetime window is a lifetime precondition violation, the same tier as
+  every other borrowed/owned-handle misuse case already established in
+  this codebase.
 - Every `VkResult` along `OffscreenTarget` construction, copy recording,
   submission, and readback is checked; no `VkResult` is discarded.
 - Vulkan Validation Layers are enabled unconditionally in Debug builds and
@@ -702,18 +755,35 @@ written.
   - `Buffer` construction-parameter validation for the new readback
     purpose, where such logic exists independent of the Vulkan Backend's
     own device-dependent creation path.
+  - `resource_state_mapping.cpp`'s `planTransition()` is itself
+    GPU-independent (it takes/returns plain enum-derived values, no
+    `VkDevice`) and must be unit-tested for: the one new entry this spec
+    adds (`ColorAttachmentOutput → TransferSource`) produces a barrier
+    plan without asserting; a `(before, after)` pair this spec does not
+    add (e.g. `ColorAttachmentOutput → DepthAttachmentReadWrite`)
+    continues to fire the existing assertion, confirming this spec adds
+    exactly one entry and no more.
 - **GPU integration tests (Windows/Vulkan):** real `OffscreenTarget`/
   readback-`Buffer`/`CommandList` construction, execution, and
   destruction, Validation-Layers-enabled, mirroring the existing
   `atlantis_vulkan_backend_gpu_tests`/`atlantis_render_graph_tests`
   pattern. Must cover, at minimum: creating and destroying an
-  `OffscreenTarget`; acquiring, using, and consuming its vended
-  `RenderTarget` more than once across the same instance's lifetime;
-  creating and destroying a readback `Buffer`; one full render-and-
-  readback cycle (`Renderer::drawFrame()` with
-  `finalColorState = TransferSource`, followed by the copy pass,
-  submission, and `waitIdle()`-gated read) with Validation Layers
-  reporting zero warnings/errors, **confirming no
+  `OffscreenTarget`; acquiring, using, and returning (via RAII) its
+  vended `RenderTarget` more than once across the same instance's
+  lifetime, confirming a second `acquireTarget()` succeeds after the
+  first borrow is destroyed/reset; that a second `acquireTarget()`
+  called *before* returning the first fires the expected assertion
+  (exercised under a non-terminating test handler, per this codebase's
+  existing assertion-testing pattern); that dropping a borrow
+  immediately after `Device::submit()` returns (before `waitIdle()`) is
+  followed by a correct subsequent cycle with no Validation Layer
+  warning/error, confirming the borrow's minimum-lifetime contract
+  ([ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md))
+  holds in practice, not only in documentation; creating and destroying
+  a readback `Buffer`; one full render-and-readback cycle
+  (`Renderer::drawFrame()` with `finalColorState = TransferSource`,
+  followed by the copy pass, submission, and `waitIdle()`-gated read)
+  with Validation Layers reporting zero warnings/errors, **confirming no
   `VK_IMAGE_LAYOUT_PRESENT_SRC_KHR` transition is ever recorded for the
   headless target**; and the existing windowed GPU integration tests,
   re-run unmodified in behavior after the three mechanical call-site

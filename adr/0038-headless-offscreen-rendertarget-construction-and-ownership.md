@@ -94,10 +94,10 @@ vended `RenderTarget` (short-lived, frame-scoped borrow):**
   `unique_ptr`-held shape `Presentation::acquireNextTarget()`/`present()`
   already use (`src/rhi/include/atlantis/rhi/presentation.h`), not a
   value type — but with a **two-outcome**, not three-outcome, result:
-  `Err(...)` for a genuine unrecoverable failure (e.g. a prior borrow was
-  never consumed — a precondition violation surfaced as a checked error
-  rather than silently permitted), or `Ok(...)` with a non-null
-  `RenderTarget` otherwise. **There is no zero-extent
+  `Err(...)` for a genuine unrecoverable, environmental failure (e.g. a
+  Vulkan allocation/device-lost condition, mirroring
+  `PresentationError`'s own non-precondition variants), or `Ok(...)`
+  with a non-null `RenderTarget` otherwise. **There is no zero-extent
   `Ok(nullptr)` case** — unlike a window, an offscreen target's extent is
   fixed at construction and can never become `{0, 0}` mid-lifetime, so
   `Presentation::acquireNextTarget()`'s tri-state outcome
@@ -105,7 +105,12 @@ vended `RenderTarget` (short-lived, frame-scoped borrow):**
   `Err`/`Ok(nullptr)`/`Ok(non-null)` contract) would carry a permanently-
   unreachable branch here; a two-outcome result is not a reduced
   contract, it is the correctly-sized one for an origin that structurally
-  cannot produce that case.
+  cannot produce that case. **Calling `acquireTarget()` while a
+  previously-vended borrow is still outstanding is a guaranteed-
+  detectable programmer error** (`ATLANTIS_CHECK`/`ATLANTIS_ASSERT`, per
+  [ADR-0009](0009-assertion.md)), not part of this `Result::Err` channel
+  — see "Borrow lifetime contract" below for why this is checkable and
+  why it is an assertion, not a recoverable error.
 - The vended `RenderTarget` value is **exactly** the abstract type
   [ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)
   already defines (`atlantis::rhi::RenderTarget` — pure-virtual
@@ -121,27 +126,115 @@ vended `RenderTarget` (short-lived, frame-scoped borrow):**
   headless-specific branch to handle this; a signal that is
   always-already-satisfied is a valid value of the same opaque
   mechanism, not a new case `Device` must recognize.
-- **`OffscreenTarget` has no `present()` counterpart.** The borrow it
-  vends is instead consumed by the readback operation
-  [ADR-0040](0040-gpu-to-cpu-readback-rhi-capability.md) defines — this
-  ADR fixes only that the borrow must be consumed by exactly one such
-  call before a new one may be acquired (the same "one acquire, one
-  consuming call" discipline `Presentation` already enforces between
-  `acquireNextTarget()` and `present()`); ADR-0040 fixes what that
-  consuming call actually does.
-- **The same `OffscreenTarget` instance may be acquired-and-consumed
+- **`OffscreenTarget` has no `present()` counterpart, and no other
+  explicit "give the borrow back" public method — the borrow ends via
+  ordinary RAII.** An earlier draft of this ADR stated the borrow "is
+  instead consumed by the readback operation
+  [ADR-0040](0040-gpu-to-cpu-readback-rhi-capability.md) defines" — this
+  was incorrect and is corrected here:
+  [ADR-0040](0040-gpu-to-cpu-readback-rhi-capability.md)'s
+  `copyRenderTargetToBuffer(RenderTarget&, Buffer&)` only *borrows* a
+  reference to record a command; it neither takes ownership of, nor
+  ends, the `RenderTarget` borrow, and defines no consuming call of any
+  kind. See "Borrow lifetime contract" below for the actual mechanism.
+- **The same `OffscreenTarget` instance may be acquired-and-borrowed
   more than once across its lifetime** — e.g. once per test case in a
   future Image Regression Testing harness. Each cycle is independent and
   follows Phase 1's existing single-frame-in-flight discipline
   ([ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md));
   no new frame-in-flight or pooling semantics are introduced.
-- **Destruction preconditions mirror `Presentation`'s exactly**
-  ([ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)):
-  a caller must not destroy `OffscreenTarget` (or the `Device` it was
-  constructed from) while a `RenderTarget` it vended has been acquired
-  but not yet consumed, or while a submission that `RenderTarget`
-  participated in has not yet completed. Same lifetime-precondition tier,
-  same `Device::waitIdle()`-satisfies-it mechanism, no new concept.
+
+**Borrow lifetime contract — RAII, not an explicit consuming call.**
+This subsection is the full, authoritative answer to "how does a vended
+`RenderTarget` borrow end, and what may a caller safely do around it,"
+replacing an earlier draft's incorrect claim that
+[ADR-0040](0040-gpu-to-cpu-readback-rhi-capability.md) would define this:
+
+- **Ending the borrow.** A caller ends its current borrow by destroying
+  or resetting the `std::unique_ptr<RenderTarget>` `acquireTarget()`
+  returned — ordinary RAII, exactly like every other owned-handle type
+  in this codebase (`Buffer`/`Texture`/`Pipeline`), and **not** an
+  explicit method call. There is no real side effect to trigger
+  explicitly here (unlike `Presentation::present()`, which must also
+  call `vkQueuePresentKHR`) — the underlying `VulkanOffscreenRenderTarget`
+  (see "Vulkan Backend implementation shape" below) is non-owning and
+  destroying it releases no Vulkan object; its destructor's only
+  responsibility is to notify its owning `VulkanOffscreenTarget`
+  (privately, not via any public API) that the borrow has ended, clearing
+  the same "borrow outstanding" tracking state that also backs the
+  guaranteed-detectable double-acquire check above and the destruction
+  check below. Adding a public `release()`/`consume()` method would
+  duplicate what destruction/`reset()` already does, for no behavioral
+  gain.
+- **The borrow must not outlive its `OffscreenTarget` owner.** Destroying
+  `OffscreenTarget` (or the `Device` it was constructed from) while a
+  borrow it vended is still outstanding is a **guaranteed-detectable
+  programmer error** (`ATLANTIS_CHECK`/`ATLANTIS_ASSERT`) — checkable
+  precisely because the same outstanding-borrow tracking already exists
+  for the double-acquire check above. This is a **deliberate, disclosed
+  improvement over `Presentation`'s equivalent precondition**, which
+  [ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)
+  states is "a lifetime precondition violation, not a guaranteed-
+  detectable error" — `Presentation` does not track outstanding-target
+  state the way `OffscreenTarget` must (to support the double-acquire
+  check), so `OffscreenTarget` can afford a strictly better error signal
+  at destruction time at effectively no added cost. This divergence from
+  `Presentation`'s tier is intentional, not an inconsistency, and does
+  not change `Presentation`'s own contract.
+- **Minimum required borrow lifetime.** The borrow must remain alive from
+  `acquireTarget()`'s return until at least the return of the
+  `Device::submit()` call whose recorded `CommandList` references it —
+  because `Device::submit(std::unique_ptr<CommandList>, const
+  RenderTarget&)` itself takes a `const RenderTarget&`
+  (`src/rhi/include/atlantis/rhi/device.h`), and because every
+  `CommandList` recording call that touches this target (via
+  `Renderer::drawFrame()`, `transitionResource()`,
+  `copyRenderTargetToBuffer()`) captures/dereferences it during
+  recording, which happens before `submit()`. **The borrow does *not*
+  need to remain alive through `Device::waitIdle()` or through reading
+  the readback `Buffer`'s contents, and does not need to remain alive
+  until the referencing GPU work has actually finished executing.** This
+  is not a relaxation adopted for convenience — it reflects how Vulkan
+  command recording actually works: `vkCmdCopyImageToBuffer` and every
+  other recorded command bake the underlying `VkImage`/`VkBuffer`
+  *handles* into the command buffer at record time; the GPU, when it
+  later executes those commands, never dereferences the C++
+  `RenderTarget` wrapper object again. Destroying the wrapper early does
+  not invalidate, cancel, or desynchronize already-recorded GPU work —
+  only destroying the underlying Vulkan objects would, and those are
+  owned by `OffscreenTarget`, not by the borrow (see the destruction
+  precondition above for what actually guards that).
+- **GPU-in-flight safety for repeated acquire cycles comes entirely from
+  `Device::submit()`'s existing single-frame-in-flight fence-wait
+  ([ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md)),
+  not from the borrow's own lifetime.** A caller may validly destroy/
+  reset the borrow and immediately call `acquireTarget()` again with no
+  intervening `Device::waitIdle()` call — the new cycle's own
+  `Device::submit()` call will transparently wait on the previous
+  submission's fence before the GPU actually begins the new cycle's
+  work, exactly as it already does for consecutive windowed frames
+  today. Explicitly calling `Device::waitIdle()` before the next acquire
+  is never *required* by this contract for correctness; it is only
+  required, per [ADR-0040](0040-gpu-to-cpu-readback-rhi-capability.md),
+  before *reading* the readback `Buffer`'s contents.
+- **Recommended (not required) convention.** For simplicity, a typical
+  caller — including this spec's own worked example (see
+  [specs/0010-headless-rendering-foundation.md](../specs/0010-headless-rendering-foundation.md)'s
+  Proposed Design) — keeps the borrow alive through the whole
+  acquire → draw → copy → submit → `waitIdle()` → read cycle and drops
+  it (goes out of scope / is reassigned) immediately before the next
+  `acquireTarget()` call. This is a simpler mental model than exploiting
+  the weaker minimum above, not a second, stricter contract — a caller
+  is free to drop the borrow as soon as `submit()` returns if it has a
+  concrete reason to.
+- **Legal ordering summary:** `acquireTarget()` → (record: draw, then
+  copy) → `submit()` → [borrow may be dropped any time from here
+  onward, per the minimum lifetime above] → `waitIdle()` → read the
+  readback `Buffer` → next `acquireTarget()`. `waitIdle()` must precede
+  reading the `Buffer`'s contents (unchanged, per
+  [ADR-0040](0040-gpu-to-cpu-readback-rhi-capability.md)) but has no
+  ordering requirement relative to the borrow's own destruction in
+  either direction.
 
 **Vulkan Backend implementation shape (named explicitly, resolving this
 ADR's own earlier ambiguity):**
@@ -241,6 +334,18 @@ trigger to revisit — not a reason to decide differently now.
   headless's actually-simpler contract rather than forcing a windowed
   shape that would carry a dead branch.
 - Zero change to the depth `Texture` ownership model.
+- The borrow lifetime contract is RAII-based, adds no new public method,
+  and makes both misuse cases it governs (double-acquire, destruction-
+  while-outstanding) guaranteed-detectable programmer errors — a real,
+  disclosed improvement over `Presentation`'s equivalent, currently-
+  undetectable precondition, achieved at no added public-API cost.
+- The minimum-borrow-lifetime clarification (through `submit()`, not
+  through GPU completion) is not merely a convenience — it correctly
+  reflects that Vulkan command recording bakes handles, not C++ object
+  references, into a `CommandList`, avoiding a stricter-than-necessary
+  contract that could otherwise mislead a future reader into believing
+  the borrow's C++ lifetime has GPU-synchronization significance it does
+  not have.
 
 ### Negative / Trade-offs
 
@@ -266,6 +371,15 @@ trigger to revisit — not a reason to decide differently now.
   if narrow and explicitly-justified, re-scoping of an existing type's
   stated purpose that the implementation must carry through to that
   type's own doc comment, not just to this ADR's text.
+- The borrow's C++ lifetime being decoupled from GPU execution
+  completion (see "Minimum required borrow lifetime" above) is a subtle
+  point that a future reader could get wrong in either direction
+  (assuming the borrow must be held longer than required, or — more
+  dangerously — assuming dropping it early is equivalent to a
+  synchronization guarantee it does not provide). This ADR states both
+  the precise minimum and the recommended convention explicitly, and any
+  future documentation referencing this contract must preserve that
+  distinction rather than collapsing it back into a single, vaguer rule.
 
 ## Alternatives Considered
 
@@ -315,3 +429,34 @@ trigger to revisit — not a reason to decide differently now.
   "genuinely narrow claim" reasoning) — reusing ADR-0023's existing
   migration boundary, unmodified, is the correct place for that future
   decision to land once a real need materializes, not here.
+- **Give `OffscreenTarget` an explicit `release()`/`consume()` public
+  method the caller must call to end a borrow, mirroring
+  `Presentation::present()`'s explicit-call shape.** Considered — this
+  round's second-round Human Review specifically asked whether RAII
+  alone can safely express the relevant lifecycle/GPU-in-flight
+  constraints; the analysis above (see "Borrow lifetime contract")
+  answers yes. **Rejected**: unlike `present()`, there is no real side
+  effect (`vkQueuePresentKHR` or equivalent) an explicit method would
+  need to trigger — its only job would be clearing the same
+  outstanding-borrow flag that a destructor can clear just as correctly,
+  for free, via RAII. Adding a public method here would be pure
+  ceremony: a second way to do exactly what destruction already does,
+  inconsistent with every other owned RHI handle in this codebase
+  (`Buffer`/`Texture`/`Pipeline`, none of which has an explicit
+  `release()` method either) and adding public surface with no
+  behavioral payoff.
+- **Have `acquireTarget()`'s double-acquire case return `Result::Err`
+  instead of firing a guaranteed-detectable assertion**, matching an
+  earlier draft of this ADR. Reconsidered and rejected during this
+  round's Human Review for consistency with this codebase's own Error
+  Model (AGENTS.md, Error handling: "Programmer errors are assertions,
+  not error returns... Recoverable runtime errors use explicit result/
+  error types"): a caller acquiring twice without returning the first
+  borrow is a caller mistake, not an environmental failure — exactly the
+  same category Guard 1/Guard 2
+  ([ADR-0021](0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md))
+  already treat as `ATLANTIS_CHECK`/`ATLANTIS_ASSERT`, not `Result::Err`.
+  Once the outstanding-borrow tracking needed to detect this case exists
+  at all (which it must, to support the destruction-time check above),
+  routing it through the assertion channel is both more consistent with
+  precedent and enables the same tracking to serve both checks uniformly.

@@ -192,6 +192,26 @@ ever needed for a headless target under this design (see
 Proposed Amendment for why). This is named explicitly here, rather than
 left purely implicit, so a future Plan does not have to rediscover it.
 
+**Legal values and error semantics for `incomingState`/`finalState`.**
+Both fields are the same backend-agnostic `ResourceState` enum used
+everywhere else in RHI/RenderGraph's public surface — neither field's
+*type* restricts which values a caller may supply, and this decision
+introduces no new, general state-validation system to do so at the
+RenderGraph level either. A value that does not correspond to an entry
+in the Vulkan Backend's `planTransition()` table — for either field, for
+any resource kind (`target` or `depthTexture`), now or as this decision
+is extended in the future — is a **programmer error**: it produces a
+guaranteed-detectable assertion failure (`ATLANTIS_CHECK_MSG`, per
+[ADR-0009](0009-assertion.md)) at the point `execute()` would otherwise
+call `CommandList::transitionResource()` with it, **not a compile-time
+restriction and not a recoverable `Result`-typed error**. This is not a
+new failure mode this decision invents — it is the same,
+already-existing, unchanged behavior `planTransition()`'s closed table
+already produces for any unlisted pair; this decision only widens which
+values a caller can *choose to try*, it does not add any new validation
+layer ahead of that existing mechanism, and does not promise that every
+syntactically-legal `ResourceState` value is semantically accepted.
+
 **This ADR does not change:**
 
 - Guard 1 (every `ResourceState`-tagged usage must have a binding) or

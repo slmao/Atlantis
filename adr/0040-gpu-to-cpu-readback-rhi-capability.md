@@ -109,7 +109,14 @@ Ensuring the copy's writes are host-visible after GPU completion
 Backend's own private implementation concern, per
 [ADR-0021](0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md)'s
 existing "RHI decides how" split — no new public type or query is added
-for this.
+for this. **`copyRenderTargetToBuffer()` only borrows `RenderTarget&`
+to record a command against — it does not take ownership of, and does
+not end, the caller's borrow of that `RenderTarget`.** Ending the
+borrow is entirely
+[ADR-0038](0038-headless-offscreen-rendertarget-construction-and-ownership.md)'s
+RAII-based ownership contract; this ADR neither participates in nor is
+required for it (correcting an earlier draft of ADR-0038, which
+incorrectly stated this ADR would define a "consuming call").
 
 **RenderGraph integration — depends directly on the `TransferSource`
 guarantee established above:** the copy is expressed as a RenderGraph

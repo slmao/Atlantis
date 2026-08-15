@@ -348,6 +348,28 @@ requirement — a caller-supplied, backend-agnostic, required
   ([ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md)) —
   no new type, and no leak of any Vulkan-specific concept into
   `Renderer`'s public surface.
+- **Legal values and error semantics.** `finalColorState` accepts any
+  `ResourceState` value — the type itself imposes no compile-time
+  restriction to a "valid for a color target" subset, consistent with
+  how `ResourceState` is used everywhere else in this codebase. A value
+  for which the Vulkan Backend's transition-mapping table
+  (`resource_state_mapping.cpp`'s `planTransition()`) has no entry
+  starting from `ColorAttachmentOutput` (this round: any value other
+  than `PresentSource` or `TransferSource`) is a **programmer error**,
+  surfaced as a guaranteed-detectable assertion failure
+  (`ATLANTIS_CHECK_MSG`, per
+  [ADR-0009](0009-assertion.md)) at the point `Renderer`'s internal
+  `execute()` call would otherwise record the corresponding
+  `transitionResource()` call — **not a compile-time restriction, and
+  not a recoverable `Result`-typed error.** This is the same, unchanged
+  assertion mechanism `planTransition()` already applies to every other
+  unlisted `(before, after)` pair; this amendment does not introduce a
+  general state-validation system, a new error enum, or any check
+  `Renderer`/RenderGraph performs ahead of the Vulkan Backend's own
+  existing (closed-table) mechanism — see
+  [ADR-0039](0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
+  for the identical contract as it applies to `ResourceBinding`'s
+  `incomingState`/`finalState` fields more generally.
 
 **Everything else in this ADR's original Decision is unchanged**:
 `Renderer` remains a concrete, stateless class depending only on
