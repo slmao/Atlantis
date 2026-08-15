@@ -72,6 +72,12 @@ architecture**:
 
 ## 3. Approved overall architecture
 
+See [docs/architecture/engine_architecture.md](architecture/engine_architecture.md)
+for a higher-level, navigation-oriented overview connecting the module
+map below to Atlantis's conceptual architecture and long-term direction
+— descriptive navigation only, no change to this section's own as-built
+content.
+
 The module map and dependency directions below are drawn from
 [docs/architecture/overview.md](architecture/overview.md) and
 [docs/architecture/module_boundaries.md](architecture/module_boundaries.md).
@@ -576,11 +582,17 @@ already-approved:
   milestone. Conflicts with `D:\blueprint.md`'s §14 graphics-backend
   roadmap (Vulkan → D3D12 → Metal → WebGPU); resolved per
   [AGENTS.md](../AGENTS.md): Phase 1 is Vulkan-only, and no second
-  backend is scaffolded "for later."
+  backend is scaffolded "for later." [ADR-0037](../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md)
+  additionally now records Direct3D 12 as a long-term candidate sibling
+  Device Backend — a boundary-level direction only, not a change to
+  this milestone/Phase-1 conclusion.
 - **Metal backend** (native, for macOS/iOS). iOS's own graphics-backend
   choice (MoltenVK vs. a native Metal RHI backend) is explicitly
   undecided — see [README.md](../README.md) and
   [ADR-0005](../adr/0005-platform-module-multi-os-windowing.md).
+  [ADR-0037](../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md)
+  additionally now records Metal as a long-term candidate sibling Device
+  Backend, without deciding the MoltenVK-vs-native-Metal question above.
 - **WebGPU backend.** Same as D3D12 above — named in
   `D:\blueprint.md`'s roadmap, not in any Atlantis-approved scope.
 - **iOS backend choice** (MoltenVK vs. native Metal). Named as a future

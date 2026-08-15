@@ -10,6 +10,12 @@
 > a target platform. See
 > [ADR-0005](../../adr/0005-platform-module-multi-os-windowing.md).
 
+For a higher-level overview connecting these modules to Atlantis's
+conceptual architecture and current build status, see
+[engine_architecture.md](engine_architecture.md) — this document remains
+the authoritative source for per-module responsibility, dependency, and
+ownership detail.
+
 Each module below is documented as: responsibilities, allowed/forbidden
 dependencies, ownership, public/private boundary, and future extension
 points. None of these modules exist yet — this is the boundary they must
