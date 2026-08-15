@@ -61,6 +61,8 @@ target_link_libraries(atlantis_vulkan_backend_gpu_tests
     Atlantis::RHI
     Atlantis::RenderGraph
     Atlantis::Renderer
+    Atlantis::ShaderSystem
+    Atlantis::ShaderSystemRhiIntegration
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )
@@ -82,11 +84,17 @@ catch_discover_tests(atlantis_vulkan_backend_gpu_tests
 # Plan 0007 Section 12/17: shaders/minimal_renderer's checked-in SPIR-V
 # pair, copied next to this executable's own build output.
 # copy_if_different is a no-op when already up to date.
+# Plan 0008 Section 7/8: the build-tree, Shader-System-produced artifact
+# set, copied next to this executable's own build output -- replaces
+# Plan 0007's checked-in shaders/minimal_renderer/*.spv copy.
+add_dependencies(atlantis_vulkan_backend_gpu_tests minimal_mesh_shaders)
 add_custom_command(TARGET atlantis_vulkan_backend_gpu_tests POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      "${CMAKE_SOURCE_DIR}/shaders/minimal_renderer/minimal_mesh.vert.spv"
-      "${CMAKE_SOURCE_DIR}/shaders/minimal_renderer/minimal_mesh.frag.spv"
+      "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.vert.spv"
+      "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.vert.refl.json"
+      "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.spv"
+      "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.refl.json"
       "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders/"
 )

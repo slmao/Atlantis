@@ -1,48 +1,44 @@
 # shaders/minimal_renderer/
 
-Spec 0007 / Plan 0007 Section 12's shader bootstrap: `minimal_mesh.vert.glsl`/
-`minimal_mesh.frag.glsl` are the human-readable GLSL source (checked in,
-never built by any CMake target); `minimal_mesh.vert.spv`/
-`minimal_mesh.frag.spv` are the pre-compiled SPIR-V bytecode checked in
-alongside them, produced by a human/agent running `glslc` manually, per
-ADR-0027 ("no shader compiler is invoked by any Atlantis build target").
+`minimal_mesh.slang` is the single Slang source module (checked in),
+containing both `vertexMain`/`fragmentMain` entry points and sharing one
+explicit varying-interface `struct` (ADR-0030's authoring convention).
+Functionally equivalent to the retired GLSL pair (Spec 0007/ADR-0027):
+camera uniform at `[[vk::binding(0, 0)]]`, a push-constant
+object-to-world matrix, position/color vertex inputs at explicit
+`[[vk::location(0)]]`/`[[vk::location(1)]]`, unlit per-vertex-color
+output.
 
-Shared, as a single authoritative copy, by both
+Per Spec 0008/Plan 0008, this module supersedes ADR-0027's temporary,
+checked-in, pre-compiled SPIR-V bootstrap: `CMakeLists.txt` here calls
+`atlantis_add_slang_shader_pair()` (defined in
+`src/shader_system/CMakeLists.txt`), which builds `.slang` into a
+build-tree `.spv`/reflection-JSON artifact pair via `atlantis_shader_compiler`
+(Atlantis Tools) at build time -- `slangc -profile spirv_1_0`, mandatory
+`spirv-val --target-env vulkan1.0`, and build-time descriptor-contract/
+push-constant validation against this material's own fixed expectation.
+No `.spv` or reflection JSON is checked into this directory or anywhere
+else in the repository; both are generated, configuration-independent
+build-tree artifacts (`${CMAKE_BINARY_DIR}/shaders/minimal_renderer/`),
+regenerated automatically whenever `minimal_mesh.slang` changes.
+
+Shared, as a single authoritative source, by both
 `examples/minimal_renderer_demo` and
 `tests/vulkan_backend/minimal_renderer_gpu_tests.cpp` -- each consumer's
-own CMake target copies the `.spv` files next to its own build output via
+own CMake target depends on the `minimal_mesh_shaders` target and copies
+the four build-tree artifacts (`.vert.spv`, `.vert.refl.json`,
+`.frag.spv`, `.frag.refl.json`) next to its own build output via
 `add_custom_command(... POST_BUILD ...)`; never duplicated as source.
 
-## Compiler / version
+## Editing this shader
 
-```
-shaderc v2026.3 v2026.3
-spirv-tools v2026.3 v2022.4-1283-gb707790a
-glslang 11.1.0-1493-g168d452a
-Target: SPIR-V 1.0
-```
+Edit `minimal_mesh.slang` directly and rebuild -- no manual regeneration
+step, no compiler-version bookkeeping to update by hand. CMake detects
+the source change and re-invokes `atlantis_shader_compiler`
+automatically; a build-time failure (a Slang compile error, a
+descriptor-contract mismatch, a `spirv-val` failure) fails the build
+with the real tool diagnostics, not a silently stale checked-in `.spv`.
 
-(`glslc.exe --version`, from the Vulkan SDK installed at
-`C:\VulkanSDK\1.4.357.0`.)
-
-## Regeneration command
-
-Run from this directory:
-
-```
-glslc.exe --target-env=vulkan1.0 -fshader-stage=vertex   -o minimal_mesh.vert.spv minimal_mesh.vert.glsl
-glslc.exe --target-env=vulkan1.0 -fshader-stage=fragment -o minimal_mesh.frag.spv minimal_mesh.frag.glsl
-```
-
-`--target-env=vulkan1.0` matches the Vulkan Backend's own minimum
-supported API version (unraised by this Plan -- ADR-0024's dual dynamic-
-rendering path is capability-detected at runtime, not gated by a higher
-`VkApplicationInfo::apiVersion` request). `-fshader-stage=...` is required
-because these source files use a `.glsl` extension (not `.vert`/`.frag`),
-which `glslc` cannot infer a stage from on its own.
-
-Any future change to `minimal_mesh.{vert,frag}.glsl` must re-run this
-exact command, updating the `.spv` files and this README's own recorded
-compiler/version output together, in the same commit -- reviewable as an
-ordinary binary-diff-plus-source-diff PR, the same way any other
-checked-in test fixture is reviewed in this repository.
+See [specs/0008-shader-system-foundation.md](../../specs/0008-shader-system-foundation.md)
+and [plans/0008-shader-system-foundation.md](../../plans/0008-shader-system-foundation.md)
+for the full design.

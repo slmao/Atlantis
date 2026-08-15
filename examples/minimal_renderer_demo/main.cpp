@@ -8,6 +8,8 @@
 #include <atlantis/rhi/device.h>
 #include <atlantis/rhi/presentation.h>
 #include <atlantis/rhi/types.h>
+#include <atlantis/shader_system/reflection_loader.h>
+#include <atlantis/shader_system/rhi_integration/vertex_input_mapping.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
 
 #include <array>
@@ -41,9 +43,11 @@ using atlantis::renderer::Renderer;
 using atlantis::rhi::BufferPurpose;
 using atlantis::rhi::DepthFormat;
 using atlantis::rhi::Extent2D;
-using atlantis::rhi::VertexAttribute;
-using atlantis::rhi::VertexAttributeFormat;
 using atlantis::rhi::VertexInputLayout;
+using atlantis::shader_system::loadReflectionMetadata;
+using atlantis::shader_system::ReflectionMetadata;
+using atlantis::shader_system::rhi_integration::MeshVertexAttributeSchema;
+using atlantis::shader_system::rhi_integration::toVertexInputLayout;
 
 [[nodiscard]] const char* platformErrorCodeToString(atlantis::platform::PlatformErrorCode code) {
   using atlantis::platform::PlatformErrorCode;
@@ -122,14 +126,21 @@ struct Vertex {
   float color[3];
 };
 
-[[nodiscard]] VertexInputLayout minimalMeshVertexLayout() {
-  VertexInputLayout layout;
-  layout.strideBytes = sizeof(Vertex);
-  layout.attributes = {
-      VertexAttribute{.location = 0, .offsetBytes = offsetof(Vertex, position), .format = VertexAttributeFormat::Float3},
-      VertexAttribute{.location = 1, .offsetBytes = offsetof(Vertex, color), .format = VertexAttributeFormat::Float3},
+// Plan 0008 Section 8: replaces the hand-written minimalMeshVertexLayout()
+// literal. `vertexMetadata` is loaded once, at startup, from the
+// build-tree reflection JSON the Shader System pipeline produced --
+// never per-frame (Section 6's own "program-startup-time, not per-frame"
+// contract). A MappingError here can only mean this schema table itself
+// is wrong (e.g. a location typo); the shader's own contract was already
+// validated at build time.
+[[nodiscard]] std::optional<VertexInputLayout> minimalMeshVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+      MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, color)},
   };
-  return layout;
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
 }
 
 // A single fixed cube -- this round's minimal mesh (Spec 0007 Non-Goals:
@@ -158,8 +169,8 @@ constexpr std::uint16_t kCubeIndices[36] = {
 };
 
 // Column-major 4x4 float matrices, matching exactly what
-// minimal_mesh.vert.glsl's `mat4` uniforms/push constant expect
-// (Section 12) and what pushConstant()/the camera uniform Buffer copy
+// minimal_mesh.slang's `float4x4` uniforms/push constant expect
+// (Plan 0008 Section 8) and what pushConstant()/the camera uniform Buffer copy
 // verbatim (Section 5/9). Atlantis Core has no public math type yet
 // (Section 11's own DrawItem comment) -- these are this demo's own,
 // deliberately minimal, local helpers; not a general math library and
@@ -264,6 +275,22 @@ int main() {
     return EXIT_FAILURE;
   }
 
+  // Plan 0008 Section 8: reflection metadata is loaded once, at
+  // startup, from the same build-tree location the .spv files above
+  // came from -- never per-frame (Section 6's own program-startup-time
+  // contract).
+  auto vertexReflectionResult = loadReflectionMetadata("shaders/minimal_mesh.vert.refl.json");
+  if (vertexReflectionResult.isErr()) {
+    ATLANTIS_LOG_ERROR("Failed to load shaders/minimal_mesh.vert.refl.json");
+    return EXIT_FAILURE;
+  }
+  const auto vertexInputLayout = minimalMeshVertexLayout(vertexReflectionResult.value());
+  if (!vertexInputLayout.has_value()) {
+    ATLANTIS_LOG_ERROR("minimalMeshVertexLayout(): reflected vertex-input attributes do not match this demo's own "
+                        "Vertex schema");
+    return EXIT_FAILURE;
+  }
+
   auto initResult = platform::initialize();
   if (initResult.isErr()) {
     const auto& error = initResult.error();
@@ -284,8 +311,8 @@ int main() {
   std::unique_ptr<rhi::Device> device = std::move(deviceResult.value());
   ATLANTIS_LOG_INFO("Vulkan Device created (Validation Layers requested)");
 
-  auto meshResult = createMesh(*device, minimalMeshVertexLayout(), kCubeVertices, sizeof(kCubeVertices),
-                                kCubeIndices, static_cast<std::uint32_t>(std::size(kCubeIndices)));
+  auto meshResult = createMesh(*device, *vertexInputLayout, kCubeVertices, sizeof(kCubeVertices), kCubeIndices,
+                                static_cast<std::uint32_t>(std::size(kCubeIndices)));
   if (meshResult.isErr()) {
     ATLANTIS_LOG_ERROR("createMesh() failed");
     device.reset();
@@ -401,7 +428,7 @@ int main() {
             auto newMaterialResult = createMaterial(
                 *device, {.vertexShader = {.spirvWords = vertexSpirv->data(), .wordCount = vertexSpirv->size()},
                           .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
-                          .vertexInputLayout = minimalMeshVertexLayout(),
+                          .vertexInputLayout = *vertexInputLayout,
                           .colorFormat = currentFormat,
                           .depthFormat = DepthFormat::D32Sfloat,
                           .pushConstantSizeBytes = sizeof(float) * 16});
