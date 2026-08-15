@@ -1,8 +1,9 @@
 # ADR 0033: Runtime Authority and Client Boundary
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-15
-- **Deciders:** _Pending Human Review_
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-15 as part of Spec 0009's Human Review Approval
 - **Related Spec:** [specs/0009-long-term-engine-architecture-alignment.md](../specs/0009-long-term-engine-architecture-alignment.md)
 
 ## Context

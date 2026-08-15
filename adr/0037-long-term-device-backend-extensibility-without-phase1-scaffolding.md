@@ -1,8 +1,9 @@
 # ADR 0037: Long-Term Device Backend Extensibility Without Phase 1 Scaffolding
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-15
-- **Deciders:** _Pending Human Review_
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-15 as part of Spec 0009's Human Review Approval
 - **Related Spec:** [specs/0009-long-term-engine-architecture-alignment.md](../specs/0009-long-term-engine-architecture-alignment.md)
 
 ## Context
@@ -21,7 +22,8 @@ Core — never on a concrete backend. Atlantis's Phase 1 target platforms
 are Windows and Android; AGENTS.md states iOS is a future target ("not
 started, not designed") and explicitly leaves open whether it eventually
 uses Vulkan via MoltenVK or a native Metal RHI backend — "that choice is
-explicitly undecided and is not to be prejudged." Atlantis Shader System
+explicitly undecided and is not to be designed or scaffolded for now."
+Atlantis Shader System
 ([Spec 0008](../specs/0008-shader-system-foundation.md),
 [ADR-0028](0028-shader-system-source-language-and-compiler.md)) compiles
 Slang to SPIR-V only; no other shader target exists or is scaffolded.

@@ -1,26 +1,67 @@
 # Spec: Long-Term Engine Architecture Alignment
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
-  direction, from a human-provided external architecture draft; pending
-  Human Review.
+  direction, from a human-provided external architecture draft;
+  approved by human review — see Human Review Approval below.
 - **Created:** 2026-08-15
-- **Related Plan(s):** None yet — this Spec does not itself authorize a
-  Plan or Implementation (see Non-Goals), and does not create Plan 0009
-  now. Because this revision proposes a concrete future documentation
-  deliverable (`docs/architecture/engine_architecture.md` — see
-  Architectural Impact), approving this Spec is expected to be followed
-  by drafting **Plan 0009**, itself subject to its own Human Review,
-  before that document is created — unlike Specs 0001–0008, this Spec
-  is not expected to close out with "no Plan is needed."
+- **Related Plan(s):** None yet — this Spec's own approval does not
+  itself authorize Implementation (see Non-Goals). Because this Spec
+  proposes a concrete future documentation deliverable
+  (`docs/architecture/engine_architecture.md` — see Architectural
+  Impact), drafting **Plan 0009** is authorized per
+  [AGENTS.md](../AGENTS.md) as the next step following this approval;
+  Plan 0009 remains subject to its own Human Review before any
+  Implementation, and is not created by this approval itself — unlike
+  Specs 0001–0008, this Spec is not expected to close out with "no Plan
+  is needed."
 - **Related ADR(s):**
   [ADR-0032](../adr/0032-conceptual-architecture-layers-versus-source-module-ownership.md),
   [ADR-0033](../adr/0033-runtime-authority-and-client-boundary.md),
   [ADR-0034](../adr/0034-stable-public-boundary-versus-internal-cpp-layout.md),
   [ADR-0035](../adr/0035-authoring-runtime-data-separation-as-a-long-term-principle.md),
   [ADR-0036](../adr/0036-agent-native-automation-and-machine-verifiable-architecture-as-long-term-goals.md),
+  and
   [ADR-0037](../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md)
-  — all `Proposed`, drafted alongside this Spec. See Architectural Impact.
+  — all `Accepted` alongside this Spec's own approval below. See
+  Architectural Impact.
+- **Human Review Approval (2026-08-15):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer for this branch) on 2026-08-15, following an independent,
+  read-only architecture review of this Spec, ADR-0032–0037, and PR #39
+  (covering git/PR state verification; the Device Backend long-term
+  design in ADR-0037 against AGENTS.md's current Vulkan-only/no-second-
+  backend-scaffolding/iOS-undecided/macOS-and-Linux-not-targeted rules;
+  the proposed future `docs/architecture/engine_architecture.md`
+  overview document and its documentation-authority boundaries; each
+  ADR's individual clarity and long-term maintainability; Candidate
+  Backlog non-disturbance; and a full documentation-consistency pass) and
+  a dedicated HR-0009 decision table covering all sixteen topics listed
+  there — this Spec, and ADR-0032 through ADR-0037, are approved as
+  drafted, with one non-blocking clarification and one confirmed
+  process point, both resolved as part of this approval:
+
+  1. **ADR-0037's citation of AGENTS.md's iOS-backend-undecided rule
+     (previously "...is not to be prejudged") is corrected to quote
+     AGENTS.md verbatim** ("...is not to be designed or scaffolded for
+     now") — see that ADR's own Context section. This was a quotation-
+     accuracy issue only; the substantive meaning (iOS Metal-vs-MoltenVK
+     remains undecided) was never in question and is unchanged.
+  2. **Plan 0009 is confirmed required** before
+     `docs/architecture/engine_architecture.md` may be created. This
+     approval authorizes drafting Plan 0009 — scoped to that document
+     plus related navigation-only updates to
+     `docs/architecture/module_boundaries.md`, `docs/project-blueprint.md`,
+     and optionally a short `README.md` entry point — through its own
+     Human Review; it does not authorize `AGENTS.md` changes without a
+     separately justified reason, and does not itself create any file.
+
+  This approval does not authorize any Direct3D 12, Metal, or other
+  second-Device-Backend code, directory, CMake target, SDK dependency,
+  or scaffolding of any kind; does not change Phase 1's Vulkan-only
+  scope; does not decide whether a future iOS Platform uses Metal or
+  Vulkan via MoltenVK; and does not modify the existing Candidate Spec
+  Backlog (`specs/README.md` Section B) or its priorities.
 
 ## Summary
 
