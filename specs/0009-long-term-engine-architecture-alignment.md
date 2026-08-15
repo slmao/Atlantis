@@ -5,16 +5,17 @@
   direction, from a human-provided external architecture draft;
   approved by human review — see Human Review Approval below.
 - **Created:** 2026-08-15
-- **Related Plan(s):** None yet — this Spec's own approval does not
-  itself authorize Implementation (see Non-Goals). Because this Spec
-  proposes a concrete future documentation deliverable
-  (`docs/architecture/engine_architecture.md` — see Architectural
-  Impact), drafting **Plan 0009** is authorized per
-  [AGENTS.md](../AGENTS.md) as the next step following this approval;
-  Plan 0009 remains subject to its own Human Review before any
-  Implementation, and is not created by this approval itself — unlike
-  Specs 0001–0008, this Spec is not expected to close out with "no Plan
-  is needed."
+- **Related Plan(s):**
+  [plans/0009-long-term-engine-architecture-alignment.md](../plans/0009-long-term-engine-architecture-alignment.md)
+  (`Draft`, pending its own Human Review — drafting this Plan against
+  this `Approved` spec is authorized per [AGENTS.md](../AGENTS.md);
+  drafting it is not itself an implementation authorization, see that
+  Plan's own Status). Scoped to
+  `docs/architecture/engine_architecture.md` and minimal,
+  non-duplicative navigation-link updates to a small number of existing
+  documents — see that Plan's own Architectural Impact/Files section for
+  the exact list. Implementation (creating the actual file) is not
+  authorized until Plan 0009 itself is `Approved`.
 - **Related ADR(s):**
   [ADR-0032](../adr/0032-conceptual-architecture-layers-versus-source-module-ownership.md),
   [ADR-0033](../adr/0033-runtime-authority-and-client-boundary.md),
