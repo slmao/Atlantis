@@ -979,17 +979,52 @@ documentation's own `bInheritHandles` remarks confirm inheritance is
 opt-in per handle, not process-wide once `bInheritHandles = TRUE` is
 passed to a specific handle set), so no unrelated open handle leaks into
 the child. Both `STARTUPINFOW::hStdOutput` and `hStdError` are set to
-this **same** file handle (`hStdInput` left unset/default); the child
+this **same** file handle; the child
 process's stdout and stderr writes therefore interleave into one file in
 their actual chronological write order (the OS serializes writes through
 one underlying file handle), which is simpler and more useful for a
 human reading a build-log diagnostic than two separately-ordered
 captures would be — matching `ProcessOutput::diagnostics` being a single
 field, not separate `stdOut`/`stdErr` fields as an earlier draft of this
-Plan had. `CreateProcessW` is called with `bInheritHandles = TRUE`
-(required for the child to actually receive the inherited diagnostic
-file handle) and `dwCreationFlags = 0` (no console allocated/detached —
-this Plan does not need one). The parent closes its own copy of the
+Plan had.
+
+**`STARTUPINFOW::dwFlags` must explicitly include `STARTF_USESTDHANDLES`
+— stated here because it is easy to silently omit.** Per the official
+documentation's own explicit wording for `hStdOutput`/`hStdError`: *"If
+dwFlags specifies STARTF_USESTDHANDLES, this member is the standard
+[output/error] handle for the process. **Otherwise, this member is
+ignored** and the default for standard output is the console window's
+buffer."* Setting `hStdOutput`/`hStdError` without also setting this
+flag has **no effect whatsoever** — the child would silently fall back
+to inheriting the parent's own console buffer, defeating this entire
+diagnostic-capture design without any error or symptom other than an
+empty `ProcessOutput::diagnostics` and a failing
+`process_launch_tests.cpp` happy-path case (Section 9). `si.dwFlags |=
+STARTF_USESTDHANDLES;` is therefore set explicitly, alongside
+`hStdOutput`/`hStdError`, before `CreateProcessW` is called. The same
+official documentation also requires, for this flag: *"the handles must
+be inheritable and the function's bInheritHandles parameter must be set
+to TRUE"* — already satisfied by the single-inheritable-handle design
+above and by `bInheritHandles = TRUE` below.
+
+**`hStdInput` — once `STARTF_USESTDHANDLES` is set, it is no longer
+ignorable and must be an explicit, valid, inheritable handle**, per the
+same documentation (*"If dwFlags specifies STARTF_USESTDHANDLES, this
+member is the standard input handle for the process"* — the "default is
+the keyboard buffer" fallback only applies when the flag is *not* set).
+`launchProcess()` therefore opens a second, separate inheritable handle
+to the Windows NUL device (`CreateFileW(L"NUL", GENERIC_READ, ...,
+&inheritableSecurityAttributes, OPEN_EXISTING, ...)`) and assigns it to
+`hStdInput` — `slangc`/`spirv-val` are one-shot CLI invocations that
+never read standard input, so a NUL device (immediate EOF on any read)
+is the correct, documented-safe choice, never the parent's own console
+input. This handle is closed by the same RAII guard covering the
+diagnostic file handle (both are opened, marked inheritable, and closed
+on the same lifecycle), and it is opened non-writable (`GENERIC_READ`
+only) since the child never writes to it. `CreateProcessW` is called
+with `bInheritHandles = TRUE` (required for the child to actually
+receive both inherited handles) and `dwCreationFlags = 0` (no console
+allocated/detached — this Plan does not need one). The parent closes its own copy of the
 diagnostic file's handle immediately after `CreateProcessW` returns
 successfully (the child now holds its own inherited copy), then, after
 `WaitForSingleObject()` confirms the child has exited, reopens the same
@@ -1928,6 +1963,13 @@ implementation step" rule:
       `const`-sourced pointer), and captures combined stdout+stderr via
       a single temporary file (never two pipes) — verifiable by
       inspection of `process_launch.cpp`.
+- [ ] `STARTUPINFOW::dwFlags` includes `STARTF_USESTDHANDLES` before
+      every `CreateProcessW` call in `process_launch.cpp`, and
+      `hStdInput` is set to an explicit, inheritable NUL-device handle
+      (never left unset) — verifiable by inspection, and by
+      `process_launch_tests.cpp`'s `cmd.exe`-based happy-path case
+      (Section 9) actually observing non-empty, correctly-captured
+      `diagnostics` output rather than an empty string.
 - [ ] `json_parser.cpp` enforces its four documented resource limits
       (input size, nesting depth, string length, element count) —
       verifiable by the corresponding `json_parser_tests.cpp` cases
