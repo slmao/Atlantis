@@ -11,6 +11,15 @@
 > (e.g. to allow a `Proposed` status here going forward) is itself an open
 > question for human review; until decided, treat the policy below as
 > still in force for anything not already marked `PROPOSED`.
+>
+> **See also:** [engine_architecture.md](engine_architecture.md) is a
+> second, narrower documented exception to the as-built-only policy
+> below — an architecture overview/navigation document that
+> intentionally combines as-built content with `Accepted`-but-not-yet-
+> implemented long-term direction (see its own status banner), added per
+> [Spec 0009](../../specs/0009-long-term-engine-architecture-alignment.md)/[Plan 0009](../../plans/0009-long-term-engine-architecture-alignment.md)'s
+> Human Review Approval. It does not change the policy for any other
+> file in this directory.
 
 This directory is otherwise intentionally empty of design content right
 now.

@@ -93,6 +93,9 @@ cmake/              CMake helper modules (CompilerWarnings.cmake)
 .github/            PR template and repository automation
 ```
 
+For a full architecture overview and navigation entry point, see
+[docs/architecture/engine_architecture.md](docs/architecture/engine_architecture.md).
+
 ## Building
 
 Requires CMake 3.21+, a C++20 compiler (MSVC, Windows — see
