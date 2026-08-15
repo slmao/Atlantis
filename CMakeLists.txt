@@ -19,6 +19,12 @@ add_subdirectory(src/rhi)
 add_subdirectory(src/vulkan_backend)
 add_subdirectory(src/render_graph)
 add_subdirectory(src/renderer)
+# Must precede any add_subdirectory() that calls
+# atlantis_add_slang_shader_pair() (Plan 0008 Section 7) -- that CMake
+# function is defined inside src/shader_system/CMakeLists.txt itself,
+# and only directories processed after this one can see it.
+add_subdirectory(src/shader_system)
+add_subdirectory(src/tools/shader_compiler)
 
 if(ATLANTIS_BUILD_EXAMPLES)
   add_subdirectory(examples/foundation_demo)
@@ -37,4 +43,5 @@ if(ATLANTIS_BUILD_TESTS)
   add_subdirectory(tests/vulkan_backend)
   add_subdirectory(tests/render_graph)
   add_subdirectory(tests/renderer)
+  add_subdirectory(tests/shader_system)
 endif()
