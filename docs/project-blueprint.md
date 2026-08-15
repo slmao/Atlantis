@@ -95,9 +95,9 @@ graph TD
     VulkanBackend["Atlantis Vulkan Backend<br/>(Implemented — Spec/Plan 0003;<br/>Spec 0006 extension Implemented;<br/>Spec 0007 dynamic-rendering<br/>draw path Implemented)"]
     RenderGraph["Atlantis RenderGraph<br/>(Implemented — Spec/Plan 0005, GPU-independent construction/compilation foundation;<br/>Spec 0006 execution extension Implemented;<br/>Spec 0007 multi-attachment/draw-pass extension Implemented)"]
     Renderer["Atlantis Renderer<br/>(Implemented — Spec/Plan 0007,<br/>minimal mesh/depth/camera/material draw path)"]
-    ShaderSystem["Atlantis Shader System<br/>(Candidate — no Spec)"]
+    ShaderSystem["Atlantis Shader System<br/>(Implemented — Spec/Plan 0008,<br/>Slang build-time compile/reflect pipeline)"]
     Runtime["Atlantis Runtime<br/>(Candidate — no Spec)"]
-    Tools["Atlantis Tools<br/>(Candidate — no Spec)"]
+    Tools["Atlantis Tools<br/>(Implemented — Spec/Plan 0008,<br/>atlantis_shader_compiler CLI)"]
 
     Platform -->|depends on| Core
     RHI -->|depends on| Core
@@ -249,29 +249,34 @@ for full verification detail and disclosed limitations (the
 attachment-format-change case are both verified by code
 inspection/GPU-independent tests only in this environment, not on real
 hardware — no second GPU/driver combination or second monitor was
-available). No Shader System, Android/iOS, or headless path exists yet —
-see below.
+available). Shader System now exists (Spec/Plan 0008, see below); no
+Android/iOS or headless path exists yet.
 
-**Every currently-`Approved` spec (0001–0007) now has matching
+**Every currently-`Approved` spec (0001–0008) now has matching
 implementation**, each merged following the same Spec → Plan → Human
 Review → Implementation → Verification → PR → Merge sequence (see the
 Spec 0006 row above for Spec 0006's own two-PR verification history, and
 the Spec 0007 row above for Spec 0007's own three-PR history — an
 implementation PR, a documentation-only ADR-amendment Human Review, and a
-follow-up code-fix PR).
+follow-up code-fix PR; see [specs/README.md](../specs/README.md)'s own
+Spec 0008 row for that spec's single-PR implementation history,
+[PR #36](https://github.com/slmao/Atlantis/pull/36)).
 
-**What has no spec yet:** Shader System, Runtime (the module), Tools,
-Android Platform implementation, iOS Platform, headless rendering, image
-regression testing, and everything in Section 5's later milestones and
-Section 5's "further candidate phases." These remain backlog candidates
-(see [specs/README.md](../specs/README.md) Section B) and are not
-`Approved` — no spec number, API shape, or Candidate-status promotion is
-assigned to any of them by this document. Per Spec 0007's own Non-Goals,
-implementing Renderer did not implement or unblock any of these — in
-particular, Shader System still relies on Spec 0007's temporary,
-checked-in, pre-compiled SPIR-V shader artifacts
-([ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)),
-not real compilation.
+Spec 0008 replaced ADR-0027's temporary, checked-in, pre-compiled
+SPIR-V shader bootstrap with a real build-time Slang compile/reflect
+pipeline (`src/shader_system/`, `src/tools/shader_compiler/`); Minimal
+Renderer's own shader now sources from that pipeline instead of a
+checked-in `.spv`/`.glsl` pair. ADR-0027 itself remains `Accepted` and
+unmodified — Spec 0008 superseded its *mechanism*, not the ADR record.
+
+**What has no spec yet:** Runtime (the module), the remainder of Tools
+beyond its first Spec 0008 content, Android Platform implementation,
+iOS Platform, headless rendering, image regression testing, and
+everything in Section 5's later milestones and Section 5's "further
+candidate phases." These remain backlog candidates (see
+[specs/README.md](../specs/README.md) Section B) and are not `Approved`
+— no spec number, API shape, or Candidate-status promotion is assigned
+to any of them by this document.
 
 ## 5. Phased roadmap
 
@@ -441,22 +446,37 @@ milestone being listed does not authorize starting it — see Section 1.
 
 ### Milestone 5 — Shader System
 
-- **Governance state:** Candidate — requires a new Spec/ADR. Not
-  started. Its dependency, Milestone 4 (Minimal Renderer), is now
-  implemented, giving this milestone a real consumer — so this
-  milestone's next step is drafting that Spec, not implementation, and
-  not authorized by this document (see Section 1).
-- **Problem domain** (not decided): Phase 1 shader source language
-  choice; SPIR-V compilation; reflection (bindings, push-constant
-  layout); pipeline layout construction; cache/debug artifact handling.
-  Spec 0007 deliberately did not resolve any of this — it fixed a
-  narrow, temporary, checked-in-`.spv` sourcing mechanism instead
-  ([ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)),
-  precisely so this milestone's own Spec is the one that decides it.
+- **Governance state:** **`Approved` Spec, `Approved / Ready for
+  Implementation` Plan, Implemented —
+  [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md),
+  [plans/0008-shader-system-foundation.md](../plans/0008-shader-system-foundation.md).**
+  Human Review Approval recorded 2026-08-14 (Spec) and 2026-08-15 (Plan).
+  Its Architectural Impact identified four new decisions, filed as
+  [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)–[ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md),
+  all `Accepted` alongside the Spec approval. Implementation merged via
+  [PR #36](https://github.com/slmao/Atlantis/pull/36) — see
+  [specs/README.md](../specs/README.md)'s own Spec 0008 row for full
+  scope/deviation/verification detail.
+- **Problem domain, as resolved by the Approved Spec/ADRs:** Slang (a
+  Khronos-governed shading language, bundled with the Vulkan SDK) as
+  Phase 1's shader source language and compiler, invoked as a CLI
+  subprocess (`slangc`) at build time, never linked as a library; SPIR-V
+  1.0 output (Option A — the Vulkan Backend's physical-device floor
+  stays `VK_API_VERSION_1_0`, unraised); `spirv-val --target-env
+  vulkan1.0` mandatory; reflection via Slang's own `-reflection-json`,
+  re-projected into an Atlantis-owned, versioned schema, scoped to
+  validating a fixed descriptor/push-constant contract, not general
+  pipeline-layout construction. Spec 0007's own narrow, temporary,
+  checked-in-`.spv` sourcing mechanism
+  ([ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md))
+  is superseded in *mechanism* by this milestone; ADR-0027 itself remains
+  `Accepted` and unmodified.
 - **Explicitly out of scope for this milestone and Phase 1 overall:**
-  targeting more than one graphics API. Do not plan or scaffold DXIL/
-  MSL/WGSL output — Phase 1 has one backend (Vulkan/SPIR-V only), per
-  [AGENTS.md](../AGENTS.md).
+  targeting more than one graphics API. No DXIL/MSL/WGSL output was
+  planned or scaffolded — Phase 1 has one backend (Vulkan/SPIR-V only),
+  per [AGENTS.md](../AGENTS.md). Also out of scope, unchanged: runtime/
+  hot-reload shader compilation, a general descriptor-set/bindless
+  system, and shader debug-info.
 
 ### Milestone 6 — Android platform and Vulkan presentation
 

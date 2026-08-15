@@ -157,12 +157,45 @@ Non-Goals for the full list of what this module deliberately does not
 do (Shader System, scene graph/ECS/asset system, multiple materials,
 lighting/texturing, GPU-driven/bindless/instanced draws, and more).
 
-Every other module — Shader System, Runtime, Tools (see
-[docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md))
-— is still empty by design, per Spec-Driven Development (see
-[AGENTS.md](../AGENTS.md)): each module's internal structure is itself an
-architectural decision established by that module's own approved
-spec + plan + ADR, not invented ahead of time.
+**`shader_system/`** — Atlantis Shader System: a build-time Slang →
+SPIR-V compile/reflect/validate pipeline, superseding
+[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)'s
+temporary checked-in-bytecode bootstrap. Target `atlantis_shader_system`,
+alias `Atlantis::ShaderSystem` (`Atlantis::Core`-only): a private JSON
+parser, the versioned `ReflectionMetadata` schema and its loader/saver,
+`transformSlangReflectionJson()` (mapping Slang's raw `-reflection-json`
+output onto that schema), the fixed Minimal Renderer descriptor contract
+and its validator, and `slangc`/`spirv-val` argv builders. A second
+target, `atlantis_shader_system_rhi_integration` (alias
+`Atlantis::ShaderSystemRhiIntegration`), is the only target in the
+repository depending on both `Atlantis::ShaderSystem` and
+`Atlantis::RHI`: `toVertexInputLayout()`/`toPushConstantSize()` combine
+reflected shader data with a caller-supplied host vertex schema into
+RHI's existing `VertexInputLayout`/push-constant size, never constructing
+or caching any RHI/GPU resource itself. Implemented per
+[specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md),
+[plans/0008-shader-system-foundation.md](../plans/0008-shader-system-foundation.md),
+and [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)–[ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md),
+merged via [PR #36](https://github.com/slmao/Atlantis/pull/36).
 
-Do not add source files for those modules here without a linked spec and
+**`tools/shader_compiler/`** — Atlantis Tools' first real content:
+`atlantis_shader_compiler`, a CLI invoked at build time by CMake's
+`atlantis_add_slang_shader_pair()` (defined in
+`src/shader_system/CMakeLists.txt`) to compile, reflect, and
+build-time-validate one Slang shader pair, publishing its four artifacts
+(vertex/fragment `.spv` and reflection JSON) only after every check
+succeeds. Owns a private, Windows-only `CreateProcessW` wrapper
+(`process_launch.{h,cpp}`) — never a Platform or Shader System API —
+and links neither `Atlantis::RHI` nor the RHI-integration target.
+Implemented per the same Spec 0008/Plan 0008/ADR-0028–0031 references
+above, merged via [PR #36](https://github.com/slmao/Atlantis/pull/36).
+
+Runtime (see
+[docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md))
+is still empty by design, per Spec-Driven Development (see
+[AGENTS.md](../AGENTS.md)): its internal structure is itself an
+architectural decision established by its own approved spec + plan +
+ADR, not invented ahead of time.
+
+Do not add source files for that module here without a linked spec and
 plan.

@@ -7,9 +7,10 @@
 Atlantis is a long-term, real-time rendering engine project. It is currently
 in its **engineering-foundation stage**: Core, Windows Platform, a
 backend-independent RHI, a Vulkan windowed presentation foundation, a
-RenderGraph, and a first Renderer are implemented — the Windows Vulkan path
-now draws a real, visible, depth-tested mesh with a working camera and a
-minimal material, not just a cleared color. Shader System, Runtime,
+RenderGraph, a first Renderer, and a Shader System are implemented — the
+Windows Vulkan path now draws a real, visible, depth-tested mesh with a
+working camera and a minimal material sourced from a real build-time Slang
+shader pipeline, not just a cleared color or checked-in bytecode. Runtime,
 Android/iOS, and headless rendering remain unimplemented. This repository
 holds the process and structure the project will be built with.
 
@@ -225,9 +226,23 @@ verified with a non-shipping `examples/minimal_renderer_demo` across
 resize and minimize/restore, Vulkan Validation Layers clean. The
 `VK_KHR_dynamic_rendering` Extension path has no real-GPU coverage in this
 environment (GPU-independent tests and code review only); see
-[specs/README.md](specs/README.md) for full verification detail. Shader
-System, Runtime, and general asset/scene systems remain unimplemented —
-see [src/README.md](src/README.md).
+[specs/README.md](specs/README.md) for full verification detail.
+
+`specs/0008-shader-system-foundation.md` is also implemented: `Atlantis
+Shader System` (`src/shader_system/` — a build-time Slang → SPIR-V
+compile/reflect/validate pipeline superseding
+[ADR-0027](adr/0027-temporary-precompiled-spirv-shader-artifacts.md)'s
+checked-in-bytecode bootstrap) and `Atlantis Tools`' first real content
+(`src/tools/shader_compiler/` — `atlantis_shader_compiler`, invoked by
+CMake at build time). Minimal Renderer's own shader now sources from this
+pipeline (`shaders/minimal_renderer/minimal_mesh.slang`) instead of a
+checked-in `.spv`/`.glsl` pair. Implementation merged via
+[PR #36](https://github.com/slmao/Atlantis/pull/36); verified with fresh
+Debug and Release builds, the full GPU-independent/`tool`/GPU-required
+test suites, and a manual demo run, Vulkan Validation Layers clean
+throughout — see [specs/README.md](specs/README.md) for full scope and
+verification detail. Runtime and general asset/scene systems remain
+unimplemented — see [src/README.md](src/README.md).
 
 Android and iOS remain specified architecturally only (not implemented);
 Vulkan Backend's Android WSI path is likewise not implemented. No headless
