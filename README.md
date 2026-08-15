@@ -252,4 +252,4 @@ questions still awaiting human decisions.
 
 ## License
 
-Not yet chosen. Do not assume a license until this section is updated.
+Licensed under the [Apache License, Version 2.0](LICENSE).
