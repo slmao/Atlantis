@@ -239,3 +239,217 @@ any known future one, that a `Renderer` interface would exist to swap in.
   cross-owner sharing across independent systems); a future spec can add
   one once a real need — likely an asset system — motivates its exact
   shape.
+
+## Proposed Amendment — 2026-08-15
+
+**Status of this section: `Proposed`, not `Accepted`.** Drafted alongside
+[specs/0010-headless-rendering-foundation.md](../specs/0010-headless-rendering-foundation.md)'s
+own revision, following an independent Human Review of that spec's first
+draft. **This section does not itself change this ADR's top-level Status**
+(`Accepted` above is unchanged — it remains the accurate record of what
+Spec 0007 shipped and how `Renderer::drawFrame()` behaves today, prior to
+this amendment). This amendment requires its own Human Review, alongside
+Spec 0010's, before this ADR's Status can incorporate it and before any
+implementation may act on it. The original Decision, Consequences, and
+Alternatives Considered above are preserved verbatim and are not
+superseded except where this section says so explicitly.
+
+### What prompted this amendment
+
+Spec 0010's first draft (and this amendment's own predecessor text)
+incorrectly assumed `Renderer::drawFrame()` requires zero changes to
+support headless rendering, and incorrectly asserted that
+`Renderer::drawFrame()` leaves its bound color `RenderTarget` in
+`ResourceState::ColorAttachmentOutput` when it returns. Independent
+verification against the actual implementation
+(`src/renderer/src/renderer.cpp`,
+`src/render_graph/src/execution.cpp`) found both claims false:
+
+- `Renderer::drawFrame()` builds and executes its own internal
+  `RenderGraphBuilder` graph by calling the same shared
+  `render_graph::execute()` free function
+  [ADR-0039](0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
+  extends — it is not an independent, isolated code path.
+- Prior to this amendment and [ADR-0039](0039-render-graph-execution-caller-specified-resource-state-boundaries.md),
+  `execute()`'s trailing-transition step unconditionally transitions
+  **every** bound `RenderTarget` that was touched by any usage to
+  `ResourceState::PresentSource`, with no way to distinguish origin
+  (`src/render_graph/src/execution.cpp`, the trailing loop at the end of
+  `execute()`) — this applied to Renderer's own internal call exactly as
+  it applied to any other caller's, because it is the same function.
+- Consequently, **`Renderer::drawFrame()`, prior to this amendment,
+  actually leaves its bound color `RenderTarget` in
+  `ResourceState::PresentSource`** when it returns — not
+  `ColorAttachmentOutput`. A headless caller relying on the incorrect
+  `ColorAttachmentOutput` assumption would record a barrier against the
+  wrong actual layout — a genuine Vulkan-Validation-relevant correctness
+  defect this amendment exists to prevent, not a documentation
+  correction with no functional consequence.
+
+Leaving `Renderer::drawFrame()`'s signature unchanged and having a
+headless caller's own second `execute()` call simply treat
+`PresentSource` as the "real" incoming state (transitioning
+`PresentSource → TransferSource` for the copy) was considered and
+rejected — see Alternatives Considered below.
+
+### Amendment
+
+**`Renderer::drawFrame()` gains one new, required parameter:
+`atlantis::rhi::ResourceState finalColorState`.** Conceptually:
+
+```
+void drawFrame(atlantis::rhi::CommandList& commandList,
+               atlantis::rhi::RenderTarget& colorTarget,
+               atlantis::rhi::Texture& depthTarget,
+               atlantis::rhi::Buffer& cameraUniformBuffer,
+               std::span<const DrawItem> drawItems,
+               atlantis::rhi::ResourceState finalColorState);
+```
+
+(Exact parameter position/name is a Plan-stage detail; the conceptual
+requirement — a caller-supplied, backend-agnostic, required
+`ResourceState` telling `Renderer` what state to leave the bound color
+`RenderTarget` in when the call returns — is fixed here.)
+
+- `Renderer` passes `finalColorState` through, unmodified, as the `final`
+  field of its own internal color `ResourceBinding` entry
+  ([ADR-0039](0039-render-graph-execution-caller-specified-resource-state-boundaries.md)),
+  replacing today's implicit reliance on `execute()`'s old hardcoded
+  `PresentSource` default. `Renderer`'s internal draw pass itself is
+  unchanged — it still declares exactly one `writes()` usage tagged
+  `ColorAttachmentOutput`; only the *trailing* transition after that pass
+  is now caller-directed rather than hardcoded.
+- **`Renderer` does not interpret, validate, or branch on
+  `finalColorState`'s value** — it is an entirely opaque, pass-through
+  parameter as far as `Renderer`'s own logic is concerned. `Renderer`
+  gains no knowledge of `Presentation`, `VkSwapchainKHR`,
+  `OffscreenTarget`, or any other origin-specific concept — it does not
+  learn, and does not need to learn, *why* its caller chose the value it
+  did. This preserves
+  [ADR-0002](0002-presentation-rendertarget-unification.md)'s origin-
+  opacity requirement exactly: the discriminator lives entirely in the
+  caller's own choice of argument value, never in anything `Renderer`
+  inspects or stores.
+- **A windowed caller passes `ResourceState::PresentSource`** — the exact
+  value `execute()`'s old hardcoded behavior always produced, so this is
+  a **zero-behavior-change** update for the windowed path once
+  `minimal_renderer_demo` is updated to supply it explicitly (see
+  [ADR-0039](0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
+  for the full, explicit list of mechanically-updated call sites,
+  including this one).
+- **A headless caller passes `ResourceState::TransferSource` directly** —
+  `Renderer`'s internal trailing transition then goes straight from
+  `ColorAttachmentOutput` to `TransferSource`, with no intermediate
+  `PresentSource` state ever recorded for an image that will never be
+  presented.
+- **No boolean or other implicit/ambiguous parameter is introduced.**
+  `finalColorState` is the same backend-agnostic `ResourceState` enum
+  already used throughout RHI/RenderGraph's public surface
+  ([ADR-0020](0020-rhi-minimal-resource-command-recording-and-submission-interface.md)) —
+  no new type, and no leak of any Vulkan-specific concept into
+  `Renderer`'s public surface.
+- **Legal values and error semantics.** `finalColorState` accepts any
+  `ResourceState` value — the type itself imposes no compile-time
+  restriction to a "valid for a color target" subset, consistent with
+  how `ResourceState` is used everywhere else in this codebase. A value
+  for which the Vulkan Backend's transition-mapping table
+  (`resource_state_mapping.cpp`'s `planTransition()`) has no entry
+  starting from `ColorAttachmentOutput` (this round: any value other
+  than `PresentSource` or `TransferSource`) is a **programmer error**,
+  surfaced as a guaranteed-detectable assertion failure
+  (`ATLANTIS_CHECK_MSG`, per
+  [ADR-0009](0009-assertion.md)) at the point `Renderer`'s internal
+  `execute()` call would otherwise record the corresponding
+  `transitionResource()` call — **not a compile-time restriction, and
+  not a recoverable `Result`-typed error.** This is the same, unchanged
+  assertion mechanism `planTransition()` already applies to every other
+  unlisted `(before, after)` pair; this amendment does not introduce a
+  general state-validation system, a new error enum, or any check
+  `Renderer`/RenderGraph performs ahead of the Vulkan Backend's own
+  existing (closed-table) mechanism — see
+  [ADR-0039](0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
+  for the identical contract as it applies to `ResourceBinding`'s
+  `incomingState`/`finalState` fields more generally.
+
+**Everything else in this ADR's original Decision is unchanged**:
+`Renderer` remains a concrete, stateless class depending only on
+`Atlantis::RHI`/`Atlantis::RenderGraph`/`Atlantis::Core`; it still never
+owns a `RenderTarget`, depth `Texture`, `Mesh`, or `Material`; `Mesh`/
+`Material` ownership, the depth-texture/attachment-format caller-owned
+resize contract, and the camera-`Buffer`-by-reference contract are all
+unaffected.
+
+### Consequences of this amendment
+
+**Positive:**
+
+- Fixes a real correctness defect (see "What prompted this amendment")
+  rather than papering over it with a headless-side workaround that
+  routes a never-presented image through `PresentSource` layout.
+- `Renderer`'s dependency boundary and origin-opacity are fully
+  preserved — the new parameter is exactly as backend-agnostic as
+  everything else in its existing contract.
+- The windowed path's behavior is bit-for-bit unchanged once its one call
+  site is updated — no regression risk from the mechanism itself.
+
+**Negative/Trade-offs:**
+
+- This is a genuine, if narrow, breaking change to
+  `Renderer::drawFrame()`'s already-`Accepted`, already-shipped public
+  signature — every existing caller (today: `minimal_renderer_demo`)
+  must be updated, and this ADR's original claim of a fully stable Spec
+  0007 contract no longer holds without qualification; this amendment is
+  the explicit, reviewed record of that change, not a silent one.
+- A caller must now make an explicit decision every time it calls
+  `Renderer::drawFrame()`, rather than relying on an implicit, always-
+  correct-for-windowed default — a small, permanent increase in this
+  call's own cognitive/API surface, accepted as the cost of not
+  hardcoding a windowed-shaped assumption into `Renderer` itself.
+
+### Alternatives considered (this amendment's own scope)
+
+- **Leave `Renderer::drawFrame()`'s signature unchanged; have a headless
+  caller's own second `execute()` call treat
+  `ResourceState::PresentSource` as the real, documented incoming state
+  and transition directly from it to `TransferSource`.** Considered —
+  this is very likely Vulkan-Validation-safe (nothing in the Vulkan
+  specification requires a `PRESENT_SRC_KHR`-layout image to actually be
+  presented), and would avoid touching `Renderer`'s public API at all.
+  **Rejected**: it does not actually eliminate the defect Spec 0010's own
+  Motivation identifies — it relocates an offscreen, never-to-be-
+  presented image's transition through a layout whose name and
+  documented purpose
+  ([ADR-0019](0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md))
+  is specifically presentation, which is confusing to a future reader of
+  the Vulkan Backend's transition-mapping table and is exactly the
+  "meaningless presentation layout" the review that prompted this
+  amendment flagged as worth avoiding. It also does not reduce the
+  amount of new Vulkan Backend transition-table work required (a
+  `PresentSource → TransferSource` entry would be needed instead of
+  `ColorAttachmentOutput → TransferSource` — see
+  [ADR-0039](0039-render-graph-execution-caller-specified-resource-state-boundaries.md)) —
+  so it trades a small, explicit, reviewed `Renderer` API change for a
+  larger, harder-to-explain semantic compromise with no net
+  implementation savings.
+- **Thread a shared, caller-owned execution-state object through both
+  `Renderer`'s internal `execute()` call and the caller's own second
+  one**, so cross-call state continuity happens automatically without
+  either a `Renderer` signature change or a caller-supplied incoming-
+  state override. Considered in the original (pre-this-amendment) draft
+  of
+  [ADR-0039](0039-render-graph-execution-caller-specified-resource-state-boundaries.md)
+  and rejected there for the same reason it is rejected here: it requires
+  `Renderer::drawFrame()`'s signature to change *regardless* (to accept
+  and thread the shared object through), and does so via a larger, less
+  self-contained change than a single `ResourceState` parameter — no
+  additional benefit over this amendment's narrower approach.
+- **Give `Renderer` an internal boolean, e.g. `bool isHeadless`, instead
+  of an explicit `ResourceState`.** Rejected: a boolean's meaning is not
+  self-evident at a call site, does not generalize if a future spec needs
+  a third final state, and — more importantly — would require `Renderer`
+  to itself map that boolean to a concrete `ResourceState` internally,
+  reintroducing exactly the kind of origin-aware branching inside
+  `Renderer` this ADR's original Decision (and
+  [ADR-0002](0002-presentation-rendertarget-unification.md)) exists to
+  keep out of it. An explicit `ResourceState` value keeps `Renderer`
+  itself completely opaque to *why* a particular value was chosen.
