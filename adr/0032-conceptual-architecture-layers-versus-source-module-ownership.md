@@ -55,19 +55,42 @@ same system — neither supersedes the other.**
   going forward, as a **non-binding, descriptive lens** for reasoning
   about where a *future* capability conceptually belongs, before that
   capability has its own Spec and therefore its own concrete module
-  assignment. A rough, illustrative (not authoritative) mapping today:
-  `Core`/`Platform` sit in Core/Platform; `RHI`/`Vulkan
-  Backend`/`RenderGraph`/`Renderer`/`Shader System` sit in Runtime
-  Services and parts of Authoritative Runtime; `Tools` and the
-  as-yet-unbuilt `Runtime` module span Authoritative Runtime and
-  (eventually) the SDK/Client boundary. This mapping is illustrative
-  only and is not itself an architectural decision — it does not fix
-  any module's real dependency edges.
+  assignment. Atlantis labels the bottom layer specifically as `Core /
+  Platform / RHI / Device Backends` (a refinement of the external
+  draft's own `Core/Platform` label, not a disagreement with it), so
+  that the Device Backend position named in
+  [ADR-0037](0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md)
+  is visible in the layer name itself rather than only in a mapping
+  paragraph. A rough, illustrative (not authoritative) mapping today:
+  `Core`/`Platform`/`RHI` sit in that bottom layer, alongside Atlantis
+  Vulkan Backend as the one implemented Device Backend (Direct3D
+  12/Metal are named only as future candidate siblings, per ADR-0037,
+  not as anything implemented or scaffolded); `RenderGraph`/`Renderer`/
+  `Shader System` sit in Runtime Services and parts of Authoritative
+  Runtime; `Tools` and the as-yet-unbuilt `Runtime` module span
+  Authoritative Runtime and (eventually) the SDK/Client boundary. This
+  mapping is illustrative only and is not itself an architectural
+  decision — it does not fix any module's real dependency edges, and a
+  single module may legitimately be described as touching more than one
+  conceptual layer without that being treated as an inconsistency.
 - Every *future* Spec that introduces or restructures a top-level module
   (Runtime, or any new module a future Spec proposes) decides that
   module's real position in **both** views explicitly, as part of its
   own Architectural Impact section — this ADR does not pre-decide that
-  placement for any module not yet specced.
+  placement for any module not yet specced. This includes any future
+  Device Backend (Direct3D 12, Metal, per ADR-0037): its own future Spec
+  places it in both views the same way this ADR requires for any other
+  new module — this ADR does not create a new public `DeviceBackend`
+  abstraction module, and Atlantis Vulkan Backend is not renamed or
+  restructured by this ADR.
+- Wherever the conceptual-layer diagram is reproduced (in Spec 0009 or
+  elsewhere), it must carry a caption stating, at minimum: it is not a
+  source-module list or a build/CMake dependency graph; the connecting
+  lines do not represent call direction or link order; and the
+  nine-module view remains the sole authoritative structure for source
+  and build ownership. This keeps the disclaimer attached to the diagram
+  itself, not only to surrounding prose that could be lost if the
+  diagram is copied elsewhere.
 - `docs/architecture/module_boundaries.md` is not modified by this ADR
   or by [Spec 0009](../specs/0009-long-term-engine-architecture-alignment.md).
   Any future update reconciling it with the five-layer view (e.g. adding

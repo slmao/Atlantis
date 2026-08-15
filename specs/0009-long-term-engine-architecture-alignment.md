@@ -5,14 +5,21 @@
   direction, from a human-provided external architecture draft; pending
   Human Review.
 - **Created:** 2026-08-15
-- **Related Plan(s):** None — this Spec explicitly does not authorize a
-  Plan or Implementation (see Non-Goals).
+- **Related Plan(s):** None yet — this Spec does not itself authorize a
+  Plan or Implementation (see Non-Goals), and does not create Plan 0009
+  now. Because this revision proposes a concrete future documentation
+  deliverable (`docs/architecture/engine_architecture.md` — see
+  Architectural Impact), approving this Spec is expected to be followed
+  by drafting **Plan 0009**, itself subject to its own Human Review,
+  before that document is created — unlike Specs 0001–0008, this Spec
+  is not expected to close out with "no Plan is needed."
 - **Related ADR(s):**
   [ADR-0032](../adr/0032-conceptual-architecture-layers-versus-source-module-ownership.md),
   [ADR-0033](../adr/0033-runtime-authority-and-client-boundary.md),
   [ADR-0034](../adr/0034-stable-public-boundary-versus-internal-cpp-layout.md),
   [ADR-0035](../adr/0035-authoring-runtime-data-separation-as-a-long-term-principle.md),
-  [ADR-0036](../adr/0036-agent-native-automation-and-machine-verifiable-architecture-as-long-term-goals.md)
+  [ADR-0036](../adr/0036-agent-native-automation-and-machine-verifiable-architecture-as-long-term-goals.md),
+  [ADR-0037](../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md)
   — all `Proposed`, drafted alongside this Spec. See Architectural Impact.
 
 ## Summary
@@ -72,9 +79,16 @@ decisions already made.
 - State a small number of long-term architectural principles — Runtime
   authority and Client symmetry, a stable schema/identity/protocol
   boundary distinct from internal C++ layout, Authoring/Runtime data
-  separation as an available (not mandatory) option, and Agent-native,
-  vendor-neutral development tooling as a direction — each as its own
-  narrowly-scoped `Proposed` ADR (ADR-0033 through ADR-0036).
+  separation as an available (not mandatory) option, Agent-native,
+  vendor-neutral development tooling as a direction, and a reserved
+  long-term boundary position for future sibling Device Backends without
+  Phase 1 scaffolding — each as its own narrowly-scoped `Proposed` ADR
+  (ADR-0033 through ADR-0037).
+- Propose a future, not-yet-authorized `docs/architecture/` overview
+  document (`engine_architecture.md`) that gives these two views, and
+  Atlantis's current-versus-long-term status, a single navigation entry
+  point — without itself becoming an authoritative source (see
+  Architectural Impact and Documentation Authority).
 - Explicitly classify the external draft's major directions against
   Atlantis's current state, so future Specs (in particular the Candidate
   Backlog's Runtime Host, World/ECS, Asset, and Tool/Editor Protocol
@@ -95,9 +109,12 @@ This Spec does not:
   or CI configuration.
 - Implement, or produce a Plan for implementing, Runtime, World, ECS,
   Asset, Asset Database, Editor, SDK (in any language), Package System,
-  Job System, a second graphics backend, Shader System language/target
-  extensions, serialization, a wire protocol, an ABI, or any AI/UGC/
-  Neural-rendering capability.
+  Job System, a second graphics backend (Direct3D 12, Metal, or any
+  other), Shader System language/target extensions, serialization, a
+  wire protocol, an ABI, or any AI/UGC/Neural-rendering capability.
+  Naming Direct3D 12 and Metal as long-term candidate Device Backends
+  (ADR-0037) is not an exception to this Non-Goal — no backend code,
+  directory, target, or dependency is created or authorized.
 - Modify `AGENTS.md`, any existing `Accepted` ADR, any existing
   `Approved` Spec or its Plan, `docs/architecture/module_boundaries.md`,
   or `docs/project-blueprint.md`. Any future alignment of those documents
@@ -115,12 +132,18 @@ This Spec does not:
   protocol, a serialization format, a Package manifest format, a
   Physics/Audio/Inference backend interface, Job System design, Editor
   process model, in-process-vs-remote Runtime transport, Asset Database
-  schema, a second graphics backend, a UGC sandbox mechanism, a
-  structured-diagnostic schema, or a concrete engine CLI command set.
+  schema, a second graphics backend's concrete interface/selection
+  mechanism, a UGC sandbox mechanism, a structured-diagnostic schema, or
+  a concrete engine CLI command set.
+- Create `docs/architecture/engine_architecture.md` or any other new
+  file under `docs/architecture/`. This Spec proposes that document as a
+  future Plan deliverable (see Roadmap Impact and Architectural Impact)
+  — drafting it is explicitly not authorized by this Spec itself.
 - Authorize a Plan or any Implementation. Approving this Spec and its
-  ADRs authorizes drafting a Plan for the next concrete step (most
-  likely a Candidate Backlog item this Spec's Roadmap Impact section
-  discusses) — it does not itself authorize writing code.
+  ADRs authorizes drafting a Plan for the next concrete step — most
+  likely Plan 0009 itself, covering `docs/architecture/engine_architecture.md`
+  and related documentation-navigation updates (see Roadmap Impact) — it
+  does not itself authorize writing code, CMake, or shaders.
 
 ## Requirements
 
@@ -150,6 +173,10 @@ require any change to existing, already-implemented code:
   constraints should move toward machine-verifiability — as a
   vendor-neutral direction, not a Phase 1 requirement or an authorization
   to build any specific tool now (ADR-0036).
+- Vulkan remains the only implemented Device Backend in Phase 1; a
+  conceptual, boundary-level position is reserved for future sibling
+  Device Backends without creating any code, directory, target,
+  dependency, or abstraction for them now (ADR-0037).
 
 ### Long-term direction (compatible, not adopted as binding invariant now)
 
@@ -165,7 +192,15 @@ say adequately:
   existing "RHI is backend-agnostic in interface; Vulkan is Phase 1's
   only implementation" principle, generalized to future non-rendering
   services once they exist. No second backend for any of these is
-  authorized by this Spec.
+  authorized by this Spec; see ADR-0037 specifically for the graphics
+  Device Backend case.
+- Direct3D 12 and Metal as candidate future sibling Device Backends
+  behind RHI's existing boundary, per ADR-0037 — a long-term position,
+  not an implementation commitment or timetable. Phase 1 remains
+  Vulkan-only; no Direct3D 12/Metal code, directory, CMake target,
+  SDK dependency, capability-tier abstraction, or backend-selection
+  mechanism is authorized by this Spec or by ADR-0037. WebGPU is not
+  given a reserved position by ADR-0037 at all.
 - Headless, fixed-step, and snapshot/replay as valuable future Runtime
   capabilities — Atlantis's own existing sequencing (windowed ships
   before headless, per AGENTS.md) is unchanged; this Spec's Roadmap
@@ -200,11 +235,21 @@ concrete engine CLI command set.
   not a target platform. This Spec does not reopen that; a future
   platform-scope Spec would need its own explicit Human Review to change
   it.
-- **A second graphics backend, or RHI capability-tier scaffolding for
-  one** (D3D12, Metal, WebGPU; `RayTracingCapability`,
-  `MeshShaderCapability`, and similar). Phase 1 is Vulkan-only, per
-  AGENTS.md; RHI stays backend-independent in interface but no second
-  backend is implemented or scaffolded for. Not reopened by this Spec.
+- **Implementing or scaffolding a second graphics backend now, in any
+  form** — RHI capability-tier abstractions (`RayTracingCapability`,
+  `MeshShaderCapability`, and similar), backend registries/factories,
+  conditional-compilation scaffolding, or second-backend SDK
+  dependencies. Phase 1 is Vulkan-only, per AGENTS.md; RHI stays
+  backend-independent in interface but no second backend is implemented
+  or scaffolded for. Not reopened by this Spec. Naming Direct3D 12 and
+  Metal as long-term candidate sibling Device Backends is a separate
+  question, addressed above under "Long-term direction" and in
+  ADR-0037 — that naming does not reopen, weaken, or except itself from
+  this Phase 1 prohibition.
+- **WebGPU, in any role, at any time horizon.** Unlike Direct3D 12 and
+  Metal, WebGPU is not given even a long-term reserved position by this
+  Spec or by ADR-0037 — it is outside this round's scope entirely, not
+  merely deferred.
 - **Shader multi-target compilation, a permutation system, or runtime/
   hot-reload shader compilation.** Spec 0008 / ADR-0028 already decided
   Slang → SPIR-V only, no DXIL/MSL/WGSL, no runtime compilation, no
@@ -244,8 +289,35 @@ Authoritative Runtime      (World, ECS, Asset, Gameplay, Replay — future)
         |
 Runtime Services            (Render, Physics, Audio, Inference, ... — Render exists today)
         |
-Core / Platform              (RHI, Jobs, IO, Memory, OS — Core/Platform/RHI exist today)
+Core / Platform / RHI / Device Backends
+                             (Core, Platform, RHI exist and are implemented today; Device
+                              Backends: Atlantis Vulkan Backend is the only implemented one —
+                              Direct3D 12 and Metal are named only as future candidate
+                              sibling backends, per ADR-0037)
 ```
+
+**Diagram caption (read together with the diagram above, not only in
+surrounding prose — per the independent architecture review's
+recommendation):**
+
+- This is a conceptual, descriptive layering, not a list of source
+  modules and not a build/CMake dependency graph. The connecting lines
+  do not represent call direction, ownership, or link order.
+- The only Device Backend that exists and is implemented today is
+  Atlantis Vulkan Backend. Direct3D 12 and Metal appear here solely as
+  future candidate positions (ADR-0037); naming them here authorizes no
+  code, directory, target, dependency, or timetable.
+- Atlantis's nine-module, source/build-ownership view (below) remains
+  the sole authoritative structure for CMake targets and module
+  dependencies — this diagram never overrides it.
+- Any future Device Backend, if and when approved by its own Spec,
+  becomes an independent sibling module in that nine-module view (a
+  tenth-plus module, alongside — not inside — Atlantis Vulkan Backend),
+  the same way Atlantis Vulkan Backend itself is a named module today.
+  This diagram does not create, and this Spec does not authorize, a new
+  public `DeviceBackend` abstraction module.
+- Atlantis Vulkan Backend is not renamed, restructured, or reinterpreted
+  by this diagram or by ADR-0037.
 
 **Repository module ownership** (authoritative for source/build/
 dependency structure — unchanged by this Spec):
@@ -257,12 +329,15 @@ Atlantis Core → Atlantis Platform → Atlantis RHI → Atlantis Vulkan Backend
 ```
 
 Today's seven implemented modules sit, approximately and
-non-authoritatively, in the lower two conceptual layers (Core/Platform,
-Runtime Services); the not-yet-implemented Runtime and Tools modules will
-eventually span Authoritative Runtime and the SDK/Client boundary once
-their own Specs place them there. This mapping is illustrative only, per
-ADR-0032 — it grants no dependency edge and reassigns no file's module
-ownership.
+non-authoritatively, in the lower two conceptual layers (Core/Platform/
+RHI/Device Backends, Runtime Services); the not-yet-implemented Runtime
+and Tools modules will eventually span Authoritative Runtime and the
+SDK/Client boundary once their own Specs place them there. Any future,
+independently-approved Device Backend (Direct3D 12, Metal) would sit in
+the same bottom layer as Atlantis Vulkan Backend does today, as a
+sibling — not a replacement, and not a new abstraction layer of its own.
+This mapping is illustrative only, per ADR-0032 — it grants no
+dependency edge and reassigns no file's module ownership.
 
 ## Compatibility with Existing Architecture
 
@@ -272,12 +347,20 @@ ownership.
   architecture-only status unchanged. ADR-0033's future Client-boundary
   principle does not apply retroactively to Platform's own existing
   Windows/Android abstraction.
-- **RHI:** unaffected in its current, `Accepted` public surface.
-  ADR-0034 explicitly names RHI's existing never-expose-`Vk*`-types
-  pattern (ADR-0001) as the *first instance* of the generalized
-  principle it states — reinforcing, not changing, that boundary.
-- **Vulkan Backend:** unaffected. Remains Phase 1's sole graphics
-  backend; no second backend scaffolding is introduced or implied.
+- **RHI:** unaffected in its current, `Accepted` public surface. ADR-0034
+  names RHI's existing never-expose-`Vk*`-types pattern (ADR-0001) as
+  one instance of the generalized principle it states — reinforcing, not
+  changing, that boundary; ADR-0030 is the instance that most directly
+  matches the schema/protocol framing (see ADR-0034's own Context for
+  the distinction). ADR-0037 states that any future Device Backend
+  behind RHI would need to satisfy the same backend-independence
+  boundary — this is a long-term expectation for future Specs, not a
+  change to RHI's public API today.
+- **Vulkan Backend:** unaffected. Remains Phase 1's sole implemented
+  Device Backend; no second-backend scaffolding is introduced or
+  implied. ADR-0037 records a long-term, boundary-level position for
+  future sibling Device Backends (Direct3D 12, Metal) without renaming,
+  restructuring, or reinterpreting Atlantis Vulkan Backend in any way.
 - **RenderGraph:** unaffected. Construction/compilation/execution
   design unchanged.
 - **Renderer:** unaffected. Its existing single-fixed-material,
@@ -307,42 +390,67 @@ ownership.
 
 The existing Candidate Spec Backlog (`specs/README.md` Section B) is
 **not rewritten** by this Spec — every existing candidate item remains,
-unchanged, at its existing backlog position. This section only records a
-non-binding dependency-ordering suggestion this alignment work surfaced,
-for whoever drafts the next Spec to consider; it commits nothing.
+unchanged, at its existing backlog position, and this Spec does not
+reorder it. This section only records a non-binding observation this
+alignment work surfaced, for whoever drafts the next Spec or conducts a
+future roadmap review to consider; it commits nothing and decides
+nothing.
 
-A plausible near-term ordering, consistent with both Atlantis's existing
-windowed-then-headless commitment and the long-term principles this Spec
-introduces:
+- **Windowed rendering is already complete** (Specs 0001–0008, all
+  `Approved`/implemented). **Headless rendering (Candidate 2) remains
+  the existing, unchanged next step in that sequencing** — AGENTS.md's
+  windowed-then-headless commitment is not altered, relaxed, or
+  reordered by this Spec in any way.
+- Whether a future Runtime Host Spec (Candidate 5) should be drafted
+  before, after, or alongside Candidate 2 is **explicitly left to a
+  future roadmap review or to whichever of those Specs is drafted
+  first** — this Spec does not resolve that ordering question, and the
+  previous draft of this section's numbered list is corrected here to
+  avoid implying it did. ADR-0033's authority/Client principle would
+  first be exercised in earnest wherever Runtime Host lands, whenever
+  that turns out to be.
+- Candidate 6 (World/ECS Foundation) and Candidate 7 (Serialization and
+  Stable Identity) are where ADR-0034 (stable boundary) and ADR-0035
+  (authoring/runtime separation) would first be tested against a real
+  data model; Candidate 4 (Asset System Foundation) plausibly benefits
+  from Candidate 7's identity work landing first, but is not described
+  as strictly blocked by it.
+- Candidate 8 (Tool/Editor Connection Protocol) is where ADR-0033's
+  Client model would get a second real Client (beyond Runtime Host
+  itself) to validate against.
+- Candidates 9–12 (Gameplay SDK, Research/Simulation API, AI Inference
+  Integration, UGC Sandbox) are not discussed further here; nothing in
+  this Spec changes their existing backlog position or gating.
+- **Candidate 1 (Android Platform) and Candidate 3 (Image Regression
+  Testing) are unaffected by this section** — this Spec's observations
+  above do not cover them, do not imply they are lower priority, and do
+  not change their existing backlog position.
+- **No Direct3D 12 or Metal work is added to the Candidate Backlog at
+  any position**, near-term or otherwise. ADR-0037 records a long-term
+  architectural *direction* only; it is deliberately not translated into
+  a roadmap or backlog item by this Spec. A future Spec proposing actual
+  Direct3D 12 or Metal work would itself need to be added to the backlog
+  first, per this repository's normal process.
+- **WebGPU has no roadmap position and is not discussed further** — see
+  Requirements above.
+- Whether Agent-native/machine-verifiable tooling (ADR-0036) should
+  become its own new Candidate Backlog item — there is currently no
+  existing candidate number for it — is an **open question left to
+  Human Review** (see Risks & Open Questions and HR-0009), not decided
+  by this Spec.
 
-1. Candidate 5 (Runtime Host and Composition Root) — the first place
-   ADR-0033's authority/Client principle would actually be exercised
-   against a real design.
-2. Candidate 2 (Headless Rendering) — already next after windowed per
-   AGENTS.md's own sequencing; also the natural first real Runtime Host
-   entry point beyond the existing non-shipping verification demos.
-3. Candidate 6 (World/ECS Foundation) and Candidate 7 (Serialization and
-   Stable Identity) — where ADR-0034 (stable boundary) and ADR-0035
-   (authoring/runtime separation) first get tested against a real data
-   model.
-4. Candidate 4 (Asset System Foundation) — benefits from Candidate 7's
-   identity work landing first, but is not strictly blocked by it.
-5. Candidate 8 (Tool/Editor Connection Protocol) — the first place
-   ADR-0033's Client model gets a second real Client (beyond Runtime
-   Host itself) to validate against.
-6. Candidates 9–12 (Gameplay SDK, Research/Simulation API, AI Inference
-   Integration, UGC Sandbox) — unchanged position, still gated on the
-   Runtime/World work above landing first.
-
-This ordering is a suggestion for the next Spec author, not a
-commitment — see AGENTS.md's own "a milestone being listed does not
-authorize starting it" principle, which applies here identically.
+None of the above is a commitment — see AGENTS.md's own "a milestone
+being listed does not authorize starting it" principle, which applies
+here identically. This section observes and flags; it does not order or
+authorize.
 
 ## Architectural Impact
 
-This Spec identifies five new architectural decisions, each drafted as
+This Spec identifies six new architectural decisions, each drafted as
 its own `Proposed` ADR alongside this Spec, none of which reopens or
-modifies any existing `Accepted` ADR or `Approved` Spec:
+modifies any existing `Accepted` ADR or `Approved` Spec. It also
+proposes one future, not-yet-authorized documentation deliverable (see
+"A future architecture overview document" below).
 
 - [ADR-0032](../adr/0032-conceptual-architecture-layers-versus-source-module-ownership.md) —
   Conceptual Architecture Layers versus Source-Module Ownership.
@@ -356,6 +464,50 @@ modifies any existing `Accepted` ADR or `Approved` Spec:
 - [ADR-0036](../adr/0036-agent-native-automation-and-machine-verifiable-architecture-as-long-term-goals.md) —
   Agent-Native Automation and Machine-Verifiable Architecture as
   Long-Term Goals.
+- [ADR-0037](../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md) —
+  Long-Term Device Backend Extensibility Without Phase 1 Scaffolding.
+
+### A future architecture overview document
+
+This Spec proposes that, once it and its ADRs are `Approved`/`Accepted`,
+a future Plan 0009 (see Related Plan(s) above) create
+`docs/architecture/engine_architecture.md` as a navigation/overview
+document. It would:
+
+- Give Atlantis a single top-level entry point describing the
+  conceptual-layers view and the nine-module source-ownership view as
+  two orthogonal lenses (per ADR-0032), including the Device Backend
+  position from ADR-0037.
+- State current as-built status (what exists today) versus long-term
+  direction (what is `Proposed`/future), consistent with what this Spec
+  and its ADRs already say.
+- Link to, rather than duplicate, every relevant `Accepted` ADR,
+  [docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md),
+  [docs/architecture/threading.md](../docs/architecture/threading.md),
+  and [docs/project-blueprint.md](../docs/project-blueprint.md).
+- Note, briefly, that Runtime/SDK/World/Asset remain unimplemented, and
+  that Agent-native/machine-verifiable goals (ADR-0036) are a
+  development-tooling direction, not a claim about Atlantis's current
+  runtime AI capability.
+
+It would explicitly **not**: restate or duplicate any governance rule
+from `AGENTS.md`; restate detailed per-module ownership already owned by
+`module_boundaries.md`; restate roadmap/status information already owned
+by `project-blueprint.md` and `specs/README.md`; restate the *reasoning*
+behind any `Accepted` ADR (link to it instead); reproduce the external
+draft; describe any concrete future subsystem's API; or state any
+capability as approved that is not actually `Accepted`/`Approved`. Per
+[AGENTS.md](../AGENTS.md)'s single-authoritative-source principle, this
+document would be a navigation/overview layer only — the *why* stays
+with `Accepted` ADRs, the current *what* stays with `Approved` Specs and
+`module_boundaries.md`, and roadmap/status stays with
+`project-blueprint.md`/`specs/README.md`. It must not become a second,
+competing `AGENTS.md`.
+
+This Spec does **not** create this file now — see Non-Goals. Whether to
+actually create it, and its exact content, is confirmed or adjusted by
+Human Review and delivered through Plan 0009 (see below), not decided
+unilaterally by this Spec.
 
 ## Alternatives Considered
 
@@ -372,16 +524,17 @@ modifies any existing `Accepted` ADR or `Approved` Spec:
   Asset, SDK, Editor) — declining to engage with it at all would leave
   each future Spec to independently rediscover the same principles (or
   fail to), with no shared starting point.
-- **Split this into three separate Specs** (long-term principles;
-  Runtime/SDK/Client boundary; Agent-native development and
-  machine-verifiable architecture), as suggested by this Spec's own
-  governance instructions. Considered, and not adopted as the default in
-  this draft: the five linked ADRs already provide independent,
-  separately-acceptable/-rejectable decision units, which was judged to
-  give most of the benefit of splitting without tripling the Human
-  Review overhead for a single, coherent alignment pass. **This is
-  flagged explicitly as an open question for Human Review** — see Risks
-  & Open Questions; splitting remains available if preferred.
+- **Split this into three separate Specs** (long-term principles,
+  including Device Backend extensibility; Runtime/SDK/Client boundary;
+  Agent-native development and machine-verifiable architecture), as
+  suggested by this Spec's own governance instructions. Considered, and
+  not adopted as the default in this draft: the six linked ADRs already
+  provide independent, separately-acceptable/-rejectable decision units,
+  which was judged to give most of the benefit of splitting without
+  tripling the Human Review overhead for a single, coherent alignment
+  pass. **This is flagged explicitly as an open question for Human
+  Review** — see Risks & Open Questions; splitting remains available if
+  preferred.
 - **Fold this work into updates to `AGENTS.md`,
   `docs/architecture/module_boundaries.md`, or `docs/project-blueprint.md`
   directly, skipping a Spec/ADR round.** Rejected: those documents state
@@ -397,13 +550,15 @@ Not applicable in the code-verification sense — this Spec produces no
 code. Verification here means: Human Review confirms (a) this Spec's own
 classification of the external draft (adopted now / long-term direction
 / deferred / rejected) is accurate and complete for the topics listed in
-Requirements; (b) each of ADR-0032–0036 states exactly one decision,
-does not silently reopen any `Accepted` ADR or `Approved` Spec, and is
-narrow enough to be individually accepted or rejected; and (c) the
-Compatibility with Existing Architecture section's per-module claims are
-correct against the actual current repository state (verifiable by
-reading the cited Specs/ADRs and, for Shader System, PR #36's own merged
-content).
+Requirements, including the three-tier treatment of Direct3D 12 and
+Metal (current Vulkan-only / long-term sibling-backend direction /
+implementation still deferred); (b) each of ADR-0032–0037 states exactly
+one decision, does not silently reopen any `Accepted` ADR or `Approved`
+Spec, and is narrow enough to be individually accepted or rejected; and
+(c) the Compatibility with Existing Architecture section's per-module
+claims are correct against the actual current repository state
+(verifiable by reading the cited Specs/ADRs and, for Shader System,
+PR #36's own merged content).
 
 ## Risks & Open Questions
 
@@ -440,9 +595,25 @@ content).
   abstractions.** Unchanged risk already named in AGENTS.md; this Spec
   does not increase it — ADR-0036 explicitly scopes "agent-native" to
   development tooling, not a runtime AI/UGC feature set.
+- **Direct3D 12/Metal naming read as a product commitment.** Naming
+  specific future backends, even only as long-term candidates, risks
+  being misread — by a human skimming this Spec, or by an AI agent
+  working from this repository — as a scheduled deliverable rather than
+  a boundary-level architectural direction. Mitigation: ADR-0037,
+  Requirements, and Compatibility above all repeat, at every mention,
+  that no timetable, code, or implementation is authorized; Roadmap
+  Impact explicitly does not add either backend to the Candidate
+  Backlog.
+- **No code-level reservation means RHI may still need to evolve later.**
+  Because ADR-0037 deliberately adds no factory, capability system, or
+  other code-level scaffolding, a future Direct3D 12 or Metal Spec may
+  still find RHI's current interface needs real changes to accommodate
+  it. Mitigation: none built into this Spec — honestly flagged as a real
+  future cost, to be addressed by that future Spec and its own ADR, not
+  papered over here.
 - **Open questions for Human Review** (recommendation given, not a
   decision made by this Spec):
-  - Whether to keep this as one Spec with five linked ADRs (as drafted)
+  - Whether to keep this as one Spec with six linked ADRs (as drafted)
     or split into the three-Spec structure this Spec's own governance
     instructions offered as an alternative.
   - Whether "Agent-native / AI-native" should be recorded anywhere as
@@ -450,21 +621,42 @@ content).
     `README.md`), versus staying scoped, as this Spec keeps it, to
     development-time tooling direction only (ADR-0036) with no runtime
     product-positioning claim.
-  - Whether the five-layer conceptual view (ADR-0032) should eventually
-    become a real, checked-in `docs/architecture/` document, or remain
-    only in this Spec/ADR pair.
-  - Whether the Roadmap Impact ordering above reflects the human
-    maintainer's actual near-term priority, or should be reordered
-    before any of those Candidate Backlog items gets its own Spec.
+  - Whether the five-layer conceptual view (ADR-0032, now naming Device
+    Backends explicitly at its base) should eventually become a real,
+    checked-in `docs/architecture/` document — this Spec's own
+    recommendation is yes, as `docs/architecture/engine_architecture.md`
+    via a future Plan 0009 (see Architectural Impact) — or remain only
+    in this Spec/ADR pair.
+  - Whether Candidate 5 (Runtime Host and Composition Root) should be
+    sequenced before, after, or alongside Candidate 2 (Headless
+    Rendering) — left to a future roadmap review or to whichever of
+    those Specs is drafted first, not resolved by this Spec (see
+    Roadmap Impact).
+  - Whether Agent-native/machine-verifiable tooling (ADR-0036) warrants
+    its own new Candidate Backlog item, since none currently exists for
+    it (see Roadmap Impact).
+  - Whether to accept ADR-0037's "boundary reservation without
+    scaffolding" as the right level of long-term commitment for Direct3D
+    12/Metal, versus one of its own Alternatives Considered (saying
+    nothing, building factory/capability scaffolding now, or declaring a
+    committed roadmap item).
 
 ## Out of Scope / Future Work
 
 Everything listed under Non-Goals and under "Deferred to a future
-subsystem Spec" in Requirements, above. Concretely, the next expected
-piece of future work — not authorized or started by this Spec — is
-drafting a Spec for whichever Candidate Backlog item Human Review
-prioritizes, most likely Candidate 5 (Runtime Host and Composition Root)
-per this Spec's own Roadmap Impact suggestion.
+subsystem Spec" in Requirements, above — including any Direct3D 12 or
+Metal implementation work, which remains entirely future-Spec territory
+per ADR-0037's own future approval gate. Concretely, two distinct pieces
+of future work follow this Spec's approval, neither authorized or
+started here:
+
+- **Plan 0009**, covering `docs/architecture/engine_architecture.md` and
+  the related documentation-navigation updates described in
+  Architectural Impact — the direct, docs-only follow-up to this Spec
+  itself.
+- A **future subsystem Spec** for whichever Candidate Backlog item Human
+  Review prioritizes next (see Roadmap Impact) — a separate piece of
+  work, not gated on Plan 0009 landing first.
 
 ## Documentation Authority
 
@@ -478,3 +670,15 @@ the authoritative record** of what was adopted, deferred, or rejected —
 not the external draft. Nothing in this repository should cite the
 external draft as a source of truth going forward; it should cite this
 Spec and its ADRs instead.
+
+This also governs the future `docs/architecture/engine_architecture.md`
+proposed above: once created by a future Plan, it is a
+navigation/overview document, not an independent source of authority.
+The *why* behind any decision stays with the relevant `Accepted` ADR;
+the current *what* stays with the relevant `Approved` Spec and
+[module_boundaries.md](../docs/architecture/module_boundaries.md); and
+roadmap/status stays with
+[project-blueprint.md](../docs/project-blueprint.md)/[specs/README.md](../specs/README.md).
+That future document must link to these sources, not restate or
+duplicate their content, and must not become a second, competing
+`AGENTS.md`.

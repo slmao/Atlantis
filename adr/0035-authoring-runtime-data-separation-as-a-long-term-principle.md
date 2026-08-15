@@ -45,6 +45,18 @@ human author or tool to edit.** This is adopted as a standing
 *permission and expectation to weigh*, not a mandate that every future
 data model must include a distinct bake/compile step.
 
+**The binding effect of this ADR is procedural, not substantive: a
+future subsystem Spec (Candidate 4, Candidate 6) must make and record
+the authoring/runtime representation choice explicitly. This ADR
+removes any presumption that a unified representation is the default,
+but it does not decide, and should not be read as having decided, which
+representation model is correct for a future subsystem.** Unlike this
+Spec's other ADRs, this ADR does not by itself forbid any future design
+choice — a future Spec choosing "authoring and runtime are the same
+structure" remains fully compliant, provided it says so and why. What
+this ADR forbids is silence: defaulting into an answer without having
+weighed the alternative.
+
 - A future World/ECS Spec (Candidate 6) and a future Asset System Spec
   (Candidate 4) must each explicitly address, in their own Architectural
   Impact section, whether their authoring-facing representation and
@@ -52,12 +64,19 @@ data model must include a distinct bake/compile step.
   two related-but-distinct ones — and if distinct, name the
   transformation step (however it works) that connects them. Silence on
   this question is not acceptable once this ADR is `Accepted`.
-- This principle generalizes an already-real precedent in this
-  repository — Shader System's own `.slang` source → build-time-compiled
-  artifact → versioned `ReflectionMetadata` schema pipeline
+- This principle draws on an already-real, but limited, precedent in
+  this repository — Shader System's own `.slang` source →
+  build-time-compiled artifact → versioned `ReflectionMetadata` schema
+  pipeline
   ([ADR-0028](0028-shader-system-source-language-and-compiler.md)–[ADR-0031](0031-shader-system-artifact-versioning-and-reproducibility.md))
   — as the first concrete instance Atlantis has actually built and
-  shipped, not a hypothetical.
+  shipped, not a hypothetical. This ADR does not claim Shader System's
+  single-input, single-output, build-time compilation is structurally
+  equivalent to a future World/ECS authoring-to-runtime bake, which would
+  plausibly involve multi-object dependency graphs, editor round-tripping,
+  and incremental updates that Shader System's pipeline does not have to
+  solve — the precedent motivates *naming* the option, it does not
+  validate any specific bake mechanism for World/ECS.
 - This ADR does not decide: whether a bake/compile step is synchronous or
   asynchronous, whether it is a build-time or load-time operation,
   whether authoring and runtime representations live in the same process

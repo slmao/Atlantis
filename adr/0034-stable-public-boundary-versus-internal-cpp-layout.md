@@ -17,7 +17,14 @@ undocumented, unversioned reflection JSON — never that raw JSON
 re-exposed verbatim ([ADR-0030](0030-shader-system-reflection-strategy-and-rhi-boundary.md)).
 Both are narrow, subsystem-scoped instances of the same underlying idea,
 decided independently, without a shared name or a stated general
-principle.
+principle — but they are not the same *mechanism*, and this ADR must not
+be read as claiming they are: ADR-0001 achieves its boundary through a
+backend-independent C++ interface with no format-level versioning
+concept at all; ADR-0030 achieves its boundary through an actually
+versioned schema (`ReflectionMetadata` carries real version fields).
+This ADR generalizes the shared underlying idea — public consumers do
+not see internal representation — not either precedent's specific
+mechanism.
 
 A human-provided external architecture draft names this idea explicitly
 as a long-term principle: what stays stable across releases is *Schema,
@@ -41,15 +48,22 @@ and no precedent beyond the two narrow, subsystem-specific cases above.
 stable public boundary is expressed through schema, identity, and
 protocol concepts — never through direct exposure of internal C++ type
 layout, memory representation, or object pointers whose lifetime an
-internal subsystem controls.** This generalizes, and is grounded in,
-ADR-0001's and ADR-0030's own already-`Accepted` instances of the same
-idea; it does not change either of them.
+internal subsystem controls.** This generalizes the underlying idea
+behind ADR-0001's and ADR-0030's own already-`Accepted` instances — not
+either one's specific mechanism, which differ (see Context) — and it
+does not change either of them.
 
-- "Stable" here means: a public consumer (a future SDK binding, a
-  serialized asset, a network message, a future Editor/Client) can
-  depend on the *shape and identity* of a schema/protocol concept
-  surviving an internal refactor, without needing to depend on how that
-  concept happens to be laid out in C++ memory today.
+- "Stable" here names a **target property future Specs must design
+  toward**, not an operational guarantee this ADR itself provides. This
+  ADR supplies no versioning scheme, no migration mechanism, and no
+  compatibility-checking process — a public consumer (a future SDK
+  binding, a serialized asset, a network message, a future
+  Editor/Client) can depend on the *shape and identity* of a
+  schema/protocol concept surviving an internal refactor only once
+  whichever future Spec defines that schema/protocol also defines how it
+  is versioned and kept (or broken) compatible over time. Until then,
+  "stable" describes an intended design property, not something already
+  operational in this repository.
 - This principle applies **prospectively** — it does not require
   retrofitting anything already `Accepted`/`Approved`/implemented. It
   governs how *future* Specs (World/ECS, Serialization/Identity, Asset,
