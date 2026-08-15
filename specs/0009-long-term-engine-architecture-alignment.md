@@ -7,15 +7,19 @@
 - **Created:** 2026-08-15
 - **Related Plan(s):**
   [plans/0009-long-term-engine-architecture-alignment.md](../plans/0009-long-term-engine-architecture-alignment.md)
-  (`Draft`, pending its own Human Review — drafting this Plan against
-  this `Approved` spec is authorized per [AGENTS.md](../AGENTS.md);
-  drafting it is not itself an implementation authorization, see that
-  Plan's own Status). Scoped to
+  (`Approved` / Ready for Implementation, Human Review recorded
+  2026-08-15 — see that Plan's own Human Review Approval note).
+  Approving the Plan authorizes drafting a separate Implementation
+  branch/PR; it is not itself an implementation authorization. Scoped to
   `docs/architecture/engine_architecture.md` and minimal,
   non-duplicative navigation-link updates to a small number of existing
   documents — see that Plan's own Architectural Impact/Files section for
-  the exact list. Implementation (creating the actual file) is not
-  authorized until Plan 0009 itself is `Approved`.
+  the exact list. Implementation (creating the actual file) is authorized
+  by Plan 0009's own approval, but requires its own separate
+  Implementation branch/PR — opened only after
+  [PR #40](https://github.com/slmao/Atlantis/pull/40) is merged by a
+  human, never by an agent — following the Plan's own Implementation
+  Order and Verification Checklist.
 - **Related ADR(s):**
   [ADR-0032](../adr/0032-conceptual-architecture-layers-versus-source-module-ownership.md),
   [ADR-0033](../adr/0033-runtime-authority-and-client-boundary.md),

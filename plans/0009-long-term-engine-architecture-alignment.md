@@ -1,10 +1,52 @@
 # Plan: Long-Term Engine Architecture Documentation
 
 - **Spec:** [specs/0009-long-term-engine-architecture-alignment.md](../specs/0009-long-term-engine-architecture-alignment.md) (`Approved`)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
   direction, against `Approved` Spec 0009 and `Accepted` ADR-0032–0037;
-  pending its own Human Review.
+  approved by human review — see Human Review Approval below.
+- **Human Review Approval (2026-08-15):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer for this branch) on 2026-08-15, following an independent,
+  read-only review of this Plan and PR #40 (git/PR state verification;
+  Spec 0009/ADR-0032–0037 traceability against a section-by-section
+  table; the planned `docs/architecture/engine_architecture.md`
+  structure — its status banner, the five conceptual-layer names
+  verified verbatim against Spec 0009's own Approved Proposed Design,
+  the single-Mermaid-diagram-plus-table design, and its three-tier
+  status legend; the Device Backend boundary against ADR-0037's full
+  prohibition list; the exact file range; the Implementation Order and
+  Verification Checklist) and a dedicated HR-PLAN-0009 decision table
+  covering sixteen topics. This Plan is approved as drafted, with the
+  following points confirmed as part of this approval rather than
+  requiring a Plan revision:
+
+  1. **The optional `README.md` (repository root) link is included** —
+     the recommended default from this Plan's own Open Questions is
+     adopted: a single short line pointing to
+     `docs/architecture/engine_architecture.md`, added at Implementation
+     time alongside the other navigation-link updates. This resolves
+     that Open Question; it is no longer optional.
+  2. **This Plan's own approval-status update** (this file's `Status`
+     field, and `specs/0009-long-term-engine-architecture-alignment.md`'s
+     `Related Plan(s)` field) is handled by this Human Review Approval
+     itself, via the same independent status-signing pattern already
+     used for Spec 0009 and ADR-0032–0037 — not by this Plan's own
+     "Implementation" (which remains scoped to creating
+     `docs/architecture/engine_architecture.md` and the navigation-link
+     edits, and is not authorized by this approval alone; see below).
+  3. **A brief acknowledgment is added to the planned
+     `docs/architecture/README.md` edit** at Implementation time,
+     framing `engine_architecture.md` as a second, narrower documented
+     exception to that directory's as-built-only policy — distinct from,
+     but alongside, the existing "Bootstrap exception" already recorded
+     there.
+
+  This approval does **not** itself authorize Implementation — creating
+  `docs/architecture/engine_architecture.md` and making the navigation-
+  link edits still requires its own Implementation branch/PR, opened
+  only after PR #40 is merged by a human (never by an agent), following
+  this Plan's own Implementation Order and Verification Checklist.
 
 ## Objective
 
@@ -156,8 +198,12 @@ This Plan does not:
   overview entry point. No per-module content changed; no banner
   changed.
 - `docs/architecture/README.md` — one short "See also" line pointing to
-  `engine_architecture.md`. No change to the existing policy text or
-  "Anticipated topics" list.
+  `engine_architecture.md`, plus one sentence (added per this Plan's
+  Human Review Approval) framing `engine_architecture.md` as a second,
+  narrower documented exception to this directory's as-built-only
+  policy — alongside, not replacing, the existing "Bootstrap exception"
+  note already recorded there. No other change to the existing policy
+  text or "Anticipated topics" list.
 - `docs/project-blueprint.md` — two small, targeted edits:
   1. A one-line pointer to `engine_architecture.md` near Section 3's
      opening (the module-map/architecture section), stated as
@@ -175,16 +221,13 @@ This Plan does not:
   (`Draft`).
 - `specs/README.md` — Spec 0009's registry row, Plan column updated from
   "None yet" to link `plans/0009-long-term-engine-architecture-alignment.md`
-  (`Draft`). Section B (Candidate Spec Backlog) untouched.
-
-### Files to Modify — Optional, Pending Plan Review (see Open Questions)
-
+  (`Draft`, later `Approved` — see this Plan's own Human Review
+  Approval note above). Section B (Candidate Spec Backlog) untouched.
 - `README.md` (repository root) — a single short line, in the
   "Repository layout" section's existing `docs/` row or as one new
   bullet, pointing to `docs/architecture/engine_architecture.md`.
-  **Not committed to by this Plan as drafted** — see Open Questions;
-  Plan Review may accept, reject, or defer this specific edit
-  independently of the rest of the Plan.
+  **Confirmed in scope as of this Plan's Human Review Approval** (see
+  above) — no longer optional.
 
 ### Files/Directories This Plan Does Not Touch
 
@@ -606,11 +649,14 @@ with the following deltas specific to this documentation-only Plan:
 
 Recorded as recommendations, not decisions — Plan Review may accept,
 reject, or amend any of these independently without blocking the rest
-of this Plan:
+of this Plan.
 
-- Whether to include the optional `README.md` (repository root) link to
-  `engine_architecture.md` — this Plan lists it as optional and does not
-  commit to it.
+**Resolved by this Plan's Human Review Approval (2026-08-15):** the
+`README.md` root-link question — confirmed in scope, see "Files to
+Modify" above and the Human Review Approval note. The remaining
+questions below are still open, left to Implementation-time judgment or
+a future Spec, as stated for each:
+
 - Whether the five-layer conceptual diagram should use different visual
   styling (e.g. a left-to-right layout, or color-coding by status tier)
   than the plain top-down `flowchart TD` with undirected edges this Plan
