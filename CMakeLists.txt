@@ -13,6 +13,33 @@ include(cmake/CompilerWarnings.cmake)
 
 find_package(Vulkan REQUIRED)
 
+# Plan 0008 Section 7: slangc/spirv-val are newly-required build tools,
+# sourced from the existing Vulkan SDK requirement -- no new dependency-
+# acquisition mechanism. A missing tool fails CMake configure, not build
+# or runtime; spirv-val is mandatory (ADR-0031), not optional.
+find_program(ATLANTIS_SLANGC_EXECUTABLE
+  NAMES slangc
+  HINTS "$ENV{VULKAN_SDK}/Bin"
+)
+if(NOT ATLANTIS_SLANGC_EXECUTABLE)
+  message(FATAL_ERROR
+    "slangc not found. It ships with the Vulkan SDK (confirmed present "
+    "since SDK 1.3.296.0) -- verify VULKAN_SDK is set and points at an "
+    "SDK install whose Bin/ directory contains slangc.exe.")
+endif()
+
+find_program(ATLANTIS_SPIRV_VAL_EXECUTABLE
+  NAMES spirv-val
+  HINTS "$ENV{VULKAN_SDK}/Bin"
+)
+if(NOT ATLANTIS_SPIRV_VAL_EXECUTABLE)
+  message(FATAL_ERROR
+    "spirv-val not found. It ships with the Vulkan SDK alongside slangc "
+    "-- verify VULKAN_SDK is set and points at an SDK install whose "
+    "Bin/ directory contains spirv-val.exe. spirv-val is a MANDATORY "
+    "build-time verification step (ADR-0031), not optional.")
+endif()
+
 add_subdirectory(src/core)
 add_subdirectory(src/platform)
 add_subdirectory(src/rhi)
