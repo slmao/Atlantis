@@ -63,6 +63,7 @@ if(ATLANTIS_BUILD_EXAMPLES)
   add_subdirectory(examples/rhi_vulkan_demo)
   add_subdirectory(examples/frame_execution_demo)
   add_subdirectory(examples/minimal_renderer_demo)
+  add_subdirectory(examples/headless_rendering_demo)
 endif()
 
 if(ATLANTIS_BUILD_TESTS)

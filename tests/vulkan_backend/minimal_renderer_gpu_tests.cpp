@@ -312,7 +312,8 @@ TEST_CASE("Renderer::drawFrame() draws a real, multi-item frame through a real a
   REQUIRE(commandListResult.isOk());
   std::unique_ptr<CommandList> commandList = std::move(commandListResult.value());
 
-  renderer.drawFrame(*commandList, *target, *depthTexture, *cameraBuffer, drawItems);
+  renderer.drawFrame(*commandList, *target, *depthTexture, *cameraBuffer, drawItems,
+                      atlantis::rhi::ResourceState::PresentSource);
 
   auto submitResult = device->submit(std::move(commandList), *target);
   REQUIRE(submitResult.isOk());

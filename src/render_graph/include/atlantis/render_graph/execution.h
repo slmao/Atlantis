@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <vector>
 
 #include <atlantis/render_graph/compiled_graph.h>
@@ -18,31 +19,55 @@ namespace atlantis::render_graph {
 // call; execute() does not take ownership of either. colorClear is used
 // only when target != nullptr; depthClear only when depthTexture !=
 // nullptr (Spec 0007/ADR-0026).
+//
+// incomingState/finalState (Spec 0010/ADR-0039): meaningful only for a
+// target-shaped entry (target != nullptr), ignored for a depthTexture
+// entry. incomingState is the state the caller asserts target already
+// holds when this execute() call begins seeding its own local tracking --
+// its default, ResourceState::Undefined, is correct only for a resource's
+// first use within its CommandList; a caller reusing an already-
+// transitioned target (e.g. the headless copy pass, which runs after
+// Renderer::drawFrame() has already left its target in a known non-
+// Undefined state) must supply the true incoming state explicitly.
+// finalState, std::nullopt by default, is the state execute() leaves
+// target in via one trailing transitionResource() call if its ending
+// state differs -- std::nullopt means no trailing transition is inserted
+// beyond whatever the last pass's own declared state already left it in.
+// Neither field has a default a target-shaped call site may rely on being
+// "correct" for its own purpose -- every target-shaped binding
+// construction site in this codebase supplies an explicit finalState as a
+// matter of caller discipline, not because the language forces it
+// syntactically.
 struct ResourceBinding {
   CompiledResourceId resource;
   atlantis::rhi::RenderTarget* target = nullptr;
   atlantis::rhi::ClearColorValue colorClear{};
   atlantis::rhi::Texture* depthTexture = nullptr;
   float depthClear = 1.0f;
+  atlantis::rhi::ResourceState incomingState = atlantis::rhi::ResourceState::Undefined;
+  std::optional<atlantis::rhi::ResourceState> finalState;
 };
 
 // Walks graph's compiled pass order once. For each pass, for each
 // ResourceState-tagged usage whose declared state differs from that
-// resource's most-recently-recorded state, records a transitionResource()
-// call before invoking the pass's execution callback. A pass is a "draw
-// pass" (Spec 0007/ADR-0026) iff any of its usages carries
-// ResourceState::ColorAttachmentOutput or
+// resource's most-recently-recorded state (seeded from the resource's
+// bound incomingState, not always ResourceState::Undefined -- Spec
+// 0010/ADR-0039), records a transitionResource() call before invoking the
+// pass's execution callback. A pass is a "draw pass" (Spec 0007/ADR-0026)
+// iff any of its usages carries ResourceState::ColorAttachmentOutput or
 // ResourceState::DepthAttachmentReadWrite -- and only these two states,
 // never ColorAttachmentWrite, which keeps Spec 0006's existing
 // clearColor()-only pass structurally un-wrapped by this rule. A
 // recognized draw pass's execution callback (if any) is invoked between a
 // commandList.beginRendering()/endRendering() pair; every other pass's
 // callback is invoked directly, exactly as Spec 0006 already does.
-// Inserts one trailing transitionResource() to ResourceState::PresentSource
-// for every bound RenderTarget (target != nullptr) that was actually
-// touched by at least one usage -- never for a depthTexture entry (never
-// presented, never read back this round). Records only -- never calls
-// Device::submit() or Presentation::present() (ADR-0021).
+// Inserts one trailing transitionResource() to the bound entry's
+// finalState (Spec 0010/ADR-0039) for every bound RenderTarget
+// (target != nullptr) that was actually touched by at least one usage and
+// whose finalState is not std::nullopt -- never for a depthTexture entry
+// (never presented, never read back this round), and never when
+// finalState is std::nullopt. Records only -- never calls Device::submit()
+// or Presentation::present() (ADR-0021).
 //
 // Guards, all guaranteed-detectable programmer errors
 // (ATLANTIS_CHECK_MSG), not Result-typed:
@@ -54,10 +79,12 @@ struct ResourceBinding {
 //   matching entry in bindings.
 // - Guard 2 (scope unchanged -- target entries only): no bound
 //   RenderTarget may have any declared read usage anywhere in graph
-//   (protects ADR-0019's always-Undefined-incoming-layout premise
-//   structurally). Not checked for depthTexture entries -- a depth-test
-//   read is legitimate, expressed as part of the single
-//   DepthAttachmentReadWrite write usage (ADR-0026).
+//   (protects RenderTarget's own write-only contract -- see
+//   rhi::RenderTarget's own doc comment -- independent of what
+//   incomingState the caller supplies for it, Spec 0010/ADR-0039). Not
+//   checked for depthTexture entries -- a depth-test read is legitimate,
+//   expressed as part of the single DepthAttachmentReadWrite write usage
+//   (ADR-0026).
 //
 // A binding that fails Guard 1 is skipped (UB-safe check-then-continue),
 // not dereferenced, under a non-terminating failure handler -- likewise a

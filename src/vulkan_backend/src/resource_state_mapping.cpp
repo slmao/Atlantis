@@ -66,6 +66,21 @@ using atlantis::rhi::ResourceState;
   };
 }
 
+// Spec 0010/ADR-0040: the one and only new table entry this spec's design
+// adds -- direct structural sibling of colorAttachmentOutputToPresentSource()
+// above (same source layout/access/stage), destined for
+// vkCmdCopyImageToBuffer() instead of vkQueuePresentKHR.
+[[nodiscard]] ImageBarrierPlan colorAttachmentOutputToTransferSource() {
+  return ImageBarrierPlan{
+      .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+      .srcStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+      .dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT,
+  };
+}
+
 [[nodiscard]] ImageBarrierPlan undefinedToDepthAttachmentReadWrite() {
   return ImageBarrierPlan{
       .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
@@ -103,6 +118,9 @@ ImageBarrierPlan planTransition(ResourceState before, ResourceState after) {
   }
   if (before == ResourceState::ColorAttachmentOutput && after == ResourceState::PresentSource) {
     return colorAttachmentOutputToPresentSource();
+  }
+  if (before == ResourceState::ColorAttachmentOutput && after == ResourceState::TransferSource) {
+    return colorAttachmentOutputToTransferSource();
   }
   if (before == ResourceState::Undefined && after == ResourceState::DepthAttachmentReadWrite) {
     return undefinedToDepthAttachmentReadWrite();

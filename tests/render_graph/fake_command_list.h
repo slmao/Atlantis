@@ -33,6 +33,11 @@ struct RecordedClear {
   atlantis::rhi::ClearColorValue color;
 };
 
+struct RecordedCopyToBuffer {
+  const atlantis::rhi::RenderTarget* source;
+  const atlantis::rhi::Buffer* destination;
+};
+
 // Also usable as a bindable "RenderTarget" stand-in in tests -- carries
 // no real GPU resource, just an identity (label) and fixed extent/format
 // so ResourceBinding::target has something concrete to point at.
@@ -164,6 +169,14 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
     events.push_back(EventKind::DrawIndexed);
   }
 
+  // Spec 0010: records source/destination identity only, exact mirror of
+  // clearColor()'s own recording shape -- no real GPU resource, no copy
+  // actually performed.
+  void copyRenderTargetToBuffer(atlantis::rhi::RenderTarget& source, atlantis::rhi::Buffer& destination) override {
+    copiesToBuffer.push_back(RecordedCopyToBuffer{&source, &destination});
+    events.push_back(EventKind::CopyToBuffer);
+  }
+
   enum class EventKind {
     Transition,
     TextureTransition,
@@ -176,6 +189,7 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
     BindUniformBuffer,
     PushConstant,
     DrawIndexed,
+    CopyToBuffer,
   };
 
   std::vector<RecordedTransition> transitions;
@@ -189,6 +203,7 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
   std::vector<RecordedPushConstant> pushConstants;
   std::vector<std::vector<std::byte>> pushConstantData;  // parallel to pushConstants -- the actual bytes copied
   std::vector<std::uint32_t> drawIndexedCounts;
+  std::vector<RecordedCopyToBuffer> copiesToBuffer;
   std::vector<EventKind> events;  // interleaved order across all recorded calls
 };
 

@@ -77,4 +77,8 @@ enum class VulkanFailureCategory {
 // Device::createPipeline()'s own Vulkan calls (Spec 0007).
 [[nodiscard]] atlantis::rhi::PipelineCreateError toPipelineCreateError(VkResult result);
 
+// vkCreateImage/vkAllocateMemory/vkBindImageMemory/vkCreateImageView --
+// Device::createOffscreenTarget()'s own Vulkan calls (Spec 0010).
+[[nodiscard]] atlantis::rhi::OffscreenTargetCreateError toOffscreenTargetCreateError(VkResult result);
+
 }  // namespace atlantis::vulkan_backend::detail

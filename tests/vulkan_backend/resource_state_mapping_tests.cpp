@@ -1,9 +1,43 @@
 #include "resource_state_mapping.h"
 
+#include <atlantis/assert.h>
+
+#include <string>
+#include <utility>
+#include <vector>
+
 #include <catch2/catch_test_macros.hpp>
 
 using atlantis::rhi::ResourceState;
 using atlantis::vulkan_backend::detail::planTransition;
+
+namespace {
+
+struct RecordedFailure {
+  std::string expression;
+  std::string message;
+};
+
+// Same RAII pattern as tests/render_graph/execution_tests.cpp's own
+// ScopedFailureHandler -- installs a recording, non-terminating
+// replacement failure handler for the lifetime of one test.
+class ScopedFailureHandler {
+ public:
+  explicit ScopedFailureHandler(std::vector<RecordedFailure>& recorded)
+      : previous_(atlantis::assertions::setFailureHandler([&recorded](const atlantis::AssertFailureInfo& info) {
+          recorded.push_back({std::string(info.expression), std::string(info.message)});
+        })) {}
+
+  ~ScopedFailureHandler() { atlantis::assertions::setFailureHandler(std::move(previous_)); }
+
+  ScopedFailureHandler(const ScopedFailureHandler&) = delete;
+  ScopedFailureHandler& operator=(const ScopedFailureHandler&) = delete;
+
+ private:
+  atlantis::AssertFailureHandler previous_;
+};
+
+}  // namespace
 
 TEST_CASE("planTransition maps Undefined -> ColorAttachmentWrite to a transfer-write discard barrier",
           "[vulkan_backend][resource_state_mapping]") {
@@ -36,4 +70,35 @@ TEST_CASE("planTransition maps Undefined -> PresentSource to a no-op-access disc
   REQUIRE(plan.dstAccessMask == 0);
   REQUIRE(plan.srcStage == VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
   REQUIRE(plan.dstStage == VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+}
+
+TEST_CASE("planTransition maps ColorAttachmentOutput -> TransferSource to a color-output-to-transfer-read barrier",
+          "[vulkan_backend][resource_state_mapping]") {
+  // Spec 0010/ADR-0040: the one and only new table entry this spec's
+  // design adds -- produced without asserting.
+  std::vector<RecordedFailure> failures;
+  ScopedFailureHandler handler(failures);
+
+  const auto plan = planTransition(ResourceState::ColorAttachmentOutput, ResourceState::TransferSource);
+  REQUIRE(plan.oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  REQUIRE(plan.newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+  REQUIRE(plan.srcAccessMask == VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+  REQUIRE(plan.dstAccessMask == VK_ACCESS_TRANSFER_READ_BIT);
+  REQUIRE(plan.srcStage == VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+  REQUIRE(plan.dstStage == VK_PIPELINE_STAGE_TRANSFER_BIT);
+  REQUIRE(failures.empty());
+}
+
+TEST_CASE("planTransition still asserts on a still-unlisted (before, after) pair -- confirms exactly one new entry",
+          "[vulkan_backend][resource_state_mapping]") {
+  // Spec 0010 adds exactly one new planTransition() entry
+  // (ColorAttachmentOutput -> TransferSource, above) -- every other
+  // unlisted pair, including one that plausibly sounds adjacent, must
+  // still fire the existing closed-table assertion.
+  std::vector<RecordedFailure> failures;
+  ScopedFailureHandler handler(failures);
+
+  static_cast<void>(planTransition(ResourceState::ColorAttachmentOutput, ResourceState::DepthAttachmentReadWrite));
+
+  REQUIRE_FALSE(failures.empty());
 }

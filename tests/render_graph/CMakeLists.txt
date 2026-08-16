@@ -7,6 +7,7 @@ add_executable(atlantis_render_graph_tests
   ownership_lifetime_tests.cpp
   execution_tests.cpp
   attachment_execution_tests.cpp
+  headless_binding_tests.cpp
 )
 
 # PRIVATE to this test target only -- needed once compile_algorithm_tests.cpp

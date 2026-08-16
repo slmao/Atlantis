@@ -14,13 +14,18 @@ namespace atlantis::vulkan_backend::detail {
 // commandPool themselves -- both must outlive this object (caller-
 // enforced; VulkanDevice's own single-retained-submission state machine
 // is what guarantees this in practice, see VulkanDevice's header
-// comment). transitionResource()/clearColor() static_cast the
-// rhi::RenderTarget& argument to VulkanRenderTarget& -- safe because
-// only Vulkan Backend ever constructs one in Phase 1 (ADR-0001's single-
-// backend constraint). Caller-owned only while being recorded into;
-// ownership transfers to VulkanDevice at submit() -- a caller never
-// destroys one it has submitted. Not copyable, not movable, not
-// thread-safe.
+// comment). transitionResource()/clearColor()/beginRendering()/
+// copyRenderTargetToBuffer()'s rhi::RenderTarget& argument may be either
+// of this module's two concrete RenderTarget implementations
+// (VulkanRenderTarget, VulkanOffscreenRenderTarget, Spec 0010/ADR-0038)
+// -- each resolves it via a checked pointer-form dynamic_cast to the
+// shared private VulkanRenderTargetAccess interface, never a static_cast
+// (only Vulkan Backend ever constructs a RenderTarget in Phase 1,
+// ADR-0001's single-backend constraint, but which of the two concrete
+// types is no longer assumable at compile time). Caller-owned only while
+// being recorded into; ownership transfers to VulkanDevice at submit() --
+// a caller never destroys one it has submitted. Not copyable, not
+// movable, not thread-safe.
 class VulkanCommandList final : public atlantis::rhi::CommandList {
  public:
   // cmdBeginRendering/cmdEndRendering: VulkanDevice's own resolved
@@ -53,6 +58,7 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   void bindUniformBuffer(atlantis::rhi::Buffer& buffer) override;
   void pushConstant(const void* data, std::size_t sizeBytes) override;
   void drawIndexed(std::uint32_t indexCount) override;
+  void copyRenderTargetToBuffer(atlantis::rhi::RenderTarget& source, atlantis::rhi::Buffer& destination) override;
 
   // Exists solely for VulkanDevice::submit() (vkEndCommandBuffer,
   // vkQueueSubmit) -- never reached from RHI's public surface.

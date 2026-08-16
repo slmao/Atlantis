@@ -136,7 +136,8 @@ void recordOneClearPass(RenderTarget& target, CommandList& commandList) {
   const auto compiled = builder.compile();
   REQUIRE(compiled.isOk());
 
-  const std::vector<ResourceBinding> bindings{{compiled.value().resourceAt(0), &target}};
+  const std::vector<ResourceBinding> bindings{
+      {.resource = compiled.value().resourceAt(0), .target = &target, .finalState = ResourceState::PresentSource}};
   execute(compiled.value(), bindings, commandList);
 }
 

@@ -115,7 +115,7 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
       atlantis::rhi::Texture* depthPtr = binding->depthTexture;
 
       const std::size_t key = usage.resource.index();
-      const ResourceState previous = currentState.count(key) ? currentState[key] : ResourceState::Undefined;
+      const ResourceState previous = currentState.count(key) ? currentState[key] : binding->incomingState;
       if (previous != *usage.state) {
         if (targetPtr != nullptr) {
           commandList.transitionResource(*targetPtr, previous, *usage.state);
@@ -155,18 +155,21 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
     }
   }
 
-  // Trailing PresentSource transition: only for a bound RenderTarget
-  // actually touched by at least one usage (currentState has an entry) --
-  // no spurious transition for an unused binding, and never for a
+  // Trailing transition to the bound entry's finalState (Spec
+  // 0010/ADR-0039): only for a bound RenderTarget actually touched by at
+  // least one usage (currentState has an entry) and whose finalState is
+  // not std::nullopt -- no spurious transition for an unused binding or a
+  // binding that declines a trailing transition, and never for a
   // depthTexture entry (never presented, never read back this round).
   for (const ResourceBinding& binding : bindings) {
     if (binding.target == nullptr) continue;
+    if (!binding.finalState.has_value()) continue;
     const std::size_t key = binding.resource.index();
     const auto it = currentState.find(key);
     if (it == currentState.end()) continue;
-    if (it->second != ResourceState::PresentSource) {
-      commandList.transitionResource(*binding.target, it->second, ResourceState::PresentSource);
-      it->second = ResourceState::PresentSource;
+    if (it->second != *binding.finalState) {
+      commandList.transitionResource(*binding.target, it->second, *binding.finalState);
+      it->second = *binding.finalState;
     }
   }
 }

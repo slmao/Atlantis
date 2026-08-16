@@ -100,7 +100,8 @@ TEST_CASE("Renderer::drawFrame() records a full bind/draw sequence per DrawItem 
   FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
 
   Renderer renderer;
-  renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems);
+  renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
+                      atlantis::rhi::ResourceState::PresentSource);
 
   REQUIRE(commandList.boundPipelines.size() == 2);
   REQUIRE(commandList.boundVertexBuffers.size() == 2);
@@ -123,4 +124,56 @@ TEST_CASE("Renderer::drawFrame() records a full bind/draw sequence per DrawItem 
   REQUIRE(commandList.beginRenderingCalls.size() == 1);
   REQUIRE(commandList.beginRenderingCalls[0].color == &colorTarget);
   REQUIRE(commandList.beginRenderingCalls[0].depth == &depthTarget);
+}
+
+TEST_CASE("Renderer::drawFrame() passes finalColorState through unmodified, never branching on it",
+          "[renderer][final_color_state]") {
+  // Spec 0010/ADR-0022 Accepted Amendment: a windowed caller supplies
+  // PresentSource, a headless caller supplies TransferSource directly --
+  // Renderer itself must not observe, validate, or branch on the value.
+  // Confirmed here by running the exact same draw twice, against two
+  // fresh FakeCommandList instances, and diffing their recorded event
+  // sequences: every event must match except the final transitions
+  // entry's `after` field, which must equal each call's own supplied
+  // finalColorState.
+  atlantis::renderer::Mesh sharedMesh(
+      std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Vertex, 0),
+      std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Index, 0), 3);
+  atlantis::renderer::Material sharedMaterial(std::make_unique<FakePipeline>());
+
+  DrawItem item;
+  item.mesh = &sharedMesh;
+  item.material = &sharedMaterial;
+  item.objectToWorld = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+                         0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+  const std::vector<DrawItem> drawItems{item};
+
+  FakeRenderTarget colorTarget("color");
+  FakeTexture depthTarget("depth");
+  FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
+  Renderer renderer;
+
+  FakeCommandList windowedCommandList;
+  renderer.drawFrame(windowedCommandList, colorTarget, depthTarget, cameraBuffer, drawItems,
+                      atlantis::rhi::ResourceState::PresentSource);
+
+  FakeCommandList headlessCommandList;
+  renderer.drawFrame(headlessCommandList, colorTarget, depthTarget, cameraBuffer, drawItems,
+                      atlantis::rhi::ResourceState::TransferSource);
+
+  REQUIRE(windowedCommandList.events == headlessCommandList.events);
+  REQUIRE(windowedCommandList.transitions.size() == headlessCommandList.transitions.size());
+  REQUIRE(windowedCommandList.transitions.size() >= 1);
+
+  const std::size_t lastIndex = windowedCommandList.transitions.size() - 1;
+  for (std::size_t i = 0; i < lastIndex; ++i) {
+    REQUIRE(windowedCommandList.transitions[i].target == headlessCommandList.transitions[i].target);
+    REQUIRE(windowedCommandList.transitions[i].before == headlessCommandList.transitions[i].before);
+    REQUIRE(windowedCommandList.transitions[i].after == headlessCommandList.transitions[i].after);
+  }
+
+  REQUIRE(windowedCommandList.transitions[lastIndex].target == headlessCommandList.transitions[lastIndex].target);
+  REQUIRE(windowedCommandList.transitions[lastIndex].before == headlessCommandList.transitions[lastIndex].before);
+  REQUIRE(windowedCommandList.transitions[lastIndex].after == atlantis::rhi::ResourceState::PresentSource);
+  REQUIRE(headlessCommandList.transitions[lastIndex].after == atlantis::rhi::ResourceState::TransferSource);
 }

@@ -6,6 +6,8 @@
 
 #include <atlantis/rhi/render_target.h>
 
+#include "vulkan_render_target_access.h"
+
 // Concrete Vulkan implementation of atlantis::rhi::RenderTarget
 // (ADR-0019, ADR-0014's mechanism). See vulkan_presentation.cpp for where
 // this is constructed (VulkanPresentation::acquireNextTarget()).
@@ -18,7 +20,12 @@ namespace atlantis::vulkan_backend::detail {
 // ever reads its prior contents). Not copyable, not movable -- held
 // exclusively behind std::unique_ptr<atlantis::rhi::RenderTarget>. Not
 // internally thread-safe; caller-thread-only (ADR-0004).
-class VulkanRenderTarget final : public atlantis::rhi::RenderTarget {
+//
+// Also implements VulkanRenderTargetAccess (Spec 0010/ADR-0038) --
+// inheritance-list-only addition; every accessor below already has the
+// exact shape that interface's pure virtuals require, so none of their
+// bodies change.
+class VulkanRenderTarget final : public atlantis::rhi::RenderTarget, public VulkanRenderTargetAccess {
  public:
   VulkanRenderTarget(VkImage image, VkImageView imageView, std::uint32_t imageIndex, atlantis::rhi::Extent2D extent,
                       atlantis::rhi::Format format, VkSemaphore acquireCompleteSemaphore,
@@ -36,21 +43,22 @@ class VulkanRenderTarget final : public atlantis::rhi::RenderTarget {
   // Accessors below exist solely for VulkanCommandList (barrier/clear
   // recording) and VulkanDevice::submit()/VulkanPresentation::present()
   // (reading which image/semaphore(s) this target refers to) -- never
-  // reached from RHI's public surface, RenderGraph, or Renderer.
-  [[nodiscard]] VkImage image() const noexcept { return image_; }
+  // reached from RHI's public surface, RenderGraph, or Renderer. Also
+  // satisfy VulkanRenderTargetAccess (Spec 0010/ADR-0038).
+  [[nodiscard]] VkImage image() const noexcept override { return image_; }
   // Spec 0007: the color VkImageView VulkanCommandList::beginRendering()
   // needs for VkRenderingAttachmentInfo -- non-owning, owned by the
   // VulkanPresentation that vended this object, same lifetime tier as
   // image() above.
-  [[nodiscard]] VkImageView imageView() const noexcept { return imageView_; }
+  [[nodiscard]] VkImageView imageView() const noexcept override { return imageView_; }
   [[nodiscard]] std::uint32_t imageIndex() const noexcept { return imageIndex_; }
-  [[nodiscard]] VkSemaphore acquireCompleteSemaphore() const noexcept { return acquireCompleteSemaphore_; }
+  [[nodiscard]] VkSemaphore acquireCompleteSemaphore() const noexcept override { return acquireCompleteSemaphore_; }
   // The one render-finished semaphore dedicated to this target's own
   // image index (VulkanPresentation's per-image pool, not a single
   // shared semaphore -- see that class's own header comment for why).
   // VulkanDevice::submit() signals this; VulkanSubmissionSignal wraps it
   // for Presentation::present() to wait on.
-  [[nodiscard]] VkSemaphore renderFinishedSemaphore() const noexcept { return renderFinishedSemaphore_; }
+  [[nodiscard]] VkSemaphore renderFinishedSemaphore() const noexcept override { return renderFinishedSemaphore_; }
 
  private:
   VkImage image_;

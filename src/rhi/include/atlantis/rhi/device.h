@@ -5,6 +5,7 @@
 #include <atlantis/result.h>
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/command_list.h>
+#include <atlantis/rhi/offscreen_target.h>
 #include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/render_target.h>
 #include <atlantis/rhi/submission_signal.h>
@@ -36,11 +37,17 @@ class Device {
   // never manages a fence directly (single-frame-in-flight baseline).
   // On success, the returned SubmissionSignal is what present() must be
   // given. Precondition, not enforced by the type system, confirmed by
-  // Human Review as an accepted design constraint: a caller must call
-  // present() for a successful submit() before calling submit() again --
-  // submit() followed directly by application exit remains legal
-  // (waitIdle() drains it). See
-  // plans/0006-rhi-render-graph-frame-execution-foundation.md.
+  // Human Review as an accepted design constraint: a *windowed* caller --
+  // one that constructs and drives a Presentation -- must call present()
+  // for a successful submit() before calling submit() again; submit()
+  // followed directly by application exit remains legal (waitIdle()
+  // drains it). See
+  // plans/0006-rhi-render-graph-frame-execution-foundation.md. A
+  // *headless* caller (Spec 0010/ADR-0038) never constructs a
+  // Presentation and therefore never calls present() at all -- its own
+  // repeated-submit() safety comes entirely from this method's existing
+  // internal single-frame-in-flight fence-wait, not from present() or the
+  // returned SubmissionSignal.
   [[nodiscard]] virtual atlantis::Result<std::unique_ptr<SubmissionSignal>, SubmitError> submit(
       std::unique_ptr<CommandList> commandList, const RenderTarget& target) = 0;
 
@@ -63,6 +70,11 @@ class Device {
 
   [[nodiscard]] virtual atlantis::Result<std::unique_ptr<Pipeline>, PipelineCreateError> createPipeline(
       const PipelineCreateParams& params) = 0;
+
+  // Spec 0010/ADR-0038: stateless factory call; Device does not retain a
+  // reference to any OffscreenTarget it creates (ADR-0003).
+  [[nodiscard]] virtual atlantis::Result<std::unique_ptr<OffscreenTarget>, OffscreenTargetCreateError>
+  createOffscreenTarget(const OffscreenTargetCreateParams& params) = 0;
 };
 
 }  // namespace atlantis::rhi

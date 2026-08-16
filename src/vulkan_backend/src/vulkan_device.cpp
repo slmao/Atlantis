@@ -19,8 +19,10 @@
 #include "vulkan_command_list.h"
 #include "vulkan_instance.h"
 #include "vulkan_memory.h"
+#include "vulkan_offscreen_target.h"
 #include "vulkan_pipeline.h"
 #include "vulkan_render_target.h"
+#include "vulkan_render_target_access.h"
 #include "vulkan_result.h"
 #include "vulkan_submission_signal.h"
 #include "vulkan_texture.h"
@@ -518,25 +520,37 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::SubmissionSignal>, atlantis::rhi
     return ResultT::Err(drainResult.error());
   }
 
-  const auto& vulkanTarget = static_cast<const VulkanRenderTarget&>(target);
-  const VkSemaphore waitSemaphore = vulkanTarget.acquireCompleteSemaphore();
+  // Pointer-form, exception-free (Spec 0010/ADR-0038): target may now be
+  // a VulkanRenderTarget or a VulkanOffscreenRenderTarget -- a mismatched
+  // type here is a programmer error (a RenderTarget this module itself
+  // did not produce, ADR-0014), caught by this assertion, never by a
+  // thrown std::bad_cast reaching the render path. Mirrors the existing
+  // vulkan_presentation.cpp:createPresentation() pointer-form-dynamic_cast
+  // precedent.
+  const auto* access = dynamic_cast<const VulkanRenderTargetAccess*>(&target);
+  ATLANTIS_CHECK_MSG(access != nullptr, "submit() received a RenderTarget not produced by this module");
+  const VkSemaphore waitSemaphore = access->acquireCompleteSemaphore();
   // Plan 0006 (found via GPU testing): read per-image-index render-
   // finished semaphore from the target itself, rather than a single
   // Device-owned one -- see VulkanPresentation's own header comment for
   // why a single shared semaphore is not safe to reuse across frames.
-  const VkSemaphore signalSemaphore = vulkanTarget.renderFinishedSemaphore();
+  // VK_NULL_HANDLE (Spec 0010: an offscreen target's own accessors) is a
+  // legal "nothing to wait on / signal" value, handled by the conditional
+  // VkSubmitInfo construction below -- never passed as a wait/signal
+  // semaphore entry itself.
+  const VkSemaphore signalSemaphore = access->renderFinishedSemaphore();
   const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
   const VkCommandBuffer commandBuffer = vulkanCommandList.commandBuffer();
 
   VkSubmitInfo submitInfo{};
   submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-  submitInfo.waitSemaphoreCount = 1;
-  submitInfo.pWaitSemaphores = &waitSemaphore;
-  submitInfo.pWaitDstStageMask = &waitStage;
+  submitInfo.waitSemaphoreCount = waitSemaphore != VK_NULL_HANDLE ? 1 : 0;
+  submitInfo.pWaitSemaphores = waitSemaphore != VK_NULL_HANDLE ? &waitSemaphore : nullptr;
+  submitInfo.pWaitDstStageMask = waitSemaphore != VK_NULL_HANDLE ? &waitStage : nullptr;
   submitInfo.commandBufferCount = 1;
   submitInfo.pCommandBuffers = &commandBuffer;
-  submitInfo.signalSemaphoreCount = 1;
-  submitInfo.pSignalSemaphores = &signalSemaphore;
+  submitInfo.signalSemaphoreCount = signalSemaphore != VK_NULL_HANDLE ? 1 : 0;
+  submitInfo.pSignalSemaphores = signalSemaphore != VK_NULL_HANDLE ? &signalSemaphore : nullptr;
 
   const VkResult submitResult = vkQueueSubmit(queue_, 1, &submitInfo, submissionFence_);
   if (submitResult != VK_SUCCESS) {
@@ -632,6 +646,9 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Buffer>, atlantis::rhi::BufferCr
       break;
     case atlantis::rhi::BufferPurpose::Uniform:
       usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+      break;
+    case atlantis::rhi::BufferPurpose::Readback:
+      usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
       break;
   }
 
@@ -964,6 +981,86 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
 
   return ResultT::Ok(std::make_unique<VulkanPipeline>(device_, descriptorPool_, pipeline, pipelineLayout,
                                                         descriptorSetLayout, descriptorSet));
+}
+
+atlantis::Result<std::unique_ptr<atlantis::rhi::OffscreenTarget>, atlantis::rhi::OffscreenTargetCreateError>
+VulkanDevice::createOffscreenTarget(const atlantis::rhi::OffscreenTargetCreateParams& params) {
+  using ResultT = atlantis::Result<std::unique_ptr<atlantis::rhi::OffscreenTarget>,
+                                    atlantis::rhi::OffscreenTargetCreateError>;
+
+  const VkFormat vkFormat = toVkFormat(params.format);
+
+  VkImageCreateInfo imageCreateInfo{};
+  imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
+  imageCreateInfo.format = vkFormat;
+  imageCreateInfo.extent = VkExtent3D{params.extent.width, params.extent.height, 1};
+  imageCreateInfo.mipLevels = 1;
+  imageCreateInfo.arrayLayers = 1;
+  imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+  // Color-attachment for the draw pass, transfer-source for the readback
+  // copy -- both required (Spec 0010 Requirements, ADR-0040's copy
+  // contract).
+  imageCreateInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+  imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+  VkImage image = VK_NULL_HANDLE;
+  const VkResult createResult = vkCreateImage(device_, &imageCreateInfo, nullptr, &image);
+  if (createResult != VK_SUCCESS) {
+    return ResultT::Err(toOffscreenTargetCreateError(createResult));
+  }
+
+  VkMemoryRequirements requirements{};
+  vkGetImageMemoryRequirements(device_, image, &requirements);
+
+  // Device-local: an offscreen color target is GPU-written, GPU-read (by
+  // the copy), never CPU-mapped directly -- only the separate readback
+  // Buffer (createBuffer()'s BufferPurpose::Readback case) is host-visible.
+  const std::optional<std::uint32_t> memoryTypeIndex = selectMemoryTypeIndexForDevice(
+      physicalDevice_, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if (!memoryTypeIndex.has_value()) {
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(atlantis::rhi::OffscreenTargetCreateError::AllocationFailed);
+  }
+
+  VkMemoryAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = requirements.size;
+  allocInfo.memoryTypeIndex = *memoryTypeIndex;
+
+  VkDeviceMemory memory = VK_NULL_HANDLE;
+  const VkResult allocResult = vkAllocateMemory(device_, &allocInfo, nullptr, &memory);
+  if (allocResult != VK_SUCCESS) {
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(atlantis::rhi::OffscreenTargetCreateError::AllocationFailed);
+  }
+
+  const VkResult bindResult = vkBindImageMemory(device_, image, memory, 0);
+  if (bindResult != VK_SUCCESS) {
+    vkFreeMemory(device_, memory, nullptr);
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(toOffscreenTargetCreateError(bindResult));
+  }
+
+  VkImageViewCreateInfo viewCreateInfo{};
+  viewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  viewCreateInfo.image = image;
+  viewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  viewCreateInfo.format = vkFormat;
+  viewCreateInfo.subresourceRange = VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+  VkImageView imageView = VK_NULL_HANDLE;
+  const VkResult viewResult = vkCreateImageView(device_, &viewCreateInfo, nullptr, &imageView);
+  if (viewResult != VK_SUCCESS) {
+    vkFreeMemory(device_, memory, nullptr);
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(atlantis::rhi::OffscreenTargetCreateError::ImageViewCreationFailed);
+  }
+
+  return ResultT::Ok(
+      std::make_unique<VulkanOffscreenTarget>(device_, image, memory, imageView, params.extent, params.format));
 }
 
 }  // namespace atlantis::vulkan_backend::detail

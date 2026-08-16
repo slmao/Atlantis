@@ -501,7 +501,8 @@ int main() {
           } else {
             std::unique_ptr<rhi::CommandList> commandList = std::move(commandListResult.value());
 
-            renderer.drawFrame(*commandList, *target, *depthTexture, *cameraBuffer, drawItems);
+            renderer.drawFrame(*commandList, *target, *depthTexture, *cameraBuffer, drawItems,
+                                atlantis::rhi::ResourceState::PresentSource);
 
             auto submitResult = device->submit(std::move(commandList), *target);
             if (submitResult.isErr()) {

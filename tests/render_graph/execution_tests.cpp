@@ -79,7 +79,8 @@ TEST_CASE("execute() inserts no transition when consecutive usages declare the s
 
   FakeRenderTarget fakeTarget("target");
   FakeCommandList commandList;
-  const std::vector<ResourceBinding> bindings{{compiled.value().resourceAt(0), &fakeTarget}};
+  const std::vector<ResourceBinding> bindings{
+      {.resource = compiled.value().resourceAt(0), .target = &fakeTarget, .finalState = ResourceState::PresentSource}};
 
   execute(compiled.value(), bindings, commandList);
 
@@ -105,7 +106,8 @@ TEST_CASE("execute() inserts exactly one transition when a resource's declared s
 
   FakeRenderTarget fakeTarget("target");
   FakeCommandList commandList;
-  const std::vector<ResourceBinding> bindings{{compiled.value().resourceAt(0), &fakeTarget}};
+  const std::vector<ResourceBinding> bindings{
+      {.resource = compiled.value().resourceAt(0), .target = &fakeTarget, .finalState = ResourceState::PresentSource}};
 
   execute(compiled.value(), bindings, commandList);
 
@@ -135,7 +137,8 @@ TEST_CASE("execute() inserts exactly one trailing transition regardless of pass 
 
   FakeRenderTarget fakeTarget("target");
   FakeCommandList commandList;
-  const std::vector<ResourceBinding> bindings{{compiled.value().resourceAt(0), &fakeTarget}};
+  const std::vector<ResourceBinding> bindings{
+      {.resource = compiled.value().resourceAt(0), .target = &fakeTarget, .finalState = ResourceState::PresentSource}};
 
   execute(compiled.value(), bindings, commandList);
 
