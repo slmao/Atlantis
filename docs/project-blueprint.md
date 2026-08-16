@@ -256,7 +256,13 @@ attachment-format-change case are both verified by code
 inspection/GPU-independent tests only in this environment, not on real
 hardware — no second GPU/driver combination or second monitor was
 available). Shader System now exists (Spec/Plan 0008, see below); no
-Android/iOS or headless path exists yet.
+Android/iOS path exists yet. A headless rendering path now exists (Spec
+0010, `Approved`, implemented and merged via
+[PR #48](https://github.com/slmao/Atlantis/pull/48) — see Milestone 7 in
+Section 5 and the Spec 0010 row in
+[specs/README.md](../specs/README.md) for full scope and verification
+detail, including its own disclosed single-GPU-vendor verification
+limitation).
 
 **Every currently-`Approved` spec (0001–0008) now has matching
 implementation**, each merged following the same Spec → Plan → Human
@@ -277,9 +283,10 @@ unmodified — Spec 0008 superseded its *mechanism*, not the ADR record.
 
 **What has no spec yet:** Runtime (the module), the remainder of Tools
 beyond its first Spec 0008 content, Android Platform implementation,
-iOS Platform, headless rendering, image regression testing, and
-everything in Section 5's later milestones and Section 5's "further
-candidate phases." These remain backlog candidates (see
+iOS Platform, image regression testing (headless rendering now has a
+spec — Spec 0010, `Approved`, implemented — see above), and everything
+in Section 5's later milestones and Section 5's "further candidate
+phases." These remain backlog candidates (see
 [specs/README.md](../specs/README.md) Section B) and are not `Approved`
 — no spec number, API shape, or Candidate-status promotion is assigned
 to any of them by this document.
@@ -503,10 +510,13 @@ milestone being listed does not authorize starting it — see Section 1.
 
 ### Milestone 7 — Headless rendering
 
-- **Governance state:** Candidate — requires a new Spec/ADR. Not
-  started. Must follow the windowed path, per
-  [AGENTS.md](../AGENTS.md)'s explicit sequencing — this is a
-  hard ordering constraint, not a scheduling preference.
+- **Governance state:** Spec 0010 `Approved`, ADR-0038/0039/0040
+  `Accepted` (plus ADR-0022's Accepted Amendment). **Implemented and
+  merged** via [PR #48](https://github.com/slmao/Atlantis/pull/48) —
+  see the Spec 0010 row in [specs/README.md](../specs/README.md) for
+  full scope and verification detail, including its own disclosed
+  single-GPU-vendor verification limitation. Followed the windowed path
+  per [AGENTS.md](../AGENTS.md)'s explicit sequencing, as required.
 - **Scope:** offscreen `RenderTarget` construction (no `Presentation`
   object involved); shares Renderer/RHI/RenderGraph unchanged with the
   windowed path; GPU readback; the foundation image regression testing
@@ -562,7 +572,7 @@ anything architectural, its own ADR before any of the below moves past
 | M4 | **Met.** A first mesh is drawn end-to-end through Renderer → RenderGraph → RHI → Vulkan Backend, with a working camera and one material, Validation Layers clean — see `examples/minimal_renderer_demo` and the Spec 0007 row in Section 4. |
 | M5 | A shader authored in Phase 1's chosen source form compiles to SPIR-V, is reflected, and backs a working pipeline used by M4's mesh draw. |
 | M6 | The same Renderer output from M4 appears on an Android device/emulator via the Android Platform + Vulkan Backend path, with no Renderer/RenderGraph code fork. |
-| M7 | The same rendering stack from M4, driven headlessly, produces a GPU-readback image comparable to the windowed output, with no window or swapchain involved. |
+| M7 | **Met** (headless GPU-readback path). The same rendering stack from M4, driven headlessly via `OffscreenTarget`, produces a GPU-readback image with no window or swapchain involved — see `examples/headless_rendering_demo` and the Spec 0010 row in [specs/README.md](../specs/README.md). Pixel/image-level comparison *against the windowed output* is explicitly Milestone 8/Image Regression Testing's own, separate scope, not part of M7/Spec 0010 — M8 remains `Candidate`. |
 | M8 | A CI-enforced golden-image comparison catches an intentionally introduced rendering regression and passes on a known-good build, gating merges. |
 
 ## 7. Explicitly deferred or off-limits for now

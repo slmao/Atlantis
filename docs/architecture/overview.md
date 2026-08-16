@@ -134,8 +134,10 @@ likely to get silently blurred later, so it is called out on its own:
 - **RenderTarget** — an RHI abstraction for "a drawable surface" (color/
   depth attachments), regardless of origin. It is backed by a swapchain
   image in the windowed path (on any OS), or by an offscreen image in the
-  future headless path. This is the abstraction that unifies windowed
-  rendering across Windows/Android/(future) iOS *and* headless.
+  headless path (Spec 0010, `Approved`, implemented and merged via
+  [PR #48](https://github.com/slmao/Atlantis/pull/48)). This is the
+  abstraction that unifies windowed rendering across Windows/Android/
+  (future) iOS *and* headless.
 - **Renderer** — consumes RHI + RenderGraph and a `RenderTarget` supplied
   by its caller. It does not create, own, resize, or know the provenance
   of the `RenderTarget`, and has no idea which OS or Platform produced it
@@ -171,7 +173,7 @@ Future iOS (windowed, not implemented):
                 -->  Atlantis RenderTarget
                 -->  Renderer
 
-Headless (any platform, future):
+Headless (any platform, implemented — Spec 0010):
   Offscreen Target request  -->  RenderTarget  -->  Renderer
 ```
 
@@ -184,8 +186,11 @@ members). This is what lets:
 
 - Windows and Android windowed rendering share one Renderer/RHI stack
   instead of forking per OS,
-- headless rendering (Phase 1, after windowed — see
-  [AGENTS.md](../../AGENTS.md)) reuse that same stack once it lands, and
+- headless rendering (Phase 1, after windowed per
+  [AGENTS.md](../../AGENTS.md)'s sequencing — Spec 0010, `Approved`,
+  implemented and merged via
+  [PR #48](https://github.com/slmao/Atlantis/pull/48)) reuses that same
+  stack, and
 - a future iOS path — whichever of MoltenVK or a native Metal RHI backend
   is eventually chosen — plug in without Renderer or RenderGraph changing
   at all. If MoltenVK is chosen, iOS is simply another `Presentation`
@@ -195,11 +200,16 @@ members). This is what lets:
   them today — either way, Renderer is untouched. **Neither is decided or
   implemented now.**
 
-Windowed ships first per Phase 1 sequencing (on Windows and/or Android);
-headless is not implemented by writing this document. The shared
-`RenderTarget` boundary is what *allows* both multi-platform windowed
-support and eventual headless/iOS support to follow without a rewrite —
-not a reason to build any of them early.
+Windowed shipped first per Phase 1 sequencing (on Windows and/or
+Android), and headless has since followed (Spec 0010, `Approved`,
+implemented and merged via
+[PR #48](https://github.com/slmao/Atlantis/pull/48) — see the Spec 0010
+row in [specs/README.md](../../specs/README.md) for full scope and
+verification detail, including its own disclosed single-GPU-vendor
+verification limitation). iOS remains future and undecided (see above).
+The shared `RenderTarget` boundary is what *allowed* headless to follow
+windowed without a rewrite, and is what will do the same for iOS
+whenever it is specced — not a reason to have built any of them early.
 
 ## Related documents
 
