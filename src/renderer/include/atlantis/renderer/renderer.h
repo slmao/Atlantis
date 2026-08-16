@@ -35,9 +35,18 @@ class Renderer {
   // projection matrices into -- Renderer never touches raw camera math,
   // only binds the Buffer it is handed. drawItems is an ordinary
   // caller-supplied span, iterated once, retained nowhere.
+  //
+  // finalColorState: required, backend-agnostic (Spec 0010/ADR-0022
+  // Accepted Amendment) -- the state colorTarget must be left in when
+  // this call returns. Passed through unmodified as the internal draw
+  // pass's trailing-transition target; Renderer does not interpret,
+  // validate, or branch on this value, and gains no knowledge of why the
+  // caller chose it. A windowed caller supplies
+  // atlantis::rhi::ResourceState::PresentSource; a headless caller
+  // supplies atlantis::rhi::ResourceState::TransferSource directly.
   void drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& colorTarget,
                  atlantis::rhi::Texture& depthTarget, atlantis::rhi::Buffer& cameraUniformBuffer,
-                 std::span<const DrawItem> drawItems);
+                 std::span<const DrawItem> drawItems, atlantis::rhi::ResourceState finalColorState);
 };
 
 }  // namespace atlantis::renderer

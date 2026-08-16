@@ -296,6 +296,7 @@ TEST_CASE("execute() tracks per-resource state independently across two simultan
   ResourceBinding colorBinding{};
   colorBinding.resource = compiled.value().resourceAt(0);
   colorBinding.target = &fakeColor;
+  colorBinding.finalState = ResourceState::PresentSource;
   ResourceBinding depthBinding{};
   depthBinding.resource = compiled.value().resourceAt(1);
   depthBinding.depthTexture = &fakeDepth;
@@ -330,6 +331,7 @@ TEST_CASE("execute() starts every bound resource from Undefined on each independ
   ResourceBinding binding{};
   binding.resource = compiled.value().resourceAt(0);
   binding.target = &fakeColor;
+  binding.finalState = ResourceState::PresentSource;
 
   execute(compiled.value(), {binding}, commandList);
   execute(compiled.value(), {binding}, commandList);  // second, independent call

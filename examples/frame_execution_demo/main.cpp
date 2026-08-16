@@ -104,7 +104,9 @@ using atlantis::render_graph::ResourceBinding;
     return false;
   }
 
-  const std::vector<ResourceBinding> bindings{{compileResult.value().resourceAt(0), &target}};
+  const std::vector<ResourceBinding> bindings{{.resource = compileResult.value().resourceAt(0),
+                                                .target = &target,
+                                                .finalState = atlantis::rhi::ResourceState::PresentSource}};
   execute(compileResult.value(), bindings, commandList);
   return true;
 }

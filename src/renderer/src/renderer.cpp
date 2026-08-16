@@ -16,7 +16,7 @@ constexpr atlantis::rhi::ClearColorValue kBackgroundClearColor{0.05f, 0.05f, 0.0
 
 void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& colorTarget,
                           atlantis::rhi::Texture& depthTarget, atlantis::rhi::Buffer& cameraUniformBuffer,
-                          std::span<const DrawItem> drawItems) {
+                          std::span<const DrawItem> drawItems, atlantis::rhi::ResourceState finalColorState) {
   atlantis::render_graph::RenderGraphBuilder builder;
   const auto colorResource = builder.declareResource("color");
   const auto depthResource = builder.declareResource("depth");
@@ -38,8 +38,11 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
   ATLANTIS_CHECK_MSG(compileResult.isOk(), "Renderer's fixed one-pass graph never fails to compile");
 
   const std::vector<atlantis::render_graph::ResourceBinding> bindings{
-      {compileResult.value().resourceAt(0), &colorTarget, kBackgroundClearColor, nullptr, 0.0f},
-      {compileResult.value().resourceAt(1), nullptr, atlantis::rhi::ClearColorValue{}, &depthTarget, 1.0f},
+      {.resource = compileResult.value().resourceAt(0),
+       .target = &colorTarget,
+       .colorClear = kBackgroundClearColor,
+       .finalState = finalColorState},
+      {.resource = compileResult.value().resourceAt(1), .depthTexture = &depthTarget, .depthClear = 1.0f},
   };
   atlantis::render_graph::execute(compileResult.value(), bindings, commandList);
 }
