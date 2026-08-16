@@ -139,9 +139,12 @@
   and
   [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
   for the full corrected/completed text.
-- **Related Plan(s):** None yet — a Plan may be drafted only after this
-  Spec (and the ADRs below) reach `Approved`/`Accepted`, per
-  [AGENTS.md](../AGENTS.md).
+- **Related Plan(s):**
+  [plans/0011-image-regression-testing-foundation.md](../plans/0011-image-regression-testing-foundation.md)
+  (`Draft`, drafted against this Spec's own `Approved` status, per
+  [AGENTS.md](../AGENTS.md)). Drafting this Plan is not itself an
+  Implementation authorization — that Plan must still pass its own (or
+  a joint Spec+Plan) Human Review first.
 - **Related ADR(s):**
   [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)
   (golden image data format and codec dependency, `Accepted`),
