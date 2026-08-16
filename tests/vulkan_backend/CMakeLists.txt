@@ -52,6 +52,7 @@ add_executable(atlantis_vulkan_backend_gpu_tests
   vulkan_presentation_gpu_tests.cpp
   frame_execution_gpu_tests.cpp
   minimal_renderer_gpu_tests.cpp
+  headless_rendering_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_vulkan_backend_gpu_tests
