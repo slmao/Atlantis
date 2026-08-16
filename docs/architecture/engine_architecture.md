@@ -199,8 +199,12 @@ the above may exist — see ADR-0037's own "Future approval gate."
 - "Agent-native" ([ADR-0036](../../adr/0036-agent-native-automation-and-machine-verifiable-architecture-as-long-term-goals.md))
   is a **development-tooling direction** — not a runtime AI feature, not
   an in-game agent API.
-- Headless rendering **remains a Phase 1 deliverable**, sequenced after
-  windowed rendering (already complete) — not moved out of Phase 1.
+- Headless rendering is **implemented and merged** (Spec 0010
+  `Approved`, [PR #48](https://github.com/slmao/Atlantis/pull/48)),
+  having followed windowed rendering per Phase 1 sequencing as required
+  — see the Spec 0010 row in [specs/README.md](../../specs/README.md)
+  for full scope and verification detail, including its own disclosed
+  single-GPU-vendor verification limitation.
 - Direct3D 12 and Metal are **not** Candidate Spec Backlog items — see
   [specs/README.md](../../specs/README.md) Section B, unmodified.
 - RenderGraph remains the mandatory path for GPU work — no ad hoc

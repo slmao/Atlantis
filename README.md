@@ -10,9 +10,14 @@ backend-independent RHI, a Vulkan windowed presentation foundation, a
 RenderGraph, a first Renderer, and a Shader System are implemented — the
 Windows Vulkan path now draws a real, visible, depth-tested mesh with a
 working camera and a minimal material sourced from a real build-time Slang
-shader pipeline, not just a cleared color or checked-in bytecode. Runtime,
-Android/iOS, and headless rendering remain unimplemented. This repository
-holds the process and structure the project will be built with.
+shader pipeline, not just a cleared color or checked-in bytecode. Headless
+rendering is also implemented — an offscreen `RenderTarget` source plus
+GPU-to-CPU readback, sharing the same Renderer/RHI/RenderGraph/Vulkan
+Backend stack (Spec 0010, `Approved`, implemented and merged via
+[PR #48](https://github.com/slmao/Atlantis/pull/48)). Runtime and
+Android/iOS remain unimplemented.
+This repository holds the process and structure the project will be
+built with.
 
 ## Phase 1 technical scope
 
@@ -29,9 +34,12 @@ holds the process and structure the project will be built with.
 - A Render Graph as the central rendering abstraction
 - Windowed rendering first — the initial working milestone is an
   interactive, on-screen swapchain path, on Windows and/or Android
-- Headless rendering after that — built once the windowed path works,
-  and what unlocks image regression testing
-- Image regression testing (depends on headless rendering landing)
+- Headless rendering after that — implemented (Spec 0010, `Approved`,
+  [PR #48](https://github.com/slmao/Atlantis/pull/48)), sharing the same
+  Renderer/RHI/RenderGraph/Vulkan Backend stack as the windowed path;
+  what unlocks image regression testing
+- Image regression testing — not yet implemented, next candidate item
+  (see [specs/README.md](specs/README.md) Section B)
 - Vulkan Validation Layers as a correctness gate
 - RenderDoc-based debugging
 
@@ -83,9 +91,9 @@ docs/               Architecture records (as-built) and process docs
 specs/              Proposed work, pre-implementation
 plans/              Approved implementation plans
 adr/                Architectural decision records
-src/                Source — src/core/ (Atlantis Core, spec/plan/ADR 0001/0006-0010); src/platform/ (Atlantis Platform's Windows path, spec/plan 0002, ADR-0005/0010-0013 — Android/iOS specified but not implemented); src/rhi/ and src/vulkan_backend/ (backend-independent RHI and its sole Phase 1 backend — Windows windowed Vulkan presentation, spec/plan 0003, ADR-0001-0003/0014-0016; frame-scoped acquire/present, RenderTarget, and CommandList/submission, spec/plan 0006, ADR-0019-0021; Buffer/Texture/Pipeline and the draw-command surface, spec/plan 0007, ADR-0023-0025); src/render_graph/ (RenderGraph construction/compilation, spec/plan 0005, ADR-0017/0018; execution/barrier integration, spec/plan 0006, ADR-0021; multi-attachment/draw-pass integration, spec/plan 0007, ADR-0026); src/renderer/ (Atlantis Renderer — Mesh/Material/DrawItem/Renderer, spec/plan 0007, ADR-0022); every other module still empty, pending its own spec/plan/ADR
-examples/           Non-shipping demo programs (foundation_demo/, platform_demo/, rhi_vulkan_demo/, frame_execution_demo/, minimal_renderer_demo/) — see ADR-0010
-tests/              Tests — tests/core/, tests/platform/, tests/rhi/ (Catch2 v3, all GPU-independent), tests/vulkan_backend/ (GPU-independent plus a separate, explicitly gpu-labeled Windows/Vulkan integration executable, incl. full frame execution and the minimal renderer draw path), tests/render_graph/ (GPU-independent, incl. execute()), tests/renderer/ (GPU-independent, Renderer statelessness/ownership); headless and image-regression layers pending their own spec
+src/                Source — src/core/ (Atlantis Core, spec/plan/ADR 0001/0006-0010); src/platform/ (Atlantis Platform's Windows path, spec/plan 0002, ADR-0005/0010-0013 — Android/iOS specified but not implemented); src/rhi/ and src/vulkan_backend/ (backend-independent RHI and its sole Phase 1 backend — Windows windowed Vulkan presentation, spec/plan 0003, ADR-0001-0003/0014-0016; frame-scoped acquire/present, RenderTarget, and CommandList/submission, spec/plan 0006, ADR-0019-0021; Buffer/Texture/Pipeline and the draw-command surface, spec/plan 0007, ADR-0023-0025; OffscreenTarget and GPU-to-CPU readback for headless rendering, spec/plan 0010, ADR-0038-0040); src/render_graph/ (RenderGraph construction/compilation, spec/plan 0005, ADR-0017/0018; execution/barrier integration, spec/plan 0006, ADR-0021; multi-attachment/draw-pass integration, spec/plan 0007, ADR-0026; caller-specified incoming/final resource-state boundaries for headless reuse, spec/plan 0010, ADR-0039); src/renderer/ (Atlantis Renderer — Mesh/Material/DrawItem/Renderer, spec/plan 0007, ADR-0022; drawFrame()'s required finalColorState parameter, spec/plan 0010, ADR-0022 Amendment); every other module still empty, pending its own spec/plan/ADR
+examples/           Non-shipping demo programs (foundation_demo/, platform_demo/, rhi_vulkan_demo/, frame_execution_demo/, minimal_renderer_demo/, headless_rendering_demo/) — see ADR-0010
+tests/              Tests — tests/core/, tests/platform/, tests/rhi/ (Catch2 v3, all GPU-independent), tests/vulkan_backend/ (GPU-independent plus a separate, explicitly gpu-labeled Windows/Vulkan integration executable, incl. full frame execution, the minimal renderer draw path, and headless GPU readback), tests/render_graph/ (GPU-independent, incl. execute()), tests/renderer/ (GPU-independent, Renderer statelessness/ownership); image-regression layer pending its own spec
 shaders/            Shader sources — shaders/minimal_renderer/ (spec/plan 0007, ADR-0027: pre-compiled, checked-in SPIR-V only, no compiler invoked by any build target)
 assets/             Engine/sample assets (empty — structure pending first spec/plan/ADR)
 tools/              Offline/dev tooling (empty — structure pending first spec/plan/ADR)
@@ -248,10 +256,15 @@ verification detail. Runtime and general asset/scene systems remain
 unimplemented — see [src/README.md](src/README.md).
 
 Android and iOS remain specified architecturally only (not implemented);
-Vulkan Backend's Android WSI path is likewise not implemented. No headless
-rendering, no image regression testing, and no CI pipeline yet. See
-[docs/](docs/) for what's documented so far and the open architectural
-questions still awaiting human decisions.
+Vulkan Backend's Android WSI path is likewise not implemented. Headless
+rendering is implemented (Spec 0010, `Approved`, implemented and merged
+via [PR #48](https://github.com/slmao/Atlantis/pull/48) — see
+[specs/README.md](specs/README.md) for full scope and verification
+detail, including its own disclosed single-GPU-vendor verification
+limitation); image regression testing does not exist yet and is the next
+candidate item. There is no CI pipeline yet. See [docs/](docs/) for
+what's documented so far and the open architectural questions still
+awaiting human decisions.
 
 ## License
 
