@@ -63,8 +63,14 @@ TEST_CASE("Full capture-compare cycle against the committed minimal_cube golden 
 
   auto goldenResult =
       loadAndValidateGolden(goldenPngPath(kMinimalCubeGoldenName), goldenSidecarPath(kMinimalCubeGoldenName));
-  INFO("INVALID GOLDEN: the committed minimal_cube golden must load and validate cleanly");
-  REQUIRE(goldenResult.isOk());
+  {
+    // Scoped to this block only -- Catch2's INFO() otherwise stays
+    // attached to every later assertion in this TEST_CASE, which would
+    // mislabel an ordinary comparison mismatch (below) as a golden
+    // validity problem.
+    INFO("INVALID GOLDEN: the committed minimal_cube golden must load and validate cleanly");
+    REQUIRE(goldenResult.isOk());
+  }
   const ValidatedGolden& validatedGolden = goldenResult.value();
 
   // Format/extent mismatch is a hard failure, distinct from an INVALID
