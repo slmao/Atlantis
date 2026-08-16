@@ -140,10 +140,13 @@ int main(int argc, char** argv) {
   // Step 3: current_environment.sidecar.txt must not be tracked by git
   // despite the .gitignore entry (defense in depth). Exit code alone
   // matters; a zero exit means the file IS tracked (refuse), a nonzero
-  // exit means it is not tracked (the expected, normal case).
+  // exit means it is not tracked (the expected, normal case -- git's own
+  // "pathspec did not match" diagnostic on that expected path is
+  // redirected away, so a normal run does not print what looks like an
+  // error for an outcome that is actually correct).
   const std::string environmentFilePath = ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE;
   const auto trackedCheckResult =
-      runGitCommand("git ls-files --error-unmatch \"" + environmentFilePath + "\"");
+      runGitCommand("git ls-files --error-unmatch \"" + environmentFilePath + "\" 2>nul");
   if (!trackedCheckResult.has_value()) {
     ATLANTIS_LOG_ERROR("failed to invoke git -- confirm it is installed and on PATH");
     return 1;
