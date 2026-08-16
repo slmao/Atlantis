@@ -95,13 +95,30 @@ Verified directly against `stb_image.h` (v2.30, 2024-05-31) and
   symbols at link time); every other translation unit that needs the
   decode/encode API `#include`s the header **without** the macro
   defined, exactly as both headers' own build instructions require.
-- **Decode channel contract.** Every `stbi_load`-family call in this
-  project's code passes `desired_channels = 4` explicitly. Per
-  `stb_image.h`'s own documented contract, a non-zero `desired_channels`
-  forces the decoded output to that many channels regardless of the
-  source PNG's own encoded channel count — this guarantees a golden PNG
-  is always read back as a 4-channel (RGBA) buffer with a fixed, known
-  layout, independent of exactly how the encoder chose to write it.
+- **Decode channel contract, and why forcing 4 channels is not enough
+  on its own.** Every `stbi_load`-family call in this project's code
+  passes `desired_channels = 4` explicitly. Per `stb_image.h`'s own
+  documented contract, a non-zero `desired_channels` forces the decoded
+  *output buffer* to that many channels regardless of the source PNG's
+  own encoded channel count — this guarantees a golden PNG is always
+  read back as a 4-channel (RGBA) buffer with a fixed, known layout, no
+  matter how the file was actually encoded. **On its own, this would
+  silently mask a golden PNG that was never really RGBA** (e.g. one
+  accidentally re-saved as RGB-only or grayscale by an external tool,
+  losing its real alpha data) — `stb_image`'s forced-channel expansion
+  fills in a synthetic alpha rather than erroring. This project's code
+  therefore **also inspects the decoder's own `channels_in_file`
+  out-parameter** (`stb_image.h`'s own documented contract: "*channels_in_file
+  has the number of components that _would_ have been output" had
+  `desired_channels` been 0 — i.e. the file's real, as-encoded channel
+  count, independent of the forced-4-channel output buffer) and requires
+  it to equal 4, and separately calls `stb_image.h`'s own
+  `stbi_is_16_bit`-family query and requires it to report `false` (this
+  project's contract is 8 bits per channel only, never 16). Either check
+  failing is a **malformed-golden** hard failure — see
+  [ADR-0042](0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
+  own "Golden validity check" for the full, ordered validation this
+  feeds into.
 - **No vertical flip, ever, on either side.** This project's code never
   calls `stbi_set_flip_vertically_on_load()`,
   `stbi_set_flip_vertically_on_load_thread()`, or

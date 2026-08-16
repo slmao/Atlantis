@@ -50,6 +50,34 @@
   received Human Review Approval** — `In Review` reflects that an
   independent review round has occurred and been acted on, not that a
   human has signed off.
+- **Independent Review — Round 2 (2026-08-16):** A second independent,
+  read-only review, focused on re-verifying Round 1's fixes against
+  primary evidence rather than trusting the prior summary (independently
+  re-ran the calibration comparator, independently hashed all 42 raw
+  captures, independently re-fetched/re-checked `nothings/stb`'s
+  tags/releases/license/source), found **no Must Fix issues** and three
+  Should Fix issues, all addressed in this revision: (1) the sidecar's
+  "Vulkan instance/loader and device API version" field was one vague
+  phrase covering three values this codebase's own Vulkan Backend
+  already computes distinctly (loader-reported version, requested
+  instance version, selected physical device `apiVersion`) — now three
+  separate, named fields, never concatenated; (2) a golden's own PNG
+  could disagree with its own sidecar (or fail `stb`'s
+  `channels_in_file`/bit-depth metadata check despite the forced-4-
+  channel output buffer looking fine) with no distinct failure mode —
+  now a dedicated, four-step **golden validity check** that runs first
+  and reports `INVALID GOLDEN`, never downgraded by tolerance and never
+  conflated with a regression failure or a provenance mismatch; (3) the
+  sidecar's "JSON is the working assumption" left its parsing
+  implementation dependency unconstrained — now bounded: no new parsing
+  dependency without its own Spec/ADR, no reuse of
+  `src/shader_system/`'s private JSON parser, a dependency-free flat
+  text format as the default, and a stable field order plus an explicit
+  version marker required of whatever encoding the Plan picks. See
+  [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)
+  and
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
+  for the full corrected/completed text.
 - **Related Plan(s):** None yet — a Plan may be drafted only after this
   Spec (and the ADRs below) reach `Approved`/`Accepted`, per
   [AGENTS.md](../AGENTS.md).
@@ -264,12 +292,22 @@ Explicitly excluded from this spec's design and implementation:
   as run at capture time against a **clean working tree** — never the
   hash of the commit the golden itself is being added in, which cannot
   be known until that commit's own content is finalized); GPU
-  vendor/model; driver version; Vulkan instance/loader and device API
-  version; OS build; and the exact `OffscreenTarget` extent/format used.
-  Exact sidecar text encoding is a Plan-stage detail (JSON is the
-  working assumption); every field above is fixed by
-  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md),
-  not left open.
+  vendor/model; driver version; OS build; **three separate Vulkan
+  version fields — loader-reported API version, requested instance API
+  version, and selected physical device `apiVersion` — never
+  concatenated into one combined value** (each already computed as a
+  distinct quantity by this codebase's own Vulkan Backend; see
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
+  for exactly where); and the exact `OffscreenTarget` extent/format
+  used. Sidecar encoding is bounded, not a blank check for Plan: no new
+  parsing/serialization dependency without its own Spec/ADR/Human
+  Review, no reuse of `src/shader_system/`'s private JSON parser or any
+  other dependency of `tests/image_regression/` on Shader System's
+  private implementation, a simple dependency-free flat text format as
+  the default (not general-purpose JSON), and a stable field order plus
+  an explicit format/version marker — full bounds in
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
+  own "Sidecar encoding and parsing."
 - When a golden is added or updated in the same PR as the rendering
   change that motivates it, the rendering change must be **committed
   first**; the golden is captured against that already-existing commit
@@ -280,11 +318,30 @@ Explicitly excluded from this spec's design and implementation:
   [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
   own "Golden PNG checksum" decision (no existing SHA-256 capability in
   this repository; adding one would itself be a new dependency).
+- **A golden must pass a validity check before it is ever compared
+  against a captured buffer:** the PNG file exists and decodes; its
+  actual decoded properties (width, height, the decoder's own
+  `channels_in_file` metadata — not just the forced-4-channel output
+  buffer — and confirmed 8-bit depth) satisfy this project's RGBA8
+  contract; its own sidecar's recorded format/extent matches those
+  actual decoded properties; and the sidecar found alongside a PNG is
+  really the one for that PNG. Any failure here is reported as a
+  distinct **`INVALID GOLDEN`** outcome — never downgraded by channel
+  tolerance, never conflated with a provenance mismatch, and never
+  reported as an ordinary regression failure (a broken golden is a
+  defect in the committed test artifact, not evidence about the code
+  under test). Full four-step check in
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
+  own "Golden validity check"; the channel-metadata mechanism in
+  [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)'s
+  "Decode channel contract."
 - The comparison suite has no `skip` outcome for non-reference hardware/
-  drivers. It always runs the real pixel comparison; if the current
-  device's vendor/model/driver/Vulkan version does not match a golden's
-  recorded provenance, a separate, prominent `PROVENANCE MISMATCH`
-  diagnostic is emitted alongside (never merged into) the ordinary
+  drivers. Once a golden is confirmed valid, the suite always runs the
+  real pixel comparison; if the current device's vendor/model/driver/OS
+  build or any of the three Vulkan version fields does not match a
+  golden's recorded provenance, a separate, prominent
+  `PROVENANCE MISMATCH` diagnostic — naming which specific field(s)
+  differ — is emitted alongside (never merged into) the ordinary
   pass/fail result. A pass obtained under a provenance mismatch must
   never be reported as reference-environment verification evidence.
   Full decision in
@@ -375,8 +432,10 @@ Explicitly excluded from this spec's design and implementation:
   `tests/image_regression/`'s own test-support targets. Full decision,
   alternatives, and licensing/build/maintenance analysis, plus the full
   usage contract (implementation-macro single-translation-unit rule,
-  forced 4-channel decode, no vertical-flip calls on either side, no
-  PNG color-profile chunks written or interpreted), in
+  forced 4-channel decode **plus an explicit check of the decoder's own
+  `channels_in_file`/bit-depth metadata**, not the forced-4-channel
+  output buffer alone, no vertical-flip calls on either side, no PNG
+  color-profile chunks written or interpreted), in
   [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md).
 - No dependency introduced by this spec is linked into, or referenced
   by, any `src/` module.
@@ -466,15 +525,30 @@ Image regression capture-and-compare cycle, conceptually:
   [New in this spec]
   Load golden PNG + provenance sidecar for this scene
     (tests/image_regression/goldens/<scene-slug>/<golden-name>.png)
-  IF format/extent of golden != format/extent of capture:
-    FAIL (hard mismatch, never resized/reformatted)
-  ELSE:
-    Per-pixel, per-channel |captured - golden| <= tolerance ?
-      ALL pixels pass -> PASS
-      ANY pixel fails -> FAIL:
-        write actual-captured PNG, write diff-image PNG,
-        report per-channel max/mean diff and out-of-tolerance
-        pixel count/percentage, at a documented build-output path
+  Golden validity check (runs first, always -- ADR-0042):
+    PNG missing or undecodable, OR decoded channels_in_file != 4,
+    OR PNG is 16-bit, OR sidecar's format/extent != PNG's own actual
+    decoded format/extent, OR sidecar/PNG pairing mismatch
+      -> INVALID GOLDEN (distinct outcome; never reached the checks
+         below; never downgraded by tolerance or provenance mismatch)
+  IF golden is valid:
+    Read current device's GPU vendor/model/driver/OS build and the
+      three Vulkan version fields (loader/instance/physical-device);
+      compare against golden's sidecar provenance
+      -> on mismatch: emit PROVENANCE MISMATCH (names which field(s)
+         differ), reported separately from, never merged into, the
+         pass/fail result below
+    IF format/extent of golden != format/extent of capture:
+      FAIL (hard mismatch, never resized/reformatted -- distinct from
+        an INVALID GOLDEN outcome, which is about the golden's own
+        internal consistency, not the capture)
+    ELSE:
+      Per-pixel, per-channel |captured - golden| <= channel tolerance ?
+        ALL pixels pass -> PASS
+        ANY pixel fails (failing-pixel budget exceeded) -> FAIL:
+          write actual-captured PNG, write diff-image PNG,
+          report per-channel max/mean diff and out-of-tolerance
+          pixel count/percentage, at a documented build-output path
 ```
 
 ### Golden image storage, provenance, and update workflow
@@ -649,9 +723,21 @@ no verification.
     round trip, confirming ADR-0041's no-added-quantization claim).
   - Provenance sidecar parsing succeeds for a well-formed sidecar and
     fails clearly for a malformed one; a provenance mismatch (current
-    device vs. sidecar) produces the separate diagnostic ADR-0042
-    requires, distinguishable from the pixel-comparison pass/fail
+    device vs. sidecar, on any one or more of the three Vulkan version
+    fields, GPU vendor/model, driver version, or OS build) produces the
+    separate diagnostic ADR-0042 requires, naming the specific
+    field(s), distinguishable from the pixel-comparison pass/fail
     result.
+  - **Golden validity check, each of its four steps, exercised
+    independently against constructed test PNGs/sidecars (no Vulkan
+    device needed):** a missing/undecodable PNG; a PNG whose decoder-
+    reported `channels_in_file` is not 4 (e.g. a real RGB or grayscale
+    PNG) even though the forced-4-channel output buffer looks fine; a
+    16-bit-depth PNG; a sidecar whose recorded format/extent does not
+    match the PNG's own actual decoded properties; and a sidecar/PNG
+    pairing mismatch. Each produces the distinct `INVALID GOLDEN`
+    outcome — never the ordinary pass/fail result, never downgraded by
+    channel tolerance, never conflated with a provenance mismatch.
 - **GPU integration tests (Windows/Vulkan, `gpu`-labeled):**
   - A full capture-via-`OffscreenTarget` cycle against the reused
     `examples/headless_rendering_demo` fixture, compared against its own
@@ -675,14 +761,18 @@ no verification.
     unchanged input. This check must be performed and its evidence
     recorded during Implementation; the regression is reverted
     immediately afterward and must not ship.
-  - A missing golden file, and a golden file present but with mismatched
-    provenance format/extent, each produce the expected, distinct
-    failure — not a crash, not a silent pass.
+  - A missing golden file produces `INVALID GOLDEN`, not a crash and not
+    a silent pass; a captured buffer whose format/extent genuinely
+    differs from a *valid* golden's recorded format/extent (the
+    actual-vs-golden case, distinct from a golden's own internal
+    PNG-vs-sidecar inconsistency, which is `INVALID GOLDEN` instead —
+    see the unit-test bullet above) produces the ordinary hard-failure
+    comparison result `INVALID GOLDEN` is never confused with.
   - Running against a golden whose recorded provenance does not match
     the current device produces the pixel-comparison result as normal,
-    plus the separate `PROVENANCE MISMATCH` diagnostic — and that
-    diagnostic is never allowed to suppress or replace the pass/fail
-    result.
+    plus the separate `PROVENANCE MISMATCH` diagnostic naming the
+    specific field(s) that differ — and that diagnostic is never
+    allowed to suppress or replace the pass/fail result.
 - **Vulkan Validation Layers:** mandatory, must run clean for every
   manual and automated exercise of the GPU-required capture path,
   exactly as every prior spec in this project already requires.
@@ -714,10 +804,16 @@ no verification.
   regression in that future evidence is a design gap requiring a spec
   revision or follow-up spec, not a silent, undocumented tolerance
   loosening during implementation.
-- **Exact provenance-sidecar text encoding** (JSON is the working
-  assumption, not fixed) is left to the Plan — every provenance *field*
-  itself (including "source revision," precisely defined) is fixed by
-  ADR-0042, not open.
+- **Exact provenance-sidecar text encoding syntax** (a specific flat
+  `key: value` scheme vs. some other simple, dependency-free layout) is
+  left to the Plan — but bounded, not open-ended: no new parsing
+  dependency without its own Spec/ADR, no reuse of
+  `src/shader_system/`'s private JSON parser, a dependency-free default,
+  and a stable field order plus an explicit version marker, all fixed by
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
+  own "Sidecar encoding and parsing." Every provenance *field* itself
+  (including "source revision" and the three separate Vulkan version
+  fields) is likewise fixed by ADR-0042, not open.
 - **Exact name and CMake target shape of the golden-regeneration
   tool** is left to the Plan; its architecture (a distinct,
   never-CTest-registered entry point, unreachable from the ordinary
