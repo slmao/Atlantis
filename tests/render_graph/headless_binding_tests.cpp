@@ -15,10 +15,10 @@
 
 // Exercises Spec 0010/ADR-0039's ResourceBinding::incomingState/finalState
 // extension and execute()'s generalized transition-insertion algorithm --
-// items 1-8 of the Plan's own Testing & Verification bullets, all
-// GPU-independent (no Vulkan device anywhere in this test binary). Item 9
-// (the copyRenderTargetToBuffer() callback-recording case) is added once
-// FakeCommandList gains that override in a later implementation step.
+// all 9 of the Plan's own Testing & Verification bullets, all
+// GPU-independent (no Vulkan device anywhere in this test binary). Items
+// 1-8 need only 2.1/2.2; item 9 additionally needs
+// FakeCommandList::copyRenderTargetToBuffer() (2.3).
 
 namespace {
 
@@ -28,6 +28,7 @@ using atlantis::render_graph::RenderGraphBuilder;
 using atlantis::render_graph::ResourceBinding;
 using atlantis::render_graph::ResourceHandle;
 using atlantis::render_graph::execute;
+using atlantis::render_graph::test::FakeBuffer;
 using atlantis::render_graph::test::FakeCommandList;
 using atlantis::render_graph::test::FakeRenderTarget;
 using atlantis::rhi::ResourceState;
@@ -266,4 +267,35 @@ TEST_CASE("execute() performs no transition on a resource never used by any pass
   execute(compiled.value(), bindings, commandList);
 
   REQUIRE(commandList.transitions.empty());
+}
+
+TEST_CASE("execute() invokes a copy pass's callback, which records exactly one copyRenderTargetToBuffer() call",
+          "[render_graph][headless]") {
+  // Item 9: confirms the copy pass's callback shape this spec's design
+  // relies on, not just the transition/recognition mechanics items 1-8
+  // already cover -- needs FakeCommandList::copyRenderTargetToBuffer()
+  // (2.3), unlike every other case in this file.
+  RenderGraphBuilder builder;
+  const ResourceHandle color = builder.declareResource("color");
+  const PassHandle copy = builder.declarePass("copy");
+  builder.writes(copy, color, ResourceState::TransferSource);
+
+  FakeRenderTarget fakeColor("color");
+  FakeBuffer readbackBuffer(atlantis::rhi::BufferPurpose::Readback, 64);
+  builder.setExecute(copy, [&fakeColor, &readbackBuffer](atlantis::rhi::CommandList& cmd) {
+    cmd.copyRenderTargetToBuffer(fakeColor, readbackBuffer);
+  });
+
+  const auto compiled = builder.compile();
+  REQUIRE(compiled.isOk());
+
+  FakeCommandList commandList;
+  const std::vector<ResourceBinding> bindings{
+      {.resource = compiled.value().resourceAt(0), .target = &fakeColor, .incomingState = ResourceState::TransferSource}};
+
+  execute(compiled.value(), bindings, commandList);
+
+  REQUIRE(commandList.copiesToBuffer.size() == 1);
+  REQUIRE(commandList.copiesToBuffer[0].source == &fakeColor);
+  REQUIRE(commandList.copiesToBuffer[0].destination == &readbackBuffer);
 }

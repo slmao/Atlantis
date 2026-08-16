@@ -55,11 +55,16 @@ namespace atlantis::vulkan_backend::detail {
 // waitIdle(), or this destructor releases it -- a caller never manages a
 // fence or decides when a CommandList is safe to destroy. Precondition,
 // not enforced by the type system, confirmed by Human Review as an
-// accepted design constraint: a caller must call
+// accepted design constraint: a *windowed* caller must call
 // VulkanPresentation::present() for a successful submit() before calling
 // submit() again -- submit() followed directly by application exit
 // remains legal (waitIdle() drains it). See
-// plans/0006-rhi-render-graph-frame-execution-foundation.md.
+// plans/0006-rhi-render-graph-frame-execution-foundation.md. A *headless*
+// caller (Spec 0010/ADR-0038) never constructs a VulkanPresentation and
+// therefore never calls present() at all -- its own repeated-submit()
+// safety comes entirely from submit()'s existing internal single-frame-
+// in-flight fence-wait (waitAndReleaseRetainedSubmission() below), not
+// from present().
 //
 // The accessor methods below exist solely for VulkanPresentation (build a
 // VkSurfaceKHR, run the concrete-surface presentation-support check,
@@ -105,6 +110,9 @@ class VulkanDevice final : public atlantis::rhi::Device {
   createTexture(const atlantis::rhi::TextureCreateParams& params) override;
   [[nodiscard]] atlantis::Result<std::unique_ptr<atlantis::rhi::Pipeline>, atlantis::rhi::PipelineCreateError>
   createPipeline(const atlantis::rhi::PipelineCreateParams& params) override;
+  [[nodiscard]] atlantis::Result<std::unique_ptr<atlantis::rhi::OffscreenTarget>,
+                                  atlantis::rhi::OffscreenTargetCreateError>
+  createOffscreenTarget(const atlantis::rhi::OffscreenTargetCreateParams& params) override;
 
   [[nodiscard]] VkInstance instance() const noexcept { return instance_; }
   [[nodiscard]] VkPhysicalDevice physicalDevice() const noexcept { return physicalDevice_; }

@@ -116,4 +116,9 @@ atlantis::rhi::PipelineCreateError toPipelineCreateError(VkResult result) {
   return atlantis::rhi::PipelineCreateError::PipelineCreationFailed;
 }
 
+atlantis::rhi::OffscreenTargetCreateError toOffscreenTargetCreateError(VkResult result) {
+  ATLANTIS_CHECK(result != VK_SUCCESS);
+  return atlantis::rhi::OffscreenTargetCreateError::ImageCreationFailed;
+}
+
 }  // namespace atlantis::vulkan_backend::detail

@@ -73,6 +73,15 @@ class CommandList {
   // Records one indexed draw call against whatever pipeline/vertex/index/
   // binding state is currently bound.
   virtual void drawIndexed(std::uint32_t indexCount) = 0;
+
+  // Spec 0010/ADR-0040: copies source's full, tightly-packed color image
+  // into destination; destination must have been created with
+  // BufferPurpose::Readback and be sized to match -- a mismatch is a
+  // caller precondition violation, not checked here. Recording remains
+  // legal only from inside a RenderGraph pass execution callback
+  // (ADR-0020), the same, unenforced-by-the-type-system convention every
+  // other CommandList method above already follows.
+  virtual void copyRenderTargetToBuffer(RenderTarget& source, Buffer& destination) = 0;
 };
 
 }  // namespace atlantis::rhi

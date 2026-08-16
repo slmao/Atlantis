@@ -6,6 +6,7 @@
 #include "vulkan_buffer.h"
 #include "vulkan_pipeline.h"
 #include "vulkan_render_target.h"
+#include "vulkan_render_target_access.h"
 #include "vulkan_texture.h"
 
 namespace atlantis::vulkan_backend::detail {
@@ -47,7 +48,12 @@ VulkanCommandList::~VulkanCommandList() { vkFreeCommandBuffers(device_, commandP
 
 void VulkanCommandList::transitionResource(atlantis::rhi::RenderTarget& target, atlantis::rhi::ResourceState before,
                                             atlantis::rhi::ResourceState after) {
-  auto& vulkanTarget = static_cast<VulkanRenderTarget&>(target);
+  // Pointer-form, exception-free (Spec 0010/ADR-0038): target may now be
+  // a VulkanRenderTarget or a VulkanOffscreenRenderTarget -- a mismatched
+  // type here is a programmer error, caught by this assertion, never by
+  // a thrown std::bad_cast reaching the render path.
+  auto* access = dynamic_cast<VulkanRenderTargetAccess*>(&target);
+  ATLANTIS_CHECK_MSG(access != nullptr, "transitionResource() received a RenderTarget not produced by this module");
   const ImageBarrierPlan plan = planTransition(before, after);
 
   const VkImageMemoryBarrier barrier{
@@ -59,7 +65,7 @@ void VulkanCommandList::transitionResource(atlantis::rhi::RenderTarget& target, 
       .newLayout = plan.newLayout,
       .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
       .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-      .image = vulkanTarget.image(),
+      .image = access->image(),
       .subresourceRange = fullColorResourceRange(),
   };
 
@@ -88,26 +94,36 @@ void VulkanCommandList::transitionResource(atlantis::rhi::Texture& target, atlan
 }
 
 void VulkanCommandList::clearColor(atlantis::rhi::RenderTarget& target, atlantis::rhi::ClearColorValue color) {
-  auto& vulkanTarget = static_cast<VulkanRenderTarget&>(target);
+  // Pointer-form, exception-free -- same rationale as transitionResource()
+  // above. Fixed here too even though this spec's own headless path never
+  // calls clearColor(), for internal consistency of this already-shared,
+  // already-affected class -- leaving this cast unfixed would leave a
+  // latent, identical-shape undefined-behavior trap for any future caller
+  // that legitimately calls it against an offscreen target.
+  auto* access = dynamic_cast<VulkanRenderTargetAccess*>(&target);
+  ATLANTIS_CHECK_MSG(access != nullptr, "clearColor() received a RenderTarget not produced by this module");
 
   // Precondition, enforced by render_graph::execute()'s own algorithm,
-  // not re-checked here: vulkanTarget must already be in
+  // not re-checked here: target must already be in
   // VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL (ResourceState::ColorAttachmentWrite)
   // when this is called -- see resource_state_mapping.h's own note.
   const VkClearColorValue vkClearColor{.float32 = {color.r, color.g, color.b, color.a}};
   const VkImageSubresourceRange range = fullColorResourceRange();
 
-  vkCmdClearColorImage(commandBuffer_, vulkanTarget.image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &vkClearColor, 1,
+  vkCmdClearColorImage(commandBuffer_, access->image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &vkClearColor, 1,
                         &range);
 }
 
 void VulkanCommandList::beginRendering(atlantis::rhi::RenderTarget& color, atlantis::rhi::Texture* depth,
                                         atlantis::rhi::ClearColorValue colorClear, float depthClear) {
-  auto& vulkanTarget = static_cast<VulkanRenderTarget&>(color);
+  // Pointer-form, exception-free -- same rationale as transitionResource()
+  // above.
+  auto* access = dynamic_cast<VulkanRenderTargetAccess*>(&color);
+  ATLANTIS_CHECK_MSG(access != nullptr, "beginRendering() received a RenderTarget not produced by this module");
 
   VkRenderingAttachmentInfo colorAttachment{};
   colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-  colorAttachment.imageView = vulkanTarget.imageView();
+  colorAttachment.imageView = access->imageView();
   colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
   colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
   colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -129,7 +145,9 @@ void VulkanCommandList::beginRendering(atlantis::rhi::RenderTarget& color, atlan
     depthAttachment.clearValue.depthStencil = VkClearDepthStencilValue{depthClear, 0};
   }
 
-  const atlantis::rhi::Extent2D extent = vulkanTarget.extent();
+  // extent() is part of RenderTarget's own public interface, already
+  // polymorphic -- called directly on color, no cast needed.
+  const atlantis::rhi::Extent2D extent = color.extent();
   VkRenderingInfo renderingInfo{};
   renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
   renderingInfo.renderArea = VkRect2D{{0, 0}, {extent.width, extent.height}};
@@ -233,6 +251,37 @@ void VulkanCommandList::pushConstant(const void* data, std::size_t sizeBytes) {
 
 void VulkanCommandList::drawIndexed(std::uint32_t indexCount) {
   vkCmdDrawIndexed(commandBuffer_, indexCount, 1, 0, 0, 0);
+}
+
+void VulkanCommandList::copyRenderTargetToBuffer(atlantis::rhi::RenderTarget& source,
+                                                  atlantis::rhi::Buffer& destination) {
+  // Pointer-form, exception-free -- same rationale as transitionResource()
+  // above.
+  auto* access = dynamic_cast<VulkanRenderTargetAccess*>(&source);
+  ATLANTIS_CHECK_MSG(access != nullptr,
+                      "copyRenderTargetToBuffer() received a RenderTarget not produced by this module");
+  // Only one concrete Buffer implementation exists in Phase 1 (ADR-0001) --
+  // this plan does not add a second one, so no dynamic_cast is needed here,
+  // unlike source above.
+  auto& vulkanBuffer = static_cast<VulkanBuffer&>(destination);
+  const atlantis::rhi::Extent2D sourceExtent = source.extent();
+
+  VkBufferImageCopy region{};
+  region.bufferOffset = 0;
+  region.bufferRowLength = 0;    // 0 = tightly packed (ADR-0040)
+  region.bufferImageHeight = 0;  // 0 = tightly packed (ADR-0040)
+  region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  region.imageOffset = {0, 0, 0};
+  region.imageExtent = {sourceExtent.width, sourceExtent.height, 1};
+  // No additional vkCmdPipelineBarrier for host-visibility is added here --
+  // destination's memory is host-coherent (ADR-0023), and
+  // Device::waitIdle()'s existing vkDeviceWaitIdle() call already
+  // establishes the device-to-host visibility guarantee the Vulkan
+  // specification's host-write-ordering rules provide for a fully-drained
+  // device, matching this codebase's existing precedent (the camera
+  // uniform Buffer's own write-timing argument, ADR-0023).
+  vkCmdCopyImageToBuffer(commandBuffer_, access->image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                          vulkanBuffer.vkBuffer(), 1, &region);
 }
 
 }  // namespace atlantis::vulkan_backend::detail
