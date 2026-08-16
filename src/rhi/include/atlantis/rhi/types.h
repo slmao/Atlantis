@@ -14,11 +14,15 @@ struct Extent2D {
 
 [[nodiscard]] bool operator==(const Extent2D& lhs, const Extent2D& rhs);
 
-// Describes only the currently-selected swapchain surface format for this
-// spec's read-only metadata query -- not a general resource-format system.
-// A future Buffer/Texture spec is expected to introduce its own format
-// concept, quite possibly superseding this enum's role rather than
-// extending it in place.
+// Describes the currently-selected swapchain surface format for
+// Presentation's read-only metadata query, and (Spec 0010/ADR-0038) an
+// OffscreenTarget's color image creation-time format parameter -- still
+// not a general resource-format system: these four values remain
+// color-attachment-shaped only, Texture's separate DepthFormat enum is
+// untouched, and Buffer/Pipeline gain no new format concept from this. A
+// future Buffer/Texture spec is expected to introduce its own general
+// format concept, quite possibly superseding this enum's role rather
+// than extending it in place.
 enum class Format {
   Unknown,
   Bgra8Unorm,
@@ -55,6 +59,7 @@ enum class ResourceState {
   PresentSource,               // unchanged (Spec 0006)
   ColorAttachmentOutput,       // new (Spec 0007) -- real graphics-pipeline color-attachment-output write
   DepthAttachmentReadWrite,    // new (Spec 0007) -- depth-test read + depth-write, single writes() usage (ADR-0026)
+  TransferSource,              // new (Spec 0010) -- GPU-to-CPU readback copy source state (ADR-0040)
 };
 
 // Spec 0007's one depth format. A single-variant enum, not a bare
@@ -81,6 +86,7 @@ enum class BufferPurpose {
   Vertex,
   Index,
   Uniform,
+  Readback,  // new (Spec 0010) -- host-visible destination for CommandList::copyRenderTargetToBuffer() (ADR-0040)
 };
 
 struct BufferCreateParams {
@@ -96,6 +102,18 @@ struct TextureCreateParams {
 };
 
 [[nodiscard]] bool operator==(const TextureCreateParams& lhs, const TextureCreateParams& rhs);
+
+// Spec 0010/ADR-0038: creation-time parameters for a headless OffscreenTarget's
+// color image. format defaults to a real, usable value (Rgba8Unorm), not
+// Format::Unknown -- toVkFormat() unconditionally asserts on Unknown, and
+// every sibling *CreateParams struct above defaults its enum field to a
+// real value for the same reason.
+struct OffscreenTargetCreateParams {
+  Extent2D extent;
+  Format format = Format::Rgba8Unorm;
+};
+
+[[nodiscard]] bool operator==(const OffscreenTargetCreateParams& lhs, const OffscreenTargetCreateParams& rhs);
 
 struct VertexAttribute {
   std::uint32_t location = 0;
@@ -146,6 +164,26 @@ enum class TextureCreateError {
   AllocationFailed,
   ImageCreationFailed,
   ImageViewCreationFailed,
+};
+
+// Spec 0010/ADR-0038: mirrors TextureCreateError exactly -- an
+// OffscreenTarget's color image creation is structurally identical
+// (image + memory + view).
+enum class OffscreenTargetCreateError {
+  AllocationFailed,
+  ImageCreationFailed,
+  ImageViewCreationFailed,
+};
+
+// Spec 0010/ADR-0038: OffscreenTarget::acquireTarget()'s Err channel --
+// reserved for a genuine unrecoverable, environmental failure, mirroring
+// PresentationError's own non-precondition variants. Calling
+// acquireTarget() while a previously-vended borrow is still outstanding
+// is a guaranteed-detectable programmer error (ATLANTIS_CHECK), not part
+// of this Result::Err channel.
+enum class OffscreenAcquireError {
+  DeviceLost,
+  Unknown,
 };
 
 enum class PipelineCreateError {

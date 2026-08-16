@@ -5,9 +5,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+using atlantis::rhi::BufferPurpose;
 using atlantis::rhi::ClearColorValue;
 using atlantis::rhi::Extent2D;
 using atlantis::rhi::Format;
+using atlantis::rhi::OffscreenTargetCreateParams;
 using atlantis::rhi::PresentationError;
 using atlantis::rhi::ResourceState;
 using atlantis::rhi::SwapchainMetadata;
@@ -72,10 +74,20 @@ TEST_CASE("PresentationError enumerators construct and compare", "[rhi][presenta
 
 TEST_CASE("ResourceState enumerators are all distinct and usable", "[rhi][resource_state]") {
   const ResourceState states[] = {ResourceState::Undefined, ResourceState::ColorAttachmentWrite,
-                                   ResourceState::PresentSource};
+                                   ResourceState::PresentSource, ResourceState::TransferSource};
   for (std::size_t i = 0; i < std::size(states); ++i) {
     for (std::size_t j = 0; j < std::size(states); ++j) {
       REQUIRE((states[i] == states[j]) == (i == j));
+    }
+  }
+}
+
+TEST_CASE("BufferPurpose enumerators are all distinct and usable", "[rhi][buffer_purpose]") {
+  const BufferPurpose purposes[] = {BufferPurpose::Vertex, BufferPurpose::Index, BufferPurpose::Uniform,
+                                     BufferPurpose::Readback};
+  for (std::size_t i = 0; i < std::size(purposes); ++i) {
+    for (std::size_t j = 0; j < std::size(purposes); ++j) {
+      REQUIRE((purposes[i] == purposes[j]) == (i == j));
     }
   }
 }
@@ -92,4 +104,19 @@ TEST_CASE("ClearColorValue equality and inequality", "[rhi][clear_color_value]")
   REQUIRE(ClearColorValue{0.1f, 0.2f, 0.3f, 1.0f} == ClearColorValue{0.1f, 0.2f, 0.3f, 1.0f});
   REQUIRE_FALSE(ClearColorValue{0.1f, 0.2f, 0.3f, 1.0f} == ClearColorValue{0.9f, 0.2f, 0.3f, 1.0f});
   REQUIRE_FALSE(ClearColorValue{} == ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f});
+}
+
+TEST_CASE("OffscreenTargetCreateParams defaults to a real, usable format", "[rhi][offscreen_target_create_params]") {
+  const OffscreenTargetCreateParams params;
+  REQUIRE(params.extent.isZero());
+  REQUIRE(params.format == Format::Rgba8Unorm);
+}
+
+TEST_CASE("OffscreenTargetCreateParams equality and inequality", "[rhi][offscreen_target_create_params]") {
+  REQUIRE(OffscreenTargetCreateParams{Extent2D{512, 512}, Format::Rgba8Unorm} ==
+          OffscreenTargetCreateParams{Extent2D{512, 512}, Format::Rgba8Unorm});
+  REQUIRE_FALSE(OffscreenTargetCreateParams{Extent2D{512, 512}, Format::Rgba8Unorm} ==
+                OffscreenTargetCreateParams{Extent2D{256, 256}, Format::Rgba8Unorm});
+  REQUIRE_FALSE(OffscreenTargetCreateParams{Extent2D{512, 512}, Format::Rgba8Unorm} ==
+                OffscreenTargetCreateParams{Extent2D{512, 512}, Format::Bgra8Unorm});
 }
