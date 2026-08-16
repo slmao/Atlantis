@@ -24,3 +24,24 @@ FetchContent_MakeAvailable(Catch2)
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
+
+# ADR-0041: stb (nothings/stb) has no git tags or GitHub Releases --
+# pinned to a specific, full commit hash's archive instead of a tagged
+# release, via the same URL/URL_HASH mechanism (not GIT_TAG) this file
+# already uses for Catch2, for the same network-reliability reason
+# documented above.
+FetchContent_Declare(
+  stb
+  URL https://github.com/nothings/stb/archive/2c980bb59875b0d32144a71867fbdebb2f77cd20.tar.gz
+  URL_HASH SHA256=9a955b1b49a4410088a2e0ee2a9c057c3c907d0c1d75454144cb980aca0ba515
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(stb)
+
+# stb ships no CMakeLists.txt of its own (it is a pair of single-header
+# libraries, not a CMake project) -- wrap its fetched source directory in
+# a plain INTERFACE target, matching this repository's own target-naming
+# convention (Atlantis::* / <Vendor>::<Lib> alias style).
+add_library(stb INTERFACE)
+target_include_directories(stb INTERFACE ${stb_SOURCE_DIR})
+add_library(Stb::Stb ALIAS stb)

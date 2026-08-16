@@ -1,0 +1,44 @@
+# current_environment.sidecar.txt template (Plan 0011 Section 3.6).
+# This .example file is a human-facing template only -- it is never
+# parsed by any code in this repository (only the real,
+# "current_environment.sidecar.txt" file is). Copy ONLY the 8
+# "key: value" lines below (schema_version through
+# vulkan_physical_device_api_version) into a new file named
+# "current_environment.sidecar.txt" in this same directory -- do not
+# include this comment block in that copy. That new file is
+# git-ignored (see .gitignore); never commit it. Do this once per
+# development/CI machine that will run atlantis_image_regression_gpu_tests
+# or the golden generator, not once per invocation.
+#
+# How to fill in each field:
+#   1. Run `vulkaninfo --summary` on that machine.
+#   2. gpu_vendor / gpu_model / driver_version: from that device's own
+#      vendorID / deviceName / driverInfo lines.
+#   3. os_build: from `winver` or Windows Settings' own "About" page --
+#      not part of vulkaninfo's own output.
+#   4. vulkan_loader_api_version: vulkaninfo's own top-level "Vulkan
+#      Instance Version" line -- or the literal token "unavailable" if
+#      vulkaninfo itself reports a pre-1.1 loader with no such line at
+#      all.
+#   5. vulkan_physical_device_api_version: that device's own apiVersion
+#      line.
+#   6. vulkan_requested_instance_api_version is NOT read from
+#      vulkaninfo at all -- it is derived from the
+#      vulkan_loader_api_version value below by a fixed, two-outcome
+#      rule this codebase's own Vulkan Backend already hardcodes
+#      (src/vulkan_backend/src/instance_api_version.cpp,
+#      decideRequestedInstanceApiVersion()): write "1.3.0" if the
+#      loader version is >= 1.3.0 (true for essentially every
+#      currently-shipping Windows Vulkan driver), otherwise write
+#      "1.0.0". Never copy the loader's own version into this field.
+#
+# The 8 lines below are a real, filled-in example (this project's own
+# reference machine) -- replace every value for your own machine.
+schema_version: 1
+gpu_vendor: Intel
+gpu_model: Intel(R) Arc(TM) B370 GPU
+driver_version: 101.8509
+os_build: Windows 11 Home, Build 26200
+vulkan_loader_api_version: 1.4.357
+vulkan_requested_instance_api_version: 1.3.0
+vulkan_physical_device_api_version: 1.4.335
