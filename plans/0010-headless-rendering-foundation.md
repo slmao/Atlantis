@@ -1,8 +1,116 @@
 # Plan: Headless Rendering Foundation
 
 - **Spec:** [specs/0010-headless-rendering-foundation.md](../specs/0010-headless-rendering-foundation.md) (`Approved`)
-- **Status:** Draft
-- **Author:** Drafted by Claude Code (AI agent) at explicit human direction.
+- **Status:** Approved
+- **Author:** Drafted by Claude Code (AI agent) at explicit human
+  direction; approved by human review — see Human Review Approval below.
+- **Human Review Approval (2026-08-16):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer for this branch) on 2026-08-16, following **two
+  independent, read-only Plan Review rounds**, each conducted against
+  this plan's actual drafted text and the real shipped implementation
+  (`src/rhi/`, `src/render_graph/`, `src/renderer/`,
+  `src/vulkan_backend/`, `tests/`) rather than against the drafter's own
+  summaries — see [PR #45](https://github.com/slmao/Atlantis/pull/45)
+  for this plan's initial draft and [PR #46](https://github.com/slmao/Atlantis/pull/46)
+  for both review rounds' findings and fixes:
+
+  1. **Round 1** found that this plan's first draft fixed only one
+     (`VulkanDevice::submit()`) of five unconditional
+     `static_cast<VulkanRenderTarget&>` occurrences in
+     `src/vulkan_backend/src/` — `transitionResource()`, `clearColor()`,
+     and `beginRendering()` in `vulkan_command_list.cpp` were left
+     unfixed, and `transitionResource()`/`beginRendering()` are reached
+     *before* `submit()` on every headless draw, meaning the plan as
+     originally written would have produced a headless demo that hit
+     undefined behavior on its very first `Renderer::drawFrame()` call.
+     Also found: `OffscreenTargetCreateParams::format` defaulted to
+     `Format::Unknown`, which `toVkFormat()` unconditionally asserts on;
+     `VulkanOffscreenRenderTarget`'s candidate constructor call was
+     inconsistent with its own described member list; and the
+     "Changeset A–E" sequencing description incorrectly claimed a
+     changeset that "only adds pure virtual functions" to `Device`/
+     `CommandList` compiles independently, when it actually makes every
+     existing concrete implementer (`VulkanDevice`, `VulkanCommandList`,
+     `FakeCommandList`) immediately abstract. Resolved by introducing one
+     shared, private `VulkanRenderTargetAccess` interface adopted at all
+     five call sites (Section 5–6), `OffscreenTargetCreateParams::format`
+     defaulting to `Format::Rgba8Unorm`, a redesigned
+     `VulkanOffscreenRenderTarget` holding only a single `owner_`
+     pointer, and a corrected Step 1–6 sequencing structure that never
+     splits an interface addition from its concrete overrides across a
+     step boundary.
+  2. **Round 2** found that every one of the five
+     `VulkanRenderTargetAccess` call sites round 1 introduced used
+     reference-form `dynamic_cast<VulkanRenderTargetAccess&>`, which
+     throws `std::bad_cast` on a failed cast — verified, by inspecting
+     every `CMakeLists.txt` in this repository, that C++ exceptions are
+     not disabled anywhere (MSVC's default `/EHsc` applies), so this
+     would have let an exception reach the render path in violation of
+     [AGENTS.md](../AGENTS.md)'s "exception-free render path" /
+     "programmer errors are assertions, not error returns" rules. Also
+     found: Section 3.3's own dependency line still claimed a false
+     dependency on Section 2.3 that Section 2.4's identical pattern had
+     already been corrected for; and `Device::submit()`'s and
+     `SubmissionSignal`'s existing doc comments stated a
+     present()-before-next-`submit()` precondition that predates any
+     caller able to legitimately skip `present()` altogether, which
+     [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)'s
+     repeated-headless-cycle argument does. Resolved by switching all
+     five call sites to the checked pointer-form `dynamic_cast` +
+     `ATLANTIS_CHECK_MSG(... != nullptr, ...)` — mirroring this
+     codebase's own existing `vulkan_presentation.cpp:651` precedent —
+     removing Section 3.3's stale dependency, and amending both doc
+     comments (new Section 1.6) to state the precondition as
+     windowed-only. A final, independent re-verification against the
+     merged fix confirmed all three corrections accurate and complete,
+     with no remaining Must Fix or Should Fix.
+
+  **This approval covers, explicitly:**
+
+  1. The plan's full implementation scope as it stands after both
+     rounds — Sections 1–10 in full, including the shared, private
+     `VulkanRenderTargetAccess` boundary (Section 5.1) adopted via
+     checked pointer-form `dynamic_cast` at all five call sites
+     (`transitionResource()`, `clearColor()`, `beginRendering()`,
+     `submit()`, `copyRenderTargetToBuffer()`), with
+     `Presentation::present()` confirmed and kept windowed-only.
+  2. The **Step 1–6** sequencing in "Sequencing & Dependencies" — in
+     particular, Step 4's treatment of the `Device`/`CommandList`
+     interface additions and every one of their concrete overrides as
+     one single, non-subdividable implementation step.
+  3. The disposition of the plan's four remaining open items (Human
+     Review / Plan Review Blockers, "Still open" list) — each confirmed,
+     during Plan Review, to be a mechanical implementation-shape detail
+     with no effect on public API, test-passing thresholds, or observable
+     behavior, and therefore **safe to leave to Implementation's own
+     judgment, not a blocker to this approval**:
+     `OffscreenAcquireError`'s `Result`-wrapped return shape (already
+     constrained by ADR-0038's own literal text — not a free choice),
+     fixture code-sharing between `minimal_renderer_demo` and
+     `headless_rendering_demo`, the exact basic-content-check tolerance
+     values in `examples/headless_rendering_demo`, and whether a
+     distinct CI/test-category label is introduced for headless GPU
+     tests.
+  4. All verification gates in "Verification Checklist" — GPU-independent
+     and GPU-required test layers in both Debug and Release, Vulkan
+     Validation Layers clean throughout, windowed-path regression
+     confirmed byte-identical at all four pre-existing call sites, no
+     reference-form `dynamic_cast` anywhere, headless `submit()`'s
+     `VkSubmitInfo` omitting wait/signal semaphores via zero count (never
+     a null handle in a non-zero-count array), and Image Regression
+     Testing remaining fully unimplemented (Non-Goal).
+
+  Per [AGENTS.md](../AGENTS.md)'s workflow (`Spec → Plan → Human Review
+  → Implementation → ...`), **Human Review is a distinct gate requiring
+  a human to have read the spec and plan together** — with Spec 0010
+  already `Approved` (see its own Human Review Approval note) and this
+  Plan now `Approved`, that joint gate is satisfied as of this record.
+  **Implementation may now begin against this plan**, strictly as
+  written, with any real-world deviation called out explicitly in the
+  Implementation PR rather than silently absorbed — this approval record
+  is not itself that Implementation PR, and does not authorize skipping
+  the Verification step this plan's own checklist defines.
 
 ## Objective
 
