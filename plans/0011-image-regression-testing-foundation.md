@@ -1,8 +1,119 @@
 # Plan: Image Regression Testing Foundation
 
 - **Spec:** [specs/0011-image-regression-testing-foundation.md](../specs/0011-image-regression-testing-foundation.md) (`Approved`)
-- **Status:** Draft
-- **Author:** Drafted by Claude Code (AI agent) at explicit human direction.
+- **Status:** Approved
+- **Author:** Drafted by Claude Code (AI agent) at explicit human
+  direction; approved by human review — see Human Review Approval below.
+- **Human Review Approval (2026-08-17):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer for this branch) on 2026-08-17, following **one
+  independent, read-only Plan Review round** (agent-performed, not Human
+  Review, conducted against this plan's actual drafted text and the real
+  shipped implementation —
+  `cmake/AtlantisDependencies.cmake`,
+  `src/vulkan_backend/src/instance_api_version.cpp`,
+  `examples/headless_rendering_demo/`, `tests/vulkan_backend/` — rather
+  than against the drafter's own summaries) and one independent,
+  read-only Human Review, both conducted on this same plan — see
+  [PR #51](https://github.com/slmao/Atlantis/pull/51) for this plan's
+  initial draft and the full revision history:
+
+  1. **Plan Review round** found and directly fixed: a data-accuracy bug
+     in the sidecar example (`vulkan_requested_instance_api_version` had
+     incorrectly copied the loader's own reported version — corrected
+     against `instance_api_version.cpp`'s actual
+     `decideRequestedInstanceApiVersion()` body, which requests exactly
+     `1.3.0` or `1.0.0`, never the loader's own version); an
+     ADR-0042-required actual/diff failure-artifact-writing step that
+     was cited but never actually specified (added
+     `computeDiffVisualization()`/`writeFailureArtifacts()`);
+     underspecified sidecar delimiter/escaping/CRLF/version-format rules
+     (fully specified — anchored-prefix field matching, no embedded
+     newlines, `\n`/`\r\n` read tolerance, `^[0-9]+\.[0-9]+\.[0-9]+$`
+     version validation); a golden generator that could have silently
+     treated a failed `git` invocation as "clean tree" (fixed to a
+     three-way launch-failure/nonzero-exit/dirty-tree split, plus a new
+     `git ls-files --error-unmatch` tracking safeguard for
+     `current_environment.sidecar.txt`); and an ambiguous "deliberately
+     caught regression" proof (tightened to require a real fixture
+     source-code change, a real rebuild, and a real re-run through the
+     actual render path — explicitly excluding in-memory buffer
+     corruption, and moved out of the permanent `TEST_CASE` list into
+     its own one-time procedure). All four of the plan's
+     originally-flagged open design questions were resolved directly in
+     this same round, not deferred to Implementation:
+     - Golden/environment-file/failure-artifact path resolution —
+       resolved via `target_compile_definitions()` string constants
+       computed once at CMake configure time from
+       `CMAKE_SOURCE_DIR`/`CMAKE_BINARY_DIR`, independent of the
+       invoking process's working directory (Sections 3.4, 5.4).
+     - `png_codec_tests.cpp`'s non-RGBA8 test fixtures — resolved as
+       generated at test run time into
+       `std::filesystem::temp_directory_path()` and removed at
+       teardown; no binary test fixture checked into the repository
+       (Section 5.1).
+     - `current_environment.sidecar.txt`'s path resolution — resolved
+       via the same explicit compile-time-constant mechanism as above,
+       no implicit directory search (Sections 3.4, 5.4).
+     - Whether a distinct CI/test-category label is needed for
+       image-regression GPU tests — resolved as no; the existing plain
+       `"gpu"` `LABELS` property continues to be reused (Section 5.4).
+  2. **Human Review** (a subsequent, independent, read-only pass), cross-
+     checking the revised plan directly against Approved Spec 0011,
+     Accepted ADR-0041/ADR-0042, and the actual current repository state
+     (not the Plan's own prose) — re-verifying, among other things, the
+     `stb` commit/hash/license/`ATLANTIS_BUILD_TESTS` scoping, the
+     `decideRequestedInstanceApiVersion()` correction, the
+     `atlantis::rhi::Format` enumerator set the sidecar format validates
+     against, the reused `examples/headless_rendering_demo` fixture's
+     exact identifiers (`kCubeVertices`, `kCubeIndices`, `kExtentPixels`,
+     `kColorFormat`, `kCycleCount`), the shader-artifact-copying
+     `target_compile_definitions()`/`WORKING_DIRECTORY` split, and
+     ADR-0006's own "release tag or commit hash" pinning language — found
+     no remaining Must Fix or Should Fix issue, and one non-blocking
+     observation: an incidental `Vk*`-shaped substring inside an
+     explanatory *comment* in
+     `tests/vulkan_backend/headless_rendering_gpu_tests.cpp`
+     (`VkSwapchainKHR`/`VkSurfaceKHR`, naming what that file deliberately
+     does *not* use), which the Explicit Prohibitions checklist's
+     `git grep -rn "Vk[A-Z]"` command will also match textually —
+     Implementation should read that checklist item as scoped to real
+     code references, not explanatory comments; left to Implementation's
+     own judgment, not a blocker to this approval.
+
+  **This approval covers, explicitly:**
+
+  1. The plan's full implementation scope as it stands after the Plan
+     Review round — Sections 1–7 in full: the `stb` `FetchContent` pin
+     (Section 1.1), the GPU-independent support library (Section 2), the
+     fixture and golden generator (Section 3), the first committed
+     golden's operational procedure (Section 4), the automated test
+     layering (Section 5), and Verification (Section 6).
+  2. The **Step 1–7** sequencing in "Sequencing & Dependencies," including
+     Step 5's bundling of the GPU-independent and GPU-required test
+     additions into one step, and the single-Implementation-PR shape
+     that section describes as this plan's expected (not mandatory) form.
+  3. The disposition of all four originally-flagged open design
+     questions (see Plan Review round, above) — each resolved directly
+     during that round, not left open for Implementation to decide.
+  4. All verification gates in "Verification Checklist" — GPU-independent
+     and GPU-required test layers in both Debug and Release, Vulkan
+     Validation Layers clean throughout, the deliberate-regression-caught
+     proof (a real fixture source-code change, a real rebuild, a real
+     re-run — never in-memory buffer corruption, reverted before the
+     Implementation PR opens), and the recorded manual/local verification
+     gate.
+
+  Per [AGENTS.md](../AGENTS.md)'s workflow (`Spec → Plan → Human Review →
+  Implementation → ...`), **Human Review is a distinct gate requiring a
+  human to have read the spec and plan together** — with Spec 0011
+  already `Approved` (see its own Human Review Approval note) and this
+  Plan now `Approved`, that joint gate is satisfied as of this record.
+  **Implementation may now begin against this plan**, strictly as
+  written, with any real-world deviation called out explicitly in the
+  Implementation PR rather than silently absorbed — this approval record
+  is not itself that Implementation PR, and does not authorize skipping
+  the Verification step this plan's own checklist defines.
 
 ## Objective
 
