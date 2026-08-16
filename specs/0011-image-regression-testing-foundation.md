@@ -1,9 +1,70 @@
 # Spec: Image Regression Testing Foundation
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
-  direction.
+  direction; approved by human review — see Human Review Approval
+  below.
 - **Created:** 2026-08-16
+- **Human Review Approval (2026-08-16):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer for this branch) on 2026-08-16, following two independent,
+  read-only review rounds — agent-performed, not Human Review, each
+  conducted against this spec's actual drafted text and its two ADRs
+  rather than against the drafter's own summaries — see
+  [PR #50](https://github.com/slmao/Atlantis/pull/50) for the full
+  revision history and the "Independent Review — Round 1/Round 2" notes
+  below for what each round found and fixed.
+
+  **This approval explicitly accepts the following:**
+  1. The PNG golden format plus the `stb_image`/`stb_image_write`
+     test-only dependency, `FetchContent`-pinned to a specific, full
+     commit hash (`nothings/stb` has no tagged releases) — see
+     [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md).
+  2. **Channel tolerance = 0, failing-pixel budget = 0**, for the reused
+     `examples/headless_rendering_demo` fixture on the one reference
+     GPU/driver this project has verified against — backed by the
+     empirical calibration recorded in
+     [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
+     own Context (42 total captures, zero differing pixels at any
+     threshold).
+  3. That this evidence is **not** generalized to any other GPU/driver
+     combination — a driver upgrade or different hardware requires its
+     own fresh calibration before this rule is treated as still valid
+     for that environment; see ADR-0042's own Consequences and Spec
+     0011's Risks & Open Questions.
+  4. The full golden provenance contract: **source revision** (not a
+     self-referential commit hash), the **golden validity check**
+     (`INVALID GOLDEN` as its own outcome, checked before any
+     regression comparison), **`PROVENANCE MISMATCH`** as a diagnostic
+     always separate from pass/fail, and the three-category
+     (rendering change / reference-environment change / approved
+     rebaseline) human-reviewed golden-update contract — all per
+     ADR-0042.
+  5. Golden regeneration locked to a distinct, standalone developer
+     tool that is never registered with CTest and never reachable from
+     the ordinary comparison test binary by any environment variable,
+     flag, or default code path.
+  6. The sidecar boundary: no new parsing/serialization dependency
+     without its own future Spec/ADR/Human Review, and no coupling of
+     `tests/image_regression/` to `src/shader_system/`'s private JSON
+     parser or any other private implementation of another module.
+  7. That automated CI-enforced gating remains explicit, disclosed
+     follow-up work, blocked on
+     [ci-strategy.md](../docs/process/ci-strategy.md)'s own open
+     questions (GPU-in-CI approach, dependency-fetch-in-CI strategy)
+     plus actual infrastructure provisioning — **this approval does not
+     authorize or implement any CI infrastructure.**
+
+  Following this approval:
+  [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)
+  and
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
+  each move to `Accepted`, and this spec moves to `Approved`. Per
+  [AGENTS.md](../AGENTS.md), a Plan may now be drafted against this
+  spec; **this approval is not itself an authorization to implement** —
+  that future Plan must still pass its own (or a joint Spec+Plan) Human
+  Review before any code, test, shader, or build-configuration file for
+  this spec's scope is written.
 - **Independent Review — Round 1 (2026-08-16):** An independent,
   read-only review of this Spec's first draft and ADR-0041/ADR-0042
   found four Must Fix issues — a self-referential "commit hash" field in
@@ -83,10 +144,11 @@
   [AGENTS.md](../AGENTS.md).
 - **Related ADR(s):**
   [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)
-  (golden image data format and codec dependency, `Proposed`),
+  (golden image data format and codec dependency, `Accepted`),
   [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
   (comparison methodology, golden provenance, and test ownership
-  boundary, `Proposed`). Builds on
+  boundary, `Accepted`) — both accepted alongside this spec's Human
+  Review Approval above. Builds on
   [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)–[ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md)
   (all `Accepted`, Spec 0010) and
   [ADR-0006](../adr/0006-dependency-management.md)/[ADR-0007](../adr/0007-test-framework.md)
@@ -620,7 +682,8 @@ the capture.
 ## Architectural Impact
 
 This spec introduces exactly two new, independently-reviewable
-decisions — both drafted alongside this spec, both currently `Proposed`:
+decisions — both drafted alongside this spec, both now `Accepted`
+alongside this spec's own Human Review Approval above:
 
 1. **Golden image data format and codec dependency** — PNG via
    `stb_image`/`stb_image_write`, fetched through `FetchContent`, linked

@@ -1,8 +1,14 @@
 # ADR 0042: Image Regression Testing — Comparison Methodology, Golden Provenance, and Test Ownership Boundary
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-16
-- **Deciders:** _Pending Human Review_
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+  Approval recorded 2026-08-16; see
+  [specs/0011-image-regression-testing-foundation.md](../specs/0011-image-regression-testing-foundation.md)'s
+  Human Review Approval note for the full, two-round independent-review
+  record this ADR's Decision (including the empirical calibration, the
+  golden validity check, the three-way Vulkan provenance split, and the
+  bounded sidecar-encoding contract) is part of.
 - **Related Spec:** [specs/0011-image-regression-testing-foundation.md](../specs/0011-image-regression-testing-foundation.md)
 
 ## Context

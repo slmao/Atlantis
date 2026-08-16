@@ -1,8 +1,13 @@
 # ADR 0041: Image Regression Testing — Golden Image Data Format and Codec Dependency
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-16
-- **Deciders:** _Pending Human Review_
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+  Approval recorded 2026-08-16; see
+  [specs/0011-image-regression-testing-foundation.md](../specs/0011-image-regression-testing-foundation.md)'s
+  Human Review Approval note for the full, two-round independent-review
+  record this ADR's Decision (including the corrected commit-pin wording
+  and the full `stb` usage contract) is part of.
 - **Related Spec:** [specs/0011-image-regression-testing-foundation.md](../specs/0011-image-regression-testing-foundation.md)
 
 ## Context
