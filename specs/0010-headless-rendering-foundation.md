@@ -138,10 +138,12 @@
   category label for headless GPU integration tests is needed; and row-
   pitch/alignment handling inside the Vulkan Backend's copy
   implementation.
-- **Related Plan(s):** None yet — a plan may now be drafted against this
-  `Approved` spec, per [AGENTS.md](../AGENTS.md); Plan 0010 has not been
-  drafted by this document, and may only be drafted once this approval
-  PR has merged into `main`.
+- **Related Plan(s):**
+  [plans/0010-headless-rendering-foundation.md](../plans/0010-headless-rendering-foundation.md)
+  (`Draft`) — drafted against this `Approved` spec, per
+  [AGENTS.md](../AGENTS.md); not yet reviewed or approved. Implementation
+  may not begin until this Plan (or a joint Spec+Plan review) passes its
+  own Human Review.
 - **Related ADR(s):** Builds on
   [ADR-0001](../adr/0001-rhi-backend-independence.md),
   [ADR-0002](../adr/0002-presentation-rendertarget-unification.md),
