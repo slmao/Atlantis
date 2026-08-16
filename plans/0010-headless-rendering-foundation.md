@@ -234,6 +234,41 @@ ownership," "GPU-to-CPU readback capability" (Requirements). **ADRs:**
   line, matching `createBuffer()`/`createTexture()`'s own terseness —
   "stateless factory call; `Device` does not retain a reference to any
   `OffscreenTarget` it creates (ADR-0003)."
+  **Also corrects a now-stale existing comment, found during the final
+  Plan Review round:** `submit()`'s own doc comment
+  (`device.h`, current text: "a caller must call `present()` for a
+  successful `submit()` before calling `submit()` again — `submit()`
+  followed directly by application exit remains legal (`waitIdle()`
+  drains it)") states a precondition that is accurate for a windowed
+  caller but was written before any caller could legitimately avoid
+  `present()` altogether. A headless caller never constructs a
+  `Presentation` and therefore never calls `present()` at all — yet
+  [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)
+  explicitly documents repeated `acquireTarget()` → `submit()` cycles
+  against the same live `OffscreenTarget`, with no intervening
+  `present()` ever, as a safe, intended pattern (its own "GPU-in-flight
+  safety for repeated acquire cycles... comes entirely from
+  `Device::submit()`'s existing single-frame-in-flight fence-wait"
+  argument — verified directly against `waitAndReleaseRetainedSubmission()`
+  in `vulkan_device.cpp`, which waits only on `submissionFence_`, a
+  `Device`-owned fence entirely independent of which concrete
+  `RenderTarget` type was submitted, never on anything `present()`
+  itself would wait on or signal). Leaving the old comment as-is would
+  violate [AGENTS.md](../AGENTS.md)'s "update or remove a comment in the
+  same change that makes it stale" rule (Documentation and code
+  comments) — the same rule ADR-0038 already invoked once for `Format`'s
+  own doc comment (Section 1.1 above). This plan therefore amends
+  `submit()`'s doc comment, in the same change that adds
+  `createOffscreenTarget()` to this file, to state: the
+  present()-before-next-`submit()` precondition applies only to a
+  caller that constructs and drives a `Presentation`; a headless caller
+  that never constructs one is exempt from it, and its repeated-`submit()`
+  safety instead comes entirely from `submit()`'s own internal
+  single-frame-in-flight fence-wait (cite ADR-0038's Lifetime contract,
+  Part 2's "repeated acquire cycles" argument, not merely asserted here).
+  This is a **comment-only** change — `submit()`'s parameters, return
+  type, and runtime behavior are entirely unchanged; no new
+  precondition, check, or `Result::Err` variant is introduced.
 - **Dependency order:** after 1.1, 1.2.
 - **Tests after this step:** none directly; this is an interface-only
   addition, exercised once Section 5 implements it.
@@ -241,7 +276,10 @@ ownership," "GPU-to-CPU readback capability" (Requirements). **ADRs:**
   concrete implementation (`VulkanDevice`) will fail to compile until
   Section 5 adds the override — this step and Section 5's
   `VulkanDevice::createOffscreenTarget()` implementation must land in the
-  same compiling changeset (see Sequencing & Dependencies).
+  same compiling changeset (see Sequencing & Dependencies). The
+  `submit()` doc-comment amendment has no compilation dependency and may
+  be reverted independently without affecting anything else in this
+  file.
 
 ### 1.4 `src/rhi/include/atlantis/rhi/command_list.h` (modify)
 
@@ -267,7 +305,7 @@ ownership," "GPU-to-CPU readback capability" (Requirements). **ADRs:**
 - **Stop condition / rollback:** revert this file; both concrete
   `CommandList` implementations (`VulkanCommandList`,
   `tests/render_graph/fake_command_list.h`'s `FakeCommandList`) fail to
-  compile until Sections 2.3/6.4 add the override — must land in the
+  compile until Sections 2.3/6.5 add the override — must land in the
   same compiling changeset as those.
 
 ### 1.5 `src/rhi/src/types.cpp` (modify)
@@ -283,6 +321,33 @@ ownership," "GPU-to-CPU readback capability" (Requirements). **ADRs:**
 - **Tests after this step:** exercised by 1.1's new
   `types_tests.cpp` case.
 - **Stop condition / rollback:** revert alongside 1.1.
+
+### 1.6 `src/rhi/include/atlantis/rhi/submission_signal.h` (modify) — stale comment only
+
+- **Input:** `SubmissionSignal`'s existing class-level doc comment,
+  which states the same "a caller must call `present()` ... before
+  calling `submit()` again" precondition 1.3's own amendment corrects on
+  `Device::submit()`'s side — found by reading this file directly during
+  the final Plan Review round, not assumed from 1.3's own finding alone.
+- **Output:** amend this comment to match 1.3's corrected wording exactly
+  (a windowed-only precondition; a headless caller that never constructs
+  a `Presentation` is exempt, safety instead coming from `submit()`'s own
+  fence-wait, per ADR-0038) — both comments must state the same rule
+  consistently, since both describe the same underlying contract from
+  two different vantage points (`Device::submit()`'s caller-facing view;
+  `SubmissionSignal`'s own token-lifetime view). **Comment-only**: no
+  method, field, or runtime behavior of `SubmissionSignal` changes —
+  it remains the same opaque, no-public-method token type; a headless
+  `submit()` call still receives a `VulkanSubmissionSignal` wrapping
+  `VK_NULL_HANDLE` exactly as Section 6.2 describes, and this token is
+  simply never passed to `present()` in that case (headless never calls
+  it), same as today.
+- **Dependency order:** none — independent of every other step; may land
+  in any order relative to 1.1–1.5.
+- **Tests after this step:** none; comment-only, no observable behavior
+  to test.
+- **Stop condition / rollback:** revert this file's comment alone; no
+  cascading effect on any other file.
 
 ---
 
@@ -513,9 +578,22 @@ Accepted Amendment.
     every respect *except* the final `transitions` entry's `after`
     field, confirming `Renderer` does not branch on the value, and (b)
     that final entry's `after` equals the value each call supplied.
-- **Dependency order:** after 3.1, 3.2, 2.3 (needs the extended
-  `FakeCommandList` for full assertion coverage, though the mechanical
-  update alone only needs 3.1/3.2).
+- **Dependency order:** after 3.1, 3.2 only. **Corrected during the
+  final Plan Review round:** an earlier draft of this plan claimed this
+  step also needed 2.3 (`FakeCommandList::copyRenderTargetToBuffer()`)
+  "for full assertion coverage" — this was the same class of false
+  dependency Section 2.4 already found and corrected for its own items
+  1–8, just not yet applied here. On inspection, the new
+  `[renderer][final_color_state]` case calls `drawFrame()` and asserts
+  only against `FakeCommandList`'s recorded `transitions` vector;
+  `Renderer::drawFrame()`'s own internal graph (`renderer.cpp`) never
+  calls `copyRenderTargetToBuffer()` — that call is only ever made by a
+  caller-composed copy pass *outside* `Renderer`, per Spec 0010's own
+  flow (Section 7.1) — so nothing in this test case's code path touches
+  2.3. This step therefore lands entirely within Step 3 (Sequencing &
+  Dependencies), not Step 4, with no dependency on any `Device`/
+  `CommandList` interface addition or the `FakeCommandList` override
+  those additions require.
 - **Tests after this step:** this *is* the test step.
 - **Stop condition / rollback:** revert this file alone.
 
@@ -649,6 +727,40 @@ clarified, scope.
   inspection at Plan-Review time; this plan does not add, remove, or
   otherwise touch any compiler/RTTI-related CMake option). No new
   `CMakeLists.txt` flag is introduced for this.
+- **`dynamic_cast` form, corrected during the final Plan Review round:
+  pointer-form, never reference-form.** A mismatched concrete type at
+  any of these five call sites is a **programmer error** (a
+  `RenderTarget`/`Buffer` argument this module itself did not produce —
+  ADR-0014), not a recoverable runtime condition — so it must fail via
+  this codebase's existing `ATLANTIS_CHECK_MSG` assertion mechanism, the
+  same tier as every other precondition check in this file, **never**
+  via a thrown C++ exception. Reference-form `dynamic_cast<T&>` throws
+  `std::bad_cast` on a failed cast; this repository does not disable
+  exceptions anywhere (`git grep` for `/EHs-`/`/GR-` across every
+  `CMakeLists.txt` returns nothing, so MSVC's default `/EHsc` applies and
+  such a throw would compile and actually propagate) — letting that
+  exception unwind through `VulkanCommandList`/`VulkanDevice` methods
+  that are reached from `Renderer::drawFrame()`'s own call chain would
+  violate [AGENTS.md](../AGENTS.md)'s explicit "keeps the render path
+  exception-free" / "programmer errors are assertions, not error
+  returns" rules (Error handling section). Every call site below
+  therefore uses the **pointer**-form:
+  `dynamic_cast<VulkanRenderTargetAccess*>(&target)` (or the
+  `const VulkanRenderTargetAccess*` form where the surrounding method
+  parameter is itself `const`), immediately followed by
+  `ATLANTIS_CHECK_MSG(access != nullptr, "...")` before any
+  `access->...` member access — never a bare reference-form cast. This
+  is not a new pattern this plan invents: it is a direct, exact mirror
+  of this codebase's own existing precedent at
+  `src/vulkan_backend/src/vulkan_presentation.cpp:651`
+  (`auto* vulkanDevice = dynamic_cast<detail::VulkanDevice*>(&device);
+  ATLANTIS_CHECK_MSG(vulkanDevice != nullptr, "createPresentation()
+  received a Device not produced by this module's own createDevice()");`)
+  — confirmed by reading that file, not assumed. RTTI itself is
+  unchanged by this correction (still relies on the same existing
+  `/GR` default, still no new build option); only the cast's *failure
+  semantics* change, from an uncaught-exception risk to this codebase's
+  ordinary, already-established assertion-based failure mode.
 - **Dependency order:** first within Section 5/6 — every other step in
   both sections depends on this interface existing.
 - **Tests after this step:** none directly (pure interface); exercised
@@ -836,15 +948,30 @@ contract from
 **Must Fix — the core of this revision.** All three methods currently do
 `auto& vulkanTarget = static_cast<VulkanRenderTarget&>(target);` (or
 `color`, for `beginRendering()`) at their very first line
-(`vulkan_command_list.cpp:50,91,106`). Each becomes:
-`auto& access = dynamic_cast<VulkanRenderTargetAccess&>(target);` (or
-`color`), and every subsequent use of `vulkanTarget.image()`/
-`vulkanTarget.imageView()` in that method's body becomes `access.image()`/
-`access.imageView()` — no other line in any of the three methods
-changes. `beginRendering()`'s own `vulkanTarget.extent()` call becomes
-`color.extent()` (called directly on the public `RenderTarget&`
-parameter — `extent()` is part of the public interface, already
-polymorphic, needs no cast).
+(`vulkan_command_list.cpp:50,91,106`). Each becomes, **pointer-form,
+exception-free** (corrected during the final Plan Review round — see
+5.1's own "`dynamic_cast` form" note for the full rationale and the
+`vulkan_presentation.cpp:651` precedent this mirrors):
+
+```
+auto* access = dynamic_cast<VulkanRenderTargetAccess*>(&target);  // or &color
+ATLANTIS_CHECK_MSG(access != nullptr,
+                    "transitionResource() received a RenderTarget not produced by this module");
+```
+
+and every subsequent use of `vulkanTarget.image()`/`vulkanTarget.imageView()`
+in that method's body becomes `access->image()`/`access->imageView()` —
+no other line in any of the three methods changes. Each method's
+`ATLANTIS_CHECK_MSG` message names that specific method (`clearColor()`,
+`beginRendering()`), matching the existing per-call-site wording
+convention `vulkan_presentation.cpp:651`/`vulkan_device.cpp` already use
+elsewhere in this codebase. A failed cast here is a **programmer
+error** — a `RenderTarget` reference this module itself did not
+construct (ADR-0014) — caught by this assertion, never by a thrown
+`std::bad_cast` propagating out of the render path. `beginRendering()`'s
+own `vulkanTarget.extent()` call becomes `color.extent()` (called
+directly on the public `RenderTarget&` parameter — `extent()` is part of
+the public interface, already polymorphic, needs no cast).
 
 - **`clearColor()` is fixed even though this spec's own headless path
   never calls it** (Spec 0010's own worked example uses
@@ -884,11 +1011,19 @@ polymorphic, needs no cast).
   and the unconditional `waitSemaphoreCount = 1`/`signalSemaphoreCount = 1`
   `VkSubmitInfo` fields.
 - **Output:**
-  - `const auto& access = dynamic_cast<const VulkanRenderTargetAccess&>(target);`
+  - **Pointer-form, exception-free** (same correction as 6.1, applied
+    here for `submit()`'s own `const` parameter):
+    ```
+    const auto* access = dynamic_cast<const VulkanRenderTargetAccess*>(&target);
+    ATLANTIS_CHECK_MSG(access != nullptr,
+                        "submit() received a RenderTarget not produced by this module");
+    ```
     replaces the `static_cast`; `waitSemaphore`/`signalSemaphore` are
-    read from `access.acquireCompleteSemaphore()`/
-    `access.renderFinishedSemaphore()` exactly as today (unchanged
-    variable names/usage below that line).
+    read from `access->acquireCompleteSemaphore()`/
+    `access->renderFinishedSemaphore()` exactly as today (unchanged
+    variable names/usage below that line). As in 6.1, a failed cast is a
+    programmer error caught by `ATLANTIS_CHECK_MSG`, never a thrown
+    exception.
   - `VkSubmitInfo` construction becomes conditional:
     `submitInfo.waitSemaphoreCount = waitSemaphore != VK_NULL_HANDLE ? 1 : 0;`,
     `submitInfo.pWaitSemaphores = waitSemaphore != VK_NULL_HANDLE ? &waitSemaphore : nullptr;`,
@@ -986,7 +1121,9 @@ polymorphic, needs no cast).
   implement:
   ```
   void VulkanCommandList::copyRenderTargetToBuffer(atlantis::rhi::RenderTarget& source, atlantis::rhi::Buffer& destination) {
-    auto& access = dynamic_cast<VulkanRenderTargetAccess&>(source);
+    auto* access = dynamic_cast<VulkanRenderTargetAccess*>(&source);
+    ATLANTIS_CHECK_MSG(access != nullptr,
+                        "copyRenderTargetToBuffer() received a RenderTarget not produced by this module");
     auto& vulkanBuffer = static_cast<VulkanBuffer&>(destination);
     const atlantis::rhi::Extent2D sourceExtent = source.extent();
 
@@ -997,11 +1134,14 @@ polymorphic, needs no cast).
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.imageOffset = {0, 0, 0};
     region.imageExtent = {sourceExtent.width, sourceExtent.height, 1};
-    vkCmdCopyImageToBuffer(commandBuffer_, access.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    vkCmdCopyImageToBuffer(commandBuffer_, access->image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                             vulkanBuffer.vkBuffer(), 1, &region);
   }
   ```
-  (`static_cast<VulkanBuffer&>` for `destination` is unchanged from
+  **Pointer-form, exception-free** — same correction and rationale as
+  6.1/6.2 (see 5.1's own "`dynamic_cast` form" note): a failed cast here
+  is a programmer error caught by `ATLANTIS_CHECK_MSG`, never a thrown
+  `std::bad_cast`. (`static_cast<VulkanBuffer&>` for `destination` is unchanged from
   every other `Buffer`-consuming method in this file — only one
   concrete `Buffer` implementation exists in Phase 1, ADR-0001 — this
   plan does not add a second one, so no `dynamic_cast` is needed there.)
@@ -1228,9 +1368,11 @@ establishes.
   change (`transitionResource()`, `clearColor()`, `beginRendering()` —
   Section 6.1; `submit()` — Section 6.2) produce identical behavior for
   any `VulkanRenderTarget`-sourced argument to what they produced before
-  this plan: the same `VkImage`/`VkImageView` values via
-  `dynamic_cast<VulkanRenderTargetAccess&>` as were previously obtained
-  via `static_cast<VulkanRenderTarget&>` (guaranteed identical, since
+  this plan: the same `VkImage`/`VkImageView` values via the checked
+  pointer-form `dynamic_cast<VulkanRenderTargetAccess*>` (always
+  non-null for a real `VulkanRenderTarget`, so the `ATLANTIS_CHECK_MSG`
+  it is paired with never fires on this path) as were previously
+  obtained via `static_cast<VulkanRenderTarget&>` (guaranteed identical, since
   `VulkanRenderTarget`'s own accessor bodies are unchanged — Section
   5.2), and `submit()`'s `VkSubmitInfo` contents byte-identical
   (non-null semaphores on both sides, exactly as today, since
@@ -1304,10 +1446,24 @@ plan's Implementation is considered complete:
       (`vulkan_presentation.cpp`'s `present()`, confirmed windowed-only
       and deliberately unchanged) — zero matches in
       `vulkan_command_list.cpp` or `vulkan_device.cpp`, confirming all
-      four in-scope call sites (`transitionResource()`, `clearColor()`,
-      `beginRendering()`, `submit()`) were migrated to
-      `dynamic_cast<VulkanRenderTargetAccess&>` and none was missed or
-      silently left as a `static_cast`.
+      four pre-existing in-scope call sites (`transitionResource()`,
+      `clearColor()`, `beginRendering()`, `submit()`) were migrated from
+      `static_cast` to the checked pointer-form `dynamic_cast<VulkanRenderTargetAccess*>`/
+      `dynamic_cast<const VulkanRenderTargetAccess*>`, with none missed
+      or silently left as a `static_cast` — and that the fifth,
+      newly-added call site (`copyRenderTargetToBuffer()`, which never
+      had a `static_cast` to migrate from, since it does not exist before
+      this plan) uses the identical checked pointer-form from the start.
+- [ ] `git grep -n "dynamic_cast<VulkanRenderTargetAccess&\|dynamic_cast<const VulkanRenderTargetAccess&"
+      src/vulkan_backend/src/` returns **zero** matches — every adoption
+      of `VulkanRenderTargetAccess` uses the checked pointer-form
+      (`dynamic_cast<VulkanRenderTargetAccess*>`/
+      `dynamic_cast<const VulkanRenderTargetAccess*>` +
+      `ATLANTIS_CHECK_MSG(... != nullptr, ...)`), never the
+      exception-throwing reference-form — **corrected during the final
+      Plan Review round**, see Section 5.1's own "`dynamic_cast` form"
+      note for why the reference-form would have violated this
+      codebase's exception-free render path rule (AGENTS.md).
 - [ ] `VulkanOffscreenRenderTarget` declares no `VkImage`/`VkImageView`/
       `Extent2D`/`Format` member of its own — `image()`/`imageView()`/
       `extent()`/`format()` each delegate to `owner_`, per Section 5.3's
@@ -1316,6 +1472,12 @@ plan's Implementation is considered complete:
       `/GR-` toggle) is added anywhere this plan touches — the
       `dynamic_cast` calls Section 5/6 introduce rely on this project's
       existing MSVC default, not a newly-added build setting.
+- [ ] `src/rhi/include/atlantis/rhi/device.h`'s `submit()` doc comment
+      and `src/rhi/include/atlantis/rhi/submission_signal.h`'s class
+      comment state the present()-before-next-submit() precondition as
+      windowed-only, consistently with each other (Sections 1.3, 1.6) —
+      neither still reads as an unconditional rule that a legitimate
+      headless caller would violate.
 
 ## Build Integration
 
@@ -1359,10 +1521,15 @@ overrides are treated as one inseparable unit, never split across
 steps, per Plan Review's explicit instruction.
 
 1. **Step 1 — RHI value types (no interface change):** Sections 1.1,
-   1.5. Adds enum values, `OffscreenTargetCreateParams`, the two new
-   error enums, and the `Format` doc-comment update — no new pure
-   virtual anywhere, so no existing concrete class is affected. Ends
-   compilable; `tests/rhi/types_tests.cpp`'s new/extended cases pass.
+   1.5, 1.6. Adds enum values, `OffscreenTargetCreateParams`, the two
+   new error enums, and the `Format` doc-comment update — no new pure
+   virtual anywhere, so no existing concrete class is affected. 1.6's
+   `submission_signal.h` comment fix is independent of everything else
+   in this step (and every other step) and may land here or anywhere
+   else convenient — grouped into Step 1 only because, like 1.1/1.5, it
+   changes no interface and affects no concrete class's compilability.
+   Ends compilable; `tests/rhi/types_tests.cpp`'s new/extended cases
+   pass.
 2. **Step 2 — `OffscreenTarget` interface (brand-new type, zero existing
    implementers):** Section 1.2. Ends compilable (nothing instantiates
    it yet, so its abstractness affects nothing).
@@ -1427,7 +1594,13 @@ breaking compilation, per the analysis above).
 `tests/render_graph/headless_binding_tests.cpp`.
 
 **Modified:**
-`src/rhi/include/atlantis/rhi/{types,device,command_list}.h`,
+`src/rhi/include/atlantis/rhi/{types,device,command_list}.h`
+(`device.h`'s `submit()` doc comment also amended — Section 1.3 — for
+the stale-precondition finding below),
+`src/rhi/include/atlantis/rhi/submission_signal.h` (comment-only —
+Section 1.6 — matches `device.h`'s amendment; not to be confused with
+the distinct, unmodified `src/vulkan_backend/src/vulkan_submission_signal.{h,cpp}`
+below),
 `src/rhi/src/types.cpp`,
 `src/render_graph/include/atlantis/render_graph/execution.h`,
 `src/render_graph/src/execution.cpp`,
@@ -1454,11 +1627,16 @@ Plan Review choice),
 `src/vulkan_backend/src/vulkan_presentation.cpp` (its own
 `static_cast<VulkanRenderTarget&>` in `present()` stays exactly as-is —
 see Section 5's own explanation of why) and
-`src/vulkan_backend/src/vulkan_submission_signal.{h,cpp}` (confirmed, by
-reading its actual implementation, to be a trivial, unconditional
-member-initializer store with no non-null assumption — an earlier draft
-of this plan flagged it as needing a possible fix "if it does" assume
-non-null; it does not, so no change is needed there).
+`src/vulkan_backend/src/vulkan_submission_signal.{h,cpp}` — the
+**Vulkan Backend's concrete** `VulkanSubmissionSignal` implementation,
+distinct from the RHI-level abstract `src/rhi/include/atlantis/rhi/submission_signal.h`
+Section 1.6 amends — confirmed, by reading its actual implementation, to
+be a trivial, unconditional member-initializer store with no non-null
+assumption — an earlier draft of this plan flagged it as needing a
+possible fix "if it does" assume non-null; it does not, so no change to
+this Vulkan Backend file is needed. (Section 1.6's change is to the
+*RHI interface's own doc comment*, a different file with a similar name
+— do not conflate the two when implementing.)
 
 If Implementation touches a file not listed here, that is a deviation to
 call out explicitly in the Implementation PR, not to slip in silently
@@ -1466,25 +1644,62 @@ call out explicitly in the Implementation PR, not to slip in silently
 
 ## Verification Checklist
 
-- [ ] Unit tests: Sections 1.1, 2.4 (items 1–8), 3.3, 6.4 pass,
-      `ctest -LE gpu` green, no new warning introduced.
-- [ ] Headless integration tests: Section 7.2 passes, `ctest -L gpu`
-      green, on real Vulkan-capable hardware (or explicitly disclosed as
-      not exercised, per Section 8) — including 7.2's own item 7,
-      confirmed to exercise all four corrected call sites end to end.
-- [ ] Image regression tests: N/A (Non-Goal).
+- [ ] Unit tests (GPU-independent, `ctest -LE gpu`, Debug **and**
+      Release): Sections 1.1, 2.4 (items 1–8), 3.3, 6.4 pass, no new
+      warning introduced.
+- [ ] Headless integration tests (GPU-required, `ctest -L gpu`, Debug
+      **and** Release): Section 7.2 passes on real Vulkan-capable
+      hardware (or explicitly disclosed as not exercised, per Section
+      8) — including 7.2's own item 7, confirmed to exercise all five
+      corrected call sites (`transitionResource()`, `clearColor()`,
+      `beginRendering()`, `submit()`, `copyRenderTargetToBuffer()`) end
+      to end.
+- [ ] Image regression tests: N/A (Non-Goal) — not implemented, not
+      stubbed, not partially scaffolded by this plan or its
+      Implementation.
+- [ ] **No reference-form `dynamic_cast` anywhere this plan
+      introduces:** `git grep -n "dynamic_cast<VulkanRenderTargetAccess&\|dynamic_cast<const VulkanRenderTargetAccess&"
+      src/vulkan_backend/src/` returns **zero** matches — every one of
+      the five call sites (6.1 ×3, 6.2, 6.5) uses the pointer-form
+      `dynamic_cast<VulkanRenderTargetAccess*>`/
+      `dynamic_cast<const VulkanRenderTargetAccess*>` followed by
+      `ATLANTIS_CHECK_MSG(... != nullptr, ...)`, matching the existing
+      `vulkan_presentation.cpp:651` precedent. A type mismatch at any of
+      these five sites fails via this assertion, in Debug **and**
+      Release (`ATLANTIS_CHECK_MSG` is unconditional, per
+      `assert.h`) — never via an uncaught `std::bad_cast` or any other
+      exception reaching the render path.
+- [ ] **Headless `submit()`'s `VkSubmitInfo` has zero wait/signal
+      semaphore count, not a null handle in a non-zero-count array:**
+      confirmed by 7.2's own GPU test (item 7) and, if feasible, by
+      inspecting `VkSubmitInfo::waitSemaphoreCount`/
+      `signalSemaphoreCount` directly in a debugger/log during that
+      test — both must be `0` and `pWaitSemaphores`/`pSignalSemaphores`
+      must be `nullptr` for a `VulkanOffscreenRenderTarget` argument,
+      matching Section 6.2's conditional construction exactly.
+- [ ] **Windowed semaphore behavior byte-identical to the pre-this-plan
+      baseline:** confirmed by `frame_execution_gpu_tests.cpp`/
+      `minimal_renderer_gpu_tests.cpp` re-run unmodified and passing —
+      `VulkanRenderTarget::acquireCompleteSemaphore()`/
+      `renderFinishedSemaphore()` never return `VK_NULL_HANDLE`, so
+      `submitInfo.waitSemaphoreCount`/`signalSemaphoreCount` remain `1`
+      and `pWaitSemaphores`/`pSignalSemaphores` remain non-null for
+      every existing windowed call site, exactly as before Section 6.2.
 - [ ] Vulkan Validation Layers clean: for every GPU-touching test and
       demo run this plan adds, and for the full re-run windowed suite
-      (Section 9) — zero warnings, zero errors.
+      (Section 9), in both Debug and Release — zero warnings, zero
+      errors.
 - [ ] Manual verification: `examples/headless_rendering_demo` runs to
       completion, passes its own basic content check, in both Debug and
       Release.
-- [ ] Windowed regression: Section 9's full checklist passes with no
-      behavior change from the pre-this-plan baseline, confirmed for
-      **all four** corrected call sites, not `submit()` alone.
+- [ ] Windowed regression (Debug **and** Release): Section 9's full
+      checklist passes with no behavior change from the pre-this-plan
+      baseline, confirmed for **all four** corrected `VulkanCommandList`/
+      `VulkanDevice` call sites, not `submit()` alone.
 - [ ] Explicit Prohibitions checklist (above) fully checked, including
-      the new `git grep` check confirming exactly one remaining
-      `static_cast<VulkanRenderTarget` site (`vulkan_presentation.cpp`).
+      the `git grep` check confirming exactly one remaining
+      `static_cast<VulkanRenderTarget` site (`vulkan_presentation.cpp`)
+      and the reference-form-`dynamic_cast` check above.
 - [ ] `git diff --check` clean on every commit.
 
 ## Rollback Plan
@@ -1534,13 +1749,13 @@ Deltas specific to this plan:
 
 ## Human Review / Plan Review Blockers
 
-**Resolved during this revision, no longer open:**
+**Resolved during the first Plan Review revision, no longer open:**
 
 - ~~`VulkanDevice::submit()`'s polymorphic-signal-access mechanism~~ —
   **confirmed**: the private-interface-plus-checked-`dynamic_cast`
   approach (`VulkanRenderTargetAccess`, Section 5.1), applied uniformly
-  across all four call sites (Section 6.1, 6.2), not `submit()` alone.
-  The always-real-dummy-semaphore alternative is dropped.
+  across all five call sites (Section 6.1, 6.2, 6.5), not `submit()`
+  alone. The always-real-dummy-semaphore alternative is dropped.
 - ~~`OffscreenTargetCreateParams::format`'s default~~ — **confirmed**:
   `Format::Rgba8Unorm` (Section 1.1), matching sibling `*CreateParams`
   structs' precedent of defaulting to a real, usable value rather than
@@ -1549,6 +1764,32 @@ Deltas specific to this plan:
   consistency~~ — **confirmed**: single-parameter constructor
   (`owner_` only), every accessor delegates to `owner_`, no duplicated
   `VkImage`/`VkImageView`/`Extent2D`/`Format` member (Section 5.3).
+
+**Resolved during the final (second) Plan Review revision, no longer
+open:**
+
+- ~~`dynamic_cast<VulkanRenderTargetAccess&>`'s exception-throwing
+  reference form~~ — **confirmed**: every one of the five call sites
+  (6.1 ×3, 6.2, 6.5) now uses the checked pointer-form
+  (`dynamic_cast<VulkanRenderTargetAccess*>`/
+  `dynamic_cast<const VulkanRenderTargetAccess*>`) plus
+  `ATLANTIS_CHECK_MSG(... != nullptr, ...)`, matching the existing
+  `vulkan_presentation.cpp:651` precedent — never a reference-form cast
+  that could throw `std::bad_cast` into the render path (Section 5.1's
+  own "`dynamic_cast` form" note). No RTTI/build-option change.
+- ~~Section 3.3's stale dependency on Section 2.3~~ — **confirmed**:
+  the new `[renderer][final_color_state]` case only exercises
+  `Renderer::drawFrame()`'s own internal draw pass and asserts against
+  `FakeCommandList`'s recorded `transitions`, never
+  `copyRenderTargetToBuffer()` — Section 3.3's dependency line now
+  reads "after 3.1, 3.2" only, consistent with its placement entirely
+  within Step 3 (Sequencing & Dependencies).
+- ~~`Device::submit()`/`SubmissionSignal`'s stale
+  present()-before-next-submit() doc comments~~ — **confirmed**: both
+  `device.h` (Section 1.3) and `submission_signal.h` (Section 1.6) now
+  state this precondition as windowed-only, with the headless exemption
+  and its ADR-0038 justification spelled out consistently in both
+  places — comment-only, no runtime behavior change.
 
 **Still open — design choices flagged for Plan Review; genuinely
 different, defensible options exist; this plan does not pick silently:**
@@ -1582,19 +1823,25 @@ different, defensible options exist; this plan does not pick silently:**
   pixel data — if that test ever shows incorrect/stale readback bytes
   with Validation Layers otherwise clean, this is the first place to
   suspect, not a re-litigation of Spec 0010/ADR-0040's own design.
-- `dynamic_cast`'s RTTI dependency (Section 5.1) relies on this
-  project's existing MSVC default (`/GR`, enabled, not currently
-  overridden anywhere in this repository's CMake configuration) — this
-  plan does not add, remove, or otherwise touch any RTTI/compiler-option
-  build setting; if a future spec ever needs to disable RTTI project-
-  wide for an unrelated reason, that future spec would need to revisit
-  this mechanism, not this plan.
+- The pointer-form `dynamic_cast`'s RTTI dependency (Section 5.1) relies
+  on this project's existing MSVC default (`/GR`, enabled, not
+  currently overridden anywhere in this repository's CMake
+  configuration) — this plan does not add, remove, or otherwise touch
+  any RTTI/compiler-option build setting; if a future spec ever needs
+  to disable RTTI project-wide for an unrelated reason, that future
+  spec would need to revisit this mechanism, not this plan. The switch
+  from reference-form to pointer-form (final Plan Review round) changes
+  only the cast's failure semantics (assertion vs. exception), not its
+  RTTI dependency.
 
 **No architectural gap requiring a return to Spec/ADR was found while
-producing or revising this plan.** The Must Fix this revision resolves
-(the three additional unconditional `static_cast` sites) and the three
-Should Fixes are all implementation-shape corrections within the
-boundaries Spec 0010 and ADR-0022/0038/0039/0040 already fixed — none
-requires a new public API, ownership model, synchronization primitive,
-module boundary, or dependency beyond what those documents already
-authorize.
+producing or revising this plan, across either Plan Review round.** The
+first round's Must Fix (the three additional unconditional `static_cast`
+sites) and three Should Fixes, and the second round's Must Fixes
+(reference-form `dynamic_cast`'s exception risk; Section 3.3's stale
+2.3 dependency) and Should Fix (the stale `submit()`/`SubmissionSignal`
+doc comments), are all implementation-shape or documentation-accuracy
+corrections within the boundaries Spec 0010 and
+ADR-0022/0038/0039/0040 already fixed — none requires a new public API,
+ownership model, synchronization primitive, module boundary, or
+dependency beyond what those documents already authorize.
