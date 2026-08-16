@@ -41,6 +41,37 @@
   interactively and reporting the result, exactly as Spec 0010's own
   "Manual verification record" did for its interactive windowed
   regression requirement.
+- **Empirical calibration performed 2026-08-16**, in response to an
+  independent review of this ADR's first draft finding that a starting
+  tolerance of "2, out of 255" was an unverified placeholder. Using
+  Spec 0010's existing, unmodified `examples/headless_rendering_demo`
+  fixture (fixed cube, fixed camera, fixed material, fixed background
+  clear color, 512×512 `Rgba8Unorm`), temporarily instrumented
+  (uncommitted, fully reverted afterward — no repository file reflects
+  this instrumentation) to dump each cycle's raw readback buffer to
+  disk, on the reference machine (GPU: Intel(R) Arc(TM) B370, integrated,
+  vendorID `0x8086`, deviceID `0xb081`; driver `101.8509`,
+  `DRIVER_ID_INTEL_PROPRIETARY_WINDOWS`; Vulkan instance/loader `1.4.357`,
+  device apiVersion `1.4.335`; Windows 11 Home, Build 26200), against
+  source revision `217db1a` (this branch's tip; byte-identical to `main`
+  in every file under `src/`, `examples/`, `tests/` as of the PR #48
+  merge commit `9bd74a5` — confirmed via `git diff`, zero output):
+  - **Debug:** 7 fresh process launches × 3 in-process render/readback
+    cycles each = 21 total captures. Every capture compared byte-for-byte
+    against the first, per channel, across all 512×512×4 = 1,048,576
+    bytes each. **Result: 0 pixels differing at any threshold (>0, >1,
+    >2) in any of the 20 comparisons — every capture was bit-for-bit
+    identical.**
+  - **Release:** identical procedure, 21 total captures. **Result:
+    identical — 0 pixels differing at any threshold in any of the 20
+    comparisons.**
+  - This evidence directly informs the tolerance decision below. It
+    covers only this one fixture, on this one reference GPU/driver, as
+    of this date — it does not cover a driver upgrade, different
+    hardware, or a future scene with a genuine source of pixel-level
+    nondeterminism (anti-aliasing, transparency); those remain this
+    ADR's own disclosed, unresolved scope (see Consequences and
+    Alternatives Considered).
 
 ## Decision
 
@@ -48,14 +79,29 @@
 byte difference between a freshly captured buffer and its golden, both
 in the identical `atlantis::rhi::Format` and extent the capturing scene
 declared — a format or extent mismatch between actual and golden is a
-hard failure, never silently resized or reformatted. A pixel passes if
-every channel's absolute difference is within a fixed tolerance
-(starting value: 2, out of 255 — an explicit placeholder this ADR
-proposes for empirical confirmation against real repeated-capture
-evidence during the Plan/Implementation stage, not asserted as final
-here). **Every pixel in the image must pass — there is no pixel-ratio/
-percentage slack budget in this Phase 1 design.** A single
-out-of-tolerance pixel anywhere fails the comparison.
+hard failure, never silently resized or reformatted.
+
+This decision distinguishes two separate parameters, deliberately not
+collapsed into one vague "tolerance":
+- **Channel tolerance** — the maximum allowed absolute difference on any
+  single channel of any single pixel for that pixel to still count as
+  passing.
+- **Failing-pixel budget** — the maximum allowed count (or proportion)
+  of pixels that may exceed the channel tolerance while the overall
+  comparison still passes.
+
+**Channel tolerance = 0. Failing-pixel budget = 0.** Every channel of
+every pixel must match its golden exactly (bit-for-bit); a single
+out-of-tolerance channel on a single pixel anywhere fails the entire
+comparison. This is not a placeholder — it is a confirmed value, backed
+by the empirical calibration recorded in Context above: 42 total
+captures (21 Debug, 21 Release; each set spanning 7 independent process
+launches and 3 in-process cycles) against the one reference GPU/driver
+this project has ever verified against, with **zero** differing pixels
+at any threshold in every comparison performed. Per Context's own
+disclosure, this confirmed value is scoped to the fixture and
+reference GPU/driver actually calibrated against — see Consequences and
+Alternatives Considered for what would trigger revisiting it.
 
 **Failure output.** A failing comparison must produce, at minimum:
 pass/fail; per-channel and combined max and mean absolute difference;
@@ -70,23 +116,125 @@ regression tests" bullet.
 
 **Golden image ownership and location.**
 `tests/image_regression/goldens/<scene-slug>/<golden-name>.png`, one PNG
-per golden, each accompanied by a sidecar file (exact serialization left
-to the Plan; JSON is the working assumption) recording: capture date,
-git commit hash, GPU vendor/model, driver version, Vulkan instance/
-device API version, OS build, and the exact `OffscreenTarget` extent/
-format used. No golden file may be regenerated or overwritten by an
-automated test/CI run under any circumstance; regenerating one is a
-distinct, explicitly-invoked, never-default-on developer action (exact
-mechanism left to the Plan) whose resulting diff is reviewed like any
-other code change in its own PR — matching
-[testing-strategy.md](../docs/process/testing-strategy.md)'s existing
-rule verbatim ("never a silent regeneration step that a CI job runs and
-commits automatically"). A PR that touches any file under
-`tests/image_regression/goldens/` must state why in its own
-description; enforcing this is a human-review/process rule today, not a
-technical control — no CI or branch-protection/CODEOWNERS mechanism
-exists yet to enforce it automatically, and provisioning one is a
-future, separate action this ADR does not fabricate.
+per golden, each accompanied by a sidecar file (exact text encoding left
+to the Plan; JSON is the working assumption — but every field below is
+fixed by this ADR, not left open) recording: capture date; **source
+revision** (see below); GPU vendor/model; driver version; Vulkan
+instance/loader and device API version; OS build; and the exact
+`OffscreenTarget` extent/format used.
+
+**Source revision, precisely — not "the commit hash of this golden's
+own commit."** A sidecar records `git rev-parse HEAD` **as run at
+capture time, against a clean working tree** (no uncommitted changes) —
+i.e. the revision the source tree already existed at *before* the golden
+and its sidecar are added. This is deliberately not, and can never be,
+"the commit hash of the commit that adds this golden": a commit's hash
+is only computable from its own final tree contents, so a sidecar cannot
+record its own commit's hash without a circular dependency. Concretely:
+- If a golden is being added or updated **because of a rendering change
+  in the same PR**, that rendering change must be **committed first**.
+  The golden is then captured against that already-existing commit
+  (a clean working tree at that commit), and the sidecar records that
+  commit's hash. The golden PNG and its sidecar are then added via a
+  **separate, subsequent commit** — never folded into the same commit as
+  the rendering change, and never recording a hash that does not yet
+  exist at capture time.
+- If no rendering change is involved (see "Golden update reasons"
+  below), the recorded source revision is simply whatever commit the
+  working tree was clean at when the capture ran.
+- Capturing against a dirty working tree is a capture-tool usage error,
+  not a supported case — the recorded source revision would not
+  correspond to any real, inspectable commit.
+
+**Behavior when the current environment does not match a golden's
+recorded provenance.** The image regression suite has no `skip`
+outcome. A test whose golden exists always runs the real pixel
+comparison, unconditionally. Before comparing, the test reads the
+current process's actual GPU vendor/model, driver version, and Vulkan
+instance/loader and device API version, and compares them against the
+golden's own sidecar provenance:
+- On a **match**, the test's pass/fail result is reported as ordinary
+  reference-environment verification evidence, exactly as today.
+- On a **mismatch**, the pixel comparison still runs and still produces
+  a real pass/fail result — but the test additionally emits a distinct,
+  prominent `PROVENANCE MISMATCH` diagnostic (current vs. golden's
+  recorded vendor/model/driver/API version), reported **separately from,
+  and never merged into,** the pass/fail verdict. **A pass obtained under
+  a provenance mismatch must never be cited or reported as evidence that
+  the harness was verified against the reference environment** — it is
+  evidence only that this specific run, on this specific (non-reference)
+  environment, happened to match; a failure obtained under a mismatch
+  must not be assumed to be a real regression without first checking
+  whether the mismatch itself is the explanation.
+
+**Golden regeneration — locked to a distinct, unreachable-by-default
+mechanism.** Regenerating a golden is performed **only** by a separate,
+standalone developer tool/entry point (exact name left to the Plan, but
+its architecture is fixed here, not left open):
+- It is **never registered with CTest** — it does not appear in
+  `ctest -L gpu`, in the default build target set, or in any target an
+  ordinary `cmake --build` invocation produces by default.
+- The ordinary GPU-required comparison test binary(ies) that `ctest -L
+  gpu` runs are **read-only** with respect to golden files: no
+  environment variable, command-line flag, or code path reachable from
+  that binary's normal invocation may write to
+  `tests/image_regression/goldens/` under any circumstance. Regeneration
+  requires invoking the separate tool directly — never a hidden mode of
+  the comparison test itself.
+- A golden's PNG and sidecar are only ever changed by a dedicated PR,
+  never bundled silently into an unrelated code or test change, and
+  always human-reviewed before merge — matching
+  [testing-strategy.md](../docs/process/testing-strategy.md)'s existing
+  rule verbatim ("never a silent regeneration step that a CI job runs
+  and commits automatically").
+
+**Golden update reasons — categorized, not left implicit.** Every PR
+that touches a file under `tests/image_regression/goldens/` must state,
+in its own description, which of the following applies:
+1. **Rendering change** — an intentional change to the rendered output
+   (a code change elsewhere in the same PR, or a prior, already-merged
+   commit this PR's golden update catches up to). The PR must identify
+   that change.
+2. **Reference-environment change** — the reference machine's GPU
+   driver, OS, or Vulkan runtime changed, and the previously-recorded
+   golden no longer matches even though no rendering code changed. The
+   PR must include **both** the old and new provenance (old golden's
+   sidecar vs. the new capture's actual environment) **and** diff
+   evidence (the actual-vs-old-golden diff image/metrics ADR-0042's own
+   failure-output contract already produces) demonstrating the reviewer
+   has a real basis to believe no rendering regression is hiding behind
+   the environment change — a driver upgrade is not, by itself,
+   sufficient justification.
+3. **Approved rebaseline** — a deliberate, explicitly human-approved
+   decision to accept a new baseline for a stated reason not covered by
+   (1) or (2) (e.g. correcting a golden that was itself wrong when
+   captured). Requires the same explicit reasoning as (2).
+A golden-update PR must not leave this categorization implicit, and a
+"reference-environment change" must never be described using the same
+language as an ordinary "rendering change" update.
+
+**Golden PNG checksum — considered, not adopted.** A cryptographic
+checksum (e.g. SHA-256) of each golden PNG's own byte content was
+considered for the provenance sidecar, to give a reviewer an integrity
+signal independent of the PNG diff itself. **Not adopted**, because
+adding one would require either a new hashing dependency or hand-rolled
+hash code — this repository has no existing SHA-256 (or equivalent)
+capability today (confirmed: no such utility exists anywhere under
+`src/core/`) — and this ADR's own dependency discipline (justify or
+avoid, per [ADR-0041](0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md))
+applies equally to a second dependency introduced only to satisfy a
+review suggestion. Instead: a golden PNG and its sidecar are always
+added or changed together, in the same commit, which git's own commit
+object already atomically binds — there is no window in which one
+could reference stale content in the other. The sidecar's own recorded
+file path, dimensions, format, and provenance fields are the
+correlation signal; a PNG corrupted independently of its sidecar would
+either fail to decode (caught immediately as a hard failure, per
+"Comparison algorithm" above) or decode into content that fails the
+pixel comparison against every future capture — a checksum would not
+catch a case neither of those already does, given this project's threat
+model (accidental corruption/tooling bugs, not adversarial tampering of
+a reviewed, version-controlled binary file).
 
 **Golden set strategy.** One unified golden set, captured on and
 compared only against the one real GPU vendor/family this project has
@@ -154,11 +302,13 @@ artifacts.
 
 ### Positive
 
-- A single, strict, unambiguous per-pixel-must-pass rule is simple to
-  implement, simple to reason about, and cannot silently mask a small
-  but real localized regression — directly satisfies the requirement
-  that a golden-image gate must not degrade into "roughly looks the
-  same."
+- A single, strict, unambiguous per-pixel-must-pass rule (channel
+  tolerance 0, failing-pixel budget 0) is simple to implement, simple to
+  reason about, cannot silently mask a small but real localized
+  regression, and — unlike the original placeholder — is now backed by
+  real repeated-capture evidence rather than an assumption (see Context)
+  — directly satisfies the requirement that a golden-image gate must not
+  degrade into "roughly looks the same."
 - Reusing Spec 0010's own already-verified fixture as the first golden
   scene means the harness proves itself against known-good, already
   human-reviewed rendering output rather than a newly authored,
@@ -169,11 +319,16 @@ artifacts.
 
 ### Negative / Trade-offs
 
-- Zero pixel-ratio slack is strict: if Phase 1 ever adds anti-aliasing,
-  transparency, or any other source of legitimate sub-pixel
-  nondeterminism, this exact-per-pixel rule will need revisiting
-  (flagged explicitly in Spec 0011's own Risks & Open Questions, not
-  solved here).
+- A zero channel tolerance and zero failing-pixel budget are strict: if
+  Phase 1 ever adds anti-aliasing, transparency, or any other source of
+  legitimate sub-pixel nondeterminism, or if a future driver upgrade or
+  different hardware is found empirically to introduce real, non-
+  regression pixel noise, this exact-per-pixel rule will need
+  revisiting with new calibration evidence of its own (flagged
+  explicitly in Spec 0011's own Risks & Open Questions, not solved
+  here) — the calibration in Context above covers only the fixture and
+  reference GPU/driver it was actually run against, not any future
+  change to either.
 - A single, unified (not per-vendor) golden set means this harness
   cannot yet be run meaningfully against any GPU other than the one this
   project has verified — a real, disclosed capability gap, not hidden by
@@ -223,3 +378,24 @@ artifacts.
   CI strategy currently exist (verified: `.github/workflows/` does not
   exist in this repository); asserting otherwise would fabricate
   infrastructure, contrary to [AGENTS.md](../AGENTS.md)'s Golden Rule.
+- **Adding a cryptographic checksum field to the provenance sidecar.**
+  Considered; not adopted — see "Golden PNG checksum" under Decision
+  above. Would require a new dependency or hand-rolled hash code for a
+  signal git's own atomic commit boundary and the sidecar's existing
+  correlated fields (path, dimensions, format, provenance) already
+  provide for this project's actual threat model.
+- **Silently skipping the image regression suite on non-reference
+  hardware/drivers.** Rejected: a `skip` outcome would make the
+  local/manual gate this ADR defines meaningless on any machine other
+  than the one exact reference environment, defeating its purpose as a
+  usable-today gate. The comparison always runs; a provenance mismatch
+  is reported as a separate, explicit diagnostic instead (see "Behavior
+  when the current environment does not match a golden's recorded
+  provenance" under Decision above).
+- **Recording "the commit hash of the commit this golden is added in"
+  as originally drafted.** Rejected on discovering the self-reference:
+  a commit's hash cannot be known before that commit's own content
+  (including this sidecar) is finalized. Corrected to record the
+  clean-working-tree source revision *at capture time*, which is always
+  a real, already-existing, inspectable commit — see "Source revision,
+  precisely" under Decision above.

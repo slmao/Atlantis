@@ -1,10 +1,55 @@
 # Spec: Image Regression Testing Foundation
 
-- **Status:** Draft
+- **Status:** In Review
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
-  direction. Not yet reviewed — see Human Review section below (absent
-  until a review round occurs).
+  direction.
 - **Created:** 2026-08-16
+- **Independent Review — Round 1 (2026-08-16):** An independent,
+  read-only review of this Spec's first draft and ADR-0041/ADR-0042
+  found four Must Fix issues — a self-referential "commit hash" field in
+  golden provenance (a commit's hash cannot be known before that
+  commit's own content is finalized); ADR-0041's "pinned to a tagged
+  commit" claim not matching `nothings/stb`'s actual upstream repository
+  (verified: zero git tags, zero GitHub Releases); the channel-tolerance/
+  failing-pixel-budget rule resting on an unverified placeholder value
+  with no calibration evidence; and undefined behavior when the
+  comparison suite runs on hardware/drivers other than the one recorded
+  in a golden's provenance — plus six Should Fix issues (missing
+  `stb_image`/`stb_image_write` implementation-macro, forced-channel-
+  decode, and no-vertical-flip contract details; an underspecified
+  golden-regeneration safety boundary; a missing golden-checksum
+  evaluation; undifferentiated golden-update-reason categorization).
+  This revision addresses all ten: golden provenance now records a
+  clean-working-tree **source revision** with an explicit same-PR
+  ordering rule (rendering change committed first, golden added in a
+  separate, later commit); ADR-0041's stb pin wording is corrected and
+  its full usage contract (implementation macros, forced 4-channel
+  decode, no-flip contract, PNG color-profile-chunk non-use, license/
+  offline-build implications) is now specified; a real **empirical
+  calibration** was performed on the reference Windows/Vulkan GPU (42
+  captures total — 21 Debug, 21 Release, each spanning 7 independent
+  process launches × 3 in-process cycles — against Spec 0010's existing,
+  unmodified fixture) and found **zero** differing pixels at any
+  threshold in every comparison, confirming channel tolerance = 0 and
+  failing-pixel budget = 0 as evidence-backed values, not placeholders,
+  for that fixture and reference GPU/driver; non-reference-environment
+  behavior is now fully specified (the comparison always runs, never
+  skips, with a provenance mismatch reported as a separate, explicit
+  diagnostic, never conflated with pass/fail); golden regeneration is
+  now locked to a distinct, non-CTest-registered tool, with ordinary
+  comparison tests read-only by design; golden-update PRs must now
+  categorize their reason (rendering change / reference-environment
+  change / approved rebaseline); and a golden PNG checksum was
+  evaluated and explicitly not adopted (no existing SHA-256 capability
+  in this repository; would require a new dependency to add one — see
+  ADR-0042's own "Golden PNG checksum" decision). See
+  [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)
+  and
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
+  for the full corrected/completed text. **This Spec has not yet
+  received Human Review Approval** — `In Review` reflects that an
+  independent review round has occurred and been acted on, not that a
+  human has signed off.
 - **Related Plan(s):** None yet — a Plan may be drafted only after this
   Spec (and the ADRs below) reach `Approved`/`Accepted`, per
   [AGENTS.md](../AGENTS.md).
@@ -215,16 +260,53 @@ Explicitly excluded from this spec's design and implementation:
   full location/provenance/update-workflow decision in
   [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md).
 - Each golden PNG is accompanied by a sidecar file recording its
-  provenance: capture date, git commit hash, GPU vendor/model, driver
-  version, Vulkan instance/device API version, OS build, and the exact
-  `OffscreenTarget` extent/format used. Exact sidecar serialization is a
-  Plan-stage detail (JSON is the working assumption).
-- No test, build step, or CI job may write to, overwrite, or delete a
-  file under `tests/image_regression/goldens/` as a side effect of
-  running the comparison suite. Regenerating a golden is a distinct,
-  explicitly-invoked, never-default-on action whose result is reviewed
-  as an ordinary PR diff before merge — a human must look at the actual
-  image (and its provenance change) and approve it.
+  provenance: capture date; **source revision** (`git rev-parse HEAD`
+  as run at capture time against a **clean working tree** — never the
+  hash of the commit the golden itself is being added in, which cannot
+  be known until that commit's own content is finalized); GPU
+  vendor/model; driver version; Vulkan instance/loader and device API
+  version; OS build; and the exact `OffscreenTarget` extent/format used.
+  Exact sidecar text encoding is a Plan-stage detail (JSON is the
+  working assumption); every field above is fixed by
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md),
+  not left open.
+- When a golden is added or updated in the same PR as the rendering
+  change that motivates it, the rendering change must be **committed
+  first**; the golden is captured against that already-existing commit
+  and added via a **separate, subsequent commit** recording that
+  commit's hash as its source revision.
+- No golden's PNG checksum is recorded in its sidecar — considered and
+  explicitly not adopted; see
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
+  own "Golden PNG checksum" decision (no existing SHA-256 capability in
+  this repository; adding one would itself be a new dependency).
+- The comparison suite has no `skip` outcome for non-reference hardware/
+  drivers. It always runs the real pixel comparison; if the current
+  device's vendor/model/driver/Vulkan version does not match a golden's
+  recorded provenance, a separate, prominent `PROVENANCE MISMATCH`
+  diagnostic is emitted alongside (never merged into) the ordinary
+  pass/fail result. A pass obtained under a provenance mismatch must
+  never be reported as reference-environment verification evidence.
+  Full decision in
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md).
+- Golden regeneration is performed **only** by a distinct, standalone
+  developer tool/entry point that is **never registered with CTest**
+  (never part of `ctest -L gpu` or any default build target). The
+  ordinary comparison test binary(ies) are read-only with respect to
+  golden files — no environment variable, command-line flag, or default
+  code path reachable from an ordinary test run may write to
+  `tests/image_regression/goldens/`. A golden's PNG and sidecar are only
+  ever changed by a dedicated, human-reviewed PR.
+- Every PR touching a file under `tests/image_regression/goldens/` must
+  categorize its reason as one of: **rendering change** (an intentional
+  output change, identified in the PR); **reference-environment change**
+  (the reference machine's driver/OS/Vulkan runtime changed — requires
+  before/after provenance and diff evidence, not just an assertion that
+  no regression is believed present); or **approved rebaseline** (a
+  deliberate, human-approved exception, same evidentiary bar as a
+  reference-environment change). A reference-environment-triggered
+  update must never be described using the same language as an ordinary
+  rendering-change update.
 - The first golden for the reused `examples/headless_rendering_demo`
   fixture must itself be captured once, reviewed by a human as "this is
   what correct output looks like today," and committed through the same
@@ -239,12 +321,18 @@ Explicitly excluded from this spec's design and implementation:
   hard failure, never silently resized or reformatted. Full algorithm
   and tolerance decision in
   [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md).
-- A starting per-channel tolerance of 2 (out of 255) is proposed,
-  explicitly subject to empirical confirmation against real
-  repeated-capture evidence gathered during the Plan/Implementation
-  stage — not asserted as final by this spec.
-- Every pixel must pass for the comparison to pass; there is no
-  pixel-ratio or percentage-based slack budget in this design.
+- Two separate parameters, not one vague "tolerance": **channel
+  tolerance** (max allowed absolute per-channel difference for one pixel
+  to pass) and **failing-pixel budget** (max allowed count/proportion of
+  pixels that may exceed channel tolerance). **Both are 0** — every
+  channel of every pixel must match exactly. This is a confirmed value,
+  backed by empirical calibration (42 captures — 21 Debug, 21 Release,
+  each spanning 7 independent process launches × 3 in-process cycles —
+  against the reused fixture on the one reference GPU/driver, zero
+  differing pixels at any threshold in every comparison; see
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
+  own Context and Decision for the full methodology and evidence), not
+  an unverified placeholder.
 - A failing comparison must produce: pass/fail; per-channel and combined
   max/mean absolute difference; the count and percentage of
   out-of-tolerance pixels; the actual captured image, saved as its own
@@ -263,12 +351,15 @@ Explicitly excluded from this spec's design and implementation:
   code-sharing mechanism — shared fixture vs. duplicated, matching Spec
   0010's own precedent for its relationship to Spec 0007's fixture — left
   to the Plan).
-- Determinism must be verified empirically, not assumed: the same
-  render-and-readback cycle repeated multiple times against the same
-  `OffscreenTarget` instance must produce byte-identical (within
-  tolerance) captures, extending Spec 0010's own "repeated cycle
-  produces consistent results" verification from its coarse content
-  check to a real pixel comparison.
+- Determinism was verified empirically, not assumed: 21 captures each
+  (Debug and Release) of the reused fixture's render-and-readback cycle,
+  spanning both same-process repetition and independent fresh-process
+  launches, produced byte-identical results in every case — see
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
+  for the full calibration methodology and evidence. This determinism
+  evidence is scoped to the fixture and reference GPU/driver actually
+  calibrated against; a future scene, driver upgrade, or different
+  hardware is not covered by it and would need its own evidence.
 - All real-hardware verification in this spec's scope is understood to
   run on a single GPU vendor/driver (Intel Arc, integrated) — this must
   never be described or reported as cross-vendor stability evidence. One
@@ -278,9 +369,14 @@ Explicitly excluded from this spec's design and implementation:
 **Data format and dependencies**
 
 - PNG via `stb_image`/`stb_image_write`, fetched by CMake `FetchContent`
-  pinned to a tagged commit, linked only into
+  pinned to a specific, full commit hash (`nothings/stb` has no tagged
+  releases — verified, zero git tags and zero GitHub Releases exist on
+  that repository), linked only into
   `tests/image_regression/`'s own test-support targets. Full decision,
-  alternatives, and licensing/build/maintenance analysis in
+  alternatives, and licensing/build/maintenance analysis, plus the full
+  usage contract (implementation-macro single-translation-unit rule,
+  forced 4-channel decode, no vertical-flip calls on either side, no
+  PNG color-profile chunks written or interpreted), in
   [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md).
 - No dependency introduced by this spec is linked into, or referenced
   by, any `src/` module.
@@ -394,9 +490,10 @@ workflow's full decision and rationale.
 
 See
 [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
-for the full decision: the per-pixel, all-pixels-must-pass rule, the
-proposed starting tolerance, the failure-output contract, and why a
-percentage-based or perceptual metric is rejected for Phase 1.
+for the full decision: the per-pixel comparison rule, the confirmed
+channel tolerance and failing-pixel budget (both 0, backed by empirical
+calibration — see ADR-0042's own Context), the failure-output contract,
+and why a percentage-based or perceptual metric is rejected for Phase 1.
 
 ### Reproducibility strategy
 
@@ -534,13 +631,15 @@ This section states what the future Plan/Implementation for this spec
 must verify — this Spec document itself introduces no code and performs
 no verification.
 
-- **Unit tests (GPU-independent):** the pixel-diff/tolerance algorithm
+- **Unit tests (GPU-independent):** the pixel-diff algorithm (channel
+  tolerance and failing-pixel budget, both fixed at 0 — see
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md))
   exercised against synthetic in-memory buffers (not real GPU captures),
   covering at minimum:
   - Two identical buffers compare equal (pass).
-  - A single differing pixel beyond tolerance anywhere in the buffer
-    fails the comparison — confirming there is no pixel-ratio slack.
-  - A difference within tolerance on every channel still passes.
+  - A single differing pixel anywhere in the buffer fails the comparison
+    — confirming the failing-pixel budget is genuinely 0, not merely
+    small.
   - A format or extent mismatch between actual and golden is reported as
     a hard failure, distinct from a content mismatch.
   - Failure output contains correct per-channel max/mean diff and
@@ -549,15 +648,23 @@ no verification.
   - PNG encode-then-decode round-trips a buffer byte-for-byte (lossless
     round trip, confirming ADR-0041's no-added-quantization claim).
   - Provenance sidecar parsing succeeds for a well-formed sidecar and
-    fails clearly for a malformed one.
+    fails clearly for a malformed one; a provenance mismatch (current
+    device vs. sidecar) produces the separate diagnostic ADR-0042
+    requires, distinguishable from the pixel-comparison pass/fail
+    result.
 - **GPU integration tests (Windows/Vulkan, `gpu`-labeled):**
   - A full capture-via-`OffscreenTarget` cycle against the reused
     `examples/headless_rendering_demo` fixture, compared against its own
     committed golden, passes with Vulkan Validation Layers clean.
   - The same cycle repeated multiple times against the same
-    `OffscreenTarget` instance produces byte-identical (within
-    tolerance) captures — the empirical determinism verification this
-    spec's Reproducibility requirements demand.
+    `OffscreenTarget` instance produces byte-identical captures — the
+    automated, permanent form of the empirical determinism verification
+    this spec's Reproducibility requirements demand. (An ad hoc,
+    uncommitted version of this check was already performed once during
+    this Spec's own review, as calibration evidence for the tolerance
+    decision — see ADR-0042's Context — but that was one-off evidence
+    gathering, not a standing test; this bullet is the permanent,
+    Plan/Implementation-stage test that must exist going forward.)
   - **A deliberately introduced rendering regression is caught:** a
     temporary, reverted-before-merge change to the fixture (e.g. an
     altered vertex color, an altered clear color, or an altered camera
@@ -571,6 +678,11 @@ no verification.
   - A missing golden file, and a golden file present but with mismatched
     provenance format/extent, each produce the expected, distinct
     failure — not a crash, not a silent pass.
+  - Running against a golden whose recorded provenance does not match
+    the current device produces the pixel-comparison result as normal,
+    plus the separate `PROVENANCE MISMATCH` diagnostic — and that
+    diagnostic is never allowed to suppress or replace the pass/fail
+    result.
 - **Vulkan Validation Layers:** mandatory, must run clean for every
   manual and automated exercise of the GPU-required capture path,
   exactly as every prior spec in this project already requires.
@@ -587,22 +699,32 @@ no verification.
 
 ## Risks & Open Questions
 
-- **Exact starting tolerance value (proposed: 2/255 per channel) needs
-  empirical confirmation** against real repeated-capture evidence on the
-  one available GPU during the Plan/Implementation stage — this spec
-  proposes it as a starting point, not a final, evidence-backed number.
-- **Whether the reused cube fixture's silhouette/edge pixels prove
-  flaky** under the strict all-pixels-must-pass rule is an unverified
-  prediction. If empirical evidence during Implementation shows real,
-  legitimate (non-regression) edge-pixel noise beyond the proposed
-  tolerance, that is a design gap requiring a spec revision or follow-up
-  spec to resolve — not a silent, undocumented tolerance loosening during
-  implementation.
-- **Exact provenance-sidecar serialization format** (JSON is the working
-  assumption, not fixed) is left to the Plan.
-- **Exact golden-regeneration invocation mechanism** (an environment
-  variable, a CLI flag, a separate CMake/ctest target — never on by
-  default) is left to the Plan.
+- **Resolved by empirical calibration** (see
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
+  Context/Decision): channel tolerance and failing-pixel budget are both
+  confirmed at 0 for the reused cube fixture's silhouette/edge pixels
+  included — 21 Debug and 21 Release captures, spanning both same-process
+  repetition and independent fresh-process launches, produced zero
+  differing pixels at any threshold. This resolves what was previously
+  an open, unverified prediction about edge-pixel flakiness for this
+  fixture on this reference GPU/driver. **Not resolved, and still
+  genuinely open:** whether a future driver upgrade or different
+  hardware would preserve this result — no evidence exists either way,
+  and none can exist until such a change actually occurs; a real
+  regression in that future evidence is a design gap requiring a spec
+  revision or follow-up spec, not a silent, undocumented tolerance
+  loosening during implementation.
+- **Exact provenance-sidecar text encoding** (JSON is the working
+  assumption, not fixed) is left to the Plan — every provenance *field*
+  itself (including "source revision," precisely defined) is fixed by
+  ADR-0042, not open.
+- **Exact name and CMake target shape of the golden-regeneration
+  tool** is left to the Plan; its architecture (a distinct,
+  never-CTest-registered entry point, unreachable from the ordinary
+  comparison test binary by any environment variable, flag, or default
+  code path) is fixed by
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md),
+  not open.
 - **Whether a distinct CI/test-category label for headless GPU
   integration tests is needed**, separate from the existing
   `gpu`-labeled pattern — the same open question Spec 0006 and Spec 0010

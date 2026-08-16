@@ -32,12 +32,21 @@
   outside this ADR's and Spec 0011's own drafts.
 - [ADR-0006](0006-dependency-management.md) (`Accepted`) established a
   two-tier dependency model: small, source-buildable dependencies via
-  CMake `FetchContent` pinned to a tagged release (e.g. Catch2, see
-  [ADR-0007](0007-test-framework.md)), versus large platform SDKs
+  CMake `FetchContent`, each "pinned to a specific tagged release
+  (`GIT_TAG` set to a release tag or commit hash, never a floating
+  branch)" (ADR-0006's own Decision text — a commit hash is an
+  explicitly permitted pin, not only a tag), versus large platform SDKs
   installed externally (Vulkan SDK, Android NDK/SDK). It explicitly
   reserves "future dependencies that don't fit the small pinned source
   dependency via `FetchContent` model" for their own ADR — an image
   codec is exactly such a new category, not decided by ADR-0006 itself.
+- **The `nothings/stb` GitHub repository has no git tags and no GitHub
+  Releases** — verified directly against the repository (`git ls-remote
+  --tags`/the GitHub Releases API both return empty as of this ADR's
+  drafting). Unlike Catch2 (ADR-0007), which is pinned to an actual
+  tagged release, `stb` can only be pinned to a specific commit hash on
+  its `master` branch. This is a real difference from ADR-0006/ADR-0007's
+  own precedent, not an oversight — see Decision below.
 
 ## Decision
 
@@ -49,10 +58,17 @@
 - PNG encode/decode is implemented using **`stb_image_write.h`** (encode)
   and **`stb_image.h`** (decode) from the `nothings/stb` project
   (public-domain / MIT dual-licensed, single-header, no transitive
-  dependencies), fetched via CMake `FetchContent` pinned to a tagged
-  commit — the same acquisition pattern ADR-0006/ADR-0007 already
-  established for Catch2, not vendored into the repository and not
-  installed as a system package.
+  dependencies), fetched via CMake `FetchContent` **pinned to a
+  specific, full 40-character commit hash on `stb`'s `master` branch —
+  never a tag (none exist), never a floating branch reference.** This is
+  the same `FetchContent` mechanism ADR-0006/ADR-0007 already established
+  for Catch2, differing only in what `GIT_TAG` is set to (a commit hash
+  here, a release tag for Catch2) — a difference ADR-0006's own Decision
+  text explicitly anticipates and permits. Not vendored into the
+  repository, not installed as a system package. The exact commit hash
+  pinned is a Plan-stage detail (this ADR fixes the pinning *mechanism*,
+  not the specific hash, which should be the tip of `master` at the time
+  the Plan is implemented).
 - This dependency is linked **only into the test-support targets under
   `tests/image_regression/`** defined by
   [ADR-0042](0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md) —
@@ -63,6 +79,79 @@
   (exact path and update workflow: see ADR-0042) — no external
   binary-asset storage system (Git LFS, a cloud bucket, etc.) is
   introduced by this decision.
+
+### stb usage contract
+
+Verified directly against `stb_image.h` (v2.30, 2024-05-31) and
+`stb_image_write.h` (v1.16) at
+[github.com/nothings/stb](https://github.com/nothings/stb), not assumed:
+
+- **Implementation macros.** `STB_IMAGE_IMPLEMENTATION` and
+  `STB_IMAGE_WRITE_IMPLEMENTATION` are each `#define`d in **exactly one**
+  dedicated `.cpp` translation unit within `tests/image_regression/`'s
+  own test-support target (exact file name left to the Plan) —
+  immediately before the corresponding `#include`. Defining either macro
+  in more than one translation unit is an ODR violation (duplicate
+  symbols at link time); every other translation unit that needs the
+  decode/encode API `#include`s the header **without** the macro
+  defined, exactly as both headers' own build instructions require.
+- **Decode channel contract.** Every `stbi_load`-family call in this
+  project's code passes `desired_channels = 4` explicitly. Per
+  `stb_image.h`'s own documented contract, a non-zero `desired_channels`
+  forces the decoded output to that many channels regardless of the
+  source PNG's own encoded channel count — this guarantees a golden PNG
+  is always read back as a 4-channel (RGBA) buffer with a fixed, known
+  layout, independent of exactly how the encoder chose to write it.
+- **No vertical flip, ever, on either side.** This project's code never
+  calls `stbi_set_flip_vertically_on_load()`,
+  `stbi_set_flip_vertically_on_load_thread()`, or
+  `stbi_flip_vertically_on_write()`. Both libraries' un-flipped default
+  ("first pixel top-left" on decode; first input row is the PNG's top
+  row on encode, per each header's own documentation) is used
+  unconditionally. This default already matches the row order
+  `VulkanCommandList::copyRenderTargetToBuffer()` produces (row 0 of the
+  readback buffer is the color image's row 0, i.e. the framebuffer's top
+  row under this codebase's standard viewport convention;
+  `VkBufferImageCopy::bufferRowLength = 0` — tightly packed, no
+  additional transform, per ADR-0040) — no flip call is needed on either
+  the write or the read path for the actual/golden byte layouts to
+  agree.
+- **Never rely on either flip setter's global state, because it is
+  never called.** Noted for completeness, not because this project uses
+  it: `stbi_set_flip_vertically_on_load_thread()` is thread-local (since
+  v2.24), but `stbi_flip_vertically_on_write()` has no thread-local
+  variant at all — it mutates a plain, process-wide `static int`. Since
+  this project never calls any of the three flip setters (previous
+  bullet), this asymmetry has no practical effect here; it is recorded
+  so a future contributor does not introduce a flip call without first
+  re-reading this constraint.
+- **No PNG color-profile metadata is written or interpreted.**
+  `stbi_write_png()` writes no `gAMA`/`sRGB`/`iCCP`/`cHRM` chunk of any
+  kind (verified against `stb_image_write.h`'s own source — no such
+  chunk-writing code exists in it); comparison in ADR-0042 operates on
+  raw pixel bytes only, with no color-profile interpretation on either
+  side.
+- **Scope, restated:** the `STB_IMAGE_IMPLEMENTATION`/
+  `STB_IMAGE_WRITE_IMPLEMENTATION` translation unit and every call site
+  above exist only inside `tests/image_regression/`'s own test-support
+  targets (ADR-0042) — never in `src/`, never linked into any shipping
+  example or the engine's own libraries.
+- **License and attribution.** Verified directly against the `LICENSE`
+  file at the root of `github.com/nothings/stb`: dual-licensed, the
+  user's choice of MIT or an Unlicense-equivalent public-domain
+  dedication, both permissive and requiring no NOTICE-file propagation
+  or separate attribution document. `FetchContent` fetches the header
+  files themselves (including their own embedded license text at the
+  end of each file), so no additional attribution mechanism is
+  introduced or required by this decision.
+- **Offline/air-gapped builds.** This dependency inherits
+  [ADR-0006](0006-dependency-management.md)'s existing, already-disclosed
+  `FetchContent` limitation: the first configure that needs to fetch it
+  requires network access; an offline/air-gapped build needs a
+  pre-populated `FetchContent` cache or vendored copy, which neither
+  ADR-0006 nor this ADR addresses. Restated explicitly here because this
+  is a second `FetchContent` dependency stacking on top of Catch2, not
+  merely a reference to an already-accepted cost.
 
 ## Consequences
 
