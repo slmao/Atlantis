@@ -140,10 +140,14 @@
   implementation.
 - **Related Plan(s):**
   [plans/0010-headless-rendering-foundation.md](../plans/0010-headless-rendering-foundation.md)
-  (`Draft`) — drafted against this `Approved` spec, per
-  [AGENTS.md](../AGENTS.md); not yet reviewed or approved. Implementation
-  may not begin until this Plan (or a joint Spec+Plan review) passes its
-  own Human Review.
+  (`Approved`, Human Review Approval recorded 2026-08-16 following two
+  independent Plan Review rounds — see the plan's own Human Review
+  Approval note, [PR #45](https://github.com/slmao/Atlantis/pull/45),
+  and [PR #46](https://github.com/slmao/Atlantis/pull/46) for the full
+  record). With this spec and that plan both `Approved`, the joint
+  Human Review gate [AGENTS.md](../AGENTS.md) requires before
+  Implementation is satisfied; Implementation may now begin, strictly
+  against the approved plan.
 - **Related ADR(s):** Builds on
   [ADR-0001](../adr/0001-rhi-backend-independence.md),
   [ADR-0002](../adr/0002-presentation-rendertarget-unification.md),
