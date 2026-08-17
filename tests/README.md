@@ -83,8 +83,12 @@ specs/plans (0003 and 0006), built as two entirely separate executables:
   path and the explicit-error case remain verified by code inspection
   and GPU-independent truth-table tests only, per Spec 0007's own stated
   limitation (no second GPU/driver combination available in this
-  environment). Validation Layers are explicitly enabled; the process
-  aborts on any WARNING/ERROR (see
+  environment); and a real headless render-and-readback cycle through a
+  real `OffscreenTarget` (`headless_rendering_gpu_tests.cpp`, Spec 0010)
+  — no window, no `Presentation`, no `VkSwapchainKHR`/`VkSurfaceKHR`
+  anywhere, sharing the same `Renderer`/RenderGraph/RHI/Vulkan Backend
+  stack the windowed path above uses. Validation Layers are explicitly
+  enabled; the process aborts on any WARNING/ERROR (see
   `src/vulkan_backend/src/validation.cpp`), so a normal exit is itself
   the validation-clean signal.
 
@@ -135,15 +139,51 @@ frame-to-frame state across calls, and that `Mesh`/`Material` are never
 created, cached, or looked up by `Renderer` itself. Run via
 `ctest --test-dir build -C Debug -LE gpu --output-on-failure`.
 
-Headless integration and image-regression test layers (see
-[docs/process/testing-strategy.md](../docs/process/testing-strategy.md))
-are not implemented — they're blocked on headless rendering, which
-doesn't exist yet. Their concrete directory structure and test framework
-choice (if different from Catch2) will be established by the spec that
-introduces that harness, not invented ahead of time. No GPU-touching CI
-exists yet either; the `gpu` CTest label is preparatory infrastructure a
-future CI job would opt into explicitly, not a currently-running pipeline.
-See [AGENTS.md](../AGENTS.md).
+**`image_regression/`** — tests for Atlantis's image regression
+harness, per
+[specs/0011-image-regression-testing-foundation.md](../specs/0011-image-regression-testing-foundation.md)/[plans/0011-image-regression-testing-foundation.md](../plans/0011-image-regression-testing-foundation.md),
+built as two executables:
+- `atlantis_image_regression_tests` — GPU-independent, carries no
+  CTest `gpu` label. Covers the pixel-diff comparison algorithm
+  (`pixel_diff_tests.cpp`), the PNG codec round-trip and malformed-input
+  rejection (`png_codec_tests.cpp`), provenance-sidecar parsing
+  (`provenance_tests.cpp`), and the four-step golden validity check
+  (`golden_validity_tests.cpp`) — all against synthetic in-memory
+  buffers and constructed/temp-generated test PNGs, no Vulkan device
+  required.
+- `atlantis_image_regression_gpu_tests` — GPU-required, every test
+  case carries the CTest label `gpu`. Drives a real capture-via-
+  `OffscreenTarget` → compare-against-committed-golden cycle
+  (`image_regression_gpu_tests.cpp`) against the `minimal_cube` scene's
+  own committed golden (`goldens/minimal_cube/`) — exact per-pixel
+  match (channel tolerance 0, failing-pixel budget 0), repeated-cycle
+  determinism, `INVALID GOLDEN` for a never-committed golden, and
+  `PROVENANCE MISMATCH` reported as a diagnostic separate from
+  pass/fail.
+
+`support/` (the comparison/codec/provenance/validity library),
+`fixture/` (the reused cube scene, duplicating
+`examples/headless_rendering_demo`'s own setup byte-for-byte), and
+`golden_generator/` (a standalone, non-CTest-registered tool that
+regenerates a golden against a clean, committed working tree — never
+reachable from an ordinary `ctest` run) are this suite's own
+supporting subdirectories, not additional test executables. See
+[docs/process/testing-strategy.md](../docs/process/testing-strategy.md)
+for the settled golden format/location/tolerance and
+[ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)/[ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
+for the full design. Run the GPU-independent suite the same way as
+every other suite above; run the GPU-required suite via
+`ctest --test-dir build -C Debug -L gpu --output-on-failure` on a real,
+Vulkan-capable Windows machine with
+`tests/image_regression/current_environment.sidecar.txt` populated
+(git-ignored, machine-local — see
+`current_environment.sidecar.txt.example`).
+
+No GPU-touching CI exists yet; the `gpu` CTest label is preparatory
+infrastructure a future CI job would opt into explicitly, not a
+currently-running pipeline — see
+[docs/process/ci-strategy.md](../docs/process/ci-strategy.md). See
+[AGENTS.md](../AGENTS.md).
 
 Do not add test files for other modules here without a linked spec and
 plan.

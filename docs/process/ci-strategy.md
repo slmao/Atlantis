@@ -15,11 +15,21 @@ architectural decision [AGENTS.md](../../AGENTS.md) prohibits.
 
 ## Sequencing note
 
-Windowed rendering ships before headless rendering (see
-[AGENTS.md](../../AGENTS.md)). CI cannot drive an on-screen swapchain, so
-until headless rendering lands, CI is limited to build verification and
-unit tests — no automated testing of rendered output. Image regression
-gating (below) activates once headless rendering exists.
+Windowed rendering shipped before headless rendering, which shipped
+before image regression testing, per [AGENTS.md](../../AGENTS.md)'s
+sequencing rule — both headless rendering (Spec 0010) and image
+regression testing (Spec 0011) are now `Approved` and implemented, with
+a real, working **local/manual** gate (a human or agent runs
+`ctest -L gpu` against real Vulkan-capable hardware and reports
+pass/fail — see
+[testing-strategy.md](testing-strategy.md#golden-images)). **This is a
+fact about what exists locally, not a change to this document's own
+subject: no CI pipeline exists in this repository, so nothing below
+this line is true of CI yet.** CI still cannot drive an on-screen
+swapchain, and CI-enforced image regression gating (below) remains
+blocked on the same GPU-in-CI/dependency-fetch prerequisites this
+document already logs as open — reaching a working local harness does
+not, by itself, resolve either.
 
 ## Baseline requirements, once CI exists
 
@@ -32,9 +42,17 @@ gating (below) activates once headless rendering exists.
   beyond what's documented in the README.
 - **Vulkan Validation Layers:** enabled in every CI build that touches the
   GPU; a validation error or warning fails the job, it does not just log.
-- **Image regression tests:** once headless rendering exists, these run in
-  CI; on failure, the actual/expected/diff images are uploaded as build
-  artifacts so a human can inspect them without reproducing locally.
+- **Image regression tests:** the harness itself now exists and runs
+  locally/manually (Spec 0011, `Approved`,
+  `tests/image_regression/`) — on failure, it already writes the
+  actual/expected/diff images to a documented build-output location (see
+  [testing-strategy.md](testing-strategy.md#golden-images)), so the
+  artifact-upload step below is a small, already-satisfied precondition,
+  not new design. **Not yet true:** these do not run in CI, because no CI
+  pipeline exists. Once CI exists, uploading that same
+  already-produced actual/expected/diff output as build artifacts is the
+  remaining, straightforward step — so a human can inspect a failure
+  without reproducing it locally.
 - **Required check:** CI must be a required status check on `main` once
   branch protection is configured (human action, see
   [git-workflow.md](git-workflow.md)).

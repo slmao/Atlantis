@@ -262,7 +262,13 @@ Android/iOS path exists yet. A headless rendering path now exists (Spec
 Section 5 and the Spec 0010 row in
 [specs/README.md](../specs/README.md) for full scope and verification
 detail, including its own disclosed single-GPU-vendor verification
-limitation).
+limitation). A local/manual image-regression gate now exists too (Spec
+0011, `Approved`, implemented and merged via
+[PR #52](https://github.com/slmao/Atlantis/pull/52) — see Milestone 8 in
+Section 5 and the Spec 0011 row in
+[specs/README.md](../specs/README.md) for full scope, verification, and
+the same disclosed single-GPU-vendor limitation); CI-enforced automatic
+gating remains not implemented.
 
 **Every currently-`Approved` spec (0001–0008) now has matching
 implementation**, each merged following the same Spec → Plan → Human
@@ -283,13 +289,13 @@ unmodified — Spec 0008 superseded its *mechanism*, not the ADR record.
 
 **What has no spec yet:** Runtime (the module), the remainder of Tools
 beyond its first Spec 0008 content, Android Platform implementation,
-iOS Platform, image regression testing (headless rendering now has a
-spec — Spec 0010, `Approved`, implemented — see above), and everything
-in Section 5's later milestones and Section 5's "further candidate
-phases." These remain backlog candidates (see
-[specs/README.md](../specs/README.md) Section B) and are not `Approved`
-— no spec number, API shape, or Candidate-status promotion is assigned
-to any of them by this document.
+iOS Platform, and everything in Section 5's later milestones and
+Section 5's "further candidate phases." (Both headless rendering and
+image regression testing now have specs — Spec 0010 and Spec 0011,
+both `Approved`, implemented — see above.) These remain backlog
+candidates (see [specs/README.md](../specs/README.md) Section B) and
+are not `Approved` — no spec number, API shape, or Candidate-status
+promotion is assigned to any of them by this document.
 
 ## 5. Phased roadmap
 
@@ -524,15 +530,47 @@ milestone being listed does not authorize starting it — see Section 1.
 
 ### Milestone 8 — Image regression testing
 
-- **Governance state:** Candidate — requires a new Spec. Depends on
-  Milestone 7. Not started.
-- **Scope:** golden-image storage and comparison; tolerance/diff
-  methodology (not yet decided, per
-  [docs/process/testing-strategy.md](process/testing-strategy.md));
-  CI integration (per
-  [docs/process/ci-strategy.md](process/ci-strategy.md)); Vulkan
-  Validation Layers as a hard gate, consistent with every earlier
-  milestone.
+- **Governance state:** **`Approved` Spec, `Approved` Plan, Implemented
+  (local/manual gate only) —
+  [specs/0011-image-regression-testing-foundation.md](../specs/0011-image-regression-testing-foundation.md),
+  [plans/0011-image-regression-testing-foundation.md](../plans/0011-image-regression-testing-foundation.md).**
+  Human Review Approval recorded 2026-08-16 (Spec) and 2026-08-17
+  (Plan). Its Architectural Impact identified two new decisions, filed
+  as
+  [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)
+  and
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md),
+  both `Accepted` alongside the Spec approval; ADR-0042 additionally
+  carries an **Accepted Amendment** (2026-08-17, adding an "Initial
+  baseline bootstrap" golden-update-reason category for a scene's
+  first-ever golden) recorded via
+  [PR #53](https://github.com/slmao/Atlantis/pull/53). Implementation
+  merged via [PR #52](https://github.com/slmao/Atlantis/pull/52) — see
+  the Spec 0011 row in [specs/README.md](../specs/README.md) for full
+  scope, verification, and deviation detail. Its dependency, Milestone
+  7 (Headless rendering), is implemented.
+- **Partially complete — the local/manual half of this milestone's own
+  scope is done; the CI-enforced half (this milestone's full Section 6
+  acceptance signal, below) is not.** A human or agent runs the
+  `gpu`-labeled image regression suite against real Windows/Vulkan
+  hardware and reports pass/fail — verified for real, including a
+  deliberately introduced rendering regression genuinely caught and a
+  reverted-before-merge fixture change. **CI-enforced automatic
+  gating on every merge remains not implemented**, blocked on the same
+  GPU-in-CI-approach and dependency-fetch-in-CI-strategy prerequisites
+  [docs/process/ci-strategy.md](process/ci-strategy.md) already logs as
+  open, plus actual infrastructure provisioning — neither decided nor
+  fabricated by Spec 0011 itself.
+- **Scope actually delivered:** golden-image storage, naming, and
+  provenance (`tests/image_regression/goldens/`, a 13-field sidecar
+  per golden); a strict, zero-tolerance per-pixel comparison algorithm
+  (channel tolerance 0, failing-pixel budget 0 — empirically confirmed
+  for the one reused fixture and reference GPU/driver, not generalized
+  beyond it); a dedicated golden validity check (`INVALID GOLDEN` as
+  its own outcome) and a `PROVENANCE MISMATCH` diagnostic kept separate
+  from pass/fail; a standalone, non-CTest-registered golden
+  regeneration tool; Vulkan Validation Layers as a hard gate,
+  consistent with every earlier milestone.
 
 ### Further candidate phases (directional only, no Spec, no ADR)
 
@@ -572,8 +610,8 @@ anything architectural, its own ADR before any of the below moves past
 | M4 | **Met.** A first mesh is drawn end-to-end through Renderer → RenderGraph → RHI → Vulkan Backend, with a working camera and one material, Validation Layers clean — see `examples/minimal_renderer_demo` and the Spec 0007 row in Section 4. |
 | M5 | A shader authored in Phase 1's chosen source form compiles to SPIR-V, is reflected, and backs a working pipeline used by M4's mesh draw. |
 | M6 | The same Renderer output from M4 appears on an Android device/emulator via the Android Platform + Vulkan Backend path, with no Renderer/RenderGraph code fork. |
-| M7 | **Met** (headless GPU-readback path). The same rendering stack from M4, driven headlessly via `OffscreenTarget`, produces a GPU-readback image with no window or swapchain involved — see `examples/headless_rendering_demo` and the Spec 0010 row in [specs/README.md](../specs/README.md). Pixel/image-level comparison *against the windowed output* is explicitly Milestone 8/Image Regression Testing's own, separate scope, not part of M7/Spec 0010 — M8 remains `Candidate`. |
-| M8 | A CI-enforced golden-image comparison catches an intentionally introduced rendering regression and passes on a known-good build, gating merges. |
+| M7 | **Met** (headless GPU-readback path). The same rendering stack from M4, driven headlessly via `OffscreenTarget`, produces a GPU-readback image with no window or swapchain involved — see `examples/headless_rendering_demo` and the Spec 0010 row in [specs/README.md](../specs/README.md). Pixel/image-level comparison *against the windowed output* is explicitly Milestone 8/Image Regression Testing's own, separate scope, not part of M7/Spec 0010 — see the M8 row below (`Approved`, implemented, partially met). |
+| M8 | **Partially met.** A human/agent-run golden-image comparison (`ctest -L gpu` against `tests/image_regression/`) genuinely catches an intentionally introduced rendering regression and passes on a known-good build — see `specs/README.md`'s Spec 0011 row and [PR #52](https://github.com/slmao/Atlantis/pull/52) for the real, recorded proof. **Not yet met:** this comparison does not yet run in CI or gate merges automatically — no CI pipeline exists in this repository (see [docs/process/ci-strategy.md](../docs/process/ci-strategy.md)). |
 
 ## 7. Explicitly deferred or off-limits for now
 

@@ -37,9 +37,13 @@ built with.
 - Headless rendering after that — implemented (Spec 0010, `Approved`,
   [PR #48](https://github.com/slmao/Atlantis/pull/48)), sharing the same
   Renderer/RHI/RenderGraph/Vulkan Backend stack as the windowed path;
-  what unlocks image regression testing
-- Image regression testing — not yet implemented, next candidate item
-  (see [specs/README.md](specs/README.md) Section B)
+  what unlocked image regression testing
+- Image regression testing — implemented (Spec 0011, `Approved`,
+  [PR #52](https://github.com/slmao/Atlantis/pull/52)): a golden-image
+  comparison harness (`tests/image_regression/`) with a working
+  local/manual gate, verified on one reference GPU/driver. Automated
+  CI-enforced gating is not yet implemented (see
+  [docs/process/ci-strategy.md](docs/process/ci-strategy.md))
 - Vulkan Validation Layers as a correctness gate
 - RenderDoc-based debugging
 
@@ -93,7 +97,7 @@ plans/              Approved implementation plans
 adr/                Architectural decision records
 src/                Source — src/core/ (Atlantis Core, spec/plan/ADR 0001/0006-0010); src/platform/ (Atlantis Platform's Windows path, spec/plan 0002, ADR-0005/0010-0013 — Android/iOS specified but not implemented); src/rhi/ and src/vulkan_backend/ (backend-independent RHI and its sole Phase 1 backend — Windows windowed Vulkan presentation, spec/plan 0003, ADR-0001-0003/0014-0016; frame-scoped acquire/present, RenderTarget, and CommandList/submission, spec/plan 0006, ADR-0019-0021; Buffer/Texture/Pipeline and the draw-command surface, spec/plan 0007, ADR-0023-0025; OffscreenTarget and GPU-to-CPU readback for headless rendering, spec/plan 0010, ADR-0038-0040); src/render_graph/ (RenderGraph construction/compilation, spec/plan 0005, ADR-0017/0018; execution/barrier integration, spec/plan 0006, ADR-0021; multi-attachment/draw-pass integration, spec/plan 0007, ADR-0026; caller-specified incoming/final resource-state boundaries for headless reuse, spec/plan 0010, ADR-0039); src/renderer/ (Atlantis Renderer — Mesh/Material/DrawItem/Renderer, spec/plan 0007, ADR-0022; drawFrame()'s required finalColorState parameter, spec/plan 0010, ADR-0022 Amendment); every other module still empty, pending its own spec/plan/ADR
 examples/           Non-shipping demo programs (foundation_demo/, platform_demo/, rhi_vulkan_demo/, frame_execution_demo/, minimal_renderer_demo/, headless_rendering_demo/) — see ADR-0010
-tests/              Tests — tests/core/, tests/platform/, tests/rhi/ (Catch2 v3, all GPU-independent), tests/vulkan_backend/ (GPU-independent plus a separate, explicitly gpu-labeled Windows/Vulkan integration executable, incl. full frame execution, the minimal renderer draw path, and headless GPU readback), tests/render_graph/ (GPU-independent, incl. execute()), tests/renderer/ (GPU-independent, Renderer statelessness/ownership); image-regression layer pending its own spec
+tests/              Tests — tests/core/, tests/platform/, tests/rhi/ (Catch2 v3, all GPU-independent), tests/vulkan_backend/ (GPU-independent plus a separate, explicitly gpu-labeled Windows/Vulkan integration executable, incl. full frame execution, the minimal renderer draw path, and headless GPU readback), tests/render_graph/ (GPU-independent, incl. execute()), tests/renderer/ (GPU-independent, Renderer statelessness/ownership); tests/image_regression/ (GPU-independent comparison/provenance logic plus a separate, explicitly gpu-labeled Windows/Vulkan capture-and-compare executable, spec/plan 0011, ADR-0041/0042)
 shaders/            Shader sources — shaders/minimal_renderer/ (spec/plan 0007, ADR-0027: pre-compiled, checked-in SPIR-V only, no compiler invoked by any build target)
 assets/             Engine/sample assets (empty — structure pending first spec/plan/ADR)
 tools/              Offline/dev tooling (empty — structure pending first spec/plan/ADR)
@@ -261,10 +265,24 @@ rendering is implemented (Spec 0010, `Approved`, implemented and merged
 via [PR #48](https://github.com/slmao/Atlantis/pull/48) — see
 [specs/README.md](specs/README.md) for full scope and verification
 detail, including its own disclosed single-GPU-vendor verification
-limitation); image regression testing does not exist yet and is the next
-candidate item. There is no CI pipeline yet. See [docs/](docs/) for
-what's documented so far and the open architectural questions still
-awaiting human decisions.
+limitation). Image regression testing is also implemented (Spec 0011,
+`Approved`, implemented and merged via
+[PR #52](https://github.com/slmao/Atlantis/pull/52) — see
+[specs/README.md](specs/README.md) for full scope and verification
+detail): a golden-image comparison harness
+(`tests/image_regression/`), verified against one committed golden on
+the same single reference GPU/driver Spec 0010 disclosed — not
+cross-vendor coverage. Golden regeneration/update reasons are governed
+by [ADR-0042](adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md),
+including its Accepted Amendment adding an "Initial baseline bootstrap"
+category for a scene's first-ever golden. This is a working
+**local/manual** gate; there is no CI pipeline yet, so automated,
+CI-enforced image-regression gating remains not implemented — see
+[docs/process/ci-strategy.md](docs/process/ci-strategy.md). Android
+Platform and Vulkan Presentation is the next candidate item (see
+[specs/README.md](specs/README.md) Section B) — not yet drafted or
+approved. See [docs/](docs/) for what's documented so far and the open
+architectural questions still awaiting human decisions.
 
 ## License
 
