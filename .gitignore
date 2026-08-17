@@ -43,3 +43,10 @@ Thumbs.db
 # Local test/debug output
 *.log
 /tmp/
+
+# Machine-local Vulkan/GPU environment provenance (Plan 0011 Section
+# 3.6/3.7) -- inherently specific to the machine it was filled in on;
+# would be actively wrong if committed and read on any other machine.
+# See tests/image_regression/current_environment.sidecar.txt.example
+# for the template and setup instructions.
+tests/image_regression/current_environment.sidecar.txt
