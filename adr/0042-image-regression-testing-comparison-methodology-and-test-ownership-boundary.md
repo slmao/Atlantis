@@ -604,3 +604,146 @@ artifacts.
   flat text format) with any real third-party-parser-requiring JSON
   approach explicitly routed back through Spec/ADR — see "Sidecar
   encoding and parsing" under Decision above.
+
+## Accepted Amendment — 2026-08-17
+
+**Status of this section:** proposed during an independent code review
+of [PR #52](https://github.com/slmao/Atlantis/pull/52) (Spec/Plan 0011's
+Implementation), which found that this ADR's original "Golden update
+reasons" enumeration (three categories: rendering change /
+reference-environment change / approved rebaseline) does not cleanly
+cover a scene's *first-ever* golden — none of the three presupposes the
+non-existence of a prior baseline, and category 3's own evidentiary bar
+(old-vs-new provenance and diff evidence, "the same explicit reasoning
+as (2)") cannot literally be satisfied when there is no old golden to
+diff against. The review did not silently force the first `minimal_cube`
+golden into an ill-fitting existing category or invent an unreviewed
+fourth category on its own; it flagged the gap and reported it.
+**Formally accepted by Human Review on 2026-08-17** — see "Human Review
+— Amendment Acceptance (2026-08-17)" immediately below. **This section
+does not itself change this ADR's top-level Status** (`Accepted` above
+is unchanged). The original Decision, Consequences, and Alternatives
+Considered above are preserved verbatim and are not superseded except
+where this section says so explicitly.
+
+### Human Review — Amendment Acceptance (2026-08-17)
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-08-17, in direct response to the code-review
+finding above. The amendment below is accepted exactly as specified in
+that approval: a new, narrowly-scoped fourth golden-update-reason
+category, bounded by six explicit constraints (see "Amendment" below),
+each taken directly from the approval and not reinterpreted or
+loosened. No further Human Review is pending for this amendment.
+
+### What prompted this amendment
+
+[PR #52](https://github.com/slmao/Atlantis/pull/52) (Plan 0011 Step 4)
+committed the first golden this project has ever captured for the
+`minimal_cube` scene. Its own commit message and PR description
+initially described this as "the harness's own bootstrap, not a
+rendering change, reference-environment change, or rebaseline" — a
+fourth category that did not exist in this ADR's actual Decision text.
+A subsequent independent code review of that PR caught the discrepancy,
+corrected the PR's own language to the closest existing fit ("Approved
+rebaseline," category 3) as a stopgap, and explicitly flagged — rather
+than silently resolved — that none of the three original categories,
+as literally written, cleanly cover a scene's first-ever golden. This
+amendment is the formal resolution of that flagged gap.
+
+### Amendment
+
+**A new, fourth golden-update-reason category: "Initial baseline
+bootstrap."** Every PR that touches a file under
+`tests/image_regression/goldens/` may state this category instead of
+(1)–(3) **only when all of the following hold:**
+
+1. **Applicability, exact:** the target golden (the specific
+   `<scene-slug>/<golden-name>` path) does not exist on the base branch
+   at all — no prior PNG or sidecar for it exists to be updated. The
+   moment a golden exists at that path on the base branch, every later
+   PR touching it **must** use one of the original three categories
+   (rendering change / reference-environment change / approved
+   rebaseline); "Initial baseline bootstrap" is never available again
+   for that same golden.
+2. **Source revision, unchanged from the general rule:** captured
+   against a clean, already-committed working tree exactly as "Source
+   revision, precisely" under Decision above already requires — no
+   relaxation of that rule for this category.
+3. **Full provenance recorded, unchanged from the general rule:** the
+   golden's sidecar records all fields "Golden image ownership and
+   location" and "Vulkan version fields, three, separate, never
+   concatenated" under Decision above already require — no reduced or
+   optional field set for a bootstrap golden.
+4. **Commit ordering, unchanged from the general rule:** the golden PNG
+   and sidecar are added via their own separate, subsequent commit —
+   "Source revision, precisely" under Decision above's same-PR ordering
+   rule applies identically to a first golden.
+5. **Evidence required, substituting for the inapplicable old-vs-new
+   diff:** since no prior golden exists to diff against, category (2)'s
+   own "old-vs-new provenance and diff evidence" requirement does not
+   apply and is **not** required for this category. In its place, the
+   PR must record: (a) a human's direct visual inspection of the
+   captured image, confirming it is a correctly-rendered, non-degenerate
+   frame (not black, not garbage, not empty) for the scene it claims to
+   capture; (b) the real capture-compare cycle passing with **zero**
+   channel difference against the golden it just wrote (the comparison
+   algorithm's own self-consistency: a golden must reproduce itself
+   exactly on the same reference hardware immediately after capture);
+   (c) a real run on real Vulkan-capable GPU hardware with Vulkan
+   Validation Layers clean; and (d) an explicit citation of whatever
+   empirical calibration evidence (per "Reproducibility constraints" and
+   the empirical-calibration Context this ADR already records) backs the
+   channel-tolerance-0/failing-pixel-budget-0 rule for the fixture and
+   reference environment being captured. A PR claiming this category
+   without all four is incomplete under this category's own bar, exactly
+   as an incomplete (2) or (3) PR would be.
+6. **No relaxation of any other Decision-section rule.** The golden
+   validity check, the comparison algorithm, the provenance-mismatch
+   diagnostic, the golden-regeneration-tool boundary, and the sidecar
+   encoding contract all apply to a bootstrap golden exactly as they
+   apply to any other — this category changes only which of the four
+   "Golden update reasons" labels a PR may cite and what evidence
+   substitutes for the inapplicable old-vs-new diff; it changes nothing
+   about how the golden itself is produced, stored, or later compared
+   against.
+
+A golden-update PR must not describe an "Initial baseline bootstrap"
+update using the same language as an ordinary "rendering change" or
+"reference-environment change" update, matching the existing rule for
+category (2)/(3) confusion.
+
+### Consequences of this amendment
+
+- Closes a real gap: the original three categories, taken literally,
+  had no correct label for the very first golden any scene ever
+  receives — a PR either had to force an ill-fitting existing category
+  (as [PR #52](https://github.com/slmao/Atlantis/pull/52)'s code-review
+  round did as a stopgap) or invent an unreviewed one (as that PR's
+  first draft did, incorrectly).
+- Narrowly scoped by construction: constraint 1 makes this category
+  unavailable the instant a golden exists, so it cannot be used to
+  quietly re-bootstrap (and thereby bypass old-vs-new diff scrutiny for)
+  an already-existing, already-reviewed golden.
+- No change to the comparison algorithm, the golden validity check, the
+  sidecar format, the golden-regeneration-tool boundary, or any other
+  part of this ADR's original Decision — this amendment adds one new,
+  bounded label and its own evidentiary substitute, nothing else.
+
+### Alternatives considered (this amendment's own scope)
+
+- **Force every first golden into "Approved rebaseline" (category 3),
+  permanently, no amendment.** This is what PR #52's own code review
+  round did as an interim stopgap. Rejected as the permanent answer:
+  category 3's own text requires "the same explicit reasoning as (2)"
+  (old-vs-new provenance/diff evidence), which cannot be produced for a
+  first golden — every future first-golden PR would either have to
+  falsely claim evidence it cannot have, or leave that requirement
+  silently unmet, both worse than a category whose own bar is honestly
+  written for the case it actually covers.
+- **A general "N/A, no prior baseline" escape hatch usable for any
+  category.** Rejected: too broad — it would blur category 3's own
+  evidentiary bar for genuine rebaselines of an *existing* golden, which
+  must keep requiring real diff evidence. This amendment's category 1
+  constraint (unavailable once the golden exists) keeps the exception
+  scoped to exactly the bootstrap case.
