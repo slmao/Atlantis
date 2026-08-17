@@ -23,6 +23,23 @@ using atlantis::image_regression::writeFailureArtifacts;
 
 namespace {
 
+// Removes its listed paths (or, for TempDirGuard, an entire directory
+// tree) at scope exit -- including via Catch2's own REQUIRE-failure
+// stack unwinding (a genuine C++ exception -- this project never
+// disables exceptions) -- so a failing test case still cleans up its
+// own temp fixtures, not only a fully-passing one.
+struct TempFilesGuard {
+  std::vector<std::filesystem::path> paths;
+  ~TempFilesGuard() {
+    for (const auto& path : paths) std::filesystem::remove(path);
+  }
+};
+
+struct TempDirGuard {
+  std::filesystem::path dir;
+  ~TempDirGuard() { std::filesystem::remove_all(dir); }
+};
+
 [[nodiscard]] std::filesystem::path tempDirForThisTest() {
   const std::filesystem::path dir =
       std::filesystem::temp_directory_path() / "atlantis_image_regression_golden_validity_test";
@@ -71,6 +88,7 @@ TEST_CASE("loadAndValidateGolden: a valid, matching golden/sidecar pair loads su
   const std::filesystem::path dir = tempDirForThisTest();
   const std::filesystem::path pngPath = dir / "valid.png";
   const std::filesystem::path sidecarPath = dir / "valid.sidecar.txt";
+  const TempFilesGuard guard{{pngPath, sidecarPath}};
 
   REQUIRE(encodePng(pngPath, makeValidGoldenPixels()).isOk());
   writeTextFile(sidecarPath, wellFormedSidecarFor(2, 2, "Rgba8Unorm"));
@@ -80,9 +98,6 @@ TEST_CASE("loadAndValidateGolden: a valid, matching golden/sidecar pair loads su
   REQUIRE(result.value().pixels.width == 2);
   REQUIRE(result.value().pixels.height == 2);
   REQUIRE(result.value().provenance.format == "Rgba8Unorm");
-
-  std::filesystem::remove(pngPath);
-  std::filesystem::remove(sidecarPath);
 }
 
 TEST_CASE("loadAndValidateGolden: MissingPngFile when the PNG does not exist", "[image_regression][golden_validity]") {
@@ -100,20 +115,20 @@ TEST_CASE("loadAndValidateGolden: MissingSidecarFile when the PNG exists but the
   const std::filesystem::path dir = tempDirForThisTest();
   const std::filesystem::path pngPath = dir / "png_only.png";
   const std::filesystem::path sidecarPath = dir / "png_only.sidecar.txt";
+  const TempFilesGuard guard{{pngPath, sidecarPath}};
 
   REQUIRE(encodePng(pngPath, makeValidGoldenPixels()).isOk());
 
   const auto result = loadAndValidateGolden(pngPath, sidecarPath);
   REQUIRE(result.isErr());
   REQUIRE(result.error() == GoldenValidityError::MissingSidecarFile);
-
-  std::filesystem::remove(pngPath);
 }
 
 TEST_CASE("loadAndValidateGolden: PngDecodeFailed for a corrupt PNG file", "[image_regression][golden_validity]") {
   const std::filesystem::path dir = tempDirForThisTest();
   const std::filesystem::path pngPath = dir / "corrupt.png";
   const std::filesystem::path sidecarPath = dir / "corrupt.sidecar.txt";
+  const TempFilesGuard guard{{pngPath, sidecarPath}};
 
   writeTextFile(pngPath, "this is not a PNG file");
   writeTextFile(sidecarPath, wellFormedSidecarFor(2, 2, "Rgba8Unorm"));
@@ -121,9 +136,6 @@ TEST_CASE("loadAndValidateGolden: PngDecodeFailed for a corrupt PNG file", "[ima
   const auto result = loadAndValidateGolden(pngPath, sidecarPath);
   REQUIRE(result.isErr());
   REQUIRE(result.error() == GoldenValidityError::PngDecodeFailed);
-
-  std::filesystem::remove(pngPath);
-  std::filesystem::remove(sidecarPath);
 }
 
 TEST_CASE("loadAndValidateGolden: ChannelCountMismatch for a real 3-channel PNG",
@@ -131,6 +143,7 @@ TEST_CASE("loadAndValidateGolden: ChannelCountMismatch for a real 3-channel PNG"
   const std::filesystem::path dir = tempDirForThisTest();
   const std::filesystem::path pngPath = dir / "three_channel.png";
   const std::filesystem::path sidecarPath = dir / "three_channel.sidecar.txt";
+  const TempFilesGuard guard{{pngPath, sidecarPath}};
 
   const std::vector<std::uint8_t> rgb(2 * 2 * 3, 128);
   REQUIRE(stbi_write_png(pngPath.string().c_str(), 2, 2, 3, rgb.data(), 2 * 3) != 0);
@@ -139,9 +152,6 @@ TEST_CASE("loadAndValidateGolden: ChannelCountMismatch for a real 3-channel PNG"
   const auto result = loadAndValidateGolden(pngPath, sidecarPath);
   REQUIRE(result.isErr());
   REQUIRE(result.error() == GoldenValidityError::ChannelCountMismatch);
-
-  std::filesystem::remove(pngPath);
-  std::filesystem::remove(sidecarPath);
 }
 
 TEST_CASE("loadAndValidateGolden: SidecarFormatExtentMismatch when the sidecar's recorded extent disagrees",
@@ -149,6 +159,7 @@ TEST_CASE("loadAndValidateGolden: SidecarFormatExtentMismatch when the sidecar's
   const std::filesystem::path dir = tempDirForThisTest();
   const std::filesystem::path pngPath = dir / "extent_mismatch.png";
   const std::filesystem::path sidecarPath = dir / "extent_mismatch.sidecar.txt";
+  const TempFilesGuard guard{{pngPath, sidecarPath}};
 
   REQUIRE(encodePng(pngPath, makeValidGoldenPixels()).isOk());
   writeTextFile(sidecarPath, wellFormedSidecarFor(999, 999, "Rgba8Unorm"));
@@ -156,9 +167,6 @@ TEST_CASE("loadAndValidateGolden: SidecarFormatExtentMismatch when the sidecar's
   const auto result = loadAndValidateGolden(pngPath, sidecarPath);
   REQUIRE(result.isErr());
   REQUIRE(result.error() == GoldenValidityError::SidecarFormatExtentMismatch);
-
-  std::filesystem::remove(pngPath);
-  std::filesystem::remove(sidecarPath);
 }
 
 TEST_CASE("loadAndValidateGolden: SidecarFormatExtentMismatch for a structurally mismatched sidecar/PNG pairing",
@@ -169,6 +177,7 @@ TEST_CASE("loadAndValidateGolden: SidecarFormatExtentMismatch for a structurally
   // to pngPath's own stem ("pairing_a") -- a caller-supplied mismatched
   // pair, which is what this step catches.
   const std::filesystem::path wrongSidecarPath = dir / "pairing_b.sidecar.txt";
+  const TempFilesGuard guard{{pngPath, wrongSidecarPath}};
 
   REQUIRE(encodePng(pngPath, makeValidGoldenPixels()).isOk());
   writeTextFile(wrongSidecarPath, wellFormedSidecarFor(2, 2, "Rgba8Unorm"));
@@ -176,9 +185,6 @@ TEST_CASE("loadAndValidateGolden: SidecarFormatExtentMismatch for a structurally
   const auto result = loadAndValidateGolden(pngPath, wrongSidecarPath);
   REQUIRE(result.isErr());
   REQUIRE(result.error() == GoldenValidityError::SidecarFormatExtentMismatch);
-
-  std::filesystem::remove(pngPath);
-  std::filesystem::remove(wrongSidecarPath);
 }
 
 TEST_CASE("loadAndValidateGolden: SidecarMalformed for an internally-inconsistent sidecar",
@@ -186,6 +192,7 @@ TEST_CASE("loadAndValidateGolden: SidecarMalformed for an internally-inconsisten
   const std::filesystem::path dir = tempDirForThisTest();
   const std::filesystem::path pngPath = dir / "malformed_sidecar.png";
   const std::filesystem::path sidecarPath = dir / "malformed_sidecar.sidecar.txt";
+  const TempFilesGuard guard{{pngPath, sidecarPath}};
 
   REQUIRE(encodePng(pngPath, makeValidGoldenPixels()).isOk());
   writeTextFile(sidecarPath, "not a valid sidecar\n");
@@ -193,14 +200,12 @@ TEST_CASE("loadAndValidateGolden: SidecarMalformed for an internally-inconsisten
   const auto result = loadAndValidateGolden(pngPath, sidecarPath);
   REQUIRE(result.isErr());
   REQUIRE(result.error() == GoldenValidityError::SidecarMalformed);
-
-  std::filesystem::remove(pngPath);
-  std::filesystem::remove(sidecarPath);
 }
 
 TEST_CASE("writeFailureArtifacts: produces two correctly-named, decodable PNG files",
           "[image_regression][golden_validity]") {
   const std::filesystem::path outputDir = tempDirForThisTest() / "failure_artifacts_output";
+  const TempDirGuard dirGuard{outputDir};
   const std::string goldenSlug = "test_slug";
 
   PixelBuffer actual = makeValidGoldenPixels();
@@ -217,6 +222,4 @@ TEST_CASE("writeFailureArtifacts: produces two correctly-named, decodable PNG fi
 
   REQUIRE(atlantis::image_regression::decodePng(actualPath).isOk());
   REQUIRE(atlantis::image_regression::decodePng(diffPath).isOk());
-
-  std::filesystem::remove_all(outputDir);
 }

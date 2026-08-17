@@ -22,6 +22,16 @@ using atlantis::image_regression::PngDecodeError;
 
 namespace {
 
+// Removes its path at scope exit, including via Catch2's own
+// REQUIRE-failure stack unwinding (a genuine C++ exception -- this
+// project never disables exceptions) -- so a temp fixture is cleaned up
+// even when an earlier REQUIRE in the same TEST_CASE fails, not only on
+// the fully-passing path.
+struct TempFileGuard {
+  std::filesystem::path path;
+  ~TempFileGuard() { std::filesystem::remove(path); }
+};
+
 [[nodiscard]] std::filesystem::path uniqueTempPngPath(const std::string& suffix) {
   return std::filesystem::temp_directory_path() / ("atlantis_image_regression_png_codec_test_" + suffix + ".png");
 }
@@ -118,6 +128,7 @@ TEST_CASE("encodePng/decodePng: round-trips a synthetic buffer byte-for-byte", "
   }
 
   const std::filesystem::path path = uniqueTempPngPath("roundtrip");
+  const TempFileGuard guard{path};
   REQUIRE(encodePng(path, original).isOk());
 
   const auto decodeResult = decodePng(path);
@@ -128,8 +139,6 @@ TEST_CASE("encodePng/decodePng: round-trips a synthetic buffer byte-for-byte", "
   REQUIRE(decoded.pixels.rgba8 == original.rgba8);
   REQUIRE(decoded.channelsInFile == 4);
   REQUIRE_FALSE(decoded.is16Bit);
-
-  std::filesystem::remove(path);
 }
 
 TEST_CASE("decodePng: FileNotFound for a missing file", "[image_regression][png_codec]") {
@@ -140,6 +149,7 @@ TEST_CASE("decodePng: FileNotFound for a missing file", "[image_regression][png_
 
 TEST_CASE("decodePng: ChannelCountMismatch for a real 3-channel PNG", "[image_regression][png_codec]") {
   const std::filesystem::path path = uniqueTempPngPath("three_channel");
+  const TempFileGuard guard{path};
   const std::vector<std::uint8_t> rgb(4 * 4 * 3, 128);
   const int written = stbi_write_png(path.string().c_str(), 4, 4, 3, rgb.data(), 4 * 3);
   REQUIRE(written != 0);
@@ -147,16 +157,13 @@ TEST_CASE("decodePng: ChannelCountMismatch for a real 3-channel PNG", "[image_re
   const auto result = decodePng(path);
   REQUIRE(result.isErr());
   REQUIRE(result.error() == PngDecodeError::ChannelCountMismatch);
-
-  std::filesystem::remove(path);
 }
 
 TEST_CASE("decodePng: UnsupportedBitDepth for a 16-bit grayscale PNG", "[image_regression][png_codec]") {
   const std::filesystem::path path = write16BitGrayscalePng();
+  const TempFileGuard guard{path};
 
   const auto result = decodePng(path);
   REQUIRE(result.isErr());
   REQUIRE(result.error() == PngDecodeError::UnsupportedBitDepth);
-
-  std::filesystem::remove(path);
 }
