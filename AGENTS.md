@@ -315,10 +315,14 @@ default.
 - Every new piece of GPU-independent logic (render graph scheduling, RHI
   bookkeeping, math/containers) gets unit tests that run without a Vulkan
   device — see [docs/process/testing-strategy.md](docs/process/testing-strategy.md).
-- Any change to rendered output requires image regression tests once that
-  harness exists (blocked on headless rendering landing, per Phase 1
-  constraints above); until then, the gate is manual verification plus a
-  clean Vulkan Validation Layers run.
+- Any change to rendered output requires image regression tests — the
+  harness exists (Spec 0011, `Approved`, `tests/image_regression/`); any
+  golden-image diffs in the PR were reviewed by a human, not
+  auto-accepted, and categorized per
+  [ADR-0042](adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
+  golden-update-reason rule. This is currently a **local/manual** gate —
+  no CI pipeline exists yet — so it's run and reported by whoever opens
+  the PR, alongside a clean Vulkan Validation Layers run.
 - No PR merges with failing tests, or with validation-layer warnings/
   errors on any GPU-touching path.
 - Build and run the relevant tests after every implementation step, not
