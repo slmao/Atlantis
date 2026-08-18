@@ -1,9 +1,34 @@
-# ADR 0043: Asset System — Module Boundary and Data Format/Dependency
+# ADR 0043: Asset System — Module Boundary and Dependency Boundary
 
 - **Status:** Proposed
 - **Date:** 2026-08-18
 - **Deciders:** &lt;pending Human Review&gt;
 - **Related Spec:** [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md)
+- **Related ADR(s):**
+  [ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)
+  (data format, versioning, and third-party dependency policy) —
+  originally drafted as part of this same ADR, split out 2026-08-18 at
+  Human Review's own request so each permanent decision has exactly one
+  authoritative record, matching this project's own precedent of one
+  ADR per independently-evolvable decision (ADR-0032–0037, drafted
+  alongside Spec 0009). This ADR's own scope narrowed to the module-
+  boundary decision alone as a result; see Revision History.
+  [ADR-0044](0044-asset-system-identity-provenance-and-import-methodology.md)
+  (identity, provenance, and import methodology) remains a separate,
+  unaffected sibling.
+
+## Revision History
+
+- **2026-08-18 (original):** Combined the module-boundary decision with
+  the data-format and third-party-dependency decisions in one ADR.
+- **2026-08-18 (split):** Narrowed to the module-boundary decision only,
+  at Human Review's own explicit request, on the grounds that the module-
+  boundary question and the data-format/dependency question are
+  independently evolvable — Human Review could reasonably accept one and
+  revisit the other later, which a single combined ADR would make
+  awkward. The data-format and dependency content that was here moved,
+  unchanged in substance, to new
+  [ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md).
 
 ## Context
 
@@ -53,19 +78,7 @@ therefore grounded in an already-`Accepted` decision and its own real
 build graph, not solely in the not-yet-`Accepted` draft language
 `module_boundaries.md` also happens to state.
 
-Separately, Asset System's authoring source and runtime artifact both
-need a concrete data format. No parsing, hashing, serialization, or
-3D-model-interchange dependency exists anywhere in `src/` today —
-confirmed by direct inspection (`src/core/include/atlantis/` contains
-only `assert.h`, `log.h`, `result.h`; no hash utility of any kind exists
-in this repository). [ADR-0006](0006-dependency-management.md) requires
-any dependency that does not fit the "small, pinned `FetchContent`
-source dependency" model to get its own ADR — this is that ADR for
-Asset System's own data formats.
-
 ## Decision
-
-### Module boundary
 
 **Asset System becomes a new, tenth top-level module: Atlantis Asset
 System.** It is placed in the conceptual five-layer view (per
@@ -115,62 +128,14 @@ implements this Spec, per the same precedent
 [ADR-0032](0032-conceptual-architecture-layers-versus-source-module-ownership.md)
 itself already established for not touching that document.
 
-### Data formats — hand-rolled, dependency-free
-
-**Both the authoring source format and the runtime artifact format are
-new, hand-rolled, dependency-free formats scoped exactly to this Spec's
-one supported asset type (a static triangle mesh: per-vertex position
-and color, `std::uint16_t` indices) — no third-party parsing, model-
-interchange, hashing, or serialization dependency is introduced.**
-
-- **Authoring source format:** a small, human-readable, flat text
-  format a human can author and diff in an ordinary PR — a fixed,
-  documented `key: value`/list structure sufficient to describe a
-  vertex list and an index list, in the same spirit as (not the same
-  code as, and not sharing an implementation with)
-  [ADR-0042](0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
-  own hand-rolled sidecar format. Exact field layout is a Plan-stage
-  detail, fixed by Requirements in
-  [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md).
-- **Runtime artifact format:** a small, versioned binary layout — a
-  fixed header (magic bytes, `schema_version`, vertex count, index
-  count) followed by raw vertex bytes matching a `VertexInputLayout`,
-  followed by raw `std::uint16_t` index bytes — loaded directly into the
-  exact shape `atlantis::renderer::createMesh()` already expects, with
-  no transformation at load time beyond a byte-count/header-consistency
-  check. Not a general-purpose binary serialization format; specific to
-  this one asset type's own two flat arrays. **Byte order:** all
-  multi-byte fields (header integers, vertex floats, index values) are
-  written and read in the host's native byte order — little-endian on
-  every currently-relevant Atlantis target (x86-64 Windows development,
-  ARM/AArch64 Android) — with no explicit endianness marker or
-  conversion step, matching how `atlantis::renderer::createMesh()`
-  already consumes raw bytes today. No big-endian target exists or is
-  planned for Atlantis; a future one would require this format to add an
-  explicit endianness marker first — a disclosed limitation, not
-  designed against now.
-- **Metadata sidecar format:** a strict, versioned flat text format
-  (Asset ID, source-file identity, importer version, per-asset-type
-  fields, `schema_version`), implemented as new, independent parsing
-  code — never a dependency on, or shared implementation with,
-  `tests/image_regression/support/provenance.*` (test-only code, outside
-  any `src/` module's dependency surface).
-- Both formats carry a **mandatory `schema_version` field from their
-  first implementation**, satisfying
-  [ADR-0034](0034-stable-public-boundary-versus-internal-cpp-layout.md)'s
-  own "stable public boundary" requirement — no migration *mechanism* is
-  built now (matching ADR-0034's own explicit disclosure that it
-  supplies no versioning scheme or migration mechanism itself), only the
-  version marker a future migration would need to gate on.
-
-### No new third-party dependency
-
-No `glTF`/`Assimp`/other 3D-interchange parser, no UUID-generation
-library, no hashing library, and no JSON/YAML/TOML parser is added by
-this ADR. Every format and mechanism this Spec's own scope needs is
-achievable with the C++ standard library alone — see Alternatives
-Considered for the specific alternatives weighed and why each is
-deferred, not adopted, at this Spec's scope.
+This ADR fixes the module-boundary/dependency-graph question only. The
+authoring-source, runtime-artifact, and metadata-sidecar data formats,
+and whether any new third-party dependency is justified, are
+[ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)'s
+own, separately-reviewable decisions — a module could in principle be
+approved here while that format/dependency decision is still under
+review, or vice versa, without either approval being incoherent on its
+own.
 
 ## Consequences
 
@@ -182,15 +147,12 @@ deferred, not adopted, at this Spec's scope.
   design.
 - Renderer, RHI, and Vulkan Backend remain entirely untouched — zero
   risk to any already-`Accepted`/implemented public API.
-- Zero new third-party dependency means zero new license, build, or
-  long-term-maintenance surface to manage — consistent with this
-  project's own demonstrated default (ADR-0041's `stb` decision is the
-  one exception in this repository's history, justified there by PNG's
-  own real external-interchange need; no such need exists for this
-  Spec's own internal-only formats).
-- A mandatory `schema_version` field from day one avoids the same
-  retrofit risk a missing version marker would otherwise create once a
-  second asset type or a real compatibility need arises.
+- Keeping this decision separate from
+  [ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)
+  means a future amendment to the data-format/dependency decision (e.g.
+  adopting `cgltf` once a real multi-mesh workflow exists) does not
+  require reopening or re-dating this module-boundary decision, and vice
+  versa.
 
 ### Negative / Trade-offs
 
@@ -198,16 +160,16 @@ deferred, not adopted, at this Spec's scope.
   commitment — once `Atlantis::AssetSystem` exists as a module other
   code links against, folding it back into an existing module later
   would be a breaking, disruptive change, not a free refactor.
-- Two new hand-rolled data formats (authoring source, runtime artifact)
-  are two more formats this project must maintain and document, instead
-  of reusing an established, widely-supported interchange format a new
-  contributor might already know.
 - `docs/architecture/module_boundaries.md`'s own current "asset
   processing" language under Tools becomes stale the moment this ADR is
   `Accepted`, until a future Plan reconciles it — a known, disclosed
   documentation-lag cost, matching the same kind of gap
   [ADR-0032](0032-conceptual-architecture-layers-versus-source-module-ownership.md)
   already accepted for that same document.
+- Maintaining two sibling ADRs (this one and ADR-0045) for what began as
+  one Asset System foundation decision is a small, real bookkeeping cost
+  — mitigated by each one's own Related ADR(s) field cross-referencing
+  the other, so a reader starting from either finds the other.
 
 ## Alternatives Considered
 
@@ -220,9 +182,9 @@ deferred, not adopted, at this Spec's scope.
   reopening Tools' own boundary — corroborated, not merely asserted by a
   not-yet-`Accepted` draft, by `Accepted` ADR-0029's own real, shipped
   Tools/Shader-System dependency edge (see Context). Reopening that
-  boundary now, as a side
-  effect of this Spec, would itself be a larger architectural change
-  than a foundation-scoped Asset System Spec should make unilaterally.
+  boundary now, as a side effect of this Spec, would itself be a larger
+  architectural change than a foundation-scoped Asset System Spec should
+  make unilaterally.
 - **Host runtime loading under Atlantis Runtime, once it exists.**
   Rejected: Runtime does not exist as a real module yet (Candidate Order
   3, spec not yet drafted), and `module_boundaries.md`'s own description
@@ -238,49 +200,10 @@ deferred, not adopted, at this Spec's scope.
   own Non-Goals explicitly excluded "a scene graph, ECS, asset system, or
   a model/mesh loader" from Renderer's scope; this ADR does not reopen
   that settled boundary.
-- **Adopt `glTF`** (via `cgltf`, a small, single-header, MIT-licensed C
-  parser, or the larger `tinygltf`/Assimp) **as the authoring source
-  format.** Considered in real depth, not dismissed reflexively:
-  `cgltf` specifically would be a small, permissively-licensed,
-  `FetchContent`-compatible dependency in the same weight class as
-  `stb` (ADR-0041's own precedent). Rejected as this Spec's *default*
-  regardless: this Spec's own scope is exactly one hand-known, eight-
-  vertex cube — glTF's own scene-graph, material, animation, texture,
-  and skinning surface (the overwhelming majority of what any glTF
-  parser exists to read) has no consumer in this Spec's scope at all.
-  Adopting a general interchange-format parser to read eight vertices is
-  exactly the "dependency justified by a future, anticipated need rather
-  than a present, real one" pattern
-  [ADR-0006](0006-dependency-management.md)'s own dependency discipline
-  warns against. Revisit once a real multi-mesh, multi-material
-  authoring workflow exists to justify it — at that point, `cgltf`'s
-  small size, permissive (MIT) license, and single-header/`FetchContent`
-  compatibility make it a strong future candidate, not a rejected one.
-- **A UUID-generation library** (e.g. `stduuid`, `boost::uuid`) for a
-  random-GUID identity scheme. Rejected alongside the identity-scheme
-  decision itself (see
-  [ADR-0044](0044-asset-system-identity-provenance-and-import-methodology.md)):
-  this Spec's own recommended path-derived identity scheme needs no
-  random-number-based UUID generation at all, so the dependency question
-  does not arise under that recommendation; it would arise again if
-  Human Review instead directs a random-GUID scheme, at which point this
-  ADR would need its own revision.
-- **A general hashing library** (e.g. `xxHash`, `wyhash`) for the
-  content-hash-based cache key
-  ([ADR-0044](0044-asset-system-identity-provenance-and-import-methodology.md)
-  recommends one). Rejected for this Spec's own scope: a hand-rolled,
-  well-known, public-domain-equivalent algorithm (e.g. FNV-1a, a few
-  lines of C++) is sufficient for a non-cryptographic, single-build-tree
-  cache key at this Spec's one-fixture scale, matching this project's
-  own existing precedent of hand-rolling small algorithms (CRC32/Adler32
-  for `tests/image_regression/png_codec_tests.cpp`'s own hand-assembled
-  PNG test fixture) rather than reaching for a dependency. Revisit if a
-  future spec's real performance/collision-resistance requirements
-  outgrow a hand-rolled hash.
-- **A JSON/YAML/TOML parser** for the authoring source and/or metadata
-  formats. Rejected for the same reason
-  [ADR-0042](0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
-  already rejected one for the image-regression sidecar: every field
-  this Spec's own formats need is a small, flat, non-nested set of
-  scalar values with no legitimate need for a general markup language's
-  nesting/escaping/Unicode-handling machinery.
+- **Keep the module-boundary and data-format/dependency decisions in one
+  combined ADR**, as originally drafted. Reconsidered and rejected at
+  Human Review's own request: the two decisions are independently
+  evolvable (see Revision History and Consequences), and this project's
+  own precedent (ADR-0032–0037, six separate ADRs from one spec) favors
+  one ADR per decision over a combined one, once a spec produces more
+  than a single architectural decision.

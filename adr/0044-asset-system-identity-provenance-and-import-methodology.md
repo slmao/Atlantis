@@ -4,6 +4,14 @@
 - **Date:** 2026-08-18
 - **Deciders:** &lt;pending Human Review&gt;
 - **Related Spec:** [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md)
+- **Related ADR(s):**
+  [ADR-0043](0043-asset-system-module-boundary.md) (module boundary) and
+  [ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)
+  (data format, versioning, and dependency policy) — siblings from the
+  same Spec. This ADR's own Asset ID hash algorithm/width/serialization
+  choices operate under ADR-0045's blanket no-new-dependency policy; the
+  metadata sidecar's own wire encoding is ADR-0045's Decision, cross-
+  referenced under "Metadata schema" below rather than restated.
 
 ## Context
 
@@ -64,10 +72,12 @@ regeneration step.
 
 **An Asset ID is a deterministic value derived from the authoring
 source file's own path, relative to a fixed, documented asset-source
-root** (exact hash/encoding a Plan-stage detail — a hand-rolled,
-non-cryptographic hash of the normalized relative path string is
-sufficient; no third-party hashing dependency, per
-[ADR-0043](0043-asset-system-module-boundary-and-data-format-dependency.md)).
+root.** This section fixes the full contract — the asset-source root
+and logical-path definition, path syntax rules, case sensitivity,
+character set, and the concrete hash algorithm/width/serialization — as
+this ADR's own Decision, not left open past this Spec's approval; only
+the asset-source root's own exact repository location (e.g. `assets/`)
+remains a Plan-stage detail.
 
 - **Disclosed limitation, accepted for this Spec's Phase 1 scope:**
   renaming or moving an authoring source file changes its Asset ID. This
@@ -79,34 +89,142 @@ sufficient; no third-party hashing dependency, per
 - **An Asset ID is never used as, or derived from, a cache/rebuild key**
   (see below) — the two remain conceptually and mechanically distinct,
   closing the conflation risk named in Context.
-- **The relative path this scheme hashes must be normalized by one
-  fixed, platform-invariant rule before hashing** — case sensitivity,
-  path separator (`/` vs. `\`), `.`/`..` segment resolution, the fixed
-  asset-source-root anchor point, and Unicode normalization form are all
-  fixed once (exact rule a Plan-stage detail). This is required, not
-  merely an encoding nicety: it exists because
-  [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md)'s
-  own Windows-now, Android-later artifact-sharing principle depends on
-  the *same* logical authoring source producing the *same* Asset ID
-  regardless of which platform's cook path computed it. An unspecified
-  or platform-dependent normalization rule would silently break that
-  principle the first time a real Android cook path exists to test it
-  against. The metadata sidecar's own recorded source-file-identity
-  field (see "Metadata schema" below) uses this same normalized form, so
-  the two never disagree about what a source file's own identity is.
+
+**Asset-source root and logical path.** A single, fixed, documented
+directory within the repository (exact path a Plan-stage detail, e.g.
+`assets/`) is the asset-source root. Every authoring source file this
+Spec's importer accepts must live under that root. The **logical path**
+is the source file's own path relative to that root, expressed with `/`
+as its only separator — the value this scheme actually hashes.
+
+**Path syntax rules, fixed here so Windows and Android can never
+disagree about a legal logical path's own bytes:**
+
+- **Separator:** before any further processing, every `\` in the input
+  path is rewritten to `/`. Windows accepts `/` as a path separator in
+  virtually all of its own APIs, so this rewrite is lossless for any
+  path Windows can express; a purely `/`-separated string is therefore
+  both platforms' own canonical form, with no further translation
+  needed on the Android/POSIX side.
+- **Absolute paths and Windows drive prefixes are rejected, never
+  normalized.** The importer's own public entry point accepts only a
+  path already expressed relative to the asset-source root (e.g.
+  supplied by the CMake build graph as a relative path). An absolute OS
+  path, or a path carrying a Windows drive prefix (e.g. `C:`), handed to
+  it is a caller precondition violation — rejected with a distinct
+  `Err`, never silently reinterpreted as relative. This closes the door
+  on ever hashing a machine-specific root, which Android's own
+  filesystem layout does not share with Windows drive letters at all.
+- **`.`/`..`/empty-segment resolution, with root-escape rejected:** the
+  logical path is lexically normalized (equivalent to
+  `std::filesystem::path::lexically_normal()` — C++ standard library
+  only, no new dependency, per
+  [ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)) —
+  collapsing `.` segments, resolving `..` segments against preceding
+  segments, and collapsing empty/doubled separators (e.g. `foo//bar`, a
+  trailing `/`). If, after normalization, any leading `..` segment
+  remains — the path would escape the asset-source root — the importer
+  rejects it with a distinct `Err`; it is never hashed. This is both a
+  correctness rule (no asset may claim an identity rooted outside the
+  space this scheme actually governs) and a real containment boundary
+  for the asset-source root, not just a starting point for path math.
+- **Case sensitivity: case is preserved exactly as authored and hashed
+  case-sensitively — never folded to one case, on either platform.**
+  Two logical paths differing only by case are, by this scheme, two
+  distinct assets. Because Windows' own default filesystem (NTFS) is
+  case-insensitive-but-case-preserving, two such files cannot actually
+  coexist at the same path on an ordinary Windows checkout — this
+  situation can only arise if content is committed to git (itself
+  case-sensitive in its own index) in a way a Windows checkout cannot
+  faithfully materialize both of; the importer must reject a
+  case-only-differing pair of logical paths it detects within one import
+  run with a distinct `Err`, rather than silently hash whichever one the
+  filesystem happened to return. Case-sensitive comparison, not
+  case-folding, was chosen because it matches Android/Linux-style
+  case-sensitive filesystems (the platform a folding scheme would
+  otherwise have to work hardest to fake); it avoids needing real
+  Unicode case-folding for arbitrary text; and this project's own
+  `snake_case` file-naming convention makes an accidental case-only
+  collision unlikely in practice.
+- **Character set: ASCII-only for this Spec's own Phase 1 scope.** Every
+  authoring-source logical path is restricted to ASCII letters (`a`-`z`,
+  `A`-`Z`), digits (`0`-`9`), `_`, `-`, `.`, and `/` as the path
+  separator. No other byte value — including any non-ASCII UTF-8
+  sequence — is permitted; the importer validates this explicitly and
+  rejects any path containing a disallowed byte with a distinct `Err`,
+  rather than accepting and hashing arbitrary bytes it cannot verify
+  round-trip identically across platforms. This sidesteps Unicode
+  normalization form (NFC vs. NFD — macOS's own HFS+ historically
+  normalizes to NFD while Windows/Android/git typically leave NFC, a
+  well-documented, genuinely easy-to-get-wrong cross-platform source of
+  path-identity bugs unrelated to this Spec's own scope) entirely, at
+  the cost of disallowing non-ASCII authoring-source filenames for Phase
+  1. This is a disclosed scope-narrowing limitation, not an oversight —
+  named as future work (see Out of Scope) once a real need for
+  non-ASCII asset paths exists to justify solving Unicode normalization
+  properly, matching this Spec's own repeated pattern (see the
+  path-derived-not-GUID identity choice above) of narrowing to what
+  today's one real fixture needs and revisiting once a real second need
+  exists.
+
+**Hash algorithm, width, and serialization.** The Asset ID is computed
+by applying **FNV-1a, 64-bit variant** (a well-known, public-domain-
+equivalent, non-cryptographic hash — a few lines of C++, no third-party
+dependency, per
+[ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md))
+to the normalized, case-preserved, ASCII-restricted logical path
+string's own bytes.
+
+- **64-bit width** is chosen deliberately: at this project's realistic
+  per-repository asset count (plausibly hundreds to low thousands over
+  this scheme's own working lifetime, not billions), a 64-bit hash's
+  birthday-bound collision probability is negligible — a 50% collision
+  chance is not expected until roughly 2^32 (~4 billion) distinct
+  assets, several orders of magnitude beyond any plausible use of this
+  scheme. 32-bit would make collision plausible at a scale (tens of
+  thousands of assets) this project could realistically reach; 128-bit
+  is unnecessary weight for a non-cryptographic, single-repository
+  identity scheme this ADR already discloses as a Phase 1 substitute for
+  full durable identity, not a permanent cryptographic commitment.
+- **Byte serialization:** in the binary runtime artifact or any other
+  binary context, the Asset ID is a fixed 8-byte (`std::uint64_t`) field
+  in the same native/little-endian byte order
+  [ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)
+  already fixes for the rest of the binary surface — one byte-order rule
+  for this Spec's entire binary surface, not two. In the metadata
+  sidecar's own flat text format, the Asset ID is written as a
+  fixed-width, lowercase, 16-hex-digit string (`%016x`) — a text
+  representation sidesteps endianness entirely in the human-readable
+  format, matching ADR-0042's own precedent of keeping provenance data
+  in a sidecar as plain, unambiguous text.
 - **Hash collisions are possible in principle and must fail loudly, not
   merge silently.** The hash is non-cryptographic and the space of
-  possible authoring-source paths is unbounded, so two distinct source
-  paths producing the same Asset ID cannot be ruled out by construction
+  possible logical paths is unbounded, so two distinct logical paths
+  producing the same 64-bit Asset ID cannot be ruled out by construction
   the way a random 128-bit GUID's collision probability effectively can
+  be — though, per the width analysis above, it is practically
+  negligible at this project's realistic scale, not merely asserted to
   be. If the importer/cooker ever observes two distinct, simultaneously-
-  known source paths sharing one computed Asset ID, it must reject the
+  known logical paths sharing one computed Asset ID, it must reject the
   situation with a distinct `Err` rather than silently associating
   either path's data with the shared ID — the same fail-fast-on-invalid-
   input discipline this Spec's own Error handling requirements apply
-  everywhere else. The exact hash width chosen at Plan stage should make
-  this practically negligible at this project's realistic asset-count
-  scale; this ADR does not claim it is eliminated by construction.
+  everywhere else.
+
+**Why Windows and a future Android cook path are guaranteed to compute
+the identical Asset ID for the identical logical authoring source:**
+every rule above is platform-invariant by construction, not by
+convention. The ASCII-only character-set restriction removes any
+Unicode-normalization-form divergence; the fixed `/`-separator canonical
+form removes any `\`-vs-`/` divergence; rejecting absolute paths and
+drive prefixes before hashing removes any host-root divergence; case is
+preserved and hashed case-sensitively regardless of the host
+filesystem's own case-folding behavior; and the same standard-library-
+only hash algorithm, bit width, and byte order are used unconditionally
+on every host. The metadata sidecar's own recorded source-file-identity
+field (see "Metadata schema" below) records this same normalized logical
+path, so the sidecar and the Asset ID it names never disagree about what
+a source file's own identity is.
 
 ### Re-import triggering (not a cache): reuse CMake's existing incremental-build tracking
 
@@ -146,18 +264,30 @@ derived-data cache would add beyond what is described here.
 
 ### Metadata schema
 
-Every imported asset's metadata sidecar is a strict, versioned, flat
-text format (exact field-by-field layout a Plan-stage detail, bound by
-this Spec's own Requirements) recording, at minimum:
+This section fixes the metadata sidecar's own **field semantics** —
+which fields it carries and what each means. The sidecar's own **wire
+encoding** (flat text, anchored-prefix parsing, strict `schema_version`
+handling) is
+[ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)'s
+own Decision, cross-referenced rather than restated here so the two
+concerns each have exactly one authoritative description.
+
+Every imported asset's metadata sidecar (exact field-by-field layout a
+Plan-stage detail, bound by this Spec's own Requirements) records, at
+minimum:
 
 - `schema_version` (first line, mandatory, checked strictly — an
   unrecognized version is rejected outright, never guessed at,
   mirroring
   [ADR-0042](0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
   own `schema_version` handling).
-- The computed Asset ID.
-- The authoring source file's own identity (its path, relative to the
-  fixed asset-source root the Asset ID is itself derived from).
+- The computed Asset ID (serialized per "Hash algorithm, width, and
+  serialization" above — a fixed-width, lowercase, 16-hex-digit
+  string).
+- The authoring source file's own identity — its logical path, relative
+  to the fixed asset-source root, in the same normalized form the Asset
+  ID is itself derived from (see "Asset-source root and logical path"
+  above), so the sidecar and the Asset ID it names never disagree.
 - The importer/cooker's own version/build identity — an explicit
   provenance anchor, in the same spirit as
   [ADR-0031](0031-shader-system-artifact-versioning-and-reproducibility.md)'s
@@ -168,16 +298,12 @@ this Spec's own Requirements) recording, at minimum:
   (vertex count, index count, the `VertexInputLayout` identity/hash it
   was cooked against).
 
-**Parsing is strict**, matching
-[ADR-0042](0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
-own precedent exactly: anchored-prefix field matching (never a
-delimiter scan), a fixed field order, no embedded-newline support, and
-an unrecognized `schema_version` rejected outright. This Spec's own
-metadata parser is new, independent code — never a dependency on, or
-shared implementation with,
+This Spec's own metadata parser is new, independent code — never a
+dependency on, or shared implementation with,
 `tests/image_regression/support/provenance.*`, which remains test-only
 code outside any `src/` module's dependency surface. The two sidecar
-formats may share the same *pattern*; they share no code.
+formats may share the same *pattern* (see ADR-0045); they share no
+code.
 
 ### Deterministic import — proven empirically
 

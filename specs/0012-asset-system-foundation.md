@@ -4,12 +4,12 @@
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
   direction.
 - **Created:** 2026-08-18
-- **Independent Review (2026-08-18):** Agent-performed, read-only-then-
-  mechanical-fix review — not Human Review — conducted against this
-  spec's and both ADRs' actual drafted text, cross-checked against
-  `origin/main`, `AGENTS.md`, the Spec/ADR templates, Spec 0008/0009,
-  ADR-0029/0032–0035, `docs/architecture/module_boundaries.md`, and
-  direct source inspection
+- **Independent Review — Round 1 (2026-08-18):** Agent-performed,
+  read-only-then-mechanical-fix review — not Human Review — conducted
+  against this spec's and both ADRs' actual drafted text, cross-checked
+  against `origin/main`, `AGENTS.md`, the Spec/ADR templates, Spec
+  0008/0009, ADR-0029/0032–0035, `docs/architecture/module_boundaries.md`,
+  and direct source inspection
   (`src/renderer/include/atlantis/renderer/mesh.h`,
   `src/rhi/include/atlantis/rhi/texture.h`,
   `examples/headless_rendering_demo`). Found no blocking architectural
@@ -19,22 +19,45 @@
   hash-collision fail-fast requirement, a runtime-artifact byte-order
   disclosure, a composition-root clarification for this spec's own
   closed-loop verification, and an added ADR-0029 citation strengthening
-  ADR-0043's module-boundary evidence beyond the not-yet-`Accepted`
-  `module_boundaries.md` draft alone — see
+  the module-boundary ADR's evidence beyond the not-yet-`Accepted`
+  `module_boundaries.md` draft alone.
+- **Independent Review — Round 2 (2026-08-18):** At the human
+  maintainer's own explicit direction, before formal Human Review: (1)
+  split the original combined ADR-0043 into
+  [ADR-0043](../adr/0043-asset-system-module-boundary.md) (module
+  boundary only) and new
+  [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
+  (data format, versioning, and third-party dependency policy), since
+  the two decisions are independently evolvable and this project's own
+  precedent (ADR-0032–0037, six ADRs from one spec) favors one ADR per
+  decision; (2) completed the path-derived Asset ID's own implementable
+  contract in [ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md) —
+  asset-source-root-relative logical path definition, separator/
+  absolute-path/`.`/`..`/empty-segment/Windows-drive-prefix handling,
+  case-sensitivity semantics, an ASCII-only character set for Phase 1
+  (disclosed scope narrowing, not a Unicode oversight), and a concrete
+  hash algorithm (FNV-1a, 64-bit), byte serialization, and
+  collision-detection contract — now Human-Review-acceptable as written,
+  not deferred to Plan. No objection was found to either the split or
+  the recommended path/hash scheme; no smaller, cleaner alternative
+  presented itself once the cross-platform-identical-ID requirement was
+  taken as fixed. See
   [PR #55](https://github.com/slmao/Atlantis/pull/55) for the full
-  revision history. This spec's own six Human-Review-required decisions
-  (Risks & Open Questions) remain open, undecided by this review, and
-  are now ready for the human maintainer's own formal Human Review and
-  `Approved` decision. Both ADRs remain `Proposed` pending that same
-  Human Review.
+  revision history across both rounds. This spec's own seven
+  Human-Review-required decisions (Risks & Open Questions) remain open,
+  undecided by either review round, and are now ready for the human
+  maintainer's own formal, one-pass Human Review and `Approved` decision.
+  All three ADRs remain `Proposed` pending that same Human Review.
 - **Related Plan(s):** none yet — a Plan may be drafted once this Spec
   and its ADRs are `Approved`/`Accepted`, per [AGENTS.md](../AGENTS.md).
 - **Related ADR(s):**
-  [ADR-0043](../adr/0043-asset-system-module-boundary-and-data-format-dependency.md)
-  (module boundary, data format, dependency policy) and
+  [ADR-0043](../adr/0043-asset-system-module-boundary.md)
+  (module boundary and dependency boundary),
   [ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md)
-  (asset identity, provenance, deterministic import and cache
-  methodology) — both `Proposed`. See Architectural Impact.
+  (asset identity, provenance, and import/re-import methodology), and
+  [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
+  (data format, versioning, and third-party dependency policy) — all
+  three `Proposed`. See Architectural Impact.
 
 ## Summary
 
@@ -260,7 +283,7 @@ Explicitly excluded from this spec's design and implementation:
   Textures, materials-as-data, audio, or any other asset kind are each a
   future spec's own scope, once a real consumer needs them.
 - **`glTF`, `Assimp`, or any external 3D interchange format parser.**
-  See Architectural Impact/ADR-0043 — this spec's authoring source
+  See Architectural Impact/ADR-0045 — this spec's authoring source
   format is a minimal, hand-rolled, dependency-free format scoped to
   exactly the geometry its one asset type needs, not a general
   model-import capability.
@@ -293,18 +316,24 @@ Explicitly excluded from this spec's design and implementation:
   disclosed Phase 1 scope boundary — never silently assumed to be
   stronger than it is.
 - **The path this scheme hashes is normalized by one fixed,
-  platform-invariant rule** — case sensitivity, path separator (`/` vs.
-  `\`), `.`/`..` segment resolution, the fixed asset-source-root anchor,
-  and Unicode normalization form are all fixed to a single canonical
-  rule (exact rule a Plan-stage detail, per ADR-0044) so that Windows
-  and a future Android cook path compute the *same* Asset ID for the
-  *same* logical authoring source. This is required by, not separate
-  from, this spec's own Windows-now, Android-later artifact-sharing
-  principle below — an unspecified or platform-dependent normalization
-  rule would silently break that principle.
+  platform-invariant rule, fixed in full as ADR-0044's own Decision, not
+  left to Plan stage** — a fixed asset-source root with a `/`-separated
+  logical path relative to it; absolute paths and Windows drive prefixes
+  rejected outright; `.`/`..` segments lexically resolved with any
+  root-escaping `..` rejected; case preserved and hashed
+  case-sensitively; and an ASCII-only character set for Phase 1 (see
+  Risks & Open Questions item 7 for the full contract and why each rule
+  is load-bearing) — so that Windows and a future Android cook path
+  compute the *same* Asset ID for the *same* logical authoring source.
+  This is required by, not separate from, this spec's own Windows-now,
+  Android-later artifact-sharing principle below — an unspecified or
+  platform-dependent normalization rule would silently break that
+  principle.
 - **A hash collision (two distinct source paths producing the same
-  Asset ID) is possible in principle**, since the hash is
-  non-cryptographic and the space of possible source paths is unbounded.
+  Asset ID) is possible in principle**, since the hash (FNV-1a, 64-bit —
+  see Risks & Open Questions item 7) is non-cryptographic and the space
+  of possible source paths is unbounded, though practically negligible
+  at this project's realistic scale (see ADR-0044's own width analysis).
   The importer must detect this if it ever occurs and fail with a
   distinct `Err` rather than silently associating either path's data
   with the shared ID — the same fail-fast-on-invalid-input discipline
@@ -606,25 +635,40 @@ section states a recommendation, not a fait accompli.
 
 ## Architectural Impact
 
-This spec introduces two new architectural decisions, each drafted as
-its own `Proposed` ADR:
+This spec introduces three new architectural decisions, each drafted as
+its own `Proposed` ADR. The module-boundary decision and the data-
+format/dependency decision were originally drafted as one combined ADR
+and split into two, at the human maintainer's own explicit request
+before Human Review, on the grounds that the two are independently
+evolvable — see ADR-0043's own Revision History.
 
-- [ADR-0043](../adr/0043-asset-system-module-boundary-and-data-format-dependency.md) —
-  Asset System Module Boundary and Data Format/Dependency. Covers: new
-  top-level module versus existing-module combination (see Proposed
-  Design above); the authoring-source and runtime-artifact data formats;
-  and whether any new third-party dependency (a model-format parser, a
-  hashing library, a serialization library) is justified — this spec's
-  own recommendation is no, see ADR-0043's own Alternatives Considered.
+- [ADR-0043](../adr/0043-asset-system-module-boundary.md) —
+  Asset System Module Boundary. Covers: new top-level module versus
+  existing-module combination (see Proposed Design above), and the
+  resulting dependency edges to Core, RHI, Shader System, Tools, and a
+  future Runtime.
 - [ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md) —
   Asset System Identity, Provenance, and Import Methodology. Covers:
-  the Asset ID scheme and its disclosed limitations; the metadata
-  schema's exact fields and encoding; the deterministic-import and
-  cache-invalidation mechanism (and whether a bespoke derived-data cache
-  is justified at this spec's scope — this spec's own recommendation is
-  no, reusing CMake's existing incremental-build dependency tracking
-  instead); and the golden-update-style human-review discipline for any
-  checked-in imported artifact.
+  the Asset ID scheme and its disclosed limitations, now including its
+  full implementable contract (asset-source-root-relative logical path
+  definition; separator, absolute-path, `.`/`..`, empty-segment, and
+  Windows-drive-prefix handling; case-sensitivity semantics; an
+  ASCII-only character set for Phase 1; and a concrete hash algorithm,
+  bit width, byte serialization, and collision-detection rule — see
+  Risks & Open Questions item 7); the metadata schema's exact field
+  semantics; the deterministic-import and re-import-triggering mechanism
+  (and whether a bespoke derived-data cache is justified at this spec's
+  scope — this spec's own recommendation is no, reusing CMake's existing
+  incremental-build dependency tracking instead); and the golden-update-
+  style human-review discipline for any checked-in imported artifact.
+- [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md) —
+  Asset System Data Format, Versioning, and Third-Party Dependency
+  Policy. Covers: the authoring-source, runtime-artifact, and metadata-
+  sidecar wire-encoding formats and their mandatory `schema_version`
+  fields; and whether any new third-party dependency (a model-format
+  parser, a hashing library, a serialization library) is justified — this
+  spec's own recommendation is no, see ADR-0045's own Alternatives
+  Considered.
 
 **ADR-0035 compliance, stated explicitly as this ADR requires:** this
 spec's authoring-facing representation (a hand-rolled text mesh source)
@@ -703,7 +747,7 @@ modification.
   ([ADR-0006](../adr/0006-dependency-management.md),
   [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md))
   requires justifying against a real, present need — not a future,
-  anticipated one. See ADR-0043's own Alternatives Considered for the
+  anticipated one. See ADR-0045's own Alternatives Considered for the
   full license/build/maintenance analysis Human Review requires before
   any dependency decision.
 - **A random-GUID, sidecar-backed identity scheme**, matching how Unity/
@@ -835,7 +879,9 @@ these as silently decided:
    hand-rolled, dependency-free, versioned formats — a flat text sidecar
    (the same *pattern*, not the same code, as ADR-0042's own
    image-regression sidecar) for metadata, and a small, versioned binary
-   layout for the runtime vertex/index artifact. See ADR-0043/ADR-0044.
+   layout for the runtime vertex/index artifact. See ADR-0045 (wire
+   encoding and versioning) and ADR-0044 (the metadata sidecar's own
+   field semantics).
 4. **Is a derived-data cache needed, and if so, what does its cache key
    include?** This spec's own recommendation: no bespoke cache is built
    now — CMake's own existing incremental-build dependency tracking is
@@ -861,8 +907,35 @@ these as silently decided:
    rolled sidecar precedent). `glTF`/`Assimp`, a UUID-generation
    library, and a JSON/YAML/TOML parser are each named explicitly, with
    their own license/build/alternatives/maintenance analysis, in
-   ADR-0043's own Alternatives Considered — none is silently adopted by
+   ADR-0045's own Alternatives Considered — none is silently adopted by
    this spec.
+7. **Given path-derived identity (item 2), what is the Asset ID's own
+   full implementable contract?** A scheme choice alone ("path-derived")
+   is not by itself a permanent, implementable contract — Human Review
+   must separately accept: the asset-source-root-relative logical path
+   definition; separator, absolute-path, `.`/`..`, empty-segment, and
+   Windows-drive-prefix handling; case-sensitivity semantics; whether
+   full Unicode or a restricted character set is supported; and the
+   concrete hash algorithm, bit width, byte serialization, and
+   collision-detection rule — each a permanent commitment this spec does
+   not leave to silent Plan-stage choice. This spec's own recommendation,
+   fixed in full in ADR-0044's own Decision: a fixed asset-source root
+   with a `/`-separated logical path relative to it; absolute paths and
+   Windows drive prefixes rejected outright (never normalized); `.`/`..`
+   lexically resolved with any root-escaping `..` rejected; case
+   preserved and hashed case-sensitively (never folded); an ASCII-only
+   character set for Phase 1 (a disclosed scope-narrowing choice that
+   sidesteps Unicode normalization-form divergence entirely, not an
+   oversight); FNV-1a, 64-bit, applied to the normalized path's own
+   bytes; native/little-endian 8-byte serialization in binary contexts
+   (reusing ADR-0045's own byte-order rule) and a fixed-width lowercase
+   hex string in the metadata sidecar's text; and a fail-fast, distinct
+   `Err` on any detected collision. No smaller alternative was found that
+   still guarantees Windows and a future Android cook path compute the
+   identical Asset ID for the identical logical source — see ADR-0044's
+   own "Why Windows and a future Android cook path are guaranteed to
+   compute the identical Asset ID" for why each individual rule above is
+   load-bearing for that guarantee, not an arbitrary style choice.
 
 **Other risks:**
 
@@ -903,6 +976,13 @@ these as silently decided:
 - **Rename-stable, GUID-with-sidecar identity** — real future work,
   once a concrete multi-author or frequent-rename workflow justifies its
   added bookkeeping cost over this spec's own path-derived default.
+- **Full Unicode support for authoring-source paths** — this spec
+  restricts Phase 1 logical paths to an ASCII-only character set (see
+  Requirements/Asset identity and ADR-0044) specifically to sidestep
+  Unicode normalization-form divergence across Windows, Android, and
+  git; real future work once a genuine need for non-ASCII asset paths
+  exists to justify solving that divergence properly, rather than as
+  part of this spec's own one-fixture, ASCII-only closed loop.
 - **A real, shared derived-data cache/database** — future work once a
   second cook target (e.g. a future Android-specific cook path) or a
   shared build farm creates genuine need beyond what CMake's own
