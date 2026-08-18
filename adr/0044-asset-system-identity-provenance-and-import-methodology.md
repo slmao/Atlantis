@@ -8,10 +8,10 @@
 ## Context
 
 [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md)
-requires a stable way to name a piece of authoring content (an **Asset
-ID**), a versioned record of where an imported artifact came from (a
-**metadata schema**), a way to know when a re-import must happen
-(**dependency tracking and cache invalidation**), and empirical proof
+requires a deterministic way to name a piece of authoring content (an
+**Asset ID**), a versioned record of where an imported artifact came
+from (a **metadata schema**), a way to know when a re-import must happen
+(**dependency tracking and re-import triggering**), and empirical proof
 that importing is **deterministic**. None of these exists anywhere in
 this repository today; no hashing, UUID-generation, or database
 capability exists in `src/` (confirmed by direct inspection).
@@ -26,15 +26,24 @@ concrete identity scheme and schema
 requires without inventing a compatibility/migration mechanism ahead of
 any real need for one.
 
-A **stable identity** (survives a source file rename/move) and a
+A **durable identity** (survives a source file rename/move) and a
 **cache-invalidation key** (must change whenever content, importer
 version, or a dependency changes) are frequently conflated in informal
 asset-pipeline design, but answer different questions: the former names
-*what* a piece of content is; the latter determines *when* it must be
-reprocessed. Conflating them — e.g. using a content hash as the asset's
-own permanent identity — silently breaks the first property every time
-the second property's own input legitimately changes (an ordinary
-content edit).
+*what* a piece of content is, independent of incidental detail; the
+latter determines *when* it must be reprocessed. Conflating them — e.g.
+using a content hash as the asset's own permanent identity — silently
+breaks the first property every time the second property's own input
+legitimately changes (an ordinary content edit). This ADR's own Decision
+below adopts a **deterministic, path-derived** Asset ID — a narrower
+property than full durable identity, since it does *not* survive a
+rename/move of its own source file (see Decision) — as a disclosed
+Phase 1 substitute. The two concepts are named distinctly throughout
+this ADR — "durable identity" as the general property a rename-surviving
+scheme would have, and "deterministic, path-derived identity" as what
+this ADR actually decides to build — specifically so this ADR never
+claims a stronger guarantee for its own scheme than it actually
+provides.
 
 [ADR-0031](0031-shader-system-artifact-versioning-and-reproducibility.md)
 (Shader System) already established this repository's own precedent for
@@ -70,8 +79,36 @@ sufficient; no third-party hashing dependency, per
 - **An Asset ID is never used as, or derived from, a cache/rebuild key**
   (see below) — the two remain conceptually and mechanically distinct,
   closing the conflation risk named in Context.
+- **The relative path this scheme hashes must be normalized by one
+  fixed, platform-invariant rule before hashing** — case sensitivity,
+  path separator (`/` vs. `\`), `.`/`..` segment resolution, the fixed
+  asset-source-root anchor point, and Unicode normalization form are all
+  fixed once (exact rule a Plan-stage detail). This is required, not
+  merely an encoding nicety: it exists because
+  [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md)'s
+  own Windows-now, Android-later artifact-sharing principle depends on
+  the *same* logical authoring source producing the *same* Asset ID
+  regardless of which platform's cook path computed it. An unspecified
+  or platform-dependent normalization rule would silently break that
+  principle the first time a real Android cook path exists to test it
+  against. The metadata sidecar's own recorded source-file-identity
+  field (see "Metadata schema" below) uses this same normalized form, so
+  the two never disagree about what a source file's own identity is.
+- **Hash collisions are possible in principle and must fail loudly, not
+  merge silently.** The hash is non-cryptographic and the space of
+  possible authoring-source paths is unbounded, so two distinct source
+  paths producing the same Asset ID cannot be ruled out by construction
+  the way a random 128-bit GUID's collision probability effectively can
+  be. If the importer/cooker ever observes two distinct, simultaneously-
+  known source paths sharing one computed Asset ID, it must reject the
+  situation with a distinct `Err` rather than silently associating
+  either path's data with the shared ID — the same fail-fast-on-invalid-
+  input discipline this Spec's own Error handling requirements apply
+  everywhere else. The exact hash width chosen at Plan stage should make
+  this practically negligible at this project's realistic asset-count
+  scale; this ADR does not claim it is eliminated by construction.
 
-### Cache invalidation: reuse CMake's existing incremental-build tracking; no bespoke derived-data cache
+### Re-import triggering (not a cache): reuse CMake's existing incremental-build tracking
 
 **No new, Asset-System-owned derived-data cache or database is built.**
 Re-import is driven by CMake's own existing
@@ -83,7 +120,16 @@ source file's own content and the importer/cooker executable itself are
 both named as `DEPENDS` inputs, so CMake re-invokes the importer exactly
 when either changes — no separate content-hash bookkeeping is
 implemented by this Spec to duplicate what CMake's own dependency
-tracking already provides correctly.
+tracking already provides correctly. **This is ordinary incremental-
+build dependency tracking, identical in kind to how CMake already
+reruns a C++ compile when a `.cpp`/header changes — it is not a cache**
+in the sense of retaining or reusing previously-computed output across
+clean builds, separate build trees, or machines; nothing is "invalidated"
+because nothing is cached in the first place. This section's own heading
+uses "re-import triggering," not "cache invalidation," specifically to
+avoid implying a cache exists where this Spec's own scope builds none —
+see "If a future spec needs a real... cache" below for what an actual
+derived-data cache would add beyond what is described here.
 
 - **If** a future spec needs a real, shared, content-addressed
   derived-data cache (e.g. once a second cook target — such as a future
@@ -163,8 +209,9 @@ automatically, and never overwritten by an ordinary build/test run.
 
 ### Positive
 
-- Cleanly separating Asset ID (stable identity) from cache key
-  (invalidation trigger) avoids a real, easy-to-make design mistake this
+- Cleanly separating Asset ID (a deterministic, path-derived identifier
+  — not fully rename/move-durable, see Decision) from cache key
+  (re-import trigger) avoids a real, easy-to-make design mistake this
   ADR's own Context names explicitly — a future spec inheriting this
   distinction does not have to rediscover it.
 - Reusing CMake's own existing, already-`Accepted` incremental-build

@@ -1,9 +1,32 @@
 # Spec: Asset System Foundation
 
-- **Status:** Draft
+- **Status:** In Review
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
   direction.
 - **Created:** 2026-08-18
+- **Independent Review (2026-08-18):** Agent-performed, read-only-then-
+  mechanical-fix review — not Human Review — conducted against this
+  spec's and both ADRs' actual drafted text, cross-checked against
+  `origin/main`, `AGENTS.md`, the Spec/ADR templates, Spec 0008/0009,
+  ADR-0029/0032–0035, `docs/architecture/module_boundaries.md`, and
+  direct source inspection
+  (`src/renderer/include/atlantis/renderer/mesh.h`,
+  `src/rhi/include/atlantis/rhi/texture.h`,
+  `examples/headless_rendering_demo`). Found no blocking architectural
+  issue; applied direct, disclosed mechanical fixes — terminology
+  precision for the Asset ID's deterministic-but-not-rename-durable
+  scope, a path-normalization-contract requirement, an Asset ID
+  hash-collision fail-fast requirement, a runtime-artifact byte-order
+  disclosure, a composition-root clarification for this spec's own
+  closed-loop verification, and an added ADR-0029 citation strengthening
+  ADR-0043's module-boundary evidence beyond the not-yet-`Accepted`
+  `module_boundaries.md` draft alone — see
+  [PR #55](https://github.com/slmao/Atlantis/pull/55) for the full
+  revision history. This spec's own six Human-Review-required decisions
+  (Risks & Open Questions) remain open, undecided by this review, and
+  are now ready for the human maintainer's own formal Human Review and
+  `Approved` decision. Both ADRs remain `Proposed` pending that same
+  Human Review.
 - **Related Plan(s):** none yet — a Plan may be drafted once this Spec
   and its ADRs are `Approved`/`Accepted`, per [AGENTS.md](../AGENTS.md).
 - **Related ADR(s):**
@@ -137,8 +160,8 @@ compositions.
 ## Goals
 
 - Fix **asset identity**: what names a piece of authoring content
-  stably, and what does *not* survive an edit/rename — stated as an
-  explicit, disclosed property, not left implicit.
+  deterministically, and what does *not* survive an edit/rename — stated
+  as an explicit, disclosed property, not left implicit.
 - Fix a **metadata schema**: what provenance/version information every
   imported asset records, in a strict, versioned, dependency-free format.
 - Fix the **authoring source / runtime artifact separation** ADR-0035
@@ -151,10 +174,13 @@ compositions.
   precedent ([ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md),
   [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
   own Context).
-- Fix **dependency tracking and cache invalidation**: when a re-import
-  must happen, and how that is detected — without inventing a bespoke
-  derived-data cache/database unless this spec's own analysis shows one
-  is actually needed at this scope (see Risks & Open Questions).
+- Fix **dependency tracking and re-import triggering** (the underlying
+  problem informally called "cache invalidation" in asset-pipeline
+  design, though this spec's own mechanism is not a cache — see
+  Requirements): when a re-import must happen, and how that is detected
+  — without inventing a bespoke derived-data cache/database unless this
+  spec's own analysis shows one is actually needed at this scope (see
+  Risks & Open Questions).
 - Decide **Asset System's ownership** within Atlantis's existing
   nine-module structure, per ADR-0032's own requirement — new top-level
   module, or hosted by a combination of existing modules — as an
@@ -249,19 +275,44 @@ Explicitly excluded from this spec's design and implementation:
 
 **Asset identity**
 
-- Every importable authoring source is identified by a stable **Asset
-  ID** — a value other content (and, later, other assets) can reference
-  without embedding a raw file path. This spec fixes the identity
-  *scheme* (see Architectural Impact/ADR-0044); the exact bit width and
-  encoding are ADR-0044's own Decision, not left further open past this
-  spec's approval.
-- The chosen scheme's limitations (in particular: whether identity
-  survives a source file rename/move) are stated explicitly, as a
+- Every importable authoring source is identified by a deterministic
+  **Asset ID** — a value other content (and, later, other assets) can
+  reference without embedding a raw file path, computed the same way
+  every time for the same input. This spec fixes the identity *scheme*
+  (see Architectural Impact/ADR-0044); the exact bit width and encoding
+  are ADR-0044's own Decision, not left further open past this spec's
+  approval. **This determinism holds across repeated imports and across
+  unrelated edits elsewhere in the source tree — it does not, by itself,
+  mean the identifier survives a rename or move of its own source file;
+  see the next bullet.** This spec deliberately avoids calling the
+  scheme "stable" without that qualifier, since the chosen scheme is
+  narrower than full rename/move-durable identity (see ADR-0044's own
+  Context, which names and distinguishes the two).
+- The chosen scheme's limitations (in particular: identity does **not**
+  survive a source file rename/move) are stated explicitly, as a
   disclosed Phase 1 scope boundary — never silently assumed to be
   stronger than it is.
+- **The path this scheme hashes is normalized by one fixed,
+  platform-invariant rule** — case sensitivity, path separator (`/` vs.
+  `\`), `.`/`..` segment resolution, the fixed asset-source-root anchor,
+  and Unicode normalization form are all fixed to a single canonical
+  rule (exact rule a Plan-stage detail, per ADR-0044) so that Windows
+  and a future Android cook path compute the *same* Asset ID for the
+  *same* logical authoring source. This is required by, not separate
+  from, this spec's own Windows-now, Android-later artifact-sharing
+  principle below — an unspecified or platform-dependent normalization
+  rule would silently break that principle.
+- **A hash collision (two distinct source paths producing the same
+  Asset ID) is possible in principle**, since the hash is
+  non-cryptographic and the space of possible source paths is unbounded.
+  The importer must detect this if it ever occurs and fail with a
+  distinct `Err` rather than silently associating either path's data
+  with the shared ID — the same fail-fast-on-invalid-input discipline
+  this spec's own Error handling requirements apply everywhere else (see
+  ADR-0044).
 - **Asset ID is a distinct concept from a cache/rebuild key.** An Asset
-  ID names *what* a piece of content is, stably; a cache key (see
-  "Deterministic import" below) determines *when* a re-import must
+  ID names *what* a piece of content is, deterministically; a cache key
+  (see "Deterministic import" below) determines *when* a re-import must
   happen, and legitimately changes whenever the source content, the
   importer's own version, or any dependency changes — conflating the two
   is a real, disclosed risk this spec's design explicitly avoids (see
@@ -313,7 +364,7 @@ Explicitly excluded from this spec's design and implementation:
   that Spec's own multi-object dependency graph, editor round-tripping,
   and incremental-update needs are not solved or assumed solved here.
 
-**Deterministic import, dependency tracking, and cache invalidation**
+**Deterministic import, dependency tracking, and re-import triggering**
 
 - Importing the same authoring source twice, with the same importer
   version, produces **byte-identical** runtime artifact output — proven
@@ -714,7 +765,10 @@ verify — this Spec document itself introduces no code.
   - Asset ID computation: deterministic for a fixed source path;
     documented, tested behavior for the disclosed rename/move limitation
     (an Asset ID changing after a rename is expected, tested behavior
-    under this spec's own recommended scheme — not a bug).
+    under this spec's own recommended scheme — not a bug); a
+    deliberately constructed hash collision (two distinct source paths
+    forced to share one Asset ID) is detected and rejected with a
+    distinct `Err`, never silently merged (see Requirements).
 - **GPU-required tests (Windows/Vulkan, `gpu`-labeled):**
   - The full closed loop: import the checked-in cube authoring source,
     load the resulting runtime artifact, construct a `Mesh` via the
@@ -728,6 +782,20 @@ verify — this Spec document itself introduces no code.
     new, bespoke pixel-comparison mechanism. **Zero** channel difference
     is the same confirmed, evidence-backed standard Spec 0011/ADR-0042
     already established for this exact fixture and reference GPU/driver.
+    **Composition root for this test:** the same test/example-owned
+    `Device`/`Presentation`(-or-`OffscreenTarget`)/`Renderer`
+    construction sequence
+    `tests/image_regression/fixture/minimal_cube_fixture.*` already owns
+    is reused and extended with an asset-load step in place of that
+    fixture's own hand-authored vertex/index arrays — this spec's own
+    verification writes no new Device-construction or frame-orchestration
+    code. Per [ADR-0033](../adr/0033-runtime-authority-and-client-boundary.md)'s
+    own Context, this is explicitly disclosed as reused verification/test
+    composition, not a preview of a future Atlantis Runtime's own
+    composition-root architecture — the same disclosed-non-preview
+    framing this project's prior non-shipping compositions (Spec 0003,
+    Spec 0010, Spec 0011) already established, cited under Motivation's
+    own "Why this does not wait for Runtime" above.
   - Vulkan Validation Layers clean throughout, matching every prior GPU-
     touching test in this project.
 - **Manual/local verification:** a human or agent runs the full

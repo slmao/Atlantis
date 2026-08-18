@@ -42,6 +42,16 @@ build-time artifact, and its own runtime-consumed library
 (`Atlantis::ShaderSystem`, `Atlantis::ShaderSystemRhiIntegration`) other
 modules link against directly — not folded into Tools despite Tools'
 own draft language already covering "shader precompilation CLI" too.
+This module split is itself fixed by
+[ADR-0029](0029-shader-system-build-time-compilation-boundary.md)
+(`Accepted`), which independently confirms — by real, shipped
+`CMakeLists.txt` dependency edges, not only by `module_boundaries.md`'s
+own `PROPOSED` text — that Atlantis Tools' CLI target depends on
+`Atlantis::ShaderSystem`, and nothing in the repository depends back on
+Tools. The "Tools is a leaf" structural claim this ADR relies on is
+therefore grounded in an already-`Accepted` decision and its own real
+build graph, not solely in the not-yet-`Accepted` draft language
+`module_boundaries.md` also happens to state.
 
 Separately, Asset System's authoring source and runtime artifact both
 need a concrete data format. No parsing, hashing, serialization, or
@@ -129,7 +139,16 @@ interchange, hashing, or serialization dependency is introduced.**
   exact shape `atlantis::renderer::createMesh()` already expects, with
   no transformation at load time beyond a byte-count/header-consistency
   check. Not a general-purpose binary serialization format; specific to
-  this one asset type's own two flat arrays.
+  this one asset type's own two flat arrays. **Byte order:** all
+  multi-byte fields (header integers, vertex floats, index values) are
+  written and read in the host's native byte order — little-endian on
+  every currently-relevant Atlantis target (x86-64 Windows development,
+  ARM/AArch64 Android) — with no explicit endianness marker or
+  conversion step, matching how `atlantis::renderer::createMesh()`
+  already consumes raw bytes today. No big-endian target exists or is
+  planned for Atlantis; a future one would require this format to add an
+  explicit endianness marker first — a disclosed limitation, not
+  designed against now.
 - **Metadata sidecar format:** a strict, versioned flat text format
   (Asset ID, source-file identity, importer version, per-asset-type
   fields, `schema_version`), implemented as new, independent parsing
@@ -198,7 +217,10 @@ deferred, not adopted, at this Spec's scope.
   "depended on by: nothing — no runtime module ever depends on Tools,"
   which structurally forecloses a future Renderer-adjacent consumer
   linking against Tools-hosted runtime-loading code without first
-  reopening Tools' own boundary. Reopening that boundary now, as a side
+  reopening Tools' own boundary — corroborated, not merely asserted by a
+  not-yet-`Accepted` draft, by `Accepted` ADR-0029's own real, shipped
+  Tools/Shader-System dependency edge (see Context). Reopening that
+  boundary now, as a side
   effect of this Spec, would itself be a larger architectural change
   than a foundation-scoped Asset System Spec should make unilaterally.
 - **Host runtime loading under Atlantis Runtime, once it exists.**
