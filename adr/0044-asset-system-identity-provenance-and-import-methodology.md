@@ -1,9 +1,12 @@
 # ADR 0044: Asset System — Identity, Provenance, and Import Methodology
 
-- **Status:** Proposed
-- **Date:** 2026-08-18
-- **Deciders:** &lt;pending Human Review&gt;
-- **Related Spec:** [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md)
+- **Status:** Accepted
+- **Date:** 2026-08-18 (accepted 2026-08-19 — see Revision History)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-19 as part of Spec 0012's Human Review Approval; see
+  that spec's own Human Review Approval note for the full approval
+  record and the directed corrections this ADR carries.
+- **Related Spec:** [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md) (`Approved`)
 - **Related ADR(s):**
   [ADR-0043](0043-asset-system-module-boundary.md) (module boundary) and
   [ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)
@@ -12,6 +15,28 @@
   choices operate under ADR-0045's blanket no-new-dependency policy; the
   metadata sidecar's own wire encoding is ADR-0045's Decision, cross-
   referenced under "Metadata schema" below rather than restated.
+
+## Revision History
+
+- **2026-08-18 (original):** Drafted alongside Spec 0012, initially
+  leaving the Asset ID's concrete path/hash contract as a Plan-stage
+  detail; that contract was completed in full within this ADR later the
+  same day, before Human Review.
+- **2026-08-19 (Human Review corrections, then `Accepted`):** Human
+  Review directed two corrections before accepting this ADR. (1) The
+  Asset ID's binary serialization is now **unconditionally
+  little-endian**, matching
+  [ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)'s
+  own corrected fixed byte-order contract — the earlier
+  "native/little-endian" phrasing conflated a property of the *format*
+  with a property of the *writing host*. (2) The collision-detection
+  guarantee is now explicitly **scoped to one importer/validator
+  invocation's own declared asset set**, since with no global asset
+  database this Spec cannot detect collisions between assets never
+  presented together; repository-global uniqueness is delegated to a
+  Plan-arranged validation step covering every declared asset, and to a
+  future asset registry/database spec. This ADR then moved to
+  `Accepted`.
 
 ## Context
 
@@ -137,9 +162,11 @@ disagree about a legal logical path's own bytes:**
   situation can only arise if content is committed to git (itself
   case-sensitive in its own index) in a way a Windows checkout cannot
   faithfully materialize both of; the importer must reject a
-  case-only-differing pair of logical paths it detects within one import
-  run with a distinct `Err`, rather than silently hash whichever one the
-  filesystem happened to return. Case-sensitive comparison, not
+  case-only-differing pair of logical paths within one invocation's own
+  declared asset set with a distinct `Err` (see "Collision detection"
+  below for that scope's own precise bounds), rather than silently hash
+  whichever one the filesystem happened to return. Case-sensitive
+  comparison, not
   case-folding, was chosen because it matches Android/Linux-style
   case-sensitive filesystems (the platform a folding scheme would
   otherwise have to work hardest to fake); it avoids needing real
@@ -188,28 +215,59 @@ string's own bytes.
   full durable identity, not a permanent cryptographic commitment.
 - **Byte serialization:** in the binary runtime artifact or any other
   binary context, the Asset ID is a fixed 8-byte (`std::uint64_t`) field
-  in the same native/little-endian byte order
+  written **unconditionally little-endian**, the same fixed on-disk
+  byte-order contract
   [ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)
-  already fixes for the rest of the binary surface — one byte-order rule
-  for this Spec's entire binary surface, not two. In the metadata
+  fixes for the rest of the binary surface — one byte-order rule for
+  this Spec's entire binary surface, and a property of the format
+  itself rather than of whichever host wrote it. In the metadata
   sidecar's own flat text format, the Asset ID is written as a
   fixed-width, lowercase, 16-hex-digit string (`%016x`) — a text
   representation sidesteps endianness entirely in the human-readable
   format, matching ADR-0042's own precedent of keeping provenance data
   in a sidecar as plain, unambiguous text.
-- **Hash collisions are possible in principle and must fail loudly, not
-  merge silently.** The hash is non-cryptographic and the space of
-  possible logical paths is unbounded, so two distinct logical paths
-  producing the same 64-bit Asset ID cannot be ruled out by construction
-  the way a random 128-bit GUID's collision probability effectively can
-  be — though, per the width analysis above, it is practically
-  negligible at this project's realistic scale, not merely asserted to
-  be. If the importer/cooker ever observes two distinct, simultaneously-
-  known logical paths sharing one computed Asset ID, it must reject the
-  situation with a distinct `Err` rather than silently associating
-  either path's data with the shared ID — the same fail-fast-on-invalid-
-  input discipline this Spec's own Error handling requirements apply
-  everywhere else.
+
+**Collision detection — scoped to one invocation's declared asset set.**
+The hash is non-cryptographic and the space of possible logical paths is
+unbounded, so two distinct logical paths producing the same 64-bit Asset
+ID cannot be ruled out by construction the way a random 128-bit GUID's
+collision probability effectively can be — though, per the width
+analysis above, it is practically negligible at this project's realistic
+scale, not merely asserted to be. What this Spec's own scope can and
+does guarantee is bounded accordingly:
+
+- **Within the set of assets declared to a single importer/validator
+  invocation**, two distinct logical paths computing the same Asset ID,
+  and two logical paths differing only by case, must each be detected
+  and reported as a distinct `Err` — never silently merged, and never
+  resolved by whichever entry the filesystem or build system happened to
+  supply first. This is the same fail-fast-on-invalid-input discipline
+  this Spec's own Error handling requirements apply everywhere else.
+- **This Spec explicitly does *not* claim repository-global collision
+  detection.** With no asset registry or database
+  ([specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md)'s
+  own "no global mutable asset database" requirement, and no
+  derived-data cache per this ADR's own re-import-triggering decision),
+  nothing in this Spec's scope observes assets that were never presented
+  together in one invocation — for example, two assets declared by
+  independent build targets, or an asset added in a later, separate
+  build. A collision between such assets is not detected by this Spec's
+  own implementation, and this ADR does not pretend otherwise.
+- **This Spec's own Plan must therefore include a validation step whose
+  declared input set covers every asset the repository declares**, so
+  that in practice the "one invocation" scope above is the whole
+  repository's asset set rather than an arbitrary subset. Exactly how
+  that step is organized in CMake — one validator invocation over an
+  aggregated list, a dedicated validation target, or another
+  arrangement — is a Plan-stage decision this ADR deliberately does not
+  fix.
+- **A future asset registry/database Spec must re-establish global
+  uniqueness on its own terms.** Whatever mechanism such a future Spec
+  introduces (a persisted registry, a real derived-data cache, a
+  multi-repository asset space) inherits the obligation to validate
+  uniqueness across everything it governs; it may not assume this Spec
+  already did so, because this Spec's own guarantee is explicitly scoped
+  to one invocation's declared set.
 
 **Why Windows and a future Android cook path are guaranteed to compute
 the identical Asset ID for the identical logical authoring source:**

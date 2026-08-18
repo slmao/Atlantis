@@ -1,9 +1,12 @@
 # ADR 0043: Asset System — Module Boundary and Dependency Boundary
 
-- **Status:** Proposed
-- **Date:** 2026-08-18
-- **Deciders:** &lt;pending Human Review&gt;
-- **Related Spec:** [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md)
+- **Status:** Accepted
+- **Date:** 2026-08-18 (accepted 2026-08-19 — see Revision History)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-19 as part of Spec 0012's Human Review Approval; see
+  that spec's own Human Review Approval note for the full approval
+  record and the three directed corrections this ADR carries.
+- **Related Spec:** [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md) (`Approved`)
 - **Related ADR(s):**
   [ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)
   (data format, versioning, and third-party dependency policy) —
@@ -29,6 +32,20 @@
   awkward. The data-format and dependency content that was here moved,
   unchanged in substance, to new
   [ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md).
+- **2026-08-19 (Human Review correction, then `Accepted`):** Human
+  Review directed one correction to this ADR before accepting it: the
+  original Decision had Asset System depending on **Atlantis RHI** (for
+  `Buffer` creation) and optionally on Shader System's
+  `rhi_integration` surface, which contradicted the module's own real
+  job — Asset System transforms data and has no GPU concept of its own.
+  The Decision now fixes a **Core-only** dependency, a CPU-side
+  `StaticMeshAssetData` output boundary, and composition-root ownership
+  of the GPU handoff, and explicitly forecloses an
+  `AssetSystemRhiIntegration` submodule absent a demonstrated need
+  raised as its own architectural question. This ADR then moved to
+  `Accepted`. See
+  [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md)'s
+  own Human Review Approval note.
 
 ## Context
 
@@ -51,10 +68,10 @@ separately describes both Atlantis Tools ("**Depended on by:** nothing —
 no runtime module ever depends on Tools") and Atlantis Runtime
 ("**Depended on by:** nothing (it's the executable)") as structural
 leaves — nothing may link against either as a library. Asset System's
-own runtime-loading half must be linkable by a future Renderer-adjacent
-consumer (an example, a test, eventually a future Runtime itself) —
-neither existing candidate host satisfies that without first reopening
-its own boundary, which
+own runtime-loading half must be linkable by a future consumer (an
+example, a test, eventually a future Runtime itself) — neither existing
+candidate host satisfies that without first reopening its own boundary,
+which
 [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md)
 is not scoped to do unilaterally.
 
@@ -88,31 +105,69 @@ boundary — a non-binding, illustrative position only, per ADR-0032's own
 terms. In the authoritative nine-module (now ten-module) source-ownership
 view:
 
-- **Depends on:** Atlantis Core (`Result<T,E>`, logging, assertions) and
-  Atlantis RHI (`Buffer` creation via `atlantis::renderer::createMesh()`'s
-  existing, unmodified surface). May depend on Atlantis Shader System's
-  public `rhi_integration` surface
-  (`atlantis::shader_system::rhi_integration::toVertexInputLayout()`) to
-  resolve the `VertexInputLayout` its one supported asset type is cooked
-  against — never Shader System's own private JSON parser or private
-  implementation.
+- **Depends on:** **Atlantis Core only** (`Result<T,E>`, logging,
+  assertions) plus the C++ standard library. Asset System does **not**
+  depend on Atlantis RHI, Renderer, Vulkan Backend, RenderGraph, Shader
+  System, Platform, Runtime, or Tools — no GPU, windowing, graphics-API,
+  or OS-process concept appears anywhere in its public surface or its
+  implementation. This is the same narrow, Core-only shape
+  [ADR-0029](0029-shader-system-build-time-compilation-boundary.md)
+  already fixed for `Atlantis::ShaderSystem`'s own base library, and for
+  the same reason: a module whose real job is data transformation should
+  not force every consumer to inherit a graphics dependency it may not
+  need.
+- **What Asset System produces and consumes is CPU-side data, not GPU
+  resources.** The importer/cooker writes, and the runtime artifact
+  loader reads, a strict CPU-side static-mesh data structure (working
+  name `StaticMeshAssetData`; exact naming and layout a Plan-stage
+  detail) carrying the vertex bytes, the index array, and the counts
+  and per-asset-type metadata needed to interpret them. **Asset System
+  never creates an `atlantis::renderer::Mesh`, never calls
+  `atlantis::renderer::createMesh()`, never constructs an
+  `atlantis::rhi::Buffer`, and never names an
+  `atlantis::rhi::VertexInputLayout`** — every one of those is a GPU-side
+  concept owned by modules Asset System does not depend on.
 - **Depended on by:** nothing yet, within this ADR's own scope — its
   consumers (examples, tests, and eventually a future Atlantis Runtime)
   sit outside Asset System itself, the same way Renderer's own consumers
   do today.
+- **The composition root — a test, an example, or eventually a future
+  Atlantis Runtime — owns the GPU handoff.** It calls Asset System's own
+  loader to obtain `StaticMeshAssetData`, separately resolves the
+  `VertexInputLayout` through Atlantis Shader System's own public
+  `rhi_integration` surface
+  (`atlantis::shader_system::rhi_integration::toVertexInputLayout()` —
+  never Shader System's private JSON parser or private implementation),
+  and passes both into the **existing, unmodified**
+  `atlantis::renderer::createMesh()`. This is exactly what
+  `examples/headless_rendering_demo` and
+  `tests/image_regression/fixture/minimal_cube_fixture.*` already do
+  today with their own hand-authored vertex/index arrays; this Spec
+  replaces the *source* of that CPU data, not the composition that
+  consumes it.
+- **No Renderer-integration submodule is introduced.** Unlike Shader
+  System — which genuinely needed
+  `Atlantis::ShaderSystemRhiIntegration` because its own reflection
+  metadata must be *translated into* an `atlantis::rhi::VertexInputLayout`
+  — Asset System's own output is plain CPU bytes and counts that
+  `createMesh()` already accepts directly, with no translation layer in
+  between. If a Plan or Implementation ever finds a concrete case where
+  this genuinely cannot be avoided, that is a real architectural change:
+  stop and raise it as its own explicit question rather than adding an
+  integration submodule silently.
 - **Atlantis Tools** hosts the importer/cooker's own command-line entry
   point (`atlantis_asset_cooker`, exact name a Plan-stage detail),
   mirroring `atlantis_shader_compiler`'s own precedent: a Tools-hosted
   CLI invoking a separate module's own library
   (`Atlantis::AssetSystem`) to do the real work, never containing that
-  logic itself. This keeps Tools' own existing, real scope (currently:
-  shader-compiler content only) additive, without requiring Tools itself
-  to become linkable.
-- **Renderer, RHI, and Vulkan Backend gain no new dependency.** Asset
-  System depends on their existing public output types
-  (`atlantis::renderer::Mesh`, `atlantis::rhi::VertexInputLayout`); none
-  of the three is modified to depend back on Asset System, and none of
-  their existing public APIs is changed by this decision.
+  logic itself. **The dependency runs Tools → Asset System only; Asset
+  System never depends on Tools.** This keeps Tools' own existing, real
+  scope (currently: shader-compiler content only) additive, without
+  requiring Tools itself to become linkable.
+- **Renderer, RHI, Vulkan Backend, RenderGraph, and Shader System gain
+  no new dependency, in either direction.** None of them is modified to
+  depend on Asset System, none of their existing public APIs is changed
+  by this decision, and Asset System does not depend on any of them.
 - **No dependency on a future Atlantis Runtime module**, which does not
   yet exist as a real module (Candidate Order 3 in
   [specs/README.md](../specs/README.md) Section B, spec not yet
@@ -145,8 +200,15 @@ own.
   System successfully used: an authoring format, a Tools-hosted CLI, and
   a runtime-consumed library — a repeatable pattern, not a one-off
   design.
-- Renderer, RHI, and Vulkan Backend remain entirely untouched — zero
-  risk to any already-`Accepted`/implemented public API.
+- Renderer, RHI, Vulkan Backend, RenderGraph, and Shader System remain
+  entirely untouched — zero risk to any already-`Accepted`/implemented
+  public API, in either dependency direction.
+- A Core-only dependency makes Asset System's own logic trivially
+  unit-testable with no Vulkan device, no window, and no GPU present —
+  the same practical benefit
+  [ADR-0029](0029-shader-system-build-time-compilation-boundary.md)'s own
+  Core-only Shader System library already demonstrates, and a strictly
+  narrower dependency surface than an RHI-dependent design would have.
 - Keeping this decision separate from
   [ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)
   means a future amendment to the data-format/dependency decision (e.g.
@@ -200,6 +262,29 @@ own.
   own Non-Goals explicitly excluded "a scene graph, ECS, asset system, or
   a model/mesh loader" from Renderer's scope; this ADR does not reopen
   that settled boundary.
+- **Have Asset System depend on RHI/Renderer and return a ready-made
+  `atlantis::renderer::Mesh` directly**, rather than CPU-side
+  `StaticMeshAssetData` a composition root converts. Rejected at Human
+  Review (2026-08-19): it would force every Asset System consumer —
+  including pure, GPU-free unit tests of the importer's own parsing and
+  identity logic — to link RHI and Renderer and stand up a `Device` for
+  no reason, and it would make Asset System's own module boundary
+  strictly wider than its real job (data transformation) requires. The
+  composition root already exists in every case that needs GPU upload
+  (`examples/headless_rendering_demo`,
+  `tests/image_regression/fixture/minimal_cube_fixture.*`, eventually a
+  future Runtime), and already owns exactly this kind of wiring today —
+  so routing the GPU handoff through it costs nothing that is not
+  already being paid.
+- **Add an `Atlantis::AssetSystemRhiIntegration` submodule**, mirroring
+  `Atlantis::ShaderSystemRhiIntegration`. Rejected: Shader System needed
+  that submodule because its reflection metadata must be *translated
+  into* an `atlantis::rhi::VertexInputLayout` — a real, non-trivial
+  mapping with one correct owner. Asset System's own output is plain CPU
+  vertex/index bytes and counts that `createMesh()`'s existing signature
+  already accepts unchanged, so there is nothing for such a submodule to
+  translate. Adding one anyway would create the exact RHI dependency
+  this ADR's own Decision exists to avoid.
 - **Keep the module-boundary and data-format/dependency decisions in one
   combined ADR**, as originally drafted. Reconsidered and rejected at
   Human Review's own request: the two decisions are independently

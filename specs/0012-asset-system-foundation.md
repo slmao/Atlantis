@@ -1,9 +1,83 @@
 # Spec: Asset System Foundation
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
-  direction.
+  direction; approved by human review — see Human Review Approval below.
 - **Created:** 2026-08-18
+- **Human Review Approval (2026-08-19):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer for this branch) on 2026-08-19, following two independent,
+  agent-performed review rounds (recorded below) and three directed
+  corrections applied as a condition of this approval.
+
+  **This approval explicitly accepts:**
+  1. **A new, tenth top-level module, Atlantis Asset System**, depending
+     on Atlantis Core alone — see
+     [ADR-0043](../adr/0043-asset-system-module-boundary.md).
+  2. **A path-derived, deterministic, explicitly non-rename-durable
+     Asset ID**, with the logical-path normalization rules, ASCII-only
+     Phase 1 character set, 64-bit FNV-1a hash, serialization, and error
+     semantics fixed in
+     [ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md).
+  3. **Hand-rolled, versioned, dependency-free authoring/metadata/
+     runtime-artifact formats**, per
+     [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md).
+  4. **CMake `DEPENDS`-based re-import triggering, with no derived-data
+     cache** built by this spec.
+  5. **A static position/color mesh as the first and only asset type**,
+     with the closed loop verified against Spec 0011's own already-
+     committed golden.
+  6. **No new third-party dependency** — no glTF/Assimp, UUID, hashing,
+     or JSON/YAML/TOML library.
+  7. **No Runtime dependency, and no Android, hot-reload, asynchronous
+     streaming, virtual file system, or general serialization framework**
+     in this spec's scope.
+
+  **Three corrections were directed by Human Review and applied before
+  this approval was recorded:**
+  1. **Dependency correction.** Asset System depends on Atlantis Core
+     only — not on RHI, Renderer, Vulkan Backend, RenderGraph, Shader
+     System, Platform, Runtime, or Tools. The importer/cooker and the
+     runtime artifact loader produce and consume a strict CPU-side
+     `StaticMeshAssetData` (exact naming a Plan-stage detail); the
+     composition root (a test, an example, or a future Runtime) owns the
+     GPU handoff, resolving the `VertexInputLayout` through Shader
+     System's public `rhi_integration` surface and calling the existing,
+     unmodified `atlantis::renderer::createMesh()` itself. Tools depends
+     on Asset System, never the reverse. No Renderer-integration
+     submodule is introduced; if implementation proves one unavoidable,
+     that is a new architectural question to raise, not to resolve
+     silently. All language implying Asset System itself creates GPU
+     meshes or names RHI/Renderer types was removed from this Spec and
+     from ADR-0043/ADR-0045.
+  2. **Byte-order correction.** The runtime artifact's on-disk format is
+     **unconditionally little-endian** — a fixed property of the format,
+     not of the writing host. The ambiguous "native/little-endian"
+     phrasing was removed. Both currently-supported targets (x86-64
+     Windows, ARM/AArch64 Android ABI) are natively little-endian, so a
+     conforming implementation on either needs no byte swapping in
+     practice; a future big-endian host would be required to swap, not
+     permitted to write host-endian bytes. The rule governs the Asset ID,
+     header fields, floats, and indices alike.
+  3. **Collision-detection correction.** The collision guarantee is
+     scoped to what is implementable without a global asset database:
+     within the asset set declared to a single importer/validator
+     invocation, Asset ID collisions and case-only-differing logical
+     paths must each be detected and returned as a distinct `Err`. This
+     spec makes **no** claim of repository-global collision detection
+     across independent build invocations. The Plan must arrange a
+     validation step whose declared input set covers every asset the
+     repository declares (CMake organization left to the Plan), and a
+     future asset registry/database spec must re-establish global
+     uniqueness on its own terms.
+
+  All three ADRs ([ADR-0043](../adr/0043-asset-system-module-boundary.md),
+  [ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md),
+  [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md))
+  move to `Accepted` alongside this approval. This approval authorizes
+  drafting a Plan against this Spec; it does not itself authorize
+  Implementation, which requires that Plan's own Human Review per
+  [AGENTS.md](../AGENTS.md).
 - **Independent Review — Round 1 (2026-08-18):** Agent-performed,
   read-only-then-mechanical-fix review — not Human Review — conducted
   against this spec's and both ADRs' actual drafted text, cross-checked
@@ -43,13 +117,13 @@
   presented itself once the cross-platform-identical-ID requirement was
   taken as fixed. See
   [PR #55](https://github.com/slmao/Atlantis/pull/55) for the full
-  revision history across both rounds. This spec's own seven
-  Human-Review-required decisions (Risks & Open Questions) remain open,
-  undecided by either review round, and are now ready for the human
-  maintainer's own formal, one-pass Human Review and `Approved` decision.
-  All three ADRs remain `Proposed` pending that same Human Review.
-- **Related Plan(s):** none yet — a Plan may be drafted once this Spec
-  and its ADRs are `Approved`/`Accepted`, per [AGENTS.md](../AGENTS.md).
+  revision history across both rounds. Both review rounds were
+  agent-performed and decided none of this spec's own seven
+  Human-Review-required decisions; those were resolved by the Human
+  Review Approval recorded above.
+- **Related Plan(s):** none yet — a Plan may now be drafted against this
+  `Approved` Spec, and requires its own Human Review before any
+  Implementation begins, per [AGENTS.md](../AGENTS.md).
 - **Related ADR(s):**
   [ADR-0043](../adr/0043-asset-system-module-boundary.md)
   (module boundary and dependency boundary),
@@ -57,16 +131,19 @@
   (asset identity, provenance, and import/re-import methodology), and
   [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
   (data format, versioning, and third-party dependency policy) — all
-  three `Proposed`. See Architectural Impact.
+  three `Accepted` 2026-08-19. See Architectural Impact.
 
 ## Summary
 
 This spec proposes Atlantis's first Asset System: a foundation for
 turning checked-in, human-authored **authoring source** into a
-versioned, deterministic **runtime artifact** that existing RHI/Renderer
-code can load and consume — with no scene graph, no asset database, no
-package system, and no change to any existing Renderer/RHI/Vulkan
-public API. It fixes asset identity, a metadata schema, the authoring/
+versioned, deterministic **runtime artifact**, loaded into CPU-side data
+that a composition root can hand to existing Renderer code — with no
+scene graph, no asset database, no package system, and no change to any
+existing Renderer/RHI/Vulkan public API. The module itself depends on
+Atlantis Core alone and never touches a GPU type; the GPU handoff
+belongs to whichever test, example, or future Runtime composes the
+frame. It fixes asset identity, a metadata schema, the authoring/
 runtime separation ADR-0035 requires every future data-model spec to
 address explicitly, and a deterministic, dependency-tracked import
 pipeline — proven by one real, minimal, verifiable closed loop: importing
@@ -257,15 +334,22 @@ Explicitly excluded from this spec's design and implementation:
   indirect, or instanced draw capability. See "Why the first asset type
   is a mesh, not a texture" under Proposed Design.
 - **Any change to an existing Renderer, RHI, or Vulkan Backend public
-  API.** This spec's runtime loader is a new consumer of
+  API.** Asset System does not depend on those modules at all; the
+  composition root feeds this spec's CPU-side output into
   `atlantis::renderer::createMesh()`'s **existing, unmodified** public
-  signature (`src/renderer/include/atlantis/renderer/mesh.h`) — it adds
-  no new parameter, no new overload with different semantics, and no
-  new public type to any of those three modules. If this spec's own
-  design work had found a genuine need to change one of those APIs, this
-  spec would stop and raise that explicitly as its own architectural
-  question rather than fold it in silently — it did not find such a
-  need (see Requirements).
+  signature (`src/renderer/include/atlantis/renderer/mesh.h`) — no new
+  parameter, no new overload with different semantics, and no new public
+  type in any of those three modules. If this spec's own design work had
+  found a genuine need to change one of those APIs, this spec would stop
+  and raise that explicitly as its own architectural question rather
+  than fold it in silently — it did not find such a need (see
+  Requirements).
+- **An Asset System ↔ RHI/Renderer integration submodule** of the kind
+  Shader System needed (`Atlantis::ShaderSystemRhiIntegration`). Asset
+  System's own output is plain CPU data `createMesh()` already accepts
+  unchanged, so no translation layer is warranted — see ADR-0043. If
+  implementation ever proves one unavoidable, that is a real
+  architectural change to raise explicitly, not to add silently.
 - **A rename-stable, sidecar-backed GUID identity scheme.** See
   Architectural Impact/Risks & Open Questions — this spec recommends a
   narrower, disclosed-limitation identity scheme for its own Phase 1
@@ -334,11 +418,24 @@ Explicitly excluded from this spec's design and implementation:
   see Risks & Open Questions item 7) is non-cryptographic and the space
   of possible source paths is unbounded, though practically negligible
   at this project's realistic scale (see ADR-0044's own width analysis).
-  The importer must detect this if it ever occurs and fail with a
-  distinct `Err` rather than silently associating either path's data
-  with the shared ID — the same fail-fast-on-invalid-input discipline
-  this spec's own Error handling requirements apply everywhere else (see
-  ADR-0044).
+  **Within the set of assets declared to a single importer/validator
+  invocation**, an Asset ID collision, and a pair of logical paths
+  differing only by case, must each be detected and reported as a
+  distinct `Err` — never silently merged, and never resolved by whichever
+  entry the filesystem or build system happened to supply first. This is
+  the same fail-fast-on-invalid-input discipline this spec's own Error
+  handling requirements apply everywhere else.
+- **This spec does not claim repository-global collision detection.**
+  With no asset registry or database (see "No global mutable asset
+  database" below) and no derived-data cache, nothing here observes
+  assets never presented together in one invocation — e.g. assets
+  declared by independent build targets, or added in a later, separate
+  build. This spec's own Plan must therefore arrange a validation step
+  whose declared input set covers every asset the repository declares,
+  so the guarantee above covers the whole asset set in practice; exactly
+  how that is organized in CMake is a Plan-stage decision. A future
+  asset registry/database spec inherits the obligation to re-establish
+  global uniqueness on its own terms (see ADR-0044).
 - **Asset ID is a distinct concept from a cache/rebuild key.** An Asset
   ID names *what* a piece of content is, deterministically; a cache key
   (see "Deterministic import" below) determines *when* a re-import must
@@ -376,11 +473,14 @@ Explicitly excluded from this spec's design and implementation:
   type — they are not the same data structure. The authoring source is
   a small, human-readable, hand-rolled text format a human can author
   and diff in an ordinary PR; the runtime artifact is a small,
-  versioned binary format laid out to be loaded directly into the exact
-  buffer shape `atlantis::renderer::createMesh()` already expects (raw
-  vertex bytes matching a `VertexInputLayout`, plus a `std::uint16_t`
-  index array — see "Why the first asset type is a mesh, not a texture"
-  under Proposed Design for why this exact shape was chosen).
+  versioned binary format that loads into the CPU-side
+  `StaticMeshAssetData` structure (raw vertex bytes plus a
+  `std::uint16_t` index array and their counts) — a shape chosen because
+  a composition root can hand it to the existing, unmodified
+  `atlantis::renderer::createMesh()` with no conversion step, though
+  Asset System itself never makes that call (see "Module ownership and
+  dependency boundaries" above, and "Why the first asset type is a mesh,
+  not a texture" under Proposed Design).
 - The **transformation step** connecting them is a deterministic
   **importer/cooker**: a build-time-or-explicitly-invoked tool (exact
   invocation model — build-integrated like Shader System's `slangc`
@@ -421,35 +521,55 @@ Explicitly excluded from this spec's design and implementation:
   Architectural Impact/ADR-0043).
 - Whatever the outcome, the following boundaries hold, verified against
   the current, real dependency structure of every module named:
-  - **Depends on RHI** (to construct GPU-consumable `Buffer`s via the
-    existing `atlantis::renderer::createMesh()` path) **and Core**
-    (`Result<T,E>`, logging, assertions) — both already-`Accepted`,
-    already-implemented, stable dependencies, matching how every other
-    RHI-consuming module already depends on them.
-  - **May depend on Atlantis Shader System's public
-    `rhi_integration` surface** (`atlantis::shader_system::rhi_integration`,
-    e.g. `toVertexInputLayout()`) to resolve which `VertexInputLayout` an
-    imported mesh must be cooked against — the same public surface
-    `examples/headless_rendering_demo` already consumes, never Shader
-    System's own private JSON parser or private implementation.
-  - **Renderer, RHI, and Vulkan Backend gain no new dependency on Asset
-    System.** Asset System depends on their existing public output
-    types (`Mesh`, `VertexInputLayout`); none of them is modified to
-    depend back on Asset System, matching the existing, unidirectional
-    dependency shape every other consumer of RHI/Renderer already
-    follows.
-  - **Atlantis Tools** hosts, at minimum, the importer/cooker's own
-    command-line entry point — matching `docs/architecture/module_boundaries.md`'s
+  - **Depends on Atlantis Core only** (`Result<T,E>`, logging,
+    assertions) plus the C++ standard library — an already-`Accepted`,
+    already-implemented, stable dependency. Asset System does **not**
+    depend on RHI, Renderer, Vulkan Backend, RenderGraph, Shader System,
+    Platform, Runtime, or Tools; no GPU, windowing, graphics-API, or
+    OS-process concept appears in its public surface or implementation.
+  - **Produces and consumes CPU-side data, never GPU resources.** The
+    importer/cooker writes, and the runtime artifact loader reads, a
+    strict CPU-side static-mesh data structure (working name
+    `StaticMeshAssetData`; exact naming and layout a Plan-stage detail)
+    carrying vertex bytes, the index array, and the counts/metadata
+    needed to interpret them. Asset System never creates an
+    `atlantis::renderer::Mesh`, never calls
+    `atlantis::renderer::createMesh()`, never constructs an
+    `atlantis::rhi::Buffer`, and never names an
+    `atlantis::rhi::VertexInputLayout` — see ADR-0043.
+  - **The composition root owns the GPU handoff.** A test, an example,
+    or eventually a future Atlantis Runtime calls Asset System's loader
+    for `StaticMeshAssetData`, separately resolves the
+    `VertexInputLayout` through Atlantis Shader System's own public
+    `rhi_integration` surface
+    (`atlantis::shader_system::rhi_integration::toVertexInputLayout()` —
+    never Shader System's private JSON parser or private
+    implementation), and passes both into the existing, unmodified
+    `atlantis::renderer::createMesh()`. This is exactly what
+    `examples/headless_rendering_demo` and
+    `tests/image_regression/fixture/minimal_cube_fixture.*` already do
+    today with hand-authored arrays; this spec replaces the *source* of
+    that CPU data, not the composition consuming it.
+  - **No Renderer-integration submodule is introduced** (unlike Shader
+    System's own `Atlantis::ShaderSystemRhiIntegration`, which exists
+    because reflection metadata must be *translated into* a
+    `VertexInputLayout`; Asset System's output needs no such
+    translation). If implementation ever proves this unavoidable, that
+    is a real architectural change to raise explicitly, not to add
+    silently — see ADR-0043.
+  - **Renderer, RHI, Vulkan Backend, RenderGraph, and Shader System gain
+    no new dependency, in either direction.** None is modified to depend
+    on Asset System, and Asset System depends on none of them.
+  - **Atlantis Tools** hosts the importer/cooker's own command-line
+    entry point — matching `docs/architecture/module_boundaries.md`'s
     own (`PROPOSED`, not yet `Accepted`) description of Tools'
     responsibilities as including "asset processing," and matching
     Shader System's own precedent of a Tools-hosted CLI
     (`atlantis_shader_compiler`) invoking a separate module's own
-    library code. Whether Asset System's own *runtime-loading* code (the
-    half a future Renderer-adjacent consumer links against) also lives
-    under Tools, or under a new dedicated module, is exactly ADR-0043's
-    own question — see Architectural Impact for why this spec's own
-    analysis finds this structurally significant, not a naming
-    preference.
+    library code. **The dependency runs Tools → Asset System only**;
+    Asset System never depends on Tools. Asset System's own
+    runtime-loading code lives in the Asset System module itself, not
+    under Tools — see ADR-0043.
   - **No dependency on a future Atlantis Runtime module.** Nothing in
     this spec's own scope requires Runtime to exist — see "Why this does
     not wait for Runtime" above.
@@ -459,11 +579,13 @@ Explicitly excluded from this spec's design and implementation:
 - This spec's implementation must import one real, checked-in authoring
   source file — the same cube geometry
   `examples/headless_rendering_demo`'s `kCubeVertices`/`kCubeIndices`
-  already hand-authors — through its own importer/cooker, load the
-  resulting runtime artifact through a new runtime-loading API, and feed
-  it into the **existing, unmodified**
+  already hand-authors — through its own importer/cooker, and load the
+  resulting runtime artifact into `StaticMeshAssetData` through a new
+  runtime-loading API. **The composition root** (a test or example, per
+  "Module ownership and dependency boundaries" above) then feeds that
+  CPU data into the **existing, unmodified**
   `atlantis::renderer::createMesh()` call this project's own examples
-  already use.
+  already use — Asset System itself makes no such call.
 - The loaded, imported mesh, rendered through the existing, unmodified
   `Renderer` → RenderGraph → RHI → Vulkan Backend stack with the same
   fixed camera/material this project's own reused fixture already uses,
@@ -542,20 +664,32 @@ Explicitly excluded from this spec's design and implementation:
 ### Pipeline shape
 
 ```
+=== Atlantis Asset System (new module; depends on Core ONLY) ===========
+
 Authoring source (checked in, human-readable, hand-rolled text format)
   |
   v
-Importer/cooker (Atlantis Tools-hosted CLI; deterministic;
-                  reads exactly one source file per invocation)
+Importer/cooker library  <-- invoked by a Tools-hosted CLI
+  (deterministic; reads exactly one source file per invocation)
   |
-  +--> Runtime artifact (versioned binary: raw vertex bytes matching a
-  |     VertexInputLayout, plus a std::uint16_t index array)
+  +--> Runtime artifact (versioned binary, little-endian: header +
+  |     raw vertex bytes + std::uint16_t index array)
   |
   +--> Metadata sidecar (versioned flat text: Asset ID, source identity,
         importer version, per-asset-type fields)
         |
         v
-Runtime loader (new library code; Result-returning; no exceptions)
+Runtime artifact loader (Result-returning; no exceptions)
+  |
+  v
+StaticMeshAssetData  <-- CPU-side data. Asset System's OUTPUT BOUNDARY.
+  |                      No RHI/Renderer type crosses this line.
+=== end Asset System ===================================================
+  |
+  v
+Composition root (a test, an example, or eventually a future Runtime) --
+  owns the GPU handoff; separately resolves VertexInputLayout via
+  shader_system::rhi_integration::toVertexInputLayout()
   |
   v
 atlantis::renderer::createMesh()  <-- EXISTING, UNMODIFIED public API
@@ -590,14 +724,12 @@ already accepts
 (`src/renderer/include/atlantis/renderer/mesh.h`). This is why mesh
 geometry, not a texture, is this spec's one supported asset type.
 
-### Module boundary (recommended, not decided here — see ADR-0043)
+### Module boundary (see ADR-0043)
 
-This spec's own recommendation, offered for Human Review to confirm or
-redirect: **a new, tenth top-level module, `Atlantis Asset System`**,
-mirroring Shader System's own precedent almost exactly — an authoring
-format, a Tools-hosted CLI producing a versioned runtime artifact, and a
-small runtime-loading library other modules link against. The reasoning
-is structural, not stylistic:
+**A new, tenth top-level module, `Atlantis Asset System`**, mirroring
+Shader System's own precedent almost exactly — an authoring format, a
+Tools-hosted CLI, and a small, Core-only library other code links
+against. The reasoning is structural, not stylistic:
 
 - `docs/architecture/module_boundaries.md`'s own text states, for both
   candidate hosts: **Tools** — "**Depended on by:** nothing — no runtime
@@ -606,22 +738,31 @@ is structural, not stylistic:
   not-yet-`Accepted` candidate hosts are, by their own current
   description, structural **leaves** — nothing may link against either
   of them as a library. This spec's own runtime-loading half must be
-  linkable by a future Renderer-adjacent consumer (an example, a test,
-  eventually a future Runtime) — a requirement neither Tools nor Runtime
-  can satisfy without first changing *their own* module boundary, which
-  would itself be a larger, separate architectural change than this
-  spec is scoped to make.
-- **Core** is explicitly scoped to "non-graphics utilities" — this
-  spec's runtime loader has a real, direct dependency on RHI (`Buffer`
-  creation) that does not fit Core's own existing boundary.
+  linkable by a future consumer (an example, a test, eventually a future
+  Runtime) — a requirement neither Tools nor Runtime can satisfy without
+  first changing *their own* module boundary, which would itself be a
+  larger, separate architectural change than this spec is scoped to
+  make.
+- **Core** is explicitly scoped to "non-graphics utilities." Asset
+  System's own logic is in fact non-graphics — it is pure data
+  transformation with no GPU concept — but it is a substantial,
+  independently-versioned subsystem with its own authoring format,
+  artifact schema, identity scheme, and CLI, not a small shared utility.
+  Folding it into Core would make Core the owner of an entire asset
+  pipeline every other module transitively inherits, which is a
+  different and much broader role than Core's own stated boundary
+  describes.
 - Shader System itself was not folded into Tools' own already-drafted
   (`PROPOSED`, not `Accepted`) "asset processing" language for exactly
   this reason: a module with a real, versioned, runtime-consumed public
   schema earns its own top-level position. Asset System has the same
-  shape.
-- Under this recommendation, **Renderer, RHI, and Vulkan Backend are
-  entirely unchanged** — Asset System depends on their existing public
-  output types; they gain no new dependency and no new public API.
+  shape — and, like Shader System's own base library, depends on Core
+  alone.
+- Under this decision, **Renderer, RHI, Vulkan Backend, RenderGraph, and
+  Shader System are entirely unchanged, in both directions** — none
+  depends on Asset System, and Asset System depends on none of them. The
+  composition root, not Asset System, performs the GPU handoff (see
+  Requirements/"Module ownership and dependency boundaries").
 
 The alternative — hosting the importer/cooker under Tools (consistent
 with `module_boundaries.md`'s own current draft language) and finding
@@ -629,14 +770,15 @@ some other home for the runtime-loading half — is named honestly in
 Alternatives Considered, with its own real cost (it requires either
 amending Tools' or Runtime's own "depended on by nothing" boundary, or
 routing runtime consumption through Renderer itself, reopening Spec
-0007's own settled boundary). Whichever way Human Review decides, this
-spec's own Plan implements exactly that decision — this Proposed Design
-section states a recommendation, not a fait accompli.
+0007's own settled boundary). Human Review accepted the new-module
+decision on 2026-08-19 (see the Human Review Approval note at the top of
+this document); this spec's own Plan implements exactly that decision.
 
 ## Architectural Impact
 
-This spec introduces three new architectural decisions, each drafted as
-its own `Proposed` ADR. The module-boundary decision and the data-
+This spec introduces three new architectural decisions, each recorded as
+its own ADR — all three `Accepted` 2026-08-19 alongside this spec's own
+Human Review Approval. The module-boundary decision and the data-
 format/dependency decision were originally drafted as one combined ADR
 and split into two, at the human maintainer's own explicit request
 before Human Review, on the grounds that the two are independently
@@ -644,9 +786,10 @@ evolvable — see ADR-0043's own Revision History.
 
 - [ADR-0043](../adr/0043-asset-system-module-boundary.md) —
   Asset System Module Boundary. Covers: new top-level module versus
-  existing-module combination (see Proposed Design above), and the
-  resulting dependency edges to Core, RHI, Shader System, Tools, and a
-  future Runtime.
+  existing-module combination (see Proposed Design above); Asset
+  System's **Core-only** dependency; the CPU-side `StaticMeshAssetData`
+  output boundary; the composition root's ownership of the GPU handoff;
+  and the one-directional Tools → Asset System edge.
 - [ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md) —
   Asset System Identity, Provenance, and Import Methodology. Covers:
   the Asset ID scheme and its disclosed limitations, now including its
@@ -686,16 +829,15 @@ is its Asset ID scheme and its versioned metadata/artifact-format
 schema — never the importer's own internal C++ parsing/cooking types,
 none of which is exposed publicly.
 
-**ADR-0032 compliance:** this spec places Asset System, if approved as a
-new module (ADR-0043's own recommendation), in the "Runtime Services"/
-"Authoritative Runtime" boundary of the conceptual five-layer view
-(alongside Render, per
+**ADR-0032 compliance:** this spec places Asset System, `Accepted` as a
+new module (ADR-0043), in the "Runtime Services" boundary of the
+conceptual five-layer view (per
 [docs/architecture/engine_architecture.md](../docs/architecture/engine_architecture.md)'s
-own illustrative mapping) and as a new, tenth top-level module in the
-authoritative nine-module source-ownership view, depending on Core and
-RHI, optionally on Shader System's public `rhi_integration` surface, and
-depended on by nothing yet (its own consumers — examples, tests, a
-future Runtime — are all outside this spec's own module).
+own illustrative, non-binding mapping) and as a new, tenth top-level
+module in the authoritative nine-module source-ownership view,
+**depending on Atlantis Core alone**, and depended on by nothing yet
+(its own consumers — examples, tests, a Tools-hosted CLI, and eventually
+a future Runtime — are all outside this spec's own module).
 
 **ADR-0033 is not implicated by this spec.** ADR-0033 governs
 authoritative *world state* and Client access to it — a future World/
@@ -801,18 +943,32 @@ verify — this Spec document itself introduces no code.
     parsing failure mode (wrong field count, wrong field name at a
     position, unknown `schema_version`, malformed value) returns a
     distinct, expected `Err`.
-  - Runtime-artifact loading: a well-formed artifact loads into the
-    exact `VertexInputLayout`-compatible buffer shape
-    `atlantis::renderer::createMesh()` expects; a malformed/truncated
-    artifact is rejected with a distinct `Err`, never a crash or a
-    silent, partially-populated result.
+  - Runtime-artifact loading: a well-formed artifact loads into a
+    correctly-populated `StaticMeshAssetData` (vertex bytes, index
+    array, and counts intact); a malformed/truncated artifact is
+    rejected with a distinct `Err`, never a crash or a silent,
+    partially-populated result. These tests link Asset System and Core
+    only — no `Device`, no GPU, and no RHI/Renderer target is required
+    to run them, which is a direct, testable consequence of the
+    Core-only module boundary.
+  - Runtime-artifact byte order: an artifact written on the (little-
+    endian) development host is byte-for-byte identical to a
+    fixed, checked-in expected-bytes vector, confirming the format's own
+    unconditional little-endian contract rather than merely whatever the
+    host happened to emit.
   - Asset ID computation: deterministic for a fixed source path;
     documented, tested behavior for the disclosed rename/move limitation
     (an Asset ID changing after a rename is expected, tested behavior
-    under this spec's own recommended scheme — not a bug); a
-    deliberately constructed hash collision (two distinct source paths
-    forced to share one Asset ID) is detected and rejected with a
-    distinct `Err`, never silently merged (see Requirements).
+    under this spec's own recommended scheme — not a bug); each rejected
+    path form (absolute path, Windows drive prefix, root-escaping `..`,
+    non-ASCII byte) returns its own distinct `Err`.
+  - Collision detection, **scoped to one invocation's declared asset
+    set**: a deliberately constructed Asset ID collision, and a
+    case-only-differing pair of logical paths, are each detected within a
+    single importer/validator invocation and rejected with a distinct
+    `Err`, never silently merged. No test asserts repository-global
+    collision detection, which this spec explicitly does not provide (see
+    Requirements and ADR-0044).
 - **GPU-required tests (Windows/Vulkan, `gpu`-labeled):**
   - The full closed loop: import the checked-in cube authoring source,
     load the resulting runtime artifact, construct a `Mesh` via the
@@ -927,10 +1083,13 @@ these as silently decided:
    character set for Phase 1 (a disclosed scope-narrowing choice that
    sidesteps Unicode normalization-form divergence entirely, not an
    oversight); FNV-1a, 64-bit, applied to the normalized path's own
-   bytes; native/little-endian 8-byte serialization in binary contexts
-   (reusing ADR-0045's own byte-order rule) and a fixed-width lowercase
-   hex string in the metadata sidecar's text; and a fail-fast, distinct
-   `Err` on any detected collision. No smaller alternative was found that
+   bytes; unconditionally little-endian 8-byte serialization in binary
+   contexts (reusing ADR-0045's own fixed byte-order rule) and a
+   fixed-width lowercase hex string in the metadata sidecar's text; and a
+   fail-fast, distinct `Err` on any collision detected **within one
+   importer/validator invocation's own declared asset set** (this spec
+   does not provide repository-global collision detection — see
+   Requirements and ADR-0044). No smaller alternative was found that
    still guarantees Windows and a future Android cook path compute the
    identical Asset ID for the identical logical source — see ADR-0044's
    own "Why Windows and a future Android cook path are guaranteed to
