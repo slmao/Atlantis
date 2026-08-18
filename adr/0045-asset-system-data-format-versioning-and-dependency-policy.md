@@ -1,9 +1,12 @@
 # ADR 0045: Asset System — Data Format, Versioning, and Third-Party Dependency Policy
 
-- **Status:** Proposed
-- **Date:** 2026-08-18
-- **Deciders:** &lt;pending Human Review&gt;
-- **Related Spec:** [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md)
+- **Status:** Accepted
+- **Date:** 2026-08-18 (accepted 2026-08-19 — see Revision History)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-19 as part of Spec 0012's Human Review Approval; see
+  that spec's own Human Review Approval note for the full approval
+  record and the directed corrections this ADR carries.
+- **Related Spec:** [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md) (`Approved`)
 - **Related ADR(s):**
   [ADR-0043](0043-asset-system-module-boundary.md) (module boundary) —
   sibling ADR this content was originally drafted alongside, split out
@@ -16,6 +19,25 @@
   (flat text, versioned, anchored-prefix parsing) and the blanket
   no-new-third-party-dependency policy those algorithm/parameter choices
   operate under — the two are cross-referenced rather than duplicated.
+
+## Revision History
+
+- **2026-08-18 (split from ADR-0043):** Created by splitting the
+  data-format, versioning, and third-party-dependency content out of
+  ADR-0043's own original combined draft — see Context.
+- **2026-08-19 (Human Review corrections, then `Accepted`):** Human
+  Review directed two corrections before accepting this ADR. (1) The
+  runtime artifact's on-disk byte order is now stated as an
+  **unconditional little-endian format contract**, replacing the earlier
+  "native/little-endian" phrasing that conflated a property of the
+  format with a property of whichever host wrote it. (2) The runtime
+  artifact format's own description no longer names
+  `atlantis::renderer::createMesh()` or `atlantis::rhi::VertexInputLayout`
+  as things Asset System itself touches — it loads into the CPU-side
+  `StaticMeshAssetData` boundary
+  [ADR-0043](0043-asset-system-module-boundary.md) fixes, and the
+  composition root performs the GPU handoff. This ADR then moved to
+  `Accepted`.
 
 ## Context
 
@@ -62,23 +84,30 @@ interchange, hashing, or serialization dependency is introduced.**
   [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md).
 - **Runtime artifact format:** a small, versioned binary layout — a
   fixed header (magic bytes, `schema_version`, vertex count, index
-  count) followed by raw vertex bytes matching a `VertexInputLayout`,
-  followed by raw `std::uint16_t` index bytes — loaded directly into the
-  exact shape `atlantis::renderer::createMesh()` already expects, with
-  no transformation at load time beyond a byte-count/header-consistency
-  check. Not a general-purpose binary serialization format; specific to
-  this one asset type's own two flat arrays. **Byte order:** all
-  multi-byte fields (header integers, vertex floats, index values) are
-  written and read in the host's native byte order — little-endian on
-  every currently-relevant Atlantis target (x86-64 Windows development,
-  ARM/AArch64 Android) — with no explicit endianness marker or
-  conversion step, matching how `atlantis::renderer::createMesh()`
-  already consumes raw bytes today. No big-endian target exists or is
-  planned for Atlantis; a future one would require this format to add an
-  explicit endianness marker first — a disclosed limitation, not
-  designed against now. This same native/little-endian rule is reused,
-  not reinvented, for the Asset ID's own binary serialization — see
-  [ADR-0044](0044-asset-system-identity-provenance-and-import-methodology.md),
+  count) followed by raw vertex bytes, followed by raw `std::uint16_t`
+  index bytes — loaded into the CPU-side `StaticMeshAssetData` structure
+  [ADR-0043](0043-asset-system-module-boundary.md) fixes as Asset
+  System's own output type, with no transformation at load time beyond a
+  byte-count/header-consistency check. The composition root (a test, an
+  example, or eventually a future Runtime) is what subsequently hands
+  that CPU data to `atlantis::renderer::createMesh()`; Asset System
+  itself never does, and this format therefore names no RHI or Renderer
+  type. Not a general-purpose binary serialization format; specific to
+  this one asset type's own two flat arrays. **Byte order: the on-disk
+  format is unconditionally little-endian.** This is a fixed property of
+  the file format itself, not a property inherited from whatever host
+  happens to write or read it: every multi-byte field (header integers,
+  the Asset ID, vertex floats, index values) is little-endian on disk by
+  definition. Both of Atlantis's currently-supported targets (x86-64
+  Windows development, and the ARM/AArch64 Android ABI) are natively
+  little-endian, so a conforming reader/writer on either needs no byte
+  swapping in practice — but that is a convenient coincidence of the
+  supported platforms, not the contract. A future big-endian host would
+  be required to byte-swap on read and write to conform; it would not be
+  permitted to write host-endian bytes and call them valid. No such
+  target exists or is planned. This same fixed little-endian rule
+  governs the Asset ID's own binary serialization — see
+  [ADR-0044](0044-asset-system-identity-provenance-and-import-methodology.md) —
   keeping exactly one byte-order rule for this Spec's entire binary
   surface.
 - **Metadata sidecar format (wire encoding):** a strict, versioned flat
