@@ -6,6 +6,7 @@ add_executable(atlantis_asset_system_tests
   mesh_source_tests.cpp
   asset_metadata_tests.cpp
   mesh_artifact_tests.cpp
+  load_tests.cpp
   module_boundary_tests.cpp
 )
 
