@@ -1,0 +1,23 @@
+atlantis_static_mesh_source_version: 1
+vertex_count: 8
+index_count: 36
+vertex: -0.5 -0.5 -0.5 0.0 0.0 0.0
+vertex: 0.5 -0.5 -0.5 1.0 0.0 0.0
+vertex: 0.5 0.5 -0.5 1.0 1.0 0.0
+vertex: -0.5 0.5 -0.5 0.0 1.0 0.0
+vertex: -0.5 -0.5 0.5 0.0 0.0 1.0
+vertex: 0.5 -0.5 0.5 1.0 0.0 1.0
+vertex: 0.5 0.5 0.5 1.0 1.0 1.0
+vertex: -0.5 0.5 0.5 0.0 1.0 1.0
+index: 0 1 2
+index: 2 3 0
+index: 5 4 7
+index: 7 6 5
+index: 4 0 3
+index: 3 7 4
+index: 1 5 6
+index: 6 2 1
+index: 4 5 1
+index: 1 0 4
+index: 3 2 6
+index: 6 7 3

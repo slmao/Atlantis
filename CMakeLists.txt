@@ -54,6 +54,17 @@ add_subdirectory(src/renderer)
 add_subdirectory(src/shader_system)
 add_subdirectory(src/tools/shader_compiler)
 add_subdirectory(src/tools/asset_cooker)
+# Must come after add_subdirectory(src/asset_system) and
+# add_subdirectory(src/tools/asset_cooker) (Plan 0012 Section D4):
+# atlantis_add_static_mesh_asset() is defined in the former and this
+# call site's own custom command invokes the atlantis_asset_cooker
+# target defined in the latter.
+add_subdirectory(assets)
+# Plan 0012 Section D4: called exactly once, after every
+# add_subdirectory() that could declare an asset (today, just assets/
+# above) -- writes the accumulated declared-asset list and declares the
+# set-level validation target.
+atlantis_finalize_asset_validation()
 # Must come after add_subdirectory(src/shader_system) (Plan 0008 Section
 # 7/8): atlantis_add_slang_shader_pair() is defined there, and this call
 # site invokes it.
