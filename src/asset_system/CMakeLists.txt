@@ -10,6 +10,7 @@ add_library(atlantis_asset_system STATIC
   src/mesh_source.cpp
   src/asset_metadata.cpp
   src/mesh_artifact.cpp
+  src/cook.cpp
 )
 add_library(Atlantis::AssetSystem ALIAS atlantis_asset_system)
 
