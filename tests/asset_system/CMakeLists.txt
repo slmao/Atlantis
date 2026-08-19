@@ -3,6 +3,9 @@ add_executable(atlantis_asset_system_tests
   logical_path_tests.cpp
   asset_id_tests.cpp
   asset_set_validation_tests.cpp
+  mesh_source_tests.cpp
+  asset_metadata_tests.cpp
+  mesh_artifact_tests.cpp
   module_boundary_tests.cpp
 )
 

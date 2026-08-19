@@ -7,6 +7,9 @@ add_library(atlantis_asset_system STATIC
   src/logical_path.cpp
   src/asset_id.cpp
   src/asset_set_validation.cpp
+  src/mesh_source.cpp
+  src/asset_metadata.cpp
+  src/mesh_artifact.cpp
 )
 add_library(Atlantis::AssetSystem ALIAS atlantis_asset_system)
 
