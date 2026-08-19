@@ -4,6 +4,9 @@
 # tests/asset_system/module_boundary_tests.cpp's own include scan.
 add_library(atlantis_asset_system STATIC
   src/static_mesh_asset_data.cpp
+  src/logical_path.cpp
+  src/asset_id.cpp
+  src/asset_set_validation.cpp
 )
 add_library(Atlantis::AssetSystem ALIAS atlantis_asset_system)
 
