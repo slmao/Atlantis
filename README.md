@@ -44,13 +44,12 @@ built with.
   local/manual gate, verified on one reference GPU/driver. Automated
   CI-enforced gating is not yet implemented (see
   [docs/process/ci-strategy.md](docs/process/ci-strategy.md))
-- Asset System foundation — implemented (Spec 0012, `Approved`): a
-  deterministic authoring-source → runtime-artifact pipeline
-  (`src/asset_system/`) for one asset type (a static mesh), proven end
-  to end against the existing image regression golden with zero channel
-  difference — see `src/README.md`'s own
-  `asset_system/`/`tools/asset_cooker/` entries and the Spec 0012 row in
-  [specs/README.md](specs/README.md) for the Implementation PR link
+- Asset System foundation — implemented (Spec 0012, `Approved`,
+  [PR #58](https://github.com/slmao/Atlantis/pull/58)): a deterministic
+  authoring-source → runtime-artifact pipeline (`src/asset_system/`) for
+  one asset type (a static mesh), proven end to end against the
+  existing image regression golden with zero channel difference — see
+  `src/README.md`'s own `asset_system/`/`tools/asset_cooker/` entries
 - Vulkan Validation Layers as a correctness gate
 - RenderDoc-based debugging
 
