@@ -121,9 +121,10 @@
   agent-performed and decided none of this spec's own seven
   Human-Review-required decisions; those were resolved by the Human
   Review Approval recorded above.
-- **Related Plan(s):** none yet — a Plan may now be drafted against this
-  `Approved` Spec, and requires its own Human Review before any
-  Implementation begins, per [AGENTS.md](../AGENTS.md).
+- **Related Plan(s):**
+  [plans/0012-asset-system-foundation.md](../plans/0012-asset-system-foundation.md)
+  (`Draft`) — requires its own Human Review before any Implementation
+  begins, per [AGENTS.md](../AGENTS.md).
 - **Related ADR(s):**
   [ADR-0043](../adr/0043-asset-system-module-boundary.md)
   (module boundary and dependency boundary),
