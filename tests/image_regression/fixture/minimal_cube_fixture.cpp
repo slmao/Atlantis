@@ -1,5 +1,6 @@
 #include "minimal_cube_fixture.h"
 
+#include <atlantis/asset_system/load.h>
 #include <atlantis/render_graph/execution.h>
 #include <atlantis/render_graph/render_graph_builder.h>
 #include <atlantis/renderer/draw_item.h>
@@ -290,6 +291,100 @@ Result<PixelBuffer, FixtureRenderError> renderOneFrame(MinimalCubeFixture& fixtu
   target.reset();  // Ends this cycle's borrow (RAII, ADR-0038) -- no release()/consume() call.
 
   return Result<PixelBuffer, FixtureRenderError>::Ok(std::move(result));
+}
+
+// Plan 0012 Step 6: identical to setUpMinimalCubeFixture() above except
+// for exactly one step -- where the mesh's vertex/index bytes come
+// from. This function is the composition root: it loads Asset System's
+// CPU-side StaticMeshAssetData, resolves the VertexInputLayout via the
+// same minimalMeshVertexLayout() helper the hand-authored path already
+// uses, and calls the existing, unmodified createMesh() itself, passing
+// the loaded data's own bytes straight through with no intermediate
+// copy or transformation -- Asset System's own code never touches RHI
+// or calls createMesh().
+Result<MinimalCubeFixture, FixtureSetupError> setUpMinimalCubeFixtureFromAsset(const char* artifactPath,
+                                                                                const char* metadataPath) {
+  const auto vertexSpirv = loadSpirvFile("shaders/minimal_mesh.vert.spv");
+  const auto fragmentSpirv = loadSpirvFile("shaders/minimal_mesh.frag.spv");
+  if (!vertexSpirv.has_value() || !fragmentSpirv.has_value()) {
+    return Result<MinimalCubeFixture, FixtureSetupError>::Err(FixtureSetupError::ShaderLoadFailed);
+  }
+
+  auto vertexReflectionResult = loadReflectionMetadata("shaders/minimal_mesh.vert.refl.json");
+  if (vertexReflectionResult.isErr()) {
+    return Result<MinimalCubeFixture, FixtureSetupError>::Err(FixtureSetupError::ShaderLoadFailed);
+  }
+  const auto vertexInputLayout = minimalMeshVertexLayout(vertexReflectionResult.value());
+  if (!vertexInputLayout.has_value()) {
+    return Result<MinimalCubeFixture, FixtureSetupError>::Err(FixtureSetupError::ShaderLoadFailed);
+  }
+
+  auto assetResult = atlantis::asset_system::loadStaticMeshAsset(artifactPath, metadataPath);
+  if (assetResult.isErr()) {
+    return Result<MinimalCubeFixture, FixtureSetupError>::Err(FixtureSetupError::AssetLoadFailed);
+  }
+  const atlantis::asset_system::StaticMeshAssetData& meshData = assetResult.value();
+
+  auto deviceResult = atlantis::vulkan_backend::createDevice(
+      {.applicationName = "Atlantis Image Regression Fixture (Asset)", .enableValidationLayers = true});
+  if (deviceResult.isErr()) {
+    return Result<MinimalCubeFixture, FixtureSetupError>::Err(FixtureSetupError::DeviceCreationFailed);
+  }
+
+  MinimalCubeFixture fixture;
+  fixture.device = std::move(deviceResult.value());
+
+  auto meshResult = createMesh(*fixture.device, *vertexInputLayout, meshData.vertexBytes().data(),
+                                meshData.vertexBytes().size(), meshData.indices().data(),
+                                static_cast<std::uint32_t>(meshData.indices().size()));
+  if (meshResult.isErr()) {
+    return Result<MinimalCubeFixture, FixtureSetupError>::Err(FixtureSetupError::ResourceCreationFailed);
+  }
+  fixture.mesh = std::move(meshResult.value());
+
+  auto cameraBufferResult =
+      fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = sizeof(float) * 32});
+  if (cameraBufferResult.isErr()) {
+    return Result<MinimalCubeFixture, FixtureSetupError>::Err(FixtureSetupError::ResourceCreationFailed);
+  }
+  fixture.cameraBuffer = std::move(cameraBufferResult.value());
+
+  auto materialResult = createMaterial(
+      *fixture.device, {.vertexShader = {.spirvWords = vertexSpirv->data(), .wordCount = vertexSpirv->size()},
+                         .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
+                         .vertexInputLayout = *vertexInputLayout,
+                         .colorFormat = kFixtureColorFormat,
+                         .depthFormat = DepthFormat::D32Sfloat,
+                         .pushConstantSizeBytes = sizeof(float) * 16});
+  if (materialResult.isErr()) {
+    return Result<MinimalCubeFixture, FixtureSetupError>::Err(FixtureSetupError::ResourceCreationFailed);
+  }
+  fixture.material = std::move(materialResult.value());
+
+  const Extent2D extent{kFixtureExtentPixels, kFixtureExtentPixels};
+
+  auto depthTextureResult = fixture.device->createTexture({.extent = extent, .format = DepthFormat::D32Sfloat});
+  if (depthTextureResult.isErr()) {
+    return Result<MinimalCubeFixture, FixtureSetupError>::Err(FixtureSetupError::ResourceCreationFailed);
+  }
+  fixture.depthTexture = std::move(depthTextureResult.value());
+
+  auto offscreenTargetResult =
+      fixture.device->createOffscreenTarget(OffscreenTargetCreateParams{.extent = extent, .format = kFixtureColorFormat});
+  if (offscreenTargetResult.isErr()) {
+    return Result<MinimalCubeFixture, FixtureSetupError>::Err(FixtureSetupError::ResourceCreationFailed);
+  }
+  fixture.offscreenTarget = std::move(offscreenTargetResult.value());
+
+  const std::size_t readbackSizeBytes = static_cast<std::size_t>(kFixtureExtentPixels) * kFixtureExtentPixels * 4;
+  auto readbackBufferResult =
+      fixture.device->createBuffer({.purpose = BufferPurpose::Readback, .sizeBytes = readbackSizeBytes});
+  if (readbackBufferResult.isErr()) {
+    return Result<MinimalCubeFixture, FixtureSetupError>::Err(FixtureSetupError::ResourceCreationFailed);
+  }
+  fixture.readbackBuffer = std::move(readbackBufferResult.value());
+
+  return Result<MinimalCubeFixture, FixtureSetupError>::Ok(std::move(fixture));
 }
 
 }  // namespace atlantis::image_regression

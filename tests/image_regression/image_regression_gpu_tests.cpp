@@ -89,6 +89,46 @@ TEST_CASE("Full capture-compare cycle against the committed minimal_cube golden 
   REQUIRE(fixture.device->waitIdle().isOk());
 }
 
+TEST_CASE("The Asset-System-sourced cube matches the committed minimal_cube golden with zero difference",
+          "[image_regression][gpu]") {
+  // Plan 0012 Step 6 / D8: reuses the existing, already-committed
+  // golden -- this test never writes to tests/image_regression/goldens/
+  // and the golden generator is never invoked. A failure here means the
+  // importer or the authoring source needs fixing, never the golden.
+  const std::filesystem::path artifactPath =
+      std::filesystem::path(ATLANTIS_ASSET_ARTIFACT_DIR) / "meshes" / "minimal_cube.amesh";
+  const std::filesystem::path metadataPath =
+      std::filesystem::path(ATLANTIS_ASSET_ARTIFACT_DIR) / "meshes" / "minimal_cube.amesh.meta.txt";
+
+  auto fixtureResult = setUpMinimalCubeFixtureFromAsset(artifactPath.string().c_str(), metadataPath.string().c_str());
+  REQUIRE(fixtureResult.isOk());
+  MinimalCubeFixture fixture = std::move(fixtureResult.value());
+
+  auto renderResult = renderOneFrame(fixture);
+  REQUIRE(renderResult.isOk());
+  const PixelBuffer actual = std::move(renderResult.value());
+
+  auto goldenResult =
+      loadAndValidateGolden(goldenPngPath(kMinimalCubeGoldenName), goldenSidecarPath(kMinimalCubeGoldenName));
+  {
+    INFO("INVALID GOLDEN: the committed minimal_cube golden must load and validate cleanly");
+    REQUIRE(goldenResult.isOk());
+  }
+  const ValidatedGolden& validatedGolden = goldenResult.value();
+
+  REQUIRE(actual.width == validatedGolden.pixels.width);
+  REQUIRE(actual.height == validatedGolden.pixels.height);
+
+  const ComparisonReport report = compareBuffers(actual, validatedGolden.pixels);
+  if (!report.passed) {
+    (void)writeFailureArtifacts(ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR,
+                                 std::string(kMinimalCubeGoldenSlug) + "_from_asset", actual, validatedGolden.pixels);
+  }
+  REQUIRE(report.passed);
+
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
 TEST_CASE("Repeated capture cycles against the same fixture produce byte-identical results",
           "[image_regression][gpu]") {
   auto fixtureResult = setUpMinimalCubeFixture();

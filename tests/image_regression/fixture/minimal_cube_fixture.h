@@ -39,7 +39,7 @@ struct MinimalCubeFixture {
 inline constexpr std::uint32_t kFixtureExtentPixels = 512;
 inline constexpr atlantis::rhi::Format kFixtureColorFormat = atlantis::rhi::Format::Rgba8Unorm;
 
-enum class FixtureSetupError { DeviceCreationFailed, ShaderLoadFailed, ResourceCreationFailed };
+enum class FixtureSetupError { DeviceCreationFailed, ShaderLoadFailed, ResourceCreationFailed, AssetLoadFailed };
 
 // Constructs every long-lived resource once (mirrors
 // headless_rendering_demo's own setup sequence). Must be called with
@@ -49,6 +49,21 @@ enum class FixtureSetupError { DeviceCreationFailed, ShaderLoadFailed, ResourceC
 // generator's and image_regression_gpu_tests.cpp's own
 // WORKING_DIRECTORY wiring.
 [[nodiscard]] atlantis::Result<MinimalCubeFixture, FixtureSetupError> setUpMinimalCubeFixture();
+
+// Plan 0012 Step 6: identical to setUpMinimalCubeFixture() in every
+// respect except where the cube's vertex/index bytes come from -- here,
+// loaded from a cooked Asset System runtime artifact (artifactPath) and
+// its metadata sidecar (metadataPath) via
+// atlantis::asset_system::loadStaticMeshAsset(), instead of the
+// hand-authored kCubeVertices/kCubeIndices arrays. This is the
+// composition root ADR-0043 requires: it resolves the VertexInputLayout
+// via Shader System's existing rhi_integration surface and calls the
+// existing, unmodified atlantis::renderer::createMesh() itself -- Asset
+// System's own code never does either. setUpMinimalCubeFixture() itself
+// is untouched, so the hand-authored path remains available as the
+// comparison baseline.
+[[nodiscard]] atlantis::Result<MinimalCubeFixture, FixtureSetupError> setUpMinimalCubeFixtureFromAsset(
+    const char* artifactPath, const char* metadataPath);
 
 enum class FixtureRenderError { AcquireFailed, CommandListCreationFailed, SubmitFailed, WaitIdleFailed };
 

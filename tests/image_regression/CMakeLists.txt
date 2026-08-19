@@ -59,13 +59,19 @@ catch_discover_tests(atlantis_image_regression_gpu_tests
 
 # Absolute, configure-time paths for everything this executable's own
 # test code needs to find that is NOT the shader pair -- goldens, the
-# machine-local environment file, and where to write failure
-# diagnostics. None of the three depends on WORKING_DIRECTORY.
+# machine-local environment file, where to write failure diagnostics,
+# and (Plan 0012 Step 6) where cooked Asset System artifacts land. None
+# of the four depends on WORKING_DIRECTORY.
 target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
   ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
   ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR="${CMAKE_BINARY_DIR}/image_regression_failures"
+  ATLANTIS_ASSET_ARTIFACT_DIR="${CMAKE_BINARY_DIR}/assets"
 )
+
+# Plan 0012 Step 6: the asset-sourced GPU test case needs
+# minimal_cube's own cooked artifact/metadata to already exist.
+add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TARGET})
 
 # Same build-tree shader artifact set as the golden generator -- this
 # executable renders the identical fixture. WORKING_DIRECTORY above

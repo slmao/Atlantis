@@ -16,6 +16,11 @@ target_link_libraries(atlantis_image_regression_fixture
     Atlantis::RenderGraph
     Atlantis::ShaderSystem
     Atlantis::ShaderSystemRhiIntegration
+    # Plan 0012 Step 6: this fixture is the composition root -- it
+    # depends on Atlantis::AssetSystem to load CPU-side mesh data and
+    # then calls the existing, unmodified createMesh() itself. Asset
+    # System itself gains no dependency in the other direction.
+    Atlantis::AssetSystem
     atlantis_compiler_warnings
 )
 
