@@ -572,6 +572,44 @@ milestone being listed does not authorize starting it — see Section 1.
   regeneration tool; Vulkan Validation Layers as a hard gate,
   consistent with every earlier milestone.
 
+### Milestone 9 — Asset System foundation
+
+- **Governance state:** **`Approved` Spec, `Approved` Plan, Implemented —
+  [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md),
+  [plans/0012-asset-system-foundation.md](../plans/0012-asset-system-foundation.md).**
+  Human Review Approval recorded 2026-08-19 for both the Spec (with
+  three targeted corrections applied at approval time — see the Spec's
+  own Human Review Approval note) and the Plan. Its Architectural Impact
+  identified three new decisions, filed as
+  [ADR-0043](../adr/0043-asset-system-module-boundary.md) (module
+  boundary — a new, tenth top-level module, Atlantis Asset System,
+  depending on Core only),
+  [ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md)
+  (path-derived Asset ID, provenance, import methodology), and
+  [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
+  (hand-rolled data formats, no new third-party dependency), all
+  `Accepted` alongside the Spec approval. Does not depend on, and is not
+  blocked by, a future Atlantis Runtime — see the Spec's own "Why this
+  does not wait for Runtime."
+- **Scope actually delivered:** a deterministic authoring-source →
+  runtime-artifact pipeline for one asset type (a static
+  position/colour mesh) — logical-path normalization, a 64-bit FNV-1a
+  Asset ID, declared-set collision/case-conflict validation, three
+  hand-rolled versioned formats (all unconditionally little-endian on
+  disk, never a host-endian struct dump), a deterministic cooker with
+  atomic (write-to-temp-then-`rename()`) output, a CMake stamp-based
+  build integration mirroring Shader System's own precedent, a
+  file-level runtime loader returning CPU-only data, and a composition
+  root (`tests/image_regression/fixture/`) that loads that data and
+  calls the existing, unmodified `atlantis::renderer::createMesh()` —
+  proven end to end by rendering the one real, checked-in asset
+  (`assets/meshes/minimal_cube.mesh.txt`) and comparing it against the
+  already-committed Milestone 8 golden with **zero** channel difference.
+- **Not implemented** (per Spec 0012's own Non-Goals, unchanged): a
+  second asset type, `glTF`/Assimp import, a rename-stable GUID identity
+  scheme, a real derived-data cache, any new Renderer/RHI/Vulkan public
+  API, and Android/iOS/Linux implementation of any kind.
+
 ### Further candidate phases (directional only, no Spec, no ADR)
 
 The following are named only to communicate long-term direction drawn
@@ -581,7 +619,6 @@ model, dependency, or API chosen.** Each requires its own Spec and, for
 anything architectural, its own ADR before any of the below moves past
 "named":
 
-- Asset system
 - Runtime Host / composition root (the actual `Atlantis Runtime`
   module — distinct from the informal, non-shipping composition
   Spec 0003's own verification demo used, which that spec explicitly
@@ -612,6 +649,7 @@ anything architectural, its own ADR before any of the below moves past
 | M6 | The same Renderer output from M4 appears on an Android device/emulator via the Android Platform + Vulkan Backend path, with no Renderer/RenderGraph code fork. |
 | M7 | **Met** (headless GPU-readback path). The same rendering stack from M4, driven headlessly via `OffscreenTarget`, produces a GPU-readback image with no window or swapchain involved — see `examples/headless_rendering_demo` and the Spec 0010 row in [specs/README.md](../specs/README.md). Pixel/image-level comparison *against the windowed output* is explicitly Milestone 8/Image Regression Testing's own, separate scope, not part of M7/Spec 0010 — see the M8 row below (`Approved`, implemented, partially met). |
 | M8 | **Partially met.** A human/agent-run golden-image comparison (`ctest -L gpu` against `tests/image_regression/`) genuinely catches an intentionally introduced rendering regression and passes on a known-good build — see `specs/README.md`'s Spec 0011 row and [PR #52](https://github.com/slmao/Atlantis/pull/52) for the real, recorded proof. **Not yet met:** this comparison does not yet run in CI or gate merges automatically — no CI pipeline exists in this repository (see [docs/process/ci-strategy.md](../docs/process/ci-strategy.md)). |
+| M9 | **Met.** A real, checked-in authoring-source mesh (`assets/meshes/minimal_cube.mesh.txt`) is cooked deterministically, loaded as CPU-only data, and rendered through the existing, unmodified Renderer → RenderGraph → RHI → Vulkan Backend stack by a test-owned composition root — pixel-identical (zero channel difference) to the M8 golden — see the Spec 0012 row in [specs/README.md](../specs/README.md). |
 
 ## 7. Explicitly deferred or off-limits for now
 

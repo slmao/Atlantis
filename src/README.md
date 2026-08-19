@@ -178,6 +178,44 @@ or caching any RHI/GPU resource itself. Implemented per
 and [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)–[ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md),
 merged via [PR #36](https://github.com/slmao/Atlantis/pull/36).
 
+**`asset_system/`** — Atlantis Asset System: a deterministic
+authoring-source → runtime-artifact pipeline for one asset type (a
+static position/colour mesh). Target `atlantis_asset_system`, alias
+`Atlantis::AssetSystem` (`Atlantis::Core`-only — no RHI, Renderer,
+RenderGraph, Shader System, Vulkan Backend, Platform, or Tools
+dependency, verified by an include-scanning test). Provides logical-path
+normalization (a pure string algorithm, never
+`std::filesystem::path`-based), a 64-bit FNV-1a Asset ID, declared-set
+collision/case-conflict validation
+(`validateAssetSet()`/`DeclaredAsset`), strict parse/serialize for all
+three formats (authoring source, metadata sidecar, and an
+unconditionally little-endian binary runtime artifact — every field,
+including vertex floats via `std::bit_cast`, assembled by explicit
+shift/mask, never a host-struct `memcpy`), a deterministic cooker
+(`cookStaticMesh()`) with atomic (write-to-temp-then-`rename()`) output,
+and a file-level loader (`loadStaticMeshAsset()`) returning CPU-only
+`StaticMeshAssetData` — never an RHI type. A composition root outside
+this module (currently `tests/image_regression/fixture/`) is
+responsible for passing that data into the existing, unmodified
+`atlantis::renderer::createMesh()`. Implemented per
+[specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md),
+[plans/0012-asset-system-foundation.md](../plans/0012-asset-system-foundation.md),
+and
+[ADR-0043](../adr/0043-asset-system-module-boundary.md)–[ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md).
+
+**`tools/asset_cooker/`** — Atlantis Tools' second real content:
+`atlantis_asset_cooker`, a CLI invoked at build time by CMake's
+`atlantis_add_static_mesh_asset()` (defined in
+`src/asset_system/CMakeLists.txt`, mirroring
+`atlantis_add_slang_shader_pair()`'s own stamp/`BYPRODUCTS` pattern) to
+cook one declared asset, and by `atlantis_finalize_asset_validation()`
+to run its own `--validate-set` mode over every declared asset's logical
+path. A thin CLI split into a testable library
+(`atlantis_asset_cooker_lib`) and a small `main.cpp` doing
+`--flag=value` argv parsing — links `Atlantis::AssetSystem` and
+`Atlantis::Core` only. Implemented per the same Spec 0012/Plan
+0012/ADR-0043–0045 references above.
+
 **`tools/shader_compiler/`** — Atlantis Tools' first real content:
 `atlantis_shader_compiler`, a CLI invoked at build time by CMake's
 `atlantis_add_slang_shader_pair()` (defined in

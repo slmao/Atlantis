@@ -139,6 +139,45 @@ frame-to-frame state across calls, and that `Mesh`/`Material` are never
 created, cached, or looked up by `Renderer` itself. Run via
 `ctest --test-dir build -C Debug -LE gpu --output-on-failure`.
 
+**`asset_system/`** — unit tests for Atlantis Asset System, per
+[specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md)/[plans/0012-asset-system-foundation.md](../plans/0012-asset-system-foundation.md),
+built as the `atlantis_asset_system_tests` Catch2 v3 executable.
+Entirely GPU-independent — no test in this executable carries the CTest
+`gpu` label. Covers `StaticMeshAssetData` construction/move semantics;
+logical-path normalization's legal/illegal boundary forms
+(`logical_path_tests.cpp`); Asset ID computation against independently-
+computed FNV-1a reference vectors and little-endian serialization
+(`asset_id_tests.cpp`); declared-set collision/case-conflict/duplicate
+detection via hand-injected `AssetId` pairs, not a discovered real hash
+collision (`asset_set_validation_tests.cpp`); strict parse/serialize
+round-trips and every malformed/truncated/version/overflow/non-finite
+case for all three formats, including a fixed expected-byte-vector case
+pinning the little-endian contract specifically
+(`mesh_source_tests.cpp`, `asset_metadata_tests.cpp`,
+`mesh_artifact_tests.cpp`); the file-level loader's success, each
+failure mode, and a deliberate artifact/metadata mismatch
+(`load_tests.cpp`); and a static include scan proving no source under
+`src/asset_system/` references RHI, Renderer, RenderGraph, Shader
+System, Platform, Vulkan Backend, Tools, or any Vulkan header
+(`module_boundary_tests.cpp`). No Vulkan device or window is required.
+
+**`tools/asset_cooker/`** — tests for the `atlantis_asset_cooker` CLI,
+per the same Spec/Plan 0012 references, built as two executables:
+- `atlantis_asset_cooker_command_tests` — GPU-independent, carries no
+  CTest `gpu` label. Exercises `runCookCommand()` in-process (no
+  subprocess) across cook mode (success, unreadable/malformed source, an
+  escaping logical path) and validate-set mode (a valid declared set, a
+  duplicate, a case-only conflict, an unnormalized path, a missing list
+  file).
+- `atlantis_asset_cooker_determinism_tests` — carries the CTest label
+  `tool` (needs the real, just-built cooker executable at test-run time,
+  no GPU/Vulkan device), matching the `tool` label
+  `tests/tools/shader_compiler/CMakeLists.txt`'s own
+  `atlantis_shader_compiler_toolchain_integration_tests` target already
+  established. Launches the real `atlantis_asset_cooker` executable
+  twice and byte-compares both output files, proving determinism through
+  the actual CLI.
+
 **`image_regression/`** — tests for Atlantis's image regression
 harness, per
 [specs/0011-image-regression-testing-foundation.md](../specs/0011-image-regression-testing-foundation.md)/[plans/0011-image-regression-testing-foundation.md](../plans/0011-image-regression-testing-foundation.md),

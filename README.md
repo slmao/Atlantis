@@ -44,6 +44,13 @@ built with.
   local/manual gate, verified on one reference GPU/driver. Automated
   CI-enforced gating is not yet implemented (see
   [docs/process/ci-strategy.md](docs/process/ci-strategy.md))
+- Asset System foundation — implemented (Spec 0012, `Approved`): a
+  deterministic authoring-source → runtime-artifact pipeline
+  (`src/asset_system/`) for one asset type (a static mesh), proven end
+  to end against the existing image regression golden with zero channel
+  difference — see `src/README.md`'s own
+  `asset_system/`/`tools/asset_cooker/` entries and the Spec 0012 row in
+  [specs/README.md](specs/README.md) for the Implementation PR link
 - Vulkan Validation Layers as a correctness gate
 - RenderDoc-based debugging
 
@@ -256,8 +263,11 @@ checked-in `.spv`/`.glsl` pair. Implementation merged via
 Debug and Release builds, the full GPU-independent/`tool`/GPU-required
 test suites, and a manual demo run, Vulkan Validation Layers clean
 throughout — see [specs/README.md](specs/README.md) for full scope and
-verification detail. Runtime and general asset/scene systems remain
-unimplemented — see [src/README.md](src/README.md).
+verification detail. A foundational Asset System is implemented (Spec
+0012, `Approved`) for one asset type (a static mesh) — see
+`src/README.md`'s own `asset_system/` entry below. Runtime, general
+scene systems, and additional asset types remain unimplemented — see
+[src/README.md](src/README.md).
 
 Android and iOS remain specified architecturally only (not implemented);
 Vulkan Backend's Android WSI path is likewise not implemented. Headless
@@ -278,11 +288,16 @@ including its Accepted Amendment adding an "Initial baseline bootstrap"
 category for a scene's first-ever golden. This is a working
 **local/manual** gate; there is no CI pipeline yet, so automated,
 CI-enforced image-regression gating remains not implemented — see
-[docs/process/ci-strategy.md](docs/process/ci-strategy.md). Android
-Platform and Vulkan Presentation is the next candidate item (see
-[specs/README.md](specs/README.md) Section B) — not yet drafted or
-approved. See [docs/](docs/) for what's documented so far and the open
-architectural questions still awaiting human decisions.
+[docs/process/ci-strategy.md](docs/process/ci-strategy.md). A
+foundational Asset System (Spec 0012, `Approved`, implemented) followed
+next, by explicit human direction, ahead of Android Platform — see
+[specs/README.md](specs/README.md) for full scope and verification
+detail. **Android Platform and Vulkan Presentation remains the next
+candidate item** (see [specs/README.md](specs/README.md) Section B) —
+not yet drafted or approved; its own scope and dependencies are
+unchanged by this reprioritization. See [docs/](docs/) for what's
+documented so far and the open architectural questions still awaiting
+human decisions.
 
 ## License
 
