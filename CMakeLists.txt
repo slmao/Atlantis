@@ -41,6 +41,7 @@ if(NOT ATLANTIS_SPIRV_VAL_EXECUTABLE)
 endif()
 
 add_subdirectory(src/core)
+add_subdirectory(src/asset_system)
 add_subdirectory(src/platform)
 add_subdirectory(src/rhi)
 add_subdirectory(src/vulkan_backend)
@@ -52,6 +53,18 @@ add_subdirectory(src/renderer)
 # and only directories processed after this one can see it.
 add_subdirectory(src/shader_system)
 add_subdirectory(src/tools/shader_compiler)
+add_subdirectory(src/tools/asset_cooker)
+# Must come after add_subdirectory(src/asset_system) and
+# add_subdirectory(src/tools/asset_cooker) (Plan 0012 Section D4):
+# atlantis_add_static_mesh_asset() is defined in the former and this
+# call site's own custom command invokes the atlantis_asset_cooker
+# target defined in the latter.
+add_subdirectory(assets)
+# Plan 0012 Section D4: called exactly once, after every
+# add_subdirectory() that could declare an asset (today, just assets/
+# above) -- writes the accumulated declared-asset list and declares the
+# set-level validation target.
+atlantis_finalize_asset_validation()
 # Must come after add_subdirectory(src/shader_system) (Plan 0008 Section
 # 7/8): atlantis_add_slang_shader_pair() is defined there, and this call
 # site invokes it.
@@ -70,6 +83,7 @@ if(ATLANTIS_BUILD_TESTS)
   enable_testing()
   include(cmake/AtlantisDependencies.cmake)
   add_subdirectory(tests/core)
+  add_subdirectory(tests/asset_system)
   add_subdirectory(tests/platform)
   add_subdirectory(tests/rhi)
   add_subdirectory(tests/vulkan_backend)
@@ -78,4 +92,5 @@ if(ATLANTIS_BUILD_TESTS)
   add_subdirectory(tests/renderer)
   add_subdirectory(tests/shader_system)
   add_subdirectory(tests/tools/shader_compiler)
+  add_subdirectory(tests/tools/asset_cooker)
 endif()

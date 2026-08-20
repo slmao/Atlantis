@@ -275,6 +275,56 @@ module's own spec.
 
 ---
 
+## Atlantis Asset System
+
+**Status: Approved (Spec 0012, ADR-0043/ADR-0044/ADR-0045, all
+`Accepted`)** — the first module in this document with real, accepted
+governance behind it rather than only a `PROPOSED` draft description;
+this section states the accepted boundary, not a placeholder.
+
+**Responsibilities:** turns checked-in, human-authored authoring source
+into a deterministic, versioned runtime artifact plus a metadata
+sidecar, and loads that artifact back into CPU-side data
+(`atlantis::asset_system::StaticMeshAssetData`, this Spec's one
+supported asset type). Never constructs a GPU resource itself.
+
+**Depends on:** Core only. No RHI, Renderer, RenderGraph, Shader System,
+Vulkan Backend, Platform, or Tools dependency — verified by an
+include-scanning test (`tests/asset_system/module_boundary_tests.cpp`),
+not merely stated.
+
+**Depended on by:** Tools (the `atlantis_asset_cooker` CLI entry point)
+and, outside this module, any composition root that loads an asset and
+then itself constructs a GPU `Mesh` from the CPU data returned —
+currently `tests/image_regression/fixture/`, eventually a future
+Atlantis Runtime. Asset System itself is never depended on by Renderer,
+RHI, RenderGraph, or Vulkan Backend, and gains no dependency from any of
+them in the other direction either.
+
+**Forbidden:** no RHI, Renderer, RenderGraph, Shader System, Vulkan
+Backend, Platform, or Tools header anywhere in this module's own source.
+No construction of `atlantis::rhi::Buffer` or any other GPU resource —
+that is exclusively the composition root's job, using the module's
+existing, unmodified `atlantis::renderer::createMesh()`.
+
+**Ownership:** each loaded `StaticMeshAssetData` is an explicit,
+caller-held value — never a global, static, or singleton registry. No
+in-process asset cache or database of any kind exists in this module.
+
+**Public/private boundary:** public surface is path normalization,
+Asset ID computation, the cooker/loader functions, and the three data
+formats' own parse/serialize functions. The cooker's atomic-write
+mechanism and the CMake stamp/`BYPRODUCTS` integration are internal to
+the build graph, not part of the runtime-consumed public API.
+
+**Extension points:** a second asset type (textures — blocked on a
+future RHI Spec adding a general sampled `Texture`/`Sampler` capability
+first), a rename-stable GUID identity scheme, and a real derived-data
+cache are each named, explicitly out-of-scope future work in Spec 0012
+— not designed or scaffolded here.
+
+---
+
 ## Atlantis Runtime
 
 **Responsibilities:** the application/executable layer. Owns an Atlantis
@@ -316,13 +366,16 @@ not designed.
 
 ## Atlantis Tools
 
-**Responsibilities:** offline/developer tooling — asset processing,
-shader precompilation CLI, debug-capture glue (e.g. RenderDoc workflow
-per [testing-strategy.md](../process/testing-strategy.md)).
+**Responsibilities:** offline/developer tooling — the
+`atlantis_asset_cooker` CLI entry point (Spec 0012, `Approved`; the real
+cooking logic lives in Atlantis Asset System, not here), shader
+precompilation CLI, debug-capture glue (e.g. RenderDoc workflow per
+[testing-strategy.md](../process/testing-strategy.md)). This narrows an
+earlier, more generic "asset processing" phrase now that Spec 0012 has
+fixed the actual boundary — Tools hosts the CLI entry point only.
 
-**Depends on:** Core, Shader System, and other modules as needed for what
-a given tool processes (e.g. RHI for an offline asset baker that needs
-GPU resource concepts — TBD per that tool's own spec).
+**Depends on:** Core, Shader System, Atlantis Asset System, and other
+modules as needed for what a given tool processes.
 
 **Depended on by:** nothing — no runtime module ever depends on Tools.
 

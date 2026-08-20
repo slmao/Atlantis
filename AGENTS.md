@@ -163,7 +163,13 @@ none should ever need to contradict these:
 
 Top-level modules: **Atlantis Core, Atlantis Platform, Atlantis RHI,
 Atlantis Vulkan Backend, Atlantis RenderGraph, Atlantis Renderer, Atlantis
-Shader System, Atlantis Runtime, Atlantis Tools.**
+Shader System, Atlantis Asset System, Atlantis Runtime, Atlantis Tools.**
+Atlantis Asset System (Spec 0012, `Approved`) depends on Atlantis Core
+only — no RHI, Renderer, or Shader System dependency; a composition root
+outside the module (a test, an example, or eventually Atlantis Runtime)
+loads its CPU-side asset data and is itself responsible for constructing
+any GPU resource from it. See
+[ADR-0043](adr/0043-asset-system-module-boundary.md).
 
 **Atlantis Platform** is the per-OS windowing/surface/lifecycle
 abstraction — it is to *operating systems* what RHI is to *graphics
