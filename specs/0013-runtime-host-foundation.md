@@ -159,10 +159,10 @@
     Backlog renumbering and World/ECS's own corrected dependency entry
     were re-checked and found internally consistent, apart from the one
     stale cross-reference fixed above.
-- **Related Plan(s):** None yet — a plan may now be drafted against this
-  `Approved` spec, per [AGENTS.md](../AGENTS.md); Plan 0013 has not been
-  drafted by this document, and may only be drafted once this spec's own
-  PR has merged into `main` (see Human Review Approval above).
+- **Related Plan(s):**
+  [plans/0013-runtime-host-foundation.md](../plans/0013-runtime-host-foundation.md)
+  (`Draft`) — requires its own Human Review before any Implementation
+  begins, per [AGENTS.md](../AGENTS.md).
 - **Related ADR(s):** Builds on
   [ADR-0001](../adr/0001-rhi-backend-independence.md)–[ADR-0005](../adr/0005-platform-module-multi-os-windowing.md),
   [ADR-0009](../adr/0009-assertion.md),
