@@ -1,9 +1,25 @@
 # Plan: Runtime Host Foundation
 
 - **Spec:** [specs/0013-runtime-host-foundation.md](../specs/0013-runtime-host-foundation.md) (`Approved`, Human Review Approval recorded 2026-08-20)
-- **Status:** Draft
+- **Status:** In Review
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
   direction.
+- **Independent Review (2026-08-21):** Centralized, agent-performed
+  review — not Human Review — of this Plan's actual PR content against
+  the real Platform/RHI/Vulkan Backend/Renderer/Asset System/Shader
+  System source and the existing composition roots, focused specifically
+  on Platform-shutdown-versus-member-destruction ordering as the
+  highest-priority risk this round was asked to check. Found and fixed
+  one real design gap (not an active bug in any single traced-through
+  path, but a real fragility: the original design's correctness rested
+  entirely on six independent, hand-written teardown sequences each
+  staying correctly ordered under future maintenance, with nothing to
+  catch a mistake) and two smaller ones, all corrected directly on this
+  branch — no fix required reopening `Accepted` ADR-0046/ADR-0047,
+  changing any composed module's public API, or moving a module
+  boundary. See "Deviations, objections, and open mechanical details"
+  for the full record, and D4a specifically for the `PlatformSession`
+  RAII redesign this round's own highest-priority finding produced.
 - **Related ADR(s):**
   [ADR-0046](../adr/0046-runtime-composition-ownership-and-frame-lifecycle.md)
   (composition, object ownership, frame lifecycle) and
@@ -107,8 +123,18 @@ class RuntimeLifecycleTracker {
   RuntimeLifecycleTracker() noexcept;  // starts Uninitialized
   [[nodiscard]] RuntimeLifecycleState state() const noexcept;
 
+  // True once markRunning() has ever been called, even after a later
+  // transition to Failed/ShuttingDown/ShutDown -- never reset. This is
+  // what distinguishes "failed during the six fixed initialization
+  // steps, before any frame ever ran" from "failed during the frame
+  // loop, after Running was genuinely reached" -- the exact distinction
+  // D8's waitIdle() usage depends on (a Device that was never handed a
+  // command list has nothing to wait for; one that reached Running may
+  // have submitted real GPU work).
+  [[nodiscard]] bool hasEverRun() const noexcept;
+
   void beginInitializing();  // Uninitialized -> Initializing
-  void markRunning();        // Initializing -> Running
+  void markRunning();        // Initializing -> Running; sets hasEverRun() true, permanently
   void markFailed();         // Initializing | Running -> Failed
   void beginShutdown();      // Initializing | Running | Failed -> ShuttingDown;
                               // ShuttingDown | ShutDown -> no-op (idempotent)
@@ -116,6 +142,7 @@ class RuntimeLifecycleTracker {
 
  private:
   RuntimeLifecycleState state_ = RuntimeLifecycleState::Uninitialized;
+  bool everRan_ = false;
 };
 ```
 
@@ -127,7 +154,7 @@ Every transition not listed above (e.g. `Running` → `Initializing`,
 `Atlantis::Core` (for `ATLANTIS_CHECK_MSG`) — it names no Platform, RHI,
 or Vulkan Backend type, so it is genuinely testable without a GPU or a
 window, independent of what else `Atlantis::RuntimeHost`'s own target
-happens to link. `RuntimeApplication` (D6) owns exactly one
+happens to link. `RuntimeApplication` (D4) owns exactly one
 `RuntimeLifecycleTracker` and is the only type that calls its mutators.
 
 ### D3. Error taxonomy — `RuntimeInitError`, `RuntimeExitReason`, exhaustive RHI-error classification
@@ -166,13 +193,10 @@ mapping is applied once, at `createRuntimeApplication()`'s own single
 // Every PresentationError/SubmitError enumerator that acquireNextTarget()/
 // present()/submit() can actually return as Err(...) is, uniformly,
 // Runtime-unrecoverable (Spec 0013's own Presentation-and-error-state
-// table) -- these two functions exist so that mapping is exhaustive and
-// *compiler-enforced*: each switches over every real enumerator with NO
-// default case, so a future RHI change adding a new PresentationError/
-// SubmitError variant fails to compile here rather than silently falling
-// through -- directly closing the exact class of gap Spec 0013's own
-// independent review round found and fixed (the originally-omitted
-// SwapchainCreationFailed).
+// table). Each function switches over every real enumerator with NO
+// default case and no code following the switch -- see this section's
+// own note below on exactly what that does and does not guarantee, and
+// the one edit that would silently defeat it.
 [[nodiscard]] RuntimeExitReason classifyPresentationError(atlantis::rhi::PresentationError error) noexcept;
 [[nodiscard]] RuntimeExitReason classifySubmitError(atlantis::rhi::SubmitError error) noexcept;
 ```
@@ -185,7 +209,108 @@ Unknown}` (four values) and `SubmitError{QueueSubmitFailed, DeviceLost}`
 differentiation — Spec 0013's own outcome table assigns the identical
 response to every one of these six values.
 
-### D4. `BootstrapConfig` and `RuntimeApplication` — object model, ownership, destruction order
+**What "no default case" actually enforces here, verified empirically
+against this project's own real compiler invocation, not assumed:**
+`cl /W4 /WX` (`cmake/CompilerWarnings.cmake`'s exact flags for this
+project) does **not** itself warn about an unhandled enumerator in a
+`switch` with no `default` — confirmed by compiling a minimal,
+`void`-returning reproduction with those exact flags: it built cleanly,
+with no diagnostic at all. What *does* fail the build is **C4715, "not
+all control paths return a value"** — confirmed by compiling the same
+reproduction with a non-`void` return type and no code after the
+`switch`: `cl /W4 /WX` failed with `error C2220` promoting `warning
+C4715` to an error (GCC/Clang's equivalent is `-Wreturn-type`, also
+promoted by `-Werror`). Both `classifyPresentationError()`/
+`classifySubmitError()` share that exact shape (non-`void` return, no
+code after the `switch`), so the *build itself* genuinely fails if a
+future RHI change adds a new enumerator without a corresponding `case`
+being added here — this is real, verified compiler enforcement, not an
+assumption.
+
+**The one edit that would silently defeat this, flagged so it is never
+made:** adding a `default: return RuntimeExitReason::UnrecoverableRuntimeError;`
+to either switch — a plausible-looking "fix" for what a future reader
+might mistake for an incomplete-switch warning — would satisfy C4715
+(there is now always a return) while making the exhaustiveness check
+disappear entirely: a new enumerator would then silently fall into
+`default` with the same result these functions already always return
+today, and the build would stay green with real coverage gone. Both
+switches carry a code comment stating this explicitly, directly above
+their own closing brace, so a future editor sees the warning before
+adding one.
+
+### D4. `PlatformSession`, `BootstrapConfig`, and `RuntimeApplication` — object model, ownership, destruction order
+
+**D4a. `PlatformSession` — an RAII guard around `platform::initialize()`/
+`shutdown()`, and the single, structural fix for the window-vs.-GPU-
+resource destruction order this Plan's own independent review round
+identified as its highest-priority risk.** Atlantis Platform's own
+public API (`platform::initialize()`/`processEvents()`/`shouldQuit()`/
+`shutdown()`) is entirely free functions with no owning object — nothing
+in Platform itself prevents a caller from calling `shutdown()` too early
+relative to GPU resources that are still alive. Every prior composition
+root in this codebase (`minimal_renderer_demo`, `frame_execution_demo`,
+the image-regression fixture) is a flat `main()` function whose own
+hand-written statement order is the *only* thing keeping this correct —
+acceptable there because each is a single, short, linear function
+reviewed as a whole; `RuntimeApplication` is a long-lived, stateful class
+with **six distinct failure points during initialization alone** (D6),
+and hand-sequencing "destroy every GPU resource, *then* call
+`platform::shutdown()`" correctly at every one of those six points,
+forever, under future maintenance, is exactly the kind of fragile
+convention this repository's own RAII-by-default rule
+([AGENTS.md](../AGENTS.md)) exists to replace with something the
+compiler enforces instead.
+
+`src/runtime/include/atlantis/runtime/platform_session.h`:
+
+```cpp
+class PlatformSession {
+ public:
+  PlatformSession() noexcept = default;  // "not holding a session" state
+  ~PlatformSession();  // calls platform::shutdown() + drains final events, IF active_; else no-op
+
+  PlatformSession(const PlatformSession&) = delete;
+  PlatformSession& operator=(const PlatformSession&) = delete;
+  PlatformSession(PlatformSession&& other) noexcept;       // steals other's active_, leaves other inactive
+  PlatformSession& operator=(PlatformSession&& other) noexcept;
+
+  [[nodiscard]] bool isActive() const noexcept;
+
+ private:
+  friend atlantis::Result<PlatformSession, atlantis::platform::PlatformError> createPlatformSession();
+  bool active_ = false;
+};
+
+[[nodiscard]] atlantis::Result<PlatformSession, atlantis::platform::PlatformError> createPlatformSession();
+// Calls platform::initialize(); on Ok, returns a PlatformSession with
+// active_ = true; on Err, returns Err directly -- no PlatformSession is
+// constructed with active_ = true unless initialize() genuinely
+// succeeded, so its destructor never calls shutdown() for a session that
+// was never really established.
+```
+
+**`PlatformSession::~PlatformSession()` is the *only* call site for
+`platform::shutdown()` anywhere in `Atlantis::RuntimeHost`.** No other
+function — not `RuntimeApplication::shutdown()`, not
+`initializeSteps()`'s own failure branches, not `main.cpp` — calls
+`platform::shutdown()` directly. This eliminates the double-call risk
+structurally rather than by auditing every call site by hand: there is
+only one call site, so there is nothing to keep in sync. Its body:
+
+```cpp
+if (active_) {
+  platform::shutdown();
+  for (const auto& event : platform::processEvents()) { /* log only */ }
+  active_ = false;
+}
+```
+
+bundling Spec 0013's own adjacent Shutdown steps 3–4 (`platform::shutdown()`
+then one final `processEvents()` drain) into one operation that only ever
+runs once, driven entirely by ordinary object destruction — never by a
+caller remembering to invoke it at the right point in a sequence of
+statements.
 
 `src/runtime/include/atlantis/runtime/bootstrap_config.h`:
 
@@ -234,13 +359,16 @@ class RuntimeApplication {
   atlantis::Result<std::monostate, RuntimeInitError> initializeSteps(const BootstrapConfig& config);
 
   // Declared in EXACTLY this order because C++ destroys non-static data
-  // members in the REVERSE of their declaration order -- this ordering IS
-  // Spec 0013's/ADR-0046's fixed Shutdown sequence (Material, Texture,
-  // Buffer, Mesh, Presentation, Device), obtained for free from ordinary
-  // member destruction rather than a manually-sequenced list of reset()
-  // calls that could drift out of order under a future edit. See D8 for
-  // why shutdown() still performs this teardown EXPLICITLY (not by
-  // merely falling out of scope) and why that is not a contradiction.
+  // members in the REVERSE of their declaration order. platformSession_
+  // is declared FIRST specifically so it is destroyed LAST, structurally
+  // guaranteeing the OS window outlives every GPU resource below it --
+  // this is a compiler-enforced invariant, not a convention any method
+  // body has to get right by hand (D4a). The remaining order (Material,
+  // Texture, Buffer, Mesh, Presentation, Device) IS Spec 0013's/
+  // ADR-0046's fixed Shutdown sequence, obtained the same way -- for
+  // free, from ordinary member destruction, not a manually-sequenced
+  // list of reset() calls that could drift under a future edit.
+  PlatformSession platformSession_;
   std::unique_ptr<atlantis::rhi::Device> device_;
   std::unique_ptr<atlantis::rhi::Presentation> presentation_;      // lazy: constructed on first SurfaceCreated
   std::optional<atlantis::renderer::Mesh> mesh_;
@@ -326,44 +454,64 @@ class RuntimeApplication {
 ### D6. Initialization sequence — `initializeSteps()`
 
 `initializeSteps(const BootstrapConfig& config)` runs the six steps Spec
-0013's own Initialization order fixes, each with its own narrow,
-immediate teardown-and-return on failure — **not** routed through the
-general `shutdown()` method (D8 explains why):
+0013's own Initialization order fixes. **Every failure branch does
+exactly two things: `lifecycle_.markFailed()`, then `return
+Err(RuntimeInitError::...)`.** No branch resets a member, and no branch
+calls `platform::shutdown()` — there is nothing left to hand-sequence,
+because D4a's `PlatformSession`-declared-first member order already
+guarantees correct teardown, in the correct order, automatically, once
+`initializeSteps()` returns `Err` and the local `RuntimeApplication` in
+`createRuntimeApplication()` (below) goes out of scope:
 
-1. `platform::initialize()`. `Err` → return
-   `Err(RuntimeInitError::PlatformInitFailed)` immediately — nothing else
-   exists yet.
+1. `createPlatformSession()` → `platformSession_`. `Err` →
+   `lifecycle_.markFailed()`; return
+   `Err(RuntimeInitError::PlatformInitFailed)`. (`platformSession_` stays
+   at its default, inactive state — its own destructor is a no-op.)
 2. Load `config.vertexShaderSpirvPath`/`fragmentShaderSpirvPath` and both
    reflection JSON paths; resolve `vertexInputLayout_`. Any failure →
-   `platform::shutdown()`, then return
+   `lifecycle_.markFailed()`; return
    `Err(RuntimeInitError::ShaderLoadFailed)`.
 3. `vulkan_backend::createDevice({.applicationName = config.applicationName,
    .enableValidationLayers = config.enableValidationLayers})` → `device_`.
-   `Err` → `platform::shutdown()`, return
+   `Err` → `lifecycle_.markFailed()`; return
    `Err(RuntimeInitError::DeviceCreateFailed)`.
 4. `asset_system::loadStaticMeshAsset(config.assetArtifactPath,
-   config.assetMetadataPath)`. `Err` → `device_.reset()`;
-   `platform::shutdown()`; return
-   `Err(RuntimeInitError::AssetLoadFailed)`. (Nothing else has been
-   constructed yet — no `waitIdle()` call: see D8.)
+   config.assetMetadataPath)`. `Err` → `lifecycle_.markFailed()`; return
+   `Err(RuntimeInitError::AssetLoadFailed)`.
 5. `renderer::createMesh(*device_, vertexInputLayout_,
    assetData.vertexBytes().data(), assetData.vertexBytes().size(),
    assetData.indices().data(), assetData.indices().size())` → `mesh_`.
-   `Err` → same teardown as step 4 (`device_.reset()`;
-   `platform::shutdown()`), return
+   `Err` → `lifecycle_.markFailed()`; return
    `Err(RuntimeInitError::MeshCreateFailed)`.
 6. `device_->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes
-   = sizeof(float) * 32})` → `cameraBuffer_`. `Err` → `mesh_.reset()`;
-   `device_.reset()`; `platform::shutdown()`; return
+   = sizeof(float) * 32})` → `cameraBuffer_`. `Err` →
+   `lifecycle_.markFailed()`; return
    `Err(RuntimeInitError::CameraBufferCreateFailed)`.
 
-On success: `lifecycle_.markRunning()`; return `Ok(std::monostate{})`.
+On success: `lifecycle_.markRunning()` (this is also the **only** place
+`hasEverRun()` becomes `true` — see D2, D8); return `Ok(std::monostate{})`.
+
 `createRuntimeApplication()` itself is a thin wrapper: construct a
 default `RuntimeApplication`, call `beginInitializing()`, call
 `initializeSteps(config)`, and return `Ok(std::move(app))` on success or
-propagate the `Err` (the local `app`'s own destructor then runs D8's
-already-idempotent no-op path, since `initializeSteps()`'s own failure
-branches already leave it in `ShutDown` — see D8).
+propagate the `Err`. On the `Err` path, the local `app` — holding
+whatever subset of `platformSession_`/`device_`/`mesh_` was actually
+constructed before the failing step, and nothing beyond that — goes out
+of scope when this function returns, and its destructor (D8) tears
+everything down through ordinary RAII, in the correct order, with no
+further code in `initializeSteps()` itself responsible for getting that
+order right.
+
+**`RuntimeInitError` covers exactly these six steps and nothing else.**
+`Material` and the depth `Texture` are never constructed during
+initialization at all (see below) — their own creation failures are
+handled entirely inside `runFrame()`'s retry-on-failure logic (D7), never
+surfaced as a `RuntimeInitError`. A `Device::waitIdle()` failure can only
+occur inside `shutdown()` (D8), which runs strictly after initialization
+has already succeeded (or, on the `Err` path above, never runs at all in
+any form that returns a value anyone reads) — it is therefore never a
+`RuntimeInitError` either; see D8 for exactly how it is reflected in
+`RuntimeExitReason` instead.
 
 **No `Material` construction step exists here** — Spec 0013's own
 Bootstrap Sequencing Detail fixes this deliberately: no real swapchain
@@ -407,12 +555,27 @@ guards the precondition):
    (zero extent or an internally-deferred out-of-date swapchain; no
    Vulkan call this iteration). `Ok(target)` → continue.
 4. Format-change check: if `!lastSeenFormat_.has_value() ||
-   presentation_->metadata().format != *lastSeenFormat_` — rebuild
-   `material_` from `vertexSpirv_`/`fragmentSpirv_`/`vertexInputLayout_`
-   and the current format; on failure, log and **keep the existing**
-   `material_` (or, on the very first frame, leave it unset), retry next
-   frame — `lastSeenFormat_` is only updated on success, matching
-   `minimal_renderer_demo`'s own unbounded-retry behavior exactly.
+   presentation_->metadata().format != *lastSeenFormat_` — call
+   `renderer::createMaterial()` to build a **new** `Material` value first;
+   only on that call's own success is `material_` **move-assigned** over
+   with the result — `material_ = std::move(newMaterialResult.value());`.
+   The **old** `Material` (and the `Pipeline` it owns) is destroyed by
+   that move-assignment itself, at the point the new one has already
+   fully succeeded — never before. This is create-before-destroy, matching
+   `minimal_renderer_demo`'s own already-verified sequence exactly (that
+   file's own comment: "old Pipeline (if any) destroyed HERE, only after
+   the new one already succeeded"). Destroying the old `Pipeline`
+   immediately afterward is safe because no GPU work referencing it can
+   still be outstanding: this check runs only after a successful
+   `acquireNextTarget()` (step 3), and `acquireNextTarget()`'s own
+   contract already drains any previous frame's submission internally
+   before returning (single-frame-in-flight, ADR-0019/ADR-0020) — so by
+   construction, nothing on the GPU can still be reading the old
+   `Pipeline` by the time this step runs. On `createMaterial()` failure,
+   log and **keep the existing** `material_` (or, on the very first
+   frame, leave it unset), retry next frame — `lastSeenFormat_` is only
+   updated on success, matching `minimal_renderer_demo`'s own unbounded-
+   retry behavior exactly.
 5. Extent-change check: if `!lastSeenExtent_.has_value() ||
    target->extent() != *lastSeenExtent_` — recreate `depthTexture_`; same
    keep-existing-and-retry-on-failure pattern as step 4.
@@ -431,6 +594,33 @@ guards the precondition):
 10. `presentation_->present(std::move(target), std::move(submissionSignal))`.
     `Err` → `lifecycle_.markFailed()`; return.
 
+**Frame-scoped objects on every early return, checked call by call — none
+is released after `presentation_`/`device_`, all correctly release
+before them:** `target` (`unique_ptr<RenderTarget>`) is a plain local
+variable in `runFrame()`'s own scope from step 3 onward. Steps 3's `Err`/
+`Ok(nullptr)` branches and step 6's "nothing to draw" branch never move
+it anywhere — it is simply destroyed by ordinary RAII when the function
+returns, which is legal per `RenderTarget`'s own documented contract (no
+`release()`/`consume()` method exists; destroying an unconsumed borrow is
+the normal path). Step 7's `commandList` does not exist yet when it can
+fail, so there is nothing to release beyond `target` itself, handled the
+same way. Step 9's `device_->submit(std::move(commandList), *target)`
+takes `commandList` **by value** (moved in, per ADR-0020) — its ownership
+has transferred into `submit()` regardless of whether that call returns
+`Ok` or `Err`, so there is nothing left at the call site for `runFrame()`
+to release either way; `target` is passed by reference here (not
+consumed) and is still released via the same RAII path on a step 9
+failure. Step 10's `present(std::move(target), std::move(submissionSignal))`
+consumes **both** by value — on success or `Err`, both have already been
+moved out of `runFrame()`'s own local variables before `present()`
+returns, so there is nothing left to release at that call site either.
+**In every case, whatever `runFrame()` still locally owns at the point of
+an early return is released by that return alone — never by anything
+`shutdown()` does later, and never in a way that could outlive
+`presentation_`/`device_`, both of which are only ever reset from inside
+`shutdown()` (D8), called strictly after the current `runFrame()` call
+has already returned.**
+
 **Mid-frame close, confirmed unnecessary to special-case:** because step
 1 always completes before step 3's `acquireNextTarget()` call, and
 `closeRequested_` short-circuits step 2 before any acquire happens this
@@ -439,63 +629,91 @@ acquired and then abandoned because a close request arrived mid-frame —
 exactly Spec 0013's own analysis, now expressed as the concrete step
 order above.
 
-### D8. Shutdown — avoiding a double `platform::shutdown()` call
+### D8. Shutdown — one uniform path, `platform::shutdown()` called exactly once, always
 
 `RuntimeExitReason RuntimeApplication::shutdown()`:
 
 ```cpp
 if (lifecycle_.state() == RuntimeLifecycleState::ShutDown) return lastExitReason_;  // idempotent
-const bool hadFailure = (lifecycle_.state() == RuntimeLifecycleState::Failed);
+bool hadFailure = (lifecycle_.state() == RuntimeLifecycleState::Failed);
 lifecycle_.beginShutdown();
-if (device_) {
+
+// waitIdle() is meaningful only if this object ever reached Running --
+// before that, runFrame() (the only place Device::submit() is ever
+// called) has never run, so there is nothing outstanding to wait for.
+// Calling it unconditionally would not be *incorrect* (vkDeviceWaitIdle()
+// is safe with zero pending work), but this codebase's own precedent
+// (examples/minimal_renderer_demo's own early-failure teardown) never
+// bothers, and Spec 0013/ADR-0046 fix this distinction explicitly --
+// hasEverRun() is what makes it possible to honor it from this single,
+// unified method rather than duplicating the wait logic per call site.
+if (device_ && lifecycle_.hasEverRun()) {
   auto result = device_->waitIdle();
-  if (result.isErr()) { /* log only -- teardown continues regardless */ }
+  if (result.isErr()) {
+    hadFailure = true;  // a wait that cannot complete cleanly (e.g. the
+                         // device was already lost) is itself an
+                         // unrecoverable condition for this run, even if
+                         // runFrame() itself never observed a Failed
+                         // state -- teardown proceeds regardless; there
+                         // is no alternative recovery action available,
+                         // and this codebase makes no claim that the
+                         // wait actually completed successfully.
+  }
 }
+
 material_.reset(); depthTexture_.reset(); cameraBuffer_.reset();
 mesh_.reset(); presentation_.reset(); device_.reset();
-platform::shutdown();
-for (const auto& event : platform::processEvents()) { /* log only */ }
+// platformSession_ is deliberately NOT touched here. Its own destructor
+// -- guaranteed by C++'s member-destruction order to run only after
+// every member above has already been destroyed (D4a) -- is the ONLY
+// place platform::shutdown() is ever called anywhere in this class.
+// This function's own responsibility ends at "every GPU resource is
+// gone"; closing the window is PlatformSession's job, not this one's.
+
 lifecycle_.markShutDown();
 lastExitReason_ = hadFailure ? RuntimeExitReason::UnrecoverableRuntimeError
                               : RuntimeExitReason::Success;
 return lastExitReason_;
 ```
 
-**This is the general Shutdown path — reachable only from the frame
-loop** (`main.cpp`'s own `while (app.shouldContinue()) { app.runFrame();
-}` loop, once it exits, always calls `shutdown()` next) or from the
-destructor as an idempotent backstop. It is **not** what
-`initializeSteps()`'s own early-failure branches (D6) call — those
-perform their own narrower, explicit teardown (reset only what was
-actually constructed so far, no `waitIdle()`, since nothing could have
-been submitted before `runFrame()` ever runs) and **transition
-`lifecycle_` directly to `ShutDown`** (via `beginShutdown()` +
-`markShutDown()` called back-to-back inside `initializeSteps()`'s own
-failure paths, with `lastExitReason_` set to
-`RuntimeExitReason::InitializationFailed`) after already having called
-`platform::shutdown()` themselves.
+**This is now the one and only teardown path in the whole class** —
+reached explicitly from `main.cpp`'s own post-loop call (`app.shutdown()`,
+after `shouldContinue()` becomes false) or from the GPU smoke test (D10),
+**and** reached implicitly, via the destructor's own idempotent backstop
+call, for every `initializeSteps()` early-failure case (D6), since those
+branches no longer perform any teardown of their own. There is exactly
+one `platform::shutdown()` call site in the entire module (`PlatformSession`'s
+own destructor, D4a) — the double-call risk this section's own earlier
+draft solved by hand-sequencing two separate teardown paths against each
+other is closed structurally instead: there is only one path, and one
+call site, so there is nothing left to keep in sync.
 
-**Why this split matters, concretely:** `platform::shutdown()`'s own real
-implementation (`src/platform/src/windows/windows_platform.cpp`) asserts
+`RuntimeApplication::~RuntimeApplication()`:
+
+```cpp
+shutdown();  // idempotent -- a genuine no-op if already ShutDown
+```
+
+That is the destructor's entire body. Ordinary implicit member
+destruction then runs — a no-op for every GPU-resource member (`shutdown()`
+already reset all of them, whether called explicitly moments earlier by
+`main.cpp`/the test, or just now by this same destructor call for an
+`initializeSteps()` failure case) — and finally, `platformSession_`'s own
+destructor runs last, closing the window (D4a).
+
+**Concrete evidence this closes the specific crash risk identified during
+review:** `platform::shutdown()`'s own real implementation
+(`src/platform/src/windows/windows_platform.cpp`) asserts
 `ATLANTIS_CHECK_MSG(s.initialized && !s.shutDown, "shutdown() called
-without a successful initialize(), or called twice")`. If the general
-`shutdown()` method above were called unconditionally from the
-destructor after an early `initializeSteps()` failure had already called
-`platform::shutdown()` itself, this assertion would fire — a real crash,
-not a theoretical one. Because `initializeSteps()`'s own failure paths
-leave `lifecycle_` in `ShutDown` directly, the destructor's own call to
-`shutdown()` (below) sees `state() == ShutDown` and returns immediately,
-calling `platform::shutdown()` zero additional times. This is the
-concrete reason `RuntimeLifecycleState` needs a `ShutDown` state reachable
-from `Initializing` (via the early-failure path) as well as from
-`Running`/`Failed` (via the general path) — both converge on the same
-terminal, idempotent state.
-
-`RuntimeApplication::~RuntimeApplication()` calls `shutdown()`
-unconditionally — a genuine no-op if `shutdown()` was already called
-explicitly (the normal path, from `main.cpp`/the GPU smoke test), and the
-correct, narrow no-op described above if `initializeSteps()`'s own
-failure path already ran.
+without a successful initialize(), or called twice")` — a genuine crash
+if ever violated, not a theoretical concern. Because `platform::shutdown()`
+is now called from exactly one place (`PlatformSession::~PlatformSession()`),
+which itself only runs once per `PlatformSession` object (C++ guarantees
+a destructor runs exactly once), this assertion cannot be violated by
+`RuntimeApplication`'s own code under any control-flow path this Plan
+constructs — not by construction failing at any of the six steps, not by
+`shutdown()` being called twice, not by the destructor running after an
+explicit `shutdown()` call.
 
 ### D9. Build-tree path threading — reusing existing exported CMake variables, no hardcoded path
 
@@ -647,25 +865,40 @@ exist.
   six real enumerators (four `PresentationError`, two `SubmitError`)
   individually asserted to map to `UnrecoverableRuntimeError`.
 
-### Step 3 — `BootstrapConfig`, `RuntimeApplication` (init/frame/shutdown), the fixed bootstrap scene
+### Step 3 — `PlatformSession`, `BootstrapConfig`, `RuntimeApplication` (init/frame/shutdown), the fixed bootstrap scene (**atomic**)
 
-The largest step: this is where `Atlantis::RuntimeHost` first depends on
-Platform/RHI/Vulkan Backend/Renderer/Shader System/Asset System for real,
-so it is not further subdivided — D4 through D8's design is genuinely one
-cohesive unit (the same member layout, the same lifecycle tracker, and
-the same failure-handling convention thread through initialization,
-per-frame execution, and shutdown together).
+The largest step, and explicitly marked atomic: this is where
+`Atlantis::RuntimeHost` first depends on Platform/RHI/Vulkan Backend/
+Renderer/Shader System/Asset System for real, and D4 through D8's design
+is genuinely one cohesive unit — the same member layout, the same
+lifecycle tracker, and the same failure-handling convention thread
+through initialization, per-frame execution, and shutdown together, so a
+partial landing (e.g. `RuntimeApplication` with `initializeSteps()` but
+no `runFrame()`/`shutdown()`) would not compile at all, let alone compile
+*correctly*. `PlatformSession` (D4a) is introduced here, alongside its
+sole real consumer, rather than in Step 1: unlike `RuntimeLifecycleState`/
+`RuntimeExitReason`, constructing a real `PlatformSession` calls
+`platform::initialize()`, which creates an actual OS window — this
+violates Step 1's own GPU-independent test category's explicit "no
+Device, no GPU, and **no real window**" bar (matching Spec 0013's own
+Testing & Verification Plan wording), so `PlatformSession` is not, and
+is not claimed to be, independently unit-tested — its correctness is
+verified as part of the full composition, in Step 5/6.
 
+- `src/runtime/include/atlantis/runtime/platform_session.h` /
+  `src/runtime/src/platform_session.cpp` — D4a, in full.
 - `src/runtime/include/atlantis/runtime/bootstrap_config.h` — D4.
 - `src/runtime/include/atlantis/runtime/runtime_application.h` /
   `src/runtime/src/runtime_application.cpp` — the full class from D4,
   `initializeSteps()`/`createRuntimeApplication()` from D6, `runFrame()`/
   `shouldContinue()` from D7, `shutdown()`/`~RuntimeApplication()` from
   D8, and the fixed camera/`DrawItem` construction from D5.
-- No new automated test in this step (see this section's own preamble) —
-  `atlantis_runtime_host` must still **compile** cleanly against every
-  module it now links, which is itself a real, meaningful check this
-  step's own build performs.
+- No new automated test in this step (see this section's own preamble
+  above) — `atlantis_runtime_host` must still **compile** cleanly against
+  every module it now links, which is itself a real, meaningful check
+  this step's own build performs. This step's own code is exercised for
+  the first time by Step 5's GPU smoke test, and verified in full by
+  Step 6 — not silently left unverified.
 
 ### Step 4 — Thin `atlantis_runtime` Windows executable, build-tree path wiring
 
@@ -744,19 +977,28 @@ per-frame execution, and shutdown together).
 - `src/README.md` — add a `runtime/` entry, matching the existing
   per-module paragraph format.
 - `specs/README.md` — Spec 0013's own Implementation column updated from
-  "Not started" to "Implemented and merged via [PR #N]", matching every
-  prior spec's own registry-update convention; this Plan's own
-  `Related Plan(s)`/Plan-column update (this current PR) is the only
-  `specs/README.md` edit this Plan-drafting round itself makes — Step 7's
-  edit here is future Implementation-PR work, not performed now.
+  "Not started" to reference the Implementation PR by number once it is
+  opened (e.g. "Implemented — code complete on PR #N, `OPEN`, not yet
+  merged into `main`"), matching this repository's own established,
+  precedent two-stage convention (Spec 0012's own registry row carried
+  exactly this "OPEN, not yet merged" wording until a human actually
+  merged its PR — this Plan does not claim "merged" status inside the
+  same PR that would need to merge for that claim to become true). A
+  small follow-up docs commit, opened only after a human has actually
+  merged the Implementation PR, updates the wording to "Implemented and
+  merged" — the same pattern this repository already used after PR #58
+  (Spec 0012). This Plan's own `Related Plan(s)`/Plan-column update (the
+  current PR) is the only `specs/README.md` edit this Plan-drafting round
+  itself makes — everything in this step is future Implementation-PR (and
+  post-merge follow-up) work, not performed now.
 
 ## Files / Modules Touched (expected)
 
 **New — Runtime module**
 
 - `src/runtime/CMakeLists.txt`
-- `src/runtime/include/atlantis/runtime/{lifecycle_state,exit_reason,init_error,error_classification,bootstrap_config,runtime_application}.h`
-- `src/runtime/src/{lifecycle_state,exit_reason,init_error,error_classification,runtime_application}.cpp`
+- `src/runtime/include/atlantis/runtime/{lifecycle_state,exit_reason,init_error,error_classification,platform_session,bootstrap_config,runtime_application}.h`
+- `src/runtime/src/{lifecycle_state,exit_reason,init_error,error_classification,platform_session,runtime_application}.cpp`
 - `src/runtime/main.cpp`
 
 **New — tests**
@@ -809,9 +1051,9 @@ Step 1 (skeleton, RuntimeLifecycleState, RuntimeExitReason)
 
 | # | Verification | Where | Kind |
 |---|---|---|---|
-| V1 | `RuntimeLifecycleState`: every legal transition succeeds; every illegal one (`Running`→`Initializing`, `ShutDown`→`Running`, `markShutDown()` from anything but `ShuttingDown`) is rejected via `ATLANTIS_CHECK`; `beginShutdown()` is idempotent from `ShuttingDown`/`ShutDown`, reaching `ShutDown` exactly once with no double `platform::shutdown()` call (exercised against the pure tracker type only — no real `Device`/`Platform`). | `lifecycle_state_tests.cpp` | GPU-independent |
+| V1 | `RuntimeLifecycleState`: every legal transition succeeds; every illegal one (`Running`→`Initializing`, `ShutDown`→`Running`, `markShutDown()` from anything but `ShuttingDown`) is rejected via `ATLANTIS_CHECK`; `beginShutdown()` is idempotent from `ShuttingDown`/`ShutDown`; `hasEverRun()` is `false` for a tracker that transitions `Initializing`→`Failed` directly, and `true` for one that reaches `Running` first, even after a later `Failed`/`ShutDown` transition — the exact property D8's `waitIdle()` gating depends on (exercised against the pure tracker type only — no real `Device`/`Platform`/window). | `lifecycle_state_tests.cpp` | GPU-independent |
 | V2 | `RuntimeExitReason`→process-exit-code mapping: three distinct values; `Success`→`EXIT_SUCCESS`. | `exit_reason_tests.cpp` | GPU-independent |
-| V3 | `classifyPresentationError()`/`classifySubmitError()`: each of the four real `PresentationError` values and both real `SubmitError` values individually maps to `UnrecoverableRuntimeError` — confirmed exhaustive against `src/rhi/include/atlantis/rhi/types.h`'s actual current enum. | `error_classification_tests.cpp` | GPU-independent |
+| V3 | `classifyPresentationError()`/`classifySubmitError()`: each of the four real `PresentationError` values and both real `SubmitError` values individually maps to `UnrecoverableRuntimeError` — confirmed exhaustive against `src/rhi/include/atlantis/rhi/types.h`'s actual current enum; separately, a fresh Debug build of `tests/runtime/` after temporarily removing one `case` from either switch is confirmed to fail with `C4715`/`-Wreturn-type` (D3's own empirically-verified mechanism), then reverted — a one-time manual check recorded in the Implementation PR, not a standing automated test (removing a real enumerator is not something a permanent test can do without editing RHI itself). | `error_classification_tests.cpp`; mechanism check manual, recorded in the PR | GPU-independent + manual |
 | V4 | No other top-level module depends on `Atlantis::RuntimeHost` — verified by inspection/grep across every other module's `CMakeLists.txt` at PR time (D1a; matching the existing, equally inspection-based "[Runtime/Tools are] depended on by: nothing" rules already in `module_boundaries.md`). | Manual/grep, recorded in the PR | Manual |
 | V5 | No `Vk*` type and no `#include <vulkan/...>` appears anywhere under `src/runtime/` — verified by inspection/grep at verification time (D1a's own stated reasoning: matching V4's inspection-based approach rather than a second, narrower automated scan). | Manual/grep, recorded in the PR | Manual |
 | V6 | Real windowed acquire/draw/submit/present succeeds for `kSmokeTestFrameCount` consecutive frames, then `shutdown()` returns `RuntimeExitReason::Success` — a genuine Vulkan Validation Layer warning/error during this run aborts the process (`validation.cpp`'s own existing mechanism), so a clean pass is direct evidence of zero warnings/errors for this exact sequence. | `runtime_smoke_gpu_tests.cpp` | `gpu`-labeled |
@@ -828,7 +1070,9 @@ Step 1 (skeleton, RuntimeLifecycleState, RuntimeExitReason)
 | Spec 0013 — `atlantis_runtime_host`/`atlantis_runtime` split, private, not a public dependency surface | D1, D1a; V4 |
 | Spec 0013 — Runtime depends on/selects Vulkan Backend directly, no `Vk*` leak | D1, D6; V5 |
 | Spec 0013 — Full object ownership, initialization order, per-frame order, reverse-order destruction | D4, D6, D7, D8; Step 3 |
-| Spec 0013 — `Device::waitIdle()` usage split (general Shutdown vs. early-failure teardown) | D8 |
+| Spec 0013 — `Device::waitIdle()` usage split (general Shutdown vs. early-failure teardown) | D2 (`hasEverRun()`), D8; V1 |
+| Spec 0013 — Window destroyed strictly after every GPU resource, structurally guaranteed | D4a; Step 3 |
+| Spec 0013 — `platform::shutdown()` called exactly once, no double-call risk | D4a, D8 |
 | Spec 0013 — GPU-independent lifecycle/state-machine boundary, no DI/service locator | D2; V1 |
 | Spec 0013 — Bootstrap scene: cooked mesh, shader, camera, fixed material only | D5; Step 3 |
 | Spec 0013 — Presentation/error classification, including `SwapchainCreationFailed`, exhaustive | D3; V3 |
@@ -859,15 +1103,50 @@ independently and do not affect build/test behavior either way.
 ## Deviations, objections, and open mechanical details
 
 **No objection to Spec 0013 or ADR-0046/ADR-0047 was found while drafting
-this Plan.** Every `Accepted` decision proved implementable against the
-real, current source tree exactly as written; no accepted boundary needed
-relaxing, and no public API of any composed module needed changing. The
-one genuinely new design point this Plan had to work out from scratch —
-avoiding a double `platform::shutdown()` call between `initializeSteps()`'s
-own early-failure path and the general `shutdown()` method (D8) — is a
-Plan-level implementation detail, not a gap in the Spec's own design; the
-Spec's own distinct-`waitIdle()`-usage requirement is exactly what this
-Plan's D8 solution satisfies.
+or independently reviewing this Plan.** Every `Accepted` decision proved
+implementable against the real, current source tree exactly as written;
+no accepted boundary needed relaxing, and no public API of any composed
+module needed changing.
+
+**Independent review round found and fixed one real design gap before
+this commit, at the point this section's own earlier draft asserted it
+had already been solved.** That earlier draft avoided a double
+`platform::shutdown()` call by having `initializeSteps()`'s own six
+failure branches each hand-sequence their own teardown-then-shutdown, and
+having the general `shutdown()` method do the same independently — correct
+in every case actually traced through by hand, but resting entirely on
+each of those hand-written sequences staying correct under future
+maintenance, with nothing to catch a mistake if one didn't. Replaced with
+`PlatformSession` (D4a): an RAII guard around `platform::initialize()`/
+`shutdown()`, declared as `RuntimeApplication`'s *first* member so it is
+destroyed *last* — a compiler-enforced ordering guarantee, not a
+convention. `platform::shutdown()` now has exactly one call site in the
+entire module (`PlatformSession`'s own destructor); `initializeSteps()`'s
+six failure branches no longer perform any teardown of their own at all
+— `lifecycle_.markFailed()` and `return Err(...)`, nothing else — and
+`RuntimeLifecycleTracker` gained `hasEverRun()` specifically so the one,
+now-unified `shutdown()` method can still honor Spec 0013's own
+`waitIdle()`-usage distinction (only meaningful once a real frame could
+have submitted GPU work) without needing two separate code paths to get
+it right. A second, smaller gap was closed in the same round: a
+`Device::waitIdle()` failure occurring *during* an otherwise-normal
+shutdown (not preceded by a `runFrame()`-detected failure) now also
+routes to `RuntimeExitReason::UnrecoverableRuntimeError` — the earlier
+draft would have silently reported `Success` in that case, since its own
+`hadFailure` computation only looked at `lifecycle_`'s state *before*
+`shutdown()` began.
+
+**The "compiler-enforced exhaustiveness" claim for
+`classifyPresentationError()`/`classifySubmitError()` (D3) was corrected
+from an assumption to an empirically-verified mechanism during the same
+round** — confirmed by actually compiling a minimal reproduction with
+this project's own real `cl /W4 /WX` flags: the enforcement comes from
+C4715 ("not all control paths return a value"), not a direct unhandled-
+enumerator diagnostic, and is fragile to one specific, plausible-looking
+edit (adding a `default:` case) that would silently restore the gap this
+design exists to close. Both switches now carry an explicit warning
+comment against doing that, and V3 adds a one-time manual confirmation
+that removing a real `case` genuinely fails this project's own build.
 
 One honest limitation, disclosed rather than papered over:
 
@@ -877,13 +1156,16 @@ One honest limitation, disclosed rather than papered over:
 
 **Every mechanical detail this Plan needed to fix is fixed above — none
 is left open for Implementation to choose.** Target/namespace/header
-layout (D1), the state-machine's exact enumerators and transition table
-(D2), the error-taxonomy types and their exhaustive-switch design (D3),
-`RuntimeApplication`'s exact member declaration order and why it produces
-the required destruction order for free (D4), the six-step initialization
-sequence with per-step teardown (D6), the ten-step per-frame order (D7),
-the shutdown/double-`platform::shutdown()`-avoidance design (D8), the
-exact CMake compile-definition/`add_dependencies()` pattern reusing
+layout (D1), the `PlatformSession` RAII guard and why it is declared
+first (D4a), the state-machine's exact enumerators, transition table, and
+`hasEverRun()` (D2), the error-taxonomy types and their real,
+empirically-verified exhaustiveness mechanism (D3), `RuntimeApplication`'s
+exact member declaration order and why it produces the required
+destruction order for free (D4), the six-step initialization sequence
+with no per-step teardown of its own (D6), the ten-step per-frame order
+with its own confirmed RAII release story for every early return (D7),
+the now-single-call-site shutdown design (D8), the exact CMake compile-
+definition/`add_dependencies()` pattern reusing
 existing exported variables (D9), and the GPU smoke test's own bounded-
 loop design with no product-level test hook (D10) are all decided, not
 proposed.
