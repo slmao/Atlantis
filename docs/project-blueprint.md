@@ -288,11 +288,12 @@ checked-in `.spv`/`.glsl` pair. ADR-0027 itself remains `Accepted` and
 unmodified — Spec 0008 superseded its *mechanism*, not the ADR record.
 
 **What has no spec yet:** Runtime (the module), the remainder of Tools
-beyond its first Spec 0008 content, Android Platform implementation,
-iOS Platform, and everything in Section 5's later milestones and
-Section 5's "further candidate phases." (Both headless rendering and
-image regression testing now have specs — Spec 0010 and Spec 0011,
-both `Approved`, implemented — see above.) These remain backlog
+beyond its Spec 0008 (shader compiler) and Spec 0012 (asset cooker)
+content, Android Platform implementation, iOS Platform, and everything
+in Section 5's later milestones and Section 5's "further candidate
+phases." (Headless rendering, image regression testing, and Asset
+System foundation now have specs — Spec 0010, Spec 0011, and Spec 0012,
+all `Approved`, implemented — see above.) These remain backlog
 candidates (see [specs/README.md](../specs/README.md) Section B) and
 are not `Approved` — no spec number, API shape, or Candidate-status
 promotion is assigned to any of them by this document.
@@ -590,7 +591,11 @@ milestone being listed does not authorize starting it — see Section 1.
   (hand-rolled data formats, no new third-party dependency), all
   `Accepted` alongside the Spec approval. Does not depend on, and is not
   blocked by, a future Atlantis Runtime — see the Spec's own "Why this
-  does not wait for Runtime."
+  does not wait for Runtime." Implementation merged via
+  [PR #58](https://github.com/slmao/Atlantis/pull/58), including a
+  post-implementation independent review round (commit `bc7fc02`) that
+  found and fixed real gaps before merge — see the Spec 0012 row in
+  [specs/README.md](../specs/README.md) for full verification detail.
 - **Scope actually delivered:** a deterministic authoring-source →
   runtime-artifact pipeline for one asset type (a static
   position/colour mesh) — logical-path normalization, a 64-bit FNV-1a

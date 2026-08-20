@@ -73,11 +73,11 @@ surrounding prose):**
   ([ADR-0037](../../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md));
   naming them here authorizes no code, directory, target, dependency, or
   timetable.
-- Atlantis's nine-module, source/build-ownership view (Section 4) remains
+- Atlantis's ten-module, source/build-ownership view (Section 4) remains
   the sole authoritative structure for CMake targets and module
   dependencies — this diagram never overrides it.
 - Any future Device Backend, if and when approved by its own Spec,
-  becomes an independent sibling module in that nine-module view, the
+  becomes an independent sibling module in that ten-module view, the
   same way Atlantis Vulkan Backend itself is a named module today. This
   diagram does not create, and nothing in this repository authorizes, a
   new public `DeviceBackend` abstraction module.
@@ -86,7 +86,7 @@ surrounding prose):**
 
 ## 4. Module Ownership Navigation
 
-The nine top-level modules named in [AGENTS.md](../../AGENTS.md) — the
+The ten top-level modules named in [AGENTS.md](../../AGENTS.md) — the
 authoritative list. Full per-module responsibility, dependency, and
 lifetime detail lives in
 [module_boundaries.md](module_boundaries.md), not here.
@@ -100,15 +100,16 @@ lifetime detail lives in
 | Atlantis RenderGraph | Central rendering abstraction: passes, dependencies, barriers | As-built | [Spec 0005](../../specs/0005-render-graph-foundation.md) |
 | Atlantis Renderer | Frame orchestration built on RenderGraph + RHI | As-built | [Spec 0007](../../specs/0007-minimal-renderer.md) |
 | Atlantis Shader System | Shader authoring/compilation/reflection (Slang → SPIR-V) | As-built | [Spec 0008](../../specs/0008-shader-system-foundation.md) |
-| Atlantis Runtime | Application/composition-root layer | Long-term candidate (module itself not yet specced); its future Client-boundary principle is Approved direction | [ADR-0033](../../adr/0033-runtime-authority-and-client-boundary.md), [specs/README.md](../../specs/README.md) Section B Candidate 5 |
-| Atlantis Tools | Offline/developer tooling | As-built (shader-compiler content only; broader scope not yet specced) | [Spec 0008](../../specs/0008-shader-system-foundation.md) |
+| Atlantis Asset System | Deterministic authoring-source → runtime-artifact pipeline (one asset type: a static mesh); Core-only dependency | As-built | [Spec 0012](../../specs/0012-asset-system-foundation.md), [ADR-0043](../../adr/0043-asset-system-module-boundary.md)–[ADR-0045](../../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md) |
+| Atlantis Runtime | Application/composition-root layer | Long-term candidate (module itself not yet specced); its future Client-boundary principle is Approved direction | [ADR-0033](../../adr/0033-runtime-authority-and-client-boundary.md), [specs/README.md](../../specs/README.md) Section B Candidate 2 |
+| Atlantis Tools | Offline/developer tooling | As-built (shader-compiler and asset-cooker CLI content; broader scope not yet specced) | [Spec 0008](../../specs/0008-shader-system-foundation.md), [Spec 0012](../../specs/0012-asset-system-foundation.md) |
 
 For the current, detailed dependency graph and per-milestone build
 status, see [project-blueprint.md](../project-blueprint.md)'s own
 diagram — this table is a navigation index, not a second copy of it.
 
-`Device Backends` is not a tenth module and not a public interface — see
-[Section 6](#6-device-backend-boundary) below.
+`Device Backends` is not its own top-level module and not a public
+interface — see [Section 6](#6-device-backend-boundary) below.
 
 ## 5. Status Legend and Long-Term Direction
 
@@ -125,9 +126,10 @@ that the decision itself is settled, not that the capability it
 describes has been built.
 
 - **As-built:** Core, Platform (Windows), RHI, Vulkan Backend,
-  RenderGraph, Renderer, Shader System, Tools (shader-compiler content).
+  RenderGraph, Renderer, Shader System, Asset System (one asset type: a
+  static mesh), Tools (shader-compiler and asset-cooker CLI content).
 - **Approved direction (partially implemented):** the five-layer/
-  nine-module coexistence
+  ten-module coexistence
   ([ADR-0032](../../adr/0032-conceptual-architecture-layers-versus-source-module-ownership.md));
   Runtime authority and Client boundary
   ([ADR-0033](../../adr/0033-runtime-authority-and-client-boundary.md));
@@ -136,13 +138,14 @@ describes has been built.
   already realized narrowly by ADR-0001/ADR-0030); authoring/runtime
   data separation as an available option
   ([ADR-0035](../../adr/0035-authoring-runtime-data-separation-as-a-long-term-principle.md),
-  already realized narrowly by Shader System); Agent-native/
+  already realized narrowly by Shader System and, since Spec 0012, by
+  Asset System too); Agent-native/
   machine-verifiable development-tooling direction
   ([ADR-0036](../../adr/0036-agent-native-automation-and-machine-verifiable-architecture-as-long-term-goals.md));
   long-term Device Backend sibling-boundary reservation
   ([ADR-0037](../../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md)).
 - **Long-term candidate:** Atlantis Runtime (the module), World/ECS,
-  Asset System, Public SDK, Package System, Job System, Editor/Tool
+  Public SDK, Package System, Job System, Editor/Tool
   Connection Protocol, Gameplay SDK, Research/Simulation API, AI
   Inference Integration, UGC Sandbox, Direct3D 12 Device Backend, Metal
   Device Backend, Android Platform implementation, iOS Platform,

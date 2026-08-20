@@ -277,10 +277,12 @@ module's own spec.
 
 ## Atlantis Asset System
 
-**Status: Approved (Spec 0012, ADR-0043/ADR-0044/ADR-0045, all
-`Accepted`)** — the first module in this document with real, accepted
-governance behind it rather than only a `PROPOSED` draft description;
-this section states the accepted boundary, not a placeholder.
+**Status: Approved, implemented and merged** (Spec 0012, ADR-0043/
+ADR-0044/ADR-0045, all `Accepted`;
+[PR #58](https://github.com/slmao/Atlantis/pull/58)) — the first module
+in this document that is genuinely as-built rather than only a
+`PROPOSED` draft description; this section states the real, shipped
+boundary, not a placeholder.
 
 **Responsibilities:** turns checked-in, human-authored authoring source
 into a deterministic, versioned runtime artifact plus a metadata
@@ -367,8 +369,9 @@ not designed.
 ## Atlantis Tools
 
 **Responsibilities:** offline/developer tooling — the
-`atlantis_asset_cooker` CLI entry point (Spec 0012, `Approved`; the real
-cooking logic lives in Atlantis Asset System, not here), shader
+`atlantis_asset_cooker` CLI entry point (Spec 0012, `Approved`,
+implemented; the real cooking logic lives in Atlantis Asset System, not
+here), shader
 precompilation CLI, debug-capture glue (e.g. RenderDoc workflow per
 [testing-strategy.md](../process/testing-strategy.md)). This narrows an
 earlier, more generic "asset processing" phrase now that Spec 0012 has
