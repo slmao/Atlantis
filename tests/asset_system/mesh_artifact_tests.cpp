@@ -19,9 +19,19 @@ TEST_CASE("encodeMeshArtifact matches an independently-computed expected byte ve
   // Pins the little-endian contract: independently computed (Python's
   // struct.pack('<...', ...), not transcribed from memory) for
   // asset_id=0x0102030405060708 and a single vertex
-  // (1.0, 2.0, 3.0, 4.0, 5.0, 6.0) with indices {0, 0, 0}. A
-  // determinism-only test would pass even if the writer emitted
-  // host-endian bytes; this test would not.
+  // (1.0, 2.0, 3.0, 4.0, 5.0, 6.0) with indices {0, 0, 0}. Catches a
+  // regression to the wrong header layout, field order, or offsets --
+  // and would catch a regression to host-endian encoding on genuinely
+  // big-endian hardware. Disclosed limitation: every one of this
+  // project's actual target platforms (x86-64 Windows, ARM/AArch64
+  // Android) is little-endian, so on the hardware this test actually
+  // runs on, an accidental native-struct memcpy would currently produce
+  // the identical bytes this test expects -- the real guarantee against
+  // that specific regression is the source-level discipline in
+  // mesh_artifact.cpp itself (appendU32LE/appendU64LE/appendFloatLE,
+  // never a memcpy of a multi-byte value), verified by code review, not
+  // something a byte-comparison test on little-endian-only hardware can
+  // fully enforce by itself.
   const std::vector<std::byte> expected = {
       std::byte{0x41}, std::byte{0x54}, std::byte{0x4C}, std::byte{0x4D}, std::byte{0x45}, std::byte{0x53},
       std::byte{0x48}, std::byte{0x00}, std::byte{0x01}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},

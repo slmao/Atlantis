@@ -7,6 +7,7 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 
 using namespace atlantis::asset_system;
@@ -140,6 +141,37 @@ TEST_CASE("loadStaticMeshAsset detects a deliberate artifact/metadata mismatch",
   REQUIRE(otherResult.isOk());
 
   fs::copy_file(otherMetadataPath, metadataPath, fs::copy_options::overwrite_existing);
+
+  const auto result = loadStaticMeshAsset(artifactPath, metadataPath);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == AssetLoadError::MetadataArtifactMismatch);
+}
+
+TEST_CASE(
+    "loadStaticMeshAsset detects a metadata file whose own recorded asset_id and source_logical_path disagree "
+    "with each other, even when asset_id still matches the artifact",
+    "[asset_system]") {
+  TempDirGuard dir("self_inconsistent_metadata");
+  const auto [artifactPath, metadataPath] = cookValidTriangle(dir.path);
+
+  // Individually well-formed and passes the artifact-vs-metadata check
+  // above (asset_id/counts still agree with the artifact's own header)
+  // -- but source_logical_path no longer hashes to that same asset_id,
+  // an internal contradiction within the metadata file itself that the
+  // artifact-vs-metadata check alone cannot see.
+  std::string metadataText;
+  {
+    std::ifstream in(metadataPath, std::ios::binary);
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    metadataText = buffer.str();
+  }
+  const std::string oldLine = "source_logical_path: triangle.mesh.txt";
+  const std::string newLine = "source_logical_path: some/other/path.mesh.txt";
+  const auto pos = metadataText.find(oldLine);
+  REQUIRE(pos != std::string::npos);
+  metadataText.replace(pos, oldLine.size(), newLine);
+  writeFile(metadataPath, metadataText);
 
   const auto result = loadStaticMeshAsset(artifactPath, metadataPath);
   REQUIRE(result.isErr());

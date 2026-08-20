@@ -1,5 +1,6 @@
 #include <atlantis/asset_system/load.h>
 
+#include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/asset_metadata.h>
 #include <atlantis/asset_system/mesh_artifact.h>
 
@@ -63,6 +64,17 @@ atlantis::Result<StaticMeshAssetData, AssetLoadError> loadStaticMeshAsset(const 
 
   if (artifact.assetId != metadata.assetId || artifact.vertexStrideBytes != metadata.vertexStrideBytes ||
       artifactVertexCount != metadata.vertexCount || artifactIndexCount != metadata.indexCount) {
+    return ResultT::Err(AssetLoadError::MetadataArtifactMismatch);
+  }
+
+  // Self-consistency, not just artifact-vs-metadata agreement: the
+  // metadata sidecar's own two fields (its recorded Asset ID and its
+  // recorded source path) must agree with each other too. Without this,
+  // a metadata file whose assetId happens to match the artifact's own
+  // header (checked above) but whose sourceLogicalPath does not
+  // actually hash to that assetId -- individually parseable, internally
+  // contradictory -- would be silently accepted.
+  if (metadata.assetId != computeAssetId(metadata.sourceLogicalPath)) {
     return ResultT::Err(AssetLoadError::MetadataArtifactMismatch);
   }
 

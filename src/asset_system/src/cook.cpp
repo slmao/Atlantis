@@ -19,12 +19,29 @@ namespace {
 namespace fs = std::filesystem;
 
 // Plan 0012 Section D10: write-to-temp-then-rename() in the same
-// directory as finalPath. std::filesystem::rename() is required by the
-// C++17 standard to atomically replace finalPath if it already exists,
-// so a reader only ever observes the fully-old or fully-new file, never
-// a partial write. On any failure, the temp file is removed on a
-// best-effort basis and any pre-existing, previously-valid finalPath is
-// left completely untouched.
+// directory as finalPath.
+//
+// The C++ standard's own wording for std::filesystem::rename() ("as if
+// by POSIX rename()") states the *effect* if the call succeeds -- it
+// does not by itself guarantee a non-POSIX implementation performs that
+// effect atomically. On this project's actual Windows/MSVC target, the
+// STL implements rename() via Win32 MoveFileExW(...,
+// MOVEFILE_REPLACE_EXISTING), which Microsoft's own documentation
+// states takes a single, same-volume filesystem rename operation only
+// when source and destination are on the *same volume* -- across
+// volumes it falls back to a non-atomic copy-then-delete. Creating the
+// temp file in finalPath's own directory (never a separate temp
+// location) is what guarantees the same-volume path is always taken,
+// not an incidental detail. Verified empirically on this toolchain, not
+// merely assumed from the standard's prose -- see
+// tests/asset_system/rename_overwrite_probe.cpp.
+//
+// Given that, a reader only ever observes the fully-old or fully-new
+// file, never a partial write. On any failure, the temp file is removed
+// on a best-effort basis and any pre-existing, previously-valid
+// finalPath is left completely untouched -- see V11
+// (cook_command_tests.cpp) for the tests proving this, including a
+// genuine forced rename failure, not only the happy path.
 [[nodiscard]] bool writeBytesAtomically(const fs::path& finalPath, const char* data, std::size_t size) {
   std::error_code ec;
   const fs::path dir = finalPath.parent_path();

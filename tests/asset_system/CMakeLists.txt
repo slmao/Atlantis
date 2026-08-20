@@ -1,4 +1,5 @@
 add_executable(atlantis_asset_system_tests
+  rename_overwrite_probe.cpp
   static_mesh_asset_data_tests.cpp
   logical_path_tests.cpp
   asset_id_tests.cpp

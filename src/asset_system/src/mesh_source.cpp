@@ -131,6 +131,21 @@ atlantis::Result<ParsedMeshSource, SourceParseError> parseMeshSource(std::string
     ++lineIndex;
   }
 
+  // Bound before allocating: unlike vertex_count (already capped to the
+  // std::uint16_t index domain above), index_count carries no upper
+  // bound of its own -- a malformed text file declaring a huge
+  // index_count (e.g. "index_count: 4000000000") would otherwise turn
+  // parsed.indices.reserve(indexCount) into a multi-gigabyte allocation
+  // attempt from a file that is actually tiny. A declared index_count
+  // whose /3 line requirement exceeds the number of lines actually
+  // remaining cannot possibly be satisfied -- reject as MissingField
+  // now, before the allocation, rather than after failing partway
+  // through the loop below.
+  const std::size_t remainingLinesForIndices = lines.size() - lineIndex;
+  if (static_cast<std::size_t>(indexCount) / 3 > remainingLinesForIndices) {
+    return ResultT::Err(SourceParseError::MissingField);
+  }
+
   parsed.indices.reserve(indexCount);
   for (std::uint32_t i = 0; i < indexCount / 3; ++i) {
     if (lineIndex >= lines.size()) return ResultT::Err(SourceParseError::MissingField);

@@ -6,6 +6,7 @@
 // --flag=value argv convention -- a Plan-stage mechanical detail, not
 // an architectural surface.
 
+#include <exception>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -64,5 +65,23 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  return runCookCommand(request);
+  // Last-line-of-defense exception safety net: every recoverable error
+  // this module's own code returns is a Result<T, E>, never a thrown
+  // exception (matching this project's render-path convention, even
+  // though offline tooling is not strictly required to follow it -- see
+  // AGENTS.md's own carve-out). Standard library operations this CLI
+  // transitively calls (e.g. std::vector::reserve()) can still throw
+  // std::bad_alloc under genuine resource exhaustion; without this,
+  // that would propagate uncaught and terminate the process instead of
+  // producing the stable, non-zero exit code and diagnostic message a
+  // CLI tool's own caller (CMake's build graph) needs to fail cleanly.
+  try {
+    return runCookCommand(request);
+  } catch (const std::exception& e) {
+    std::cerr << "atlantis_asset_cooker: unexpected internal error: " << e.what() << "\n";
+    return 1;
+  } catch (...) {
+    std::cerr << "atlantis_asset_cooker: unexpected internal error (unknown exception type)\n";
+    return 1;
+  }
 }

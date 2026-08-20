@@ -235,6 +235,29 @@ TEST_CASE("parseMeshSource rejects vertex_count above 65535", "[asset_system]") 
   CHECK(result.error() == SourceParseError::VertexCountOutOfRange);
 }
 
+TEST_CASE("parseMeshSource rejects a huge index_count unsupported by the file's actual line count, without "
+          "attempting a huge allocation",
+          "[asset_system]") {
+  // A malformed file declaring an implausibly large index_count (here,
+  // divisible by 3, so it clears IndexCountNotMultipleOfThree) must be
+  // rejected before parsed.indices.reserve(indexCount) ever runs --
+  // otherwise a tiny file could trigger a multi-gigabyte allocation
+  // attempt. If this regresses, this test either fails on
+  // MissingField/CountMismatch mismatch or hangs/aborts the process
+  // trying to allocate ~8GB for a handful of bytes of input.
+  const std::string_view hugeIndexCount =
+      "atlantis_static_mesh_source_version: 1\n"
+      "vertex_count: 3\n"
+      "index_count: 4000000002\n"
+      "vertex: 0.0 0.0 0.0 1.0 0.0 0.0\n"
+      "vertex: 1.0 0.0 0.0 0.0 1.0 0.0\n"
+      "vertex: 0.0 1.0 0.0 0.0 0.0 1.0\n"
+      "index: 0 1 2\n";
+  const auto result = parseMeshSource(hugeIndexCount);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == SourceParseError::MissingField);
+}
+
 TEST_CASE("parseMeshSource rejects trailing content after the final index line", "[asset_system]") {
   std::string withTrailing(kValidTriangleSource);
   withTrailing += "extra garbage line\n";
