@@ -1,8 +1,9 @@
 # ADR 0046: Runtime Composition, Object Ownership, and Frame Lifecycle
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-20
-- **Deciders:** Pending Human Review
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-20 as part of Spec 0013's Human Review Approval
 - **Related Spec:** [specs/0013-runtime-host-foundation.md](../specs/0013-runtime-host-foundation.md)
 
 ## Context

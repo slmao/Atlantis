@@ -1,30 +1,70 @@
 # Spec: Runtime Host Foundation
 
-- **Status:** In Review
-- **Author:** Drafted by Claude Code (AI agent) at explicit human direction;
-  human authorship/ownership pending confirmation at Human Review.
+- **Status:** Approved
+- **Author:** Drafted by Claude Code (AI agent) at explicit human
+  direction; approved by human review — see Human Review Approval below.
 - **Created:** 2026-08-20
-- **Related Plan(s):** None yet — a plan may be drafted once this spec
-  reaches `Approved`, per [AGENTS.md](../AGENTS.md).
-- **Related ADR(s):** Builds on
-  [ADR-0001](../adr/0001-rhi-backend-independence.md)–[ADR-0005](../adr/0005-platform-module-multi-os-windowing.md),
-  [ADR-0009](../adr/0009-assertion.md),
-  [ADR-0011](../adr/0011-native-window-handle-representation.md)–[ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md),
-  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)–[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md),
-  [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)–[ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md),
-  [ADR-0032](../adr/0032-conceptual-architecture-layers-versus-source-module-ownership.md)–[ADR-0037](../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md),
-  [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)–[ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md),
-  and
-  [ADR-0043](../adr/0043-asset-system-module-boundary.md)–[ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
-  (all `Accepted`; none reopened or modified — see Motivation and
-  Architectural Impact for which are load-bearing here). See
-  **Architectural Impact** below — two new decisions are identified and
-  drafted alongside this spec:
+- **Human Review Approval (2026-08-20):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer for this branch) on 2026-08-20, following the two independent
+  review rounds recorded below (Round 2 found and fixed one substantive
+  and three mechanical drafting errors before this approval, all
+  corrected on this same branch — no further correction was directed by
+  Human Review itself). This approval explicitly accepts:
+
+  1. The `atlantis_runtime_host` private static library plus a thin
+     `atlantis_runtime` Windows executable split (ADR-0047) — the private
+     library exists solely for entry-point reuse and GPU-independent
+     testability, and is not a public dependency surface any other
+     top-level module may consume.
+  2. Runtime, as composition root, depending on and selecting
+     `Atlantis::VulkanBackend` directly — without any `Vk*` type crossing
+     into any other module's public surface or into the GPU-independent
+     lifecycle/state-machine test boundary.
+  3. ADR-0046's complete initialization order, object-ownership model,
+     per-frame execution order, `Device::waitIdle()` usage, and
+     reverse-order destruction contract, as fixed in this spec's own
+     Requirements.
+  4. A pure `RuntimeLifecycleState` lifecycle/decision state-machine
+     boundary for GPU-independent testing — no general dependency
+     injection, service locator, or fake-engine-interface set is
+     introduced.
+  5. A bootstrap scene combining only the existing cooked `minimal_cube`
+     asset, the existing `minimal_mesh` shader, a camera, and one fixed
+     `Material` — no World/ECS/Scene abstraction of any kind.
+  6. The revised, complete `Presentation`/`acquireNextTarget()`/`submit()`
+     error classification — including `PresentationError::SwapchainCreationFailed`
+     — and its recoverable/unrecoverable handling, per Round 2's own fix.
+  7. Windows windowed mode only for this round — no headless Runtime,
+     server mode, or Android implementation.
+  8. A minimal configuration boundary — no general application
+     configuration system designed or implied.
+  9. Every existing example/demo retained, unchanged, as its own spec's
+     disclosed verification composition — no removal or large-scale
+     refactor.
+  10. No Client API, Editor IPC, remote transport, or command/query/event
+      protocol in this round — [ADR-0033](../adr/0033-runtime-authority-and-client-boundary.md)'s
+      Runtime-authority principle is acknowledged but not exercised beyond
+      local, single-process ownership.
+  11. No change to any existing public API of Platform, RHI, Vulkan
+      Backend, Renderer, Shader System, or Asset System.
+  12. The revised three-layer verification model from Round 2: a Runtime
+      GPU smoke test covering real windowed acquire/draw/submit/present
+      and Vulkan Validation Layers; the existing, unmodified headless
+      image-regression suite as the continuing automated pixel-level
+      regression gate; manual, by-eye comparison of Runtime's visible
+      window against the existing `minimal_cube` golden PNG; and no
+      addition of `VK_IMAGE_USAGE_TRANSFER_SRC_BIT` to the swapchain or
+      any other windowed-readback capability for this spec.
+
   [ADR-0046](../adr/0046-runtime-composition-ownership-and-frame-lifecycle.md)
-  (Runtime composition, object ownership, and frame lifecycle) and
-  [ADR-0047](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md)
-  (Runtime Host executable/library structure and test boundary) — both
-  `Proposed`.
+  and [ADR-0047](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md)
+  both move to `Accepted` alongside this approval. **This approval
+  authorizes drafting Plan 0013 against this spec, per
+  [AGENTS.md](../AGENTS.md); it does not itself authorize Implementation**
+  — that future Plan must still pass its own Human Review, per the same
+  Spec → Plan → Human Review → Implementation → Verification → PR →
+  Merge path every prior spec in this line has followed.
 - **Independent Review — Round 1 (2026-08-20):** Self-review performed
   during drafting, against `origin/main`'s actual, current public headers
   (not historical summaries) for every module this spec composes:
@@ -119,6 +159,27 @@
     Backlog renumbering and World/ECS's own corrected dependency entry
     were re-checked and found internally consistent, apart from the one
     stale cross-reference fixed above.
+- **Related Plan(s):** None yet — a plan may now be drafted against this
+  `Approved` spec, per [AGENTS.md](../AGENTS.md); Plan 0013 has not been
+  drafted by this document, and may only be drafted once this spec's own
+  PR has merged into `main` (see Human Review Approval above).
+- **Related ADR(s):** Builds on
+  [ADR-0001](../adr/0001-rhi-backend-independence.md)–[ADR-0005](../adr/0005-platform-module-multi-os-windowing.md),
+  [ADR-0009](../adr/0009-assertion.md),
+  [ADR-0011](../adr/0011-native-window-handle-representation.md)–[ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md),
+  [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)–[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md),
+  [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)–[ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md),
+  [ADR-0032](../adr/0032-conceptual-architecture-layers-versus-source-module-ownership.md)–[ADR-0037](../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md),
+  [ADR-0038](../adr/0038-headless-offscreen-rendertarget-construction-and-ownership.md)–[ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md),
+  and
+  [ADR-0043](../adr/0043-asset-system-module-boundary.md)–[ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
+  (all `Accepted`; none reopened or modified — see Motivation and
+  Architectural Impact for which are load-bearing here).
+  [ADR-0046](../adr/0046-runtime-composition-ownership-and-frame-lifecycle.md)
+  (Runtime composition, object ownership, and frame lifecycle) and
+  [ADR-0047](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md)
+  (Runtime Host executable/library structure and test boundary) — both
+  `Accepted` alongside this spec's own Human Review Approval above.
 
 ## Summary
 
@@ -754,8 +815,10 @@ No dependency on Atlantis::RenderGraph directly (see Requirements'
 
 ## Architectural Impact
 
-This spec introduces architecture and requires two new ADRs before it can
-move from `In Review` to `Approved`, per [AGENTS.md](../AGENTS.md):
+This spec introduces architecture recorded in two new ADRs, both
+`Accepted` alongside this spec's own Human Review Approval — required to
+reach `Accepted` before this spec could move from `In Review` to
+`Approved`, per [AGENTS.md](../AGENTS.md):
 
 1. **Runtime composition, object ownership, and frame lifecycle** — the
    complete object model, initialization order, per-frame order, resize/
@@ -868,11 +931,12 @@ spec and is not drafted here.
 
 ## Decisions Requiring Human Review
 
-Each of the following is stated with this spec's own recommendation and
-reasoning, per this repository's established practice (e.g. Spec 0008's
-own pre-approval decision list) — none is decided unilaterally by this
-spec; each requires explicit Human Review confirmation before this spec
-can move to `Approved`.
+**All ten items below were accepted as recommended by the 2026-08-20
+Human Review Approval recorded at the top of this document** — retained
+here as the permanent record of each recommendation and its reasoning,
+per this repository's established practice (e.g. Spec 0008's own
+pre-approval decision list). None was decided unilaterally by this spec;
+each was confirmed explicitly rather than assumed.
 
 1. **Pure executable, or an internal Runtime Host library plus a thin
    Windows executable?** *Recommendation:* the library-plus-thin-
