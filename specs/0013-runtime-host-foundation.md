@@ -54,6 +54,71 @@
   not name RenderGraph as a direct Runtime dependency; see Architectural
   Impact's own note on this for the reasoning and the corresponding,
   explicitly-deferred `module_boundaries.md` correction.
+- **Independent Review — Round 2 (2026-08-20):** Centralized review of
+  this spec's actual PR content against real code — the RHI/Vulkan
+  Backend/Renderer/Platform/Shader/Asset System headers and
+  implementations, `examples/minimal_renderer_demo`, Spec 0011/0012's own
+  test compositions, and [ADR-0033](../adr/0033-runtime-authority-and-client-boundary.md)
+  — checking specifically for claimed capabilities the current interfaces
+  cannot actually provide. Found and fixed one substantive drafting error
+  and three smaller ones, all corrected directly on this branch; no
+  architectural blocker was found.
+  - **Substantive:** the Testing & Verification Plan originally claimed
+    this spec's own windowed bootstrap composition could be automatically
+    pixel-compared against Spec 0011's `minimal_cube` golden via
+    `atlantis::image_regression::compareBuffers()`. This is false as a
+    matter of real, current interface capability, not merely undesigned:
+    swapchain-backed `RenderTarget`s are created with
+    `VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT`
+    only (`src/vulkan_backend/src/vulkan_presentation.cpp`), never
+    `VK_IMAGE_USAGE_TRANSFER_SRC_BIT`, which `CommandList::copyRenderTargetToBuffer()`'s
+    own `vkCmdCopyImageToBuffer` call requires of its source image — the
+    only existing GPU-to-CPU readback path (ADR-0040) cannot legally be
+    used against a windowed target, and doing so would fail Vulkan
+    Validation Layers. Corrected: Testing & Verification Plan's
+    "GPU-required tests" now specifies a three-layer verification model
+    instead (a Runtime GPU smoke test checking the real acquire/draw/
+    submit/present pipeline runs Validation-Layers-clean with no pixel
+    assertion; the existing, unmodified headless image-regression suite
+    as the actual pixel-level rendering-output regression gate; manual,
+    by-eye comparison against the existing golden PNG as the evidence for
+    Runtime's own visible window) — see that section's own inline
+    correction note for the full evidence trail. Bootstrap Scene's and
+    the Acceptance-adjacent "No golden added or modified" bullet's
+    wording were corrected to match.
+  - **Mechanical:** the presentation/error-state outcome table (and the
+    matching Decisions Requiring Human Review item 6) omitted
+    `PresentationError::SwapchainCreationFailed` — a real, reachable
+    outcome of `acquireNextTarget()`'s own internal `recreateIfNeeded()`
+    call, confirmed against `src/rhi/include/atlantis/rhi/types.h`'s
+    actual four-value enum — from what it claimed was an exhaustive
+    classification. Fixed to cover the enum's full value set.
+  - **Mechanical:** added an explicit note explaining why Initialization
+    order steps 3–6's own failure teardown never calls
+    `Device::waitIdle()` (no submission can have occurred before the
+    frame loop begins), distinguishing it from the general Shutdown
+    sequence's unconditional call — matching, not contradicting,
+    `examples/minimal_renderer_demo`'s own identical early-failure
+    teardown behavior.
+  - **Mechanical, in `specs/README.md`:** Spec 0012's own registry row
+    still read "does not wait for Atlantis Runtime (Candidate Order 2
+    below, not yet specced)" — stale after this spec's own prior
+    registry update promoted Runtime out of Candidate Order 2 and gave it
+    a real spec number. Corrected to reference Spec 0013 directly.
+  - **Confirmed clean, no change needed:** the Windows `WM_CLOSE`/
+    `WM_DESTROY`/`SurfaceCreated` event-timing model this spec's per-frame
+    and shutdown ordering depends on, checked directly against
+    `src/platform/src/windows/windows_platform.cpp`'s actual `windowProc`
+    and `shutdown()` implementation — `WindowCloseRequested` never itself
+    triggers `SurfaceDestroyed`/`shouldQuit()`; only `shutdown()`'s own
+    `DestroyWindow()` call does, synchronously, exactly as this spec's Mid-
+    frame close and Shutdown sections already assumed. ADR-0046/ADR-0047's
+    own division of responsibility (composition/ownership/lifecycle vs.
+    executable/library structure and the Vulkan Backend dependency) has no
+    overlapping claim between the two documents. The registry's Candidate
+    Backlog renumbering and World/ECS's own corrected dependency entry
+    were re-checked and found internally consistent, apart from the one
+    stale cross-reference fixed above.
 
 ## Summary
 
@@ -431,6 +496,19 @@ Explicitly excluded from this spec's design and implementation:
    `metadata().format` becomes known for the first time — see Bootstrap
    Sequencing Detail.
 
+**Why steps 3–6's own failure teardown never calls `Device::waitIdle()`.**
+None of steps 3–6 ever reaches `Device::createCommandList()`/`submit()` —
+the first submission of any kind happens only inside the frame loop
+(Per-frame order, below). `waitIdle()`'s own contract ("blocks until every
+submission this Device has made has finished executing") therefore has
+nothing to wait for at any of these steps; omitting it here is not a gap,
+it matches `examples/minimal_renderer_demo/main.cpp`'s own identical
+early-failure teardown (e.g. its `createMesh()`-failure path calls
+`device.reset()` directly, with no `waitIdle()` call). This is deliberately
+narrower than the general Shutdown sequence below, which calls
+`waitIdle()` unconditionally because it is reachable from the frame loop,
+where a submission may genuinely be outstanding.
+
 **Bootstrap Sequencing Detail — resolving Material's initial format**
 
 `Material`/`Pipeline` creation needs a concrete color format
@@ -506,7 +584,7 @@ classified into exactly one of three categories:
 | `Presentation::metadata().format` differs from last observed | Recoverable, Runtime-visible | Rebuild `Material` (Spec 0007's existing caller-owned contract); on `createMaterial()` failure, keep the existing `Material` and retry next frame — matching `minimal_renderer_demo`'s own already-verified retry behavior exactly, not a new bounded-retry policy. |
 | Acquired target's extent differs from last observed | Recoverable, Runtime-visible | Recreate the depth `Texture`; on `createTexture()` failure, keep the existing `Texture` and retry next frame — same retry pattern as above. |
 | `WindowCloseRequested` observed, or `Quit` observed with `shouldQuit()` true | Normal exit | Proceed to Shutdown; exit code Success (see Error Handling). |
-| `acquireNextTarget()` → `Err(PresentationError::SurfaceLost \| DeviceLost \| Unknown)` | Unrecoverable | Log; proceed to Shutdown; exit code UnrecoverableRuntimeError. |
+| `acquireNextTarget()` → `Err(PresentationError::...)` (any variant — including `SwapchainCreationFailed`, surfaced from its own internal `recreateIfNeeded()` call, per `PresentationError`'s full four-value enum) | Unrecoverable | Log; proceed to Shutdown; exit code UnrecoverableRuntimeError. |
 | `present()` → `Err(PresentationError::...)` (any variant) | Unrecoverable | Log; proceed to Shutdown; exit code UnrecoverableRuntimeError. |
 | `Device::submit()` → `Err(SubmitError::QueueSubmitFailed \| DeviceLost)` | Unrecoverable | Log; proceed to Shutdown; exit code UnrecoverableRuntimeError. |
 | `Device::createCommandList()` → `Err` | Unrecoverable | Log; proceed to Shutdown; exit code UnrecoverableRuntimeError. |
@@ -562,12 +640,16 @@ does not invent a new ownership rule.
   already-proven prior art and neither is an architectural decision).
 - No second mesh, no second material, no scene file, and no World/ECS
   representation of any kind — see Non-Goals.
-- This is the same geometry and shader every existing windowed/asset-
-  sourced composition already renders and already has a committed,
-  zero-difference-verified golden for (Spec 0011/Plan 0012's own
-  `minimal_cube` golden) — chosen specifically so this spec's own GPU
-  verification (Testing & Verification Plan) can reuse that existing
-  golden rather than needing a new one.
+- This is the same geometry and shader Spec 0011/Plan 0012's own
+  `minimal_cube` golden was captured from — chosen so a human verifier
+  comparing Runtime's own visible window against that already-published
+  golden image has a direct, meaningful reference, and so the *offscreen*
+  path this spec's own GPU-required tests actually exercise (see Testing
+  & Verification Plan) is the same content the existing headless
+  image-regression suite already covers pixel-for-pixel. This spec's own
+  windowed path is **not** automatically, pixel-comparably verified
+  against that golden — see Testing & Verification Plan's own correction
+  of an earlier drafting error on exactly this point.
 
 **Build integration**
 
@@ -848,8 +930,9 @@ can move to `Approved`.
    loss, and mid-frame close.** *Recommendation:* fixed exhaustively under
    Requirements' "Presentation and error-state handling," using only
    outcomes `Presentation`/`Device`'s real, current signatures can
-   actually produce (`PresentationError::{SurfaceLost, DeviceLost,
-   Unknown}`, `SubmitError::{QueueSubmitFailed, DeviceLost}`, confirmed
+   actually produce (`PresentationError`'s full four-value enum —
+   `SurfaceLost`, `SwapchainCreationFailed`, `DeviceLost`, `Unknown` —
+   and `SubmitError::{QueueSubmitFailed, DeviceLost}`, confirmed
    live-mapped from real `VkResult`s in
    `src/vulkan_backend/src/vulkan_result.cpp`, not merely declared and
    unused) — no new RHI capability is needed or proposed to express any of
@@ -964,15 +1047,52 @@ can move to `Approved`.
     verified its own composition root's real teardown correctness (none
     unit-tests it either).
 - **GPU-required tests (Windows/Vulkan, `gpu`-labeled):**
-  - The full bootstrap composition constructs successfully and renders at
-    least one frame off-screen-equivalent-comparable content: reuse
-    Spec 0011's existing `minimal_cube` golden and
-    `atlantis::image_regression::compareBuffers()` the same way Plan 0012
-    Step 6's own GPU test already does, confirming this spec's own
-    windowed, Asset-System-sourced bootstrap scene produces the same
-    pixels as the already-verified offscreen path — **zero** channel
-    difference is the target, matching that existing, evidence-backed
-    standard; this spec does not introduce or modify any golden.
+  - **Correction to an earlier drafting error, found during independent
+    review:** this spec's own bootstrap composition does **not**
+    automatically compare its windowed output against Spec 0011's
+    `minimal_cube` golden via `atlantis::image_regression::compareBuffers()`,
+    and no such test is added. Verified directly against
+    `src/rhi/include/atlantis/rhi/render_target.h` and
+    `src/vulkan_backend/src/vulkan_presentation.cpp`: a swapchain-backed
+    `RenderTarget` is created with `imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+    | VK_IMAGE_USAGE_TRANSFER_DST_BIT` only — **no**
+    `VK_IMAGE_USAGE_TRANSFER_SRC_BIT`. `CommandList::copyRenderTargetToBuffer()`
+    (the only existing GPU-to-CPU readback path, ADR-0040) issues
+    `vkCmdCopyImageToBuffer`, which requires `VK_IMAGE_USAGE_TRANSFER_SRC_BIT`
+    on its source image; calling it against a windowed `RenderTarget` would
+    violate that requirement and fail Vulkan Validation Layers, even though
+    the type-level `dynamic_cast<VulkanRenderTargetAccess*>` check inside
+    it (`src/vulkan_backend/src/vulkan_command_list.cpp`) does not itself
+    reject a windowed target — `VulkanRenderTarget` and
+    `VulkanOffscreenRenderTarget` both implement that private interface.
+    There is therefore **no existing, unmodified-public-API path to read
+    back and pixel-compare a real windowed frame**, and this spec does not
+    add one — doing so would mean changing the Vulkan Backend's own
+    internal swapchain `imageUsage` flags (itself contingent on
+    `VkSurfaceCapabilitiesKHR::supportedUsageFlags` actually offering
+    `TRANSFER_SRC_BIT`, not guaranteed on every present mode/compositor),
+    which is exactly the kind of implementation change this spec's own
+    Non-Goals require raising as an explicit architectural question rather
+    than adding silently — not raised here, since no real need has forced
+    it (see below for what this spec verifies instead).
+  - **What is verified instead, split across three complementary layers,
+    none of which claims what the others do not:**
+    1. A **Runtime GPU smoke test** constructs the full bootstrap
+       composition, creates a real window, and confirms `acquireNextTarget()`
+       → the format/extent-change paths → `Renderer::drawFrame()` →
+       `submit()` → `present()` all succeed at least once with Vulkan
+       Validation Layers reporting zero warnings/errors — a mechanical
+       correctness check (the real pipeline runs end to end, cleanly), not
+       a pixel-content assertion of any kind.
+    2. The **existing, unmodified headless image-regression suite**
+       (`tests/image_regression/`, Spec 0011/0012, offscreen-only) remains
+       the actual pixel-level rendering-output regression gate for this
+       exact geometry/shader/camera combination — untouched, still passing,
+       already covering the content Runtime's own bootstrap scene reuses.
+    3. **Manual verification** (below) is the evidence that Runtime's own
+       *visible window* shows the correct mesh — a human comparing what
+       the window displays against the same already-published
+       `minimal_cube` golden PNG, by eye, not an automated diff.
   - Device-loss and surface-loss code paths are verified by code
     inspection against `src/vulkan_backend/src/vulkan_result.cpp`'s real,
     live `VK_ERROR_DEVICE_LOST`-to-`PresentationError::DeviceLost`/
@@ -984,7 +1104,11 @@ can move to `Approved`.
 - **Manual verification (Windows, real window, real GPU):**
   - A visible window shows the `minimal_cube` mesh, correctly shaded,
     matching every existing windowed demo's own already-verified visual
-    bar.
+    bar — a human verifier compares it by eye against the same
+    already-published `minimal_cube` golden PNG
+    (`tests/image_regression/goldens/minimal_cube/`), the only comparison
+    this spec's own verification makes against that golden (see Testing &
+    Verification Plan's "GPU-required tests" note above).
   - Interactive resize continues to show the mesh correctly, with the
     depth `Texture` recreated at the new extent and `Material`/`Pipeline`
     **not** recreated for an extent-only change (dynamic viewport/
@@ -1018,12 +1142,13 @@ can move to `Approved`.
   Criterion) and by the manual verification's own clean-shutdown/no-leak
   observation above.
 - **No golden added or modified**, per this spec's own Non-Goals and
-  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md) —
-  this spec's rendered output is expected, by design, to be pixel-
-  identical to the already-committed `minimal_cube` golden; any observed
-  difference is a defect in this spec's implementation to fix, not a
-  reason to update the golden, unless a human reviewer determines
-  otherwise through that ADR's own approval discipline.
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
+  — this spec's implementation never writes to
+  `tests/image_regression/goldens/`, and no test this spec adds performs
+  an automated pixel comparison of any kind (see the "GPU-required tests"
+  correction above for why). The existing `minimal_cube` golden remains
+  exactly as Spec 0011/Plan 0012 left it, exercised only by the existing,
+  unmodified headless suite.
 
 ## Risks & Open Questions
 
