@@ -171,6 +171,18 @@ loads its CPU-side asset data and is itself responsible for constructing
 any GPU resource from it. See
 [ADR-0043](adr/0043-asset-system-module-boundary.md).
 
+Atlantis Runtime (Spec 0013, `Approved`) is the actual composition root —
+a private `atlantis_runtime_host` static library plus a thin
+`atlantis_runtime` Windows executable, composing Platform, RHI, Vulkan
+Backend, Renderer, Shader System, and Asset System into one fixed
+startup → windowed frame loop → shutdown lifecycle. `atlantis_runtime_host`
+exists solely for testability (its own GPU-independent lifecycle/error-
+classification tests) and is not a dependency any other top-level module
+may take. See
+[ADR-0046](adr/0046-runtime-composition-ownership-and-frame-lifecycle.md)
+and
+[ADR-0047](adr/0047-runtime-host-executable-library-structure-and-test-boundary.md).
+
 **Atlantis Platform** is the per-OS windowing/surface/lifecycle
 abstraction — it is to *operating systems* what RHI is to *graphics
 backends*: an interface with concrete per-OS implementations (Windows

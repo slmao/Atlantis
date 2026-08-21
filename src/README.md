@@ -228,12 +228,35 @@ and links neither `Atlantis::RHI` nor the RHI-integration target.
 Implemented per the same Spec 0008/Plan 0008/ADR-0028–0031 references
 above, merged via [PR #36](https://github.com/slmao/Atlantis/pull/36).
 
-Runtime (see
-[docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md))
-is still empty by design, per Spec-Driven Development (see
-[AGENTS.md](../AGENTS.md)): its internal structure is itself an
-architectural decision established by its own approved spec + plan +
-ADR, not invented ahead of time.
-
-Do not add source files for that module here without a linked spec and
-plan.
+**`runtime/`** — Atlantis Runtime: the real Windows windowed composition
+root. Two targets: `atlantis_runtime_host` (STATIC, alias
+`Atlantis::RuntimeHost`; PUBLIC dependencies `Atlantis::Core`,
+`Atlantis::Platform`, `Atlantis::RHI`, `Atlantis::VulkanBackend`,
+`Atlantis::Renderer`, `Atlantis::ShaderSystem`,
+`Atlantis::ShaderSystemRhiIntegration`, `Atlantis::AssetSystem` — not
+`Atlantis::RenderGraph` directly, since `Renderer::drawFrame()` already
+owns it internally), a private composition library that exists solely so
+`tests/runtime/` can exercise real lifecycle/error-classification logic
+without a device or a window — not a dependency any other module may
+take; and `atlantis_runtime` (the thin executable, PRIVATE dependency on
+`Atlantis::RuntimeHost` only). `RuntimeApplication` owns a
+`PlatformSession` RAII guard as its first member (destroyed last by
+reverse-declaration-order destruction, making window-outlives-GPU-
+resources compiler-enforced rather than hand-sequenced), a six-step
+initialization sequence (Platform session, shader load, `Device`, mesh
+asset load, `Mesh`, camera `Buffer` — `Material` is deliberately deferred
+to the first frame, since no real swapchain format is known before the
+first `SurfaceCreated` event), a ten-step per-frame orchestration
+(event handling, acquire, format-change Material rebuild, extent-change
+depth-texture rebuild, draw, submit, present), and a single, idempotent
+`shutdown()` that is the sole caller of GPU-resource teardown and the
+sole indirect trigger (via `PlatformSession`'s own destructor) of
+`platform::shutdown()`. Implemented per
+[specs/0013-runtime-host-foundation.md](../specs/0013-runtime-host-foundation.md),
+[plans/0013-runtime-host-foundation.md](../plans/0013-runtime-host-foundation.md),
+and
+[ADR-0046](../adr/0046-runtime-composition-ownership-and-frame-lifecycle.md),
+[ADR-0047](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md).
+See
+[docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md)
+for the full public/private boundary statement.

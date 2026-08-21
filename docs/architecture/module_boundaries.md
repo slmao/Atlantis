@@ -329,40 +329,71 @@ cache are each named, explicitly out-of-scope future work in Spec 0012
 
 ## Atlantis Runtime
 
-**Responsibilities:** the application/executable layer. Owns an Atlantis
-Platform instance for the OS being built (Windows Platform or Android
-Platform), creates the RHI `Device` and `Presentation` instance (via
-Vulkan Backend) using the opaque native surface handle Platform produced,
-and each frame: acquires a `RenderTarget` from `Presentation`, hands it to
-`Renderer`, then presents. Also responds to Platform-delivered lifecycle
-events (e.g. Android surface destroyed/recreated, app paused/resumed) —
-exact handling TBD, see Open Questions in
-[threading.md](threading.md).
+**Status: Approved, implemented** (Spec 0013, ADR-0046/ADR-0047, all
+`Accepted`) — this section states the real, built boundary for the
+Windows windowed path; Android/iOS remain architectural, not
+implemented (see Extension points).
+
+**Responsibilities:** the actual composition root. A private
+`atlantis_runtime_host` static library (`Atlantis::RuntimeHost`) owns
+the object model, initialization sequence, per-frame orchestration, and
+shutdown; a thin `atlantis_runtime` Windows executable contains only the
+`main()` entry point that constructs and drives it. Owns a Platform
+session for the OS being built (Windows Platform; Android Platform not
+implemented), creates the RHI `Device` and (on the first `SurfaceCreated`
+event) `Presentation` via the Vulkan Backend, loads the `minimal_cube`
+Asset-System-sourced mesh and the `minimal_mesh` Shader-System-compiled
+material, and each frame: acquires a `RenderTarget` from `Presentation`,
+hands it to `Renderer`, then presents. Also responds to Platform-
+delivered lifecycle events; Android-specific lifecycle handling (surface
+destroyed/recreated, app paused/resumed) remains TBD, see Open Questions
+in [threading.md](threading.md).
 
 **Depends on:** Atlantis Platform, RHI (Device + Presentation), Renderer,
-RenderGraph, Core. This is the **only** module permitted to depend on
-Atlantis Platform.
+Shader System (both targets), Asset System, Core. **Not** RenderGraph
+directly — `Renderer::drawFrame()` already owns RenderGraph construction/
+compilation/execution internally, confirmed by inspection that no
+`atlantis/render_graph/*.h` header is included anywhere under
+`src/runtime/` (a correction to this section's own earlier, `PROPOSED`-
+era text, which listed RenderGraph as a direct dependency before any
+real Runtime code existed to check that claim against). This is the
+**only** module permitted to depend on Atlantis Platform.
 
-**Depended on by:** nothing (it's the executable).
+**Depended on by:** nothing (it's the executable) — and, per its own
+design, `Atlantis::RuntimeHost` specifically is not to be depended on by
+any *other* top-level module either, even though it is technically a
+linkable library: it exists solely so `tests/runtime/`'s own GPU-
+independent lifecycle/error-classification tests can exercise real
+composition logic without a device or a window.
 
-**Ownership:** owns the Platform instance and `Presentation` for their
-full lifetime, including resize/recreation and OS-driven
-invalidation. `RenderTarget` instances it acquires each frame are
-short-lived and scoped to that frame — see
-[resource_lifetime.md](resource_lifetime.md).
+**Ownership:** a `PlatformSession` RAII guard (wrapping
+`platform::initialize()`/`shutdown()`) is declared as the composition
+object's *first* member, so it is destroyed *last* by ordinary C++
+reverse-declaration-order destruction — a compiler-enforced guarantee
+that the window outlives every GPU resource, not a hand-sequenced
+convention. `Device`, `Presentation`, `Mesh`, the camera `Buffer`, the
+depth `Texture`, and `Material` are owned in that reverse order below
+it, matching `Material → Texture → Buffer → Mesh → Presentation → Device
+→ PlatformSession`/window as the fixed destruction sequence.
+`RenderTarget` instances acquired each frame are short-lived and scoped
+to that frame — see [resource_lifetime.md](resource_lifetime.md).
 
-**Public/private boundary:** Runtime is largely "private" — it is the
-composition root, not a library other modules link against. Per-OS
-executable entry points (Win32 `WinMain`/`main`, Android
-`android_main`/`ANativeActivity_onCreate` or equivalent) live here, calling
-into the corresponding Platform implementation.
+**Public/private boundary:** `atlantis_runtime_host` is a private
+composition library — not a public dependency surface any other module
+may consume, despite being a real, linkable CMake target (see Depended
+on by, above). `atlantis_runtime`'s own `main()` (Windows; Android
+`android_main`/`ANativeActivity_onCreate` or equivalent remains
+unimplemented) contains no composition logic of its own beyond building
+a fixed configuration from build-tree paths and driving
+`atlantis_runtime_host`'s own already-public API.
 
 **Extension points:** the headless entry point (offscreen target
-construction instead of Platform/Presentation) is a Runtime-level (or
-Tools-level) concern that reuses the same Renderer/RenderGraph — see
+construction instead of Platform/Presentation) remains a future,
+unimplemented Runtime-level (or Tools-level) concern that would reuse the
+same Renderer/RenderGraph — see
 [overview.md](overview.md#windowed-vs-headless-the-shared-path-across-platforms).
-Not implemented by this document. Future iOS Runtime entry point:
-not designed.
+Not implemented by Spec 0013, which is windowed-only by explicit design.
+Future iOS Runtime entry point: not designed.
 
 ---
 
