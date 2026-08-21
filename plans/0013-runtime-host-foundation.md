@@ -1,9 +1,72 @@
 # Plan: Runtime Host Foundation
 
 - **Spec:** [specs/0013-runtime-host-foundation.md](../specs/0013-runtime-host-foundation.md) (`Approved`, Human Review Approval recorded 2026-08-20)
-- **Status:** In Review
+- **Status:** Approved / Ready for Implementation
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
   direction.
+- **Human Review Approval (2026-08-21):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer for this branch) on 2026-08-21, as a joint review of
+  `Approved` Spec 0013, `Accepted` ADR-0046/ADR-0047, and this Plan
+  together, following the Independent Review round recorded below. This
+  approval covers the Plan as it stands after that round — see
+  [PR #61](https://github.com/slmao/Atlantis/pull/61) for the full
+  revision history — and explicitly accepts:
+
+  1. The full seven-step implementation sequence (Milestones / Task
+     Breakdown).
+  2. Step 1's and Step 3's atomic boundaries — no commit may land an
+     unbuildable intermediate state or an object with an incomplete
+     ownership/lifecycle story.
+  3. The `atlantis_runtime_host` private library plus thin
+     `atlantis_runtime` executable structure (D1) — no public alias,
+     `install()`/export surface, or API any other top-level module may
+     depend on.
+  4. The `PlatformSession` Runtime-private RAII guard (D4a): declared as
+     `RuntimeApplication`'s first member, destroyed last; the single call
+     site for `platform::shutdown()` anywhere in the Runtime module,
+     inside that guard's own destructor; no hand-written repeated
+     teardown sequence in any initialization-failure path.
+  5. The final member declaration and reverse destruction order:
+     `platformSession_` → `device_` → `presentation_` → `mesh_` →
+     `cameraBuffer_` → `depthTexture_` → `material_`, destroying
+     `Material` → `Texture` → `Buffer` → `Mesh` → `Presentation` →
+     `Device` → `PlatformSession`/window.
+  6. The `RuntimeLifecycleTracker::hasEverRun()` contract, and that
+     `Device::waitIdle()` is called only once a real frame loop has been
+     entered (D2, D8).
+  7. That a `waitIdle()` failure itself maps to
+     `RuntimeExitReason::UnrecoverableRuntimeError`, with RAII-driven
+     teardown still proceeding safely afterward (D8).
+  8. The frame-scoped-object release ordering for every acquire/draw/
+     submit/present early-return path (`RenderTarget`, `CommandList`,
+     `SubmissionSignal`) (D7).
+  9. Create-before-destroy `Material` rebuild on a format change, relying
+     on the existing single-frame-in-flight drain guarantee to make
+     destroying the old `Pipeline` safe (D7).
+  10. The exhaustive, no-`default`-case switch design for Presentation/
+      Submit error classification, together with the V3 requirement to
+      run the real `/W4 /WX` exhaustiveness-protection check by hand
+      (D3).
+  11. The Runtime GPU smoke test's scope: real Windows windowed
+      acquire/draw/submit/present plus Vulkan Validation Layers only — no
+      windowed readback, no automated pixel comparison (D10).
+  12. That the existing headless image-regression suite continues to own
+      pixel-level regression, while manual window verification owns
+      resize/minimize/restore/close and by-eye comparison against the
+      existing golden PNG.
+  13. That Runtime composes only the existing bootstrap asset/shader/
+      camera/material, with no World/ECS, Client API, headless Runtime,
+      Android, or change to any existing module's public API.
+  14. The Plan's complete file list, CMake target/dependency graph, the
+      V1–V11 verification matrix, and its stated prohibitions (Files /
+      Modules Touched, Verification Checklist).
+
+  This approval authorizes Implementation **once this approval record has
+  merged into `main` via a human merge of [PR #61](https://github.com/slmao/Atlantis/pull/61)**
+  — not before, and not as part of drafting this same commit. No design
+  content, `Accepted` ADR, code, CMake, or test file is changed by this
+  approval; it is a status-and-record update only.
 - **Independent Review (2026-08-21):** Centralized, agent-performed
   review — not Human Review — of this Plan's actual PR content against
   the real Platform/RHI/Vulkan Backend/Renderer/Asset System/Shader

@@ -161,8 +161,11 @@
     stale cross-reference fixed above.
 - **Related Plan(s):**
   [plans/0013-runtime-host-foundation.md](../plans/0013-runtime-host-foundation.md)
-  (`Draft`) — requires its own Human Review before any Implementation
-  begins, per [AGENTS.md](../AGENTS.md).
+  (`Approved / Ready for Implementation`, joint Spec + Plan Human Review
+  recorded 2026-08-21 — see that Plan's own Human Review Approval note).
+  Implementation is authorized only once
+  [PR #61](https://github.com/slmao/Atlantis/pull/61) has merged into
+  `main`, per [AGENTS.md](../AGENTS.md).
 - **Related ADR(s):** Builds on
   [ADR-0001](../adr/0001-rhi-backend-independence.md)–[ADR-0005](../adr/0005-platform-module-multi-os-windowing.md),
   [ADR-0009](../adr/0009-assertion.md),
