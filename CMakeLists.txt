@@ -69,6 +69,15 @@ atlantis_finalize_asset_validation()
 # 7/8): atlantis_add_slang_shader_pair() is defined there, and this call
 # site invokes it.
 add_subdirectory(shaders/minimal_renderer)
+# Plan 0013 Section D1: must come after both add_subdirectory(assets)
+# and add_subdirectory(shaders/minimal_renderer) above -- atlantis_runtime
+# add_dependencies() on minimal_mesh_shaders and
+# ${ATLANTIS_minimal_cube_TARGET}, both declared by those two calls, and
+# CMake's add_dependencies() requires the named target to already be
+# declared at the point the call is parsed. Runtime is a product
+# executable, not an example, so it is unconditional here, not inside
+# the ATLANTIS_BUILD_EXAMPLES block below.
+add_subdirectory(src/runtime)
 
 if(ATLANTIS_BUILD_EXAMPLES)
   add_subdirectory(examples/foundation_demo)
@@ -93,4 +102,5 @@ if(ATLANTIS_BUILD_TESTS)
   add_subdirectory(tests/shader_system)
   add_subdirectory(tests/tools/shader_compiler)
   add_subdirectory(tests/tools/asset_cooker)
+  add_subdirectory(tests/runtime)
 endif()
