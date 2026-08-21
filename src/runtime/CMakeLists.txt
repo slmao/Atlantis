@@ -6,6 +6,8 @@
 add_library(atlantis_runtime_host STATIC
   src/lifecycle_state.cpp
   src/exit_reason.cpp
+  src/init_error.cpp
+  src/error_classification.cpp
 )
 add_library(Atlantis::RuntimeHost ALIAS atlantis_runtime_host)
 
