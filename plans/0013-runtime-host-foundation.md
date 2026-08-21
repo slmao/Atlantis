@@ -47,7 +47,11 @@
   10. The exhaustive, no-`default`-case switch design for Presentation/
       Submit error classification, together with the V3 requirement to
       run the real `/W4 /WX` exhaustiveness-protection check by hand
-      (D3).
+      (D3). **[Corrected by the 2026-08-21 Human Review Amendment below —
+      the underlying no-`default`-case switch design and the requirement
+      to verify exhaustiveness protection against the real compiler both
+      stand; the specific mechanism and V3's own verification procedure
+      are revised — see that note and D3's/V3's own revised text.]**
   11. The Runtime GPU smoke test's scope: real Windows windowed
       acquire/draw/submit/present plus Vulkan Validation Layers only — no
       windowed readback, no automated pixel comparison (D10).
@@ -67,6 +71,42 @@
   — not before, and not as part of drafting this same commit. No design
   content, `Accepted` ADR, code, CMake, or test file is changed by this
   approval; it is a status-and-record update only.
+- **Human Review Amendment / Correction (2026-08-21):** Reviewed and
+  approved by slmao (`slmao <slmaosjtu@gmail.com>`) on 2026-08-21, during
+  Implementation of Plan 0013 on `feature/0013-runtime-host-foundation`.
+  Real MSVC compilation of `atlantis_runtime_host` (`exit_reason.cpp`'s
+  `toProcessExitCode()`, a `switch` with no `default` covering every
+  current `RuntimeExitReason` value, nothing after it) failed under this
+  project's own real `cl /W4 /WX` with `error C2220` promoting `warning
+  C4715: not all control paths return a value` — **even though the
+  switch already handled every current enumerator**. This falsifies the
+  Human Review Approval's own item 10 and D3's original claim that a
+  no-`default`-case switch, on its own, is "real, verified compiler
+  enforcement" of enum exhaustiveness under this project's actual
+  toolchain: C4715 is a *return-path* diagnostic, not an *enum-
+  completeness* diagnostic, and — confirmed by a further, isolated
+  compile probe reproducing the exact shape (`switch` with no `default`,
+  a trailing non-`[[noreturn]]` fallback call, then a `return`) — it
+  fires (or doesn't) identically regardless of whether the switch is
+  missing a case or already handles every one. **See D3's own revised
+  text below for the corrected mechanism, and V3's revised text for the
+  corrected verification procedure — both empirically re-verified against
+  this project's real MSVC invocation as part of this same amendment,
+  not merely reasoned about.**
+
+  This amendment corrects **D3 and V3 only**. It does not reopen, delete,
+  weaken, or reinterpret Human Review Approval items 1–9 or 11–14 above,
+  the joint Spec + Plan approval those items belong to, `Approved` Spec
+  0013, or `Accepted` ADR-0046/ADR-0047 — none of which this finding
+  touches. It authorizes no code, CMake, or test file change by itself;
+  it corrects what a still-pending Implementation must build once it
+  resumes, and is drafted, reviewed, and merged as its own minimal,
+  independent Plan-document-only change, per the same process every other
+  architecturally-relevant Plan correction in this repository's history
+  has followed. Plan 0013's own `Status` remains `Approved / Ready for
+  Implementation` — this amendment does not revert it to `Draft`/`In
+  Review`, since nothing about the Plan's own overall design, sequencing,
+  or scope is reopened, only this one mechanism's concrete shape.
 - **Independent Review (2026-08-21):** Centralized, agent-performed
   review — not Human Review — of this Plan's actual PR content against
   the real Platform/RHI/Vulkan Backend/Renderer/Asset System/Shader
@@ -113,7 +153,7 @@ architectural left to choose.
 
 | Target | Kind | Location | Links | Notes |
 |---|---|---|---|---|
-| `atlantis_runtime_host` (alias `Atlantis::RuntimeHost`) | STATIC | `src/runtime/` | PUBLIC `Atlantis::Core`, `Atlantis::Platform`, `Atlantis::RHI`, `Atlantis::VulkanBackend`, `Atlantis::Renderer`, `Atlantis::ShaderSystem`, `Atlantis::ShaderSystemRhiIntegration`, `Atlantis::AssetSystem`; PRIVATE `atlantis_compiler_warnings` | **Not** `Atlantis::RenderGraph` — confirmed by Spec 0013's own Independent Review that `Renderer::drawFrame()` (`src/renderer/include/atlantis/renderer/renderer.h`) already owns RenderGraph construction/compilation/execution internally; no `atlantis/render_graph/*.h` header is included anywhere in this Plan's file list. |
+| `atlantis_runtime_host` (alias `Atlantis::RuntimeHost`) | STATIC | `src/runtime/` | PUBLIC `Atlantis::Core`, `Atlantis::Platform`, `Atlantis::RHI`, `Atlantis::VulkanBackend`, `Atlantis::Renderer`, `Atlantis::ShaderSystem`, `Atlantis::ShaderSystemRhiIntegration`, `Atlantis::AssetSystem`; PRIVATE `atlantis_compiler_warnings` | **Not** `Atlantis::RenderGraph` — confirmed by Spec 0013's own Independent Review that `Renderer::drawFrame()` (`src/renderer/include/atlantis/renderer/renderer.h`) already owns RenderGraph construction/compilation/execution internally; no `atlantis/render_graph/*.h` header is included anywhere in this Plan's file list. **Also** (2026-08-21 amendment, D3): `target_compile_options(atlantis_runtime_host PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/w14062>)` — this target only, MSVC only; `cmake/CompilerWarnings.cmake` itself is not touched. |
 | `atlantis_runtime` (executable) | executable | `src/runtime/` | PRIVATE `Atlantis::RuntimeHost`, `atlantis_compiler_warnings` | The thin, per-OS entry point. No other target may depend on `Atlantis::RuntimeHost`, and no `install()`/export rule is added for it — see D1a. |
 | `atlantis_runtime_tests` | executable | `tests/runtime/` | `Atlantis::RuntimeHost`, `Catch2::Catch2WithMain`, `atlantis_compiler_warnings` | GPU-independent — `RuntimeLifecycleState`, error classification, exit-code mapping, and the module-boundary grep. |
 | `atlantis_runtime_gpu_tests` | executable | `tests/runtime/` | `Atlantis::RuntimeHost`, `Catch2::Catch2WithMain`, `atlantis_compiler_warnings` | `gpu`-labeled — the real windowed smoke test (Step 5). |
@@ -272,35 +312,100 @@ Unknown}` (four values) and `SubmitError{QueueSubmitFailed, DeviceLost}`
 differentiation — Spec 0013's own outcome table assigns the identical
 response to every one of these six values.
 
-**What "no default case" actually enforces here, verified empirically
-against this project's own real compiler invocation, not assumed:**
-`cl /W4 /WX` (`cmake/CompilerWarnings.cmake`'s exact flags for this
-project) does **not** itself warn about an unhandled enumerator in a
-`switch` with no `default` — confirmed by compiling a minimal,
-`void`-returning reproduction with those exact flags: it built cleanly,
-with no diagnostic at all. What *does* fail the build is **C4715, "not
-all control paths return a value"** — confirmed by compiling the same
-reproduction with a non-`void` return type and no code after the
-`switch`: `cl /W4 /WX` failed with `error C2220` promoting `warning
-C4715` to an error (GCC/Clang's equivalent is `-Wreturn-type`, also
-promoted by `-Werror`). Both `classifyPresentationError()`/
-`classifySubmitError()` share that exact shape (non-`void` return, no
-code after the `switch`), so the *build itself* genuinely fails if a
-future RHI change adds a new enumerator without a corresponding `case`
-being added here — this is real, verified compiler enforcement, not an
-assumption.
+**Corrected by the 2026-08-21 Human Review Amendment — see that note
+above for why.** The text below replaces this section's original
+"compiler-enforced exhaustiveness via a bare no-`default` switch" design,
+which real MSVC compilation during Implementation proved false: `cl /W4
+/WX` failed `atlantis_runtime_host`'s own real build on
+`toProcessExitCode()` — a `switch` with no `default` that already handled
+every current `RuntimeExitReason` value, with nothing after it — via
+`error C2220` promoting `warning C4715: not all control paths return a
+value`. **C4715 fires (or doesn't) based on whether the compiler can
+prove every control-flow path returns a value; it does not evaluate
+whether a `switch` over an enum's named enumerators is complete.** A
+follow-up, isolated compile probe (this amendment's own verification —
+see D3's replacement text and V3 below) confirmed this precisely: the
+*identical* shape with the switch missing a case still fails with C4715,
+and the identical shape with the switch already complete *also* fails
+with C4715 — the diagnostic cannot distinguish the two, so it provides no
+enum-exhaustiveness signal at all on its own, contrary to what the
+original text of this section claimed.
 
-**The one edit that would silently defeat this, flagged so it is never
-made:** adding a `default: return RuntimeExitReason::UnrecoverableRuntimeError;`
-to either switch — a plausible-looking "fix" for what a future reader
-might mistake for an incomplete-switch warning — would satisfy C4715
-(there is now always a return) while making the exhaustiveness check
-disappear entirely: a new enumerator would then silently fall into
-`default` with the same result these functions already always return
-today, and the build would stay green with real coverage gone. Both
-switches carry a code comment stating this explicitly, directly above
-their own closing brace, so a future editor sees the warning before
-adding one.
+**Corrected mechanism, empirically verified against this project's own
+real `cl` invocation as part of this amendment (see V3):**
+
+```cpp
+RuntimeExitReason classifyPresentationError(atlantis::rhi::PresentationError error) noexcept {
+  switch (error) {  // no default -- every enumerator gets its own case
+    case atlantis::rhi::PresentationError::SurfaceLost:
+    case atlantis::rhi::PresentationError::SwapchainCreationFailed:
+    case atlantis::rhi::PresentationError::DeviceLost:
+    case atlantis::rhi::PresentationError::Unknown:
+      return RuntimeExitReason::UnrecoverableRuntimeError;
+  }
+  // Reached only if a future PresentationError enumerator is added
+  // without a corresponding case above. ATLANTIS_CHECK_MSG's own
+  // installed handler is NOT guaranteed to terminate (Core's own
+  // replaceable-handler contract, tests/*/assert_tests.cpp's own
+  // precedent installs a non-terminating one) -- a fallback return
+  // after it is therefore required, not optional, and must be the same
+  // conservative value every other branch already returns.
+  ATLANTIS_CHECK_MSG(false, "classifyPresentationError(): unhandled PresentationError enumerator");
+  return RuntimeExitReason::UnrecoverableRuntimeError;
+}
+```
+
+(`classifySubmitError()` and `toProcessExitCode()` follow the identical
+shape — the latter's own three-value `switch` also needed this trailing
+statement to satisfy C4715, confirmed by the same real build failure that
+motivated this amendment, even though `RuntimeExitReason` is Runtime's
+own enum and does not carry the same external-drift risk `Presentation`/
+`SubmitError` do.)
+
+- **The `ATLANTIS_CHECK_MSG` + fallback pattern above satisfies C4715 on
+  its own** (confirmed: a complete switch followed by this exact pattern
+  compiles cleanly under plain `/W4 /WX`, matching every other target in
+  this codebase) **but provides no compile-time protection by itself** —
+  a case silently removed from the switch would fall through to the
+  `ATLANTIS_CHECK_MSG` line and still compile cleanly, its only remaining
+  effect being a Debug-build crash (or, with a non-terminating handler
+  installed, a logged failure) the *first time* that specific value is
+  actually exercised at runtime — not a build-time guarantee.
+- **Real, additional compile-time protection requires MSVC's `C4062`
+  ("enumerator ... in switch of enum ... is not handled") — off by
+  default even at `/W4`, and not implied by `/Wall` either; it must be
+  explicitly requested.** Confirmed empirically: the exact reproduction
+  above, with one case deliberately removed, compiled cleanly under plain
+  `/W4 /WX` (no signal at all) but failed under `/W4 /WX /w14062` with
+  `error C2220` promoting `warning C4062: unhandled enumerator
+  "Color::Blue" in switch of enum "Color"` naming the exact missing
+  value — and, restoring the removed case, compiled cleanly again under
+  the same `/w14062` flag (no false positive against an already-complete
+  switch). `C4062` fires from the `switch`'s own case-label completeness
+  against the enum's declaration, independent of what code follows the
+  switch — unlike C4715, it genuinely distinguishes "complete" from
+  "missing a case."
+- **`/w14062` is added to `atlantis_runtime_host` specifically** (a
+  `target_compile_options()` addition in `src/runtime/CMakeLists.txt`,
+  MSVC-only — guarded the same way this codebase already guards
+  MSVC-vs.-GCC/Clang-specific flags in `cmake/CompilerWarnings.cmake`
+  itself), **not** by editing `cmake/CompilerWarnings.cmake` — that file
+  is shared by every target in this repository, and enabling `C4062`
+  project-wide would apply it to every existing `switch` statement in
+  the whole codebase, an unaudited, out-of-scope change no part of Spec
+  0013/Plan 0013 calls for. This repository's existing, repo-wide `/WX`
+  (already present on every target via `cmake/CompilerWarnings.cmake`)
+  is what promotes `C4062` from a warning to a hard build error once
+  `/w14062` opts `atlantis_runtime_host` into seeing it at all — no
+  second `/WX`-equivalent flag is needed.
+- **The `default: return ...;` edit this section's original text warned
+  against remains exactly as dangerous as originally stated, for a
+  narrower but still-real reason**: adding a `default` case would
+  additionally suppress `C4062` itself (a `switch` with a `default` is,
+  by definition, "handled" from `C4062`'s own point of view, regardless
+  of which named enumerators have their own `case`), silently defeating
+  the one mechanism that *does* provide real protection under this
+  design. Both switches carry a code comment stating this explicitly.
 
 ### D4. `PlatformSession`, `BootstrapConfig`, and `RuntimeApplication` — object model, ownership, destruction order
 
@@ -923,7 +1028,12 @@ exist.
   `src/runtime/src/init_error.cpp` — D3.
 - `src/runtime/include/atlantis/runtime/error_classification.h` /
   `src/runtime/src/error_classification.cpp` — `classifyPresentationError()`/
-  `classifySubmitError()`, the two no-default exhaustive switches (D3).
+  `classifySubmitError()`, the two no-default exhaustive switches with
+  their `ATLANTIS_CHECK_MSG` + conservative-fallback trailing statement
+  (D3, as revised by the 2026-08-21 Human Review Amendment).
+- `src/runtime/CMakeLists.txt` — the `/w14062` target-scoped MSVC compile
+  option (D1, D3 amendment) — real enum-exhaustiveness protection for
+  this target only; `cmake/CompilerWarnings.cmake` is not touched.
 - `tests/runtime/error_classification_tests.cpp` — V3: every one of the
   six real enumerators (four `PresentationError`, two `SubmitError`)
   individually asserted to map to `UnrecoverableRuntimeError`.
@@ -1116,7 +1226,7 @@ Step 1 (skeleton, RuntimeLifecycleState, RuntimeExitReason)
 |---|---|---|---|
 | V1 | `RuntimeLifecycleState`: every legal transition succeeds; every illegal one (`Running`→`Initializing`, `ShutDown`→`Running`, `markShutDown()` from anything but `ShuttingDown`) is rejected via `ATLANTIS_CHECK`; `beginShutdown()` is idempotent from `ShuttingDown`/`ShutDown`; `hasEverRun()` is `false` for a tracker that transitions `Initializing`→`Failed` directly, and `true` for one that reaches `Running` first, even after a later `Failed`/`ShutDown` transition — the exact property D8's `waitIdle()` gating depends on (exercised against the pure tracker type only — no real `Device`/`Platform`/window). | `lifecycle_state_tests.cpp` | GPU-independent |
 | V2 | `RuntimeExitReason`→process-exit-code mapping: three distinct values; `Success`→`EXIT_SUCCESS`. | `exit_reason_tests.cpp` | GPU-independent |
-| V3 | `classifyPresentationError()`/`classifySubmitError()`: each of the four real `PresentationError` values and both real `SubmitError` values individually maps to `UnrecoverableRuntimeError` — confirmed exhaustive against `src/rhi/include/atlantis/rhi/types.h`'s actual current enum; separately, a fresh Debug build of `tests/runtime/` after temporarily removing one `case` from either switch is confirmed to fail with `C4715`/`-Wreturn-type` (D3's own empirically-verified mechanism), then reverted — a one-time manual check recorded in the Implementation PR, not a standing automated test (removing a real enumerator is not something a permanent test can do without editing RHI itself). | `error_classification_tests.cpp`; mechanism check manual, recorded in the PR | GPU-independent + manual |
+| V3 | *(Revised by the 2026-08-21 Human Review Amendment — see D3's own revised text and that note for why.)* `classifyPresentationError()`/`classifySubmitError()`: each of the four real `PresentationError` values and both real `SubmitError` values individually maps to `UnrecoverableRuntimeError` — confirmed exhaustive against `src/rhi/include/atlantis/rhi/types.h`'s actual current enum. Separately, with `atlantis_runtime_host`'s own `/w14062` compile option in place (D1, D3): a fresh Debug build of `atlantis_runtime_host` with the complete switch is confirmed clean; a fresh Debug build after temporarily removing one `case` from either switch is confirmed to fail with `error C2220` promoting `warning C4062` naming the exact missing enumerator; a fresh Debug build after restoring the removed case is confirmed clean again — a one-time manual check recorded in the Implementation PR, not a standing automated test (removing a real enumerator is not something a permanent test can do without editing RHI itself). `C4715` is **not** part of this check — confirmed by this same amendment's own probe to fire identically whether the switch is complete or missing a case, so it provides no exhaustiveness signal on its own; `C4062`, gated behind `/w14062`, is what this verification actually exercises. | `error_classification_tests.cpp`; `/w14062` mechanism check manual, recorded in the PR | GPU-independent + manual |
 | V4 | No other top-level module depends on `Atlantis::RuntimeHost` — verified by inspection/grep across every other module's `CMakeLists.txt` at PR time (D1a; matching the existing, equally inspection-based "[Runtime/Tools are] depended on by: nothing" rules already in `module_boundaries.md`). | Manual/grep, recorded in the PR | Manual |
 | V5 | No `Vk*` type and no `#include <vulkan/...>` appears anywhere under `src/runtime/` — verified by inspection/grep at verification time (D1a's own stated reasoning: matching V4's inspection-based approach rather than a second, narrower automated scan). | Manual/grep, recorded in the PR | Manual |
 | V6 | Real windowed acquire/draw/submit/present succeeds for `kSmokeTestFrameCount` consecutive frames, then `shutdown()` returns `RuntimeExitReason::Success` — a genuine Vulkan Validation Layer warning/error during this run aborts the process (`validation.cpp`'s own existing mechanism), so a clean pass is direct evidence of zero warnings/errors for this exact sequence. | `runtime_smoke_gpu_tests.cpp` | `gpu`-labeled |
@@ -1210,6 +1320,29 @@ edit (adding a `default:` case) that would silently restore the gap this
 design exists to close. Both switches now carry an explicit warning
 comment against doing that, and V3 adds a one-time manual confirmation
 that removing a real `case` genuinely fails this project's own build.
+**This paragraph's own C4715 claim was itself found wrong during real
+Implementation and is corrected by the 2026-08-21 Human Review Amendment
+— see that note and D3's revised text.** Preserved here, unedited, as an
+honest record of what this Plan originally claimed and how the record
+that superseded it came about — not deleted or rewritten in place.
+
+**2026-08-21 Human Review Amendment finding, recorded here as its own
+entry rather than silently folded into the paragraph above:** real MSVC
+compilation of `atlantis_runtime_host`'s own `toProcessExitCode()` — a
+`switch` with no `default`, already handling every current
+`RuntimeExitReason` value, nothing after it — failed with the *same*
+C4715 diagnostic the paragraph above describes, proving C4715 does not
+actually distinguish a complete switch from an incomplete one; it fires
+identically either way. Genuine compile-time enum-exhaustiveness
+protection instead requires MSVC's `C4062` (off by default, not implied
+by `/W4`/`/Wall`), enabled via a target-scoped `/w14062` on
+`atlantis_runtime_host` only (D1, D3) — both the false-C4715-premise
+finding and the working `C4062`-based replacement were verified against
+this project's own real `cl` invocation as part of drafting this
+amendment, not reasoned about in the abstract. No fix required reopening
+`Accepted` ADR-0046/ADR-0047, changing any composed module's public API,
+or moving a module boundary — this is a Plan-level implementation-
+mechanism correction, scoped to D3 and V3 alone.
 
 One honest limitation, disclosed rather than papered over:
 
