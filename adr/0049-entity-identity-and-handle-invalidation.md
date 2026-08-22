@@ -1,6 +1,12 @@
 # ADR 0049: Entity Identity and Handle Invalidation
 
-- **Status:** Accepted
+- **Status:** Accepted. **A new "Proposed Amendment" section below
+  (2026-08-22, cross-`World`-instance `EntityId` use) is `Proposed`, not
+  `Accepted` — it does not change this ADR's own status or any decision
+  above it; see that section and
+  [plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md)'s
+  own Deviations for why Plan 0014's Human Review Approval is blocked on
+  it.**
 - **Date:** 2026-08-22
 - **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
   approved 2026-08-22 as part of Spec 0014's Human Review Approval
@@ -405,3 +411,101 @@ nothing and its lifetime is entirely decoupled from the entity it names.
   nothing and keeps the rule simple (a single equality check after each
   increment, no separate "how close to the edge" threshold to choose or
   justify).
+
+## Proposed Amendment (2026-08-22, Plan 0014 Independent Review Round 2) — Cross-`World`-instance `EntityId` use
+
+**Status: Proposed — not yet Accepted. This section does not change any
+`Accepted` Decision, Consequence, or Alternative above; it adds a new,
+previously-undecided precondition. [plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md)'s
+own Human Review Approval is blocked on this section reaching Accepted,
+per that Plan's own Independent Review Round 2.**
+
+### Context
+
+Plan 0014's second Independent Review round asked a question this ADR's
+existing Decision never states an answer to: is an `EntityId` obtained
+from one `World` instance valid — and if not, *reliably rejected* — when
+passed to a **different**, independently constructed `World` instance?
+
+Every guarantee this ADR's own `Accepted` Decision makes (stale-handle
+detection, permanent retirement closing wraparound) is proven relative to
+**one** `World` instance's own `slots_` mutation history. Nothing in the
+Decision, and nothing in [Spec 0014](../specs/0014-world-scene-foundation.md)
+or [ADR-0048](0048-world-scene-module-boundary-and-ownership.md), states
+this as a precondition on `EntityId` itself. The only existing text
+adjacent to this question — Spec 0014's and ADR-0048's identical
+"Runtime owns the one real `World` instance" sentence — describes
+Runtime's own composition choice in this round's scope (which module is
+the sole Client observing/mutating `World`), not a stated precondition on
+`EntityId`'s own public contract. Treating that sentence as sufficient
+justification for `EntityId`'s own correctness would be exactly the
+"current caller happens to only do X" reasoning that must not stand in
+for a public module's own safety contract — flagged explicitly during
+Plan Review, not assumed.
+
+The gap is not a rare edge case comparable to generation wraparound. Two
+freshly constructed `World` instances each hand out `{index=0,
+generation=0}` for their own first `createEntity()` call — a handle from
+one **validates against the other's own first entity by construction**,
+on the single most common possible sequence (first entity in each), not
+a statistically remote coincidence.
+
+### Decision (proposed)
+
+**Option A (recommended): document cross-`World`-instance `EntityId` use
+as an unenforceable precondition violation — undefined behavior, not
+covered by `WorldError::InvalidEntity` — with no change to `EntityId`'s
+16-byte shape.**
+
+An `EntityId` is valid only for the exact `World` instance whose
+`createEntity()` call returned it. Passing it to any `isValid()`/
+`EntityId`-accepting call on a *different* `World` instance is a
+violated caller precondition, not a condition `World`'s `Result`-based
+API is required to detect: no instance-identifying information exists
+anywhere in `EntityId` or `World` for such a check to compare against, so
+unlike the same-instance stale-handle case (a legitimate, expected
+outcome of correct code, correctly given a `Result` per this ADR's own
+existing Decision), a cross-instance handle is squarely the "violated
+precondition/invariant" category [AGENTS.md](../AGENTS.md) reserves for
+assertions — except here no general, reliable assertion is possible
+either, so the contract is stated as documentation only, the same
+category as this codebase's other non-enforceable borrowed-reference/
+lifetime preconditions (e.g. a reference outliving the object that owns
+it). `World`'s own `Result`-based safety net remains exactly as strong as
+the existing Decision already states for same-instance use; this
+amendment narrows what it was ever claimed to cover, it does not weaken
+it.
+
+This keeps `EntityId` at 16 bytes (unchanged from the `Accepted`
+Decision), requires no new `WorldError` enumerator, and requires no
+change to `isValid()`'s existing check. The cost is a genuinely
+undetectable misuse mode for any *future* consumer that legitimately
+constructs more than one simultaneous `World` instance — none exists in
+this Spec's own scope (Runtime constructs exactly one, for its entire
+process lifetime; Spec 0014's Non-Goals exclude a second Client/process)
+— explicitly flagged here for whichever future Spec first introduces one
+(e.g. a Serialization/Stable-Identity Spec, or a Tool/Editor protocol
+maintaining a staging `World`), not silently deferred without a record.
+
+**Option B (not recommended): add per-instance identity to `EntityId`**
+(e.g. a third field, a monotonically assigned `std::uint32_t instanceId`
+set at `World` construction and copied into every `EntityId` it issues,
+compared by every validating method). Makes cross-instance misuse
+*reliably* `Err(InvalidEntity)` rather than coincidentally valid — at the
+cost of reopening `EntityId`'s already-`Accepted` 16-byte shape (growing
+to 20, or 24 once the new field's own alignment is counted) for a
+capability this Spec's own scope has no consumer for. Rejected as this
+amendment's own recommendation on the same "no speculative abstraction"
+grounds [ADR-0049](0049-entity-identity-and-handle-invalidation.md)'s
+existing Alternatives Considered already applies to the rejected stable-
+GUID option above — the capability belongs with whichever future Spec
+actually needs simultaneous multi-instance `World` use, at which point
+that Spec can weigh this cost against its own real requirement, not
+speculatively here.
+
+### Disposition
+
+Pending Human Review. Until this section is marked `Accepted`,
+[Plan 0014](../plans/0014-world-scene-foundation.md) treats cross-`World`-
+instance `EntityId` use as a blocking open question, not a disclosed
+limitation folded into Implementation.
