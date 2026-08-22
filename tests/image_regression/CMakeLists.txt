@@ -39,12 +39,16 @@ catch_discover_tests(atlantis_image_regression_tests DISCOVERY_MODE PRE_TEST)
 # capture-via-OffscreenTarget -> compare-against-checked-in-golden path.
 add_executable(atlantis_image_regression_gpu_tests
   image_regression_gpu_tests.cpp
+  world_scene_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_image_regression_gpu_tests
   PRIVATE
     Atlantis::ImageRegressionFixture
     Atlantis::ImageRegressionSupport
+    # Plan 0014 Section D10: world_scene_gpu_tests.cpp names World-scene
+    # fixture types directly.
+    Atlantis::World
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )

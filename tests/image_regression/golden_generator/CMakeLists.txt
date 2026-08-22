@@ -34,6 +34,38 @@ add_custom_command(TARGET atlantis_image_regression_golden_generator POST_BUILD
       "$<TARGET_FILE_DIR:atlantis_image_regression_golden_generator>/shaders/"
 )
 
+# Plan 0014 Section D10: a second, standalone golden-generator
+# executable -- not a change to the existing target above -- reusing the
+# identical Atlantis::ImageRegressionSupport-provided git/provenance/PNG
+# steps, with only "render one frame" replaced.
+add_executable(atlantis_image_regression_world_scene_golden_generator world_scene_main.cpp)
+
+target_link_libraries(atlantis_image_regression_world_scene_golden_generator
+  PRIVATE
+    Atlantis::ImageRegressionFixture
+    Atlantis::ImageRegressionSupport
+    Atlantis::World
+    atlantis_compiler_warnings
+)
+
+target_compile_definitions(atlantis_image_regression_world_scene_golden_generator PRIVATE
+  ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+  ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
+)
+
+add_dependencies(atlantis_image_regression_world_scene_golden_generator minimal_mesh_shaders
+  ${ATLANTIS_minimal_cube_TARGET})
+add_custom_command(TARGET atlantis_image_regression_world_scene_golden_generator POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+      "$<TARGET_FILE_DIR:atlantis_image_regression_world_scene_golden_generator>/shaders"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.vert.spv"
+      "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.vert.refl.json"
+      "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.spv"
+      "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_world_scene_golden_generator>/shaders/"
+)
+
 # Deliberately no catch_discover_tests()/LABELS "gpu"/add_test() call in
 # this file -- the concrete enforcement of "never registered with
 # CTest." Deliberately no run_... convenience custom target: this tool

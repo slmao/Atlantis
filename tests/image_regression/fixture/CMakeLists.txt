@@ -1,5 +1,6 @@
 add_library(atlantis_image_regression_fixture STATIC
   minimal_cube_fixture.cpp
+  world_scene_fixture.cpp
 )
 
 target_include_directories(atlantis_image_regression_fixture
@@ -11,6 +12,9 @@ target_link_libraries(atlantis_image_regression_fixture
     Atlantis::RHI
     Atlantis::Renderer
     Atlantis::ImageRegressionSupport
+    # Plan 0014 Section D10: WorldSceneFixture's own public header names
+    # atlantis::world::World in a public field type.
+    Atlantis::World
   PRIVATE
     Atlantis::VulkanBackend
     Atlantis::RenderGraph
