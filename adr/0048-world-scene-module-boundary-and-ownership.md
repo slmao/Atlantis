@@ -1,9 +1,18 @@
 # ADR 0048: World/Scene Module Boundary and Ownership
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-22
-- **Deciders:** Pending Human Review
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-22 as part of Spec 0014's Human Review Approval
 - **Related Spec:** [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md)
+- **Acceptance Record (2026-08-22):** Accepted by Human Review as Human
+  Review Decision Table item 1 (new top-level module) and item 9
+  (`AssetId` reference boundary) of
+  [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md)'s
+  own Human Review Approval (2026-08-22) — see that Spec's own approval
+  note for the full record of what was accepted. This record does not
+  change this ADR's own Decision, Consequences, or Alternatives
+  Considered below.
 
 ## Context
 

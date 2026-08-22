@@ -1,17 +1,161 @@
 # Spec: World / Scene Foundation
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
   direction, following AGENTS.md's Spec → Plan → Human Review →
-  Implementation path. Not yet reviewed by a human — see Independent
-  Review below for the self-review performed during drafting; Human
-  Review Approval is not recorded on this document yet.
+  Implementation path. Reviewed and approved by a human — see Human
+  Review Approval immediately below; the Independent Review entries
+  further below are the self-review record that preceded and fed that
+  approval, not a substitute for it.
 - **Created:** 2026-08-22
-- **Related Plan(s):** None. Per this round's explicit scope, only a Spec
-  and its required ADRs are drafted — no Plan, no Implementation. A Plan
-  is authorized only once this Spec and
+- **Human Review Approval (2026-08-22):** Reviewed and approved by slmao
+  (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer) on 2026-08-22, accepting the merged document's own Human
+  Review Decision Table in full, as recommended, with no amendment. This
+  approval explicitly accepts:
+
+  1. **A new, independent top-level module, `Atlantis::World`** (not a
+     private submodule of `src/runtime/`), depending on `Atlantis::Core`
+     and, narrowly, `Atlantis::AssetSystem` for `AssetId` only — no RHI,
+     Vulkan Backend, RenderGraph, Renderer, Shader System, Platform,
+     Runtime, or Tools dependency, in either direction (Human Review
+     Decision Table item 1; [ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md)).
+  2. **`EntityId` as an index (`uint32_t`) + generation (`uint64_t`)
+     handle, with unconditional, formal overflow closure**: a slot's
+     index is permanently retired — never reused — the moment its
+     generation reaches `uint64_t`'s maximum representable value,
+     guaranteeing no historical handle can ever revalidate regardless of
+     cycle count; the 64-bit width itself is accepted as a complementary
+     practical mitigation, not the thing that alone closes the risk
+     (item 2; [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)).
+  3. **Stale/invalid `EntityId` use is a `Result::Err(WorldError::InvalidEntity)`,
+     classified per AGENTS.md's own Programmer-error/`Result` model**: a
+     stale handle produced by a legitimate (direct or cascading)
+     destruction is a normal, observable state `EntityId`'s own non-
+     owning contract already defines, not a violated precondition — while
+     a genuine internal generation/slot bookkeeping inconsistency (a bug
+     in World's own implementation) remains squarely an `ATLANTIS_CHECK`
+     matter, never folded into `WorldError` (item 3; ADR-0049).
+  4. **Every public World accessor returns by-value** (`Result<T,
+     WorldError>`), never a reference or pointer into World's own
+     internal storage (item 4; ADR-0049).
+  5. **Fixed-type component storage** — a mandatory `Transform` plus two
+     optional components (`Camera`, `Renderable`) directly on each
+     entity's own record — not a generic, type-erased ECS registry (item
+     5; this Spec's own "Why this stays a minimal World, not a general
+     ECS").
+  6. **Deterministic slot reuse and multi-entity enumeration order**: the
+     free list is a LIFO stack, and any World API enumerating more than
+     one entity iterates in ascending slot-index order — a fully
+     specified, reproducible function of World's own mutation history,
+     never dependent on unspecified container iteration (ADR-0049's own
+     Decision; not a separately numbered table row, accepted here
+     explicitly as load-bearing for item 14's own image-regression
+     reproducibility).
+  7. **Explicit, single-threaded, once-per-frame `updateTransforms()`**,
+     with cycle prevention at `setParent()` mutation time (an ancestor-
+     chain walk, `Result::Err` before any state change) and a defensive,
+     traversal-time `ATLANTIS_CHECK` as a last-resort invariant guard
+     only (item 6; [ADR-0050](../adr/0050-transform-hierarchy-composition-and-update-model.md)).
+  8. **Parent destruction cascades** to every transitive descendant in one
+     atomic call, automatically clearing the active camera if implicated
+     (item 7; ADR-0050).
+  9. **`setParent()` preserves the child's own *local* transform, not its
+     *world* transform** — reparenting therefore generally changes world
+     position/orientation as a disclosed side effect, with no automatic
+     world-preserving reparent operation in this round (item 8;
+     ADR-0050).
+  10. **The fully specified Math contract**: column-major matrix layout;
+      column-vector composition with parent on the left
+      (`worldMatrix = parentWorldMatrix · localMatrix`); right-handed,
+      Y-up coordinates; `localMatrix = T · R · S`; Euler-angle composition
+      `R = Ry(yaw) · Rx(pitch) · Rz(roll)`; the disclosed fact that a
+      composed, multi-level world matrix may contain shear; and the
+      `Camera` `fovYRadians`/`nearZ`/`farZ`-only ownership boundary
+      (aspect computed by Runtime per-frame, never stored on `Camera`) —
+      all as stated in ADR-0050's own "Math contract" subsection (not a
+      separately numbered table row, accepted here explicitly as the
+      final, evidence-grounded contract this Spec and ADR-0050 converged
+      on).
+  11. **Camera ownership, the active-camera rule, and view-matrix
+      construction under a scaled hierarchy**: `Camera` is an optional
+      component on an ordinary entity, carrying only `fovYRadians`/
+      `nearZ`/`farZ`; exactly one active camera at a time; the view
+      matrix is built by extracting only `eye` and `forward` from the
+      camera's own world matrix — never `right`/`up` columns, which are
+      not reliably orthogonal under a sheared hierarchy — feeding them
+      into the existing, unmodified `lookAt()`; a near-zero forward
+      direction or a forward direction parallel to the canonical world-up
+      axis are explicit, recoverable, Runtime-classified extraction
+      errors, never a silent `NaN` (item 11; [ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)).
+  12. **`Renderable` reuses `atlantis::asset_system::AssetId` directly**
+      (not a World-owned opaque handle), and World depends on nothing
+      else from Asset System (item 9; ADR-0048).
+  13. **The World→Renderer `DrawItem` translation is Runtime's own
+      composition-root adapter** — never inside World, never a Renderer
+      change, and not a new, separate "Extraction" module (item 10;
+      ADR-0051) — and **Runtime's `AssetId`→`Mesh`/`Material` resolution
+      mechanism is a private implementation detail of
+      `Atlantis::RuntimeHost`'s own composition object**, never a fixed
+      public interface and never a global mutable Asset database (item
+      12; ADR-0051).
+  14. **Every existing public rendering API — `Renderer`, RHI, Vulkan
+      Backend, Platform, Shader System, and Asset System — remains
+      exactly as `Accepted` today, with zero modification to any public
+      header, type, or function signature** (item 13; confirmed twice by
+      direct inspection, Independent Review Rounds 1 and 2).
+  15. **Runtime's own windowed `RenderTarget` cannot be pixel-read-back**
+      (no `VK_IMAGE_USAGE_TRANSFER_SRC_BIT`, unchanged from Spec 0013);
+      windowed verification for this Spec's own multi-entity scene stays
+      a GPU smoke test plus manual, by-eye comparison, while the existing,
+      unmodified headless `OffscreenTarget`/image-regression path is the
+      only automated pixel-comparison route this Spec's scene gets (part
+      of item 14; ADR-0051's own Consequences).
+  16. **The recommended new headless image-regression golden for this
+      Spec's own multi-entity scene cites [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
+      own `Accepted` Amendment, "Initial baseline bootstrap" category —
+      not "Approved rebaseline"** — per that Amendment's own applicability
+      constraint 1 (no prior golden exists at that path) and its own
+      constraint 5 substitute-evidence requirement (visual inspection;
+      zero-diff self-consistency; a real Validation-Layers-clean GPU run;
+      citing ADR-0042's own existing calibration) in place of an
+      inapplicable old-vs-new diff (item 14; this Spec's own Testing &
+      Verification Plan).
+  17. **Every Non-Goal this Spec states explicitly** (see Non-Goals) — a
+      general/data-driven/multi-threaded ECS framework; any scene file
+      format, cooker, or serialization; textures/samplers; PBR materials,
+      lighting, shadows; animation/rotation interpolation; post-
+      processing; Android/iOS/Linux; any new third-party dependency or
+      general-purpose `Atlantis::Math` module; a Client/Editor API; any
+      change to an existing module's public API; multiple simultaneous
+      cameras; and a general multi-asset resource cache/hot-reload/async
+      streaming in Runtime's own resolution mechanism.
+
+  Two stale internal cross-references — found during this Human Review's
+  own final consistency check, not a design change — were corrected on
+  this same branch immediately before this approval was recorded:
+  [ADR-0050](../adr/0050-transform-hierarchy-composition-and-update-model.md)'s
+  own `setParent()` bullet and
+  [ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)'s
+  own windowed-`RenderTarget` bullet each still named this document's
+  prior "Decisions Requiring Human Review" section (renamed to "Human
+  Review Decision Table" during Independent Review Round 2) and, in
+  ADR-0051's case, cited a stale item number left over from before the
+  table's own final 14-row numbering — both are now updated to point at
+  the correct, current table rows. Neither correction changes any
+  Decision, Consequence, or Alternative Considered in either ADR.
+
   [ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)
-  have all passed Human Review, per [AGENTS.md](../AGENTS.md).
+  all move to `Accepted` alongside this approval — see each ADR's own new
+  Acceptance Record. **This approval authorizes drafting Plan 0014
+  against this Spec, per [AGENTS.md](../AGENTS.md); it does not itself
+  authorize Implementation** — that future Plan must still pass its own
+  Human Review, per the same Spec → Plan → Human Review → Implementation
+  → Verification → PR → Merge path every prior spec in this line has
+  followed.
+- **Related Plan(s):** None yet. This approval authorizes drafting Plan
+  0014 against this Spec, per [AGENTS.md](../AGENTS.md) — no Plan has
+  been drafted yet.
 - **Related ADR(s):**
   [ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md)
   (module boundary and ownership),
@@ -21,9 +165,7 @@
   (Transform hierarchy, composition, and update model), and
   [ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)
   (World-to-Renderer extraction and asset resolution boundary) — all four
-  `Proposed`, not yet `Accepted`. This Spec cannot reach `Approved` until
-  Human Review accepts all four and moves them to `Accepted`, per
-  [AGENTS.md](../AGENTS.md).
+  `Accepted` alongside this Spec's own Human Review Approval above.
 - **Independent Review (2026-08-22):** Self-review performed during
   drafting, against `main`'s actual, current public headers and
   implementation (not historical summaries or the human-provided design
@@ -824,9 +966,8 @@ multi-item span.
 ## Architectural Impact
 
 This Spec introduces a new top-level module and four architectural
-decisions, filed as four `Proposed` ADRs (all requiring Human Review to
-reach `Accepted` before this Spec can reach `Approved`, per
-[AGENTS.md](../AGENTS.md)):
+decisions, filed as four ADRs — all `Accepted` alongside this Spec's own
+Human Review Approval, per [AGENTS.md](../AGENTS.md):
 
 1. **Module boundary and ownership** —
    [ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md).
@@ -931,27 +1072,32 @@ item 9).
 
 ### Approval readiness
 
-**This Spec is not yet ready to move to `Approved`.** Per
-[AGENTS.md](../AGENTS.md) and [specs/README.md](README.md), that requires:
-(1) a human reading this Spec and
+**Superseded by the Human Review Approval (2026-08-22) recorded at the top
+of this document.** This subsection originally stated, correctly at the
+time, that the Spec was not yet ready to move to `Approved` — retained
+here as the honest historical record of this document's own pre-approval
+state, not silently deleted now that it no longer applies. Per
+[AGENTS.md](../AGENTS.md) and [specs/README.md](README.md), reaching
+`Approved` required (1) a human reading this Spec and
 [ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)
-together and recording explicit Human Review Approval — the table above is
-the complete, one-time set of items that approval needs to either accept
-as recommended or direct a change to, with no item left for a later,
-separate round; and (2) all four ADRs moving from `Proposed` to
+together and recording explicit Human Review Approval — the table above
+was the complete, one-time set of items that approval needed to either
+accept as recommended or direct a change to, with no item left for a
+later, separate round — and (2) all four ADRs moving from `Proposed` to
 `Accepted` as part of that same approval, per AGENTS.md's ADR workflow.
-Neither has happened yet. This document's own self-review work (Independent
-Review Rounds 2 and 3 above) closed every internal contradiction, omission,
+Both have now happened, exactly as this section anticipated: the table's
+own 14 items were accepted in full, as recommended, with no amendment —
+see the Human Review Approval note at the top of this document for the
+complete record. This Spec's own self-review work (Independent Review
+Rounds 2 and 3 above) closed every internal contradiction, omission,
 overclaim, and — in Round 3 — one genuine mathematical error (the camera
-view-matrix construction's own original orthogonality claim) that targeted,
-evidence-driven review passes found, including one item (golden-update-
-reason category) re-verified against ADR-0042's actual text and confirmed
-correct as originally drafted, not changed. Round 3 was intentionally
-narrow — three named points only, not a fresh broad pass — precisely so
-this document could converge and go to Human Review directly afterward. A
-self-review, however thorough, is not Human Review and does not substitute
-for it. No Plan may be drafted, and no Implementation may begin, until
-that approval is recorded.
+view-matrix construction's own original orthogonality claim) that
+targeted, evidence-driven review passes found, before Human Review itself
+ran; that self-review was not, and did not substitute for, the Human
+Review Approval now recorded. **This approval authorizes drafting Plan
+0014 against this Spec; it does not authorize Implementation** — a future
+Plan must still pass its own Human Review before Implementation may
+begin.
 
 ## Alternatives Considered
 

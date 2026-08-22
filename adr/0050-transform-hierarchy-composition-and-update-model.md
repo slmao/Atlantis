@@ -1,9 +1,22 @@
 # ADR 0050: Transform Hierarchy, Composition, and Update Model
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-22
-- **Deciders:** Pending Human Review
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-22 as part of Spec 0014's Human Review Approval
 - **Related Spec:** [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md)
+- **Acceptance Record (2026-08-22):** Accepted by Human Review as Human
+  Review Decision Table items 6 (update strategy and cycle-detection
+  timing), 7 (cascading destroy), and 8 (`setParent()` local-vs-world
+  preservation) of
+  [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md)'s
+  own Human Review Approval (2026-08-22), which additionally accepted
+  this ADR's own fully specified Math contract explicitly (not a
+  separately numbered table row, but confirmed as the final, evidence-
+  grounded TRS/matrix/handedness/Euler-order/Camera-scale contract) — see
+  that Spec's own approval note for the full record. This record does not
+  change this ADR's own Decision, Consequences, or Alternatives
+  Considered below.
 - **Revision (2026-08-22, pre-Human-Review evidence pass):** replaced the
   informally-stated `worldMatrix = parentWorldMatrix × T × R × S`
   composition with a fully specified math contract (matrix layout,
@@ -220,8 +233,8 @@ evidence pass, not restated from memory:
   compute and set the resulting local transform itself, via
   `setLocalTransform()`, in a separate call — World provides no automatic
   "keep world transform across reparent" operation in this round. See the
-  related Spec's Decisions Requiring Human Review for this as an explicit,
-  confirmable choice, not a silently locked default.
+  related Spec's Human Review Decision Table, item 8, for this as an
+  explicit, confirmable choice, not a silently locked default.
 - **Cycle prevention happens at `setParent()` time, not at traversal
   time.** Before mutating any state, `setParent()` walks `newParent`'s own
   ancestor chain up to its root; if `child` appears in that chain (or

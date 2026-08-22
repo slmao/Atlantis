@@ -1,9 +1,20 @@
 # ADR 0051: World-to-Renderer Extraction and Asset Resolution Boundary
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-22
-- **Deciders:** Pending Human Review
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-22 as part of Spec 0014's Human Review Approval
 - **Related Spec:** [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md)
+- **Acceptance Record (2026-08-22):** Accepted by Human Review as Human
+  Review Decision Table items 10 (World→Renderer adaptation boundary), 11
+  (camera ownership, active-camera rule, and view-matrix construction
+  under a scaled hierarchy), 12 (private `AssetId`→`Mesh`/`Material`
+  resolution), 13 (existing public rendering API preserved unchanged),
+  and 14 (validation scene and golden-update-reason category) of
+  [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md)'s
+  own Human Review Approval (2026-08-22) — see that Spec's own approval
+  note for the full record. This record does not change this ADR's own
+  Decision, Consequences, or Alternatives Considered below.
 - **Revision (2026-08-22, pre-Human-Review evidence pass):** replaced the
   "view = inverse(world matrix)" description with a precise, precedent-
   reusing construction (extract eye position and a normalized basis from
@@ -296,8 +307,8 @@ Concretely, once per frame:
   pixel-level comparison this Spec's own multi-entity scene gets is
   through the existing, unmodified headless `OffscreenTarget`/image-
   regression path** (`tests/image_regression/`, Spec 0010/0011) — see the
-  related Spec's Testing & Verification Plan and Decisions Requiring
-  Human Review, item 9.
+  related Spec's Testing & Verification Plan and Human Review Decision
+  Table, item 14.
 
 ## Consequences
 

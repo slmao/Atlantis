@@ -1,9 +1,21 @@
 # ADR 0049: Entity Identity and Handle Invalidation
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-22
-- **Deciders:** Pending Human Review
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-22 as part of Spec 0014's Human Review Approval
 - **Related Spec:** [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md)
+- **Acceptance Record (2026-08-22):** Accepted by Human Review as Human
+  Review Decision Table items 2 (`EntityId` shape, generation width, and
+  overflow behavior), 3 (stale-handle `Result` classification), and 4
+  (by-value accessor access) of
+  [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md)'s
+  own Human Review Approval (2026-08-22), which additionally accepted this
+  ADR's own deterministic slot-reuse/enumeration-order contract explicitly
+  (not a separately numbered table row, but confirmed load-bearing for
+  item 14's own image-regression reproducibility) — see that Spec's own
+  approval note for the full record. This record does not change this
+  ADR's own Decision, Consequences, or Alternatives Considered below.
 - **Revision (2026-08-22, pre-Human-Review evidence pass):** widened
   `generation` from `std::uint32_t` to `std::uint64_t` and added an
   explicit slot-reuse/enumeration-order contract and a blanket mutation-
