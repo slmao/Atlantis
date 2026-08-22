@@ -4,6 +4,20 @@
 - **Date:** 2026-08-22
 - **Deciders:** Pending Human Review
 - **Related Spec:** [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md)
+- **Revision (2026-08-22, pre-Human-Review evidence pass):** replaced the
+  "view = inverse(world matrix)" description with a precise, precedent-
+  reusing construction (extract eye position and a normalized basis from
+  the camera entity's world matrix columns, feed them into the exact same
+  `lookAt()`-shaped formula every existing demo already uses) that needs
+  no general 4×4 matrix inverse and no unscaled-camera precondition — see
+  Decision step 3. Softened the resource-table container type to
+  illustrative-only and stated explicitly that it is Runtime-**private**,
+  not a new public API this ADR fixes. Added an explicit statement that
+  Runtime's existing windowed `RenderTarget` cannot be pixel-read-back or
+  auto-compared against a golden — windowed verification stays smoke-test-
+  and-manual-only, headless remains the only pixel-comparison path — see
+  Consequences. No change to this ADR's `Proposed` status; still pending
+  Human Review.
 
 ## Context
 
@@ -65,34 +79,78 @@ Concretely, once per frame:
    by a deliberately-misconfigured test, matching this codebase's existing
    convention of testing an error path explicitly rather than only its
    success path.
-3. Runtime computes that camera entity's **view matrix as the inverse of
-   its own world matrix** (`World::getWorldMatrix()` on the active camera
-   entity) — a standard technique that needs no separate `lookAt()`-style
-   function, and a **projection matrix** from the `Camera` component's
+3. Runtime computes that camera entity's **view matrix by extracting an
+   eye position and an orthonormal basis directly from its own world
+   matrix's columns, then feeding them into the exact same
+   `lookAt()`-shaped construction `examples/minimal_renderer_demo/main.cpp`
+   already implements** — not a general 4×4 matrix inverse, and not a new
+   view-matrix algorithm. Precisely: for a world matrix built as
+   `T · R · S` (per
+   [ADR-0050](0050-transform-hierarchy-composition-and-update-model.md)'s
+   own Math contract), columns 0/1/2 are `R`'s own orthonormal basis
+   columns each scaled by `S`'s corresponding factor — **mutually
+   orthogonal regardless of scale**, since scaling each of three already-
+   orthogonal columns by a (possibly different) non-zero factor preserves
+   their pairwise zero dot products; normalizing each column individually
+   therefore recovers a valid orthonormal basis even under non-uniform
+   scale, with no "the camera must be unscaled" precondition needed.
+   Concretely: `eye` = the world matrix's translation column;
+   `right` = `normalize(column 0)`; `up` = `normalize(column 1)`;
+   `forward` = `normalize(-column 2)` (this fixes the convention **a
+   Camera entity looks down its own local −Z axis**, matching the
+   existing `lookAt()` function's own already-verified result, whose
+   view-space forward is conventionally −Z — confirmed by inspection of
+   its own `result[2]/result[6]/result[10] = -fx/-fy/-fz` assignment).
+   Runtime then calls the existing, **unmodified** `lookAt(eye.x, eye.y,
+   eye.z, eye.x + forward.x, eye.y + forward.y, eye.z + forward.z)` — the
+   same function signature every existing windowed demo already calls,
+   now fed World-derived values instead of a hardcoded/orbiting eye
+   position. No new view-matrix formula is introduced; this is new
+   *plumbing* (World → eye/forward extraction → the existing function),
+   not new *math*.
+   The **projection matrix** comes from the `Camera` component's
    `fovYRadians`/`nearZ`/`farZ` fields plus the current swapchain aspect
    ratio (`Presentation::metadata()`, computed per-frame exactly as every
-   existing windowed demo already does, unchanged). Both matrices are
+   existing windowed demo already does, unchanged) — fed into the
+   existing, unmodified `perspective()` function. Both matrices are
    written into the existing camera uniform `Buffer`, through the exact
    same caller-owned, per-frame write path Spec 0007/0013 already fixed —
-   **no RHI or Renderer API changes**. This is genuinely new *code*
-   (matrix inversion, reading `Camera`/`Transform` instead of hardcoded
-   eye coordinates) but reuses the exact existing capability contract
-   every prior spec in this line already established; it does not, and
-   this Spec does not claim it needs to, promote this math into World or
-   into a shared Core library (see
+   **no RHI or Renderer API changes**. This math (basis extraction,
+   normalization, the `lookAt()`/`perspective()` calls themselves) stays
+   Runtime's own hand-rolled code — it is not, and this Spec does not
+   claim it needs to be, promoted into World or into a shared Core
+   library (see
    [ADR-0048](0048-world-scene-module-boundary-and-ownership.md)'s own
    Alternatives Considered).
-4. Runtime iterates `world.renderableEntities()` (every entity with both a
-   `Transform` and a `Renderable`). For each: Runtime resolves
-   `Renderable.meshAsset` (an `atlantis::asset_system::AssetId`) through
-   its own resource table — a plain, Runtime-owned
-   `std::unordered_map<AssetId, /* already-constructed Mesh+Material */>`
-   populated once at startup from the same already-cooked assets Spec
-   0013 already loads (for this Spec's own validation scene: exactly one
-   entry, `minimal_cube`'s `AssetId` mapped to the one `Mesh` and one
-   fixed `Material` Runtime already constructs today — looked up per
-   entity instead of hardcoded, not a new construction per entity or per
-   frame). An `AssetId` with no resource-table entry is a recoverable,
+4. Runtime iterates `world.renderableEntities()`, in the ascending-slot-
+   index order [ADR-0049](0049-entity-identity-and-handle-invalidation.md)
+   fixes (every entity with both a `Transform` and a `Renderable`). For
+   each: Runtime resolves `Renderable.meshAsset` (an
+   `atlantis::asset_system::AssetId`) through its own **resolution
+   mechanism** — a plain, Runtime-**private** lookup from `AssetId` to an
+   already-constructed `Mesh`/`Material` pair, populated once at startup
+   from the same already-cooked assets Spec 0013 already loads (for this
+   Spec's own validation scene: exactly one entry, `minimal_cube`'s
+   `AssetId` mapped to the one `Mesh` and one fixed `Material` Runtime
+   already constructs today — looked up per entity instead of hardcoded,
+   not a new construction per entity or per frame). **This ADR fixes only
+   the existence and the input/output shape of this resolution step
+   (`AssetId` in, an already-constructed `Mesh`/`Material` pair or a
+   not-found outcome, out) — not its concrete container type or data
+   structure** (a `std::unordered_map`, a `std::vector` linear-scanned at
+   this Spec's own tiny scale, or any equivalent are all conforming
+   choices; the exact one is a Plan-stage implementation detail, not fixed
+   here, so this ADR does not lock in a public interface no real second
+   consumer has asked for yet). It is **entirely internal to
+   `Atlantis::RuntimeHost`'s own composition object** — not a new public
+   API, not a type any other module (including World) names or depends
+   on, and specifically **not a global mutable Asset database**: it is
+   owned, constructed, and destroyed exactly once per `Atlantis::RuntimeHost`
+   instance, alongside every other resource Spec 0013 already owns this
+   way, never a process-wide singleton or static — matching
+   [AGENTS.md](../AGENTS.md)'s existing no-global-mutable-engine-state
+   rule exactly as Spec 0013 already satisfies it for its own `Mesh`/
+   `Material`. An `AssetId` with no matching entry is a recoverable,
    Runtime-classified extraction error (exact handling — skip that entity
    and log, or fail the frame — a Plan-stage detail; the category is
    fixed here as recoverable, matching every other per-frame condition
@@ -119,14 +177,35 @@ Concretely, once per frame:
   already uses, now reading its inputs from `World`/`Camera` instead of
   hardcoded literals — not a new shared capability, not moved into World
   or Renderer.
-- **Runtime's AssetId→Mesh/Material resource table is new state this Spec
-  introduces to Runtime's own composition object** (not existing before
-  this Spec, since Spec 0013's own bootstrap held exactly one hardcoded
-  `Mesh`/`Material` pair with no lookup at all) — scoped, for this Spec's
-  own validation scene, to the same single already-cooked asset Runtime
+- **Runtime's AssetId→Mesh/Material resolution mechanism is new state
+  this Spec introduces to Runtime's own composition object** (not
+  existing before this Spec, since Spec 0013's own bootstrap held exactly
+  one hardcoded `Mesh`/`Material` pair with no lookup at all), entirely
+  **private** to that composition object — scoped, for this Spec's own
+  validation scene, to the same single already-cooked asset Runtime
   already loads; a general multi-asset resource-table implementation
-  (eviction, hot-reload, lazy loading) is explicitly not designed here —
-  see the related Spec's Non-Goals.
+  (eviction, hot-reload, lazy loading), and any fixed public interface for
+  it, are explicitly not designed here — see the related Spec's Non-Goals.
+- **Runtime's existing windowed `RenderTarget` still cannot be
+  pixel-read-back or auto-compared against a golden — unchanged from
+  Spec 0013, re-confirmed by inspection during this ADR's own evidence
+  pass.** `src/vulkan_backend/src/vulkan_presentation.cpp` still
+  constructs a swapchain-backed `RenderTarget` with `imageUsage =
+  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT`
+  only — no `VK_IMAGE_USAGE_TRANSFER_SRC_BIT` — so
+  `CommandList::copyRenderTargetToBuffer()` (the only existing GPU-to-CPU
+  readback path, ADR-0040) cannot legally be issued against it. This Spec
+  does not add `TRANSFER_SRC_BIT` to the swapchain or any other windowed-
+  readback capability (matching Spec 0013's own explicit, unchanged
+  decision on this exact point) — **Runtime's own windowed verification
+  therefore stays a GPU smoke test (the real acquire/draw/submit/present
+  pipeline runs Validation-Layers-clean, with no pixel assertion) plus
+  manual, by-eye comparison against a golden PNG; the only automated
+  pixel-level comparison this Spec's own multi-entity scene gets is
+  through the existing, unmodified headless `OffscreenTarget`/image-
+  regression path** (`tests/image_regression/`, Spec 0010/0011) — see the
+  related Spec's Testing & Verification Plan and Decisions Requiring
+  Human Review, item 9.
 
 ## Consequences
 
@@ -148,6 +227,12 @@ Concretely, once per frame:
   logic (currently one hardcoded item) already lives — this Spec extends
   an existing pattern rather than introducing a new architectural layer
   (no "Scene Renderer" or "Extraction System" module is created).
+- The camera view-matrix construction (basis extraction + the existing,
+  unmodified `lookAt()`) needs no general 4×4 matrix inverse and carries
+  no "the camera must be unscaled" precondition (see Decision step 3's
+  own orthogonality-under-scale reasoning) — a more robust, less-new-code
+  result than the "invert the world matrix" phrasing this ADR's own first
+  draft used.
 
 ### Negative / Trade-offs
 
@@ -182,6 +267,15 @@ Concretely, once per frame:
   `DrawItem`) — generalizing it into its own module ahead of a second real
   consumer would be speculative structure this Spec's own minimal-scope
   instruction argues against.
+- **Compute the camera view matrix via a general 4×4 matrix inverse of the
+  camera entity's world matrix**, as this ADR's own first draft described.
+  Rejected on reconsideration during this ADR's own evidence pass:
+  correct, but strictly more code (a general cofactor/adjugate-based 4×4
+  inverse, unused for anything else in this Spec's own scope) than
+  extracting and normalizing the world matrix's own basis columns and
+  reusing the existing `lookAt()` function — the chosen approach is both
+  smaller and, per Decision step 3's own orthogonality-under-scale
+  argument, no less correct.
 - **Have World compute camera view/projection matrices itself**, given
   `Camera`'s fields and its own Transform math. Rejected: view/projection
   matrices are meaningful only relative to a graphics convention (right-

@@ -80,15 +80,151 @@
     golden-update-reason category exists specifically for a scene's
     first-ever golden, directly applicable to this Spec's own recommended
     new multi-entity validation golden (see Testing & Verification Plan
-    and Decisions Requiring Human Review, item 9).
+    and the Human Review Decision Table, item 14).
 
   This review found no case where an existing public API must change to
   support this Spec's own minimum scope, and one real, disclosed
   architectural fork worth flagging explicitly rather than deciding
   silently: whether Renderable should reuse
   `atlantis::asset_system::AssetId` directly (this Spec's recommendation)
-  or a World-owned opaque handle type — see Decisions Requiring Human
-  Review, item 5.
+  or a World-owned opaque handle type — see the Human Review Decision
+  Table, item 9.
+- **Independent Review — Round 2 (2026-08-22, pre-Human-Review evidence
+  pass), centralized on the ten points a targeted, evidence-driven review
+  raised before this document could go to formal Human Review.** Each
+  point below was checked directly against real code or the actual,
+  current text of the ADR it concerns — not restated from the Round 1
+  summary above — and every finding was corrected on this same branch
+  before this Spec's own status changed. Full detail lives in each
+  affected ADR's own "Revision (2026-08-22...)" note; this is the
+  consolidated index:
+  1. **Golden-update-reason category — re-verified against
+     [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
+     own full text, not from memory.** Confirmed: "Initial baseline
+     bootstrap" is a real, `Accepted` category (its own "Accepted
+     Amendment — 2026-08-17" section, formally accepted by Human Review
+     2026-08-17) — not a fourth category this Spec invented. Confirmed
+     further that "Approved rebaseline" (category 3) is the **wrong**
+     category for this Spec's own new golden: ADR-0042's own Alternatives
+     Considered explicitly rejects using category 3 as "the permanent
+     answer" for a first golden, since it requires "the same explicit
+     reasoning as (2)" (old-vs-new provenance/diff evidence) that cannot
+     exist when there is no prior golden. The Human Review Decision
+     Table, item 14, below now cites the Amendment's own constraint
+     numbers directly (applicability constraint 1; the four-part
+     substitute-evidence constraint 5) instead of a general "matches Spec
+     0011's precedent" gesture.
+  2. **Windowed pixel comparison — reconfirmed impossible with today's
+     public API, stated explicitly rather than left implicit.**
+     Re-inspected `src/vulkan_backend/src/vulkan_presentation.cpp`
+     directly (not merely cited from Spec 0013's own record): a
+     swapchain-backed `RenderTarget` is still constructed with
+     `VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT`
+     only — no `VK_IMAGE_USAGE_TRANSFER_SRC_BIT` — unchanged since Spec
+     0013. Runtime's own windowed verification therefore remains a GPU
+     smoke test plus manual, by-eye comparison; the headless
+     `OffscreenTarget`/image-regression path is the **only** automated
+     pixel-comparison path this Spec's own scene gets — made explicit in
+     Requirements' "Extraction / Runtime adapter" and Testing &
+     Verification Plan below, and in
+     [ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)'s
+     own Consequences.
+  3. **Stale-handle `Result` vs. assertion — re-grounded in
+     `src/core/include/atlantis/assert.h`'s actual Release-build
+     semantics**, not merely in ADR-0033's cross-module framing (which
+     this Spec's own Non-Goals concede does not yet have a real second
+     Client to apply to). `ATLANTIS_ASSERT` compiles to a no-op — the
+     condition unevaluated — whenever `NDEBUG` is defined, i.e. every
+     Release build; using it for stale-handle detection would silently
+     disable the entire safety net in exactly the configuration a real
+     build ships. `ATLANTIS_CHECK` is evaluated in both configurations
+     but aborts the whole process on failure — too severe for what is
+     often ordinary, single-threaded caller bookkeeping. See
+     [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s
+     own Decision and Alternatives Considered, and the Human Review
+     Decision Table, item 3, below — flagged for explicit confirmation,
+     not silently locked.
+  4. **Generation-counter overflow — closed, not merely disclosed.**
+     `EntityId::generation` widened from `std::uint32_t` to
+     `std::uint64_t` (`EntityId` grows from 8 to 16 bytes) — see
+     [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s
+     own quantitative reasoning (`2^64` cycles on one slot is
+     impractical at any plausible process lifetime) and its Alternatives
+     Considered for why a permanently-retired-slot scheme was rejected in
+     favor of simply widening the field.
+  5. **Deterministic multi-entity iteration order — fixed explicitly.**
+     The free list is a LIFO stack (most-recently-freed index reused
+     first); any World API enumerating more than one entity
+     (`renderableEntities()`) iterates in ascending slot-index order —
+     both fixed in
+     [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s
+     own Decision, so the order `DrawItem`s are built and submitted in is
+     a specified, reproducible function of World's own mutation history,
+     never an accident of unspecified container iteration a multi-entity
+     image-regression golden could silently depend on.
+  6. **Hierarchy semantics, each pinned down explicitly:**
+     `setParent()` preserves the child's own **local** transform, not its
+     world transform (reparenting therefore generally changes world
+     position/orientation as a disclosed side effect — now its own Human
+     Review Decision Table row, item 8 — see
+     [ADR-0050](../adr/0050-transform-hierarchy-composition-and-update-model.md));
+     parent destruction cascades to every descendant, clearing the active
+     camera automatically if implicated (unchanged from Round 1, now also
+     its own Human Review Decision Table row, item 7); cycle
+     detection failure and every other mutating World operation are
+     atomic — full success or `Result::Err` with zero mutation, fixed as
+     a blanket contract in
+     [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md).
+  7. **The minimal Transform/Camera math contract, fully specified and
+     evidence-grounded rather than gestured at.** Verified directly
+     against `examples/minimal_renderer_demo/main.cpp`'s own `multiply()`/
+     `lookAt()`/`perspective()` and
+     `shaders/minimal_renderer/minimal_mesh.slang`'s own vertex-stage
+     `mul()` chain: column-major layout (matching `DrawItem`), column-
+     vector composition with parent on the left
+     (`worldMatrix = parentWorldMatrix · localMatrix`), right-handed Y-up,
+     and `localMatrix = T · R · S`, all **reused** from already-
+     established precedent — plus one genuinely **new** convention this
+     Spec introduces (no prior code builds a rotation from Euler angles):
+     `R = Ry(yaw) · Rx(pitch) · Rz(roll)`, fixed arbitrarily but
+     precisely. Camera's `fovYRadians`/`nearZ`/`farZ`-only ownership
+     (aspect computed by Runtime per-frame, never stored on `Camera`) is
+     stated as an explicit responsibility boundary. See
+     [ADR-0050](../adr/0050-transform-hierarchy-composition-and-update-model.md)'s
+     own "Math contract" subsection for the full, precise statement. No
+     general-purpose `Atlantis::Math` module is introduced.
+  8. **`Renderable`'s `AssetId` → loaded `Mesh` resolution — boundary
+     clarified, no public interface prematurely locked.** Confirmed this
+     resolution mechanism is entirely private to
+     `Atlantis::RuntimeHost`'s own composition object (never a process-
+     wide singleton or global mutable Asset database, never a type World
+     or any other module names or depends on) and that this ADR fixes
+     only its input/output shape (`AssetId` in, an already-constructed
+     `Mesh`/`Material` pair or a not-found outcome, out) — not a concrete
+     container type, which remains an explicit Plan-stage detail. See
+     [ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md).
+     Also replaced this ADR's own original "view = inverse(world matrix)"
+     camera construction with a basis-extraction-plus-existing-`lookAt()`
+     construction that needs no general 4×4 inverse and no unscaled-
+     camera precondition (mutual orthogonality of a TRS matrix's basis
+     columns is preserved under arbitrary per-axis scale) — see that
+     ADR's own Decision step 3.
+  9. **Every item this round confirmed must be a Human Review decision,
+     not a silently-fixed implementation detail, is now its own row in
+     the Human Review Decision Table below** — the new top-level module,
+     fixed-type component storage, by-value access, cascading destroy,
+     and the stale-handle `Result` policy are each individually visible
+     and individually confirmable, not folded invisibly into surrounding
+     prose. See "Human Review Decision Table," replacing the prior
+     "Decisions Requiring Human Review" prose list.
+  10. **Re-confirmed, not merely carried forward: no existing public
+      rendering API needs to change.** Re-inspected
+      `src/renderer/include/atlantis/renderer/{draw_item,renderer}.h` and
+      `src/renderer/src/renderer.cpp` during this same evidence pass — no
+      change since Round 1 (this branch has added no implementation code
+      to any existing module); the multi-item `DrawItem` span capability
+      and the "Renderer never touches raw camera math" contract both
+      still hold exactly as Round 1 found them. No blocking finding.
 
 ## Summary
 
@@ -164,8 +300,8 @@ speculative, data-driven abstraction [AGENTS.md](../AGENTS.md)'s Golden
 Rule and "No speculative abstraction" principle warn against, built
 before a second real component type or a second real consumer exists to
 validate its shape against. This Spec instead fixes a small, closed set
-of component types directly on each entity's own record — see Decisions
-Requiring Human Review, item 3, for the explicit trade-off this
+of component types directly on each entity's own record — see the Human
+Review Decision Table, item 5, for the explicit trade-off this
 accepts.
 
 ## Goals
@@ -209,7 +345,7 @@ Explicitly excluded from this Spec's design:
   type-erased component registry, no generic "register a new component
   type at runtime" mechanism, no archetype/chunk storage, no job-system-
   driven parallel iteration. Fixed-type component storage only — see
-  Decisions Requiring Human Review, item 3.
+  the Human Review Decision Table, item 5.
 - **Scene file format or serialization of any kind.** World's own data
   exists only in memory, constructed and torn down within a single
   process run. No load/save, no versioning, no schema. Scene Asset/
@@ -287,10 +423,15 @@ Explicitly excluded from this Spec's design:
 [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md))
 
 - `EntityId` is an index+generation value type (`{ std::uint32_t index;
-  std::uint32_t generation; }`), value-comparable, with a fixed invalid
-  sentinel.
+  std::uint64_t generation; }`, 16 bytes — the 64-bit generation field
+  closes the counter-wraparound risk a narrower field would leave open;
+  see ADR-0049's own quantitative reasoning), value-comparable, with a
+  fixed invalid sentinel.
 - `World::createEntity()` returns a new, always-valid `EntityId`
-  (non-fallible).
+  (non-fallible). Slot reuse is a **LIFO free list** — the most recently
+  destroyed slot's index is the first one a following `createEntity()`
+  reuses, a fixed, deterministic rule, never an accident of container
+  choice.
 - `World::destroyEntity(EntityId)` returns `Result<void, WorldError>`;
   cascades to every transitive descendant in the same call; clears the
   active-camera reference automatically if it or any destroyed descendant
@@ -299,9 +440,37 @@ Explicitly excluded from this Spec's design:
   range and its generation matches the slot's current generation.
 - Every public World API accepting an `EntityId` validates it and returns
   `Result<T, WorldError>` with `WorldError::InvalidEntity` on a stale or
-  out-of-range handle — never undefined behavior.
+  out-of-range handle — never undefined behavior. This is a deliberate
+  choice, not the only reasonable one: `WorldError::InvalidEntity` is used
+  instead of `ATLANTIS_ASSERT`/`ATLANTIS_CHECK` specifically because
+  `ATLANTIS_ASSERT` compiles to a no-op whenever `NDEBUG` is defined
+  (verified against `src/core/include/atlantis/assert.h`), which would
+  silently remove stale-handle detection in every Release build, and
+  `ATLANTIS_CHECK` aborts the whole process — too severe for what is,
+  in this Spec's own single-threaded model, often ordinary caller
+  bookkeeping rather than a violated memory-safety invariant. See
+  ADR-0049's own Decision and Alternatives Considered, and the Human
+  Review Decision Table below (this is flagged for explicit confirmation,
+  not silently locked).
 - No public World accessor returns a reference or pointer into World's own
   internal storage; every getter returns a by-value copy.
+- **Every mutating World operation (`destroyEntity()`, `setParent()`,
+  `setLocalTransform()`, `setCamera()`/`removeCamera()`/
+  `setActiveCamera()`, `setRenderable()`/`removeRenderable()`) is atomic:**
+  it either fully succeeds, or returns `Result::Err` having changed
+  nothing at all — every precondition (handle validity; for `setParent()`,
+  the cycle check) is validated before any state change.
+- **Multi-entity enumeration order is deterministic and specified:** any
+  World API enumerating more than one entity (`renderableEntities()`, see
+  below) iterates in **ascending slot-index order** — combined with the
+  LIFO free-list rule above, this makes the order a pure, reproducible
+  function of the exact sequence of `createEntity()`/`destroyEntity()`
+  calls a caller makes, not an unspecified property of an internal
+  container. Required so a multi-entity image-regression golden (the
+  Human Review Decision Table, item 14) never depends on undefined
+  ordering for its own reproducibility. (`updateTransforms()`'s own internal traversal
+  order is not a public contract — see Non-functional below for why it
+  does not need to be.)
 
 **Transform and hierarchy** (see
 [ADR-0050](../adr/0050-transform-hierarchy-composition-and-update-model.md))
@@ -316,7 +485,17 @@ Explicitly excluded from this Spec's design:
   WorldError>` — `parent == kInvalidEntityId` clears to root. Returns
   `WorldError::WouldCreateCycle` (checked before any mutation) if `parent`
   is `child` itself or a descendant of `child`; returns
-  `WorldError::InvalidEntity` if either handle is stale.
+  `WorldError::InvalidEntity` if either handle is stale. **Preserves the
+  child's own *local* transform; does not preserve its *world*
+  transform** — `setParent()` never reads or writes `Transform` fields,
+  so reparenting generally changes the child's world position/orientation
+  as a disclosed side effect (unless the old and new parent share the
+  same world matrix). A caller wanting the child's world transform to stay
+  fixed across a reparent must compute and set the appropriate new local
+  transform itself via `setLocalTransform()` — no automatic "preserve
+  world transform" reparent operation exists in this round (would require
+  a general 4×4 matrix inverse plus a TRS decomposition; see
+  [ADR-0050](../adr/0050-transform-hierarchy-composition-and-update-model.md)).
 - `World::getParent(EntityId) const -> Result<EntityId, WorldError>`
   (returns the invalid sentinel for a root entity, not an error).
 - `World::updateTransforms()` recomputes every entity's world matrix in
@@ -324,14 +503,31 @@ Explicitly excluded from this Spec's design:
   `World::getWorldMatrix(EntityId) const -> Result<std::array<float, 16>,
   WorldError>` reflects state as of the most recent `updateTransforms()`
   call — an explicit, documented contract, not an implicit assumption.
+- **Math contract, fully specified** (see
+  [ADR-0050](../adr/0050-transform-hierarchy-composition-and-update-model.md)'s
+  own "Math contract" subsection for the full statement and its evidence):
+  column-major matrix layout (matching `DrawItem::objectToWorld`'s own
+  existing contract); column-vector composition with parent on the left
+  (`worldMatrix = parentWorldMatrix · localMatrix`, matching
+  `minimal_mesh.slang`'s own vertex-stage `mul()` chain); right-handed,
+  Y-up coordinates (matching `lookAt()`'s own established convention);
+  `localMatrix = T · R · S`; and Euler-angle composition
+  `R = Ry(yaw) · Rx(pitch) · Rz(roll)` — the one piece of this contract
+  with no prior precedent in this codebase, fixed here arbitrarily but
+  precisely. This is a fully-specified internal contract of
+  `atlantis::world`, not a new general-purpose `Atlantis::Math` module.
 
 **Camera**
 
 - Optional per-entity `Camera` component: `float fovYRadians`, `float
-  nearZ`, `float farZ`. No position/orientation fields of its own — a
+  nearZ`, `float farZ`. **No aspect-ratio field, and no position/
+  orientation fields of its own** — aspect is Runtime's own per-frame
+  responsibility (computed from the current swapchain extent, exactly
+  matching every existing windowed demo's own established pattern), and a
   Camera entity's position/orientation come entirely from its own
   `Transform` (so a camera can be parented, e.g. attached to a moving
-  rig, using the same hierarchy every other entity uses).
+  rig, using the same hierarchy every other entity uses). This is a fixed
+  responsibility boundary, not left ambiguous.
 - `World::setCamera(EntityId, Camera) -> Result<void, WorldError>`,
   `World::removeCamera(EntityId) -> Result<void, WorldError>`,
   `World::getCamera(EntityId) const -> Result<Camera, WorldError>`.
@@ -361,17 +557,41 @@ Explicitly excluded from this Spec's design:
 [ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md))
 
 - Runtime, not World, performs: `world.updateTransforms()`; resolving the
-  active camera to a view/projection matrix pair (view = inverse of the
-  camera entity's world matrix; projection from `Camera`'s
-  `fovYRadians`/`nearZ`/`farZ` and the current swapchain aspect ratio) and
-  writing both into the existing camera uniform `Buffer`; resolving each
-  Renderable entity's `AssetId` through a new, Runtime-owned
-  `AssetId → (Mesh&, Material&)` resource table; building one
-  `renderer::DrawItem` per Renderable entity; and calling the existing,
-  unmodified `Renderer::drawFrame()` once per frame with the full
-  multi-item span.
+  active camera to a view/projection matrix pair — the **view** matrix
+  built by extracting an eye position and a normalized right/up/forward
+  basis directly from the camera entity's own world matrix columns (a
+  Camera looks down its own local −Z axis) and feeding them into the
+  existing, unmodified `lookAt()`-shaped construction every windowed demo
+  already uses (no general 4×4 matrix inverse, and no "camera must be
+  unscaled" precondition — a TRS matrix's basis columns stay mutually
+  orthogonal under arbitrary per-axis scale; see
+  [ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)'s
+  own Decision step 3); the **projection** matrix from `Camera`'s
+  `fovYRadians`/`nearZ`/`farZ` and the current swapchain aspect ratio —
+  and writing both into the existing camera uniform `Buffer`; resolving
+  each Renderable entity's `AssetId` through a resolution mechanism
+  entirely **private** to Runtime's own composition object (never a
+  global mutable Asset database, never a type World or any other module
+  depends on; this Spec fixes only its `AssetId`-in/`Mesh`+`Material`-or-
+  not-found-out shape, not a concrete container type — a Plan-stage
+  detail); building one `renderer::DrawItem` per Renderable entity, in
+  `renderableEntities()`'s own ascending-slot-index order; and calling the
+  existing, unmodified `Renderer::drawFrame()` once per frame with the
+  full multi-item span.
 - No RHI, Renderer, RenderGraph, Vulkan Backend, or Platform type is ever
   named, included, or constructed inside `src/world/`.
+- **Runtime's existing windowed `RenderTarget` cannot be pixel-read-back
+  or automatically compared against a golden** — confirmed by direct
+  inspection of `src/vulkan_backend/src/vulkan_presentation.cpp` (a
+  swapchain-backed `RenderTarget`'s `imageUsage` carries
+  `VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT`
+  only, never `TRANSFER_SRC_BIT`, unchanged since Spec 0013), and this
+  Spec does not add that capability (see Non-Goals). Runtime's own
+  windowed verification for this Spec's multi-entity scene is therefore a
+  GPU smoke test plus manual, by-eye comparison, exactly as Spec 0013
+  already established — the headless `OffscreenTarget`/image-regression
+  path (below) is the **only** automated pixel-comparison path this
+  Spec's own scene gets.
 
 ### Non-functional
 
@@ -400,12 +620,39 @@ Explicitly excluded from this Spec's design:
   and component it holds; `EntityId` is a non-owning value handle; no
   public accessor exposes a reference/pointer into World's own storage
   (see [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)).
+- **Determinism and ordering:** `renderableEntities()` (and any future
+  multi-entity enumeration API) iterates in ascending slot-index order,
+  with a LIFO free list governing slot reuse — a fully specified,
+  reproducible function of World's own mutation history (see Requirements
+  above and
+  [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)).
+  `updateTransforms()`'s own **internal** traversal order is deliberately
+  *not* a public contract: its only fixed requirement is topological
+  (every entity visited strictly after its own parent), and any traversal
+  satisfying that requirement produces byte-identical world-matrix values,
+  since each entity's computation reads only its own immediate parent's
+  already-finalized world matrix — this internal order is never externally
+  observable through any World API, unlike enumeration order, and
+  therefore needs no equivalent guarantee (see
+  [ADR-0050](../adr/0050-transform-hierarchy-composition-and-update-model.md)).
+- **Atomicity:** every mutating World operation either fully succeeds or
+  returns `Result::Err` having changed nothing — no partially-applied
+  mutation is ever observable, including on a `WorldError::WouldCreateCycle`
+  or `WorldError::InvalidEntity` failure (see Requirements above).
 - **Error handling:** every recoverable World operation returns
   `atlantis::Result<T, WorldError>`, matching every existing module's own
-  convention, extended here to World for the first time. Programmer
-  errors (e.g. an internal invariant violation caught by the update
-  traversal's own defensive cycle check) use `ATLANTIS_CHECK`/
-  `ATLANTIS_ASSERT`, never a `Result`.
+  convention, extended here to World for the first time — including
+  stale/invalid `EntityId` use, which this Spec treats as recoverable
+  rather than a programmer-error assertion (see Requirements' "Entity
+  lifecycle and identity" above for the concrete, `assert.h`-grounded
+  reason, and the Human Review Decision Table below for this as an
+  explicit, confirmable choice). Genuine internal invariant violations
+  (e.g. the update traversal's own defense-in-depth "never revisit an
+  already-visited entity" check —
+  [ADR-0050](../adr/0050-transform-hierarchy-composition-and-update-model.md))
+  use `ATLANTIS_CHECK` specifically (not `ATLANTIS_ASSERT`, which compiles
+  to a no-op whenever `NDEBUG` is defined) so a defense-in-depth invariant
+  guard stays active in Release builds too, never a `Result`.
 
 ## Proposed Design
 
@@ -530,104 +777,56 @@ position; drafting this Spec ahead of it is, as with Spec 0012 and Spec
 0013 before it, an explicit human-directed continuation, not a finding
 that Android's own scope or dependencies changed.
 
-## Decisions Requiring Human Review
+## Human Review Decision Table
 
-1. **New, independent top-level module (`Atlantis::World`), or a private
-   submodule of `src/runtime/`?** *Recommendation:* a new top-level
-   module, matching Asset System's own precedent — see
-   [ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md).
-   Rejected alternative: folding into Runtime's own private
-   `RuntimeHost` library, which would foreclose independent unit testing
-   and a future non-Runtime consumer without a later, disruptive boundary
-   reopening.
-2. **Entity ID/handle representation and invalidation detection.**
-   *Recommendation:* index+generation (`EntityId{index, generation}`), the
-   exact shape [ADR-0033](../adr/0033-runtime-authority-and-client-boundary.md)
-   itself named as an illustrative candidate — see
-   [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md).
-   Every public World accessor returns by-value, never a reference/
-   pointer into World's own storage.
-3. **Fixed-type component storage, or a generic ECS registry?**
-   *Recommendation:* fixed-type storage — every entity's record directly
-   holds a mandatory `Transform` and two optional components (`Camera`,
-   `Renderable`); no type-erased component pool, no runtime component-type
-   registration. **Explicit trade-off, not free:** a future component
-   type (e.g. a Light) requires extending the fixed entity record, not
-   registering a new type generically — accepted here because this Spec's
-   own scope names exactly two optional component kinds and no
-   generic-registration consumer exists yet; revisit only once a real,
-   concrete case for more component types actually exists.
-4. **Transform hierarchy update strategy and cycle detection.**
-   *Recommendation:* explicit, single-threaded, once-per-frame
-   `updateTransforms()` traversal (no eager per-setter propagation, no
-   dirty-flag incremental scheme); cycle prevention at `setParent()`
-   mutation time (ancestor-chain walk, `Result::Err` before any state
-   changes), with a defensive traversal-time assertion as a last-resort
-   invariant guard, never a second recovery path — see
-   [ADR-0050](../adr/0050-transform-hierarchy-composition-and-update-model.md).
-   Parent destruction cascades to all descendants in the same call, with
-   automatic active-camera clearing if implicated.
-5. **World↔Asset System reference boundary — and specifically, does
-   `Renderable` reuse `atlantis::asset_system::AssetId` directly, or a
-   World-owned opaque handle?** *Recommendation:* reuse `AssetId`
-   directly — a narrow, dependency-free, already-`Accepted` type, keeping
-   one source of truth for asset identity with no conversion layer. **The
-   real, disclosed trade-off:** this couples `Renderable`'s own
-   representation to Asset System's current, path-derived (not
-   rename-durable) identity scheme
-   ([ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md));
-   a future Serialization and Stable Identity Spec changing that scheme
-   would change `Renderable` directly rather than being insulated behind
-   a World-owned indirection. World depends on nothing else from Asset
-   System (no `load.h`, no `StaticMeshAssetData`, no cooker/validation
-   surface) — see
-   [ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md).
-6. **World-to-Renderer extraction/adaptation boundary.**
-   *Recommendation:* Runtime's own composition-root adapter code — never
-   inside World (which stays free of any Renderer/RHI dependency), never a
-   Renderer change, and not a new, separate "Extraction" module ahead of
-   a second real consumer — see
-   [ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md).
-   Confirmed, by direct inspection, that `Renderer::drawFrame()` already
-   accepts and already iterates a multi-item `DrawItem` span — zero
-   Renderer change is needed for this Spec's own multi-entity validation
-   scene.
-7. **Camera ownership and the active-camera rule.** *Recommendation:*
-   `Camera` is an optional component on an ordinary entity (so it
-   participates in the same Transform hierarchy as any other entity,
-   e.g. a camera rig), carrying only `fovYRadians`/`nearZ`/`farZ` — its
-   position/orientation come entirely from its own `Transform`. Exactly
-   one active camera at a time, referenced by a single, nullable
-   `EntityId` on World itself; an unset active camera is a recoverable
-   Runtime-classified extraction condition, never a crash. View/
-   projection matrix computation stays entirely in Runtime's own
-   hand-rolled code (unchanged pattern from every prior spec), never
-   moved into World.
-8. **Does this Spec preserve every existing public rendering API
-   unchanged?** *Recommendation:* yes — confirmed by direct inspection
-   (Independent Review above): `Renderer`, RHI, Vulkan Backend, Platform,
-   Shader System, and Asset System all remain exactly as `Accepted`
-   today, with zero modification to any public header, type, or function
-   signature.
-9. **The first multi-entity Runtime validation scene, and image-
-   regression ownership.** *Recommendation:* extend Runtime's existing
-   bootstrap composition (Spec 0013) with the validation scene described
-   under Proposed Design (several `minimal_cube` instances at distinct
-   World-driven transforms, one hierarchy relationship exercised, one
-   World-driven camera) as a Plan-stage implementation detail of this
-   Spec. Because this is genuinely new rendered content (not the single
-   existing `minimal_cube` composition Spec 0011/0012/0013's own golden
-   already covers), the recommended verification split is: (a) a **new**
-   headless image-regression fixture and golden under
-   `tests/image_regression/` for this multi-entity scene — the actual
-   pixel-level regression gate, using ADR-0042's own "Initial baseline
-   bootstrap" golden-update-reason category, matching Spec 0011's own
-   precedent for a scene's first-ever golden; (b) a windowed Runtime GPU
-   smoke test extension, matching Spec 0013's own three-layer model; and
-   (c) manual, by-eye windowed verification against that same new golden.
-   Exact fixture/golden naming and whether it lands in the same PR as the
-   rest of the implementation are Plan-stage details this Spec does not
-   fix.
+Fourteen decisions this Spec asks Human Review to confirm, reject, or
+amend — none is silently locked as "just an implementation detail."
+Every row states this Spec's own recommendation and the trade-off a
+reviewer is actually being asked to weigh; full reasoning and
+Alternatives Considered live in the ADR each row links to (or in this
+Spec's own sections, for the two rows with no dedicated ADR). Items 2–4
+were previously folded into a single "Entity ID/handle representation"
+bullet; items 7–8 and 12 were previously implied rather than stated as
+their own confirmable rows — this table makes each one individually
+visible, per this round's own review finding (Independent Review Round 2,
+item 9).
+
+| # | Decision | Recommendation | Key trade-off / why this needs sign-off | Source |
+|---|---|---|---|---|
+| 1 | New, independent top-level module (`Atlantis::World`), or a private submodule of `src/runtime/`? | New top-level module, matching Asset System's own precedent (ADR-0043). | A new top-level module is a permanent structural commitment; folding into Runtime's private `RuntimeHost` library would forecloses independent unit testing and a future non-Runtime consumer. | [ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md) |
+| 2 | `EntityId` shape and generation width. | Index (`uint32_t`) + generation (`uint64_t`), 16 bytes. | A 64-bit generation closes the counter-wraparound risk a 32-bit field would leave open, at the cost of doubling the handle's own size. | [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md) |
+| 3 | Stale/invalid `EntityId` detection: `Result::Err`, or an assertion (`ATLANTIS_CHECK`/`ATLANTIS_ASSERT`)? | `Result<T, WorldError>` — `WorldError::InvalidEntity`. | `ATLANTIS_ASSERT` compiles to a no-op whenever `NDEBUG` is defined (verified against `assert.h`), silently disabling detection in every Release build; `ATLANTIS_CHECK` aborts the whole process for what is often ordinary single-threaded caller bookkeeping, not a memory-safety invariant. Re-grounded in this evidence, not merely in ADR-0033 (which this Spec has no second Client to exercise against yet). | [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md) |
+| 4 | Do public World accessors return by-value copies, or references/pointers into World's own storage? | By-value only — every getter returns `Result<T, WorldError>` by value; every setter takes its argument by value. | Stricter than ADR-0033 strictly requires (that rule is about cross-module Client access) — adopted because World's own internal slot array can reallocate on growth, which would otherwise dangle any previously-returned reference. | [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md) |
+| 5 | Fixed-type component storage, or a generic ECS registry? | Fixed-type storage — a mandatory `Transform` plus two optional components (`Camera`, `Renderable`) directly on each entity's own record; no type-erased component pool, no runtime component-type registration. | A future component type (e.g. a Light) requires extending the fixed entity record, not registering a new type generically — accepted because this Spec names exactly two optional component kinds and no generic-registration consumer exists yet. | This Spec's own "Why this stays a minimal World, not a general ECS" above |
+| 6 | Transform hierarchy update strategy, and when cycle detection runs. | Explicit, single-threaded, once-per-frame `updateTransforms()` (no eager per-setter propagation, no dirty-flag scheme); cycle prevention at `setParent()` mutation time (ancestor-chain walk, `Result::Err` before any state change), with a defensive traversal-time `ATLANTIS_CHECK` as a last-resort invariant guard only. | A world matrix read without a following `updateTransforms()` call silently reflects stale data — a documented contract, not an automatic dirty check; accepted for this Spec's own explicit, single-threaded model. | [ADR-0050](../adr/0050-transform-hierarchy-composition-and-update-model.md) |
+| 7 | Does destroying a parent entity cascade to its descendants, reparent them, or leave them orphaned? | Cascades — `id` and every transitive descendant are destroyed together, in one atomic call; the active camera is cleared automatically if implicated. | Simplest semantics to reason about, but no "detach children first" escape hatch exists — a real, disclosed constraint a future Plan/caller must design around if it ever needs a subtree to outlive its root. | [ADR-0050](../adr/0050-transform-hierarchy-composition-and-update-model.md) |
+| 8 | Does `setParent()` preserve the child's *local* transform, or its *world* transform? | Preserves *local*; world transform generally changes as a disclosed side effect. | The alternative (auto-preserving world transform) requires a general 4×4 matrix inverse plus a TRS decomposition — real machinery no other part of this Spec's minimal scope needs, for a capability this Spec's own validation scene does not exercise. | [ADR-0050](../adr/0050-transform-hierarchy-composition-and-update-model.md) |
+| 9 | World↔Asset System reference boundary: does `Renderable` reuse `atlantis::asset_system::AssetId` directly, or a World-owned opaque handle? | Reuse `AssetId` directly — one source of truth, no conversion layer; World depends on nothing else from Asset System. | Couples `Renderable` to Asset System's current, path-derived (not rename-durable) identity scheme (ADR-0044) — a future Serialization/Stable-Identity Spec changing that scheme changes `Renderable` directly, with no insulating indirection. | [ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md) |
+| 10 | Where does the World→Renderer `DrawItem` translation live? | Runtime's own composition-root adapter — never inside World, never a Renderer change, and not a new, separate "Extraction" module ahead of a second real consumer. | Confirmed, by direct inspection, that `Renderer::drawFrame()` already accepts and already iterates a multi-item `DrawItem` span — zero Renderer change needed. | [ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md) |
+| 11 | Camera ownership and the active-camera rule. | `Camera` is an optional component on an ordinary entity (participates in the Transform hierarchy, e.g. a camera rig), carrying only `fovYRadians`/`nearZ`/`farZ`; exactly one active camera at a time, a single nullable `EntityId` on World. | View/projection matrix computation stays entirely Runtime's own hand-rolled code (basis extraction from the camera's world matrix, fed into the existing `lookAt()`), never moved into World — keeps World free of any graphics-facing convention. | [ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md) |
+| 12 | Should Runtime's `AssetId`→`Mesh`/`Material` resolution mechanism be a fixed public interface, or a private implementation detail? | Private to `Atlantis::RuntimeHost`'s own composition object — this Spec fixes only its input/output shape (`AssetId` in, a resolved pair or not-found, out), not a concrete container type or a public API. | Locking a public resolver interface now, with only one real consumer and one real asset, would be exactly the premature, unnecessary abstraction AGENTS.md's Golden Rule warns against. | [ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md) |
+| 13 | Does this Spec preserve every existing public rendering API unchanged? | Yes — confirmed by direct inspection, twice (Independent Review Rounds 1 and 2): `Renderer`, RHI, Vulkan Backend, Platform, Shader System, and Asset System all remain exactly as `Accepted` today, zero modification to any public header, type, or function signature. | Not a judgment call — a factual finding this table records for the reviewer's own direct confirmation, since it is this Spec's own central architectural claim. | Independent Review above |
+| 14 | The first multi-entity Runtime validation scene, and its image-regression golden-update-reason category. | Extend Runtime's bootstrap (Spec 0013) with several `minimal_cube` instances at distinct World-driven transforms (one hierarchy relationship exercised) plus one World-driven camera; verify via (a) a **new** headless image-regression fixture/golden under `tests/image_regression/`, citing ADR-0042's own **Accepted Amendment** "Initial baseline bootstrap" category (not "Approved rebaseline" — ADR-0042's own Alternatives Considered explicitly rejects that category as the permanent answer for a first golden, since it needs old-vs-new diff evidence that cannot exist here) — the Amendment's own constraint 5 substitute evidence (visual inspection; zero-diff self-consistency; a real Validation-Layers-clean GPU run; citing ADR-0042's existing calibration) is what a future Plan/Implementation must produce; (b) a windowed Runtime GPU smoke test extension; (c) manual, by-eye windowed verification against that same golden. | Runtime's own windowed swapchain still cannot be pixel-read-back (confirmed: no `VK_IMAGE_USAGE_TRANSFER_SRC_BIT` on it) — the headless path is the only automated pixel-comparison route available. Exact fixture/golden naming and PR sequencing remain Plan-stage details. | This Spec's own Testing & Verification Plan; [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md) |
+
+### Approval readiness
+
+**This Spec is not yet ready to move to `Approved`.** Per
+[AGENTS.md](../AGENTS.md) and [specs/README.md](README.md), that requires:
+(1) a human reading this Spec and
+[ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)
+together and recording explicit Human Review Approval — the table above is
+the complete, one-time set of items that approval needs to either accept
+as recommended or direct a change to, with no item left for a later,
+separate round; and (2) all four ADRs moving from `Proposed` to
+`Accepted` as part of that same approval, per AGENTS.md's ADR workflow.
+Neither has happened yet. This round's own work (Independent Review Round
+2 above) closed every internal contradiction, omission, and overclaim a
+targeted, evidence-driven review found — including one item (golden-
+update-reason category) that was re-verified against ADR-0042's actual
+text and confirmed correct as originally drafted, not changed — but a
+self-review is not Human Review and does not substitute for it. No Plan
+may be drafted, and no Implementation may begin, until that approval is
+recorded.
 
 ## Alternatives Considered
 
@@ -646,7 +845,7 @@ that Android's own scope or dependencies changed.
   no data-driven authoring tool, and no measured performance need exists
   yet to validate a general ECS's own added complexity against — see
   "Why this stays a minimal World, not a general ECS" above, and
-  Decisions Requiring Human Review, item 3.
+  the Human Review Decision Table, item 5.
 - **Give World a Renderer dependency so it can vend `DrawItem`s (or even
   own GPU `Mesh`/`Material`) directly, simplifying Runtime's own
   composition code.** Rejected: violates this Spec's own CPU-only/
@@ -676,11 +875,18 @@ that Android's own scope or dependencies changed.
     request; rejects (`WorldError::WouldCreateCycle`) a direct self-parent,
     a two-hop cycle, and a longer transitive cycle, in each case leaving
     the hierarchy unchanged (verified by re-reading `getParent()`
-    afterward); `updateTransforms()` produces the expected world matrix
-    for a multi-level chain (root → child → grandchild) against a
-    hand-computed expected result; destroying a mid-chain entity cascades
-    to its own descendants, leaving unrelated siblings/ancestors
-    untouched.
+    afterward — the atomicity contract); `setParent()` leaves the child's
+    own `getLocalTransform()` value byte-identical while its
+    `getWorldMatrix()` (after `updateTransforms()`) changes when the new
+    parent's world matrix differs from the old one — the local-vs-world
+    preservation contract; `updateTransforms()` produces the expected
+    world matrix for a multi-level chain (root → child → grandchild)
+    against a hand-computed expected result, verifying the full math
+    contract (column-major layout, `parentWorld · local` composition,
+    `T · R · S` order, and the fixed `Ry · Rx · Rz` Euler order) against
+    independently hand-computed matrices, not merely "does it run";
+    destroying a mid-chain entity cascades to its own descendants, leaving
+    unrelated siblings/ancestors untouched.
   - Camera: `setActiveCamera()` fails (`WorldError::NoCameraComponent`)
     against an entity with no `Camera`; destroying the active camera
     entity clears `activeCamera()` to `std::nullopt` automatically;
@@ -690,10 +896,31 @@ that Android's own scope or dependencies changed.
     set of live entities currently carrying a `Renderable`, correctly
     excluding entities with only a `Transform`, a destroyed entity, and
     (after `removeRenderable()`) a previously-renderable entity.
+  - **Determinism:** a fixed sequence of `createEntity()`/`destroyEntity()`
+    calls that frees and reuses slot indices (exercising the LIFO free
+    list) produces the exact same `renderableEntities()` ascending-slot-
+    index ordering across repeated, independent runs of the same test —
+    the concrete guarantee a multi-entity image-regression golden's own
+    reproducibility depends on (Human Review Decision Table, item 14).
+  - **Atomicity:** a `setParent()` call that fails with
+    `WorldError::WouldCreateCycle`, and a `destroyEntity()`/
+    `setLocalTransform()`/etc. call that fails with
+    `WorldError::InvalidEntity`, each leave every observable World state
+    (parent links, transforms, component presence, entity validity)
+    byte-identical to immediately before the call.
   - `EntityId` value semantics: equality, the invalid sentinel's own
     `isValid()` result, and that a plain `std::vector<EntityId>`/`std::
     unordered_map<EntityId, ...>` usage compiles and behaves as expected
-    (exercising the handle as an ordinary copyable value).
+    (exercising the 16-byte handle as an ordinary copyable value).
+  - **Honest scope limit, stated explicitly, not silently overclaimed:**
+    the 64-bit generation counter's own overflow-safety margin
+    ([ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s
+    `2^64`-cycle reasoning) is a design-time, quantitative argument, not
+    something any test exercises — actually driving one slot through
+    anywhere near `2^64` destroy/reuse cycles is not a real, runnable test
+    at any practical timescale. Only the ordinary, small-scale generation-
+    mismatch case (one destroy, one reuse, one stale-handle check) is
+    unit-tested above.
 - **GPU-required tests (Windows/Vulkan, `gpu`-labeled), extending
   `tests/runtime/` and/or `tests/vulkan_backend/`:**
   - A Runtime GPU smoke test constructing the full validation-scene
@@ -705,7 +932,7 @@ that Android's own scope or dependencies changed.
     span for the first time.
 - **Image regression (headless), `tests/image_regression/`:** a new
   fixture and golden for this Spec's own multi-entity validation scene —
-  see Decisions Requiring Human Review, item 9, for the recommended
+  see the Human Review Decision Table, item 14, for the recommended
   "Initial baseline bootstrap" category and the three-layer verification
   split. Exact fixture composition (which entities, which transforms) a
   Plan-stage detail, fixed to be deterministic and visually distinguishable
@@ -731,13 +958,17 @@ that Android's own scope or dependencies changed.
 
 - **Whether the recommended new image-regression golden lands in the same
   PR as the rest of this Spec's implementation, or as a follow-up** — a
-  Plan-stage sequencing detail, not fixed here (see Decisions Requiring
-  Human Review, item 9).
-- **Exact `Transform` composition axis order (pitch/yaw/roll
-  multiplication order) and the exact `EntityId` invalid-sentinel bit
-  pattern** are left to the Plan — this Spec fixes the composition
-  formula's shape (`parentWorld × T × R × S`) and the handle's shape
-  (index+generation), not their literal encoding.
+  Plan-stage sequencing detail, not fixed here (see the Human Review
+  Decision Table, item 14).
+- **The exact `EntityId` invalid-sentinel bit pattern, and the exact
+  per-axis rotation-matrix element layout implementing the fixed
+  `R = Ry(yaw) · Rx(pitch) · Rz(roll)` composition** are left to the
+  Plan — this Spec fixes the handle's shape (index + 64-bit generation)
+  and the full math contract (layout, multiplication order, handedness,
+  TRS order, and the Euler axis order itself — see
+  [ADR-0050](../adr/0050-transform-hierarchy-composition-and-update-model.md)'s
+  own "Math contract"), not the literal sentinel value or the mechanical
+  per-element formula implementing an already-fixed rotation matrix.
 - **Whether `renderableEntities()`'s exact return type is a
   `std::vector<EntityId>` snapshot, a lazy view, or a callback-based
   `forEach`** is left to the Plan — this Spec fixes the capability (a
@@ -745,10 +976,18 @@ that Android's own scope or dependencies changed.
   contract (valid as of the call, not a live/invalidating iterator held
   across a subsequent World mutation), not the concrete C++ shape.
 - **Whether reusing `atlantis::asset_system::AssetId` directly (this
-  Spec's own recommendation, Decisions Requiring Human Review item 5)
+  Spec's own recommendation, the Human Review Decision Table item 9)
   proves awkward once a real Serialization and Stable Identity Spec is
   drafted** is a named, honest, deferred risk — not something this Spec
   claims to have preempted.
+- **Whether the camera basis-extraction convention (a Camera entity looks
+  down its own local −Z axis) reads intuitively to a future author hand-
+  placing a camera entity**, versus a possible alternative (+Z-forward)
+  convention some other engines use — this Spec fixes one, documented,
+  internally-consistent convention (matching `lookAt()`'s own existing
+  result) because it has to pick one, not because a strong argument
+  favors it over the alternative; a future Spec is free to revisit if this
+  proves confusing in practice.
 - **Runtime's own new AssetId→Mesh/Material resource table's exact
   container/lookup-failure policy** (skip-and-log vs. fail-the-frame) is
   left to the Plan — this Spec fixes only that the condition is
