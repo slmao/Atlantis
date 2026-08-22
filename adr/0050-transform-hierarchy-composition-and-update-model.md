@@ -15,6 +15,15 @@
   local-vs-world-transform preservation rule. See the new "Math contract"
   subsection and "Hierarchy and cycle prevention" below. No change to this
   ADR's `Proposed` status; still pending Human Review.
+- **Revision 2 (2026-08-22, targeted correction, camera/scale
+  hierarchy):** added an explicit statement, with a concrete counter-
+  example, that a composed multi-level world matrix may contain shear
+  (non-orthogonal basis columns) even though a single, isolated `T·R·S`
+  matrix never does — a real property of this ADR's own composition model
+  that [ADR-0051](0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)'s
+  own camera view-matrix construction was found, on re-review, to have
+  gotten wrong by not accounting for. See the new Math contract bullet.
+  No change to this ADR's `Proposed` status; still pending Human Review.
 
 ## Context
 
@@ -139,6 +148,37 @@ evidence pass, not restated from memory:
   applied to the column-major storage above) is a Plan-stage
   implementation detail; the **axis order** (`Rz` innermost, `Ry`
   outermost) is fixed by this ADR and is not left open.
+- **A composed, multi-level world matrix is not guaranteed to be a pure
+  rotation-times-uniform-scale transform — it may contain shear.** A
+  single, isolated `T · R · S` matrix's linear part (`R · S`) always has
+  mutually orthogonal columns, for any per-axis (including non-uniform or
+  negative) scale `S`, since scaling each of three already-orthogonal
+  columns of a rotation matrix by a possibly-different non-zero factor
+  preserves their pairwise zero dot products. **This property does not
+  extend to a composed hierarchy.** Concrete counter-example, found and
+  verified during
+  [ADR-0051](0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)'s
+  own re-review: a parent with local matrix `T · I · diag(2,1,1)`
+  (non-uniform scale, no rotation) composed with a child whose own local
+  matrix is `T · Rz(45°) · I` (a 45° rotation about `Z`, no scale of its
+  own) produces a child world matrix whose linear part is
+  `diag(2,1,1) · Rz(45°)` — columns `(√2, √2/2, 0)` and `(−√2, √2/2, 0)`,
+  with dot product `−2 + 0.5 = −1.5 ≠ 0`: **not orthogonal**. Any
+  non-uniform or negative scale at one level, combined with a
+  differently-oriented rotation at a descendant level, introduces real
+  shear into that descendant's own world matrix. This is a disclosed,
+  accepted property of this ADR's own composition model (not a defect —
+  `Renderable` entities render correctly under an arbitrary, even sheared,
+  linear transform; shear is just an unusual but valid visual effect for
+  a mesh) — it matters specifically because a consumer that needs to
+  recover an **orthonormal** basis from a world matrix (Runtime's own
+  camera view-matrix construction) cannot assume simply normalizing that
+  matrix's own basis columns is sufficient — see
+  [ADR-0051](0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)'s
+  own Decision step 3 for the corrected extraction this fact requires,
+  and for the two genuine degenerate-input cases (near-zero direction;
+  direction parallel to the canonical world-up axis) that construction
+  must still handle explicitly.
 - **Camera FOV/near/far/aspect responsibility boundary, fixed
   precisely.** `Camera` (see the related Spec's Requirements) owns
   `fovYRadians`/`nearZ`/`farZ` only — it never owns an aspect ratio.
@@ -310,6 +350,13 @@ evidence pass, not restated from memory:
 - O(N) full-traversal update has no headroom built in for a much larger
   future entity count — an explicit, disclosed non-goal of this ADR, not
   an oversight.
+- A composed world matrix may contain shear (see the Math contract's own
+  counter-example) — a disclosed property, not a defect, for rendering
+  purposes, but a real constraint any future consumer needing an
+  orthonormal basis from a world matrix must account for explicitly
+  (as [ADR-0051](0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)'s
+  own camera construction now does), rather than assuming column
+  normalization is always sufficient.
 
 ## Alternatives Considered
 

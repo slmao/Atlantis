@@ -18,6 +18,22 @@
   and-manual-only, headless remains the only pixel-comparison path — see
   Consequences. No change to this ADR's `Proposed` status; still pending
   Human Review.
+- **Revision 2 (2026-08-22, targeted correction, camera/scale
+  hierarchy):** the prior revision's own "columns 0/1/2 stay mutually
+  orthogonal under arbitrary per-axis scale" claim was **wrong** for a
+  composed, multi-level hierarchy (correct only for a single, isolated
+  TRS matrix) — found by a targeted re-check, with a concrete counter-
+  example (a non-uniformly scaled parent composed with a rotated child
+  produces a sheared, non-orthogonal descendant world matrix). Fixed:
+  Decision step 3 now extracts **only** `eye` and `forward` from the
+  camera's world matrix (never `right`/`up` columns), delegating
+  orthonormal-basis construction entirely to the existing `lookAt()`
+  function's own cross-product method — robust to any non-degenerate
+  scale/shear, with two explicit, Runtime-classified recoverable-error
+  cases (near-zero forward; forward parallel to the canonical world-up
+  axis) replacing the prior, unqualified "just works" claim. See Decision
+  step 3's own full correction note. No change to this ADR's `Proposed`
+  status; still pending Human Review.
 
 ## Context
 
@@ -79,35 +95,111 @@ Concretely, once per frame:
    by a deliberately-misconfigured test, matching this codebase's existing
    convention of testing an error path explicitly rather than only its
    success path.
-3. Runtime computes that camera entity's **view matrix by extracting an
-   eye position and an orthonormal basis directly from its own world
-   matrix's columns, then feeding them into the exact same
+3. Runtime computes that camera entity's **view matrix by extracting only
+   an eye position and a forward direction from its own world matrix —
+   never a "right" or "up" column — then feeding them into the exact same
    `lookAt()`-shaped construction `examples/minimal_renderer_demo/main.cpp`
-   already implements** — not a general 4×4 matrix inverse, and not a new
-   view-matrix algorithm. Precisely: for a world matrix built as
-   `T · R · S` (per
+   already implements**, which itself re-derives an orthonormal basis via
+   cross products against a fixed world-up reference, exactly as it
+   already does for every existing composition root. Not a general 4×4
+   matrix inverse, and not a new view-matrix algorithm.
+
+   **Correction to this ADR's own first-drafted approach, found and fixed
+   during a targeted re-review, not assumed correct.** That first draft
+   extracted `right`/`up`/`forward` from the world matrix's three columns
+   independently and normalized each, reasoning that a single-level TRS
+   matrix's columns stay mutually orthogonal under arbitrary per-axis
+   scale. That single-level claim is true in isolation, but **does not
+   extend to a composed, multi-level hierarchy**, which is exactly what
+   `World`'s own Transform hierarchy produces
+   ([ADR-0050](0050-transform-hierarchy-composition-and-update-model.md)).
+   Verified by direct counter-example: let a parent's local matrix be
+   `T · I · diag(2,1,1)` (non-uniform scale, no rotation) and its child's
+   own local matrix be `T · Rz(45°) · I` (a 45° rotation about `Z`, no
+   scale of its own). The child's world matrix's linear part is
+   `diag(2,1,1) · Rz(45°)`, whose column 0 is `(√2, √2/2, 0)` and column 1
+   is `(−√2, √2/2, 0)` — their dot product is `−2 + 0.5 = −1.5 ≠ 0`, **not
+   orthogonal**. A non-uniform (or negative) scale at one level combined
+   with a differently-oriented rotation at a descendant level introduces
+   real shear into the descendant's world matrix — see
    [ADR-0050](0050-transform-hierarchy-composition-and-update-model.md)'s
-   own Math contract), columns 0/1/2 are `R`'s own orthonormal basis
-   columns each scaled by `S`'s corresponding factor — **mutually
-   orthogonal regardless of scale**, since scaling each of three already-
-   orthogonal columns by a (possibly different) non-zero factor preserves
-   their pairwise zero dot products; normalizing each column individually
-   therefore recovers a valid orthonormal basis even under non-uniform
-   scale, with no "the camera must be unscaled" precondition needed.
-   Concretely: `eye` = the world matrix's translation column;
-   `right` = `normalize(column 0)`; `up` = `normalize(column 1)`;
-   `forward` = `normalize(-column 2)` (this fixes the convention **a
-   Camera entity looks down its own local −Z axis**, matching the
-   existing `lookAt()` function's own already-verified result, whose
-   view-space forward is conventionally −Z — confirmed by inspection of
-   its own `result[2]/result[6]/result[10] = -fx/-fy/-fz` assignment).
-   Runtime then calls the existing, **unmodified** `lookAt(eye.x, eye.y,
-   eye.z, eye.x + forward.x, eye.y + forward.y, eye.z + forward.z)` — the
-   same function signature every existing windowed demo already calls,
-   now fed World-derived values instead of a hardcoded/orbiting eye
-   position. No new view-matrix formula is introduced; this is new
-   *plumbing* (World → eye/forward extraction → the existing function),
-   not new *math*.
+   own Math contract for this same fact recorded as a general property of
+   the hierarchy model, not one this ADR discovered independently of it.
+   Normalizing `right`/`up` columns extracted from a sheared matrix like
+   this does **not** recover a valid orthonormal basis (the normalized
+   vectors are still non-perpendicular) — the first draft's claim was
+   wrong for exactly the case (a scaled ancestor, a rotated descendant)
+   this Spec's own `Transform`/hierarchy design is required to support
+   correctly, whether or not this Spec's own particular windowed
+   validation scene happens to place a non-uniform scale on a camera's
+   own ancestor chain (its own Testing & Verification Plan covers this
+   case directly via unit tests, independent of the validation scene's
+   own exact composition).
+
+   **The fix: never extract `right`/`up` from the world matrix at all.**
+   Only two values come from the camera entity's own world matrix: `eye`
+   (the translation column — always well-defined; translation is
+   unaffected by any scale/shear in the linear part) and `forward`
+   (`normalize(-column 2)` — a **single** direction, which has no
+   "orthogonality to something else" property to violate; this fixes the
+   convention **a Camera entity looks down its own local −Z axis**,
+   matching the existing `lookAt()` function's own already-verified
+   result, whose view-space forward is conventionally −Z — confirmed by
+   inspection of its own `result[2]/result[6]/result[10] = -fx/-fy/-fz`
+   assignment). Runtime then calls the existing, **unmodified**
+   `lookAt(eye.x, eye.y, eye.z, eye.x + forward.x, eye.y + forward.y,
+   eye.z + forward.z)` — the same function signature every existing
+   windowed demo already calls. `lookAt()`'s own internal construction
+   (cross `forward` against a fixed world-up `(0,1,0)` to get `right`,
+   then cross `right`/`forward` to get the true `up`) is **exactly** a
+   Gram–Schmidt-style orthonormal-basis construction from a single
+   reference direction — it was already robust to this problem, this ADR
+   simply stops discarding that robustness by extracting `right`/`up`
+   from a matrix that may not have them well-formed. No new view-matrix
+   formula is introduced; this is new *plumbing* (World → eye/forward
+   extraction → the existing function), not new *math*.
+
+   **Consequence for negative/mirrored ancestor scale, stated
+   positively:** because `right`/`up` are never inherited from the world
+   matrix, a mirrored ancestor (an odd number of negative-scale axes
+   somewhere in the camera's own chain) cannot itself mirror the camera's
+   own view basis — only `forward`'s direction (and `eye`'s position) can
+   be affected, and both remain well-defined single values. The camera's
+   own view matrix is always a proper (non-reflected), right-handed
+   orthonormal basis by construction, regardless of ancestor scale sign.
+
+   **Two genuine degenerate-input cases remain, given explicit,
+   recoverable error semantics — not silently produced as NaN/garbage
+   matrices:**
+   1. **Near-zero-length forward.** If `column 2`'s own world-space image
+      (before normalization) has length below a small, Plan-stage
+      epsilon, `forward` cannot be normalized — this happens only when
+      some ancestor's scale genuinely collapses that axis (e.g. a `0` or
+      near-`0` scale component aligned with the camera's own local `Z`
+      after composition). Runtime's own extraction step detects this
+      (checking the pre-normalization length) and treats it as a
+      recoverable, Runtime-classified extraction condition (the same
+      category the existing "`AssetId` with no resource-table entry" case
+      below already uses) — never computed through into a `NaN`-poisoned
+      view matrix.
+   2. **Forward parallel (or near-parallel) to the canonical world-up
+      axis `(0,1,0)`.** The camera "looks straight up or down" — a
+      rotational singularity `lookAt()`'s own `cross(forward, worldUp)`
+      construction has always been latently exposed to (its own existing
+      code has no zero-length guard on that cross product), simply never
+      reachable by any existing hardcoded/orbiting demo camera. `World`'s
+      own fully author-controllable `Camera` Transform makes this
+      genuinely reachable for the first time. Runtime's own extraction
+      step checks this cross product's own pre-normalization length
+      **before** calling `lookAt()` and treats a near-zero result as the
+      same category of recoverable, Runtime-classified extraction
+      condition as case 1 — `lookAt()` itself is never called with an
+      input that would make it divide by a near-zero length.
+   Exact handling of either condition (skip the frame's render and log,
+   retain the previous frame's camera matrices, or fail the frame
+   outright) and the exact epsilon value are Plan-stage details; this ADR
+   fixes only that both are detected explicitly and treated as
+   recoverable, never left to silently produce undefined/`NaN` output.
    The **projection matrix** comes from the `Camera` component's
    `fovYRadians`/`nearZ`/`farZ` fields plus the current swapchain aspect
    ratio (`Presentation::metadata()`, computed per-frame exactly as every
@@ -227,12 +319,14 @@ Concretely, once per frame:
   logic (currently one hardcoded item) already lives — this Spec extends
   an existing pattern rather than introducing a new architectural layer
   (no "Scene Renderer" or "Extraction System" module is created).
-- The camera view-matrix construction (basis extraction + the existing,
-  unmodified `lookAt()`) needs no general 4×4 matrix inverse and carries
-  no "the camera must be unscaled" precondition (see Decision step 3's
-  own orthogonality-under-scale reasoning) — a more robust, less-new-code
-  result than the "invert the world matrix" phrasing this ADR's own first
-  draft used.
+- The camera view-matrix construction (`eye`/`forward`-only extraction +
+  the existing, unmodified `lookAt()`) needs no general 4×4 matrix
+  inverse, and — after Revision 2's own correction — is actually robust
+  to shear from a scaled ancestor combined with a rotated descendant,
+  unlike the "normalize each column independently" approach the first
+  revision incorrectly claimed was equivalent (see Decision step 3's own
+  counter-example). Both are more robust and less new code than the
+  "invert the world matrix" phrasing this ADR's very first draft used.
 
 ### Negative / Trade-offs
 
@@ -269,13 +363,26 @@ Concretely, once per frame:
   instruction argues against.
 - **Compute the camera view matrix via a general 4×4 matrix inverse of the
   camera entity's world matrix**, as this ADR's own first draft described.
-  Rejected on reconsideration during this ADR's own evidence pass:
-  correct, but strictly more code (a general cofactor/adjugate-based 4×4
-  inverse, unused for anything else in this Spec's own scope) than
-  extracting and normalizing the world matrix's own basis columns and
-  reusing the existing `lookAt()` function — the chosen approach is both
-  smaller and, per Decision step 3's own orthogonality-under-scale
-  argument, no less correct.
+  Rejected: correct (a general inverse handles shear/non-uniform scale
+  correctly by construction, unlike the flawed column-normalization
+  approach below), but strictly more code — a general cofactor/adjugate-
+  based 4×4 inverse, unused for anything else in this Spec's own scope —
+  than the chosen `eye`/`forward`-only extraction feeding the existing
+  `lookAt()`, which is smaller and, per Decision step 3's own corrected
+  reasoning, equally correct for the one thing a view matrix actually
+  needs (a valid orthonormal basis), without needing to compute or store
+  a full matrix inverse.
+- **Extract `right`/`up`/`forward` from the world matrix's three columns
+  independently, normalizing each** — this ADR's own first-revision
+  approach. Rejected, not merely superseded: found genuinely **incorrect**
+  during this ADR's own Revision 2 evidence pass — a non-uniformly (or
+  negatively) scaled ancestor composed with a differently-oriented
+  descendant rotation introduces shear, after which the extracted columns
+  are no longer mutually orthogonal and normalizing each independently
+  does not recover a valid basis (see Decision step 3's own concrete
+  counter-example). Not merely a stylistic alternative to weigh against
+  the chosen approach — a bug this ADR's own record keeps visible so it
+  is not silently reintroduced by a future edit.
 - **Have World compute camera view/projection matrices itself**, given
   `Camera`'s fields and its own Transform math. Rejected: view/projection
   matrices are meaningful only relative to a graphics convention (right-
