@@ -153,9 +153,12 @@
   Human Review, per the same Spec → Plan → Human Review → Implementation
   → Verification → PR → Merge path every prior spec in this line has
   followed.
-- **Related Plan(s):** None yet. This approval authorizes drafting Plan
-  0014 against this Spec, per [AGENTS.md](../AGENTS.md) — no Plan has
-  been drafted yet.
+- **Related Plan(s):**
+  [plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md)
+  (`In Review` — self-reviewed, not yet Human-Review-approved; drafted
+  under the authorization this Spec's own Human Review Approval above
+  grants, per [AGENTS.md](../AGENTS.md)). Implementation is not
+  authorized until that Plan passes its own Human Review.
 - **Related ADR(s):**
   [ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md)
   (module boundary and ownership),
