@@ -1,6 +1,14 @@
 # ADR 0049: Entity Identity and Handle Invalidation
 
-- **Status:** Accepted
+- **Status:** Accepted. **An "Accepted Amendment" section below
+  (2026-08-22, cross-`World`-instance `EntityId` use, stable identity
+  token) is now also `Accepted` — see that section's own "Human Review
+  Amendment Approval" note, and its own "Correction (2026-08-23)"
+  fixing a mechanical encapsulation gap (all three of `EntityId`'s
+  identity-bearing fields are private, not only the identity token).
+  Neither the amendment nor its correction rewrites this ADR's original
+  Decision, Consequences, or Alternatives Considered above; they add a
+  new precondition and mechanism those did not previously state.**
 - **Date:** 2026-08-22
 - **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
   approved 2026-08-22 as part of Spec 0014's Human Review Approval
@@ -405,3 +413,497 @@ nothing and its lifetime is entirely decoupled from the entity it names.
   nothing and keeps the rule simple (a single equality check after each
   increment, no separate "how close to the edge" threshold to choose or
   justify).
+
+## Accepted Amendment (2026-08-22, Plan 0014 Independent Review Round 2–3) — Cross-`World`-instance `EntityId` use, stable identity token
+
+**Status: Accepted.** This section does not rewrite any `Accepted`
+Decision, Consequence, or Alternative above; it adds a new precondition
+and mechanism `EntityId`/`World` did not previously state. See "Human
+Review Amendment Approval (2026-08-22)" at the end of this section for
+the formal record.
+
+**Human Review direction (2026-08-22):** of the two options originally
+proposed below, Human Review **rejected Option A** (documented,
+unenforceable UB) and **directed, then formally accepted, Option B**,
+with a specific mechanism: a stable, per-`World` identity **token** — not
+a global, process-wide incrementing instance counter. Option A's own text
+is retained unmodified immediately below for the historical record of
+what was considered and rejected, per this repository's own "history
+stays intact" convention for ADRs; Option B is expanded below it into the
+full concrete design Human Review directed and then accepted.
+
+### Context
+
+Plan 0014's second Independent Review round asked a question this ADR's
+existing Decision never states an answer to: is an `EntityId` obtained
+from one `World` instance valid — and if not, *reliably rejected* — when
+passed to a **different**, independently constructed `World` instance?
+
+Every guarantee this ADR's own `Accepted` Decision makes (stale-handle
+detection, permanent retirement closing wraparound) is proven relative to
+**one** `World` instance's own `slots_` mutation history. Nothing in the
+Decision, and nothing in [Spec 0014](../specs/0014-world-scene-foundation.md)
+or [ADR-0048](0048-world-scene-module-boundary-and-ownership.md), states
+this as a precondition on `EntityId` itself. The only existing text
+adjacent to this question — Spec 0014's and ADR-0048's identical
+"Runtime owns the one real `World` instance" sentence — describes
+Runtime's own composition choice in this round's scope (which module is
+the sole Client observing/mutating `World`), not a stated precondition on
+`EntityId`'s own public contract. Treating that sentence as sufficient
+justification for `EntityId`'s own correctness would be exactly the
+"current caller happens to only do X" reasoning that must not stand in
+for a public module's own safety contract — flagged explicitly during
+Plan Review, not assumed.
+
+The gap is not a rare edge case comparable to generation wraparound. Two
+freshly constructed `World` instances each hand out `{index=0,
+generation=0}` for their own first `createEntity()` call — a handle from
+one **validates against the other's own first entity by construction**,
+on the single most common possible sequence (first entity in each), not
+a statistically remote coincidence.
+
+### Decision
+
+**Option A — NOT ADOPTED. Rejected by Human Review, 2026-08-22. Retained
+below, unmodified, only for the record of what was considered — skip to
+Option B for the adopted direction.**
+
+Originally recommended by this Plan Review round: document
+cross-`World`-instance `EntityId` use as an unenforceable precondition
+violation — undefined behavior, not covered by `WorldError::InvalidEntity`
+— with no change to `EntityId`'s 16-byte shape.
+
+An `EntityId` is valid only for the exact `World` instance whose
+`createEntity()` call returned it. Passing it to any `isValid()`/
+`EntityId`-accepting call on a *different* `World` instance is a
+violated caller precondition, not a condition `World`'s `Result`-based
+API is required to detect: no instance-identifying information exists
+anywhere in `EntityId` or `World` for such a check to compare against, so
+unlike the same-instance stale-handle case (a legitimate, expected
+outcome of correct code, correctly given a `Result` per this ADR's own
+existing Decision), a cross-instance handle is squarely the "violated
+precondition/invariant" category [AGENTS.md](../AGENTS.md) reserves for
+assertions — except here no general, reliable assertion is possible
+either, so the contract is stated as documentation only, the same
+category as this codebase's other non-enforceable borrowed-reference/
+lifetime preconditions (e.g. a reference outliving the object that owns
+it). `World`'s own `Result`-based safety net remains exactly as strong as
+the existing Decision already states for same-instance use; this
+amendment narrows what it was ever claimed to cover, it does not weaken
+it.
+
+This keeps `EntityId` at 16 bytes (unchanged from the `Accepted`
+Decision), requires no new `WorldError` enumerator, and requires no
+change to `isValid()`'s existing check. The cost is a genuinely
+undetectable misuse mode for any *future* consumer that legitimately
+constructs more than one simultaneous `World` instance — none exists in
+this Spec's own scope (Runtime constructs exactly one, for its entire
+process lifetime; Spec 0014's Non-Goals exclude a second Client/process)
+— explicitly flagged here for whichever future Spec first introduces one
+(e.g. a Serialization/Stable-Identity Spec, or a Tool/Editor protocol
+maintaining a staging `World`), not silently deferred without a record.
+
+**Option B — ACCEPTED (Human Review, 2026-08-22): a stable,
+heap-allocated, address-stable `World` identity token, not a global
+instance counter.**
+
+Cross-`World`-instance `EntityId` misuse becomes **reliably** detected
+(`Err(WorldError::WrongWorld)`), not merely documented as UB, without
+introducing a process-wide global (no counter, no registry, no random
+identifier, no new third-party dependency) and without giving up
+`World`'s own move-constructibility or `EntityId`'s own value-type
+simplicity.
+
+**Mechanism.** Each `World` instance, at construction, allocates exactly
+one small, opaque, empty marker object on the heap and holds it by
+`std::unique_ptr`:
+
+```cpp
+// world.cpp -- private; never declared in any public header
+struct WorldIdentity {};  // no data, no behavior; only its own heap
+                           // address matters, as a per-instance token
+                           // no other live World can ever share
+```
+
+```cpp
+// world.h
+namespace atlantis::world {
+class WorldIdentity;  // opaque forward declaration only -- EntityId
+                       // holds a pointer to it, never a complete object,
+                       // never dereferences it
+
+class World {
+ public:
+  World();
+  ~World();
+  World(const World&) = delete;
+  World& operator=(const World&) = delete;
+  World(World&&) noexcept;
+  World& operator=(World&&) = delete;
+  // ... rest of public API ...
+ private:
+  std::unique_ptr<WorldIdentity> identity_;
+  std::vector<Slot> slots_;
+  std::vector<std::uint32_t> freeList_;
+  std::optional<EntityId> activeCamera_;
+};
+}  // namespace atlantis::world
+```
+
+`World`'s default constructor and destructor are declared in `world.h`
+but **defined in `world.cpp`** (`= default` bodies suffice) — not
+inlined in the class body — because `std::unique_ptr<WorldIdentity>`'s
+own construction (`std::make_unique<WorldIdentity>()`) and destruction
+both require `WorldIdentity`'s complete definition, which is deliberately
+private to `world.cpp` and never exposed in any public header. This is
+the standard, well-established C++ idiom for an opaque-pointer member (a
+"pimpl"-adjacent pattern), not a new mechanism this codebase invents.
+
+**Why this satisfies "heap-allocated, address-stable, opaque" together,
+and why that combination is what makes move-then-still-valid work.** A
+`unique_ptr`'s own move operation transfers ownership of the *same*
+underlying heap block — the `WorldIdentity` object's own address never
+changes across a `World` move, only which `unique_ptr` (and therefore
+which `World` C++ object) owns it. An inline, non-indirected token (e.g.
+a plain member field with no heap allocation) would **not** have this
+property — moving the containing `World` object would move the field's
+own storage along with it, changing its address. The heap indirection is
+what makes the token's own identity survive a `World`'s own object-
+identity change across a move, exactly the property "old `EntityId`
+stays valid after a move" requires.
+
+**`EntityId` gains a third field — private, not a writable public raw
+pointer.** `index`/`generation` stay public, unchanged in form from
+before this amendment; `worldIdentity_` is `private`, settable only by
+`World` itself (a `friend`), via a `private` constructor `World` alone
+may call:
+
+**Correction (2026-08-23, mechanical encapsulation fix, no new design
+question): all three identity-bearing fields are `private`, not only
+`worldIdentity_`.** An earlier drafting pass of this amendment left
+`index`/`generation` as plain public data while moving only
+`worldIdentity_` behind `private` — this was inconsistent with this
+amendment's own stated goal. A caller could copy a legitimate `EntityId`
+(carrying a real, valid identity from some live `World`) and then
+directly mutate its public `index` field to a different value — ordinary,
+legal C++ for a plain public data member — coincidentally forging a
+*different* entity within the *same* `World` instance whenever the
+mutated index happens to carry the same generation. The private identity
+token closes the *cross-instance* forgery case; it does nothing to
+prevent this *same-instance* one, since `index`/`generation` alone are
+what `validate()` actually checks against `slots_`. Fixed below: `index`
+and `generation` are now private state as well, exposed only through
+read-only accessors.
+
+```cpp
+// entity_id.h
+namespace atlantis::world {
+class World;           // forward declaration (friend)
+class WorldIdentity;   // opaque forward declaration only
+
+struct EntityId {
+  EntityId() = default;
+
+  [[nodiscard]] std::uint32_t index() const noexcept { return index_; }
+  [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
+
+  friend bool operator==(const EntityId&, const EntityId&) = default;
+
+ private:
+  friend class World;  // only World may construct a non-default EntityId
+                        // or read any of its three private fields
+  EntityId(std::uint32_t idx, std::uint64_t gen, const WorldIdentity* identity)
+      : index_(idx), generation_(gen), worldIdentity_(identity) {}
+
+  std::uint32_t index_ = std::numeric_limits<std::uint32_t>::max();
+  std::uint64_t generation_ = 0;
+  const WorldIdentity* worldIdentity_ = nullptr;
+};
+inline constexpr EntityId kInvalidEntityId{};  // index_ == max, generation_ == 0, worldIdentity_ == nullptr
+}  // namespace atlantis::world
+```
+
+All three fields move behind `private`: no caller can read, forge, or
+overwrite any of `index_`/`generation_`/`worldIdentity_` directly (e.g.
+via `reinterpret_cast` plus direct assignment, or simply `id.index =
+other;` on a plain public field), closing the same-instance forgery
+loophole above alongside the cross-instance one this amendment already
+closed. A caller can still *hold*, *copy*, and *compare* an `EntityId`
+freely (the defaulted `operator==` compares all three members regardless
+of their access level, since a defaulted comparison operator has the
+same access as if written inside the class) and, where a real call site
+needs it (e.g. a test verifying which physical slot the LIFO free list
+reused, or a diagnostic log line), read `index()`/`generation()` through
+the read-only accessors above — but cannot construct or mutate an
+`EntityId` with an arbitrary index, generation, *or* identity.
+Deliberately, **no `worldIdentity()`-style accessor and no mutator of any
+kind exists** for any of the three fields; only `World` itself, as a
+`friend`, ever touches `worldIdentity_`, and reading it through a public
+accessor would serve no legitimate external purpose this Spec's own scope
+has. `EntityId` keeps a public, `= default` default constructor (needed
+for `kInvalidEntityId` and every other "no entity yet" use already
+throughout this Spec) and remains trivially copyable — declaring ordinary
+(non-special-member) constructors and read-only accessor member functions
+does not affect `std::is_trivially_copyable`, which only examines the
+copy/move constructors, copy/move assignment, and destructor, all of
+which stay implicitly generated and trivial here. `worldIdentity_`
+remains a plain observer pointer: `EntityId` never dereferences it, never
+allocates or frees anything through it, and owns nothing — unchanged in
+*kind* from `index_`/`generation_` already being non-owning values. A
+pointer to a type with **zero fields**, private, used **exclusively** for
+equality comparison and never dereferenced by any caller, exposes no
+Runtime-owned state across the public boundary — this is a materially
+different case from
+[ADR-0033](0033-runtime-authority-and-client-boundary.md)'s own "no raw
+pointer/reference to a Runtime-owned object" rule, which targets pointers
+that grant access to live, mutable data; `WorldIdentity` has no data to
+grant access to, and is now additionally not even readable or writable
+by a caller.
+
+**`EntityId` must never be serialized, persisted, or used across a
+process boundary.** `worldIdentity_`'s own value is a heap address,
+meaningful only within the process and `World` instance that produced
+it — it has no meaning after a process restart, in a different process's
+own address space, or written to any durable medium. This is not a new
+restriction invented by this amendment: [Spec 0014](../specs/0014-world-scene-foundation.md)'s
+own Non-Goals already exclude any serialization, scene file format, or
+cross-process/Client consumer of `World` state; this amendment states the
+concrete reason `EntityId` specifically, not merely `World` generally,
+inherits that exclusion — stable, cross-session identity remains the
+explicitly deferred Serialization/Stable-Identity Spec's own future
+scope (Alternatives Considered, "a stable GUID," above), not something
+this amendment repurposes the identity token to provide.
+
+**Validation ordering — identity before slot/generation, with an
+explicit carve-out for the sentinel, and a moved-from guard:**
+
+```cpp
+Result<void, WorldError> World::validate(EntityId id) const {
+  ATLANTIS_CHECK_MSG(identity_ != nullptr,
+                      "World::validate() called on a moved-from World");
+  // World is EntityId's own friend -- reads the three private fields
+  // directly (id.index_/id.generation_/id.worldIdentity_), not through
+  // the public index()/generation() accessors.
+  if (id.worldIdentity_ != nullptr && id.worldIdentity_ != identity_.get())
+    return Result<void, WorldError>::Err(WorldError::WrongWorld);
+  if (id.index_ >= slots_.size() || !slots_[id.index_].alive
+      || slots_[id.index_].generation != id.generation_)
+    return Result<void, WorldError>::Err(WorldError::InvalidEntity);
+  return Result<void, WorldError>::Ok({});
+}
+```
+
+The `id.worldIdentity_ != nullptr` guard is deliberate: `kInvalidEntityId`
+(and any other default-constructed `EntityId`) carries `worldIdentity_ ==
+nullptr`, which is never "a foreign instance's identity," only "no
+claimed identity at all" — without this guard, the existing sentinel
+would incorrectly report `WrongWorld` instead of its own existing,
+unchanged `InvalidEntity` classification. A real handle from a
+**different, live** `World` (non-null, non-matching pointer) correctly
+reaches `WrongWorld`; every other case reaches the existing, unmodified
+index/generation check exactly as before. `isValid(EntityId) const ->
+bool` applies the same identity-then-moved-from-then-slot/generation
+checks, collapsed to a boolean — its own signature and existing callers
+are unaffected by which specific reason a handle fails. `validate()` is a
+`private` member of `World` — `EntityId`'s own `friend class World;`
+declaration exists precisely so `World`'s own methods can read
+`worldIdentity_` here and nowhere outside `World` can.
+
+**Moved-from `World`: only destructible or move-constructible-from
+again; every other call is a programmer error, checked, not silently
+tolerated.** After `World b = std::move(a);`, `a`'s own `identity_`
+becomes `nullptr` (`std::unique_ptr`'s own guaranteed moved-from state);
+this is the exact, already-available signal `World` uses to detect its
+own moved-from state — no new flag is introduced. `identity_ != nullptr`
+is asserted (`ATLANTIS_CHECK_MSG`) at the start of every public method
+except the constructor, destructor, and move constructor itself (which
+must remain callable on an already-moved-from source, matching ordinary
+`std::vector`/`std::unique_ptr` semantics — moving from an empty/moved-
+from object is always well-defined and produces an equally empty
+destination). Every `EntityId`-accepting method gets this for free via
+`validate()`, above; the few methods that do not accept an `EntityId`
+(`createEntity()`, `updateTransforms()`, `clearActiveCamera()`,
+`activeCamera()`) each perform the identical check directly at entry.
+Calling any of these on a moved-from `World` is a genuine programmer
+error — the object's own useful state no longer exists to operate on —
+squarely the "violated precondition/invariant fails fast"
+[AGENTS.md](../AGENTS.md) reserves for assertions, the same category
+[ADR-0049](0049-entity-identity-and-handle-invalidation.md)'s own
+existing Decision already uses for internal bookkeeping corruption, not
+the `Result`-shaped stale-handle case.
+
+**`WorldError` gains a fourth enumerator:**
+
+```cpp
+enum class WorldError {
+  InvalidEntity,
+  WouldCreateCycle,
+  NoCameraComponent,
+  WrongWorld,  // EntityId belongs to a different, currently live World instance
+};
+```
+
+**Lifetime remains a distinct concern `WrongWorld` does not, and cannot,
+cover.** `WrongWorld` only helps when **both** `World` instances are
+still alive — comparing `id.worldIdentity_` against a live
+`identity_.get()` is a well-defined pointer-value comparison. Using an
+`EntityId` after **its own** `World` instance has been destroyed (its
+`WorldIdentity` freed along with it) is not something any identity
+scheme can detect: no mechanism can validate a call made against an
+object that no longer exists. This remains exactly the borrowed-handle
+lifetime precondition this codebase already establishes elsewhere
+(AGENTS.md's own ownership/lifetime rules) — `EntityId` must not outlive
+the `World` that issued it; violating this is undefined behavior, not a
+`Result`, unchanged in kind from before this amendment.
+
+**`World`'s own copy/move semantics, now load-bearing:** move-
+constructible (the identity token and all state — `slots_`/`freeList_`/
+`activeCamera_` — move together via ordinary `std::vector`/`unique_ptr`
+move semantics, so a handle valid before the move remains valid after
+it, against the moved-to instance, since `identity_.get()` returns the
+same address before and after); **not** copyable (a copy constructor
+would have to choose between sharing the source's own `identity_` token
+— defeating the point, since two live `World`s would then validate the
+same handles — or minting a fresh one, which would make every `EntityId`
+copied over from the source silently `WrongWorld` against the copy; no
+choice is right, so copying is deleted rather than answered with an
+easy-to-get-wrong semantic); **not** move-assignable (would silently replace one live
+`World`'s own identity and state with another's, freeing the original
+token while handles issued against it may still be held — the same class
+of hazard this amendment exists to close, reintroduced via assignment
+instead of construction).
+
+**Cost, honestly stated:** `EntityId` grows by one pointer-sized field
+relative to the prior, `Accepted` 16-byte shape — the exact resulting
+size is target- and alignment-dependent, an Implementation-time detail,
+not a number this ADR fixes (see Spec 0014's own amendment). `World`
+gains one small heap allocation per instance (a single
+`sizeof(WorldIdentity) == 1`-byte block, in practice a single minimal
+allocator block) and every validating call gains one additional pointer
+comparison before its existing checks — both real, disclosed,
+negligible-at-this-Spec's-scale costs, not evaluated against a future,
+larger-scale entity count.
+
+### Alternatives Considered (this amendment)
+
+- **Option A — document as unenforceable UB, `EntityId` carries no
+  identity at all.** Rejected by Human Review, 2026-08-22 — see Option A
+  above for the full reasoning this amendment's own Decision already
+  records; not repeated here.
+- **A global, monotonically incrementing per-process `World`-instance
+  counter** (e.g. a `static std::atomic<std::uint32_t>` or similar,
+  assigning each `World` the next integer at construction). Rejected:
+  Human Review explicitly directed against this shape. A global counter
+  is process-wide mutable shared state outside any `World` instance's own
+  ownership — exactly the kind of "process-wide singleton or global
+  mutable database" this Spec's own module boundary
+  ([ADR-0048](0048-world-scene-module-boundary-and-ownership.md)) already
+  argues against for Asset resolution, now for the identical reason here;
+  it also reintroduces a (much slower-growing, but nonzero) wraparound
+  question of its own, and requires synchronization if `World` construction
+  is ever not confined to one thread, neither of which the chosen
+  per-instance heap token needs to consider at all.
+- **`std::shared_ptr`/`std::weak_ptr`-based identity** (`World` holds a
+  `std::shared_ptr<Something>` as its own token; `EntityId` holds the
+  corresponding `std::weak_ptr`, `lock()`-ed and compared on validation).
+  Rejected: pulls in reference-counting overhead and, more importantly,
+  shared ownership semantics neither `World` nor `EntityId` needs or
+  should have — `EntityId` remains a plain, trivially-copyable value type
+  under the adopted design (a raw observer pointer, `memcpy`-safe, no
+  atomic refcount touched on every copy); a `weak_ptr` member would make
+  `EntityId` non-trivial to copy and add per-copy atomic-refcount cost to
+  a value type this ADR's own existing Decision already establishes
+  should stay cheap to store in `std::vector` and pass by value at high
+  frequency (per-entity, per-frame). The adopted `unique_ptr`-owned,
+  raw-pointer-observed design gets the same "stable address, owned by
+  exactly one `World`" property without any of this cost.
+- **Forbid constructing more than one `World` instance per process**
+  (e.g. a runtime-checked singleton guard in `World`'s own constructor).
+  Rejected: this does not answer the question this amendment exists to
+  answer, it only makes the question unreachable *for this Spec's own
+  process*, by fiat — Plan 0014's own Round 2 review explicitly rejected
+  "only one instance exists today" as a sufficient justification for a
+  public module's own correctness; a runtime-enforced singleton restatement
+  of the same fact would not change that. It would also foreclose,
+  without any stated reason tied to a real requirement, legitimate future
+  uses this Spec's own Non-Goals never actually excluded (an in-process
+  second, staging `World` for tooling or diffing) — a new, un-costed
+  restriction speculatively added to solve an identity problem the chosen
+  design solves directly instead.
+
+### Disposition
+
+`Accepted` — see "Human Review Amendment Approval" immediately below.
+[Plan 0014](../plans/0014-world-scene-foundation.md) may proceed to its
+own Human Review Approval; Implementation itself still waits on
+[PR #67](https://github.com/slmao/Atlantis/pull/67) being merged, per
+that Plan's own Approval note and
+[specs/README.md](../specs/README.md).
+
+### Human Review Amendment Approval (2026-08-22)
+
+Reviewed and approved by slmao (`slmao <slmaosjtu@gmail.com>`, this
+repository's git-identified maintainer) on 2026-08-22. This approval
+accepts, in full, the concrete design recorded in this section above:
+
+1. `World` exclusively owns one heap-allocated, address-stable, opaque
+   `WorldIdentity` token — no global counter, no random identifier, no
+   shared ownership, no new third-party dependency.
+2. `EntityId` is composed of an index (`uint32_t`), a generation
+   (`uint64_t`), and a non-owning identity reference to that token — all
+   three **private**, caller-immutable implementation state (see
+   Correction, 2026-08-23, below).
+3. `EntityId` publicly exposes only the value semantics genuinely needed:
+   default construction (the invalid sentinel), equality comparison, and
+   — only where a real call site needs it — read-only `index()`/
+   `generation()` accessors; **no accessor of any kind for the identity
+   field, and no mutator of any kind for any of the three fields** (see
+   Correction below).
+4. `EntityId` must never be serialized, persisted, or used across a
+   process boundary.
+5. Every `World` API validates identity before slot/generation; misuse
+   between two simultaneously live `World` instances returns
+   `Err(WorldError::WrongWorld)`.
+6. `EntityId` remains a strictly borrowed handle that must not outlive
+   the `World` that issued it; use after that `World`'s own destruction
+   is a lifetime precondition violation, not a `Result`.
+7. `World` is not copyable, is move-constructible, and is not
+   move-assignable; move-construction transfers the identity token and
+   all state together, so an `EntityId` valid before the move remains
+   valid after it, against the moved-to instance.
+8. A moved-from `World` guarantees only that it remains destructible or
+   may be move-constructed from again; any other call is a programmer
+   error, caught by an explicit `ATLANTIS_CHECK`-based guard, not
+   silently tolerated.
+9. Generation-based retirement at the maximum representable value remains
+   unconditional and permanent — no historical handle ever revalidates,
+   unchanged from this ADR's own original, already-`Accepted` Decision.
+10. Equality (and any hash, if one is ever publicly provided) must include
+    identity; no fixed `EntityId` byte size is promised.
+
+This approval does not reopen or modify this ADR's own original
+`Accepted` Decision, Consequences, or Alternatives Considered above (the
+pre-amendment text) — only this amendment section is newly `Accepted`.
+
+**Correction (2026-08-23), mechanical, not a new design question — no
+new review round.** Items 2–3 above, and this section's own earlier
+design text, originally left `index`/`generation` as plain public data
+members, moving only the identity field behind `private`. This was
+inconsistent with this same approval's own intent (a caller must not be
+able to forge or tamper with an `EntityId`): a plain public `index` field
+lets a caller copy a legitimate handle and directly overwrite its index,
+coincidentally forging a *different* entity within the *same* `World`
+whenever the mutated index happens to carry a matching generation — the
+private identity token alone does not prevent this, since `validate()`
+checks `index`/`generation` against `slots_` regardless of identity.
+Corrected: **all three fields — index, generation, and identity — are
+now private**, exposed externally only through the read-only
+`index()`/`generation()` accessors added above (never an identity
+accessor, never a mutator). This is a mechanical fix to how the
+already-approved "no forgery" intent is implemented, not a change to
+what was decided — no new Alternatives, no new `WorldError` enumerator,
+no change to validation ordering, `WrongWorld`, the moved-from contract,
+or `World`'s own move/ownership semantics. New verification requirements,
+covering exactly this fix, are recorded in
+[Plan 0014](../plans/0014-world-scene-foundation.md)'s own Verification
+Checklist (V27).
