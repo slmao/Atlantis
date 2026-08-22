@@ -69,6 +69,14 @@ class RuntimeApplication {
 
  private:
   friend atlantis::Result<RuntimeApplication, RuntimeInitError> createRuntimeApplication(const BootstrapConfig&);
+  // Plan 0014 Section D-Step 6: the one narrowly-scoped friend needed for
+  // the GPU smoke test's own V17 assertion (exactly 5 DrawItems reach
+  // Renderer::drawFrame()) -- no other public/private API surface is
+  // added for this; the capability (read how many renderable entities
+  // the fixed validation scene currently has) has no design content of
+  // its own, matching the same class of test-only accessor Plan 0014's
+  // own V4 (World's generation-retirement test) already establishes.
+  friend struct RuntimeSmokeTestAccess;
 
   // Move-constructs platformSession_ directly from an already-active
   // session (createRuntimeApplication()'s own Step 1). Deliberately not

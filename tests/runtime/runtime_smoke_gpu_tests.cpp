@@ -2,6 +2,7 @@
 #include <atlantis/runtime/exit_reason.h>
 #include <atlantis/runtime/runtime_application.h>
 
+#include <cstddef>
 #include <string>
 #include <utility>
 
@@ -27,6 +28,18 @@ using atlantis::runtime::createRuntimeApplication;
 using atlantis::runtime::RuntimeApplication;
 using atlantis::runtime::RuntimeExitReason;
 
+// Plan 0014 Section D-Step 6: the one narrowly-scoped friend
+// RuntimeApplication declares for this test only (see
+// runtime_application.h's own comment) -- reads world_'s own
+// renderableEntities() count, no new public API.
+namespace atlantis::runtime {
+struct RuntimeSmokeTestAccess {
+  static std::size_t renderableEntityCount(const RuntimeApplication& app) {
+    return app.world_.renderableEntities().size();
+  }
+};
+}  // namespace atlantis::runtime
+
 TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/submit/present frames",
           "[runtime][gpu]") {
   BootstrapConfig config;
@@ -51,6 +64,15 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
     app.runFrame();
   }
   REQUIRE(app.shouldContinue());  // did not fail during those frames
+
+  // V17: exactly 5 DrawItems reach Renderer::drawFrame() on a successful
+  // frame -- every validation-scene Renderable entity resolved. Vulkan
+  // Validation Layers reporting zero warnings/errors for the full
+  // multi-item span is this test's own existing crash-on-validation-hit
+  // mechanism (enableValidationLayers = true above), unchanged: reaching
+  // this REQUIRE at all already proves no validation hit aborted the
+  // process.
+  REQUIRE(atlantis::runtime::RuntimeSmokeTestAccess::renderableEntityCount(app) == 5);
 
   const RuntimeExitReason reason = app.shutdown();
   REQUIRE(reason == RuntimeExitReason::Success);
