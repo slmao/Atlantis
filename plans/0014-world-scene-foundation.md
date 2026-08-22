@@ -1,15 +1,18 @@
 # Plan: World / Scene Foundation
 
-- **Spec:** [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md) (`Approved`, Human Review Approval recorded 2026-08-22)
+- **Spec:** [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md) (`Approved`, Human Review Approval recorded 2026-08-22; carries its own "Proposed Amendment" section, 2026-08-22, not yet `Accepted` — see Independent Review Round 3 below)
 - **Status:** In Review — **Human Review Approval is blocked**, not merely
-  pending: Independent Review Round 2 (below) escalated a cross-`World`-
-  instance `EntityId` question to a new "Proposed Amendment" section
-  appended to
-  [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md) that
-  Human Review has not yet accepted. Every other finding from Round 2 is
-  resolved directly in this document. This Plan cannot proceed to Human
-  Review Approval until that amendment is `Accepted` (or otherwise
-  resolved by Human Review) — see Deviations.
+  pending: Independent Review Round 2 escalated a cross-`World`-instance
+  `EntityId` question to Human Review. Human Review has since given a
+  concrete design direction (2026-08-22 — a stable, heap-allocated
+  `World` identity token; see below), now fully reflected in this
+  document's own D2–D5/D11 and Verification Checklist. **The amendment
+  itself is still `Proposed`, not `Accepted`, on both
+  [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md) and
+  [Spec 0014](../specs/0014-world-scene-foundation.md)** — a direction is
+  not the same as a recorded Approval. This Plan cannot proceed to its
+  own Human Review Approval, and Implementation must not begin, until
+  both amendments are formally `Accepted` — see Deviations.
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
   direction, following AGENTS.md's Spec → Plan → Human Review →
   Implementation path. Not yet reviewed by a human — see Independent
@@ -152,6 +155,49 @@
      **separate** commit — a provenance rule (ADR-0042), a different kind
      of constraint than "must not be split," now stated distinctly so the
      two are not conflated.
+- **Independent Review — Round 3 (2026-08-22): Human Review direction on
+  the ADR-0049 amendment, applied.** Human Review rejected Round 2's own
+  recommended Option A (documented, unenforceable UB) and directed Option
+  B, with a specific mechanism: a **stable, per-`World`, heap-allocated,
+  address-stable identity token** — explicitly not a global, process-wide
+  instance counter. This round applies that direction concretely:
+  - `EntityId` gains a third field, `worldIdentity` (a non-owning pointer
+    to an opaque, private `WorldIdentity` marker type `World` allocates
+    once via `std::unique_ptr` at construction) — superseding the prior
+    16-byte shape; the exact resulting size is no longer a number this
+    Plan (or the amending ADR/Spec) fixes (D2).
+  - Every `EntityId`-accepting `World` method now routes through a single
+    `validate()` helper checking identity **before** slot/generation,
+    with an explicit `worldIdentity == nullptr` carve-out so the existing
+    sentinel `kInvalidEntityId` keeps reporting `InvalidEntity`, never the
+    new `WrongWorld` (D3, D4, D5).
+  - `WorldError` gains its fourth enumerator, `WrongWorld` (D2, D11).
+  - `World`'s copy/move semantics (D3, fixed in Round 2) are now
+    load-bearing for identity, not merely a convenience choice: moving a
+    `World` moves its identity token's own heap block intact (same
+    address before and after), so a handle valid before the move remains
+    valid after it — the *reason* copy/move-assignment are refused is now
+    tied directly to this mechanism, not only the general "byte-identical
+    state" argument Round 2 used.
+  - Three new verifications added — V23 (two live `World`s' own first
+    entities correctly cross-reject via `WrongWorld`, not coincidental
+    validation), V24 (`WrongWorld` reachable from every entry point, not
+    only `isValid()`), V25 (a handle issued before a `World` move remains
+    valid after it) — and V2 is restored to its own clean, same-instance-
+    only scope now that cross-instance behavior has a real, dedicated
+    home.
+  - **Both [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s
+    and [Spec 0014](../specs/0014-world-scene-foundation.md)'s own
+    Proposed Amendments record this design in full, including the
+    alternatives Human Review explicitly rejected alongside it (a global
+    incrementing counter, `shared_ptr`/`weak_ptr`-based identity,
+    forbidding multiple `World` construction) — neither amendment is
+    marked `Accepted` by this round; that remains a distinct, later
+    Human Review action.** No conflict between this mechanism and any
+    already-`Accepted` ownership rule was found — see the ADR's own
+    amendment for why a zero-data, comparison-only opaque pointer does
+    not re-open [ADR-0033](../adr/0033-runtime-authority-and-client-boundary.md)'s
+    "no raw pointer to Runtime-owned state" rule.
 - **Related ADR(s):**
   [ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md),
   all `Accepted` 2026-08-22, **except** ADR-0049's new "Proposed
@@ -220,7 +266,10 @@ architectural left to choose.
 
 Each header below is the **entire** contents of its own module's public
 contract for that type — nothing here is left for Implementation to
-invent, per Spec 0014's own Requirements and ADR-0049/0050.
+invent, per Spec 0014's own Requirements and ADR-0049/0050, as amended by
+[ADR-0049's own Proposed Amendment](../adr/0049-entity-identity-and-handle-invalidation.md)
+(stable `World` identity token; Human Review direction recorded
+2026-08-22, pending final Accept).
 
 ```cpp
 // vec3.h
@@ -231,19 +280,26 @@ struct Vec3 {
 };
 
 // entity_id.h
+namespace atlantis::world {
+class WorldIdentity;  // opaque forward declaration only -- full definition
+                       // private to world.cpp; EntityId never dereferences it
+
 struct EntityId {
   std::uint32_t index = std::numeric_limits<std::uint32_t>::max();
   std::uint64_t generation = 0;
+  const WorldIdentity* worldIdentity = nullptr;
 
   friend bool operator==(const EntityId&, const EntityId&) = default;
 };
-inline constexpr EntityId kInvalidEntityId{};  // index == max, generation == 0
+inline constexpr EntityId kInvalidEntityId{};  // index == max, generation == 0, worldIdentity == nullptr
+}  // namespace atlantis::world
 
 // world_error.h
 enum class WorldError {
-  InvalidEntity,       // stale or out-of-range handle
+  InvalidEntity,       // stale or out-of-range handle, or the invalid sentinel
   WouldCreateCycle,     // setParent() would make child its own ancestor
   NoCameraComponent,    // setActiveCamera() target has no Camera
+  WrongWorld,            // handle's worldIdentity belongs to a different, live World instance
 };
 
 // transform.h
@@ -266,22 +322,34 @@ struct Renderable {
 };
 ```
 
-- `EntityId`'s default constructor already equals `kInvalidEntityId` (both
-  members default-initialize to the sentinel values) — `EntityId{}` and
-  `kInvalidEntityId` are interchangeable; the named constant exists purely
-  for readability at call sites.
-- No type above declares a destructor, copy/move special member, or any
-  method beyond `EntityId`'s defaulted `operator==` — every one is a
-  trivial, standard-layout aggregate, freely copyable, safe to store in
-  `std::vector`, matching ADR-0049's own "small, trivially-copyable" claim
-  literally (`sizeof(EntityId) == 16` after `std::uint64_t`'s own 8-byte
-  alignment pads the leading `std::uint32_t index` by 4 bytes).
+- `EntityId`'s default constructor already equals `kInvalidEntityId` (all
+  three members default-initialize to the sentinel values) —
+  `EntityId{}` and `kInvalidEntityId` are interchangeable; the named
+  constant exists purely for readability at call sites.
+- **`EntityId` is 24 bytes on a typical 64-bit target** (`uint32_t` index
+  padded to 8, `uint64_t` generation, one pointer) — up from the prior
+  16-byte shape; the *exact* figure is target-pointer-width- and
+  alignment-dependent and is not a number this Plan (or the amending ADR)
+  fixes, only the field list above is fixed. No type above declares a
+  destructor or any method beyond `EntityId`'s defaulted `operator==`
+  (which now compares all three fields, `worldIdentity` included,
+  satisfying ADR-0049's own amendment requirement that equality include
+  identity with no separately written comparison code); every one remains
+  a trivial, standard-layout aggregate, freely copyable, safe to store in
+  `std::vector`. `worldIdentity` is a plain observer pointer — `EntityId`
+  never allocates, frees, or dereferences anything through it, unchanged
+  in *kind* from `index`/`generation` already being non-owning values.
 
 ### D3. `World`'s internal slot map — exact representation
 
 Private to `world.cpp` (not declared in any public header):
 
 ```cpp
+struct WorldIdentity {};  // opaque, no data, no behavior -- only its own
+                           // heap address matters, as this instance's
+                           // unique, address-stable token (ADR-0049's
+                           // own Proposed Amendment)
+
 enum class SlotVisitState : std::uint8_t { NotVisited, Visiting, Visited };  // transient, updateTransforms() only
 
 struct Slot {
@@ -297,84 +365,129 @@ struct Slot {
 
 class World {
  public:
-  World() = default;
+  World();   // defined in world.cpp (not = default inline) -- allocates
+             // identity_ via std::make_unique<WorldIdentity>(), which
+             // requires WorldIdentity's complete definition, private to
+             // this file
+  ~World();  // defined in world.cpp for the identical reason -- unique_ptr's
+             // destructor also requires WorldIdentity to be complete
   World(const World&) = delete;
   World& operator=(const World&) = delete;
-  World(World&&) = default;
+  World(World&&) noexcept = default;  // may stay inline: moving a
+                                        // unique_ptr<Incomplete> does not
+                                        // require completeness
   World& operator=(World&&) = delete;
   // ... rest of public API (D4/D5) ...
  private:
+  std::unique_ptr<WorldIdentity> identity_;  // this instance's own stable token
   std::vector<Slot> slots_;
   std::vector<std::uint32_t> freeList_;      // LIFO stack: push_back()/pop_back() only
   std::optional<EntityId> activeCamera_;
 };
 ```
 
+**Why `world.h` only forward-declares `WorldIdentity`:** `entity_id.h`
+(D2) also only forward-declares it — neither header needs the complete
+type, since both only ever hold or compare a pointer to it, never
+dereference it. The complete, one-line definition (`struct
+WorldIdentity {};`) lives in `world.cpp` alone, alongside `Slot`. This is
+the standard C++ idiom for an opaque-pointer member; it is what forces
+`World`'s own constructor and destructor to be declared in the header but
+**defined** in `world.cpp` (`= default` bodies suffice for both) rather
+than inlined in the class body, since `std::make_unique<WorldIdentity>()`
+(in the constructor) and `unique_ptr`'s own implicit `delete` (in the
+destructor) both require `WorldIdentity` to be complete at the point they
+are compiled.
+
 **`World`'s own copy/move semantics — fixed here; Spec 0014/ADR-0048–0051
-left this genuinely open, it is not an oversight to state it now.**
+left this genuinely open, it is not an oversight to state it now. Now
+directly load-bearing for identity, not merely a convenience choice**
+(ADR-0049's own Proposed Amendment; Human Review direction 2026-08-22).
 Move-constructible, **not** move-assignable, **not** copyable — the same
 "move-construction-only" shape `PlatformSession`/`RuntimeApplication`
 already establish as this codebase's own precedent for a type with real
-per-instance identity, adopted here for a different but related reason:
+per-instance identity:
 
-- **Not copyable.** `slots_`/`freeList_`/`activeCamera_` are ordinary
-  `std::vector`/`std::optional` members with well-defined, safe default
-  copy semantics at the C++ level — copying `World` would not corrupt
-  memory. It is deleted anyway because a copy starts out **byte-identical**
-  to its source (same indices, same generations), so *every* `EntityId`
-  issued by either instance would validate against both — not the
-  coincidental, low-probability cross-instance collision the ADR-0049
-  Proposed Amendment above discusses, but a **guaranteed** one, for every
-  handle, the moment a copy is made. Nothing in this Spec's own scope
-  needs whole-scene-graph copying; deleting it removes a concrete,
-  trivially-reproducible instance of the same hazard rather than adding
-  an unneeded capability (AGENTS.md's own "no speculative abstraction").
+- **Not copyable.** A copy constructor would have to choose between
+  sharing the source's own `identity_` token (defeating the entire point
+  — two live `World`s would then validate the same handles, exactly the
+  hazard this design exists to close) or minting a fresh one via its own
+  `make_unique` call (which would make every `EntityId` copied over from
+  the source's own component data silently `Err(WrongWorld)` against the
+  copy, an unpleasant surprise with no good default). No choice is right,
+  so copying is deleted outright — `slots_`/`freeList_`/`activeCamera_`
+  themselves would copy safely at the C++ level; `identity_` is the
+  entire reason copying is refused.
 - **Move-constructible.** `RuntimeApplication` holds `world_` as a plain
   value member (D8) and is itself move-constructible (Spec 0013's own
   already-`Accepted` pattern, unchanged by this Plan) — its compiler-
   generated move constructor requires every member, `World` included, to
-  be move-constructible. A `std::vector`-based move transfers the
-  underlying heap allocation without touching element values, so
-  `slots_`/`freeList_`/`activeCamera_` — and therefore every previously
-  issued `EntityId`'s own validity — are preserved **exactly**: an
-  `EntityId` valid before the move remains valid after it, since
-  `isValid()` only ever inspects whichever `slots_` the *current* `World`
-  object holds, and a move transfers that data, not copies it. `EntityId`
-  never references a `World` object's own address, so a `World`'s own
-  C++ object identity changing across a move (a new object, at a new
-  address, now owning the same logical state) is invisible to every
-  handle.
-- **Not move-assignable.** Unlike move-construction (which produces a
-  *new* object from data that had no prior identity of its own to
-  confuse), move-assignment (`worldA = std::move(worldB)`) would silently
-  replace `worldA`'s own state with `worldB`'s — any `EntityId` a caller
-  still associates with "the `World` at `worldA`'s address" would now be
-  validated against **different** underlying data, the same category of
-  handle-identity confusion as the cross-instance question above, just
-  introduced via assignment instead of two separately constructed
-  instances. `RuntimeApplication` itself does not need `World`'s move-
-  assignment (its own move-assignment is already deleted, matching Spec
-  0013's own precedent), and no other consumer in this Spec's own scope
-  needs it either — deleted for the same "remove a concrete instance of
-  the handle-identity hazard, add no needed capability" reasoning as the
-  deleted copy constructor.
+  be move-constructible. Moving `identity_` (a `std::unique_ptr`)
+  transfers ownership of the **same** underlying `WorldIdentity` heap
+  block — that object's own address never changes across the move, only
+  which `World` C++ object owns the `unique_ptr` pointing to it. A
+  `std::vector`-based move likewise transfers the underlying heap
+  allocation without touching element values. Together, `identity_.get()`
+  returns the **exact same address** before and after the move, and
+  `slots_`/`freeList_`/`activeCamera_` are preserved exactly — so any
+  `EntityId` valid before the move (`worldIdentity` equal to the
+  pre-move `identity_.get()`, index/generation matching a preserved slot)
+  remains valid after it, against the moved-to instance, with no special
+  handling required anywhere in the validation logic.
+- **Not move-assignable.** Move-assignment (`worldA =
+  std::move(worldB)`) would free `worldA`'s own `identity_` token and
+  replace it with `worldB`'s, while any `EntityId` a caller still holds
+  against "the `World` that used to be reachable as `worldA`" remains
+  stamped with the now-freed token's own (dangling) address — a real
+  lifetime hazard distinct from, and not solved by, the `WrongWorld`
+  check (which only helps between two *simultaneously live* instances).
+  `RuntimeApplication` itself does not need `World`'s move-assignment
+  (its own move-assignment is already deleted, matching Spec 0013's own
+  precedent), and no other consumer in this Spec's own scope needs it
+  either — deleted rather than left as a latent hazard with no real use.
 - A `static_assert`-based test (matching `runtime_ownership_tests.cpp`'s
   own established pattern) confirms exactly this shape:
   `std::is_move_constructible_v<World> && !std::is_copy_constructible_v<World>
   && !std::is_move_assignable_v<World> && !std::is_copy_assignable_v<World>`
   (V22).
 
+- **`validate(id)` — private helper, identity checked before
+  slot/generation, every `EntityId`-accepting method routes through it
+  (D4/D5 as well as D3):**
+
+  ```cpp
+  Result<void, WorldError> World::validate(EntityId id) const {
+    if (id.worldIdentity != nullptr && id.worldIdentity != identity_.get())
+      return Result<void, WorldError>::Err(WorldError::WrongWorld);
+    if (id.index >= slots_.size() || !slots_[id.index].alive
+        || slots_[id.index].generation != id.generation)
+      return Result<void, WorldError>::Err(WorldError::InvalidEntity);
+    return Result<void, WorldError>::Ok({});
+  }
+  ```
+
+  The `id.worldIdentity != nullptr` guard is deliberate: `kInvalidEntityId`
+  (`worldIdentity == nullptr`) is "no claimed identity," not "a foreign
+  instance's identity" — without the guard, the existing sentinel would
+  incorrectly report `WrongWorld` instead of its own unchanged
+  `InvalidEntity` classification. A real handle from a **different, live**
+  `World` (non-null, non-matching pointer) correctly reaches `WrongWorld`
+  before either the index or generation is even inspected; every other
+  case reaches the existing, unmodified index/generation check exactly as
+  before this amendment.
 - **`createEntity()`:** if `freeList_` is non-empty, `pop_back()` its
   index (the LIFO rule — ADR-0049's own Decision); otherwise
   `slots_.emplace_back()` and use the new highest index. Either way, set
   `alive = true`, reset `parent`/`localTransform`/`camera`/`renderable`
   to their default-constructed values (a reused slot's own generation is
   **not** touched here — it was already advanced by the `destroyEntity()`
-  call that freed it), and return `EntityId{index, slots_[index].generation}`.
-  Never fails.
+  call that freed it), and return `EntityId{index, slots_[index].generation,
+  identity_.get()}` — every handle this instance ever issues is stamped
+  with this instance's own token. Never fails.
 - **`destroyEntity(id)` — cascading, via a worklist, no stored children
-  list:** validate `id` first (`Err(InvalidEntity)`, zero mutation, if
-  invalid). On success, build `std::vector<EntityId> toDestroy{id}` and,
+  list:** `validate(id)` first (`Err(WrongWorld)` or `Err(InvalidEntity)`,
+  zero mutation, if invalid). On success, build `std::vector<EntityId>
+  toDestroy{id}` and,
   for each entry already in the list (index-based loop so appending
   during iteration is safe with `std::vector`), scan every **alive**
   slot whose `parent` equals that entry and append it — an O(N × depth)
@@ -429,14 +542,24 @@ per-instance identity, adopted here for a different but related reason:
   to freeList_ */ }` — a single equality check, no separate "near the
   edge" threshold (ADR-0049's own Alternatives Considered already
   rejected an early-cutoff variant).
-- **`isValid(id)`:** `id.index < slots_.size() && slots_[id.index].alive
-  && slots_[id.index].generation == id.generation`.
+- **`isValid(id)`:** `(id.worldIdentity == nullptr || id.worldIdentity ==
+  identity_.get()) && id.index < slots_.size() && slots_[id.index].alive
+  && slots_[id.index].generation == id.generation` — the same two-part
+  check `validate()` performs, collapsed to a `bool`; a handle from a
+  different, live `World` and an ordinary stale/out-of-range handle both
+  simply report `false`, unchanged in signature and existing callers'
+  expectations (the finer `WrongWorld`-vs-`InvalidEntity` distinction is
+  only surfaced by the `Result`-returning API, per D4).
 
 ### D4. Component and Transform accessor API — exact signatures, atomic by construction
 
-Every setter validates its `EntityId` argument(s) — and, for `setParent()`,
-runs the cycle check — **before** writing any member, so a `Result::Err`
-return is always zero-mutation by construction (ADR-0049's own blanket
+Every `EntityId`-accepting method — `destroyEntity()`, every setter/
+getter below, and `setParent()`/`getParent()` (D5) — routes through the
+same `validate(id)` helper (D3) **first**: identity checked before
+slot/generation, `Err(WorldError::WrongWorld)` before `Err(InvalidEntity)`
+is even considered. Every setter additionally validates — and, for
+`setParent()`, runs the cycle check — **before** writing any member, so a
+`Result::Err` return is always zero-mutation by construction (ADR-0049's own blanket
 atomicity contract); no explicit "rollback" code exists anywhere because
 nothing is ever written before every precondition has already passed.
 
@@ -476,21 +599,21 @@ class World {
 ```
 
 - **`getParent(child)`** returns `Ok(kInvalidEntityId)` for a root entity
-  — not an error; only a stale `child` handle is `Err(InvalidEntity)`.
-- **`setActiveCamera(id)`** validates `id` (`InvalidEntity`) then checks
-  `slots_[id.index].camera.has_value()` (`NoCameraComponent`) before
-  writing `activeCamera_ = id`.
+  — not an error; only a `WrongWorld`/stale `child` handle is `Err`.
+- **`setActiveCamera(id)`** runs `validate(id)` first (`WrongWorld` or
+  `InvalidEntity`) then checks `slots_[id.index].camera.has_value()`
+  (`NoCameraComponent`) before writing `activeCamera_ = id`.
 - **`renderableEntities()`** walks `slots_` in ascending index order,
-  appending `EntityId{index, slot.generation}` for every slot with
-  `alive && renderable.has_value()`.
+  appending `EntityId{index, slot.generation, identity_.get()}` for every
+  slot with `alive && renderable.has_value()`.
 
 ### D5. `setParent()` — cycle check, exact algorithm
 
 ```cpp
 Result<void, WorldError> World::setParent(EntityId child, EntityId parent) {
-  if (!isValid(child)) return Result<void, WorldError>::Err(WorldError::InvalidEntity);
+  if (auto r = validate(child); r.isErr()) return r;
   if (parent != kInvalidEntityId) {
-    if (!isValid(parent)) return Result<void, WorldError>::Err(WorldError::InvalidEntity);
+    if (auto r = validate(parent); r.isErr()) return r;
     // Walk parent's own ancestor chain, including parent itself as the
     // zeroth step -- this single loop covers both "parent == child"
     // (the degenerate one-entity cycle) and every longer transitive
@@ -506,8 +629,9 @@ Result<void, WorldError> World::setParent(EntityId child, EntityId parent) {
 }
 ```
 
-No state is written until the function's final line — both `Err` paths
-return before any mutation, satisfying atomicity trivially.
+No state is written until the function's final line — every `Err` path
+(`WrongWorld`/`InvalidEntity` from either handle, or `WouldCreateCycle`)
+returns before any mutation, satisfying atomicity trivially.
 
 ### D6. Math contract — exact matrix construction, and how Runtime obtains `minimal_cube`'s real `AssetId`
 
@@ -958,13 +1082,17 @@ the Implementation PR must follow and record, not left implicit:**
    new golden exactly as they already apply to `minimal_cube`'s —
    nothing in this Plan changes any of them.
 
-### D11. `WorldError`'s existing three enumerators are exhaustive for this Plan's own scope
+### D11. `WorldError`'s four enumerators are exhaustive for this Plan's own scope
 
-Confirmed by construction, not merely asserted: every setter/getter's
-own only failure mode is either "handle invalid" or (for `setParent()`)
-"would create a cycle" or (for `setActiveCamera()`) "no `Camera`
-component" — no fourth condition exists anywhere in D3–D5's own
-algorithms. No new `WorldError` enumerator is added by this Plan.
+Confirmed by construction, not merely asserted: every setter/getter's own
+only failure modes are "handle belongs to a different, live `World`"
+(`WrongWorld`, checked first by `validate()`, D3), "handle stale or
+out-of-range" (`InvalidEntity`), (for `setParent()`) "would create a
+cycle," or (for `setActiveCamera()`) "no `Camera` component" — no fifth
+condition exists anywhere in D3–D5's own algorithms. `WrongWorld` is
+added by this Plan, per ADR-0049's own Proposed Amendment (Human Review
+direction, 2026-08-22) — the only `WorldError` enumerator change from
+the prior round.
 
 ## Milestones / Task Breakdown
 
@@ -1002,15 +1130,20 @@ commit as that minimum; it is grouped here for a cohesive, reviewable
 unit (a working entity-lifecycle slice with its own passing tests), not
 because splitting it further would break anything. Implementation may
 split entity lifecycle (`createEntity()`/`isValid()`), cascading destroy,
-and `World`'s own special-member-function shape (D3's new copy/move
-decision, V22) into separate commits within this step if it prefers.
+identity/`WrongWorld` checking, and `World`'s own special-member-function
+shape (D3's copy/move decision, V22) into separate commits within this
+step if it prefers.
 
 - `src/world/CMakeLists.txt` — `atlantis_world` + `Atlantis::World` alias,
   D1's dependency list.
 - `src/world/include/atlantis/world/{vec3,entity_id,world_error,transform,camera,renderable}.h`
-  — D2, in full.
+  — D2, in full, including `entity_id.h`'s own `WorldIdentity` forward
+  declaration and `EntityId`'s three-field shape, and `world_error.h`'s
+  new `WrongWorld` enumerator.
 - `src/world/include/atlantis/world/world.h` / `src/world/src/world.cpp`
-  — `World`'s full public API (D4) and internal slot map (D3), **except**
+  — `World`'s full public API (D4) and internal slot map (D3), including
+  the private `WorldIdentity` definition, the out-of-line constructor/
+  destructor, and the `validate()` helper, **except**
   `updateTransforms()`/`getWorldMatrix()` (Step 2) and
   `renderableEntities()` (needs `Renderable`, present from this step, but
   grouped into Step 3 alongside `Camera`/`Renderable` accessor tests for
@@ -1018,12 +1151,18 @@ decision, V22) into separate commits within this step if it prefers.
 - `tests/world/CMakeLists.txt`,
   `tests/world/{entity_lifecycle_tests.cpp,hierarchy_tests.cpp,module_boundary_tests.cpp}`
   — V1–V4, V6 (partial — the atomicity and cycle-prevention halves that
-  do not depend on `updateTransforms()`), V16, V22 (D3's new copy/move
-  `static_assert`s, added to `entity_lifecycle_tests.cpp`).
-  `module_boundary_tests.cpp` created here (not later), mirroring
-  `tests/asset_system/`'s own precedent of creating the boundary scan as
-  soon as the module has any source, so it covers every file this Plan
-  adds in every later step automatically.
+  do not depend on `updateTransforms()`), V16, V22 (D3's copy/move
+  `static_assert`s), and the new identity-token coverage: V23 (two
+  simultaneously live `World` instances' own first entities, `{index=0,
+  generation=0}` in both, correctly cross-reject with `Err(WrongWorld)`),
+  V24 (`WrongWorld` reachable from every `EntityId`-accepting entry
+  point, not only `isValid()`), V25 (an `EntityId` issued before a
+  `World` move-construction remains valid — `Ok`, not `WrongWorld` or
+  `InvalidEntity` — against the moved-to instance), all added to
+  `entity_lifecycle_tests.cpp`. `module_boundary_tests.cpp` created here
+  (not later), mirroring `tests/asset_system/`'s own precedent of
+  creating the boundary scan as soon as the module has any source, so it
+  covers every file this Plan adds in every later step automatically.
 - Root `CMakeLists.txt` — `add_subdirectory(src/world)` and
   `add_subdirectory(tests/world)` (D1's ordering).
 
@@ -1322,7 +1461,7 @@ Step 1 (World skeleton, value types, slot map, entity lifecycle)
 | # | Verification | Where | Kind |
 |---|---|---|---|
 | V1 | `createEntity()` always succeeds, returns a valid handle; a fresh `World` has no live entities. | `entity_lifecycle_tests.cpp` | GPU-independent |
-| V2 | `destroyEntity()`: invalidates the target and, recursively, every transitive descendant, in one call; every subsequent operation against any of those handles returns `Err(InvalidEntity)`; an unrelated sibling/ancestor is untouched. An out-of-range `index` (beyond any slot ever allocated) is rejected the same way. **Cross-`World`-instance `EntityId` use is out of scope for this test** — pending the ADR-0049 Proposed Amendment (Deviations), it is a documented caller precondition, not a `World`-detectable condition; no test claims detection of it. | `entity_lifecycle_tests.cpp` | GPU-independent |
+| V2 | `destroyEntity()`: invalidates the target and, recursively, every transitive descendant, in one call; every subsequent operation against any of those handles returns `Err(InvalidEntity)`; an unrelated sibling/ancestor is untouched. An out-of-range `index` (beyond any slot ever allocated) is rejected the same way. Same-`World`-instance behavior only — cross-instance behavior is V23–V25. | `entity_lifecycle_tests.cpp` | GPU-independent |
 | V3 | Slot reuse: destroying and recreating produces a **different** generation at the same index; the old `EntityId` is correctly `Err(InvalidEntity)`; the free list's own LIFO order is directly observed (destroy A then B; the next two `createEntity()` calls reuse B's index first, then A's). | `entity_lifecycle_tests.cpp` | GPU-independent |
 | V4 | **Generation retirement, at the real boundary, not merely a design-time argument:** using the test-only friend access D3 describes, a slot's generation is set to `max() - 1`, `destroyEntity()`d, and confirmed (a) its generation is now the tombstone value; (b) a following `createEntity()`, or a sequence exhausting every other free slot, never reuses that index; (c) an `EntityId` at that index with its old, pre-retirement generation still correctly returns `Err(InvalidEntity)`, via the same, unmodified check every other stale-handle case already uses. | `entity_lifecycle_tests.cpp` | GPU-independent |
 | V5 | `setParent()`: succeeds for a valid, non-cycle-forming request; rejects a direct self-parent, a two-hop cycle, and a four-hop transitive cycle, each with `Err(WouldCreateCycle)`, leaving the hierarchy **completely unchanged** (re-read via `getParent()` on every entity involved, not just the one call's own target); a stale `child`/`parent` handle is `Err(InvalidEntity)`, checked before any cycle walk. | `hierarchy_tests.cpp` | GPU-independent |
@@ -1343,6 +1482,9 @@ Step 1 (World skeleton, value types, slot map, entity lifecycle)
 | V20 | Manual windowed: the real `atlantis_runtime` executable shows five distinct, correctly-shaded, depth-ordered cubes at their D9 positions (D visibly offset from C), matching the new golden by eye; interactive resize/minimize/restore/close all behave per Spec 0013's own already-established bar, unchanged. **This is visual confirmation only — it is not, and does not substitute for, the mathematical proof of Camera scale/degenerate-input correctness, which V15 alone provides.** | Manual | Manual |
 | V21 | `git diff --stat` confirms no file under `src/rhi/`, `src/renderer/`, `src/render_graph/`, `src/vulkan_backend/`, `src/platform/`, `src/shader_system/`, `src/asset_system/`, `shaders/`, or `tests/image_regression/goldens/minimal_cube/` was modified, and no existing example/demo/CMake target/test was removed or renamed. | Manual, recorded in the PR | Manual |
 | V22 | `World` is move-constructible, and **not** copy-constructible, copy-assignable, or move-assignable — confirmed via `static_assert` on each trait, matching `runtime_ownership_tests.cpp`'s own established pattern. | `tests/world/` (a small dedicated test file, or added to `entity_lifecycle_tests.cpp`) | GPU-independent (compile-time) |
+| V23 | **Two simultaneously live `World` instances, first-entity collision:** construct `World a; World b;`, call `a.createEntity()` and `b.createEntity()` (both correctly `{index=0, generation=0}`, differing only in `worldIdentity`); confirm `b`'s every `EntityId`-accepting API rejects `a`'s handle with `Err(WorldError::WrongWorld)` (not `Err(InvalidEntity)`, not coincidental `Ok`), and symmetrically for `a` rejecting `b`'s handle — the concrete case ADR-0049's own Proposed Amendment names as the common, not rare, hazard this design closes. | `entity_lifecycle_tests.cpp` | GPU-independent |
+| V24 | **`WrongWorld` reachable from every `EntityId`-accepting entry point**, not only `isValid()`/`destroyEntity()`: `setParent()`/`getParent()`, `setLocalTransform()`/`getLocalTransform()`, `getWorldMatrix()`, `setCamera()`/`removeCamera()`/`getCamera()`, `setActiveCamera()`, `setRenderable()`/`removeRenderable()`/`getRenderable()` each correctly return `Err(WorldError::WrongWorld)` when passed a handle from a different, live `World` instance, checked **before** any index/generation-dependent behavior (e.g. `setParent()` never reaches its own cycle walk for a wrong-world handle). `kInvalidEntityId` itself is confirmed to still report `Err(InvalidEntity)`, never `WrongWorld`, against every one of these (the `worldIdentity == nullptr` carve-out). | `entity_lifecycle_tests.cpp`, `hierarchy_tests.cpp` | GPU-independent |
+| V25 | **`EntityId` validity survives `World` move-construction:** create several entities (including a parent/child pair) in a `World`, capture their `EntityId`s, move-construct a new `World` from it (`World moved = std::move(original);`), and confirm every previously issued `EntityId` is still `Ok`/`isValid()` against `moved` — same index, same generation, same `worldIdentity` (the token's own heap address, unchanged by the move) — and that hierarchy/component data moved with it intact. | `entity_lifecycle_tests.cpp` | GPU-independent |
 
 ## Traceability — Spec / ADR → Plan
 
@@ -1352,8 +1494,9 @@ Step 1 (World skeleton, value types, slot map, entity lifecycle)
 | Spec 0014 — `EntityId` index+64-bit-generation, by-value access, atomic mutation | D2, D3, D4; V1, V6, V13 |
 | Spec 0014 — Overflow formally closed via slot retirement | D3; V4 |
 | Spec 0014 — Stale-handle `Result` classification | D4; V2 |
-| `World`'s own copy/move semantics (Plan-stage detail, not stated by Spec/ADR) | D3; V22 |
-| Cross-`World`-instance `EntityId` use — **blocking, pending ADR-0049 Proposed Amendment** | ADR-0049 "Proposed Amendment" section; Deviations |
+| `EntityId` gains a `World`-identity field; `World` owns a heap-allocated, address-stable identity token — **pending ADR-0049/Spec 0014 Proposed Amendments reaching `Accepted`** | D2, D3, D4, D5; V22–V25; ADR-0049/Spec 0014 "Proposed Amendment" sections; Deviations |
+| `World`'s own copy/move semantics, now load-bearing for identity | D3; V22, V25 |
+| `WorldError::WrongWorld` — new fourth enumerator, checked before slot/generation at every entry point | D2, D3, D4, D5, D11; V23, V24 |
 | Spec 0014 — Deterministic slot reuse (LIFO) and enumeration (ascending index) | D3, D4; V3, V14 |
 | Spec 0014 — Fixed-type `Transform`/`Camera`/`Renderable` component storage | D2, D4; V11, V12 |
 | Spec 0014 — `setParent()` cycle prevention, local-vs-world preservation | D5; V5, V10 |
@@ -1451,44 +1594,42 @@ Implementation, neither architectural:**
    *capability* — direct, test-only generation mutation — is fixed here;
    its C++ spelling is not).
 
-**BLOCKING: cross-`World`-instance `EntityId` use requires a Spec/ADR
-amendment; this Plan does not resolve it and does not claim to.** Round 1
-of this Plan's own review found this gap and reasoned it away as "not
-reachable by any code this Plan writes, since `RuntimeApplication`
-constructs exactly one `World` instance." Round 2 explicitly rejects that
-reasoning: `Atlantis::World` is a public module, and its own correctness
-contract cannot rest on which one consumer happens to exist today —
-a future consumer that legitimately holds handles from two simultaneous
-`World` instances would inherit an unreviewed safety gap this Plan
-otherwise would have silently normalized. Re-examined against ADR-0049's
-full current text: every guarantee it makes (stale-handle detection,
-permanent retirement) is proven relative to **one** instance's own
-mutation history; nothing in `Accepted` text states this as a precondition
-on `EntityId` itself, and two freshly constructed `World` instances
-*guarantee* — not coincidentally risk — a collision on their own first
-entity (`{index=0, generation=0}` in both). This is a genuine, unaddressed
-question about `EntityId`'s own public contract, squarely the kind of
-decision AGENTS.md's Golden Rule reserves for Human Review, not something
-a Plan may fix by asserting a precondition on its own authority.
+**BLOCKING (updated, Round 3): cross-`World`-instance `EntityId` use has
+a concrete design resolution, directed by Human Review — but the
+governing amendments remain `Proposed`, not `Accepted`, so this Plan
+still cannot proceed to its own Human Review Approval.** Round 1 of this
+Plan's own review found the gap and reasoned it away as "not reachable by
+any code this Plan writes, since `RuntimeApplication` constructs exactly
+one `World` instance" — rejected in Round 2 as insufficient justification
+for a public module's own correctness. Round 2 escalated the question to
+Human Review with two options (document as UB, or add per-instance
+identity). **Human Review has since responded (2026-08-22): Option A
+(UB) is rejected; Option B is directed, specifically as a stable,
+heap-allocated, address-stable per-`World` identity token — explicitly
+not a global instance counter, and explicitly not `shared_ptr`/
+`weak_ptr`-based identity, and explicitly not a restriction to a single
+`World` instance per process.** This round (Round 3) applies that
+direction throughout D2–D5/D11 and the Verification Checklist (V22–V25):
+`EntityId` gains a `worldIdentity` field, `World` owns a
+`std::unique_ptr<WorldIdentity>` token allocated once at construction,
+every `EntityId`-accepting method validates identity before slot/
+generation via a shared `validate()` helper, and a handle used against a
+different, live `World` instance is reliably rejected with the new
+`WorldError::WrongWorld` — not coincidental validation, and not silent
+misuse of the wrong entity.
 
-A **Proposed Amendment has been appended to
-[ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)**
-(status `Proposed`, not `Accepted`), recommending that cross-`World`-
-instance `EntityId` use become a documented, unenforceable precondition
-violation — undefined behavior, not covered by `WorldError::InvalidEntity`
-— with no change to `EntityId`'s 16-byte shape, and presenting the
-shape-changing alternative (a per-instance identity field) for Human
-Review to weigh instead if it disagrees. **This Plan's own Human Review
-Approval is blocked until that amendment reaches a decision** — see
-Status above. Nothing else in this Plan depends on the amendment's
-outcome: no code this Plan specifies changes shape or behavior under
-either option (Option A changes only documentation; Option B, if chosen
-instead, would change `EntityId`'s own `Accepted` shape and require this
-Plan's D2/D3/D4 to be revised before Implementation, which this Plan does
-not pre-emptively do). `entity_lifecycle_tests.cpp`'s own V2 no longer
-claims to test cross-instance behavior at all (edited above) — the
-amendment, once resolved, is documentation-only under the recommended
-option, not a new test obligation.
+**Proposed Amendments recording this design, in full, have been appended
+to both [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)
+and [Spec 0014](../specs/0014-world-scene-foundation.md)** — both still
+`Proposed`, deliberately: a direction given in review is not the same as
+a recorded Human Review Approval, and this Plan does not write either
+amendment as `Accepted` on its own authority. **This Plan's own Human
+Review Approval, and Implementation, remain blocked until both amendments
+are explicitly `Accepted`** — see Status above. Unlike Round 2's own
+disposition, this is no longer an open design *question* pending a
+choice between architecturally different options; it is a fully specified
+design pending a formal Approval record, which this Plan is otherwise
+ready for once that record exists.
 
 **One disclosed, deliberately unmitigated edge case, distinct from the
 generation-retirement risk ADR-0049 already closes:** `EntityId::index`
@@ -1507,12 +1648,12 @@ one.
 See [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
 Deltas specific to this plan:
 
-- V1–V18 and V22 all executed and recorded; V19–V21 recorded as manual
-  verification in the Implementation PR.
-- The ADR-0049 Proposed Amendment (cross-`World`-instance `EntityId` use)
-  has reached a Human Review decision (`Accepted` or otherwise resolved)
+- V1–V18 and V22–V25 all executed and recorded; V19–V21 recorded as
+  manual verification in the Implementation PR.
+- Both the ADR-0049 and Spec 0014 Proposed Amendments (stable `World`
+  identity token) have reached an explicit Human Review `Accepted` record
   before this Plan's own Human Review Approval — Implementation must not
-  begin while it remains `Proposed`.
+  begin while either remains `Proposed`.
 - The existing `minimal_cube` golden under
   `tests/image_regression/goldens/` is confirmed **unchanged** in the
   final diff; the new `world_scene` golden is captured per D10's own

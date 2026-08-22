@@ -639,7 +639,10 @@ Explicitly excluded from this Spec's design:
 - Depended on by `Atlantis Runtime` only, for now.
 
 **Entity lifecycle and identity** (see
-[ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md))
+[ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md); the
+shape below is superseded by this Spec's own "Proposed Amendment"
+section further down — not yet `Accepted` — which adds a third,
+`World`-identity field)
 
 - `EntityId` is an index+generation value type (`{ std::uint32_t index;
   std::uint64_t generation; }`, 16 bytes), value-comparable, with a fixed
@@ -1347,3 +1350,72 @@ PBR materials, lighting, and shadows; animation; post-processing — all
 remain later, separately-specced work, per
 [docs/project-blueprint.md](../docs/project-blueprint.md) and this
 document's own Non-Goals above.
+
+## Proposed Amendment (2026-08-22) — Stable `World` identity in `EntityId`
+
+**Status: Proposed — not yet Accepted.** Recorded following Human Review
+direction responding to Plan 0014's Independent Review Round 2 finding
+(cross-`World`-instance `EntityId` use — see
+[plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md)'s
+own Deviations). Does not alter the Human Review Approval recorded above;
+that approval covered the document as it stood on 2026-08-22, before this
+finding existed.
+
+**What changed:** Human Review rejected treating cross-`World`-instance
+`EntityId` use as an undetectable documented precondition violation, and
+separately rejected resolving it with a global, incrementing per-process
+`World`-instance counter. Instead, Human Review directed: each `World`
+instance owns one heap-allocated, address-stable, opaque identity token
+for its own exclusive lifetime; `EntityId` carries a non-owning reference
+to that token alongside its existing index and generation; every `World`
+API validates identity **before** slot/generation; a handle used against
+a **different, currently live** `World` instance is rejected with a new,
+distinct `WorldError::WrongWorld` — never silently misapplied to an
+unrelated entity. Full design rationale, exact validation ordering, and
+rejected alternatives are recorded in
+[ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s own
+amendment; this section states the requirements-level consequence, not a
+second copy of the architecture.
+
+- **`EntityId` gains a third field** — `{ std::uint32_t index;
+  std::uint64_t generation; const WorldIdentity* worldIdentity; }` (the
+  identity type itself is opaque, private to `Atlantis::World`'s own
+  implementation) — still a plain, trivially-copyable value type owning
+  nothing (`worldIdentity` is a non-owning observer pointer, exactly like
+  `index`/`generation` are non-owning values). **This Spec's prior "16
+  bytes" claim (Requirements, "Entity lifecycle and identity") is
+  superseded and not replaced with a new fixed number** — the exact
+  resulting size is pointer-width- and alignment-dependent, an
+  Implementation-time detail, not a claim this Spec fixes.
+- **`WorldError` gains a fourth enumerator, `WrongWorld`**, returned when
+  a `Result`-returning API's `EntityId` argument carries a non-null
+  `worldIdentity` that does not match the receiving `World` instance's
+  own token — checked before any index/generation check, since a
+  mismatched identity makes those fields meaningless relative to this
+  instance. The existing sentinel `kInvalidEntityId`
+  (`worldIdentity == nullptr`) is unaffected: a null identity is never
+  treated as "wrong," only as ordinarily invalid (`InvalidEntity`),
+  preserving its existing behavior exactly.
+- **Lifetime remains a separate concern from cross-instance confusion.**
+  `EntityId` is still a strictly borrowed, non-owning handle: using it
+  after the `World` instance that issued it has been destroyed remains a
+  lifetime precondition violation (undefined behavior), not a condition
+  this design detects or is required to detect. `WrongWorld` covers use
+  against a different, currently **live** `World` instance only — not a
+  destroyed one — unchanged from every other borrowed-handle contract
+  this codebase already establishes (AGENTS.md's own ownership/lifetime
+  rules).
+- **`World`'s own copy/move semantics are now load-bearing, not merely a
+  Plan-stage convenience choice.** `World` must be move-constructible,
+  with its identity token and all state moving together (a handle valid
+  before a move remains valid after it, against the moved-to instance),
+  and must be neither copyable nor move-assignable — both would let two
+  live `World` "identities" apply to overlapping state, defeating the
+  very check this amendment adds.
+
+**Disposition:** pending Human Review. Until both this section and
+[ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s own
+amendment reach `Accepted`,
+[Plan 0014](../plans/0014-world-scene-foundation.md) treats this as the
+adopted resolution *direction*, not yet a ratified contract —
+Implementation must not begin until both are `Accepted`.
