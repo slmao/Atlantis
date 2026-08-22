@@ -4,7 +4,9 @@ add_executable(atlantis_runtime_tests
   lifecycle_state_tests.cpp
   exit_reason_tests.cpp
   error_classification_tests.cpp
+  init_error_tests.cpp
   runtime_ownership_tests.cpp
+  scene_extraction_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_tests

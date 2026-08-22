@@ -42,6 +42,10 @@ endif()
 
 add_subdirectory(src/core)
 add_subdirectory(src/asset_system)
+# Plan 0014 Section D1: the earliest point both of Atlantis::World's own
+# dependencies (Atlantis::Core, Atlantis::AssetSystem) are already
+# declared.
+add_subdirectory(src/world)
 add_subdirectory(src/platform)
 add_subdirectory(src/rhi)
 add_subdirectory(src/vulkan_backend)
@@ -93,6 +97,7 @@ if(ATLANTIS_BUILD_TESTS)
   include(cmake/AtlantisDependencies.cmake)
   add_subdirectory(tests/core)
   add_subdirectory(tests/asset_system)
+  add_subdirectory(tests/world)
   add_subdirectory(tests/platform)
   add_subdirectory(tests/rhi)
   add_subdirectory(tests/vulkan_backend)

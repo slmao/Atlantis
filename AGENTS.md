@@ -163,7 +163,8 @@ none should ever need to contradict these:
 
 Top-level modules: **Atlantis Core, Atlantis Platform, Atlantis RHI,
 Atlantis Vulkan Backend, Atlantis RenderGraph, Atlantis Renderer, Atlantis
-Shader System, Atlantis Asset System, Atlantis Runtime, Atlantis Tools.**
+Shader System, Atlantis Asset System, Atlantis World, Atlantis Runtime,
+Atlantis Tools.**
 Atlantis Asset System (Spec 0012, `Approved`) depends on Atlantis Core
 only — no RHI, Renderer, or Shader System dependency; a composition root
 outside the module (a test, an example, or Atlantis Runtime, which now
@@ -171,17 +172,34 @@ does this in practice — see below) loads its CPU-side asset data and is
 itself responsible for constructing any GPU resource from it. See
 [ADR-0043](adr/0043-asset-system-module-boundary.md).
 
-Atlantis Runtime (Spec 0013, `Approved`) is the actual composition root —
-a private `atlantis_runtime_host` static library plus a thin
-`atlantis_runtime` Windows executable, composing Platform, RHI, Vulkan
-Backend, Renderer, Shader System, and Asset System into one fixed
-startup → windowed frame loop → shutdown lifecycle. `atlantis_runtime_host`
-exists solely for testability (its own GPU-independent lifecycle/error-
-classification tests) and is not a dependency any other top-level module
-may take. See
-[ADR-0046](adr/0046-runtime-composition-ownership-and-frame-lifecycle.md)
+**Atlantis World** (Spec 0014, `Approved`) is Atlantis's in-memory,
+multi-entity scene module — `atlantis::world::World`, an index+generation-
+handle slot map (`EntityId`, stable per-`World`-instance identity token)
+owning `Transform`/optional `Camera`/optional `Renderable` component data
+and an atomic parent/child hierarchy, plus its own TRS/matrix math
+contract. It depends on Atlantis Core and, narrowly, Atlantis Asset
+System (for `AssetId` only) — no RHI, Renderer, RenderGraph, Shader
+System, Vulkan Backend, Platform, Runtime, or Tools dependency in either
+direction. `World` never returns a reference or pointer into its own
+internal storage; every accessor is by value. See
+[ADR-0048](adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md).
+
+Atlantis Runtime (Spec 0013, `Approved`; extended by Spec 0014,
+`Approved`) is the actual composition root — a private
+`atlantis_runtime_host` static library plus a thin `atlantis_runtime`
+Windows executable, composing Platform, RHI, Vulkan Backend, Renderer,
+Shader System, Asset System, and World into one fixed startup → windowed
+frame loop → shutdown lifecycle. Runtime owns the one real `World`
+instance and is the sole place a `World`-driven scene is turned into
+`atlantis::renderer::DrawItem`s, via a Runtime-private extraction adapter
+(`scene_extraction.h`/`.cpp`) — not a public API, not shared with any
+other module. `atlantis_runtime_host` exists solely for testability (its
+own GPU-independent lifecycle/error-classification tests) and is not a
+dependency any other top-level module may take. See
+[ADR-0046](adr/0046-runtime-composition-ownership-and-frame-lifecycle.md),
+[ADR-0047](adr/0047-runtime-host-executable-library-structure-and-test-boundary.md),
 and
-[ADR-0047](adr/0047-runtime-host-executable-library-structure-and-test-boundary.md).
+[ADR-0051](adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md).
 
 **Atlantis Platform** is the per-OS windowing/surface/lifecycle
 abstraction — it is to *operating systems* what RHI is to *graphics

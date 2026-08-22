@@ -9,6 +9,7 @@ add_library(atlantis_runtime_host STATIC
   src/init_error.cpp
   src/error_classification.cpp
   src/platform_session.cpp
+  src/scene_extraction.cpp
   src/runtime_application.cpp
 )
 add_library(Atlantis::RuntimeHost ALIAS atlantis_runtime_host)
@@ -34,6 +35,9 @@ target_link_libraries(atlantis_runtime_host
     Atlantis::ShaderSystem
     Atlantis::ShaderSystemRhiIntegration
     Atlantis::AssetSystem
+    # Plan 0014 Section D1: Runtime's own World-driven validation scene
+    # and Runtime-private extraction adapter.
+    Atlantis::World
   PRIVATE
     atlantis_compiler_warnings
 )

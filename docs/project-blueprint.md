@@ -678,6 +678,71 @@ milestone being listed does not authorize starting it — see Section 1.
   API, hot-reload or async asset streaming, a Job System, and any
   DI/service-locator framework.
 
+### Milestone 11 — World / Scene Foundation
+
+- **Governance state:** **`Approved` Spec, `Approved` Plan, code complete
+  on [PR #68](https://github.com/slmao/Atlantis/pull/68) (OPEN, not yet
+  merged)** —
+  [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md),
+  [plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md).
+  Human Review Approval recorded 2026-08-22 for the Spec (17
+  explicitly accepted items) and 2026-08-22 for the Plan, following four
+  independent Plan Review rounds; a fifth round (2026-08-23) applied a
+  mechanical encapsulation correction. Its Architectural Impact
+  identified four new decisions, filed as
+  [ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md)
+  (module boundary and ownership),
+  [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)
+  (entity identity and handle invalidation, including its own Accepted
+  Amendment adding a stable, per-`World` identity token after Human
+  Review rejected leaving cross-`World`-instance `EntityId` use as
+  undetectable UB),
+  [ADR-0050](../adr/0050-transform-hierarchy-composition-and-update-model.md)
+  (transform hierarchy composition and update model), and
+  [ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)
+  (World-to-Renderer extraction and asset resolution boundary), all
+  `Accepted`.
+- **Scope actually delivered:** a new, eleventh top-level module,
+  `Atlantis::World` (`src/world/`) — entity lifecycle with a formally
+  overflow-safe `EntityId` handle carrying a private, non-owning
+  reference to its own `World` instance's heap-allocated identity token
+  (`WorldError::WrongWorld` on cross-instance misuse, never silent
+  aliasing), fixed-type `Transform`/`Camera`/`Renderable` component
+  storage, an atomic parent/child hierarchy with cycle prevention and
+  cascading destroy, and a fully iterative (non-recursive)
+  `updateTransforms()`. Runtime (`src/runtime/`) gained a Runtime-private
+  extraction adapter (`scene_extraction.h`/`.cpp`) and now drives its own
+  fixed, six-entity validation scene end to end through the existing,
+  unmodified `Renderer::drawFrame()`/`DrawItem` path. A new headless
+  image-regression golden (`world_scene`) and the existing windowed GPU
+  smoke test (extended to confirm all 5 `DrawItem`s reach `drawFrame()`)
+  both pass on real Vulkan-capable hardware; the existing `minimal_cube`
+  golden is untouched. Verified by a clean Debug and Release full build
+  (`ctest -LE gpu`: 434/434 Debug, 433/433 Release), `ctest -L gpu` 19/19
+  both configurations, Vulkan Validation Layers grepped clean throughout,
+  and programmatic interactive verification (real Win32 message
+  injection for resize, minimize/restore, close) against the real
+  `atlantis_runtime` executable.
+- **Disclosed limitations:** carried forward from Milestone 10 (no
+  automated literal pixel/visual screenshot comparison of the Runtime
+  window's own live output; the headless golden match is pixel-exact
+  evidence for the same World-driven scene in its own offscreen fixture,
+  not for `atlantis_runtime`'s own windowed output). Two minor,
+  mechanical Implementation-time interpretations, neither architectural:
+  `getRenderable()` on a valid entity with no `Renderable` reuses
+  `WorldError::NoCameraComponent` (the closest existing semantic fit,
+  since `WorldError` fixes exactly four enumerators and this Plan's own
+  scene never exercises the path); the standalone `world_scene` golden
+  generator takes three positional arguments (golden name, asset artifact
+  path, asset metadata path) rather than the Plan's own illustrative
+  single-argument form, since `WorldSceneFixture` has no hand-authored-
+  vertex construction path.
+- **Not implemented** (per Spec 0014's own Non-Goals, unchanged):
+  scene serialization or a scene file format, a scene-asset cooker, a
+  general/data-driven/multi-threaded ECS, keyframe or time-driven
+  mutation, and any Client/Editor/second-process consumer of `World`
+  state.
+
 ### Further candidate phases (directional only, no Spec, no ADR)
 
 The following are named only to communicate long-term direction drawn
@@ -687,10 +752,11 @@ model, dependency, or API chosen.** Each requires its own Spec and, for
 anything architectural, its own ADR before any of the below moves past
 "named":
 
-- World/ECS foundation — **no ECS implementation, library, or in-house
-  design is chosen**
 - Serialization and stable identity (GUID/handle schemes, schema
-  migration)
+  migration) — World/Scene foundation itself is now Milestone 11 above,
+  not a directional-only item; this remaining item is scoped to
+  *durable* (save/load, cross-session) identity, which Milestone 11's own
+  Non-Goals explicitly excluded
 - Tool/Editor connection protocol — **no process model (in-process vs.
   IPC) is chosen**
 - Gameplay SDK — **no gameplay language is chosen**

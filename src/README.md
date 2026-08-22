@@ -203,6 +203,37 @@ responsible for passing that data into the existing, unmodified
 and
 [ADR-0043](../adr/0043-asset-system-module-boundary.md)–[ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md).
 
+**`world/`** — Atlantis World: Atlantis's in-memory, multi-entity scene.
+Target `atlantis_world`, alias `Atlantis::World` (PUBLIC dependency
+`Atlantis::Core` and, narrowly, `Atlantis::AssetSystem` — for the
+`AssetId` type only, named in `Renderable`'s own public field — no RHI,
+Renderer, RenderGraph, Shader System, Vulkan Backend, Platform, Runtime,
+or Tools dependency in either direction, verified by an include-scanning
+test). `World` is a slot map: `createEntity()`/`destroyEntity()` return
+an index+generation `EntityId` handle, formally overflow-safe via
+permanent slot retirement at the generation counter's maximum value;
+`EntityId` carries a `private`, non-owning reference to its own `World`
+instance's heap-allocated, address-stable identity token (never a
+writable public field, never an accessor for it), so a handle used
+against a different, live `World` instance is rejected with
+`WorldError::WrongWorld`, never silently misapplied to the wrong entity.
+Each entity carries a mandatory `Transform` plus two optional
+components, `Camera` and `Renderable` — fixed-type storage, not a
+generic ECS registry. `setParent()` maintains an atomic parent/child
+hierarchy with cycle prevention; `destroyEntity()` cascades to every
+transitive descendant via a collect-then-mutate worklist, never a
+recursive walk. `updateTransforms()` is a fully iterative (non-
+recursive) traversal producing each entity's own world matrix
+(`getWorldMatrix()`), composed `parentWorld · T · R · S` with a fixed
+`Ry · Rx · Rz` Euler order. `World` itself is move-constructible, not
+copyable, not move-assignable; every public accessor returns by value,
+never a reference or pointer into `World`'s own internal storage.
+Implemented per
+[specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md),
+[plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md),
+and
+[ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md).
+
 **`tools/asset_cooker/`** — Atlantis Tools' second real content:
 `atlantis_asset_cooker`, a CLI invoked at build time by CMake's
 `atlantis_add_static_mesh_asset()` (defined in
@@ -233,30 +264,38 @@ root. Two targets: `atlantis_runtime_host` (STATIC, alias
 `Atlantis::RuntimeHost`; PUBLIC dependencies `Atlantis::Core`,
 `Atlantis::Platform`, `Atlantis::RHI`, `Atlantis::VulkanBackend`,
 `Atlantis::Renderer`, `Atlantis::ShaderSystem`,
-`Atlantis::ShaderSystemRhiIntegration`, `Atlantis::AssetSystem` — not
-`Atlantis::RenderGraph` directly, since `Renderer::drawFrame()` already
-owns it internally), a private composition library that exists solely so
-`tests/runtime/` can exercise real lifecycle/error-classification logic
-without a device or a window — not a dependency any other module may
-take; and `atlantis_runtime` (the thin executable, PRIVATE dependency on
-`Atlantis::RuntimeHost` only). `RuntimeApplication` owns a
-`PlatformSession` RAII guard as its first member (destroyed last by
-reverse-declaration-order destruction, making window-outlives-GPU-
-resources compiler-enforced rather than hand-sequenced), a six-step
-initialization sequence (Platform session, shader load, `Device`, mesh
-asset load, `Mesh`, camera `Buffer` — `Material` is deliberately deferred
-to the first frame, since no real swapchain format is known before the
-first `SurfaceCreated` event), a ten-step per-frame orchestration
-(event handling, acquire, format-change Material rebuild, extent-change
-depth-texture rebuild, draw, submit, present), and a single, idempotent
-`shutdown()` that is the sole caller of GPU-resource teardown and the
-sole indirect trigger (via `PlatformSession`'s own destructor) of
-`platform::shutdown()`. Implemented per
+`Atlantis::ShaderSystemRhiIntegration`, `Atlantis::AssetSystem`,
+`Atlantis::World` — not `Atlantis::RenderGraph` directly, since
+`Renderer::drawFrame()` already owns it internally), a private
+composition library that exists solely so `tests/runtime/` can exercise
+real lifecycle/error-classification logic without a device or a window —
+not a dependency any other module may take; and `atlantis_runtime` (the
+thin executable, PRIVATE dependency on `Atlantis::RuntimeHost` only).
+`RuntimeApplication` owns a `PlatformSession` RAII guard as its first
+member (destroyed last by reverse-declaration-order destruction, making
+window-outlives-GPU-resources compiler-enforced rather than
+hand-sequenced), an eight-step initialization sequence (Platform session,
+shader load, `Device`, mesh asset load, asset metadata re-read for its
+`AssetId`, `Mesh`, camera `Buffer`, the fixed six-entity `World`
+validation scene — `Material` is deliberately deferred to the first
+frame, since no real swapchain format is known before the first
+`SurfaceCreated` event), a per-frame orchestration (event handling,
+acquire, format-change Material rebuild, extent-change depth-texture
+rebuild, `World::updateTransforms()` + Runtime-private camera/asset
+extraction (`scene_extraction.h`/`.cpp`) + per-entity `DrawItem` build,
+submit, present), and a single, idempotent `shutdown()` that is the sole
+caller of GPU-resource teardown and the sole indirect trigger (via
+`PlatformSession`'s own destructor) of `platform::shutdown()`.
+Implemented per
 [specs/0013-runtime-host-foundation.md](../specs/0013-runtime-host-foundation.md),
 [plans/0013-runtime-host-foundation.md](../plans/0013-runtime-host-foundation.md),
-and
 [ADR-0046](../adr/0046-runtime-composition-ownership-and-frame-lifecycle.md),
-[ADR-0047](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md).
+[ADR-0047](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md);
+the `World`-driven scene and extraction adapter extended per
+[specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md),
+[plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md),
+and
+[ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md).
 See
 [docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md)
 for the full public/private boundary statement.
