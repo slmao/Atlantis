@@ -1,6 +1,8 @@
 add_executable(atlantis_world_tests
   entity_lifecycle_tests.cpp
   hierarchy_tests.cpp
+  math_contract_tests.cpp
+  update_transforms_tests.cpp
   module_boundary_tests.cpp
 )
 

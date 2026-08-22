@@ -2,6 +2,8 @@
 
 #include <atlantis/assert.h>
 
+#include <cmath>
+#include <cstddef>
 #include <limits>
 #include <utility>
 
@@ -29,6 +31,75 @@ struct Slot {
   std::optional<Renderable> renderable;
   SlotVisitState visitState = SlotVisitState::NotVisited;  // reset at the start of every updateTransforms() call
 };
+
+namespace {
+
+using Mat4 = std::array<float, 16>;
+
+constexpr Mat4 kIdentityMatrix4{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+
+// ADR-0050's own Math contract: column-major, index col*4+row.
+// result = a . b, the exact same element formula
+// examples/minimal_renderer_demo/main.cpp's own multiply() already uses
+// -- reused verbatim as this module's own private implementation, not
+// called across the module boundary.
+[[nodiscard]] Mat4 multiply(const Mat4& a, const Mat4& b) {
+  Mat4 result{};
+  for (int col = 0; col < 4; ++col) {
+    for (int row = 0; row < 4; ++row) {
+      float sum = 0.0f;
+      for (int k = 0; k < 4; ++k) {
+        sum += a[static_cast<std::size_t>(k * 4 + row)] * b[static_cast<std::size_t>(col * 4 + k)];
+      }
+      result[static_cast<std::size_t>(col * 4 + row)] = sum;
+    }
+  }
+  return result;
+}
+
+[[nodiscard]] Mat4 translationMatrix(const Vec3& t) {
+  Mat4 result = kIdentityMatrix4;
+  result[12] = t.x;
+  result[13] = t.y;
+  result[14] = t.z;
+  return result;
+}
+
+[[nodiscard]] Mat4 scaleMatrix(const Vec3& s) {
+  Mat4 result = kIdentityMatrix4;
+  result[0] = s.x;
+  result[5] = s.y;
+  result[10] = s.z;
+  return result;
+}
+
+[[nodiscard]] Mat4 rotationX(float theta) {  // rotates Y/Z about +X
+  const float c = std::cos(theta), s = std::sin(theta);
+  return {1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1};
+}
+
+[[nodiscard]] Mat4 rotationY(float theta) {  // rotates X/Z about +Y
+  const float c = std::cos(theta), s = std::sin(theta);
+  return {c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1};
+}
+
+[[nodiscard]] Mat4 rotationZ(float theta) {  // rotates X/Y about +Z
+  const float c = std::cos(theta), s = std::sin(theta);
+  return {c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+}
+
+// R = Ry(yaw) * Rx(pitch) * Rz(roll) -- ADR-0050's own fixed Euler order.
+[[nodiscard]] Mat4 eulerRotation(const Vec3& radians) {
+  return multiply(rotationY(radians.y), multiply(rotationX(radians.x), rotationZ(radians.z)));
+}
+
+// local = T * R * S.
+[[nodiscard]] Mat4 composeLocal(const Transform& t) {
+  return multiply(translationMatrix(t.localPosition), multiply(eulerRotation(t.localEulerAnglesRadians),
+                                                                  scaleMatrix(t.localScale)));
+}
+
+}  // namespace
 
 World::World() : identity_(std::make_unique<WorldIdentity>()) {}
 
@@ -151,6 +222,54 @@ atlantis::Result<std::monostate, WorldError> World::setLocalTransform(EntityId i
 atlantis::Result<Transform, WorldError> World::getLocalTransform(EntityId id) const {
   if (auto r = validate(id); r.isErr()) return atlantis::Result<Transform, WorldError>::Err(r.error());
   return atlantis::Result<Transform, WorldError>::Ok(slots_[id.index()].localTransform);
+}
+
+// Memoized, fully iterative traversal (no C++ recursion, no call-stack
+// depth tied to hierarchy depth) -- doubles as the defense-in-depth
+// cycle guard (setParent()'s own cycle check is the primary
+// prevention). Any traversal order satisfying "visit a parent before
+// its child" produces identical results; this is one such order, not
+// part of World's own public contract.
+void World::updateTransforms() {
+  ATLANTIS_CHECK_MSG(identity_ != nullptr, "World::updateTransforms() called on a moved-from World");
+
+  for (auto& slot : slots_) slot.visitState = SlotVisitState::NotVisited;
+  std::vector<std::uint32_t> path;  // reused scratch buffer -- heap-allocated, not call-stack depth
+  for (std::uint32_t i = 0; i < slots_.size(); ++i) {
+    if (!slots_[i].alive || slots_[i].visitState == SlotVisitState::Visited) continue;
+
+    // Walk up from i, collecting the not-yet-visited prefix of its own
+    // ancestor chain, stopping at a root or at an already-Visited
+    // ancestor (whose own cachedWorldMatrix is already correct).
+    path.clear();
+    std::uint32_t current = i;
+    while (true) {
+      Slot& s = slots_[current];
+      if (s.visitState == SlotVisitState::Visited) break;
+      ATLANTIS_CHECK_MSG(s.visitState != SlotVisitState::Visiting,
+                          "updateTransforms(): cycle detected -- setParent()'s own prevention has a bug");
+      s.visitState = SlotVisitState::Visiting;  // "on the current walk-up path" -- the cycle guard
+      path.push_back(current);
+      if (s.parent == kInvalidEntityId) break;
+      current = s.parent.index();
+    }
+
+    // Process outermost-unvisited-ancestor-first, so each entity's own
+    // parent world matrix is already known by the time it is computed --
+    // an ordinary loop, no recursive call.
+    for (auto it = path.rbegin(); it != path.rend(); ++it) {
+      Slot& s = slots_[*it];
+      const std::array<float, 16> local = composeLocal(s.localTransform);
+      s.cachedWorldMatrix =
+          (s.parent == kInvalidEntityId) ? local : multiply(slots_[s.parent.index()].cachedWorldMatrix, local);
+      s.visitState = SlotVisitState::Visited;
+    }
+  }
+}
+
+atlantis::Result<std::array<float, 16>, WorldError> World::getWorldMatrix(EntityId id) const {
+  if (auto r = validate(id); r.isErr()) return atlantis::Result<std::array<float, 16>, WorldError>::Err(r.error());
+  return atlantis::Result<std::array<float, 16>, WorldError>::Ok(slots_[id.index()].cachedWorldMatrix);
 }
 
 EntityId World::forceGenerationForTesting(EntityId id, std::uint64_t generation) {
