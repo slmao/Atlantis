@@ -681,7 +681,8 @@ milestone being listed does not authorize starting it — see Section 1.
 ### Milestone 11 — World / Scene Foundation
 
 - **Governance state:** **`Approved` Spec, `Approved` Plan, code complete
-  on [PR #TBD](https://github.com/slmao/Atlantis) (OPEN, not yet merged)** —
+  on [PR #68](https://github.com/slmao/Atlantis/pull/68) (OPEN, not yet
+  merged)** —
   [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md),
   [plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md).
   Human Review Approval recorded 2026-08-22 for the Spec (17
