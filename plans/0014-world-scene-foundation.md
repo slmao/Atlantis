@@ -48,12 +48,15 @@
      remains destructible or may be move-constructed from again, with
      every other call an `ATLANTIS_CHECK`-guarded programmer error.
   4. **The stable `World` identity token design in full** — `EntityId`'s
-     three-field shape (`index`, `generation`, and a `private`,
-     non-owning identity reference no caller can read or write directly),
-     the new `WorldError::WrongWorld` enumerator, identity-before-slot/
-     generation validation ordering via the shared `validate()` helper,
-     and the explicit prohibition on serializing, persisting, or using
-     `EntityId` across a process boundary — matching
+     three-field shape, **all three fields `private`** (index, generation,
+     and a non-owning identity reference; read-only `index()`/
+     `generation()` accessors where a real call site needs them, no
+     accessor for identity, no mutator for any field — see the
+     2026-08-23 correction, covered by this same approval), the new
+     `WorldError::WrongWorld` enumerator, identity-before-slot/generation
+     validation ordering via the shared `validate()` helper, and the
+     explicit prohibition on serializing, persisting, or using `EntityId`
+     across a process boundary — matching
      [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s
      and [Spec 0014](../specs/0014-world-scene-foundation.md)'s own
      Accepted Amendments item-for-item.
@@ -65,15 +68,24 @@
      tree, golden capture as its own separate, subsequent commit, full
      provenance sidecar fields, substitute evidence in place of an
      inapplicable old-vs-new diff.
-  7. **The full V1–V26 Verification Checklist**, including the four
-     verifications added across Rounds 3–4 for the identity-token design
-     (V22–V26) alongside the original V1–V21.
+  7. **The full V1–V27 Verification Checklist**, including the six
+     verifications added across Rounds 3–5 for the identity-token design
+     (V22–V27) alongside the original V1–V21.
 
   This approval does not authorize Implementation to begin immediately —
   per this repository's own PR-based workflow,
   [PR #67](https://github.com/slmao/Atlantis/pull/67) (carrying this Plan
   and its full review history) must be merged first; see
   [specs/README.md](../specs/README.md).
+
+  **Correction (2026-08-23), covered by this same approval, no new
+  review round:** item 4 above is refined so all three of `EntityId`'s
+  fields (index, generation, identity) are `private`, not only identity
+  — see Independent Review Round 5 below. This closes a same-`World`
+  forgery loophole a plain public `index`/`generation` would otherwise
+  have left, fixing how this approval's own already-stated "no forgery"
+  intent is implemented; it changes nothing else this approval covers.
+  This Plan's own status remains `Approved / Ready for Implementation`.
 - **Independent Review (2026-08-22):** Self-review performed during
   drafting, against `main`'s actual, current source tree (not the Spec's
   own illustrative prose alone) for every file/target this Plan touches
@@ -286,6 +298,38 @@
     both are additive, mechanical refinements of the already-accepted
     Round 3 design, not a reopened design question, per Human Review's
     own explicit instruction not to add a further review round for them.
+- **Independent Review — Round 5 (2026-08-23): mechanical encapsulation
+  correction, not a new design question.** Round 4's own "private
+  identity field" refinement left `index`/`generation` as plain public
+  `EntityId` data members, moving only `worldIdentity_` behind `private`
+  — inconsistent with the very intent that refinement was meant to serve
+  (a caller must not be able to forge or tamper with an `EntityId`). A
+  plain public `index` field lets a caller copy a legitimate handle and
+  directly overwrite its index, coincidentally forging a **different**
+  entity within the **same** `World` whenever the mutated index happens
+  to carry a matching generation — the private identity token closes the
+  cross-instance case; it does nothing to prevent this same-instance one,
+  since `validate()`/`isValid()` check index/generation against `slots_`
+  regardless of identity. Fixed throughout D2–D5: **all three of
+  `EntityId`'s fields — `index_`, `generation_`, `worldIdentity_` — are
+  now `private`**, exposed externally only through read-only
+  `index()`/`generation()` accessors (added where V3's own LIFO-reuse
+  observation needs them); no accessor of any kind exists for
+  `worldIdentity_`, and no mutator of any kind exists for any of the
+  three fields. New V27 locks: `EntityId` remains `std::is_trivially_copyable`;
+  no external code can mutate any of the three fields; `operator==`
+  distinguishes handles differing in any one of the three, tested
+  individually; `kInvalidEntityId` and every `World`-issued handle still
+  behave exactly as before; no fixed `sizeof(EntityId)` is promised
+  anywhere. This is a fix to how an already-approved intent is
+  implemented, not a new decision — no new `WorldError` enumerator, no
+  change to validation ordering, `WrongWorld`, the moved-from contract,
+  or `World`'s own move/ownership semantics — applied directly per Human
+  Review's own explicit instruction not to add a further review round.
+  Both [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s
+  and [Spec 0014](../specs/0014-world-scene-foundation.md)'s own
+  "Accepted Amendment" sections carry a matching "Correction (2026-08-23)"
+  note; neither is reopened to `Proposed`.
 - **Related ADR(s):**
   [ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md),
   all `Accepted` 2026-08-22, **including** ADR-0049's "Accepted Amendment"
@@ -374,20 +418,24 @@ class WorldIdentity;   // opaque forward declaration only -- full definition
                         // private to world.cpp; EntityId never dereferences it
 
 struct EntityId {
-  std::uint32_t index = std::numeric_limits<std::uint32_t>::max();
-  std::uint64_t generation = 0;
-
   EntityId() = default;
+
+  [[nodiscard]] std::uint32_t index() const noexcept { return index_; }
+  [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
+
   friend bool operator==(const EntityId&, const EntityId&) = default;
 
  private:
   friend class World;  // only World may construct a non-default EntityId
-                        // or read worldIdentity_
+                        // or read any of its three private fields
   EntityId(std::uint32_t idx, std::uint64_t gen, const WorldIdentity* identity)
-      : index(idx), generation(gen), worldIdentity_(identity) {}
+      : index_(idx), generation_(gen), worldIdentity_(identity) {}
+
+  std::uint32_t index_ = std::numeric_limits<std::uint32_t>::max();
+  std::uint64_t generation_ = 0;
   const WorldIdentity* worldIdentity_ = nullptr;
 };
-inline constexpr EntityId kInvalidEntityId{};  // index == max, generation == 0, worldIdentity_ == nullptr
+inline constexpr EntityId kInvalidEntityId{};  // index_ == max, generation_ == 0, worldIdentity_ == nullptr
 }  // namespace atlantis::world
 
 // world_error.h
@@ -427,23 +475,37 @@ struct Renderable {
   16-byte shape; the *exact* figure is target-pointer-width- and
   alignment-dependent and is not a number this Plan (or the amending
   ADR/Spec) fixes, only the field list above is fixed.
-- **`worldIdentity_` is `private` — not a writable public raw pointer.**
-  `index`/`generation` stay public, unchanged in form from before this
-  amendment. Only `World` (a `friend`) may construct an `EntityId`
-  carrying a non-default identity, via the `private` three-argument
-  constructor; no other code can read, forge, or overwrite it. A caller
-  can still hold, copy, and compare an `EntityId` freely — the defaulted
-  `operator==` compares all three members regardless of access level,
-  since a defaulted comparison operator has the same access as if written
-  inside the class — but cannot construct or mutate one with an arbitrary
-  identity. Declaring this ordinary (non-special-member) `private`
-  constructor does not affect `std::is_trivially_copyable<EntityId>`,
-  which examines only the copy/move constructors, copy/move assignment,
-  and destructor — all four remain implicitly generated and trivial, so
+- **All three of `EntityId`'s own fields — `index_`, `generation_`,
+  `worldIdentity_` — are `private`, not only the identity field**
+  (corrected 2026-08-23; a prior drafting pass of this amendment left
+  `index`/`generation` public, which would have let a caller copy a
+  legitimate handle and directly overwrite its index, coincidentally
+  forging a *different* entity within the *same* `World` whenever the
+  mutated index carried a matching generation — the private identity
+  token alone does not prevent this, since `validate()` checks index/
+  generation against `slots_` regardless of identity; see
+  [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s
+  own matching correction). Only `World` (a `friend`) may construct an
+  `EntityId` carrying non-default values, via the `private`
+  three-argument constructor; no other code can read, forge, or overwrite
+  any of the three fields. A caller can still hold, copy, and compare an
+  `EntityId` freely — the defaulted `operator==` compares all three
+  members regardless of access level, since a defaulted comparison
+  operator has the same access as if written inside the class — and can
+  read `index()`/`generation()` through the read-only accessors above
+  where a real call site needs them (e.g. V3's own LIFO-reuse
+  observation, or a diagnostic log line), but cannot construct or mutate
+  an `EntityId` with an arbitrary index, generation, or identity. **No
+  accessor of any kind exists for `worldIdentity_`, and no mutator of any
+  kind exists for any of the three fields.** Declaring these ordinary
+  (non-special-member) `private` constructor and public accessor member
+  functions does not affect `std::is_trivially_copyable<EntityId>`, which
+  examines only the copy/move constructors, copy/move assignment, and
+  destructor — all four remain implicitly generated and trivial, so
   `EntityId` stays freely copyable, safe to store in `std::vector`.
   `worldIdentity_` remains a plain observer pointer — `EntityId` never
   allocates, frees, or dereferences anything through it, unchanged in
-  *kind* from `index`/`generation` already being non-owning values.
+  *kind* from `index_`/`generation_` already being non-owning values.
 - **`EntityId` must never be serialized, persisted, or used across a
   process boundary** — its identity component is a heap address,
   meaningful only within the process and `World` instance that produced
@@ -585,10 +647,12 @@ directly at entry (D4). New verification: V26.
   Result<void, WorldError> World::validate(EntityId id) const {
     ATLANTIS_CHECK_MSG(identity_ != nullptr,
                         "World::validate() called on a moved-from World");
+    // World is EntityId's own friend -- reads the three private fields
+    // directly (id.index_/id.generation_/id.worldIdentity_).
     if (id.worldIdentity_ != nullptr && id.worldIdentity_ != identity_.get())
       return Result<void, WorldError>::Err(WorldError::WrongWorld);
-    if (id.index >= slots_.size() || !slots_[id.index].alive
-        || slots_[id.index].generation != id.generation)
+    if (id.index_ >= slots_.size() || !slots_[id.index_].alive
+        || slots_[id.index_].generation != id.generation_)
       return Result<void, WorldError>::Err(WorldError::InvalidEntity);
     return Result<void, WorldError>::Ok({});
   }
@@ -677,9 +741,10 @@ directly at entry (D4). New verification: V26.
   rejected an early-cutoff variant).
 - **`isValid(id)`:** `ATLANTIS_CHECK_MSG(identity_ != nullptr, ...)` first
   (moved-from guard), then `(id.worldIdentity_ == nullptr ||
-  id.worldIdentity_ == identity_.get()) && id.index < slots_.size() &&
-  slots_[id.index].alive && slots_[id.index].generation ==
-  id.generation` — the same checks `validate()` performs, collapsed to a
+  id.worldIdentity_ == identity_.get()) && id.index_ < slots_.size() &&
+  slots_[id.index_].alive && slots_[id.index_].generation ==
+  id.generation_` (`World`'s own friend access to the three private
+  fields) — the same checks `validate()` performs, collapsed to a
   `bool`; a handle from a different, live `World` and an ordinary stale/
   out-of-range handle both simply report `false`, unchanged in signature
   and existing callers' expectations (the finer `WrongWorld`-vs-
@@ -744,7 +809,7 @@ class World {
 - **`getParent(child)`** returns `Ok(kInvalidEntityId)` for a root entity
   — not an error; only a `WrongWorld`/stale `child` handle is `Err`.
 - **`setActiveCamera(id)`** runs `validate(id)` first (`WrongWorld` or
-  `InvalidEntity`) then checks `slots_[id.index].camera.has_value()`
+  `InvalidEntity`) then checks `slots_[id.index_].camera.has_value()`
   (`NoCameraComponent`) before writing `activeCamera_ = id`.
 - **`renderableEntities()`** — no `EntityId` argument to route through
   `validate()`, but reads `identity_.get()` to stamp every result, so it
@@ -767,10 +832,10 @@ Result<void, WorldError> World::setParent(EntityId child, EntityId parent) {
     EntityId ancestor = parent;
     while (ancestor != kInvalidEntityId) {
       if (ancestor == child) return Result<void, WorldError>::Err(WorldError::WouldCreateCycle);
-      ancestor = slots_[ancestor.index].parent;
+      ancestor = slots_[ancestor.index_].parent;  // World's own friend access
     }
   }
-  slots_[child.index].parent = parent;
+  slots_[child.index_].parent = parent;
   return Result<void, WorldError>::Ok({});
 }
 ```
@@ -859,7 +924,7 @@ void World::updateTransforms() {
       s.visitState = SlotVisitState::Visiting;  // "on the current walk-up path" -- the cycle guard
       path.push_back(current);
       if (s.parent == kInvalidEntityId) break;
-      current = s.parent.index;
+      current = s.parent.index_;  // World's own friend access
     }
     // Process outermost-unvisited-ancestor-first, so each entity's own
     // parent world matrix is already known by the time it is computed --
@@ -869,9 +934,9 @@ void World::updateTransforms() {
       const std::array<float, 16> local = composeLocal(s.localTransform);
       s.cachedWorldMatrix = (s.parent == kInvalidEntityId)
           ? local
-          : multiply(slots_[s.parent.index].cachedWorldMatrix, local);  // parent, if set, was
-                                                                          // just processed above,
-                                                                          // or was already Visited
+          : multiply(slots_[s.parent.index_].cachedWorldMatrix, local);  // parent, if set, was
+                                                                           // just processed above,
+                                                                           // or was already Visited
       s.visitState = SlotVisitState::Visited;
     }
   }
@@ -1623,7 +1688,7 @@ Step 1 (World skeleton, value types, slot map, entity lifecycle)
 |---|---|---|---|
 | V1 | `createEntity()` always succeeds, returns a valid handle; a fresh `World` has no live entities. | `entity_lifecycle_tests.cpp` | GPU-independent |
 | V2 | `destroyEntity()`: invalidates the target and, recursively, every transitive descendant, in one call; every subsequent operation against any of those handles returns `Err(InvalidEntity)`; an unrelated sibling/ancestor is untouched. An out-of-range `index` (beyond any slot ever allocated) is rejected the same way. Same-`World`-instance behavior only — cross-instance behavior is V23–V25. | `entity_lifecycle_tests.cpp` | GPU-independent |
-| V3 | Slot reuse: destroying and recreating produces a **different** generation at the same index; the old `EntityId` is correctly `Err(InvalidEntity)`; the free list's own LIFO order is directly observed (destroy A then B; the next two `createEntity()` calls reuse B's index first, then A's). | `entity_lifecycle_tests.cpp` | GPU-independent |
+| V3 | Slot reuse: destroying and recreating produces a **different** `generation()` at the same `index()`; the old `EntityId` is correctly `Err(InvalidEntity)`; the free list's own LIFO order is directly observed via the public `index()` accessor (destroy A then B; the next two `createEntity()` calls reuse B's `index()` first, then A's). | `entity_lifecycle_tests.cpp` | GPU-independent |
 | V4 | **Generation retirement, at the real boundary, not merely a design-time argument:** using the test-only friend access D3 describes, a slot's generation is set to `max() - 1`, `destroyEntity()`d, and confirmed (a) its generation is now the tombstone value; (b) a following `createEntity()`, or a sequence exhausting every other free slot, never reuses that index; (c) an `EntityId` at that index with its old, pre-retirement generation still correctly returns `Err(InvalidEntity)`, via the same, unmodified check every other stale-handle case already uses. | `entity_lifecycle_tests.cpp` | GPU-independent |
 | V5 | `setParent()`: succeeds for a valid, non-cycle-forming request; rejects a direct self-parent, a two-hop cycle, and a four-hop transitive cycle, each with `Err(WouldCreateCycle)`, leaving the hierarchy **completely unchanged** (re-read via `getParent()` on every entity involved, not just the one call's own target); a stale `child`/`parent` handle is `Err(InvalidEntity)`, checked before any cycle walk. | `hierarchy_tests.cpp` | GPU-independent |
 | V6 | Every mutating call's own `Err` path (`setParent()` cycle/invalid-handle; `destroyEntity()`/`setLocalTransform()`/`setCamera()`/`setRenderable()`/etc. on an invalid handle) leaves every observable `World` state — parent links, local transforms, component presence, `isValid()` for every other entity — byte-identical to immediately before the call. | `hierarchy_tests.cpp`, `entity_lifecycle_tests.cpp` | GPU-independent |
@@ -1647,6 +1712,7 @@ Step 1 (World skeleton, value types, slot map, entity lifecycle)
 | V24 | **`WrongWorld` reachable from every `EntityId`-accepting entry point**, not only `isValid()`/`destroyEntity()`: `setParent()`/`getParent()`, `setLocalTransform()`/`getLocalTransform()`, `getWorldMatrix()`, `setCamera()`/`removeCamera()`/`getCamera()`, `setActiveCamera()`, `setRenderable()`/`removeRenderable()`/`getRenderable()` each correctly return `Err(WorldError::WrongWorld)` when passed a handle from a different, live `World` instance, checked **before** any index/generation-dependent behavior (e.g. `setParent()` never reaches its own cycle walk for a wrong-world handle). `kInvalidEntityId` itself is confirmed to still report `Err(InvalidEntity)`, never `WrongWorld`, against every one of these (the "no claimed identity" carve-out). | `entity_lifecycle_tests.cpp`, `hierarchy_tests.cpp` | GPU-independent |
 | V25 | **`EntityId` validity survives `World` move-construction:** create several entities (including a parent/child pair) in a `World`, capture their `EntityId`s, move-construct a new `World` from it (`World moved = std::move(original);`), and confirm every previously issued `EntityId` is still `Ok`/`isValid()` against `moved` — same index, same generation, same underlying identity token address, unchanged by the move — and that hierarchy/component data moved with it intact. | `entity_lifecycle_tests.cpp` | GPU-independent |
 | V26 | **Moved-from `World`: any call other than the destructor or move-construction-from is a checked programmer error.** After `World moved = std::move(original);`, install a recording failure handler via `atlantis::assertions::setFailureHandler()` (matching `tests/core/assert_tests.cpp`'s own established pattern), call `original.createEntity()` (and separately, an arbitrary `EntityId`-accepting method, `updateTransforms()`, and `clearActiveCamera()`/`activeCamera()`), and confirm the handler recorded exactly one failure each time — not a crash, not silently-succeeding undefined behavior. | `entity_lifecycle_tests.cpp` | GPU-independent |
+| V27 | **`EntityId`'s full encapsulation, all three fields (2026-08-23 correction):** (a) `std::is_trivially_copyable_v<EntityId>` holds, confirmed via `static_assert`; (b) no external code can compile a direct mutation of any of `index_`/`generation_`/`worldIdentity_` — confirmed by construction (they are `private`, no public setter exists) and, concretely, a compile-fail check (e.g. via a `static_assert`-guarded SFINAE trait, or documented as an intentionally-uncompilable negative example the test file comments but does not build) that `EntityId` exposes no assignable public data member; (c) the defaulted `operator==` distinguishes two handles differing in **any single one** of the three fields (index-only, generation-only, and — via two live `World`s per V23 — identity-only, each tested as its own case); (d) `kInvalidEntityId` still reports `Err(InvalidEntity)` (never `WrongWorld`) against every `World`-issued handle, and every `World::createEntity()` handle still round-trips through every accessor/API exactly as before this correction; (e) no test or production code anywhere asserts or depends on a fixed `sizeof(EntityId)`. | `entity_lifecycle_tests.cpp` | GPU-independent (mix of runtime and compile-time) |
 
 ## Traceability — Spec / ADR → Plan
 
@@ -1656,7 +1722,7 @@ Step 1 (World skeleton, value types, slot map, entity lifecycle)
 | Spec 0014 — `EntityId` index+64-bit-generation, by-value access, atomic mutation | D2, D3, D4; V1, V6, V13 |
 | Spec 0014 — Overflow formally closed via slot retirement | D3; V4 |
 | Spec 0014 — Stale-handle `Result` classification | D4; V2 |
-| `EntityId` gains a `private` `World`-identity field; `World` owns a heap-allocated, address-stable identity token — ADR-0049/Spec 0014 Accepted Amendments | D2, D3, D4, D5; V22–V26; ADR-0049/Spec 0014 "Accepted Amendment" sections |
+| `EntityId` gains three `private` fields (index, generation, `World`-identity); `World` owns a heap-allocated, address-stable identity token — ADR-0049/Spec 0014 Accepted Amendments | D2, D3, D4, D5; V22–V27; ADR-0049/Spec 0014 "Accepted Amendment" sections |
 | Moved-from `World`: destructible/move-constructible-from only, every other call a checked programmer error | D3, D4; V26 |
 | `World`'s own copy/move semantics, now load-bearing for identity | D3; V22, V25 |
 | `WorldError::WrongWorld` — new fourth enumerator, checked before slot/generation at every entry point | D2, D3, D4, D5, D11; V23, V24 |
@@ -1812,7 +1878,7 @@ one.
 See [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
 Deltas specific to this plan:
 
-- V1–V18 and V22–V26 all executed and recorded; V19–V21 recorded as
+- V1–V18 and V22–V27 all executed and recorded; V19–V21 recorded as
   manual verification in the Implementation PR.
 - Both the ADR-0049 and Spec 0014 Accepted Amendments (stable `World`
   identity token) have reached their formal Human Review Amendment

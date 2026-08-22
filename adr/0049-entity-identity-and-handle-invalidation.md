@@ -3,9 +3,12 @@
 - **Status:** Accepted. **An "Accepted Amendment" section below
   (2026-08-22, cross-`World`-instance `EntityId` use, stable identity
   token) is now also `Accepted` — see that section's own "Human Review
-  Amendment Approval" note. It does not rewrite this ADR's original
-  Decision, Consequences, or Alternatives Considered above; it adds a new
-  precondition and mechanism those did not previously state.**
+  Amendment Approval" note, and its own "Correction (2026-08-23)"
+  fixing a mechanical encapsulation gap (all three of `EntityId`'s
+  identity-bearing fields are private, not only the identity token).
+  Neither the amendment nor its correction rewrites this ADR's original
+  Decision, Consequences, or Alternatives Considered above; they add a
+  new precondition and mechanism those did not previously state.**
 - **Date:** 2026-08-22
 - **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
   approved 2026-08-22 as part of Spec 0014's Human Review Approval
@@ -575,6 +578,23 @@ before this amendment; `worldIdentity_` is `private`, settable only by
 `World` itself (a `friend`), via a `private` constructor `World` alone
 may call:
 
+**Correction (2026-08-23, mechanical encapsulation fix, no new design
+question): all three identity-bearing fields are `private`, not only
+`worldIdentity_`.** An earlier drafting pass of this amendment left
+`index`/`generation` as plain public data while moving only
+`worldIdentity_` behind `private` — this was inconsistent with this
+amendment's own stated goal. A caller could copy a legitimate `EntityId`
+(carrying a real, valid identity from some live `World`) and then
+directly mutate its public `index` field to a different value — ordinary,
+legal C++ for a plain public data member — coincidentally forging a
+*different* entity within the *same* `World` instance whenever the
+mutated index happens to carry the same generation. The private identity
+token closes the *cross-instance* forgery case; it does nothing to
+prevent this *same-instance* one, since `index`/`generation` alone are
+what `validate()` actually checks against `slots_`. Fixed below: `index`
+and `generation` are now private state as well, exposed only through
+read-only accessors.
+
 ```cpp
 // entity_id.h
 namespace atlantis::world {
@@ -582,51 +602,63 @@ class World;           // forward declaration (friend)
 class WorldIdentity;   // opaque forward declaration only
 
 struct EntityId {
-  std::uint32_t index = std::numeric_limits<std::uint32_t>::max();
-  std::uint64_t generation = 0;
-
   EntityId() = default;
+
+  [[nodiscard]] std::uint32_t index() const noexcept { return index_; }
+  [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
+
   friend bool operator==(const EntityId&, const EntityId&) = default;
 
  private:
   friend class World;  // only World may construct a non-default EntityId
-                        // or read worldIdentity_
+                        // or read any of its three private fields
   EntityId(std::uint32_t idx, std::uint64_t gen, const WorldIdentity* identity)
-      : index(idx), generation(gen), worldIdentity_(identity) {}
+      : index_(idx), generation_(gen), worldIdentity_(identity) {}
+
+  std::uint32_t index_ = std::numeric_limits<std::uint32_t>::max();
+  std::uint64_t generation_ = 0;
   const WorldIdentity* worldIdentity_ = nullptr;
 };
-inline constexpr EntityId kInvalidEntityId{};  // worldIdentity_ == nullptr
+inline constexpr EntityId kInvalidEntityId{};  // index_ == max, generation_ == 0, worldIdentity_ == nullptr
 }  // namespace atlantis::world
 ```
 
-`index`/`generation` remain ordinary public data — this amendment does
-not change their existing, already-`Accepted` visibility or any code that
-already reads them. Only `worldIdentity_` moves behind `private`: no
-caller can read, forge, or overwrite it directly (e.g. via
-`reinterpret_cast` plus direct assignment), closing the loophole a plain
-public pointer field would otherwise leave — a caller can still *hold*,
-*copy*, and *compare* an `EntityId` freely (the defaulted `operator==`
-compares all three members regardless of their access level, since a
-defaulted comparison operator has the same access as if written inside
-the class), but cannot construct or mutate one with an arbitrary
-identity. `EntityId` keeps a public, `= default` default constructor
-(needed for `kInvalidEntityId` and every other "no entity yet" use
-already throughout this Spec) and remains trivially copyable — declaring
-an ordinary (non-special-member) private constructor does not affect
-`std::is_trivially_copyable`, which only examines the copy/move
-constructors, copy/move assignment, and destructor, all of which stay
-implicitly generated and trivial here. `worldIdentity_` remains a plain
-observer pointer: `EntityId` never dereferences it, never allocates or
-frees anything through it, and owns nothing — unchanged in *kind* from
-`index`/`generation` already being non-owning values. A pointer to a type
-with **zero fields**, private, used **exclusively** for equality
-comparison and never dereferenced by any caller, exposes no Runtime-owned
-state across the public boundary — this is a materially different case
-from [ADR-0033](0033-runtime-authority-and-client-boundary.md)'s own "no
-raw pointer/reference to a Runtime-owned object" rule, which targets
-pointers that grant access to live, mutable data; `WorldIdentity` has no
-data to grant access to, and is now additionally not even writable by a
-caller.
+All three fields move behind `private`: no caller can read, forge, or
+overwrite any of `index_`/`generation_`/`worldIdentity_` directly (e.g.
+via `reinterpret_cast` plus direct assignment, or simply `id.index =
+other;` on a plain public field), closing the same-instance forgery
+loophole above alongside the cross-instance one this amendment already
+closed. A caller can still *hold*, *copy*, and *compare* an `EntityId`
+freely (the defaulted `operator==` compares all three members regardless
+of their access level, since a defaulted comparison operator has the
+same access as if written inside the class) and, where a real call site
+needs it (e.g. a test verifying which physical slot the LIFO free list
+reused, or a diagnostic log line), read `index()`/`generation()` through
+the read-only accessors above — but cannot construct or mutate an
+`EntityId` with an arbitrary index, generation, *or* identity.
+Deliberately, **no `worldIdentity()`-style accessor and no mutator of any
+kind exists** for any of the three fields; only `World` itself, as a
+`friend`, ever touches `worldIdentity_`, and reading it through a public
+accessor would serve no legitimate external purpose this Spec's own scope
+has. `EntityId` keeps a public, `= default` default constructor (needed
+for `kInvalidEntityId` and every other "no entity yet" use already
+throughout this Spec) and remains trivially copyable — declaring ordinary
+(non-special-member) constructors and read-only accessor member functions
+does not affect `std::is_trivially_copyable`, which only examines the
+copy/move constructors, copy/move assignment, and destructor, all of
+which stay implicitly generated and trivial here. `worldIdentity_`
+remains a plain observer pointer: `EntityId` never dereferences it, never
+allocates or frees anything through it, and owns nothing — unchanged in
+*kind* from `index_`/`generation_` already being non-owning values. A
+pointer to a type with **zero fields**, private, used **exclusively** for
+equality comparison and never dereferenced by any caller, exposes no
+Runtime-owned state across the public boundary — this is a materially
+different case from
+[ADR-0033](0033-runtime-authority-and-client-boundary.md)'s own "no raw
+pointer/reference to a Runtime-owned object" rule, which targets pointers
+that grant access to live, mutable data; `WorldIdentity` has no data to
+grant access to, and is now additionally not even readable or writable
+by a caller.
 
 **`EntityId` must never be serialized, persisted, or used across a
 process boundary.** `worldIdentity_`'s own value is a heap address,
@@ -649,10 +681,13 @@ explicit carve-out for the sentinel, and a moved-from guard:**
 Result<void, WorldError> World::validate(EntityId id) const {
   ATLANTIS_CHECK_MSG(identity_ != nullptr,
                       "World::validate() called on a moved-from World");
+  // World is EntityId's own friend -- reads the three private fields
+  // directly (id.index_/id.generation_/id.worldIdentity_), not through
+  // the public index()/generation() accessors.
   if (id.worldIdentity_ != nullptr && id.worldIdentity_ != identity_.get())
     return Result<void, WorldError>::Err(WorldError::WrongWorld);
-  if (id.index >= slots_.size() || !slots_[id.index].alive
-      || slots_[id.index].generation != id.generation)
+  if (id.index_ >= slots_.size() || !slots_[id.index_].alive
+      || slots_[id.index_].generation != id.generation_)
     return Result<void, WorldError>::Err(WorldError::InvalidEntity);
   return Result<void, WorldError>::Ok({});
 }
@@ -814,12 +849,16 @@ accepts, in full, the concrete design recorded in this section above:
 1. `World` exclusively owns one heap-allocated, address-stable, opaque
    `WorldIdentity` token — no global counter, no random identifier, no
    shared ownership, no new third-party dependency.
-2. `EntityId` is composed of `index` (`uint32_t`), `generation`
-   (`uint64_t`), and a non-owning identity reference to that token.
-3. The identity field is `private`, caller-immutable implementation
-   state — `EntityId` publicly exposes only the value semantics needed
-   (`index`/`generation` as before, default construction, the invalid
-   sentinel, and equality comparison), never a writable raw pointer.
+2. `EntityId` is composed of an index (`uint32_t`), a generation
+   (`uint64_t`), and a non-owning identity reference to that token — all
+   three **private**, caller-immutable implementation state (see
+   Correction, 2026-08-23, below).
+3. `EntityId` publicly exposes only the value semantics genuinely needed:
+   default construction (the invalid sentinel), equality comparison, and
+   — only where a real call site needs it — read-only `index()`/
+   `generation()` accessors; **no accessor of any kind for the identity
+   field, and no mutator of any kind for any of the three fields** (see
+   Correction below).
 4. `EntityId` must never be serialized, persisted, or used across a
    process boundary.
 5. Every `World` API validates identity before slot/generation; misuse
@@ -845,3 +884,26 @@ accepts, in full, the concrete design recorded in this section above:
 This approval does not reopen or modify this ADR's own original
 `Accepted` Decision, Consequences, or Alternatives Considered above (the
 pre-amendment text) — only this amendment section is newly `Accepted`.
+
+**Correction (2026-08-23), mechanical, not a new design question — no
+new review round.** Items 2–3 above, and this section's own earlier
+design text, originally left `index`/`generation` as plain public data
+members, moving only the identity field behind `private`. This was
+inconsistent with this same approval's own intent (a caller must not be
+able to forge or tamper with an `EntityId`): a plain public `index` field
+lets a caller copy a legitimate handle and directly overwrite its index,
+coincidentally forging a *different* entity within the *same* `World`
+whenever the mutated index happens to carry a matching generation — the
+private identity token alone does not prevent this, since `validate()`
+checks `index`/`generation` against `slots_` regardless of identity.
+Corrected: **all three fields — index, generation, and identity — are
+now private**, exposed externally only through the read-only
+`index()`/`generation()` accessors added above (never an identity
+accessor, never a mutator). This is a mechanical fix to how the
+already-approved "no forgery" intent is implemented, not a change to
+what was decided — no new Alternatives, no new `WorldError` enumerator,
+no change to validation ordering, `WrongWorld`, the moved-from contract,
+or `World`'s own move/ownership semantics. New verification requirements,
+covering exactly this fix, are recorded in
+[Plan 0014](../plans/0014-world-scene-foundation.md)'s own Verification
+Checklist (V27).

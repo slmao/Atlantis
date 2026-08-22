@@ -1382,14 +1382,19 @@ second copy of the architecture.
 - **`EntityId` gains a third, `private` field** — `index`/`generation`
   stay public, unchanged in form from before this amendment; a
   non-owning identity reference to an opaque `WorldIdentity` token is
-  added as `private` implementation state, settable only by `World`
-  itself. `EntityId` publicly exposes only what is necessary: default
-  construction (the invalid sentinel), the existing public
-  `index`/`generation` values, and equality comparison (which still
-  includes identity, since a defaulted comparison operator has access to
-  private members) — **never a caller-writable raw pointer.** No caller
-  can forge or overwrite the identity field directly. `EntityId` remains
-  a plain, trivially-copyable value type owning nothing. **This Spec's
+  added — and **all three of `EntityId`'s own fields (index, generation,
+  and identity) are `private`, not only the identity field** (corrected
+  2026-08-23; see this section's own "Human Review Amendment Approval"
+  note below for why leaving index/generation public would have left the
+  same-`World` forgery case this amendment's own "no forgery" intent was
+  meant to close). `EntityId` publicly exposes only what is necessary:
+  default construction (the invalid sentinel), equality comparison (which
+  still includes identity, since a defaulted comparison operator has
+  access to private members), and — only where a real call site needs it
+  — read-only `index()`/`generation()` accessors. **Never a caller-writable
+  raw pointer, and never any mutator for any of the three fields.** No
+  caller can forge or overwrite any of them directly. `EntityId` remains a
+  plain, trivially-copyable value type owning nothing. **This Spec's
   prior "16 bytes" claim (Requirements, "Entity lifecycle and identity")
   is superseded and not replaced with a new fixed number** — the exact
   resulting size is pointer-width- and alignment-dependent, an
@@ -1448,3 +1453,17 @@ to this design, is separately approved — see that Plan's own Human
 Review Approval note. Implementation itself still waits on
 [PR #67](https://github.com/slmao/Atlantis/pull/67) being merged — see
 [specs/README.md](README.md).
+
+**Correction (2026-08-23), mechanical, no new review round:** the
+original text above left `index`/`generation` as plain public `EntityId`
+fields, moving only the identity reference behind `private` — inconsistent
+with this same approval's own "no forgery" intent, since a plain public
+`index` field lets a caller copy a legitimate handle and overwrite its
+index directly, coincidentally forging a different entity within the
+same `World` when the mutated index carries a matching generation. Fixed:
+all three fields are now private, exposed only via read-only
+`index()`/`generation()` accessors (never an identity accessor, never a
+mutator) — see the bullet above and
+[ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s own
+matching correction for the full mechanism. No other part of this
+approval changes.
