@@ -615,6 +615,47 @@ milestone being listed does not authorize starting it — see Section 1.
   scheme, a real derived-data cache, any new Renderer/RHI/Vulkan public
   API, and Android/iOS/Linux implementation of any kind.
 
+### Milestone 10 — Runtime Host Foundation
+
+- **Governance state:** **`Approved` Spec, `Approved` Plan, Implemented —
+  [specs/0013-runtime-host-foundation.md](../specs/0013-runtime-host-foundation.md),
+  [plans/0013-runtime-host-foundation.md](../plans/0013-runtime-host-foundation.md).**
+  Human Review Approval recorded 2026-08-20 for the Spec and 2026-08-20
+  for the Plan (14 explicitly accepted review items). Its Architectural
+  Impact identified two new decisions, filed as
+  [ADR-0046](../adr/0046-runtime-composition-ownership-and-frame-lifecycle.md)
+  (object ownership order, six-step initialization, ten-step per-frame
+  orchestration, unified idempotent shutdown) and
+  [ADR-0047](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md)
+  (`atlantis_runtime_host` static library / `atlantis_runtime` thin
+  executable split, purely for GPU-independent testability — not a
+  dependency surface for any other module), both `Accepted` alongside the
+  Spec approval. During implementation, a real MSVC compiler-behavior
+  misconception in the approved Plan (`C4715` does not, by itself, detect
+  an incomplete enum `switch`) was found, corrected via an independent
+  Plan amendment, and folded back in before Steps 2-7 continued — see the
+  Spec 0013 row in [specs/README.md](../specs/README.md) for full
+  verification detail, including the amendment's own PR.
+- **Scope actually delivered:** a real Windows windowed composition root
+  drawing the same Asset-System-sourced `minimal_cube` mesh and
+  Shader-System-compiled material used by earlier milestones, through the
+  existing, unmodified Renderer → RenderGraph → RHI → Vulkan Backend
+  stack. A `PlatformSession` RAII guard makes window-outlives-GPU-resources
+  a compiler-enforced invariant (first member, destroyed last) rather than
+  a hand-sequenced convention; a single unified, idempotent `shutdown()`
+  is the sole caller of GPU-resource teardown and the sole indirect
+  trigger (via `PlatformSession`'s own destructor) of
+  `platform::shutdown()`. Verified by a real windowed GPU smoke test
+  (`tests/runtime`, `gpu`-labeled — the first test in the repository that
+  creates a real, visible OS window during automated `ctest`), by clean
+  Debug and Release full builds, and by manual interactive verification
+  (resize, minimize/restore, close) against the real executable with
+  Vulkan Validation Layers clean throughout.
+- **Not implemented** (per Spec 0013's own Non-Goals, unchanged):
+  Android/iOS/Linux, a headless Runtime entry point, World/ECS, a Client
+  API, hot-reload or async asset streaming, a Job System, and any
+  DI/service-locator framework.
+
 ### Further candidate phases (directional only, no Spec, no ADR)
 
 The following are named only to communicate long-term direction drawn
@@ -624,10 +665,6 @@ model, dependency, or API chosen.** Each requires its own Spec and, for
 anything architectural, its own ADR before any of the below moves past
 "named":
 
-- Runtime Host / composition root (the actual `Atlantis Runtime`
-  module — distinct from the informal, non-shipping composition
-  Spec 0003's own verification demo used, which that spec explicitly
-  states is *not* a preview of Runtime)
 - World/ECS foundation — **no ECS implementation, library, or in-house
   design is chosen**
 - Serialization and stable identity (GUID/handle schemes, schema
@@ -655,6 +692,7 @@ anything architectural, its own ADR before any of the below moves past
 | M7 | **Met** (headless GPU-readback path). The same rendering stack from M4, driven headlessly via `OffscreenTarget`, produces a GPU-readback image with no window or swapchain involved — see `examples/headless_rendering_demo` and the Spec 0010 row in [specs/README.md](../specs/README.md). Pixel/image-level comparison *against the windowed output* is explicitly Milestone 8/Image Regression Testing's own, separate scope, not part of M7/Spec 0010 — see the M8 row below (`Approved`, implemented, partially met). |
 | M8 | **Partially met.** A human/agent-run golden-image comparison (`ctest -L gpu` against `tests/image_regression/`) genuinely catches an intentionally introduced rendering regression and passes on a known-good build — see `specs/README.md`'s Spec 0011 row and [PR #52](https://github.com/slmao/Atlantis/pull/52) for the real, recorded proof. **Not yet met:** this comparison does not yet run in CI or gate merges automatically — no CI pipeline exists in this repository (see [docs/process/ci-strategy.md](../docs/process/ci-strategy.md)). |
 | M9 | **Met.** A real, checked-in authoring-source mesh (`assets/meshes/minimal_cube.mesh.txt`) is cooked deterministically, loaded as CPU-only data, and rendered through the existing, unmodified Renderer → RenderGraph → RHI → Vulkan Backend stack by a test-owned composition root — pixel-identical (zero channel difference) to the M8 golden — see the Spec 0012 row in [specs/README.md](../specs/README.md). |
+| M10 | **Met.** A real `atlantis_runtime` Windows executable, backed by the `atlantis_runtime_host` composition library, opens a live window and draws the same Asset-System-sourced mesh and Shader-System-compiled material through the existing, unmodified Renderer → RenderGraph → RHI → Vulkan Backend stack, surviving interactive resize, minimize/restore, and close with Vulkan Validation Layers clean throughout — see the Spec 0013 row in [specs/README.md](../specs/README.md). |
 
 ## 7. Explicitly deferred or off-limits for now
 
