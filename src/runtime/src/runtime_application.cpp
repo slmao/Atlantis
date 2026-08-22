@@ -134,18 +134,17 @@ using Mat4 = std::array<float, 16>;
 
 }  // namespace
 
+RuntimeApplication::RuntimeApplication(PlatformSession&& session) noexcept
+    : platformSession_(std::move(session)) {}
+
 RuntimeApplication::~RuntimeApplication() { shutdown(); }
 
 atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializeSteps(
     const BootstrapConfig& config) {
-  // Step 1: Platform session.
-  auto sessionResult = createPlatformSession();
-  if (sessionResult.isErr()) {
-    ATLANTIS_LOG_ERROR("createPlatformSession() failed");
-    lifecycle_.markFailed();
-    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::PlatformInitFailed);
-  }
-  platformSession_ = std::move(sessionResult.value());
+  // Step 1 (Platform session) already ran in createRuntimeApplication(),
+  // before this object existed -- platformSession_ was move-constructed
+  // from it directly, never assigned into after the fact (PlatformSession's
+  // move-assignment operator is deleted; see platform_session.h).
 
   // Step 2: shader load (SPIR-V + reflection JSON) and VertexInputLayout resolution.
   auto vertexSpirvOpt = loadSpirvFile(config.vertexShaderSpirvPath);
@@ -224,7 +223,17 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
 }
 
 atlantis::Result<RuntimeApplication, RuntimeInitError> createRuntimeApplication(const BootstrapConfig& config) {
-  RuntimeApplication app;
+  // Step 1: Platform session -- created before RuntimeApplication exists,
+  // so platformSession_ can be move-CONSTRUCTED directly into it below.
+  // On Err, no RuntimeApplication is ever constructed; there is nothing
+  // to tear down.
+  auto sessionResult = createPlatformSession();
+  if (sessionResult.isErr()) {
+    ATLANTIS_LOG_ERROR("createPlatformSession() failed");
+    return atlantis::Result<RuntimeApplication, RuntimeInitError>::Err(RuntimeInitError::PlatformInitFailed);
+  }
+
+  RuntimeApplication app(std::move(sessionResult.value()));
   app.lifecycle_.beginInitializing();
   auto result = app.initializeSteps(config);
   if (result.isErr()) {

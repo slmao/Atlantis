@@ -18,20 +18,6 @@ PlatformSession::PlatformSession(PlatformSession&& other) noexcept : active_(oth
   other.active_ = false;
 }
 
-PlatformSession& PlatformSession::operator=(PlatformSession&& other) noexcept {
-  if (this != &other) {
-    if (active_) {
-      platform::shutdown();
-      for (const auto& event : platform::processEvents()) {
-        static_cast<void>(event);
-      }
-    }
-    active_ = other.active_;
-    other.active_ = false;
-  }
-  return *this;
-}
-
 atlantis::Result<PlatformSession, atlantis::platform::PlatformError> createPlatformSession() {
   auto initResult = platform::initialize();
   if (initResult.isErr()) {

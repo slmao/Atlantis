@@ -13,6 +13,17 @@ namespace atlantis::runtime {
 // the whole Runtime module: this type's own destructor. Not internally
 // thread-safe; caller-thread-only (ADR-0004), matching every other type
 // in this module.
+//
+// Move-assignment is deleted, not just move-construction kept (PR #63
+// review round): an assignment operator would have to call
+// platform::shutdown() itself whenever the assignment target already held
+// an active session, giving platform::shutdown() a second call site and
+// letting a still-active session be torn down without any of the ordering
+// guarantee RuntimeApplication's member-declaration order otherwise
+// provides. Wiring an active session into a RuntimeApplication is done
+// exclusively via move CONSTRUCTION (see runtime_application.h's private
+// constructor) -- never by assigning into a default-constructed, inactive
+// instance.
 class PlatformSession {
  public:
   PlatformSession() noexcept = default;
@@ -22,7 +33,7 @@ class PlatformSession {
   PlatformSession& operator=(const PlatformSession&) = delete;
 
   PlatformSession(PlatformSession&& other) noexcept;
-  PlatformSession& operator=(PlatformSession&& other) noexcept;
+  PlatformSession& operator=(PlatformSession&&) = delete;
 
   [[nodiscard]] bool isActive() const noexcept { return active_; }
 

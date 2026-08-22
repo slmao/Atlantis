@@ -29,9 +29,10 @@ namespace atlantis::runtime {
 // abstract service interface, no DI container, no service locator --
 // initializeSteps() calls the real, concrete Platform/RHI/Vulkan
 // Backend/Renderer/Shader System/Asset System functions directly, by
-// name, exactly as every existing composition root already does. Move-
-// only (implicit, from its unique_ptr/optional/Mesh/Material members).
-// Not internally thread-safe; caller-thread-only (ADR-0004).
+// name, exactly as every existing composition root already does.
+// Move-constructible, NOT move-assignable (move-assignment is explicitly
+// deleted, not merely left implicit -- see the operator='s own comment
+// below). Not internally thread-safe; caller-thread-only (ADR-0004).
 class RuntimeApplication {
  public:
   RuntimeApplication() = default;
@@ -40,7 +41,13 @@ class RuntimeApplication {
   RuntimeApplication(const RuntimeApplication&) = delete;
   RuntimeApplication& operator=(const RuntimeApplication&) = delete;
   RuntimeApplication(RuntimeApplication&&) noexcept = default;
-  RuntimeApplication& operator=(RuntimeApplication&&) noexcept = default;
+  // Move-assignment is deleted (PR #63 review round), not defaulted: a
+  // member-wise move-assignment runs in member DECLARATION order, so
+  // platformSession_ (declared first) would be assigned -- and its own
+  // shutdown-on-active-target logic run -- before device_/presentation_/
+  // the GPU resources below it are torn down, closing the window while
+  // they are still live. See platform_session.h's own comment.
+  RuntimeApplication& operator=(RuntimeApplication&&) = delete;
 
   // One frame iteration: processEvents(), then (if a Presentation exists
   // and nothing has failed or requested close) acquire/format-check/
@@ -59,6 +66,14 @@ class RuntimeApplication {
 
  private:
   friend atlantis::Result<RuntimeApplication, RuntimeInitError> createRuntimeApplication(const BootstrapConfig&);
+
+  // Move-constructs platformSession_ directly from an already-active
+  // session (createRuntimeApplication()'s own Step 1). Deliberately not
+  // wired in via assignment after default construction -- PlatformSession's
+  // move-assignment operator is deleted (see platform_session.h), so this
+  // constructor is the only way an active session ever enters a
+  // RuntimeApplication.
+  explicit RuntimeApplication(PlatformSession&& session) noexcept;
 
   atlantis::Result<std::monostate, RuntimeInitError> initializeSteps(const BootstrapConfig& config);
 
