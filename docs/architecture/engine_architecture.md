@@ -101,7 +101,7 @@ lifetime detail lives in
 | Atlantis Renderer | Frame orchestration built on RenderGraph + RHI | As-built | [Spec 0007](../../specs/0007-minimal-renderer.md) |
 | Atlantis Shader System | Shader authoring/compilation/reflection (Slang → SPIR-V) | As-built | [Spec 0008](../../specs/0008-shader-system-foundation.md) |
 | Atlantis Asset System | Deterministic authoring-source → runtime-artifact pipeline (one asset type: a static mesh); Core-only dependency | As-built | [Spec 0012](../../specs/0012-asset-system-foundation.md), [ADR-0043](../../adr/0043-asset-system-module-boundary.md)–[ADR-0045](../../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md) |
-| Atlantis Runtime | Application/composition-root layer | Long-term candidate (module itself not yet specced); its future Client-boundary principle is Approved direction | [ADR-0033](../../adr/0033-runtime-authority-and-client-boundary.md), [specs/README.md](../../specs/README.md) Section B Candidate 2 |
+| Atlantis Runtime | Windows windowed composition root | As-built (Windows windowed composition root); its future Client-boundary/multi-client authority principle remains Approved direction, not yet built | [Spec 0013](../../specs/0013-runtime-host-foundation.md), [ADR-0046](../../adr/0046-runtime-composition-ownership-and-frame-lifecycle.md), [ADR-0047](../../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md), [ADR-0033](../../adr/0033-runtime-authority-and-client-boundary.md) (Client-boundary principle, separate from the module itself) |
 | Atlantis Tools | Offline/developer tooling | As-built (shader-compiler and asset-cooker CLI content; broader scope not yet specced) | [Spec 0008](../../specs/0008-shader-system-foundation.md), [Spec 0012](../../specs/0012-asset-system-foundation.md) |
 
 For the current, detailed dependency graph and per-milestone build
@@ -127,7 +127,8 @@ describes has been built.
 
 - **As-built:** Core, Platform (Windows), RHI, Vulkan Backend,
   RenderGraph, Renderer, Shader System, Asset System (one asset type: a
-  static mesh), Tools (shader-compiler and asset-cooker CLI content).
+  static mesh), Runtime (Windows windowed composition root), Tools
+  (shader-compiler and asset-cooker CLI content).
 - **Approved direction (partially implemented):** the five-layer/
   ten-module coexistence
   ([ADR-0032](../../adr/0032-conceptual-architecture-layers-versus-source-module-ownership.md));
@@ -144,14 +145,16 @@ describes has been built.
   ([ADR-0036](../../adr/0036-agent-native-automation-and-machine-verifiable-architecture-as-long-term-goals.md));
   long-term Device Backend sibling-boundary reservation
   ([ADR-0037](../../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md)).
-- **Long-term candidate:** Atlantis Runtime (the module), World/ECS,
-  Public SDK, Package System, Job System, Editor/Tool
-  Connection Protocol, Gameplay SDK, Research/Simulation API, AI
-  Inference Integration, UGC Sandbox, Direct3D 12 Device Backend, Metal
-  Device Backend, Android Platform implementation, iOS Platform,
-  Agent-native CLI/manifest/diagnostic tooling — see
-  [specs/README.md](../../specs/README.md) Section B for each item's
-  Candidate Backlog row, where one exists.
+- **Long-term candidate:** World/ECS, Public SDK, Package System, Job
+  System, Editor/Tool Connection Protocol, Gameplay SDK,
+  Research/Simulation API, AI Inference Integration, UGC Sandbox,
+  Direct3D 12 Device Backend, Metal Device Backend, Android Platform
+  implementation, iOS Platform, Agent-native CLI/manifest/diagnostic
+  tooling — see [specs/README.md](../../specs/README.md) Section B for
+  each item's Candidate Backlog row, where one exists. (Atlantis Runtime
+  the module is now As-built, above — only its future Client-boundary/
+  multi-client authority principle remains here, listed under Approved
+  direction, not this tier.)
 - **Explicitly not reserved, at any tier:** WebGPU — per ADR-0037, given
   no position at all, stated here so it is not silently omitted and
   mistaken for an oversight.

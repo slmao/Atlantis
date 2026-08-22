@@ -14,8 +14,13 @@ shader pipeline, not just a cleared color or checked-in bytecode. Headless
 rendering is also implemented — an offscreen `RenderTarget` source plus
 GPU-to-CPU readback, sharing the same Renderer/RHI/RenderGraph/Vulkan
 Backend stack (Spec 0010, `Approved`, implemented and merged via
-[PR #48](https://github.com/slmao/Atlantis/pull/48)). Runtime and
-Android/iOS remain unimplemented.
+[PR #48](https://github.com/slmao/Atlantis/pull/48)). A real Windows
+windowed composition root, Atlantis Runtime, is also implemented —
+composing Platform, RHI, Vulkan Backend, Renderer, Shader System, and
+Asset System into a real windowed application (Spec 0013, `Approved`,
+implemented and merged via
+[PR #63](https://github.com/slmao/Atlantis/pull/63)). Android and iOS
+remain unimplemented.
 This repository holds the process and structure the project will be
 built with.
 
@@ -101,9 +106,9 @@ docs/               Architecture records (as-built) and process docs
 specs/              Proposed work, pre-implementation
 plans/              Approved implementation plans
 adr/                Architectural decision records
-src/                Source — src/core/ (Atlantis Core, spec/plan/ADR 0001/0006-0010); src/platform/ (Atlantis Platform's Windows path, spec/plan 0002, ADR-0005/0010-0013 — Android/iOS specified but not implemented); src/rhi/ and src/vulkan_backend/ (backend-independent RHI and its sole Phase 1 backend — Windows windowed Vulkan presentation, spec/plan 0003, ADR-0001-0003/0014-0016; frame-scoped acquire/present, RenderTarget, and CommandList/submission, spec/plan 0006, ADR-0019-0021; Buffer/Texture/Pipeline and the draw-command surface, spec/plan 0007, ADR-0023-0025; OffscreenTarget and GPU-to-CPU readback for headless rendering, spec/plan 0010, ADR-0038-0040); src/render_graph/ (RenderGraph construction/compilation, spec/plan 0005, ADR-0017/0018; execution/barrier integration, spec/plan 0006, ADR-0021; multi-attachment/draw-pass integration, spec/plan 0007, ADR-0026; caller-specified incoming/final resource-state boundaries for headless reuse, spec/plan 0010, ADR-0039); src/renderer/ (Atlantis Renderer — Mesh/Material/DrawItem/Renderer, spec/plan 0007, ADR-0022; drawFrame()'s required finalColorState parameter, spec/plan 0010, ADR-0022 Amendment); every other module still empty, pending its own spec/plan/ADR
+src/                Source — src/core/ (Atlantis Core, spec/plan/ADR 0001/0006-0010); src/platform/ (Atlantis Platform's Windows path, spec/plan 0002, ADR-0005/0010-0013 — Android/iOS specified but not implemented); src/rhi/ and src/vulkan_backend/ (backend-independent RHI and its sole Phase 1 backend — Windows windowed Vulkan presentation, spec/plan 0003, ADR-0001-0003/0014-0016; frame-scoped acquire/present, RenderTarget, and CommandList/submission, spec/plan 0006, ADR-0019-0021; Buffer/Texture/Pipeline and the draw-command surface, spec/plan 0007, ADR-0023-0025; OffscreenTarget and GPU-to-CPU readback for headless rendering, spec/plan 0010, ADR-0038-0040); src/render_graph/ (RenderGraph construction/compilation, spec/plan 0005, ADR-0017/0018; execution/barrier integration, spec/plan 0006, ADR-0021; multi-attachment/draw-pass integration, spec/plan 0007, ADR-0026; caller-specified incoming/final resource-state boundaries for headless reuse, spec/plan 0010, ADR-0039); src/renderer/ (Atlantis Renderer — Mesh/Material/DrawItem/Renderer, spec/plan 0007, ADR-0022; drawFrame()'s required finalColorState parameter, spec/plan 0010, ADR-0022 Amendment); src/runtime/ (Atlantis Runtime — the real Windows windowed composition root, atlantis_runtime_host static library plus the thin atlantis_runtime executable, spec/plan 0013, ADR-0046/0047); every other top-level module (Shader System, Asset System, Tools) also has real content — see src/README.md for the full, up-to-date per-module list, not maintained exhaustively here
 examples/           Non-shipping demo programs (foundation_demo/, platform_demo/, rhi_vulkan_demo/, frame_execution_demo/, minimal_renderer_demo/, headless_rendering_demo/) — see ADR-0010
-tests/              Tests — tests/core/, tests/platform/, tests/rhi/ (Catch2 v3, all GPU-independent), tests/vulkan_backend/ (GPU-independent plus a separate, explicitly gpu-labeled Windows/Vulkan integration executable, incl. full frame execution, the minimal renderer draw path, and headless GPU readback), tests/render_graph/ (GPU-independent, incl. execute()), tests/renderer/ (GPU-independent, Renderer statelessness/ownership); tests/image_regression/ (GPU-independent comparison/provenance logic plus a separate, explicitly gpu-labeled Windows/Vulkan capture-and-compare executable, spec/plan 0011, ADR-0041/0042)
+tests/              Tests — tests/core/, tests/platform/, tests/rhi/ (Catch2 v3, all GPU-independent), tests/vulkan_backend/ (GPU-independent plus a separate, explicitly gpu-labeled Windows/Vulkan integration executable, incl. full frame execution, the minimal renderer draw path, and headless GPU readback), tests/render_graph/ (GPU-independent, incl. execute()), tests/renderer/ (GPU-independent, Renderer statelessness/ownership); tests/image_regression/ (GPU-independent comparison/provenance logic plus a separate, explicitly gpu-labeled Windows/Vulkan capture-and-compare executable, spec/plan 0011, ADR-0041/0042); tests/runtime/ (GPU-independent lifecycle/error-classification/ownership tests plus a separate, explicitly gpu-labeled real windowed smoke test, spec/plan 0013, ADR-0046/0047)
 shaders/            Shader sources — shaders/minimal_renderer/ (spec/plan 0007, ADR-0027: pre-compiled, checked-in SPIR-V only, no compiler invoked by any build target)
 assets/             Engine/sample assets (empty — structure pending first spec/plan/ADR)
 tools/              Offline/dev tooling (empty — structure pending first spec/plan/ADR)
@@ -264,9 +269,12 @@ test suites, and a manual demo run, Vulkan Validation Layers clean
 throughout — see [specs/README.md](specs/README.md) for full scope and
 verification detail. A foundational Asset System is implemented (Spec
 0012, `Approved`) for one asset type (a static mesh) — see
-`src/README.md`'s own `asset_system/` entry below. Runtime, general
-scene systems, and additional asset types remain unimplemented — see
-[src/README.md](src/README.md).
+`src/README.md`'s own `asset_system/` entry below. A real Windows
+windowed composition root, Atlantis Runtime, is also implemented (Spec
+0013, `Approved`) — see below. World/ECS, a scene graph, additional
+asset types, lighting/material/post-processing extensions beyond the
+one fixed material this stack draws today, and Android/iOS remain
+unimplemented — see [src/README.md](src/README.md).
 
 Android and iOS remain specified architecturally only (not implemented);
 Vulkan Backend's Android WSI path is likewise not implemented. Headless
@@ -291,12 +299,36 @@ CI-enforced image-regression gating remains not implemented — see
 foundational Asset System (Spec 0012, `Approved`, implemented) followed
 next, by explicit human direction, ahead of Android Platform — see
 [specs/README.md](specs/README.md) for full scope and verification
-detail. **Android Platform and Vulkan Presentation remains the next
-candidate item** (see [specs/README.md](specs/README.md) Section B) —
-not yet drafted or approved; its own scope and dependencies are
-unchanged by this reprioritization. See [docs/](docs/) for what's
-documented so far and the open architectural questions still awaiting
-human decisions.
+detail.
+
+A real Windows windowed composition root, Atlantis Runtime, followed
+next after that, again by explicit human direction, ahead of Android
+Platform (Spec 0013, `Approved`, implemented and merged via
+[PR #63](https://github.com/slmao/Atlantis/pull/63)): `atlantis_runtime_host`
+(a private static library, alias `Atlantis::RuntimeHost`) and a thin
+`atlantis_runtime` executable compose Platform, RHI, Vulkan Backend,
+Renderer, Shader System, and Asset System into one fixed startup →
+windowed frame loop → shutdown lifecycle, drawing the same
+Asset-System-sourced `minimal_cube` mesh used by earlier milestones. A
+`PlatformSession` RAII guard makes window-outlives-GPU-resources a
+compiler-enforced invariant rather than a hand-sequenced convention.
+Verified by a real windowed GPU smoke test (`tests/runtime`,
+`gpu`-labeled — the first test in the repository that opens a real,
+visible OS window during automated `ctest`), by clean Debug/Release
+builds (`ctest -LE gpu`: 389/389 Debug, 388/388 Release; `ctest -L gpu`:
+18/18 both configurations), and by programmatic Win32 interactive
+verification (resize, minimize/restore, close), Vulkan Validation
+Layers grepped clean throughout. **Disclosed limitation:** no automated
+literal pixel/visual screenshot comparison of the Runtime window's
+rendered output exists yet — see the Spec 0013 row in
+[specs/README.md](specs/README.md) for the full disclosure and the
+outstanding human-only verification step it records. **Android Platform
+and Vulkan Presentation remains the next candidate item** (see
+[specs/README.md](specs/README.md) Section B) — not yet drafted or
+approved; its own scope and dependencies are unchanged by this
+repeated reprioritization. See [docs/](docs/) for what's documented so
+far and the open architectural questions still awaiting human
+decisions.
 
 ## License
 
