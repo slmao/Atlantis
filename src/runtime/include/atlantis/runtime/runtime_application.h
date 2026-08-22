@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atlantis/asset_system/asset_id.h>
 #include <atlantis/renderer/material.h>
 #include <atlantis/renderer/mesh.h>
 #include <atlantis/renderer/renderer.h>
@@ -14,6 +15,8 @@
 #include <atlantis/runtime/init_error.h>
 #include <atlantis/runtime/lifecycle_state.h>
 #include <atlantis/runtime/platform_session.h>
+#include <atlantis/world/entity_id.h>
+#include <atlantis/world/world.h>
 
 #include <cstdint>
 #include <memory>
@@ -94,6 +97,14 @@ class RuntimeApplication {
   std::optional<atlantis::renderer::Material> material_;  // lazy: first frame's format-change check
 
   atlantis::renderer::Renderer renderer_;  // stateless, default-constructed
+  // Plan 0014 Section D8: World owns no GPU resource and has no ordering
+  // relationship to Device/Presentation/Mesh -- placed here, outside the
+  // fixed reverse-destruction-order GPU-resource block above, not
+  // because its own position is unconstrained in general, just because
+  // no ordering constraint applies to it.
+  atlantis::world::World world_;
+  atlantis::asset_system::AssetId knownMinimalCubeAssetId_ = 0;
+  std::optional<atlantis::world::EntityId> activeCameraEntity_;  // cached for logging only; World itself is the source of truth
   RuntimeLifecycleTracker lifecycle_;
   RuntimeExitReason lastExitReason_ = RuntimeExitReason::Success;
   bool closeRequested_ = false;

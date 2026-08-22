@@ -1,15 +1,21 @@
 #include <atlantis/runtime/runtime_application.h>
 
 #include <atlantis/assert.h>
+#include <atlantis/asset_system/asset_metadata.h>
 #include <atlantis/asset_system/load.h>
 #include <atlantis/log.h>
 #include <atlantis/platform/platform.h>
 #include <atlantis/platform/platform_event.h>
 #include <atlantis/renderer/draw_item.h>
 #include <atlantis/runtime/error_classification.h>
+#include <atlantis/runtime/scene_extraction.h>
 #include <atlantis/shader_system/reflection_loader.h>
 #include <atlantis/shader_system/rhi_integration/vertex_input_mapping.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
+#include <atlantis/world/camera.h>
+#include <atlantis/world/renderable.h>
+#include <atlantis/world/transform.h>
+#include <atlantis/world/vec3.h>
 
 #include <array>
 #include <cmath>
@@ -17,6 +23,7 @@
 #include <cstdint>
 #include <fstream>
 #include <optional>
+#include <sstream>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -73,63 +80,70 @@ struct Vertex {
   return result.value();
 }
 
-using Mat4 = std::array<float, 16>;
-
-[[nodiscard]] Mat4 identityMatrix() {
-  return {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+// Plan 0014 Section D6: a second, small read of the same metadata file
+// loadStaticMeshAsset() already consumes, to obtain the real, cooked
+// AssetId -- matching this file's own already-established
+// plain-std::ifstream pattern (loadSpirvFile() above), not a new I/O
+// mechanism.
+[[nodiscard]] std::optional<std::string> readFileToString(const std::string& path) {
+  std::ifstream file(path, std::ios::binary);
+  if (!file.is_open()) return std::nullopt;
+  std::ostringstream buffer;
+  buffer << file.rdbuf();
+  return buffer.str();
 }
 
-// Plan 0013 Section D5: the fixed (not orbiting) camera --
-// tests/image_regression/fixture/minimal_cube_fixture.cpp's own exact
-// eye/look-at, chosen so the manual by-eye comparison against the
-// existing golden PNG is meaningful frame-to-frame.
-[[nodiscard]] Mat4 lookAt(float eyeX, float eyeY, float eyeZ, float centerX, float centerY, float centerZ) {
-  float fx = centerX - eyeX, fy = centerY - eyeY, fz = centerZ - eyeZ;
-  const float fLen = std::sqrt(fx * fx + fy * fy + fz * fz);
-  fx /= fLen;
-  fy /= fLen;
-  fz /= fLen;
+// Plan 0014 Section D9: the fixed, six-entity validation scene, built
+// once during initializeSteps() and never touched again by runFrame().
+// Every World call here uses a handle this same function just created,
+// so a Result::Err is only plausible from a genuine implementation bug
+// (D8) -- still checked and propagated uniformly, not asserted, matching
+// initializeSteps()'s own existing failure-handling style throughout.
+[[nodiscard]] atlantis::Result<std::monostate, RuntimeInitError> buildValidationScene(
+    atlantis::world::World& world, atlantis::asset_system::AssetId meshAssetId,
+    std::optional<atlantis::world::EntityId>& activeCameraEntityOut) {
+  using atlantis::world::Camera;
+  using atlantis::world::EntityId;
+  using atlantis::world::Renderable;
+  using atlantis::world::Transform;
+  using atlantis::world::Vec3;
 
-  const float upX = 0.0f, upY = 1.0f, upZ = 0.0f;
-  float sx = fy * upZ - fz * upY;
-  float sy = fz * upX - fx * upZ;
-  float sz = fx * upY - fy * upX;
-  const float sLen = std::sqrt(sx * sx + sy * sy + sz * sz);
-  sx /= sLen;
-  sy /= sLen;
-  sz /= sLen;
+  const auto fail = []() {
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::SceneConstructionFailed);
+  };
 
-  const float ux = sy * fz - sz * fy;
-  const float uy = sz * fx - sx * fz;
-  const float uz = sx * fy - sy * fx;
+  const auto makeCubeEntity = [&](Vec3 position, Vec3 eulerRadians) -> std::optional<EntityId> {
+    const EntityId id = world.createEntity();
+    Transform transform;
+    transform.localPosition = position;
+    transform.localEulerAnglesRadians = eulerRadians;
+    if (world.setLocalTransform(id, transform).isErr()) return std::nullopt;
+    if (world.setRenderable(id, Renderable{.meshAsset = meshAssetId}).isErr()) return std::nullopt;
+    return id;
+  };
 
-  Mat4 result = identityMatrix();
-  result[0] = sx;
-  result[4] = sy;
-  result[8] = sz;
-  result[1] = ux;
-  result[5] = uy;
-  result[9] = uz;
-  result[2] = -fx;
-  result[6] = -fy;
-  result[10] = -fz;
-  result[12] = -(sx * eyeX + sy * eyeY + sz * eyeZ);
-  result[13] = -(ux * eyeX + uy * eyeY + uz * eyeZ);
-  result[14] = fx * eyeX + fy * eyeY + fz * eyeZ;
-  return result;
-}
+  const std::optional<EntityId> a = makeCubeEntity(Vec3{-2.5f, 0.0f, 0.0f}, Vec3{});
+  const std::optional<EntityId> b = makeCubeEntity(Vec3{-1.0f, 0.0f, 0.0f}, Vec3{0.0f, 0.5236f, 0.0f});
+  const std::optional<EntityId> c = makeCubeEntity(Vec3{1.0f, -0.5f, 0.0f}, Vec3{});
+  const std::optional<EntityId> d = makeCubeEntity(Vec3{0.0f, 1.3f, 0.0f}, Vec3{0.0f, 0.7854f, 0.0f});
+  const std::optional<EntityId> e = makeCubeEntity(Vec3{2.5f, 0.0f, 0.0f}, Vec3{0.2618f, 0.3491f, 0.0f});
+  if (!a.has_value() || !b.has_value() || !c.has_value() || !d.has_value() || !e.has_value()) return fail();
 
-// Vulkan clip-space convention: right-handed, depth range [0, 1], Y
-// flipped relative to the classic OpenGL convention.
-[[nodiscard]] Mat4 perspective(float fovYRadians, float aspect, float nearZ, float farZ) {
-  const float f = 1.0f / std::tan(fovYRadians * 0.5f);
-  Mat4 result{};
-  result[0] = f / aspect;
-  result[5] = -f;
-  result[10] = farZ / (nearZ - farZ);
-  result[11] = -1.0f;
-  result[14] = (nearZ * farZ) / (nearZ - farZ);
-  return result;
+  if (world.setParent(*d, *c).isErr()) return fail();
+
+  const EntityId cameraEntity = world.createEntity();
+  Transform cameraTransform;
+  cameraTransform.localPosition = Vec3{0.0f, 2.2f, 7.0f};
+  cameraTransform.localEulerAnglesRadians = Vec3{-0.3054f, 0.0f, 0.0f};
+  if (world.setLocalTransform(cameraEntity, cameraTransform).isErr()) return fail();
+
+  constexpr float kPi = 3.14159265f;
+  const Camera camera{.fovYRadians = 60.0f * kPi / 180.0f, .nearZ = 0.1f, .farZ = 100.0f};
+  if (world.setCamera(cameraEntity, camera).isErr()) return fail();
+  if (world.setActiveCamera(cameraEntity).isErr()) return fail();
+
+  activeCameraEntityOut = cameraEntity;
+  return atlantis::Result<std::monostate, RuntimeInitError>::Ok({});
 }
 
 }  // namespace
@@ -190,6 +204,25 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   }
   const atlantis::asset_system::StaticMeshAssetData& assetData = assetResult.value();
 
+  // Plan 0014 Section D6: a second, small read of the same metadata file
+  // just above, to obtain minimal_cube's real, cooked AssetId --
+  // parseAssetMetadata() and AssetMetadata::assetId are both already
+  // Accepted, public Asset System API; no change to Asset System's own
+  // header, .cpp, or CMakeLists.txt.
+  auto metadataTextOpt = readFileToString(config.assetMetadataPath);
+  if (!metadataTextOpt.has_value()) {
+    ATLANTIS_LOG_ERROR("failed to read asset metadata file for AssetId: {}", config.assetMetadataPath);
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::AssetMetadataParseFailed);
+  }
+  auto metadataResult = atlantis::asset_system::parseAssetMetadata(*metadataTextOpt);
+  if (metadataResult.isErr()) {
+    ATLANTIS_LOG_ERROR("parseAssetMetadata() failed for {}", config.assetMetadataPath);
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::AssetMetadataParseFailed);
+  }
+  knownMinimalCubeAssetId_ = metadataResult.value().assetId;
+
   // Step 5: Mesh, from the loaded asset's CPU-side bytes -- no intermediate copy.
   auto meshResult = createMesh(*device_, vertexInputLayout_, assetData.vertexBytes().data(),
                                 assetData.vertexBytes().size(), assetData.indices().data(),
@@ -217,6 +250,17 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // construction happens inside runFrame()'s own format-change check
   // below, exactly the code path that later handles every subsequent
   // format change identically.
+
+  // Plan 0014 Section D9: the fixed, six-entity validation scene --
+  // built once here, never mutated by runFrame() (updateTransforms()
+  // still runs every frame, recomputing the same, unchanged world
+  // matrices each time).
+  auto sceneResult = buildValidationScene(world_, knownMinimalCubeAssetId_, activeCameraEntity_);
+  if (sceneResult.isErr()) {
+    ATLANTIS_LOG_ERROR("buildValidationScene() failed");
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(sceneResult.error());
+  }
 
   lifecycle_.markRunning();
   return atlantis::Result<std::monostate, RuntimeInitError>::Ok(std::monostate{});
@@ -337,22 +381,74 @@ void RuntimeApplication::runFrame() {
     return;  // nothing valid to draw yet -- target dropped via RAII, no leaked GPU state
   }
 
-  // Camera write-timing: safe here because acquireNextTarget()'s own internal drain already
-  // guarantees no prior-frame GPU work is still reading this Buffer.
-  const Mat4 view = lookAt(0.0f, 1.5f, 2.5f, 0.0f, 0.0f, 0.0f);
+  // Plan 0014 Section D8: World-driven extraction replaces the prior
+  // fixed single-cube camera write + DrawItem build.
+  world_.updateTransforms();
+
+  const std::optional<atlantis::world::EntityId> activeCamera = world_.activeCamera();
+  if (!activeCamera.has_value()) {
+    // This Plan's own validation scene always sets an active camera at
+    // construction (D9) -- reaching this path indicates a genuine
+    // construction bug, the same "should never happen in correct
+    // operation" category Spec 0013 already established for a second
+    // SurfaceCreated/an unexpected SurfaceDestroyed.
+    ATLANTIS_LOG_ERROR("runFrame(): World has no active camera");
+    lifecycle_.markFailed();
+    return;
+  }
+  activeCameraEntity_ = activeCamera;  // cached for logging only; World itself is the source of truth
+
+  const auto cameraWorldMatrixResult = world_.getWorldMatrix(*activeCamera);
+  ATLANTIS_CHECK_MSG(cameraWorldMatrixResult.isOk(),
+                      "runFrame(): getWorldMatrix() failed for the handle activeCamera() just returned");
+  const auto cameraComponentResult = world_.getCamera(*activeCamera);
+  ATLANTIS_CHECK_MSG(cameraComponentResult.isOk(),
+                      "runFrame(): getCamera() failed for the handle activeCamera() just returned");
+  const atlantis::world::Camera cameraComponent = cameraComponentResult.value();
+
   const float aspect =
       currentExtent.height != 0 ? static_cast<float>(currentExtent.width) / static_cast<float>(currentExtent.height)
                                  : 1.0f;
-  const Mat4 projection = perspective(60.0f * 3.14159265f / 180.0f, aspect, 0.1f, 100.0f);
-  auto* cameraData = static_cast<float*>(cameraBuffer_->mappedData());
-  for (std::size_t i = 0; i < 16; ++i) cameraData[i] = view[i];
-  for (std::size_t i = 0; i < 16; ++i) cameraData[16 + i] = projection[i];
+  const auto extractionResult = extractCameraMatrices(cameraWorldMatrixResult.value(), cameraComponent.fovYRadians,
+                                                        cameraComponent.nearZ, cameraComponent.farZ, aspect);
+  if (extractionResult.isErr()) {
+    // This Plan's own fixed camera Transform/Camera values (D9) are
+    // chosen to never be degenerate -- reaching this path is likewise an
+    // unrecoverable construction-bug indicator, not a per-frame
+    // condition to retry.
+    ATLANTIS_LOG_ERROR("runFrame(): extractCameraMatrices() failed");
+    lifecycle_.markFailed();
+    return;
+  }
 
-  DrawItem item;
-  item.mesh = &*mesh_;
-  item.material = &*material_;
-  item.objectToWorld = identityMatrix();
-  const std::array<DrawItem, 1> drawItems{item};
+  auto* cameraData = static_cast<float*>(cameraBuffer_->mappedData());
+  for (std::size_t i = 0; i < 16; ++i) cameraData[i] = extractionResult.value().view[i];
+  for (std::size_t i = 0; i < 16; ++i) cameraData[16 + i] = extractionResult.value().projection[i];
+
+  std::vector<DrawItem> drawItems;
+  for (const atlantis::world::EntityId& id : world_.renderableEntities()) {
+    const auto renderableResult = world_.getRenderable(id);
+    ATLANTIS_CHECK_MSG(renderableResult.isOk(),
+                        "runFrame(): getRenderable() failed for a handle renderableEntities() just returned");
+    const auto resolveResult = resolveMeshAsset(renderableResult.value().meshAsset, knownMinimalCubeAssetId_);
+    if (resolveResult.isErr()) {
+      // Recoverable, per-entity: a single bad reference should not halt
+      // an otherwise-valid scene, matching the general "keep going, log,
+      // retry/skip" philosophy the existing format-/extent-change retry
+      // logic above already establishes.
+      ATLANTIS_LOG_ERROR("runFrame(): resolveMeshAsset() could not resolve a Renderable entity's own AssetId");
+      continue;
+    }
+    const auto worldMatrixResult = world_.getWorldMatrix(id);
+    ATLANTIS_CHECK_MSG(worldMatrixResult.isOk(),
+                        "runFrame(): getWorldMatrix() failed for a handle renderableEntities() just returned");
+
+    DrawItem item;
+    item.mesh = &*mesh_;
+    item.material = &*material_;
+    item.objectToWorld = worldMatrixResult.value();
+    drawItems.push_back(item);
+  }
 
   auto commandListResult = device_->createCommandList();
   if (commandListResult.isErr()) {
