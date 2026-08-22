@@ -1,12 +1,11 @@
 # ADR 0049: Entity Identity and Handle Invalidation
 
-- **Status:** Accepted. **A new "Proposed Amendment" section below
-  (2026-08-22, cross-`World`-instance `EntityId` use) is `Proposed`, not
-  `Accepted` — it does not change this ADR's own status or any decision
-  above it; see that section and
-  [plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md)'s
-  own Deviations for why Plan 0014's Human Review Approval is blocked on
-  it.**
+- **Status:** Accepted. **An "Accepted Amendment" section below
+  (2026-08-22, cross-`World`-instance `EntityId` use, stable identity
+  token) is now also `Accepted` — see that section's own "Human Review
+  Amendment Approval" note. It does not rewrite this ADR's original
+  Decision, Consequences, or Alternatives Considered above; it adds a new
+  precondition and mechanism those did not previously state.**
 - **Date:** 2026-08-22
 - **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
   approved 2026-08-22 as part of Spec 0014's Human Review Approval
@@ -412,25 +411,23 @@ nothing and its lifetime is entirely decoupled from the entity it names.
   increment, no separate "how close to the edge" threshold to choose or
   justify).
 
-## Proposed Amendment (2026-08-22, Plan 0014 Independent Review Round 2) — Cross-`World`-instance `EntityId` use
+## Accepted Amendment (2026-08-22, Plan 0014 Independent Review Round 2–3) — Cross-`World`-instance `EntityId` use, stable identity token
 
-**Status: Proposed — not yet Accepted. This section does not change any
-`Accepted` Decision, Consequence, or Alternative above; it adds a new,
-previously-undecided precondition. [plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md)'s
-own Human Review Approval is blocked on this section reaching Accepted,
-per that Plan's own Independent Review Round 2.**
+**Status: Accepted.** This section does not rewrite any `Accepted`
+Decision, Consequence, or Alternative above; it adds a new precondition
+and mechanism `EntityId`/`World` did not previously state. See "Human
+Review Amendment Approval (2026-08-22)" at the end of this section for
+the formal record.
 
 **Human Review direction (2026-08-22):** of the two options originally
 proposed below, Human Review **rejected Option A** (documented,
-unenforceable UB) and **directed Option B**, with a specific mechanism:
-a stable, per-`World` identity **token** — not a global, process-wide
-incrementing instance counter. Option A's own text is retained
-unmodified immediately below for the historical record of what was
-considered and rejected, per this repository's own "history stays
-intact" convention for ADRs; Option B is expanded below it into the full
-concrete design Human Review directed. This section remains `Proposed`
-— not `Accepted` — until a subsequent, explicit Human Review Approval
-note is recorded.
+unenforceable UB) and **directed, then formally accepted, Option B**,
+with a specific mechanism: a stable, per-`World` identity **token** — not
+a global, process-wide incrementing instance counter. Option A's own text
+is retained unmodified immediately below for the historical record of
+what was considered and rejected, per this repository's own "history
+stays intact" convention for ADRs; Option B is expanded below it into the
+full concrete design Human Review directed and then accepted.
 
 ### Context
 
@@ -462,7 +459,7 @@ one **validates against the other's own first entity by construction**,
 on the single most common possible sequence (first entity in each), not
 a statistically remote coincidence.
 
-### Decision (proposed)
+### Decision
 
 **Option A — NOT ADOPTED. Rejected by Human Review, 2026-08-22. Retained
 below, unmodified, only for the record of what was considered — skip to
@@ -503,7 +500,7 @@ process lifetime; Spec 0014's Non-Goals exclude a second Client/process)
 (e.g. a Serialization/Stable-Identity Spec, or a Tool/Editor protocol
 maintaining a staging `World`), not silently deferred without a record.
 
-**Option B — ADOPTED DIRECTION (Human Review, 2026-08-22): a stable,
+**Option B — ACCEPTED (Human Review, 2026-08-22): a stable,
 heap-allocated, address-stable `World` identity token, not a global
 instance counter.**
 
@@ -572,44 +569,87 @@ what makes the token's own identity survive a `World`'s own object-
 identity change across a move, exactly the property "old `EntityId`
 stays valid after a move" requires.
 
-**`EntityId` gains a third field:**
+**`EntityId` gains a third field — private, not a writable public raw
+pointer.** `index`/`generation` stay public, unchanged in form from
+before this amendment; `worldIdentity_` is `private`, settable only by
+`World` itself (a `friend`), via a `private` constructor `World` alone
+may call:
 
 ```cpp
 // entity_id.h
 namespace atlantis::world {
-class WorldIdentity;  // forward declaration only
+class World;           // forward declaration (friend)
+class WorldIdentity;   // opaque forward declaration only
 
 struct EntityId {
   std::uint32_t index = std::numeric_limits<std::uint32_t>::max();
   std::uint64_t generation = 0;
-  const WorldIdentity* worldIdentity = nullptr;
 
+  EntityId() = default;
   friend bool operator==(const EntityId&, const EntityId&) = default;
+
+ private:
+  friend class World;  // only World may construct a non-default EntityId
+                        // or read worldIdentity_
+  EntityId(std::uint32_t idx, std::uint64_t gen, const WorldIdentity* identity)
+      : index(idx), generation(gen), worldIdentity_(identity) {}
+  const WorldIdentity* worldIdentity_ = nullptr;
 };
-inline constexpr EntityId kInvalidEntityId{};  // worldIdentity == nullptr
+inline constexpr EntityId kInvalidEntityId{};  // worldIdentity_ == nullptr
 }  // namespace atlantis::world
 ```
 
-The defaulted `operator==` now compares all three fields automatically —
-satisfying "equality must include identity" with no separately written
-comparison logic. `worldIdentity` is a plain observer pointer: `EntityId`
-never dereferences it, never allocates or frees anything through it, and
-owns nothing — unchanged in *kind* from `index`/`generation`, which were
-already non-owning values. A pointer to a type with **zero fields**,
-used **exclusively** for equality comparison and never dereferenced by
-any caller, exposes no Runtime-owned state across the public boundary —
-this is a materially different case from
-[ADR-0033](0033-runtime-authority-and-client-boundary.md)'s own "no raw
-pointer/reference to a Runtime-owned object" rule, which targets pointers
-that grant access to live, mutable data; `WorldIdentity` has no data to
-grant access to.
+`index`/`generation` remain ordinary public data — this amendment does
+not change their existing, already-`Accepted` visibility or any code that
+already reads them. Only `worldIdentity_` moves behind `private`: no
+caller can read, forge, or overwrite it directly (e.g. via
+`reinterpret_cast` plus direct assignment), closing the loophole a plain
+public pointer field would otherwise leave — a caller can still *hold*,
+*copy*, and *compare* an `EntityId` freely (the defaulted `operator==`
+compares all three members regardless of their access level, since a
+defaulted comparison operator has the same access as if written inside
+the class), but cannot construct or mutate one with an arbitrary
+identity. `EntityId` keeps a public, `= default` default constructor
+(needed for `kInvalidEntityId` and every other "no entity yet" use
+already throughout this Spec) and remains trivially copyable — declaring
+an ordinary (non-special-member) private constructor does not affect
+`std::is_trivially_copyable`, which only examines the copy/move
+constructors, copy/move assignment, and destructor, all of which stay
+implicitly generated and trivial here. `worldIdentity_` remains a plain
+observer pointer: `EntityId` never dereferences it, never allocates or
+frees anything through it, and owns nothing — unchanged in *kind* from
+`index`/`generation` already being non-owning values. A pointer to a type
+with **zero fields**, private, used **exclusively** for equality
+comparison and never dereferenced by any caller, exposes no Runtime-owned
+state across the public boundary — this is a materially different case
+from [ADR-0033](0033-runtime-authority-and-client-boundary.md)'s own "no
+raw pointer/reference to a Runtime-owned object" rule, which targets
+pointers that grant access to live, mutable data; `WorldIdentity` has no
+data to grant access to, and is now additionally not even writable by a
+caller.
+
+**`EntityId` must never be serialized, persisted, or used across a
+process boundary.** `worldIdentity_`'s own value is a heap address,
+meaningful only within the process and `World` instance that produced
+it — it has no meaning after a process restart, in a different process's
+own address space, or written to any durable medium. This is not a new
+restriction invented by this amendment: [Spec 0014](../specs/0014-world-scene-foundation.md)'s
+own Non-Goals already exclude any serialization, scene file format, or
+cross-process/Client consumer of `World` state; this amendment states the
+concrete reason `EntityId` specifically, not merely `World` generally,
+inherits that exclusion — stable, cross-session identity remains the
+explicitly deferred Serialization/Stable-Identity Spec's own future
+scope (Alternatives Considered, "a stable GUID," above), not something
+this amendment repurposes the identity token to provide.
 
 **Validation ordering — identity before slot/generation, with an
-explicit carve-out for the sentinel:**
+explicit carve-out for the sentinel, and a moved-from guard:**
 
 ```cpp
 Result<void, WorldError> World::validate(EntityId id) const {
-  if (id.worldIdentity != nullptr && id.worldIdentity != identity_.get())
+  ATLANTIS_CHECK_MSG(identity_ != nullptr,
+                      "World::validate() called on a moved-from World");
+  if (id.worldIdentity_ != nullptr && id.worldIdentity_ != identity_.get())
     return Result<void, WorldError>::Err(WorldError::WrongWorld);
   if (id.index >= slots_.size() || !slots_[id.index].alive
       || slots_[id.index].generation != id.generation)
@@ -618,8 +658,8 @@ Result<void, WorldError> World::validate(EntityId id) const {
 }
 ```
 
-The `id.worldIdentity != nullptr` guard is deliberate: `kInvalidEntityId`
-(and any other default-constructed `EntityId`) carries `worldIdentity ==
+The `id.worldIdentity_ != nullptr` guard is deliberate: `kInvalidEntityId`
+(and any other default-constructed `EntityId`) carries `worldIdentity_ ==
 nullptr`, which is never "a foreign instance's identity," only "no
 claimed identity at all" — without this guard, the existing sentinel
 would incorrectly report `WrongWorld` instead of its own existing,
@@ -627,9 +667,35 @@ unchanged `InvalidEntity` classification. A real handle from a
 **different, live** `World` (non-null, non-matching pointer) correctly
 reaches `WrongWorld`; every other case reaches the existing, unmodified
 index/generation check exactly as before. `isValid(EntityId) const ->
-bool` applies the same two-part check, collapsed to a boolean — its own
-signature and existing callers are unaffected by which specific reason a
-handle fails.
+bool` applies the same identity-then-moved-from-then-slot/generation
+checks, collapsed to a boolean — its own signature and existing callers
+are unaffected by which specific reason a handle fails. `validate()` is a
+`private` member of `World` — `EntityId`'s own `friend class World;`
+declaration exists precisely so `World`'s own methods can read
+`worldIdentity_` here and nowhere outside `World` can.
+
+**Moved-from `World`: only destructible or move-constructible-from
+again; every other call is a programmer error, checked, not silently
+tolerated.** After `World b = std::move(a);`, `a`'s own `identity_`
+becomes `nullptr` (`std::unique_ptr`'s own guaranteed moved-from state);
+this is the exact, already-available signal `World` uses to detect its
+own moved-from state — no new flag is introduced. `identity_ != nullptr`
+is asserted (`ATLANTIS_CHECK_MSG`) at the start of every public method
+except the constructor, destructor, and move constructor itself (which
+must remain callable on an already-moved-from source, matching ordinary
+`std::vector`/`std::unique_ptr` semantics — moving from an empty/moved-
+from object is always well-defined and produces an equally empty
+destination). Every `EntityId`-accepting method gets this for free via
+`validate()`, above; the few methods that do not accept an `EntityId`
+(`createEntity()`, `updateTransforms()`, `clearActiveCamera()`,
+`activeCamera()`) each perform the identical check directly at entry.
+Calling any of these on a moved-from `World` is a genuine programmer
+error — the object's own useful state no longer exists to operate on —
+squarely the "violated precondition/invariant fails fast"
+[AGENTS.md](../AGENTS.md) reserves for assertions, the same category
+[ADR-0049](0049-entity-identity-and-handle-invalidation.md)'s own
+existing Decision already uses for internal bookkeeping corruption, not
+the `Result`-shaped stale-handle case.
 
 **`WorldError` gains a fourth enumerator:**
 
@@ -644,7 +710,7 @@ enum class WorldError {
 
 **Lifetime remains a distinct concern `WrongWorld` does not, and cannot,
 cover.** `WrongWorld` only helps when **both** `World` instances are
-still alive — comparing `id.worldIdentity` against a live
+still alive — comparing `id.worldIdentity_` against a live
 `identity_.get()` is a well-defined pointer-value comparison. Using an
 `EntityId` after **its own** `World` instance has been destroyed (its
 `WorldIdentity` freed along with it) is not something any identity
@@ -732,8 +798,50 @@ larger-scale entity count.
 
 ### Disposition
 
-Pending Human Review's own explicit Approval note on this amendment's
-final wording (direction already given, 2026-08-22 — see above). Until
-this section is marked `Accepted`,
-[Plan 0014](../plans/0014-world-scene-foundation.md) does not begin
-Implementation.
+`Accepted` — see "Human Review Amendment Approval" immediately below.
+[Plan 0014](../plans/0014-world-scene-foundation.md) may proceed to its
+own Human Review Approval; Implementation itself still waits on
+[PR #67](https://github.com/slmao/Atlantis/pull/67) being merged, per
+that Plan's own Approval note and
+[specs/README.md](../specs/README.md).
+
+### Human Review Amendment Approval (2026-08-22)
+
+Reviewed and approved by slmao (`slmao <slmaosjtu@gmail.com>`, this
+repository's git-identified maintainer) on 2026-08-22. This approval
+accepts, in full, the concrete design recorded in this section above:
+
+1. `World` exclusively owns one heap-allocated, address-stable, opaque
+   `WorldIdentity` token — no global counter, no random identifier, no
+   shared ownership, no new third-party dependency.
+2. `EntityId` is composed of `index` (`uint32_t`), `generation`
+   (`uint64_t`), and a non-owning identity reference to that token.
+3. The identity field is `private`, caller-immutable implementation
+   state — `EntityId` publicly exposes only the value semantics needed
+   (`index`/`generation` as before, default construction, the invalid
+   sentinel, and equality comparison), never a writable raw pointer.
+4. `EntityId` must never be serialized, persisted, or used across a
+   process boundary.
+5. Every `World` API validates identity before slot/generation; misuse
+   between two simultaneously live `World` instances returns
+   `Err(WorldError::WrongWorld)`.
+6. `EntityId` remains a strictly borrowed handle that must not outlive
+   the `World` that issued it; use after that `World`'s own destruction
+   is a lifetime precondition violation, not a `Result`.
+7. `World` is not copyable, is move-constructible, and is not
+   move-assignable; move-construction transfers the identity token and
+   all state together, so an `EntityId` valid before the move remains
+   valid after it, against the moved-to instance.
+8. A moved-from `World` guarantees only that it remains destructible or
+   may be move-constructed from again; any other call is a programmer
+   error, caught by an explicit `ATLANTIS_CHECK`-based guard, not
+   silently tolerated.
+9. Generation-based retirement at the maximum representable value remains
+   unconditional and permanent — no historical handle ever revalidates,
+   unchanged from this ADR's own original, already-`Accepted` Decision.
+10. Equality (and any hash, if one is ever publicly provided) must include
+    identity; no fixed `EntityId` byte size is promised.
+
+This approval does not reopen or modify this ADR's own original
+`Accepted` Decision, Consequences, or Alternatives Considered above (the
+pre-amendment text) — only this amendment section is newly `Accepted`.

@@ -640,9 +640,9 @@ Explicitly excluded from this Spec's design:
 
 **Entity lifecycle and identity** (see
 [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md); the
-shape below is superseded by this Spec's own "Proposed Amendment"
-section further down — not yet `Accepted` — which adds a third,
-`World`-identity field)
+shape below is superseded by this Spec's own "Accepted Amendment"
+section further down, which adds a third, private `World`-identity
+field)
 
 - `EntityId` is an index+generation value type (`{ std::uint32_t index;
   std::uint64_t generation; }`, 16 bytes), value-comparable, with a fixed
@@ -1351,51 +1351,67 @@ remain later, separately-specced work, per
 [docs/project-blueprint.md](../docs/project-blueprint.md) and this
 document's own Non-Goals above.
 
-## Proposed Amendment (2026-08-22) — Stable `World` identity in `EntityId`
+## Accepted Amendment (2026-08-22) — Stable `World` identity in `EntityId`
 
-**Status: Proposed — not yet Accepted.** Recorded following Human Review
-direction responding to Plan 0014's Independent Review Round 2 finding
-(cross-`World`-instance `EntityId` use — see
+**Status: Accepted.** Recorded following Human Review direction, then
+formal approval, responding to Plan 0014's Independent Review Round 2
+finding (cross-`World`-instance `EntityId` use — see
 [plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md)'s
 own Deviations). Does not alter the Human Review Approval recorded above;
 that approval covered the document as it stood on 2026-08-22, before this
-finding existed.
+finding existed — see "Human Review Amendment Approval" below for the
+formal record of this section's own approval.
 
 **What changed:** Human Review rejected treating cross-`World`-instance
 `EntityId` use as an undetectable documented precondition violation, and
 separately rejected resolving it with a global, incrementing per-process
-`World`-instance counter. Instead, Human Review directed: each `World`
-instance owns one heap-allocated, address-stable, opaque identity token
-for its own exclusive lifetime; `EntityId` carries a non-owning reference
-to that token alongside its existing index and generation; every `World`
-API validates identity **before** slot/generation; a handle used against
-a **different, currently live** `World` instance is rejected with a new,
-distinct `WorldError::WrongWorld` — never silently misapplied to an
-unrelated entity. Full design rationale, exact validation ordering, and
-rejected alternatives are recorded in
+`World`-instance counter. Instead, Human Review directed, then accepted:
+each `World` instance exclusively owns one heap-allocated, address-stable,
+opaque identity token for its own exclusive lifetime; `EntityId` carries a
+non-owning, **private** reference to that token alongside its existing
+public `index`/`generation`; every `World` API validates identity
+**before** slot/generation; a handle used against a **different,
+currently live** `World` instance is rejected with a new, distinct
+`WorldError::WrongWorld` — never silently misapplied to an unrelated
+entity. Full design rationale, exact validation ordering, and rejected
+alternatives are recorded in
 [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s own
 amendment; this section states the requirements-level consequence, not a
 second copy of the architecture.
 
-- **`EntityId` gains a third field** — `{ std::uint32_t index;
-  std::uint64_t generation; const WorldIdentity* worldIdentity; }` (the
-  identity type itself is opaque, private to `Atlantis::World`'s own
-  implementation) — still a plain, trivially-copyable value type owning
-  nothing (`worldIdentity` is a non-owning observer pointer, exactly like
-  `index`/`generation` are non-owning values). **This Spec's prior "16
-  bytes" claim (Requirements, "Entity lifecycle and identity") is
-  superseded and not replaced with a new fixed number** — the exact
+- **`EntityId` gains a third, `private` field** — `index`/`generation`
+  stay public, unchanged in form from before this amendment; a
+  non-owning identity reference to an opaque `WorldIdentity` token is
+  added as `private` implementation state, settable only by `World`
+  itself. `EntityId` publicly exposes only what is necessary: default
+  construction (the invalid sentinel), the existing public
+  `index`/`generation` values, and equality comparison (which still
+  includes identity, since a defaulted comparison operator has access to
+  private members) — **never a caller-writable raw pointer.** No caller
+  can forge or overwrite the identity field directly. `EntityId` remains
+  a plain, trivially-copyable value type owning nothing. **This Spec's
+  prior "16 bytes" claim (Requirements, "Entity lifecycle and identity")
+  is superseded and not replaced with a new fixed number** — the exact
   resulting size is pointer-width- and alignment-dependent, an
   Implementation-time detail, not a claim this Spec fixes.
 - **`WorldError` gains a fourth enumerator, `WrongWorld`**, returned when
   a `Result`-returning API's `EntityId` argument carries a non-null
-  `worldIdentity` that does not match the receiving `World` instance's
-  own token — checked before any index/generation check, since a
-  mismatched identity makes those fields meaningless relative to this
-  instance. The existing sentinel `kInvalidEntityId`
-  (`worldIdentity == nullptr`) is unaffected: a null identity is never
-  treated as "wrong," only as ordinarily invalid (`InvalidEntity`),
-  preserving its existing behavior exactly.
+  identity that does not match the receiving `World` instance's own
+  token — checked before any index/generation check, and before a
+  moved-from-`World` check (below), since a mismatched identity makes
+  those fields meaningless relative to this instance. The existing
+  sentinel `kInvalidEntityId` (no claimed identity) is unaffected: a null
+  identity is never treated as "wrong," only as ordinarily invalid
+  (`InvalidEntity`), preserving its existing behavior exactly.
+- **`EntityId` must never be serialized, persisted, or used across a
+  process boundary.** Its identity component is a heap address,
+  meaningful only within the process and `World` instance that produced
+  it. This states explicitly, for `EntityId` specifically, an exclusion
+  this Spec's own Non-Goals already establish for `World` generally (no
+  serialization, no scene file format, no cross-process/Client consumer
+  — see Non-Goals above); stable, cross-session identity remains the
+  separately deferred Serialization/Stable-Identity Spec's own future
+  scope, not repurposed from this token.
 - **Lifetime remains a separate concern from cross-instance confusion.**
   `EntityId` is still a strictly borrowed, non-owning handle: using it
   after the `World` instance that issued it has been destroyed remains a
@@ -1412,10 +1428,23 @@ second copy of the architecture.
   and must be neither copyable nor move-assignable — both would let two
   live `World` "identities" apply to overlapping state, defeating the
   very check this amendment adds.
+- **A moved-from `World` guarantees only that it remains destructible or
+  may be move-constructed from again.** Any other call on a moved-from
+  `World` (e.g. `createEntity()`, any `EntityId`-accepting method) is a
+  programmer error, caught by an explicit assertion-based check, not
+  silently tolerated or left to produce unspecified behavior.
 
-**Disposition:** pending Human Review. Until both this section and
+### Human Review Amendment Approval (2026-08-22)
+
+Reviewed and approved by slmao (`slmao <slmaosjtu@gmail.com>`, this
+repository's git-identified maintainer) on 2026-08-22, accepting this
+section's design in full, matching
 [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s own
-amendment reach `Accepted`,
-[Plan 0014](../plans/0014-world-scene-foundation.md) treats this as the
-adopted resolution *direction*, not yet a ratified contract —
-Implementation must not begin until both are `Accepted`.
+"Human Review Amendment Approval" note item-for-item. This approval does
+not reopen or modify the Human Review Approval recorded above (the
+pre-amendment document) — only this amendment section is newly
+`Accepted`. [Plan 0014](../plans/0014-world-scene-foundation.md), synced
+to this design, is separately approved — see that Plan's own Human
+Review Approval note. Implementation itself still waits on
+[PR #67](https://github.com/slmao/Atlantis/pull/67) being merged — see
+[specs/README.md](README.md).
