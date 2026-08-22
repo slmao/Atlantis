@@ -3,6 +3,9 @@ add_executable(atlantis_world_tests
   hierarchy_tests.cpp
   math_contract_tests.cpp
   update_transforms_tests.cpp
+  camera_tests.cpp
+  renderable_tests.cpp
+  traversal_determinism_tests.cpp
   module_boundary_tests.cpp
 )
 

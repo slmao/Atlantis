@@ -272,6 +272,88 @@ atlantis::Result<std::array<float, 16>, WorldError> World::getWorldMatrix(Entity
   return atlantis::Result<std::array<float, 16>, WorldError>::Ok(slots_[id.index()].cachedWorldMatrix);
 }
 
+atlantis::Result<std::monostate, WorldError> World::setCamera(EntityId id, Camera camera) {
+  if (auto r = validate(id); r.isErr()) return r;
+  slots_[id.index()].camera = camera;
+  return atlantis::Result<std::monostate, WorldError>::Ok({});
+}
+
+atlantis::Result<std::monostate, WorldError> World::removeCamera(EntityId id) {
+  if (auto r = validate(id); r.isErr()) return r;
+  slots_[id.index()].camera.reset();
+  if (activeCamera_.has_value() && *activeCamera_ == id) {
+    activeCamera_.reset();
+  }
+  return atlantis::Result<std::monostate, WorldError>::Ok({});
+}
+
+atlantis::Result<Camera, WorldError> World::getCamera(EntityId id) const {
+  if (auto r = validate(id); r.isErr()) return atlantis::Result<Camera, WorldError>::Err(r.error());
+  const Slot& slot = slots_[id.index()];
+  if (!slot.camera.has_value()) return atlantis::Result<Camera, WorldError>::Err(WorldError::NoCameraComponent);
+  return atlantis::Result<Camera, WorldError>::Ok(*slot.camera);
+}
+
+atlantis::Result<std::monostate, WorldError> World::setActiveCamera(EntityId id) {
+  if (auto r = validate(id); r.isErr()) return r;
+  if (!slots_[id.index()].camera.has_value()) {
+    return atlantis::Result<std::monostate, WorldError>::Err(WorldError::NoCameraComponent);
+  }
+  activeCamera_ = id;
+  return atlantis::Result<std::monostate, WorldError>::Ok({});
+}
+
+void World::clearActiveCamera() noexcept {
+  ATLANTIS_CHECK_MSG(identity_ != nullptr, "World::clearActiveCamera() called on a moved-from World");
+  activeCamera_.reset();
+}
+
+std::optional<EntityId> World::activeCamera() const noexcept {
+  ATLANTIS_CHECK_MSG(identity_ != nullptr, "World::activeCamera() called on a moved-from World");
+  return activeCamera_;
+}
+
+atlantis::Result<std::monostate, WorldError> World::setRenderable(EntityId id, Renderable renderable) {
+  if (auto r = validate(id); r.isErr()) return r;
+  slots_[id.index()].renderable = renderable;
+  return atlantis::Result<std::monostate, WorldError>::Ok({});
+}
+
+atlantis::Result<std::monostate, WorldError> World::removeRenderable(EntityId id) {
+  if (auto r = validate(id); r.isErr()) return r;
+  slots_[id.index()].renderable.reset();
+  return atlantis::Result<std::monostate, WorldError>::Ok({});
+}
+
+atlantis::Result<Renderable, WorldError> World::getRenderable(EntityId id) const {
+  if (auto r = validate(id); r.isErr()) return atlantis::Result<Renderable, WorldError>::Err(r.error());
+  const Slot& slot = slots_[id.index()];
+  if (!slot.renderable.has_value()) {
+    // D11's own WorldError enumerator set has no Renderable-specific
+    // "absent component" value (only NoCameraComponent, named for
+    // setActiveCamera()'s own distinct failure mode) -- reusing it here
+    // is the closest existing semantic fit for "valid entity, requested
+    // optional component absent," preserving WorldError's own four-
+    // enumerator exhaustiveness rather than adding a fifth. Disclosed as
+    // a minor, non-architectural interpretation; this Plan's own
+    // validation scene never exercises this path (every Renderable
+    // entity has setRenderable() called before any getRenderable()).
+    return atlantis::Result<Renderable, WorldError>::Err(WorldError::NoCameraComponent);
+  }
+  return atlantis::Result<Renderable, WorldError>::Ok(*slot.renderable);
+}
+
+std::vector<EntityId> World::renderableEntities() const {
+  ATLANTIS_CHECK_MSG(identity_ != nullptr, "World::renderableEntities() called on a moved-from World");
+  std::vector<EntityId> result;
+  for (std::uint32_t i = 0; i < slots_.size(); ++i) {
+    if (slots_[i].alive && slots_[i].renderable.has_value()) {
+      result.push_back(EntityId{i, slots_[i].generation, identity_.get()});
+    }
+  }
+  return result;
+}
+
 EntityId World::forceGenerationForTesting(EntityId id, std::uint64_t generation) {
   ATLANTIS_CHECK_MSG(identity_ != nullptr, "World::forceGenerationForTesting() called on a moved-from World");
   ATLANTIS_CHECK_MSG(id.index_ < slots_.size() && slots_[id.index_].alive,
