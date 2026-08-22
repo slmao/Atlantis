@@ -166,9 +166,9 @@ Atlantis Vulkan Backend, Atlantis RenderGraph, Atlantis Renderer, Atlantis
 Shader System, Atlantis Asset System, Atlantis Runtime, Atlantis Tools.**
 Atlantis Asset System (Spec 0012, `Approved`) depends on Atlantis Core
 only — no RHI, Renderer, or Shader System dependency; a composition root
-outside the module (a test, an example, or eventually Atlantis Runtime)
-loads its CPU-side asset data and is itself responsible for constructing
-any GPU resource from it. See
+outside the module (a test, an example, or Atlantis Runtime, which now
+does this in practice — see below) loads its CPU-side asset data and is
+itself responsible for constructing any GPU resource from it. See
 [ADR-0043](adr/0043-asset-system-module-boundary.md).
 
 Atlantis Runtime (Spec 0013, `Approved`) is the actual composition root —
