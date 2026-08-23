@@ -49,12 +49,15 @@ using atlantis::rhi::ResourceState;
 
 void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bindings,
              atlantis::rhi::CommandList& commandList) {
-  // Guard 0 (Spec 0007): every entry binds exactly one of
-  // target/depthTexture, and no two entries bind the same resource.
+  // Guard 0 (Spec 0007; widened to three kinds by Spec 0016): every entry
+  // binds exactly one of target/depthTexture/sampledTexture, and no two
+  // entries bind the same resource.
   std::unordered_set<std::size_t> seenBindingResources;
   for (const ResourceBinding& binding : bindings) {
-    const bool exactlyOne = (binding.target != nullptr) != (binding.depthTexture != nullptr);
-    ATLANTIS_CHECK_MSG(exactlyOne, "ResourceBinding must bind exactly one of target/depthTexture");
+    const int boundCount = (binding.target != nullptr) + (binding.depthTexture != nullptr) +
+                            (binding.sampledTexture != nullptr);
+    ATLANTIS_CHECK_MSG(boundCount == 1,
+                        "ResourceBinding must bind exactly one of target/depthTexture/sampledTexture");
     const auto [it, inserted] = seenBindingResources.insert(binding.resource.index());
     (void)it;
     ATLANTIS_CHECK_MSG(inserted, "ResourceBinding must not bind the same resource twice");
@@ -113,14 +116,17 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
 
       atlantis::rhi::RenderTarget* targetPtr = binding->target;
       atlantis::rhi::Texture* depthPtr = binding->depthTexture;
+      atlantis::rhi::SampledTexture* sampledTexturePtr = binding->sampledTexture;
 
       const std::size_t key = usage.resource.index();
       const ResourceState previous = currentState.count(key) ? currentState[key] : binding->incomingState;
       if (previous != *usage.state) {
         if (targetPtr != nullptr) {
           commandList.transitionResource(*targetPtr, previous, *usage.state);
-        } else {
+        } else if (depthPtr != nullptr) {
           commandList.transitionResource(*depthPtr, previous, *usage.state);
+        } else {
+          commandList.transitionResource(*sampledTexturePtr, previous, *usage.state);
         }
         currentState[key] = *usage.state;
       }
@@ -156,19 +162,33 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
   }
 
   // Trailing transition to the bound entry's finalState (Spec
-  // 0010/ADR-0039): only for a bound RenderTarget actually touched by at
-  // least one usage (currentState has an entry) and whose finalState is
-  // not std::nullopt -- no spurious transition for an unused binding or a
-  // binding that declines a trailing transition, and never for a
-  // depthTexture entry (never presented, never read back this round).
+  // 0010/ADR-0039; widened to sampledTexture bindings by Spec 0016/D4 --
+  // the same mechanism, not a new one): only for a bound RenderTarget or
+  // SampledTexture actually touched by at least one usage (currentState
+  // has an entry) and whose finalState is not std::nullopt -- no spurious
+  // transition for an unused binding or a binding that declines a
+  // trailing transition, and never for a depthTexture entry (never
+  // presented, never read back this round). For a sampledTexture upload
+  // pass, this is what actually produces the TransferDestination ->
+  // ShaderRead barrier *after* the pass's own copyBufferToTexture() call
+  // -- execute()'s per-usage loop above records every transition for a
+  // pass's declared usages before that pass's executeFn ever runs, so a
+  // usage tagged ShaderRead directly on the upload pass itself would
+  // wrongly land the barrier before the copy, not after it; the upload
+  // pass therefore declares only the TransferDestination usage, and
+  // ShaderRead is reached here, once, after every pass has executed.
   for (const ResourceBinding& binding : bindings) {
-    if (binding.target == nullptr) continue;
+    if (binding.target == nullptr && binding.sampledTexture == nullptr) continue;
     if (!binding.finalState.has_value()) continue;
     const std::size_t key = binding.resource.index();
     const auto it = currentState.find(key);
     if (it == currentState.end()) continue;
     if (it->second != *binding.finalState) {
-      commandList.transitionResource(*binding.target, it->second, *binding.finalState);
+      if (binding.target != nullptr) {
+        commandList.transitionResource(*binding.target, it->second, *binding.finalState);
+      } else {
+        commandList.transitionResource(*binding.sampledTexture, it->second, *binding.finalState);
+      }
       it->second = *binding.finalState;
     }
   }

@@ -691,6 +691,9 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Buffer>, atlantis::rhi::BufferCr
     case atlantis::rhi::BufferPurpose::Readback:
       usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
       break;
+    case atlantis::rhi::BufferPurpose::Staging:
+      usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+      break;
   }
 
   VkBufferCreateInfo bufferCreateInfo{};
