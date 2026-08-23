@@ -46,13 +46,26 @@ own procedural requirement explicitly:**
 1. **Authoring source**: a strict, versioned, plain-text grammar
    extending the mesh source's own established style — one line per
    field, fixed order, `std::from_chars`-parsed numbers, no general
-   parser library. Each node is declared with an **explicit, author-
-   assigned `node_id` (an unsigned integer, unique within one scene
-   file, not implied by declaration order)** — not the array position
-   it happens to appear at. A node's optional parent is authored as
-   another node's own `node_id` (or an explicit "no parent" sentinel,
-   e.g. `0` reserved and never a valid author-assigned id, or a literal
-   `none` token — exact spelling is a Plan-level detail). A
+   parser library. Illustrative shape (exact field names/order are a
+   Plan-level detail; the *grammar discipline* is fixed here):
+
+   ```
+   atlantis_scene_source_version: 1
+   node_count: 6
+   active_camera: 6
+   node: node_id=1 parent=none position=-2.5 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/minimal_cube
+   node: node_id=4 parent=3 position=0.0 1.3 0.0 rotation=0.0 0.7854 0.0 scale=1.0 1.0 1.0 mesh=meshes/minimal_cube
+   node: node_id=6 parent=none position=0.0 2.2 7.0 rotation=-0.3054 0.0 0.0 fov_y=1.0472 near_z=0.1 far_z=100.0
+   ```
+
+   Each node is declared with an **explicit, author-assigned `node_id`
+   (an unsigned integer, unique within one scene file, not implied by
+   declaration order)** — not the array position it happens to appear
+   at. A node's optional parent is authored as another node's own
+   `node_id`, or the literal token `none` (never a bare `0` or other
+   numeric sentinel, to avoid colliding with a legitimate author-chosen
+   `node_id` of `0`). A `Renderable`'s mesh reference is authored as
+   a
    `Renderable`'s mesh reference is authored as a **logical path**
    (`atlantis::asset_system::LogicalPath`'s own existing normalization
    rules), never an `AssetId` — the same "author writes what a human
@@ -86,44 +99,80 @@ own procedural requirement explicitly:**
    cross-checked against the artifact at load time, matching
    `AssetLoadError::MetadataArtifactMismatch`'s own established
    contract.
-3. **`DecodedScene`** (the in-memory value type
-   [ADR-0052](0052-scene-asset-module-boundary-and-ownership.md)
-   defines): a flat array, one entry per node, in the artifact's own
-   dense array-index order, each entry carrying its local `Transform`,
-   an optional `Camera`, an optional `Renderable{AssetId}`, its parent
-   as a plain array index (or "no parent"), plus a separate
-   active-camera array index (or "none"). No `node_id`, no logical
-   path, and no `Atlantis::World` type appear anywhere in this
-   structure — the authoring-time human-facing identity and the
-   source-file mesh reference are both already resolved away by cook
-   time; only `World`'s own real `EntityId`s, minted fresh at
-   instantiation, are the durable identity from this point on
-   (`EntityId`/`WorldIdentity` are never written to, or read from, any
-   artifact — Spec 0014's own Non-Goal, unaffected by this Spec).
+3. **`DecodedScene` is an `Atlantis::AssetSystem`-owned value type
+   using only `Atlantis::AssetSystem`/`Atlantis::Core`-owned field
+   types — never `atlantis::world::Transform`/`Camera`/`Renderable`
+   directly.** This is a hard constraint, not a stylistic choice: if
+   `DecodedScene` named a `world::Transform` field, `Atlantis::AssetSystem`
+   would have to `#include <atlantis/world/transform.h>`, giving
+   `AssetSystem` a real compile-time dependency on `Atlantis::World` —
+   exactly the cycle [ADR-0052](0052-scene-asset-module-boundary-and-ownership.md)'s
+   own Decision forbids (`World` already depends on `AssetSystem`).
+   Concretely: a flat array of `DecodedSceneNode`, one entry per node,
+   in the artifact's own dense array-index order, each entry carrying
+   a plain `DecodedTransform` (nine `float`s: position xyz, Euler
+   radians xyz, scale xyz — the same flat-float shape
+   `MeshSourceVertex` already establishes for authoring-facing data, not
+   a shared struct with `world::Transform`), an optional
+   `DecodedCamera` (`fovYRadians`/`nearZ`/`farZ`, three `float`s), an
+   optional `DecodedRenderable` (one `AssetId`), its parent as a plain,
+   **range-verified** array index (or a "no parent" sentinel), plus a
+   separate, **range-verified** active-camera array index (or "none").
+   `DecodedTransform`/`DecodedCamera`/`DecodedRenderable` are new,
+   `Atlantis::AssetSystem`-owned types, not aliases for or conversions
+   of any `Atlantis::World` type — converting each field into a real
+   `world::Transform`/`Camera`/`Renderable` happens exactly once, inside
+   `World`'s own new instantiation entry point
+   ([ADR-0054](0054-scene-loading-transactional-instantiation-contract.md)),
+   which is the one place in this pipeline permitted to know both
+   shapes. No `node_id`, no logical path, and no `Atlantis::World` type
+   of any kind appears anywhere in `DecodedScene` — the authoring-time
+   human-facing identity and the source-file mesh reference are both
+   already resolved away by cook time; only `World`'s own real
+   `EntityId`s, minted fresh at instantiation, are the durable identity
+   from this point on (`EntityId`/`WorldIdentity` are never written to,
+   or read from, any artifact or `DecodedScene` — Spec 0014's own
+   Non-Goal, unaffected by this Spec — and a `DecodedSceneNode`'s own
+   array index is never treated as, compared against, or convertible to
+   an `EntityId`).
 4. **Both the cooker and the loader independently validate their own
-   input** — this repository's already-established stance
-   (`AssetLoadError` exists specifically because a cooked artifact is
-   never assumed trustworthy just because *some* cooker produced it).
-   The cooker rejects, before writing any byte: a duplicate `node_id`,
-   a parent `node_id` that names no declared node, a parent cycle (a
-   node that is, transitively, its own ancestor — reusing the same
+   input, and — critically — that validation is exhaustive enough that
+   `DecodedScene` is a fully-proven-valid type by the time anything
+   downstream consumes it** (this is what lets
+   [ADR-0054](0054-scene-loading-transactional-instantiation-contract.md)
+   make `World` instantiation infallible, rather than reusing
+   `WorldError` for a scene-loading-specific condition). This
+   repository's already-established stance — `AssetLoadError` exists
+   specifically because a cooked artifact is never assumed trustworthy
+   just because *some* cooker produced it — is extended here with one
+   additional, semantic (not merely structural) check. The cooker
+   rejects, before writing any byte: a duplicate `node_id`; a parent
+   `node_id` that names no declared node; a parent cycle (a node that
+   is, transitively, its own ancestor — reusing the same
    walk-the-ancestor-chain algorithm
    [Plan 0014's own `setParent()`](../plans/0014-world-scene-foundation.md)
    already established, applied to the authoring graph instead of a
-   live `World`), more than one node claiming the active-camera role
-   (or the active-camera reference naming an undeclared `node_id`), and
-   any non-finite (`NaN`/`Inf`) authored float. The loader
-   independently re-validates the artifact's own internal consistency
-   at load time (magic, schema version, every offset/count internally
-   consistent, every parent/active-camera array index in range, no
-   node its own transitive ancestor) — **never assuming a well-formed
-   cooker output**, matching `ArtifactDecodeError`'s own existing
-   philosophy for the mesh artifact exactly. A `Renderable`'s
-   `AssetId` is *not* resolved against a known-asset table at decode
-   time — mirroring `resolveMeshAsset()`'s own existing split
+   live `World`); more than one node claiming the active-camera role,
+   or the active-camera reference naming an undeclared `node_id`;
+   **the active-camera-referenced node itself declaring no `Camera`**
+   (moved here, deliberately, from a candidate alternative of relying
+   on `World::setActiveCamera()`'s own runtime `NoCameraComponent`
+   check — see this ADR's own Alternatives Considered for why); and any
+   non-finite (`NaN`/`Inf`) authored float. The loader independently
+   re-validates every one of these same conditions against the
+   artifact's own bytes at load time (magic, schema version, every
+   offset/count internally consistent, every parent/active-camera array
+   index in range, no node its own transitive ancestor, the
+   active-camera node's own decoded record has its `Camera` fields
+   present) — **never assuming a well-formed cooker output**, matching
+   `ArtifactDecodeError`'s own existing philosophy for the mesh artifact
+   exactly. A `Renderable`'s `AssetId` is *not* resolved against a
+   known-asset table at decode time — mirroring `resolveMeshAsset()`'s
+   own existing split
    ([ADR-0051](0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)):
-   decode only decodes; asset resolution happens where the consumer
-   already knows what assets exist ([ADR-0054](0054-scene-loading-transactional-instantiation-contract.md)).
+   decode only decodes; **mesh dependency resolution is its own,
+   separate, later stage, with its own error domain, not part of
+   scene-artifact decoding** ([ADR-0054](0054-scene-loading-transactional-instantiation-contract.md)).
 
 ## Consequences
 
@@ -142,11 +191,24 @@ own procedural requirement explicitly:**
 - `DecodedScene` naming no `EntityId`/`WorldIdentity`/pointer anywhere
   makes "never persist Runtime identity" (this Spec's own Non-Goal)
   true by construction, not by convention someone could forget.
-- Duplicate-detection, cycle-detection, and non-finite-value rejection
-  are required at **both** cook time and load time — an artifact that
-  somehow reached disk in a bad state (hand-edited, corrupted,
-  transferred from an incompatible build) still fails safely at load,
-  not just at cook.
+- Duplicate-detection, cycle-detection, active-camera-has-`Camera`, and
+  non-finite-value rejection are required at **both** cook time and
+  load time — an artifact that somehow reached disk in a bad state
+  (hand-edited, corrupted, transferred from an incompatible build)
+  still fails safely at load, not just at cook.
+- `DecodedTransform`/`DecodedCamera`/`DecodedRenderable` being
+  `Atlantis::AssetSystem`-owned, `world`-independent types keeps
+  `AssetSystem`'s own module boundary exactly as narrow as it already
+  is (`Atlantis::Core` only) — no compile-time dependency on
+  `Atlantis::World` is introduced anywhere in the decode path.
+- Because decode-time validation is exhaustive over every structural
+  *and* semantic precondition `World` instantiation needs,
+  `DecodedScene` reaching that step is a genuine type-level guarantee,
+  not a documented-but-unenforced convention — letting
+  [ADR-0054](0054-scene-loading-transactional-instantiation-contract.md)
+  make instantiation infallible instead of inventing a parallel error
+  type that would mean the same thing `ArtifactDecodeError`-style
+  checks already ruled out.
 
 ### Negative / Trade-offs
 
@@ -184,6 +246,19 @@ own procedural requirement explicitly:**
   `World` that would own them exists yet
   ([ADR-0049](0049-entity-identity-and-handle-invalidation.md)'s own
   explicit prohibition, restated as this Spec's own Non-Goal).
+- **Rely on `World::setActiveCamera()`'s own existing
+  `Err(WorldError::NoCameraComponent)` runtime check instead of
+  validating this at cook/decode time.** Rejected — this was this
+  Spec's own original design and was corrected during self-review: it
+  would make `World`'s new instantiation entry point return
+  `Result<World, WorldError>`, reusing a `WorldError` enumerator whose
+  own established meaning is "a caller-supplied `EntityId` handle,
+  checked against a live `World`" for a condition that has nothing to
+  do with a caller-supplied handle — a scene-authoring mistake wearing
+  a different module's error type. Validating it here instead, as one
+  more structural/semantic precondition `DecodedScene` already
+  guarantees, keeps `WorldError`'s own domain exactly what it already
+  is and lets instantiation be infallible.
 - **Resolve `Renderable` mesh references to `AssetId` at load time,
   not cook time** (store the logical path in the artifact, resolve on
   every load). Rejected: reintroduces a source-path dependency into the

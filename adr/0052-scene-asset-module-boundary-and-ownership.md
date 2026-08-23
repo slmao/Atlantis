@@ -61,11 +61,16 @@ nothing existing could plausibly own it):
 
 1. **`Atlantis::AssetSystem` gains scene artifact encode (cook) and
    decode**, producing/consuming a new, neutral, in-memory
-   `DecodedScene` value type — a flat array of per-node data (local
-   Transform, an optional `Camera`, an optional `Renderable` carrying
-   an `atlantis::asset_system::AssetId`, a parent reference, an
-   active-camera reference) that names **no `Atlantis::World` type
-   anywhere**. This is the same shape `loadStaticMeshAsset()` already
+   `DecodedScene` value type — a flat array of per-node data, each
+   entry carrying its own `Atlantis::AssetSystem`-owned
+   `DecodedTransform`/optional `DecodedCamera`/optional
+   `DecodedRenderable` (an `atlantis::asset_system::AssetId`), a parent
+   reference, and an active-camera reference — that names **no
+   `Atlantis::World` type anywhere, by construction, not merely by
+   convention** (see
+   [ADR-0053](0053-scene-artifact-format-versioning-and-node-identity.md)'s
+   own Decision for exactly why this matters and the concrete field
+   shapes). This is the same shape `loadStaticMeshAsset()` already
    established for meshes: "reads the runtime artifact... returns
    CPU-side [data]... A composition root outside Asset System is
    responsible for" turning it into something else
@@ -78,31 +83,50 @@ nothing existing could plausibly own it):
    cross-checked against the artifact at load time
    (`AssetLoadError::MetadataArtifactMismatch`'s own precedent).
 2. **`Atlantis::World` gains one new, small, additive public entry
-   point that consumes a `DecodedScene` and constructs a fully-populated
-   `World` transactionally** (Spec 0015's own transactional-
+   point — `World fromDecodedScene(const DecodedScene&)` (exact name a
+   Plan-level detail) — that consumes an already-fully-validated
+   `DecodedScene` and returns a fully-populated `World` by value —
+   infallibly, not `Result`-wrapped** (Spec 0015's own transactional-
    instantiation requirement —
-   [ADR-0054](0054-scene-loading-transactional-instantiation-contract.md)).
-   This does not add a dependency edge: `World` already depends on
-   `Atlantis::AssetSystem` for `AssetId`; consuming one more neutral
-   value type from the same, already-permitted module is a broader use
-   of an existing edge, not a new one. Placing instantiation on `World`
-   itself — not in Runtime — keeps it reusable without duplication: the
-   headless image-regression test needs the identical "artifact bytes →
-   real `World`" capability Runtime's own bootstrap needs, and unlike
-   the small, easily-duplicated camera-math/scene-construction helpers
-   ADR-0051 accepted duplicating, a strict, validating binary-artifact
-   decoder-and-instantiator is exactly the kind of logic where a second,
-   independently-maintained copy risks silently drifting from the
-   first.
-3. **`Atlantis Runtime`'s own role shrinks to composition, not
-   translation**: call `Atlantis::AssetSystem`'s decode, call
-   `Atlantis::World`'s new instantiate-from-`DecodedScene` entry point,
-   swap the result in on success — the same "call other modules, wire
-   results together" shape Runtime's `initializeSteps()` already has for
-   every other resource (Device, Mesh, shader load). No new
-   Runtime-private translation file is required for this path (unlike
-   `scene_extraction.h`, which exists because World→Renderer output
-   genuinely has no other natural owner).
+   [ADR-0054](0054-scene-loading-transactional-instantiation-contract.md)
+   explains why every precondition is already guaranteed by the time
+   this function runs). **This function performs a real, concrete
+   conversion from `Atlantis::AssetSystem`'s own DTOs
+   (`DecodedTransform`/`DecodedCamera`/`DecodedRenderable`) into real
+   `world::Transform`/`Camera`/`Renderable` values** — this is
+   genuine translation work, not eliminated by this Decision, only
+   located in the one place permitted to know both shapes, so it never
+   needs its own separate name or file the way `scene_extraction.h`
+   does for the World→Renderer direction. Placing this conversion on
+   `World` itself does not add a dependency edge: `World` already
+   depends on `Atlantis::AssetSystem` for `AssetId`; consuming one more
+   neutral value type from the same, already-permitted module is a
+   broader use of an existing edge, not a new one. Placing instantiation
+   on `World` itself — not in Runtime — keeps it reusable without
+   duplication: the headless image-regression test needs the identical
+   "already-decoded scene → real `World`" capability Runtime's own
+   bootstrap needs, and unlike the small, easily-duplicated
+   camera-math/scene-construction helpers ADR-0051 accepted duplicating,
+   a strict, validating scene-instantiation routine is exactly the kind
+   of logic where a second, independently-maintained copy risks
+   silently drifting from the first.
+3. **`Atlantis Runtime`'s own role is composition and mesh-dependency
+   resolution, not `DecodedScene`→`World` translation** — that
+   translation is `World`'s own job, per item 2 above. Runtime still
+   does real work of its own: call `Atlantis::AssetSystem`'s decode,
+   resolve and eagerly load every `Renderable`'s mesh dependency against
+   a local resolver
+   ([ADR-0054](0054-scene-loading-transactional-instantiation-contract.md)),
+   call `Atlantis::World`'s new instantiation entry point, publish the
+   result on success — the same "call other modules, wire results
+   together" shape Runtime's `initializeSteps()` already has for every
+   other resource (Device, Mesh, shader load). No new Runtime-private
+   *translation* file is required for the `DecodedScene`→`World`
+   direction specifically (unlike `scene_extraction.h`, which exists
+   because the World→Renderer direction genuinely has no other natural
+   owner) — mesh-dependency resolution is orchestration, not a second
+   translation layer duplicating what `World`'s own entry point already
+   does.
 4. **The scene cooker is a new mode of the existing `atlantis_asset_cooker`
    Tools executable**, not a second standalone binary — reusing its CLI
    argument conventions, its `--validate-set`-style pattern, and its

@@ -59,11 +59,13 @@ has, not a new one.
   little-endian runtime artifact plus a metadata sidecar, atomically
   written, reusing the existing `atlantis_asset_cooker` Tools
   executable and CMake re-import-triggering pattern.
-- A Runtime load path that decodes the artifact, resolves every
-  `Renderable`'s mesh `AssetId` against assets Runtime has actually
-  loaded, and instantiates a fully-populated `Atlantis::World` —
-  transactionally: full success before anything is published, no
-  partial state on any failure.
+- A Runtime load path that decodes the artifact, resolves and eagerly
+  loads every `Renderable`'s mesh dependency against a small,
+  build-generated, locally-held resolver (never a global or persistent
+  asset database), and instantiates a fully-populated `Atlantis::World`
+  — transactionally: every mesh dependency resolved and loaded, and
+  `World` instantiation complete, before anything is published; no
+  partial state, and no `Entity` created at all, on any failure.
 - Strict validation at both cook time and load time: duplicate
   scene-local node ID, a parent referencing an undeclared node, a
   parent cycle, an invalid or missing active-camera reference, a
@@ -124,6 +126,15 @@ Explicitly excluded from this Spec's design:
   own public API.** This Spec is entirely upstream of `DrawItem`
   construction — the exact same `Renderer::drawFrame()`/`DrawItem`
   contract Spec 0014 already uses, unmodified.
+- **An independent Asset Catalog or Registry** — a persistent,
+  cross-scene, cross-session store mapping `AssetId`s to file locations.
+  Mesh-dependency location for this Spec's own scope is a small,
+  build-generated, per-scene manifest consumed into a local, immutable,
+  per-`RuntimeApplication` resolver — never a global, mutable, or
+  persistent database
+  ([ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)).
+  A real Asset Catalog remains a named, future Candidate Backlog item;
+  see Out of Scope / Future Work.
 - **The broader "stable GUID/handle schemes, schema versioning and
   migration" scope originally named for Candidate Backlog item 2**
   (`specs/README.md`'s own prior description) **— disclosed narrowing,
@@ -151,56 +162,116 @@ Explicitly excluded from this Spec's design:
   camera. See
   [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md).
 - **Cooker**: `atlantis::asset_system::cookScene(...)` (exact name a
-  Plan-level detail) reads the authoring source, validates it
-  (`DuplicateNodeId`, `UndeclaredParentReference`, `ParentCycle`,
-  `InvalidActiveCameraReference`, `NonFiniteValue` — exact enumerator
-  names a Plan-level detail, the *conditions* are fixed here), resolves
-  every `Renderable`'s logical path to an `AssetId` via the existing
-  `computeAssetId()`, remaps every `node_id` to a dense, zero-based
-  array index in declaration order, and writes a versioned, unconditionally
-  little-endian binary artifact plus a text metadata sidecar, atomically
-  (write-to-temp-then-rename, the existing pattern
-  `cookStaticMesh()`/`cook.h` already established). Exposed via a new
-  mode of the existing `atlantis_asset_cooker` Tools executable, not a
-  second binary.
+  Plan-level detail) reads the authoring source, validates it against
+  its own dedicated `SceneCookError`-style error enum (exact enumerator
+  names a Plan-level detail; the *conditions* are fixed here and are
+  distinct from every other error domain below): `DuplicateNodeId`, a
+  parent `node_id` naming no declared node, `ParentCycle`, more than one
+  node (or zero, if one is required) claiming the active-camera role, an
+  active-camera node with no declared `Camera`, and any non-finite
+  authored float. It resolves every `Renderable`'s logical path to an
+  `AssetId` via the existing `computeAssetId()`, remaps every `node_id`
+  to a dense, zero-based array index in declaration order, and writes a
+  versioned, unconditionally little-endian binary artifact plus a text
+  metadata sidecar, atomically (write-to-temp-then-rename, the existing
+  pattern `cookStaticMesh()`/`cook.h` already established). Exposed via
+  a new mode of the existing `atlantis_asset_cooker` Tools executable,
+  not a second binary.
 - **Loader**: `atlantis::asset_system::decodeScene(...)` (exact name a
-  Plan-level detail) reads the artifact and its metadata sidecar,
-  independently re-validates internal consistency (magic, schema
-  version, every offset/count consistent, every parent/active-camera
-  index in range, no cycle — never assuming a well-formed cooker
-  output), cross-checks the sidecar against the artifact, and returns a
-  `DecodedScene` — a flat, array-indexed, `Atlantis::World`-independent
-  value type naming no `EntityId`, `WorldIdentity`, pointer, or logical
-  path.
-- **Instantiation**: a new `Atlantis::World` entry point consumes a
-  `DecodedScene` and returns `atlantis::Result<World, WorldError>` — a
-  fully-populated, freshly-constructed `World` on success, or
-  `Err(WorldError::NoCameraComponent)` if the decoded active-camera node
-  has no `Camera` (the one genuinely reachable failure mode; every other
-  internal call is guaranteed to succeed by the loader's own prior
-  validation — see
-  [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)).
-  Two-pass, deterministic, ascending `DecodedScene` array order: every
-  node instantiated first, every parent link set second.
-- **Runtime asset resolution**: before calling `World`'s instantiation
-  entry point, Runtime confirms every decoded `Renderable`'s `AssetId`
-  matches an asset Runtime has actually loaded — extending
-  `resolveMeshAsset()`'s existing per-`AssetId` check to a whole-scene
-  pass; an unresolved reference fails the load before any `World` is
-  constructed, classified via `RuntimeInitError` (a new enumerator,
-  exact name a Plan-level detail), matching `initializeSteps()`'s own
-  existing failure-classification convention.
+  Plan-level detail) reads the artifact and its metadata sidecar against
+  its own dedicated `SceneArtifactDecodeError`-style enum — distinct
+  from `SceneCookError` and from the mesh pipeline's own
+  `ArtifactDecodeError` — independently re-validating every one of the
+  cooker's own conditions against the artifact's actual bytes (magic,
+  schema version, every offset/count consistent, every parent/active-
+  camera index in range and non-cyclic, the active-camera node's own
+  decoded record provably has `Camera` fields present — never assuming
+  a well-formed cooker output), cross-checks the sidecar against the
+  artifact, and returns a `DecodedScene` — a flat, array-indexed value
+  type owned entirely by `Atlantis::AssetSystem`, naming no
+  `Atlantis::World` type (`Transform`/`Camera`/`Renderable`), no
+  `EntityId`, no `WorldIdentity`, no pointer, and no logical path
+  anywhere in its own fields (see
+  [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md)
+  for the exact `DecodedTransform`/`DecodedCamera`/`DecodedRenderable`
+  DTO shapes and why they must not alias `Atlantis::World`'s own
+  types). **By the time `decodeScene()` returns `Ok`, `DecodedScene` is
+  exhaustively proven valid — structurally and semantically** — nothing
+  downstream re-derives or re-checks any of these conditions.
+- **Build-time mesh-dependency declaration**: a scene asset's own CMake
+  declaration (`atlantis_add_scene_asset(...)`, exact name a Plan-level
+  detail) names, explicitly, which already-declared mesh assets it
+  depends on (`MESH_DEPENDENCIES`) — never auto-discovered from cooked
+  artifact content, since CMake itself cannot run `computeAssetId()` or
+  parse a binary artifact. This wires real `add_dependencies()` build
+  ordering against each named mesh's own existing target, and emits a
+  small, per-scene, build-tree-local text manifest — each declared
+  dependency's own authoring-time logical path plus its own build-tree
+  artifact/metadata paths — via `file(GENERATE ...)`, the same mechanism
+  `atlantis_finalize_asset_validation()`'s `declared_assets.txt` already
+  uses. Rebuild scoping is exact: editing the scene source, the scene
+  cooker, or one of this scene's own declared mesh dependencies
+  re-triggers exactly this scene's own cook step, via ordinary CMake
+  `DEPENDS` staleness checking; an unrelated scene or mesh never appears
+  in this command's own dependency list and never triggers it — not a
+  new caching layer. A scene whose authoring source references a mesh
+  logical path never declared as a `MESH_DEPENDENCIES` entry is not a
+  build error — it surfaces at Runtime load time as an unresolved
+  `AssetId` (below).
+  See
+  [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md).
+- **Runtime mesh-dependency resolution and load**: Runtime reads its own
+  manifest (named by a new `BootstrapConfig` field, populated the same
+  CMake-compile-definition way every existing field already is) once at
+  startup, computes each entry's `AssetId` via `computeAssetId()` over
+  that entry's own logical path, and builds a local, immutable,
+  per-`RuntimeApplication` `AssetId → (artifactPath, metadataPath)`
+  resolver map — never a global or persistent one. After decoding the
+  scene, Runtime walks every `DecodedScene` `Renderable`, resolves its
+  `AssetId` against that map, and calls the existing
+  `loadStaticMeshAsset()` + `createMesh()` for every distinct resolved
+  `AssetId`, accumulating a mesh resource map (`AssetId → Mesh`).
+  **Every one of these resolutions and loads must succeed before any
+  `Entity` is created** — an unresolved `AssetId` or a failed load fails
+  the entire scene load immediately, classified via `RuntimeInitError`
+  (a new enumerator, exact name a Plan-level detail) — never
+  `WorldError`, `SceneCookError`, `SceneArtifactDecodeError`, or the
+  mesh pipeline's own `AssetLoadError` directly (Runtime's own
+  enumerator may wrap one for diagnostic detail, but the *classification*
+  callers observe is Runtime's own).
+- **Instantiation**: a new, **infallible** `Atlantis::World` entry point
+  — `World fromDecodedScene(const DecodedScene&)`, returning a
+  fully-populated `World` by value, never `Result`-wrapped — because
+  `decodeScene()`'s own exhaustive validation already guarantees every
+  precondition its internal calls depend on (see
+  [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)
+  for exactly which conditions and why this makes a `Result` return
+  type unnecessary rather than merely convenient). Two-pass,
+  deterministic, ascending `DecodedScene` array order: every node
+  instantiated first (converting each `DecodedTransform`/
+  `DecodedCamera`/`DecodedRenderable` into a real
+  `world::Transform`/`Camera`/`Renderable`), every parent link set
+  second, using a decoded-index→`EntityId` mapping that exists only for
+  the duration of this one function call — never part of `World`'s own
+  public state.
 - **Runtime bootstrap**: `BootstrapConfig` gains the scene artifact/
-  metadata paths as new fields, populated the same
-  CMake-compile-definition way every existing `BootstrapConfig` field
-  already is — no CLI parsing, no environment variable, no config file.
-  `initializeSteps()` replaces its call to `buildValidationScene()`
-  with: load asset → decode scene → resolve assets → instantiate
-  `World` → on any failure, `markFailed()` and propagate, exactly
-  matching its own existing per-step error-handling shape; on success,
-  the returned `World` becomes `RuntimeApplication`'s own `world_`
-  member, used by `runFrame()` exactly as today (Plan 0014 Section D9,
-  unchanged).
+  metadata paths and the mesh-dependency manifest path as new fields,
+  populated the same CMake-compile-definition way every existing
+  `BootstrapConfig` field already is — no CLI parsing, no environment
+  variable, no config file. `initializeSteps()` replaces its call to
+  `buildValidationScene()` with: decode scene → resolve and load every
+  mesh dependency into a local mesh resource map → call `World`'s
+  infallible instantiation entry point → **only once both the mesh
+  resource map and the `World` value are fully constructed**, move both
+  into `RuntimeApplication`'s own members, replacing whatever it held
+  before. Any failure at the decode or dependency-resolution stage
+  `markFailed()`s and propagates, exactly matching `initializeSteps()`'s
+  own existing per-step error-handling shape — no explicit rollback
+  code; an unpublished `World` or mesh resource map is simply destroyed
+  by ordinary C++ scope exit. `runFrame()` uses the published `World`
+  and mesh resource map exactly as today (Plan 0014 Section D9,
+  `resolveMeshAsset()` now querying a small map instead of one
+  hard-coded `AssetId`).
 - **First scene asset**: the exact five-cube, one-hierarchy,
   one-camera scene `buildValidationScene()` currently hand-builds is
   authored as this Spec's own first, and only required, scene asset —
@@ -235,11 +306,14 @@ Explicitly excluded from this Spec's design:
   a hot path — no performance budget beyond "does not noticeably delay
   Runtime startup," matching Spec 0014's own similarly unbudgeted
   scene-construction cost.
-- **Memory:** `DecodedScene` is a flat, bounded-size, single-owner value
-  — freed once instantiation (success or failure) completes; no
-  persistent cache, no derived-data store beyond the artifact/metadata
-  sidecar CMake's own build tree already keeps for every other cooked
-  asset.
+- **Memory:** `DecodedScene`, the mesh-dependency resolver map, and the
+  mesh resource map are all flat, bounded-size values scoped to one
+  scene load — the resolver and `DecodedScene` are freed once
+  instantiation completes; no persistent cache, and no derived-data
+  store beyond what CMake's own build tree already keeps for every
+  other cooked asset (the runtime artifact, its metadata sidecar, and
+  the new per-scene dependency manifest are all ordinary,
+  regenerated-every-build CMake outputs, not a new cache category).
 - **Portability (within the Vulkan-only Phase 1 constraint):** the
   artifact's unconditional little-endian encoding (matching
   `mesh_artifact.h`'s own established discipline) makes the format
@@ -253,32 +327,46 @@ Explicitly excluded from this Spec's design:
 
 ## Proposed Design
 
-Three stages, two transformation steps, per
-[ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md):
+Build time (once per scene, CMake-triggered) and load time (once per
+Runtime startup), per
+[ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md)
+and
+[ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md):
 
 ```
-authoring source (.scene.txt, human-edited)
-        │  cookScene()  — Atlantis::AssetSystem, build time
-        ▼
-runtime artifact (.ascene) + metadata sidecar (.ascene.meta.txt)
-        │  decodeScene()  — Atlantis::AssetSystem, load time
-        ▼
-DecodedScene (flat, array-indexed, World-independent, in memory)
-        │  Runtime's own asset-resolution pre-check (RuntimeInitError)
-        │  World's own instantiate-from-DecodedScene entry point
-        ▼
-Result<World, WorldError>  — full success, or no World at all
+Build time:
+  authoring source (.scene.txt) ─┐
+                                  ├─ cookScene() [AssetSystem] ─▶ runtime artifact (.ascene) + metadata sidecar
+  MESH_DEPENDENCIES (CMake) ─────┴─ file(GENERATE) ─────────────▶ per-scene dependency manifest (text, build-tree)
+
+Load time (Runtime::initializeSteps(), once, before the first frame):
+  dependency manifest ─▶ computeAssetId() per entry ─▶ local AssetId→(artifact,metadata) resolver map
+                                                              │
+  runtime artifact + sidecar ─▶ decodeScene() [AssetSystem] ─┼─▶ DecodedScene (fully validated; AssetSystem DTOs only)
+                                                              │         │
+                                          resolve + loadStaticMeshAsset()+createMesh() per Renderable AssetId
+                                                              │         │
+                                                    mesh resource map   │
+                                                    (AssetId → Mesh)    │
+                                                              │         ▼
+                                                              │   World::fromDecodedScene()  [World, infallible]
+                                                              │         │
+                                                              ▼         ▼
+                                    only on full success: publish (mesh resource map, World) together into RuntimeApplication
+                                    any failure at any stage: nothing published, no partial state, no explicit rollback code
 ```
 
 Module ownership follows
 [ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md):
-`Atlantis::AssetSystem` owns both transformation arrows (cook, decode);
-`Atlantis::World` owns the final arrow (instantiate); `Atlantis Runtime`
-composes the three calls in sequence, gaining no new Runtime-private
-translation file the way `scene_extraction.h` was needed for the
-World→Renderer direction. See each ADR's own Decision for the full
-reasoning; this section states the resulting shape, not a second copy
-of the architecture.
+`Atlantis::AssetSystem` owns both artifact-side transformation arrows
+(cook, decode) and the `DecodedTransform`/`DecodedCamera`/
+`DecodedRenderable` DTO shapes; `Atlantis::World` owns the one arrow
+that produces a real `World` (`fromDecodedScene()`, infallible, doing
+the genuine DTO→domain-type conversion internally); `Atlantis Runtime`
+owns mesh-dependency resolution and loading (a real capability, not
+mere composition) and publishes the final result transactionally. See
+each ADR's own Decision for the full reasoning; this section states the
+resulting shape, not a second copy of the architecture.
 
 ## Architectural Impact
 
@@ -292,18 +380,26 @@ single-responsibility ADR, per AGENTS.md's Golden Rule:
 
 - [ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)
   — module boundary and ownership: no new top-level module; cook/decode
-  extends `Atlantis::AssetSystem`; instantiate extends
-  `Atlantis::World`; Runtime composes, translates nothing new.
+  and the `DecodedScene` DTO shapes extend `Atlantis::AssetSystem`
+  (never naming an `Atlantis::World` type, avoiding a dependency cycle);
+  the real `DecodedScene`→`World` conversion extends `Atlantis::World`
+  itself; Runtime's own new work is mesh-dependency resolution/loading,
+  not a duplicate translation layer.
 - [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md)
   — artifact format, versioning, and scene-local node identity:
   authoring/runtime/in-memory shapes, explicit author-assigned node IDs
-  remapped to dense array indices at cook time, both cook-time and
-  load-time validation.
+  remapped to dense array indices at cook time, cook-time and load-time
+  validation exhaustive enough (including the active-camera-has-`Camera`
+  semantic check) to make `DecodedScene` a fully-proven-valid type.
 - [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)
-  — transactional instantiation: asset resolution as a Runtime pre-check,
-  `World`'s own new entry point reusing `WorldError` with no new
-  enumerator, two-pass deterministic instantiation order, RAII-based
-  all-or-nothing semantics with no explicit rollback code.
+  — transactional instantiation: a concrete, buildable mesh-dependency
+  location mechanism (build-generated manifest, local Runtime-side
+  resolver, no global catalog); mesh dependencies resolved and loaded
+  before any `Entity` exists; `World`'s own new entry point is
+  infallible, not a `WorldError`-reusing `Result`; two-pass deterministic
+  instantiation order; RAII-based all-or-nothing semantics spanning both
+  the mesh resource map and the `World` value, with no explicit
+  rollback code.
 
 **Per [ADR-0035](../adr/0035-authoring-runtime-data-separation-as-a-long-term-principle.md)'s
 own procedural requirement**, this Spec states explicitly: authoring
@@ -320,15 +416,17 @@ unaddressed.
 | 1 | Does the scene cooker/loader belong to `Atlantis::AssetSystem`, or does it need an independent Serialization module? | Split: cook/decode extends `Atlantis::AssetSystem` (no new dependency, matches `loadStaticMeshAsset()`'s own "CPU data only" role); instantiate extends `Atlantis::World` itself (avoids `AssetSystem`→`World`, which would close a cycle, since `World` already depends on `AssetSystem`). No new top-level module. | A new `Atlantis::Serialization`/`Atlantis::SceneAsset` module owning all three steps — structurally valid, not chosen because both existing modules already have a narrower, established place for their own half. | [ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md) |
 | 2 | What format, version, and byte order do the authoring source, metadata sidecar, and runtime artifact each use? | Authoring: strict versioned plain text, `mesh_source.h`'s own grammar style. Artifact: fixed binary header + per-node records, unconditionally little-endian, explicit shift/mask (never `memcpy`), matching `mesh_artifact.h` exactly. Metadata sidecar: text, cross-checked against the artifact at load, matching the mesh pipeline's own convention. | A structured-text format (JSON/YAML) for authoring or metadata — rejected per this Spec's own Non-Goals (no new dependency, no general parser). | [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md) |
 | 3 | What type is a scene-local node ID, how is ordering handled, and what are the parent/active-camera reference rules? | Explicit, author-assigned unsigned integer `node_id`, unique per file; the cooker remaps it to a dense, zero-based array index (declaration order) in the artifact and `DecodedScene`; parent/active-camera references are plain array indices at runtime. | Pure array-position identity (no explicit ID) — rejected because it makes the required `DuplicateNodeId` error case structurally unreachable and couples authoring convenience to declaration order. Reusing `EntityId` itself — rejected outright, meaningless before a `World` exists or across a process boundary. | [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md) |
-| 4 | When is a `Renderable`'s logical-path mesh reference converted to an `AssetId`, and when is its existence validated? | Conversion (path syntax check + `computeAssetId()`) happens at **cook time**, unconditionally — the artifact never contains a path. Existence (does that `AssetId` correspond to an asset Runtime actually has loaded) is validated at **Runtime load time**, as a pre-check before instantiation — not at cook time, since a scene need not be cooked in mesh-availability build order. | Cook-time cross-validation against a declared-asset list (reusing `atlantis_finalize_asset_validation()`'s own mechanism) — rejected as this Spec's own recommendation because it would couple scene cooking to mesh-cooking build order for a check Runtime already needs to make anyway once real GPU asset loading is involved; Human Review may still prefer it. | [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md); [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md) |
+| 4 | When is a `Renderable`'s logical-path mesh reference converted to an `AssetId`, and when is its existence/location validated? | Conversion (path syntax check + `computeAssetId()`) happens at **cook time**, unconditionally — the artifact never contains a path. Existence/location is resolved at **Runtime load time**, against a local resolver map built from a build-generated, per-scene dependency manifest (Decision 13 below) — not at cook time, since a scene need not be cooked in mesh-availability build order. | Cook-time cross-validation against the global declared-asset list (reusing `atlantis_finalize_asset_validation()`'s own mechanism) — rejected as this Spec's own recommendation because it would couple scene cooking to mesh-cooking build order and to a *global* list, for a check this Spec's own explicit, per-scene `MESH_DEPENDENCIES` declaration (Decision 13) already covers more precisely; Human Review may still prefer it as additional defense-in-depth. | [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md); [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md) |
 | 5 | How does the cooker guarantee determinism and atomic writes? | Reuses `cookStaticMesh()`'s own exact pattern: a hand-bumped, independently-versioned behavior constant; write-to-temp-then-rename in the output directory; no filesystem timestamp or other non-deterministic input reflected in output bytes. | A new, scene-specific atomic-write mechanism — rejected, no reason exists to diverge from an already-`Accepted`, already-shipped pattern. | [ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md) |
-| 6 | Where is the boundary between the artifact loader and `World` instantiation? | Loader (`Atlantis::AssetSystem`) decodes bytes into `DecodedScene` only — no `Atlantis::World` type named anywhere in it. Instantiation (`Atlantis::World`'s own new entry point) consumes `DecodedScene`, returns `Result<World, WorldError>`. Runtime composes the two calls; no new Runtime-private translation file. | Runtime itself owning decode-to-`World` translation (like `scene_extraction.h`) — rejected because the headless image-regression test would then have to duplicate a strict binary decoder rather than reuse one, a heavier duplication than this codebase's existing small-helper "duplicated, not shared" precedent. | [ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md) |
-| 7 | What is the transactional failure/rollback contract? | Instantiation builds directly into a freshly-constructed, not-yet-published `World`; any failure returns `Err` before that value is ever handed anywhere; its own RAII destructor tears down whatever partial state existed — no explicit rollback code. Runtime's own asset-resolution pre-check fails before even that `World` is constructed. | Publishing a partially-instantiated `World` and letting the caller decide — rejected outright, directly contradicts this Spec's own explicit no-partial-state requirement. | [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md) |
-| 8 | What is Runtime's minimal configuration entry point for its own startup scene? | `BootstrapConfig` gains scene artifact/metadata path fields, populated the same CMake-compile-definition way every existing field already is — no CLI flag, no environment variable, no config file. | A CLI flag or environment variable naming the scene at process-launch time — rejected, `BootstrapConfig`'s own existing doc comment already states this is "the whole of Runtime's own configuration surface"; no reason to add a second configuration channel for one more path. | This Spec's own Requirements ("Runtime bootstrap") |
-| 9 | What are the semantics for Camera aspect ratio, the active-camera reference, and a decoded active-camera node with no `Camera`? | Aspect ratio: unaffected, still computed per-frame from the live swapchain extent — this Spec authors/cooks nothing aspect-related. Active-camera node lacking a `Camera`: reuses `World::setActiveCamera()`'s own already-`Accepted` `Err(WorldError::NoCameraComponent)` path as the sole enforcement point — not independently re-validated at cook time. | Cook-time validation that the active-camera node also declares a `Camera` — rejected as this Spec's own recommendation to avoid duplicating a check `World` already performs correctly; Human Review may still prefer defense-in-depth at cook time. | [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md) |
-| 10 | What is the deterministic multi-node instantiation/traversal order? | Two-pass, ascending `DecodedScene` array-index order: every node instantiated (entity + Transform + Camera + Renderable) in pass one; every parent link set in pass two, using the pass-one index→`EntityId` mapping. Generalizes `buildValidationScene()`'s own existing shape exactly. | Single-pass, deferring only forward-referenced parents — rejected, more complex for no benefit at this Spec's own scale. | [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md) |
+| 6 | Where is the boundary between the artifact loader and `World` instantiation, and what does `DecodedScene` contain? | Loader (`Atlantis::AssetSystem`) decodes bytes into `DecodedScene` — an `AssetSystem`-owned value type using its own `DecodedTransform`/`DecodedCamera`/`DecodedRenderable` DTOs, never `atlantis::world`'s own types (naming one would give `AssetSystem` a real dependency on `World`, closing a cycle). Instantiation (`Atlantis::World`'s own new entry point, `World fromDecodedScene(const DecodedScene&)`) performs the real DTO→domain conversion and returns `World` **by value, infallibly** — `DecodedScene`'s own exhaustive prior validation (Decision 9 below) removes every reachable failure case. Runtime composes decode → dependency resolution → instantiation; no Runtime-private *translation* file the way `scene_extraction.h` is needed for World→Renderer, though Runtime does gain real dependency-resolution logic of its own (Decision 13). | Runtime itself owning decode-to-`World` translation (like `scene_extraction.h`) — rejected because the headless image-regression test would then have to duplicate a strict binary decoder rather than reuse one. `DecodedScene` reusing `atlantis::world::Transform`/`Camera`/`Renderable` directly — rejected outright, would give `AssetSystem` a compile-time dependency on `World`. | [ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md); [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md) |
+| 7 | What is the transactional failure/rollback contract, and what exactly must succeed before any `Entity` exists? | Sequence: decode scene (fails → nothing published) → resolve **every** mesh dependency and load it (fails → nothing published, no `Entity` created yet) → call `World::fromDecodedScene()` (infallible) → **only now**, with both the mesh resource map and the `World` value fully built, publish both together into `RuntimeApplication`. Any failure anywhere in this sequence leaves Runtime's own pre-existing state (for this Spec's scope: none, since this runs once at startup) completely untouched; an unpublished `World`/mesh map is destroyed by ordinary RAII — no explicit rollback code. | Publishing a partially-instantiated `World`, or a partial mesh resource map, and letting the caller decide — rejected outright, directly contradicts this Spec's own explicit no-partial-state requirement. Deferring mesh-dependency loading to be lazy/per-frame (today's single-mesh shape) — rejected, would let a scene "load" with cubes silently missing. | [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md) |
+| 8 | What is Runtime's minimal configuration entry point for its own startup scene and its own mesh dependencies? | `BootstrapConfig` gains scene artifact/metadata path fields plus the dependency-manifest path, populated the same CMake-compile-definition way every existing field already is — no CLI flag, no environment variable, no config file. | A CLI flag or environment variable naming the scene (or its dependencies) at process-launch time — rejected, `BootstrapConfig`'s own existing doc comment already states this is "the whole of Runtime's own configuration surface"; no reason to add a second configuration channel. | This Spec's own Requirements ("Runtime bootstrap") |
+| 9 | What are the semantics for Camera aspect ratio, the active-camera reference, and a decoded active-camera node with no `Camera`? | Aspect ratio: unaffected, still computed per-frame from the live swapchain extent. Active-camera node lacking a `Camera`: **validated at cook time and independently re-validated at decode time** — a structural/semantic precondition `DecodedScene` itself guarantees, *not* a `World`-runtime-checked condition — specifically so `World`'s own instantiation entry point never needs to report this as a `Result::Err` reusing `WorldError`. | Relying on `World::setActiveCamera()`'s own existing `Err(WorldError::NoCameraComponent)` runtime check instead — this was this Spec's own original design and was corrected during self-review: it conflates a scene-authoring mistake with `WorldError`'s own established "caller-supplied-handle" domain and would make instantiation fallible for a condition decode-time validation can catch instead. | [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md); [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md) |
+| 10 | What is the deterministic multi-node instantiation/traversal order? | Two-pass, ascending `DecodedScene` array-index order: every node instantiated (entity + Transform + Camera + Renderable) in pass one; every parent link set in pass two, using a decoded-index→`EntityId` mapping that exists only for the duration of the instantiation call. Generalizes `buildValidationScene()`'s own existing shape exactly. | Single-pass, deferring only forward-referenced parents — rejected, more complex for no benefit at this Spec's own scale. | [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md) |
 | 11 | How is the existing `world_scene` golden reused for verification? | A new GPU-required headless test loads the first scene asset through the real load path, renders one frame through the existing, unmodified extraction/`Renderer` pipeline, and compares against the existing checked-in golden — zero difference required, no new golden captured, matching `minimal_cube`'s own already-shipped "two construction paths, one golden" precedent. | Capturing a new, second golden for the artifact-loaded path — rejected, the whole point is proving the loaded scene is the *same* scene, not a plausibly-similar one; a second golden would only prove the new path renders *something*, not that it matches. | This Spec's own Requirements/Goals |
 | 12 | Does this Spec require any change to `Renderer`/`RHI`/`RenderGraph`/Vulkan Backend's public API, or any new third-party dependency? | No to both — confirmed by this Spec's own Non-Goals and by every design decision above staying entirely upstream of `DrawItem` construction, using only hand-rolled parsing/encoding matching already-`Accepted` precedent. | N/A — this is a confirmation, not an open design choice. | This Spec's own Non-Goals |
+| 13 | **(Must Fix, resolved.)** Given the scene artifact only stores `AssetId`s, and this repository has no Asset Catalog, how does Runtime actually locate the corresponding mesh artifact/metadata files on disk? | A scene's own CMake declaration explicitly names its mesh dependencies (`MESH_DEPENDENCIES`, referencing already-declared assets by name) — never auto-discovered, since CMake cannot run `computeAssetId()` or parse cooked binary content. This wires real `add_dependencies()` build ordering and emits a small, per-scene, build-tree text manifest (`file(GENERATE)`, matching `declared_assets.txt`'s own precedent) of (logical path, artifact path, metadata path) triples. Runtime reads this manifest once at startup, computes each `AssetId` itself via the existing `computeAssetId()`, and holds the result as a **local, immutable, per-`RuntimeApplication` resolver map** — never global, never persisted, never mutated after construction. The scene artifact itself never contains a path, only `AssetId`s. | (a) A build-generated *global* catalog/registry spanning every declared asset — rejected as broader than this Spec's own scope needs; remains a named future Candidate. (b) The scene artifact stores a portable logical path instead of an `AssetId` — rejected, already closed by [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md). (c) The scene artifact embeds each dependency's own mesh bytes inline — rejected, duplicates data across every referencing scene, breaks Asset System's one-canonical-location-per-asset model. (d) Auto-discover dependencies from cooked scene content at CMake-configure time — not achievable at all, CMake cannot compute an `AssetId` or parse a binary artifact. | [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md) |
+| 14 | **(Must Fix, resolved.)** How are cook-time, decode-time, dependency-resolution, and instantiation errors kept in four separate, correctly-scoped domains rather than one collapsing into another? | Four domains, each owned by the one stage that can actually detect the condition: `SceneCookError` (authoring/cook-time mistakes, `Atlantis::AssetSystem`); `SceneArtifactDecodeError` (artifact-bytes-level corruption/inconsistency, `Atlantis::AssetSystem`, independently re-checking every `SceneCookError` condition); a new `RuntimeInitError` enumerator (mesh-dependency resolution/load failure, `Atlantis Runtime`, before any `Entity` exists); and **no fifth domain for `World` instantiation**, because it is infallible by construction once `DecodedScene` is exhaustively validated. `WorldError` is never reused for any scene-loading condition — its own domain (caller-supplied-handle operations against a live `World`) is unaffected and unextended by this Spec. | Reusing `WorldError` for scene-node conditions (duplicate ID, missing parent, cycle, invalid active camera) — rejected outright, this Spec's own self-review corrected exactly this mistake; see this table's own item 9. A single, generic "scene load failed" error collapsing all four stages — rejected, matches none of this repository's own existing error-taxonomy precedent (`errors.h`'s own five distinct enums for the mesh pipeline alone). | [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md); [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md) |
 
 ## Alternatives Considered
 
@@ -369,32 +467,45 @@ three-layer verification model):
 
 - Authoring-source parser: strict grammar acceptance/rejection,
   round-trip (parse → serialize → parse, matching `mesh_source.h`'s own
-  established test shape), and every named validation failure
-  (`DuplicateNodeId`, `UndeclaredParentReference`, `ParentCycle`,
-  `InvalidActiveCameraReference`, `NonFiniteValue`) individually
-  triggered and correctly reported.
+  established test shape), and every named `SceneCookError` condition
+  (`DuplicateNodeId`, an undeclared parent reference, `ParentCycle`, an
+  invalid/missing active-camera reference, an active-camera node with
+  no `Camera`, a non-finite value) individually triggered and correctly
+  reported.
 - Artifact encode/decode round-trip: cooking a known scene then
-  decoding it reproduces the exact same node data; every artifact-level
-  corruption case (`ArtifactDecodeError`-style: bad magic, unknown
-  schema version, truncated, an out-of-range parent/active-camera
-  index, a decode-time-detected cycle) individually triggered and
-  correctly reported, matching `mesh_artifact.h`'s own already-shipped
-  test discipline.
+  decoding it reproduces the exact same node data; every
+  `SceneArtifactDecodeError` condition (bad magic, unknown schema
+  version, truncated, an out-of-range parent/active-camera index, a
+  decode-time-detected cycle, a decode-time-detected active-camera node
+  with no `Camera`) individually triggered and correctly reported,
+  matching `mesh_artifact.h`'s own already-shipped test discipline.
 - `World`'s new instantiation entry point: a well-formed `DecodedScene`
   produces a `World` whose entities/hierarchy/components match exactly;
-  an active-camera node with no `Camera` produces
-  `Err(WorldError::NoCameraComponent)`; deterministic instantiation
-  order confirmed via repeated runs producing identical `EntityId`
-  sequences (matching Spec 0014's own V14 determinism-test shape).
-- Runtime's own asset-resolution pre-check: a resolvable scene passes;
-  an unresolvable `Renderable` reference fails before any `World`
-  exists, classified via `RuntimeInitError`.
-- Transactional failure: an artifact that fails validation at any stage
-  (cook-time-equivalent corruption injected directly, since a
-  cook-time-rejecting source never reaches an artifact) never leaves a
-  `World` behind, confirmed the same way Spec 0014's own atomicity
-  requirements are confirmed — by directly observing that no partial
-  entity/component state exists to observe.
+  a `static_assert`-confirmed compile-time check that the entry point's
+  own return type is `World`, not a `Result` — the type system itself
+  proving infallibility, not merely an absence of currently-observed
+  failures; deterministic instantiation order confirmed via repeated
+  runs producing identical `EntityId` sequences (matching Spec 0014's
+  own V14 determinism-test shape).
+- Runtime's own mesh-dependency resolver: a resolver map built from a
+  known manifest correctly maps each entry's `AssetId` (independently
+  computed via `computeAssetId()` over the same logical path) to its
+  own artifact/metadata paths; a scene referencing an `AssetId` with no
+  resolver entry fails via `RuntimeInitError` **before any `Entity` is
+  created** (confirmed directly, not inferred from exit status); a
+  resolver entry whose own `loadStaticMeshAsset()`/`createMesh()` call
+  fails likewise fails the whole load before any `Entity` exists; a
+  scene with two `Renderable`s sharing one `AssetId` loads that mesh
+  exactly once (mesh resource map keyed by `AssetId`, not by node).
+- Transactional failure, at every stage: a scene that fails cook-time
+  validation never produces an artifact; an artifact that fails
+  decode-time validation never produces a `DecodedScene`; a scene whose
+  own mesh dependency fails to resolve or load never reaches
+  `World::fromDecodedScene()` and leaves `RuntimeApplication` with
+  neither a `World` nor a mesh resource map — confirmed directly, by
+  observing that no partial entity/component state and no partial mesh
+  resource map exist to observe, the same way Spec 0014's own atomicity
+  requirements are confirmed.
 
 GPU-required (real hardware, matching Spec 0014's own two-tier
 windowed/headless split):
@@ -422,35 +533,50 @@ windowed/headless split):
 
 ## Risks & Open Questions
 
-- **The exact authoring grammar's own field names/order, and the exact
-  artifact header layout**, are Plan-level details this Spec does not
-  fix beyond the *conditions* named in Requirements — matching Spec
-  0014's own precedent of leaving concrete C++/file-format shapes to
-  the Plan where no architectural content is at stake.
-- **Whether cook-time cross-validation against a declared-asset list is
-  worth its build-ordering cost** (Human Review Decision 4) is a named,
-  disclosed open question, not a claim this Spec has settled — either
+- **The exact authoring grammar's own field names/order, the exact
+  artifact/manifest header layouts, and the exact CMake function/error-
+  enumerator names**, are Plan-level details this Spec does not fix
+  beyond the *conditions* and *shapes* named in Requirements — matching
+  Spec 0014's own precedent of leaving concrete C++/file-format shapes
+  to the Plan where no architectural content is at stake.
+- **Whether cook-time cross-validation against the *global* declared-
+  asset list is worth adding as additional defense-in-depth, on top of
+  this Spec's own per-scene `MESH_DEPENDENCIES` mechanism** (Human
+  Review Decision 4) is a named, disclosed open question — either
   answer is compatible with every ADR this Spec introduces.
-- **Whether the active-camera-node-lacks-a-Camera check deserves
-  cook-time defense-in-depth in addition to `World`'s own existing
-  runtime check** (Human Review Decision 9) is similarly named, not
-  settled.
 - **This Spec's own scene-local node ID space is per-file, not
   repository-wide** — two different scene files may freely reuse the
   same `node_id` values; nothing in this Spec requires or provides a
   global node-ID registry, matching the deliberately narrow scope
   disclosed in Non-Goals.
+- **The per-scene dependency manifest is regenerated on every CMake
+  configure/build**, never a persistent, cross-build cache — a
+  `MESH_DEPENDENCIES` declaration that goes stale relative to the
+  scene's own authoring source is caught at Runtime load time
+  (unresolved `AssetId`), not silently — but this Spec does not add a
+  CMake-time check that the two stay consistent; Human Review may
+  consider this an acceptable gap for this Spec's own scale, or note it
+  as a candidate future Plan-level refinement.
 
 ## Out of Scope / Future Work
 
 A durable, cross-session, cross-artifact stable identity/schema-
-migration system — the broader scope originally implied by
-`specs/README.md`'s prior Candidate Backlog description of this item —
-remains explicitly future, unscoped work, needed only once a real
-consumer (a save system, networking, or an Editor referencing objects
-across sessions) exists to design against; this Spec's own scene-local
-node identity is not, and does not evolve into, that system without a
-future Spec explicitly designing it. Also remaining out of scope,
+migration system, **and** an independent, general-purpose Asset
+Catalog/Registry (a persistent, cross-scene, cross-session `AssetId`→
+location store) — the broader scope originally implied by
+`specs/README.md`'s prior Candidate Backlog description of this item,
+plus the location mechanism this Spec's own scope needed a real answer
+for but deliberately scoped as narrowly as possible
+([ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)'s
+own build-generated, per-scene, local-resolver design) — both remain
+explicitly future, unscoped work, needed only once a real consumer (a
+save system, networking, an Editor referencing objects across sessions,
+or a second, independent scene needing to share dependency location
+logic across scenes) exists to design against; see `specs/README.md`'s
+own Candidate Backlog for the renamed entry tracking this. This Spec's
+own scene-local node identity and per-scene dependency manifest are not,
+and do not evolve into, either of those systems without a future Spec
+explicitly designing it. Also remaining out of scope,
 unaffected by this Spec: Texture/Sampler, PBR Material, Light, Shadow,
 Animation, Post-processing; an Editor or Tool/Editor Connection
 Protocol; a Gameplay SDK; Android/iOS/Linux — all remain later,

@@ -157,20 +157,26 @@ ordering note.
 | 4 | Research/Simulation API | Spec 0013 (Runtime Host Foundation), Spec 0010 (Headless Rendering Foundation) | Observation/Action/Episode-style research interface — language/transport not chosen | Candidate — spec not yet drafted |
 | 5 | AI Inference Integration | Spec 0013 (Runtime Host Foundation) | Pluggable inference backend for gameplay/tools use — must not shape Phase 1 rendering abstractions; inference backend not chosen | Candidate — spec not yet drafted; future AI workload, does not shape Phase 1 |
 | 6 | UGC Sandbox and Package Model | Candidate 3 (Gameplay SDK) | Sandboxed, capability-scoped user content execution — UGC VM/language not chosen | Candidate — spec not yet drafted; future UGC workload, does not shape Phase 1 |
+| 7 | Cross-Session Stable Identity and Asset Catalog | Spec 0015 (Scene Asset & Serialization Foundation) | The broader scope Candidate 2's own prior description named ("Stable GUID/handle schemes, schema versioning and migration") plus a general-purpose, persistent `AssetId`→location Asset Catalog/Registry — both explicitly deferred, disclosed, out of Spec 0015's own narrower scene-asset-bake/load scope; renamed from "Serialization and Stable Identity" when Spec 0015 was drafted 2026-08-23, to make clear what Spec 0015 did *not* cover, not to re-promise a specific future design | Candidate — spec not yet drafted; no consumer (save system, networking, Editor, or a second scene needing cross-scene dependency-location sharing) yet exists to design against |
 
 Image Regression Testing, Asset System Foundation, Runtime Host
-Foundation, World/ECS Foundation, and Serialization and Stable Identity
-no longer appear in this table — they were promoted to Section A above
-as Spec 0011, Spec 0012, Spec 0013, Spec 0014, and Spec 0015
-respectively (World/ECS Foundation promoted under the working title
-"World / Scene Foundation," per Spec 0014's own drafting; Serialization
-and Stable Identity promoted under the working title "Scene Asset &
-Serialization Foundation," per Spec 0015's own drafting, with a
-disclosed scope narrowing — see the "Superseded in part again,
-human-directed 2026-08-23" note below), each once a real spec was
-drafted for it, per this section's own maintenance rules below (see
-Section A for each spec's current status). Every remaining candidate's
-own `Candidate Order` number and
+Foundation, and World/ECS Foundation no longer appear in this table at
+all — they were promoted to Section A above as Spec 0011, Spec 0012,
+Spec 0013, and Spec 0014 respectively (World/ECS Foundation promoted
+under the working title "World / Scene Foundation," per Spec 0014's own
+drafting), each once a real spec was drafted for it, per this section's
+own maintenance rules below (see Section A for each spec's current
+status). **Serialization and Stable Identity is a partial promotion,
+not a full one:** its scene-asset-bake/load slice was promoted to Spec
+0015 ("Scene Asset & Serialization Foundation," `In Review`, Section A
+above — see the "Superseded in part again, human-directed 2026-08-23"
+note below for the full disclosed scope narrowing), but the remainder
+of what that candidate's own prior description named — cross-session
+stable identity/schema migration, and a general-purpose Asset Catalog —
+was **not** drafted and remains a real, tracked candidate, renamed and
+re-listed above as Candidate Order 7 ("Cross-Session Stable Identity and
+Asset Catalog") rather than silently dropped. Every remaining
+candidate's own `Candidate Order` number and
 every cross-reference to a since-promoted item's old number are
 renumbered/corrected at each promotion, per this section's own
 maintenance rules — this is a mechanical index update only, never a
