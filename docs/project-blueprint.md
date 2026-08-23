@@ -719,9 +719,13 @@ milestone being listed does not authorize starting it — see Section 1.
   storage, an atomic parent/child hierarchy with cycle prevention and
   cascading destroy, and a fully iterative (non-recursive)
   `updateTransforms()`. Runtime (`src/runtime/`) gained a Runtime-private
-  extraction adapter (`scene_extraction.h`/`.cpp`) and now drives its own
-  fixed, six-entity validation scene end to end through the existing,
-  unmodified `Renderer::drawFrame()`/`DrawItem` path. A new headless
+  extraction adapter (`scene_extraction.h`/`.cpp`) and, at this
+  Milestone's own completion, drove a fixed, six-entity validation
+  scene end to end through the existing, unmodified
+  `Renderer::drawFrame()`/`DrawItem` path — since superseded by
+  Milestone 12 below (Spec 0015), which replaced that fixed
+  construction with a real, loaded scene asset reproducing the same
+  five-cube/one-camera layout byte-for-byte. A new headless
   image-regression golden (`world_scene`) and the existing windowed GPU
   smoke test (extended to confirm all 5 `DrawItem`s reach `drawFrame()`)
   both pass on real Vulkan-capable hardware; the existing `minimal_cube`
@@ -766,9 +770,8 @@ milestone being listed does not authorize starting it — see Section 1.
 ### Milestone 12 — Scene Asset & Serialization Foundation
 
 - **Governance state:** **`Approved` Spec, `Approved` Plan. Implementation
-  is code complete on [PR #74](https://github.com/slmao/Atlantis/pull/74)
-  (OPEN, not yet merged) — do not treat this Milestone as delivered
-  until that PR merges** —
+  merged via [PR #74](https://github.com/slmao/Atlantis/pull/74)
+  (2026-08-23)** —
   [specs/0015-scene-asset-serialization-foundation.md](../specs/0015-scene-asset-serialization-foundation.md),
   [plans/0015-scene-asset-serialization-foundation.md](../plans/0015-scene-asset-serialization-foundation.md).
   Architectural Impact identified three new decisions, filed as
@@ -781,9 +784,15 @@ milestone being listed does not authorize starting it — see Section 1.
   no-public-default-constructor contract), and
   [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)
   (scene loading's own transactional instantiation contract), all
-  `Accepted`.
-- **Scope delivered on the OPEN PR:** a scene authoring grammar and
-  cook/decode pipeline in Atlantis Asset System (`ValidatedSceneData`,
+  `Accepted`. A pre-merge centralized final review (still on PR #74, no
+  new PR) removed a test-only friend that had weakened
+  `ValidatedSceneData`'s own "`decodeScene()` is the sole privileged
+  entry point" contract, and added `static_assert`-based, compile-time
+  proof that `RuntimeApplication`'s own scene-load publish is
+  genuinely atomic (both steps unconditionally `noexcept`) rather than
+  arguing it in prose.
+- **Scope delivered:** a scene authoring grammar and cook/decode
+  pipeline in Atlantis Asset System (`ValidatedSceneData`,
   `cookScene()`/`decodeScene()`, a little-endian binary artifact format,
   a build-tree-private dependency manifest); `World::fromValidatedSceneData()`
   (two-pass, deterministic, infallible instantiation); Runtime's own
@@ -803,17 +812,23 @@ milestone being listed does not authorize starting it — see Section 1.
   configurations, Vulkan Validation Layers grepped clean throughout, a
   strengthened `tests/asset_system/module_boundary_tests.cpp` (now also
   forbidding `atlantis/world/`), and a switch-exhaustiveness positive
-  and negative (C4062) build check.
-- **Outstanding before merge:** V24 — genuine human visual confirmation
-  of the windowed five-cube scene (resize, minimize/restore, close,
-  personally-observed clean Vulkan Validation Layers) has not yet been
-  performed; programmatic execution of the windowed smoke test proves
-  only the lifecycle path. This PR must not be merged until a real
-  human completes and records this observation.
+  and negative (C4062) build check. **V24 (genuine human visual
+  confirmation) is PASS**: a human personally launched real, visible
+  Debug and Release windows separately, confirmed the five-cube
+  composition against the golden, resize, minimize/restore, and a
+  clean close for both, with literal process exit code 0 for both —
+  recorded on PR #74's own comments, not inferred from the automated
+  GPU tests.
 - **Not implemented** (per Spec 0015's own Non-Goals, unchanged): a
   distributable, cross-session Asset Catalog/Registry, a rename-stable
   GUID identity scheme, schema migration, and any Client/Editor/
-  second-process consumer of scene data.
+  second-process consumer of scene data. The per-scene dependency
+  manifest (D8) is build-tree-private only, never a portable/shippable
+  artifact. Texture/Sampler asset support, PBR Material, Light,
+  Shadow, and Post-processing remain out of scope (see Candidate Order
+  8, "Texture & Sampler Foundation," in
+  [specs/README.md](../specs/README.md)'s own Candidate Backlog, now
+  human-selected to be specced next).
 
 ### Further candidate phases (directional only, no Spec, no ADR)
 
@@ -826,9 +841,16 @@ anything architectural, its own ADR before any of the below moves past
 
 - Serialization and stable identity (GUID/handle schemes, schema
   migration) — World/Scene foundation itself is now Milestone 11 above,
-  not a directional-only item; this remaining item is scoped to
-  *durable* (save/load, cross-session) identity, which Milestone 11's own
-  Non-Goals explicitly excluded
+  and a scene-asset authoring/cook/load pipeline (scene-local,
+  per-artifact node identity only) is now Milestone 12 above, neither a
+  directional-only item; this remaining item is scoped to *durable*
+  (save/load, cross-session, cross-artifact) identity, which both
+  Milestone 11's and Milestone 12's own Non-Goals explicitly excluded
+- Texture & Sampler Foundation (general sampled `Texture`/`Sampler`
+  support in RHI, unblocking a texture asset type and eventually PBR
+  materials) — human-selected 2026-08-24 to be specced next (see
+  [specs/README.md](../specs/README.md)'s own Candidate Backlog,
+  Candidate Order 8); **no Spec drafted yet**
 - Tool/Editor connection protocol — **no process model (in-process vs.
   IPC) is chosen**
 - Gameplay SDK — **no gameplay language is chosen**

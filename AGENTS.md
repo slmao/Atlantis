@@ -165,12 +165,16 @@ Top-level modules: **Atlantis Core, Atlantis Platform, Atlantis RHI,
 Atlantis Vulkan Backend, Atlantis RenderGraph, Atlantis Renderer, Atlantis
 Shader System, Atlantis Asset System, Atlantis World, Atlantis Runtime,
 Atlantis Tools.**
-Atlantis Asset System (Spec 0012, `Approved`) depends on Atlantis Core
-only — no RHI, Renderer, or Shader System dependency; a composition root
-outside the module (a test, an example, or Atlantis Runtime, which now
-does this in practice — see below) loads its CPU-side asset data and is
-itself responsible for constructing any GPU resource from it. See
-[ADR-0043](adr/0043-asset-system-module-boundary.md).
+Atlantis Asset System (Spec 0012, `Approved`; extended by Spec 0015,
+`Approved`, with a second asset type, scene graphs) depends on Atlantis
+Core only — no RHI, Renderer, Shader System, or Atlantis World
+dependency (the last verified by an include-scanning test since Spec
+0015: AssetSystem must never depend on World, ADR-0053); a composition
+root outside the module (a test, an example, or Atlantis Runtime, which
+now does this in practice — see below) loads its CPU-side asset data
+and is itself responsible for constructing any GPU resource from it.
+See [ADR-0043](adr/0043-asset-system-module-boundary.md) and
+[ADR-0052](adr/0052-scene-asset-module-boundary-and-ownership.md)–[ADR-0054](adr/0054-scene-loading-transactional-instantiation-contract.md).
 
 **Atlantis World** (Spec 0014, `Approved`) is Atlantis's in-memory,
 multi-entity scene module — `atlantis::world::World`, an index+generation-
@@ -185,7 +189,7 @@ internal storage; every accessor is by value. See
 [ADR-0048](adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md).
 
 Atlantis Runtime (Spec 0013, `Approved`; extended by Spec 0014,
-`Approved`) is the actual composition root — a private
+`Approved`, and Spec 0015, `Approved`) is the actual composition root — a private
 `atlantis_runtime_host` static library plus a thin `atlantis_runtime`
 Windows executable, composing Platform, RHI, Vulkan Backend, Renderer,
 Shader System, Asset System, and World into one fixed startup → windowed
