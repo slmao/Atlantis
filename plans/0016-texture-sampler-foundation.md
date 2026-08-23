@@ -42,25 +42,71 @@ Spec's own citations) immediately before drafting this Plan:
   files); `vulkan_texture.h`/`.cpp`, `vulkan_buffer.h`/`.cpp` are the
   exact naming precedent `vulkan_sampled_texture.h`/`.cpp` and
   `vulkan_sampler.h`/`.cpp` follow.
-- **No `FakeDevice` exists anywhere in this repository.** The only test
-  double is `tests/render_graph/fake_command_list.h`'s `FakeCommandList`
-  (implements `atlantis::rhi::CommandList` fully, recording every call;
-  zero real Vulkan device in that test binary) plus trivial
-  `FakeRenderTarget`/`FakeTexture`/`FakeBuffer`/`FakePipeline` stand-ins.
-  It is reused by `tests/render_graph/` and, via an explicit
-  `target_include_directories`, `tests/renderer/`. `tests/rhi/types_tests.cpp`
-  tests only free-standing value types (no `Device`, no polymorphism).
-  Every real `Device::createTexture()`/`createBuffer()`/`submit()` call
-  in the test suite goes through the real `VulkanDevice`, `"gpu"`-labeled.
-  **Consequence, binding on this Plan's own Milestone 2 (below):** adding
-  a new pure-virtual method to `CommandList` (`copyBufferToTexture()`,
-  a third `transitionResource()` overload, `bindTexture()`) or to
-  `Device` (`createSampledTexture()`, `createSampler()`) breaks
-  compilation of every concrete implementer until updated — that means
-  `VulkanCommandList`/`VulkanDevice` **and** `FakeCommandList` (the only
-  other `CommandList` implementer in the tree) must all be updated in
-  the same, indivisible step. There is no `FakeDevice` to update in
-  parallel — `Device`'s only implementer is `VulkanDevice`.
+- **Exhaustive, repo-wide implementer audit — every abstract RHI
+  interface, not only `Device`/`CommandList`.** Every class under
+  `src/rhi/include/atlantis/rhi/` declaring at least one pure-virtual
+  (`= 0`) method, and every one of its implementers anywhere in the
+  repository, confirmed fresh:
+
+  | Interface | Pure virtuals | Implementers | This Plan's own new pure virtuals? |
+  |---|---|---|---|
+  | `Device` | 7 (`createCommandList`, `submit`, `waitIdle`, `createBuffer`, `createTexture`, `createPipeline`, `createOffscreenTarget`) | `VulkanDevice` only — **no Fake** | **Yes** — `createSampledTexture()`, `createSampler()` |
+  | `CommandList` | 12 (`transitionResource`×2, `clearColor`, `beginRendering`, `endRendering`, `bindPipeline`, `bindVertexBuffer`, `bindIndexBuffer`, `bindUniformBuffer`, `pushConstant`, `drawIndexed`, `copyRenderTargetToBuffer`) | `VulkanCommandList`, `FakeCommandList` (`tests/render_graph/fake_command_list.h:113`) | **Yes** — `copyBufferToTexture()`, a third `transitionResource()` overload, `bindTexture()` |
+  | `Buffer` | 3 (`purpose`, `sizeBytes`, `mappedData`) | `VulkanBuffer`, `FakeBuffer` (`fake_command_list.h:75`) | No — only a new `BufferPurpose` enum *value* (`Staging`), not a new method |
+  | `Texture` (depth-only) | 2 (`extent`, `format`) | `VulkanTexture`, `FakeTexture` (`fake_command_list.h:58`) | No — completely untouched, per Spec 0016's own explicit requirement |
+  | `RenderTarget` | 2 (`extent`, `format`) | **Three**: `VulkanRenderTarget`, `VulkanOffscreenRenderTarget` (both real, production Vulkan classes — headless and windowed presentation each have their own), `FakeRenderTarget` (`fake_command_list.h:44`) | No — untouched |
+  | `Pipeline` | **0** (only a virtual destructor — technically not abstract, but functions as an interface with real implementers) | `VulkanPipeline`, `FakePipeline` (`fake_command_list.h:91`, trivially empty) | No new *method* — `PipelineCreateParams` (a plain struct, not `Pipeline` itself) gains a new field, see D6a below |
+  | `OffscreenTarget` | 1 (`acquireTarget`) | `VulkanOffscreenTarget` only — **no Fake** | No |
+  | `Presentation` | 5 | `VulkanPresentation` only — **no Fake** | No |
+  | `SubmissionSignal` | **0** (virtual destructor only) | `VulkanSubmissionSignal` only — **no Fake** | No |
+  | `SampledTexture` (new) | 2 (`extent`, `format`) | **New**: `VulkanSampledTexture`, `FakeSampledTexture` | N/A — the interface itself is new |
+  | `Sampler` (new) | 2 (`filter`, `addressMode`) | **New**: `VulkanSampler`, `FakeSampler` | N/A — new |
+
+  **This Plan touches the pure-virtual method set of exactly two existing
+  interfaces (`Device`, `CommandList`) and introduces exactly two new
+  ones (`SampledTexture`, `Sampler`) — every other RHI interface
+  (`Buffer`, `Texture`, `RenderTarget`, `Pipeline`, `OffscreenTarget`,
+  `Presentation`, `SubmissionSignal`) is confirmed untouched, method-
+  signature-wise, by this Plan.** The atomic-step requirement therefore
+  applies to exactly: `VulkanDevice` (no Fake to update in parallel —
+  `Device` has none); `VulkanCommandList` **and** `FakeCommandList`
+  together (its only two implementers); `VulkanSampledTexture` **and**
+  `FakeSampledTexture` together; `VulkanSampler` **and** `FakeSampler`
+  together — all four in Milestone 2, the same indivisible step.
+  `RenderTarget`'s own three-implementer shape (confirmed above) is
+  unaffected by this Plan and is cited here only to make clear this
+  Plan is not the first place a multi-implementer RHI interface exists —
+  `RenderTarget` additionally has a second, Vulkan-Backend-private
+  interface, `atlantis::vulkan_backend::detail::VulkanRenderTargetAccess`
+  (`src/vulkan_backend/src/vulkan_render_target_access.h:20`, 4 pure
+  virtuals, `dynamic_cast`-accessed from `VulkanCommandList`/`VulkanDevice`
+  specifically *because* `RenderTarget` has two real Vulkan implementers
+  that must be distinguished safely) — **`SampledTexture` does not need
+  an analogous private-access interface or `dynamic_cast`,** because it
+  has exactly one real Vulkan implementer, `VulkanSampledTexture`,
+  exactly mirroring depth `Texture`'s own single-implementer shape.
+  Confirmed precedent: `VulkanCommandList`'s existing
+  `transitionResource(Texture&, ...)` implementation accesses the
+  concrete type via a raw, unchecked `static_cast<VulkanTexture&>(target)`
+  (`vulkan_command_list.cpp:77`, and again at `:134` for the depth
+  attachment) — **not** `dynamic_cast`, **not** a private access
+  interface — because `FakeTexture` is never passed to a real
+  `VulkanCommandList` in production code, only to `FakeCommandList`
+  itself. `VulkanCommandList`'s new `copyBufferToTexture()`/
+  `transitionResource(SampledTexture&, ...)`/`bindTexture()` overrides
+  follow this exact, simpler, single-implementer precedent —
+  `static_cast<VulkanSampledTexture&>(destination)`/`static_cast<VulkanSampler&>(sampler)`
+  — not the `RenderTarget`-style `dynamic_cast` pattern, which exists
+  only because `RenderTarget` genuinely has two real implementers.
+  **`Material`/`Mesh` are confirmed, verbatim, to declare no base class
+  and no `virtual` method of any kind** (`material.h:18-32`, `mesh.h:16-35`
+  — both plain, move-only, non-polymorphic concrete classes composing
+  owned `unique_ptr<rhi::X>` members) — **there is no `VulkanMaterial`,
+  and none is needed；** `Material`'s own new `SampledTexture`/`Sampler`
+  fields (D3) are ordinary data members, not a virtual-dispatch surface,
+  so no implementer-synchronization concern applies to `Material` at
+  all, contrary to what its structural similarity to `Device`/`CommandList`
+  might suggest.
 - `src/shader_system/CMakeLists.txt`: two separate library targets,
   `atlantis_shader_system` (Core-only: `json_parser.cpp`,
   `reflection_metadata.cpp`, `reflection_loader.cpp`,
@@ -339,11 +385,40 @@ class Material {
 
 Nullable, non-owning raw pointers — not references — because the
 binding is genuinely *optional* (an untextured `Material`, like every
-existing one today, passes neither). Both are set together or not at
-all (`sampledTexture_ == nullptr` iff `sampler_ == nullptr`; enforced by
-`ATLANTIS_CHECK` in the constructor, a caller-precondition violation
-otherwise — a `Material` naming a texture with no sampler, or vice
-versa, is a programmer error, not a representable state).
+existing one today, passes neither).
+
+**Validation entry point and rebind surface, stated precisely (Should
+Fix, resolved — not left implicit):** the both-or-neither invariant
+(`sampledTexture_ == nullptr` iff `sampler_ == nullptr`) is checked
+**exactly once, in the constructor, via `ATLANTIS_CHECK`** — a `Material`
+naming a texture with no sampler, or vice versa, fails to construct at
+all, a caller-precondition violation, not a representable runtime
+state. **There is no other entry point to check, because there is no
+other way to set these fields at all**: `Material`'s own public surface
+above declares no setter for either pointer (matching `pipeline_`'s own
+existing, already-`Accepted` no-setter shape exactly — `pipeline_` has
+never been rebindable after construction, and this Plan does not change
+that for `sampledTexture_`/`sampler_` either). Once constructed, a
+`Material`'s own texture/sampler binding is **fixed for its entire
+lifetime** — there is no "reviewed" vs. "unreviewed" rebind path to
+distinguish, because no rebind path of any kind is exposed; the only
+way to change a `Material`'s own binding is to destroy it and construct
+a new one, which re-runs the same, only, `ATLANTIS_CHECK`-guarded
+constructor path. This is a structural guarantee (no method exists to
+violate it), not a documented convention a future caller could bypass.
+
+**Descriptor-layout branches, both named explicitly:** (1) an
+untextured `Material` — `sampledTexture_ == sampler_ == nullptr` —
+flows through `createMaterial()` with `PipelineCreateParams::hasSampledTextureBinding
+== false` (its own default), producing `VulkanDevice::createPipeline()`'s
+existing, single-binding descriptor-set-layout exactly as before this
+Plan, byte-for-byte (V23). (2) a textured `Material` — both non-null —
+flows through with `hasSampledTextureBinding == true` (set by the
+caller from the shader's own real reflection, D5's own exact
+mechanism), producing the second, fixed `COMBINED_IMAGE_SAMPLER`
+binding. There is no third branch and no partial state: `Material`'s
+own constructor-time invariant guarantees these are the only two
+reachable shapes.
 
 **Ownership/destruction-order contract, stated explicitly (Spec 0016
 Human Review item 7):** the caller-owning composition root — never
@@ -372,7 +447,7 @@ if (item.material->sampledTexture() != nullptr) {
 An untextured `Material` (`sampledTexture() == nullptr`) skips this
 call entirely — `bindTexture()` is never invoked, the existing
 one-binding descriptor set layout path is exercised exactly as before
-(D7's own regression requirement).
+(this section's own regression requirement, V23).
 
 ### D4. RenderGraph — one new resource-carrying field, strictly scoped
 
@@ -403,12 +478,85 @@ identical to the existing `target`/`depthTexture` branches, reusing the
 same `incomingState`/`finalState` mechanism Spec 0010's readback
 `finalState` already established, not a new mechanism.
 
+**The source staging `Buffer` is deliberately not added to
+`ResourceBinding` — this is Spec 0016's own already-approved
+architecture (ADR-0056 Decision 4, Human Review item 6: "the source
+staging `Buffer` is not itself RenderGraph-tracked, matching
+`copyRenderTargetToBuffer()`'s own existing untracked-destination-buffer
+precedent"), not reopened or reversed by this Plan.** The reasoning
+holds precisely: RenderGraph's own `ResourceBinding`/`incomingState`/
+`finalState` machinery exists to drive Vulkan *image layout*
+transitions — a `Buffer` has no Vulkan image layout at all, so there is
+nothing for that machinery to track for it, exactly as
+`copyRenderTargetToBuffer()`'s own existing destination `Buffer`
+already establishes. Adding a `Buffer`-carrying field to
+`ResourceBinding` would not close a real gap — it would make
+`ResourceBinding` track a resource kind that structurally has no state
+to transition, the first step toward exactly the "unbounded generic
+resource system" this Plan and Spec 0016 both explicitly reject.
+
+**What this Plan does fix — a genuine code-clarity gap, not an
+architectural one:** the *pass-building* code must not let the staging
+`Buffer` dependency exist only inside an anonymous lambda's own capture
+list, invisible to anything reading the pass's own construction site.
+The upload pass is built by a small, named helper — not inlined ad hoc
+at each call site — taking both resources as explicit, required
+parameters:
+
+```cpp
+// A named pass-builder, not an anonymous lambda hiding its own inputs.
+// Declares the SampledTexture as the one tracked ResourceBinding
+// (incomingState=Undefined, finalState=ShaderRead); stagingBuffer is
+// an explicit, required parameter to this function -- visible at every
+// call site -- even though it is not itself a RenderGraph resource
+// (see the Decision note above for why).
+void buildTextureUploadPass(atlantis::render_graph::RenderGraphBuilder& builder,
+                             atlantis::rhi::Buffer& stagingBuffer,
+                             atlantis::rhi::SampledTexture& destination) {
+  auto resource = builder.declareResource(&destination);
+  auto pass = builder.declarePass("TextureUpload");  // named, not anonymous,
+      // so a future graph-debugging/visualization tool has something
+      // real to show
+  builder.writes(pass, resource, ResourceState::Undefined, ResourceState::ShaderRead);
+  builder.setExecute(pass, [&stagingBuffer, &destination](atlantis::rhi::CommandList& cmd) {
+    cmd.copyBufferToTexture(stagingBuffer, destination);
+  });
+}
+```
+
+The lambda passed to `setExecute()` still exists (matching every other
+pass in this codebase, including `copyRenderTargetToBuffer()`'s own
+existing readback pass) — what changes is that `stagingBuffer` is no
+longer *introduced* by that lambda's own capture; it arrives as a
+named, typed parameter to `buildTextureUploadPass()` itself, so a
+reader (or a future caller building the two-texture combined-submission
+sequence, Milestone 9) sees the real source/destination/copy-purpose
+relationship in one function signature, not buried in a closure body.
+Milestone 3's own new test (below) asserts this signature shape
+directly, not merely that *some* upload happens to work.
+
+**Location, disclosed explicitly:** Milestone 3's own isolated
+upload-primitive GPU test (`tests/vulkan_backend/`) and Milestone 9's
+own fixture (`tests/image_regression/fixture/`) are two independent
+CMake test targets with no existing shared-helper dependency between
+them (confirmed: `tests/vulkan_backend/` and
+`tests/image_regression/fixture/` share no common private-header
+target today). Each defines its own, independently-declared
+`buildTextureUploadPass()`-shaped local helper — matching this
+codebase's own already-established precedent of `minimal_cube_fixture.cpp`
+and `headless_rendering_gpu_tests.cpp` independently duplicating
+near-identical setup/render sequences rather than sharing one, per
+Pre-draft verification's own citation of both files. This is not a new
+convention invented for this Plan; introducing a first shared
+cross-target test helper is explicitly out of this Plan's own scope.
+
 **Explicitly not done**, matching Spec 0016's own Architectural Impact
-and this Plan's own scope discipline: no fourth resource kind, no
-generic/variant resource-binding refactor, no persistent-resource
-tracking across multiple `execute()` calls. `isDrawPass()`
-(`execution.cpp:37-46`) is unmodified — a `sampledTexture`-carrying
-binding is never classified as a draw pass.
+and this Plan's own scope discipline: no fourth `ResourceBinding`
+resource kind, no generic/variant resource-binding refactor, no
+`Buffer`-tracking capability added to RenderGraph at all, no
+persistent-resource tracking across multiple `execute()` calls.
+`isDrawPass()` (`execution.cpp:37-46`) is unmodified — a
+`sampledTexture`-carrying binding is never classified as a draw pass.
 
 ### D5. Vulkan Backend — allocation, barrier table, descriptor layout
 
@@ -465,14 +613,115 @@ own descriptor-set-layout creation (`vulkan_device.cpp:807-819`) gains a
 second, **conditional** `VkDescriptorSetLayoutBinding` — `binding = 1`,
 `VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER`, `VK_SHADER_STAGE_FRAGMENT_BIT`
 — added to the layout only when `PipelineCreateParams` indicates the
-shader's own reflected contract declares it (see D6); the existing
-one-binding shader path is otherwise completely unaffected, satisfying
-D8's own regression requirement without a second `createPipeline()`
-overload. `VulkanCommandList::bindTexture()` writes one
+shader's own reflected contract declares it. **Exact mechanism (Should
+Fix, resolved precisely — not left as a hand-wave):**
+`PipelineCreateParams` (`types.h`) gains one new field,
+`bool hasSampledTextureBinding = false;` — set by the caller
+constructing a `Material`, which already has the shader's own
+`ReflectionMetadata` in hand at that point (the identical, already-
+established pattern `vertexInputLayout` itself already uses: derived
+from reflection by the caller, passed into pipeline creation as plain
+data, never re-derived inside `VulkanDevice`). Concretely:
+`hasSampledTextureBinding = std::any_of(reflection.descriptorBindings.begin(), reflection.descriptorBindings.end(), [](const auto& b){ return b.type == DescriptorType::Sampler; })`.
+`VulkanDevice::createPipeline()` branches on this one `bool` — **not** a
+new enum, not a second `createPipeline()` overload: `false` reproduces
+today's exact one-binding layout/pool behavior unconditionally; `true`
+adds the second, fixed binding described above. This is the *entire*
+untextured-vs-textured descriptor-layout branch — one `if`, one `bool`
+field, no other `PipelineCreateParams` field changes shape or meaning.
+Existing callers (every pre-this-Plan `createMaterial()` call site)
+default-construct `PipelineCreateParams` with `hasSampledTextureBinding`
+left at its own default, `false` — **zero source change required at any
+existing call site**, satisfying D3's own untextured-`Material`
+regression requirement (V23) without a second `createPipeline()` path
+to keep in sync. `VulkanCommandList::bindTexture()` writes one
 `VkWriteDescriptorSet` (`VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER`,
 binding 1) against the currently-bound pipeline's own descriptor set,
 pairing the `SampledTexture`'s own `VkImageView` and the `Sampler`'s own
-`VkSampler` in one `VkDescriptorImageInfo` (ADR-0056 Decision 9).
+`VkSampler` in one `VkDescriptorImageInfo` (ADR-0056 Decision 9) —
+implemented via `static_cast<VulkanSampledTexture&>`/`static_cast<VulkanSampler&>`,
+matching `VulkanTexture`'s own established single-implementer precedent
+(Pre-draft verification section, above) — never `dynamic_cast`.
+
+### D5a. Staging/readback resource lifecycle under `submit()`/`waitIdle()` failure — not just the success path
+
+**A real gap this Plan's first draft left implicit, fixed here
+precisely.** "The staging `Buffer` is destroyed only after `waitIdle()`
+returns `Ok`" (this Plan's own original Milestone 9 language) only
+states the *success* path. Three distinct failure shapes exist, each
+with a different, precisely-stated answer — none handled by leaking,
+by a bare `release()`, by assuming `waitIdle()` never fails, or by a
+vague "process is exiting anyway":
+
+1. **Early setup failure, before `submit()` is ever called** (e.g.
+   `Device::createSampledTexture()` itself returns `Err`, or an earlier
+   staging `Buffer`'s own `createBuffer()` fails). **Safe to destroy
+   immediately, unconditionally.** No GPU work referencing any of this
+   step's resources was ever submitted — there is no outstanding
+   GPU-side reference to race against. This is ordinary C++ behavior
+   already: the fixture's own setup function returns `Err` early, and
+   every already-constructed `unique_ptr<Buffer>`/`unique_ptr<SampledTexture>`
+   member is destroyed via normal stack/member unwinding — no special
+   handling is added or needed.
+2. **`Device::submit()` itself returns `Err(SubmitError::QueueSubmitFailed)`.**
+   **Also safe to destroy immediately, unconditionally.** A failed
+   `vkQueueSubmit` means the GPU driver never accepted this
+   `CommandList`'s own recorded work at all — nothing in it (the copy,
+   the barriers, the draw, the readback) ever began executing, so none
+   of the resources it references (both staging `Buffer`s, both
+   `SampledTexture`s, the readback `Buffer`) has any outstanding
+   GPU-side reference from *this* submission. The fixture's own
+   `renderOneFrame()`-equivalent function returns `Err` at this point;
+   its caller's own `Result`-propagation (matching
+   `RuntimeApplication::initializeSteps()`'s own established pattern)
+   destroys every resource via ordinary RAII — no `waitIdle()` call is
+   needed or made in this path, since nothing was ever queued.
+3. **`Device::submit()` succeeds, but the subsequent `Device::waitIdle()`
+   returns `Err` — most importantly `Err(SubmitError::DeviceLost)`.**
+   **This is treated as fatal for the fixture/test, not a recoverable
+   state this Plan attempts to gracefully unwind.** Per the Vulkan
+   specification's own `VK_ERROR_DEVICE_LOST` guidance, once a device is
+   lost, continued fine-grained interaction with objects created from it
+   has no well-defined outcome — there is no Vulkan-spec-guaranteed-safe
+   way to selectively determine "did the GPU finish reading this
+   specific staging buffer before it died." The only broadly-supported
+   recovery shape is destroying the entire `VkDevice` and everything
+   created from it together, then (if continuing at all) recreating from
+   scratch — not selective per-resource cleanup. **This Plan does not
+   build that recovery machinery — it does not exist anywhere else in
+   this codebase either.** Every existing headless GPU test already
+   treats `waitIdle()` failure as fatal via
+   `REQUIRE(device->waitIdle().isOk())` (`headless_rendering_gpu_tests.cpp`,
+   `minimal_cube_fixture.cpp`), which aborts the test immediately on
+   `Err` — this Plan's own new fixture/test follows the identical,
+   already-established pattern, not a new one. **What actually happens
+   to the C++ objects on this path, disclosed explicitly, not hidden:**
+   ordinary RAII destruction still runs regardless (the test binary
+   unwinds/exits), which still calls `VulkanBuffer`/`VulkanSampledTexture`/
+   `VulkanSampler`'s own unconditional destructors (`vkDestroyBuffer`/
+   `vkDestroyImage`/`vkFreeMemory`/`vkDestroySampler`) — **exactly the
+   same behavior every existing `VulkanBuffer`/`VulkanTexture`/
+   `VulkanRenderTarget` already has today under `DeviceLost`, with no
+   special-casing anywhere in the current codebase.** This Plan
+   introduces no new device-loss-awareness to those destructors,
+   because doing so would be building a general device-loss-recovery
+   system — well beyond Spec 0016's own single-fixture, test-only scope,
+   and inconsistent with how every other RHI resource in this codebase
+   already behaves.
+4. **Ownership, restated plainly:** the fixture struct itself (D1's own
+   table: `device` is a `unique_ptr<Device>` *member* of the fixture)
+   owns every resource for exactly the fixture's own function-local
+   scope — there is no "retained until `Device` destruction" state
+   distinct from "retained until fixture teardown," because the fixture
+   *is* what owns the `Device` too; both happen at the same scope exit.
+   No new ownership model is introduced.
+5. **Reuses the existing internal retained-submission/fence contract,
+   unchanged, not reinvented.** `VulkanDevice::waitIdle()`'s own already-
+   existing internal implementation (`waitAndReleaseRetainedSubmission()`,
+   a single-fence `vkWaitForFences` drain, `vulkan_device.cpp:456-475`)
+   is exactly what this Plan's `waitIdle()` call already goes through —
+   this Plan adds no new fence, no new "retained submission" concept at
+   the RHI or fixture level.
 
 ### D6. Shader System — reflected sampler kind, `Float2`, and the second contract
 
@@ -488,16 +737,118 @@ enum class VertexAttributeType {
   Float2,  // new
 };
 ```
-`reflection_loader.cpp`'s `parseDescriptorType()` gains a case for the
-string `"combinedImageSampler"` (matching Slang's own reflection JSON
-vocabulary for this binding kind — exact string confirmed empirically
-during Milestone 4, not guessed). `slang_json_transform.cpp:245-248`'s
-own explicit "silently skip any other binding kind" comment/branch is
-replaced with a real `combinedImageSampler` case, alongside the
-existing `descriptorTableSlot`/`pushConstantBuffer` handling — the
-"silent skip" behavior is preserved for any *other*, still-unmodeled
-kind (this Plan adds exactly one new recognized kind, not a general
-reflection framework).
+**Empirically confirmed against a real `slangc` compile during this
+Plan's own review (Should Fix, resolved with real evidence, not a
+guess) — the actual Slang reflection JSON shape for a `[[vk::binding(1,0)]]
+Sampler2D` combined-sampler declaration:**
+
+```slang
+[[vk::binding(1, 0)]]
+Sampler2D texturedSampler;   // Slang's own combined image-sampler type
+                              // -- NOT a separate Texture2D + SamplerState
+                              // pair, which would reflect as two bindings
+                              // and contradict ADR-0056 Decision 9's own
+                              // "combined image sampler" commitment.
+```
+
+`slangc -target spirv -profile spirv_1_0 -stage fragment ... -reflection-json ...`
+against exactly this declaration produces (module-parameter section):
+```json
+{
+  "name": "texturedSampler",
+  "binding": {"kind": "descriptorTableSlot", "index": 1},
+  "type": {
+    "kind": "resource",
+    "baseShape": "texture2D",
+    "combined": true,
+    "resultType": {"kind": "vector", "elementCount": 4, "elementType": {"kind": "scalar", "scalarType": "float32"}}
+  }
+}
+```
+and, per fragment-stage entry point, in `entryPoints[].bindings[]`
+(exactly the array `slang_json_transform.cpp`'s own existing `used`-field
+handling already reads from, `:186-193`):
+```json
+{"name": "texturedSampler", "binding": {"kind": "descriptorTableSlot", "index": 1, "used": 1}}
+```
+
+**This is a genuinely important, previously-mistaken assumption
+corrected here**: a combined sampler binding's own top-level
+`binding.kind` is `"descriptorTableSlot"` — **the same string a uniform
+buffer already uses**, not a distinct `"combinedImageSampler"` kind as
+this Plan's own first draft assumed. The real distinguishing
+information lives one level deeper, in the module parameter's own
+`type` object: `type.kind == "resource"`, `type.baseShape == "texture2D"`,
+and — the field that specifically confirms *combined*, not separate,
+image+sampler — `type.combined == true` (a JSON boolean). The fix is
+therefore **not** a new top-level `*kind` branch in
+`slang_json_transform.cpp` — it is extending the *existing*
+`if (*kind == "descriptorTableSlot")` branch's own `moduleTypeKind`
+check (`:200-210`), which today hard-rejects (`UnexpectedStructure`)
+anything except `"constantBuffer"`:
+
+```cpp
+if (*moduleTypeKind == "constantBuffer") {
+  metadata.descriptorBindings.push_back(
+      DescriptorBinding{.set = space.value_or(0), .binding = *index, .type = DescriptorType::UniformBuffer, .stage = stage});
+} else if (*moduleTypeKind == "resource") {
+  const auto baseShape = readStringField(*moduleType, "baseShape");
+  const JsonValue* combinedField = moduleType->find("combined");
+  const bool isCombined = combinedField != nullptr && isTruthy(*combinedField);
+  if (baseShape.has_value() && *baseShape == "texture2D" && isCombined) {
+    metadata.descriptorBindings.push_back(
+        DescriptorBinding{.set = space.value_or(0), .binding = *index, .type = DescriptorType::Sampler, .stage = stage});
+  } else {
+    // A resource binding kind this module does not model (e.g. a
+    // separate, non-combined SamplerState/Texture2D pair, or a 3D/
+    // cubemap texture) -- still an explicit, named structural error,
+    // never silently skipped, matching the existing constantBuffer
+    // branch's own "genuinely new shape, not silently mis-typed" comment.
+    return TransformResult::Err(TransformError::UnexpectedStructure);
+  }
+} else {
+  return TransformResult::Err(TransformError::UnexpectedStructure);
+}
+```
+
+The file's own top comment and the trailing "any other binding kind ...
+is outside this round's modeled scope ... silently skipped" note
+(`:245-248`) is narrowed accordingly: `descriptorTableSlot`/
+`pushConstantBuffer` are no longer the only two recognized *top-level*
+kinds needing no change — what changes is that `descriptorTableSlot`
+itself now recognizes two *module-type* shapes (`constantBuffer`,
+`resource`+`texture2D`+`combined`) instead of one; any *other* top-level
+`kind` string remains silently skipped exactly as today, and any
+*other* resource shape within a `descriptorTableSlot` (a non-combined
+sampler, a non-2D texture, a storage buffer, etc.) is now an explicit,
+named `UnexpectedStructure` rather than silently absent from
+`descriptorBindings` — a real, disclosed narrowing of the existing
+"unknown things are silently ignored" rule for exactly this one new
+case, matching the existing `constantBuffer` branch's own precedent of
+treating an unrecognized shape as a structural error, not a silent gap.
+
+`reflection_loader.cpp`'s own `parseDescriptorType()` (the function
+that round-trips a persisted `ReflectionMetadata` JSON file back into
+memory — distinct from `slang_json_transform.cpp`'s own raw-Slang-JSON
+parser above) gains a matching case for the string `"sampler"` (the
+`DescriptorType::Sampler` enumerator's own serialized name, following
+whatever short-string convention `"uniformBuffer"` already uses for
+`DescriptorType::UniformBuffer` — confirmed against real, current
+`reflection_loader.cpp`/`reflection_metadata.cpp` serialization code
+during Milestone 4 itself, not assumed here).
+
+`Float2`'s own reflection parsing (a *separate* function,
+`vertexAttributeTypeFromTypeNode()`, `slang_json_transform.cpp:109-120`)
+is likewise empirically confirmed: the same probe compile's own vertex-
+input `uv` field reflects as `{"kind": "vector", "elementCount": 2,
+"elementType": {"kind": "scalar", "scalarType": "float32"}}` — the
+existing function already checks exactly this shape for `elementCount
+== 3` (line 114); the fix is a one-line widening:
+```cpp
+if (!elementCount.has_value() || (*elementCount != 3 && *elementCount != 2) || ...) return std::nullopt;
+...
+return *elementCount == 3 ? VertexAttributeType::Float3 : VertexAttributeType::Float2;
+```
 
 `descriptor_contract.cpp` gains a second, named contract function
 (e.g. `texturedMaterialExpectedDescriptorContract()`, exact name a
@@ -695,21 +1046,102 @@ buildable `atlantis_asset_cooker`; a second from-scratch configure with
 `ATLANTIS_BUILD_TESTS=ON` still builds and passes the two existing
 `tests/image_regression/` targets unmodified).
 
-### D11. First textured fixture — exact scene content
+### D11. First textured fixture — exact scene content, vertex layout, and combined-submission ordering
 
-Two 1×2-triangle quads, side by side in clip space (e.g. left quad
-`x ∈ [-0.9, -0.1]`, right quad `x ∈ [0.1, 0.9]`, both `y ∈ [-0.5, 0.5]`,
-`z = 0`), each with `float2 uv` spanning `[0,1]²` across its own quad.
-One checkerboard-patterned source PNG (small — e.g. 64×64, a handful of
-alternating-color blocks large enough to be unambiguous in a 512×512
-capture), checked in as `tests/image_regression/fixture/textured_quad_source.png`,
-cooked **twice** via `atlantis_add_texture_asset()` (D8): once
-`COLOR_SPACE Unorm` (left quad's own `Material`), once `COLOR_SPACE
-Srgb` (right quad's own `Material`) — both textures share one
-`Sampler` (`Filter::Nearest`, `AddressMode::ClampToEdge` — nearest
-filtering keeps the checkerboard's own block edges crisp in the
-captured golden, avoiding filtering-interpolation ambiguity at block
-boundaries).
+**Geometry**: two 1×2-triangle quads, side by side in clip space (left
+quad `x ∈ [-0.9, -0.1]`, right quad `x ∈ [0.1, 0.9]`, both
+`y ∈ [-0.5, 0.5]`, `z = 0`), each with `uv` spanning `[0,1]²` across its
+own quad. **No per-vertex color attribute** — the quads' own visible
+color comes entirely from the sampled texture, matching this Spec's own
+purpose (proving texture sampling, not vertex-color interpolation); this
+Plan's own recommendation deliberately differs from Spec 0016's own
+illustrative `[[vk::location(2)]]` mention (which implied a
+position+color+uv, three-attribute shape carried over from
+`minimal_mesh.slang`) — the exact attribute count/location was always a
+disclosed Plan-level detail (Spec 0016's own Risks & Open Questions:
+"the exact Slang/reflection JSON binding-kind mapping... Plan-level
+details"), not a fixed Human Review decision, and a genuinely minimal
+two-attribute shape is simpler with no loss of verification value.
+
+**Exact vertex struct, layout, and how `Float2` reaches a real
+`VertexInputLayout` (Should Fix, resolved precisely):**
+```cpp
+struct Vertex {
+  float position[3];
+  float uv[2];
+};  // interleaved, single buffer, single binding -- matching
+    // minimal_cube_fixture.cpp's own Vertex{position[3], color[3]}
+    // shape exactly (interleaved, not a separate per-attribute buffer);
+    // stride = sizeof(Vertex) = 20 bytes (5 floats)
+```
+`MeshVertexAttributeSchema` (this fixture's own, matching
+`minimal_cube_fixture.cpp`'s exact established pattern):
+```cpp
+{MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},   // = 0
+ MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)}}          // = 12
+```
+passed, together with `sizeof(Vertex)`, into the **existing, unmodified**
+`toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex))` — where
+`vertexMetadata` is the new shader's own *real*, `slangc`-produced
+reflection (D6, empirically confirmed above: the shader's own
+`[[vk::location(0)]] float3 position`/`[[vk::location(1)]] float2 uv`
+`VertexInput` fields reflect as `elementCount: 3`/`elementCount: 2`
+respectively) — **cross-validated against the real shader, exactly like
+every existing fixture, never a hand-built `VertexInputLayout` bypassing
+reflection, and no Asset System mesh-schema or test-private-backdoor
+involvement of any kind.** `toRhiFormat()` (D6) maps the reflected
+`VertexAttributeType::Float3`/`Float2` to RHI's
+`VertexAttributeFormat::Float3`/`Float2`; `vertexAttributeFormatToVkFormat()`
+(D2/D5) maps those to `VK_FORMAT_R32G32B32_SFLOAT`/`VK_FORMAT_R32G32_SFLOAT`
+in `VulkanDevice::createPipeline()`'s own existing attribute loop,
+unmodified in shape.
+
+**Textures**: one checkerboard-patterned source PNG (small — e.g. 64×64,
+a handful of alternating-color blocks large enough to be unambiguous in
+a 512×512 capture), checked in as
+`tests/image_regression/fixture/textured_quad_source.png`, cooked
+**twice** via `atlantis_add_texture_asset()` (D8): once `COLOR_SPACE
+Unorm` (left quad's own `Material`), once `COLOR_SPACE Srgb` (right
+quad's own `Material`) — both textures share one `Sampler`
+(`Filter::Nearest`, `AddressMode::ClampToEdge` — nearest filtering keeps
+the checkerboard's own block edges crisp in the captured golden,
+avoiding filtering-interpolation ambiguity at block boundaries).
+
+**Combined-submission ordering, fully explicit (Should Fix, resolved —
+matching Milestone 9's own description below exactly):**
+
+1. Staging `Buffer` #1 (`Unorm` pixel bytes) → `SampledTexture` #1
+   upload pass (D4's own `buildTextureUploadPass()`; RenderGraph-driven
+   `Undefined → TransferDestination → ShaderRead`).
+2. Staging `Buffer` #2 (`Srgb` pixel bytes) → `SampledTexture` #2 upload
+   pass (same helper, independent call).
+3. `Renderer::drawFrame()`'s own draw graph — two `DrawItem`s (left
+   quad/`Material` #1/`SampledTexture` #1; right quad/`Material` #2/
+   `SampledTexture` #2), both sampling their own now-`ShaderRead`
+   texture via `bindTexture()` (D3), both rendering into the **same**
+   `RenderTarget` acquired once at the top of the frame; leaves that
+   `RenderTarget` in `ResourceState::TransferSource`.
+4. Readback graph — `copyRenderTargetToBuffer()` from that same
+   `RenderTarget` into the readback `Buffer`.
+5. **Exactly one** `Device::submit(std::move(commandList), *target)` —
+   covering steps 1–4 together, `target` genuinely drawn-into (step 3)
+   and read-from (step 4).
+6. **Exactly one** `Device::waitIdle()`.
+7. CPU reads `readbackBuffer->mappedData()` and compares — only now
+   (D5a's own success-path timing) are both staging `Buffer`s and the
+   readback `Buffer` destroyed.
+
+**Proof the `RenderTarget` is genuinely used, not merely passed to
+satisfy `submit()`'s signature (Should Fix, new test):** the GPU test
+(Milestone 9) additionally captures the readback buffer's own content
+against a **known baseline** — the offscreen target's own clear color,
+captured via the identical fixture *before* the draw graph runs (a
+second, minimal readback exercising only steps 4–6 above against a
+freshly-cleared, undrawn target) — and asserts the real, post-draw
+capture differs from that baseline in both quads' own screen regions.
+A `RenderTarget` reused only as a dummy `submit()` argument, never
+actually drawn into, would fail this comparison (it would read back as
+the untouched clear color); a genuine draw does not.
 
 ## Milestones / Task Breakdown
 
@@ -773,12 +1205,15 @@ ones.
    combined-submission fixture (Milestone 9).
 4. **Shader System + Tools shader-compiler** (D6, D7 — `DescriptorType::Sampler`,
    `VertexAttributeType::Float2`, `parseDescriptorType()`,
-   `slang_json_transform.cpp`'s real `combinedImageSampler` case, the
-   new textured contract, `toRhiFormat()`'s `Float2` case,
-   `compile_and_validate.cpp`'s real `expectedContract` consumption).
-   `tests/shader_system/`: a real captured Slang reflection JSON
-   (produced during this step against a small, throwaway test `.slang`
-   file declaring both a uniform buffer and a combined sampler, plus a
+   `slang_json_transform.cpp`'s real, empirically-confirmed
+   `resource`/`texture2D`/`combined`-shape case (D6), the new textured
+   contract, `toRhiFormat()`'s `Float2` case, `compile_and_validate.cpp`'s
+   real `expectedContract` consumption). `tests/shader_system/`: a real
+   Slang reflection JSON — the exact shape already produced and
+   confirmed by this Plan's own review (D6's own probe compile,
+   `[[vk::binding(1,0)]] Sampler2D` plus `float2 uv`) — becomes this
+   step's own committed test fixture input (a small `.slang` file
+   declaring both a uniform buffer and a combined sampler, plus a
    `float2` vertex input) drives `DescriptorType::Sampler`/
    `VertexAttributeType::Float2` reflection tests and the new
    contract-shape test. `tests/shader_system/rhi_integration/vertex_input_mapping_tests.cpp`
@@ -836,7 +1271,9 @@ ones.
    Numbering preserved from the Spec's own suggested area list for
    cross-reference only.)*
 9. **First textured fixture, combined submission, real GPU exercise**
-   (D11). New `tests/image_regression/fixture/textured_quad_fixture.h`/`.cpp`,
+   (D11 — see its own fully explicit, seven-step combined-submission
+   ordering and vertex-layout precision). New
+   `tests/image_regression/fixture/textured_quad_fixture.h`/`.cpp`,
    `textured_quad_source.png`, its own new `.slang` shader (declaring
    both the uniform buffer and the combined-sampler binding plus a
    `float2 uv` vertex input), directly extending
@@ -862,11 +1299,14 @@ ones.
    `tests/image_regression/textured_quad_gpu_tests.cpp`, `"gpu"`-labeled,
    confirming: exactly one `submit()` call for the whole sequence
    (instrumented count, or code-inspection-confirmed — Plan-level
-   detail); the captured frame is non-degenerate (not all-one-color);
-   Vulkan Validation Layers clean. **This step does not itself capture
-   or commit a golden** — see the Golden Capture Process below; the code
-   in this step is fully mergeable and independently reviewable without
-   any golden PNG in the same diff.
+   detail); the `RenderTarget` genuinely participates, confirmed against
+   the clear-color baseline comparison D11 describes (not merely passed
+   to satisfy `submit()`'s own signature); the captured frame is
+   non-degenerate (not all-one-color); Vulkan Validation Layers clean.
+   **This step does not itself capture or commit a golden** — see the
+   Golden Capture Process below; the code in this step is fully
+   mergeable and independently reviewable without any golden PNG in the
+   same diff.
 10. **Golden capture — mandatory, separate commit** (see Golden Capture
     Process below; matches ADR-0042's "Initial baseline bootstrap" and
     Plan 0015's own Step 9 precedent of a dedicated, evidence-bearing
@@ -1003,7 +1443,7 @@ depends on Milestone 10.
 | V6 | Both `Rgba8Unorm` and `Rgba8Srgb` artifacts encode/decode with the correct fixed byte value for `format`; row order (first artifact row = source's first-decoded row) and row pitch (`width*4`, no padding) confirmed byte-exact. | `tests/asset_system/texture_artifact_tests.cpp` | GPU-independent |
 | V7 | Every named `TextureArtifactDecodeError` condition individually triggered and correctly, distinctly reported: bad magic, unsupported schema version, truncated header, inconsistent `pixelDataSizeBytes`, a dimension exceeding the maximum, an unknown format value, a mip count other than `1`. | `tests/asset_system/texture_artifact_tests.cpp` | GPU-independent |
 | V8 | Cooker determinism: cooking the same decoded bytes twice produces byte-identical artifact and metadata bytes; a forced mid-write failure leaves no partial output file and does not disturb a pre-existing valid one — mirroring `cookStaticMesh()`'s own established V11/V12-style test shape exactly. | `tests/asset_system/cook_texture_tests.cpp` | GPU-independent |
-| V9 | `stb_image`'s `STB_IMAGE_IMPLEMENTATION` macro is defined in exactly one translation unit per linking target (`png_codec.cpp` for `tests/image_regression/`, `cook_command.cpp` for `atlantis_asset_cooker_lib`) — confirmed by a clean link with no duplicate-symbol error, not merely code inspection. | Build-level (both configurations) | GPU-independent |
+| V9 | `stb_image`'s `STB_IMAGE_IMPLEMENTATION`/`STB_IMAGE_WRITE_IMPLEMENTATION` macros are each defined in exactly one translation unit per *static library that defines them* (`png_codec.cpp` — both macros — for `atlantis_image_regression_support`; `cook_command.cpp` — `STB_IMAGE_IMPLEMENTATION` only, no write-side needed — for `atlantis_asset_cooker_lib`) — confirmed by a clean link with no duplicate-symbol error for every final binary linking either library (`atlantis_asset_cooker`, `tests/tools/asset_cooker`'s own test executable if it also links `atlantis_asset_cooker_lib`, `atlantis_image_regression_tests`, `atlantis_image_regression_gpu_tests`), not merely code inspection — a static library's own macro-definition count is what avoids ODR conflict, independent of how many executables eventually link it. | Build-level (both configurations) | GPU-independent |
 | V10 | `ATLANTIS_BUILD_TESTS=OFF`: a from-scratch configure succeeds and `atlantis_asset_cooker` builds with real `Stb::Stb` linkage available (`--kind=texture` functional). `ATLANTIS_BUILD_TESTS=ON`: a separate from-scratch configure/build still passes `tests/image_regression/`'s own two pre-existing `Stb::Stb` consumers unmodified. | Manual, recorded (matching Plan 0012 Section D7's own established CMake-reconfigure procedure) | Manual |
 | V11 | RHI value-type equality: `SampledTextureCreateParams`/`SamplerCreateParams` `operator==` confirmed, matching `OffscreenTargetCreateParams`'s own existing test shape. | `tests/rhi/types_tests.cpp` | GPU-independent |
 | V12 | `SampledTextureCreateError`/`SamplerCreateError` plumb through `Device::createSampledTexture()`/`createSampler()`'s own `Result::Err` channel correctly for each named failure mode (allocation, image creation, image-view creation, sampler creation), matching `TextureCreateError`'s own existing test discipline. | `tests/vulkan_backend/` (GPU-required, real allocation-failure conditions may be simulated per existing precedent) | GPU-required where real allocation is exercised |
@@ -1011,8 +1451,8 @@ depends on Milestone 10.
 | V14 | The two new barrier-plan entries (`Undefined -> TransferDestination`, `TransferDestination -> ShaderRead`) produce the exact expected `VkImageMemoryBarrier` fields (layout, stage, access masks); an unlisted pair naming `SampledTexture` still triggers the existing `ATLANTIS_CHECK_MSG` failure — regression-confirmed, not merely assumed unchanged. | `tests/vulkan_backend/resource_state_mapping_tests.cpp` | GPU-independent |
 | V15 | `VertexAttributeFormat::Float2` maps to `VK_FORMAT_R32G32_SFLOAT`; the exhaustive switch in `vertexAttributeFormatToVkFormat()` still hard-fails (`ATLANTIS_CHECK_MSG`) for any hypothetically-unhandled value. | `tests/vulkan_backend/` | GPU-independent |
 | V16 | RenderGraph: a one-pass graph declaring a `sampledTexture` binding with `incomingState=Undefined`/`finalState=ShaderRead` drives the expected `FakeCommandList`-recorded `transitionResource(SampledTexture&, ...)` sequence; Guard 0 still rejects a binding naming more than one of `target`/`depthTexture`/`sampledTexture`, or none. | `tests/render_graph/` | GPU-independent (via `FakeCommandList`) |
-| V17 | A real `SampledTexture`, uploaded through a real one-pass RenderGraph execution and `copyBufferToTexture()` in isolation (no draw pass yet), completes with Vulkan Validation Layers clean — confirming the barrier/copy mechanics alone are correct before the full combined-submission fixture exercises them together with a draw. | `tests/vulkan_backend/` (new upload-primitive GPU test, Milestone 3) | GPU-required |
-| V18 | Shader System: a real captured Slang reflection JSON declaring both the existing uniform-buffer binding and a new `combinedImageSampler` binding produces `DescriptorType::Sampler` correctly; a real captured reflection declaring a `float2` vertex input produces `VertexAttributeType::Float2`, mapped by `toRhiFormat()` to `VertexAttributeFormat::Float2`. | `tests/shader_system/`, `tests/shader_system/rhi_integration/` | GPU-independent |
+| V17 | A real `SampledTexture`, uploaded through `buildTextureUploadPass()` (D4's own named helper, called with a real staging `Buffer` and destination `SampledTexture` as explicit parameters — not a bare lambda) and a real one-pass RenderGraph execution, completes with Vulkan Validation Layers clean — confirming the barrier/copy mechanics alone are correct before the full combined-submission fixture exercises them together with a draw. | `tests/vulkan_backend/` (new upload-primitive GPU test, Milestone 3) | GPU-required |
+| V18 | Shader System: a real captured Slang reflection JSON for a `[[vk::binding(1,0)]] Sampler2D` declaration (`binding.kind == "descriptorTableSlot"`, `type.kind == "resource"`, `type.baseShape == "texture2D"`, `type.combined == true` — the real, `slangc`-confirmed shape, D6) produces `DescriptorType::Sampler` correctly, and a mismatched shape (`combined == false`, or a non-`texture2D` `baseShape`) is rejected as `UnexpectedStructure`, never silently dropped; a real captured reflection declaring a `float2` vertex input produces `VertexAttributeType::Float2`, mapped by `toRhiFormat()` to `VertexAttributeFormat::Float2`. | `tests/shader_system/`, `tests/shader_system/rhi_integration/` | GPU-independent |
 | V19 | The new two-binding descriptor contract accepts exactly a matching two-binding reflection and rejects a mismatched one (wrong count, wrong stage, wrong descriptor type at either binding), matching `minimalRendererExpectedDescriptorContract()`'s own existing test discipline. | `tests/shader_system/` | GPU-independent |
 | V20 | `expectedContract` wiring regression: `minimal_mesh.slang`'s own existing reflection still validates correctly against `minimalRendererExpectedDescriptorContract()` now that `compileAndValidate()` reaches it via the newly-read `expectedContract` field rather than an unconditional call — byte-for-byte the same accept/reject outcome as before this Plan. | `tests/tools/shader_compiler/` | Tool-required (real `slangc`/`spirv-val`, no GPU) |
 | V21 | `expectedContract` wiring, positive case: the new textured shader's own real reflection validates successfully against the new two-binding contract when `expectedContract` names it. | `tests/tools/shader_compiler/` | Tool-required |
@@ -1021,7 +1461,7 @@ depends on Milestone 10.
 | V24 | A textured `Material` drives exactly one additional recorded `bindTexture` call, positioned immediately after `bindUniformBuffer`, with the expected `SampledTexture`/`Sampler` identities. | `tests/renderer/renderer_ownership_tests.cpp` | GPU-independent |
 | V25 | Vulkan descriptor pool/layout: an untextured `Pipeline`'s own descriptor-set-layout creation is completely unaffected (one binding, as before this Plan); a textured `Pipeline` gains exactly the second, fixed `COMBINED_IMAGE_SAMPLER` binding at binding 1, fragment stage; the device-level pool's own new pool-size entry does not affect `maxSets` or the existing uniform-buffer pool-size entry. | `tests/vulkan_backend/` | GPU-required |
 | V26 | `bindTexture()`'s own `VkWriteDescriptorSet` correctly pairs the bound `SampledTexture`'s `VkImageView` and the bound `Sampler`'s `VkSampler` in one `VkDescriptorImageInfo`, confirmed via Vulkan Validation Layers clean during an actual textured draw (not inferred from a correct-looking image alone). | `tests/vulkan_backend/`, Milestone 9's own GPU test | GPU-required |
-| V27 | **Combined submission, exactly once:** the textured fixture's own composition code calls `Device::submit()` exactly one time for the upload(s)+draw+readback sequence, against the same `RenderTarget` the draw and readback graphs actually use — confirmed by call-count instrumentation or direct code inspection, not assumed. | `tests/image_regression/textured_quad_gpu_tests.cpp` | GPU-required |
+| V27 | **Combined submission, exactly once, and the `RenderTarget` genuinely participates:** the textured fixture's own composition code calls `Device::submit()` exactly one time for the seven-step upload(s)+draw+readback sequence (D11), against the same `RenderTarget` the draw and readback graphs actually use — confirmed by call-count instrumentation or direct code inspection. **Not a dummy-target risk left unaddressed:** the readback content is compared against a freshly-cleared, undrawn baseline capture of the same target (D11's own explicit baseline-comparison design) — a `RenderTarget` reused only to satisfy `submit()`'s signature, never actually drawn into, would read back identical to that baseline; a genuine draw does not. | `tests/image_regression/textured_quad_gpu_tests.cpp` | GPU-required |
 | V28 | Staging-buffer lifetime: both staging `Buffer`s remain alive (not destroyed) until after the combined submission's own `waitIdle()` returns `Ok` — confirmed by code-structure inspection (declaration/destruction ordering) and, where feasible, a debug-build lifetime assertion. | `tests/image_regression/textured_quad_gpu_tests.cpp` | GPU-required |
 | V29 | `Material` destruction precedes `SampledTexture`/`Sampler` destruction in the fixture's own scope-exit order — confirmed by the fixture struct's own declared member order (D3) and, if feasible, an explicit destructor-order assertion in debug builds. | `tests/image_regression/fixture/textured_quad_fixture.cpp` | GPU-independent (structural) / manual code review |
 | V30 | The two quads, cooked from identical source pixel bytes under `Rgba8Unorm` vs. `Rgba8Srgb`, produce **visibly, measurably different** sampled colors in the captured frame — confirmed both by the golden's own human visual-confirmation step (Golden Capture Process, step 3) and by a direct pixel-value comparison in the GPU test itself (the two quads' own captured regions must differ by more than the existing channel-tolerance-0 rule's own noise floor). | `tests/image_regression/textured_quad_gpu_tests.cpp`, Golden Capture Process | GPU-required |
@@ -1029,10 +1469,16 @@ depends on Milestone 10.
 | V32 | New golden captured strictly under ADR-0042's "Initial baseline bootstrap" category, satisfying all six of its own numbered constraints explicitly (Spec 0016 Human Review item 14) — confirmed in the golden-capture commit's own PR description, not merely asserted here. | PR description (Milestone 10's own commit) | Manual |
 | V33 | **Existing-golden regression, explicit:** `minimal_cube` and `world_scene` headless tests re-run unmodified, against their own existing, unmodified goldens, zero channel difference — proving this Plan's RenderGraph/`Material`/Vulkan Backend/descriptor-pool changes did not disturb either existing rendering path. | `tests/image_regression/` | GPU-required |
 | V34 | `git diff --stat` (or equivalent) confirms the two existing golden PNG/sidecar pairs under `tests/image_regression/goldens/` are byte-identical to `main` at every commit in this Plan's own PR. | PR-level check | Manual |
-| V35 | Module-boundary scan: `Atlantis::AssetSystem` still names no RHI header and no `stb_image.h`/`stb_image_write.h` include outside `src/tools/asset_cooker/cook_command.cpp`; `Atlantis::Renderer` still names no `Atlantis::VulkanBackend` header. | `tests/asset_system/module_boundary_tests.cpp` and an equivalent grep-based check for the `stb_image` scan (new, or extended) | GPU-independent |
+| V35 | Module-boundary scan, both header-include and CMake link-graph: `Atlantis::AssetSystem` still names no RHI header and no `stb_image.h`/`stb_image_write.h` include outside `src/tools/asset_cooker/cook_command.cpp`; `atlantis_asset_system`'s own `target_link_libraries` closure (transitively) never reaches `Stb::Stb` — confirmed via CMake's own dependency graph (e.g. `cmake --graphviz` or an equivalent target-property inspection), not header-grep alone; `Atlantis::Renderer` still names no `Atlantis::VulkanBackend` header. | `tests/asset_system/module_boundary_tests.cpp` plus a CMake-level link-graph check (new) | GPU-independent |
 | V36 | `/w14062` positive/negative build check on `atlantis_asset_cooker_lib`: a temporarily removed `AssetKind::Texture` case in `runCookCommand()`'s own switch (or in `textureCookErrorMessage()`) fails the build, naming that exact enumerator; restoring it builds clean again — mirroring Spec 0013's own established mechanism. | Manual, recorded (build-log evidence) | Manual |
 | V37 | Full Debug and Release builds from a fresh configure; `ctest -LE gpu` and `ctest -L gpu` both green on both configurations; Vulkan Validation Layers grepped clean throughout (zero `VUID`/Validation Error/Warning matches) — not merely absence-of-crash. | Full test suite | GPU-independent + GPU-required |
 | V38 | A genuine, human-observed visual confirmation of the new golden's own captured image (matching Spec 0014/0015's own V20/V24 discipline for what "human confirmation" means, applied here to a headless-only capture — no windowed claim). | Golden Capture Process, step 3; recorded in the golden-capture commit's own PR | Manual |
+| V39 | `buildTextureUploadPass()`'s own signature requires the staging `Buffer` as an explicit, named, non-optional parameter (D4) — confirmed by a direct signature/compile-time check (the function cannot be called without one) — closing the "hidden via lambda capture" gap without adding the `Buffer` to `ResourceBinding` itself. | `tests/render_graph/` | GPU-independent (compile-time/structural) |
+| V40 | **Submit failure, resource safety (D5a, case 2):** `Device::submit()` returning `Err(SubmitError::QueueSubmitFailed)` (simulated per existing precedent) is followed by immediate, unconditional destruction of every resource this operation created, with no crash, no leak-detector warning, and no attempted `waitIdle()` call (since nothing was ever queued). | `tests/vulkan_backend/` or `tests/image_regression/` (GPU-required, simulated failure) | GPU-required |
+| V41 | **`waitIdle()` failure, fail-fast confirmed as intentional, not accidental (D5a, case 3):** the new fixture's own test follows the identical `REQUIRE(device->waitIdle().isOk())`-style fail-fast pattern every existing headless GPU test already uses — confirmed by direct code inspection that no bespoke, untested "graceful DeviceLost recovery" code path was silently introduced. | `tests/image_regression/textured_quad_gpu_tests.cpp` (code-inspection) | Manual |
+| V42 | **Early setup failure (D5a, case 1):** a forced failure at each individual setup stage (e.g. the second `createSampledTexture()` call, simulated per existing precedent) before `submit()` is ever reached leaves no resource leaked and requires no explicit cleanup code beyond ordinary RAII — confirmed by a clean run under the project's existing leak-detection discipline (matching `cookStaticMesh()`'s own established V11/V12-style forced-failure test shape). | `tests/image_regression/` or `tests/vulkan_backend/` (GPU-required) | GPU-required |
+| V43 | The relocated `cmake/AtlantisStb.cmake` declares the identical pinned commit hash (`URL`/`URL_HASH`) `cmake/AtlantisDependencies.cmake` declared before the move — confirmed by direct diff of the two declarations, not merely "it still builds." | PR-level diff check (Milestone 1's own commit) | Manual |
+| V44 | `PipelineCreateParams::hasSampledTextureBinding`'s own default (`false`) requires zero source change at any pre-existing `createMaterial()`/`createPipeline()` call site — confirmed by a full-repository build succeeding with no call site touched beyond what Milestone 5 itself lists (D5's own exact mechanism). | Build-level, `git diff --stat` cross-check against Files/Modules Touched | Manual |
 
 ## Rollback Plan
 
@@ -1056,8 +1502,8 @@ independently of every code commit that precedes it.
 See [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
 Deltas specific to this plan:
 
-- V1–V38 all executed and recorded; V10, V32, V34, V36, V38 recorded as
-  manual verification in the Implementation PR(s).
+- V1–V44 all executed and recorded; V10, V32, V34, V36, V38, V41, V43,
+  V44 recorded as manual verification in the Implementation PR(s).
 - The existing `minimal_cube` and `world_scene` goldens confirmed
   byte-identical to `main` in the final diff (V34) — this Plan captures
   exactly one new golden, `textured_quad`, in its own separate commit.
@@ -1070,7 +1516,7 @@ Deltas specific to this plan:
   to the two already-disclosed translation units (ADR-0041's own
   Accepted Amendment).
 
-## Independent Review (self-review, 2026-08-24)
+## Independent Review — Round 1 (self-review, 2026-08-24)
 
 A centralized, evidence-driven self-review pass, before this Plan
 proceeds to Human Review — mechanical issues found and fixed directly,
@@ -1118,17 +1564,128 @@ not left for a reviewer to discover:
 - **Left as a genuinely open, disclosed mechanical detail, not
   resolved here** (matching Spec 0015's own precedent for leaving
   concrete shapes to Implementation where no architectural content is
-  at stake): the exact Slang reflection-JSON string for a combined
-  image sampler binding (`"combinedImageSampler"` is this Plan's own
-  best-available guess, to be confirmed empirically against a real
-  `slangc`-produced reflection JSON during Milestone 4 itself, before
-  `parseDescriptorType()`'s own case is finalized); the exact
-  `kMaxTextureDimension` value (this Plan fixes `8192` as a reasoned
-  default per D8's own overflow-safety math, Implementation may adjust
-  with disclosure if a real constraint is found); the exact new shader
-  file's own directory placement (`shaders/textured_quad/` assumed,
-  matching `shaders/minimal_renderer/`'s own precedent).
+  at stake): the exact `kMaxTextureDimension` value (this Plan fixes
+  `8192` as a reasoned default per D8's own overflow-safety math,
+  Implementation may adjust with disclosure if a real constraint is
+  found); the exact new shader file's own directory placement
+  (`shaders/textured_quad/` assumed, matching
+  `shaders/minimal_renderer/`'s own precedent). **The Slang reflection-
+  JSON shape for a combined image sampler binding, flagged in this
+  round as an open guess, is resolved with real evidence in Independent
+  Review — Round 2 below** — no longer open.
 
-No blocking issue remains. This Plan is set to `In Review` — not
-`Approved` — pending the same Human Review path every prior Plan in
-this repository has followed.
+Round 1 found no blocking issue beyond the two corrected above. Round 2
+below, prompted by a further Plan Review, replaces the guess this round
+left open with real evidence and fixes three further, genuine gaps.
+
+## Independent Review — Round 2 (final Plan Review, 2026-08-24)
+
+A second, targeted review round — not a broad re-review — resolving
+three Must Fix findings and five Should Fix precision items before this
+Plan proceeds to formal Human Review, without broadening scope further:
+
+- **Must Fix, resolved — not by reversing Approved architecture.** A
+  reviewer asked whether the third `ResourceBinding` field should be a
+  composite type also carrying the source staging `Buffer`. Re-verified
+  against ADR-0056 Decision 4 and Spec 0016 Human Review item 6: the
+  Approved design **already explicitly decided** the staging `Buffer` is
+  not RenderGraph-tracked, matching `copyRenderTargetToBuffer()`'s own
+  established precedent — reversing that at Plan-review time would be
+  exactly the kind of silent architecture change AGENTS.md forbids, and
+  would also reintroduce the "unbounded generic resource system" both
+  Spec 0016 and this Plan explicitly reject (Buffers have no Vulkan
+  image layout — there is nothing for `ResourceBinding`'s own
+  state-transition machinery to track). The **real, separate** gap the
+  same finding pointed at — the dependency being visible only inside an
+  anonymous lambda's own capture list — is genuine and is fixed: D4 now
+  specifies a named `buildTextureUploadPass()` helper taking the staging
+  `Buffer` as an explicit, required parameter, with the architectural
+  reasoning stated inline so a future reader sees a deliberate design,
+  not an oversight (V39).
+- **Must Fix, resolved with a full, repo-wide audit, not the
+  previously-checked subset.** Every abstract RHI interface
+  (`Device`, `CommandList`, `Buffer`, `Texture`, `RenderTarget`,
+  `Pipeline`, `OffscreenTarget`, `Presentation`, `SubmissionSignal`) and
+  every one of its real implementers (Vulkan and Fake) is now
+  enumerated in the Pre-draft verification section's own table. Two
+  genuine findings: (1) `RenderTarget` has **three** implementers
+  (`VulkanRenderTarget`, `VulkanOffscreenRenderTarget`, `FakeRenderTarget`)
+  — irrelevant to this Plan (its interface is untouched) but recorded so
+  a future reader does not assume the two-implementer `CommandList`
+  shape generalizes; (2) `Material`/`Mesh` are confirmed, verbatim, to
+  have zero virtual methods and no base class — there is no
+  `VulkanMaterial`, and the "every implementer in one atomic step" rule
+  simply does not apply to `Material`'s own new fields, which are
+  ordinary data members. `SampledTexture`/`Sampler` follow depth
+  `Texture`'s own single-real-implementer precedent (`static_cast`, not
+  `RenderTarget`'s own `dynamic_cast`-based access pattern, which exists
+  only because `RenderTarget` genuinely has two real implementers).
+- **Must Fix, resolved precisely, not left implicit.** "Staging
+  `Buffer`s survive until `waitIdle()` returns `Ok`" only ever covered
+  the success path. New D5a section states three distinct failure
+  shapes explicitly: early setup failure (safe, immediate, unconditional
+  cleanup — nothing was ever submitted); `submit()` itself failing
+  (equally safe and immediate — the GPU never began executing this
+  `CommandList`'s own work); `waitIdle()` returning `Err` including
+  `DeviceLost` (treated as fatal for the fixture, matching every
+  existing headless GPU test's own already-established
+  `REQUIRE(...isOk())` fail-fast pattern — not a new graceful-recovery
+  mechanism this codebase does not have anywhere else, and building one
+  would be solving a problem well outside Spec 0016's own single-fixture
+  scope). Confirmed this Plan reuses `VulkanDevice::waitIdle()`'s own
+  existing internal `waitAndReleaseRetainedSubmission()`/fence contract
+  unchanged — no new fence or retained-submission concept introduced
+  (V40, V41, V42).
+- **Should Fix, resolved with real evidence, not a guess — the most
+  consequential finding of this round.** A real `slangc` compile (this
+  repository's own pinned Vulkan SDK toolchain, run directly during this
+  review) of a `[[vk::binding(1,0)]] Sampler2D` declaration confirms the
+  reflection JSON's top-level `binding.kind` is `"descriptorTableSlot"`
+  — **the same string a uniform buffer already uses** — not a distinct
+  `"combinedImageSampler"` kind as Round 1 had guessed. The real
+  distinguishing shape is one level deeper:
+  `type.kind == "resource"`, `type.baseShape == "texture2D"`,
+  `type.combined == true`. D6 now shows the exact confirmed JSON and the
+  exact, corrected `slang_json_transform.cpp` extension (widening the
+  existing `descriptorTableSlot` branch's own `moduleTypeKind` check,
+  not adding a new top-level branch) — a real, previously-unverified
+  assumption this round would have caught only after Milestone 4 was
+  already underway, not before. `Float2`'s own reflection shape
+  (`elementCount: 2`) is confirmed by the same probe compile (V18).
+- **Should Fix, resolved:** `Material`'s both-or-neither invariant is
+  confirmed to have exactly one entry point (the constructor) and no
+  rebind surface of any kind (no setter exists, matching `pipeline_`'s
+  own existing precedent) — a structural guarantee, not a documented
+  convention. `PipelineCreateParams::hasSampledTextureBinding`'s own
+  exact mechanism (a caller-derived `bool`, defaulting to `false`,
+  zero change to any existing call site) is now specified precisely
+  rather than hand-waved as "indicates" (D5, V44).
+- **Should Fix, resolved:** the fixture's own `Vertex` struct, binding,
+  offset, stride, and location assignment for `Float2` are now fully
+  specified (D11) — interleaved, single buffer, matching
+  `minimal_cube_fixture.cpp`'s own established shape, cross-validated
+  against the shader's own real reflection, no Asset System or
+  test-private-backdoor involvement. This Plan's own recommendation
+  drops the per-vertex color attribute Spec 0016's own illustrative
+  `location(2)` mention implied, explicitly disclosed as a Plan-level
+  simplification (a texture-sampling proof needs no vertex color), not
+  a silent deviation.
+- **Should Fix, resolved:** the combined-submission ordering (D11) is
+  now a fully explicit seven-step sequence, and a new baseline-
+  comparison test (V27, expanded) proves the `RenderTarget` is
+  genuinely drawn into and read from, not merely passed to satisfy
+  `submit()`'s own signature.
+- **Should Fix, resolved:** `stb`'s CMake split is re-verified against
+  the pinned commit hash staying identical across the file move (V43),
+  the per-static-library (not per-executable) implementation-macro
+  count (V9, corrected wording), and an explicit CMake link-graph check
+  — not header-grep alone — confirming `Atlantis::AssetSystem`'s own
+  link closure never reaches `Stb::Stb` (V35, corrected wording).
+
+No blocking issue remains after this round. This Plan is set to
+`In Review` — not `Approved` — pending the same Human Review path every
+prior Plan in this repository has followed. Every Must Fix and Should
+Fix item from this round's own review is now resolved with either a
+corrected design (backed, where relevant, by real empirical evidence —
+the `slangc` probe) or an explicit, disclosed confirmation that the
+Approved architecture already correctly addressed the concern raised.
