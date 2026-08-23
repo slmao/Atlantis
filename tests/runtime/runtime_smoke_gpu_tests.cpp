@@ -31,14 +31,29 @@ using atlantis::runtime::RuntimeExitReason;
 // Plan 0014 Section D-Step 6: the one narrowly-scoped friend
 // RuntimeApplication declares for this test only (see
 // runtime_application.h's own comment) -- reads world_'s own
-// renderableEntities() count, no new public API.
+// renderableEntities() count, no new public API. Plan 0015 Section
+// D2/D10: world_ is std::optional<World>; runFrame() has already run
+// by the time this is called (below), so it is guaranteed populated.
 namespace atlantis::runtime {
 struct RuntimeSmokeTestAccess {
   static std::size_t renderableEntityCount(const RuntimeApplication& app) {
-    return app.world_.renderableEntities().size();
+    return app.world_->renderableEntities().size();
   }
 };
 }  // namespace atlantis::runtime
+
+// Plan 0015 Section D10/D11 (2026-08-23): this test's own
+// BootstrapConfig does not yet populate sceneArtifactPath/
+// sceneMetadataPath/sceneDependencyManifestPath -- createRuntimeApplication()
+// below will therefore fail at initializeSteps() step (a) with
+// Err(SceneManifestLoadFailed) until Step 9 (assets/scenes/world_scene.scene.txt,
+// assets/CMakeLists.txt's own atlantis_add_scene_asset() call, and this
+// file's own compile-definition wiring) lands. Left as a disclosed,
+// known-red GPU test rather than silently deleted or skipped -- Step 8
+// only needed this file to keep *compiling* against world_'s own new
+// std::optional<World> type (the edit above); making it pass again is
+// explicitly Step 9's own scope (Plan 0015 Milestone 9: "runtime_smoke_gpu_tests.cpp
+// extended for the loaded-scene path").
 
 TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/submit/present frames",
           "[runtime][gpu]") {

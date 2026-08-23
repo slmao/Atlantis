@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 namespace atlantis::runtime {
@@ -99,7 +100,15 @@ class RuntimeApplication {
   PlatformSession platformSession_;
   std::unique_ptr<atlantis::rhi::Device> device_;
   std::unique_ptr<atlantis::rhi::Presentation> presentation_;  // lazy: constructed on first SurfaceCreated
-  std::optional<atlantis::renderer::Mesh> mesh_;
+  // Plan 0015 Section D10: replaces the old std::optional<Mesh> mesh_ in
+  // this exact declaration slot -- keyed by the AssetId every Renderable
+  // references, populated only once, atomically, at the end of a
+  // successful initializeSteps() (D10 step (g)). Occupying mesh_'s own
+  // former slot preserves the existing, already-documented reverse-
+  // destruction-order guarantee below without any new ordering rule:
+  // every Mesh value the map owns still destructs after
+  // Material/Texture/Buffer and before Presentation/Device.
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap_;
   std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer_;
   std::unique_ptr<atlantis::rhi::Texture> depthTexture_;  // lazy: first frame's extent-change check
   std::optional<atlantis::renderer::Material> material_;  // lazy: first frame's format-change check
@@ -109,9 +118,15 @@ class RuntimeApplication {
   // relationship to Device/Presentation/Mesh -- placed here, outside the
   // fixed reverse-destruction-order GPU-resource block above, not
   // because its own position is unconstrained in general, just because
-  // no ordering constraint applies to it.
-  atlantis::world::World world_;
-  atlantis::asset_system::AssetId knownMinimalCubeAssetId_ = 0;
+  // no ordering constraint applies to it. Plan 0015 Section D2/D10:
+  // retyped to std::optional -- World is move-constructible but NOT
+  // move-assignable (ADR-0049/Spec 0014, unchanged), so publishing a
+  // freshly-instantiated World requires in-place move-construction
+  // (world_.emplace(std::move(world)), D10 step (g)), which a bare
+  // World member cannot support. Empty (std::nullopt) until
+  // initializeSteps() successfully reaches step (g); never reset by
+  // shutdown() (it owns no GPU resource, matching today's behavior).
+  std::optional<atlantis::world::World> world_;
   std::optional<atlantis::world::EntityId> activeCameraEntity_;  // cached for logging only; World itself is the source of truth
   RuntimeLifecycleTracker lifecycle_;
   RuntimeExitReason lastExitReason_ = RuntimeExitReason::Success;

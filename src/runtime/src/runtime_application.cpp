@@ -1,21 +1,17 @@
 #include <atlantis/runtime/runtime_application.h>
 
 #include <atlantis/assert.h>
-#include <atlantis/asset_system/asset_metadata.h>
-#include <atlantis/asset_system/load.h>
 #include <atlantis/log.h>
 #include <atlantis/platform/platform.h>
 #include <atlantis/platform/platform_event.h>
 #include <atlantis/renderer/draw_item.h>
 #include <atlantis/runtime/error_classification.h>
 #include <atlantis/runtime/scene_extraction.h>
+#include <atlantis/runtime/scene_load.h>
 #include <atlantis/shader_system/reflection_loader.h>
 #include <atlantis/shader_system/rhi_integration/vertex_input_mapping.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
 #include <atlantis/world/camera.h>
-#include <atlantis/world/renderable.h>
-#include <atlantis/world/transform.h>
-#include <atlantis/world/vec3.h>
 
 #include <array>
 #include <cmath>
@@ -23,7 +19,6 @@
 #include <cstdint>
 #include <fstream>
 #include <optional>
-#include <sstream>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -41,7 +36,6 @@ namespace atlantis::runtime {
 namespace {
 
 using atlantis::renderer::createMaterial;
-using atlantis::renderer::createMesh;
 using atlantis::renderer::DrawItem;
 using atlantis::rhi::BufferPurpose;
 using atlantis::rhi::DepthFormat;
@@ -78,72 +72,6 @@ struct Vertex {
   auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
   if (result.isErr()) return std::nullopt;
   return result.value();
-}
-
-// Plan 0014 Section D6: a second, small read of the same metadata file
-// loadStaticMeshAsset() already consumes, to obtain the real, cooked
-// AssetId -- matching this file's own already-established
-// plain-std::ifstream pattern (loadSpirvFile() above), not a new I/O
-// mechanism.
-[[nodiscard]] std::optional<std::string> readFileToString(const std::string& path) {
-  std::ifstream file(path, std::ios::binary);
-  if (!file.is_open()) return std::nullopt;
-  std::ostringstream buffer;
-  buffer << file.rdbuf();
-  return buffer.str();
-}
-
-// Plan 0014 Section D9: the fixed, six-entity validation scene, built
-// once during initializeSteps() and never touched again by runFrame().
-// Every World call here uses a handle this same function just created,
-// so a Result::Err is only plausible from a genuine implementation bug
-// (D8) -- still checked and propagated uniformly, not asserted, matching
-// initializeSteps()'s own existing failure-handling style throughout.
-[[nodiscard]] atlantis::Result<std::monostate, RuntimeInitError> buildValidationScene(
-    atlantis::world::World& world, atlantis::asset_system::AssetId meshAssetId,
-    std::optional<atlantis::world::EntityId>& activeCameraEntityOut) {
-  using atlantis::world::Camera;
-  using atlantis::world::EntityId;
-  using atlantis::world::Renderable;
-  using atlantis::world::Transform;
-  using atlantis::world::Vec3;
-
-  const auto fail = []() {
-    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::SceneConstructionFailed);
-  };
-
-  const auto makeCubeEntity = [&](Vec3 position, Vec3 eulerRadians) -> std::optional<EntityId> {
-    const EntityId id = world.createEntity();
-    Transform transform;
-    transform.localPosition = position;
-    transform.localEulerAnglesRadians = eulerRadians;
-    if (world.setLocalTransform(id, transform).isErr()) return std::nullopt;
-    if (world.setRenderable(id, Renderable{.meshAsset = meshAssetId}).isErr()) return std::nullopt;
-    return id;
-  };
-
-  const std::optional<EntityId> a = makeCubeEntity(Vec3{-2.5f, 0.0f, 0.0f}, Vec3{});
-  const std::optional<EntityId> b = makeCubeEntity(Vec3{-1.0f, 0.0f, 0.0f}, Vec3{0.0f, 0.5236f, 0.0f});
-  const std::optional<EntityId> c = makeCubeEntity(Vec3{1.0f, -0.5f, 0.0f}, Vec3{});
-  const std::optional<EntityId> d = makeCubeEntity(Vec3{0.0f, 1.3f, 0.0f}, Vec3{0.0f, 0.7854f, 0.0f});
-  const std::optional<EntityId> e = makeCubeEntity(Vec3{2.5f, 0.0f, 0.0f}, Vec3{0.2618f, 0.3491f, 0.0f});
-  if (!a.has_value() || !b.has_value() || !c.has_value() || !d.has_value() || !e.has_value()) return fail();
-
-  if (world.setParent(*d, *c).isErr()) return fail();
-
-  const EntityId cameraEntity = world.createEntity();
-  Transform cameraTransform;
-  cameraTransform.localPosition = Vec3{0.0f, 2.2f, 7.0f};
-  cameraTransform.localEulerAnglesRadians = Vec3{-0.3054f, 0.0f, 0.0f};
-  if (world.setLocalTransform(cameraEntity, cameraTransform).isErr()) return fail();
-
-  constexpr float kPi = 3.14159265f;
-  const Camera camera{.fovYRadians = 60.0f * kPi / 180.0f, .nearZ = 0.1f, .farZ = 100.0f};
-  if (world.setCamera(cameraEntity, camera).isErr()) return fail();
-  if (world.setActiveCamera(cameraEntity).isErr()) return fail();
-
-  activeCameraEntityOut = cameraEntity;
-  return atlantis::Result<std::monostate, RuntimeInitError>::Ok({});
 }
 
 }  // namespace
@@ -195,46 +123,7 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   }
   device_ = std::move(deviceResult.value());
 
-  // Step 4: Asset load (minimal_cube runtime artifact -> StaticMeshAssetData).
-  auto assetResult = atlantis::asset_system::loadStaticMeshAsset(config.assetArtifactPath, config.assetMetadataPath);
-  if (assetResult.isErr()) {
-    ATLANTIS_LOG_ERROR("loadStaticMeshAsset() failed");
-    lifecycle_.markFailed();
-    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::AssetLoadFailed);
-  }
-  const atlantis::asset_system::StaticMeshAssetData& assetData = assetResult.value();
-
-  // Plan 0014 Section D6: a second, small read of the same metadata file
-  // just above, to obtain minimal_cube's real, cooked AssetId --
-  // parseAssetMetadata() and AssetMetadata::assetId are both already
-  // Accepted, public Asset System API; no change to Asset System's own
-  // header, .cpp, or CMakeLists.txt.
-  auto metadataTextOpt = readFileToString(config.assetMetadataPath);
-  if (!metadataTextOpt.has_value()) {
-    ATLANTIS_LOG_ERROR("failed to read asset metadata file for AssetId: {}", config.assetMetadataPath);
-    lifecycle_.markFailed();
-    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::AssetMetadataParseFailed);
-  }
-  auto metadataResult = atlantis::asset_system::parseAssetMetadata(*metadataTextOpt);
-  if (metadataResult.isErr()) {
-    ATLANTIS_LOG_ERROR("parseAssetMetadata() failed for {}", config.assetMetadataPath);
-    lifecycle_.markFailed();
-    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::AssetMetadataParseFailed);
-  }
-  knownMinimalCubeAssetId_ = metadataResult.value().assetId;
-
-  // Step 5: Mesh, from the loaded asset's CPU-side bytes -- no intermediate copy.
-  auto meshResult = createMesh(*device_, vertexInputLayout_, assetData.vertexBytes().data(),
-                                assetData.vertexBytes().size(), assetData.indices().data(),
-                                static_cast<std::uint32_t>(assetData.indices().size()));
-  if (meshResult.isErr()) {
-    ATLANTIS_LOG_ERROR("createMesh() failed");
-    lifecycle_.markFailed();
-    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::MeshCreateFailed);
-  }
-  mesh_ = std::move(meshResult.value());
-
-  // Step 6: camera uniform Buffer.
+  // Step 4: camera uniform Buffer.
   auto cameraBufferResult =
       device_->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = sizeof(float) * 32});
   if (cameraBufferResult.isErr()) {
@@ -251,16 +140,35 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // below, exactly the code path that later handles every subsequent
   // format change identically.
 
-  // Plan 0014 Section D9: the fixed, six-entity validation scene --
-  // built once here, never mutated by runFrame() (updateTransforms()
-  // still runs every frame, recomputing the same, unchanged world
-  // matrices each time).
-  auto sceneResult = buildValidationScene(world_, knownMinimalCubeAssetId_, activeCameraEntity_);
-  if (sceneResult.isErr()) {
-    ATLANTIS_LOG_ERROR("buildValidationScene() failed");
+  // Step 5: scene load -- Plan 0015 Section D10, steps (a)-(g), factored
+  // into loadAndInstantiateScene() (scene_load.h) so V20's own manifest/
+  // artifact/dependency-unresolved failure paths are directly testable
+  // without a real Device (see that header's own comment). Replaces the
+  // former fixed, hardcoded six-entity validation scene (Plan 0014
+  // Section D9) and its own single-asset load/Mesh-create steps: mesh
+  // resolution and loading are now driven entirely by the scene's own
+  // declared Renderable references and dependency manifest, not a
+  // single hardcoded AssetId. Every early-return happens before world_/
+  // meshResourceMap_ are ever touched -- both remain in their own
+  // default, harmless states (std::nullopt / empty) on any failure
+  // path, so RuntimeApplication never reaches Running with a partially-
+  // published scene.
+  auto sceneLoadResult = loadAndInstantiateScene(config, device_.get(), vertexInputLayout_);
+  if (sceneLoadResult.isErr()) {
+    ATLANTIS_LOG_ERROR("loadAndInstantiateScene() failed");
     lifecycle_.markFailed();
-    return atlantis::Result<std::monostate, RuntimeInitError>::Err(sceneResult.error());
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(sceneLoadResult.error());
   }
+  SceneLoadOutcome& outcome = sceneLoadResult.value();
+
+  // Publish -- only now, both fully built (D10 step (g)). World is
+  // move-constructible but NOT move-assignable (ADR-0049/Spec 0014,
+  // unchanged) -- world_ is std::optional<World> and this is emplace(),
+  // i.e. in-place move-CONSTRUCTION, never assignment. meshResourceMap_
+  // is a plain std::unordered_map, whose own move-assignment is not
+  // deleted, so plain assignment is correct there.
+  world_.emplace(std::move(outcome.world));
+  meshResourceMap_ = std::move(outcome.meshResourceMap);
 
   lifecycle_.markRunning();
   return atlantis::Result<std::monostate, RuntimeInitError>::Ok(std::monostate{});
@@ -382,13 +290,22 @@ void RuntimeApplication::runFrame() {
   }
 
   // Plan 0014 Section D8: World-driven extraction replaces the prior
-  // fixed single-cube camera write + DrawItem build.
-  world_.updateTransforms();
+  // fixed single-cube camera write + DrawItem build. Plan 0015 Section
+  // D10: world_ is std::optional<World>, guaranteed populated here --
+  // runFrame() is only ever called once RuntimeApplication has reached
+  // Running, which only happens after initializeSteps() step (g) has
+  // already published it (see world_'s own declaration comment,
+  // runtime_application.h).
+  world_->updateTransforms();
 
-  const std::optional<atlantis::world::EntityId> activeCamera = world_.activeCamera();
+  const std::optional<atlantis::world::EntityId> activeCamera = world_->activeCamera();
   if (!activeCamera.has_value()) {
-    // This Plan's own validation scene always sets an active camera at
-    // construction (D9) -- reaching this path indicates a genuine
+    // Every scene this Plan's own decodeScene()/ValidatedSceneData
+    // pipeline accepts either has no active camera declared at all (an
+    // authoring-time choice, not reachable for the one real scene this
+    // Plan ships, D11) or one whose Camera presence is already
+    // guaranteed by cook/decode-time validation (D4/D6) -- reaching
+    // this path for a scene that DID declare one indicates a genuine
     // construction bug, the same "should never happen in correct
     // operation" category Spec 0013 already established for a second
     // SurfaceCreated/an unexpected SurfaceDestroyed.
@@ -398,10 +315,10 @@ void RuntimeApplication::runFrame() {
   }
   activeCameraEntity_ = activeCamera;  // cached for logging only; World itself is the source of truth
 
-  const auto cameraWorldMatrixResult = world_.getWorldMatrix(*activeCamera);
+  const auto cameraWorldMatrixResult = world_->getWorldMatrix(*activeCamera);
   ATLANTIS_CHECK_MSG(cameraWorldMatrixResult.isOk(),
                       "runFrame(): getWorldMatrix() failed for the handle activeCamera() just returned");
-  const auto cameraComponentResult = world_.getCamera(*activeCamera);
+  const auto cameraComponentResult = world_->getCamera(*activeCamera);
   ATLANTIS_CHECK_MSG(cameraComponentResult.isOk(),
                       "runFrame(): getCamera() failed for the handle activeCamera() just returned");
   const atlantis::world::Camera cameraComponent = cameraComponentResult.value();
@@ -425,12 +342,22 @@ void RuntimeApplication::runFrame() {
   for (std::size_t i = 0; i < 16; ++i) cameraData[i] = extractionResult.value().view[i];
   for (std::size_t i = 0; i < 16; ++i) cameraData[16 + i] = extractionResult.value().projection[i];
 
+  // Plan 0015 Section D10: knownMeshAssetIds is meshResourceMap_'s own
+  // key set, collected once per frame (not once per entity) -- passed
+  // to resolveMeshAsset() for the membership check; meshResourceMap_
+  // itself is then queried directly by AssetId for the actual Mesh,
+  // exactly as scene_extraction.h's own updated resolveMeshAsset()
+  // doc comment describes.
+  std::vector<atlantis::asset_system::AssetId> knownMeshAssetIds;
+  knownMeshAssetIds.reserve(meshResourceMap_.size());
+  for (const auto& [assetId, mesh] : meshResourceMap_) knownMeshAssetIds.push_back(assetId);
+
   std::vector<DrawItem> drawItems;
-  for (const atlantis::world::EntityId& id : world_.renderableEntities()) {
-    const auto renderableResult = world_.getRenderable(id);
+  for (const atlantis::world::EntityId& id : world_->renderableEntities()) {
+    const auto renderableResult = world_->getRenderable(id);
     ATLANTIS_CHECK_MSG(renderableResult.isOk(),
                         "runFrame(): getRenderable() failed for a handle renderableEntities() just returned");
-    const auto resolveResult = resolveMeshAsset(renderableResult.value().meshAsset, knownMinimalCubeAssetId_);
+    const auto resolveResult = resolveMeshAsset(renderableResult.value().meshAsset, knownMeshAssetIds);
     if (resolveResult.isErr()) {
       // Recoverable, per-entity: a single bad reference should not halt
       // an otherwise-valid scene, matching the general "keep going, log,
@@ -439,12 +366,12 @@ void RuntimeApplication::runFrame() {
       ATLANTIS_LOG_ERROR("runFrame(): resolveMeshAsset() could not resolve a Renderable entity's own AssetId");
       continue;
     }
-    const auto worldMatrixResult = world_.getWorldMatrix(id);
+    const auto worldMatrixResult = world_->getWorldMatrix(id);
     ATLANTIS_CHECK_MSG(worldMatrixResult.isOk(),
                         "runFrame(): getWorldMatrix() failed for a handle renderableEntities() just returned");
 
     DrawItem item;
-    item.mesh = &*mesh_;
+    item.mesh = &meshResourceMap_.at(renderableResult.value().meshAsset);
     item.material = &*material_;
     item.objectToWorld = worldMatrixResult.value();
     drawItems.push_back(item);
@@ -500,7 +427,7 @@ RuntimeExitReason RuntimeApplication::shutdown() {
   material_.reset();
   depthTexture_.reset();
   cameraBuffer_.reset();
-  mesh_.reset();
+  meshResourceMap_.clear();
   presentation_.reset();
   device_.reset();
   // platformSession_ is deliberately NOT touched here -- its own

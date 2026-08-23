@@ -8,6 +8,7 @@ add_executable(atlantis_runtime_tests
   runtime_ownership_tests.cpp
   scene_extraction_tests.cpp
   scene_manifest_tests.cpp
+  scene_load_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_tests
