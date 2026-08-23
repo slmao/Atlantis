@@ -10,6 +10,7 @@ add_executable(atlantis_asset_system_tests
   load_tests.cpp
   module_boundary_tests.cpp
   validated_scene_data_tests.cpp
+  scene_source_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_system_tests
