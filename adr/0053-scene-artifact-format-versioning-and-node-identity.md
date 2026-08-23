@@ -11,7 +11,7 @@
 *where* scene cook/decode/instantiate logic lives. This ADR decides
 *what bytes* a scene consists of at each of its three stages — human-
 editable authoring source, cooked runtime artifact, and the in-memory
-`DecodedScene` between them — and how one node refers to another
+`ValidatedSceneData` between them — and how one node refers to another
 (parent/child, active-camera) at each stage. ADR-0035 requires this be
 addressed explicitly, not defaulted into "authoring is runtime."
 
@@ -99,16 +99,16 @@ own procedural requirement explicitly:**
    cross-checked against the artifact at load time, matching
    `AssetLoadError::MetadataArtifactMismatch`'s own established
    contract.
-3. **`DecodedScene` is an `Atlantis::AssetSystem`-owned value type
+3. **`ValidatedSceneData` is an `Atlantis::AssetSystem`-owned value type
    using only `Atlantis::AssetSystem`/`Atlantis::Core`-owned field
    types — never `atlantis::world::Transform`/`Camera`/`Renderable`
    directly.** This is a hard constraint, not a stylistic choice: if
-   `DecodedScene` named a `world::Transform` field, `Atlantis::AssetSystem`
+   `ValidatedSceneData` named a `world::Transform` field, `Atlantis::AssetSystem`
    would have to `#include <atlantis/world/transform.h>`, giving
    `AssetSystem` a real compile-time dependency on `Atlantis::World` —
    exactly the cycle [ADR-0052](0052-scene-asset-module-boundary-and-ownership.md)'s
    own Decision forbids (`World` already depends on `AssetSystem`).
-   Concretely: a flat array of `DecodedSceneNode`, one entry per node,
+   Concretely: a flat array of `ValidatedSceneNode`, one entry per node,
    in the artifact's own dense array-index order, each entry carrying
    a plain `DecodedTransform` (nine `float`s: position xyz, Euler
    radians xyz, scale xyz — the same flat-float shape
@@ -126,18 +126,52 @@ own procedural requirement explicitly:**
    ([ADR-0054](0054-scene-loading-transactional-instantiation-contract.md)),
    which is the one place in this pipeline permitted to know both
    shapes. No `node_id`, no logical path, and no `Atlantis::World` type
-   of any kind appears anywhere in `DecodedScene` — the authoring-time
+   of any kind appears anywhere in `ValidatedSceneData` — the authoring-time
    human-facing identity and the source-file mesh reference are both
    already resolved away by cook time; only `World`'s own real
    `EntityId`s, minted fresh at instantiation, are the durable identity
    from this point on (`EntityId`/`WorldIdentity` are never written to,
-   or read from, any artifact or `DecodedScene` — Spec 0014's own
-   Non-Goal, unaffected by this Spec — and a `DecodedSceneNode`'s own
+   or read from, any artifact or `ValidatedSceneData` — Spec 0014's own
+   Non-Goal, unaffected by this Spec — and a `ValidatedSceneNode`'s own
    array index is never treated as, compared against, or convertible to
    an `EntityId`).
-4. **Both the cooker and the loader independently validate their own
+4. **`ValidatedSceneData` is encapsulated so that "fully validated"
+   is a type-level guarantee, not a caller convention.** This is what
+   makes [ADR-0054](0054-scene-loading-transactional-instantiation-contract.md)'s
+   own infallible `World` instantiation actually true, rather than an
+   assumption resting on every caller behaving — reusing the exact
+   pattern `atlantis::world::EntityId` already established
+   ([ADR-0049](0049-entity-identity-and-handle-invalidation.md)): every
+   structural field (the node array, each node's parent index, the
+   active-camera index) is **`private`**; the only non-default
+   constructor is **`private`**, callable only by `decodeScene()`
+   itself (a `friend` relationship, matching `EntityId`'s own
+   `friend class World;`); the public surface is **read-only accessors
+   only** (`nodeCount()`, a per-index node accessor returning a `const`
+   view, `parentOf(index)`, `activeCameraIndex()`) — **no setter, no
+   mutable reference, no mutable iterator, and no way to reach a
+   `ValidatedSceneNode`'s own fields except through these same
+   read-only accessors exists anywhere on the public type.** A default
+   constructor producing an empty (zero-node) instance is the only
+   other public constructor — trivially valid, since an empty node
+   array vacuously satisfies every structural/semantic condition below.
+   Copy and move are both defaulted and preserve validity by
+   construction: since nothing on the public surface can mutate a
+   `ValidatedSceneData` after it exists, a copy or a moved-from/moved-to
+   pair are, respectively, two independently valid instances or one
+   valid instance relocated — there is no mutation path through which a
+   copy or move could ever produce an invalid one. **No caller —
+   `Atlantis Runtime`, a test, or any future consumer — can construct a
+   `ValidatedSceneData` naming an out-of-range parent, a cycle, a
+   duplicate structural position, or an active-camera index pointing at
+   a component-less node, because no public constructor accepts
+   arbitrary node data at all.** The only path to a non-empty instance
+   is a successful `decodeScene()` call, which already performed every
+   check in Decision item 5 below before that private constructor ever
+   runs.
+5. **Both the cooker and the loader independently validate their own
    input, and — critically — that validation is exhaustive enough that
-   `DecodedScene` is a fully-proven-valid type by the time anything
+   `ValidatedSceneData` is a fully-proven-valid type by the time anything
    downstream consumes it** (this is what lets
    [ADR-0054](0054-scene-loading-transactional-instantiation-contract.md)
    make `World` instantiation infallible, rather than reusing
@@ -185,10 +219,10 @@ own procedural requirement explicitly:**
   layout.
 - Explicit author-assigned `node_id`, remapped to dense array indices
   only at cook time, gives authors reorder-without-renumbering ergonomics
-  while keeping the runtime artifact and `DecodedScene` as cheap and
+  while keeping the runtime artifact and `ValidatedSceneData` as cheap and
   simple as the mesh artifact's own index buffer — no runtime hash
   lookup, no string anywhere in the hot path.
-- `DecodedScene` naming no `EntityId`/`WorldIdentity`/pointer anywhere
+- `ValidatedSceneData` naming no `EntityId`/`WorldIdentity`/pointer anywhere
   makes "never persist Runtime identity" (this Spec's own Non-Goal)
   true by construction, not by convention someone could forget.
 - Duplicate-detection, cycle-detection, active-camera-has-`Camera`, and
@@ -202,9 +236,13 @@ own procedural requirement explicitly:**
   is (`Atlantis::Core` only) — no compile-time dependency on
   `Atlantis::World` is introduced anywhere in the decode path.
 - Because decode-time validation is exhaustive over every structural
-  *and* semantic precondition `World` instantiation needs,
-  `DecodedScene` reaching that step is a genuine type-level guarantee,
-  not a documented-but-unenforced convention — letting
+  *and* semantic precondition `World` instantiation needs, **and**
+  `ValidatedSceneData` is unforgeable after construction (private
+  fields, a private constructor only `decodeScene()` can call, no
+  public mutator of any kind), reaching `World::fromValidatedSceneData()`
+  with a `ValidatedSceneData` value is a genuine, type-enforced
+  guarantee — not a documented convention a careless or hostile caller
+  could bypass. This is what lets
   [ADR-0054](0054-scene-loading-transactional-instantiation-contract.md)
   make instantiation infallible instead of inventing a parallel error
   type that would mean the same thing `ArtifactDecodeError`-style
@@ -227,6 +265,19 @@ own procedural requirement explicitly:**
 
 ## Alternatives Considered
 
+- **`ValidatedSceneData` as a plain, publicly-mutable struct** (public
+  node array, public parent/active-camera fields, no private
+  constructor). Rejected during self-review — this was the prior
+  draft's own design and was corrected because it made "already fully
+  validated" a documentation claim, not a fact: any caller holding a
+  `ValidatedSceneData` value could mutate a parent index into an
+  out-of-range value, introduce a cycle, or point the active-camera
+  index at a component-less node, silently invalidating exactly the
+  guarantee [ADR-0054](0054-scene-loading-transactional-instantiation-contract.md)'s
+  own infallible instantiation depends on. Encapsulation (private
+  fields, `decodeScene()`-only construction, read-only accessors) is
+  chosen instead specifically because it makes that guarantee
+  impossible to violate, not merely unlikely.
 - **Array position is the only node identity (no explicit `node_id`).**
   Rejected: makes `DuplicateNodeId` — an error case this Spec's own
   Non-Goals-adjacent Requirements explicitly name — structurally
@@ -235,7 +286,7 @@ own procedural requirement explicitly:**
 - **A general string name as node identity** (e.g. `"camera_entity"`)
   instead of a small integer. Rejected: adds string comparison/hashing
   to cook-time validation and (if ever needed at runtime) to
-  `DecodedScene`, for no capability this Spec's own scope needs (no
+  `ValidatedSceneData`, for no capability this Spec's own scope needs (no
   Editor, no runtime scene query by name); a small integer is
   sufficient and matches every other identity scheme this codebase
   already uses (`AssetId`, `EntityId`'s own index).
@@ -256,7 +307,7 @@ own procedural requirement explicitly:**
   checked against a live `World`" for a condition that has nothing to
   do with a caller-supplied handle — a scene-authoring mistake wearing
   a different module's error type. Validating it here instead, as one
-  more structural/semantic precondition `DecodedScene` already
+  more structural/semantic precondition `ValidatedSceneData` already
   guarantees, keeps `WorldError`'s own domain exactly what it already
   is and lets instantiation be infallible.
 - **Resolve `Renderable` mesh references to `AssetId` at load time,

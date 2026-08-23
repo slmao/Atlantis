@@ -8,9 +8,9 @@
 ## Context
 
 [ADR-0052](0052-scene-asset-module-boundary-and-ownership.md) put
-`DecodedScene → World` translation on `Atlantis::World` itself.
+`ValidatedSceneData → World` translation on `Atlantis::World` itself.
 [ADR-0053](0053-scene-artifact-format-versioning-and-node-identity.md)
-made `DecodedScene` a fully-proven-valid type by the time anything
+made `ValidatedSceneData` a fully-proven-valid type by the time anything
 downstream consumes it — every structural precondition (no cycle, every
 index in range) and, deliberately, the one semantic precondition that
 matters (the active-camera node has a `Camera`) are already guaranteed
@@ -86,44 +86,97 @@ Spec already uses elsewhere (a structural/build-time check plus an
 independent, never-assumed-consistent runtime check).
 
 **2. Runtime builds one local, immutable, per-instance resolver from
-that manifest at startup — never a global or persistent one.**
+that manifest at startup — never a global or persistent one — and
+validates the manifest itself before trusting any entry in it.**
 `BootstrapConfig` gains a new field naming this manifest's own
 build-tree path (populated the same CMake-compile-definition way every
 existing `BootstrapConfig` field already is — no CLI flag, no
-environment variable). `initializeSteps()` reads it once, computes each
-entry's `AssetId`, and holds the resulting `AssetId → (artifactPath,
-metadataPath)` map as a local, `RuntimeApplication`-scoped value —
-built fresh every process run, never written back to disk, never
-shared across `RuntimeApplication` instances, and never mutated after
-construction. **The scene artifact itself still contains only
-`AssetId`s** ([ADR-0053](0053-scene-artifact-format-versioning-and-node-identity.md)'s
-own Decision, unchanged) — every path involved lives entirely in this
-ephemeral, machine-local, regenerated-every-build resolver, exactly how
-the single existing mesh path already works today, generalized from one
-entry to a small, explicitly-declared set.
+environment variable). `initializeSteps()` reads it once, using the
+same strict, fixed-grammar text-parsing discipline every other format
+in this pipeline already uses (a malformed line — missing field, empty
+path, unparseable — is a hard parse failure, not silently skipped).
+For each well-formed entry, Runtime computes its own `AssetId` via
+`computeAssetId()` over the entry's own logical path, so **each
+manifest entry is fully associated as a (logical path, `AssetId`, real
+build-tree artifact/metadata locator) triple** before it is ever added
+to the resolver map. Three checks run before the resolver is considered
+built, each a distinct, named failure classified via `RuntimeInitError`
+(exact enumerator names a Plan-level detail):
+  - **Duplicate logical path.** Two manifest entries naming the same
+    logical path is malformed input (the same `MESH_DEPENDENCIES` name
+    declared twice) — rejected.
+  - **`AssetId` collision.** Two manifest entries whose own distinct
+    logical paths hash to the same `AssetId` — astronomically unlikely
+    with a 64-bit hash, but checked explicitly rather than assumed
+    impossible, mirroring `AssetSetError::AssetIdCollision`'s own
+    already-`Accepted` precedent for the mesh pipeline's own declared-
+    asset validation (`atlantis_finalize_asset_validation()`) — applied
+    here per-scene instead of repository-global.
+  - **Metadata/`AssetId` cross-check.** For each entry, its own
+    metadata sidecar (already `Accepted`, already parseable via the
+    existing `parseAssetMetadata()`) is read and its own recorded
+    `asset_id` field is compared against the `AssetId` Runtime just
+    computed from the manifest entry's own logical path — a mismatch
+    (e.g. a stale manifest entry left over after the referenced mesh
+    was renamed and re-cooked under a new logical path, without
+    regenerating this scene's own manifest) is rejected, the same
+    "never assume a stale reference is still correct" stance
+    `AssetLoadError::MetadataArtifactMismatch` already embodies one
+    layer down.
+  A manifest entry declared but **never actually referenced** by this
+  scene's own `ValidatedSceneData` is **not** an error and is not
+  rejected — a human may reasonably over-declare `MESH_DEPENDENCIES`
+  for forward-compatibility (a scene variant that conditionally uses
+  fewer meshes than declared); only entries the scene actually
+  references are ever resolved or loaded (item 3 below). The resulting
+  `AssetId → (artifactPath, metadataPath)` map is a local,
+  `RuntimeApplication`-scoped value — built fresh every process run,
+  never written back to disk, never shared across `RuntimeApplication`
+  instances, and never mutated after construction. **The scene artifact
+  itself still contains only `AssetId`s**
+  ([ADR-0053](0053-scene-artifact-format-versioning-and-node-identity.md)'s
+  own Decision, unchanged), and **the manifest itself is exactly as
+  build-tree-private as every other CMake output already in this
+  repository** (the artifact, its metadata sidecar) — it is never
+  embedded in, referenced by, or shipped alongside the scene artifact,
+  which remains fully portable, platform- and build-tree-independent
+  content.
 
 **3. Every mesh dependency must resolve and successfully load before
-any `Entity` is created.** After decoding the scene artifact
-(`Atlantis::AssetSystem`, already fully validated per ADR-0053),
-Runtime walks every `DecodedRenderable` in the `DecodedScene`, looks up
-its `AssetId` in its own local resolver map, and — for every distinct
-`AssetId` found, at most once — calls the already-`Accepted`
-`loadStaticMeshAsset()` and `atlantis::renderer::createMesh()` exactly
-as `initializeSteps()` already does for its own single existing mesh
-today, accumulating the results into a **mesh resource map**
-(`AssetId → real, GPU-backed `Mesh``). **If any `AssetId` has no
-resolver entry, or any resolver-entry-backed load fails, the entire
+any `Entity` is created — resolution and loading are two explicit,
+separate phases, in a deterministic order.** After decoding the scene
+artifact (`Atlantis::AssetSystem`, already fully validated per
+ADR-0053), Runtime collects the **complete set** of distinct `AssetId`s
+its `ValidatedSceneData` references, walking nodes in ascending
+array-index order and recording each newly-seen `AssetId` in that same
+order (first reference wins position — an `AssetId` referenced by more
+than one node is resolved and loaded exactly once). **Phase one
+(resolve):** every collected `AssetId` is looked up against the local
+resolver map; if **any** has no entry, the whole load fails immediately
+via `RuntimeInitError` — **before any file I/O for this phase, and
+before any `Entity` is created.** **Phase two (load):** only once every
+reference in the set has resolved, Runtime calls the already-`Accepted`
+`loadStaticMeshAsset()` and `atlantis::renderer::createMesh()` for each
+resolved entry, **in the same deterministic, ascending-first-reference
+order phase one established** — never relying on `std::unordered_map`
+(or any other non-deterministic-iteration container) to decide load
+order, since that order is otherwise unspecified and can vary between
+runs or standard-library implementations — accumulating the results
+into a **mesh resource map** (`AssetId → real, GPU-backed `Mesh``,
+itself keyed for correctness, not iterated over in a load-order-
+sensitive way). **If any resolved entry's own load fails, the whole
 scene load fails immediately — before `World`'s own instantiation entry
-point is ever called, and therefore before any `Entity` exists.** This
-is a distinct, Runtime-owned failure surface — classified via
-`RuntimeInitError` (a new enumerator, exact name a Plan-level detail),
-matching `initializeSteps()`'s own existing per-step classification
-convention (`AssetLoadFailed`, `SceneConstructionFailed`) — **never**
-`WorldError`, `AssetLoadError`, or `ArtifactDecodeError`, each of which
-already means something else.
+point is ever called, and therefore before any `Entity` exists.** Every
+failure in either phase is a distinct, Runtime-owned condition —
+classified via `RuntimeInitError` (a new enumerator per distinct
+condition, exact names a Plan-level detail), matching
+`initializeSteps()`'s own existing per-step classification convention
+(`AssetLoadFailed`, `SceneConstructionFailed`) — **never** `WorldError`,
+`SceneCookError`, `SceneArtifactDecodeError`, or the mesh pipeline's own
+`AssetLoadError` directly, each of which already means something else.
 
 **4. `World`'s own new instantiation entry point is infallible —
-`World fromDecodedScene(const DecodedScene&)`, returning by value, not
+`World fromValidatedSceneData(const ValidatedSceneData&)`, returning by value, not
 `Result`-wrapped.** [ADR-0053](0053-scene-artifact-format-versioning-and-node-identity.md)'s
 own decode-time validation already guarantees every precondition this
 function's internal calls (`createEntity()`, `setLocalTransform()`,
@@ -147,7 +200,7 @@ Decision item 2) using the mesh resource map's own already-loaded
 per-frame job ([ADR-0051](0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)),
 now querying a small map instead of one hard-coded `AssetId`.
 
-**5. Nodes are instantiated in two passes, in the `DecodedScene`'s own
+**5. Nodes are instantiated in two passes, in the `ValidatedSceneData`'s own
 array order.** Pass one: `createEntity()` + `setLocalTransform()` +
 (if present) `setCamera()` + (if present) `setRenderable()`, for every
 node in ascending array-index order, recording a **decoded index →
@@ -162,7 +215,7 @@ exactly generalizes `buildValidationScene()`'s own existing shape in
 `src/runtime/src/runtime_application.cpp` (every cube entity created
 first via its own `makeCubeEntity()` closure; `world.setParent(*d, *c)`
 called only afterward). Instantiation order is deterministic by
-construction: the same `DecodedScene` always produces the same sequence
+construction: the same `ValidatedSceneData` always produces the same sequence
 of `createEntity()` calls against a freshly-constructed `World`, and
 `World`'s own already-`Accepted` slot-assignment rule
 ([ADR-0049](0049-entity-identity-and-handle-invalidation.md)) makes the
@@ -173,7 +226,7 @@ value together — published as one unit, or neither is.** Runtime's own
 sequence is: decode scene (fails → nothing published) → resolve and
 load every mesh dependency into a local mesh resource map (fails →
 that map, and everything built so far, is simply dropped — RAII;
-nothing published) → call `World::fromDecodedScene()` (infallible, per
+nothing published) → call `World::fromValidatedSceneData()` (infallible, per
 item 4) → **only now**, with both the mesh resource map and the `World`
 value fully and successfully constructed, does Runtime move them into
 `RuntimeApplication`'s own members, replacing whatever it held before
@@ -229,6 +282,20 @@ ratio.
   silently-missing cube, matching this Spec's own explicit
   no-partial-state requirement at the mesh-resource layer, not only the
   `World`-construction layer.
+- The manifest's own duplicate-path, `AssetId`-collision, and
+  metadata-cross-check validation catches a stale or corrupted manifest
+  entry (a renamed mesh, a hand-edited manifest, a build-tree mismatch)
+  at Runtime startup, with a specific, classified error — not a
+  mysterious wrong-mesh render or a crash discovered only by looking at
+  the screen.
+- `World`'s own new entry point being genuinely infallible is not only
+  a claim about `World`'s own internal logic — it is backed by
+  [ADR-0053](0053-scene-artifact-format-versioning-and-node-identity.md)'s
+  own `ValidatedSceneData` encapsulation (private fields, `decodeScene()`-
+  only construction, read-only public accessors), so no caller between
+  decode and instantiation — including this ADR's own Runtime-side
+  dependency-resolution code — can invalidate the guarantee `World`
+  relies on.
 
 ### Negative / Trade-offs
 
@@ -283,12 +350,41 @@ answer):**
   Backlog item (`specs/README.md`), not designed, scaffolded, or
   blocked on here.
 
+**For manifest validation and load order:**
+
+- **Trust the manifest as-is — no duplicate/collision/metadata
+  cross-check.** Rejected: this was this Spec's own original design
+  and was corrected during self-review because a stale or hand-edited
+  manifest (a renamed, re-cooked mesh whose scene manifest was not
+  regenerated) would silently resolve to the wrong artifact — a
+  Renderable's `AssetId` still numerically "resolving," just to the
+  wrong file — exactly the class of silent-wrong-data hazard this
+  repository's own `MetadataArtifactMismatch` precedent already exists
+  to close one layer down; extending the same check up to the manifest
+  layer costs little and closes it here too.
+- **Reject a `MESH_DEPENDENCIES` entry the scene never actually
+  references.** Rejected as this ADR's own recommendation: an
+  over-declared dependency is forward-compatible authoring hygiene, not
+  a mistake, and rejecting it would penalize a human being cautious;
+  Human Review may still prefer strict, no-unused-entries validation if
+  scene/mesh drift is a bigger concern in practice than authoring
+  friction.
+- **Load resolved mesh dependencies in whatever order a hash-map
+  (`std::unordered_map`) happens to iterate them.** Rejected: iteration
+  order over an unordered associative container is unspecified and can
+  differ between standard-library implementations or even between runs
+  — silently non-deterministic behavior this repository's own
+  `World`/`AssetSystem` precedent has consistently avoided elsewhere
+  (deterministic slot order, deterministic enumeration order). Ascending
+  first-reference order in `ValidatedSceneData`'s own array — itself
+  already deterministic — is used instead, at zero extra cost.
+
 **For the transactional/instantiation contract:**
 
 - **A new, scene-loading-specific `SceneInstantiationError` enum on
   `World`'s own new entry point**, covering conditions ADR-0053's own
   decode-time validation already forecloses. Rejected: once
-  `DecodedScene` is exhaustively pre-validated, there is nothing left
+  `ValidatedSceneData` is exhaustively pre-validated, there is nothing left
   for this enum to ever actually report — an error type with no
   reachable case is worse than no error type.
 - **Reuse `WorldError::NoCameraComponent`** for the active-camera-node-
