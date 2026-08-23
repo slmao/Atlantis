@@ -17,6 +17,10 @@ add_library(atlantis_asset_system STATIC
   src/scene_artifact.cpp
   src/cook_scene.cpp
   src/decode_scene.cpp
+  src/texture_metadata.cpp
+  src/texture_artifact.cpp
+  src/cook_texture.cpp
+  src/load_texture.cpp
 )
 add_library(Atlantis::AssetSystem ALIAS atlantis_asset_system)
 
@@ -170,6 +174,62 @@ function(atlantis_add_scene_asset)
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_MANIFEST_PATH "${manifest_path}" PARENT_SCOPE)
+  set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
+endfunction()
+
+# Plan 0016 Section D8: declares one texture asset for
+# atlantis_asset_cooker to process at build time, mirroring
+# atlantis_add_static_mesh_asset()'s own stamp/BYPRODUCTS pattern.
+# COLOR_SPACE is Unorm or Srgb, forwarded to the cooker's own
+# --color-space= argument (lowercased here). Unlike
+# atlantis_add_static_mesh_asset(), output paths are keyed by NAME, not
+# SOURCE -- callable twice against the same SOURCE with different
+# NAME/COLOR_SPACE (the mechanism the textured fixture's own two
+# textures, one per color space, need), which a SOURCE-derived output
+# path could not support without one call overwriting the other's
+# BYPRODUCTS.
+function(atlantis_add_texture_asset)
+  set(options "")
+  set(oneValueArgs NAME SOURCE COLOR_SPACE)
+  set(multiValueArgs "")
+  cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+  set(asset_root "${CMAKE_SOURCE_DIR}/assets")
+  set(source_path "${asset_root}/${ARG_SOURCE}")
+  set(output_dir "${CMAKE_BINARY_DIR}/assets")
+
+  string(TOLOWER "${ARG_COLOR_SPACE}" color_space_lower)
+
+  set(artifact_path "${output_dir}/${ARG_NAME}.atex")
+  set(metadata_path "${output_dir}/${ARG_NAME}.atex.meta.txt")
+  set(stamp "${output_dir}/${ARG_NAME}.stamp")
+
+  add_custom_command(
+    OUTPUT "${stamp}"
+    BYPRODUCTS "${artifact_path}" "${metadata_path}"
+    COMMAND atlantis_asset_cooker
+      --kind=texture --source=${source_path} --asset-root=${asset_root}
+      --output-dir=${output_dir} --stamp=${stamp} --color-space=${color_space_lower}
+    DEPENDS ${source_path} atlantis_asset_cooker
+    COMMENT "Cooking texture asset: ${ARG_NAME} (${ARG_SOURCE}, ${ARG_COLOR_SPACE})"
+    VERBATIM
+  )
+  add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
+
+  # A texture SOURCE cooked twice under two NAMEs (once per color space)
+  # is, by construction, the same logical source asset both times --
+  # registering it into the collision-detection list a second time would
+  # be a spurious AssetSetError::DuplicateLogicalPath, not a genuine
+  # collision (two DIFFERENT sources should never share a logical path;
+  # the same source declared twice under this one function is not that).
+  get_property(already_declared GLOBAL PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS)
+  list(FIND already_declared "${ARG_SOURCE}" existing_index)
+  if(existing_index EQUAL -1)
+    set_property(GLOBAL APPEND PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS "${ARG_SOURCE}")
+  endif()
+
+  set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
+  set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
 endfunction()
 

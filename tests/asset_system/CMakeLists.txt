@@ -14,6 +14,10 @@ add_executable(atlantis_asset_system_tests
   cook_scene_tests.cpp
   decode_scene_tests.cpp
   scene_asset_cmake_declaration_tests.cpp
+  texture_metadata_tests.cpp
+  texture_artifact_tests.cpp
+  cook_texture_tests.cpp
+  load_texture_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_system_tests

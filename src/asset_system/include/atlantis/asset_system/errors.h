@@ -116,4 +116,39 @@ enum class SceneArtifactDecodeError {
   MetadataArtifactMismatch,
 };
 
+// Plan 0016 Section D8: cookTexture()'s own validation conditions --
+// mirrors cookStaticMesh()'s own established set (Spec 0016 Human
+// Review item 9's own explicit checked-arithmetic requirement is what
+// SourceOverflow guards). A single AtomicWriteFailed, unlike CookError's
+// own separate Artifact/MetadataWriteFailed pair -- cookTexture()'s own
+// two atomic writes (artifact, metadata) are not independently
+// distinguished by this enum.
+enum class TextureCookError {
+  ZeroDimension,
+  DimensionExceedsMaximum,
+  SourceOverflow,
+  AtomicWriteFailed,
+};
+
+// decodeTextureArtifact()'s own conditions -- never assumes a
+// well-formed cooker output, independently re-derives every
+// TextureCookError-adjacent condition from the artifact's own bytes.
+enum class TextureArtifactDecodeError {
+  BadMagic,
+  UnsupportedSchemaVersion,
+  TruncatedHeader,
+  InconsistentPixelDataSize,
+  DimensionExceedsMaximum,
+  UnknownFormat,
+  UnsupportedMipCount,  // must equal 1
+};
+
+enum class TextureLoadError {
+  ArtifactDecodeFailed,  // wraps TextureArtifactDecodeError, including a
+                          // failed artifact file read
+  MetadataParseFailed,
+  MetadataArtifactMismatch,
+  MetadataReadFailed,
+};
+
 }  // namespace atlantis::asset_system
