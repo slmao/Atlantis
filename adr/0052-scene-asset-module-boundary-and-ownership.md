@@ -1,9 +1,18 @@
 # ADR 0052: Scene Asset Module Boundary and Ownership
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-23
-- **Deciders:** Pending Human Review
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-23 as part of Spec 0015's Human Review Approval
 - **Related Spec:** [specs/0015-scene-asset-serialization-foundation.md](../specs/0015-scene-asset-serialization-foundation.md)
+- **Acceptance Record (2026-08-23):** Accepted by Human Review as part
+  of
+  [specs/0015-scene-asset-serialization-foundation.md](../specs/0015-scene-asset-serialization-foundation.md)'s
+  own Human Review Approval (2026-08-23) — see that Spec's own approval
+  note (items 1, 2, 6, 14) and its own Human Review Decision Table's
+  "Where" column for the specific items this ADR corresponds to. This
+  record does not change this ADR's own Decision, Consequences, or
+  Alternatives Considered below.
 
 ## Context
 

@@ -1,10 +1,86 @@
 # Spec: Scene Asset & Serialization Foundation
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
   direction, following AGENTS.md's Spec → Plan → Human Review →
-  Implementation path.
+  Implementation path. Reviewed and approved by a human — see Human
+  Review Approval immediately below.
 - **Created:** 2026-08-23
+- **Human Review Approval (2026-08-23):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer) on 2026-08-23, accepting this document's own Human Review
+  Decision Table in full — all 16 items, as recommended, with no
+  amendment. This approval explicitly accepts:
+
+  1. Scene authoring/cook/decode belongs to `Atlantis::AssetSystem`; no
+     new, independent Serialization module (item 1; [ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)).
+  2. `Atlantis::AssetSystem` uses its own DTOs
+     (`DecodedTransform`/`DecodedCamera`/`DecodedRenderable`), never
+     depending on `Atlantis::World`; `Atlantis::World` owns the
+     `ValidatedSceneData → World` conversion (item 6; ADR-0052,
+     [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md)).
+  3. **`ValidatedSceneData` is constructible only by a successful
+     decoder/validator** (`decodeScene()`, via a `private` constructor
+     and `friend` relationship, matching `EntityId`'s own established
+     pattern) — private internal state, read-only access only, no
+     public default/arbitrary construction, copy/move preserving
+     validity, and no path by which a caller can produce or mutate an
+     invalid hierarchy, index, active-camera reference, or component
+     value (item 15; ADR-0053).
+  4. `World` accepts only `ValidatedSceneData` and returns a fresh
+     `World` value — infallibly, no `SceneInstantiationError` (item 6;
+     ADR-0052, [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)).
+  5. Scene-local node ID, deterministic ordering, dense artifact-index
+     remapping at cook time, and the explicit prohibition on
+     persisting `EntityId`/`WorldIdentity` (items 3, 5; ADR-0053).
+  6. Authoring/runtime artifact separation, a versioned, unconditionally
+     little-endian binary format, and strict, independent decode-time
+     validation (item 2; ADR-0053).
+  7. A per-scene, build-tree-private dependency manifest — each entry a
+     (normalized logical path, `AssetId`, artifact locator) triple
+     (item 16; ADR-0054).
+  8. Distinct, named manifest error semantics: duplicate entry,
+     `AssetId` collision, metadata/`AssetId` mismatch, an unresolved
+     scene reference, and a malformed/corrupted manifest line (item 16;
+     ADR-0054).
+  9. A manifest entry the scene never actually references is explicitly
+     permitted, not an error (item 16; ADR-0054).
+  10. Runtime resolves and loads mesh dependencies in the scene's own
+      deterministic, ascending first-reference order — never relying on
+      `std::unordered_map`'s own unspecified iteration order (item 16;
+      ADR-0054).
+  11. Every mesh dependency resolves and loads before any `Entity` is
+      created (items 7, 13; ADR-0054).
+  12. `ValidatedSceneData`, the mesh resource map, and the fresh
+      `World` publish together only after full success; any failure is
+      discarded by RAII, with no partial state (item 7; ADR-0054).
+  13. **The dependency manifest exists to serve the current build tree
+      only — it is never part of, or shipped alongside, the portable
+      scene artifact.** This Spec does not claim to solve distributable-
+      asset packaging or a general-purpose Asset Catalog; both remain
+      explicitly future, unscoped work (item 13; ADR-0054; see Non-Goals
+      and `specs/README.md`'s own Candidate Order 7).
+  14. Reuses the existing Asset System CMake re-import-triggering
+      pattern, atomic cooker writes, and introduces no new derived-data
+      cache (item 5; ADR-0052).
+  15. The first scene asset's headless load reuses the existing
+      `world_scene` golden with **zero** difference — no new or updated
+      equivalent golden — and Runtime's windowed path remains smoke-only
+      plus genuine human visual confirmation, never an automated pixel-
+      comparison claim (item 11; this Spec's own Requirements/Goals).
+  16. Every Non-Goal named in this document, including no new
+      third-party dependency and no change to `Renderer`/`RHI`/
+      `RenderGraph`/Vulkan Backend's own public API (item 12; this
+      Spec's own Non-Goals).
+
+  [ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)–[ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)
+  all move to `Accepted` alongside this approval — see each ADR's own
+  new Acceptance Record. **This approval authorizes drafting Plan 0015
+  against this Spec, per [AGENTS.md](../AGENTS.md); it does not itself
+  authorize Implementation** — that future Plan must still pass its own
+  Human Review, per the same Spec → Plan → Human Review → Implementation
+  → Verification → PR → Merge path every prior spec in this line has
+  followed.
 - **Related Plan(s):** None yet — Plan drafting is explicitly out of
   scope for this document; see AGENTS.md's own Spec → Plan → Human
   Review sequencing.
@@ -14,8 +90,8 @@
   [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md)
   (artifact format, versioning, scene-local node identity),
   [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)
-  (transactional instantiation contract) — all `Proposed`, pending this
-  Spec's own Human Review Approval.
+  (transactional instantiation contract) — all `Accepted`, alongside
+  this Spec's own Human Review Approval recorded 2026-08-23.
 
 ## Summary
 
