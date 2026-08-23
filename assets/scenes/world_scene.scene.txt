@@ -1,0 +1,9 @@
+atlantis_scene_source_version: 1
+node_count: 6
+active_camera: 6
+node: node_id=1 parent=none position=-2.5 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/minimal_cube.mesh.txt
+node: node_id=2 parent=none position=-1.0 0.0 0.0 rotation=0.0 0.5236 0.0 scale=1.0 1.0 1.0 mesh=meshes/minimal_cube.mesh.txt
+node: node_id=3 parent=none position=1.0 -0.5 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/minimal_cube.mesh.txt
+node: node_id=4 parent=3 position=0.0 1.3 0.0 rotation=0.0 0.7854 0.0 scale=1.0 1.0 1.0 mesh=meshes/minimal_cube.mesh.txt
+node: node_id=5 parent=none position=2.5 0.0 0.0 rotation=0.2618 0.3491 0.0 scale=1.0 1.0 1.0 mesh=meshes/minimal_cube.mesh.txt
+node: node_id=6 parent=none position=0.0 2.2 7.0 rotation=-0.3054 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.04719758 camera_near_z=0.1 camera_far_z=100.0

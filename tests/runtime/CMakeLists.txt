@@ -7,6 +7,8 @@ add_executable(atlantis_runtime_tests
   init_error_tests.cpp
   runtime_ownership_tests.cpp
   scene_extraction_tests.cpp
+  scene_manifest_tests.cpp
+  scene_load_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_tests
@@ -38,9 +40,12 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   ATLANTIS_RUNTIME_SHADER_DIR="${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}"
   ATLANTIS_RUNTIME_ASSET_ARTIFACT_PATH="${ATLANTIS_minimal_cube_ARTIFACT_PATH}"
   ATLANTIS_RUNTIME_ASSET_METADATA_PATH="${ATLANTIS_minimal_cube_METADATA_PATH}"
+  ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH="${ATLANTIS_world_scene_ARTIFACT_PATH}"
+  ATLANTIS_RUNTIME_SCENE_METADATA_PATH="${ATLANTIS_world_scene_METADATA_PATH}"
+  ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH="${ATLANTIS_world_scene_MANIFEST_PATH}"
 )
 
-add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders ${ATLANTIS_minimal_cube_TARGET})
+add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})
 
 # LABELS "gpu": the existing plain ctest convention Spec 0006/Spec 0010
 # already established -- matching tests/image_regression/CMakeLists.txt's

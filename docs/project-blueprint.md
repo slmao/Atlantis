@@ -763,6 +763,58 @@ milestone being listed does not authorize starting it — see Section 1.
   mutation, and any Client/Editor/second-process consumer of `World`
   state.
 
+### Milestone 12 — Scene Asset & Serialization Foundation
+
+- **Governance state:** **`Approved` Spec, `Approved` Plan. Implementation
+  is code complete on [PR #74](https://github.com/slmao/Atlantis/pull/74)
+  (OPEN, not yet merged) — do not treat this Milestone as delivered
+  until that PR merges** —
+  [specs/0015-scene-asset-serialization-foundation.md](../specs/0015-scene-asset-serialization-foundation.md),
+  [plans/0015-scene-asset-serialization-foundation.md](../plans/0015-scene-asset-serialization-foundation.md).
+  Architectural Impact identified three new decisions, filed as
+  [ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)
+  (module boundary and ownership — AssetSystem's own scene DTOs never
+  name a `world::` type),
+  [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md)
+  (artifact format versioning and node identity, including its own
+  Human Review Correction settling `ValidatedSceneData`'s own
+  no-public-default-constructor contract), and
+  [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)
+  (scene loading's own transactional instantiation contract), all
+  `Accepted`.
+- **Scope delivered on the OPEN PR:** a scene authoring grammar and
+  cook/decode pipeline in Atlantis Asset System (`ValidatedSceneData`,
+  `cookScene()`/`decodeScene()`, a little-endian binary artifact format,
+  a build-tree-private dependency manifest); `World::fromValidatedSceneData()`
+  (two-pass, deterministic, infallible instantiation); Runtime's own
+  manifest-driven resolve/load sequence
+  (`loadAndInstantiateScene()`, factored out of `initializeSteps()` so
+  it is directly testable without a real Platform session or GPU
+  Device), replacing the former hardcoded six-entity validation scene;
+  and the first real scene asset, `assets/scenes/world_scene.scene.txt`,
+  reproducing that former validation scene byte-for-byte and reusing
+  the existing, unmodified `world_scene` image-regression golden with
+  zero pixel difference (a real, empirically-found `fov_y` rounding
+  discrepancy between the Plan's own literal authored text and the
+  original code's own computed float32 value was found and corrected
+  in the course of proving this — see the PR's own disclosed deviations
+  list). Verified by a clean Debug and Release full build (`ctest -LE gpu`:
+  516/516 Debug, 515/515 Release), `ctest -L gpu` 20/20 both
+  configurations, Vulkan Validation Layers grepped clean throughout, a
+  strengthened `tests/asset_system/module_boundary_tests.cpp` (now also
+  forbidding `atlantis/world/`), and a switch-exhaustiveness positive
+  and negative (C4062) build check.
+- **Outstanding before merge:** V24 — genuine human visual confirmation
+  of the windowed five-cube scene (resize, minimize/restore, close,
+  personally-observed clean Vulkan Validation Layers) has not yet been
+  performed; programmatic execution of the windowed smoke test proves
+  only the lifecycle path. This PR must not be merged until a real
+  human completes and records this observation.
+- **Not implemented** (per Spec 0015's own Non-Goals, unchanged): a
+  distributable, cross-session Asset Catalog/Registry, a rename-stable
+  GUID identity scheme, schema migration, and any Client/Editor/
+  second-process consumer of scene data.
+
 ### Further candidate phases (directional only, no Spec, no ADR)
 
 The following are named only to communicate long-term direction drawn

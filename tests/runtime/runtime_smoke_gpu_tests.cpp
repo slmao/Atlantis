@@ -31,11 +31,13 @@ using atlantis::runtime::RuntimeExitReason;
 // Plan 0014 Section D-Step 6: the one narrowly-scoped friend
 // RuntimeApplication declares for this test only (see
 // runtime_application.h's own comment) -- reads world_'s own
-// renderableEntities() count, no new public API.
+// renderableEntities() count, no new public API. Plan 0015 Section
+// D2/D10: world_ is std::optional<World>; runFrame() has already run
+// by the time this is called (below), so it is guaranteed populated.
 namespace atlantis::runtime {
 struct RuntimeSmokeTestAccess {
   static std::size_t renderableEntityCount(const RuntimeApplication& app) {
-    return app.world_.renderableEntities().size();
+    return app.world_->renderableEntities().size();
   }
 };
 }  // namespace atlantis::runtime
@@ -50,6 +52,11 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   config.fragmentShaderReflectionPath = std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.frag.refl.json";
   config.assetArtifactPath = ATLANTIS_RUNTIME_ASSET_ARTIFACT_PATH;
   config.assetMetadataPath = ATLANTIS_RUNTIME_ASSET_METADATA_PATH;
+  // Plan 0015 Section D11: the real, loaded scene path -- replaces the
+  // former hardcoded six-entity validation scene.
+  config.sceneArtifactPath = ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH;
+  config.sceneMetadataPath = ATLANTIS_RUNTIME_SCENE_METADATA_PATH;
+  config.sceneDependencyManifestPath = ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH;
   config.enableValidationLayers = true;
 
   auto appResult = createRuntimeApplication(config);
@@ -65,9 +72,10 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   }
   REQUIRE(app.shouldContinue());  // did not fail during those frames
 
-  // V17: exactly 5 DrawItems reach Renderer::drawFrame() on a successful
-  // frame -- every validation-scene Renderable entity resolved. Vulkan
-  // Validation Layers reporting zero warnings/errors for the full
+  // V22: exactly 5 DrawItems reach Renderer::drawFrame() on a successful
+  // frame -- world_scene.scene.txt declares 5 Renderable nodes (D11),
+  // matching the former hardcoded validation scene's own count exactly.
+  // Vulkan Validation Layers reporting zero warnings/errors for the full
   // multi-item span is this test's own existing crash-on-validation-hit
   // mechanism (enableValidationLayers = true above), unchanged: reaching
   // this REQUIRE at all already proves no validation hit aborted the

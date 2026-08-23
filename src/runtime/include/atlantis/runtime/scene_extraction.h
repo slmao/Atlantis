@@ -5,6 +5,7 @@
 
 #include <array>
 #include <variant>
+#include <vector>
 
 namespace atlantis::runtime {
 
@@ -54,10 +55,15 @@ struct CameraMatrices {
 
 // Trivial by design (ADR-0051's own Decision step 4 fixes only the
 // existence and input/output shape of asset resolution, not a
-// container) -- this Plan's own validation scene resolves against
-// exactly one known AssetId; Ok() on a match, Err(UnresolvedMeshAsset)
-// otherwise.
+// container). Plan 0015 Section D10: knownIds is the currently-
+// resolved/loaded AssetId set (RuntimeApplication's own
+// meshResourceMap_ keys, collected by the caller) -- Ok() if requested
+// is a member, Err(UnresolvedMeshAsset) otherwise. Takes a plain
+// std::vector rather than the map itself so this Runtime-private
+// header stays decoupled from atlantis::renderer::Mesh's own complete
+// type; the caller still uses meshResourceMap_.at(requested) directly
+// to obtain the actual Mesh once this call confirms membership.
 [[nodiscard]] atlantis::Result<std::monostate, SceneExtractionError> resolveMeshAsset(
-    atlantis::asset_system::AssetId requested, atlantis::asset_system::AssetId known);
+    atlantis::asset_system::AssetId requested, const std::vector<atlantis::asset_system::AssetId>& knownIds);
 
 }  // namespace atlantis::runtime

@@ -12,6 +12,11 @@ add_library(atlantis_asset_system STATIC
   src/mesh_artifact.cpp
   src/cook.cpp
   src/load.cpp
+  src/scene_source.cpp
+  src/scene_metadata.cpp
+  src/scene_artifact.cpp
+  src/cook_scene.cpp
+  src/decode_scene.cpp
 )
 add_library(Atlantis::AssetSystem ALIAS atlantis_asset_system)
 
@@ -78,6 +83,93 @@ function(atlantis_add_static_mesh_asset)
   # naming convention.
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
+  set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
+  # Plan 0015 Section D7: exposes the exact string cookStaticMesh() was
+  # already given as its own logicalPathInput -- no behavior change to
+  # any existing caller; existing callers simply gain one more
+  # unused-by-them exported variable. atlantis_add_scene_asset() below
+  # is this variable's own first real consumer, recording a
+  # MESH_DEPENDENCIES entry's logical path into the manifest.
+  set(ATLANTIS_${ARG_NAME}_LOGICAL_PATH "${ARG_SOURCE}" PARENT_SCOPE)
+endfunction()
+
+# Plan 0015 Section D7: declares one scene asset -- mirrors
+# atlantis_add_static_mesh_asset()'s own stamp/BYPRODUCTS pattern, with
+# two additions: a MESH_DEPENDENCIES list (each entry must already be
+# declared via atlantis_add_static_mesh_asset() above) and a generated,
+# build-tree-private manifest recording each dependency's own logical
+# path, artifact path, and metadata path as a tab-separated triple
+# (Section D8) -- Runtime's own sole way to resolve a scene's mesh
+# references to real on-disk artifacts, never a portable part of the
+# artifact itself. Must be defined before any add_subdirectory() that
+# calls it, matching atlantis_add_static_mesh_asset()'s own ordering
+# convention exactly.
+function(atlantis_add_scene_asset)
+  set(options "")
+  set(oneValueArgs NAME SOURCE)
+  set(multiValueArgs MESH_DEPENDENCIES)
+  cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+  set(asset_root "${CMAKE_SOURCE_DIR}/assets")
+  set(source_path "${asset_root}/${ARG_SOURCE}")
+  set(output_dir "${CMAKE_BINARY_DIR}/assets")
+
+  string(REGEX REPLACE "\\.scene\\.txt$" "" base "${ARG_SOURCE}")
+  set(artifact_path "${output_dir}/${base}.ascene")
+  set(metadata_path "${output_dir}/${base}.ascene.meta.txt")
+  set(manifest_path "${output_dir}/${base}.ascene.manifest.txt")
+  set(stamp "${output_dir}/${base}.stamp")
+
+  set(dependency_targets "")
+  set(manifest_lines "")
+  foreach(dep_name ${ARG_MESH_DEPENDENCIES})
+    if(NOT DEFINED ATLANTIS_${dep_name}_ARTIFACT_PATH)
+      message(FATAL_ERROR
+        "atlantis_add_scene_asset(${ARG_NAME}): MESH_DEPENDENCIES entry "
+        "'${dep_name}' is not a previously declared asset -- declare it "
+        "via atlantis_add_static_mesh_asset() first.")
+    endif()
+    list(APPEND dependency_targets "${ATLANTIS_${dep_name}_TARGET}")
+    string(APPEND manifest_lines
+      "${ATLANTIS_${dep_name}_LOGICAL_PATH}\t${ATLANTIS_${dep_name}_ARTIFACT_PATH}\t${ATLANTIS_${dep_name}_METADATA_PATH}\n")
+  endforeach()
+
+  # file(GENERATE) runs at CMake generate time, independent of which
+  # config a multi-config (Visual Studio) generator later builds --
+  # this manifest's own content (paths, not compiled binaries) does not
+  # vary by config, matching atlantis_add_static_mesh_asset()'s own
+  # ARTIFACT_PATH/METADATA_PATH (also config-independent, both already
+  # proven working under this project's own real Visual Studio
+  # generator). No $<CONFIG> generator expression is needed or used.
+  file(GENERATE OUTPUT "${manifest_path}" CONTENT "${manifest_lines}")
+
+  add_custom_command(
+    OUTPUT "${stamp}"
+    BYPRODUCTS "${artifact_path}" "${metadata_path}"
+    COMMAND atlantis_asset_cooker
+      --kind=scene --source=${source_path} --asset-root=${asset_root}
+      --output-dir=${output_dir} --stamp=${stamp}
+    DEPENDS ${source_path} atlantis_asset_cooker
+    COMMENT "Cooking scene asset: ${ARG_SOURCE}"
+    VERBATIM
+  )
+  add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
+  # Ordering only, deliberately NOT added to the custom command's own
+  # DEPENDS above: a MESH_DEPENDENCIES mesh's own content edit must not
+  # re-trigger this scene's own cook step -- the scene artifact only
+  # ever stores that mesh's AssetId (a hash of its logical path, known
+  # already at CMake-declare time and unaffected by the mesh's content),
+  # so the scene's own output bytes provably cannot change from a mesh
+  # content edit. This add_dependencies() edge exists only so the full
+  # build graph is consistent (the mesh builds as part of the same ALL
+  # pass) -- it does not, by itself, mark this scene's own stamp stale.
+  if(dependency_targets)
+    add_dependencies(${ARG_NAME}_asset ${dependency_targets})
+  endif()
+
+  set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
+  set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
+  set(ATLANTIS_${ARG_NAME}_MANIFEST_PATH "${manifest_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
 endfunction()
 

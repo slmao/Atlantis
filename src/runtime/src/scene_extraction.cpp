@@ -1,5 +1,6 @@
 #include <atlantis/runtime/scene_extraction.h>
 
+#include <algorithm>
 #include <cmath>
 
 namespace atlantis::runtime {
@@ -115,9 +116,9 @@ atlantis::Result<CameraMatrices, SceneExtractionError> extractCameraMatrices(con
   return atlantis::Result<CameraMatrices, SceneExtractionError>::Ok(result);
 }
 
-atlantis::Result<std::monostate, SceneExtractionError> resolveMeshAsset(atlantis::asset_system::AssetId requested,
-                                                                          atlantis::asset_system::AssetId known) {
-  if (requested != known) {
+atlantis::Result<std::monostate, SceneExtractionError> resolveMeshAsset(
+    atlantis::asset_system::AssetId requested, const std::vector<atlantis::asset_system::AssetId>& knownIds) {
+  if (std::find(knownIds.begin(), knownIds.end(), requested) == knownIds.end()) {
     return atlantis::Result<std::monostate, SceneExtractionError>::Err(SceneExtractionError::UnresolvedMeshAsset);
   }
   return atlantis::Result<std::monostate, SceneExtractionError>::Ok({});

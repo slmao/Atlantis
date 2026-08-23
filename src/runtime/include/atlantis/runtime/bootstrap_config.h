@@ -20,6 +20,13 @@ struct BootstrapConfig {
   std::string fragmentShaderReflectionPath;
   std::string assetArtifactPath;
   std::string assetMetadataPath;
+  // Plan 0015 Section D2/D11: the scene asset atlantis_add_scene_asset()
+  // (assets/CMakeLists.txt) declares -- sourced from new CMake compile
+  // definitions, matching assetArtifactPath/assetMetadataPath's own
+  // established sourcing exactly.
+  std::string sceneArtifactPath;
+  std::string sceneMetadataPath;
+  std::string sceneDependencyManifestPath;
   bool enableValidationLayers = true;
 };
 

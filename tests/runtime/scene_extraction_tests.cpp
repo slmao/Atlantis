@@ -117,14 +117,25 @@ TEST_CASE("extractCameraMatrices(): a forward parallel to world-up returns Err(D
 }
 
 // resolveMeshAsset()
-TEST_CASE("resolveMeshAsset(): a matching AssetId returns Ok()", "[runtime][scene_extraction]") {
-  const auto result = resolveMeshAsset(42, 42);
+TEST_CASE("resolveMeshAsset(): a member AssetId returns Ok()", "[runtime][scene_extraction]") {
+  const auto result = resolveMeshAsset(42, {42});
   REQUIRE(result.isOk());
 }
 
-TEST_CASE("resolveMeshAsset(): a non-matching AssetId returns Err(UnresolvedMeshAsset)",
+TEST_CASE("resolveMeshAsset(): a member AssetId among several returns Ok()", "[runtime][scene_extraction]") {
+  const auto result = resolveMeshAsset(2, {1, 2, 3});
+  REQUIRE(result.isOk());
+}
+
+TEST_CASE("resolveMeshAsset(): a non-member AssetId returns Err(UnresolvedMeshAsset)",
           "[runtime][scene_extraction]") {
-  const auto result = resolveMeshAsset(1, 2);
+  const auto result = resolveMeshAsset(1, {2});
+  REQUIRE(result.isErr());
+  REQUIRE(result.error() == SceneExtractionError::UnresolvedMeshAsset);
+}
+
+TEST_CASE("resolveMeshAsset(): an empty known set returns Err(UnresolvedMeshAsset)", "[runtime][scene_extraction]") {
+  const auto result = resolveMeshAsset(1, {});
   REQUIRE(result.isErr());
   REQUIRE(result.error() == SceneExtractionError::UnresolvedMeshAsset);
 }

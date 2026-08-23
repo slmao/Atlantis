@@ -22,6 +22,14 @@ const char* toString(RuntimeInitError error) noexcept {
       return "AssetMetadataParseFailed";
     case RuntimeInitError::SceneConstructionFailed:
       return "SceneConstructionFailed";
+    case RuntimeInitError::SceneManifestLoadFailed:
+      return "SceneManifestLoadFailed";
+    case RuntimeInitError::SceneArtifactLoadFailed:
+      return "SceneArtifactLoadFailed";
+    case RuntimeInitError::SceneDependencyUnresolved:
+      return "SceneDependencyUnresolved";
+    case RuntimeInitError::SceneDependencyLoadFailed:
+      return "SceneDependencyLoadFailed";
   }
   // Reached only if a future RuntimeInitError value is added without a
   // corresponding case above -- see exit_reason.cpp's identical comment

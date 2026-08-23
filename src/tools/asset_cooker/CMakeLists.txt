@@ -26,6 +26,19 @@ target_link_libraries(atlantis_asset_cooker_lib
     atlantis_compiler_warnings
 )
 
+# Plan 0015 Section D7/D2 (V27): real, compile-time enum-exhaustiveness
+# protection for sceneCookErrorMessage()'s own no-default switch over
+# SceneCookError -- MSVC's C4062 ("enumerator ... not handled"), off by
+# default even at /W4. Scoped to this target only, matching
+# atlantis_runtime_host's own established /w14062 precedent
+# (src/runtime/CMakeLists.txt) exactly -- cmake/CompilerWarnings.cmake
+# (shared by every target) is deliberately not touched. The
+# repository's existing, already-present /WX promotes C4062 to a hard
+# build error once this target opts into seeing it.
+target_compile_options(atlantis_asset_cooker_lib PRIVATE
+  $<$<CXX_COMPILER_ID:MSVC>:/w14062>
+)
+
 add_executable(atlantis_asset_cooker
   main.cpp
 )
