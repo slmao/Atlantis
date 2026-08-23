@@ -32,29 +32,22 @@ class ValidatedSceneData;
 // pattern atlantis::world::EntityId already established. Every
 // structural field private; the only non-default constructor private,
 // callable only by decodeScene() (a friend relationship, matching
-// EntityId's own friend class World) and, for tests only,
-// ValidatedSceneDataTestAccess (matching World's own
-// EntityLifecycleTestAccess precedent, D9/V21 below). Public surface is read-only
-// accessors only -- no setter, no mutable reference, no mutable
-// iterator. NO public default constructor -- deleted, not merely
-// omitted, so a caller's own attempt to default-construct one is a
-// named compiler error. A zero-node scene is not representable by this
-// type at all; decodeScene() itself never succeeds with one (see
+// EntityId's own friend class World) -- the SOLE privileged entry
+// point in this entire codebase, with no test-only exception of any
+// kind. Public surface is read-only accessors only -- no setter, no
+// mutable reference, no mutable iterator. NO public default
+// constructor -- deleted, not merely omitted, so a caller's own
+// attempt to default-construct one is a named compiler error. A
+// zero-node scene is not representable by this type at all;
+// decodeScene() itself never succeeds with one (see
 // cook_scene.h/decode_scene.h's own EmptyScene condition) -- there is
-// no "empty but valid" instance to represent.
-// Plan 0015 Section D9 (V21): the one narrowly-scoped, Plan-pre-
-// authorized friend granting a single test translation unit
-// (tests/world/scene_instantiation_tests.cpp) direct construction
-// access -- matching World's own EntityLifecycleTestAccess precedent
-// exactly (world.h's own identical friend struct, defined only in
-// tests/world/entity_lifecycle_tests.cpp). Needed because Step 6
-// (fromValidatedSceneData()) is sequenced to depend only on Step 1's
-// own public accessor surface, not on the real cook/decode pipeline
-// (Steps 3-4) -- so its own tests need a way to construct arbitrary
-// ValidatedSceneData instances (specific hierarchies, camera setups)
-// without going through a full text-authoring round trip each time.
-struct ValidatedSceneDataTestAccess;
-
+// no "empty but valid" instance to represent. A prior revision of this
+// header briefly added a second, test-only friend
+// (ValidatedSceneDataTestAccess) so tests/world/scene_instantiation_tests.cpp
+// could construct arbitrary instances directly; a subsequent review
+// round removed it as a genuine invariant weakening -- that test file
+// now goes through the real, public cookScene() -> decodeScene() path
+// exclusively, like every other consumer.
 class ValidatedSceneData {
  public:
   ValidatedSceneData() = delete;
@@ -75,7 +68,6 @@ class ValidatedSceneData {
  private:
   friend atlantis::Result<ValidatedSceneData, SceneArtifactDecodeError> decodeScene(const std::string&,
                                                                                       const std::string&);
-  friend struct ValidatedSceneDataTestAccess;
 
   ValidatedSceneData(std::vector<ValidatedSceneNode> nodes, std::vector<std::optional<std::size_t>> parents,
                       std::optional<std::size_t> activeCameraIndex)

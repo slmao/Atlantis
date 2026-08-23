@@ -1,15 +1,26 @@
 #include <atlantis/world/scene_instantiation.h>
 
+#include <atlantis/asset_system/asset_id.h>
+#include <atlantis/asset_system/cook_scene.h>
+#include <atlantis/asset_system/decode_scene.h>
+#include <atlantis/asset_system/logical_path.h>
+
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
+#include <filesystem>
+#include <fstream>
 #include <optional>
+#include <string>
 #include <type_traits>
 #include <vector>
 
-using atlantis::asset_system::DecodedCamera;
-using atlantis::asset_system::DecodedRenderable;
+using atlantis::asset_system::AssetId;
+using atlantis::asset_system::computeAssetId;
+using atlantis::asset_system::cookScene;
+using atlantis::asset_system::decodeScene;
+using atlantis::asset_system::normalizeLogicalPath;
 using atlantis::asset_system::ValidatedSceneData;
-using atlantis::asset_system::ValidatedSceneNode;
 using atlantis::world::Camera;
 using atlantis::world::EntityId;
 using atlantis::world::fromValidatedSceneData;
@@ -18,58 +29,102 @@ using atlantis::world::Renderable;
 using atlantis::world::Transform;
 using atlantis::world::World;
 
-// Plan 0015 Section D9 (V21): the one narrowly-scoped, Plan-pre-
-// authorized friend this test translation unit needs -- matching
-// World's own EntityLifecycleTestAccess precedent
-// (tests/world/entity_lifecycle_tests.cpp) exactly. Declared inside
-// atlantis::asset_system to match ValidatedSceneData's own unqualified
-// `friend struct ValidatedSceneDataTestAccess;`.
-namespace atlantis::asset_system {
-struct ValidatedSceneDataTestAccess {
-  static ValidatedSceneData make(std::vector<ValidatedSceneNode> nodes,
-                                  std::vector<std::optional<std::size_t>> parents,
-                                  std::optional<std::size_t> activeCameraIndex) {
-    return ValidatedSceneData(std::move(nodes), std::move(parents), activeCameraIndex);
-  }
-};
-}  // namespace atlantis::asset_system
-
-using atlantis::asset_system::ValidatedSceneDataTestAccess;
+// Plan 0015 Section D2/D9 (final review round, 2026-08-24): a prior
+// revision of this file constructed ValidatedSceneData directly via a
+// test-only friend (ValidatedSceneDataTestAccess). That friend has
+// been removed from validated_scene_data.h entirely -- decodeScene()
+// is now, without exception, the ONLY way any ValidatedSceneData
+// instance can exist anywhere in this codebase, including here. Every
+// scene this file exercises is therefore real, authored scene-source
+// text, cooked via the real cookScene() and decoded via the real
+// decodeScene(), exactly like any other consumer.
 
 namespace {
 
-constexpr atlantis::asset_system::AssetId kNode0MeshAsset = 0x0102030405060708ULL;
-constexpr atlantis::asset_system::AssetId kNode1MeshAsset = 0xAABBCCDDEEFF0011ULL;
+namespace fs = std::filesystem;
 
-// Three nodes: node 0 a Renderable with no parent; node 1 a Renderable
-// child of node 0 (its own, distinct meshAsset makes it independently
-// identifiable via renderableEntities(), not just reachable in
-// principle); node 2 a Camera, no parent, the scene's own active
-// camera.
-[[nodiscard]] ValidatedSceneData makeThreeNodeScene() {
-  ValidatedSceneNode node0;
-  node0.transform = {1.0f, 2.0f, 3.0f, 0.1f, 0.2f, 0.3f, 1.0f, 1.0f, 1.0f};
-  node0.renderable = DecodedRenderable{kNode0MeshAsset};
+std::atomic<int> gScratchCounter{0};
 
-  ValidatedSceneNode node1;
-  node1.transform = {4.0f, 5.0f, 6.0f, 0.0f, 0.0f, 0.0f, 2.0f, 2.0f, 2.0f};
-  node1.renderable = DecodedRenderable{kNode1MeshAsset};
+struct TempDirGuard {
+  fs::path path;
+  explicit TempDirGuard(const std::string& label)
+      : path(fs::temp_directory_path() / "atlantis_scene_instantiation_tests" /
+              (label + "_" + std::to_string(gScratchCounter.fetch_add(1)))) {
+    fs::create_directories(path);
+  }
+  ~TempDirGuard() {
+    std::error_code ec;
+    fs::remove_all(path, ec);
+  }
+  TempDirGuard(const TempDirGuard&) = delete;
+  TempDirGuard& operator=(const TempDirGuard&) = delete;
+};
 
-  ValidatedSceneNode node2;
-  node2.transform = {0.0f, 2.2f, 7.0f, -0.3054f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f};
-  node2.camera = DecodedCamera{1.0472f, 0.1f, 100.0f};
-
-  return ValidatedSceneDataTestAccess::make({node0, node1, node2}, {std::nullopt, std::size_t{0}, std::nullopt},
-                                             std::size_t{2});
+void writeFile(const fs::path& path, const std::string& content) {
+  fs::create_directories(path.parent_path());
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  out << content;
 }
+
+// Cooks sourceText via the real cookScene(), then decodes the result
+// via the real decodeScene() -- the sole entry point capable of
+// producing a ValidatedSceneData instance anywhere in this codebase.
+[[nodiscard]] ValidatedSceneData cookAndDecodeScene(const std::string& sourceText) {
+  static std::atomic<int> counter{0};
+  const fs::path dir = fs::temp_directory_path() / "atlantis_scene_instantiation_tests" /
+                        ("fixture_" + std::to_string(counter.fetch_add(1)));
+  fs::create_directories(dir);
+  const fs::path sourcePath = dir / "scene.scene.txt";
+  const fs::path artifactPath = dir / "scene.ascene";
+  const fs::path metadataPath = dir / "scene.ascene.meta.txt";
+  writeFile(sourcePath, sourceText);
+
+  auto cookResult = cookScene(sourcePath.string(), artifactPath.string(), metadataPath.string());
+  REQUIRE(cookResult.isOk());
+  auto decodeResult = decodeScene(artifactPath.string(), metadataPath.string());
+  REQUIRE(decodeResult.isOk());
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+  return decodeResult.value();
+}
+
+[[nodiscard]] AssetId meshAssetIdFor(const std::string& logicalPath) {
+  const auto normalized = normalizeLogicalPath(logicalPath);
+  REQUIRE(normalized.isOk());
+  return computeAssetId(normalized.value());
+}
+
+constexpr const char* kNode0MeshPath = "meshes/scene_instantiation_node0.mesh.txt";
+constexpr const char* kNode1MeshPath = "meshes/scene_instantiation_node1.mesh.txt";
+
+// Three nodes: node 1 a Renderable with no parent; node 2 a Renderable
+// child of node 1 (its own, distinct mesh path makes it independently
+// identifiable via renderableEntities(), not just reachable in
+// principle); node 3 a Camera, no parent, the scene's own active
+// camera. Values match the prior revision's own hand-built fixture
+// exactly, just authored as real scene source text instead.
+constexpr const char* kThreeNodeSceneSource =
+    "atlantis_scene_source_version: 1\n"
+    "node_count: 3\n"
+    "active_camera: 3\n"
+    "node: node_id=1 parent=none position=1.0 2.0 3.0 rotation=0.1 0.2 0.3 scale=1.0 1.0 1.0 "
+    "mesh=meshes/scene_instantiation_node0.mesh.txt\n"
+    "node: node_id=2 parent=1 position=4.0 5.0 6.0 rotation=0.0 0.0 0.0 scale=2.0 2.0 2.0 "
+    "mesh=meshes/scene_instantiation_node1.mesh.txt\n"
+    "node: node_id=3 parent=none position=0.0 2.2 7.0 rotation=-0.3054 0.0 0.0 scale=1.0 1.0 1.0 "
+    "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0\n";
 
 }  // namespace
 
 static_assert(std::is_same_v<decltype(fromValidatedSceneData(std::declval<const ValidatedSceneData&>())), World>);
 
 TEST_CASE("fromValidatedSceneData() instantiates every node with its own component data", "[world][scene]") {
-  const ValidatedSceneData scene = makeThreeNodeScene();
+  const ValidatedSceneData scene = cookAndDecodeScene(kThreeNodeSceneSource);
   World world = fromValidatedSceneData(scene);
+
+  const AssetId node0MeshAsset = meshAssetIdFor(kNode0MeshPath);
+  const AssetId node1MeshAsset = meshAssetIdFor(kNode1MeshPath);
 
   // renderableEntities() returns Renderable-bearing entities in
   // ascending slot-index order (World's own documented guarantee) --
@@ -101,7 +156,7 @@ TEST_CASE("fromValidatedSceneData() instantiates every node with its own compone
 
   const auto renderableNode0 = world.getRenderable(node0Id);
   REQUIRE(renderableNode0.isOk());
-  CHECK(renderableNode0.value().meshAsset == kNode0MeshAsset);
+  CHECK(renderableNode0.value().meshAsset == node0MeshAsset);
 
   const auto transformNode1 = world.getLocalTransform(node1Id);
   REQUIRE(transformNode1.isOk());
@@ -110,7 +165,7 @@ TEST_CASE("fromValidatedSceneData() instantiates every node with its own compone
 
   const auto renderableNode1 = world.getRenderable(node1Id);
   REQUIRE(renderableNode1.isOk());
-  CHECK(renderableNode1.value().meshAsset == kNode1MeshAsset);
+  CHECK(renderableNode1.value().meshAsset == node1MeshAsset);
   CHECK_FALSE(world.getCamera(node1Id).isOk());  // node1 has no Camera
 
   const auto cameraNode2 = world.getCamera(node2Id);
@@ -127,7 +182,7 @@ TEST_CASE("fromValidatedSceneData() instantiates every node with its own compone
 }
 
 TEST_CASE("fromValidatedSceneData() sets up the parent hierarchy correctly", "[world][scene]") {
-  const ValidatedSceneData scene = makeThreeNodeScene();
+  const ValidatedSceneData scene = cookAndDecodeScene(kThreeNodeSceneSource);
   World world = fromValidatedSceneData(scene);
 
   const std::vector<EntityId> renderables = world.renderableEntities();
@@ -156,8 +211,12 @@ TEST_CASE("fromValidatedSceneData() sets up the parent hierarchy correctly", "[w
 }
 
 TEST_CASE("fromValidatedSceneData() produces deterministic, repeatable EntityId sequences", "[world][scene]") {
-  const ValidatedSceneData sceneA = makeThreeNodeScene();
-  const ValidatedSceneData sceneB = makeThreeNodeScene();
+  // Two independently cooked-and-decoded ValidatedSceneData instances
+  // from the identical source text -- cookScene()'s own determinism
+  // (V12) plus decodeScene()'s own purity together guarantee these are
+  // two genuinely independent instances, not the same one reused.
+  const ValidatedSceneData sceneA = cookAndDecodeScene(kThreeNodeSceneSource);
+  const ValidatedSceneData sceneB = cookAndDecodeScene(kThreeNodeSceneSource);
 
   World worldA = fromValidatedSceneData(sceneA);
   World worldB = fromValidatedSceneData(sceneB);
@@ -178,10 +237,12 @@ TEST_CASE("fromValidatedSceneData() produces deterministic, repeatable EntityId 
 }
 
 TEST_CASE("fromValidatedSceneData() leaves an empty active camera when the scene declares none", "[world][scene]") {
-  ValidatedSceneNode node0;
-  node0.transform = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f};
-
-  const ValidatedSceneData scene = ValidatedSceneDataTestAccess::make({node0}, {std::nullopt}, std::nullopt);
+  constexpr const char* kPlainSceneSource =
+      "atlantis_scene_source_version: 1\n"
+      "node_count: 1\n"
+      "active_camera: none\n"
+      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";
+  const ValidatedSceneData scene = cookAndDecodeScene(kPlainSceneSource);
   World world = fromValidatedSceneData(scene);
   CHECK_FALSE(world.activeCamera().has_value());
 }
