@@ -15,20 +15,19 @@ constexpr std::string_view kActiveCameraPrefix = "active_camera: ";
 constexpr std::string_view kNodePrefix = "node: ";
 constexpr std::string_view kNoneToken = "none";
 
-// node: line field prefixes, fixed order -- the first 11 are always
-// present; a 12th group (either exactly {"mesh="} or exactly
-// {"camera_fov_y=", "camera_near_z=", "camera_far_z="}) is optional.
+// node: line field prefixes, fixed order (Plan 0015 Section D3's own
+// literal grammar example) -- the first 11 tokens are always present;
+// a 12th group (either exactly {"mesh="} or exactly {"camera_fov_y=",
+// "camera_near_z=", "camera_far_z="}) is optional. position/rotation/
+// scale each carry ONE prefix on their first value, followed by two
+// bare floats -- matching MeshSourceVertex's own "vertex: x y z r g b"
+// single-prefix-then-bare-values style; camera_fov_y/near_z/far_z are
+// each individually prefixed, per D3's own example.
 constexpr std::string_view kNodeIdPrefix = "node_id=";
 constexpr std::string_view kParentPrefix = "parent=";
-constexpr std::string_view kPositionXPrefix = "position_x=";
-constexpr std::string_view kPositionYPrefix = "position_y=";
-constexpr std::string_view kPositionZPrefix = "position_z=";
-constexpr std::string_view kRotationXPrefix = "rotation_x=";
-constexpr std::string_view kRotationYPrefix = "rotation_y=";
-constexpr std::string_view kRotationZPrefix = "rotation_z=";
-constexpr std::string_view kScaleXPrefix = "scale_x=";
-constexpr std::string_view kScaleYPrefix = "scale_y=";
-constexpr std::string_view kScaleZPrefix = "scale_z=";
+constexpr std::string_view kPositionPrefix = "position=";
+constexpr std::string_view kRotationPrefix = "rotation=";
+constexpr std::string_view kScalePrefix = "scale=";
 constexpr std::string_view kMeshPrefix = "mesh=";
 constexpr std::string_view kCameraFovYPrefix = "camera_fov_y=";
 constexpr std::string_view kCameraNearZPrefix = "camera_near_z=";
@@ -81,10 +80,6 @@ constexpr std::string_view kCameraFarZPrefix = "camera_far_z=";
   return result.ec == std::errc{} && result.ptr == token.data() + token.size();
 }
 
-// Every node: token is individually self-describing (key=value), unlike
-// mesh_source.cpp's own "position: x y z" grouping -- this keeps this
-// grammar's own per-token check uniform (expect token N to start with
-// prefix N) despite the optional trailing component group.
 [[nodiscard]] bool consumePrefixedFloat(std::string_view token, std::string_view prefix, float& out) {
   if (token.substr(0, prefix.size()) != prefix) return false;
   return parseFloatToken(token.substr(prefix.size()), out);
@@ -129,10 +124,11 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
   ++lineIndex;
 
   // Bound before allocating -- mirrors parseMeshSource()'s own
-  // index_count guard: a declared node_count with no plausible way to
-  // be satisfied by the lines actually remaining is rejected now,
-  // before reserve(), rather than after failing partway through the
-  // loop below.
+  // index_count guard (itself fixed in Plan 0012's own post-merge
+  // review, D3's own note above): a declared node_count with no
+  // plausible way to be satisfied by the lines actually remaining is
+  // rejected now, before reserve(), rather than after failing partway
+  // through the loop below.
   const std::size_t remainingLinesForNodes = lines.size() - lineIndex;
   if (nodeCount > remainingLinesForNodes) return ResultT::Err(SceneSourceParseError::MissingField);
 
@@ -172,22 +168,37 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
       }
     }
 
-    const std::pair<std::string_view, float*> transformFields[9] = {
-        {kPositionXPrefix, &node.transform.positionX}, {kPositionYPrefix, &node.transform.positionY},
-        {kPositionZPrefix, &node.transform.positionZ}, {kRotationXPrefix, &node.transform.eulerXRadians},
-        {kRotationYPrefix, &node.transform.eulerYRadians}, {kRotationZPrefix, &node.transform.eulerZRadians},
-        {kScaleXPrefix, &node.transform.scaleX}, {kScaleYPrefix, &node.transform.scaleY},
-        {kScaleZPrefix, &node.transform.scaleZ}};
-    for (std::size_t f = 0; f < 9; ++f) {
-      float value = 0.0f;
-      if (!consumePrefixedFloat(tokens[2 + f], transformFields[f].first, value)) {
-        if (tokens[2 + f].substr(0, transformFields[f].first.size()) != transformFields[f].first) {
-          return ResultT::Err(SceneSourceParseError::FieldOrderMismatch);
-        }
+    // position=<f> <f> <f>  rotation=<f> <f> <f>  scale=<f> <f> <f> --
+    // tokens[2..4], tokens[5..7], tokens[8..10]. Each group's first
+    // token carries the prefix; the remaining two are bare floats,
+    // matching MeshSourceVertex's own "vertex: x y z r g b" style.
+    const struct {
+      std::string_view prefix;
+      float* x;
+      float* y;
+      float* z;
+    } vec3Groups[3] = {
+        {kPositionPrefix, &node.transform.positionX, &node.transform.positionY, &node.transform.positionZ},
+        {kRotationPrefix, &node.transform.eulerXRadians, &node.transform.eulerYRadians,
+         &node.transform.eulerZRadians},
+        {kScalePrefix, &node.transform.scaleX, &node.transform.scaleY, &node.transform.scaleZ},
+    };
+    for (std::size_t g = 0; g < 3; ++g) {
+      const std::size_t base = 2 + g * 3;
+      if (tokens[base].substr(0, vec3Groups[g].prefix.size()) != vec3Groups[g].prefix) {
+        return ResultT::Err(SceneSourceParseError::FieldOrderMismatch);
+      }
+      float x = 0.0f, y = 0.0f, z = 0.0f;
+      if (!consumePrefixedFloat(tokens[base], vec3Groups[g].prefix, x) || !parseFloatToken(tokens[base + 1], y) ||
+          !parseFloatToken(tokens[base + 2], z)) {
         return ResultT::Err(SceneSourceParseError::MalformedNumber);
       }
-      if (!std::isfinite(value)) return ResultT::Err(SceneSourceParseError::NonFiniteFloat);
-      *transformFields[f].second = value;
+      if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
+        return ResultT::Err(SceneSourceParseError::NonFiniteFloat);
+      }
+      *vec3Groups[g].x = x;
+      *vec3Groups[g].y = y;
+      *vec3Groups[g].z = z;
     }
 
     if (tokens.size() == 12) {
@@ -240,15 +251,14 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
     out += std::string(kParentPrefix) +
            (node.parentNodeId.has_value() ? std::to_string(*node.parentNodeId) : std::string(kNoneToken));
     out += ' ';
-    out += std::string(kPositionXPrefix) + std::to_string(node.transform.positionX) + ' ' +
-           std::string(kPositionYPrefix) + std::to_string(node.transform.positionY) + ' ' +
-           std::string(kPositionZPrefix) + std::to_string(node.transform.positionZ) + ' ' +
-           std::string(kRotationXPrefix) + std::to_string(node.transform.eulerXRadians) + ' ' +
-           std::string(kRotationYPrefix) + std::to_string(node.transform.eulerYRadians) + ' ' +
-           std::string(kRotationZPrefix) + std::to_string(node.transform.eulerZRadians) + ' ' +
-           std::string(kScaleXPrefix) + std::to_string(node.transform.scaleX) + ' ' + std::string(kScaleYPrefix) +
-           std::to_string(node.transform.scaleY) + ' ' + std::string(kScaleZPrefix) +
-           std::to_string(node.transform.scaleZ);
+    out += std::string(kPositionPrefix) + std::to_string(node.transform.positionX) + ' ' +
+           std::to_string(node.transform.positionY) + ' ' + std::to_string(node.transform.positionZ);
+    out += ' ';
+    out += std::string(kRotationPrefix) + std::to_string(node.transform.eulerXRadians) + ' ' +
+           std::to_string(node.transform.eulerYRadians) + ' ' + std::to_string(node.transform.eulerZRadians);
+    out += ' ';
+    out += std::string(kScalePrefix) + std::to_string(node.transform.scaleX) + ' ' +
+           std::to_string(node.transform.scaleY) + ' ' + std::to_string(node.transform.scaleZ);
 
     if (node.meshLogicalPath.has_value()) {
       out += ' ';

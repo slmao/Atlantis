@@ -10,10 +10,10 @@ constexpr std::string_view kValidTwoNodeSource =
     "atlantis_scene_source_version: 1\n"
     "node_count: 2\n"
     "active_camera: 2\n"
-    "node: node_id=1 parent=none position_x=-2.5 position_y=0.0 position_z=0.0 rotation_x=0.0 rotation_y=0.0 "
-    "rotation_z=0.0 scale_x=1.0 scale_y=1.0 scale_z=1.0 mesh=meshes/minimal_cube.mesh.txt\n"
-    "node: node_id=2 parent=none position_x=0.0 position_y=2.2 position_z=7.0 rotation_x=-0.3054 rotation_y=0.0 "
-    "rotation_z=0.0 scale_x=1.0 scale_y=1.0 scale_z=1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0\n";
+    "node: node_id=1 parent=none position=-2.5 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+    "mesh=meshes/minimal_cube.mesh.txt\n"
+    "node: node_id=2 parent=none position=0.0 2.2 7.0 rotation=-0.3054 0.0 0.0 scale=1.0 1.0 1.0 "
+    "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0\n";
 
 }  // namespace
 
@@ -28,12 +28,15 @@ TEST_CASE("parseSceneSource parses a well-formed two-node scene", "[asset_system
   CHECK(parsed.nodes[0].nodeId == 1);
   CHECK_FALSE(parsed.nodes[0].parentNodeId.has_value());
   CHECK(parsed.nodes[0].transform.positionX == -2.5f);
+  CHECK(parsed.nodes[0].transform.positionY == 0.0f);
+  CHECK(parsed.nodes[0].transform.scaleZ == 1.0f);
   REQUIRE(parsed.nodes[0].meshLogicalPath.has_value());
   CHECK(*parsed.nodes[0].meshLogicalPath == "meshes/minimal_cube.mesh.txt");
   CHECK_FALSE(parsed.nodes[0].camera.has_value());
 
   CHECK(parsed.nodes[1].nodeId == 2);
   CHECK(parsed.nodes[1].transform.positionY == 2.2f);
+  CHECK(parsed.nodes[1].transform.eulerXRadians == -0.3054f);
   REQUIRE(parsed.nodes[1].camera.has_value());
   CHECK(parsed.nodes[1].camera->fovYRadians == 1.0472f);
   CHECK(parsed.nodes[1].camera->nearZ == 0.1f);
@@ -46,8 +49,7 @@ TEST_CASE("parseSceneSource parses a plain node with neither mesh nor camera", "
       "atlantis_scene_source_version: 1\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position_x=0.0 position_y=0.0 position_z=0.0 rotation_x=0.0 rotation_y=0.0 "
-      "rotation_z=0.0 scale_x=1.0 scale_y=1.0 scale_z=1.0\n";
+      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";
   const auto result = parseSceneSource(plainNode);
   REQUIRE(result.isOk());
   REQUIRE(result.value().nodes.size() == 1);
@@ -71,10 +73,8 @@ TEST_CASE("parseSceneSource parses a parent reference", "[asset_system][scene]")
       "atlantis_scene_source_version: 1\n"
       "node_count: 2\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position_x=0.0 position_y=0.0 position_z=0.0 rotation_x=0.0 rotation_y=0.0 "
-      "rotation_z=0.0 scale_x=1.0 scale_y=1.0 scale_z=1.0\n"
-      "node: node_id=2 parent=1 position_x=0.0 position_y=0.0 position_z=0.0 rotation_x=0.0 rotation_y=0.0 "
-      "rotation_z=0.0 scale_x=1.0 scale_y=1.0 scale_z=1.0\n";
+      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n"
+      "node: node_id=2 parent=1 position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";
   const auto result = parseSceneSource(withParent);
   REQUIRE(result.isOk());
   REQUIRE(result.value().nodes[1].parentNodeId.has_value());
@@ -148,8 +148,18 @@ TEST_CASE("parseSceneSource rejects a malformed numeric token", "[asset_system][
       "atlantis_scene_source_version: 1\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=not_a_number parent=none position_x=0.0 position_y=0.0 position_z=0.0 rotation_x=0.0 "
-      "rotation_y=0.0 rotation_z=0.0 scale_x=1.0 scale_y=1.0 scale_z=1.0\n");
+      "node: node_id=not_a_number parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
+  REQUIRE(result.isErr());
+  CHECK(result.error() == SceneSourceParseError::MalformedNumber);
+}
+
+TEST_CASE("parseSceneSource rejects a malformed number within a position/rotation/scale group",
+          "[asset_system][scene]") {
+  const auto result = parseSceneSource(
+      "atlantis_scene_source_version: 1\n"
+      "node_count: 1\n"
+      "active_camera: none\n"
+      "node: node_id=1 parent=none position=0.0 not_a_number 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::MalformedNumber);
 }
@@ -159,8 +169,7 @@ TEST_CASE("parseSceneSource rejects a non-finite float", "[asset_system][scene]"
       "atlantis_scene_source_version: 1\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position_x=nan position_y=0.0 position_z=0.0 rotation_x=0.0 rotation_y=0.0 "
-      "rotation_z=0.0 scale_x=1.0 scale_y=1.0 scale_z=1.0\n");
+      "node: node_id=1 parent=none position=nan 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::NonFiniteFloat);
 }
@@ -170,8 +179,7 @@ TEST_CASE("parseSceneSource rejects an invalid parent token", "[asset_system][sc
       "atlantis_scene_source_version: 1\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=not_a_number_or_none position_x=0.0 position_y=0.0 position_z=0.0 rotation_x=0.0 "
-      "rotation_y=0.0 rotation_z=0.0 scale_x=1.0 scale_y=1.0 scale_z=1.0\n");
+      "node: node_id=1 parent=not_a_number_or_none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::InvalidParentToken);
 }
@@ -190,7 +198,7 @@ TEST_CASE("parseSceneSource rejects a node line with a wrong token count", "[ass
       "atlantis_scene_source_version: 1\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position_x=0.0 position_y=0.0\n");
+      "node: node_id=1 parent=none position=0.0 0.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::InvalidComponentGroup);
 }
@@ -200,8 +208,8 @@ TEST_CASE("parseSceneSource rejects a node line with both mesh and camera groups
       "atlantis_scene_source_version: 1\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position_x=0.0 position_y=0.0 position_z=0.0 rotation_x=0.0 rotation_y=0.0 "
-      "rotation_z=0.0 scale_x=1.0 scale_y=1.0 scale_z=1.0 mesh=a.mesh.txt camera_fov_y=1.0\n");
+      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=a.mesh.txt "
+      "camera_fov_y=1.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::InvalidComponentGroup);
 }
@@ -211,8 +219,8 @@ TEST_CASE("parseSceneSource rejects a mismatched trailing-group prefix", "[asset
       "atlantis_scene_source_version: 1\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position_x=0.0 position_y=0.0 position_z=0.0 rotation_x=0.0 rotation_y=0.0 "
-      "rotation_z=0.0 scale_x=1.0 scale_y=1.0 scale_z=1.0 not_mesh=a.mesh.txt\n");
+      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "not_mesh=a.mesh.txt\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::InvalidComponentGroup);
 }
