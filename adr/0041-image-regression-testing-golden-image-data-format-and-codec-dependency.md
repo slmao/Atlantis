@@ -242,3 +242,195 @@ Verified directly against `stb_image.h` (v2.30, 2024-05-31) and
   own operational/access-control/CI-credential surface with no current
   justification at this project's still-small golden-image count;
   revisit only if repository bloat becomes a real, measured problem.
+
+## Accepted Amendment — 2026-08-24
+
+**Status: Accepted.** Drafted 2026-08-23 as a Proposed Amendment
+alongside [Spec 0016](../specs/0016-texture-sampler-foundation.md) and
+[ADR-0055](0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0057](0057-texture-asset-format-decoder-dependency-and-color-space-contract.md),
+and **formally accepted by Human Review on 2026-08-24** as part of
+Spec 0016's own Human Review Approval — see that Spec's own approval
+note for the full scope of what was accepted. Everything above this
+section remains this ADR's own original, unmodified `Accepted` Decision
+(this ADR's own top-level `Status: Accepted` above is unchanged and
+unaffected by this amendment) — this amendment does not alter, narrow,
+or reinterpret any of it; it adds one new, additional linkage point to
+the "Scope, restated" bullet above, under the constraints below, now
+binding.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-08-24, accepting this amendment (every Decision
+item below) in full, as drafted, with no change.
+
+### Context for this amendment
+
+Spec 0016 (Texture & Sampler Foundation) needs a build-time texture
+cooker that decodes an authored PNG into a runtime pixel artifact. This
+ADR's own "Scope, restated" bullet above currently states, without
+qualification, that `stb_image`/`stb_image_write` usage exists "only
+inside `tests/image_regression/`'s own test-support targets ... never
+in `src/`, never linked into any shipping example or the engine's own
+libraries." A texture cooker inside `src/tools/asset_cooker` is exactly
+the kind of linkage that sentence forbids as written — reusing `stb` for
+it cannot proceed under a mere forward-looking mention in Spec 0016's
+own ADR-0057; this ADR's own stated boundary must be amended directly,
+by name, here.
+
+**A second, real, previously undiscovered gap this amendment also
+closes:** `cmake/AtlantisDependencies.cmake` — the file whose
+`FetchContent_Declare(stb ...)`/`FetchContent_MakeAvailable(stb)` calls
+(lines 33–39) are this ADR's own implementation — is included from the
+root `CMakeLists.txt` **only** inside the `if(ATLANTIS_BUILD_TESTS)`
+block (`CMakeLists.txt:95-97`). `add_subdirectory(src/tools/asset_cooker)`
+(`CMakeLists.txt:60`) runs unconditionally, **before** that block, at
+configure time. Under today's `CMakeLists.txt` ordering, `Stb::Stb`
+therefore does not exist as a target yet at the point
+`src/tools/asset_cooker/CMakeLists.txt` would need to
+`target_link_libraries(... Stb::Stb)` — regardless of
+`ATLANTIS_BUILD_TESTS`'s value. Simply adding a `target_link_libraries`
+call to the cooker's own `CMakeLists.txt`, as Spec 0016/ADR-0057
+originally described without checking this, would be a hard CMake
+configure-time error ("target Stb::Stb not found"), not a working
+change. This amendment's own Decision below fixes the ordering, not
+only the scope sentence.
+
+### Decision
+
+- **`stb_image`/`stb_image_write` usage is extended from
+  image-regression test-only to offline Asset Cooker use, additionally
+  and only.** `Stb::Stb` is linked `PRIVATE` into exactly one additional
+  target: `atlantis_asset_cooker_lib` (the library backing the
+  `atlantis_asset_cooker` Tools executable, `src/tools/asset_cooker/`).
+  This ADR's own "Scope, restated" bullet is amended, in effect, to read:
+  *"... exist only inside `tests/image_regression/`'s own test-support
+  targets and `src/tools/asset_cooker`'s own cooker library — never
+  anywhere else in `src/`, never linked into any shipping example, and
+  never linked into any of the engine's own runtime libraries."*
+- **Never linked into Runtime, `Atlantis::AssetSystem`'s own runtime
+  library, `Atlantis::Renderer`, or any GPU-facing module.**
+  Specifically and by name: `Atlantis::AssetSystem`'s own
+  `atlantis_asset_system` runtime library (the one linked by
+  `Atlantis::World`, Runtime, and every runtime-loading call site) does
+  **not** gain a `Stb::Stb` dependency — only the separate,
+  Tools-only `atlantis_asset_cooker_lib` does, matching the existing,
+  already-`Accepted` separation between `atlantis_asset_system` (runtime
+  library) and `atlantis_asset_cooker` (offline Tools executable) this
+  repository already draws for the mesh and scene cookers. RHI, Vulkan
+  Backend, RenderGraph, Renderer, and Shader System gain no dependency
+  on `stb` of any kind, directly or transitively — `Stb::Stb` remains an
+  `INTERFACE` target with no dependency edge into any of them.
+- **`ATLANTIS_BUILD_TESTS=OFF` must not remove the cooker's own access
+  to `stb`.** `cmake/AtlantisDependencies.cmake`'s `stb`
+  `FetchContent_Declare`/`FetchContent_MakeAvailable`/`Stb::Stb`
+  `INTERFACE`-target block (lines 28–47) is moved out of that
+  test-only-included file into a new, separate CMake module (exact file
+  name a Plan-level detail, e.g. `cmake/AtlantisStb.cmake`), included
+  unconditionally and early from the root `CMakeLists.txt` — before
+  `add_subdirectory(src/tools/asset_cooker)` (`CMakeLists.txt:60`) and
+  independent of the `if(ATLANTIS_BUILD_TESTS)` block. Catch2's own
+  `FetchContent` declaration remains exactly where it is today, inside
+  `cmake/AtlantisDependencies.cmake`, still gated by
+  `ATLANTIS_BUILD_TESTS` — this amendment moves only `stb`'s declaration,
+  and does not change Catch2's own test-only scope in any way.
+  `tests/image_regression/`'s own two existing `Stb::Stb` consumers are
+  unaffected: the target still exists, under the same name, by the time
+  `ATLANTIS_BUILD_TESTS=ON` processes their own subdirectories — this is
+  a relocation of *where* `Stb::Stb` is declared, not a second,
+  duplicate declaration of it (CMake's `include_guard(GLOBAL)`, already
+  present in the moved block, continues to prevent a double-inclusion
+  problem if both the cooker and a test subdirectory transitively
+  `include()` the new module).
+- **One implementation-macro translation unit each, unchanged
+  principle, one new instance.** The existing rule ("`STB_IMAGE_IMPLEMENTATION`
+  and `STB_IMAGE_WRITE_IMPLEMENTATION` are each `#define`d in exactly one
+  dedicated `.cpp` translation unit," this ADR's own "stb usage contract"
+  above) now applies **per linking target**, not merely once
+  repository-wide: `tests/image_regression/support/png_codec.cpp`
+  remains the one TU defining both macros for the test-support target;
+  the new texture cooker gains its **own**, second, independent TU
+  (inside `src/tools/asset_cooker/`) defining `STB_IMAGE_IMPLEMENTATION`
+  only (the cooker decodes authoring images; it does not need
+  `stb_image_write`'s encode path, which stays test-only). Two separate
+  binaries each defining the macro once, in their own TU, is not an ODR
+  violation — the existing rule's own "exactly one... within
+  `tests/image_regression/`'s own test-support target" wording is
+  narrowed to "within its own linking target," which is what the
+  original rule already meant in a single-consumer world and is now
+  stated explicitly because a second consumer exists.
+- **License, offline-build/network, and maintenance boundary: unchanged,
+  explicitly re-confirmed, not re-litigated.** This ADR's own existing
+  "License and attribution" and "Offline/air-gapped builds" disclosures
+  (above) apply identically to this second linkage — same dual MIT/
+  Unlicense-equivalent license, same no-NOTICE-file requirement, same
+  pinned-commit-hash `FetchContent` mechanism, same first-configure
+  network-access requirement (now also gating a configure that never
+  builds any test target, since the relocated module is unconditional).
+  No new version is pinned by this amendment; the cooker links the
+  identical pinned commit hash `tests/image_regression/` already uses —
+  one dependency, one pin, two consumers. A future upgrade of that pinned
+  commit (a Plan-level, not architectural, change) updates both
+  consumers together, from the one relocated declaration — this
+  amendment does not introduce a second, independently-versioned copy
+  to keep in sync.
+- **Warnings**: the cooker's own new `stb_image` TU builds under this
+  project's existing `atlantis_compiler_warnings` target exactly as
+  `png_codec.cpp` already does today — no new warning-suppression
+  mechanism, no relaxed warning level, introduced by this amendment.
+
+### Consequences of this amendment
+
+#### Positive
+
+- Closes a real, disclosed gap between Spec 0016/ADR-0057's own original
+  text (which merely said a future amendment "would be needed") and this
+  ADR's own actual, binding scope statement — the two documents no
+  longer disagree.
+- Fixes a genuine CMake configure-order defect this amendment's own
+  research found before it could reach an implementing Plan and fail
+  there instead.
+- Preserves this ADR's own original `Accepted` Decision, Consequences,
+  and Alternatives Considered untouched — a future reader can still see
+  exactly what was decided 2026-08-16 and why, unmodified.
+
+#### Negative / Trade-offs
+
+- `stb_image`'s own decoder is, for the first time, part of a build-time
+  Tools executable's input-handling surface, not only a test-support
+  target's — mitigated exactly as this ADR's own existing "Negative /
+  Trade-offs" already states for the test-only case: authoring images are
+  developer-supplied, trusted input, never loaded from an untrusted or
+  network source, matching every other cooker's own existing trust model
+  in this repository.
+- Relocating `stb`'s `FetchContent` declaration out of
+  `cmake/AtlantisDependencies.cmake` is a real, if small, build-system
+  restructuring — a Plan implementing Spec 0016 must perform it
+  correctly (new file, updated `CMakeLists.txt` include order,
+  `include_guard(GLOBAL)` preserved) or the configure-order defect above
+  persists.
+
+### Alternatives Considered (for this amendment)
+
+- **Decode PNG at Runtime load time instead of at cook time**, avoiding
+  any need to extend `stb`'s linkage into Tools at all. Rejected outright
+  — directly contradicts Spec 0016's own explicit "Runtime never parses
+  PNG/JPEG" requirement and this repository's authoring/runtime
+  separation principle (ADR-0035); would also require linking `stb` into
+  a runtime-linked target, a strictly worse boundary than the one this
+  amendment actually proposes.
+- **Use a platform/OS-provided image codec** (e.g. Windows Imaging
+  Component / WIC) for the cooker instead of `stb_image`. Rejected: a
+  Windows-only API contradicts this project's own cross-platform
+  (Windows/Android/future iOS) target set stated in AGENTS.md — a cooker
+  dependency should not be harder to build on Android's own host
+  tooling than the small, portable library already in use.
+- **`libpng` (+ zlib)** for the cooker. Rejected for the same reason this
+  ADR's own original "Alternatives Considered" already rejected it for
+  golden encoding: heavier, autotools/CMake-based, its own transitive
+  zlib dependency, no capability benefit over `stb` for this narrow
+  "decode one RGBA-ish PNG" use case.
+- **Vendor or fetch a second, independent copy of `stb` scoped only to
+  the cooker**, rather than widening the existing `Stb::Stb` target's own
+  linkage. Rejected as needless duplication — two independently pinned
+  copies of the same header-only library would need to be kept in sync
+  by hand, with no benefit over one shared, relocated declaration two
+  targets both depend on.

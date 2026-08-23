@@ -848,9 +848,11 @@ anything architectural, its own ADR before any of the below moves past
   Milestone 11's and Milestone 12's own Non-Goals explicitly excluded
 - Texture & Sampler Foundation (general sampled `Texture`/`Sampler`
   support in RHI, unblocking a texture asset type and eventually PBR
-  materials) — human-selected 2026-08-24 to be specced next (see
-  [specs/README.md](../specs/README.md)'s own Candidate Backlog,
-  Candidate Order 8); **no Spec drafted yet**
+  materials) — human-selected 2026-08-24 to be specced next; drafted as
+  [Spec 0016](../specs/0016-texture-sampler-foundation.md) (`In Review`,
+  no Plan yet, no Implementation authorized) — see
+  [specs/README.md](../specs/README.md)'s own Section A row for current
+  status
 - Tool/Editor connection protocol — **no process model (in-process vs.
   IPC) is chosen**
 - Gameplay SDK — **no gameplay language is chosen**
