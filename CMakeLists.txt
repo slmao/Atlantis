@@ -10,6 +10,10 @@ option(ATLANTIS_BUILD_TESTS "Build Atlantis unit tests" ON)
 option(ATLANTIS_BUILD_EXAMPLES "Build Atlantis example programs" ON)
 
 include(cmake/CompilerWarnings.cmake)
+# Unconditional, independent of ATLANTIS_BUILD_TESTS -- src/tools/asset_cooker
+# (added unconditionally below) needs Stb::Stb too (Spec 0016). Must
+# precede add_subdirectory(src/tools/asset_cooker).
+include(cmake/AtlantisStb.cmake)
 
 find_package(Vulkan REQUIRED)
 
