@@ -16,10 +16,16 @@ GPU-to-CPU readback, sharing the same Renderer/RHI/RenderGraph/Vulkan
 Backend stack (Spec 0010, `Approved`, implemented and merged via
 [PR #48](https://github.com/slmao/Atlantis/pull/48)). A real Windows
 windowed composition root, Atlantis Runtime, is also implemented —
-composing Platform, RHI, Vulkan Backend, Renderer, Shader System, and
-Asset System into a real windowed application (Spec 0013, `Approved`,
-implemented and merged via
-[PR #63](https://github.com/slmao/Atlantis/pull/63)). Android and iOS
+composing Platform, RHI, Vulkan Backend, Renderer, Shader System,
+Asset System, and World into a real windowed application (Spec 0013,
+`Approved`, implemented and merged via
+[PR #63](https://github.com/slmao/Atlantis/pull/63)). Runtime now
+loads a real, cooked scene asset at startup — a five-cube, one-camera
+scene reproducing the project's own former hardcoded validation scene
+byte-for-byte — through a manifest-driven cook → decode → resolve →
+load → instantiate pipeline, not a fixed, hardcoded scene construction
+(Spec 0015, `Approved`, implemented and merged via
+[PR #74](https://github.com/slmao/Atlantis/pull/74)). Android and iOS
 remain unimplemented.
 This repository holds the process and structure the project will be
 built with.
@@ -51,10 +57,18 @@ built with.
   [docs/process/ci-strategy.md](docs/process/ci-strategy.md))
 - Asset System foundation — implemented (Spec 0012, `Approved`,
   [PR #58](https://github.com/slmao/Atlantis/pull/58)): a deterministic
-  authoring-source → runtime-artifact pipeline (`src/asset_system/`) for
-  one asset type (a static mesh), proven end to end against the
-  existing image regression golden with zero channel difference — see
-  `src/README.md`'s own `asset_system/`/`tools/asset_cooker/` entries
+  authoring-source → runtime-artifact pipeline (`src/asset_system/`),
+  proven end to end against the existing image regression golden with
+  zero channel difference. Extended with a second asset type, scene
+  graphs (Spec 0015, `Approved`,
+  [PR #74](https://github.com/slmao/Atlantis/pull/74)): a scene
+  authoring grammar, cook/decode pipeline, and a Runtime-side,
+  build-tree-private dependency manifest, proven end to end against
+  the existing World Scene golden with zero pixel difference. A
+  distributable, cross-session Asset Catalog and rename-stable GUID
+  identity remain future work (Candidate Order 7,
+  `specs/README.md`) — see `src/README.md`'s own
+  `asset_system/`/`tools/asset_cooker/` entries
 - Vulkan Validation Layers as a correctness gate
 - RenderDoc-based debugging
 
@@ -268,12 +282,17 @@ Debug and Release builds, the full GPU-independent/`tool`/GPU-required
 test suites, and a manual demo run, Vulkan Validation Layers clean
 throughout — see [specs/README.md](specs/README.md) for full scope and
 verification detail. A foundational Asset System is implemented (Spec
-0012, `Approved`) for one asset type (a static mesh) — see
-`src/README.md`'s own `asset_system/` entry below. A real Windows
-windowed composition root, Atlantis Runtime, is also implemented (Spec
-0013, `Approved`) — see below. World/ECS, a scene graph, additional
-asset types, lighting/material/post-processing extensions beyond the
-one fixed material this stack draws today, and Android/iOS remain
+0012, `Approved`) — see `src/README.md`'s own `asset_system/` entry
+below. A real Windows windowed composition root, Atlantis Runtime, is
+also implemented (Spec 0013, `Approved`) — see below. World/Scene
+(`Atlantis::World`, an entity/component multi-entity scene, Spec 0014,
+`Approved`) and scene asset serialization (a scene authoring/cook/
+decode/load pipeline reproducing a real, cooked scene at Runtime
+startup, Spec 0015, `Approved`) are also both implemented — see
+[specs/README.md](specs/README.md). Additional asset types beyond
+static mesh/scene (e.g. textures), lighting/material/post-processing
+extensions beyond the one fixed material this stack draws today, a
+distributable cross-session Asset Catalog, and Android/iOS remain
 unimplemented — see [src/README.md](src/README.md).
 
 Android and iOS remain specified architecturally only (not implemented);

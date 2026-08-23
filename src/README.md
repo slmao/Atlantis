@@ -179,29 +179,42 @@ and [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)–[ADR
 merged via [PR #36](https://github.com/slmao/Atlantis/pull/36).
 
 **`asset_system/`** — Atlantis Asset System: a deterministic
-authoring-source → runtime-artifact pipeline for one asset type (a
-static position/colour mesh). Target `atlantis_asset_system`, alias
-`Atlantis::AssetSystem` (`Atlantis::Core`-only — no RHI, Renderer,
-RenderGraph, Shader System, Vulkan Backend, Platform, or Tools
-dependency, verified by an include-scanning test). Provides logical-path
+authoring-source → runtime-artifact pipeline, now for two asset types.
+Target `atlantis_asset_system`, alias `Atlantis::AssetSystem`
+(`Atlantis::Core`-only — no RHI, Renderer, RenderGraph, Shader System,
+Vulkan Backend, Platform, Tools, or `atlantis::world` dependency,
+verified by an include-scanning test). Provides logical-path
 normalization (a pure string algorithm, never
 `std::filesystem::path`-based), a 64-bit FNV-1a Asset ID, declared-set
 collision/case-conflict validation
-(`validateAssetSet()`/`DeclaredAsset`), strict parse/serialize for all
-three formats (authoring source, metadata sidecar, and an
+(`validateAssetSet()`/`DeclaredAsset`), strict parse/serialize for
+every format (authoring source, metadata sidecar, and an
 unconditionally little-endian binary runtime artifact — every field,
-including vertex floats via `std::bit_cast`, assembled by explicit
-shift/mask, never a host-struct `memcpy`), a deterministic cooker
-(`cookStaticMesh()`) with atomic (write-to-temp-then-`rename()`) output,
-and a file-level loader (`loadStaticMeshAsset()`) returning CPU-only
-`StaticMeshAssetData` — never an RHI type. A composition root outside
-this module (currently `tests/image_regression/fixture/`) is
-responsible for passing that data into the existing, unmodified
-`atlantis::renderer::createMesh()`. Implemented per
+including vertex/transform floats via `std::bit_cast`, assembled by
+explicit shift/mask, never a host-struct `memcpy`), and atomic
+(write-to-temp-then-`rename()`) cooker output. Static mesh (a position/
+colour mesh): `cookStaticMesh()`, `loadStaticMeshAsset()` returning
+CPU-only `StaticMeshAssetData` — never an RHI type; a composition root
+outside this module (`tests/image_regression/fixture/`, Atlantis
+Runtime) is responsible for passing that data into the existing,
+unmodified `atlantis::renderer::createMesh()`. Scene graph (a node
+hierarchy with Transform/Camera/Renderable-shaped DTOs, `ValidatedSceneData`
+— no public default constructor, constructible only by `decodeScene()`,
+the sole entry point, enforced by a friend relationship with no
+test-only exception): `cookScene()`/`decodeScene()`, independently
+re-validating every cook-time condition at decode time, never trusting
+the cooker. Neither DTO shape ever names an `atlantis::world::` type
+(`scene_types.h`) — the one place permitted to convert between them,
+`atlantis::world::fromValidatedSceneData()`, lives in `src/world/`, not
+here. Implemented per
 [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md),
 [plans/0012-asset-system-foundation.md](../plans/0012-asset-system-foundation.md),
+[ADR-0043](../adr/0043-asset-system-module-boundary.md)–[ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md);
+the scene graph asset type extended per
+[specs/0015-scene-asset-serialization-foundation.md](../specs/0015-scene-asset-serialization-foundation.md),
+[plans/0015-scene-asset-serialization-foundation.md](../plans/0015-scene-asset-serialization-foundation.md),
 and
-[ADR-0043](../adr/0043-asset-system-module-boundary.md)–[ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md).
+[ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)–[ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md).
 
 **`world/`** — Atlantis World: Atlantis's in-memory, multi-entity scene.
 Target `atlantis_world`, alias `Atlantis::World` (PUBLIC dependency
@@ -228,11 +241,18 @@ recursive) traversal producing each entity's own world matrix
 `Ry · Rx · Rz` Euler order. `World` itself is move-constructible, not
 copyable, not move-assignable; every public accessor returns by value,
 never a reference or pointer into `World`'s own internal storage.
-Implemented per
+`fromValidatedSceneData()` (`scene_instantiation.h`, deliberately not a
+`World` member function) is the one place permitted to convert Asset
+System's own `ValidatedSceneData` into a real `World` — two-pass,
+deterministic, genuinely infallible instantiation; scene-local node
+indices are never persisted as `EntityId`. Implemented per
 [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md),
 [plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md),
+[ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md);
+`fromValidatedSceneData()` extended per
+[specs/0015-scene-asset-serialization-foundation.md](../specs/0015-scene-asset-serialization-foundation.md)
 and
-[ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md).
+[ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md).
 
 **`tools/asset_cooker/`** — Atlantis Tools' second real content:
 `atlantis_asset_cooker`, a CLI invoked at build time by CMake's
@@ -274,18 +294,29 @@ thin executable, PRIVATE dependency on `Atlantis::RuntimeHost` only).
 `RuntimeApplication` owns a `PlatformSession` RAII guard as its first
 member (destroyed last by reverse-declaration-order destruction, making
 window-outlives-GPU-resources compiler-enforced rather than
-hand-sequenced), an eight-step initialization sequence (Platform session,
-shader load, `Device`, mesh asset load, asset metadata re-read for its
-`AssetId`, `Mesh`, camera `Buffer`, the fixed six-entity `World`
-validation scene — `Material` is deliberately deferred to the first
-frame, since no real swapchain format is known before the first
-`SurfaceCreated` event), a per-frame orchestration (event handling,
-acquire, format-change Material rebuild, extent-change depth-texture
-rebuild, `World::updateTransforms()` + Runtime-private camera/asset
-extraction (`scene_extraction.h`/`.cpp`) + per-entity `DrawItem` build,
-submit, present), and a single, idempotent `shutdown()` that is the sole
-caller of GPU-resource teardown and the sole indirect trigger (via
-`PlatformSession`'s own destructor) of `platform::shutdown()`.
+hand-sequenced), a five-step initialization sequence (Platform session,
+shader load, `Device`, camera `Buffer`, then a real scene asset's own
+manifest-driven load: read the scene's dependency manifest, decode its
+`ValidatedSceneData`, resolve and load every distinct mesh it
+references in ascending first-reference order into a keyed
+`meshResourceMap_`, and instantiate the one real `World` instance via
+`atlantis::world::fromValidatedSceneData()` — replacing the project's
+own former fixed, hardcoded six-entity validation scene; `Material` is
+deliberately deferred to the first frame, since no real swapchain
+format is known before the first `SurfaceCreated` event), a per-frame
+orchestration (event handling, acquire, format-change Material
+rebuild, extent-change depth-texture rebuild,
+`World::updateTransforms()` + Runtime-private camera/asset extraction
+(`scene_extraction.h`/`.cpp`, now resolving against `meshResourceMap_`'s
+own key set rather than one hardcoded `AssetId`) + per-entity
+`DrawItem` build, submit, present), and a single, idempotent
+`shutdown()` that is the sole caller of GPU-resource teardown and the
+sole indirect trigger (via `PlatformSession`'s own destructor) of
+`platform::shutdown()`. `world_` is `std::optional<World>`, published
+via in-place move-construction only once the scene load fully
+succeeds (`World` is not move-assignable); `meshResourceMap_` occupies
+the single former `Mesh` member's own declaration slot, preserving the
+existing GPU-resource reverse-destruction-order guarantee unchanged.
 Implemented per
 [specs/0013-runtime-host-foundation.md](../specs/0013-runtime-host-foundation.md),
 [plans/0013-runtime-host-foundation.md](../plans/0013-runtime-host-foundation.md),
@@ -295,7 +326,12 @@ the `World`-driven scene and extraction adapter extended per
 [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md),
 [plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md),
 and
-[ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md).
+[ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md);
+the manifest-driven real scene asset load implemented per
+[specs/0015-scene-asset-serialization-foundation.md](../specs/0015-scene-asset-serialization-foundation.md),
+[plans/0015-scene-asset-serialization-foundation.md](../plans/0015-scene-asset-serialization-foundation.md),
+and
+[ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)–[ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md).
 See
 [docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md)
 for the full public/private boundary statement.
