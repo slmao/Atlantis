@@ -327,12 +327,67 @@ cache are each named, explicitly out-of-scope future work in Spec 0012
 
 ---
 
+## Atlantis World
+
+**Status: Approved, implemented** (Spec 0014, ADR-0048–ADR-0051, all
+`Accepted`) — this section states the real, built boundary.
+
+**Responsibilities:** Atlantis's in-memory, multi-entity scene. `World`
+is a slot map: entity lifecycle (`createEntity()`/`destroyEntity()`, an
+index+generation `EntityId` handle formally overflow-safe via permanent
+slot retirement at the generation counter's maximum value), a
+mandatory `Transform` plus two optional components (`Camera`,
+`Renderable`) directly on each entity's own record — not a generic,
+type-erased ECS registry — an atomic parent/child hierarchy with cycle
+prevention and cascading destroy, and an explicit `updateTransforms()`
+producing each entity's own world matrix via a fully iterative
+(non-recursive) traversal. `World` never mutates itself automatically;
+every state change is caller-driven.
+
+**Depends on:** Core, and, narrowly, Asset System (for the `AssetId`
+type only, named in `Renderable`'s own public field). No RHI, Renderer,
+RenderGraph, Shader System, Vulkan Backend, Platform, Runtime, or Tools
+dependency in either direction — verified by an include-scanning test
+(`tests/world/module_boundary_tests.cpp`), not merely stated.
+
+**Depended on by:** Runtime (the sole real `World` instance's owner) and
+`tests/image_regression/`'s own headless fixture (an independent,
+duplicated scene-construction/extraction copy, not a shared dependency
+edge — see Runtime's own section below).
+
+**Ownership:** `World` owns every entity and component outright; no
+reference or pointer into its own internal storage ever crosses its
+public API — every accessor returns by value. `EntityId` is a strictly
+borrowed, non-owning handle: it carries a private, non-owning reference
+to its own issuing `World` instance's heap-allocated, address-stable
+identity token (never a writable public field, never serialized,
+persisted, or used across a process boundary); a handle used against a
+different, live `World` instance is rejected with `WorldError::WrongWorld`,
+never silently misapplied to an unrelated entity. `World` itself is
+move-constructible, not copyable, not move-assignable; a moved-from
+`World` guarantees only that it remains destructible or may be
+move-constructed from again.
+
+**Public/private boundary:** public surface is the entity/component
+accessor API, `updateTransforms()`/`getWorldMatrix()`, and the public
+value types (`EntityId`, `Transform`, `Camera`, `Renderable`,
+`WorldError`). The slot map's own internal representation (`Slot`, the
+opaque identity-token type) is private to `world.cpp`, never declared in
+any public header.
+
+**Extension points:** a rename/save-durable identity scheme, scene
+serialization, and a Tool/Editor protocol are each named, explicitly
+out-of-scope future work in Spec 0014 — not designed or scaffolded here.
+
+---
+
 ## Atlantis Runtime
 
 **Status: Approved, implemented** (Spec 0013, ADR-0046/ADR-0047, all
-`Accepted`) — this section states the real, built boundary for the
-Windows windowed path; Android/iOS remain architectural, not
-implemented (see Extension points).
+`Accepted`; extended by Spec 0014, ADR-0048–ADR-0051, all `Accepted`) —
+this section states the real, built boundary for the Windows windowed
+path; Android/iOS remain architectural, not implemented (see Extension
+points).
 
 **Responsibilities:** the actual composition root. A private
 `atlantis_runtime_host` static library (`Atlantis::RuntimeHost`) owns
@@ -343,17 +398,24 @@ session for the OS being built (Windows Platform; Android Platform not
 implemented), creates the RHI `Device` and (on the first `SurfaceCreated`
 event) `Presentation` via the Vulkan Backend, loads the `minimal_cube`
 Asset-System-sourced mesh and the `minimal_mesh` Shader-System-compiled
-material, and each frame: acquires a `RenderTarget` from `Presentation`,
-hands it to `Renderer`, then presents. Also responds to Platform-
-delivered lifecycle events; Android-specific lifecycle handling (surface
-destroyed/recreated, app paused/resumed) remains TBD, see Open Questions
-in [threading.md](threading.md).
+material, and owns the one real `World` instance holding a fixed,
+multi-entity validation scene. Each frame: calls `World::updateTransforms()`,
+extracts the active camera's view/projection matrices and builds one
+`DrawItem` per renderable entity via a Runtime-private adapter
+(`scene_extraction.h`/`.cpp` — eye/forward-only camera extraction, never
+a right/up column, so it stays correct under a sheared hierarchy;
+per-entity `AssetId` resolution against the one known, resolved asset),
+acquires a `RenderTarget` from `Presentation`, hands the `DrawItem`s to
+`Renderer`, then presents. Also responds to Platform-delivered lifecycle
+events; Android-specific lifecycle handling (surface destroyed/recreated,
+app paused/resumed) remains TBD, see Open Questions in
+[threading.md](threading.md).
 
 **Depends on:** Atlantis Platform, RHI (Device + Presentation), Renderer,
-Shader System (both targets), Asset System, Core. **Not** RenderGraph
-directly — `Renderer::drawFrame()` already owns RenderGraph construction/
-compilation/execution internally, confirmed by inspection that no
-`atlantis/render_graph/*.h` header is included anywhere under
+Shader System (both targets), Asset System, World, Core. **Not**
+RenderGraph directly — `Renderer::drawFrame()` already owns RenderGraph
+construction/compilation/execution internally, confirmed by inspection
+that no `atlantis/render_graph/*.h` header is included anywhere under
 `src/runtime/` (a correction to this section's own earlier, `PROPOSED`-
 era text, which listed RenderGraph as a direct dependency before any
 real Runtime code existed to check that claim against). This is the

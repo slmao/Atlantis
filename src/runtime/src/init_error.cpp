@@ -18,6 +18,10 @@ const char* toString(RuntimeInitError error) noexcept {
       return "MeshCreateFailed";
     case RuntimeInitError::CameraBufferCreateFailed:
       return "CameraBufferCreateFailed";
+    case RuntimeInitError::AssetMetadataParseFailed:
+      return "AssetMetadataParseFailed";
+    case RuntimeInitError::SceneConstructionFailed:
+      return "SceneConstructionFailed";
   }
   // Reached only if a future RuntimeInitError value is added without a
   // corresponding case above -- see exit_reason.cpp's identical comment
