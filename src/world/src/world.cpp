@@ -329,16 +329,7 @@ atlantis::Result<Renderable, WorldError> World::getRenderable(EntityId id) const
   if (auto r = validate(id); r.isErr()) return atlantis::Result<Renderable, WorldError>::Err(r.error());
   const Slot& slot = slots_[id.index()];
   if (!slot.renderable.has_value()) {
-    // D11's own WorldError enumerator set has no Renderable-specific
-    // "absent component" value (only NoCameraComponent, named for
-    // setActiveCamera()'s own distinct failure mode) -- reusing it here
-    // is the closest existing semantic fit for "valid entity, requested
-    // optional component absent," preserving WorldError's own four-
-    // enumerator exhaustiveness rather than adding a fifth. Disclosed as
-    // a minor, non-architectural interpretation; this Plan's own
-    // validation scene never exercises this path (every Renderable
-    // entity has setRenderable() called before any getRenderable()).
-    return atlantis::Result<Renderable, WorldError>::Err(WorldError::NoCameraComponent);
+    return atlantis::Result<Renderable, WorldError>::Err(WorldError::NoRenderableComponent);
   }
   return atlantis::Result<Renderable, WorldError>::Ok(*slot.renderable);
 }

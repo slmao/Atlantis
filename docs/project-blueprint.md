@@ -680,9 +680,13 @@ milestone being listed does not authorize starting it — see Section 1.
 
 ### Milestone 11 — World / Scene Foundation
 
-- **Governance state:** **`Approved` Spec, `Approved` Plan, code complete
-  on [PR #68](https://github.com/slmao/Atlantis/pull/68) (OPEN, not yet
-  merged)** —
+- **Governance state:** **`Approved` Spec, `Approved` Plan, Implementation
+  merged via [PR #68](https://github.com/slmao/Atlantis/pull/68), a
+  governance-only Human Review Correction merged via
+  [PR #69](https://github.com/slmao/Atlantis/pull/69) (`WorldError` gains
+  `NoRenderableComponent`), and the corresponding code fix + broadened
+  final review tracked in its own follow-up PR — see "Disclosed
+  limitations" below for current status** —
   [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md),
   [plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md).
   Human Review Approval recorded 2026-08-22 for the Spec (17
@@ -718,25 +722,35 @@ milestone being listed does not authorize starting it — see Section 1.
   smoke test (extended to confirm all 5 `DrawItem`s reach `drawFrame()`)
   both pass on real Vulkan-capable hardware; the existing `minimal_cube`
   golden is untouched. Verified by a clean Debug and Release full build
-  (`ctest -LE gpu`: 434/434 Debug, 433/433 Release), `ctest -L gpu` 19/19
-  both configurations, Vulkan Validation Layers grepped clean throughout,
-  and programmatic interactive verification (real Win32 message
-  injection for resize, minimize/restore, close) against the real
-  `atlantis_runtime` executable.
+  (`ctest -LE gpu`: 436/436 Debug, 435/435 Release), `ctest -L gpu` 19/19
+  both configurations, Vulkan Validation Layers grepped clean throughout.
+  **Programmatic interactive automation (real Win32 message injection for
+  resize, minimize/restore, close) against the real `atlantis_runtime`
+  executable was performed as lifecycle/liveness evidence only — it is
+  explicitly not, and must never be recorded as, V20's own genuine-human,
+  GUI-based visual confirmation** (multi-entity scene visible and
+  correctly composed, interactive resize/minimize/restore/close, clean
+  Validation Layers, observed by an actual person). V20 remains an
+  outstanding, merge-blocking gate — see Plan 0014's own Verification
+  Checklist and Definition of Done for the exact commands and checklist.
 - **Disclosed limitations:** carried forward from Milestone 10 (no
   automated literal pixel/visual screenshot comparison of the Runtime
   window's own live output; the headless golden match is pixel-exact
   evidence for the same World-driven scene in its own offscreen fixture,
-  not for `atlantis_runtime`'s own windowed output). Two minor,
-  mechanical Implementation-time interpretations, neither architectural:
-  `getRenderable()` on a valid entity with no `Renderable` reuses
-  `WorldError::NoCameraComponent` (the closest existing semantic fit,
-  since `WorldError` fixes exactly four enumerators and this Plan's own
-  scene never exercises the path); the standalone `world_scene` golden
-  generator takes three positional arguments (golden name, asset artifact
-  path, asset metadata path) rather than the Plan's own illustrative
-  single-argument form, since `WorldSceneFixture` has no hand-authored-
-  vertex construction path.
+  not for `atlantis_runtime`'s own windowed output). One minor, mechanical
+  Implementation-time interpretation, neither architectural: the
+  standalone `world_scene` golden generator takes three positional
+  arguments (golden name, asset artifact path, asset metadata path)
+  rather than the Plan's own illustrative single-argument form, since
+  `WorldSceneFixture` has no hand-authored-vertex construction path. A
+  second, previously disclosed interpretation — `getRenderable()` reusing
+  `WorldError::NoCameraComponent` for a missing `Renderable` — was
+  reviewed and **rejected** by Human Review (2026-08-23); `WorldError`
+  now carries a fifth enumerator, `NoRenderableComponent`, and
+  `getRenderable()` returns it correctly; see
+  [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s
+  and [Spec 0014](../specs/0014-world-scene-foundation.md)'s own "Human
+  Review Correction (2026-08-23)" notes and Plan 0014's own V28.
 - **Not implemented** (per Spec 0014's own Non-Goals, unchanged):
   scene serialization or a scene file format, a scene-asset cooker, a
   general/data-driven/multi-threaded ECS, keyframe or time-driven
