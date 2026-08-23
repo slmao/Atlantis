@@ -4,11 +4,145 @@
   (`Approved`, Human Review Approval recorded 2026-08-24, accepting all
   18 items of that Spec's own Human Review Decision Table — see that
   Spec's own approval note for the full record)
-- **Status:** In Review
+- **Status:** `Approved / Ready for Implementation`. See "Human Review
+  Approval" below for the full record.
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
   direction, following AGENTS.md's Spec → Plan → Human Review →
-  Implementation path. Not yet reviewed/approved — see the Independent
-  Review note near the end of this document.
+  Implementation path. Reviewed and approved by a human — see Human
+  Review Approval immediately below; the two "Independent Review"
+  sections further below are the self-review record that preceded and
+  fed that approval, not a substitute for it.
+- **Human Review Approval (2026-08-24):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer) on 2026-08-24, accepting this Plan in full as revised
+  through both Independent Review rounds below (the second of which
+  resolved three Must Fix findings — explicit upload-`Buffer` visibility
+  via `buildTextureUploadPass()`, an exhaustive pure-virtual-interface-
+  implementer audit, and the `submit()`/`waitIdle()` failure-lifecycle
+  contract — plus five Should Fix precision items, including a real
+  `slangc`-confirmed reflection JSON shape replacing an earlier guess).
+  This approval explicitly covers:
+
+  1. **The full, revised Milestone/Task Breakdown (11 steps) and every
+     minimal atomic-step boundary within it** — most consequentially,
+     Milestone 2's own indivisible RHI+Vulkan-Backend+test-double step
+     (below).
+  2. **`stb`'s `FetchContent` declaration relocated to a new,
+     unconditional, early-included `cmake/AtlantisStb.cmake`** (D10),
+     with the Asset Cooker and `tests/image_regression/`'s own two
+     pre-existing consumers sharing the identical pinned commit (V43);
+     `Atlantis::AssetSystem`'s own runtime library confirmed to depend
+     on neither `Stb::Stb` nor `Atlantis::RHI`/`Atlantis::World`
+     (Pre-draft verification's own module-boundary resolution note; D1;
+     V35).
+  3. **The full texture authoring/cooker/artifact/loader file and
+     target scope** (D8, D9) — `cookTexture()` receiving already-decoded
+     bytes (never calling `stbi_load()` itself), the PNG decode call
+     living only in the Tools cooker's own `runCookTextureMode()`, and
+     `TextureColorSpace` as Asset System's own independent enum, never
+     `atlantis::rhi::SampledTextureFormat`.
+  4. **RHI's `SampledTexture`/`Sampler`/`SampledTextureFormat`/`Filter`/
+     `AddressMode`, the new `BufferPurpose::Staging`, the new
+     `ResourceState::TransferDestination`/`ShaderRead` values, and the
+     new `copyBufferToTexture()`/`transitionResource()`/`bindTexture()`
+     `CommandList` methods** (D2, D5) — and the exhaustive, repo-wide
+     audit confirming exactly which existing RHI interfaces gain new
+     pure virtuals (`Device`, `CommandList` only) and which real and
+     Fake implementers must be updated in the same, indivisible
+     Milestone 2 step (`VulkanDevice`; `VulkanCommandList` and
+     `FakeCommandList` together; the new `VulkanSampledTexture`/
+     `FakeSampledTexture` and `VulkanSampler`/`FakeSampler` pairs) —
+     with `Buffer`, `Texture`, `RenderTarget`, `Pipeline`,
+     `OffscreenTarget`, `Presentation`, and `SubmissionSignal` confirmed
+     untouched (Pre-draft verification's own table).
+  5. **`Material` confirmed as a non-virtual value type with no base
+     class — no `VulkanMaterial` is fabricated or needed** (Pre-draft
+     verification; D3); **`SampledTexture`/`Sampler` confirmed to have
+     exactly one real Vulkan implementer each**, using the same
+     `static_cast` boundary depth `Texture` already establishes, never
+     `RenderTarget`'s own `dynamic_cast`-based multi-implementer pattern
+     (Pre-draft verification; D5).
+  6. **The staging `Buffer` remains outside RenderGraph's own
+     image-layout state tracking** (Approved architecture, unchanged,
+     ADR-0056 Decision 4) **but must appear as an explicit, required
+     parameter to the named `buildTextureUploadPass()` helper** — never
+     introduced only inside an anonymous lambda's own capture list (D4;
+     V39); `SampledTexture` is confirmed the *only* resource the upload
+     graph itself state-tracks.
+  7. **The upload, real draw, and readback recorded into one
+     `CommandList`, against one real, genuinely-used `RenderTarget`,
+     submitted via exactly one `Device::submit()` call** (D11's own
+     explicit seven-step ordering; Milestone 9; V27, V39) — `ShaderRead`
+     correctness attributed to the recorded `TransferDestination →
+     ShaderRead` barrier and command order *within* that submission,
+     never to `Device::waitIdle()`, whose own role is confirmed narrowly
+     CPU-side (safe readback, safe staging/readback-`Buffer` release)
+     (D5a's own opening framing; D11).
+  8. **D5a's own three-case `submit()`/`waitIdle()` failure contract in
+     full**: pre-`submit()` and `submit()`-failure cases both safe for
+     immediate, unconditional cleanup (nothing was ever queued);
+     `waitIdle()` returning `Err`, including `DeviceLost`, treated as
+     fatal for the fixture, matching every existing headless GPU test's
+     own already-established `REQUIRE(...isOk())` fail-fast pattern —
+     **no new selective-recovery mechanism is introduced** (V40–V42);
+     `VulkanDevice::waitIdle()`'s own existing internal retained-
+     submission/fence contract reused unchanged, not reinvented (D5a
+     items 4–5).
+  9. **`Material`'s both-or-neither, non-owning `SampledTexture`/
+     `Sampler` borrowing, its one and only validation entry point (the
+     constructor), its own complete absence of any rebind surface, and
+     the fixture's own member-declaration-order destruction-order
+     enforcement** (D3; V22, V29); **the untextured-`Material` and
+     textured-`Material` descriptor-layout branches, both named
+     explicitly, via `PipelineCreateParams::hasSampledTextureBinding`
+     defaulting to `false` with zero change required at any existing
+     call site** (D3, D5; V23, V25, V44).
+  10. **The real, `slangc`-confirmed Slang reflection shape for a
+      combined image sampler binding** — `binding.kind ==
+      "descriptorTableSlot"` (the same string a uniform buffer already
+      uses), with the real distinguishing shape one level deeper
+      (`type.kind == "resource"`, `baseShape == "texture2D"`,
+      `combined == true`) — **replacing the first draft's own incorrect
+      top-level `"combinedImageSampler"` guess** (D6; V18); the matching
+      `Float2` reflection shape, the interleaved, 20-byte `Vertex`
+      layout (`location 0` = position, `location 1` = UV, no per-vertex
+      color), cross-validated against that real reflection (D6, D11;
+      V15, V18).
+  11. **The texture artifact's own color-space contract (explicit,
+      mandatory `colorSpace`, never PNG-metadata-inferred), the
+      `Rgba8Unorm`/`Rgba8Srgb` byte contract, the single-mip contract,
+      the row-order/row-pitch contract, the checked (64-bit-before-
+      32-bit) size arithmetic, and the distinct, named error enumerator
+      for every malformed-source/corrupted-artifact condition** (D8;
+      V3–V7).
+  12. **`stb_image`'s own implementation-macro-per-static-library
+      count, and its license/build/offline-network boundary**,
+      unchanged from ADR-0041's own Accepted Amendment (D9, D10; V9,
+      V43).
+  13. **Exactly one new golden — the dual-quad (`Rgba8Unorm`/`Rgba8Srgb`)
+      fixture's own — captured strictly under ADR-0042's own "Initial
+      baseline bootstrap" category via the Golden Capture Process's own
+      five-step sequence, kept in its own separate commit; both existing
+      goldens (`minimal_cube`, `world_scene`) confirmed unmodified** (D11;
+      the Golden Capture Process; V30–V34, V38).
+  14. **The complete D1–D11 (including D5a) Plan-level-decision set and
+      the complete V1–V44 verification matrix**, including
+      `ATLANTIS_BUILD_TESTS=ON`/`OFF` configure-and-build coverage, the
+      `/w14062` positive/negative enumerator-exhaustiveness probe, the
+      header-include-*and*-CMake-link-graph module-boundary scan, and
+      full Debug/Release, `ctest -LE gpu`/`ctest -L gpu`, and Vulkan
+      Validation Layers gates (V10, V35, V36, V37).
+  15. **Every disclosed follow-up item remains explicitly unimplemented
+      by this Plan** — "Mesh UV Attribute Foundation," target-
+      independent submission, and every Non-Goal Spec 0016 itself
+      already named (PBR, mipmap generation, compressed formats, and
+      the rest) — none are solved, scaffolded, or silently narrowed
+      here.
+
+  **This approval does not itself authorize Implementation to begin
+  immediately — per this repository's own PR-based workflow, this
+  Plan's own PR (#77) must be merged first; see
+  [specs/README.md](../specs/README.md).**
 
 ## Objective
 
@@ -1682,10 +1816,12 @@ Plan proceeds to formal Human Review, without broadening scope further:
   — not header-grep alone — confirming `Atlantis::AssetSystem`'s own
   link closure never reaches `Stb::Stb` (V35, corrected wording).
 
-No blocking issue remains after this round. This Plan is set to
-`In Review` — not `Approved` — pending the same Human Review path every
-prior Plan in this repository has followed. Every Must Fix and Should
-Fix item from this round's own review is now resolved with either a
+No blocking issue remained after this round. Every Must Fix and Should
+Fix item from this round's own review was resolved with either a
 corrected design (backed, where relevant, by real empirical evidence —
 the `slangc` probe) or an explicit, disclosed confirmation that the
 Approved architecture already correctly addressed the concern raised.
+This Plan was subsequently reviewed and approved in full — see "Human
+Review Approval (2026-08-24)" at the top of this document for the
+complete record; this Plan's own status is `Approved / Ready for
+Implementation`, not merely `In Review`, as of that approval.
