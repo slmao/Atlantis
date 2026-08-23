@@ -332,14 +332,29 @@ format's own parse/serialize functions. The cooker's atomic-write
 mechanism and the CMake stamp/`BYPRODUCTS` integration are internal to
 the build graph, not part of the runtime-consumed public API.
 
-**Extension points:** a third asset type (textures — blocked on a
-future RHI Spec adding a general sampled `Texture`/`Sampler` capability
-first), a rename-stable GUID identity scheme, and a real derived-data
-cache are each named, explicitly out-of-scope future work in Spec 0012/
-Spec 0015 — not designed or scaffolded here. A distributable,
-cross-session Asset Catalog/Registry is likewise explicitly deferred
-(Spec 0015's own Non-Goals) — the scene dependency manifest Spec 0015
-adds is build-tree-private, never a portable part of any artifact.
+**Textures (Spec 0016, code complete on an open Implementation PR):** a
+third asset type, following the same cook/artifact/metadata-sidecar/load
+shape mesh and scene already established --
+`texture_types.h`/`texture_artifact.h`/`texture_metadata.h`/
+`cook_texture.h`/`load_texture.h`. `cookTexture()` takes already-decoded
+pixel bytes and never calls `stbi_load()` itself -- the PNG decode call
+lives only in the Tools cooker's own `runCookTextureMode()`
+(`src/tools/asset_cooker/`), the sole place this module's own runtime
+library boundary is crossed by `stb`; `atlantis_asset_system`'s own
+`target_link_libraries` closure never reaches `Stb::Stb`, confirmed via
+CMake's own dependency graph, not header-grep alone. `TextureColorSpace`
+is this module's own independent enum, never `atlantis::rhi::SampledTextureFormat`
+-- the RHI dependency boundary this section states above is unaffected;
+a composition root outside Asset System (the fixture) is the only place
+that translates one to the other.
+
+**Extension points:** a rename-stable GUID identity scheme and a real
+derived-data cache are each named, explicitly out-of-scope future work
+in Spec 0012/Spec 0015 — not designed or scaffolded here. A
+distributable, cross-session Asset Catalog/Registry is likewise
+explicitly deferred (Spec 0015's own Non-Goals) — the scene dependency
+manifest Spec 0015 adds is build-tree-private, never a portable part of
+any artifact.
 
 ---
 
