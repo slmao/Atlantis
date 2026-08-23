@@ -57,6 +57,33 @@ TEST_CASE("saveReflectionMetadata()/loadReflectionMetadata() round-trip a full f
   std::filesystem::remove(path);
 }
 
+TEST_CASE("saveReflectionMetadata()/loadReflectionMetadata() round-trip a Sampler/Float2 fixture value",
+          "[shader_system][reflection_metadata]") {
+  // Spec 0016/D6: the new DescriptorType::Sampler/VertexAttributeType::Float2
+  // enumerators, serialized as "sampler"/"float2".
+  ReflectionMetadata original;
+  original.entryPointName = "fragmentMain";
+  original.stage = ShaderStage::Fragment;
+  original.descriptorBindings = {
+      DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
+      DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+  original.vertexInputAttributes = {
+      VertexInputAttribute{.location = 0, .type = VertexAttributeType::Float3},
+      VertexInputAttribute{.location = 1, .type = VertexAttributeType::Float2},
+  };
+  original.sdkProvenance = "1.4.357.0 / slang-standard-module-2026.13.1";
+
+  const auto path = uniqueTempJsonPath("roundtrip_sampler_float2");
+  const auto saveResult = saveReflectionMetadata(original, path);
+  REQUIRE(saveResult.isOk());
+
+  const auto loadResult = loadReflectionMetadata(path);
+  REQUIRE(loadResult.isOk());
+  REQUIRE(loadResult.value() == original);
+
+  std::filesystem::remove(path);
+}
+
 TEST_CASE("loadReflectionMetadata() required-field handling", "[shader_system][reflection_metadata]") {
   SECTION("a nonexistent file is FileNotFound") {
     const auto result = loadReflectionMetadata(uniqueTempJsonPath("does_not_exist"));

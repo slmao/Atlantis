@@ -9,6 +9,7 @@ using atlantis::shader_system::DescriptorType;
 using atlantis::shader_system::minimalRendererExpectedDescriptorContract;
 using atlantis::shader_system::ReflectionMetadata;
 using atlantis::shader_system::ShaderStage;
+using atlantis::shader_system::texturedMaterialExpectedDescriptorContract;
 using atlantis::shader_system::validateDescriptorContract;
 
 namespace {
@@ -71,4 +72,27 @@ TEST_CASE("validateDescriptorContract() other mismatch variants", "[shader_syste
     REQUIRE(result.isErr());
     REQUIRE(result.error() == ContractMismatchError::StageMismatch);
   }
+}
+
+TEST_CASE("validateDescriptorContract() accepts an exact two-binding match against the textured contract",
+          "[shader_system][descriptor_contract]") {
+  // Spec 0016/D6: {set 0, binding 0, UniformBuffer, Vertex} + {set 0,
+  // binding 1, Sampler, Fragment}.
+  const auto metadata = metadataWithBindings({
+      DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
+      DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+  });
+  const auto result = validateDescriptorContract(metadata, texturedMaterialExpectedDescriptorContract());
+  REQUIRE(result.isOk());
+}
+
+TEST_CASE("validateDescriptorContract() rejects a UniformBuffer where the textured contract expects a Sampler",
+          "[shader_system][descriptor_contract]") {
+  const auto metadata = metadataWithBindings({
+      DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
+      DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
+  });
+  const auto result = validateDescriptorContract(metadata, texturedMaterialExpectedDescriptorContract());
+  REQUIRE(result.isErr());
+  REQUIRE(result.error() == ContractMismatchError::DescriptorTypeMismatch);
 }

@@ -17,6 +17,18 @@ namespace atlantis::shader_system {
 // fixed contract," not "eliminate hand-authored duplication of it."
 [[nodiscard]] std::vector<DescriptorBinding> minimalRendererExpectedDescriptorContract();
 
+// Spec 0016/D6: the fixed, expected descriptor contract a textured
+// Material's shaders must match -- two bindings, {set 0, binding 0,
+// UniformBuffer, Vertex} (the same camera-uniform binding every shader
+// contract in this codebase already uses) plus {set 0, binding 1,
+// Sampler, Fragment} (the combined image sampler,
+// PipelineCreateParams::hasSampledTextureBinding's own descriptor-set-
+// layout binding). Additive alongside minimalRendererExpectedDescriptorContract()
+// above, which is untouched -- an untextured Material's shaders continue
+// validating against that one, unaffected by this new contract's
+// existence.
+[[nodiscard]] std::vector<DescriptorBinding> texturedMaterialExpectedDescriptorContract();
+
 enum class ContractMismatchError {
   BindingCountMismatch,
   BindingNotFound,        // an expected {set, binding} pair is absent from the reflected shader

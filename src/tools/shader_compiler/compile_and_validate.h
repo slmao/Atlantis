@@ -18,7 +18,8 @@ struct CompileAndValidateRequest {
   std::string vertexEntry;
   std::string fragmentEntry;
   std::filesystem::path outputDir;
-  std::string expectedContract;  // this round's only value: "minimal-renderer"
+  std::string expectedContract;  // "minimal-renderer" or "textured-material" (Spec 0016/D7) --
+                                  // any other value fails validation explicitly.
   std::filesystem::path stampPath;
 };
 

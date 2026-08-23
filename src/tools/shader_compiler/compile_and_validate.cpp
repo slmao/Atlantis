@@ -29,6 +29,7 @@ using atlantis::shader_system::buildSpirvValArgv;
 using atlantis::shader_system::DescriptorBinding;
 using atlantis::shader_system::minimalRendererExpectedDescriptorContract;
 using atlantis::shader_system::PushConstantRange;
+using atlantis::shader_system::texturedMaterialExpectedDescriptorContract;
 using atlantis::shader_system::ReflectionMetadata;
 using atlantis::shader_system::saveReflectionMetadata;
 using atlantis::shader_system::ShaderStage;
@@ -114,20 +115,29 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
 }
 
 // Step 7: descriptor-contract validation, scoped per stage. The fixed
-// contract (minimalRendererExpectedDescriptorContract()) is a
-// PIPELINE-level expectation, not an independent per-stage one -- a
+// contract -- minimalRendererExpectedDescriptorContract() or, for a
+// shader pair whose CMake declaration names the textured contract
+// (Spec 0016/D6/D7), texturedMaterialExpectedDescriptorContract() -- is
+// a PIPELINE-level expectation, not an independent per-stage one -- a
 // real captured fragment-stage reflection (Plan 0008 Section 3's own
 // module-level-parameters-vs-entry-point-bindings-used filtering rule)
-// correctly has ZERO descriptor bindings, since fragmentMain never
-// references the camera uniform. Validating the FULL fixed contract
-// against each stage independently would therefore always fail for
-// the fragment stage. The fix is narrow: filter `expected` down to just
-// the entries whose own `.stage` matches the stage being validated
-// before comparing -- for this round's contract, that is the whole
-// vector for Vertex and an empty vector for Fragment, which correctly
-// matches fragment's own real, empty reflection.
-[[nodiscard]] bool validateDescriptorContractForStage(const ReflectionMetadata& metadata, ShaderStage stage) {
-  const auto fullContract = minimalRendererExpectedDescriptorContract();
+// correctly has ZERO descriptor bindings for a shader that never
+// references the camera uniform in that stage. Validating the FULL
+// fixed contract against each stage independently would therefore
+// always fail for a stage that legitimately declares fewer bindings.
+// The fix is narrow: filter `expected` down to just the entries whose
+// own `.stage` matches the stage being validated before comparing.
+[[nodiscard]] bool validateDescriptorContractForStage(const ReflectionMetadata& metadata, ShaderStage stage,
+                                                        const std::string& expectedContract) {
+  std::vector<DescriptorBinding> fullContract;
+  if (expectedContract == "minimal-renderer") {
+    fullContract = minimalRendererExpectedDescriptorContract();
+  } else if (expectedContract == "textured-material") {
+    fullContract = texturedMaterialExpectedDescriptorContract();
+  } else {
+    std::cerr << "atlantis_shader_compiler: unknown --expected-contract value '" << expectedContract << "'\n";
+    return false;
+  }
   std::vector<DescriptorBinding> scoped;
   std::copy_if(fullContract.begin(), fullContract.end(), std::back_inserter(scoped),
                [stage](const DescriptorBinding& binding) { return binding.stage == stage; });
@@ -295,8 +305,8 @@ int compileAndValidate(const CompileAndValidateRequest& request) {
   }
 
   const bool validationOk =
-      validateDescriptorContractForStage(vertexResult->metadata, ShaderStage::Vertex) &&
-      validateDescriptorContractForStage(fragmentResult->metadata, ShaderStage::Fragment) &&
+      validateDescriptorContractForStage(vertexResult->metadata, ShaderStage::Vertex, request.expectedContract) &&
+      validateDescriptorContractForStage(fragmentResult->metadata, ShaderStage::Fragment, request.expectedContract) &&
       validatePushConstantsForVertexStage(vertexResult->metadata) &&
       validateUniqueVertexInputLocations(vertexResult->metadata) &&
       validateCrossStageInterface(vertexResult->metadata, fragmentResult->metadata);

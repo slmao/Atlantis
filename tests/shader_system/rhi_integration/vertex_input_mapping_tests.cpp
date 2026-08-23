@@ -85,6 +85,33 @@ TEST_CASE("toVertexInputLayout() a schema entry with no matching reflected locat
   REQUIRE(result.error() == MappingError::LocationNotFoundInSchema);
 }
 
+TEST_CASE("toVertexInputLayout() maps a reflected Float2 attribute to VertexAttributeFormat::Float2",
+          "[shader_system][rhi_integration][vertex_input_mapping]") {
+  // Spec 0016/D6: the interleaved Vertex layout's UV attribute.
+  ReflectionMetadata metadata;
+  metadata.entryPointName = "vertexMain";
+  metadata.stage = ShaderStage::Vertex;
+  metadata.vertexInputAttributes = {
+      VertexInputAttribute{.location = 0, .type = VertexAttributeType::Float3},
+      VertexInputAttribute{.location = 1, .type = VertexAttributeType::Float2},
+  };
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = 0},
+      MeshVertexAttributeSchema{.location = 1, .offsetBytes = 12},
+  };
+
+  const auto result = toVertexInputLayout(metadata, schema, 20);
+  REQUIRE(result.isOk());
+  const auto& layout = result.value();
+  const auto findAttr = [&](std::uint32_t location) {
+    return std::find_if(layout.attributes.begin(), layout.attributes.end(),
+                         [location](const auto& a) { return a.location == location; });
+  };
+  const auto uvAttr = findAttr(1);
+  REQUIRE(uvAttr != layout.attributes.end());
+  REQUIRE(uvAttr->format == VertexAttributeFormat::Float2);
+}
+
 TEST_CASE("toVertexInputLayout() a reflected location with no matching schema entry fails",
           "[shader_system][rhi_integration][vertex_input_mapping]") {
   const auto metadata = twoAttributeVertexMetadata();

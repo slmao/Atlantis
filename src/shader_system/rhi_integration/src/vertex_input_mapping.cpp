@@ -11,6 +11,8 @@ namespace {
   switch (type) {
     case VertexAttributeType::Float3:
       return atlantis::rhi::VertexAttributeFormat::Float3;
+    case VertexAttributeType::Float2:
+      return atlantis::rhi::VertexAttributeFormat::Float2;
   }
   return std::nullopt;
 }
