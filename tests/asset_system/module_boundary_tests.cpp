@@ -10,12 +10,19 @@
 // Core only. This test enumerates every .h/.cpp under src/asset_system/
 // at test-run time (not compile time), so it automatically covers every
 // file later Plan 0012 steps add, with no further edits to this test.
+// Plan 0015 Section D1/ADR-0053: "atlantis/world/" added to the
+// forbidden list -- AssetSystem must never depend on World (the
+// reverse dependency, World -> AssetSystem for AssetId, is the
+// already-Accepted direction, ADR-0048); this constraint previously
+// existed only as a design rule, not an automated check, since World
+// did not exist when this test was first written (Plan 0012).
 
 namespace {
 
-constexpr std::array<const char*, 8> kForbiddenIncludePrefixes = {
+constexpr std::array<const char*, 9> kForbiddenIncludePrefixes = {
     "atlantis/rhi/",       "atlantis/renderer/",       "atlantis/render_graph/", "atlantis/shader_system/",
-    "atlantis/platform/",  "atlantis/vulkan_backend/", "atlantis/tools/",        "vulkan/",
+    "atlantis/platform/",  "atlantis/vulkan_backend/", "atlantis/tools/",        "atlantis/world/",
+    "vulkan/",
 };
 
 [[nodiscard]] std::vector<std::string> forbiddenIncludeLinesIn(const std::filesystem::path& file) {

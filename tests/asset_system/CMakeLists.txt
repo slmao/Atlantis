@@ -55,4 +55,3 @@ target_compile_definitions(atlantis_asset_system_tests PRIVATE
 )
 
 catch_discover_tests(atlantis_asset_system_tests DISCOVERY_MODE PRE_TEST)
-
