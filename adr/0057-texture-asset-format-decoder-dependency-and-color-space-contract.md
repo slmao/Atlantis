@@ -1,9 +1,20 @@
 # ADR 0057: Texture Asset Format, Decoder Dependency, and Color Space Contract
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-23
-- **Deciders:** Pending Human Review (as part of Spec 0016)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-24 as part of Spec 0016's Human Review Approval
 - **Related Spec:** [specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md)
+- **Acceptance Record (2026-08-24):** Accepted by Human Review as part
+  of [specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md)'s
+  own Human Review Approval (2026-08-24) — see that Spec's own approval
+  note (Human Review Decision items 3, 9, 10) for the specific items
+  this ADR corresponds to, including the dual-format (`Rgba8Unorm`/
+  `Rgba8Srgb`) GPU-verified color-space contract (item 3). This ADR's
+  own Decision 4 additionally required, and now has, ADR-0041's own
+  companion "Accepted Amendment — 2026-08-24," accepted in the same
+  Human Review pass. This record does not change this ADR's own
+  Decision, Consequences, or Alternatives Considered below.
 
 ## Context
 

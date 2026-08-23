@@ -243,15 +243,24 @@ Verified directly against `stb_image.h` (v2.30, 2024-05-31) and
   justification at this project's still-small golden-image count;
   revisit only if repository bloat becomes a real, measured problem.
 
-## Proposed Amendment — 2026-08-23
+## Accepted Amendment — 2026-08-24
 
-**Status: Proposed, pending the same Human Review as
-[Spec 0016](../specs/0016-texture-sampler-foundation.md) and
-[ADR-0055](0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0057](0057-texture-asset-format-decoder-dependency-and-color-space-contract.md).
-Everything above this section is this ADR's own original, unmodified
-`Accepted` Decision — this amendment does not alter, narrow, or
-reinterpret any of it; it adds one new, additional linkage point to the
-"Scope, restated" bullet above, under the constraints below.**
+**Status: Accepted.** Drafted 2026-08-23 as a Proposed Amendment
+alongside [Spec 0016](../specs/0016-texture-sampler-foundation.md) and
+[ADR-0055](0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0057](0057-texture-asset-format-decoder-dependency-and-color-space-contract.md),
+and **formally accepted by Human Review on 2026-08-24** as part of
+Spec 0016's own Human Review Approval — see that Spec's own approval
+note for the full scope of what was accepted. Everything above this
+section remains this ADR's own original, unmodified `Accepted` Decision
+(this ADR's own top-level `Status: Accepted` above is unchanged and
+unaffected by this amendment) — this amendment does not alter, narrow,
+or reinterpret any of it; it adds one new, additional linkage point to
+the "Scope, restated" bullet above, under the constraints below, now
+binding.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-08-24, accepting this amendment (every Decision
+item below) in full, as drafted, with no change.
 
 ### Context for this amendment
 

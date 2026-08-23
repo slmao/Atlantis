@@ -1,11 +1,126 @@
 # Spec: Texture & Sampler Foundation
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
   direction, following AGENTS.md's Spec → Plan → Human Review →
-  Implementation path. Not yet reviewed/approved — see Human Review
-  Decision Table below; this document is submitted for that review.
+  Implementation path. Reviewed and approved by a human — see Human
+  Review Approval immediately below.
 - **Created:** 2026-08-23
+- **Human Review Approval (2026-08-24):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer) on 2026-08-24, accepting this document's own Human Review
+  Decision Table in full — all 18 items, as recommended, with no
+  amendment. This approval explicitly accepts:
+
+  1. A new, independent `SampledTexture`/`Sampler` RHI owning-type pair;
+     today's depth-only `Texture` and its `DepthFormat` enum are
+     completely unchanged (items 1, 2; [ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)).
+  2. `SampledTextureFormat`'s first supported values, `Rgba8Unorm`
+     (linear) and `Rgba8Srgb` (item 3; [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md)).
+  3. A minimal, immutable `Sampler` filter/address/LOD contract, and a
+     single, fixed mip level of exactly `1` for every `SampledTexture`
+     this round (items 4, 12; ADR-0055).
+  4. A new `BufferPurpose::Staging`, `ResourceState::TransferDestination`/
+     `ShaderRead`, `CommandList::copyBufferToTexture()`, and a third
+     `transitionResource()` overload (item 5; [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md)).
+  5. RenderGraph's `ResourceBinding` gaining a third resource-carrying
+     field **strictly scoped to this Spec's own sampled-texture-upload
+     need** — not a general, arbitrary-resource tracking framework — and
+     `execute()`'s transition-insertion logic extended for
+     `TransferDestination`/`ShaderRead` accordingly (item 6; ADR-0056).
+  6. **The upload, the real draw, and a readback graph recorded into one
+     `CommandList`, submitted via exactly one `Device::submit()` call
+     against a real `OffscreenTarget`-vended `RenderTarget` that
+     genuinely participates** (drawn into, read back from — never a
+     dummy token). `ShaderRead` correctness comes from the upload's own
+     recorded barrier and execution order **within that one
+     submission**; `Device::waitIdle()`'s own role is narrowly CPU-side
+     — safe to read the readback buffer, safe to destroy the
+     staging/readback buffers — never what makes GPU-side sampling
+     correct (items 6, 13; ADR-0056).
+  7. **No target-independent submit API is added this round** — a
+     `Device::submit()` overload admitting no real `RenderTarget` is
+     registered as a named, disclosed future decision, not solved or
+     worked around with a dummy target (item 6; Out of Scope / Future
+     Work).
+  8. `Material` gaining one new, fixed, **borrowed — never owned**
+     combined-image-sampler binding, explicitly extending `DrawItem`'s
+     own existing borrowed-reference contract; the caller-owning
+     composition root, not `Material`, is responsible for
+     `SampledTexture`/`Sampler` outliving every `drawFrame()` call that
+     uses them (items 7, 8; ADR-0056).
+  9. Shader System gaining a real, reflected sampled-image/sampler
+     descriptor kind, and the shader-compiler tool's own
+     `expectedContract` field — previously parsed from CMake but never
+     consulted — wired into genuine use (item 17; ADR-0056).
+  10. `VertexAttributeFormat::Float2` (RHI) and `VertexAttributeType::Float2`
+      (Shader System), added solely to let this Spec's own hand-authored
+      verification fixture carry a real UV vertex attribute — documented
+      here, not as a fourth ADR, since it is a single, mechanical,
+      already-anticipated enum addition introducing no new module
+      boundary, ownership model, or public-API shape (items 11, 18).
+  11. **No upgrade to Asset System's own mesh schema this round, and no
+      claim that a real, asset-sourced textured mesh exists.**
+      `StaticMeshAssetData`, the mesh authoring grammar, and the mesh
+      runtime artifact remain completely untouched. "Mesh UV Attribute
+      Foundation" remains registered as an immediate, named, blocking
+      follow-up candidate for that future claim (item 11; Out of Scope /
+      Future Work).
+  12. The texture authoring/cooker/runtime-artifact/loader pipeline,
+      with Runtime never parsing PNG/JPEG at load time (items 9, 10;
+      ADR-0057).
+  13. The texture artifact's own versioned, little-endian, tightly-packed
+      RGBA8 contract — explicit row order/row pitch, a defensive maximum
+      dimension with 64-bit-safe overflow-checked arithmetic performed
+      before that check, a mip count checked equal to `1`, and distinct,
+      named error enumerators for every malformed-source/corrupted-
+      artifact condition (item 9; ADR-0057).
+  14. `colorSpace` as a mandatory, explicit `cookTexture()` parameter —
+      never inferred from the source PNG's own `gAMA`/`sRGB`/`iCCP`/
+      `cHRM` chunk, which this cooker reads from neither `stb_image` nor
+      itself, matching ADR-0057's own current recommendation exactly
+      (item 3; ADR-0057).
+  15. `stb_image` promoted from image-regression test-only to **offline
+      Asset Cooker use only** — never entering Runtime,
+      `Atlantis::AssetSystem`'s own runtime library, `Atlantis::Renderer`,
+      or any GPU-facing module (item 10; ADR-0057; [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)'s
+      own Accepted Amendment, below).
+  16. [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)'s
+      own "Accepted Amendment — 2026-08-24" **in full** — the dependency-
+      linkage boundary widening, the per-target single-implementation-TU
+      rule, license/offline-build/network/warnings/maintenance-boundary
+      re-confirmation, and relocating `stb`'s own `FetchContent`
+      declaration to a new, unconditionally-included CMake module,
+      earlier than `add_subdirectory(src/tools/asset_cooker)` (item 10).
+  17. The new fixture cooking the **same source texel data** twice — once
+      `Rgba8Unorm`, once `Rgba8Srgb` — rendering two side-by-side quads,
+      one shared `Sampler`, two `Material`s (items 3, 14).
+  18. **Both real GPU sampled-texture paths verified by one new golden**,
+      captured strictly under ADR-0042's own "Initial baseline
+      bootstrap" category, satisfying all six of its own numbered
+      constraints explicitly; the existing `minimal_cube`/`world_scene`
+      goldens are not modified, and their own tests are re-run unmodified
+      (item 14).
+  19. Every remaining Non-Goal unchanged: the Scene Asset format does not
+      yet reference texture/material (item 15); PBR, mipmap generation/
+      streaming, compressed formats, texture arrays/cubemaps, bindless
+      descriptors, render-to-texture/depth-sampling, and lighting/
+      shadow/HDR/post-processing all remain out of scope; Windows-now/
+      Android-later artifact portability, with Android implementation
+      itself still out of this round's scope (item 16).
+
+  [ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md)
+  all move to `Accepted` alongside this approval — see each ADR's own
+  new Acceptance Record. [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)'s
+  own top-level Status remains `Accepted`, unchanged; its own "Proposed
+  Amendment — 2026-08-23" section is now an "Accepted Amendment —
+  2026-08-24," accepted in the same Human Review pass, in full, as
+  drafted. **This approval authorizes drafting Plan 0016 against this
+  Spec, per [AGENTS.md](../AGENTS.md); it does not itself authorize
+  Implementation** — that future Plan must still pass its own Human
+  Review, per the same Spec → Plan → Human Review → Implementation →
+  Verification → PR → Merge path every prior spec in this line has
+  followed.
 - **Revised 2026-08-23** — a centralized, evidence-driven final review
   (still on this Spec's own first PR, no new PR) found and fixed two
   real, previously-glossed-over gaps before Human Review: (1) the
@@ -50,9 +165,10 @@
   Human Review Decision items 3, 6, 13, and 14 for the corrected
   designs; this Spec is submitted for formal Human Review as of this
   revision.
-- **Related Plan(s):** None yet — this round drafts only the Spec and its
-  ADRs, per explicit human direction; no Plan is authorized until this
-  Spec itself reaches `Approved`.
+- **Related Plan(s):** None yet — this Spec's own Human Review Approval
+  (2026-08-24) authorizes drafting Plan 0016 against it, per
+  [AGENTS.md](../AGENTS.md); no Plan has been drafted as of this
+  approval, and this approval does not itself authorize Implementation.
 - **Related ADR(s):**
   [ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)
   (sampled Texture/Sampler RHI boundary and ownership),
@@ -60,7 +176,10 @@
   (upload, resource state, RenderGraph responsibility, and descriptor
   binding), [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md)
   (texture asset format, decoder dependency, and color space contract)
-  — all `Proposed`.
+  — all `Accepted`, alongside this Spec's Human Review Approval recorded
+  2026-08-24. [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)'s
+  own top-level Status remains `Accepted`, unchanged; its own "Accepted
+  Amendment — 2026-08-24" section was accepted in the same pass.
 
 ## Summary
 

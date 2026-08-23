@@ -1,9 +1,16 @@
 # ADR 0055: Sampled Texture and Sampler RHI Module Boundary and Ownership
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-23
-- **Deciders:** Pending Human Review (as part of Spec 0016)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-24 as part of Spec 0016's Human Review Approval
 - **Related Spec:** [specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md)
+- **Acceptance Record (2026-08-24):** Accepted by Human Review as part
+  of [specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md)'s
+  own Human Review Approval (2026-08-24) — see that Spec's own approval
+  note (Human Review Decision items 1, 2, 4) for the specific items this
+  ADR corresponds to. This record does not change this ADR's own
+  Decision, Consequences, or Alternatives Considered below.
 
 ## Context
 
