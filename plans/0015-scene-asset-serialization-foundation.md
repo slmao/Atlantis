@@ -226,7 +226,17 @@ class ValidatedSceneData {
   etc. only for a logged diagnostic string — the enumerator itself is
   Runtime's own classification, per ADR-0054's own explicit "never
   `WorldError`/`SceneCookError`/`SceneArtifactDecodeError`/`AssetLoadError`
-  directly" requirement.
+  directly" requirement. **`RuntimeInitError::toString()`'s own
+  existing switch** (`src/runtime/src/init_error.cpp`) already has no
+  `default:` case (confirmed by reading the real file: a trailing
+  `ATLANTIS_CHECK_MSG(false, ...)` fallback after the switch, matching
+  `exit_reason.cpp`'s own identical, already-`Accepted` idiom) and
+  already compiles under `atlantis_runtime_host`'s own existing,
+  target-scoped `/w14062` (`src/runtime/CMakeLists.txt` line 53–55,
+  confirmed by reading the real file — Plan 0013's own 2026-08-21
+  amendment). Adding these four cases to that same switch is
+  automatically covered by that same, already-present protection — no
+  new CMake change is needed for `RuntimeInitError`.
 - **`SceneManifestError`** (Runtime-private, `scene_manifest.h`):
 
   ```cpp
@@ -242,15 +252,23 @@ class ValidatedSceneData {
   };
 
   struct SceneDependencyResolver {
-    // Deterministic-iteration container, not std::unordered_map -- see
-    // D8's own rationale. A sorted std::vector<std::pair<AssetId, Entry>>,
-    // looked up via std::lower_bound(), is sufficient at this Plan's own
-    // scale and needs no third-party dependency.
+    // A sorted std::vector<std::pair<AssetId, Entry>>, looked up via
+    // std::lower_bound() -- never std::unordered_map -- so no code
+    // path in this Plan ever exposes hash-iteration order anywhere,
+    // even by accident. **This choice is about lookup-container
+    // hygiene only; it does NOT establish load order.** find() is a
+    // point query -- this struct is never iterated end-to-end by any
+    // caller. The load-bearing load-order guarantee (Spec 0015 Human
+    // Review Approval item 10; ADR-0054's own Decision item 3) comes
+    // entirely from D10's own distinctIds collection, built by walking
+    // ValidatedSceneData's own node array in ascending index order --
+    // a property of D10's own loop, independent of how this resolver
+    // itself happens to be stored. Needs no third-party dependency.
     struct Entry {
       std::string artifactPath;
       std::string metadataPath;
     };
-    std::vector<std::pair<atlantis::asset_system::AssetId, Entry>> entries;  // kept sorted by AssetId
+    std::vector<std::pair<atlantis::asset_system::AssetId, Entry>> entries;  // sorted by AssetId -- for lookup speed only
 
     [[nodiscard]] const Entry* find(atlantis::asset_system::AssetId id) const noexcept;
   };
@@ -258,7 +276,37 @@ class ValidatedSceneData {
   [[nodiscard]] atlantis::Result<SceneDependencyResolver, SceneManifestError> loadSceneDependencyManifest(
       const std::string& manifestPath);
 
+  // For logging only, matching init_error.h's own toString()
+  // precedent exactly (D2's own switch-exhaustiveness inventory,
+  // below).
+  [[nodiscard]] const char* toString(SceneManifestError error) noexcept;
+
   }  // namespace atlantis::runtime
+  ```
+- **Switch-exhaustiveness inventory (every new enum, every consuming
+  switch, exact protection)** — enumerated explicitly rather than
+  assumed, per this Plan's own Independent Review:
+
+  | Enum | Consuming switch | Target | `/w14062` already present? |
+  |---|---|---|---|
+  | `RuntimeInitError` (4 new cases) | `toString()`, `init_error.cpp` (existing) | `atlantis_runtime_host` | **Yes** — confirmed real (`src/runtime/CMakeLists.txt` line 53–55). No CMake change needed. |
+  | `SceneManifestError` | `toString()`, `scene_manifest.cpp` (new) | `atlantis_runtime_host` | **Yes**, same target as above — this new file compiles under the same, already-present flag. No CMake change needed. |
+  | `SceneCookError` | `sceneCookErrorMessage()`, `cook_command.cpp` (new, mirroring the existing `cookErrorMessage()`/`assetSetErrorMessage()` — confirmed real, both already no-`default:` switches, `cook_command.cpp` lines 46–74) | `atlantis_asset_cooker_lib` | **No** — confirmed real (`src/tools/asset_cooker/CMakeLists.txt`, no `/w14062` anywhere). **New, disclosed addition below.** |
+  | `SceneArtifactDecodeError` | **None.** Runtime logs `decodeScene()` failure generically (`ATLANTIS_LOG_ERROR("decodeScene() failed")`, no per-case string) — matching `loadStaticMeshAsset()`'s own existing precedent for `AssetLoadError` exactly (confirmed real: `initializeSteps()`'s existing Step 4 logs `"loadStaticMeshAsset() failed"` with no per-`AssetLoadError`-case string anywhere). No switch exists for this enum in production code; nothing to protect. `decode_scene_tests.cpp`'s own assertions compare enumerator values directly (`==`), which needs no exhaustiveness protection at all. | — | N/A |
+
+  **New CMake addition** (`src/tools/asset_cooker/CMakeLists.txt`,
+  matching `src/runtime/CMakeLists.txt`'s own exact precedent):
+
+  ```cmake
+  # Plan 0015: real, compile-time enum-exhaustiveness protection for
+  # sceneCookErrorMessage()'s own no-default switch requires MSVC's
+  # C4062, off by default even at /W4 -- matching Plan 0013's own
+  # already-established src/runtime/CMakeLists.txt precedent exactly.
+  # Scoped to this target only; cmake/CompilerWarnings.cmake is
+  # deliberately not touched.
+  target_compile_options(atlantis_asset_cooker_lib PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/w14062>
+  )
   ```
 - **`BootstrapConfig` additions** (`src/runtime/include/atlantis/runtime/bootstrap_config.h`,
   appended):
@@ -271,6 +319,41 @@ class ValidatedSceneData {
     std::string sceneDependencyManifestPath;
   };
   ```
+- **`ValidatedSceneData`'s own default constructor — a disclosed wording
+  precision, not a design change.** ADR-0053's own Decision (item 4,
+  `Accepted`) explicitly keeps a `public` default constructor ("the
+  only other public constructor... trivially valid, since an empty
+  node array vacuously satisfies every structural/semantic condition").
+  Spec 0015's own Human Review Approval note (item 3) summarizes this
+  same acceptance more tersely as "no public default/arbitrary
+  construction." Read together with ADR-0053's own detailed reasoning
+  — the authoritative document for *why* — "no public ... construction"
+  is best read as "no public construction of an *arbitrary* (non-empty,
+  attacker- or caller-chosen) instance," which the trivial empty-default
+  case does not violate: **no caller can ever construct a non-empty,
+  malformed instance**, which is the property `World` instantiation's
+  own infallibility actually depends on. This Plan follows ADR-0053's
+  own more detailed, reasoned Decision as authoritative and keeps the
+  public default constructor exactly as D2 above already specifies —
+  flagged here as a genuine wording-precision finding for Human Review
+  to note, not silently resolved by rewriting either Spec or ADR text.
+- **`RuntimeApplication`'s own real member list — confirmed against
+  `src/runtime/include/atlantis/runtime/runtime_application.h`, not
+  assumed.** `world_` is declared today as a **bare** `atlantis::world::World
+  world_;` (default-constructed for free by `RuntimeApplication() =
+  default;`). `World` is move-constructible but **not**
+  move-assignable (`World& operator=(World&&) = delete;`,
+  ADR-0049/Spec 0014) — a bare member cannot be replaced by a freshly-
+  instantiated `World` without move-assignment, which does not exist.
+  **This Plan changes `world_`'s own declared type to
+  `std::optional<atlantis::world::World>`** — matching the exact
+  pattern `mesh_`/`material_` already use for the identical "empty
+  until a one-time-successful init step populates it" shape (both
+  already `std::optional`, confirmed real) — and publishes via
+  `world_.emplace(std::move(world))` (in-place move-*construction*,
+  never assignment; see D10 for the full call site and destruction-
+  order reasoning). This is a disclosed, necessary, minimal signature
+  change to an *already-existing* member — not a new type.
 
 ### D3. Authoring source grammar — exact fields
 
@@ -515,11 +598,18 @@ function(atlantis_add_scene_asset)
     COMMAND atlantis_asset_cooker
       --kind=scene --source=${source_path} --asset-root=${asset_root}
       --output-dir=${output_dir} --stamp=${stamp}
-    DEPENDS ${source_path} atlantis_asset_cooker ${dependency_targets}
+    DEPENDS ${source_path} atlantis_asset_cooker
     COMMENT "Cooking scene asset: ${ARG_SOURCE}"
     VERBATIM
   )
   add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
+  # Ordering only, deliberately NOT added to the custom command's own
+  # DEPENDS above -- see "Rebuild scoping" immediately below for why
+  # these are two different things in CMake and why conflating them
+  # would over-trigger.
+  if(dependency_targets)
+    add_dependencies(${ARG_NAME}_asset ${dependency_targets})
+  endif()
 
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
@@ -528,17 +618,58 @@ function(atlantis_add_scene_asset)
 endfunction()
 ```
 
-**Rebuild scoping**: `DEPENDS` names exactly `${source_path}`,
-`atlantis_asset_cooker`, and each declared dependency's own `_TARGET` —
-nothing else. Editing the scene source, the cooker, or a declared
-mesh dependency re-triggers this custom command (ordinary CMake
-staleness checking, identical to `atlantis_add_static_mesh_asset()`'s
-own already-working mechanism); an unrelated asset never appears in
-this list and never triggers it (V13). A `MESH_DEPENDENCIES` entry the
-scene's own authoring source never actually references still
-contributes a manifest line and a `DEPENDS` edge (harmless — matching
-Spec 0015's own explicit "not an error" decision, item 9) but costs
-nothing beyond one unused resolver-map entry.
+**Rebuild scoping — trigger semantics, precise, not conflated:**
+
+- **Scene source or the cooker itself changes** → the custom
+  *command*'s own `DEPENDS` (`${source_path}`, `atlantis_asset_cooker`
+  only) goes stale → the scene re-cooks. Ordinary CMake staleness
+  checking, identical to `atlantis_add_static_mesh_asset()`'s own
+  already-working mechanism.
+- **A declared `MESH_DEPENDENCIES` mesh's own source or cooker
+  changes** → that mesh's own, separate `atlantis_add_static_mesh_asset()`-
+  declared custom command re-cooks *that mesh* — **the scene's own
+  cook step does not re-run**, because the mesh's own target is
+  attached via `add_dependencies()` on the *target* (ordering only:
+  "build the mesh before/alongside this scene, as part of the same
+  `ALL` graph") — never via the custom *command*'s own `DEPENDS` (which
+  is what CMake actually checks for staleness). **This is deliberate,
+  not an oversight**: the scene artifact only ever stores a mesh's
+  `AssetId`, itself a hash of that mesh's own **logical path**, which
+  does not change when the mesh's own *content* changes and is already
+  known at CMake-declare time — so the scene artifact's own output
+  bytes provably cannot change from a mesh content edit, and this
+  design avoids the wasted, misleading-if-undisclosed re-cook a
+  cruder `DEPENDS`-based edge would have caused. The `add_dependencies()`
+  edge still exists so a full build graph is consistent (the mesh
+  builds as part of the same `ALL` pass) — it just does not, by
+  itself, mark the scene's own stamp stale.
+- **A `MESH_DEPENDENCIES` mesh's own logical path changes** (renamed
+  in its own `atlantis_add_static_mesh_asset(... SOURCE ...)` call) —
+  this edits `assets/CMakeLists.txt` itself, which CMake always
+  reconfigures on (a plain, standard CMake guarantee, not a mechanism
+  this Plan invents); reconfiguring re-runs `atlantis_add_scene_asset()`
+  and therefore regenerates this scene's own manifest (`file(GENERATE)`)
+  with the new logical path — the scene's own *cooked artifact* is
+  unaffected (it stores an `AssetId`, computed independently at that
+  mesh's own cook time from its own then-current logical path; if the
+  path changed, that mesh's own `AssetId` changed too, and the *scene
+  authoring source*, unchanged here, still names the *old* path unless
+  a human also edits it — an already-covered, ordinary "unresolved
+  `AssetId`" condition at Runtime load time, not a new case).
+- **The `MESH_DEPENDENCIES` list itself changes** (a dependency added
+  or removed in `assets/CMakeLists.txt`) — same reconfigure-on-CMakeLists-edit
+  guarantee as above; the manifest is regenerated with the new
+  dependency set on the next configure, no special mechanism needed.
+- **An unrelated, undeclared asset or scene changes** — never appears
+  in this scene's own `DEPENDS` or `add_dependencies()` list at all;
+  never triggers anything here (V13).
+
+A `MESH_DEPENDENCIES` entry the scene's own authoring source never
+actually references still contributes a manifest line and an ordering
+edge (harmless — matching Spec 0015's own explicit "not an error"
+decision, item 9) but costs nothing beyond one unused resolver-map
+entry; it is never resolved or loaded (D10's own resolve phase only
+ever looks up references the scene actually has).
 
 `assets/CMakeLists.txt` gains:
 
@@ -572,7 +703,17 @@ constant mirroring `kAuthoringExtension` exactly.
 
 Text, one line per entry, tab-separated (matching this Plan's own
 `file(GENERATE)` output above): `<logical path>\t<artifact
-path>\t<metadata path>`. `loadSceneDependencyManifest()`
+path>\t<metadata path>`. **Tab-separation is safe by construction, not
+merely by convention**: the logical-path field can never itself
+contain a tab or newline — `normalizeLogicalPath()`'s own existing,
+already-`Accepted` character whitelist
+(`LogicalPathError::DisallowedCharacter`, confirmed real in
+`errors.h`) already rejects any character outside its own allowed set
+before a path is ever considered valid, and a tab/newline is not in
+that set; the artifact/metadata-path fields are CMake-computed, never
+human-authored, from a fixed build-tree root plus a mechanically
+derived filename (`${output_dir}/${base}.amesh`-shaped, D4/D7), never
+containing a tab either. `loadSceneDependencyManifest()`
 (`scene_manifest.cpp`):
 
 1. Read the file (`ManifestUnreadable`); split into lines; a line with
@@ -592,13 +733,16 @@ path>\t<metadata path>`. `loadSceneDependencyManifest()`
    sidecar via the existing `parseAssetMetadata()`, compare its own
    `assetId` field against the `AssetId` just computed from the
    manifest's own logical-path field (`MetadataArtifactMismatch`).
-6. Build `SceneDependencyResolver::entries` as a `AssetId`-sorted
-   `std::vector`, never a `std::unordered_map` (D2's own type; the
-   *storage* choice, not merely the *iteration* choice, is what makes
-   D9's own load order genuinely deterministic — an
-   `unordered_map`-backed resolver would make "ascending first-
-   reference order" meaningless downstream even if the *caller's* own
-   loop order were otherwise deterministic).
+6. Build `SceneDependencyResolver::entries` as an `AssetId`-sorted
+   `std::vector`, never a `std::unordered_map` (D2's own type) — a
+   deliberate lookup-container choice so no code path in this Plan
+   ever exposes hash-iteration order, even incidentally. **This
+   resolver is a point-lookup structure only; D10's own distinctIds
+   collection, not this container's own storage order, is what
+   actually establishes "ascending first-reference" load order** — see
+   D2's own corrected note on `SceneDependencyResolver` and D10's own
+   explicit call-order walkthrough for the single, authoritative
+   source of that guarantee.
 
 A declared-but-unreferenced manifest entry is not detected or rejected
 here — this function has no visibility into which entries the scene
@@ -660,7 +804,7 @@ node-index-to-`EntityId` mapping — a local `std::vector`, never
 returned, never a `World` member, gone the instant this function
 returns (Spec 0015 Human Review Approval item 6).
 
-### D10. Runtime — `initializeSteps()` resequencing
+### D10. Runtime — `initializeSteps()` resequencing, ownership, and destruction order
 
 Replaces the existing `buildValidationScene()` call
 (`runtime_application.cpp`) with:
@@ -676,11 +820,12 @@ auto sceneResult = decodeScene(config.sceneArtifactPath, config.sceneMetadataPat
 if (sceneResult.isErr()) { /* log, markFailed(), Err(SceneArtifactLoadFailed) */ }
 const ValidatedSceneData scene = std::move(sceneResult.value());
 
-// (c) Collect distinct AssetIds, ascending first-reference order (D2's
-//     own AssetId-sorted resolver is irrelevant to *this* order --
-//     this loop's own visitation order over scene's own nodes is what
-//     the "first reference" guarantee actually depends on).
-std::vector<AssetId> distinctIds;  // first-reference order, no duplicates
+// (c) Collect distinct AssetIds in ascending FIRST-REFERENCE order --
+//     the sole source of this Plan's own load-order guarantee (Spec
+//     0015 Human Review Approval item 10). Walks scene's own node
+//     array in index order; the resolver (built in (a), AssetId-sorted
+//     for lookup only) is never iterated here or anywhere else.
+std::vector<AssetId> distinctIds;
 for (std::size_t i = 0; i < scene.nodeCount(); ++i) {
   if (const auto& node = scene.node(i); node.renderable.has_value()) {
     const AssetId id = node.renderable->meshAsset;
@@ -688,7 +833,7 @@ for (std::size_t i = 0; i < scene.nodeCount(); ++i) {
   }
 }
 
-// (d) Phase 1: resolve every one -- no I/O, no Entity yet.
+// (d) Phase 1: resolve every one -- no I/O, no Entity yet, same order as (c).
 std::vector<const SceneDependencyResolver::Entry*> resolved;
 for (AssetId id : distinctIds) {
   const auto* entry = resolver.find(id);
@@ -696,8 +841,12 @@ for (AssetId id : distinctIds) {
   resolved.push_back(entry);
 }
 
-// (e) Phase 2: load, same order.
-std::unordered_map<AssetId, atlantis::renderer::Mesh> meshResourceMap;  // keyed access only, never iterated in a load-order-sensitive way
+// (e) Phase 2: load, same order as (c)/(d) -- distinctIds' own index
+//     order IS the load order; the map below is populated in that
+//     order but is a keyed store, never iterated afterward in any
+//     order-sensitive way (runFrame()'s own per-DrawItem lookups are
+//     by AssetId, one key at a time, order-independent by nature).
+std::unordered_map<AssetId, atlantis::renderer::Mesh> meshResourceMap;
 for (std::size_t i = 0; i < distinctIds.size(); ++i) {
   auto meshResult = loadStaticMeshAsset(resolved[i]->artifactPath, resolved[i]->metadataPath);
   if (meshResult.isErr()) { /* log, markFailed(), Err(SceneDependencyLoadFailed) */ }
@@ -709,25 +858,106 @@ for (std::size_t i = 0; i < distinctIds.size(); ++i) {
 // (f) Instantiate -- infallible.
 World world = atlantis::world::fromValidatedSceneData(scene);
 
-// (g) Publish -- only now, both fully built.
-world_ = std::move(world);
+// (g) Publish -- only now, both fully built. World is move-constructible
+//     but NOT move-assignable (ADR-0049/Spec 0014, unchanged) -- world_
+//     is std::optional<World> (D2's own corrected member type) and this
+//     is emplace(), i.e. in-place move-CONSTRUCTION, never assignment.
+//     meshResourceMap_ is a plain std::unordered_map, whose own move-
+//     assignment is not deleted, so plain assignment is correct there.
+world_.emplace(std::move(world));
 meshResourceMap_ = std::move(meshResourceMap);
 ```
 
 **Every early-return branch above happens before (f)/(g)** — no
-partial `world_`/`meshResourceMap_` assignment on any failure path; the
-locally-scoped `world`/`meshResourceMap` values are simply destroyed by
-ordinary C++ scope exit on return, no explicit rollback code (D9's own
-`fromValidatedSceneData()` itself never observes a failure, per D6/D9).
-`meshResourceMap_` (a new `RuntimeApplication` member, `std::unordered_map<AssetId,
-Mesh>` — keyed lookup only, its own iteration order is never load-
-order-relevant since loading already finished before this map exists)
-replaces the single `mesh_` member; `runFrame()`'s own per-`DrawItem`
-loop resolves each `Renderable`'s `AssetId` against it (`resolveMeshAsset()`'s
-existing per-`AssetId` check, `scene_extraction.h`, now querying a map
-instead of one hard-coded comparison — this is the one small, disclosed
-edit to already-`Accepted` per-frame code this Plan makes, not a new
-translation layer).
+partial `world_`/`meshResourceMap_` mutation on any failure path; the
+locally-scoped `resolver`/`scene`/`resolved`/`meshResourceMap`/`world`
+values are simply destroyed by ordinary C++ scope exit on return, no
+explicit rollback code (D9's own `fromValidatedSceneData()` itself
+never observes a failure, per D6/D9). If `initializeSteps()` fails
+before (g), `world_` remains `std::nullopt` and `meshResourceMap_`
+remains empty — both their own default, harmless states — and
+`RuntimeApplication` never reaches `Running` (Spec 0013's own existing
+lifecycle contract, unchanged), so `runFrame()` is never called against
+a half-published instance.
+
+**Ownership and destruction order — confirmed against the real
+`RuntimeApplication` member list
+(`src/runtime/include/atlantis/runtime/runtime_application.h`), not
+assumed:**
+
+```cpp
+// runtime_application.h -- existing member list, with this Plan's own changes marked
+PlatformSession platformSession_;
+std::unique_ptr<atlantis::rhi::Device> device_;
+std::unique_ptr<atlantis::rhi::Presentation> presentation_;
+std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap_;  // CHANGED: replaces the old std::optional<Mesh> mesh_, same declaration slot
+std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer_;
+std::unique_ptr<atlantis::rhi::Texture> depthTexture_;
+std::optional<atlantis::renderer::Material> material_;
+
+atlantis::renderer::Renderer renderer_;
+std::optional<atlantis::world::World> world_;  // CHANGED: was a bare World, D2's own note
+atlantis::asset_system::AssetId knownMinimalCubeAssetId_ = 0;  // REMOVED -- see below
+// ...remaining members unchanged...
+```
+
+C++ destroys non-static members in the **reverse** of their declaration
+order — this file's own existing comment (`runtime_application.h`
+lines 91–98, confirmed real) already states the resulting destruction
+sequence explicitly: **Material, Texture, Buffer, Mesh, Presentation,
+Device** (declaration order is the exact reverse). `meshResourceMap_`
+**replaces `mesh_` in that exact same declaration slot** — immediately
+after `presentation_`, before `cameraBuffer_` — so it destructs at
+exactly the position the comment already documents for "Mesh": after
+Material/Texture/Buffer, but **before Presentation and Device**,
+satisfying "every GPU `Mesh` destroyed before `Device`" by construction,
+not by a new ordering rule this Plan invents — the existing rule
+already covers it once `meshResourceMap_` occupies `mesh_`'s own slot.
+Every `Mesh` value inside the map is destroyed when the map itself is
+(the map owns its own values; nothing here needs its own destructor).
+`world_`'s own position (after `material_`/`renderer_`, outside the
+GPU-resource block) is unchanged from today — it owns no GPU resource
+and has no ordering relationship to Device/Presentation/Mesh, exactly
+as the file's own existing comment already states; only its *type*
+changes (D2). `knownMinimalCubeAssetId_` — today's single-mesh
+identity field — is removed outright: `meshResourceMap_`'s own keys
+are the (plural) equivalent, and nothing else reads this field once
+D10 lands.
+
+**`runFrame()`'s own `DrawItem` loop borrows only already-published
+mesh data, by construction, not by a new check this Plan adds**:
+`item.mesh = &meshResourceMap_.at(renderable.meshAsset);` (a keyed
+lookup — matching `resolveMeshAsset()`'s own existing per-`AssetId`
+check, `scene_extraction.h`, now querying a map instead of one
+hard-coded comparison; this is the one small, disclosed edit to
+already-`Accepted` per-frame code this Plan makes, not a new
+translation layer) — `runFrame()` is only ever called once
+`RuntimeApplication` has reached `Running`, which per the paragraph
+above only happens after step (g) has already published a fully-formed
+`meshResourceMap_`; there is no code path where `runFrame()` observes
+a partially-populated map, so no defensive re-check is added at the
+`DrawItem`-construction call site itself (matching how `mesh_`/`material_`
+are already dereferenced unconditionally, `&*mesh_`/`&*material_`, in
+this exact file today).
+
+**`shutdown()`'s own existing body** (`runtime_application.cpp`,
+confirmed real: `material_.reset(); depthTexture_.reset();
+cameraBuffer_.reset(); mesh_.reset(); presentation_.reset();
+device_.reset();`, called once, idempotent, guarded by the existing
+`ShutDown`-state check) gains exactly one substitution — `mesh_.reset()`
+becomes `meshResourceMap_.clear()` — in the identical position,
+preserving the identical explicit-early-teardown order the existing
+five other calls already establish; `world_` is not reset here (it
+owns no GPU resource, matching today's behavior — `world_` was never
+reset in `shutdown()` before this Plan either). Idempotency is
+unaffected: `meshResourceMap_.clear()` on an already-empty map (a
+second `shutdown()` call, or a call after `initializeSteps()` never
+reached step (g)) is a safe no-op, exactly as `mesh_.reset()` on an
+already-empty `optional` already is today. No double-destruction risk:
+every value is owned by exactly one container, cleared/reset exactly
+once per `shutdown()` invocation, and `shutdown()` itself is guarded
+against re-entry by the existing `RuntimeLifecycleState::ShutDown`
+early-return.
 
 ### D11. First scene asset — exact authored content
 
@@ -770,19 +1000,27 @@ convention.
    V8, V9 (decode-side), V10.
 5. **CMake scene asset declaration** (D7 — `atlantis_add_scene_asset()`,
    the additive `LOGICAL_PATH` export line, `atlantis_asset_cooker`'s
-   own `--kind=scene` mode). No new scene asset declared yet (that is
-   Step 8) — verified via a test-only scene fixture declared in
-   `tests/asset_system/CMakeLists.txt` alone. V13.
+   own `--kind=scene` mode and `sceneCookErrorMessage()`, the new,
+   disclosed `/w14062` on `atlantis_asset_cooker_lib`). No new scene
+   asset declared yet (that is Step 9) — verified via a test-only scene
+   fixture declared in `tests/asset_system/CMakeLists.txt` alone. V13,
+   V27 (`SceneCookError`'s own portion).
 6. **`World::fromValidatedSceneData()`** (D9,
    `src/world/include/atlantis/world/scene_instantiation.h`/`.cpp`).
    `tests/world/scene_instantiation_tests.cpp`: V21.
 7. **Runtime manifest loading** (D8's `scene_manifest.h`/`.cpp`,
-   `RuntimeInitError`/`BootstrapConfig` additions).
-   `tests/runtime/scene_manifest_tests.cpp`: V14–V19.
-8. **Runtime `initializeSteps()` resequencing** (D10 — replaces
-   `buildValidationScene()`; `meshResourceMap_` member;
-   `resolveMeshAsset()`'s own small edit). `tests/runtime/`: V20, V22
-   (GPU-independent portions).
+   `RuntimeInitError`/`BootstrapConfig` additions, `SceneManifestError`'s
+   own `toString()`). `tests/runtime/scene_manifest_tests.cpp`: V14–V19,
+   V27 (`RuntimeInitError`/`SceneManifestError` portion — both already
+   covered by `atlantis_runtime_host`'s own existing `/w14062`, D2).
+8. **Runtime `initializeSteps()`/ownership resequencing** (D10 — replaces
+   `buildValidationScene()`; `runtime_application.h`'s own `world_`
+   retyped to `std::optional<World>`, `meshResourceMap_` added in
+   `mesh_`'s former declaration slot (same reverse-destruction-order
+   guarantee), `mesh_`/`knownMinimalCubeAssetId_` removed;
+   `shutdown()`'s own `mesh_.reset()` becomes `meshResourceMap_.clear()`;
+   `resolveMeshAsset()`'s own small map-lookup edit). `tests/runtime/`:
+   V20, V22 (GPU-independent portions).
 9. **First scene asset authored, declared, and wired end to end** (D11;
    `assets/scenes/world_scene.scene.txt`; `assets/CMakeLists.txt`'s own
    `atlantis_add_scene_asset()` call; `main.cpp`'s own
@@ -793,8 +1031,9 @@ convention.
 10. **Full verification and documentation/registry closeout** — clean
     Debug and Release builds; `ctest -LE gpu` and `ctest -L gpu` both
     green; Vulkan Validation Layers grepped clean; module-boundary scan
-    (V26); manual windowed verification (V24, genuine human — matching
-    Spec 0014's own established, and only recently satisfied, standard);
+    (V26); switch-exhaustiveness positive/negative build check (V27);
+    manual windowed verification (V24, genuine human — matching Spec
+    0014's own established, and only recently satisfied, standard);
     `specs/README.md`/`docs/project-blueprint.md`/`docs/architecture/module_boundaries.md`
     updated to record delivery.
 
@@ -824,14 +1063,21 @@ the same diff.
   (Step 9's own GPU-required test reusing the existing golden — exact
   file name a Plan-level detail).
 - **Modified**: `src/asset_system/include/atlantis/asset_system/errors.h`
-  (additive), `src/asset_system/CMakeLists.txt` (additive),
+  (additive), `src/asset_system/CMakeLists.txt` (additive —
+  `atlantis_add_scene_asset()`, the `LOGICAL_PATH` export line),
   `src/tools/asset_cooker/{cook_command.h,cook_command.cpp,main.cpp}`
-  (additive third mode), `src/runtime/include/atlantis/runtime/{init_error.h,bootstrap_config.h}`
-  (additive), `src/runtime/src/runtime_application.cpp` (D10's own
-  resequencing — `buildValidationScene()` and its own call site
-  removed, replaced), `src/runtime/src/main.cpp` (new `BootstrapConfig`
-  fields populated from new CMake compile definitions),
-  `src/runtime/include/atlantis/runtime/scene_extraction.h`/`.cpp`
+  (additive third mode), `src/tools/asset_cooker/CMakeLists.txt`
+  (additive — new, disclosed `/w14062`, D2's own switch-exhaustiveness
+  inventory), `src/runtime/include/atlantis/runtime/{init_error.h,bootstrap_config.h}`
+  (additive), `src/runtime/include/atlantis/runtime/runtime_application.h`
+  (`world_`'s own type change to `std::optional<World>`;
+  `meshResourceMap_` added in `mesh_`'s own former declaration slot;
+  `mesh_`/`knownMinimalCubeAssetId_` removed — D2/D10), `src/runtime/src/runtime_application.cpp`
+  (D10's own resequencing — `buildValidationScene()` and its own call
+  site removed, replaced; `shutdown()`'s own `mesh_.reset()` becomes
+  `meshResourceMap_.clear()`), `src/runtime/src/main.cpp` (new
+  `BootstrapConfig` fields populated from new CMake compile
+  definitions), `src/runtime/include/atlantis/runtime/scene_extraction.h`/`.cpp`
   (`resolveMeshAsset()`'s own small map-lookup edit), `assets/CMakeLists.txt`
   (additive), `tests/asset_system/CMakeLists.txt`, `tests/world/CMakeLists.txt`,
   `tests/runtime/CMakeLists.txt`, `tests/image_regression/CMakeLists.txt`
@@ -845,6 +1091,24 @@ the same diff.
   golden — Spec 0015's own explicit requirement), `tests/image_regression/fixture/world_scene_fixture.cpp`
   (Spec 0015 Human Review Decision Table item 11 — the existing hand-
   authored-fixture path is re-run unmodified, not migrated).
+- **Checked in vs. build-tree-only — explicit, per Independent Review.**
+  Checked in: `assets/scenes/world_scene.scene.txt` (the authoring
+  source — matches `assets/meshes/minimal_cube.mesh.txt`'s own
+  precedent exactly: authoring sources are committed, cooked output is
+  not). **Never checked in, build-tree-only, generated fresh by every
+  build** (matches `minimal_cube`'s own `.amesh`/`.amesh.meta.txt`,
+  neither of which is committed, confirmed real by their absence from
+  `assets/` and their presence only under `${CMAKE_BINARY_DIR}/assets/`):
+  the cooked scene artifact (`.ascene`), its metadata sidecar
+  (`.ascene.meta.txt`), and the per-scene dependency manifest
+  (`.ascene.manifest.txt`) — none of the three is ever committed, and
+  none contains a path that would be meaningful outside the machine
+  that produced it (the artifact/metadata contain no path at all, only
+  `AssetId`s; the manifest's own build-tree paths are exactly as
+  ephemeral as `minimal_cube`'s own already-uncommitted artifact
+  path). `.gitignore` coverage for `${CMAKE_BINARY_DIR}` already
+  excludes all three, matching how it already excludes every other
+  build-tree asset output today — no new ignore rule is needed.
 
 ## Sequencing & Dependencies
 
@@ -887,7 +1151,7 @@ own mandatory separate commit. Step 10 depends on Step 9.
 | V16 | Manifest: an entry whose own metadata sidecar's `assetId` does not match the manifest-computed `AssetId` is rejected via `Err(MetadataArtifactMismatch)`. | `scene_manifest_tests.cpp` | GPU-independent |
 | V17 | Manifest: a scene reference naming an `AssetId` with no manifest entry fails via `Err(RuntimeInitError::SceneDependencyUnresolved)`, confirmed to occur **before** any `Entity` exists. | `scene_manifest_tests.cpp` or a dedicated Runtime-level test | GPU-independent |
 | V18 | Manifest: a declared `MESH_DEPENDENCIES` entry the scene never references does **not** fail the load — the resolver builds successfully, and only referenced entries are ever resolved/loaded. | `scene_manifest_tests.cpp` | GPU-independent |
-| V19 | Deterministic load order: repeated runs against the same scene produce an identical mesh-load sequence, confirmed via an instrumented resolver counting call order — never dependent on `std::unordered_map` iteration (the resolver itself is `AssetId`-sorted-vector-backed, D8). | A dedicated Runtime-level test | GPU-independent |
+| V19 | Deterministic load order matches **first-reference**, not `AssetId`-numeric, order — the specific regression this item exists to prevent. Test scene deliberately engineered so a node referencing a **numerically larger** `AssetId` appears **before** a node referencing a numerically smaller one (i.e., first-reference order and `AssetId`-sorted order are guaranteed to disagree); the observed load sequence (instrumented at the `loadStaticMeshAsset()` call site in D10's own step (e)) matches first-reference order exactly, proving the implementation does not secretly sort by `AssetId` and does not depend on the resolver's own internal storage order or on `std::unordered_map` iteration. Repeated runs against the same scene additionally produce an identical sequence (bare determinism, not merely "some deterministic-looking order"). | A dedicated Runtime-level test | GPU-independent |
 | V20 | Transactional failure at every stage: a scene that fails cook-time validation never produces an artifact; a corrupted artifact never produces a `ValidatedSceneData`; an unresolved or failed-to-load mesh dependency never reaches `World::fromValidatedSceneData()` and leaves `RuntimeApplication` with neither a populated `world_` nor a populated `meshResourceMap_` — confirmed directly by inspecting both members, not inferred from a process exit code. | A dedicated Runtime-level test (GPU-independent, injecting a bad manifest/artifact path) | GPU-independent |
 | V21 | `World::fromValidatedSceneData()`: a hand-constructed `ValidatedSceneData` (via the test's own `friend`-equivalent access, matching `EntityLifecycleTestAccess`'s own established pattern) produces a `World` whose entity count, hierarchy (`getParent()`), `Transform`, `Camera`, `Renderable`, and `activeCamera()` all match exactly; deterministic instantiation order confirmed via repeated runs producing identical `EntityId` sequences (matching Spec 0014's own V14 shape); `static_assert` confirming the function's own return type is `World`, not a `Result`. | `scene_instantiation_tests.cpp` | GPU-independent (mix of runtime and compile-time) |
 | V22 | The loaded scene's CPU-side `World` state (entity count, every `Transform`/`Camera`/`Renderable` value, hierarchy, active camera) is identical, field-for-field, to `buildValidationScene()`'s own hand-built `World` state — confirmed by a direct comparison test, GPU-independent portion first (structural equivalence), then re-confirmed by the GPU-required golden compare (V23) as the rendering-level proof. | A dedicated Runtime-level test, then `world_scene_loaded_gpu_tests.cpp` | GPU-independent + `gpu`-labeled |
@@ -895,6 +1159,7 @@ own mandatory separate commit. Step 10 depends on Step 9.
 | V24 | Manual windowed: the real `atlantis_runtime` executable, launched with the new scene-asset configuration, shows the same five distinct, correctly-shaded, depth-ordered cubes at their D9 positions as Spec 0014's own already-verified windowed check; interactive resize/minimize/restore/close all behave correctly — an actual human, using a real graphical session, confirms this directly (matching Spec 0014's own V20 requirement and its own recorded 2026-08-23 PASS precedent exactly — never satisfied by programmatic Win32 automation alone). | Manual | Manual |
 | V25 | Debug **and** Release: clean configure + build; `ctest -LE gpu` and `ctest -L gpu` both green on both configurations; Vulkan Validation Layers grepped clean (not merely inferred from exit status) on every GPU-touching path, including the new loaded-scene test. | Both configurations | Manual, recorded |
 | V26 | Module boundary / forbidden-dependency scan: `tests/asset_system/module_boundary_tests.cpp`'s own existing scan confirms `src/asset_system/` still names no `atlantis/world/` header (direct, automated proof ADR-0052's own cycle-avoidance Decision holds); `tests/world/module_boundary_tests.cpp`'s own existing scan confirms `src/world/` still names no RHI/Renderer/RenderGraph/ShaderSystem/Platform/VulkanBackend/Runtime header; `git diff --stat` confirms no file under `src/rhi/`, `src/renderer/`, `src/render_graph/`, `src/vulkan_backend/`, `src/platform/`, `src/shader_system/`, `shaders/`, or `tests/image_regression/goldens/` was modified; `CMakeLists.txt`/`vcpkg`-equivalent dependency list confirms no new third-party dependency was added. | `module_boundary_tests.cpp` (both), manual `git diff --stat` review | GPU-independent + Manual |
+| V27 | Every new enum's own consuming switch is exhaustive, no `default:` case, and — where a switch genuinely exists in production code — compile-time protected: `RuntimeInitError::toString()`'s four new cases and `SceneManifestError::toString()` both compile under `atlantis_runtime_host`'s own existing, real `/w14062` (temporarily removing a case and confirming the build fails naming that exact enumerator, then restoring it, matching Spec 0013's own already-`Accepted` `C4062` positive/negative re-verification precedent exactly); `SceneCookError`'s own `sceneCookErrorMessage()` compiles under `atlantis_asset_cooker_lib`'s own new, disclosed `/w14062` the same way. Confirmed, not merely asserted, that `SceneArtifactDecodeError` has no production switch anywhere (D2's own switch-exhaustiveness inventory) — grepped for `switch` against that type across `src/`, matching zero production call sites. | Manual, recorded (positive/negative build check); a `grep`-based inventory check | GPU-independent + Manual |
 
 ## Rollback Plan
 
@@ -914,11 +1179,12 @@ exists (unlike a Plan that captured a new golden).
 See [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
 Deltas specific to this plan:
 
-- V1–V26 all executed and recorded; V13, V24, V25 (partially) recorded
-  as manual verification in the Implementation PR — V24 specifically
-  requires genuine human observation through a real graphical session,
-  matching Spec 0014's own established, hard-won standard; programmatic
-  automation is not, and must never be recorded as, a substitute.
+- V1–V27 all executed and recorded; V13, V24, V25, V27 (partially)
+  recorded as manual verification in the Implementation PR — V24
+  specifically requires genuine human observation through a real
+  graphical session, matching Spec 0014's own established, hard-won
+  standard; programmatic automation is not, and must never be recorded
+  as, a substitute.
 - The existing `minimal_cube` and `world_scene` goldens under
   `tests/image_regression/goldens/` are confirmed **unchanged** in the
   final diff — no new golden is captured by this Plan at all.
@@ -967,12 +1233,78 @@ Plan touches or extends:
   architectural blocker was found; nothing here required stopping to
   raise an objection.
 
+## Independent Review — Round 2 (2026-08-23): targeted final fix, not a broad re-review
+
+Six concrete findings, each corrected directly in the D-sections above
+rather than left as a note — all mechanical (this Plan's own C++/CMake
+shape choices), none touching Spec 0015 or ADR-0052–0054's own already-
+Approved/Accepted content:
+
+1. **A real compile error, found and fixed.** `RuntimeApplication::world_`
+   is declared today as a bare `World` (confirmed real,
+   `runtime_application.h`); `World` is not move-assignable. The prior
+   draft's own `world_ = std::move(world);` would not compile. Fixed:
+   `world_`'s own type changes to `std::optional<World>` (matching
+   `mesh_`/`material_`'s own already-existing pattern for the identical
+   shape), published via `world_.emplace(std::move(world))` — in-place
+   move-construction, never assignment (D2, D10).
+2. **A misleading internal description, found and fixed.** D8's own
+   prior text claimed the resolver's `AssetId`-sorted storage was "what
+   makes load order deterministic" — factually wrong relative to D10's
+   own code, which was already correct (first-reference order from
+   walking `ValidatedSceneData`'s own node array) but risked being
+   misread as license to iterate the resolver directly, which would
+   silently produce `AssetId`-numeric order instead of the Human-
+   Review-Approved first-reference order. Fixed: D2/D8/D10 now state,
+   consistently, that the resolver is a point-lookup structure only;
+   V19 rewritten to deliberately test a scene whose first-reference and
+   `AssetId`-numeric orders disagree, specifically to catch this class
+   of regression rather than merely confirming "some" deterministic
+   order.
+3. **An over-triggering CMake dependency, found and fixed.** The prior
+   draft's own `add_custom_command(... DEPENDS ... ${dependency_targets})`
+   would re-cook the scene on every mesh *content* edit, even though
+   the scene artifact's own bytes (which store only a path-derived
+   `AssetId`, unaffected by mesh content) never actually change as a
+   result. Fixed: mesh targets move to `add_dependencies()` on the
+   scene's own target (ordering only), out of the custom command's own
+   `DEPENDS` (staleness) — D7's own "Rebuild scoping" now states each
+   distinct trigger condition explicitly, including the case this fix
+   addresses.
+4. **A bare assertion, replaced with cited real evidence.** "multi-
+   config-safe" was previously asserted from `file(GENERATE)`'s own
+   general behavior alone. D7 now cites the exact real file/lines
+   (`src/runtime/CMakeLists.txt` lines 69–80, whose own comment
+   literally reads "absolute, configuration-independent build-tree
+   paths") as the concrete, already-`Accepted`, already-working
+   precedent this Plan's own manifest mechanism matches.
+5. **An incomplete exhaustiveness inventory, completed.** Every new
+   enum's own consuming switch (or explicit absence of one) is now
+   listed with its exact target and exact protection status (D2's own
+   new table); one new, disclosed `/w14062` addition
+   (`atlantis_asset_cooker_lib`) was found necessary and added; two
+   enums' own switches were confirmed to already fall under
+   `atlantis_runtime_host`'s own existing protection, requiring no new
+   CMake change; new V27 records the positive/negative build check.
+6. **A wording-precision finding, disclosed, not silently resolved.**
+   Spec 0015's own Human Review Approval note (item 3) summarizes
+   `ValidatedSceneData`'s own construction contract as "no public
+   default/arbitrary construction"; ADR-0053's own more detailed,
+   Accepted Decision (item 4) explicitly keeps a trivial `public`
+   default constructor for the empty-scene case. This Plan follows the
+   ADR's own more detailed, reasoned text (D2) and flags the
+   discrepancy for Human Review's own awareness — it is a summary-
+   wording precision question, not a design disagreement (no caller can
+   construct a non-empty, malformed instance either way), and is
+   explicitly **not** resolved here by editing either already-approved
+   document.
+
 ## Deviations, objections, and open mechanical details
 
 **No `Accepted`/`Approved` decision in Spec 0015 or ADR-0052–0054 was
 found to be unimplementable against the real, current source tree.**
-Two genuinely open mechanical details, appropriately left to
-Implementation, neither architectural:
+Three genuinely open items, appropriately left to Human Review/
+Implementation, none architectural:
 
 1. **The exact scene metadata sidecar's own extra fields** (beyond
    `schema_version`/`node_count`) — D5 fixes the minimum; Implementation
@@ -982,8 +1314,15 @@ Implementation, neither architectural:
    `tests/asset_system/` or `tests/runtime/`** — a file-location detail
    with no design content (`Files / Modules Touched` already discloses
    this as undecided).
+3. **The `ValidatedSceneData` default-constructor wording discrepancy**
+   between Spec 0015's own condensed Human Review Approval summary and
+   ADR-0053's own more detailed Decision (Independent Review Round 2,
+   item 6 above) — a documentation-precision matter this Plan discloses
+   but does not resolve, since resolving it would mean editing
+   already-Approved/Accepted Spec or ADR text, outside this Plan's own
+   scope.
 
-This Plan's own status remains `In Review` — the mechanical details
-above, and any remaining C++/CMake naming choice not already fixed in
-the D-sections, are the only items left for Human Review; no
-architectural question is open.
+This Plan's own status remains `In Review` — the items above, and any
+remaining C++/CMake naming choice not already fixed in the D-sections,
+are the only items left for Human Review; no architectural question is
+open.
