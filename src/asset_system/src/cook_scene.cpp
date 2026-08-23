@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -67,16 +68,34 @@ namespace fs = std::filesystem;
 // authoring-time node_id references rather than array indices. Only
 // safe to call after every parent node_id is already confirmed
 // declared (step 4).
+//
+// Three-state (Unvisited/Visiting/Done) iterative marking, matching
+// hasCycleByIndex()'s own identical rationale: a naive fresh walk from
+// every node is worst-case O(n^2) against a maliciously large,
+// pathologically-chained authoring source. Marking every node_id Done
+// exactly once bounds total work to O(n) map operations.
 [[nodiscard]] bool hasCycleByNodeId(const std::unordered_map<std::uint32_t, std::optional<std::uint32_t>>& parentOf) {
-  const std::size_t n = parentOf.size();
+  enum class State : std::uint8_t { Unvisited, Visiting, Done };
+  std::unordered_map<std::uint32_t, State> state;
+  state.reserve(parentOf.size());
+  std::vector<std::uint32_t> path;
+
   for (const auto& [startId, _] : parentOf) {
-    std::optional<std::uint32_t> current = parentOf.at(startId);
-    std::size_t steps = 0;
-    while (current.has_value()) {
-      if (*current == startId) return true;
-      if (++steps > n) return true;
-      current = parentOf.at(*current);
+    if (state[startId] != State::Unvisited) continue;
+
+    path.clear();
+    std::uint32_t current = startId;
+    while (true) {
+      State& currentState = state[current];
+      if (currentState == State::Visiting) return true;
+      if (currentState == State::Done) break;
+      currentState = State::Visiting;
+      path.push_back(current);
+      const std::optional<std::uint32_t>& parent = parentOf.at(current);
+      if (!parent.has_value()) break;
+      current = *parent;
     }
+    for (std::uint32_t node : path) state[node] = State::Done;
   }
   return false;
 }

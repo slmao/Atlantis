@@ -4,6 +4,7 @@
 #include <bit>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 
 namespace atlantis::asset_system {
 
@@ -43,16 +44,37 @@ void appendFloatLE(std::vector<std::byte>& out, float value) { appendU32LE(out, 
 // walk uses (Plan 0015 Section D4 step 5 / D6 step 6), applied here to
 // already-range-checked array indices. Only safe to call after every
 // parent index has already been confirmed < parents.size().
+//
+// Three-state (Unvisited/Visiting/Done) iterative marking, not a naive
+// per-node ancestor walk: a naive walk starting fresh from every node
+// is worst-case O(n^2) (e.g. a long acyclic chain with no shared
+// suffix caching) -- for a decode path that must never trust a
+// declared node_count up to kMaxSceneArtifactNodeCount, that is a real
+// hardening gap against a maliciously crafted artifact, not merely a
+// style preference. Marking every node Done exactly once means the
+// total work across all starting points is O(n): a node already Done
+// short-circuits immediately, and re-encountering a node already
+// Visiting in the CURRENT walk is exactly a cycle.
 [[nodiscard]] bool hasCycleByIndex(const std::vector<std::optional<std::size_t>>& parents) {
+  enum class State : std::uint8_t { Unvisited, Visiting, Done };
   const std::size_t n = parents.size();
+  std::vector<State> state(n, State::Unvisited);
+  std::vector<std::size_t> path;
+
   for (std::size_t start = 0; start < n; ++start) {
-    std::optional<std::size_t> current = parents[start];
-    std::size_t steps = 0;
-    while (current.has_value()) {
-      if (*current == start) return true;
-      if (++steps > n) return true;
-      current = parents[*current];
+    if (state[start] != State::Unvisited) continue;
+
+    path.clear();
+    std::size_t current = start;
+    while (true) {
+      if (state[current] == State::Visiting) return true;
+      if (state[current] == State::Done) break;
+      state[current] = State::Visiting;
+      path.push_back(current);
+      if (!parents[current].has_value()) break;
+      current = *parents[current];
     }
+    for (std::size_t node : path) state[node] = State::Done;
   }
   return false;
 }
