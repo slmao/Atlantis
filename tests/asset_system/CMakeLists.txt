@@ -11,6 +11,7 @@ add_executable(atlantis_asset_system_tests
   module_boundary_tests.cpp
   validated_scene_data_tests.cpp
   scene_source_tests.cpp
+  cook_scene_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_system_tests
