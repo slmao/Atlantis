@@ -22,11 +22,20 @@
   3. **`ValidatedSceneData` is constructible only by a successful
      decoder/validator** (`decodeScene()`, via a `private` constructor
      and `friend` relationship, matching `EntityId`'s own established
-     pattern) — private internal state, read-only access only, no
-     public default/arbitrary construction, copy/move preserving
-     validity, and no path by which a caller can produce or mutate an
-     invalid hierarchy, index, active-camera reference, or component
-     value (item 15; ADR-0053).
+     pattern) — private internal state, read-only access only, **no
+     public construction of any kind, including no public default
+     constructor** (a zero-node scene is an explicit, named cook-time
+     and decode-time error, not a trivially-constructible empty
+     instance), copy/move preserving validity, and no path by which a
+     caller can produce or mutate an invalid hierarchy, index,
+     active-camera reference, or component value (item 15; ADR-0053).
+     **This wording matches ADR-0053's own text exactly as of its own
+     "Human Review Correction (2026-08-23)"** — the two documents were
+     never intended to diverge; that correction removes a wording gap
+     between this summary and ADR-0053's own original Decision body
+     (which had briefly kept a trivial public default constructor for
+     an empty-scene case) without reopening or narrowing this Spec's
+     own Approval, recorded here, above.
   4. `World` accepts only `ValidatedSceneData` and returns a fresh
      `World` value — infallibly, no `SceneInstantiationError` (item 6;
      ADR-0052, [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)).

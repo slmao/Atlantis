@@ -4,10 +4,88 @@
   (`Approved`, Human Review Approval recorded 2026-08-23, accepting all
   16 items of that Spec's own Human Review Decision Table — see that
   Spec's own approval note for the full record)
-- **Status:** In Review
+- **Status:** `Approved / Ready for Implementation`. See "Human Review
+  Approval" below for the full record.
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
   direction, following AGENTS.md's Spec → Plan → Human Review →
-  Implementation path.
+  Implementation path. Reviewed and approved by a human — see Human
+  Review Approval immediately below; the two "Independent Review"
+  sections further below are the self-review record that preceded and
+  fed that approval, not a substitute for it.
+- **Human Review Approval (2026-08-23):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer) on 2026-08-23, accepting this Plan in full as revised
+  through both Independent Review rounds below (the second of which
+  found and fixed a real compile error, a misleading load-order
+  description, an over-triggering CMake dependency, and completed a
+  switch-exhaustiveness inventory). This approval explicitly covers:
+
+  1. **The full ten-step Milestones / Task Breakdown**, its own
+     Sequencing & Dependencies, and the Files / Modules Touched scope —
+     new files under `src/asset_system/`, `src/world/`, `src/runtime/`,
+     `assets/scenes/`, and their matching `tests/`; additive-only edits
+     to `errors.h`, `init_error.h`, `bootstrap_config.h`,
+     `runtime_application.h`/`.cpp`, `main.cpp`, `scene_extraction.h`/`.cpp`,
+     `cook_command.h`/`.cpp`/`main.cpp`, and the CMake files listed —
+     with `src/rhi/`, `src/renderer/`, `src/render_graph/`,
+     `src/vulkan_backend/`, `src/platform/`, `src/shader_system/`, and
+     both existing goldens confirmed untouched.
+  2. **The authoring/artifact/manifest format in full** — the strict,
+     versioned, `.scene.txt` authoring grammar (D3); the versioned,
+     unconditionally little-endian binary artifact and its metadata
+     sidecar (D5); the per-scene, build-tree-private dependency
+     manifest as an explicit (logical path, `AssetId`, artifact
+     locator) triple, its own duplicate/collision/metadata-mismatch/
+     malformed-entry validation, and its confirmed exclusion from the
+     portable scene artifact (D7/D8).
+  3. **`ValidatedSceneData`'s own corrected construction contract** —
+     no public default constructor of any kind (`= delete`d), the
+     private, `decodeScene()`-only non-default constructor, private
+     storage, read-only accessors only, copy/move that only ever
+     duplicates or relocates an already-validated instance, and a
+     zero-node scene rejected as an explicit, named error at both cook
+     time and decode time (`EmptyScene`) rather than accepted as a
+     vacuously-valid empty instance — matching
+     [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md)'s
+     own Human Review Correction (2026-08-23) exactly (D2, D4, D6; V11,
+     V28).
+  4. **`World::fromValidatedSceneData()`'s own two-pass, infallible
+     instantiation** — no `Result`, no new `WorldError` enumerator, a
+     transient decoded-index-to-`EntityId` mapping that exists only for
+     the duration of the call, and explicit `ATLANTIS_CHECK_MSG`
+     invariant guards (not silent tolerance) on every internal call
+     whose own precondition `ValidatedSceneData` already guarantees
+     (D9; V21).
+  5. **Runtime's own transactional publish and ownership contract** —
+     mesh-dependency resolution and loading strictly before any
+     `Entity` is created; the resolver as a point-lookup structure only,
+     with the sole load-order guarantee coming from
+     `ValidatedSceneData`'s own first-reference node order, never
+     `AssetId`-numeric or hash-iteration order; `world_` retyped to
+     `std::optional<World>` and published via `world_.emplace()` — an
+     in-place move-*construction*, never a move-assignment `World`
+     itself does not have; `meshResourceMap_` replacing `mesh_` in its
+     exact former declaration slot, preserving the file's own existing
+     reverse-destruction-order guarantee (every GPU `Mesh` destroyed
+     before `Presentation`/`Device`); no partial `world_`/`meshResourceMap_`
+     mutation on any failure path, and no explicit rollback code (D10;
+     V17–V22).
+  6. **CMake trigger semantics, precisely differentiated** — a scene or
+     cooker edit re-cooks the scene; a declared mesh dependency's own
+     *content* edit does not (ordering via `add_dependencies()`,
+     deliberately excluded from the custom command's own `DEPENDS`); a
+     `MESH_DEPENDENCIES` list edit regenerates the manifest on the next
+     ordinary CMake reconfigure; an unrelated asset never triggers
+     anything here (D7; V13).
+  7. **The full V1–V28 Verification Checklist**, including V19's own
+     deliberate first-reference-vs-`AssetId`-order regression test, V27's
+     own switch-exhaustiveness positive/negative build check (with one
+     new, disclosed `/w14062` on `atlantis_asset_cooker_lib`), and V28's
+     own cook-time/decode-time `EmptyScene` rejection.
+
+  This approval does not authorize Implementation to begin immediately
+  — per this repository's own PR-based workflow, this Plan's own PR
+  must be merged first; see [specs/README.md](../specs/README.md).
 
 ## Objective
 
@@ -103,14 +181,21 @@ struct ValidatedSceneNode {
   std::optional<DecodedRenderable> renderable;
 };
 
-// ADR-0053 D4 / Spec 0015 Human Review Approval item 3: encapsulated so
-// "fully validated" is a type-level guarantee. Every structural field
+// ADR-0053 D4 / its own Human Review Correction (2026-08-23); Spec 0015
+// Human Review Approval item 3: encapsulated so "fully validated" is a
+// type-level guarantee, not a caller convention. Every structural field
 // private; the only non-default constructor private, callable only by
 // decodeScene() (a named friend function, matching EntityId's own
-// friend class World). Public surface is read-only accessors only.
+// friend class World); public surface is read-only accessors only.
+// NO public default constructor -- deleted, not merely omitted, so a
+// caller's own attempt to default-construct one is a named compiler
+// error, not a puzzling "no viable constructor" message. A zero-node
+// scene is not representable by this type at all; decodeScene() itself
+// never succeeds with one (D6's own EmptyScene check) -- see this
+// Plan's own V11/V28.
 class ValidatedSceneData {
  public:
-  ValidatedSceneData() = default;  // empty (zero-node) scene -- vacuously valid
+  ValidatedSceneData() = delete;
 
   [[nodiscard]] std::size_t nodeCount() const noexcept { return nodes_.size(); }
   [[nodiscard]] const ValidatedSceneNode& node(std::size_t index) const noexcept { return nodes_[index]; }
@@ -148,6 +233,7 @@ class ValidatedSceneData {
   enum class SceneCookError {
     SourceFileUnreadable,
     SourceParseFailed,
+    EmptyScene,               // node_count == 0 -- ADR-0053's own Human Review Correction (2026-08-23)
     DuplicateNodeId,
     UndeclaredParentReference,
     ParentCycle,
@@ -166,7 +252,8 @@ class ValidatedSceneData {
     UnknownSchemaVersion,
     InconsistentOffsets,
     SizeMismatch,
-    NodeCountOutOfRange,
+    EmptyScene,               // node_count == 0 -- re-checked independently, never trusting the cooker
+    NodeCountOutOfRange,       // node_count implausibly large -- the separate, pre-existing upper-bound guard
     OutOfRangeParentIndex,
     CyclicParent,
     OutOfRangeActiveCameraIndex,
@@ -319,24 +406,20 @@ class ValidatedSceneData {
     std::string sceneDependencyManifestPath;
   };
   ```
-- **`ValidatedSceneData`'s own default constructor — a disclosed wording
-  precision, not a design change.** ADR-0053's own Decision (item 4,
-  `Accepted`) explicitly keeps a `public` default constructor ("the
-  only other public constructor... trivially valid, since an empty
-  node array vacuously satisfies every structural/semantic condition").
-  Spec 0015's own Human Review Approval note (item 3) summarizes this
-  same acceptance more tersely as "no public default/arbitrary
-  construction." Read together with ADR-0053's own detailed reasoning
-  — the authoritative document for *why* — "no public ... construction"
-  is best read as "no public construction of an *arbitrary* (non-empty,
-  attacker- or caller-chosen) instance," which the trivial empty-default
-  case does not violate: **no caller can ever construct a non-empty,
-  malformed instance**, which is the property `World` instantiation's
-  own infallibility actually depends on. This Plan follows ADR-0053's
-  own more detailed, reasoned Decision as authoritative and keeps the
-  public default constructor exactly as D2 above already specifies —
-  flagged here as a genuine wording-precision finding for Human Review
-  to note, not silently resolved by rewriting either Spec or ADR text.
+- **`ValidatedSceneData` has no public default constructor of any
+  kind — settled by ADR-0053's own "Human Review Correction
+  (2026-08-23)", not merely this Plan's own reading.** An earlier round
+  of this Plan's own drafting found a wording gap between ADR-0053's
+  own original Decision text (which had briefly kept a trivial `public`
+  default constructor for an empty-scene case) and Spec 0015's own
+  Human Review Approval summary (item 3, "no public default/arbitrary
+  construction"); Human Review has since resolved it directly, in
+  ADR-0053 itself, in the "no public default construction" direction —
+  see that ADR's own Correction for the full record. This Plan's own
+  D2 above (`ValidatedSceneData() = delete;`) already reflects the
+  corrected design; a zero-node scene is now an explicit,
+  named cook-time and decode-time error (D4/D6, `EmptyScene`), not a
+  vacuously-valid empty instance.
 - **`RuntimeApplication`'s own real member list — confirmed against
   `src/runtime/include/atlantis/runtime/runtime_application.h`, not
   assumed.** `world_` is declared today as a **bare** `atlantis::world::World
@@ -422,24 +505,31 @@ own, only its `Renderable` references do, D2):
 
 1. Read `sourceFilePath` (`SourceFileUnreadable` on failure); parse via
    `parseSceneSource()` (`SourceParseFailed` on failure).
-2. **Duplicate `node_id`**: a `std::vector<std::uint32_t>` of seen IDs,
+2. **Empty scene**: `node_count == 0` is rejected outright
+   (`EmptyScene`) — checked immediately after a successful parse, before
+   any of the per-node validation below runs, matching
+   [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md)'s
+   own Human Review Correction (2026-08-23): `ValidatedSceneData` has no
+   public default constructor, so `decodeScene()` must never succeed
+   with zero nodes, and this is where that guarantee originates.
+3. **Duplicate `node_id`**: a `std::vector<std::uint32_t>` of seen IDs,
    sorted and checked for adjacency after `std::sort` — `O(n log n)`,
    sufficient at this Plan's own scale (`DuplicateNodeId`).
-3. **Undeclared parent**: every non-`none` parent `node_id` must appear
+4. **Undeclared parent**: every non-`none` parent `node_id` must appear
    in the declared set (`UndeclaredParentReference`).
-4. **Parent cycle**: walk each node's own ancestor chain (via the
+5. **Parent cycle**: walk each node's own ancestor chain (via the
    authoring-time `node_id`-keyed parent map, not an array index — this
    is genuinely a second, small, independent implementation of the same
    *algorithm* `World::setParent()`'s own ancestor walk already uses,
    applied to authoring-time data rather than a live slot map,
    consistent with this repository's own "duplicated, not shared"
    precedent) (`ParentCycle`).
-5. **Active camera reference**: `active_camera`'s own `node_id` must be
+6. **Active camera reference**: `active_camera`'s own `node_id` must be
    declared (`UndeclaredActiveCameraReference`) and that node must
    carry a `camera_*` triple (`ActiveCameraMissingCamera`).
-6. **Non-finite values**: every authored float (`position`/`rotation`/
+7. **Non-finite values**: every authored float (`position`/`rotation`/
    `scale`/`camera_*`) checked via `std::isfinite()` (`NonFiniteValue`).
-7. **Mesh reference resolution**: for each node with a `mesh=` field,
+8. **Mesh reference resolution**: for each node with a `mesh=` field,
    `normalizeLogicalPath()` + `computeAssetId()` over the authored
    string — the *existing*, already-`Accepted` mesh pipeline's own
    pure functions, unchanged. (A malformed logical path here surfaces
@@ -447,17 +537,17 @@ own, only its `Renderable` references do, D2):
    folded into `SourceParseFailed` for this enum's own granularity —
    matching how `cookStaticMesh()`'s own `CookError::LogicalPathInvalid`
    is already a single, coarse case.)
-8. **Dense remapping**: build a `node_id → array index` map in
+9. **Dense remapping**: build a `node_id → array index` map in
    declaration order (the order `parseSceneSource()`'s own node array
    already has); rewrite every parent/active-camera reference from
    `node_id` to array index.
-9. **Encode** (D5) and **write atomically** — write-to-temp-then-rename
-   in `artifactOutputPath`'s/`metadataOutputPath`'s own directory,
-   identical to `cookStaticMesh()`'s own established pattern
-   (`ArtifactWriteFailed`/`MetadataWriteFailed`).
+10. **Encode** (D5) and **write atomically** — write-to-temp-then-rename
+    in `artifactOutputPath`'s/`metadataOutputPath`'s own directory,
+    identical to `cookStaticMesh()`'s own established pattern
+    (`ArtifactWriteFailed`/`MetadataWriteFailed`).
 
 **Determinism**: no filesystem timestamp, no non-deterministic
-iteration (steps 2–3 sort explicitly; step 8's remapping is declaration-
+iteration (steps 3–4 sort explicitly; step 9's remapping is declaration-
 order, not hash-order) reaches output bytes — two cooks of an unchanged
 source produce byte-identical artifact + metadata (V12). A hand-bumped
 `kSceneCookerVersion` constant (`cook_scene.h`, independently versioned
@@ -512,27 +602,40 @@ artifact's own bytes:
    (`BadMagic`), `schema_version` known (`UnknownSchemaVersion`),
    declared byte size vs. `node_count`-implied size consistent
    (`InconsistentOffsets`, `SizeMismatch`).
-3. **`node_count` bound check** before allocating the node vector
+3. **Empty scene, re-checked independently**: `node_count == 0` is
+   rejected (`EmptyScene`) — **never trusting that the cooker already
+   enforced this** (D4's own step 2), matching this function's own
+   stated philosophy for every other condition below. This is the
+   check that makes `ValidatedSceneData`'s own lack of a public default
+   constructor sound in practice, not merely in the type's own API
+   shape: no code path through `decodeScene()` can ever reach the
+   private constructor (step 9 below) with an empty node vector.
+4. **`node_count` upper-bound check** before allocating the node vector
    (`NodeCountOutOfRange`) — mirroring `ArtifactDecodeError::VertexCountOutOfRange`'s
    own precedent exactly: never trust a declared count enough to
-   allocate on its word alone.
-4. Decode every per-node record; for each: `has_parent` → `parent_index
+   allocate on its word alone. A distinct condition from step 3 above
+   (zero vs. implausibly large), each with its own enumerator, per
+   [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md)'s
+   own Human Review Correction.
+5. Decode every per-node record; for each: `has_parent` → `parent_index
    < node_count` (`OutOfRangeParentIndex`); every `float` field
    `std::isfinite()` (`NonFiniteValue`).
-5. **Cycle re-check**: walk each node's own parent-index chain (array-
+6. **Cycle re-check**: walk each node's own parent-index chain (array-
    index-based this time, not `node_id`-based — a second, independent
    algorithm instance from D4's own, per this repository's own
    "duplicated, not shared" precedent) (`CyclicParent`).
-6. `has_active_camera` → `active_camera_index < node_count`
+7. `has_active_camera` → `active_camera_index < node_count`
    (`OutOfRangeActiveCameraIndex`) and that node's own `has_camera`
    flag is set (`ActiveCameraMissingCamera`).
-7. Parse the metadata sidecar via the existing `parseAssetMetadata()`-
+8. Parse the metadata sidecar via the existing `parseAssetMetadata()`-
    sibling strict-text discipline, reusing `MetadataParseError`
    (`MetadataParseFailed`); cross-check its own `node_count` against
    the artifact's own header (`MetadataArtifactMismatch`).
-8. On success: construct `ValidatedSceneData` via its own `private`
+9. On success: construct `ValidatedSceneData` via its own `private`
    constructor (this is the **only** call site in the entire codebase
-   permitted to do so, enforced by the `friend` declaration, D2).
+   permitted to do so, enforced by the `friend` declaration, D2) —
+   reachable only once every check above, including step 3's own
+   non-empty guarantee, has already passed.
 
 By this point every structural and semantic precondition D9 (`World`
 instantiation) depends on is proven — nothing downstream re-checks any
@@ -984,9 +1087,10 @@ convention.
 
 1. **Asset System scene types and error enums** (D2's `scene_types.h`,
    `errors.h` additions, `validated_scene_data.h` — `ValidatedSceneData`'s
-   own encapsulation contract, no cook/decode logic yet).
+   own encapsulation contract, no public default constructor, no
+   cook/decode logic yet).
    `tests/asset_system/validated_scene_data_tests.cpp`: V11 (compile-fail
-   negative test), construction/copy/move round-trip.
+   negative test and `static_assert`), construction/copy/move round-trip.
 2. **Authoring parser** (D3's `scene_source.h`/`.cpp` —
    `parseSceneSource()`/`serializeSceneSource()`, `ParsedSceneSource`).
    `tests/asset_system/scene_source_tests.cpp`: V1 (round-trip),
@@ -994,10 +1098,10 @@ convention.
 3. **Scene cooker** (D4/D5's `cook_scene.h`/`.cpp`, `scene_artifact.h`/`.cpp`'s
    own `encodeSceneArtifact()`, `scene_metadata.h`/`.cpp`).
    `tests/asset_system/cook_scene_tests.cpp`: V2–V7, V9 (encode-side),
-   V12 (determinism, atomic write).
+   V12 (determinism, atomic write), V28 (cook-side `EmptyScene`).
 4. **Scene decoder** (D6's `decode_scene.h`/`.cpp`, `scene_artifact.h`'s
    own `decodeSceneArtifact()`). `tests/asset_system/decode_scene_tests.cpp`:
-   V8, V9 (decode-side), V10.
+   V8, V9 (decode-side), V10, V28 (decode-side `EmptyScene`).
 5. **CMake scene asset declaration** (D7 — `atlantis_add_scene_asset()`,
    the additive `LOGICAL_PATH` export line, `atlantis_asset_cooker`'s
    own `--kind=scene` mode and `sceneCookErrorMessage()`, the new,
@@ -1143,7 +1247,7 @@ own mandatory separate commit. Step 10 depends on Step 9.
 | V8 | Artifact encode/decode round-trip: cooking a known-good scene then decoding it reproduces the exact same node data (position/rotation/scale/camera/renderable/parent/active-camera, every field). | `decode_scene_tests.cpp` | GPU-independent |
 | V9 | Every `SceneArtifactDecodeError` condition individually triggered and correctly, distinctly reported: bad magic, unknown schema version, truncated (`TooSmallForHeader`), a corrupted/inconsistent size, an out-of-range parent index, a decode-time-injected cycle, an out-of-range active-camera index, a decode-time-injected active-camera-missing-Camera case, a non-finite value, a metadata parse failure, a metadata/artifact mismatch. | `decode_scene_tests.cpp` | GPU-independent |
 | V10 | An artifact whose own declared `node_count` is implausibly large (mirroring `VertexCountOutOfRange`'s own precedent) is rejected via `NodeCountOutOfRange` before any allocation proportional to it. | `decode_scene_tests.cpp` | GPU-independent |
-| V11 | `ValidatedSceneData`'s own unforgeability: a compile-fail negative test (documented, not built, matching `EntityId`'s own V27 precedent) confirming no external code can name the non-default constructor, assign to any field, or obtain a mutable reference; copy/move preserve every accessor's own observed value. | `validated_scene_data_tests.cpp` | GPU-independent (mix of runtime and compile-time) |
+| V11 | `ValidatedSceneData`'s own unforgeability: `static_assert(!std::is_default_constructible_v<ValidatedSceneData>)` (ADR-0053's own Human Review Correction, 2026-08-23 — confirms no caller can default-construct one at all, not merely that construction with arbitrary data is blocked); a compile-fail negative test (documented, not built, matching `EntityId`'s own V27 precedent) confirming no external code can name the private non-default constructor, assign to any field, or obtain a mutable reference; copy/move preserve every accessor's own observed value, confirmed only against an instance a real `decodeScene()` call produced (there is no other kind to test against). | `validated_scene_data_tests.cpp` | GPU-independent (mix of runtime and compile-time) |
 | V12 | Cooker determinism and atomic writes: cooking the same source twice produces byte-identical artifact and metadata bytes; a forced mid-write failure leaves no partial output file and does not disturb a pre-existing valid one — mirroring `cookStaticMesh()`'s own already-`Accepted` V11 (Spec 0012/Plan 0012) test shape exactly. | `cook_scene_tests.cpp` | GPU-independent |
 | V13 | CMake re-import triggering: editing the scene source, the cooker, or a declared `MESH_DEPENDENCIES` target re-cooks the scene on the next build; editing an unrelated, undeclared asset does not. | Manual, recorded (matching Plan 0012 Section D7's own established procedure) | Manual |
 | V14 | Manifest: a duplicate logical-path entry is rejected via `Err(SceneManifestError::DuplicateLogicalPath)`. | `scene_manifest_tests.cpp` | GPU-independent |
@@ -1160,6 +1264,7 @@ own mandatory separate commit. Step 10 depends on Step 9.
 | V25 | Debug **and** Release: clean configure + build; `ctest -LE gpu` and `ctest -L gpu` both green on both configurations; Vulkan Validation Layers grepped clean (not merely inferred from exit status) on every GPU-touching path, including the new loaded-scene test. | Both configurations | Manual, recorded |
 | V26 | Module boundary / forbidden-dependency scan: `tests/asset_system/module_boundary_tests.cpp`'s own existing scan confirms `src/asset_system/` still names no `atlantis/world/` header (direct, automated proof ADR-0052's own cycle-avoidance Decision holds); `tests/world/module_boundary_tests.cpp`'s own existing scan confirms `src/world/` still names no RHI/Renderer/RenderGraph/ShaderSystem/Platform/VulkanBackend/Runtime header; `git diff --stat` confirms no file under `src/rhi/`, `src/renderer/`, `src/render_graph/`, `src/vulkan_backend/`, `src/platform/`, `src/shader_system/`, `shaders/`, or `tests/image_regression/goldens/` was modified; `CMakeLists.txt`/`vcpkg`-equivalent dependency list confirms no new third-party dependency was added. | `module_boundary_tests.cpp` (both), manual `git diff --stat` review | GPU-independent + Manual |
 | V27 | Every new enum's own consuming switch is exhaustive, no `default:` case, and — where a switch genuinely exists in production code — compile-time protected: `RuntimeInitError::toString()`'s four new cases and `SceneManifestError::toString()` both compile under `atlantis_runtime_host`'s own existing, real `/w14062` (temporarily removing a case and confirming the build fails naming that exact enumerator, then restoring it, matching Spec 0013's own already-`Accepted` `C4062` positive/negative re-verification precedent exactly); `SceneCookError`'s own `sceneCookErrorMessage()` compiles under `atlantis_asset_cooker_lib`'s own new, disclosed `/w14062` the same way. Confirmed, not merely asserted, that `SceneArtifactDecodeError` has no production switch anywhere (D2's own switch-exhaustiveness inventory) — grepped for `switch` against that type across `src/`, matching zero production call sites. | Manual, recorded (positive/negative build check); a `grep`-based inventory check | GPU-independent + Manual |
+| V28 | A zero-node scene is rejected as `Err(SceneCookError::EmptyScene)` at cook time (no artifact written) and, independently, as `Err(SceneArtifactDecodeError::EmptyScene)` at decode time (a hand-crafted, artificially-empty artifact, bypassing the cooker entirely, still correctly rejected — proving the decoder does not merely trust a well-behaved cooker); confirms, together with V11's own `static_assert`, that no `ValidatedSceneData` instance — empty or otherwise malformed — can ever exist outside a successful, non-empty `decodeScene()` result (ADR-0053's own Human Review Correction, 2026-08-23). | `cook_scene_tests.cpp`, `decode_scene_tests.cpp` | GPU-independent |
 
 ## Rollback Plan
 
@@ -1179,7 +1284,7 @@ exists (unlike a Plan that captured a new golden).
 See [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
 Deltas specific to this plan:
 
-- V1–V27 all executed and recorded; V13, V24, V25, V27 (partially)
+- V1–V28 all executed and recorded; V13, V24, V25, V27 (partially)
   recorded as manual verification in the Implementation PR — V24
   specifically requires genuine human observation through a real
   graphical session, matching Spec 0014's own established, hard-won
@@ -1303,8 +1408,9 @@ Approved/Accepted content:
 
 **No `Accepted`/`Approved` decision in Spec 0015 or ADR-0052–0054 was
 found to be unimplementable against the real, current source tree.**
-Three genuinely open items, appropriately left to Human Review/
-Implementation, none architectural:
+Two genuinely open mechanical details, appropriately left to
+Implementation, neither architectural — both already noted for Human
+Review's own awareness and neither blocked this Plan's own approval:
 
 1. **The exact scene metadata sidecar's own extra fields** (beyond
    `schema_version`/`node_count`) — D5 fixes the minimum; Implementation
@@ -1314,15 +1420,21 @@ Implementation, none architectural:
    `tests/asset_system/` or `tests/runtime/`** — a file-location detail
    with no design content (`Files / Modules Touched` already discloses
    this as undecided).
-3. **The `ValidatedSceneData` default-constructor wording discrepancy**
-   between Spec 0015's own condensed Human Review Approval summary and
-   ADR-0053's own more detailed Decision (Independent Review Round 2,
-   item 6 above) — a documentation-precision matter this Plan discloses
-   but does not resolve, since resolving it would mean editing
-   already-Approved/Accepted Spec or ADR text, outside this Plan's own
-   scope.
 
-This Plan's own status remains `In Review` — the items above, and any
-remaining C++/CMake naming choice not already fixed in the D-sections,
-are the only items left for Human Review; no architectural question is
-open.
+**Resolved since the prior round:** the `ValidatedSceneData` default-
+constructor wording discrepancy between Spec 0015's own condensed
+Human Review Approval summary and ADR-0053's own Decision (Independent
+Review Round 2, item 6 above) is settled — ADR-0053 now carries its
+own "Human Review Correction (2026-08-23)" resolving it in the "no
+public default construction" direction; this Plan's own D2/D4/D6 and
+V11/V28 already reflect the corrected design. See
+[ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md)'s
+own Correction and Spec 0015's own updated Human Review Approval item 3
+cross-reference for the full record.
+
+This Plan's own status is `Approved / Ready for Implementation` — see
+"Human Review Approval" at the top of this document for the full
+record. The two items above, and any remaining C++/CMake naming choice
+not already fixed in the D-sections, are mechanical details for
+Implementation to resolve without reopening this Plan; no architectural
+question remains open.
