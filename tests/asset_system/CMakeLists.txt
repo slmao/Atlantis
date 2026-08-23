@@ -9,6 +9,7 @@ add_executable(atlantis_asset_system_tests
   mesh_artifact_tests.cpp
   load_tests.cpp
   module_boundary_tests.cpp
+  validated_scene_data_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_system_tests
