@@ -54,10 +54,14 @@ int main(int argc, char** argv) {
         request.kind = atlantis::tools::asset_cooker::AssetKind::StaticMesh;
       } else if (*kind == "scene") {
         request.kind = atlantis::tools::asset_cooker::AssetKind::Scene;
+      } else if (*kind == "texture") {
+        request.kind = atlantis::tools::asset_cooker::AssetKind::Texture;
       } else {
         std::cerr << "atlantis_asset_cooker: unrecognized --kind value: " << *kind << "\n";
         sawUnrecognized = true;
       }
+    } else if (auto colorSpace = valueAfterEquals(arg, "--color-space=")) {
+      request.colorSpace = *colorSpace;
     } else {
       std::cerr << "atlantis_asset_cooker: unrecognized argument: " << arg << "\n";
       sawUnrecognized = true;
@@ -68,8 +72,8 @@ int main(int argc, char** argv) {
       request.isValidateSet ? sawAssetList : (sawSource && sawAssetRoot && sawOutputDir);
 
   if (sawUnrecognized || !haveRequiredFlags) {
-    std::cerr << "usage: atlantis_asset_cooker [--kind=mesh|scene] --source=<path> --asset-root=<dir> "
-                 "--output-dir=<dir> [--stamp=<path>]\n"
+    std::cerr << "usage: atlantis_asset_cooker [--kind=mesh|scene|texture] --source=<path> --asset-root=<dir> "
+                 "--output-dir=<dir> [--stamp=<path>] [--color-space=unorm|srgb]\n"
                  "       atlantis_asset_cooker --validate-set --asset-list=<path>\n";
     return 1;
   }

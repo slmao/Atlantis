@@ -4,10 +4,10 @@
 
 namespace atlantis::tools::asset_cooker {
 
-// Plan 0015 Section D7: which cook-mode pipeline to run -- StaticMesh
-// (the original, default behavior, unchanged) or Scene. Never affects
-// validate-set mode.
-enum class AssetKind { StaticMesh, Scene };
+// Plan 0015 Section D7 / Plan 0016 Section D9: which cook-mode pipeline
+// to run -- StaticMesh (the original, default behavior, unchanged),
+// Scene, or Texture. Never affects validate-set mode.
+enum class AssetKind { StaticMesh, Scene, Texture };
 
 // Plan 0012 Section D4: two modes. Cook mode (isValidateSet == false)
 // cooks exactly one asset from sourcePath (relative to assetRoot) into
@@ -29,6 +29,15 @@ struct CookCommandRequest {
   std::string assetRoot;
   std::string outputDir;
   std::string stampPath;
+
+  // Texture cook mode only (Plan 0016 Section D9) -- already validated
+  // by main.cpp's own CLI parsing to be exactly "unorm" or "srgb" before
+  // this request is ever built; kept as a raw string here (not
+  // atlantis::asset_system::TextureColorSpace) so this header does not
+  // need to depend on Asset System's own texture-specific types for one
+  // field. runCookTextureMode() does the final string -> enum
+  // conversion immediately before calling cookTexture().
+  std::string colorSpace;
 
   // Validate-set mode.
   std::string assetListPath;

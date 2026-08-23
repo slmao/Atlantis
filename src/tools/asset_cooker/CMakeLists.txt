@@ -24,6 +24,12 @@ target_link_libraries(atlantis_asset_cooker_lib
     Atlantis::Core
   PRIVATE
     atlantis_compiler_warnings
+    # Plan 0016 Section D9: cook_command.cpp's own stbi_load() call site
+    # (texture cook mode) -- the second implementation-macro translation
+    # unit in the repository (ADR-0041's own Accepted Amendment), never
+    # linked into the same binary as
+    # tests/image_regression/support/png_codec.cpp's own.
+    Stb::Stb
 )
 
 # Plan 0015 Section D7/D2 (V27): real, compile-time enum-exhaustiveness
