@@ -4,6 +4,11 @@
 
 namespace atlantis::tools::asset_cooker {
 
+// Plan 0015 Section D7: which cook-mode pipeline to run -- StaticMesh
+// (the original, default behavior, unchanged) or Scene. Never affects
+// validate-set mode.
+enum class AssetKind { StaticMesh, Scene };
+
 // Plan 0012 Section D4: two modes. Cook mode (isValidateSet == false)
 // cooks exactly one asset from sourcePath (relative to assetRoot) into
 // outputDir, writing a completion stamp at stampPath on success --
@@ -19,6 +24,7 @@ struct CookCommandRequest {
   bool isValidateSet = false;
 
   // Cook mode.
+  AssetKind kind = AssetKind::StaticMesh;
   std::string sourcePath;
   std::string assetRoot;
   std::string outputDir;

@@ -49,6 +49,15 @@ int main(int argc, char** argv) {
     } else if (auto assetList = valueAfterEquals(arg, "--asset-list=")) {
       request.assetListPath = *assetList;
       sawAssetList = true;
+    } else if (auto kind = valueAfterEquals(arg, "--kind=")) {
+      if (*kind == "mesh") {
+        request.kind = atlantis::tools::asset_cooker::AssetKind::StaticMesh;
+      } else if (*kind == "scene") {
+        request.kind = atlantis::tools::asset_cooker::AssetKind::Scene;
+      } else {
+        std::cerr << "atlantis_asset_cooker: unrecognized --kind value: " << *kind << "\n";
+        sawUnrecognized = true;
+      }
     } else {
       std::cerr << "atlantis_asset_cooker: unrecognized argument: " << arg << "\n";
       sawUnrecognized = true;
@@ -59,8 +68,8 @@ int main(int argc, char** argv) {
       request.isValidateSet ? sawAssetList : (sawSource && sawAssetRoot && sawOutputDir);
 
   if (sawUnrecognized || !haveRequiredFlags) {
-    std::cerr << "usage: atlantis_asset_cooker --source=<path> --asset-root=<dir> --output-dir=<dir> "
-                 "[--stamp=<path>]\n"
+    std::cerr << "usage: atlantis_asset_cooker [--kind=mesh|scene] --source=<path> --asset-root=<dir> "
+                 "--output-dir=<dir> [--stamp=<path>]\n"
                  "       atlantis_asset_cooker --validate-set --asset-list=<path>\n";
     return 1;
   }
