@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <fstream>
 #include <optional>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -50,6 +51,36 @@ struct Vertex {
   float position[3];
   float color[3];
 };
+
+// Plan 0015 Section D10 step (g) / final review round (2026-08-24):
+// the two-step publish in initializeSteps() below (world_.emplace(),
+// then meshResourceMap_'s own move-assignment) is genuinely atomic in
+// effect, not merely "unlikely to fail" -- both operations are
+// unconditionally noexcept, locked down here as a compile-time-
+// enforced invariant rather than argued in prose or guarded with a
+// catch/rollback. World's own move constructor is noexcept by its own
+// declaration (world.h); std::unordered_map<AssetId, Mesh>'s own
+// move-assignment operator is noexcept per the standard's own
+// [unord.map] clause whenever its Allocator/Hash/KeyEqual satisfy that
+// clause's own noexcept condition, which the default
+// std::allocator/std::hash<AssetId>/std::equal_to<AssetId> this map
+// instantiates with all do. Given both hold, the first publish step
+// cannot throw if it runs at all; and since world_ starts
+// std::nullopt and is written exactly once over RuntimeApplication's
+// own lifetime (initializeSteps() runs once, from createRuntimeApplication()),
+// there is no prior engaged state for emplace() to destroy first
+// either. There is therefore no reachable state where world_ is
+// populated but meshResourceMap_ is not, or vice versa -- if either of
+// these static_asserts were ever to start failing (e.g. a future
+// change to Mesh's own type altering Hash/KeyEqual), that would be a
+// compile error here, not a latent runtime risk discovered later.
+static_assert(std::is_nothrow_move_constructible_v<atlantis::world::World>,
+              "world_.emplace(std::move(world)) in initializeSteps() requires World's own move constructor to be "
+              "noexcept for the scene-load publish step to be genuinely atomic");
+static_assert(
+    std::is_nothrow_move_assignable_v<decltype(std::declval<SceneLoadOutcome>().meshResourceMap)>,
+    "meshResourceMap_ = std::move(outcome.meshResourceMap) in initializeSteps() requires this move-assignment to "
+    "be noexcept for the scene-load publish step to be genuinely atomic");
 
 [[nodiscard]] std::optional<std::vector<std::uint32_t>> loadSpirvFile(const std::string& path) {
   std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -166,7 +197,12 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // unchanged) -- world_ is std::optional<World> and this is emplace(),
   // i.e. in-place move-CONSTRUCTION, never assignment. meshResourceMap_
   // is a plain std::unordered_map, whose own move-assignment is not
-  // deleted, so plain assignment is correct there.
+  // deleted, so plain assignment is correct there. Both steps are
+  // proven noexcept at compile time by the two static_asserts above
+  // this file's own anonymous namespace -- this two-step publish is
+  // genuinely atomic in effect (if the first step runs, it cannot
+  // throw, and the second cannot throw either), not merely assumed
+  // safe; no catch/rollback exists here because none is needed.
   world_.emplace(std::move(outcome.world));
   meshResourceMap_ = std::move(outcome.meshResourceMap);
 
