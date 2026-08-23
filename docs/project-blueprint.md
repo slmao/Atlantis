@@ -851,7 +851,9 @@ anything architectural, its own ADR before any of the below moves past
   (`Approved`), [Plan 0016](../plans/0016-texture-sampler-foundation.md)
   (`Approved / Ready for Implementation`, merged via
   [PR #77](https://github.com/slmao/Atlantis/pull/77)) -- Implementation
-  code-complete on an open PR, not yet merged; see
+  code-complete on [PR #78](https://github.com/slmao/Atlantis/pull/78),
+  OPEN, not yet merged; new `textured_quad` golden awaits human visual
+  review (V38). See
   [specs/README.md](../specs/README.md)'s own Section A row for current
   status
 - Tool/Editor connection protocol — **no process model (in-process vs.
