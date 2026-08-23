@@ -24,4 +24,15 @@ target_compile_definitions(atlantis_world_tests PRIVATE
   ATLANTIS_WORLD_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/world"
 )
 
+# Plan 0014 V28 (2026-08-23 Human Review Correction): real, compile-time
+# WorldError enum-exhaustiveness protection for renderable_tests.cpp's
+# own no-default canary switch requires MSVC's C4062 ("enumerator ...
+# not handled"), which is off by default even at /W4 -- matching Plan
+# 0013's own already-established src/runtime/CMakeLists.txt precedent
+# for classifyPresentationError()/classifySubmitError(). Scoped to this
+# target only; cmake/CompilerWarnings.cmake is deliberately not touched.
+target_compile_options(atlantis_world_tests PRIVATE
+  $<$<CXX_COMPILER_ID:MSVC>:/w14062>
+)
+
 catch_discover_tests(atlantis_world_tests DISCOVERY_MODE PRE_TEST)
