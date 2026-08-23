@@ -3,12 +3,16 @@
 - **Status:** Accepted. **An "Accepted Amendment" section below
   (2026-08-22, cross-`World`-instance `EntityId` use, stable identity
   token) is now also `Accepted` — see that section's own "Human Review
-  Amendment Approval" note, and its own "Correction (2026-08-23)"
+  Amendment Approval" note, its own "Correction (2026-08-23)"
   fixing a mechanical encapsulation gap (all three of `EntityId`'s
-  identity-bearing fields are private, not only the identity token).
-  Neither the amendment nor its correction rewrites this ADR's original
-  Decision, Consequences, or Alternatives Considered above; they add a
-  new precondition and mechanism those did not previously state.**
+  identity-bearing fields are private, not only the identity token),
+  and its own further "Human Review Correction (2026-08-23)" adding a
+  fifth `WorldError` enumerator, `NoRenderableComponent`, so
+  `getRenderable()` no longer reuses `NoCameraComponent` for a missing
+  `Renderable`. Neither the amendment nor either correction rewrites
+  this ADR's original Decision, Consequences, or Alternatives
+  Considered above; they add a new precondition and mechanism those did
+  not previously state.**
 - **Date:** 2026-08-22
 - **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
   approved 2026-08-22 as part of Spec 0014's Human Review Approval
@@ -907,3 +911,36 @@ or `World`'s own move/ownership semantics. New verification requirements,
 covering exactly this fix, are recorded in
 [Plan 0014](../plans/0014-world-scene-foundation.md)'s own Verification
 Checklist (V27).
+
+**Human Review Correction (2026-08-23), additive, no new design
+question — no new review round.** This amendment's own Decision above
+(line "`WorldError` gains a fourth enumerator") explicitly closed
+`WorldError` at four members: `InvalidEntity`, `WouldCreateCycle`,
+`NoCameraComponent`, `WrongWorld`. Implementation of
+[Plan 0014](../plans/0014-world-scene-foundation.md) surfaced a gap this
+closure did not anticipate: `World::getRenderable()` has no enumerator
+of its own for a valid `EntityId` that legitimately carries no
+`Renderable` component. The Implementation's own disclosed interim
+choice — reusing `NoCameraComponent` for that case — was reviewed and
+**rejected** by Human Review as insufficiently precise, breaking the
+symmetry between `Camera` and `Renderable` component-absence reporting.
+
+Corrected: **`WorldError` gains a fifth enumerator,
+`NoRenderableComponent`**, returned by `getRenderable()` when the target
+`EntityId` is otherwise valid (already passed the `InvalidEntity` /
+`WrongWorld` / stale-generation checks this ADR's own Decision and
+Amendment order first) but the entity has no `Renderable` component
+attached. `NoCameraComponent` continues to mean exactly what it already
+meant — a missing `Camera` component — and must never be returned for a
+missing `Renderable`. This correction does not alter the validation
+ordering this ADR's Decision and Amendment already establish:
+`InvalidEntity`, `WrongWorld`, and any other handle-validity check
+continue to be evaluated, and continue to take priority, before any
+component-absence check — `NoCameraComponent` and
+`NoRenderableComponent` alike are only reachable once the handle itself
+has already validated. No other `World` API, module boundary, or error
+semantics changes. New verification requirements, covering the
+Camera/Renderable error distinction and the unchanged validation
+priority, are recorded in
+[Plan 0014](../plans/0014-world-scene-foundation.md)'s own Verification
+Checklist (V28).

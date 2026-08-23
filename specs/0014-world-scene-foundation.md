@@ -1467,3 +1467,25 @@ mutator) — see the bullet above and
 [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s own
 matching correction for the full mechanism. No other part of this
 approval changes.
+
+**Human Review Correction (2026-08-23), additive, no new review round:**
+the bullet above ("`WorldError` gains a fourth enumerator, `WrongWorld`")
+stated `WorldError`'s resulting size as four. Implementation of
+[Plan 0014](../plans/0014-world-scene-foundation.md) disclosed that
+`World::getRenderable()` had no enumerator of its own for a valid
+`EntityId` legitimately carrying no `Renderable` component, and reused
+`NoCameraComponent` for that case as an interim choice. Human Review
+**rejected** that reuse as insufficiently precise. Corrected:
+**`WorldError` gains a fifth enumerator, `NoRenderableComponent`**,
+returned by `getRenderable()` for a valid entity with no `Renderable`;
+`NoCameraComponent` remains scoped exactly as before — a missing
+`Camera` component only. The `InvalidEntity` / `WrongWorld` /
+stale-generation validation this Spec and its amendment already require
+before any component-absence check is unchanged and still takes
+priority — a component-absence error is only reachable once the handle
+itself has already validated. No other `World` API, module boundary, or
+error semantics changes. See
+[ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s own
+matching correction for the full mechanism, and
+[Plan 0014](../plans/0014-world-scene-foundation.md)'s own Verification
+Checklist (V28) for the corresponding new verification requirement.

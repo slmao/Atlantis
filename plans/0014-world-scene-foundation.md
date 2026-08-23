@@ -68,9 +68,10 @@
      tree, golden capture as its own separate, subsequent commit, full
      provenance sidecar fields, substitute evidence in place of an
      inapplicable old-vs-new diff.
-  7. **The full V1–V27 Verification Checklist**, including the six
+  7. **The full V1–V28 Verification Checklist**, including the six
      verifications added across Rounds 3–5 for the identity-token design
-     (V22–V27) alongside the original V1–V21.
+     (V22–V27) alongside the original V1–V21, plus V28 (Round 6,
+     2026-08-23) for the `WorldError::NoRenderableComponent` correction.
 
   This approval does not authorize Implementation to begin immediately —
   per this repository's own PR-based workflow,
@@ -86,6 +87,22 @@
   have left, fixing how this approval's own already-stated "no forgery"
   intent is implemented; it changes nothing else this approval covers.
   This Plan's own status remains `Approved / Ready for Implementation`.
+
+  **Human Review Correction (2026-08-23), covered by this same approval,
+  no new review round:** Implementation of this Plan disclosed that
+  `World::getRenderable()` had no `WorldError` enumerator of its own for
+  a valid entity with no `Renderable`, and reused `NoCameraComponent` as
+  an interim choice. Human Review **rejected** that reuse — see
+  Independent Review Round 6 below. `WorldError` gains a fifth
+  enumerator, `NoRenderableComponent`, restoring symmetry with
+  `NoCameraComponent`; validation priority (`InvalidEntity` /
+  `WrongWorld` / stale-generation before any component-absence check) is
+  unchanged. This correction is governance-only: it does not itself
+  modify [PR #68](https://github.com/slmao/Atlantis/pull/68)'s
+  Implementation code, and does not authorize merging that PR — V20
+  (genuine human, GUI-based visual confirmation) remains a separate,
+  outstanding gate before merge; see Definition of Done. This Plan's own
+  status remains `Approved / Ready for Implementation`.
 - **Independent Review (2026-08-22):** Self-review performed during
   drafting, against `main`'s actual, current source tree (not the Spec's
   own illustrative prose alone) for every file/target this Plan touches
@@ -330,6 +347,43 @@
   and [Spec 0014](../specs/0014-world-scene-foundation.md)'s own
   "Accepted Amendment" sections carry a matching "Correction (2026-08-23)"
   note; neither is reopened to `Proposed`.
+- **Independent Review — Round 6 (2026-08-23): `WorldError` gains
+  `NoRenderableComponent` — Human Review Correction, not a new design
+  question.** Implementation of this Plan (on
+  [PR #68](https://github.com/slmao/Atlantis/pull/68)) disclosed a gap
+  neither this Plan's own D2/D11 nor ADR-0049's/Spec 0014's Accepted
+  Amendments anticipated: `World::getRenderable()` has no `WorldError`
+  enumerator of its own for a valid `EntityId` that legitimately carries
+  no `Renderable` component. The disclosed Implementation choice —
+  reusing `NoCameraComponent` for that case — was reviewed and
+  **rejected** by Human Review (2026-08-23) as insufficiently precise,
+  breaking the symmetry between `Camera` and `Renderable`
+  component-absence reporting. Corrected: **`WorldError` gains a fifth
+  enumerator, `NoRenderableComponent`** (D2), returned by
+  `getRenderable()` for an otherwise-valid entity with no `Renderable`
+  (D4); `NoCameraComponent` continues to mean exactly what it already
+  meant — a missing `Camera` component only. Validation priority is
+  unchanged: `InvalidEntity`, `WrongWorld`, and stale-generation checks
+  continue to be evaluated, and continue to take priority, before any
+  component-absence check (D11). New V28 locks the Camera/Renderable
+  error distinction, the unchanged priority ordering, and exhaustiveness
+  of every `WorldError` switch/mapping. This is a fix to how an
+  already-approved API surface reports one previously-unassigned error
+  case, not a new decision — no change to any other `World` API, module
+  boundary, `WrongWorld`, the moved-from contract, or `World`'s own
+  move/ownership semantics — applied directly per Human Review's own
+  explicit instruction not to add a further review round. Both
+  [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s
+  and [Spec 0014](../specs/0014-world-scene-foundation.md)'s own
+  "Accepted Amendment" sections carry a matching "Human Review Correction
+  (2026-08-23)" note, since both explicitly closed `WorldError` at four
+  enumerators; neither is reopened to `Proposed`. This correction is
+  governance-only — it does not itself edit
+  [PR #68](https://github.com/slmao/Atlantis/pull/68)'s Implementation
+  code (a separate, subsequent Implementation-fix change lands the actual
+  `NoRenderableComponent` enumerator and `getRenderable()` fix against
+  that PR or a follow-up), and does not waive V20's own outstanding,
+  genuine-human-observation requirement — see Definition of Done.
 - **Related ADR(s):**
   [ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md),
   all `Accepted` 2026-08-22, **including** ADR-0049's "Accepted Amendment"
@@ -440,10 +494,11 @@ inline constexpr EntityId kInvalidEntityId{};  // index_ == max, generation_ == 
 
 // world_error.h
 enum class WorldError {
-  InvalidEntity,       // stale or out-of-range handle, or the invalid sentinel
-  WouldCreateCycle,     // setParent() would make child its own ancestor
-  NoCameraComponent,    // setActiveCamera() target has no Camera
-  WrongWorld,            // handle's identity belongs to a different, live World instance
+  InvalidEntity,          // stale or out-of-range handle, or the invalid sentinel
+  WouldCreateCycle,       // setParent() would make child its own ancestor
+  NoCameraComponent,      // setActiveCamera() target has no Camera
+  WrongWorld,             // handle's identity belongs to a different, live World instance
+  NoRenderableComponent,  // getRenderable() target has no Renderable (2026-08-23 correction)
 };
 
 // transform.h
@@ -511,6 +566,14 @@ struct Renderable {
   meaningful only within the process and `World` instance that produced
   it, matching Spec 0014's own Non-Goals (no serialization, no scene file
   format, no cross-process consumer).
+- **`WorldError` gains a fifth enumerator, `NoRenderableComponent`**
+  (Human Review Correction, 2026-08-23; see Independent Review Round 6
+  below): `getRenderable()` returns it for an otherwise-valid entity with
+  no `Renderable`, in place of the disclosed Implementation interim
+  choice of reusing `NoCameraComponent`, which Human Review rejected as
+  insufficiently precise. `NoCameraComponent` is unchanged — a missing
+  `Camera` component only. No other enumerator, validation ordering, or
+  `World` API changes.
 
 ### D3. `World`'s internal slot map — exact representation
 
@@ -811,6 +874,11 @@ class World {
 - **`setActiveCamera(id)`** runs `validate(id)` first (`WrongWorld` or
   `InvalidEntity`) then checks `slots_[id.index_].camera.has_value()`
   (`NoCameraComponent`) before writing `activeCamera_ = id`.
+- **`getRenderable(id)`** (Human Review Correction, 2026-08-23) runs
+  `validate(id)` first (`WrongWorld` or `InvalidEntity`) then checks
+  `slots_[id.index_].renderable.has_value()`, returning
+  `Err(NoRenderableComponent)` — never `NoCameraComponent` — when absent,
+  matching `setActiveCamera()`'s own priority ordering exactly.
 - **`renderableEntities()`** — no `EntityId` argument to route through
   `validate()`, but reads `identity_.get()` to stamp every result, so it
   performs the same moved-from `ATLANTIS_CHECK_MSG` directly at entry —
@@ -1295,17 +1363,21 @@ the Implementation PR must follow and record, not left implicit:**
    new golden exactly as they already apply to `minimal_cube`'s —
    nothing in this Plan changes any of them.
 
-### D11. `WorldError`'s four enumerators are exhaustive for this Plan's own scope
+### D11. `WorldError`'s five enumerators are exhaustive for this Plan's own scope
 
 Confirmed by construction, not merely asserted: every setter/getter's own
 only failure modes are "handle belongs to a different, live `World`"
 (`WrongWorld`, checked first by `validate()`, D3), "handle stale or
 out-of-range" (`InvalidEntity`), (for `setParent()`) "would create a
-cycle," or (for `setActiveCamera()`) "no `Camera` component" — no fifth
-condition exists anywhere in D3–D5's own algorithms. `WrongWorld` is
-added by this Plan, per ADR-0049's own Accepted Amendment (Human Review
-Amendment Approval, 2026-08-22) — the only `WorldError` enumerator change
-from the original design.
+cycle," (for `setActiveCamera()`) "no `Camera` component," or (for
+`getRenderable()`) "no `Renderable` component" — no sixth condition
+exists anywhere in D3–D5's own algorithms. `WrongWorld` was added by this
+Plan, per ADR-0049's own Accepted Amendment (Human Review Amendment
+Approval, 2026-08-22). `NoRenderableComponent` was added by this Plan's
+own Human Review Correction (2026-08-23; Independent Review Round 6,
+above) — every `WorldError`-producing `switch`/mapping in D3–D5 must
+handle all five enumerators exhaustively (verified by V28), never a
+`default` case masking a missing one.
 
 ## Milestones / Task Breakdown
 
@@ -1713,6 +1785,7 @@ Step 1 (World skeleton, value types, slot map, entity lifecycle)
 | V25 | **`EntityId` validity survives `World` move-construction:** create several entities (including a parent/child pair) in a `World`, capture their `EntityId`s, move-construct a new `World` from it (`World moved = std::move(original);`), and confirm every previously issued `EntityId` is still `Ok`/`isValid()` against `moved` — same index, same generation, same underlying identity token address, unchanged by the move — and that hierarchy/component data moved with it intact. | `entity_lifecycle_tests.cpp` | GPU-independent |
 | V26 | **Moved-from `World`: any call other than the destructor or move-construction-from is a checked programmer error.** After `World moved = std::move(original);`, install a recording failure handler via `atlantis::assertions::setFailureHandler()` (matching `tests/core/assert_tests.cpp`'s own established pattern), call `original.createEntity()` (and separately, an arbitrary `EntityId`-accepting method, `updateTransforms()`, and `clearActiveCamera()`/`activeCamera()`), and confirm the handler recorded exactly one failure each time — not a crash, not silently-succeeding undefined behavior. | `entity_lifecycle_tests.cpp` | GPU-independent |
 | V27 | **`EntityId`'s full encapsulation, all three fields (2026-08-23 correction):** (a) `std::is_trivially_copyable_v<EntityId>` holds, confirmed via `static_assert`; (b) no external code can compile a direct mutation of any of `index_`/`generation_`/`worldIdentity_` — confirmed by construction (they are `private`, no public setter exists) and, concretely, a compile-fail check (e.g. via a `static_assert`-guarded SFINAE trait, or documented as an intentionally-uncompilable negative example the test file comments but does not build) that `EntityId` exposes no assignable public data member; (c) the defaulted `operator==` distinguishes two handles differing in **any single one** of the three fields (index-only, generation-only, and — via two live `World`s per V23 — identity-only, each tested as its own case); (d) `kInvalidEntityId` still reports `Err(InvalidEntity)` (never `WrongWorld`) against every `World`-issued handle, and every `World::createEntity()` handle still round-trips through every accessor/API exactly as before this correction; (e) no test or production code anywhere asserts or depends on a fixed `sizeof(EntityId)`. | `entity_lifecycle_tests.cpp` | GPU-independent (mix of runtime and compile-time) |
+| V28 | **`WorldError::NoRenderableComponent`, distinct from `NoCameraComponent` (2026-08-23 Human Review Correction):** (a) `getRenderable()` against a valid entity with no `Renderable` returns `Err(NoRenderableComponent)`, never `Err(NoCameraComponent)`; (b) `setActiveCamera()` against a valid entity with no `Camera` still returns `Err(NoCameraComponent)`, never `Err(NoRenderableComponent)` — both checked in the same test, on the same entity, to directly prove the two errors are distinct and not interchangeable; (c) for `getRenderable()`, an invalid, wrong-`World`, or stale-generation handle still returns `Err(InvalidEntity)`/`Err(WrongWorld)` and never reaches the component-absence check — confirmed by constructing a handle that is simultaneously stale **and** would (if valid) point at a componentless entity, and observing `Err(InvalidEntity)`, not `Err(NoRenderableComponent)`; (d) every `WorldError`-producing `switch`/mapping in the implementation (D3–D5) is confirmed exhaustive over all five enumerators — no `default:` case — via a compile-time check (e.g. removing exhaustiveness would fail to compile under `-Werror`) or an explicit enumeration in the test itself. | `renderable_tests.cpp`, `camera_tests.cpp` | GPU-independent |
 
 ## Traceability — Spec / ADR → Plan
 
@@ -1726,6 +1799,7 @@ Step 1 (World skeleton, value types, slot map, entity lifecycle)
 | Moved-from `World`: destructible/move-constructible-from only, every other call a checked programmer error | D3, D4; V26 |
 | `World`'s own copy/move semantics, now load-bearing for identity | D3; V22, V25 |
 | `WorldError::WrongWorld` — new fourth enumerator, checked before slot/generation at every entry point | D2, D3, D4, D5, D11; V23, V24 |
+| `WorldError::NoRenderableComponent` — new fifth enumerator (Human Review Correction, 2026-08-23); `getRenderable()` no longer reuses `NoCameraComponent`; component-absence checks still ordered after `InvalidEntity`/`WrongWorld`/stale-generation — ADR-0049/Spec 0014 "Human Review Correction (2026-08-23)" notes | D2, D4, D11; V28; ADR-0049/Spec 0014 "Accepted Amendment" sections' own "Human Review Correction (2026-08-23)" notes |
 | Spec 0014 — Deterministic slot reuse (LIFO) and enumeration (ascending index) | D3, D4; V3, V14 |
 | Spec 0014 — Fixed-type `Transform`/`Camera`/`Renderable` component storage | D2, D4; V11, V12 |
 | Spec 0014 — `setParent()` cycle prevention, local-vs-world preservation | D5; V5, V10 |
@@ -1861,6 +1935,35 @@ still waits on [PR #67](https://github.com/slmao/Atlantis/pull/67) being
 merged, per this repository's own PR-based workflow — see
 [specs/README.md](../specs/README.md).
 
+**RESOLVED (Round 6, 2026-08-23): `getRenderable()` reusing
+`NoCameraComponent` — a Human Review Correction, not a Plan defect found
+during drafting.** This gap was not found during this Plan's own
+drafting/review rounds (1–5); it was disclosed by Implementation itself
+on [PR #68](https://github.com/slmao/Atlantis/pull/68) after this Plan's
+own Human Review Approval, as an interim choice made because neither
+Spec 0014's Requirements nor this Plan's own original D2/D4/D11 assigned
+`getRenderable()` its own `WorldError` case. Human Review reviewed and
+**rejected** the reuse (2026-08-23), directing a fifth, independent
+enumerator instead — see Independent Review Round 6 above for the full
+record. This governance correction (this document, plus matching
+"Human Review Correction (2026-08-23)" notes on
+[ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md) and
+[Spec 0014](../specs/0014-world-scene-foundation.md)) does not by itself
+change [PR #68](https://github.com/slmao/Atlantis/pull/68)'s
+Implementation code — the actual `NoRenderableComponent` enumerator and
+corrected `getRenderable()` body land in a separate, subsequent
+Implementation-fix change. **This correction also does not touch, waive,
+or reinterpret V20.** V20 requires an actual human, using a real
+graphical session, to personally observe the windowed
+`atlantis_runtime` executable's five-cube scene, interactive
+resize/minimize/restore/close, and clean Vulkan Validation Layers output
+— a programmatic Win32 message-injection pass (`SetWindowPos`,
+`PostMessage(WM_CLOSE)`, etc.) is useful automation but is **not** a
+substitute for, and must never be recorded as satisfying, V20's own
+human-observation requirement. V20 remains outstanding and is a
+merge-blocking gate for [PR #68](https://github.com/slmao/Atlantis/pull/68)
+independent of this correction.
+
 **One disclosed, deliberately unmitigated edge case, distinct from the
 generation-retirement risk ADR-0049 already closes:** `EntityId::index`
 reaching its own `std::uint32_t` maximum (a `World` instance holding
@@ -1878,8 +1981,14 @@ one.
 See [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
 Deltas specific to this plan:
 
-- V1–V18 and V22–V27 all executed and recorded; V19–V21 recorded as
+- V1–V18 and V22–V28 all executed and recorded; V19–V21 recorded as
   manual verification in the Implementation PR.
+- **V20 specifically requires genuine human observation through a real
+  graphical session** — programmatic Win32 message-injection automation
+  is not a substitute and must not be recorded as satisfying it. V20 is
+  an outstanding gate on [PR #68](https://github.com/slmao/Atlantis/pull/68)
+  independent of, and not resolved by, the `NoRenderableComponent`
+  governance correction (Independent Review Round 6, 2026-08-23) above.
 - Both the ADR-0049 and Spec 0014 Accepted Amendments (stable `World`
   identity token) have reached their formal Human Review Amendment
   Approval record — done, 2026-08-22 — before this Plan's own Human
