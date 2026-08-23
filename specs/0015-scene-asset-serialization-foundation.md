@@ -81,9 +81,11 @@
   Human Review, per the same Spec → Plan → Human Review → Implementation
   → Verification → PR → Merge path every prior spec in this line has
   followed.
-- **Related Plan(s):** None yet — Plan drafting is explicitly out of
-  scope for this document; see AGENTS.md's own Spec → Plan → Human
-  Review sequencing.
+- **Related Plan(s):** [plans/0015-scene-asset-serialization-foundation.md](../plans/0015-scene-asset-serialization-foundation.md)
+  (`In Review`) — drafted following this Spec's own Human Review
+  Approval (2026-08-23), which authorizes drafting a Plan but does not
+  itself authorize Implementation; see that Plan's own Human Review
+  Approval note once recorded.
 - **Related ADR(s):**
   [ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)
   (module boundary and ownership),
