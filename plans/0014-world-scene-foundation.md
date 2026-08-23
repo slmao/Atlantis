@@ -99,10 +99,11 @@
   `WrongWorld` / stale-generation before any component-absence check) is
   unchanged. This correction is governance-only: it does not itself
   modify [PR #68](https://github.com/slmao/Atlantis/pull/68)'s
-  Implementation code, and does not authorize merging that PR — V20
-  (genuine human, GUI-based visual confirmation) remains a separate,
-  outstanding gate before merge; see Definition of Done. This Plan's own
-  status remains `Approved / Ready for Implementation`.
+  Implementation code, and does not by itself authorize merging that PR
+  — V20 (genuine human, GUI-based visual confirmation) was a separate
+  gate, subsequently satisfied 2026-08-23; see the "Post-Merge Status
+  Update" note in Deviations and Definition of Done below. This Plan's
+  own status remains `Approved / Ready for Implementation`.
 - **Independent Review (2026-08-22):** Self-review performed during
   drafting, against `main`'s actual, current source tree (not the Spec's
   own illustrative prose alone) for every file/target this Plan touches
@@ -1960,9 +1961,27 @@ resize/minimize/restore/close, and clean Vulkan Validation Layers output
 — a programmatic Win32 message-injection pass (`SetWindowPos`,
 `PostMessage(WM_CLOSE)`, etc.) is useful automation but is **not** a
 substitute for, and must never be recorded as satisfying, V20's own
-human-observation requirement. V20 remains outstanding and is a
-merge-blocking gate for [PR #68](https://github.com/slmao/Atlantis/pull/68)
-independent of this correction.
+human-observation requirement. As of this paragraph's own writing
+(2026-08-23), V20 was outstanding and a merge-blocking gate for
+[PR #68](https://github.com/slmao/Atlantis/pull/68), independent of this
+correction — see the "Post-Merge Status Update" note immediately below
+for how this was subsequently resolved.
+
+**Post-Merge Status Update (2026-08-23):** [PR #68](https://github.com/slmao/Atlantis/pull/68)
+(Implementation), [PR #69](https://github.com/slmao/Atlantis/pull/69)
+(this governance correction), and
+[PR #70](https://github.com/slmao/Atlantis/pull/70) (the
+`WorldError::NoRenderableComponent` code fix, V28, and a broadened final
+code review) are all merged. V20 was subsequently satisfied by an actual
+human, using a real graphical session, personally observing both the
+Debug and Release `atlantis_runtime` executables — five-cube scene
+visible and correctly composed, interactive resize/minimize/restore/close
+all correct, both processes exiting with code 0, Vulkan Validation
+Layers zero VUID/Error/Warning in both runs — recorded as a PR comment
+on [PR #70](https://github.com/slmao/Atlantis/pull/70/) dated
+2026-08-23. This paragraph does not alter the point above: the
+programmatic Win32 automation itself never satisfied V20; a separate,
+subsequent human observation did.
 
 **One disclosed, deliberately unmitigated edge case, distinct from the
 generation-retirement risk ADR-0049 already closes:** `EntityId::index`
@@ -1981,14 +2000,18 @@ one.
 See [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
 Deltas specific to this plan:
 
-- V1–V18 and V22–V28 all executed and recorded; V19–V21 recorded as
-  manual verification in the Implementation PR.
+- V1–V28 all executed and recorded, including V20 (see below). `ctest
+  -LE gpu`: 436/436 Debug, 435/435 Release; `ctest -L gpu`: 19/19 both
+  configurations; Vulkan Validation Layers grepped clean throughout.
 - **V20 specifically requires genuine human observation through a real
   graphical session** — programmatic Win32 message-injection automation
-  is not a substitute and must not be recorded as satisfying it. V20 is
-  an outstanding gate on [PR #68](https://github.com/slmao/Atlantis/pull/68)
-  independent of, and not resolved by, the `NoRenderableComponent`
-  governance correction (Independent Review Round 6, 2026-08-23) above.
+  is not, and was never recorded as, a substitute. **Satisfied
+  2026-08-23**: an actual human personally observed both Debug and
+  Release `atlantis_runtime` (five-cube scene, interactive
+  resize/minimize/restore/close, clean exit, clean Validation Layers),
+  recorded as a PR comment on
+  [PR #70](https://github.com/slmao/Atlantis/pull/70) — see the "Post-Merge
+  Status Update" note above.
 - Both the ADR-0049 and Spec 0014 Accepted Amendments (stable `World`
   identity token) have reached their formal Human Review Amendment
   Approval record — done, 2026-08-22 — before this Plan's own Human

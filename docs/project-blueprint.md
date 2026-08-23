@@ -680,13 +680,17 @@ milestone being listed does not authorize starting it — see Section 1.
 
 ### Milestone 11 — World / Scene Foundation
 
-- **Governance state:** **`Approved` Spec, `Approved` Plan, Implementation
-  merged via [PR #68](https://github.com/slmao/Atlantis/pull/68), a
+- **Governance state:** **`Approved` Spec, `Approved` Plan. Implementation
+  merged via [PR #68](https://github.com/slmao/Atlantis/pull/68); a
   governance-only Human Review Correction merged via
   [PR #69](https://github.com/slmao/Atlantis/pull/69) (`WorldError` gains
-  `NoRenderableComponent`), and the corresponding code fix + broadened
-  final review tracked in its own follow-up PR — see "Disclosed
-  limitations" below for current status** —
+  `NoRenderableComponent`); the corresponding code fix, new V28, and a
+  broadened final code review merged via
+  [PR #70](https://github.com/slmao/Atlantis/pull/70), which also carries
+  V20's own genuine-human manual verification record (2026-08-23,
+  PASS). Milestone 11 is code-complete and fully verified — see "Not
+  implemented" below for what remains explicitly out of scope, still
+  pending its own future Spec** —
   [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md),
   [plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md).
   Human Review Approval recorded 2026-08-22 for the Spec (17
@@ -726,13 +730,15 @@ milestone being listed does not authorize starting it — see Section 1.
   both configurations, Vulkan Validation Layers grepped clean throughout.
   **Programmatic interactive automation (real Win32 message injection for
   resize, minimize/restore, close) against the real `atlantis_runtime`
-  executable was performed as lifecycle/liveness evidence only — it is
-  explicitly not, and must never be recorded as, V20's own genuine-human,
-  GUI-based visual confirmation** (multi-entity scene visible and
-  correctly composed, interactive resize/minimize/restore/close, clean
-  Validation Layers, observed by an actual person). V20 remains an
-  outstanding, merge-blocking gate — see Plan 0014's own Verification
-  Checklist and Definition of Done for the exact commands and checklist.
+  executable was performed as lifecycle/liveness evidence only — it was
+  explicitly not, and was never recorded as, V20's own genuine-human,
+  GUI-based visual confirmation.** V20 was subsequently satisfied
+  2026-08-23 by an actual human personally observing both Debug and
+  Release `atlantis_runtime` (five-cube scene matching the golden,
+  interactive resize/minimize/restore/close, clean exit, clean
+  Validation Layers), recorded as a PR comment on
+  [PR #70](https://github.com/slmao/Atlantis/pull/70) — see Plan 0014's
+  own "Post-Merge Status Update" note and Definition of Done.
 - **Disclosed limitations:** carried forward from Milestone 10 (no
   automated literal pixel/visual screenshot comparison of the Runtime
   window's own live output; the headless golden match is pixel-exact
