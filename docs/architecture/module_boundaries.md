@@ -282,48 +282,67 @@ ADR-0044/ADR-0045, all `Accepted`;
 [PR #58](https://github.com/slmao/Atlantis/pull/58)) — the first module
 in this document that is genuinely as-built rather than only a
 `PROPOSED` draft description; this section states the real, shipped
-boundary, not a placeholder.
+boundary, not a placeholder. **Extended by Spec 0015 (Scene Asset &
+Serialization Foundation, `Approved`), ADR-0052–ADR-0054 (all
+`Accepted`) — code complete on
+[PR #74](https://github.com/slmao/Atlantis/pull/74) (OPEN, not yet
+merged); the paragraphs below already describe the extended boundary,
+clearly marked where they depend on that PR.**
 
 **Responsibilities:** turns checked-in, human-authored authoring source
 into a deterministic, versioned runtime artifact plus a metadata
-sidecar, and loads that artifact back into CPU-side data
-(`atlantis::asset_system::StaticMeshAssetData`, this Spec's one
-supported asset type). Never constructs a GPU resource itself.
+sidecar, and loads that artifact back into CPU-side data. Two asset
+types are supported: `atlantis::asset_system::StaticMeshAssetData`
+(Spec 0012) and, **pending PR #74**, a scene graph
+(`atlantis::asset_system::ValidatedSceneData` — node hierarchy,
+Transform/Camera/Renderable-shaped DTOs that never name a
+`atlantis::world::` type, ADR-0053). Never constructs a GPU resource
+itself.
 
 **Depends on:** Core only. No RHI, Renderer, RenderGraph, Shader System,
-Vulkan Backend, Platform, or Tools dependency — verified by an
-include-scanning test (`tests/asset_system/module_boundary_tests.cpp`),
-not merely stated.
+Vulkan Backend, Platform, Tools, or **(pending PR #74)** World
+dependency — verified by an include-scanning test
+(`tests/asset_system/module_boundary_tests.cpp`), not merely stated.
 
 **Depended on by:** Tools (the `atlantis_asset_cooker` CLI entry point)
 and, outside this module, any composition root that loads an asset and
-then itself constructs a GPU `Mesh` from the CPU data returned —
-currently `tests/image_regression/fixture/`, eventually a future
-Atlantis Runtime. Asset System itself is never depended on by Renderer,
-RHI, RenderGraph, or Vulkan Backend, and gains no dependency from any of
-them in the other direction either.
+then itself constructs GPU resources from the CPU data returned —
+`tests/image_regression/fixture/` and, **pending PR #74**, Atlantis
+Runtime (which now loads a real scene asset, not a single hardcoded
+mesh — see the Atlantis Runtime section below) and
+`atlantis::world::fromValidatedSceneData()` (Atlantis World, for the
+CPU-side scene graph only — World still depends on Asset System only
+narrowly, for `AssetId`, per ADR-0048/ADR-0053, never the reverse).
+Asset System itself is never depended on by Renderer, RHI, RenderGraph,
+or Vulkan Backend, and gains no dependency from any of them in the
+other direction either.
 
 **Forbidden:** no RHI, Renderer, RenderGraph, Shader System, Vulkan
-Backend, Platform, or Tools header anywhere in this module's own source.
-No construction of `atlantis::rhi::Buffer` or any other GPU resource —
-that is exclusively the composition root's job, using the module's
-existing, unmodified `atlantis::renderer::createMesh()`.
+Backend, Platform, Tools, or (as of PR #74) World header anywhere in
+this module's own source. No construction of `atlantis::rhi::Buffer` or
+any other GPU resource — that is exclusively the composition root's
+job, using the module's existing, unmodified
+`atlantis::renderer::createMesh()`.
 
-**Ownership:** each loaded `StaticMeshAssetData` is an explicit,
-caller-held value — never a global, static, or singleton registry. No
-in-process asset cache or database of any kind exists in this module.
+**Ownership:** each loaded `StaticMeshAssetData`/decoded
+`ValidatedSceneData` is an explicit, caller-held value — never a
+global, static, or singleton registry. No in-process asset cache or
+database of any kind exists in this module.
 
 **Public/private boundary:** public surface is path normalization,
-Asset ID computation, the cooker/loader functions, and the three data
-formats' own parse/serialize functions. The cooker's atomic-write
+Asset ID computation, the cooker/loader functions, and each data
+format's own parse/serialize functions. The cooker's atomic-write
 mechanism and the CMake stamp/`BYPRODUCTS` integration are internal to
 the build graph, not part of the runtime-consumed public API.
 
-**Extension points:** a second asset type (textures — blocked on a
+**Extension points:** a third asset type (textures — blocked on a
 future RHI Spec adding a general sampled `Texture`/`Sampler` capability
 first), a rename-stable GUID identity scheme, and a real derived-data
-cache are each named, explicitly out-of-scope future work in Spec 0012
-— not designed or scaffolded here.
+cache are each named, explicitly out-of-scope future work in Spec 0012/
+Spec 0015 — not designed or scaffolded here. A distributable,
+cross-session Asset Catalog/Registry is likewise explicitly deferred
+(Spec 0015's own Non-Goals) — the scene dependency manifest Spec 0015
+adds is build-tree-private, never a portable part of any artifact.
 
 ---
 
@@ -369,15 +388,22 @@ move-constructible, not copyable, not move-assignable; a moved-from
 move-constructed from again.
 
 **Public/private boundary:** public surface is the entity/component
-accessor API, `updateTransforms()`/`getWorldMatrix()`, and the public
-value types (`EntityId`, `Transform`, `Camera`, `Renderable`,
-`WorldError`). The slot map's own internal representation (`Slot`, the
-opaque identity-token type) is private to `world.cpp`, never declared in
-any public header.
+accessor API, `updateTransforms()`/`getWorldMatrix()`, the public value
+types (`EntityId`, `Transform`, `Camera`, `Renderable`, `WorldError`),
+and, **pending PR #74** (Spec 0015), `fromValidatedSceneData()`
+(`scene_instantiation.h`, deliberately not a `World` member function) —
+two-pass, deterministic, genuinely infallible instantiation from Asset
+System's own `ValidatedSceneData`, never persisting a scene-local node
+index as `EntityId`. The slot map's own internal representation
+(`Slot`, the opaque identity-token type) is private to `world.cpp`,
+never declared in any public header.
 
-**Extension points:** a rename/save-durable identity scheme, scene
-serialization, and a Tool/Editor protocol are each named, explicitly
-out-of-scope future work in Spec 0014 — not designed or scaffolded here.
+**Extension points:** a rename/save-durable identity scheme and a
+Tool/Editor protocol are each named, explicitly out-of-scope future
+work in Spec 0014 — not designed or scaffolded here. Scene
+serialization itself is Spec 0015's own scope (AssetSystem-owned, not
+World-owned — `fromValidatedSceneData()` above is World's own, single,
+narrow consumption point of it).
 
 ---
 
@@ -387,7 +413,11 @@ out-of-scope future work in Spec 0014 — not designed or scaffolded here.
 `Accepted`; extended by Spec 0014, ADR-0048–ADR-0051, all `Accepted`) —
 this section states the real, built boundary for the Windows windowed
 path; Android/iOS remain architectural, not implemented (see Extension
-points).
+points). **Further extended by Spec 0015 (`Approved`), ADR-0052–
+ADR-0054 (all `Accepted`) — code complete on
+[PR #74](https://github.com/slmao/Atlantis/pull/74) (OPEN, not yet
+merged); the scene-loading description below already reflects that
+PR's own code, clearly marked.**
 
 **Responsibilities:** the actual composition root. A private
 `atlantis_runtime_host` static library (`Atlantis::RuntimeHost`) owns
@@ -396,19 +426,26 @@ shutdown; a thin `atlantis_runtime` Windows executable contains only the
 `main()` entry point that constructs and drives it. Owns a Platform
 session for the OS being built (Windows Platform; Android Platform not
 implemented), creates the RHI `Device` and (on the first `SurfaceCreated`
-event) `Presentation` via the Vulkan Backend, loads the `minimal_cube`
-Asset-System-sourced mesh and the `minimal_mesh` Shader-System-compiled
-material, and owns the one real `World` instance holding a fixed,
-multi-entity validation scene. Each frame: calls `World::updateTransforms()`,
-extracts the active camera's view/projection matrices and builds one
-`DrawItem` per renderable entity via a Runtime-private adapter
-(`scene_extraction.h`/`.cpp` — eye/forward-only camera extraction, never
-a right/up column, so it stays correct under a sheared hierarchy;
-per-entity `AssetId` resolution against the one known, resolved asset),
-acquires a `RenderTarget` from `Presentation`, hands the `DrawItem`s to
-`Renderer`, then presents. Also responds to Platform-delivered lifecycle
-events; Android-specific lifecycle handling (surface destroyed/recreated,
-app paused/resumed) remains TBD, see Open Questions in
+event) `Presentation` via the Vulkan Backend, loads the `minimal_mesh`
+Shader-System-compiled material, and, **pending PR #74**, reads a real
+scene asset's own dependency manifest, decodes its
+`ValidatedSceneData`, resolves and loads every distinct mesh it
+references (in ascending first-reference order, never `AssetId`-sorted
+order — a keyed `meshResourceMap_`, not a single hardcoded asset), and
+instantiates the one real `World` instance via
+`atlantis::world::fromValidatedSceneData()` — replacing the former
+fixed, hardcoded six-entity validation scene Spec 0014 shipped. Each
+frame: calls `World::updateTransforms()`, extracts the active camera's
+view/projection matrices and builds one `DrawItem` per renderable
+entity via a Runtime-private adapter (`scene_extraction.h`/`.cpp` —
+eye/forward-only camera extraction, never a right/up column, so it
+stays correct under a sheared hierarchy; per-entity `AssetId`
+resolution against `meshResourceMap_`'s own key set, **pending PR #74**
+— previously a single hardcoded asset comparison), acquires a
+`RenderTarget` from `Presentation`, hands the `DrawItem`s to `Renderer`,
+then presents. Also responds to Platform-delivered lifecycle events;
+Android-specific lifecycle handling (surface destroyed/recreated, app
+paused/resumed) remains TBD, see Open Questions in
 [threading.md](threading.md).
 
 **Depends on:** Atlantis Platform, RHI (Device + Presentation), Renderer,
@@ -433,10 +470,13 @@ composition logic without a device or a window.
 object's *first* member, so it is destroyed *last* by ordinary C++
 reverse-declaration-order destruction — a compiler-enforced guarantee
 that the window outlives every GPU resource, not a hand-sequenced
-convention. `Device`, `Presentation`, `Mesh`, the camera `Buffer`, the
-depth `Texture`, and `Material` are owned in that reverse order below
-it, matching `Material → Texture → Buffer → Mesh → Presentation → Device
-→ PlatformSession`/window as the fixed destruction sequence.
+convention. `Device`, `Presentation`, a keyed map of every loaded
+`Mesh` (**pending PR #74** — `meshResourceMap_`, occupying the single
+`Mesh` member's own former declaration slot, so the guarantee below is
+unchanged, not newly invented), the camera `Buffer`, the depth
+`Texture`, and `Material` are owned in that reverse order below it,
+matching `Material → Texture → Buffer → Mesh(es) → Presentation →
+Device → PlatformSession`/window as the fixed destruction sequence.
 `RenderTarget` instances acquired each frame are short-lived and scoped
 to that frame — see [resource_lifetime.md](resource_lifetime.md).
 
