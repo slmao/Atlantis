@@ -81,6 +81,17 @@ from the drawing pass already recorded into the same `CommandList`) into
 that same `CommandList`, then `submit()`s once and `waitIdle()`s once
 for both passes together.
 
+**A second review round's own further verification corrected this
+ADR's own first-drafted Decision 5–7 below**, which had the upload run
+as its own, separate `submit()`/`waitIdle()` cycle *before* a later,
+separate per-frame draw graph. That design works, but does not match
+`headless_rendering_gpu_tests.cpp`'s own precedent as closely as
+possible (which submits its draw pass and its copy pass *together*, one
+`submit()`), and unnecessarily doubles GPU submissions and CPU stalls
+for a fixture whose own base verification need is exactly one combined
+submission covering upload, draw, and readback together. The corrected
+Decisions below reflect the combined design.
+
 ## Decision
 
 1. **New `BufferPurpose::Staging`**, extending the existing four-value
@@ -114,44 +125,60 @@ for both passes together.
    kind, reusing `ResourceBinding`'s existing `incomingState`/`finalState`
    fields (`execution.h:23-40`) — the same mechanism Spec 0010's own
    readback `finalState` already uses, not a new mechanism.
-5. **The upload's own `submit()` call reuses the caller's own
-   already-acquired `RenderTarget` — `Device::submit()` itself is
-   unchanged; this ADR introduces no target-optional or target-free
-   submit path.** The caller (this Spec's own fixture) is already a
-   headless fixture that creates an `OffscreenTarget` and calls
-   `acquireTarget()` for its own eventual draw pass; the upload's own
-   one-pass graph is `execute()`'d into a `CommandList`, then
-   `submit(commandList, *thatSameRenderTarget)` — the upload's own
-   recorded commands never touch that target's own color image;
-   `submit()`'s target parameter exists for swapchain/offscreen
-   semaphore bookkeeping (legally null handles for an offscreen target),
-   not to describe every resource a `CommandList` touches, and
-   `Device::submit()`'s own doc comment already names exactly this
-   "headless caller, never calls `present()`" case as supported.
-   `Device::waitIdle()` — real, already-used, blocking — is called once
-   after that `submit()`, before the fixture builds or executes its own
-   later, separate per-frame draw graph against the same `RenderTarget`.
-6. **Staging `Buffer` lifetime, and every other resource's destruction
-   ordering, are tied to observed GPU completion, not to `submit()`
-   returning.** The staging `Buffer` is destroyed only after the
-   upload's own `waitIdle()` call returns `Ok` — submission is
-   asynchronous; only `waitIdle()`'s own return is evidence the GPU
-   actually finished reading it. Because the copy and its own
-   `TransferDestination → ShaderRead` transition are both recorded into
-   the one `CommandList` that `waitIdle()` covers, no separate "wait for
-   copy, then transition" step exists. `SampledTexture`/`Sampler`
-   themselves are owned by the same composition root that creates them;
-   `Material` (Decision 8 below) only borrows them.
+5. **The upload, the real draw, and the readback all share exactly one
+   `Device::submit()` call — `Device::submit()` itself is unchanged;
+   this ADR introduces no target-optional or target-free submit path,
+   and does not use a dummy target to work around needing one.** The
+   caller (this Spec's own fixture) creates one real `OffscreenTarget`,
+   `acquireTarget()`s once for one real `RenderTarget`, and creates
+   **one** `CommandList`. It records, in order, into that one
+   `CommandList`: (a) the upload graph(s) from Decision 4 above; (b)
+   `Renderer::drawFrame()`'s own draw graph (unmodified shape),
+   rendering into the same `RenderTarget`, its `DrawItem`s' `Material`s
+   sampling the now-`ShaderRead` `SampledTexture`(s) via
+   `CommandList::bindTexture()` (Decision 8 below), leaving the target in
+   `ResourceState::TransferSource` via its own existing `finalColorState`
+   parameter; (c) a third, caller-built `RenderGraphBuilder` readback
+   graph, `writes(target, ResourceState::TransferSource)` matching what
+   (b) just left it in, calling the existing
+   `copyRenderTargetToBuffer(*target, *readbackBuffer)` — this
+   three-graphs-in-one-`CommandList` shape directly extends
+   `headless_rendering_gpu_tests.cpp`'s own already-established
+   two-graphs-in-one-`CommandList` precedent (draw pass + copy pass) by
+   one more graph at the front. Then **exactly one**
+   `submit(commandList, *target)` — `target` genuinely participates
+   (drawn into by (b), read from by (c)), never reused merely to satisfy
+   the parameter's own signature.
+6. **`ShaderRead` correctness is guaranteed by the upload graph's own
+   barrier and the recorded execution order within that one submission —
+   `Device::waitIdle()` plays no role in it.** The upload graph's own
+   `execute()` call records a real `vkCmdPipelineBarrier` transitioning
+   `SampledTexture` to `VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL` before
+   the draw graph's own recorded sampling commands, both inside the same
+   `CommandList` — Vulkan's own single-command-buffer, single-queue
+   execution-order guarantee, together with the barrier's own
+   pipeline-stage synchronization, is what makes the draw pass's own
+   sampling valid, and this is already true the instant the GPU begins
+   processing this one submission, independent of `waitIdle()`.
+   `Device::waitIdle()`'s own role is narrower and purely CPU-side: it is
+   the signal that it is safe (a) for the CPU to read the readback
+   `Buffer`'s `mappedData()`, and (b) to destroy the staging `Buffer`(s)
+   (their own upload already consumed) and the readback `Buffer` (its
+   data already read) — submission is asynchronous, so only `waitIdle()`'s
+   own return, not `submit()`'s, is real evidence of this. `SampledTexture`/
+   `Sampler` themselves are owned by the same composition root that
+   creates them; `Material` (Decision 8 below) only borrows them.
 7. **Upload/submit/device-loss error semantics reuse existing `Result`
    channels — no new unified error enum.** Resource creation
-   (`SampledTexture`, `Sampler`, the staging `Buffer`) reports through
-   existing `*CreateError`-style enums; the upload's own
-   `RenderGraphBuilder::compile()`/`execute()` calls report through
-   RenderGraph's own existing compile/execute error channel, unchanged;
-   `submit()`/`waitIdle()` report through the existing `SubmitError`
-   enum, whose already-`Accepted` `DeviceLost` enumerator covers a
-   device loss during the upload exactly as it already covers one during
-   any other `submit()`/`waitIdle()` call.
+   (`SampledTexture`, `Sampler`, the staging `Buffer`, the readback
+   `Buffer`) reports through existing `*CreateError`-style enums; every
+   `RenderGraphBuilder::compile()`/`execute()` call (upload, draw,
+   readback) reports through RenderGraph's own existing compile/execute
+   error channel, unchanged; the one `submit()`/`waitIdle()` pair reports
+   through the existing `SubmitError` enum, whose already-`Accepted`
+   `DeviceLost` enumerator covers a device loss during this combined
+   submission exactly as it already covers one during any other
+   `submit()`/`waitIdle()` call.
 8. **`Material` gains an optional, construction-time, borrowed — never
    owned — `SampledTexture`/`Sampler` pair**, explicitly extending
    `DrawItem`'s own existing "mesh/material are borrowed (must outlive
@@ -176,13 +203,26 @@ for both passes together.
    image view and a sampler at bind time. This is a decision about the
    Vulkan-level binding mechanism only; `Sampler`'s own independence at
    the RHI level (ADR-0055) is unaffected.
-10. **Single mip level, fully synchronous upload.** Every
-    `SampledTexture` this round has exactly one mip level; the upload's
-    own RenderGraph execution completes (`submit()`, then `waitIdle()`
-    returning `Ok` — real, blocking, confirmed, per Decisions 5–6 above,
-    not merely "submitted") before any per-frame graph runs — no
-    asynchronous or deferred upload, no partial-readiness state.
-11. **The shader-compiler tool's `expectedContract` field, already
+10. **Single mip level, fully synchronous, combined-submission upload —
+    no asynchronous or deferred readiness state.** Every `SampledTexture`
+    this round has exactly one mip level; the whole combined submission
+    (upload, draw, readback per Decision 5) completes as a unit —
+    `submit()` once, then `waitIdle()` once, returning `Ok` (real,
+    blocking, confirmed, per Decisions 5–6 above) — before the fixture
+    reads back or reasons about any result. No texture is ever sampled
+    "maybe still uploading"; `ShaderRead` readiness is a compile-time
+    consequence of graph ordering (Decision 4/6), not a runtime race.
+11. **Target-independent submission — an upload with no real
+    `RenderTarget` at all — is explicitly named future work, not solved
+    or worked around with a dummy target here.** `Device::submit()` has
+    exactly one overload, requiring a real, module-produced
+    `const RenderTarget&`; this ADR's own base verification path
+    (Decision 5) always has a real one and reuses it genuinely. A future
+    Runtime need for an upload genuinely decoupled from any per-frame
+    `RenderTarget` (e.g. loading a texture with no frame currently in
+    flight) would need its own, separately-designed RHI change — not
+    scaffolded for or anticipated here.
+12. **The shader-compiler tool's `expectedContract` field, already
     plumbed from CMake but never read, is wired into real use.**
     `CompileAndValidateRequest::expectedContract`
     (`compile_and_validate.h:21`) is parsed but never consulted by
@@ -206,11 +246,18 @@ for both passes together.
   Golden Rule constraint — introduces no new "GPU work outside
   RenderGraph" precedent for any future spec to point back to.
 - **No RHI public-API change to `Device::submit()`, `Device::waitIdle()`,
-  or `SubmissionSignal`** — a review round's own deeper verification
+  or `SubmissionSignal`** — two review rounds' own deeper verification
   confirmed the existing, already-used submit/wait-idle shape (already
   proven at `headless_rendering_gpu_tests.cpp`/`minimal_cube_fixture.cpp`)
   covers this Spec's own upload need without modification, once the
-  upload reuses the caller's own already-acquired `RenderTarget`.
+  upload, real draw, and readback share one combined submission against
+  a real, genuinely-used `RenderTarget`.
+- **Fewer GPU submissions and CPU stalls than the immediately-prior
+  draft** (which submitted the upload separately, before a later,
+  separate draw submission) — one `submit()`/`waitIdle()` pair covers
+  the fixture's entire base verification path, matching this
+  repository's own closest existing multi-graph-per-submission
+  precedent as closely as possible rather than diverging from it.
 - The new barrier-plan entries are explicit and additive; the existing
   table's own hard-failure-on-unlisted-pair behavior is preserved
   unchanged for every other transition.
@@ -269,6 +316,26 @@ for both passes together.
   is asynchronous; the GPU may still be reading the staging buffer's
   memory when `submit()` itself returns, making this a real
   use-after-free risk, not merely an overly conservative choice.
+- **The upload as its own, separate `submit()`/`waitIdle()` cycle,
+  before a later, separate per-frame draw graph's own submission.**
+  This was this ADR's own first-drafted design (Decisions 5–7, prior
+  revision) and is withdrawn, not merely revised: it is correct but
+  needlessly doubles GPU submissions and CPU stalls for a fixture whose
+  own base verification need is exactly one combined submission, and a
+  second review round found it diverges from
+  `headless_rendering_gpu_tests.cpp`'s own closest existing precedent
+  (draw pass + copy pass sharing one `submit()`) more than necessary.
+  Nothing about the separate-submission design was functionally
+  incorrect; the combined design is preferred as the closer match to
+  established precedent and the smaller footprint.
+- **A throwaway/dummy `RenderTarget`, constructed solely to satisfy
+  `submit()`'s own required parameter, reused across an otherwise
+  target-free upload.** Rejected — indistinguishable in effect from a
+  target-free submit path this codebase does not have, and would let a
+  future reader mistake `submit()`'s target parameter for something
+  optional/decorative when it is not; the real, already-acquired
+  `RenderTarget` a headless fixture already has is always the correct
+  choice when one exists.
 - **Teach RenderGraph to manage the texture's full lifecycle (creation,
   upload, and every subsequent per-frame binding) as a tracked,
   persistent resource.** Rejected as more machinery than this Spec's own

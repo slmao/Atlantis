@@ -62,12 +62,22 @@ offline-build caveat (`adr/0041-...md:169-176`) already discloses that
    by format at the hardware level, stated explicitly: an `Rgba8Srgb`
    `SampledTexture` is linearized by Vulkan's own fixed-function texture
    unit (the sRGB EOTF) before a fragment shader ever sees a sampled
-   value; `Rgba8Unorm` is not. Spec 0016's own one GPU-required fixture
-   uses `Rgba8Unorm` specifically to avoid entangling its golden's own
-   "did the upload/sample path move the right bytes" claim with
-   tonemapping/output-encoding concerns Spec 0016's own Non-Goals
-   already exclude; `Rgba8Srgb` is exercised by its own GPU-independent
-   cook/decode round-trip test instead. Golden comparison in either case
+   value; `Rgba8Unorm` is not. **This is real GPU hardware behavior, not
+   a form of tonemapping, and cannot be proven by a CPU-only artifact
+   round-trip test** — a second review round corrected an earlier
+   version of this Decision that tried to exercise `Rgba8Srgb` with only
+   a GPU-independent cook/decode unit test (which proves the artifact's
+   own format tag and bytes round-trip correctly, never that Vulkan's
+   own hardware sampling actually linearizes). Spec 0016's own one
+   GPU-required fixture instead cooks the *same* source image twice —
+   once per format — and samples both in the same golden (two quads, two
+   `Material`s, one shared `Sampler`), so that any visible difference
+   between them in the captured, human-confirmed golden is exactly
+   Vulkan's own real hardware sRGB decode, not an artifact of cooking,
+   uploading, or comparison methodology; the GPU-independent round-trip
+   test remains valuable only as evidence the artifact layer itself is
+   correct, never as a substitute for the GPU evidence above. Golden
+   comparison in either case
    happens on the final, rendered RGBA8 color-attachment bytes — never a
    direct comparison against the source PNG or the artifact's own stored
    texel values.
@@ -230,3 +240,11 @@ offline-build caveat (`adr/0041-...md:169-176`) already discloses that
   header could wrap that multiplication into a small, falsely-valid
   size before the check ever runs, defeating the check it's meant to
   gate; 64-bit arithmetic first closes this.
+- **(Withdrawn, second review round.)** Exercise `Rgba8Srgb` with only a
+  GPU-independent cook/decode round-trip unit test, using `Rgba8Unorm`
+  for the one GPU-required fixture. This was an earlier version of this
+  ADR's own Decision 1 and is withdrawn: it proves the artifact format
+  tag and bytes round-trip correctly, never that Vulkan's own hardware
+  sampling actually linearizes on sample, which is the entire point of
+  claiming `Rgba8Srgb` support — see this ADR's own Decision 1 for the
+  corrected, dual-format-in-one-golden design.
