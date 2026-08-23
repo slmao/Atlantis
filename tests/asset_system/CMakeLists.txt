@@ -12,6 +12,7 @@ add_executable(atlantis_asset_system_tests
   validated_scene_data_tests.cpp
   scene_source_tests.cpp
   cook_scene_tests.cpp
+  decode_scene_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_system_tests
