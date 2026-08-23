@@ -19,6 +19,16 @@ enum class RuntimeInitError {
   CameraBufferCreateFailed,
   AssetMetadataParseFailed,
   SceneConstructionFailed,
+  // Plan 0015 Section D2/D10: each wraps the underlying
+  // SceneManifestError/SceneArtifactDecodeError/etc. only for a logged
+  // diagnostic string -- the enumerator itself is Runtime's own
+  // classification, per ADR-0054's own explicit "never
+  // WorldError/SceneCookError/SceneArtifactDecodeError/AssetLoadError
+  // directly" requirement.
+  SceneManifestLoadFailed,    // manifest missing, malformed, or fails its own validation (D8)
+  SceneArtifactLoadFailed,    // decodeScene() returned Err
+  SceneDependencyUnresolved,  // a referenced AssetId has no resolver entry
+  SceneDependencyLoadFailed,  // a resolved AssetId's own mesh load failed
 };
 
 // For logging only -- not part of any Result/error contract.

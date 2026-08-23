@@ -10,6 +10,7 @@ add_library(atlantis_runtime_host STATIC
   src/error_classification.cpp
   src/platform_session.cpp
   src/scene_extraction.cpp
+  src/scene_manifest.cpp
   src/runtime_application.cpp
 )
 add_library(Atlantis::RuntimeHost ALIAS atlantis_runtime_host)
