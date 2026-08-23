@@ -105,7 +105,17 @@ class CommandList {
   // 0, binding 1, fragment stage (ADR-0056 Decision 9) -- the currently
   // bound Pipeline must have been created with
   // PipelineCreateParams::hasSampledTextureBinding = true.
-  virtual void bindTexture(SampledTexture& texture, Sampler& sampler) = 0;
+  //
+  // const&, unlike transitionResource(SampledTexture&, ...)/
+  // copyBufferToTexture() above -- this call only reads the bound
+  // texture/sampler's already-const-qualified accessors (VkImageView/
+  // VkSampler) to populate a descriptor write; it does not transition or
+  // otherwise mutate either resource. const is also what Material's own
+  // borrowed sampledTexture()/sampler() accessors return (Spec 0016/D3),
+  // so this is the only signature Renderer's own
+  // cmd.bindTexture(*item.material->sampledTexture(), ...) call can pass
+  // without an unsafe const_cast.
+  virtual void bindTexture(const SampledTexture& texture, const Sampler& sampler) = 0;
 };
 
 }  // namespace atlantis::rhi

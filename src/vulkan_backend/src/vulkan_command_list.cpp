@@ -268,10 +268,11 @@ void VulkanCommandList::bindUniformBuffer(atlantis::rhi::Buffer& buffer) {
                            &boundDescriptorSet_, 0, nullptr);
 }
 
-void VulkanCommandList::bindTexture(atlantis::rhi::SampledTexture& texture, atlantis::rhi::Sampler& sampler) {
+void VulkanCommandList::bindTexture(const atlantis::rhi::SampledTexture& texture,
+                                     const atlantis::rhi::Sampler& sampler) {
   ATLANTIS_CHECK(boundDescriptorSet_ != VK_NULL_HANDLE);
-  auto& vulkanTexture = static_cast<VulkanSampledTexture&>(texture);
-  auto& vulkanSampler = static_cast<VulkanSampler&>(sampler);
+  const auto& vulkanTexture = static_cast<const VulkanSampledTexture&>(texture);
+  const auto& vulkanSampler = static_cast<const VulkanSampler&>(sampler);
 
   VkDescriptorImageInfo imageInfo{};
   imageInfo.sampler = vulkanSampler.sampler();
@@ -282,23 +283,38 @@ void VulkanCommandList::bindTexture(atlantis::rhi::SampledTexture& texture, atla
   // when this is called -- see resource_state_mapping.h's own note.
   imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-  VkWriteDescriptorSet write{};
-  write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  write.dstSet = boundDescriptorSet_;
-  write.dstBinding = 1;
-  write.descriptorCount = 1;
-  write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  write.pImageInfo = &imageInfo;
+  // Same redundant-write memo as bindUniformBuffer() above, and for the
+  // same reason (this class's own header comment on
+  // lastUpdatedDescriptorSet_/lastUpdatedUniformBuffer_): a textured
+  // Material shared by multiple DrawItems in one frame calls
+  // bindTexture() again for every item, each with byte-identical
+  // VkDescriptorImageInfo contents, so the redundant vkUpdateDescriptorSets
+  // call (and only that call) is skipped when this exact
+  // (descriptor set, SampledTexture, Sampler) triple repeats.
+  if (boundDescriptorSet_ != lastUpdatedTextureDescriptorSet_ || &vulkanTexture != lastUpdatedSampledTexture_ ||
+      &vulkanSampler != lastUpdatedSampler_) {
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = boundDescriptorSet_;
+    write.dstBinding = 1;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &imageInfo;
 
-  // Unlike bindUniformBuffer(), this writes binding 1 only -- it does not
-  // also call vkCmdBindDescriptorSets(); bindUniformBuffer() re-issues that
-  // call unconditionally on every draw item (this class's own header
-  // comment), which re-binds the whole descriptor set object (both
-  // bindings) after this write lands. Caller contract: a draw item using a
-  // textured Material must call bindTexture() before bindUniformBuffer()
-  // in the same recording, so the set is fully up to date at the point it
-  // is (re-)bound.
-  vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    lastUpdatedTextureDescriptorSet_ = boundDescriptorSet_;
+    lastUpdatedSampledTexture_ = &vulkanTexture;
+    lastUpdatedSampler_ = &vulkanSampler;
+  }
+
+  // Renderer calls this immediately after bindUniformBuffer() (Spec
+  // 0016/D3), which has already re-issued vkCmdBindDescriptorSets() for
+  // this same set earlier in this draw item -- re-issuing it again here
+  // is what actually makes this write visible to the upcoming draw call;
+  // it is not merely redundant with bindUniformBuffer()'s own call, since
+  // that earlier call could not have known about this write yet.
+  vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipelineLayout_, 0, 1,
+                           &boundDescriptorSet_, 0, nullptr);
 }
 
 void VulkanCommandList::pushConstant(const void* data, std::size_t sizeBytes) {

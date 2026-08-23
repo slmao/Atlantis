@@ -215,7 +215,7 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
     events.push_back(EventKind::BindUniformBuffer);
   }
 
-  void bindTexture(atlantis::rhi::SampledTexture& texture, atlantis::rhi::Sampler& sampler) override {
+  void bindTexture(const atlantis::rhi::SampledTexture& texture, const atlantis::rhi::Sampler& sampler) override {
     boundTextures.push_back(RecordedBindTexture{&texture, &sampler});
     events.push_back(EventKind::BindTexture);
   }

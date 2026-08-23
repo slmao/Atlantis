@@ -29,6 +29,13 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
       cmd.bindVertexBuffer(item.mesh->vertexBuffer());
       cmd.bindIndexBuffer(item.mesh->indexBuffer());
       cmd.bindUniformBuffer(cameraUniformBuffer);
+      // Spec 0016/D3: an untextured Material (sampledTexture() == nullptr)
+      // skips this call entirely -- bindTexture() is never invoked, and
+      // the existing one-binding descriptor set layout path is exercised
+      // exactly as before this Spec.
+      if (item.material->sampledTexture() != nullptr) {
+        cmd.bindTexture(*item.material->sampledTexture(), *item.material->sampler());
+      }
       cmd.pushConstant(item.objectToWorld.data(), item.objectToWorld.size() * sizeof(float));
       cmd.drawIndexed(item.mesh->indexCount());
     }
