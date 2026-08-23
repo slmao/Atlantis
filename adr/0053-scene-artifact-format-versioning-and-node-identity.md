@@ -12,7 +12,15 @@
   note (items 2, 3, 5, 6) and its own Human Review Decision Table's
   "Where" column for the specific items this ADR corresponds to. This
   record does not change this ADR's own Decision, Consequences, or
-  Alternatives Considered below.
+  Alternatives Considered below. **This ADR's own Decision additionally
+  carries a "Human Review Correction (2026-08-23)" section** (end of
+  Decision, before Consequences) — `ValidatedSceneData` has no public
+  default constructor at all (item 4's own original text describing a
+  trivial empty-default case is superseded by this correction, left
+  unedited above as the historical record of what was originally
+  written); a zero-node scene is now an explicit, named cook-time and
+  decode-time error instead. Neither the original Decision nor this
+  correction is reopened to `Proposed`.
 
 ## Context
 
@@ -216,6 +224,71 @@ own procedural requirement explicitly:**
    decode only decodes; **mesh dependency resolution is its own,
    separate, later stage, with its own error domain, not part of
    scene-artifact decoding** ([ADR-0054](0054-scene-loading-transactional-instantiation-contract.md)).
+
+**Human Review Correction (2026-08-23), additive, no new review round
+— does not reopen or rewrite Decision items 1–5 above.** Item 4's own
+text above states "a default constructor producing an empty (zero-node)
+instance is the only other public constructor." This was reviewed
+during Plan 0015's own drafting and **rejected**: it was an oversight
+between this ADR's own Accepted body and Spec 0015's own Human Review
+Approval summary (item 3), which already stated "no public default/
+arbitrary construction" — the two were never actually meant to diverge,
+and this correction removes the divergence in the direction Human
+Review confirms: **no public default construction of any kind.**
+
+Corrected:
+
+- **`ValidatedSceneData` has no public default constructor.** The type
+  is `= delete`d (not merely omitted) for its default form — deleted,
+  not simply absent, so a caller's attempt to default-construct one
+  fails with a compiler error naming the deletion explicitly, per
+  `static_assert(!std::is_default_constructible_v<ValidatedSceneData>)`
+  ([Plan 0015](../plans/0015-scene-asset-serialization-foundation.md)'s
+  own V11).
+- **The only creation path, for any instance, empty or not, is a
+  successful `decodeScene()` call** (or another function internal to
+  `Atlantis::AssetSystem`'s own validation pipeline the `friend`
+  relationship names) — never a caller, a test's own hand-assembly, or
+  any other public entry point. `private` fields, a `private`
+  non-default constructor, and read-only public accessors (all already
+  stated in item 4 above) are unchanged and remain the enforcement
+  mechanism; this correction only removes the *one* public constructor
+  item 4 had left open.
+- **Copy and move construct/assign only an already-validated instance
+  into another already-validated instance** — both remain defaulted,
+  or a caller could never legitimately hold a second copy of a
+  `decodeScene()` result, which this Spec's own transactional-load flow
+  ([ADR-0054](0054-scene-loading-transactional-instantiation-contract.md))
+  genuinely needs. This is unaffected by removing the default
+  constructor: copy/move never construct a *new*, independent instance
+  from nothing — they only ever duplicate or relocate one that already
+  passed `decodeScene()`'s own validation.
+- **No empty, default-initialized, or hand-assembled `ValidatedSceneData`
+  can ever reach `World`'s own instantiation entry point** — this was
+  already true under item 4's own "no arbitrary construction" guarantee
+  for a *non-empty* malformed instance; this correction closes the one
+  remaining gap (a trivially-empty instance, reachable via the
+  now-removed default constructor) the same way.
+- **A scene with zero nodes is not "vacuously valid" — it is an
+  explicit, named error, rejected at cook time and independently
+  re-rejected at decode time**, the same layered-validation discipline
+  item 5 above already applies to every other structural condition.
+  `SceneCookError`/`SceneArtifactDecodeError` each gain one new
+  enumerator for this condition
+  ([Plan 0015](../plans/0015-scene-asset-serialization-foundation.md)'s
+  own D2). This is the corollary that makes removing the default
+  constructor sound: since `decodeScene()` itself now never succeeds
+  with zero nodes, there is no remaining scenario — not even a
+  legitimately empty scene — where an "empty but valid" instance would
+  need constructing at all.
+
+This correction is mechanical: it removes one convenience constructor
+and closes the one input condition (an empty scene) that constructor
+existed to represent, without changing this ADR's own module boundary,
+artifact format, node-identity scheme, or validation algorithm in any
+other respect. New verification requirements are recorded in
+[Plan 0015](../plans/0015-scene-asset-serialization-foundation.md)'s
+own Verification Checklist.
 
 ## Consequences
 

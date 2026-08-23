@@ -22,11 +22,20 @@
   3. **`ValidatedSceneData` is constructible only by a successful
      decoder/validator** (`decodeScene()`, via a `private` constructor
      and `friend` relationship, matching `EntityId`'s own established
-     pattern) — private internal state, read-only access only, no
-     public default/arbitrary construction, copy/move preserving
-     validity, and no path by which a caller can produce or mutate an
-     invalid hierarchy, index, active-camera reference, or component
-     value (item 15; ADR-0053).
+     pattern) — private internal state, read-only access only, **no
+     public construction of any kind, including no public default
+     constructor** (a zero-node scene is an explicit, named cook-time
+     and decode-time error, not a trivially-constructible empty
+     instance), copy/move preserving validity, and no path by which a
+     caller can produce or mutate an invalid hierarchy, index,
+     active-camera reference, or component value (item 15; ADR-0053).
+     **This wording matches ADR-0053's own text exactly as of its own
+     "Human Review Correction (2026-08-23)"** — the two documents were
+     never intended to diverge; that correction removes a wording gap
+     between this summary and ADR-0053's own original Decision body
+     (which had briefly kept a trivial public default constructor for
+     an empty-scene case) without reopening or narrowing this Spec's
+     own Approval, recorded here, above.
   4. `World` accepts only `ValidatedSceneData` and returns a fresh
      `World` value — infallibly, no `SceneInstantiationError` (item 6;
      ADR-0052, [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)).
@@ -81,9 +90,11 @@
   Human Review, per the same Spec → Plan → Human Review → Implementation
   → Verification → PR → Merge path every prior spec in this line has
   followed.
-- **Related Plan(s):** None yet — Plan drafting is explicitly out of
-  scope for this document; see AGENTS.md's own Spec → Plan → Human
-  Review sequencing.
+- **Related Plan(s):** [plans/0015-scene-asset-serialization-foundation.md](../plans/0015-scene-asset-serialization-foundation.md)
+  (`In Review`) — drafted following this Spec's own Human Review
+  Approval (2026-08-23), which authorizes drafting a Plan but does not
+  itself authorize Implementation; see that Plan's own Human Review
+  Approval note once recorded.
 - **Related ADR(s):**
   [ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)
   (module boundary and ownership),
