@@ -18,6 +18,14 @@ bool operator==(const TextureCreateParams& lhs, const TextureCreateParams& rhs) 
   return lhs.extent == rhs.extent && lhs.format == rhs.format;
 }
 
+bool operator==(const SampledTextureCreateParams& lhs, const SampledTextureCreateParams& rhs) {
+  return lhs.extent == rhs.extent && lhs.format == rhs.format;
+}
+
+bool operator==(const SamplerCreateParams& lhs, const SamplerCreateParams& rhs) {
+  return lhs.filter == rhs.filter && lhs.addressMode == rhs.addressMode;
+}
+
 bool operator==(const OffscreenTargetCreateParams& lhs, const OffscreenTargetCreateParams& rhs) {
   return lhs.extent == rhs.extent && lhs.format == rhs.format;
 }

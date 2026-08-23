@@ -99,6 +99,39 @@ using atlantis::rhi::ResourceState;
   };
 }
 
+// Spec 0016/D5: SampledTexture's own upload-destination state. Same
+// concrete layout/access/stage values as undefinedToColorAttachmentWrite()
+// above (both are "first write, from nothing, via a transfer-style copy"),
+// kept as a separate named function since the two states
+// (ColorAttachmentWrite vs. TransferDestination) mean different things and
+// are never interchangeable in the table dispatch below.
+[[nodiscard]] ImageBarrierPlan undefinedToTransferDestination() {
+  return ImageBarrierPlan{
+      .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+      .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      .srcAccessMask = 0,
+      .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+      .srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+      .dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT,
+  };
+}
+
+// Spec 0016/D5: the buffer-to-image copy destination becoming available for
+// fragment-shader sampling. Destination stage is fragment-shader-only --
+// this Spec's fixed, single-purpose combined-image-sampler binding is
+// VK_SHADER_STAGE_FRAGMENT_BIT only (PipelineCreateParams::
+// hasSampledTextureBinding's own descriptor-set-layout binding, Spec 0016).
+[[nodiscard]] ImageBarrierPlan transferDestinationToShaderRead() {
+  return ImageBarrierPlan{
+      .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+      .srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT,
+      .dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+  };
+}
+
 }  // namespace
 
 ImageBarrierPlan planTransition(ResourceState before, ResourceState after) {
@@ -124,6 +157,12 @@ ImageBarrierPlan planTransition(ResourceState before, ResourceState after) {
   }
   if (before == ResourceState::Undefined && after == ResourceState::DepthAttachmentReadWrite) {
     return undefinedToDepthAttachmentReadWrite();
+  }
+  if (before == ResourceState::Undefined && after == ResourceState::TransferDestination) {
+    return undefinedToTransferDestination();
+  }
+  if (before == ResourceState::TransferDestination && after == ResourceState::ShaderRead) {
+    return transferDestinationToShaderRead();
   }
 
   ATLANTIS_CHECK_MSG(false, "planTransition() called with a (before, after) pair this round does not define");

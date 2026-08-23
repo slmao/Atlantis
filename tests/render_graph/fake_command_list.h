@@ -10,6 +10,8 @@
 
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/pipeline.h>
+#include <atlantis/rhi/sampled_texture.h>
+#include <atlantis/rhi/sampler.h>
 
 // Test-only rhi::CommandList implementation (Plan 0006 Section 13) that
 // records which calls it received -- state, target identity, and order --
@@ -28,6 +30,12 @@ struct RecordedTextureTransition {
   atlantis::rhi::ResourceState after;
 };
 
+struct RecordedSampledTextureTransition {
+  const atlantis::rhi::SampledTexture* target;
+  atlantis::rhi::ResourceState before;
+  atlantis::rhi::ResourceState after;
+};
+
 struct RecordedClear {
   const atlantis::rhi::RenderTarget* target;
   atlantis::rhi::ClearColorValue color;
@@ -36,6 +44,16 @@ struct RecordedClear {
 struct RecordedCopyToBuffer {
   const atlantis::rhi::RenderTarget* source;
   const atlantis::rhi::Buffer* destination;
+};
+
+struct RecordedCopyBufferToTexture {
+  const atlantis::rhi::Buffer* source;
+  const atlantis::rhi::SampledTexture* destination;
+};
+
+struct RecordedBindTexture {
+  const atlantis::rhi::SampledTexture* texture;
+  const atlantis::rhi::Sampler* sampler;
 };
 
 // Also usable as a bindable "RenderTarget" stand-in in tests -- carries
@@ -61,6 +79,40 @@ class FakeTexture final : public atlantis::rhi::Texture {
 
   [[nodiscard]] atlantis::rhi::Extent2D extent() const override { return atlantis::rhi::Extent2D{1, 1}; }
   [[nodiscard]] atlantis::rhi::DepthFormat format() const override { return atlantis::rhi::DepthFormat::D32Sfloat; }
+  [[nodiscard]] std::string_view label() const { return label_; }
+
+ private:
+  std::string label_;
+};
+
+// Also usable as a bindable SampledTexture stand-in in tests -- carries
+// no real GPU resource, just an identity (label) and fixed extent/format
+// (Spec 0016).
+class FakeSampledTexture final : public atlantis::rhi::SampledTexture {
+ public:
+  explicit FakeSampledTexture(std::string_view label) : label_(label) {}
+
+  [[nodiscard]] atlantis::rhi::Extent2D extent() const override { return atlantis::rhi::Extent2D{1, 1}; }
+  [[nodiscard]] atlantis::rhi::SampledTextureFormat format() const override {
+    return atlantis::rhi::SampledTextureFormat::Rgba8Unorm;
+  }
+  [[nodiscard]] std::string_view label() const { return label_; }
+
+ private:
+  std::string label_;
+};
+
+// Also usable as a bindable Sampler stand-in in tests -- carries no real
+// GPU resource, just an identity (label) and fixed filter/address mode
+// (Spec 0016).
+class FakeSampler final : public atlantis::rhi::Sampler {
+ public:
+  explicit FakeSampler(std::string_view label) : label_(label) {}
+
+  [[nodiscard]] atlantis::rhi::Filter filter() const override { return atlantis::rhi::Filter::Nearest; }
+  [[nodiscard]] atlantis::rhi::AddressMode addressMode() const override {
+    return atlantis::rhi::AddressMode::ClampToEdge;
+  }
   [[nodiscard]] std::string_view label() const { return label_; }
 
  private:
@@ -124,6 +176,12 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
     events.push_back(EventKind::TextureTransition);
   }
 
+  void transitionResource(atlantis::rhi::SampledTexture& target, atlantis::rhi::ResourceState before,
+                           atlantis::rhi::ResourceState after) override {
+    sampledTextureTransitions.push_back(RecordedSampledTextureTransition{&target, before, after});
+    events.push_back(EventKind::SampledTextureTransition);
+  }
+
   void clearColor(atlantis::rhi::RenderTarget& target, atlantis::rhi::ClearColorValue color) override {
     clears.push_back(RecordedClear{&target, color});
     events.push_back(EventKind::Clear);
@@ -157,6 +215,11 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
     events.push_back(EventKind::BindUniformBuffer);
   }
 
+  void bindTexture(atlantis::rhi::SampledTexture& texture, atlantis::rhi::Sampler& sampler) override {
+    boundTextures.push_back(RecordedBindTexture{&texture, &sampler});
+    events.push_back(EventKind::BindTexture);
+  }
+
   void pushConstant(const void* data, std::size_t sizeBytes) override {
     const auto* bytes = static_cast<const std::byte*>(data);
     pushConstants.push_back(RecordedPushConstant{sizeBytes});
@@ -177,9 +240,18 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
     events.push_back(EventKind::CopyToBuffer);
   }
 
+  // Spec 0016: records source/destination identity only, exact mirror of
+  // copyRenderTargetToBuffer()'s own recording shape -- no real GPU
+  // resource, no copy actually performed.
+  void copyBufferToTexture(atlantis::rhi::Buffer& source, atlantis::rhi::SampledTexture& destination) override {
+    copiesBufferToTexture.push_back(RecordedCopyBufferToTexture{&source, &destination});
+    events.push_back(EventKind::CopyBufferToTexture);
+  }
+
   enum class EventKind {
     Transition,
     TextureTransition,
+    SampledTextureTransition,
     Clear,
     BeginRendering,
     EndRendering,
@@ -187,23 +259,28 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
     BindVertexBuffer,
     BindIndexBuffer,
     BindUniformBuffer,
+    BindTexture,
     PushConstant,
     DrawIndexed,
     CopyToBuffer,
+    CopyBufferToTexture,
   };
 
   std::vector<RecordedTransition> transitions;
   std::vector<RecordedTextureTransition> textureTransitions;
+  std::vector<RecordedSampledTextureTransition> sampledTextureTransitions;
   std::vector<RecordedClear> clears;
   std::vector<RecordedBeginRendering> beginRenderingCalls;
   std::vector<const atlantis::rhi::Pipeline*> boundPipelines;
   std::vector<const atlantis::rhi::Buffer*> boundVertexBuffers;
   std::vector<const atlantis::rhi::Buffer*> boundIndexBuffers;
   std::vector<const atlantis::rhi::Buffer*> boundUniformBuffers;
+  std::vector<RecordedBindTexture> boundTextures;
   std::vector<RecordedPushConstant> pushConstants;
   std::vector<std::vector<std::byte>> pushConstantData;  // parallel to pushConstants -- the actual bytes copied
   std::vector<std::uint32_t> drawIndexedCounts;
   std::vector<RecordedCopyToBuffer> copiesToBuffer;
+  std::vector<RecordedCopyBufferToTexture> copiesBufferToTexture;
   std::vector<EventKind> events;  // interleaved order across all recorded calls
 };
 

@@ -60,6 +60,8 @@ enum class ResourceState {
   ColorAttachmentOutput,       // new (Spec 0007) -- real graphics-pipeline color-attachment-output write
   DepthAttachmentReadWrite,    // new (Spec 0007) -- depth-test read + depth-write, single writes() usage (ADR-0026)
   TransferSource,              // new (Spec 0010) -- GPU-to-CPU readback copy source state (ADR-0040)
+  TransferDestination,         // new (Spec 0016) -- CPU-to-GPU upload copy destination state (ADR-0056)
+  ShaderRead,                  // new (Spec 0016) -- sampled-texture shader-read-only state (ADR-0056)
 };
 
 // Spec 0007's one depth format. A single-variant enum, not a bare
@@ -74,12 +76,11 @@ enum class DepthFormat {
 // Spec 0007's vertex attributes (position, one per-vertex color attribute
 // -- Spec 0007 Risks & Open Questions) are both a 3-float vector; this
 // enum exists so VertexInputLayout (below) does not silently assume a
-// single hardcoded format. No VertexAttributeFormat beyond Float3 this
-// round -- deliberately narrow, matching Spec 0007's own minimal-material
-// scope; a future spec adding a second attribute type (e.g. Float2 for
-// UVs) extends this enum.
+// single hardcoded format. A future spec adding a second attribute type
+// (e.g. Float2 for UVs) extends this enum -- Spec 0016 is that spec.
 enum class VertexAttributeFormat {
   Float3,
+  Float2,  // new (Spec 0016) -- UV vertex attributes
 };
 
 enum class BufferPurpose {
@@ -87,6 +88,31 @@ enum class BufferPurpose {
   Index,
   Uniform,
   Readback,  // new (Spec 0010) -- host-visible destination for CommandList::copyRenderTargetToBuffer() (ADR-0040)
+  Staging,   // new (Spec 0016) -- host-visible source for CommandList::copyBufferToTexture() (ADR-0056)
+};
+
+// Spec 0016/ADR-0055: sampled-texture color-space contract, independent
+// of the swapchain/offscreen-shaped Format enum above (whose own BGRA
+// variants are meaningless for an authored texture). First two values
+// only -- see ADR-0057.
+enum class SampledTextureFormat {
+  Rgba8Unorm,  // linear
+  Rgba8Srgb,
+};
+
+// Spec 0016/ADR-0055: minimal Sampler filter contract -- no separate
+// mip filter, since every SampledTexture has exactly one mip level
+// this round.
+enum class Filter {
+  Nearest,
+  Linear,
+};
+
+// Spec 0016/ADR-0055: minimal Sampler address-mode contract, applied to
+// both U and V.
+enum class AddressMode {
+  Repeat,
+  ClampToEdge,
 };
 
 struct BufferCreateParams {
@@ -102,6 +128,24 @@ struct TextureCreateParams {
 };
 
 [[nodiscard]] bool operator==(const TextureCreateParams& lhs, const TextureCreateParams& rhs);
+
+// Spec 0016/ADR-0055: no mip-count field -- every SampledTexture this
+// round has exactly one mip level (Human Review item 12); exposing an
+// unused knob is deliberately avoided, matching DepthFormat's own
+// precedent above.
+struct SampledTextureCreateParams {
+  Extent2D extent;
+  SampledTextureFormat format = SampledTextureFormat::Rgba8Unorm;
+};
+
+[[nodiscard]] bool operator==(const SampledTextureCreateParams& lhs, const SampledTextureCreateParams& rhs);
+
+struct SamplerCreateParams {
+  Filter filter = Filter::Nearest;
+  AddressMode addressMode = AddressMode::ClampToEdge;
+};
+
+[[nodiscard]] bool operator==(const SamplerCreateParams& lhs, const SamplerCreateParams& rhs);
 
 // Spec 0010/ADR-0038: creation-time parameters for a headless OffscreenTarget's
 // color image. format defaults to a real, usable value (Rgba8Unorm), not
@@ -146,6 +190,14 @@ struct PipelineCreateParams {
   Format colorFormat = Format::Unknown;          // matches the bound RenderTarget's format at Material construction time
   DepthFormat depthFormat = DepthFormat::D32Sfloat;
   std::size_t pushConstantSizeBytes = 0;          // this round: sizeof(float) * 16 (one 4x4 matrix)
+  // Spec 0016/ADR-0056: caller-derived from the shader's own real
+  // ReflectionMetadata (whether it declares a combined-image-sampler
+  // binding) -- the same "caller derives from reflection, passes plain
+  // data" pattern vertexInputLayout above already uses. false (default)
+  // reproduces today's exact one-binding descriptor-set-layout/pool
+  // behavior unconditionally -- zero source change at any existing
+  // call site.
+  bool hasSampledTextureBinding = false;
 };
 
 // Why three distinct *CreateError enums below, not one shared
@@ -164,6 +216,19 @@ enum class TextureCreateError {
   AllocationFailed,
   ImageCreationFailed,
   ImageViewCreationFailed,
+};
+
+// Spec 0016/ADR-0055: mirrors TextureCreateError exactly -- a
+// SampledTexture's own color image creation is structurally identical
+// (image + memory + view).
+enum class SampledTextureCreateError {
+  AllocationFailed,
+  ImageCreationFailed,
+  ImageViewCreationFailed,
+};
+
+enum class SamplerCreateError {
+  SamplerCreationFailed,
 };
 
 // Spec 0010/ADR-0038: mirrors TextureCreateError exactly -- an

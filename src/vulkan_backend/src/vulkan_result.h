@@ -72,6 +72,10 @@ enum class VulkanFailureCategory {
 // Device::createTexture()'s own Vulkan calls (Spec 0007).
 [[nodiscard]] atlantis::rhi::TextureCreateError toTextureCreateError(VkResult result);
 
+// vkCreateImage/vkAllocateMemory/vkBindImageMemory/vkCreateImageView --
+// Device::createSampledTexture()'s own Vulkan calls (Spec 0016).
+[[nodiscard]] atlantis::rhi::SampledTextureCreateError toSampledTextureCreateError(VkResult result);
+
 // vkCreateShaderModule/vkCreateDescriptorSetLayout/vkAllocateDescriptorSets/
 // vkCreatePipelineLayout/vkCreateGraphicsPipelines --
 // Device::createPipeline()'s own Vulkan calls (Spec 0007).

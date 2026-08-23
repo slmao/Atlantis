@@ -46,6 +46,8 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
                            atlantis::rhi::ResourceState after) override;
   void transitionResource(atlantis::rhi::Texture& target, atlantis::rhi::ResourceState before,
                            atlantis::rhi::ResourceState after) override;
+  void transitionResource(atlantis::rhi::SampledTexture& target, atlantis::rhi::ResourceState before,
+                           atlantis::rhi::ResourceState after) override;
   void clearColor(atlantis::rhi::RenderTarget& target, atlantis::rhi::ClearColorValue color) override;
 
   void beginRendering(atlantis::rhi::RenderTarget& color, atlantis::rhi::Texture* depth,
@@ -56,9 +58,14 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   void bindVertexBuffer(atlantis::rhi::Buffer& buffer) override;
   void bindIndexBuffer(atlantis::rhi::Buffer& buffer) override;
   void bindUniformBuffer(atlantis::rhi::Buffer& buffer) override;
+  // Must be called before bindUniformBuffer() within the same draw item's
+  // recording sequence -- see this method's own .cpp body comment for why
+  // (Spec 0016).
+  void bindTexture(atlantis::rhi::SampledTexture& texture, atlantis::rhi::Sampler& sampler) override;
   void pushConstant(const void* data, std::size_t sizeBytes) override;
   void drawIndexed(std::uint32_t indexCount) override;
   void copyRenderTargetToBuffer(atlantis::rhi::RenderTarget& source, atlantis::rhi::Buffer& destination) override;
+  void copyBufferToTexture(atlantis::rhi::Buffer& source, atlantis::rhi::SampledTexture& destination) override;
 
   // Exists solely for VulkanDevice::submit() (vkEndCommandBuffer,
   // vkQueueSubmit) -- never reached from RHI's public surface.
