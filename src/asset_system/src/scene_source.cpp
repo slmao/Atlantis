@@ -1,7 +1,6 @@
 #include <atlantis/asset_system/scene_source.h>
 
 #include <charconv>
-#include <cmath>
 #include <cstddef>
 #include <system_error>
 
@@ -193,9 +192,6 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
           !parseFloatToken(tokens[base + 2], z)) {
         return ResultT::Err(SceneSourceParseError::MalformedNumber);
       }
-      if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
-        return ResultT::Err(SceneSourceParseError::NonFiniteFloat);
-      }
       *vec3Groups[g].x = x;
       *vec3Groups[g].y = y;
       *vec3Groups[g].z = z;
@@ -217,7 +213,6 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
         if (!consumePrefixedFloat(tokens[11 + f], cameraFields[f].first, value)) {
           return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
         }
-        if (!std::isfinite(value)) return ResultT::Err(SceneSourceParseError::NonFiniteFloat);
         *cameraFields[f].second = value;
       }
       node.camera = camera;

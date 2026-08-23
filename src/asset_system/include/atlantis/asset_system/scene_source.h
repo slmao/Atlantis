@@ -41,7 +41,6 @@ enum class SceneSourceParseError {
   MissingField,
   FieldOrderMismatch,
   MalformedNumber,
-  NonFiniteFloat,
   InvalidParentToken,
   InvalidComponentGroup,
   TrailingContent,
@@ -54,7 +53,12 @@ enum class SceneSourceParseError {
 // judgment (EmptyScene) belongs to cookScene(), checked immediately
 // after a successful parse (Plan 0015 Section D4), so this function
 // can be tested and reasoned about purely as a grammar, independent of
-// that one scene-level policy.
+// that one scene-level policy. Deliberately does NOT reject a
+// non-finite (nan/inf) float value either -- unlike mesh_source.h's
+// own parseMeshSource(), Plan 0015 Section D4 assigns that check to
+// cookScene() itself (its own step 7, SceneCookError::NonFiniteValue),
+// not to the grammar layer; a syntactically well-formed "nan"/"inf"
+// token parses successfully here.
 [[nodiscard]] atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std::string_view text);
 
 // Serializes back to the exact grammar parseSceneSource() accepts --

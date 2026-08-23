@@ -1,5 +1,7 @@
 #include <atlantis/asset_system/scene_source.h>
 
+#include <cmath>
+
 #include <catch2/catch_test_macros.hpp>
 
 using namespace atlantis::asset_system;
@@ -164,14 +166,19 @@ TEST_CASE("parseSceneSource rejects a malformed number within a position/rotatio
   CHECK(result.error() == SceneSourceParseError::MalformedNumber);
 }
 
-TEST_CASE("parseSceneSource rejects a non-finite float", "[asset_system][scene]") {
+TEST_CASE("parseSceneSource accepts a non-finite float (Plan 0015 D4's own step 7, not the grammar, rejects it)",
+          "[asset_system][scene]") {
+  // Unlike parseMeshSource(), this parser deliberately does not reject
+  // nan/inf -- that is cookScene()'s own semantic check
+  // (SceneCookError::NonFiniteValue), covered by cook_scene_tests.cpp
+  // in Step 3, not here.
   const auto result = parseSceneSource(
       "atlantis_scene_source_version: 1\n"
       "node_count: 1\n"
       "active_camera: none\n"
       "node: node_id=1 parent=none position=nan 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
-  REQUIRE(result.isErr());
-  CHECK(result.error() == SceneSourceParseError::NonFiniteFloat);
+  REQUIRE(result.isOk());
+  CHECK(std::isnan(result.value().nodes[0].transform.positionX));
 }
 
 TEST_CASE("parseSceneSource rejects an invalid parent token", "[asset_system][scene]") {
