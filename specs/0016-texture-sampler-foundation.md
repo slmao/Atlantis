@@ -165,10 +165,11 @@
   Human Review Decision items 3, 6, 13, and 14 for the corrected
   designs; this Spec is submitted for formal Human Review as of this
   revision.
-- **Related Plan(s):** None yet — this Spec's own Human Review Approval
-  (2026-08-24) authorizes drafting Plan 0016 against it, per
-  [AGENTS.md](../AGENTS.md); no Plan has been drafted as of this
-  approval, and this approval does not itself authorize Implementation.
+- **Related Plan(s):** [plans/0016-texture-sampler-foundation.md](../plans/0016-texture-sampler-foundation.md)
+  (`In Review`) — drafted following this Spec's own Human Review
+  Approval (2026-08-24), which authorizes drafting a Plan but does not
+  itself authorize Implementation; see that Plan's own Human Review
+  Approval note once recorded.
 - **Related ADR(s):**
   [ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)
   (sampled Texture/Sampler RHI boundary and ownership),
