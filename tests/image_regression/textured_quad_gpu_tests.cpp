@@ -1,4 +1,6 @@
 #include "fixture/textured_quad_fixture.h"
+#include "support/golden_validity.h"
+#include "support/pixel_diff.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -6,19 +8,26 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <utility>
 #include <vector>
 
 // Spec 0016/Plan 0016 Milestone 9 (D11, V27-V29, V39-V42): the textured
-// fixture's own GPU-required coverage. No golden comparison here yet --
-// Plan 0016's own two-phase golden capture process (this file's own
-// commit ships with no golden; a strictly separate, later commit adds
-// one after a human has visually reviewed it, generated on this exact
-// already-committed revision). This file instead confirms structural
-// correctness: non-degenerate output, both quads visibly drawn, a real,
-// measurable Unorm-vs-Srgb difference, and genuine RenderTarget use
-// (the baseline-comparison test, D11's own explicit requirement).
+// fixture's own GPU-required coverage. Structural correctness --
+// non-degenerate output, both quads visibly drawn, a real, measurable
+// Unorm-vs-Srgb difference, and genuine RenderTarget use (the
+// baseline-comparison test, D11's own explicit requirement) -- plus,
+// once the golden PNG/sidecar exist (this file's own commit that adds
+// them, strictly separate from and after the implementation commit that
+// first introduced this file, per Plan 0016's own two-phase golden
+// capture process), a full capture-compare cycle against the committed
+// golden, mirroring image_regression_gpu_tests.cpp's own identical
+// pattern for minimal_cube.
 
+using atlantis::image_regression::compareBuffers;
 using atlantis::image_regression::kTexturedQuadExtentPixels;
+using atlantis::image_regression::loadAndValidateGolden;
+using atlantis::image_regression::writeFailureArtifacts;
 using atlantis::image_regression::PixelBuffer;
 using atlantis::image_regression::renderTexturedQuadBaselineFrame;
 using atlantis::image_regression::renderTexturedQuadFrame;
@@ -63,6 +72,17 @@ constexpr std::uint32_t kLeftXStart = 60, kLeftXEnd = 200;
 constexpr std::uint32_t kRightXStart = 312, kRightXEnd = 452;
 constexpr std::uint32_t kYStart = 160, kYEnd = 352;
 constexpr std::uint32_t kStep = 20;
+
+constexpr const char* kTexturedQuadGoldenName = "textured_quad/textured_quad_512x512_rgba8unorm";
+constexpr const char* kTexturedQuadGoldenSlug = "textured_quad_512x512_rgba8unorm";
+
+[[nodiscard]] std::filesystem::path goldenPngPath(const std::string& goldenName) {
+  return std::filesystem::path(ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR) / (goldenName + ".png");
+}
+
+[[nodiscard]] std::filesystem::path goldenSidecarPath(const std::string& goldenName) {
+  return std::filesystem::path(ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR) / (goldenName + ".sidecar.txt");
+}
 
 }  // namespace
 
@@ -185,6 +205,44 @@ TEST_CASE("Textured quad fixture's captured frame differs from a freshly-cleared
     if (baselineRight[i] != frameRight[i]) rightDiffers = true;
   }
   CHECK(rightDiffers);
+}
+
+TEST_CASE("Full capture-compare cycle against the committed textured_quad golden passes",
+          "[image_regression][gpu][textured_quad]") {
+  const std::filesystem::path outputDir = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
+  const std::filesystem::path actualArtifact = outputDir / (std::string(kTexturedQuadGoldenSlug) + "_actual.png");
+  const std::filesystem::path diffArtifact = outputDir / (std::string(kTexturedQuadGoldenSlug) + "_diff.png");
+  std::filesystem::remove(actualArtifact);
+  std::filesystem::remove(diffArtifact);
+
+  auto fixtureResult = setUpTexturedQuadFixture(
+      ATLANTIS_textured_quad_unorm_ARTIFACT_PATH, ATLANTIS_textured_quad_unorm_METADATA_PATH,
+      ATLANTIS_textured_quad_srgb_ARTIFACT_PATH, ATLANTIS_textured_quad_srgb_METADATA_PATH);
+  REQUIRE(fixtureResult.isOk());
+  TexturedQuadFixture& fixture = fixtureResult.value();
+
+  auto renderResult = renderTexturedQuadFrame(fixture);
+  REQUIRE(renderResult.isOk());
+  const PixelBuffer& actual = renderResult.value();
+
+  auto goldenResult =
+      loadAndValidateGolden(goldenPngPath(kTexturedQuadGoldenName), goldenSidecarPath(kTexturedQuadGoldenName));
+  {
+    INFO("INVALID GOLDEN: the committed textured_quad golden must load and validate cleanly");
+    REQUIRE(goldenResult.isOk());
+  }
+  const auto& validatedGolden = goldenResult.value();
+
+  REQUIRE(actual.width == validatedGolden.pixels.width);
+  REQUIRE(actual.height == validatedGolden.pixels.height);
+
+  const auto report = compareBuffers(actual, validatedGolden.pixels);
+  if (!report.passed) {
+    (void)writeFailureArtifacts(outputDir, kTexturedQuadGoldenSlug, actual, validatedGolden.pixels);
+  }
+  REQUIRE(report.passed);
+
+  REQUIRE(fixture.device->waitIdle().isOk());
 }
 
 TEST_CASE("Textured quad fixture: repeated render cycles against the same fixture succeed independently",
