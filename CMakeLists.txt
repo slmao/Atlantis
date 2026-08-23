@@ -105,6 +105,10 @@ if(ATLANTIS_BUILD_TESTS)
   add_subdirectory(tests/platform)
   add_subdirectory(tests/rhi)
   add_subdirectory(tests/vulkan_backend)
+  # Plan 0016 Milestone 9 (D11): test-only shader pair, unlike
+  # shaders/minimal_renderer's own unconditional placement above --
+  # only tests/image_regression/fixture/ (added next) consumes it.
+  add_subdirectory(shaders/textured_quad)
   add_subdirectory(tests/image_regression)
   add_subdirectory(tests/render_graph)
   add_subdirectory(tests/renderer)
