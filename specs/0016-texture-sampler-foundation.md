@@ -6,6 +6,26 @@
   Implementation path. Not yet reviewed/approved — see Human Review
   Decision Table below; this document is submitted for that review.
 - **Created:** 2026-08-23
+- **Revised 2026-08-23** — a centralized, evidence-driven final review
+  (still on this Spec's own first PR, no new PR) found and fixed two
+  real, previously-glossed-over gaps before Human Review: (1) the
+  original draft's "submit and wait" language for the one-time texture
+  upload never checked whether `Device::submit()` actually requires a
+  real `RenderTarget` — it does, unconditionally, and there is no
+  target-independent submit path; the corrected design reuses the
+  fixture's own already-acquired `OffscreenTarget`-vended `RenderTarget`
+  for the upload's own `submit()` call (no new `Device`/`Renderer`
+  public API), with `Device::waitIdle()` (an already-existing, already-
+  used blocking completion API) as the real synchronization mechanism,
+  not a guess. (2) "Hand-authored UV in the fixture" is not actually
+  achievable with zero shared/public type changes, as first drafted —
+  `VertexAttributeFormat` (RHI) has no `Float2` variant anywhere in the
+  pipeline; a real UV0 vertex attribute requires adding one, a small,
+  disclosed, mechanical RHI/Shader-System change fully decoupled from
+  Asset System's own mesh cook/artifact/load pipeline (which remains
+  untouched). See the Human Review Decision Table (items 6, 11, and new
+  items 17–19) and Proposed Design below for the corrected, code-proven
+  designs.
 - **Related Plan(s):** None yet — this round drafts only the Spec and its
   ADRs, per explicit human direction; no Plan is authorized until this
   Spec itself reaches `Approved`.
@@ -25,28 +45,38 @@ cooker turning an authored PNG into a versioned, little-endian runtime
 artifact (reusing `Atlantis::AssetSystem`'s existing cook/artifact/load
 conventions), a Runtime-side, RenderGraph-driven CPU→GPU upload path
 (staging buffer → `copyBufferToTexture()` → a `TransferDestination`→
-`ShaderRead` transition), a new, independent, immutable RHI `Sampler`
-object, and a `Material`/Shader binding path that lets one fragment
-shader sample one bound texture — proved end to end by a new, independent
-headless fixture and its own first image-regression golden. Every layer
-this closed loop touches — RHI, Vulkan Backend, RenderGraph, Renderer's
-`Material`, Shader System's reflection/contract surface, and Asset
-System's cooker/loader — currently has an explicit, load-bearing gap
-this Spec's own pre-draft code verification confirmed (cited throughout
-Requirements and the Human Review Decision Table below); none of it is
-invented speculatively. Mesh UV (texcoord) attributes remain out of this
-Spec's own scope by explicit, disclosed Human Review decision (item 11)
-— this Spec's own proof fixture uses hand-authored, non-Asset-System UV
-data, matching `minimal_cube_fixture`'s own already-established
-hand-authored-construction-path precedent, and does **not** claim a real
-asset-sourced textured mesh exists yet.
+`ShaderRead` transition, submitted through the existing `Device::submit()`
+against the fixture's own already-acquired `OffscreenTarget`-vended
+`RenderTarget` and confirmed complete via the existing `Device::waitIdle()`
+— no new `Device`/`Renderer` public API), a new, independent, immutable
+RHI `Sampler` object, and a `Material`/Shader binding path that lets one
+fragment shader sample one bound texture — proved end to end by a new,
+independent headless fixture and its own first image-regression golden.
+Every layer this closed loop touches — RHI, Vulkan Backend, RenderGraph,
+Renderer's `Material`, Shader System's reflection/contract surface and
+its Tools compiler, and Asset System's cooker/loader — currently has an
+explicit, load-bearing gap this Spec's own pre-draft code verification,
+and a subsequent review round's own deeper verification, confirmed
+(cited throughout Requirements and the Human Review Decision Table
+below); none of it is invented speculatively or worked around silently.
+The fixture's own UV0 vertex attribute is real — carried through
+`Mesh`/`VertexInputLayout` exactly like `minimal_cube_fixture`'s own
+hand-authored position/color data — enabled by one small, disclosed
+RHI/Shader-System addition (`VertexAttributeFormat::Float2`, item 11)
+that is fully decoupled from, and does not touch, Asset System's own
+mesh cook/artifact/load pipeline (`StaticMeshAssetData`, the mesh
+authoring grammar, the mesh runtime artifact all remain untouched) — so
+this Spec still does **not** claim a real asset-sourced textured mesh
+exists; "Mesh UV Attribute Foundation" (real UV0 inside Asset System's
+own mesh pipeline) remains a named, immediate follow-up blocker for that
+claim.
 
 ## Motivation / Problem Statement
 
 Every rendering-capable Spec approved so far explicitly deferred this
 exact gap rather than silently ignoring it:
 
-- [ADR-0023](../adr/0023-minimal-renderer-texture-and-depth-buffer-strategy.md)
+- [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)
   (Spec 0007), on today's depth-only `Texture`: *"A general, sampled
   `Texture` (material color maps, etc.) is explicitly future work — this
   spec's acceptance introduces no `Buffer`/`Texture`/`Sampler` type"*
@@ -227,11 +257,89 @@ Explicitly excluded from this Spec's design:
   `SampledTexture*`, and `execute()`'s transition-insertion logic is
   extended to drive `Undefined → TransferDestination` (before the copy)
   and `TransferDestination → ShaderRead` (after it, before any draw pass
-  samples the texture) for it. The upload itself runs as its own
-  small, single-pass `RenderGraphBuilder`/`compile()`/`execute()`
-  invocation, built and run once, synchronously, before Runtime's first
-  per-frame graph — never folded into, or reusing state from, any later
-  per-frame graph (item 6;
+  samples the texture) for it. The upload's own graph — one pass,
+  declaring only the destination `SampledTexture` as a RenderGraph
+  resource (`incomingState = Undefined`, `finalState = ShaderRead`,
+  reusing `ResourceBinding`'s existing `incomingState`/`finalState`
+  fields, `execution.h:23-40`, exactly the way Spec 0010's readback
+  `finalState` already works); the source staging `Buffer` is **not**
+  itself a RenderGraph-tracked resource, matching the existing
+  `copyRenderTargetToBuffer()` readback pass's own precedent (its own
+  destination `Buffer` is likewise untracked — only the source
+  `RenderTarget` is declared) — is built via a `RenderGraphBuilder`,
+  compiled, and `execute()`'d into a `CommandList` the fixture creates
+  for exactly this purpose.
+- **Submission reuses the existing `Device::submit()`/`Device::waitIdle()`
+  API, unchanged — no new `Device` or `Renderer` public API is needed for
+  the upload itself.** A review round's own deeper verification found
+  `Device::submit()` has exactly one overload
+  (`device.h:51-52`: `submit(std::unique_ptr<CommandList>, const
+  RenderTarget&)`), and the Vulkan implementation
+  (`vulkan_device.cpp:508-564`) unconditionally `dynamic_cast`s and
+  `ATLANTIS_CHECK_MSG`-asserts the target is real and module-produced —
+  there is no target-optional or target-free submit path in this
+  codebase today, and this Spec does not add one. Instead, this Spec's
+  own fixture — a headless fixture, matching `minimal_cube_fixture.cpp`'s
+  own already-established shape — already creates an `OffscreenTarget`
+  and calls `acquireTarget()` to get a real `RenderTarget` for its own
+  eventual draw pass; the upload's own `submit()` call **reuses that same
+  already-acquired `RenderTarget`** (the upload's own recorded commands
+  do not touch its color image at all — `submit()`'s target parameter
+  exists for swapchain/offscreen semaphore bookkeeping, which may
+  legally be null handles for an offscreen target, not to describe every
+  resource a `CommandList` touches; `Device::submit()`'s own doc comment
+  already names exactly this "headless caller, never calls `present()`"
+  case). **`SubmissionSignal`** (`submission_signal.h:21-24`) is opaque
+  — no public method beyond its destructor, never inspected or waited on
+  directly by a caller. The real, already-existing, already-used
+  synchronous-completion mechanism is **`Device::waitIdle()`**
+  (`device.h:59`, `Result<std::monostate, SubmitError>`) — used today at
+  exactly this "submit once, block until GPU-complete" shape in
+  `tests/vulkan_backend/headless_rendering_gpu_tests.cpp:405`,
+  `minimal_cube_fixture.cpp`'s own `renderOneFrame()` (`:279`), and
+  Runtime's own shutdown path (`runtime_application.cpp:455`). The
+  upload's own sequence — build the upload `RenderGraphBuilder` graph
+  above → `execute()` it into a `CommandList` → `submit(commandList,
+  *reusedRenderTarget)` → `waitIdle()` — runs once, fully before the
+  fixture builds or executes its own separate, later per-frame draw
+  graph against the same `RenderTarget`; the two graphs are never merged
+  and never share compiled state (item 6, 13;
+  [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md)).
+- **Staging `Buffer` lifetime, and every other resource's destruction
+  ordering, tied to real, observed GPU completion — never a guess.** The
+  staging `Buffer` is destroyed only **after** the upload's own
+  `waitIdle()` call returns `Ok` — not "immediately after the command is
+  recorded" or "immediately after `submit()` returns" (submission is
+  asynchronous; only `waitIdle()`'s own return is evidence the GPU has
+  actually finished reading it). Because the copy and the
+  `TransferDestination → ShaderRead` transition are both recorded into
+  the same `CommandList` covered by that one `waitIdle()`, no separate
+  "wait for copy, then transition" step exists — by the time `waitIdle()`
+  returns, `SampledTexture` is genuinely populated and genuinely in
+  `ShaderRead` state. `SampledTexture`/`Sampler` are owned by the same
+  composition root that creates them (this Spec's own fixture); `Material`
+  only **borrows** them (see next bullet) — the caller-owning composition
+  root must not destroy `SampledTexture`/`Sampler` before every `Material`
+  binding them is done being used in a `Renderer::drawFrame()` call,
+  matching `DrawItem`'s own existing "mesh/material are borrowed, must
+  outlive the `drawFrame()` call" contract (`draw_item.h:10-12`) extended,
+  not re-invented (item 13;
+  [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md)).
+- **Upload/submit/device-loss error semantics reuse existing `Result`
+  channels — no new unified error enum.** Resource creation
+  (`SampledTexture`, `Sampler`, the staging `Buffer`) reports through
+  their own existing `*CreateError`-style enums (matching
+  `TextureCreateError`/`BufferCreateError`'s own established shape); the
+  upload's own `RenderGraphBuilder::compile()`/`execute()` calls report
+  through RenderGraph's own existing compile/execute error channel,
+  unchanged; `submit()`/`waitIdle()` report through the existing
+  `SubmitError` enum, whose already-`Accepted` `DeviceLost` enumerator
+  covers a device loss during the upload exactly as it already covers
+  one during any other `submit()`/`waitIdle()` call — this Spec adds no
+  new error type for the upload path; the composition root propagates
+  each stage's own `Result::Err` in sequence, matching
+  `RuntimeApplication::initializeSteps()`'s own established multi-step
+  composition-root error-propagation shape (item 13;
   [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md)).
 - **`Material` gains a second, fixed descriptor binding.** Today,
   `Material` (`src/renderer/include/atlantis/renderer/material.h:18-32`)
@@ -239,16 +347,31 @@ Explicitly excluded from this Spec's design:
   lives on `CommandList`/`VulkanDevice`, hardcoded to exactly one
   binding — `{set 0, binding 0, UniformBuffer, Vertex stage}`
   (`vulkan_device.cpp:808-861`, one `VkDescriptorPoolSize` entry,
-  `vulkan_device.cpp:1245-1254`). `Material` gains an optional,
-  construction-time `SampledTexture`/`Sampler` pair (borrowed, matching
-  `Mesh`/`Material`'s own existing non-owning-reference conventions in
-  `DrawItem`); a new `CommandList::bindTexture(SampledTexture&, Sampler&)`
-  call, used inside `Renderer`'s existing per-`DrawItem` pass-callback
-  loop (`src/renderer/src/renderer.cpp:26-31`) immediately alongside the
+  `vulkan_device.cpp:1245-1254`) — confirmed generic enough elsewhere
+  (`createMesh()`, `toVertexInputLayout()`, `createPipeline()`'s own
+  attribute loop) that only this one hardcoded descriptor-set-layout/
+  pool site is the actual blocker, not `Material`/`Mesh`/`Pipeline`
+  construction generally. `Material` gains an optional, construction-time
+  `SampledTexture`/`Sampler` pair, **borrowed, not owned** — matching
+  `DrawItem`'s own existing non-owning-reference contract for
+  `Mesh`/`Material` themselves (`draw_item.h:10-12`: *"mesh/material are
+  borrowed (must outlive the `Renderer::drawFrame()` call they are
+  passed to)"*). This Spec extends that identical contract to
+  `Material`'s own new fields: the caller that constructs a `Material`
+  with a `SampledTexture`/`Sampler` pair must keep both alive for at
+  least as long as that `Material` is used in any `drawFrame()` call —
+  `Material` neither takes ownership nor extends either object's
+  lifetime, and destroying `SampledTexture`/`Sampler` while a `Material`
+  still referencing them is later used is a caller precondition
+  violation, not a checked error, matching this codebase's own existing
+  borrowed-reference discipline exactly. A new
+  `CommandList::bindTexture(SampledTexture&, Sampler&)` call, used inside
+  `Renderer`'s existing per-`DrawItem` pass-callback loop
+  (`src/renderer/src/renderer.cpp:26-31`) immediately alongside the
   existing `bindUniformBuffer()` call. Vulkan Backend's per-`Pipeline`
   descriptor-set-layout creation and the device-level descriptor pool
   both gain one new, second, fixed entry: `binding 1,
-  VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, fragment stage` (item 7;
+  VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, fragment stage` (item 7, 18;
   [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md)).
 - **Combined image sampler, not separate texture/sampler descriptor
   types.** The one new Vulkan descriptor binding this Spec adds uses
@@ -267,31 +390,161 @@ Explicitly excluded from this Spec's design:
   by its own comment, silently skips any other Slang-reported binding
   kind as "outside this round's modeled scope." This Spec adds a new
   `DescriptorType::Sampler` (matching `VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER`'s
-  own combined shape) value, reflected from a real Slang
+  own combined shape) value, plus a matching case in
+  `reflection_loader.cpp`'s `parseDescriptorType()` (today recognizes
+  only the string `"uniformBuffer"`), reflected from a real Slang
   `[[vk::binding(1,0)]]` combined-sampler declaration, and a second,
   new expected-descriptor-contract shape alongside
   `minimalRendererExpectedDescriptorContract()`'s existing one-binding
   contract — this Spec does not remove or narrow the existing contract,
   it adds a sibling for shaders that declare both bindings.
+- **The shader-compiler Tool's contract-selection wiring is dead code
+  today and must be made real — a genuine gap this Spec's own new
+  shader needs closed, independent of the UV decision.** A review
+  round's own deeper verification found
+  `CompileAndValidateRequest::expectedContract`
+  (`compile_and_validate.h:21`, populated from CMake's
+  `EXPECTED_CONTRACT`/`--expected-contract=` argument,
+  `shader_system/CMakeLists.txt:78`, `tools/shader_compiler/main.cpp:51-52`)
+  is parsed but **never read** anywhere in `compile_and_validate.cpp` —
+  `validateDescriptorContractForStage()`
+  (`compile_and_validate.cpp:129-142`) unconditionally calls
+  `minimalRendererExpectedDescriptorContract()` regardless of what
+  `expectedContract` was given, for every shader compiled through
+  `atlantis_add_slang_shader_pair()`, by name or path. Without a fix,
+  this Spec's own new fragment shader (declaring a second, sampler
+  binding) would fail build-time validation as
+  `ContractMismatchError::UnexpectedExtraBinding` against the *wrong*,
+  fixed, one-binding contract — regardless of the UV decision, since
+  this failure is triggered by the sampler binding alone.
+  `compileAndValidate()`'s call to `validateDescriptorContractForStage()`
+  is changed to consult the caller-supplied `expectedContract` (already
+  fully plumbed from CMake through to this point, simply never
+  consulted) instead of unconditionally calling
+  `minimalRendererExpectedDescriptorContract()` — a small, mechanical
+  fix (using an already-declared field) rather than a new mechanism
+  (item 17).
+- **RHI gains one new vertex-attribute format, `VertexAttributeFormat::Float2`
+  — small, disclosed, and fully decoupled from Asset System's own mesh
+  pipeline.** A review round's own deeper verification found a
+  hand-authored UV coordinate is **not** freely addable with zero
+  shared-type changes, as first drafted: `VertexAttributeFormat`
+  (`rhi/types.h:81-83`) has exactly one value, `Float3`, and every
+  bridge that consumes it — `vertexAttributeFormatToVkFormat()`
+  (`vulkan_device.cpp:624-631`, Vulkan Backend), Shader System's own
+  mirror enum `VertexAttributeType` (`reflection_metadata.h:16-18`), and
+  `toRhiFormat()` (`vertex_input_mapping.cpp:10-16`) — is an exhaustive
+  switch over `Float3` alone, ending in a hard `ATLANTIS_CHECK_MSG`
+  failure for anything else. This is genuinely different from, and far
+  smaller than, adding UV to Asset System's own mesh pipeline (item 11
+  below): `Mesh`/`createMesh()` (`mesh.h:47-52`) is already fully
+  generic — raw bytes + stride, no hardcoded field layout
+  (`mesh.cpp:11-41`) — and `toVertexInputLayout()`/`createPipeline()`'s
+  own attribute loop (`vulkan_device.cpp:877-898`) already accept an
+  arbitrary attribute count/layout from any caller; the *only* real
+  blocker to a genuine 2-float UV attribute, for any fixture, is this one
+  missing enum value and its Vulkan-format mapping. This Spec adds
+  `VertexAttributeFormat::Float2` (RHI) and `VertexAttributeType::Float2`
+  (Shader System reflection, plus a matching `toRhiFormat()` case) — a
+  small, mechanical extension `types.h`'s own existing comment already
+  anticipates verbatim ("a future spec adding a second attribute type
+  (e.g. `Float2` for UVs) extends this enum") — without touching
+  `StaticMeshAssetData`, the mesh authoring grammar, or the mesh runtime
+  artifact in any way (item 11, 18).
 - **Texture cooker (`Atlantis::AssetSystem`)**: `cookTexture(sourceImagePath,
   logicalPathInput, colorSpace, artifactOutputPath, metadataOutputPath) ->
   Result<monostate, TextureCookError>` (exact name a Plan-level detail),
   following `cookStaticMesh()`/`cookScene()`'s own established pattern
   exactly (`cook.cpp:82-125`): normalize logical path → decode the
   authoring image via `stb_image` (promoted from test-only to Tools use,
-  see below) → validate (non-zero dimensions, within a defensive maximum
-  — Plan-level detail, e.g. 8192×8192 — decoded channel count matches the
-  declared `SampledTextureFormat`) → `computeAssetId()` → encode a
-  versioned, unconditionally little-endian artifact (magic + fixed
-  header: schema version, width, height, format, mip count [= 1],
-  pixel-data offset/size, followed by tightly-packed row-major RGBA8
-  bytes, explicit shift/mask serialization matching `mesh_artifact.h`'s
-  own discipline — never a struct memcpy) plus a text metadata sidecar
-  → atomic dual-file write (`writeBytesAtomically()`/`writeTextAtomically()`,
+  see below) → validate → `computeAssetId()` → encode a versioned,
+  unconditionally little-endian artifact plus a text metadata sidecar →
+  atomic dual-file write (`writeBytesAtomically()`/`writeTextAtomically()`,
   the same temp-file-then-rename pattern every existing cooker uses).
   Exposed via a new mode of the existing `atlantis_asset_cooker` Tools
   executable, dispatched by `AssetKind`, matching
   `cook_command.cpp:208-217`'s own existing dispatch shape (item 9;
+  [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md)).
+- **`colorSpace` is a mandatory, explicit cooker parameter — PNG bytes
+  never decide it themselves.** `stb_image` decodes to raw RGBA8 bytes
+  only; it applies no gamma/color-space interpretation of its own — the
+  cooker does not read, and explicitly ignores, any source PNG's
+  `gAMA`/`sRGB`/`iCCP`/`cHRM` chunk (matching ADR-0041's own existing
+  "No PNG color-profile metadata is written or interpreted... comparison
+  operates on raw pixel bytes only, with no color-profile interpretation
+  on either side" discipline, extended here from goldens to authored
+  textures). `cookTexture()`'s caller-supplied `colorSpace` parameter
+  (`Rgba8Unorm` or `Rgba8Srgb`) is written into the artifact's own
+  `SampledTextureFormat` header field verbatim — the cooker performs no
+  pixel-value transformation of its own between the two; the *meaning*
+  of the stored bytes is entirely determined by which `VkFormat`
+  (`VK_FORMAT_R8G8B8A8_UNORM` vs. `VK_FORMAT_R8G8B8A8_SRGB`) `Device::createSampledTexture()`
+  later creates the GPU image with. **Sampling behavior, stated
+  explicitly, not left implicit**: for an `Rgba8Srgb` `SampledTexture`,
+  Vulkan's own fixed-function texture unit linearizes each sampled texel
+  (applies the sRGB EOTF) before the fragment shader ever sees it — the
+  shader receives already-linear float values, not the raw stored bytes;
+  for `Rgba8Unorm`, the shader receives the raw stored bytes reinterpreted
+  as `[0,1]` floats, unmodified. **This Spec's own proof fixture's cooked
+  test texture uses `Rgba8Unorm`** — deliberately, to keep the fixture's
+  own golden-comparison claim exactly "did the upload/sample path move
+  the right bytes," not entangled with tonemapping/output-encoding
+  concerns this Spec's own Non-Goals already exclude (HDR/lighting/
+  post-processing); `Rgba8Srgb` remains a real, supported format per this
+  Spec's own color-space contract (item 3), exercised by its own
+  cook/decode round-trip unit test, but not by the one GPU-required
+  fixture/golden. **Golden comparison happens on the final, rendered
+  RGBA8 color-attachment bytes** (the fragment shader's own output,
+  after whatever hardware linearization the bound `SampledTexture`'s own
+  format applied on sampling) — never a direct byte comparison against
+  the source PNG or the cooked artifact's own stored texel values, which
+  is the same "compare the real output, not an intermediate" discipline
+  every existing golden in this repository already follows (item 3).
+- **Texture artifact: explicit overflow, size-limit, row-pitch, mip, and
+  channel contract.** Header fields (schema version, width, height,
+  format, mip count, pixel-data offset/size) are unconditionally
+  little-endian, explicit shift/mask serialized, matching
+  `mesh_artifact.h`'s own discipline exactly — never a struct memcpy. A
+  defensive maximum dimension (Plan-level detail, e.g. 8192×8192,
+  chosen specifically so `maxDimension × maxDimension × 4` stays
+  comfortably within a `uint32_t` pixel-data-size field — 8192×8192×4 =
+  268,435,456 bytes, well under `UINT32_MAX`) is enforced as an explicit
+  decode-time error, checked **before** any allocation sized from
+  header-supplied values. `width × height × 4` is computed in 64-bit
+  arithmetic first (matching `mesh_artifact.h`'s own "every offset/size
+  recomputed independently in `uint64_t`" defense-in-depth pattern), so
+  a corrupted or adversarial header cannot wrap a 32-bit multiplication
+  into a small, falsely-valid size before the maximum-dimension check
+  runs. **Row order**: the artifact's first row is the authoring image's
+  own first-decoded row (`stb_image`'s un-flipped, top-to-bottom
+  default) — matching ADR-0041's own existing "no vertical flip, ever"
+  convention exactly, extended from goldens to texture artifacts. **Row
+  pitch**: tightly packed, `width × 4` bytes per row, no padding —
+  matching `VkBufferImageCopy::bufferRowLength = 0`'s own existing
+  convention (ADR-0040, already used by `copyRenderTargetToBuffer()`),
+  reused unchanged by this Spec's own `copyBufferToTexture()`. **Mip**:
+  the header's own mip-count field is validated as exactly `1` at decode
+  time — a foreign or future artifact claiming any other value is a
+  distinct, named decode error, never silently truncated to one mip.
+  **Channel**: the cooker always decodes with `desired_channels = 4`
+  (matching ADR-0041's own established `stb_image` convention exactly)
+  — unlike a golden (which must be a literal RGBA capture of an internal
+  buffer, so ADR-0041 hard-requires `channels_in_file == 4`), an authored
+  texture may legitimately be a real-world RGB-only (no alpha) or
+  grayscale source image; the cooker force-expands via `stb_image`'s own
+  `desired_channels = 4` (opaque alpha filled in for a source with none)
+  and records the source's own real `channels_in_file` in the metadata
+  sidecar for provenance/debugging — this is **not** a validation
+  failure for texture cooking, a deliberate, disclosed difference from
+  the golden-validation model. **Corrupted input**: an unreadable/
+  malformed source image at cook time is a distinct `TextureCookError`
+  enumerator (e.g. `SourceImageDecodeFailed`); a corrupted/truncated
+  artifact at decode time (bad magic, unknown schema version, a
+  pixel-data size inconsistent with declared width/height, a dimension
+  exceeding the defensive maximum, truncated pixel data) is each a
+  distinct `TextureArtifactDecodeError`/`TextureLoadError` enumerator,
+  mirroring `mesh_artifact.h`'s own already-shipped defense-in-depth
+  decode discipline exactly (item 9;
   [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md)).
 - **Texture loader (`Atlantis::AssetSystem`)**: `loadTextureAsset(artifactPath,
   metadataPath) -> Result<TextureAssetData, TextureLoadError>` (exact
@@ -299,13 +552,14 @@ Explicitly excluded from this Spec's design:
   cross-validation discipline (`load.cpp:40-83`): independently
   re-validates every cook-time condition against the artifact's actual
   bytes (magic, schema version, declared byte counts self-consistent,
-  pixel-data size exactly `width * height * 4`), cross-checks the
-  metadata sidecar against the artifact, and returns a pure CPU-side
-  `TextureAssetData` (width, height, `SampledTextureFormat`, owned pixel
-  bytes) naming no RHI type — a composition root elsewhere passes the
-  result into `Device::createSampledTexture()` plus this Spec's own
-  upload path, exactly the way `loadStaticMeshAsset()`'s own result today
-  passes into `renderer::createMesh()` (item 9, 10).
+  pixel-data size exactly `width * height * 4`, per the overflow/size-limit
+  contract above), cross-checks the metadata sidecar against the
+  artifact, and returns a pure CPU-side `TextureAssetData` (width,
+  height, `SampledTextureFormat`, owned pixel bytes) naming no RHI type —
+  a composition root elsewhere passes the result into
+  `Device::createSampledTexture()` plus this Spec's own upload path,
+  exactly the way `loadStaticMeshAsset()`'s own result today passes into
+  `renderer::createMesh()` (item 9, 10).
 - **Runtime never decodes PNG/JPEG.** `loadTextureAsset()` reads only the
   cooked, already-decoded pixel-byte artifact; `stb_image`'s own linkage
   never reaches `Atlantis::AssetSystem`'s runtime-loading code path or
@@ -325,31 +579,52 @@ Explicitly excluded from this Spec's design:
   targets ... never in `src/`, never linked into any shipping example or
   the engine's own libraries"* (`adr/0041-...md:156-160`). This Spec
   widens that boundary, disclosed explicitly, not silently: `Stb::Stb`
-  is additionally linked `PRIVATE` into `atlantis_asset_cooker`
+  is additionally linked `PRIVATE` into `atlantis_asset_cooker_lib`
   (Tools) only — never into `Atlantis::AssetSystem`'s own runtime
   library, never into `src/renderer`, `src/runtime`, or any target a
   shipped executable links. ADR-0041's own license/offline-build
   disclosures (`adr/0041-...md:161-176`) are re-confirmed, unchanged, as
-  applying equally to this new linkage. This requires ADR-0041's own
-  future Human Review Amendment — **not made by this Spec** (ADR-0041's
-  `Accepted` body is not modified here); see
+  applying equally to this new linkage. **ADR-0041 now carries its own
+  "Proposed Amendment — 2026-08-23" section recording this widening**
+  (ADR-0041's own original `Accepted` Decision/Consequences/Alternatives
+  Considered are left completely unmodified above it) — pending the same
+  Human Review pass as this Spec itself, not yet accepted; see
   [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md)
   and this Spec's own Human Review Decision Table item 10 (item 10).
 - **New, independent headless textured fixture and its own first
   golden.** A new fixture (e.g. `textured_quad_fixture`, exact name a
-  Plan-level detail) renders one texture-sampled quad (two triangles,
-  hand-authored position + UV data, matching `minimal_cube_fixture`'s
-  own already-established hand-authored, non-Asset-System-sourced
-  construction path — see Human Review item 11) with a small, cooked,
-  distinctively-patterned test texture, through this Spec's real
-  cook → decode → upload → bind → sample path. A new golden,
-  `tests/image_regression/goldens/textured_quad/`, is captured following
-  ADR-0042's own "Initial baseline bootstrap" category — the same
-  category Spec 0011's own first-ever golden used, since no prior golden
-  for this scene exists. **The existing `minimal_cube` and `world_scene`
-  goldens are not modified, and their own existing tests are re-run
-  unmodified** as regression proof this Spec's changes did not disturb
-  either existing rendering path (item 14).
+  Plan-level detail) hand-authors its own `struct Vertex { float
+  position[3]; float uv[2]; };` array (two triangles), matching
+  `minimal_cube_fixture.cpp`'s own already-established hand-authored,
+  non-Asset-System-sourced construction shape exactly — its own new
+  fragment shader (a new `.slang` file, its own `MeshVertexAttributeSchema`,
+  its own reflection JSON, compiled via the existing, unmodified
+  `atlantis_add_slang_shader_pair()`) declares a real
+  `[[vk::location(2)]] float2 uv` vertex input, carried through
+  `Mesh`/`createMesh()`/`toVertexInputLayout()` exactly like the
+  existing shader-reflection-driven path every current fixture already
+  uses (item 11) — with a small, cooked, distinctively-patterned test
+  texture, through this Spec's real cook → decode → upload → bind →
+  sample path. A new golden, `tests/image_regression/goldens/textured_quad/`,
+  is captured following ADR-0042's own "Initial baseline bootstrap"
+  category, satisfying all six of its own numbered constraints
+  explicitly, not merely in spirit: (1) applicability — no prior golden
+  exists at this path; (2) captured against a clean, already-committed
+  working tree; (3) full provenance recorded in the sidecar, same fields
+  as every other golden; (4) the golden PNG/sidecar added via their own
+  separate, subsequent commit; (5) evidence substituting for the
+  inapplicable old-vs-new diff — a human's direct visual confirmation of
+  a correctly-rendered, non-degenerate frame, the capture-compare cycle
+  reproducing zero channel difference against itself immediately after
+  capture, a real run on real Vulkan-capable hardware with Validation
+  Layers clean, and citation of this repository's own already-recorded
+  empirical calibration evidence for the channel-tolerance-0 rule; (6)
+  no relaxation of the golden validity check, comparison algorithm, or
+  sidecar encoding contract for being a bootstrap golden. **The existing
+  `minimal_cube` and `world_scene` goldens are not modified, and their
+  own existing tests are re-run unmodified** as regression proof this
+  Spec's changes did not disturb either existing rendering path (item
+  14).
 
 ### Non-functional
 
@@ -358,13 +633,15 @@ Explicitly excluded from this Spec's design:
   path — no performance budget beyond "does not noticeably delay the new
   fixture's own startup," matching every prior Spec's own similarly
   unbudgeted one-time-load cost.
-- **Memory:** the staging `Buffer` is destroyed immediately after its
-  one-time upload command completes (RAII scope exit) — never retained.
-  `SampledTexture`/`Sampler` are explicitly, single-owner-held by
-  whichever composition root creates them (this Spec's own fixture),
-  matching `resource_lifetime.md`'s existing "explicit ownership, no
-  hidden caching" principle exactly — no resource pool, no texture
-  cache, this round.
+- **Memory:** the staging `Buffer` is destroyed only after the upload's
+  own `Device::waitIdle()` call returns `Ok` (RAII scope exit) — real,
+  observed GPU completion, never "immediately after `submit()` returns"
+  or any other guess; never retained past that point. `SampledTexture`/
+  `Sampler` are explicitly, single-owner-held by whichever composition
+  root creates them (this Spec's own fixture), matching
+  `resource_lifetime.md`'s existing "explicit ownership, no hidden
+  caching" principle exactly — no resource pool, no texture cache, this
+  round.
 - **Portability (within the Vulkan-only Phase 1 constraint):** the
   artifact's unconditional little-endian encoding (matching
   `mesh_artifact.h`'s own established discipline) makes the format
@@ -389,31 +666,47 @@ this Spec's own fixture's startup), per
 ```
 Build time:
   authoring image (.png) ─▶ cookTexture() [AssetSystem, stb_image-backed, Tools-only] ─▶ texture artifact (.atex) + metadata sidecar
+                                                                                                          (colorSpace explicit, cooker-supplied)
 
-Load time (fixture startup, before the first per-frame RenderGraph runs):
+Load time (fixture startup, before the fixture's own first per-frame RenderGraph runs):
   texture artifact + sidecar ─▶ loadTextureAsset() [AssetSystem] ─▶ TextureAssetData (CPU pixel bytes, no RHI type)
                                                                           │
                                               Device::createSampledTexture() + createSampler()
                                                                           │
                                     staging Buffer (BufferPurpose::Staging) populated with pixel bytes
                                                                           │
-                        one-time, single-pass RenderGraph execution [RenderGraph -- AGENTS.md's own
+                  fixture's own OffscreenTarget::acquireTarget() ─▶ RenderTarget (reused below, not throwaway)
+                                                                          │
+                        one-time upload RenderGraph execution [RenderGraph -- AGENTS.md's own
                         "Render Graph is the mandatory path for GPU work" constraint, never a raw
-                        CommandList sequence outside it]:
-                          transitionResource(SampledTexture, Undefined -> TransferDestination)
-                          copyBufferToTexture(staging Buffer, SampledTexture)
-                          transitionResource(SampledTexture, TransferDestination -> ShaderRead)
+                        CommandList sequence outside it -- one pass, only SampledTexture tracked
+                        (incomingState=Undefined, finalState=ShaderRead); staging Buffer untracked,
+                        matching copyRenderTargetToBuffer()'s own untracked-destination precedent]:
+                          pass body: copyBufferToTexture(staging Buffer, SampledTexture)
+                          RenderGraph-driven: transitionResource(SampledTexture, Undefined -> TransferDestination -> ShaderRead)
                                                                           │
-                                                    Material(pipeline, SampledTexture, Sampler)
+                        Device::submit(commandList, *reusedRenderTarget)  [existing API, unchanged --
+                        target reused only for submit()'s own required parameter/semaphore bookkeeping,
+                        not touched by the upload's own recorded commands]
                                                                           │
-                        per-frame RenderGraph draw pass (existing, unmodified shape):
+                        Device::waitIdle()  [existing API, unchanged -- real, blocking GPU-completion
+                        evidence; only after this returns Ok: staging Buffer destroyed]
+                                                                          │
+                                                    Material(pipeline, SampledTexture&, Sampler&)  [borrowed, not owned]
+                                                                          │
+                        fixture's own later, separate per-frame RenderGraph draw pass (existing,
+                        unmodified shape, reusing the SAME RenderTarget acquired above):
                           bindPipeline / bindVertexBuffer / bindUniformBuffer / bindTexture(SampledTexture, Sampler)
                                                                           │
-                                                              fragment shader samples, writes color
+                                                              fragment shader samples (hardware
+                                                              linearizes if Rgba8Srgb), writes color
+                                                                          │
+                                            golden comparison against the FINAL rendered RGBA8 bytes
 ```
 
 Module ownership: RHI (`SampledTexture`, `Sampler`, new `ResourceState`/
-`BufferPurpose` values, new `CommandList` overloads) and Vulkan Backend
+`BufferPurpose` values, new `CommandList` overloads — `Device::submit()`/
+`waitIdle()`/`SubmissionSignal` themselves unchanged) and Vulkan Backend
 (implementation: manual per-resource `vkAllocateMemory` — no VMA,
 matching the existing, `Accepted`-deferred (ADR-0015) pattern every other
 RHI resource already uses; barrier-plan table entries; descriptor pool/
@@ -423,8 +716,16 @@ RenderGraph (new `ResourceBinding` kind, transition-insertion logic) and
 Renderer's `Material`/`CommandList::bindTexture()` per
 [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md);
 Asset System (`cookTexture()`/`loadTextureAsset()`, `Stb::Stb`'s widened
-Tools-only linkage) and Shader System (`DescriptorType::Sampler`) per
+Tools-only linkage), Shader System (`DescriptorType::Sampler`,
+`VertexAttributeType::Float2`), and Tools' shader compiler (wiring
+`expectedContract`, today dead code, into real use) per
 [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md).
+RHI additionally gains `VertexAttributeFormat::Float2` — a small,
+disclosed extension covered in this Spec's own Requirements/Human Review
+Decision Table (item 18) rather than a fourth ADR, since it is a
+single, mechanical enum-value addition `types.h`'s own existing comment
+already anticipated, not a new module boundary, ownership model, or
+public-API shape of the weight this repository's ADRs otherwise record.
 
 ## Architectural Impact
 
@@ -436,45 +737,83 @@ none of the following is hidden or silently worked around:
 - A **new RHI subsystem boundary**: `SampledTexture`/`Sampler` as
   independent types, new `ResourceState`/`BufferPurpose` values, two new
   `CommandList` capabilities (buffer→texture copy, a third
-  `transitionResource()` overload) —
+  `transitionResource()` overload), and a new
+  `VertexAttributeFormat::Float2` value (item 11, 18) —
   [ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md).
+  **`Device::submit()`, `Device::waitIdle()`, and `SubmissionSignal`
+  are all unchanged** — a review round's own deeper verification
+  confirmed the one-time upload reuses the existing `submit()` API
+  against the fixture's own already-acquired `OffscreenTarget`-vended
+  `RenderTarget`, with `waitIdle()` as the real completion-wait
+  mechanism (item 6, 13); this Spec does not introduce a target-optional
+  or target-free submit path.
 - A **new RenderGraph resource-binding kind and transition
-  responsibility** — `ResourceBinding` gains a third field, `execute()`
-  gains new transition logic, and a genuine one-time, single-pass
-  RenderGraph execution is introduced ahead of Runtime's first per-frame
-  graph. This is the one finding this Spec's own suggested core scope
-  (as directed) did not explicitly anticipate — the CPU→GPU upload
-  cannot be a raw `CommandList` sequence outside RenderGraph, per
-  AGENTS.md's own Golden Rule; it must be real, if minimal, RenderGraph
-  scope —
+  responsibility** — `ResourceBinding` gains a third field (tracking
+  only the destination `SampledTexture`; the source staging `Buffer`
+  remains untracked, matching `copyRenderTargetToBuffer()`'s own
+  untracked-destination precedent), `execute()` gains new transition
+  logic, and a genuine one-time, single-pass RenderGraph execution is
+  introduced ahead of the fixture's own first per-frame graph, using the
+  same `RenderTarget` both graphs share. This is the one finding this
+  Spec's own suggested core scope (as directed) did not explicitly
+  anticipate — the CPU→GPU upload cannot be a raw `CommandList` sequence
+  outside RenderGraph, per AGENTS.md's own Golden Rule; it must be real,
+  if minimal, RenderGraph scope —
   [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md).
-- A **new `Material`/descriptor-binding public API**: a second, fixed
-  descriptor slot (combined image sampler, fragment stage), extending
-  both RHI's `CommandList` surface and Vulkan Backend's previously
-  hardcoded single-binding descriptor-set-layout/pool —
+- A **new `Material`/descriptor-binding public API**: a second, fixed,
+  **borrowed** (not owned — extending `DrawItem`'s own existing
+  `Mesh`/`Material` borrowing contract) descriptor slot (combined image
+  sampler, fragment stage), extending both RHI's `CommandList` surface
+  and Vulkan Backend's previously hardcoded single-binding
+  descriptor-set-layout/pool —
   [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md).
 - A **new Shader System reflected descriptor kind**
-  (`DescriptorType::Sampler`) and a second expected-descriptor-contract
-  shape, alongside (not replacing) the existing one —
+  (`DescriptorType::Sampler`, plus its own `reflection_loader.cpp`
+  parser case) and a second expected-descriptor-contract shape,
+  alongside (not replacing) the existing one —
   [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md).
+- A **real, previously-dead-code Tools fix, not merely a new
+  capability**: the shader-compiler tool's `expectedContract` field is
+  parsed from CMake but never consulted — `compileAndValidate()` is
+  changed to actually use it, a prerequisite for this Spec's own new
+  shader (sampler binding) to pass build-time contract validation at
+  all, independent of the UV decision —
+  [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md).
 - A **new Asset System asset kind** (texture: cooker, artifact format,
-  loader), following the established mesh/scene pattern exactly —
+  loader), following the established mesh/scene pattern exactly, with an
+  explicit, mandatory `colorSpace` cook-time parameter (never inferred
+  from PNG color-profile chunks) —
   [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md).
 - A **new third-party dependency boundary widening**: `stb_image`,
   already an `Accepted` (ADR-0041) test-only dependency, gains a second,
   disclosed linkage point (Tools' `atlantis_asset_cooker`) — never a new
   library, but a real, named boundary change ADR-0041 itself did not
-  previously permit, requiring ADR-0041's own future Human Review
-  Amendment (not made by this Spec) —
+  previously permit. **ADR-0041 now carries its own Proposed Amendment**
+  (not merely a forward reference) recording this boundary widening and
+  a real, previously-undiscovered CMake configure-ordering defect this
+  review round found: `cmake/AtlantisDependencies.cmake` (where `stb`'s
+  own `FetchContent` declaration lives) is included only inside the
+  `if(ATLANTIS_BUILD_TESTS)` block, **after** `add_subdirectory(src/tools/asset_cooker)`
+  already runs — `Stb::Stb` would not exist as a target at the point the
+  cooker needs it, regardless of `ATLANTIS_BUILD_TESTS`'s value, without
+  also relocating that declaration — see ADR-0041's own Proposed
+  Amendment and this Spec's own Human Review Decision item 10 —
   [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md).
 
 **Explicitly not changed**: `Atlantis::World`'s `Renderable` component
 shape (still names exactly one mesh `AssetId`, Spec 0014/0015
 unmodified); the Scene Asset artifact format (Spec 0015 unmodified);
-`StaticMeshAssetData`/the mesh authoring grammar/the mesh runtime
-artifact (no UV added this round, item 11); today's depth-only `Texture`
-and its single-value `DepthFormat` enum (completely untouched, not
-generalized).
+`StaticMeshAssetData`, the mesh authoring grammar, and the mesh runtime
+artifact (no UV added to Asset System's own mesh pipeline this round —
+only a small, decoupled RHI/Shader-System vertex-attribute-format
+addition, item 11); today's depth-only `Texture` and its single-value
+`DepthFormat` enum (completely untouched, not generalized);
+`Device::submit()`, `Device::waitIdle()`, and `SubmissionSignal`
+(unchanged, reused as-is); `Renderer::drawFrame()`'s own public API
+(the upload never goes through it — the upload is a separate,
+fixture-level `RenderGraphBuilder`/`execute()` sequence, matching the
+existing headless-readback test's own "second, caller-built
+`RenderGraphBuilder`" precedent).
 
 ## Human Review Decision Table
 
@@ -482,20 +821,22 @@ generalized).
 |---|---|---|---|---|
 | 1 | Generalize the existing `Texture` (today, depth-only) to also cover sampled color textures, or introduce a new, independent `SampledTexture` type? | New, independent `SampledTexture` type. Depth and sampled-color images differ in Vulkan usage bits, image aspect, and consumption pattern (attachment write vs. shader read) enough that forcing one C++ type to cover both would touch every existing depth-`Texture` call site for no benefit, and contradicts `texture.h`'s own explicit "depth attachment... no sampled/shader-read usage" scoping (`texture.h:7-8`). Matches the existing precedent that `RenderTarget` and depth `Texture` are already two separate types for two different roles. | Generalize `Texture` with a `Kind`/`Usage` tag spanning Depth and Sampled — rejected: forces `DepthFormat` and a new color-format concept into one type and risks every existing depth-`Texture` caller. | [ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md) |
 | 2 | What is the type boundary between depth and sampled-color formats? | `DepthFormat` (still one value, `D32Sfloat`) is completely untouched. A new, independent `SampledTextureFormat` enum is introduced for sampled color textures — not a shared enum with `DepthFormat`, and not a reuse of the existing swapchain-shaped `Format` enum (see item 3). | A single, unified `Format` enum spanning depth and color — rejected outright, `DepthFormat`'s own existing single-variant-enum precedent (`types.h:65-68`) exists specifically so a future depth format extends it independently of any color concept. | [ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md) |
-| 3 | What is the first supported set of linear/sRGB sampled-texture formats, and is the existing swapchain `Format` enum reused? | A new, independent `SampledTextureFormat` enum, not the existing `Format` (whose own doc comment already anticipates a future format concept "quite possibly superseding" it, `types.h:22-25`, but whose two BGRA variants are swapchain-specific and meaningless for an authored texture). First two values: `Rgba8Unorm` (linear) and `Rgba8Srgb`, giving an explicit, minimal linear-vs-sRGB contract from the start. | Reuse `Format` directly — rejected, couples an authored-texture color-space contract to swapchain-surface-format concerns that have nothing to do with it. Ship only `Rgba8Srgb` (no linear option) — rejected, the Goals explicitly require "at least" naming the linear/sRGB boundary, not just the color-authoring case. | [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md) |
+| 3 | What is the first supported set of linear/sRGB sampled-texture formats, is the existing swapchain `Format` enum reused, and what actually decides linear vs. sRGB (since PNG bytes don't decide it themselves)? | A new, independent `SampledTextureFormat` enum, not the existing `Format` (whose own doc comment already anticipates a future format concept "quite possibly superseding" it, `types.h:22-25`, but whose two BGRA variants are swapchain-specific and meaningless for an authored texture). First two values: `Rgba8Unorm` (linear) and `Rgba8Srgb`. `stb_image` applies no color-profile interpretation of its own; `cookTexture()`'s `colorSpace` parameter is a mandatory, explicit, caller-supplied choice, written into the artifact verbatim — any source PNG `gAMA`/`sRGB`/`iCCP`/`cHRM` chunk is read by neither `stb_image` nor this cooker, matching ADR-0041's own already-established "no color-profile interpretation on either side" discipline. Sampling behavior is explicit, not implicit: an `Rgba8Srgb` `SampledTexture` is hardware-linearized (sRGB EOTF) by Vulkan's own texture unit before the shader sees it; `Rgba8Unorm` is not. This Spec's own proof fixture uses `Rgba8Unorm` specifically to keep its golden's own claim to "did the right bytes move," undistorted by tonemapping/output-encoding concerns already excluded by Non-Goals; golden comparison itself happens on the final rendered RGBA8 color-attachment bytes, never the source PNG or artifact texel values directly. | Reuse `Format` directly — rejected, couples an authored-texture color-space contract to swapchain-surface-format concerns that have nothing to do with it. Ship only `Rgba8Srgb` (no linear option) — rejected, the Goals explicitly require "at least" naming the linear/sRGB boundary, not just the color-authoring case. Infer color space from PNG metadata (`gAMA`/`sRGB` chunk) — rejected, `stb_image` does not read these chunks in this codebase's existing usage and adding that interpretation would be new, undisclosed decoder behavior beyond ADR-0041's own established "raw bytes only" contract. Use the fixture's own cooked texture in `Rgba8Srgb` — rejected for the one GPU-required fixture specifically, to avoid conflating "texture infrastructure works" with "gamma/tonemapping is handled correctly," an explicit Non-Goal. | [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md) |
 | 4 | What is the minimal `Sampler` filter/address/LOD API? | A single `Filter` (`Nearest`\|`Linear`, applied to min/mag together — no separate mip filter, since every texture has exactly one mip level this round) and a single `AddressMode` (`Repeat`\|`ClampToEdge`, applied to U/V together). No LOD bias, anisotropy, or compare-op. `Sampler` is independent, immutable, RAII-owned — matching `resource_lifetime.md`'s existing "explicit ownership, no hidden caching" principle. | Separate min/mag/mip filter fields — rejected, meaningless with a fixed single mip level (item 12); would be dead API surface. Exposing anisotropy/LOD bias now — rejected, no consumer or measured need exists yet; matches AGENTS.md's own "do not add abstraction knobs for a capability that isn't being built" discipline. | [ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md) |
 | 5 | What staging buffer, copy command, and `ResourceState` values does the CPU→GPU upload path need? | A new `BufferPurpose::Staging` (host-visible, extending the existing `BufferPurpose` enum exactly as `Readback` already did); new `ResourceState::TransferDestination`/`ShaderRead` values, with two new, explicit `(before,after)` entries added to Vulkan Backend's existing exhaustive barrier-plan table (`resource_state_mapping.cpp`) — no wildcard transition; a new `CommandList::copyBufferToTexture()` and a third `transitionResource()` overload. | A single combined "upload" `ResourceState` collapsing `TransferDestination` and `ShaderRead` — rejected, these are two genuinely distinct Vulkan image layouts (`VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL` vs. `VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL`) and collapsing them would make the barrier-plan table's own exhaustiveness check meaningless for this path. | [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md) |
-| 6 | **(Real API gap, resolved.)** Can the one-time texture upload be a raw `CommandList` sequence issued outside RenderGraph, given it runs once, synchronously, before any per-frame graph? | No. AGENTS.md states plainly: *"Render Graph is the mandatory path for GPU work. No subsystem submits ad hoc, hand-scheduled GPU work outside it"* (`AGENTS.md:142-143`); the RenderGraph module boundary's own Responsibilities line states *"no ad hoc direct-submission rendering path is allowed to bypass it."* `ResourceBinding` (`execution.h`) therefore gains a third, generic-`SampledTexture`-carrying field, and `execute()`'s transition-insertion logic is extended for `TransferDestination`/`ShaderRead`. The upload runs as its own small, single-pass RenderGraph execution (build → compile → execute, once), never folded into or reusing state from any later per-frame graph. | A raw, one-time `CommandList` sequence recorded directly against `Device`, bypassing RenderGraph — this was this Spec's own first-drafted design and was corrected during self-review specifically because it violates AGENTS.md's own already-established, non-negotiable constraint; not a stylistic preference, an actual governance violation. | [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md) |
-| 7 | What is `Material`'s new binding API for a sampled texture + sampler? | `Material` gains an optional, construction-time, borrowed `SampledTexture`/`Sampler` pair (matching `Mesh`/`Material`'s existing non-owning-reference shape in `DrawItem`). A new `CommandList::bindTexture(SampledTexture&, Sampler&)`, called inside `Renderer`'s existing per-`DrawItem` pass callback alongside `bindUniformBuffer()`. Vulkan Backend's per-`Pipeline` descriptor-set-layout and the device-level descriptor pool each gain one new, fixed entry (binding 1, combined image sampler, fragment stage). | A general, per-`Material` variable-length binding list — rejected as premature, ahead of any real second consumer needing more than one texture; matches this codebase's own "one fixed, hardcoded contract, extended only when a real need appears" discipline (`minimalRendererExpectedDescriptorContract()`'s own existing precedent). | [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md) |
+| 6 | **(Real API gap, resolved — twice.)** Can the one-time texture upload be a raw `CommandList` sequence issued outside RenderGraph, and — a second, deeper question a review round's own verification raised — does `Device::submit()` even admit a target-free/target-optional CommandList in the first place? | No to bypassing RenderGraph — AGENTS.md states plainly: *"Render Graph is the mandatory path for GPU work. No subsystem submits ad hoc, hand-scheduled GPU work outside it"* (`AGENTS.md:142-143`). And no, there is no target-free submit path: `Device::submit()` has exactly one overload (`device.h:51-52`, `const RenderTarget&`), and `VulkanDevice::submit()` (`vulkan_device.cpp:530-531`) unconditionally `dynamic_cast`s/`ATLANTIS_CHECK_MSG`-asserts it is real and module-produced. `ResourceBinding` (`execution.h`) gains a third, generic-`SampledTexture`-carrying field (tracking only the destination texture — the source staging `Buffer` stays untracked, matching `copyRenderTargetToBuffer()`'s own untracked-destination-buffer precedent), and `execute()`'s transition-insertion logic is extended for `TransferDestination`/`ShaderRead` via the existing `incomingState`/`finalState` mechanism (`execution.h:23-40`, the same one Spec 0010's readback `finalState` already uses). The upload's own one-pass graph is `execute()`'d into a `CommandList`, then submitted via the **existing, unchanged** `Device::submit()`, reusing the fixture's own already-`OffscreenTarget::acquireTarget()`-vended `RenderTarget` (the upload's own commands never touch that target's color image — `submit()`'s target parameter exists for semaphore bookkeeping, legally null for an offscreen target, not to describe every touched resource; `Device::submit()`'s own doc comment already names exactly this "headless caller" case). `Device::waitIdle()` (`device.h:59`) — not `SubmissionSignal`, which is opaque (`submission_signal.h:21-24`, no public method beyond its destructor) — is the real, already-used blocking completion mechanism (`headless_rendering_gpu_tests.cpp:405`, `minimal_cube_fixture.cpp:279`, `runtime_application.cpp:455`), run once before the fixture's own later, separate per-frame draw graph reuses the same `RenderTarget`. | A raw, one-time `CommandList` sequence recorded directly against `Device`, bypassing RenderGraph — this was this Spec's own first-drafted design and was corrected during self-review specifically because it violates AGENTS.md's own already-established, non-negotiable constraint. A **new**, target-optional/target-free `Device::submit()` overload — considered during this review round and rejected: would be a real, disclosed RHI public-API change (a second overload, a `VulkanDevice::submit()` branch skipping the `dynamic_cast`/semaphore-read block) for a need this Spec's own single-texture, single-fixture scope does not actually have, since the fixture already creates and can reuse a real `OffscreenTarget`-vended `RenderTarget`; deferred to a future spec if a real target-free-submission consumer (e.g. compute-only work) ever needs one. | [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md) |
+| 7 | What is `Material`'s new binding API for a sampled texture + sampler, and its own ownership/lifetime semantics? | `Material` gains an optional, construction-time, **borrowed, not owned** `SampledTexture`/`Sampler` pair — explicitly extending `DrawItem`'s own existing "`mesh`/`material` are borrowed (must outlive the `drawFrame()` call)" contract (`draw_item.h:10-12`) to `Material`'s own new fields: the caller-owning composition root must keep `SampledTexture`/`Sampler` alive at least as long as any `Material` referencing them is used in a `drawFrame()` call; `Material` neither owns nor extends their lifetime, and destroying either while a live `Material` still references it is a caller precondition violation (matching this codebase's existing borrowed-reference discipline), not a checked error. A new `CommandList::bindTexture(SampledTexture&, Sampler&)`, called inside `Renderer`'s existing per-`DrawItem` pass callback alongside `bindUniformBuffer()`. Vulkan Backend's per-`Pipeline` descriptor-set-layout and the device-level descriptor pool each gain one new, fixed entry (binding 1, combined image sampler, fragment stage). | A general, per-`Material` variable-length binding list — rejected as premature, ahead of any real second consumer needing more than one texture; matches this codebase's own "one fixed, hardcoded contract, extended only when a real need appears" discipline (`minimalRendererExpectedDescriptorContract()`'s own existing precedent). `Material` taking shared/owning references (e.g. a `shared_ptr`-style handle) to `SampledTexture`/`Sampler` — rejected, introduces implicit shared ownership this codebase's own "explicit ownership, no hidden caching" principle (`resource_lifetime.md`) does not use anywhere else, for no need this Spec's own single-fixture scope has. | [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md) |
 | 8 | Combined image sampler, or separate texture/sampler descriptor types? | Combined image sampler (`VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER`) — one binding slot, one pool-size entry, one `VkDescriptorImageInfo` pairing image view + sampler at bind time. The RHI-level `Sampler` object itself remains fully independent (own creation, own lifetime, reusable across multiple textures) — this decision is purely about the underlying Vulkan descriptor-binding mechanism, not the RHI's own C++ object model. | Separate `SampledImage`/`Sampler` descriptor types (two binding slots, two pool-size entries) — rejected as more descriptor-pool/layout complexity for no benefit this round, ahead of any real need to bind one sampler against multiple images independently. | [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md) |
-| 9 | What is the texture artifact's format, byte order, row order, size limit, and validation? | Magic + fixed header (schema version, width, height, `SampledTextureFormat`, mip count [= 1], pixel-data offset/size), unconditionally little-endian, explicit shift/mask serialization — matching `mesh_artifact.h`'s own discipline exactly, never a struct memcpy. Row order: the first row in the artifact is the authoring image's own first-decoded row (`stb_image`'s default top-to-bottom origin) — a fixed, documented convention, not left ambiguous. A defensive maximum dimension (Plan-level detail, e.g. 8192×8192) is enforced as an explicit decode-time error, not a crash/OOM risk. Decode independently re-validates: magic, schema version, non-zero dimensions within the maximum, a known format value, and pixel-data byte count exactly `width × height × 4`. | Storing pixel data bottom-to-top (matching some legacy image conventions) — rejected, `stb_image`'s own natural decode order is top-to-bottom and there is no existing convention in this codebase to match instead. No explicit size cap (trust the authoring pipeline) — rejected, an unbounded value read from a corrupted/malformed header is exactly the kind of decode-time risk this repository's existing artifact formats already guard against. | [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md) |
-| 10 | **(Real dependency-boundary gap, resolved.)** What authoring-image decoder does the cooker use, and does promoting `stb_image` from test-only to Tools require re-evaluating ADR-0041? | Reuse `stb_image` (already an `Accepted`, license-reviewed, pinned-commit dependency, `Stb::Stb`) rather than writing a redundant decoder — but this genuinely widens ADR-0041's own explicit boundary statement ("never in `src/`, never linked into any shipping example or engine library," `adr/0041-...md:156-160`). `Stb::Stb` is linked `PRIVATE` into `atlantis_asset_cooker` (Tools) only — never into `Atlantis::AssetSystem`'s own runtime library or any runtime-linked target. This requires ADR-0041's own future Human Review Amendment, not made by this Spec/ADR-0057 (ADR-0041's `Accepted` body is untouched here) — approving Spec 0016 without also amending ADR-0041 leaves this dependency boundary inconsistent, and Human Review must explicitly authorize both together. | Write a hand-rolled PNG decoder instead — rejected, duplicates a small, permissively-licensed, already-vetted library for no real benefit, and this repository's own established restraint is "no new general parser library," not "no reuse of an already-accepted one." Ship raw, undecoded PNG bytes as the "artifact" and decode at Runtime load time — rejected outright, directly violates this Spec's own explicit "Runtime never parses PNG/JPEG" requirement and this repository's authoring/runtime separation principle (ADR-0035). | [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md) |
-| 11 | **(Explicit, disclosed decision — not silently resolved.)** `StaticMeshAssetData`/`MeshSourceVertex`/the mesh runtime artifact are all confirmed position+color only (24-byte stride) at three independent layers, with no UV field anywhere, and RHI's `VertexAttributeFormat` has only `Float3` (no `Float2`). Does this Spec add real `float2 UV0` to the mesh pipeline, or use procedural/hand-authored coordinates? | **Hand-authored, non-Asset-System UV coordinates in this Spec's own new fixture only** — matching `minimal_cube_fixture`'s own already-established, disclosed precedent of a hand-authored construction path existing alongside (not replacing) an Asset-System-sourced one. This is an explicit, small, fixed UV array written directly in the fixture's own C++ source — **not** derived from vertex position by any formula, satisfying the letter and spirit of "must not silently substitute position-derived coordinates." This Spec's own closed-loop claim is scoped to texture infrastructure (cook/load/upload/sample), not to an asset-sourced textured mesh — that claim is **explicitly not made here**. "Mesh UV Attribute Foundation" (real `float2 UV0` across the authoring grammar, `MeshSourceVertex`, the mesh artifact — requiring a schema version bump per this repository's own established "new schema version, not an in-place mutation" precedent — and `VertexAttributeFormat::Float2`) is registered as an immediate, named, blocking follow-up candidate; see Out of Scope / Future Work. | Add real `float2 UV0` in this Spec — rejected as this Spec's own recommendation (Human Review may override): a genuine three-layer schema change (authoring grammar, artifact schema-version bump, `StaticMeshAssetData`/RHI/Shader-System attribute additions) plus retrofitting or dual-schema-version-supporting the existing, checked-in `minimal_cube.mesh.txt` asset — a substantially different, mesh-schema-focused scope from "Texture & Sampler Foundation," better served by its own, tightly-scoped Spec once a real asset-sourced textured-mesh consumer exists to design against. | This Spec's own Non-Goals; Out of Scope / Future Work |
+| 9 | What is the texture artifact's format, byte order, row order, row pitch, mip contract, channel-forcing behavior, overflow safety, size limit, and validation? | Magic + fixed header (schema version, width, height, `SampledTextureFormat`, mip count [= 1], pixel-data offset/size), unconditionally little-endian, explicit shift/mask serialization — matching `mesh_artifact.h`'s own discipline exactly, never a struct memcpy. Row order: the artifact's first row is the authoring image's own first-decoded row (`stb_image`'s un-flipped, top-to-bottom default), matching ADR-0041's own "no vertical flip, ever" convention exactly. Row pitch: tightly packed, `width × 4` bytes, no padding — matching `VkBufferImageCopy::bufferRowLength = 0`'s own existing convention (ADR-0040), reused unchanged by `copyBufferToTexture()`. Mip: the header's own mip-count field is checked equal to `1` at decode time, a distinct, named error otherwise. Channel: the cooker always forces `desired_channels = 4` via `stb_image` (matching ADR-0041's own established convention), recording the source's own real `channels_in_file` in the metadata sidecar for provenance — **not** a hard validation failure the way a golden's own `channels_in_file == 4` requirement is, since an authored texture may legitimately be a real RGB/grayscale source. Overflow: `width × height × 4` is computed in 64-bit arithmetic before any allocation, and a defensive maximum dimension (Plan-level detail, e.g. 8192×8192, chosen so the maximum stays comfortably within a `uint32_t` pixel-data-size field) is checked **before** that computation is trusted for sizing. Decode independently re-validates: magic, schema version, dimensions non-zero and within the maximum, a known format value, mip count exactly 1, and pixel-data byte count exactly `width × height × 4`; a malformed source image at cook time and a corrupted/truncated artifact at decode time are each distinct, named error enumerators. | Storing pixel data bottom-to-top (matching some legacy image conventions) — rejected, `stb_image`'s own natural decode order is top-to-bottom and there is no existing convention in this codebase to match instead. No explicit size cap (trust the authoring pipeline) — rejected, an unbounded value read from a corrupted/malformed header is exactly the kind of decode-time risk this repository's existing artifact formats already guard against. Computing `width × height × 4` in 32-bit arithmetic before the maximum-dimension check — rejected, a crafted header could wrap the multiplication into a small, falsely-valid size, defeating the check it's meant to gate. Requiring `channels_in_file == 4` for authored textures, matching the golden-validation model exactly — rejected, would reject legitimate real-world RGB/grayscale authoring images for no correctness benefit, conflating two different validation purposes (golden = must be a literal internal-buffer capture; texture = may be any real authored image). | [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md) |
+| 10 | **(Real dependency-boundary gap, resolved — including a real CMake-ordering defect a later review round found.)** What authoring-image decoder does the cooker use, does promoting `stb_image` from test-only to Tools require amending ADR-0041, and does the resulting linkage actually work given today's `CMakeLists.txt` ordering? | Reuse `stb_image` (already an `Accepted`, license-reviewed, pinned-commit dependency, `Stb::Stb`) rather than writing a redundant decoder — but this genuinely widens ADR-0041's own explicit boundary statement ("never in `src/`, never linked into any shipping example or engine library," `adr/0041-...md:156-160`). `Stb::Stb` is linked `PRIVATE` into `atlantis_asset_cooker_lib` (Tools) only — never into `Atlantis::AssetSystem`'s own runtime library or any runtime-linked target. **ADR-0041 now carries its own "Proposed Amendment — 2026-08-23" section** recording this widening and its own real, previously-undiscovered fix: `cmake/AtlantisDependencies.cmake` (where `stb`'s `FetchContent` declaration lives) is included only inside `if(ATLANTIS_BUILD_TESTS)`, **after** `add_subdirectory(src/tools/asset_cooker)` already runs (`CMakeLists.txt:60,95-97`) — `Stb::Stb` would not exist as a target at the point the cooker needs it, regardless of `ATLANTIS_BUILD_TESTS`'s value, without relocating that declaration into a new, unconditionally-included module (the amendment's own Decision). Approving this Spec without also accepting that amendment leaves both a real dependency-boundary inconsistency and a non-functional build — Human Review must decide both together, in the same pass. | Write a hand-rolled PNG decoder instead — rejected, duplicates a small, permissively-licensed, already-vetted library for no real benefit, and this repository's own established restraint is "no new general parser library," not "no reuse of an already-accepted one." Ship raw, undecoded PNG bytes as the "artifact" and decode at Runtime load time — rejected outright, directly violates this Spec's own explicit "Runtime never parses PNG/JPEG" requirement and this repository's authoring/runtime separation principle (ADR-0035). Leave `stb`'s `FetchContent` declaration where it is and simply reorder `add_subdirectory()` calls in root `CMakeLists.txt` instead of relocating the declaration — rejected as this Spec's own recommendation: `AtlantisDependencies.cmake` also declares Catch2 (test-only), so moving the *whole file* earlier/unconditional would pull a test-only dependency into every configure; splitting `stb`'s own declaration out is the narrower fix. | [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md) |
+| 11 | **(Explicit, disclosed decision, revised after a review round's own deeper verification.)** Is "hand-authored UV in the fixture, zero shared-type changes" actually achievable, and if not, what's the narrowest real fix? | **No, not with zero shared-type changes — a review round's own verification found `VertexAttributeFormat` (`rhi/types.h:81-83`) has exactly one value, `Float3`, and every bridge that consumes it (`vertexAttributeFormatToVkFormat()`, `VertexAttributeType`, `toRhiFormat()`) is an exhaustive switch over `Float3` alone; a real 2-float UV cannot be expressed by *any* fixture without this specific addition.** The good news the same verification found: this is genuinely decoupled from, and far smaller than, adding UV to Asset System's own mesh pipeline — `Mesh`/`createMesh()` is already fully generic (raw bytes + stride), and `toVertexInputLayout()`/`createPipeline()`'s own attribute loop already accept an arbitrary attribute layout from any caller. **Recommendation: add `VertexAttributeFormat::Float2` (RHI) and `VertexAttributeType::Float2` (Shader System reflection, plus its `toRhiFormat()` case) — a small, mechanical, already-anticipated extension (`types.h`'s own comment names exactly this) — and nothing else.** The new fixture hand-authors its own `struct Vertex { float position[3]; float uv[2]; };`, its own new shader (own `[[vk::location(2)]] float2 uv` input, own reflection), carried through the same shader-reflection-driven `toVertexInputLayout()` path every existing fixture already uses — **not** a position-derived or otherwise fabricated coordinate, a real vertex-buffer-bound UV attribute. `StaticMeshAssetData`, the mesh authoring grammar, and the mesh runtime artifact remain completely untouched — this Spec's own closed-loop claim proves a real `Mesh`-driven UV attribute, but still explicitly does **not** claim a real *asset-sourced* textured mesh exists. "Mesh UV Attribute Foundation" (real UV0 inside Asset System's own mesh cook/artifact/load pipeline, a genuinely separate, three-layer, schema-version-bumping change) remains a named, immediate, blocking follow-up candidate for that claim; see Out of Scope / Future Work. | **(Original first-draft recommendation, now superseded.)** "Zero shared-type changes, hand-authored UV only" — this was this Spec's own first-drafted recommendation and is withdrawn: it is not actually achievable, since `VertexAttributeFormat` itself blocks it regardless of which fixture attempts it. Add full real UV0 to Asset System's own mesh pipeline in this Spec (authoring grammar, artifact schema-version bump, `StaticMeshAssetData`) — considered and still rejected: a genuinely separate, larger, mesh-schema-focused scope from "Texture & Sampler Foundation," requiring retrofitting or dual-schema-version-supporting the existing, checked-in `minimal_cube.mesh.txt` asset, better served by its own Spec once a real asset-sourced textured-mesh consumer exists to design against. A fullscreen-triangle/`SV_VertexID`-generated quad needing no vertex buffer or UV attribute at all — considered and rejected: proves texture *sampling* but nothing about a real, vertex-buffer-driven UV *attribute* flowing through `Mesh`/`VertexInputLayout`, a meaningfully weaker claim than the recommended design achieves for a comparably small cost. | This Spec's own Non-Goals; Out of Scope / Future Work |
 | 12 | What is this round's mip-level contract? | Exactly 1 mip level, always — no mip-count creation parameter exposed, matching `DepthFormat`'s own "don't expose a knob for a dimension not yet supported" precedent. No mip generation, no mip selection in the shader (a fragment shader sampling a 1-mip texture has no LOD to select). | Expose a mip-count parameter now, defaulted to 1 — rejected, `types.h`'s own existing comments consistently prefer a single-value enum/fixed contract over an unused knob until a real second value is needed. | This Spec's own Non-Goals |
-| 13 | What is the upload's synchronization model and the resulting resources' lifetime? | Fully synchronous: the one-time upload RenderGraph execution completes (submit + an existing wait-for-completion equivalent) before the fixture's first per-frame graph runs — matching this Spec's own explicit "single frame-in-flight, synchronous upload" requirement. The staging `Buffer` is destroyed immediately after (RAII scope exit, never retained); `SampledTexture`/`Sampler` are held, explicitly owned, by the same composition root that created them (this Spec's own fixture), matching `resource_lifetime.md`'s existing ownership principle — no implicit sharing, no cache. | An asynchronous/deferred upload (submit without waiting, sample only once a fence signals) — rejected, adds real synchronization complexity this Spec's own minimal-loop scope does not need; Non-Goals already exclude streaming, which is the scenario that would motivate it. | [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md) |
-| 14 | What proves the texture-sampling path actually works, and how is the new golden categorized? | A new, independent headless fixture (hand-authored quad + UV, a small cooked test texture) rendered through the real cook→load→upload→bind→sample path, matched against its own new, first golden — captured under ADR-0042's existing "Initial baseline bootstrap" category (the same category Spec 0011's own first golden used). The existing `minimal_cube`/`world_scene` goldens and their own tests are re-run unmodified, as regression proof. | Reuse `minimal_cube`'s existing golden for the new fixture — rejected outright, `minimal_cube` has no texture binding and was never rendered with one; a texture-sampling claim needs its own scene and its own golden to mean anything. | This Spec's own Goals/Requirements |
+| 13 | What is the upload's synchronization model, and exactly when is each resource safe to destroy? | Fully synchronous, via existing, real APIs, not a guess: the upload's one-pass RenderGraph execution is `execute()`'d into a `CommandList`, submitted via the existing `Device::submit()` (reusing the fixture's own already-acquired `RenderTarget`, item 6), then `Device::waitIdle()` — this specific "submit once, block until GPU-complete" shape already used at `headless_rendering_gpu_tests.cpp:405`/`minimal_cube_fixture.cpp:279` — runs before the fixture's own later, separate per-frame graph. The staging `Buffer` is destroyed only after `waitIdle()` returns `Ok`, real observed GPU completion, never "immediately after submit()"; since the copy and its own `TransferDestination → ShaderRead` transition are recorded in the same `CommandList` that one `waitIdle()` covers, no separate "wait for copy, then transition" step is needed. `SampledTexture`/`Sampler` are owned by the fixture; `Material` only borrows them (item 7) — the fixture must not destroy either before every `Material` referencing them is done being used. Device loss during the upload is reported via the existing `SubmitError::DeviceLost` enumerator, same as any other `submit()`/`waitIdle()` call; every other stage (resource creation, RenderGraph compile/execute) reports through its own existing `Result`/error channel — no new unified error type. | An asynchronous/deferred upload (submit without waiting, sample only once a fence signals) — rejected, adds real synchronization complexity this Spec's own minimal-loop scope does not need; Non-Goals already exclude streaming, which is the scenario that would motivate it. A new, dedicated "upload complete" error/status type — rejected, every stage already has its own established `Result`/error channel; inventing a new unified one would duplicate, not clarify. | [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md) |
+| 14 | What proves the texture-sampling path actually works, and how is the new golden categorized, against ADR-0042's own exact bootstrap criteria? | A new, independent headless fixture (hand-authored quad + a real, `Mesh`-bound UV0 attribute, item 11, a small cooked test texture) rendered through the real cook→load→upload→bind→sample path, matched against its own new, first golden — captured under ADR-0042's "Initial baseline bootstrap" category, satisfying all six of its own numbered constraints explicitly: no prior golden at this path; captured against a clean, committed tree; full provenance recorded; the golden PNG/sidecar added via their own separate commit; the four-part substitute evidence (human visual confirmation, zero-diff self-reproduction, real-hardware run with Validation Layers clean, cited empirical-calibration evidence); and no relaxation of any other Decision-section rule for being a bootstrap golden. The existing `minimal_cube`/`world_scene` goldens and their own tests are re-run unmodified, as regression proof. | Reuse `minimal_cube`'s existing golden for the new fixture — rejected outright, `minimal_cube` has no texture binding and was never rendered with one; a texture-sampling claim needs its own scene and its own golden to mean anything. Describing this golden's own PR using ordinary "rendering change"/"reference-environment change" language instead of citing "Initial baseline bootstrap" explicitly — rejected, ADR-0042 itself forbids exactly this confusion. | This Spec's own Goals/Requirements |
 | 15 | Does the Scene Asset format ([Spec 0015](0015-scene-asset-serialization-foundation.md)) gain a texture/material reference this round? | No — confirmed Non-Goal. A scene's `Renderable` continues to name exactly one mesh `AssetId`, entirely unchanged; this Spec's own textured fixture is not scene-driven at all (matching `minimal_cube_fixture`'s own non-scene, hand-authored construction shape). | Add an optional texture `AssetId` to `Renderable` now, unused by anything yet — rejected as speculative scope-widening of an already-`Approved`/merged Spec 0015 format for no consumer this Spec itself provides. | This Spec's own Non-Goals |
 | 16 | What is the artifact's portability contract given Windows-now/Android-later? | Unconditional little-endian encoding (matching every prior artifact format) makes the byte format itself host-endianness-independent; raw, uncompressed RGBA8 carries no format-specific mobile-GPU concern to resolve now. Windows remains this Spec's own only verified target, matching every prior Spec — no ASTC/ETC mobile-compression format is chosen or implied here. | Choose a mobile-compressed format now "for" Android — rejected per AGENTS.md's own "do not add abstraction knobs for a capability that isn't being built" discipline; Android Platform itself remains an un-specced Candidate. | This Spec's own Non-Goals |
+| 17 | **(Real, previously-dead-code gap, resolved — a review round's own deeper verification found this, and it blocks even the non-UV core scope.)** The shader-compiler tool's `CompileAndValidateRequest::expectedContract` is parsed from CMake but never consulted by `validateDescriptorContractForStage()`, which unconditionally validates every shader against `minimalRendererExpectedDescriptorContract()`. Does this Spec's own new shader (a sampler binding, regardless of the UV decision) need this fixed? | Yes — required, not optional. `compileAndValidate()`'s call to `validateDescriptorContractForStage()` is changed to consult the caller-supplied `expectedContract` instead of always calling `minimalRendererExpectedDescriptorContract()`. This is a small, mechanical fix (reading a field that is already fully plumbed from CMake through `main.cpp` to this exact call site) — not a new mechanism, not a new CMake parameter, not a change to the existing minimal-renderer shader's own contract or validation. | Leave `expectedContract` unread and give this Spec's own new shader a *different* build path that skips `validateDescriptorContractForStage()` entirely — rejected, would mean this Spec's own new shader is compiled without the same build-time descriptor-contract safety net every other shader in this repository already gets, a real regression in verification rigor for no stated benefit. | [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md) |
+| 18 | Does the small, disclosed `VertexAttributeFormat::Float2` addition (item 11) need its own, fourth Proposed ADR — matching the instruction that any UV0/mesh-schema decision be separately recorded — or is documenting it within this Spec's own Requirements/Human Review Decision Table sufficient? | Document it here, within this Spec — no fourth ADR. It is a single, mechanical enum-value addition (plus a matching Vulkan-format-mapping case) that `types.h`'s own existing comment already explicitly anticipates verbatim, introduces no new module boundary, no new ownership model, and no new public-API *shape* (the existing `VertexAttributeFormat`/`VertexInputLayout`/`toVertexInputLayout()` surface is unchanged in shape, only in which enumerator values are legal) — unlike `BufferPurpose::Staging`/`ResourceState::TransferDestination`/`ShaderRead` (folded into ADR-0056, since they gate a genuinely new capability, upload) or `SampledTextureFormat`/`DescriptorType::Sampler` (folded into ADR-0055/0056/0057, each gating a real new type/capability), `Float2` gates nothing new by itself — it only makes an already-generic, already-caller-supplied field able to hold one more legal value. Critically, and this is the actual UV0/mesh-schema decision the instruction is protecting against silently skipping: **this addition does not touch Asset System's own mesh schema/artifact version at all** (item 11) — the real, weightier "Mesh UV Attribute Foundation" decision (a genuine schema-version-bumping change) remains explicitly un-made by this Spec and is registered as its own, separate, future-Spec-level candidate, not quietly folded into this small RHI enum addition. | A fourth ADR dedicated to `VertexAttributeFormat::Float2` alone — considered and rejected as disproportionate to the decision's own actual weight, and risks implying (incorrectly) that this Spec has made the real Asset-System mesh-schema/UV0 decision, when it has deliberately not. Silently adding `Float2` as an implementation detail with no Human Review visibility at all — rejected outright, this is exactly the kind of change the instruction requires be surfaced explicitly, whether or not it rises to full-ADR weight. | This Spec's own Requirements; Out of Scope / Future Work |
 
 ## Alternatives Considered
 
@@ -529,6 +870,19 @@ generalized).
 - **Reuse `Format` (the existing swapchain/offscreen-shaped enum) for
   sampled-texture color space, rather than introducing a new
   `SampledTextureFormat`.** Rejected — see Human Review Decision item 3.
+- **"Hand-authored UV, zero shared-type changes" — this Spec's own
+  original recommendation for item 11.** Withdrawn, not merely revised:
+  a review round's own deeper verification found this is not actually
+  achievable (`VertexAttributeFormat` has no `Float2` variant anywhere in
+  the pipeline, blocking it regardless of which fixture attempts it) —
+  see Human Review Decision item 11 for the corrected, code-proven
+  design and item 18 for why the resulting small RHI addition still does
+  not need its own ADR.
+- **A new, target-optional/target-free `Device::submit()` overload**,
+  considered so the one-time upload would not need to reuse the
+  fixture's own `RenderTarget` at all. Rejected for this Spec's own
+  scope — see Human Review Decision item 6; would be a real, disclosed
+  RHI public-API change for a need this Spec does not actually have.
 
 ## Testing & Verification Plan
 
@@ -561,32 +915,72 @@ three-layer verification model):
 - Shader System: a real captured Slang reflection JSON declaring both
   the existing uniform-buffer binding and a new combined-sampler binding
   produces the expected `ReflectionMetadata` (`DescriptorType::Sampler`
-  present, `VertexAttributeType` unchanged); the new descriptor-contract
-  shape accepts exactly this two-binding case and rejects a mismatched
-  one (wrong count, wrong stage), matching
+  present); a real captured Slang reflection JSON declaring a `float2`
+  vertex input produces `VertexAttributeType::Float2`, and
+  `toRhiFormat()` maps it to `VertexAttributeFormat::Float2` correctly;
+  the new descriptor-contract shape accepts exactly the two-binding case
+  and rejects a mismatched one (wrong count, wrong stage), matching
   `minimalRendererExpectedDescriptorContract()`'s own existing test
   discipline.
+- Shader-compiler Tool: `compileAndValidate()` with a real
+  `expectedContract` set to the existing one-binding minimal-renderer
+  contract still validates the existing `minimal_mesh.slang`'s own
+  reflection correctly (regression check for the `expectedContract`
+  wiring fix, item 17); set to this Spec's own new two-binding contract,
+  validates this Spec's own new shader's reflection correctly; a
+  mismatched `expectedContract` against either shader's real reflection
+  is rejected with the correct, existing `ContractMismatchError`
+  enumerator.
+- `Device::submit()`/`waitIdle()` reuse: a unit-level (or
+  GPU-independent-mocked, Plan-level detail) check that the upload's own
+  code path passes the same, already-acquired `RenderTarget` reference
+  into `submit()` rather than constructing a second one — confirming no
+  new target is silently allocated for the upload.
+- `Material` borrowing contract: a `static_assert`/compile-time check (or
+  equivalent) confirming `Material`'s new fields are non-owning reference/
+  pointer types, not an owning smart pointer — matching this codebase's
+  existing compile-time-provable-contract precedent (`EntityId`'s own
+  V27-style unforgeability tests) rather than a runtime-only convention.
 - Module-boundary include scan: `Atlantis::AssetSystem`'s own runtime
   loader translation units (`load.h`/`load.cpp` and this Spec's own
   `loadTextureAsset()`) never include `stb_image.h`/`stb_image_write.h`;
-  only `atlantis_asset_cooker`'s own translation unit(s) do — confirmed
-  by grep, not inspection alone, matching every prior Spec's own
-  module-boundary verification discipline.
+  only `atlantis_asset_cooker`'s own translation unit(s) do, and
+  `Atlantis::AssetSystem`'s own runtime library target does not link
+  `Stb::Stb` — confirmed by grep and by inspecting the actual CMake
+  target link list, not inspection alone, matching every prior Spec's
+  own module-boundary verification discipline. A CMake configure-only
+  check (no build required) confirms `Stb::Stb` exists as a target with
+  `ATLANTIS_BUILD_TESTS=OFF` (regression check for ADR-0041's own
+  Proposed Amendment's CMake-ordering fix).
 
 GPU-required (real hardware, matching every prior Spec's own headless
 verification tier):
 
 - **Headless, new golden (this Spec's own central verification claim):**
-  cook the test texture, load it, upload it through the new one-time
-  RenderGraph execution, bind it via `Material`, render the new textured
-  fixture's one frame, and capture/compare against its own new golden —
-  zero channel difference on a second, independent run of the same
-  fixture (confirming the upload/sample path is deterministic, not
-  merely "looked right once"). Vulkan Validation Layers grepped clean
-  throughout (zero `VUID`/Validation Error/Warning matches), confirming
-  the new barrier-plan entries and descriptor-binding changes are
-  themselves layout- and binding-correct, not merely visually
-  plausible.
+  cook the test texture (`Rgba8Unorm`, item 3), load it, upload it
+  through the new one-time RenderGraph execution — reusing the fixture's
+  own already-acquired `RenderTarget` for `submit()`, confirmed via
+  `waitIdle()` returning `Ok` before any per-frame graph runs (item 6,
+  13) — bind it via `Material` (borrowed reference, item 7), render the
+  new textured fixture's one frame using its own real UV0 vertex
+  attribute (item 11), and capture/compare against its own new golden,
+  satisfying ADR-0042's own "Initial baseline bootstrap" category in
+  full (item 14) — zero channel difference on a second, independent run
+  of the same fixture (confirming the upload/sample path is
+  deterministic, not merely "looked right once"). Vulkan Validation
+  Layers grepped clean throughout (zero `VUID`/Validation Error/Warning
+  matches), confirming the new barrier-plan entries and
+  descriptor-binding changes are themselves layout- and binding-correct,
+  not merely visually plausible — this is the real evidence that the
+  `TransferDestination`/`ShaderRead` transitions and the
+  `submit()`/`waitIdle()` sequencing are genuinely correct, not merely
+  that a plausible-looking image happened to result.
+- **`Rgba8Srgb` round-trip, GPU-independent:** a separate, GPU-independent
+  cook/decode unit test confirms the `Rgba8Srgb` `SampledTextureFormat`
+  value round-trips correctly through the artifact (item 3) — this Spec's
+  own one GPU-required fixture/golden uses `Rgba8Unorm` only, so
+  `Rgba8Srgb`'s own correctness is confirmed at the format/artifact
+  level, not by a second golden.
 - **Existing-golden regression check:** the existing `minimal_cube` and
   `world_scene` headless tests are re-run unmodified, against their own
   existing, unmodified goldens, with zero channel difference — proving
@@ -620,29 +1014,60 @@ verification tier):
   scope is exactly one texture, one upload, and does not attempt to
   design a batched-upload mechanism ahead of a real multi-texture
   consumer.
-- **ADR-0041's own scope-widening amendment is a real, disclosed
-  prerequisite for this Spec's own Implementation, not yet made.**
-  Approving this Spec's own Human Review without also amending ADR-0041
-  would leave a genuine inconsistency between an `Accepted` ADR's stated
-  boundary and this Spec's own design; Human Review Decision item 10
-  names this explicitly rather than assuming it resolves itself.
-- **This Spec's own hand-authored UV data (item 11) is not, and must not
-  be read as, evidence that a real asset-sourced textured mesh exists.**
-  A future Spec claiming that requires "Mesh UV Attribute Foundation"
-  (or equivalent) first — this Spec does not, and cannot, substitute for
-  it.
+- **ADR-0041's own Proposed Amendment is a real, disclosed prerequisite
+  for this Spec's own Implementation — drafted, but not yet accepted.**
+  ADR-0041 now carries a full "Proposed Amendment — 2026-08-23" section
+  (its own original `Accepted` Decision, Consequences, and Alternatives
+  Considered left completely unmodified above it), covering the
+  boundary widening itself, the real CMake configure-ordering defect
+  this review round found (`cmake/AtlantisDependencies.cmake` included
+  only inside `if(ATLANTIS_BUILD_TESTS)`, after
+  `add_subdirectory(src/tools/asset_cooker)` already runs), the
+  per-target single-implementation-TU rule, and license/offline-build/
+  maintenance re-confirmation. Approving this Spec's own Human Review
+  without also accepting that amendment would leave a genuine
+  inconsistency between an `Accepted` ADR's stated boundary and this
+  Spec's own design; Human Review Decision item 10 names this
+  explicitly, and both this Spec and ADR-0041's own amendment are
+  intended to be decided by the same Human Review pass.
+- **This Spec's own new, real UV vertex attribute (item 11) is not, and
+  must not be read as, evidence that a real *asset-sourced* textured
+  mesh exists.** It proves a genuine `Mesh`/`VertexInputLayout`-bound UV
+  attribute, carried through the same reflection-driven path every
+  fixture uses — a real step forward from "hand-authored, disconnected
+  from any shared type" — but `StaticMeshAssetData` and the mesh
+  authoring/cook/artifact pipeline remain untouched. A future Spec
+  claiming a real asset-sourced textured mesh still requires "Mesh UV
+  Attribute Foundation" first — this Spec does not, and cannot,
+  substitute for it.
+- **The shader-compiler tool's `expectedContract` wiring fix (item 17)
+  is a small, mechanical, low-risk change, but it is still a real code
+  change to a shared Tools file (`compile_and_validate.cpp`) that every
+  other existing shader's own build-time validation also runs through.**
+  A Plan implementing this Spec must re-verify the existing
+  `minimal_mesh.slang` shader still validates correctly (against
+  `minimalRendererExpectedDescriptorContract()`, its own existing,
+  unchanged contract, now reached via the newly-read `expectedContract`
+  field rather than an unconditional call) — a regression here would be
+  silent otherwise, since today's code path never varies by shader.
 
 ## Out of Scope / Future Work
 
-**Mesh UV Attribute Foundation** — real `float2 UV0` across the mesh
-authoring grammar, `MeshSourceVertex`, the mesh runtime artifact (a new
-schema version, not an in-place mutation, matching this repository's own
-established artifact-versioning precedent), `StaticMeshAssetData`, and
-RHI's `VertexAttributeFormat::Float2` — is registered as an **immediate,
-named, blocking follow-up candidate**, required before any future Spec
-may claim a real, asset-sourced textured mesh exists; see Human Review
-Decision item 11. This Spec's own hand-authored fixture proves texture
-infrastructure only, explicitly not this.
+**Mesh UV Attribute Foundation** — real `float2 UV0` inside Asset
+System's own mesh pipeline: the authoring grammar, `MeshSourceVertex`,
+and the mesh runtime artifact (a new schema version, not an in-place
+mutation, matching this repository's own established
+artifact-versioning precedent), plus `StaticMeshAssetData` — is
+registered as an **immediate, named, blocking follow-up candidate**,
+required before any future Spec may claim a real, *asset-sourced*
+textured mesh exists; see Human Review Decision item 11. **This is
+distinct from, and does not include, `VertexAttributeFormat::Float2`
+itself** — that small, RHI/Shader-System-only addition is already part
+of *this* Spec's own scope (items 11, 18), fully decoupled from Asset
+System's own mesh pipeline, which remains completely untouched. This
+Spec's own hand-authored fixture proves a real, `Mesh`-bound UV vertex
+attribute — texture and vertex-layout infrastructure — explicitly not
+an asset-sourced textured mesh.
 
 Also remaining out of scope, unaffected by this Spec: PBR/material-graph
 support, normal/metallic/roughness texture semantics, mipmap generation/

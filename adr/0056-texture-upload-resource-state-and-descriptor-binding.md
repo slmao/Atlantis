@@ -53,6 +53,34 @@ sized for exactly that one binding type
 (`vulkan_device.cpp:1245-1254`, `maxSets = 4`, one
 `VkDescriptorPoolSize` entry).
 
+**A review round's own deeper verification of the submission/completion
+API this ADR's Decision 4 depends on** found: `Device::submit()` has
+exactly one overload
+(`src/rhi/include/atlantis/rhi/device.h:51-52`:
+`submit(std::unique_ptr<CommandList>, const RenderTarget&)`), and
+`VulkanDevice::submit()` (`vulkan_device.cpp:508-564`) unconditionally
+`dynamic_cast`s the target and `ATLANTIS_CHECK_MSG`-asserts it is real
+and module-produced (`vulkan_device.cpp:530-531`) — there is no
+target-optional or target-free submit path anywhere in this codebase
+today. `SubmissionSignal`
+(`src/rhi/include/atlantis/rhi/submission_signal.h:21-24`) is opaque —
+no public method beyond its own destructor, never inspected or waited on
+by a caller. The real, already-existing, already-used blocking
+completion mechanism is `Device::waitIdle()` (`device.h:59`), used
+today at exactly the "submit once, then block until GPU-complete" shape
+this Spec's upload needs: `tests/vulkan_backend/headless_rendering_gpu_tests.cpp:405`
+(`REQUIRE(device->waitIdle().isOk());` immediately after `submit()`),
+`tests/image_regression/fixture/minimal_cube_fixture.cpp`'s own
+`renderOneFrame()` (`:279`), and Runtime's own shutdown path
+(`src/runtime/src/runtime_application.cpp:455`). That same headless test
+(`headless_rendering_gpu_tests.cpp:360-408`) is also this codebase's
+closest existing precedent for the upload's own shape: it acquires one
+real `OffscreenTarget`-vended `RenderTarget`, builds and `execute()`s a
+*second*, caller-built `RenderGraphBuilder` pass (a copy pass, distinct
+from the drawing pass already recorded into the same `CommandList`) into
+that same `CommandList`, then `submit()`s once and `waitIdle()`s once
+for both passes together.
+
 ## Decision
 
 1. **New `BufferPurpose::Staging`**, extending the existing four-value
@@ -77,17 +105,64 @@ sized for exactly that one binding type
    execution — never a raw `CommandList` sequence outside it.**
    `ResourceBinding` gains a third resource-carrying field, a generic
    `SampledTexture*`, alongside the existing `target`/`depthTexture`
-   fields; `execute()`'s transition-insertion logic is extended to drive
-   `Undefined → TransferDestination` (before the copy) and
-   `TransferDestination → ShaderRead` (after it) for this binding kind.
-   A caller builds, compiles, and executes one small, single-pass
-   RenderGraph graph, once, containing exactly this upload — run before
-   Runtime's (or, at this Spec's own scope, this Spec's own fixture's)
-   first per-frame graph, never merged into or sharing state with any
-   later per-frame graph.
-5. **`Material` gains an optional, construction-time, borrowed
-   `SampledTexture`/`Sampler` pair** (matching `DrawItem`'s existing
-   non-owning-reference conventions for `Mesh`/`Material` itself). A new
+   fields — tracking only the destination `SampledTexture`; the source
+   staging `Buffer` is not itself RenderGraph-tracked, matching
+   `copyRenderTargetToBuffer()`'s own existing untracked-destination-
+   buffer precedent. `execute()`'s transition-insertion logic is
+   extended to drive `Undefined → TransferDestination` (before the copy)
+   and `TransferDestination → ShaderRead` (after it) for this binding
+   kind, reusing `ResourceBinding`'s existing `incomingState`/`finalState`
+   fields (`execution.h:23-40`) — the same mechanism Spec 0010's own
+   readback `finalState` already uses, not a new mechanism.
+5. **The upload's own `submit()` call reuses the caller's own
+   already-acquired `RenderTarget` — `Device::submit()` itself is
+   unchanged; this ADR introduces no target-optional or target-free
+   submit path.** The caller (this Spec's own fixture) is already a
+   headless fixture that creates an `OffscreenTarget` and calls
+   `acquireTarget()` for its own eventual draw pass; the upload's own
+   one-pass graph is `execute()`'d into a `CommandList`, then
+   `submit(commandList, *thatSameRenderTarget)` — the upload's own
+   recorded commands never touch that target's own color image;
+   `submit()`'s target parameter exists for swapchain/offscreen
+   semaphore bookkeeping (legally null handles for an offscreen target),
+   not to describe every resource a `CommandList` touches, and
+   `Device::submit()`'s own doc comment already names exactly this
+   "headless caller, never calls `present()`" case as supported.
+   `Device::waitIdle()` — real, already-used, blocking — is called once
+   after that `submit()`, before the fixture builds or executes its own
+   later, separate per-frame draw graph against the same `RenderTarget`.
+6. **Staging `Buffer` lifetime, and every other resource's destruction
+   ordering, are tied to observed GPU completion, not to `submit()`
+   returning.** The staging `Buffer` is destroyed only after the
+   upload's own `waitIdle()` call returns `Ok` — submission is
+   asynchronous; only `waitIdle()`'s own return is evidence the GPU
+   actually finished reading it. Because the copy and its own
+   `TransferDestination → ShaderRead` transition are both recorded into
+   the one `CommandList` that `waitIdle()` covers, no separate "wait for
+   copy, then transition" step exists. `SampledTexture`/`Sampler`
+   themselves are owned by the same composition root that creates them;
+   `Material` (Decision 8 below) only borrows them.
+7. **Upload/submit/device-loss error semantics reuse existing `Result`
+   channels — no new unified error enum.** Resource creation
+   (`SampledTexture`, `Sampler`, the staging `Buffer`) reports through
+   existing `*CreateError`-style enums; the upload's own
+   `RenderGraphBuilder::compile()`/`execute()` calls report through
+   RenderGraph's own existing compile/execute error channel, unchanged;
+   `submit()`/`waitIdle()` report through the existing `SubmitError`
+   enum, whose already-`Accepted` `DeviceLost` enumerator covers a
+   device loss during the upload exactly as it already covers one during
+   any other `submit()`/`waitIdle()` call.
+8. **`Material` gains an optional, construction-time, borrowed — never
+   owned — `SampledTexture`/`Sampler` pair**, explicitly extending
+   `DrawItem`'s own existing "mesh/material are borrowed (must outlive
+   the `Renderer::drawFrame()` call they are passed to)" contract
+   (`draw_item.h:10-12`) to `Material`'s own new fields: the caller that
+   constructs a `Material` with a `SampledTexture`/`Sampler` pair must
+   keep both alive for at least as long as that `Material` is used in
+   any `drawFrame()` call; destroying either while a live `Material`
+   still references it is a caller precondition violation, not a checked
+   error, matching this codebase's existing borrowed-reference discipline
+   exactly — not implicit shared ownership. A new
    `CommandList::bindTexture(SampledTexture&, Sampler&)`, called inside
    `Renderer`'s existing per-`DrawItem` pass-callback loop
    (`src/renderer/src/renderer.cpp:26-31`), immediately alongside the
@@ -95,17 +170,33 @@ sized for exactly that one binding type
    descriptor-set-layout creation and the device-level descriptor pool
    each gain one new, fixed, second entry: binding 1,
    `VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER`, fragment stage.
-6. **Combined image sampler, not separate texture/sampler descriptor
+9. **Combined image sampler, not separate texture/sampler descriptor
    types**, for the one new Vulkan binding this ADR adds — one binding
    slot, one pool-size entry, one `VkDescriptorImageInfo` pairing an
    image view and a sampler at bind time. This is a decision about the
    Vulkan-level binding mechanism only; `Sampler`'s own independence at
    the RHI level (ADR-0055) is unaffected.
-7. **Single mip level, fully synchronous upload.** Every `SampledTexture`
-   this round has exactly one mip level; the upload's own RenderGraph
-   execution completes (submitted and waited on) before any per-frame
-   graph runs — no asynchronous or deferred upload, no partial-readiness
-   state.
+10. **Single mip level, fully synchronous upload.** Every
+    `SampledTexture` this round has exactly one mip level; the upload's
+    own RenderGraph execution completes (`submit()`, then `waitIdle()`
+    returning `Ok` — real, blocking, confirmed, per Decisions 5–6 above,
+    not merely "submitted") before any per-frame graph runs — no
+    asynchronous or deferred upload, no partial-readiness state.
+11. **The shader-compiler tool's `expectedContract` field, already
+    plumbed from CMake but never read, is wired into real use.**
+    `CompileAndValidateRequest::expectedContract`
+    (`compile_and_validate.h:21`) is parsed but never consulted by
+    `validateDescriptorContractForStage()`
+    (`compile_and_validate.cpp:129-142`), which unconditionally calls
+    `minimalRendererExpectedDescriptorContract()` for every shader
+    compiled through `atlantis_add_slang_shader_pair()`. Without this
+    fix, this Spec's own new shader (declaring the second, sampler
+    binding from Decision 8) would fail build-time validation against
+    the *wrong*, fixed, one-binding contract, independent of any UV
+    decision. `compileAndValidate()`'s own call site is changed to
+    consult the caller-supplied `expectedContract` instead — a small,
+    mechanical fix using an already-declared field, not a new mechanism
+    or a new CMake parameter.
 
 ## Consequences
 
@@ -114,15 +205,25 @@ sized for exactly that one binding type
 - Fully respects AGENTS.md's own already-established, non-negotiable
   Golden Rule constraint — introduces no new "GPU work outside
   RenderGraph" precedent for any future spec to point back to.
+- **No RHI public-API change to `Device::submit()`, `Device::waitIdle()`,
+  or `SubmissionSignal`** — a review round's own deeper verification
+  confirmed the existing, already-used submit/wait-idle shape (already
+  proven at `headless_rendering_gpu_tests.cpp`/`minimal_cube_fixture.cpp`)
+  covers this Spec's own upload need without modification, once the
+  upload reuses the caller's own already-acquired `RenderTarget`.
 - The new barrier-plan entries are explicit and additive; the existing
   table's own hard-failure-on-unlisted-pair behavior is preserved
   unchanged for every other transition.
 - `Material`'s new binding is additive (a second, fixed slot) — the
   existing one-uniform-buffer contract, and every shader that declares
-  only it, continues to validate and bind exactly as before.
+  only it, continues to validate and bind exactly as before, once the
+  `expectedContract` wiring fix (Decision 11) is in place.
 - Combined image sampler keeps the Vulkan descriptor-pool/layout change
   to the minimum needed for this Spec's own one-texture, one-sampler
   scope.
+- Every new error condition reuses an existing `Result`/error channel
+  (Decision 7) — no new error taxonomy to maintain or keep in sync with
+  this repository's existing ones.
 
 ### Negative / Trade-offs
 
@@ -139,6 +240,12 @@ sized for exactly that one binding type
   model (already a known, narrow, hardcoded shape before this ADR) now
   carries two hardcoded entry kinds instead of one — still not a general
   descriptor-pool sizing strategy, deferred exactly as before.
+- The `expectedContract` wiring fix (Decision 11) touches a shared Tools
+  file (`compile_and_validate.cpp`) every existing shader's own
+  build-time validation also runs through — a Plan implementing this
+  ADR must re-verify the existing `minimal_mesh.slang` shader still
+  validates correctly, since today's code path never varies by shader
+  and a regression here would otherwise be silent.
 
 ## Alternatives Considered
 
@@ -147,12 +254,32 @@ sized for exactly that one binding type
   Spec's own first-drafted design and was corrected during self-review
   specifically because AGENTS.md forbids it without qualification; not a
   style preference.
+- **A new, target-optional/target-free `Device::submit()` overload**,
+  so the upload would not need to reuse the caller's own `RenderTarget`
+  at all. Considered during a later review round and rejected: a real,
+  disclosed RHI public-API change (a second overload plus a
+  `VulkanDevice::submit()` branch skipping the `dynamic_cast`/semaphore-
+  read block) for a need this Spec's own single-texture, single-fixture
+  scope does not actually have, since the caller already creates and can
+  reuse a real `OffscreenTarget`-vended `RenderTarget`. Deferred to a
+  future spec if a genuine target-free-submission consumer (e.g.
+  compute-only work) ever needs one.
+- **Destroy the staging `Buffer` immediately after `submit()` returns**,
+  rather than after `waitIdle()` returns. Rejected outright — `submit()`
+  is asynchronous; the GPU may still be reading the staging buffer's
+  memory when `submit()` itself returns, making this a real
+  use-after-free risk, not merely an overly conservative choice.
 - **Teach RenderGraph to manage the texture's full lifecycle (creation,
   upload, and every subsequent per-frame binding) as a tracked,
   persistent resource.** Rejected as more machinery than this Spec's own
   one-time-upload-then-read-only-forever shape needs; RenderGraph tracks
   the upload transition only, not the texture's own creation or its
   read-only use in later, unrelated per-frame graphs.
+- **`Material` taking shared/owning references to `SampledTexture`/
+  `Sampler`** (e.g. a `shared_ptr`-style handle), rather than borrowing.
+  Rejected — introduces implicit shared ownership this codebase's own
+  "explicit ownership, no hidden caching" principle does not use
+  anywhere else, for no need this Spec's own single-fixture scope has.
 - **Separate, non-combined texture/sampler descriptor types.** Rejected
   — more descriptor-pool/layout complexity for no benefit until a real
   consumer needs to reuse one sampler across many images independently
@@ -161,3 +288,9 @@ sized for exactly that one binding type
   Rejected as premature — matches this codebase's own "one fixed,
   hardcoded contract, extended only when a real need appears" discipline
   already established by `minimalRendererExpectedDescriptorContract()`.
+- **Leave `expectedContract` unread, giving this Spec's own new shader a
+  different build path that skips `validateDescriptorContractForStage()`
+  entirely.** Rejected — would mean this Spec's own new shader is
+  compiled without the same build-time descriptor-contract safety net
+  every other shader in this repository already gets, a real regression
+  in verification rigor for no stated benefit.

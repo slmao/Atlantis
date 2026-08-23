@@ -12,7 +12,7 @@ explicitly, deliberately narrow — its own class comment states: *"A GPU
 image used, this round, exclusively as a depth attachment (ADR-0023) --
 no sampled/shader-read usage, no mipmaps."* Its only format is
 `DepthFormat::D32Sfloat` (`types.h:69-72`), a single-variant enum.
-[ADR-0023](0023-minimal-renderer-texture-and-depth-buffer-strategy.md)
+[ADR-0023](0023-rhi-minimal-gpu-resource-types-and-allocation.md)
 (Spec 0007) explicitly deferred a general, sampled texture as future
 work (`adr/0023-...md:74-77`): *"A general, sampled `Texture` (material
 color maps, etc.) is explicitly future work."*

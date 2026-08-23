@@ -52,24 +52,62 @@ offline-build caveat (`adr/0041-...md:169-176`) already discloses that
    texture). First two supported values: `Rgba8Unorm` (linear) and
    `Rgba8Srgb`, giving an explicit linear-vs-sRGB color-space contract
    from the outset — not deferred to "whichever the first real texture
-   happens to need."
+   happens to need." **Which of the two a given texture uses is a
+   mandatory, explicit `colorSpace` cooker parameter — never inferred
+   from the source PNG.** `stb_image` applies no gamma/color-profile
+   interpretation of its own; the cooker reads no `gAMA`/`sRGB`/`iCCP`/
+   `cHRM` chunk (matching ADR-0041's own already-established "no
+   color-profile interpretation on either side" discipline, extended
+   here from goldens to authored textures). Sampling behavior differs
+   by format at the hardware level, stated explicitly: an `Rgba8Srgb`
+   `SampledTexture` is linearized by Vulkan's own fixed-function texture
+   unit (the sRGB EOTF) before a fragment shader ever sees a sampled
+   value; `Rgba8Unorm` is not. Spec 0016's own one GPU-required fixture
+   uses `Rgba8Unorm` specifically to avoid entangling its golden's own
+   "did the upload/sample path move the right bytes" claim with
+   tonemapping/output-encoding concerns Spec 0016's own Non-Goals
+   already exclude; `Rgba8Srgb` is exercised by its own GPU-independent
+   cook/decode round-trip test instead. Golden comparison in either case
+   happens on the final, rendered RGBA8 color-attachment bytes — never a
+   direct comparison against the source PNG or the artifact's own stored
+   texel values.
 2. **A new texture cooker**, `cookTexture(sourceImagePath,
    logicalPathInput, colorSpace, artifactOutputPath, metadataOutputPath)
    -> Result<monostate, TextureCookError>` (exact name a Plan-level
    detail), following `cookStaticMesh()`/`cookScene()`'s established
    pattern exactly: normalize logical path → decode the authoring image
-   via `stb_image` → validate (non-zero dimensions, within a defensive
-   maximum, decoded channel data consistent with the declared
-   `SampledTextureFormat`) → `computeAssetId()` → encode a magic-prefixed,
-   versioned, little-endian artifact (header: schema version, width,
-   height, `SampledTextureFormat`, mip count [fixed at 1], pixel-data
-   offset/size; body: tightly-packed row-major RGBA8 bytes, first row
-   matching the authoring image's own first-decoded row) plus a text
-   metadata sidecar → atomic dual-file write, reusing
-   `writeBytesAtomically()`/`writeTextAtomically()` unchanged. Exposed
-   via a new mode of the existing `atlantis_asset_cooker` Tools
-   executable, dispatched by `AssetKind` exactly as the mesh/scene modes
-   already are (`cook_command.cpp:208-217`).
+   via `stb_image` with `desired_channels = 4` forced (matching
+   ADR-0041's own established `stb_image` convention exactly; unlike a
+   golden, an authored texture may legitimately be a real RGB/grayscale
+   source, so a `channels_in_file != 4` source is **not** itself a cook
+   error — the source's own real `channels_in_file` is instead recorded
+   in the metadata sidecar for provenance) → validate against a
+   defensive maximum dimension (Plan-level detail, e.g. 8192×8192,
+   chosen so `maxDimension × maxDimension × 4` stays comfortably within
+   a `uint32_t` pixel-data-size header field), checked **before**
+   `width × height × 4` is computed for any allocation, that computation
+   itself performed in 64-bit arithmetic first so a corrupted/adversarial
+   value cannot wrap a 32-bit multiplication into a small, falsely-valid
+   size → `computeAssetId()` → encode a magic-prefixed, versioned,
+   little-endian artifact (header: schema version, width, height,
+   `SampledTextureFormat`, mip count [fixed at 1, checked equal to 1 at
+   decode time], pixel-data offset/size; body: tightly-packed row-major
+   RGBA8 bytes — `width × 4` bytes per row, no padding, matching
+   `VkBufferImageCopy::bufferRowLength = 0`'s own existing convention,
+   ADR-0040 — first row matching the authoring image's own first-decoded
+   row, matching ADR-0041's own "no vertical flip, ever" convention)
+   plus a text metadata sidecar → atomic dual-file write, reusing
+   `writeBytesAtomically()`/`writeTextAtomically()` unchanged. An
+   unreadable/malformed source image is a distinct `TextureCookError`
+   enumerator (e.g. `SourceImageDecodeFailed`); a corrupted/truncated
+   artifact at decode time (bad magic, unknown schema version, an
+   inconsistent pixel-data size, a dimension exceeding the maximum, a
+   mip count other than 1, truncated pixel data) is each a distinct
+   `TextureArtifactDecodeError`/`TextureLoadError` enumerator, mirroring
+   `mesh_artifact.h`'s own already-shipped defense-in-depth decode
+   discipline exactly. Exposed via a new mode of the existing
+   `atlantis_asset_cooker` Tools executable, dispatched by `AssetKind`
+   exactly as the mesh/scene modes already are (`cook_command.cpp:208-217`).
 3. **A new texture loader**, `loadTextureAsset(artifactPath,
    metadataPath) -> Result<TextureAssetData, TextureLoadError>` (exact
    name a Plan-level detail), mirroring `loadStaticMeshAsset()`'s own
@@ -85,15 +123,26 @@ offline-build caveat (`adr/0041-...md:169-176`) already discloses that
    passes into `renderer::createMesh()`.
 4. **`stb_image` is promoted from test-only to Tools use, disclosed
    explicitly.** `Stb::Stb` is additionally linked `PRIVATE` into
-   `atlantis_asset_cooker` (Tools) only — never into
+   `atlantis_asset_cooker_lib` (Tools) only — never into
    `Atlantis::AssetSystem`'s own runtime library, `src/renderer`,
    `src/runtime`, or any other runtime-linked target. This widens
    ADR-0041's own explicit "never in `src/`, never linked into any
-   shipping example or engine library" boundary statement and therefore
-   requires ADR-0041's own future Human Review Amendment — **not made by
-   this ADR**; ADR-0041's `Accepted` body remains untouched here. This
-   ADR does not stand approved on its own without that companion
-   amendment; see Spec 0016's own Human Review Decision item 10.
+   shipping example or engine library" boundary statement. **ADR-0041
+   now carries its own "Proposed Amendment — 2026-08-23" section**
+   recording this widening, its own per-target single-implementation-TU
+   rule, and a real, previously-undiscovered CMake configure-ordering
+   defect this review round found (`cmake/AtlantisDependencies.cmake`,
+   where `stb`'s `FetchContent` declaration lives, is included only
+   inside `if(ATLANTIS_BUILD_TESTS)`, **after**
+   `add_subdirectory(src/tools/asset_cooker)` already runs at
+   `CMakeLists.txt:60` — `Stb::Stb` would not exist as a target at the
+   point the cooker needs it, regardless of `ATLANTIS_BUILD_TESTS`'s
+   value, without also relocating that declaration into a new,
+   unconditionally-included module) — ADR-0041's own original `Accepted`
+   Decision/Consequences/Alternatives Considered are left completely
+   unmodified by that amendment. This ADR does not stand approved on its
+   own without that amendment also being accepted, by the same Human
+   Review pass; see Spec 0016's own Human Review Decision item 10.
 5. **Runtime never decodes an authoring image format.**
    `loadTextureAsset()` reads only the cooked, already-decoded
    pixel-byte artifact. `stb_image`'s own linkage never reaches
@@ -121,9 +170,9 @@ offline-build caveat (`adr/0041-...md:169-176`) already discloses that
 ### Negative / Trade-offs
 
 - This ADR is not independently approvable — its own decision 4 requires
-  a companion amendment to an already-`Accepted` ADR (ADR-0041), adding
-  a real, disclosed cross-document approval dependency Human Review must
-  handle explicitly, not incidentally.
+  a companion Proposed Amendment to an already-`Accepted` ADR (ADR-0041),
+  adding a real, disclosed cross-document approval dependency Human
+  Review must handle explicitly, not incidentally.
 - A defensive maximum texture dimension is a somewhat arbitrary,
   Plan-level choice (not derived from any queried real device limit) —
   acceptable for this Spec's own small-test-texture scope, but not a
@@ -136,6 +185,13 @@ offline-build caveat (`adr/0041-...md:169-176`) already discloses that
   developer-supplied, trusted input, not runtime/network-supplied data,
   matching every other cooker's own existing trust model for its own
   authoring source.
+- The explicit, mandatory `colorSpace` cooker parameter puts the burden
+  of choosing correctly on the human author (or a Plan-level authoring
+  tool default) — this ADR introduces no automatic detection, so an
+  author who passes the wrong `colorSpace` for a given source image gets
+  a cooked artifact that decodes and uploads successfully but samples
+  with the wrong linearization; no validation catches this, since it is
+  an authoring-intent question, not a data-integrity one.
 
 ## Alternatives Considered
 
@@ -160,3 +216,17 @@ offline-build caveat (`adr/0041-...md:169-176`) already discloses that
   as needless duplication — one pinned-commit, one license review, one
   `FetchContent` declaration remains simpler to reason about than two
   independent copies of the same header-only library.
+- **Infer `colorSpace` from the source PNG's own `gAMA`/`sRGB` chunk**,
+  rather than requiring an explicit cooker parameter. Rejected — `stb_image`
+  does not read these chunks in this codebase's existing usage, and
+  adding that interpretation would be new, undisclosed decoder behavior
+  beyond ADR-0041's own established "raw bytes only, no color-profile
+  interpretation" contract; an explicit, author-supplied parameter is
+  also simply more predictable than trusting arbitrary third-party
+  authoring-tool metadata.
+- **Compute `width × height × 4` in 32-bit arithmetic before the
+  maximum-dimension check**, matching a naive reading of "check the
+  dimensions, then compute the size." Rejected — a crafted or corrupted
+  header could wrap that multiplication into a small, falsely-valid
+  size before the check ever runs, defeating the check it's meant to
+  gate; 64-bit arithmetic first closes this.
