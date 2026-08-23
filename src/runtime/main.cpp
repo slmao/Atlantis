@@ -32,6 +32,9 @@ int main() {
   config.fragmentShaderReflectionPath = std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.frag.refl.json";
   config.assetArtifactPath = ATLANTIS_RUNTIME_ASSET_ARTIFACT_PATH;
   config.assetMetadataPath = ATLANTIS_RUNTIME_ASSET_METADATA_PATH;
+  config.sceneArtifactPath = ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH;
+  config.sceneMetadataPath = ATLANTIS_RUNTIME_SCENE_METADATA_PATH;
+  config.sceneDependencyManifestPath = ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH;
   config.enableValidationLayers = true;
 
   auto appResult = createRuntimeApplication(config);

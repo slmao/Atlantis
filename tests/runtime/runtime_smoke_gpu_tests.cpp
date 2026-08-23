@@ -42,19 +42,6 @@ struct RuntimeSmokeTestAccess {
 };
 }  // namespace atlantis::runtime
 
-// Plan 0015 Section D10/D11 (2026-08-23): this test's own
-// BootstrapConfig does not yet populate sceneArtifactPath/
-// sceneMetadataPath/sceneDependencyManifestPath -- createRuntimeApplication()
-// below will therefore fail at initializeSteps() step (a) with
-// Err(SceneManifestLoadFailed) until Step 9 (assets/scenes/world_scene.scene.txt,
-// assets/CMakeLists.txt's own atlantis_add_scene_asset() call, and this
-// file's own compile-definition wiring) lands. Left as a disclosed,
-// known-red GPU test rather than silently deleted or skipped -- Step 8
-// only needed this file to keep *compiling* against world_'s own new
-// std::optional<World> type (the edit above); making it pass again is
-// explicitly Step 9's own scope (Plan 0015 Milestone 9: "runtime_smoke_gpu_tests.cpp
-// extended for the loaded-scene path").
-
 TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/submit/present frames",
           "[runtime][gpu]") {
   BootstrapConfig config;
@@ -65,6 +52,11 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   config.fragmentShaderReflectionPath = std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.frag.refl.json";
   config.assetArtifactPath = ATLANTIS_RUNTIME_ASSET_ARTIFACT_PATH;
   config.assetMetadataPath = ATLANTIS_RUNTIME_ASSET_METADATA_PATH;
+  // Plan 0015 Section D11: the real, loaded scene path -- replaces the
+  // former hardcoded six-entity validation scene.
+  config.sceneArtifactPath = ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH;
+  config.sceneMetadataPath = ATLANTIS_RUNTIME_SCENE_METADATA_PATH;
+  config.sceneDependencyManifestPath = ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH;
   config.enableValidationLayers = true;
 
   auto appResult = createRuntimeApplication(config);
@@ -80,9 +72,10 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   }
   REQUIRE(app.shouldContinue());  // did not fail during those frames
 
-  // V17: exactly 5 DrawItems reach Renderer::drawFrame() on a successful
-  // frame -- every validation-scene Renderable entity resolved. Vulkan
-  // Validation Layers reporting zero warnings/errors for the full
+  // V22: exactly 5 DrawItems reach Renderer::drawFrame() on a successful
+  // frame -- world_scene.scene.txt declares 5 Renderable nodes (D11),
+  // matching the former hardcoded validation scene's own count exactly.
+  // Vulkan Validation Layers reporting zero warnings/errors for the full
   // multi-item span is this test's own existing crash-on-validation-hit
   // mechanism (enableValidationLayers = true above), unchanged: reaching
   // this REQUIRE at all already proves no validation hit aborted the

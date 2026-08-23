@@ -40,6 +40,7 @@ catch_discover_tests(atlantis_image_regression_tests DISCOVERY_MODE PRE_TEST)
 add_executable(atlantis_image_regression_gpu_tests
   image_regression_gpu_tests.cpp
   world_scene_gpu_tests.cpp
+  world_scene_loaded_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_image_regression_gpu_tests
@@ -71,11 +72,18 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
   ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR="${CMAKE_BINARY_DIR}/image_regression_failures"
   ATLANTIS_ASSET_ARTIFACT_DIR="${CMAKE_BINARY_DIR}/assets"
+  # Plan 0015 Section D11/Step 9: world_scene_loaded_gpu_tests.cpp's own
+  # real, cooked scene asset paths.
+  ATLANTIS_WORLD_SCENE_ARTIFACT_PATH="${ATLANTIS_world_scene_ARTIFACT_PATH}"
+  ATLANTIS_WORLD_SCENE_METADATA_PATH="${ATLANTIS_world_scene_METADATA_PATH}"
+  ATLANTIS_WORLD_SCENE_MANIFEST_PATH="${ATLANTIS_world_scene_MANIFEST_PATH}"
 )
 
 # Plan 0012 Step 6: the asset-sourced GPU test case needs
-# minimal_cube's own cooked artifact/metadata to already exist.
-add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TARGET})
+# minimal_cube's own cooked artifact/metadata to already exist. Plan
+# 0015 Section D11/Step 9: world_scene's own cooked artifact/metadata/
+# manifest likewise.
+add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})
 
 # Same build-tree shader artifact set as the golden generator -- this
 # executable renders the identical fixture. WORKING_DIRECTORY above

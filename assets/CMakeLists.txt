@@ -29,3 +29,19 @@ set(ATLANTIS_minimal_cube_TARGET "${ATLANTIS_minimal_cube_TARGET}" PARENT_SCOPE)
 # directories of this one) needs it visible at root scope to record
 # minimal_cube's own logical path into a scene's generated manifest.
 set(ATLANTIS_minimal_cube_LOGICAL_PATH "${ATLANTIS_minimal_cube_LOGICAL_PATH}" PARENT_SCOPE)
+
+# Plan 0015 Section D11: the one scene asset this Plan ships --
+# world_scene.scene.txt reproduces buildValidationScene()'s own former,
+# now-removed six-entity validation scene byte-for-byte (every
+# position/rotation/camera value transcribed directly from that
+# function's own former source, not re-derived -- see Plan 0015
+# Section D11). Depends on minimal_cube, already declared above.
+atlantis_add_scene_asset(
+  NAME world_scene
+  SOURCE scenes/world_scene.scene.txt
+  MESH_DEPENDENCIES minimal_cube
+)
+set(ATLANTIS_world_scene_ARTIFACT_PATH "${ATLANTIS_world_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_world_scene_METADATA_PATH "${ATLANTIS_world_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_world_scene_MANIFEST_PATH "${ATLANTIS_world_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_world_scene_TARGET "${ATLANTIS_world_scene_TARGET}" PARENT_SCOPE)

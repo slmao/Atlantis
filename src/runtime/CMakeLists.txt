@@ -74,14 +74,19 @@ target_link_libraries(atlantis_runtime
 # and ATLANTIS_minimal_cube_{ARTIFACT_PATH,METADATA_PATH,TARGET}
 # (src/asset_system/CMakeLists.txt's atlantis_add_static_mesh_asset())
 # variables -- never a working-directory-relative path, never a
-# hardcoded machine path.
+# hardcoded machine path. Plan 0015 Section D11: the three
+# ATLANTIS_world_scene_* variables, same sourcing, from
+# atlantis_add_scene_asset() (assets/CMakeLists.txt).
 target_compile_definitions(atlantis_runtime PRIVATE
   ATLANTIS_RUNTIME_SHADER_DIR="${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}"
   ATLANTIS_RUNTIME_ASSET_ARTIFACT_PATH="${ATLANTIS_minimal_cube_ARTIFACT_PATH}"
   ATLANTIS_RUNTIME_ASSET_METADATA_PATH="${ATLANTIS_minimal_cube_METADATA_PATH}"
+  ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH="${ATLANTIS_world_scene_ARTIFACT_PATH}"
+  ATLANTIS_RUNTIME_SCENE_METADATA_PATH="${ATLANTIS_world_scene_METADATA_PATH}"
+  ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH="${ATLANTIS_world_scene_MANIFEST_PATH}"
 )
 
 # Guarantees the shader-compile and asset-cook targets have already run
 # before this executable builds -- matching
 # tests/image_regression/CMakeLists.txt's own identical pattern.
-add_dependencies(atlantis_runtime minimal_mesh_shaders ${ATLANTIS_minimal_cube_TARGET})
+add_dependencies(atlantis_runtime minimal_mesh_shaders ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})

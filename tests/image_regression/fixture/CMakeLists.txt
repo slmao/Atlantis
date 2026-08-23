@@ -1,6 +1,7 @@
 add_library(atlantis_image_regression_fixture STATIC
   minimal_cube_fixture.cpp
   world_scene_fixture.cpp
+  world_scene_loaded_fixture.cpp
 )
 
 target_include_directories(atlantis_image_regression_fixture
