@@ -122,11 +122,16 @@ enum class SceneArtifactDecodeError {
 // SourceOverflow guards). A single AtomicWriteFailed, unlike CookError's
 // own separate Artifact/MetadataWriteFailed pair -- cookTexture()'s own
 // two atomic writes (artifact, metadata) are not independently
-// distinguished by this enum.
+// distinguished by this enum. LogicalPathInvalid added by Plan 0016's
+// own "Human Review Correction -- 2026-08-24": cookTexture() now
+// normalizes its own logicalPathInput exactly like cookStaticMesh()
+// does, so it needs the matching rejection case -- named to match
+// CookError::LogicalPathInvalid exactly, not a new naming convention.
 enum class TextureCookError {
   ZeroDimension,
   DimensionExceedsMaximum,
   SourceOverflow,
+  LogicalPathInvalid,
   AtomicWriteFailed,
 };
 
