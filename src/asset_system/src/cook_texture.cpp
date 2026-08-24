@@ -1,6 +1,7 @@
 #include <atlantis/asset_system/cook_texture.h>
 
 #include <atlantis/asset_system/asset_id.h>
+#include <atlantis/asset_system/logical_path.h>
 #include <atlantis/asset_system/texture_artifact.h>
 #include <atlantis/asset_system/texture_metadata.h>
 
@@ -64,6 +65,10 @@ atlantis::Result<std::monostate, TextureCookError> cookTexture(const std::uint8_
                                                                  const std::filesystem::path& metadataOutputPath) {
   using ResultT = atlantis::Result<std::monostate, TextureCookError>;
 
+  const auto normalizedResult = normalizeLogicalPath(logicalPathInput);
+  if (normalizedResult.isErr()) return ResultT::Err(TextureCookError::LogicalPathInvalid);
+  const std::string& normalizedLogicalPath = normalizedResult.value();
+
   if (width == 0 || height == 0) return ResultT::Err(TextureCookError::ZeroDimension);
   if (width > kMaxTextureDimension || height > kMaxTextureDimension) {
     return ResultT::Err(TextureCookError::DimensionExceedsMaximum);
@@ -81,13 +86,13 @@ atlantis::Result<std::monostate, TextureCookError> cookTexture(const std::uint8_
   }
   const auto pixelByteCount = static_cast<std::size_t>(pixelByteCount64);
 
-  const AssetId assetId = computeAssetId(logicalPathInput);
+  const AssetId assetId = computeAssetId(normalizedLogicalPath);
   const std::vector<std::byte> artifactBytes =
       encodeTextureArtifact(width, height, colorSpace, pixelBytes, pixelByteCount);
 
   TextureMetadata metadata;
   metadata.assetId = assetId;
-  metadata.sourceLogicalPath = logicalPathInput;
+  metadata.sourceLogicalPath = normalizedLogicalPath;
   metadata.width = width;
   metadata.height = height;
   metadata.format = colorSpace;

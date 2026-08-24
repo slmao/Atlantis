@@ -18,6 +18,7 @@ add_executable(atlantis_asset_system_tests
   texture_artifact_tests.cpp
   cook_texture_tests.cpp
   load_texture_tests.cpp
+  texture_fixture_source_identity_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_system_tests
@@ -34,6 +35,26 @@ target_link_libraries(atlantis_asset_system_tests
 target_compile_definitions(atlantis_asset_system_tests PRIVATE
   ATLANTIS_ASSET_SYSTEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/asset_system"
 )
+
+# Plan 0016's own "Human Review Correction -- 2026-08-24" (Verification
+# V45/V46/V49): the textured fixture's own two source PNGs and cooked
+# artifact/metadata paths -- textured_quad_unorm/textured_quad_srgb are
+# already declared unconditionally in assets/CMakeLists.txt (like
+# minimal_cube/world_scene above), so their ARTIFACT/METADATA path
+# variables are already available here, matching the
+# ATLANTIS_minimal_cube_ARTIFACT_PATH precedent above and
+# tests/image_regression/CMakeLists.txt's own identical use of the same
+# two targets.
+target_compile_definitions(atlantis_asset_system_tests PRIVATE
+  ATLANTIS_TEXTURED_QUAD_SOURCE_UNORM_PATH="${CMAKE_SOURCE_DIR}/assets/textures/textured_quad_source_unorm.png"
+  ATLANTIS_TEXTURED_QUAD_SOURCE_SRGB_PATH="${CMAKE_SOURCE_DIR}/assets/textures/textured_quad_source_srgb.png"
+  ATLANTIS_textured_quad_unorm_ARTIFACT_PATH="${ATLANTIS_textured_quad_unorm_ARTIFACT_PATH}"
+  ATLANTIS_textured_quad_unorm_METADATA_PATH="${ATLANTIS_textured_quad_unorm_METADATA_PATH}"
+  ATLANTIS_textured_quad_srgb_ARTIFACT_PATH="${ATLANTIS_textured_quad_srgb_ARTIFACT_PATH}"
+  ATLANTIS_textured_quad_srgb_METADATA_PATH="${ATLANTIS_textured_quad_srgb_METADATA_PATH}"
+)
+add_dependencies(atlantis_asset_system_tests
+  ${ATLANTIS_textured_quad_unorm_TARGET} ${ATLANTIS_textured_quad_srgb_TARGET})
 
 # Plan 0015 Step 5 (V13's own mechanism, V27's SceneCookError portion):
 # exercises atlantis_add_scene_asset() end to end through the real

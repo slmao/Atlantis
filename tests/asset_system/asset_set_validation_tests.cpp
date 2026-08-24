@@ -88,3 +88,42 @@ TEST_CASE("validateAssetSet's production-shaped use always supplies a genuinely 
   CHECK(asset.assetId == computeAssetId("meshes/minimal_cube.mesh.txt"));
   CHECK(validateAssetSet({asset}).isOk());
 }
+
+// Plan 0016's own "Human Review Correction -- 2026-08-24" (Verification
+// V48): DeclaredAsset{logicalPath, assetId} carries no asset-kind field
+// -- validateAssetSet() is kind-agnostic by construction, so it already
+// covers texture logical paths exactly as it covers mesh/scene ones,
+// with no code change. These cases confirm that remains true after the
+// Correction removed atlantis_add_texture_asset()'s own
+// collision-detector bypass: a genuine duplicate or case-only-differing
+// pair of texture logical paths is still caught, never silently passed.
+TEST_CASE("validateAssetSet detects a duplicate texture logical path exactly as it does for mesh/scene paths",
+          "[asset_system]") {
+  const AssetId id = computeAssetId("textures/textured_quad_source_unorm.png");
+  const std::vector<DeclaredAsset> assets{
+      {"textures/textured_quad_source_unorm.png", id},
+      {"textures/textured_quad_source_unorm.png", id},
+  };
+  const auto result = validateAssetSet(assets);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == AssetSetError::DuplicateLogicalPath);
+}
+
+TEST_CASE("validateAssetSet detects a case-only-differing texture logical path pair", "[asset_system]") {
+  const std::vector<DeclaredAsset> assets{
+      {"textures/Textured_Quad_Source_Unorm.png", computeAssetId("textures/Textured_Quad_Source_Unorm.png")},
+      {"textures/textured_quad_source_unorm.png", computeAssetId("textures/textured_quad_source_unorm.png")},
+  };
+  const auto result = validateAssetSet(assets);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == AssetSetError::CaseOnlyPathConflict);
+}
+
+TEST_CASE("validateAssetSet accepts the textured fixture's own two real, distinct texture logical paths",
+          "[asset_system]") {
+  const std::vector<DeclaredAsset> assets{
+      {"textures/textured_quad_source_unorm.png", computeAssetId("textures/textured_quad_source_unorm.png")},
+      {"textures/textured_quad_source_srgb.png", computeAssetId("textures/textured_quad_source_srgb.png")},
+  };
+  CHECK(validateAssetSet(assets).isOk());
+}

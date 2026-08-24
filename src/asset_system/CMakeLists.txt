@@ -177,17 +177,21 @@ function(atlantis_add_scene_asset)
   set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
 endfunction()
 
-# Plan 0016 Section D8: declares one texture asset for
+# Plan 0016 Section D8, corrected by the Plan's own "Human Review
+# Correction -- 2026-08-24": declares one texture asset for
 # atlantis_asset_cooker to process at build time, mirroring
 # atlantis_add_static_mesh_asset()'s own stamp/BYPRODUCTS pattern.
 # COLOR_SPACE is Unorm or Srgb, forwarded to the cooker's own
 # --color-space= argument (lowercased here). Unlike
 # atlantis_add_static_mesh_asset(), output paths are keyed by NAME, not
-# SOURCE -- callable twice against the same SOURCE with different
-# NAME/COLOR_SPACE (the mechanism the textured fixture's own two
-# textures, one per color space, need), which a SOURCE-derived output
-# path could not support without one call overwriting the other's
-# BYPRODUCTS.
+# SOURCE -- this is a build-output-file-naming convenience only (two
+# custom-command outputs must never collide on one path), never an
+# identity mechanism: every declared texture asset still needs its own
+# distinct SOURCE, exactly like every other asset kind, so it gets its
+# own distinct logical path and AssetId (ADR-0044). "Callable twice
+# against the same SOURCE" is no longer this function's own supported
+# shape -- see the Plan's own Correction for why that original design
+# silently shared one AssetId across two genuinely different artifacts.
 function(atlantis_add_texture_asset)
   set(options "")
   set(oneValueArgs NAME SOURCE COLOR_SPACE)
@@ -216,17 +220,12 @@ function(atlantis_add_texture_asset)
   )
   add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
 
-  # A texture SOURCE cooked twice under two NAMEs (once per color space)
-  # is, by construction, the same logical source asset both times --
-  # registering it into the collision-detection list a second time would
-  # be a spurious AssetSetError::DuplicateLogicalPath, not a genuine
-  # collision (two DIFFERENT sources should never share a logical path;
-  # the same source declared twice under this one function is not that).
-  get_property(already_declared GLOBAL PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS)
-  list(FIND already_declared "${ARG_SOURCE}" existing_index)
-  if(existing_index EQUAL -1)
-    set_property(GLOBAL APPEND PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS "${ARG_SOURCE}")
-  endif()
+  # Unconditional registration, matching atlantis_add_static_mesh_asset()
+  # exactly -- no collision-detector bypass. A texture SOURCE declared
+  # twice (the original, corrected-away design) is now a genuine
+  # DuplicateLogicalPath, caught by atlantis_finalize_asset_validation()'s
+  # own --validate-set exactly like any other asset kind's duplicate.
+  set_property(GLOBAL APPEND PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS "${ARG_SOURCE}")
 
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)

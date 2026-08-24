@@ -156,12 +156,24 @@ TEST_CASE("runCookCommand rejects an unrecognized --color-space value", "[asset_
   CHECK_FALSE(fs::exists(dir.path / "out" / "checker.atex"));
 }
 
-TEST_CASE("runCookCommand cooking the same source PNG twice under two names/color spaces produces two distinct "
-          "artifacts",
+TEST_CASE("runCookCommand cooking the same source PNG twice under two names/color spaces still shares one AssetId "
+          "-- NAME only disambiguates build-output file naming, never asset identity",
           "[asset_cooker][texture]") {
-  // The exact mechanism the textured fixture (Milestone 9) needs -- Plan
-  // 0016 Section D8's own "NAME, not SOURCE, is the per-artifact
-  // identity key."
+  // Plan 0016's own "Human Review Correction -- 2026-08-24": this is no
+  // longer the textured fixture's own mechanism (the fixture now uses
+  // two independent, byte-identical source PNGs with two distinct
+  // logical paths instead -- see assets/CMakeLists.txt). This case is
+  // kept as a regression test for cookTexture()'s own correct, narrower
+  // behavior: NAME only disambiguates where the cooker writes its
+  // output on disk (BYPRODUCTS collision avoidance); it was never an
+  // identity mechanism, and computeAssetId() is still, correctly, a
+  // pure function of the normalized SOURCE-derived logical path alone
+  // -- two cooks of the same real SOURCE necessarily still share one
+  // AssetId. The bug the Correction fixed was one layer up, in
+  // atlantis_add_texture_asset()'s own now-removed collision-detector
+  // bypass that let the CMake declaration layer register two named
+  // assets against one shared SOURCE as if they were legitimately
+  // distinct assets.
   TempDirGuard dir("cooked_twice");
   const fs::path source = fixturePath("tiny_rgba.png");
   const auto unormRequest = makeTextureRequest(source, dir.path / "out", "checker_unorm", "unorm");

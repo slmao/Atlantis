@@ -117,6 +117,8 @@ constexpr std::string_view kTextureAuthoringExtension = ".png";
       return "dimension exceeds maximum";
     case TextureCookError::SourceOverflow:
       return "pixel data size overflow";
+    case TextureCookError::LogicalPathInvalid:
+      return "logical path invalid";
     case TextureCookError::AtomicWriteFailed:
       return "atomic write failed";
   }

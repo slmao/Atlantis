@@ -138,3 +138,54 @@ TEST_CASE("cookTexture is deterministic -- cooking the same decoded bytes twice 
   CHECK(readFile(dir.path / "first.atex") == readFile(dir.path / "second.atex"));
   CHECK(readFile(dir.path / "first.atex.meta.txt") == readFile(dir.path / "second.atex.meta.txt"));
 }
+
+// Plan 0016's own "Human Review Correction -- 2026-08-24" (Verification
+// V47): cookTexture() now normalizes logicalPathInput via the same
+// normalizeLogicalPath() cookStaticMesh() already calls, so every
+// malformed form logical_path_tests.cpp already proves normalizeLogicalPath()
+// itself rejects must be rejected here too, via the new
+// TextureCookError::LogicalPathInvalid -- not silently accepted the way
+// the pre-correction cookTexture() (which never normalized its input at
+// all) would have.
+TEST_CASE("cookTexture rejects every malformed logical path normalizeLogicalPath() itself rejects",
+          "[asset_system]") {
+  TempDirGuard dir("logical_path_invalid");
+  const auto pixels = makeRgbaBytes(1, 1);
+
+  const auto reject = [&](const std::string& malformedPath) {
+    const auto result = cookTexture(pixels.data(), 1, 1, 4, TextureColorSpace::Unorm, malformedPath,
+                                     dir.path / "a.atex", dir.path / "a.atex.meta.txt");
+    REQUIRE(result.isErr());
+    CHECK(result.error() == TextureCookError::LogicalPathInvalid);
+    CHECK_FALSE(fs::exists(dir.path / "a.atex"));
+  };
+
+  SECTION("empty path") { reject(""); }
+  SECTION("path that normalizes to nothing") { reject("."); }
+  SECTION("absolute POSIX-style path") { reject("/textures/a.png"); }
+  SECTION("UNC-style path") { reject("\\\\server\\share\\textures\\a.png"); }
+  SECTION("Windows drive-letter prefix") { reject("C:\\textures\\a.png"); }
+  SECTION("'..' escaping the asset root") { reject("../a.png"); }
+  SECTION("non-ASCII byte") { reject("textures/caf\xC3\xA9.png"); }
+  SECTION("disallowed colon not in drive-letter position") { reject("textures/foo:bar.png"); }
+}
+
+TEST_CASE("cookTexture accepts a not-yet-normalized logical path, cooking under its normalized form",
+          "[asset_system]") {
+  // Mirrors cookStaticMesh()'s own established shape: normalization
+  // happens inside cookTexture() itself, so a caller-supplied path that
+  // merely needs backslash/redundant-separator cleanup still succeeds,
+  // and both the recorded AssetId and sourceLogicalPath reflect the
+  // normalized form, never the raw caller input.
+  TempDirGuard dir("logical_path_normalized");
+  const auto pixels = makeRgbaBytes(1, 1);
+
+  const auto result = cookTexture(pixels.data(), 1, 1, 4, TextureColorSpace::Unorm, "textures\\a.png",
+                                   dir.path / "a.atex", dir.path / "a.atex.meta.txt");
+  REQUIRE(result.isOk());
+
+  const auto metadata = parseTextureMetadata(readFile(dir.path / "a.atex.meta.txt"));
+  REQUIRE(metadata.isOk());
+  CHECK(metadata.value().sourceLogicalPath == "textures/a.png");
+  CHECK(metadata.value().assetId == computeAssetId("textures/a.png"));
+}
