@@ -1825,3 +1825,217 @@ This Plan was subsequently reviewed and approved in full — see "Human
 Review Approval (2026-08-24)" at the top of this document for the
 complete record; this Plan's own status is `Approved / Ready for
 Implementation`, not merely `In Review`, as of that approval.
+
+## Human Review Correction — 2026-08-24
+
+**Status: Accepted.** Everything above this section remains this Plan's
+own original, unmodified `Approved / Ready for Implementation` record
+(this Plan's own top-level `Status` line above is unchanged and
+unaffected by this correction) — this correction does not alter,
+narrow, or reinterpret any of it as a review outcome; it corrects one
+real design gap this Plan's own Approved D8/D9/D11 sections left
+unaddressed, restoring an already-`Accepted` architectural invariant
+([ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md))
+that this Plan's own design had silently narrowed. Neither
+[Spec 0016](../specs/0016-texture-sampler-foundation.md) nor
+[ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md)
+require any change — this correction is scoped entirely to this Plan's
+own D8/D9/D11 sections and the Verification Checklist below; it does
+not reopen any Spec- or ADR-level decision.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Correction recorded 2026-08-24, discovered while reviewing
+[Implementation PR #78](https://github.com/slmao/Atlantis/pull/78)
+(code complete, OPEN, not yet merged — this correction does not modify
+that branch or PR; it corrects this Plan document only, for a
+subsequent Implementation follow-up to apply).
+
+### Context for this correction
+
+[ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md)'s
+own "Hash algorithm, width, and serialization" Decision fixes the Asset
+ID as a deterministic function of one thing only: the normalized
+logical path's own bytes (64-bit FNV-1a). Every existing asset kind —
+static mesh, scene — maintains a 1:1 relationship between "one cooked
+asset" and "one Asset ID" as a direct consequence: one authoring source,
+one logical path, one Asset ID, one artifact.
+
+D8/D9/D11 as originally drafted break that relationship for textures,
+without saying so. D11's own "Textures" paragraph directs cooking **one**
+checkerboard source PNG **twice**, via `atlantis_add_texture_asset()`
+called with the same `SOURCE` under two different `NAME`/`COLOR_SPACE`
+pairs (`Unorm`, `Srgb`). D8's own `cookTexture()` signature takes
+`logicalPathInput` and derives the Asset ID from it
+(`computeAssetId(logicalPathInput)`) exactly like every other cook
+function — but because both calls pass the *same* `SOURCE`-derived
+`relativePath`, both cooked artifacts — two genuinely different files,
+different `format` bytes, different metadata — receive the **identical**
+Asset ID. D8's own closing sentence already names the symptom without
+naming it as a problem: *"the reason `NAME` (not `SOURCE`) is the
+per-artifact identity key"* — this is true for **build-output file
+naming** (D9's own `--stamp=`-derived basename correctly keeps the two
+`.atex` files from colliding on disk) but was never true for **Asset
+ID**, and D8/D11 do not distinguish the two. Two distinct on-disk
+assets sharing one Asset ID is exactly the failure mode
+ADR-0044's own collision-detection Decision exists to catch — and it
+does not catch this one, because both `cookTexture()` calls are given
+the *same* logical path *by design*, not by accident; there is no
+collision for `atlantis_finalize_asset_validation()`'s own detector to
+see, only a silent, structural violation of the "one asset, one ID"
+invariant one level upstream of where that detector looks.
+
+`cookTexture()` also never calls `normalizeLogicalPath()` (unlike
+`cookStaticMesh()`/every other cook function) — D8's own
+`TextureCookError` enum (`ZeroDimension`, `DimensionExceedsMaximum`,
+`SourceOverflow`, `AtomicWriteFailed`) has no matching case, so this was
+structural, not an oversight caught late: the enum's own closed
+vocabulary left no room for the check every other cook function already
+performs.
+
+### Decision
+
+1. **Every cooked texture asset has its own unique, normalized logical
+   path and its own unique Asset ID — no exception, no bypass.** A
+   texture Asset ID remains exactly what ADR-0044 already fixes it as:
+   `computeAssetId()` applied to that asset's own normalized logical
+   path, nothing else. Two cooked artifacts must never share an Asset
+   ID by construction — not via a shared `SOURCE`, not via any global
+   collision-detector bypass. This correction does not introduce an
+   asset-variant identity, subresource key, or composite Asset ID model
+   of any kind — that remains explicitly out of scope (see item 2's own
+   closing note below).
+
+2. **The fixture's two textures are two logically independent source
+   PNGs with byte-identical content, not one PNG cooked twice.** D11's
+   own prose named the checked-in source's path as
+   `tests/image_regression/fixture/textured_quad_source.png`; the actual
+   Implementation (PR #78) instead checked it in at
+   `assets/textures/textured_quad_source.png`, matching every other
+   texture/mesh/scene authoring source's own placement under
+   `assets/` (`atlantis_add_texture_asset()`'s own `asset_root`,
+   `src/asset_system/CMakeLists.txt`) — a pre-existing, disclosed-here
+   mechanical mismatch between D11's own descriptive text and where the
+   fixture was actually placed, not itself part of what this correction
+   changes. This correction's own two replacement files therefore belong
+   at that same, real location:
+   `assets/textures/textured_quad_source_unorm.png` and
+   `assets/textures/textured_quad_source_srgb.png` — each with its own
+   distinct, normalized logical path (`textures/textured_quad_source_unorm.png`,
+   `textures/textured_quad_source_srgb.png`), therefore each with its own
+   distinct Asset ID. `atlantis_add_texture_asset()` is called twice with
+   two different `SOURCE` values (not the same `SOURCE` under two
+   `NAME`s, as D8/D11 originally directed):
+   ```
+   atlantis_add_texture_asset(NAME textured_quad_unorm SOURCE textures/textured_quad_source_unorm.png COLOR_SPACE Unorm)
+   atlantis_add_texture_asset(NAME textured_quad_srgb  SOURCE textures/textured_quad_source_srgb.png  COLOR_SPACE Srgb)
+   ```
+   A new, GPU-independent test asserts the two checked-in PNG files are
+   byte-identical (e.g. `std::filesystem::file_size` plus a direct byte
+   comparison, or a checked-in hash) — the automated proof D11's own
+   evidentiary point ("the two quads sharing identical stored bytes is
+   the entire evidentiary point of this golden," D11 as originally
+   drafted) requires but never stated a mechanism for. This closes the
+   gap without inventing new Asset System machinery: identical bytes are
+   now a property the *fixture's own test suite* verifies directly,
+   never assumed from "it's the same file" once that stops being
+   literally true.
+
+   **Explicitly out of scope, named for future work, not solved here:**
+   a single physical source authored once, cooked into multiple typed
+   variants under one shared or derived identity ("Asset Variant
+   Identity") is a real, disclosed future Asset System decision — this
+   correction deliberately does not design it. Two independent,
+   byte-identical source files is a narrower, sufficient fix for this
+   Plan's own one fixture, not a general mechanism.
+
+3. **`cookTexture()` normalizes its own `logicalPathInput`, exactly like
+   every other cook function.** D8's own `cookTexture()` signature is
+   unchanged; its body gains the same `normalizeLogicalPath()` call
+   `cookStaticMesh()` already makes, at the same point (before
+   `computeAssetId()`). `TextureCookError` gains one new enumerator,
+   named to match `CookError`'s own existing convention exactly (not
+   `InvalidLogicalPath`, which is not this codebase's own established
+   word order):
+   ```cpp
+   enum class TextureCookError {
+     ZeroDimension, DimensionExceedsMaximum, SourceOverflow,
+     LogicalPathInvalid,  // new -- matches CookError::LogicalPathInvalid's
+                           // own established name exactly
+     AtomicWriteFailed,
+   };
+   ```
+   Windows/Android path-separator normalization, case handling, `.`/`..`
+   segment handling, absolute-path rejection, and disallowed-character
+   rejection all reuse the existing, single `normalizeLogicalPath()`
+   function every other cook function already calls — there is no
+   second, texture-specific normalization rule to design or keep in
+   sync; behavior is identical to `cookStaticMesh()`'s own by
+   construction, not by parallel re-implementation.
+
+4. **D9's own `textureCookErrorMessage()` and every exhaustive switch
+   over `TextureCookError` gain the matching case** (`/w14062` forces
+   this at compile time, the same mechanism already proven in Milestone
+   7 of the Implementation — see PR #78's own V36 record — so a missed
+   case fails the build naming the enumerator, not a silent gap).
+
+5. **Output file naming stays exactly as D9 already specifies —
+   `--stamp='s own filename stem (`NAME`) — and this correction states
+   explicitly, for the first time, why that is correct and not itself
+   an identity concern:** the on-disk `.atex`/`.atex.meta.txt` file
+   *name* is a build-output-uniqueness detail (CMake's own `NAME`
+   argument, needed only so two custom-command outputs never collide on
+   one path); the Asset ID recorded *inside* that file's own metadata
+   sidecar is the asset's own logical identity (ADR-0044). The two are
+   independent by design: this correction changes which `SOURCE` value
+   each `atlantis_add_texture_asset()` call passes (fixing identity),
+   not how the output filename is derived from `NAME`/`--stamp=` (fixing
+   nothing, because it was never the problem). Documented explicitly
+   here so a future reader does not conflate the two the way this
+   Plan's own original D8 closing sentence's ambiguity allowed.
+
+   **A consequence of item 2 above, disclosed explicitly:** the
+   Implementation's own `atlantis_add_texture_asset()`
+   (`src/asset_system/CMakeLists.txt`) currently contains a
+   collision-detector bypass — skipping re-registration of an
+   already-declared `SOURCE` in the global declared-asset-logical-paths
+   list, added specifically to tolerate the same `SOURCE` being declared
+   twice. With two distinct `SOURCE` values (item 2), that scenario
+   no longer occurs, and this bypass becomes both unnecessary and
+   contrary to item 1's own "no collision-detector bypass" requirement
+   — **it must be removed**, restoring
+   `atlantis_add_static_mesh_asset()`'s own unconditional registration
+   exactly, as the Implementation follow-up applies this correction.
+
+### Verification Checklist — additions
+
+Continuing the existing V1–V44 sequence (none renumbered, none
+reinterpreted):
+
+| # | Verification | Where | Kind |
+|---|---|---|---|
+| V45 | The two checked-in `assets/textures/` source PNGs (`textured_quad_source_unorm.png`, `textured_quad_source_srgb.png`) are byte-identical — confirmed by a direct automated comparison, not assumed from "cooked from the same original file." | `tests/asset_system/` (new test) | GPU-independent |
+| V46 | The two cooked texture artifacts produce two distinct Asset IDs — confirmed by reading both metadata sidecars' own `asset_id` fields and asserting inequality — and each Asset ID equals `computeAssetId()` applied to its own artifact's real, normalized `source_logical_path`. | `tests/asset_system/` (new test) or `tests/tools/asset_cooker/` | GPU-independent |
+| V47 | `cookTexture()` rejects a malformed/escaping logical path via `TextureCookError::LogicalPathInvalid`, byte-for-byte the same acceptance/rejection outcome `cookStaticMesh()` already produces for the identical malformed input (absolute path, `..` escape, disallowed character, case-only variants) — confirmed by a direct, paired comparison test, not merely "some error is returned." | `tests/asset_system/cook_texture_tests.cpp` | GPU-independent |
+| V48 | The global collision detector still catches a genuine texture-sourced collision. `validateAssetSet()`'s own `DeclaredAsset{logicalPath, assetId}` (Plan 0012 D4) carries no asset-kind field — it is kind-agnostic by construction, so no code change is needed for it to already cover texture logical paths exactly as it covers mesh/scene ones today; this case confirms that remains true after this correction, using two texture logical paths (one hand-injected `AssetId` pair, per Plan 0012's own V3 methodology) and asserting `AssetIdCollision`/`CaseOnlyPathConflict`/`DuplicateLogicalPath` are still returned, never silently passed. | `asset_set_validation_tests.cpp` | GPU-independent |
+| V49 | `SceneDependencyResolver`-equivalent lookup (or the fixture's own direct load path) can hold and distinguish both texture assets simultaneously by their own now-distinct Asset IDs — confirmed by loading both via `loadTextureAsset()` in the same process and asserting their returned `TextureAssetData` are both present and distinguishable, not merely "both files exist on disk." | `tests/image_regression/fixture/textured_quad_fixture.cpp` (code-structure) or a new `tests/asset_system/` test | GPU-independent |
+
+### Golden re-capture required
+
+The already-generated `textured_quad` golden
+(`tests/image_regression/goldens/textured_quad/textured_quad_512x512_rgba8unorm.png`,
+provenance `source_revision` = `2b0481c`, on
+[Implementation PR #78](https://github.com/slmao/Atlantis/pull/78)) was
+captured **before** this correction and must be treated as superseded,
+not reused. Once a future Implementation follow-up applies this
+correction's own Decision on PR #78's own branch (or a successor), the
+Golden Capture Process (above) must run again in full, from step 1:
+Milestone 9's own implementation commit is re-landed reflecting the
+corrected D8/D9/D11 design (two distinct `SOURCE` PNGs, two distinct
+Asset IDs, `cookTexture()` normalizing its own logical path), and the
+golden is regenerated **against that new implementation commit's own
+revision**, on a clean tree, with V38's own human visual review
+performed fresh — even if the two textures' own sampled pixel bytes
+turn out identical to the already-captured (now-superseded) image
+byte-for-byte, the sidecar's own `source_revision` must still be
+re-recorded against the corrected commit, never left pointing at
+`2b0481c`. V38 remains Outstanding.
