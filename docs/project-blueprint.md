@@ -824,11 +824,10 @@ milestone being listed does not authorize starting it — see Section 1.
   GUID identity scheme, schema migration, and any Client/Editor/
   second-process consumer of scene data. The per-scene dependency
   manifest (D8) is build-tree-private only, never a portable/shippable
-  artifact. Texture/Sampler asset support, PBR Material, Light,
-  Shadow, and Post-processing remain out of scope (see Candidate Order
-  8, "Texture & Sampler Foundation," in
-  [specs/README.md](../specs/README.md)'s own Candidate Backlog, now
-  human-selected to be specced next).
+  artifact. PBR Material, Light, Shadow, and Post-processing remain out
+  of scope. Texture/Sampler asset support itself is no longer out of
+  scope repository-wide -- see [Spec 0016](../specs/0016-texture-sampler-foundation.md)
+  above (`Approved`, Implementation code-complete on an open PR).
 
 ### Further candidate phases (directional only, no Spec, no ADR)
 
@@ -848,9 +847,13 @@ anything architectural, its own ADR before any of the below moves past
   Milestone 11's and Milestone 12's own Non-Goals explicitly excluded
 - Texture & Sampler Foundation (general sampled `Texture`/`Sampler`
   support in RHI, unblocking a texture asset type and eventually PBR
-  materials) — human-selected 2026-08-24 to be specced next; drafted as
-  [Spec 0016](../specs/0016-texture-sampler-foundation.md) (`In Review`,
-  no Plan yet, no Implementation authorized) — see
+  materials) — [Spec 0016](../specs/0016-texture-sampler-foundation.md)
+  (`Approved`), [Plan 0016](../plans/0016-texture-sampler-foundation.md)
+  (`Approved / Ready for Implementation`, merged via
+  [PR #77](https://github.com/slmao/Atlantis/pull/77)) -- Implementation
+  code-complete on [PR #78](https://github.com/slmao/Atlantis/pull/78),
+  OPEN, not yet merged; new `textured_quad` golden awaits human visual
+  review (V38). See
   [specs/README.md](../specs/README.md)'s own Section A row for current
   status
 - Tool/Editor connection protocol — **no process model (in-process vs.

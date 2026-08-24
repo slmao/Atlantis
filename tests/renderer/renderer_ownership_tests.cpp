@@ -30,6 +30,8 @@ using atlantis::render_graph::test::FakeBuffer;
 using atlantis::render_graph::test::FakeCommandList;
 using atlantis::render_graph::test::FakePipeline;
 using atlantis::render_graph::test::FakeRenderTarget;
+using atlantis::render_graph::test::FakeSampledTexture;
+using atlantis::render_graph::test::FakeSampler;
 using atlantis::render_graph::test::FakeTexture;
 using atlantis::renderer::DrawItem;
 using atlantis::renderer::Material;
@@ -37,6 +39,13 @@ using atlantis::renderer::Mesh;
 using atlantis::renderer::Renderer;
 
 }  // namespace
+
+TEST_CASE("Material's sampledTexture()/sampler() are non-owning raw pointer types (V22)", "[renderer][ownership]") {
+  STATIC_REQUIRE(std::is_same_v<decltype(std::declval<const Material&>().sampledTexture()),
+                                 const atlantis::rhi::SampledTexture*>);
+  STATIC_REQUIRE(
+      std::is_same_v<decltype(std::declval<const Material&>().sampler()), const atlantis::rhi::Sampler*>);
+}
 
 TEST_CASE("Mesh is movable, not copyable", "[renderer][ownership]") {
   STATIC_REQUIRE(std::is_move_constructible_v<Mesh>);
@@ -176,4 +185,78 @@ TEST_CASE("Renderer::drawFrame() passes finalColorState through unmodified, neve
   REQUIRE(windowedCommandList.transitions[lastIndex].before == headlessCommandList.transitions[lastIndex].before);
   REQUIRE(windowedCommandList.transitions[lastIndex].after == atlantis::rhi::ResourceState::PresentSource);
   REQUIRE(headlessCommandList.transitions[lastIndex].after == atlantis::rhi::ResourceState::TransferSource);
+}
+
+TEST_CASE("Renderer::drawFrame() with an untextured Material records no bindTexture call (V23)",
+          "[renderer][ownership][sampled_texture]") {
+  atlantis::renderer::Mesh mesh(std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Vertex, 0),
+                                 std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Index, 0), 3);
+  atlantis::renderer::Material material(std::make_unique<FakePipeline>());  // untextured -- sampledTexture() == nullptr
+  REQUIRE(material.sampledTexture() == nullptr);
+  REQUIRE(material.sampler() == nullptr);
+
+  DrawItem item;
+  item.mesh = &mesh;
+  item.material = &material;
+  item.objectToWorld = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+                         0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+  const std::vector<DrawItem> drawItems{item};
+
+  FakeRenderTarget colorTarget("color");
+  FakeTexture depthTarget("depth");
+  FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
+  FakeCommandList commandList;
+  Renderer renderer;
+  renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
+                      atlantis::rhi::ResourceState::PresentSource);
+
+  REQUIRE(commandList.boundTextures.empty());
+  for (const FakeCommandList::EventKind event : commandList.events) {
+    REQUIRE(event != FakeCommandList::EventKind::BindTexture);
+  }
+}
+
+TEST_CASE("Renderer::drawFrame() with a textured Material records bindTexture immediately after "
+          "bindUniformBuffer (V24)",
+          "[renderer][ownership][sampled_texture]") {
+  atlantis::renderer::Mesh mesh(std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Vertex, 0),
+                                 std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Index, 0), 3);
+  FakeSampledTexture fakeTexture("texture");
+  FakeSampler fakeSampler("sampler");
+  atlantis::renderer::Material material(std::make_unique<FakePipeline>(), &fakeTexture, &fakeSampler);
+  REQUIRE(material.sampledTexture() == &fakeTexture);
+  REQUIRE(material.sampler() == &fakeSampler);
+
+  DrawItem itemA;
+  itemA.mesh = &mesh;
+  itemA.material = &material;
+  itemA.objectToWorld = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+                          0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+  DrawItem itemB = itemA;
+  const std::vector<DrawItem> drawItems{itemA, itemB};
+
+  FakeRenderTarget colorTarget("color");
+  FakeTexture depthTarget("depth");
+  FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
+  FakeCommandList commandList;
+  Renderer renderer;
+  renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
+                      atlantis::rhi::ResourceState::PresentSource);
+
+  REQUIRE(commandList.boundTextures.size() == 2);
+  REQUIRE(commandList.boundTextures[0].texture == &fakeTexture);
+  REQUIRE(commandList.boundTextures[0].sampler == &fakeSampler);
+  REQUIRE(commandList.boundTextures[1].texture == &fakeTexture);
+  REQUIRE(commandList.boundTextures[1].sampler == &fakeSampler);
+
+  // Positioned immediately after bindUniformBuffer, for each DrawItem.
+  const auto& events = commandList.events;
+  int foundPairs = 0;
+  for (std::size_t i = 0; i + 1 < events.size(); ++i) {
+    if (events[i] == FakeCommandList::EventKind::BindUniformBuffer &&
+        events[i + 1] == FakeCommandList::EventKind::BindTexture) {
+      ++foundPairs;
+    }
+  }
+  REQUIRE(foundPairs == 2);
 }

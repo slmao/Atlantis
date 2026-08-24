@@ -6,44 +6,65 @@
 #include <atlantis/render_graph/compiled_graph.h>
 #include <atlantis/rhi/command_list.h>
 #include <atlantis/rhi/render_target.h>
+#include <atlantis/rhi/sampled_texture.h>
 #include <atlantis/rhi/texture.h>
 
 namespace atlantis::render_graph {
 
-// Binds one compiled-local resource to a live RHI RenderTarget or depth
-// Texture for exactly one execute() call -- frame-scoped, not persisted on
-// the builder or CompiledGraph (ADR-0021). Exactly one of target/
-// depthTexture must be non-null (Guard 0, below) -- a malformed binding
-// with both null or both non-null is a programmer error, not a silently
-// accepted ambiguous case. target/depthTexture must outlive the execute()
-// call; execute() does not take ownership of either. colorClear is used
+// Binds one compiled-local resource to a live RHI RenderTarget, depth
+// Texture, or SampledTexture for exactly one execute() call -- frame-
+// scoped, not persisted on the builder or CompiledGraph (ADR-0021).
+// Exactly one of target/depthTexture/sampledTexture must be non-null
+// (Guard 0, below) -- a malformed binding with zero or more than one set
+// is a programmer error, not a silently accepted ambiguous case.
+// target/depthTexture/sampledTexture must outlive the execute() call;
+// execute() does not take ownership of any of them. colorClear is used
 // only when target != nullptr; depthClear only when depthTexture !=
 // nullptr (Spec 0007/ADR-0026).
 //
-// incomingState/finalState (Spec 0010/ADR-0039): meaningful only for a
-// target-shaped entry (target != nullptr), ignored for a depthTexture
-// entry. incomingState is the state the caller asserts target already
-// holds when this execute() call begins seeding its own local tracking --
-// its default, ResourceState::Undefined, is correct only for a resource's
-// first use within its CommandList; a caller reusing an already-
-// transitioned target (e.g. the headless copy pass, which runs after
-// Renderer::drawFrame() has already left its target in a known non-
-// Undefined state) must supply the true incoming state explicitly.
-// finalState, std::nullopt by default, is the state execute() leaves
-// target in via one trailing transitionResource() call if its ending
-// state differs -- std::nullopt means no trailing transition is inserted
-// beyond whatever the last pass's own declared state already left it in.
-// Neither field has a default a target-shaped call site may rely on being
-// "correct" for its own purpose -- every target-shaped binding
-// construction site in this codebase supplies an explicit finalState as a
-// matter of caller discipline, not because the language forces it
-// syntactically.
+// sampledTexture (Spec 0016/ADR-0056): tracks ONLY the destination of a
+// texture upload's own Undefined -> TransferDestination -> ShaderRead
+// transition -- never used to track a texture already in ShaderRead
+// being sampled by a later, unrelated draw pass; that consumption is a
+// plain CommandList::bindTexture() call inside a pass callback, exactly
+// like bindUniformBuffer() today, not a RenderGraph-tracked resource.
+// The upload pass itself declares only a single TransferDestination
+// usage (never a second, ShaderRead-tagged usage on the same pass) --
+// execute() records every one of a pass's declared-usage transitions
+// before invoking that pass's own executeFn, so a ShaderRead usage
+// declared directly on the upload pass would land its barrier *before*
+// the pass's own copyBufferToTexture() call, not after it. The trailing
+// ShaderRead transition is reached the same way a target's own trailing
+// finalState transition is: via this binding's own finalState field,
+// below, applied once after every pass in the graph has executed.
+//
+// incomingState/finalState (Spec 0010/ADR-0039; finalState widened to
+// sampledTexture bindings by Spec 0016/D4 -- the same mechanism, not a
+// new one): meaningful only for a target- or sampledTexture-shaped entry
+// (target != nullptr or sampledTexture != nullptr), ignored for a
+// depthTexture entry. incomingState is the state the caller asserts the
+// bound resource already holds when this execute() call begins seeding
+// its own local tracking -- its default, ResourceState::Undefined, is
+// correct only for a resource's first use within its CommandList; a
+// caller reusing an already-transitioned target (e.g. the headless copy
+// pass, which runs after Renderer::drawFrame() has already left its
+// target in a known non-Undefined state) must supply the true incoming
+// state explicitly. finalState, std::nullopt by default, is the state
+// execute() leaves the bound resource in via one trailing
+// transitionResource() call if its ending state differs -- std::nullopt
+// means no trailing transition is inserted beyond whatever the last
+// pass's own declared state already left it in. Neither field has a
+// default a target- or sampledTexture-shaped call site may rely on being
+// "correct" for its own purpose -- every such binding construction site
+// in this codebase supplies an explicit finalState as a matter of caller
+// discipline, not because the language forces it syntactically.
 struct ResourceBinding {
   CompiledResourceId resource;
   atlantis::rhi::RenderTarget* target = nullptr;
   atlantis::rhi::ClearColorValue colorClear{};
   atlantis::rhi::Texture* depthTexture = nullptr;
   float depthClear = 1.0f;
+  atlantis::rhi::SampledTexture* sampledTexture = nullptr;
   atlantis::rhi::ResourceState incomingState = atlantis::rhi::ResourceState::Undefined;
   std::optional<atlantis::rhi::ResourceState> finalState;
 };
@@ -62,21 +83,23 @@ struct ResourceBinding {
 // commandList.beginRendering()/endRendering() pair; every other pass's
 // callback is invoked directly, exactly as Spec 0006 already does.
 // Inserts one trailing transitionResource() to the bound entry's
-// finalState (Spec 0010/ADR-0039) for every bound RenderTarget
-// (target != nullptr) that was actually touched by at least one usage and
-// whose finalState is not std::nullopt -- never for a depthTexture entry
-// (never presented, never read back this round), and never when
-// finalState is std::nullopt. Records only -- never calls Device::submit()
-// or Presentation::present() (ADR-0021).
+// finalState (Spec 0010/ADR-0039; widened to sampledTexture bindings by
+// Spec 0016/D4) for every bound RenderTarget or SampledTexture
+// (target != nullptr or sampledTexture != nullptr) that was actually
+// touched by at least one usage and whose finalState is not std::nullopt
+// -- never for a depthTexture entry (never presented, never read back
+// this round), and never when finalState is std::nullopt. Records only --
+// never calls Device::submit() or Presentation::present() (ADR-0021).
 //
 // Guards, all guaranteed-detectable programmer errors
 // (ATLANTIS_CHECK_MSG), not Result-typed:
-// - Guard 0 (Spec 0007): every ResourceBinding entry has exactly one of
-//   target/depthTexture non-null, and bindings contains no two entries
-//   for the same CompiledResourceId.
-// - Guard 1 (unchanged in principle, scope generalized to depthTexture
-//   entries too): every ResourceState-tagged usage in graph must have a
-//   matching entry in bindings.
+// - Guard 0 (Spec 0007; widened to three kinds by Spec 0016): every
+//   ResourceBinding entry has exactly one of target/depthTexture/
+//   sampledTexture non-null, and bindings contains no two entries for
+//   the same CompiledResourceId.
+// - Guard 1 (unchanged in principle, scope generalized to depthTexture/
+//   sampledTexture entries too): every ResourceState-tagged usage in
+//   graph must have a matching entry in bindings.
 // - Guard 2 (scope unchanged -- target entries only): no bound
 //   RenderTarget may have any declared read usage anywhere in graph
 //   (protects RenderTarget's own write-only contract -- see

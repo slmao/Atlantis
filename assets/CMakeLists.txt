@@ -45,3 +45,34 @@ set(ATLANTIS_world_scene_ARTIFACT_PATH "${ATLANTIS_world_scene_ARTIFACT_PATH}" P
 set(ATLANTIS_world_scene_METADATA_PATH "${ATLANTIS_world_scene_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_world_scene_MANIFEST_PATH "${ATLANTIS_world_scene_MANIFEST_PATH}" PARENT_SCOPE)
 set(ATLANTIS_world_scene_TARGET "${ATLANTIS_world_scene_TARGET}" PARENT_SCOPE)
+
+# Plan 0016 Section D8/D11: the textured fixture's own source, cooked
+# twice from the same SOURCE under two NAMEs/color spaces --
+# atlantis_add_texture_asset()'s own explicit "NAME, not SOURCE, is the
+# per-artifact identity key" mechanism (D8), confirmed working via
+# texture_cook_command_tests.cpp's own real-CLI double-cook case
+# (Milestone 7). Declared here, unconditionally (like minimal_cube/
+# world_scene above), rather than inside the ATLANTIS_BUILD_TESTS block
+# tests/image_regression/fixture/ itself lives in -- this call site must
+# precede atlantis_finalize_asset_validation()'s own call (below, this
+# file's caller), which reads the accumulated declared-asset-paths
+# property at CMake configure time, not build time; a declaration added
+# only inside the later ATLANTIS_BUILD_TESTS block would never be seen
+# by that read.
+atlantis_add_texture_asset(
+  NAME textured_quad_unorm
+  SOURCE textures/textured_quad_source.png
+  COLOR_SPACE Unorm
+)
+set(ATLANTIS_textured_quad_unorm_ARTIFACT_PATH "${ATLANTIS_textured_quad_unorm_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_textured_quad_unorm_METADATA_PATH "${ATLANTIS_textured_quad_unorm_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_textured_quad_unorm_TARGET "${ATLANTIS_textured_quad_unorm_TARGET}" PARENT_SCOPE)
+
+atlantis_add_texture_asset(
+  NAME textured_quad_srgb
+  SOURCE textures/textured_quad_source.png
+  COLOR_SPACE Srgb
+)
+set(ATLANTIS_textured_quad_srgb_ARTIFACT_PATH "${ATLANTIS_textured_quad_srgb_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_textured_quad_srgb_METADATA_PATH "${ATLANTIS_textured_quad_srgb_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_textured_quad_srgb_TARGET "${ATLANTIS_textured_quad_srgb_TARGET}" PARENT_SCOPE)

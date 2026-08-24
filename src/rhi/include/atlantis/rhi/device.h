@@ -8,6 +8,8 @@
 #include <atlantis/rhi/offscreen_target.h>
 #include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/render_target.h>
+#include <atlantis/rhi/sampled_texture.h>
+#include <atlantis/rhi/sampler.h>
 #include <atlantis/rhi/submission_signal.h>
 #include <atlantis/rhi/texture.h>
 #include <atlantis/rhi/types.h>
@@ -75,6 +77,16 @@ class Device {
   // reference to any OffscreenTarget it creates (ADR-0003).
   [[nodiscard]] virtual atlantis::Result<std::unique_ptr<OffscreenTarget>, OffscreenTargetCreateError>
   createOffscreenTarget(const OffscreenTargetCreateParams& params) = 0;
+
+  // Spec 0016/ADR-0055: stateless factory calls, matching
+  // createBuffer()/createTexture() exactly -- Device does not retain a
+  // reference (ADR-0003). SampledTexture/Sampler are each move-only,
+  // single-owner; the caller owns the returned object exclusively.
+  [[nodiscard]] virtual atlantis::Result<std::unique_ptr<SampledTexture>, SampledTextureCreateError>
+  createSampledTexture(const SampledTextureCreateParams& params) = 0;
+
+  [[nodiscard]] virtual atlantis::Result<std::unique_ptr<Sampler>, SamplerCreateError> createSampler(
+      const SamplerCreateParams& params) = 0;
 };
 
 }  // namespace atlantis::rhi

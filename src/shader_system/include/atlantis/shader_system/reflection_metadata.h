@@ -7,14 +7,15 @@
 
 namespace atlantis::shader_system {
 
-// Mirrors atlantis::rhi::VertexAttributeFormat's own narrowness (Float3
-// only, this round) -- see reflection_metadata.cpp's mapping from
-// Slang's scalar-type/element-count pair. A reflected attribute whose
-// Slang type does not map to a value here is a transform-time error
+// Mirrors atlantis::rhi::VertexAttributeFormat's own shape -- see
+// reflection_metadata.cpp's mapping from Slang's scalar-type/
+// element-count pair. A reflected attribute whose Slang type does not
+// map to a value here is a transform-time error
 // (TransformError::UnsupportedVertexAttributeType), never silently
 // coerced.
 enum class VertexAttributeType {
   Float3,
+  Float2,  // new (Spec 0016/D6) -- the interleaved Vertex layout's UV attribute
 };
 
 enum class ShaderStage {
@@ -23,7 +24,9 @@ enum class ShaderStage {
 };
 
 enum class DescriptorType {
-  UniformBuffer,  // this round's only reflected resource kind (ADR-0030's narrow scope)
+  UniformBuffer,  // ADR-0030's narrow scope
+  Sampler,  // new (Spec 0016/D6) -- a combined image sampler, matching
+            // VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER's own shape
 };
 
 // [JSON-verified against a real Slang reflection sample, per Spec 0008's

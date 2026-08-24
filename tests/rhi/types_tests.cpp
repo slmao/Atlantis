@@ -5,13 +5,18 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+using atlantis::rhi::AddressMode;
 using atlantis::rhi::BufferPurpose;
 using atlantis::rhi::ClearColorValue;
 using atlantis::rhi::Extent2D;
+using atlantis::rhi::Filter;
 using atlantis::rhi::Format;
 using atlantis::rhi::OffscreenTargetCreateParams;
 using atlantis::rhi::PresentationError;
 using atlantis::rhi::ResourceState;
+using atlantis::rhi::SampledTextureCreateParams;
+using atlantis::rhi::SampledTextureFormat;
+using atlantis::rhi::SamplerCreateParams;
 using atlantis::rhi::SwapchainMetadata;
 
 TEST_CASE("Extent2D defaults to zero", "[rhi][extent2d]") {
@@ -119,4 +124,34 @@ TEST_CASE("OffscreenTargetCreateParams equality and inequality", "[rhi][offscree
                 OffscreenTargetCreateParams{Extent2D{256, 256}, Format::Rgba8Unorm});
   REQUIRE_FALSE(OffscreenTargetCreateParams{Extent2D{512, 512}, Format::Rgba8Unorm} ==
                 OffscreenTargetCreateParams{Extent2D{512, 512}, Format::Bgra8Unorm});
+}
+
+TEST_CASE("SampledTextureCreateParams defaults to a real, usable format", "[rhi][sampled_texture_create_params]") {
+  const SampledTextureCreateParams params;
+  REQUIRE(params.extent.isZero());
+  REQUIRE(params.format == SampledTextureFormat::Rgba8Unorm);
+}
+
+TEST_CASE("SampledTextureCreateParams equality and inequality", "[rhi][sampled_texture_create_params]") {
+  REQUIRE(SampledTextureCreateParams{Extent2D{64, 64}, SampledTextureFormat::Rgba8Unorm} ==
+          SampledTextureCreateParams{Extent2D{64, 64}, SampledTextureFormat::Rgba8Unorm});
+  REQUIRE_FALSE(SampledTextureCreateParams{Extent2D{64, 64}, SampledTextureFormat::Rgba8Unorm} ==
+                SampledTextureCreateParams{Extent2D{32, 32}, SampledTextureFormat::Rgba8Unorm});
+  REQUIRE_FALSE(SampledTextureCreateParams{Extent2D{64, 64}, SampledTextureFormat::Rgba8Unorm} ==
+                SampledTextureCreateParams{Extent2D{64, 64}, SampledTextureFormat::Rgba8Srgb});
+}
+
+TEST_CASE("SamplerCreateParams defaults to a real, usable filter and address mode", "[rhi][sampler_create_params]") {
+  const SamplerCreateParams params;
+  REQUIRE(params.filter == Filter::Nearest);
+  REQUIRE(params.addressMode == AddressMode::ClampToEdge);
+}
+
+TEST_CASE("SamplerCreateParams equality and inequality", "[rhi][sampler_create_params]") {
+  REQUIRE(SamplerCreateParams{Filter::Linear, AddressMode::Repeat} ==
+          SamplerCreateParams{Filter::Linear, AddressMode::Repeat});
+  REQUIRE_FALSE(SamplerCreateParams{Filter::Linear, AddressMode::Repeat} ==
+                SamplerCreateParams{Filter::Nearest, AddressMode::Repeat});
+  REQUIRE_FALSE(SamplerCreateParams{Filter::Linear, AddressMode::Repeat} ==
+                SamplerCreateParams{Filter::Linear, AddressMode::ClampToEdge});
 }

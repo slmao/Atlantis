@@ -15,6 +15,8 @@ add_library(atlantis_vulkan_backend STATIC
   src/dynamic_rendering.cpp
   src/vulkan_buffer.cpp
   src/vulkan_texture.cpp
+  src/vulkan_sampled_texture.cpp
+  src/vulkan_sampler.cpp
   src/vulkan_pipeline.cpp
   src/vulkan_offscreen_target.cpp
   src/vulkan_offscreen_render_target.cpp

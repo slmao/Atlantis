@@ -24,6 +24,8 @@
 #include "vulkan_render_target.h"
 #include "vulkan_render_target_access.h"
 #include "vulkan_result.h"
+#include "vulkan_sampled_texture.h"
+#include "vulkan_sampler.h"
 #include "vulkan_submission_signal.h"
 #include "vulkan_texture.h"
 #include "wsi/win32_surface.h"
@@ -625,9 +627,48 @@ namespace {
   switch (format) {
     case atlantis::rhi::VertexAttributeFormat::Float3:
       return VK_FORMAT_R32G32B32_SFLOAT;
+    case atlantis::rhi::VertexAttributeFormat::Float2:
+      return VK_FORMAT_R32G32_SFLOAT;
   }
   ATLANTIS_CHECK_MSG(false, "vertexAttributeFormatToVkFormat() called with an unhandled enumerator");
   return VK_FORMAT_UNDEFINED;
+}
+
+// Spec 0016: SampledTexture's own format vocabulary is deliberately
+// separate from Texture's depth-only Format (D2's "depth-only Texture
+// stays unchanged" constraint), so it gets its own toVkFormat() overload
+// rather than extending the existing one.
+[[nodiscard]] VkFormat toVkFormat(atlantis::rhi::SampledTextureFormat format) {
+  switch (format) {
+    case atlantis::rhi::SampledTextureFormat::Rgba8Unorm:
+      return VK_FORMAT_R8G8B8A8_UNORM;
+    case atlantis::rhi::SampledTextureFormat::Rgba8Srgb:
+      return VK_FORMAT_R8G8B8A8_SRGB;
+  }
+  ATLANTIS_CHECK_MSG(false, "toVkFormat(SampledTextureFormat) called with an unhandled enumerator");
+  return VK_FORMAT_UNDEFINED;
+}
+
+[[nodiscard]] VkFilter toVkFilter(atlantis::rhi::Filter filter) {
+  switch (filter) {
+    case atlantis::rhi::Filter::Nearest:
+      return VK_FILTER_NEAREST;
+    case atlantis::rhi::Filter::Linear:
+      return VK_FILTER_LINEAR;
+  }
+  ATLANTIS_CHECK_MSG(false, "toVkFilter() called with an unhandled enumerator");
+  return VK_FILTER_NEAREST;
+}
+
+[[nodiscard]] VkSamplerAddressMode toVkSamplerAddressMode(atlantis::rhi::AddressMode addressMode) {
+  switch (addressMode) {
+    case atlantis::rhi::AddressMode::Repeat:
+      return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    case atlantis::rhi::AddressMode::ClampToEdge:
+      return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  }
+  ATLANTIS_CHECK_MSG(false, "toVkSamplerAddressMode() called with an unhandled enumerator");
+  return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 }
 
 }  // namespace
@@ -649,6 +690,9 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Buffer>, atlantis::rhi::BufferCr
       break;
     case atlantis::rhi::BufferPurpose::Readback:
       usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+      break;
+    case atlantis::rhi::BufferPurpose::Staging:
+      usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
       break;
   }
 
@@ -813,10 +857,28 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   uniformBinding.descriptorCount = 1;
   uniformBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
+  // Spec 0016 D5: the second, combined-image-sampler binding a textured
+  // Material's pipeline needs -- present only when
+  // params.hasSampledTextureBinding is set (an uniform-only Material's
+  // pipeline keeps the single-binding layout above unchanged, per D5a's
+  // "uniform-only Material behavior unchanged" constraint).
+  VkDescriptorSetLayoutBinding combinedImageSamplerBinding{};
+  combinedImageSamplerBinding.binding = 1;
+  combinedImageSamplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  combinedImageSamplerBinding.descriptorCount = 1;
+  combinedImageSamplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  const VkDescriptorSetLayoutBinding bothBindings[2] = {uniformBinding, combinedImageSamplerBinding};
+
   VkDescriptorSetLayoutCreateInfo setLayoutCreateInfo{};
   setLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  setLayoutCreateInfo.bindingCount = 1;
-  setLayoutCreateInfo.pBindings = &uniformBinding;
+  if (params.hasSampledTextureBinding) {
+    setLayoutCreateInfo.bindingCount = 2;
+    setLayoutCreateInfo.pBindings = bothBindings;
+  } else {
+    setLayoutCreateInfo.bindingCount = 1;
+    setLayoutCreateInfo.pBindings = &uniformBinding;
+  }
 
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   const VkResult setLayoutResult =
@@ -1063,6 +1125,109 @@ VulkanDevice::createOffscreenTarget(const atlantis::rhi::OffscreenTargetCreatePa
       std::make_unique<VulkanOffscreenTarget>(device_, image, memory, imageView, params.extent, params.format));
 }
 
+atlantis::Result<std::unique_ptr<atlantis::rhi::SampledTexture>, atlantis::rhi::SampledTextureCreateError>
+VulkanDevice::createSampledTexture(const atlantis::rhi::SampledTextureCreateParams& params) {
+  using ResultT = atlantis::Result<std::unique_ptr<atlantis::rhi::SampledTexture>,
+                                    atlantis::rhi::SampledTextureCreateError>;
+
+  const VkFormat vkFormat = toVkFormat(params.format);
+
+  VkImageCreateInfo imageCreateInfo{};
+  imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
+  imageCreateInfo.format = vkFormat;
+  imageCreateInfo.extent = VkExtent3D{params.extent.width, params.extent.height, 1};
+  imageCreateInfo.mipLevels = 1;
+  imageCreateInfo.arrayLayers = 1;
+  imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+  // Shader-sampled, and the copy destination for buildTextureUploadPass()'s
+  // buffer-to-image copy (Spec 0016 D4) -- both required.
+  imageCreateInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+  VkImage image = VK_NULL_HANDLE;
+  const VkResult createResult = vkCreateImage(device_, &imageCreateInfo, nullptr, &image);
+  if (createResult != VK_SUCCESS) {
+    return ResultT::Err(toSampledTextureCreateError(createResult));
+  }
+
+  VkMemoryRequirements requirements{};
+  vkGetImageMemoryRequirements(device_, image, &requirements);
+
+  const std::optional<std::uint32_t> memoryTypeIndex = selectMemoryTypeIndexForDevice(
+      physicalDevice_, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if (!memoryTypeIndex.has_value()) {
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(atlantis::rhi::SampledTextureCreateError::AllocationFailed);
+  }
+
+  VkMemoryAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = requirements.size;
+  allocInfo.memoryTypeIndex = *memoryTypeIndex;
+
+  VkDeviceMemory memory = VK_NULL_HANDLE;
+  const VkResult allocResult = vkAllocateMemory(device_, &allocInfo, nullptr, &memory);
+  if (allocResult != VK_SUCCESS) {
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(atlantis::rhi::SampledTextureCreateError::AllocationFailed);
+  }
+
+  const VkResult bindResult = vkBindImageMemory(device_, image, memory, 0);
+  if (bindResult != VK_SUCCESS) {
+    vkFreeMemory(device_, memory, nullptr);
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(toSampledTextureCreateError(bindResult));
+  }
+
+  VkImageViewCreateInfo viewCreateInfo{};
+  viewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  viewCreateInfo.image = image;
+  viewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  viewCreateInfo.format = vkFormat;
+  viewCreateInfo.subresourceRange = VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+  VkImageView imageView = VK_NULL_HANDLE;
+  const VkResult viewResult = vkCreateImageView(device_, &viewCreateInfo, nullptr, &imageView);
+  if (viewResult != VK_SUCCESS) {
+    vkFreeMemory(device_, memory, nullptr);
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(atlantis::rhi::SampledTextureCreateError::ImageViewCreationFailed);
+  }
+
+  return ResultT::Ok(
+      std::make_unique<VulkanSampledTexture>(device_, image, memory, imageView, params.extent, params.format));
+}
+
+atlantis::Result<std::unique_ptr<atlantis::rhi::Sampler>, atlantis::rhi::SamplerCreateError>
+VulkanDevice::createSampler(const atlantis::rhi::SamplerCreateParams& params) {
+  using ResultT = atlantis::Result<std::unique_ptr<atlantis::rhi::Sampler>, atlantis::rhi::SamplerCreateError>;
+
+  VkSamplerCreateInfo samplerCreateInfo{};
+  samplerCreateInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+  samplerCreateInfo.magFilter = toVkFilter(params.filter);
+  samplerCreateInfo.minFilter = toVkFilter(params.filter);
+  samplerCreateInfo.addressModeU = toVkSamplerAddressMode(params.addressMode);
+  samplerCreateInfo.addressModeV = toVkSamplerAddressMode(params.addressMode);
+  // 2D-only (Spec 0016 D5) -- W is unused by any sampling this module
+  // performs, so it is pinned to the same clamp behavior as U/V rather
+  // than exposed as its own RHI parameter.
+  samplerCreateInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  samplerCreateInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+  samplerCreateInfo.minLod = 0.0f;
+  samplerCreateInfo.maxLod = 0.0f;
+
+  VkSampler sampler = VK_NULL_HANDLE;
+  const VkResult createResult = vkCreateSampler(device_, &samplerCreateInfo, nullptr, &sampler);
+  if (createResult != VK_SUCCESS) {
+    return ResultT::Err(atlantis::rhi::SamplerCreateError::SamplerCreationFailed);
+  }
+
+  return ResultT::Ok(std::make_unique<VulkanSampler>(device_, sampler, params.filter, params.addressMode));
+}
+
 }  // namespace atlantis::vulkan_backend::detail
 
 namespace atlantis::vulkan_backend {
@@ -1242,16 +1407,23 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
   // derivation), VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT
   // required so vkFreeDescriptorSets (VulkanPipeline's destructor) is
   // valid usage.
-  VkDescriptorPoolSize descriptorPoolSize{};
-  descriptorPoolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-  descriptorPoolSize.descriptorCount = 4;
+  //
+  // Spec 0016 D5: a second pool-size entry for the combined-image-sampler
+  // binding textured Materials use -- sized the same as the uniform entry
+  // above so an all-textured workload does not exhaust the pool any
+  // sooner than an all-uniform-only one would.
+  VkDescriptorPoolSize descriptorPoolSizes[2]{};
+  descriptorPoolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  descriptorPoolSizes[0].descriptorCount = 4;
+  descriptorPoolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  descriptorPoolSizes[1].descriptorCount = 4;
 
   VkDescriptorPoolCreateInfo descriptorPoolCreateInfo{};
   descriptorPoolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
   descriptorPoolCreateInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
   descriptorPoolCreateInfo.maxSets = 4;
-  descriptorPoolCreateInfo.poolSizeCount = 1;
-  descriptorPoolCreateInfo.pPoolSizes = &descriptorPoolSize;
+  descriptorPoolCreateInfo.poolSizeCount = 2;
+  descriptorPoolCreateInfo.pPoolSizes = descriptorPoolSizes;
 
   VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
   if (vkCreateDescriptorPool(device, &descriptorPoolCreateInfo, nullptr, &descriptorPool) != VK_SUCCESS) {

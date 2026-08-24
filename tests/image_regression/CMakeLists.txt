@@ -41,6 +41,7 @@ add_executable(atlantis_image_regression_gpu_tests
   image_regression_gpu_tests.cpp
   world_scene_gpu_tests.cpp
   world_scene_loaded_gpu_tests.cpp
+  textured_quad_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_image_regression_gpu_tests
@@ -77,13 +78,20 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_WORLD_SCENE_ARTIFACT_PATH="${ATLANTIS_world_scene_ARTIFACT_PATH}"
   ATLANTIS_WORLD_SCENE_METADATA_PATH="${ATLANTIS_world_scene_METADATA_PATH}"
   ATLANTIS_WORLD_SCENE_MANIFEST_PATH="${ATLANTIS_world_scene_MANIFEST_PATH}"
+  # Plan 0016 Milestone 9: the textured fixture's own two cooked texture
+  # artifact/metadata paths (Milestone 6/7).
+  ATLANTIS_textured_quad_unorm_ARTIFACT_PATH="${ATLANTIS_textured_quad_unorm_ARTIFACT_PATH}"
+  ATLANTIS_textured_quad_unorm_METADATA_PATH="${ATLANTIS_textured_quad_unorm_METADATA_PATH}"
+  ATLANTIS_textured_quad_srgb_ARTIFACT_PATH="${ATLANTIS_textured_quad_srgb_ARTIFACT_PATH}"
+  ATLANTIS_textured_quad_srgb_METADATA_PATH="${ATLANTIS_textured_quad_srgb_METADATA_PATH}"
 )
 
 # Plan 0012 Step 6: the asset-sourced GPU test case needs
 # minimal_cube's own cooked artifact/metadata to already exist. Plan
 # 0015 Section D11/Step 9: world_scene's own cooked artifact/metadata/
 # manifest likewise.
-add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})
+add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET}
+  ${ATLANTIS_textured_quad_unorm_TARGET} ${ATLANTIS_textured_quad_srgb_TARGET})
 
 # Same build-tree shader artifact set as the golden generator -- this
 # executable renders the identical fixture. WORKING_DIRECTORY above
@@ -93,7 +101,7 @@ add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TAR
 # instead precisely because they must resolve identically regardless of
 # which directory ctest (or a human) happens to invoke this executable
 # from.
-add_dependencies(atlantis_image_regression_gpu_tests minimal_mesh_shaders)
+add_dependencies(atlantis_image_regression_gpu_tests minimal_mesh_shaders textured_quad_shaders)
 add_custom_command(TARGET atlantis_image_regression_gpu_tests POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_image_regression_gpu_tests>/shaders"
@@ -102,5 +110,11 @@ add_custom_command(TARGET atlantis_image_regression_gpu_tests POST_BUILD
       "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.vert.refl.json"
       "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.spv"
       "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_gpu_tests>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.vert.spv"
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.vert.refl.json"
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.frag.spv"
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.frag.refl.json"
       "$<TARGET_FILE_DIR:atlantis_image_regression_gpu_tests>/shaders/"
 )

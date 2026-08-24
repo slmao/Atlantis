@@ -10,6 +10,10 @@ option(ATLANTIS_BUILD_TESTS "Build Atlantis unit tests" ON)
 option(ATLANTIS_BUILD_EXAMPLES "Build Atlantis example programs" ON)
 
 include(cmake/CompilerWarnings.cmake)
+# Unconditional, independent of ATLANTIS_BUILD_TESTS -- src/tools/asset_cooker
+# (added unconditionally below) needs Stb::Stb too (Spec 0016). Must
+# precede add_subdirectory(src/tools/asset_cooker).
+include(cmake/AtlantisStb.cmake)
 
 find_package(Vulkan REQUIRED)
 
@@ -101,6 +105,10 @@ if(ATLANTIS_BUILD_TESTS)
   add_subdirectory(tests/platform)
   add_subdirectory(tests/rhi)
   add_subdirectory(tests/vulkan_backend)
+  # Plan 0016 Milestone 9 (D11): test-only shader pair, unlike
+  # shaders/minimal_renderer's own unconditional placement above --
+  # only tests/image_regression/fixture/ (added next) consumes it.
+  add_subdirectory(shaders/textured_quad)
   add_subdirectory(tests/image_regression)
   add_subdirectory(tests/render_graph)
   add_subdirectory(tests/renderer)

@@ -111,6 +111,11 @@ atlantis::rhi::TextureCreateError toTextureCreateError(VkResult result) {
   return atlantis::rhi::TextureCreateError::ImageCreationFailed;
 }
 
+atlantis::rhi::SampledTextureCreateError toSampledTextureCreateError(VkResult result) {
+  ATLANTIS_CHECK(result != VK_SUCCESS);
+  return atlantis::rhi::SampledTextureCreateError::ImageCreationFailed;
+}
+
 atlantis::rhi::PipelineCreateError toPipelineCreateError(VkResult result) {
   ATLANTIS_CHECK(result != VK_SUCCESS);
   return atlantis::rhi::PipelineCreateError::PipelineCreationFailed;

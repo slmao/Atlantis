@@ -4,13 +4,38 @@
 #include <atlantis/asset_system/asset_set_validation.h>
 #include <atlantis/asset_system/cook.h>
 #include <atlantis/asset_system/cook_scene.h>
+#include <atlantis/asset_system/cook_texture.h>
 #include <atlantis/asset_system/logical_path.h>
+#include <atlantis/asset_system/texture_types.h>
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
+
+// Plan 0016 Section D9: the one and only stb_image call site in this
+// entire codebase's own runtime-adjacent code -- the second
+// implementation-macro translation unit in the repository (ADR-0041's
+// own "one implementation-macro TU per linking target" Accepted
+// Amendment; the first is tests/image_regression/support/png_codec.cpp),
+// never linked into the same binary as that one. STB_IMAGE_WRITE_IMPLEMENTATION
+// is deliberately NOT defined here -- this tool only ever decodes,
+// mirroring cook_command.cpp's own read-only relationship to every other
+// authoring source format it already handles.
+#define STB_IMAGE_IMPLEMENTATION
+#if defined(_MSC_VER)
+// stb's own implementation is not warning-clean under this project's
+// /W4 /WX policy -- third-party code this project does not own or
+// modify, matching png_codec.cpp's own identical, already-established
+// suppression scope exactly (narrowly around this one include, not a
+// relaxation of atlantis_compiler_warnings itself).
+#pragma warning(push, 0)
+#endif
+#include <stb_image.h>
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 namespace atlantis::tools::asset_cooker {
 
@@ -24,6 +49,11 @@ constexpr std::string_view kAuthoringExtension = ".mesh.txt";
 // scene pipeline's own source-relative-path/output-basename
 // computation.
 constexpr std::string_view kSceneAuthoringExtension = ".scene.txt";
+// Plan 0016 Section D9: mirrors kAuthoringExtension exactly, for the
+// texture pipeline's own source-relative-path computation (the output
+// basename itself is NAME-derived, not SOURCE-derived -- see
+// runCookTextureMode()'s own comment).
+constexpr std::string_view kTextureAuthoringExtension = ".png";
 
 // Computes the source path relative to the asset root, as a forward-
 // slash string, purely for CLI convenience (constructing an output file
@@ -75,6 +105,22 @@ constexpr std::string_view kSceneAuthoringExtension = ".scene.txt";
       return "invalid (not already normalized) logical path";
   }
   return "unknown asset set error";
+}
+
+// Plan 0016 Section D9: mirrors cookErrorMessage()'s own role and shape
+// exactly, for TextureCookError.
+[[nodiscard]] const char* textureCookErrorMessage(TextureCookError error) {
+  switch (error) {
+    case TextureCookError::ZeroDimension:
+      return "zero width or height";
+    case TextureCookError::DimensionExceedsMaximum:
+      return "dimension exceeds maximum";
+    case TextureCookError::SourceOverflow:
+      return "pixel data size overflow";
+    case TextureCookError::AtomicWriteFailed:
+      return "atomic write failed";
+  }
+  return "unknown texture cook error";
 }
 
 // Plan 0015 Section D7: mirrors cookErrorMessage()'s own role and
@@ -171,6 +217,76 @@ constexpr std::string_view kSceneAuthoringExtension = ".scene.txt";
   return 0;
 }
 
+// Plan 0016 Section D9: matches runCookMeshMode()/runCookSceneMode()'s
+// own overall shape (decode -> cook -> stamp), with one disclosed
+// deviation from D9's own literal "strip a fixed authoring extension"
+// output-path description. Unlike mesh/scene, the same source PNG must
+// be cook-able TWICE, under two different NAMEs/color spaces (Plan 0016
+// Section D8's own explicit "NAME, not SOURCE, is the per-artifact
+// identity key" requirement -- the mechanism the textured fixture's own
+// two textures, Milestone 9, need) -- a source-relative-path-derived
+// output basename cannot support that without one cook silently
+// overwriting the other's artifact. The output basename is therefore
+// derived from --stamp='s own filename stem instead, which
+// atlantis_add_texture_asset() (asset_system/CMakeLists.txt, already
+// committed in Milestone 6) already keys by NAME (<name>.stamp) to
+// exactly match this function's own <name>.atex/<name>.atex.meta.txt
+// expectation -- no CMake change was needed to make this line up.
+// relativePath (the source's own asset-root-relative path) is still
+// used for cookTexture()'s own logicalPathInput, unchanged from every
+// other cook mode's own convention.
+[[nodiscard]] int runCookTextureMode(const CookCommandRequest& request) {
+  using atlantis::asset_system::cookTexture;
+  using atlantis::asset_system::TextureColorSpace;
+
+  const std::string relativePath = computeRelativePathString(request.sourcePath, request.assetRoot);
+
+  TextureColorSpace colorSpace = TextureColorSpace::Unorm;
+  if (request.colorSpace == "srgb") {
+    colorSpace = TextureColorSpace::Srgb;
+  } else if (request.colorSpace == "unorm") {
+    colorSpace = TextureColorSpace::Unorm;
+  } else {
+    std::cerr << "atlantis_asset_cooker: unrecognized --color-space value: " << request.colorSpace << "\n";
+    return 1;
+  }
+
+  // The one and only stbi_load() call site in this entire codebase's
+  // own runtime-adjacent code (this file's own top comment). Requests 4
+  // channels unconditionally -- channelsInFile reports the source's own
+  // real decoded channel count for metadata provenance only (Spec 0016
+  // Human Review item 9); a non-RGBA source is never rejected here,
+  // deliberately unlike png_codec.cpp's own golden-validation
+  // ChannelCountMismatch/UnsupportedBitDepth checks.
+  int width = 0;
+  int height = 0;
+  int channelsInFile = 0;
+  unsigned char* decoded = stbi_load(request.sourcePath.c_str(), &width, &height, &channelsInFile, 4);
+  if (decoded == nullptr) {
+    std::cerr << "atlantis_asset_cooker: failed to decode PNG source: " << request.sourcePath << "\n";
+    return 1;
+  }
+
+  const std::string base = fs::path(request.stampPath).stem().string();
+  const fs::path artifactPath = fs::path(request.outputDir) / (base + ".atex");
+  const fs::path metadataPath = fs::path(request.outputDir) / (base + ".atex.meta.txt");
+
+  const auto result = cookTexture(decoded, static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height),
+                                   channelsInFile, colorSpace, relativePath, artifactPath, metadataPath);
+  stbi_image_free(decoded);
+  if (result.isErr()) {
+    std::cerr << "atlantis_asset_cooker: cook failed: " << textureCookErrorMessage(result.error()) << "\n";
+    return 1;
+  }
+
+  if (!writeStamp(request.stampPath)) {
+    std::cerr << "atlantis_asset_cooker: failed to write stamp file: " << request.stampPath << "\n";
+    return 1;
+  }
+
+  return 0;
+}
+
 [[nodiscard]] int runValidateSetMode(const CookCommandRequest& request) {
   std::ifstream listFile(request.assetListPath);
   if (!listFile.is_open()) {
@@ -212,6 +328,8 @@ int runCookCommand(const CookCommandRequest& request) {
       return runCookMeshMode(request);
     case AssetKind::Scene:
       return runCookSceneMode(request);
+    case AssetKind::Texture:
+      return runCookTextureMode(request);
   }
   return runCookMeshMode(request);
 }

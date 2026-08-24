@@ -7,6 +7,8 @@
 #include "vulkan_pipeline.h"
 #include "vulkan_render_target.h"
 #include "vulkan_render_target_access.h"
+#include "vulkan_sampled_texture.h"
+#include "vulkan_sampler.h"
 #include "vulkan_texture.h"
 
 namespace atlantis::vulkan_backend::detail {
@@ -88,6 +90,29 @@ void VulkanCommandList::transitionResource(atlantis::rhi::Texture& target, atlan
       .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
       .image = vulkanTexture.image(),
       .subresourceRange = fullDepthResourceRange(),
+  };
+
+  vkCmdPipelineBarrier(commandBuffer_, plan.srcStage, plan.dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+}
+
+void VulkanCommandList::transitionResource(atlantis::rhi::SampledTexture& target, atlantis::rhi::ResourceState before,
+                                            atlantis::rhi::ResourceState after) {
+  // Single real implementer -- static_cast, matching VulkanSampledTexture's
+  // own header comment (Spec 0016).
+  auto& vulkanTexture = static_cast<VulkanSampledTexture&>(target);
+  const ImageBarrierPlan plan = planTransition(before, after);
+
+  const VkImageMemoryBarrier barrier{
+      .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+      .pNext = nullptr,
+      .srcAccessMask = plan.srcAccessMask,
+      .dstAccessMask = plan.dstAccessMask,
+      .oldLayout = plan.oldLayout,
+      .newLayout = plan.newLayout,
+      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+      .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+      .image = vulkanTexture.image(),
+      .subresourceRange = fullColorResourceRange(),
   };
 
   vkCmdPipelineBarrier(commandBuffer_, plan.srcStage, plan.dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
@@ -243,6 +268,55 @@ void VulkanCommandList::bindUniformBuffer(atlantis::rhi::Buffer& buffer) {
                            &boundDescriptorSet_, 0, nullptr);
 }
 
+void VulkanCommandList::bindTexture(const atlantis::rhi::SampledTexture& texture,
+                                     const atlantis::rhi::Sampler& sampler) {
+  ATLANTIS_CHECK(boundDescriptorSet_ != VK_NULL_HANDLE);
+  const auto& vulkanTexture = static_cast<const VulkanSampledTexture&>(texture);
+  const auto& vulkanSampler = static_cast<const VulkanSampler&>(sampler);
+
+  VkDescriptorImageInfo imageInfo{};
+  imageInfo.sampler = vulkanSampler.sampler();
+  imageInfo.imageView = vulkanTexture.imageView();
+  // Precondition, enforced by render_graph::execute()'s own algorithm, not
+  // re-checked here: texture must already be in
+  // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL (ResourceState::ShaderRead)
+  // when this is called -- see resource_state_mapping.h's own note.
+  imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+  // Same redundant-write memo as bindUniformBuffer() above, and for the
+  // same reason (this class's own header comment on
+  // lastUpdatedDescriptorSet_/lastUpdatedUniformBuffer_): a textured
+  // Material shared by multiple DrawItems in one frame calls
+  // bindTexture() again for every item, each with byte-identical
+  // VkDescriptorImageInfo contents, so the redundant vkUpdateDescriptorSets
+  // call (and only that call) is skipped when this exact
+  // (descriptor set, SampledTexture, Sampler) triple repeats.
+  if (boundDescriptorSet_ != lastUpdatedTextureDescriptorSet_ || &vulkanTexture != lastUpdatedSampledTexture_ ||
+      &vulkanSampler != lastUpdatedSampler_) {
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = boundDescriptorSet_;
+    write.dstBinding = 1;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &imageInfo;
+
+    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    lastUpdatedTextureDescriptorSet_ = boundDescriptorSet_;
+    lastUpdatedSampledTexture_ = &vulkanTexture;
+    lastUpdatedSampler_ = &vulkanSampler;
+  }
+
+  // Renderer calls this immediately after bindUniformBuffer() (Spec
+  // 0016/D3), which has already re-issued vkCmdBindDescriptorSets() for
+  // this same set earlier in this draw item -- re-issuing it again here
+  // is what actually makes this write visible to the upcoming draw call;
+  // it is not merely redundant with bindUniformBuffer()'s own call, since
+  // that earlier call could not have known about this write yet.
+  vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipelineLayout_, 0, 1,
+                           &boundDescriptorSet_, 0, nullptr);
+}
+
 void VulkanCommandList::pushConstant(const void* data, std::size_t sizeBytes) {
   ATLANTIS_CHECK(boundPipelineLayout_ != VK_NULL_HANDLE);
   vkCmdPushConstants(commandBuffer_, boundPipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
@@ -282,6 +356,30 @@ void VulkanCommandList::copyRenderTargetToBuffer(atlantis::rhi::RenderTarget& so
   // uniform Buffer's own write-timing argument, ADR-0023).
   vkCmdCopyImageToBuffer(commandBuffer_, access->image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                           vulkanBuffer.vkBuffer(), 1, &region);
+}
+
+void VulkanCommandList::copyBufferToTexture(atlantis::rhi::Buffer& source, atlantis::rhi::SampledTexture& destination) {
+  ATLANTIS_CHECK(source.purpose() == atlantis::rhi::BufferPurpose::Staging);
+  // Only one concrete Buffer implementation exists in Phase 1 (ADR-0001) --
+  // no dynamic_cast needed, matching copyRenderTargetToBuffer()'s own note
+  // on destination there.
+  auto& vulkanBuffer = static_cast<VulkanBuffer&>(source);
+  auto& vulkanTexture = static_cast<VulkanSampledTexture&>(destination);
+  const atlantis::rhi::Extent2D destExtent = destination.extent();
+
+  VkBufferImageCopy region{};
+  region.bufferOffset = 0;
+  region.bufferRowLength = 0;    // 0 = tightly packed (ADR-0040 precedent)
+  region.bufferImageHeight = 0;  // 0 = tightly packed (ADR-0040 precedent)
+  region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  region.imageOffset = {0, 0, 0};
+  region.imageExtent = {destExtent.width, destExtent.height, 1};
+  // Precondition, enforced by buildTextureUploadPass() (Spec 0016 D4), not
+  // re-checked here: destination must already be in
+  // VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL (ResourceState::TransferDestination)
+  // when this is called.
+  vkCmdCopyBufferToImage(commandBuffer_, vulkanBuffer.vkBuffer(), vulkanTexture.image(),
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 }
 
 }  // namespace atlantis::vulkan_backend::detail

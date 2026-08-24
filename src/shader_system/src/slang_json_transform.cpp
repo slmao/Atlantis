@@ -111,12 +111,13 @@ void collectVaryingLeaves(const JsonValue& node, const std::string& bindingKind,
   if (readStringField(*typeNode, "kind") != "vector") return std::nullopt;
   const auto elementCount = readUint32Field(*typeNode, "elementCount");
   const JsonValue* elementType = typeNode->find("elementType");
-  if (!elementCount.has_value() || *elementCount != 3 || elementType == nullptr || !elementType->isObject()) {
+  if (!elementCount.has_value() || (*elementCount != 3 && *elementCount != 2) || elementType == nullptr ||
+      !elementType->isObject()) {
     return std::nullopt;
   }
   if (readStringField(*elementType, "kind") != "scalar") return std::nullopt;
   if (readStringField(*elementType, "scalarType") != "float32") return std::nullopt;
-  return VertexAttributeType::Float3;
+  return *elementCount == 3 ? VertexAttributeType::Float3 : VertexAttributeType::Float2;
 }
 
 }  // namespace
@@ -201,16 +202,44 @@ atlantis::Result<ReflectionMetadata, TransformError> transformSlangReflectionJso
         const auto moduleTypeKind = moduleType != nullptr && moduleType->isObject()
                                          ? readStringField(*moduleType, "kind")
                                          : std::nullopt;
-        if (!moduleTypeKind.has_value() || *moduleTypeKind != "constantBuffer") {
-          // This round's only reflected resource kind is a uniform
-          // buffer (Spec 0008/ADR-0030's narrow scope) -- anything else
-          // reflecting as a descriptorTableSlot is a genuinely new shape
-          // this module does not model, not silently mis-typed.
+        if (!moduleTypeKind.has_value()) return TransformResult::Err(TransformError::UnexpectedStructure);
+
+        if (*moduleTypeKind == "constantBuffer") {
+          metadata.descriptorBindings.push_back(
+              DescriptorBinding{.set = space.value_or(0), .binding = *index, .type = DescriptorType::UniformBuffer, .stage = stage});
+        } else if (*moduleTypeKind == "resource") {
+          // Spec 0016/D6: a combined image sampler ([[vk::binding(N,M)]]
+          // Sampler2D) also reflects as a descriptorTableSlot binding --
+          // the same top-level kind a uniform buffer uses. The real
+          // distinguishing shape is one level deeper, in the module
+          // parameter's own type object -- empirically confirmed against
+          // a real slangc compile (see this file's own top comment):
+          // type.kind == "resource", type.baseShape == "texture2D", and
+          // type.combined == true (a JSON boolean) confirms *combined*
+          // image+sampler, never a separate Texture2D + SamplerState pair.
+          const auto baseShape = readStringField(*moduleType, "baseShape");
+          const JsonValue* combinedField = moduleType->find("combined");
+          const bool isCombined = combinedField != nullptr && isTruthy(*combinedField);
+          if (baseShape.has_value() && *baseShape == "texture2D" && isCombined) {
+            metadata.descriptorBindings.push_back(
+                DescriptorBinding{.set = space.value_or(0), .binding = *index, .type = DescriptorType::Sampler, .stage = stage});
+          } else {
+            // A resource binding shape this module does not model (e.g.
+            // a separate, non-combined SamplerState/Texture2D pair, or a
+            // 3D/cubemap texture) -- still an explicit, named structural
+            // error, never silently skipped, matching the constantBuffer
+            // branch's own "genuinely new shape, not silently mis-typed"
+            // precedent.
+            return TransformResult::Err(TransformError::UnexpectedStructure);
+          }
+        } else {
+          // This round's only reflected descriptorTableSlot resource
+          // kinds are a uniform buffer and a combined image sampler
+          // (Spec 0016/D6's narrow scope) -- anything else reflecting as
+          // a descriptorTableSlot is a genuinely new shape this module
+          // does not model, not silently mis-typed.
           return TransformResult::Err(TransformError::UnexpectedStructure);
         }
-
-        metadata.descriptorBindings.push_back(
-            DescriptorBinding{.set = space.value_or(0), .binding = *index, .type = DescriptorType::UniformBuffer, .stage = stage});
 
       } else if (*kind == "pushConstantBuffer") {
         // No "used" field is present on this binding kind in real
@@ -242,10 +271,19 @@ atlantis::Result<ReflectionMetadata, TransformError> transformSlangReflectionJso
         metadata.pushConstantRanges.push_back(
             PushConstantRange{.offsetBytes = *offsetBytes, .sizeBytes = *sizeBytes, .stage = stage});
       }
-      // Any other binding kind (e.g. a future sampler/texture) is
-      // outside this round's modeled scope (Spec 0008/ADR-0030) and is
-      // silently skipped here, matching Section 3's general "unknown
-      // fields are ignored" rule extended to unknown binding kinds.
+      // Any other top-level binding kind is outside this round's modeled
+      // scope (Spec 0008/ADR-0030) and is silently skipped here, matching
+      // Section 3's general "unknown fields are ignored" rule extended to
+      // unknown binding kinds. This is narrower than it was before Spec
+      // 0016/D6: descriptorTableSlot itself now recognizes two distinct
+      // module-type shapes (constantBuffer, resource+texture2D+combined)
+      // instead of one, and any *other* resource shape within a
+      // descriptorTableSlot (a non-combined sampler, a non-2D texture, a
+      // storage buffer, etc.) is an explicit, named UnexpectedStructure
+      // above, not silently absent from descriptorBindings -- only a
+      // wholly different top-level `kind` string (neither
+      // descriptorTableSlot nor pushConstantBuffer) still falls through
+      // to this silent skip.
     }
   }
 

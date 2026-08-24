@@ -44,6 +44,7 @@ using LoadResult = atlantis::Result<ReflectionMetadata, ReflectionLoadError>;
 
 [[nodiscard]] std::optional<DescriptorType> parseDescriptorType(const std::string& text) {
   if (text == "uniformBuffer") return DescriptorType::UniformBuffer;
+  if (text == "sampler") return DescriptorType::Sampler;  // Spec 0016/D6
   return std::nullopt;
 }
 
@@ -51,12 +52,15 @@ using LoadResult = atlantis::Result<ReflectionMetadata, ReflectionLoadError>;
   switch (type) {
     case DescriptorType::UniformBuffer:
       return "uniformBuffer";
+    case DescriptorType::Sampler:
+      return "sampler";
   }
   return "uniformBuffer";
 }
 
 [[nodiscard]] std::optional<VertexAttributeType> parseVertexAttributeType(const std::string& text) {
   if (text == "float3") return VertexAttributeType::Float3;
+  if (text == "float2") return VertexAttributeType::Float2;  // Spec 0016/D6
   return std::nullopt;
 }
 
@@ -64,6 +68,8 @@ using LoadResult = atlantis::Result<ReflectionMetadata, ReflectionLoadError>;
   switch (type) {
     case VertexAttributeType::Float3:
       return "float3";
+    case VertexAttributeType::Float2:
+      return "float2";
   }
   return "float3";
 }

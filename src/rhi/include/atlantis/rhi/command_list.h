@@ -6,6 +6,8 @@
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/render_target.h>
+#include <atlantis/rhi/sampled_texture.h>
+#include <atlantis/rhi/sampler.h>
 #include <atlantis/rhi/texture.h>
 #include <atlantis/rhi/types.h>
 
@@ -82,6 +84,38 @@ class CommandList {
   // (ADR-0020), the same, unenforced-by-the-type-system convention every
   // other CommandList method above already follows.
   virtual void copyRenderTargetToBuffer(RenderTarget& source, Buffer& destination) = 0;
+
+  // Spec 0016/ADR-0056: a third transitionResource() overload, alongside
+  // the RenderTarget/depth-Texture ones above -- same shape, new target
+  // type.
+  virtual void transitionResource(SampledTexture& target, ResourceState before, ResourceState after) = 0;
+
+  // source must have been created with BufferPurpose::Staging.
+  // destination must be in ResourceState::Undefined or
+  // ResourceState::TransferDestination when this is recorded -- caller
+  // precondition (ATLANTIS_CHECK), not checked here, matching every
+  // other CommandList method's existing discipline. Tightly packed,
+  // row-major, no padding -- matching copyRenderTargetToBuffer()'s own
+  // bufferRowLength = 0 convention (ADR-0040).
+  virtual void copyBufferToTexture(Buffer& source, SampledTexture& destination) = 0;
+
+  // texture must be in ResourceState::ShaderRead when this is recorded
+  // -- caller precondition, matching bindUniformBuffer()'s own
+  // BufferPurpose precondition. Binds a combined image sampler at set
+  // 0, binding 1, fragment stage (ADR-0056 Decision 9) -- the currently
+  // bound Pipeline must have been created with
+  // PipelineCreateParams::hasSampledTextureBinding = true.
+  //
+  // const&, unlike transitionResource(SampledTexture&, ...)/
+  // copyBufferToTexture() above -- this call only reads the bound
+  // texture/sampler's already-const-qualified accessors (VkImageView/
+  // VkSampler) to populate a descriptor write; it does not transition or
+  // otherwise mutate either resource. const is also what Material's own
+  // borrowed sampledTexture()/sampler() accessors return (Spec 0016/D3),
+  // so this is the only signature Renderer's own
+  // cmd.bindTexture(*item.material->sampledTexture(), ...) call can pass
+  // without an unsafe const_cast.
+  virtual void bindTexture(const SampledTexture& texture, const Sampler& sampler) = 0;
 };
 
 }  // namespace atlantis::rhi

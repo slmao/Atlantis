@@ -66,6 +66,40 @@ add_custom_command(TARGET atlantis_image_regression_world_scene_golden_generator
       "$<TARGET_FILE_DIR:atlantis_image_regression_world_scene_golden_generator>/shaders/"
 )
 
+# Plan 0016 Milestone 9: a third, standalone golden-generator executable
+# for the textured quad fixture -- same reused git/provenance/PNG steps,
+# "render one frame" replaced with renderTexturedQuadFrame().
+add_executable(atlantis_image_regression_textured_quad_golden_generator textured_quad_main.cpp)
+
+target_link_libraries(atlantis_image_regression_textured_quad_golden_generator
+  PRIVATE
+    Atlantis::ImageRegressionFixture
+    Atlantis::ImageRegressionSupport
+    atlantis_compiler_warnings
+)
+
+target_compile_definitions(atlantis_image_regression_textured_quad_golden_generator PRIVATE
+  ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+  ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
+  ATLANTIS_textured_quad_unorm_ARTIFACT_PATH="${ATLANTIS_textured_quad_unorm_ARTIFACT_PATH}"
+  ATLANTIS_textured_quad_unorm_METADATA_PATH="${ATLANTIS_textured_quad_unorm_METADATA_PATH}"
+  ATLANTIS_textured_quad_srgb_ARTIFACT_PATH="${ATLANTIS_textured_quad_srgb_ARTIFACT_PATH}"
+  ATLANTIS_textured_quad_srgb_METADATA_PATH="${ATLANTIS_textured_quad_srgb_METADATA_PATH}"
+)
+
+add_dependencies(atlantis_image_regression_textured_quad_golden_generator textured_quad_shaders
+  ${ATLANTIS_textured_quad_unorm_TARGET} ${ATLANTIS_textured_quad_srgb_TARGET})
+add_custom_command(TARGET atlantis_image_regression_textured_quad_golden_generator POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+      "$<TARGET_FILE_DIR:atlantis_image_regression_textured_quad_golden_generator>/shaders"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.vert.spv"
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.vert.refl.json"
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.frag.spv"
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_textured_quad_golden_generator>/shaders/"
+)
+
 # Deliberately no catch_discover_tests()/LABELS "gpu"/add_test() call in
 # this file -- the concrete enforcement of "never registered with
 # CTest." Deliberately no run_... convenience custom target: this tool

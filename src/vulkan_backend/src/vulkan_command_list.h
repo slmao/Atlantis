@@ -9,6 +9,9 @@
 // (VulkanDevice::createCommandList()).
 namespace atlantis::vulkan_backend::detail {
 
+class VulkanSampledTexture;
+class VulkanSampler;
+
 // Owns its VkCommandBuffer's allocation from device/commandPool (frees it
 // in its destructor via vkFreeCommandBuffers) but does not own device or
 // commandPool themselves -- both must outlive this object (caller-
@@ -46,6 +49,8 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
                            atlantis::rhi::ResourceState after) override;
   void transitionResource(atlantis::rhi::Texture& target, atlantis::rhi::ResourceState before,
                            atlantis::rhi::ResourceState after) override;
+  void transitionResource(atlantis::rhi::SampledTexture& target, atlantis::rhi::ResourceState before,
+                           atlantis::rhi::ResourceState after) override;
   void clearColor(atlantis::rhi::RenderTarget& target, atlantis::rhi::ClearColorValue color) override;
 
   void beginRendering(atlantis::rhi::RenderTarget& color, atlantis::rhi::Texture* depth,
@@ -56,9 +61,16 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   void bindVertexBuffer(atlantis::rhi::Buffer& buffer) override;
   void bindIndexBuffer(atlantis::rhi::Buffer& buffer) override;
   void bindUniformBuffer(atlantis::rhi::Buffer& buffer) override;
+  // Renderer calls this immediately after bindUniformBuffer() for a
+  // textured Material's draw items (Spec 0016/D3) -- see this method's
+  // own .cpp body comment for why that order is safe. const&, matching
+  // CommandList's own interface declaration -- see that header's own
+  // comment for why (only const-qualified accessors are ever read here).
+  void bindTexture(const atlantis::rhi::SampledTexture& texture, const atlantis::rhi::Sampler& sampler) override;
   void pushConstant(const void* data, std::size_t sizeBytes) override;
   void drawIndexed(std::uint32_t indexCount) override;
   void copyRenderTargetToBuffer(atlantis::rhi::RenderTarget& source, atlantis::rhi::Buffer& destination) override;
+  void copyBufferToTexture(atlantis::rhi::Buffer& source, atlantis::rhi::SampledTexture& destination) override;
 
   // Exists solely for VulkanDevice::submit() (vkEndCommandBuffer,
   // vkQueueSubmit) -- never reached from RHI's public surface.
@@ -102,6 +114,17 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   // bound.
   VkDescriptorSet lastUpdatedDescriptorSet_ = VK_NULL_HANDLE;
   VkBuffer lastUpdatedUniformBuffer_ = VK_NULL_HANDLE;
+
+  // Same memo pattern as lastUpdatedDescriptorSet_/lastUpdatedUniformBuffer_
+  // above, for bindTexture() (Spec 0016/D3) -- a textured Material shared
+  // by multiple DrawItems calls bindTexture() again for every item, each
+  // with byte-identical VkDescriptorImageInfo contents (the one shared
+  // SampledTexture/Sampler pair). Pointer identity only, matching the
+  // buffer memo's own VkBuffer-handle-identity comparison; neither
+  // pointer is ever dereferenced through this member.
+  VkDescriptorSet lastUpdatedTextureDescriptorSet_ = VK_NULL_HANDLE;
+  const VulkanSampledTexture* lastUpdatedSampledTexture_ = nullptr;
+  const VulkanSampler* lastUpdatedSampler_ = nullptr;
 };
 
 }  // namespace atlantis::vulkan_backend::detail

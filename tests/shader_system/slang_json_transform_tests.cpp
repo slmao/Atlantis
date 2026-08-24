@@ -159,6 +159,112 @@ TEST_CASE("transformSlangReflectionJson() rejects malformed/unexpected top-level
   }
 }
 
+TEST_CASE("transformSlangReflectionJson() parses a real combined-image-sampler binding (V18)",
+          "[shader_system][slang_json_transform]") {
+  // Spec 0016/D6: the real, slangc-confirmed shape for a
+  // [[vk::binding(1,0)]] Sampler2D declaration -- binding.kind is
+  // "descriptorTableSlot" (the same string a uniform buffer already
+  // uses), and the real distinguishing shape is one level deeper:
+  // type.kind == "resource", type.baseShape == "texture2D",
+  // type.combined == true.
+  const auto path = writeTempFixture("combined_sampler", R"({
+    "parameters": [{
+      "name": "texturedSampler",
+      "binding": {"kind": "descriptorTableSlot", "index": 1},
+      "type": {
+        "kind": "resource",
+        "baseShape": "texture2D",
+        "combined": true,
+        "resultType": {"kind": "vector", "elementCount": 4, "elementType": {"kind": "scalar", "scalarType": "float32"}}
+      }
+    }],
+    "entryPoints": [{
+      "name": "fragmentMain", "stage": "fragment",
+      "bindings": [{"name": "texturedSampler", "binding": {"kind": "descriptorTableSlot", "index": 1, "used": 1}}]
+    }]
+  })");
+  const auto result = transformSlangReflectionJson(path, "fragmentMain", ShaderStage::Fragment, "test-provenance");
+  REQUIRE(result.isOk());
+  const auto& metadata = result.value();
+  REQUIRE(metadata.descriptorBindings.size() == 1);
+  REQUIRE(metadata.descriptorBindings[0].set == 0);
+  REQUIRE(metadata.descriptorBindings[0].binding == 1);
+  REQUIRE(metadata.descriptorBindings[0].type == DescriptorType::Sampler);
+  REQUIRE(metadata.descriptorBindings[0].stage == ShaderStage::Fragment);
+  std::filesystem::remove(path);
+}
+
+TEST_CASE("transformSlangReflectionJson() rejects a non-combined resource binding (V18)",
+          "[shader_system][slang_json_transform]") {
+  // combined == false -- a separate Texture2D + SamplerState pair, or
+  // any other non-combined resource shape, is a genuinely new shape
+  // this module does not model, not silently mis-typed.
+  const auto path = writeTempFixture("non_combined_sampler", R"({
+    "parameters": [{
+      "name": "texturedSampler",
+      "binding": {"kind": "descriptorTableSlot", "index": 1},
+      "type": {"kind": "resource", "baseShape": "texture2D", "combined": false}
+    }],
+    "entryPoints": [{
+      "name": "fragmentMain", "stage": "fragment",
+      "bindings": [{"name": "texturedSampler", "binding": {"kind": "descriptorTableSlot", "index": 1, "used": 1}}]
+    }]
+  })");
+  const auto result = transformSlangReflectionJson(path, "fragmentMain", ShaderStage::Fragment, "test-provenance");
+  REQUIRE(result.isErr());
+  REQUIRE(result.error() == TransformError::UnexpectedStructure);
+  std::filesystem::remove(path);
+}
+
+TEST_CASE("transformSlangReflectionJson() rejects a non-texture2D combined resource binding (V18)",
+          "[shader_system][slang_json_transform]") {
+  const auto path = writeTempFixture("non_texture2d_sampler", R"({
+    "parameters": [{
+      "name": "texturedSampler",
+      "binding": {"kind": "descriptorTableSlot", "index": 1},
+      "type": {"kind": "resource", "baseShape": "texture3D", "combined": true}
+    }],
+    "entryPoints": [{
+      "name": "fragmentMain", "stage": "fragment",
+      "bindings": [{"name": "texturedSampler", "binding": {"kind": "descriptorTableSlot", "index": 1, "used": 1}}]
+    }]
+  })");
+  const auto result = transformSlangReflectionJson(path, "fragmentMain", ShaderStage::Fragment, "test-provenance");
+  REQUIRE(result.isErr());
+  REQUIRE(result.error() == TransformError::UnexpectedStructure);
+  std::filesystem::remove(path);
+}
+
+TEST_CASE("transformSlangReflectionJson() parses a real float2 vertex input as VertexAttributeType::Float2 (V18)",
+          "[shader_system][slang_json_transform]") {
+  const auto path = writeTempFixture("float2_vertex_input", R"({
+    "parameters": [],
+    "entryPoints": [{
+      "name": "vertexMain", "stage": "vertex",
+      "parameters": [{
+        "name": "input",
+        "binding": {"kind": "varyingInput", "index": 0, "count": 1},
+        "type": {
+          "kind": "struct", "name": "VertexInput",
+          "fields": [{
+            "name": "uv",
+            "type": {"kind": "vector", "elementCount": 2, "elementType": {"kind": "scalar", "scalarType": "float32"}},
+            "binding": {"kind": "varyingInput", "index": 1}
+          }]
+        }
+      }],
+      "bindings": []
+    }]
+  })");
+  const auto result = transformSlangReflectionJson(path, "vertexMain", ShaderStage::Vertex, "test-provenance");
+  REQUIRE(result.isOk());
+  const auto& metadata = result.value();
+  REQUIRE(metadata.vertexInputAttributes.size() == 1);
+  REQUIRE(metadata.vertexInputAttributes[0].location == 1);
+  REQUIRE(metadata.vertexInputAttributes[0].type == VertexAttributeType::Float2);
+  std::filesystem::remove(path);
+}
+
 TEST_CASE("transformSlangReflectionJson() push-constant offset/size regression (issue #5676)",
           "[shader_system][slang_json_transform]") {
   // Cross-checks the reflected push-constant offset/size against the

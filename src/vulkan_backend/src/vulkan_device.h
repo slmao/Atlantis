@@ -114,6 +114,12 @@ class VulkanDevice final : public atlantis::rhi::Device {
                                   atlantis::rhi::OffscreenTargetCreateError>
   createOffscreenTarget(const atlantis::rhi::OffscreenTargetCreateParams& params) override;
 
+  [[nodiscard]] atlantis::Result<std::unique_ptr<atlantis::rhi::SampledTexture>,
+                                  atlantis::rhi::SampledTextureCreateError>
+  createSampledTexture(const atlantis::rhi::SampledTextureCreateParams& params) override;
+  [[nodiscard]] atlantis::Result<std::unique_ptr<atlantis::rhi::Sampler>, atlantis::rhi::SamplerCreateError>
+  createSampler(const atlantis::rhi::SamplerCreateParams& params) override;
+
   [[nodiscard]] VkInstance instance() const noexcept { return instance_; }
   [[nodiscard]] VkPhysicalDevice physicalDevice() const noexcept { return physicalDevice_; }
   [[nodiscard]] VkDevice device() const noexcept { return device_; }

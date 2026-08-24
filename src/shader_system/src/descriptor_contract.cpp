@@ -14,6 +14,16 @@ std::vector<DescriptorBinding> minimalRendererExpectedDescriptorContract() {
   return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex}};
 }
 
+// Hand-kept in sync with vulkan_backend/src/vulkan_device.cpp's own
+// createPipeline() conditional second binding (Spec 0016/D5,
+// PipelineCreateParams::hasSampledTextureBinding): binding 0 is the same
+// camera-uniform binding every contract in this codebase uses; binding 1
+// is the combined image sampler, fragment stage (ADR-0056 Decision 9).
+std::vector<DescriptorBinding> texturedMaterialExpectedDescriptorContract() {
+  return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
+          DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+}
+
 atlantis::Result<std::monostate, ContractMismatchError> validateDescriptorContract(
     const ReflectionMetadata& metadata, const std::vector<DescriptorBinding>& expected) {
   using ResultType = atlantis::Result<std::monostate, ContractMismatchError>;

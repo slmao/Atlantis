@@ -4,6 +4,7 @@
 # atlantis_shader_compiler_process_launch_tests precedent.
 add_executable(atlantis_asset_cooker_command_tests
   cook_command_tests.cpp
+  texture_cook_command_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_cooker_command_tests
@@ -11,6 +12,15 @@ target_link_libraries(atlantis_asset_cooker_command_tests
     atlantis_asset_cooker_lib
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
+)
+
+# Plan 0016 Section D9 (V-item 7): an absolute, configure-time path to
+# this test's own checked-in tiny real PNG fixtures (RGBA/RGB/grayscale/
+# corrupted) -- matching ATLANTIS_ASSET_SYSTEM_SOURCE_DIR's own
+# absolute-path-definition precedent, independent of whatever working
+# directory ctest invokes this executable from.
+target_compile_definitions(atlantis_asset_cooker_command_tests PRIVATE
+  ATLANTIS_ASSET_COOKER_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
 )
 
 catch_discover_tests(atlantis_asset_cooker_command_tests DISCOVERY_MODE PRE_TEST)
