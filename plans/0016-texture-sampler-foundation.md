@@ -2039,3 +2039,29 @@ turn out identical to the already-captured (now-superseded) image
 byte-for-byte, the sidecar's own `source_revision` must still be
 re-recorded against the corrected commit, never left pointing at
 `2b0481c`. V38 remains Outstanding.
+
+**Post-Merge Status Update (2026-08-24):** [PR #78](https://github.com/slmao/Atlantis/pull/78)
+(Implementation), [PR #79](https://github.com/slmao/Atlantis/pull/79)
+(this Human Review Correction, docs-only), and
+[PR #80](https://github.com/slmao/Atlantis/pull/80) (the corresponding
+code fix) are all merged. PR #80 applied this section's own Decision in
+full: the fixture's two textures are two independent, byte-identical
+source PNGs (`assets/textures/textured_quad_source_unorm.png`,
+`_srgb.png`) with distinct `SOURCE` values and distinct AssetIds;
+`cookTexture()` calls `normalizeLogicalPath()`; `TextureCookError`
+gained `LogicalPathInvalid`; the collision-detector bypass in
+`atlantis_add_texture_asset()` was removed; V45–V49 were added and pass.
+The `textured_quad` golden was regenerated against PR #80's own
+implementation-fix commit (`0b16a44`) on a clean tree, real GPU
+hardware — pixel bytes unchanged from the pre-correction capture, only
+the sidecar's `capture_date`/`source_revision` changed, no longer
+pointing at `2b0481c`. **V38 was subsequently satisfied**: a human
+reviewed the regenerated golden and confirmed both checkerboard quads
+(left UNORM, right sRGB) are clearly visible, the color difference
+matches expected UNORM-vs-sRGB hardware sampling behavior, and there is
+no black frame or garbage data — recorded as a PR comment on
+[PR #80](https://github.com/slmao/Atlantis/pull/80). Final verification
+(PR #80's own record): `ctest -LE gpu` 586/586 Debug, 585/585 Release;
+`ctest -L gpu` 26/26 both configurations; Vulkan Validation Layers
+grepped clean throughout. Plan 0016 is fully implemented, verified, and
+closed out; no further action is outstanding against this Plan.

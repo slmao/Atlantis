@@ -826,8 +826,114 @@ milestone being listed does not authorize starting it — see Section 1.
   manifest (D8) is build-tree-private only, never a portable/shippable
   artifact. PBR Material, Light, Shadow, and Post-processing remain out
   of scope. Texture/Sampler asset support itself is no longer out of
-  scope repository-wide -- see [Spec 0016](../specs/0016-texture-sampler-foundation.md)
-  above (`Approved`, Implementation code-complete on an open PR).
+  scope repository-wide -- see Milestone 13 below.
+
+### Milestone 13 — Texture & Sampler Foundation
+
+- **Governance state:** **`Approved` Spec, `Approved` Plan. Implementation
+  merged via [PR #78](https://github.com/slmao/Atlantis/pull/78)
+  (2026-08-24)** —
+  [specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md),
+  [plans/0016-texture-sampler-foundation.md](../plans/0016-texture-sampler-foundation.md).
+  Architectural Impact identified three new decisions, filed as
+  [ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)
+  (`SampledTexture`/`Sampler` RHI module boundary and ownership),
+  [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md)
+  (texture upload, resource state, and descriptor binding), and
+  [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md)
+  (texture asset format, decoder dependency, and color-space contract),
+  all `Accepted`, alongside an **Accepted Amendment** to the
+  already-`Accepted` [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)
+  (widening `stb_image`'s linkage from test-only to Tools/cooker use).
+  **A real post-merge gap was found and corrected in two further PRs,
+  not silently patched into PR #78:** Human Review found that PR #78's
+  own textured fixture cooked one shared source PNG twice under two
+  `NAME`s/color spaces, so both cooked artifacts derived the same
+  AssetId from the same logical path -- silently violating
+  [ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md)'s
+  one-asset-one-AssetId contract, tolerated by a collision-detector
+  bypass in `atlantis_add_texture_asset()`.
+  [PR #79](https://github.com/slmao/Atlantis/pull/79) (2026-08-24,
+  merged, docs-only) recorded a Plan 0016 "Human Review Correction"
+  restoring the contract; [PR #80](https://github.com/slmao/Atlantis/pull/80)
+  (2026-08-24, merged) applied the corresponding code fix. See "Scope
+  delivered" and "Corrected after merge" below for the final, as-built
+  state.
+- **Scope delivered:** a third Asset System asset type
+  (`texture_types.h`/`texture_artifact.h`/`texture_metadata.h`/
+  `cook_texture.h`/`load_texture.h`, following the same
+  cook/artifact/metadata-sidecar/load shape mesh and scene already
+  established); a new RHI `SampledTexture`/`Sampler` pair
+  ([ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md));
+  a new RenderGraph sampled-resource binding kind and a one-time
+  CPU→GPU upload integrated into the same single `Device::submit()`
+  call as the real draw and readback, against a real,
+  already-acquired `RenderTarget` (no target-free submit path);
+  `Material` gained a second, nullable, both-or-neither texture+sampler
+  pointer pair; RHI gained `VertexAttributeFormat::Float2` (and Shader
+  System `VertexAttributeType::Float2`) so the new fixture's own UV0 is
+  a real, `Mesh`-bound vertex attribute. The fixture renders two quads
+  side by side, sampling the same decoded pixel bytes through
+  `Rgba8Unorm` and `Rgba8Srgb`, proving hardware sRGB linearization-on-
+  sample against a real GPU rather than asserting it. New
+  `textured_quad` image-regression golden; `minimal_cube` and
+  `world_scene` goldens untouched.
+- **Corrected after merge:** each cooked texture artifact now has its
+  own unique, normalized logical path and Asset ID -- the fixture's two
+  textures are two independent, byte-identical source PNGs
+  (`assets/textures/textured_quad_source_unorm.png`,
+  `_srgb.png`), each declared with its own distinct `SOURCE`, proven
+  byte-identical by an automated test, rather than one PNG cooked
+  twice under a shared `SOURCE`. `cookTexture()` now calls
+  `normalizeLogicalPath()`, matching `cookStaticMesh()`'s established
+  shape; `TextureCookError` gained `LogicalPathInvalid`, matching
+  `CookError`'s own naming. `atlantis_add_texture_asset()`'s
+  collision-detector bypass was removed; registration is unconditional,
+  matching `atlantis_add_static_mesh_asset()` exactly. Five new
+  Verification Checklist items, V45-V49, cover byte-identical source
+  files, distinct AssetIds, `LogicalPathInvalid` rejection, the
+  collision detector still catching a genuine duplicate/case-only-
+  differing texture logical path, and both texture assets loading
+  independently and remaining distinguishable in the same process. The
+  `textured_quad` golden was regenerated against the code-fix commit's
+  own clean tree on real GPU hardware (pixel bytes unchanged; only the
+  sidecar's `capture_date`/`source_revision` changed).
+- **Verified** (final numbers, from [PR #80](https://github.com/slmao/Atlantis/pull/80)'s
+  own record): clean Debug and Release full builds, plus a separately
+  verified `ATLANTIS_BUILD_TESTS=OFF` configure; `ctest -LE gpu`
+  586/586 Debug, 585/585 Release (the one-fewer-in-Release gap is the
+  pre-existing, documented Debug-only `ATLANTIS_ASSERT` test); `ctest
+  -L gpu` 26/26 both configurations; Vulkan Validation Layers grepped
+  clean (zero `VUID`/`Validation Error`/`Validation Warning` matches)
+  across full verbose GPU test output, both configurations; a `/w14062`
+  C4062 positive/negative build probe on the new `LogicalPathInvalid`
+  enumerator; module-boundary/CMake-link-graph scan reconfirming
+  `Atlantis::AssetSystem` links `Atlantis::Core` only, never `Stb::Stb`
+  or RHI. **V38 (genuine human visual confirmation) is PASS:** a human
+  reviewed the regenerated `textured_quad` golden and confirmed both
+  checkerboard quads (left UNORM, right sRGB) are clearly visible, the
+  color difference matches expected UNORM-vs-sRGB hardware sampling
+  behavior, and there is no black frame or garbage data -- recorded as
+  a PR comment on [PR #80](https://github.com/slmao/Atlantis/pull/80).
+- **Not implemented** (per Spec 0016's own Non-Goals, unchanged): PBR,
+  a material graph, or multiple material slots; normal/metallic/
+  roughness texture semantics; mipmap generation, texture streaming, or
+  virtual/sparse textures; compressed texture formats (KTX2/Basis,
+  ASTC, BC/DXT); texture arrays, cubemaps, or 3D textures; a bindless
+  descriptor system; render-to-texture or sampling a depth attachment
+  as a shader resource; lighting, shadowing, HDR, or post-processing of
+  any kind; a second graphics backend; and any change to the Scene
+  Asset format -- a scene's `Renderable` still names exactly one mesh
+  `AssetId`, so a texture/material scene binding remains future work.
+  Two further, explicitly disclosed, blocking follow-up candidates
+  remain named but unsolved: "Mesh UV Attribute Foundation" (real UV0
+  inside Asset System's own mesh pipeline, required before any future
+  asset-sourced-textured-mesh claim -- today's UV0 is fixture-authored,
+  not asset-sourced) and target-independent submission (a
+  `Device::submit()` path admitting no real `RenderTarget`). A
+  distributable, cross-session Asset Catalog/Registry (carried forward
+  from Milestone 12) and Android Platform (Candidate Order 1 below,
+  unchanged priority) remain out of scope.
 
 ### Further candidate phases (directional only, no Spec, no ADR)
 
@@ -845,17 +951,6 @@ anything architectural, its own ADR before any of the below moves past
   directional-only item; this remaining item is scoped to *durable*
   (save/load, cross-session, cross-artifact) identity, which both
   Milestone 11's and Milestone 12's own Non-Goals explicitly excluded
-- Texture & Sampler Foundation (general sampled `Texture`/`Sampler`
-  support in RHI, unblocking a texture asset type and eventually PBR
-  materials) — [Spec 0016](../specs/0016-texture-sampler-foundation.md)
-  (`Approved`), [Plan 0016](../plans/0016-texture-sampler-foundation.md)
-  (`Approved / Ready for Implementation`, merged via
-  [PR #77](https://github.com/slmao/Atlantis/pull/77)) -- Implementation
-  code-complete on [PR #78](https://github.com/slmao/Atlantis/pull/78),
-  OPEN, not yet merged; new `textured_quad` golden awaits human visual
-  review (V38). See
-  [specs/README.md](../specs/README.md)'s own Section A row for current
-  status
 - Tool/Editor connection protocol — **no process model (in-process vs.
   IPC) is chosen**
 - Gameplay SDK — **no gameplay language is chosen**
