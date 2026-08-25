@@ -214,6 +214,23 @@ TEST_CASE("parseMeshSource rejects a version-2-labeled vertex line still missing
   CHECK(result.error() == SourceParseError::CountMismatch);
 }
 
+TEST_CASE("parseMeshSource rejects a version-2-labeled vertex line with the exact old, pre-UV0 field count "
+          "(6 fields, UV0 fully omitted)",
+          "[asset_system]") {
+  // Same real-world mistake as above, at the other boundary: the
+  // version line was bumped to 2 but the vertex line itself was left
+  // completely untouched from the old 6-field (position + color only)
+  // grammar.
+  const std::string_view oldFieldCount =
+      "atlantis_static_mesh_source_version: 2\n"
+      "vertex_count: 3\n"
+      "index_count: 3\n"
+      "vertex: 0.0 0.0 0.0 1.0 0.0 0.0\n";
+  const auto result = parseMeshSource(oldFieldCount);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == SourceParseError::CountMismatch);
+}
+
 TEST_CASE("parseMeshSource rejects an index line with the wrong field count", "[asset_system]") {
   const std::string_view wrongIndexFieldCount =
       "atlantis_static_mesh_source_version: 2\n"
