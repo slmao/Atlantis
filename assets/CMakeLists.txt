@@ -92,3 +92,33 @@ atlantis_add_texture_asset(
 set(ATLANTIS_textured_quad_srgb_ARTIFACT_PATH "${ATLANTIS_textured_quad_srgb_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_textured_quad_srgb_METADATA_PATH "${ATLANTIS_textured_quad_srgb_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_textured_quad_srgb_TARGET "${ATLANTIS_textured_quad_srgb_TARGET}" PARENT_SCOPE)
+
+# Plan 0017 Section D7: two independent, non-shared-vertex quad mesh
+# assets for the textured fixture (Milestone 3 below), transcribed
+# value-for-value from textured_quad_fixture.cpp's own former
+# kLeftQuadVertices/kRightQuadVertices arrays (including their baked
+# left/right clip-space positions) -- not one shared quad mesh plus an
+# objectToWorld translation, since both DrawItems already use an
+# identity objectToWorld and introducing new GPU-side matrix-multiply
+# arithmetic here would risk the zero-pixel-difference goal against the
+# existing textured_quad golden for no benefit. Color is a deterministic
+# "1.0 1.0 1.0" placeholder -- textured_quad.slang has no color input
+# and never reads it. Declared here, unconditionally (like minimal_cube/
+# world_scene/the two textures above), for the same
+# atlantis_finalize_asset_validation() configure-time-visibility reason
+# documented on the texture declarations above.
+atlantis_add_static_mesh_asset(
+  NAME textured_quad_left
+  SOURCE meshes/textured_quad_left.mesh.txt
+)
+set(ATLANTIS_textured_quad_left_ARTIFACT_PATH "${ATLANTIS_textured_quad_left_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_textured_quad_left_METADATA_PATH "${ATLANTIS_textured_quad_left_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_textured_quad_left_TARGET "${ATLANTIS_textured_quad_left_TARGET}" PARENT_SCOPE)
+
+atlantis_add_static_mesh_asset(
+  NAME textured_quad_right
+  SOURCE meshes/textured_quad_right.mesh.txt
+)
+set(ATLANTIS_textured_quad_right_ARTIFACT_PATH "${ATLANTIS_textured_quad_right_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_textured_quad_right_METADATA_PATH "${ATLANTIS_textured_quad_right_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_textured_quad_right_TARGET "${ATLANTIS_textured_quad_right_TARGET}" PARENT_SCOPE)
