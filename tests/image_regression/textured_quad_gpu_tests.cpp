@@ -90,7 +90,9 @@ TEST_CASE("Textured quad fixture renders a non-degenerate frame with both quads 
           "[image_regression][gpu][textured_quad]") {
   auto fixtureResult = setUpTexturedQuadFixture(
       ATLANTIS_textured_quad_unorm_ARTIFACT_PATH, ATLANTIS_textured_quad_unorm_METADATA_PATH,
-      ATLANTIS_textured_quad_srgb_ARTIFACT_PATH, ATLANTIS_textured_quad_srgb_METADATA_PATH);
+      ATLANTIS_textured_quad_srgb_ARTIFACT_PATH, ATLANTIS_textured_quad_srgb_METADATA_PATH,
+      ATLANTIS_textured_quad_left_ARTIFACT_PATH, ATLANTIS_textured_quad_left_METADATA_PATH,
+      ATLANTIS_textured_quad_right_ARTIFACT_PATH, ATLANTIS_textured_quad_right_METADATA_PATH);
   REQUIRE(fixtureResult.isOk());
   TexturedQuadFixture& fixture = fixtureResult.value();
 
@@ -135,7 +137,9 @@ TEST_CASE("Textured quad fixture shows a real Unorm-vs-Srgb difference at the sa
           "[image_regression][gpu][textured_quad]") {
   auto fixtureResult = setUpTexturedQuadFixture(
       ATLANTIS_textured_quad_unorm_ARTIFACT_PATH, ATLANTIS_textured_quad_unorm_METADATA_PATH,
-      ATLANTIS_textured_quad_srgb_ARTIFACT_PATH, ATLANTIS_textured_quad_srgb_METADATA_PATH);
+      ATLANTIS_textured_quad_srgb_ARTIFACT_PATH, ATLANTIS_textured_quad_srgb_METADATA_PATH,
+      ATLANTIS_textured_quad_left_ARTIFACT_PATH, ATLANTIS_textured_quad_left_METADATA_PATH,
+      ATLANTIS_textured_quad_right_ARTIFACT_PATH, ATLANTIS_textured_quad_right_METADATA_PATH);
   REQUIRE(fixtureResult.isOk());
   TexturedQuadFixture& fixture = fixtureResult.value();
 
@@ -176,7 +180,9 @@ TEST_CASE("Textured quad fixture's captured frame differs from a freshly-cleared
           "[image_regression][gpu][textured_quad]") {
   auto fixtureResult = setUpTexturedQuadFixture(
       ATLANTIS_textured_quad_unorm_ARTIFACT_PATH, ATLANTIS_textured_quad_unorm_METADATA_PATH,
-      ATLANTIS_textured_quad_srgb_ARTIFACT_PATH, ATLANTIS_textured_quad_srgb_METADATA_PATH);
+      ATLANTIS_textured_quad_srgb_ARTIFACT_PATH, ATLANTIS_textured_quad_srgb_METADATA_PATH,
+      ATLANTIS_textured_quad_left_ARTIFACT_PATH, ATLANTIS_textured_quad_left_METADATA_PATH,
+      ATLANTIS_textured_quad_right_ARTIFACT_PATH, ATLANTIS_textured_quad_right_METADATA_PATH);
   REQUIRE(fixtureResult.isOk());
   TexturedQuadFixture& fixture = fixtureResult.value();
 
@@ -217,7 +223,9 @@ TEST_CASE("Full capture-compare cycle against the committed textured_quad golden
 
   auto fixtureResult = setUpTexturedQuadFixture(
       ATLANTIS_textured_quad_unorm_ARTIFACT_PATH, ATLANTIS_textured_quad_unorm_METADATA_PATH,
-      ATLANTIS_textured_quad_srgb_ARTIFACT_PATH, ATLANTIS_textured_quad_srgb_METADATA_PATH);
+      ATLANTIS_textured_quad_srgb_ARTIFACT_PATH, ATLANTIS_textured_quad_srgb_METADATA_PATH,
+      ATLANTIS_textured_quad_left_ARTIFACT_PATH, ATLANTIS_textured_quad_left_METADATA_PATH,
+      ATLANTIS_textured_quad_right_ARTIFACT_PATH, ATLANTIS_textured_quad_right_METADATA_PATH);
   REQUIRE(fixtureResult.isOk());
   TexturedQuadFixture& fixture = fixtureResult.value();
 
@@ -249,7 +257,9 @@ TEST_CASE("Textured quad fixture: repeated render cycles against the same fixtur
           "[image_regression][gpu][textured_quad]") {
   auto fixtureResult = setUpTexturedQuadFixture(
       ATLANTIS_textured_quad_unorm_ARTIFACT_PATH, ATLANTIS_textured_quad_unorm_METADATA_PATH,
-      ATLANTIS_textured_quad_srgb_ARTIFACT_PATH, ATLANTIS_textured_quad_srgb_METADATA_PATH);
+      ATLANTIS_textured_quad_srgb_ARTIFACT_PATH, ATLANTIS_textured_quad_srgb_METADATA_PATH,
+      ATLANTIS_textured_quad_left_ARTIFACT_PATH, ATLANTIS_textured_quad_left_METADATA_PATH,
+      ATLANTIS_textured_quad_right_ARTIFACT_PATH, ATLANTIS_textured_quad_right_METADATA_PATH);
   REQUIRE(fixtureResult.isOk());
   TexturedQuadFixture& fixture = fixtureResult.value();
 

@@ -157,7 +157,9 @@ int main(int argc, char** argv) {
 
   auto fixtureResult = setUpTexturedQuadFixture(
       ATLANTIS_textured_quad_unorm_ARTIFACT_PATH, ATLANTIS_textured_quad_unorm_METADATA_PATH,
-      ATLANTIS_textured_quad_srgb_ARTIFACT_PATH, ATLANTIS_textured_quad_srgb_METADATA_PATH);
+      ATLANTIS_textured_quad_srgb_ARTIFACT_PATH, ATLANTIS_textured_quad_srgb_METADATA_PATH,
+      ATLANTIS_textured_quad_left_ARTIFACT_PATH, ATLANTIS_textured_quad_left_METADATA_PATH,
+      ATLANTIS_textured_quad_right_ARTIFACT_PATH, ATLANTIS_textured_quad_right_METADATA_PATH);
   if (fixtureResult.isErr()) {
     ATLANTIS_LOG_ERROR("setUpTexturedQuadFixture() failed");
     return 1;

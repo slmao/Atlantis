@@ -78,9 +78,17 @@ enum class TexturedQuadSetupError {
 // Buffer. Must be called with the process's current working directory
 // set to a location where "shaders/textured_quad.{vert,frag}.spv"
 // resolves, matching every other fixture's own established convention.
+//
+// Plan 0017 Milestone 3: meshLeft/meshRight are now loaded via
+// atlantis::asset_system::loadStaticMeshAsset() against the
+// textured_quad_left/textured_quad_right cooked artifacts
+// (leftMeshArtifactPath/leftMeshMetadataPath,
+// rightMeshArtifactPath/rightMeshMetadataPath) -- there is no longer a
+// hand-authored vertex/UV fallback of any kind.
 [[nodiscard]] atlantis::Result<TexturedQuadFixture, TexturedQuadSetupError> setUpTexturedQuadFixture(
     const char* unormArtifactPath, const char* unormMetadataPath, const char* srgbArtifactPath,
-    const char* srgbMetadataPath);
+    const char* srgbMetadataPath, const char* leftMeshArtifactPath, const char* leftMeshMetadataPath,
+    const char* rightMeshArtifactPath, const char* rightMeshMetadataPath);
 
 enum class TexturedQuadRenderError {
   AcquireFailed,
