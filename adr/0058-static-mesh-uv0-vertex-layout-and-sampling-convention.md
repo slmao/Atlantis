@@ -112,11 +112,22 @@ code — confirmed by direct inspection, not assumption:
   clamping would duplicate, and could silently conflict with, that
   existing sampler-level contract.
 - `tests/image_regression/fixture/textured_quad_fixture.cpp`'s own
-  comment already states, and Plan 0016's own real-GPU verification
-  already empirically confirmed, the UV-origin convention this codebase
-  uses: "v=0 at the top row, v=1 at the bottom row, matching the
-  texture artifact's own 'row 0 = first-decoded row (top), no vertical
-  flip' contract."
+  comment already states the UV-origin convention this codebase uses:
+  "v=0 at the top row, v=1 at the bottom row, matching the texture
+  artifact's own 'row 0 = first-decoded row (top), no vertical flip'
+  contract." **This convention already ships in production code, but
+  its own absolute correctness has not actually been independently
+  verified** — the existing `textured_quad` golden and its own human
+  visual review (recorded on
+  [PR #80](https://github.com/slmao/Atlantis/pull/80)) only confirm a
+  non-degenerate, self-consistent checkerboard render; no test asserts
+  an absolute expected color at a specific, known UV-mapped screen
+  position, and a regular, even-row checkerboard is visually
+  near-indistinguishable from its own vertically-flipped, color-inverted
+  form to a human reviewer. See
+  [Spec 0017](../specs/0017-mesh-uv-attribute-foundation.md)'s own
+  Decision item 11 for the full disclosure and the explicit Human
+  Review choice this raises.
 
 Given all of the above, the real design question this ADR settles is
 narrow: does UV0 become a **mandatory** part of the one, single, shared
@@ -183,24 +194,56 @@ introduced.**
 5. **UV origin/convention:** `v = 0` corresponds to the sampled
    texture's first-decoded (top) row; `v = 1` corresponds to its
    last-decoded (bottom) row — adopting, verbatim, the exact convention
-   `textured_quad_fixture.cpp` already established and Plan 0016 already
-   verified against real GPU hardware. This ADR invents no new
-   convention; it extends the existing one to asset-sourced authoring.
-6. **Attribute location convention:** when a shader declares all three
-   attributes, `location(0)` = position, `location(1)` = color,
-   `location(2)` = UV0 — matching this codebase's own established
-   declaration-order convention (`minimal_mesh.slang`: position@0,
-   color@1; `textured_quad.slang`: position@0, uv@1). A shader that
-   declares only a subset (e.g. `minimal_mesh.slang`, no UV input) is
-   unaffected: `toVertexInputLayout()`'s own existing cross-validation
-   (Spec 0016) requires the caller's `MeshVertexAttributeSchema` to list
-   exactly the shader's own reflected attribute set, by `location` —
-   never the mesh's full vertex byte layout. Unreferenced trailing or
-   interior bytes in a vertex's own stride (e.g. an unused UV pair for
-   a color-only shader, or an unused color triple for a UV-only shader)
-   are already legal under this mechanism and remain legal; no shader
-   is required to declare every attribute a mesh asset's own vertex
-   layout happens to carry.
+   `textured_quad_fixture.cpp` already established and already ships in
+   production code. This ADR invents no new convention; it extends the
+   existing one to asset-sourced authoring. **This ADR does not claim
+   that convention's own absolute correctness has been independently
+   verified** — see Context above and
+   [Spec 0017](../specs/0017-mesh-uv-attribute-foundation.md)'s own
+   Decision item 11 for the disclosed limitation and the Human Review
+   choice it raises.
+6. **Attribute location convention — closed at the real Vulkan pipeline
+   level, not merely asserted:** `location` numbering is per-shader, not
+   a global registry any code enforces — each shader's own
+   `[[vk::location(N)]]` declarations are matched only against that same
+   shader's own real reflected input list, by `toVertexInputLayout()`
+   (Spec 0016/0008), which requires the caller's `MeshVertexAttributeSchema`
+   to have exactly the shader's own reflected attribute *count*, matched
+   by `location`. A shader declaring all three attributes uses
+   `location(0)` = position, `location(1)` = color, `location(2)` = UV0,
+   matching this codebase's own established declaration-order
+   convention. A shader declaring only a subset uses whatever `location`
+   numbers *that shader itself* assigns to *its own* inputs —
+   `minimal_mesh.slang` (`position@0, color@1`, no UV input) and
+   `textured_quad.slang` (`position@0, uv@1`, no color input, so its own
+   `location(1)` is UV, not color) are both already real, shipped
+   examples of this, confirmed by direct inspection of both `.slang`
+   files' own `VertexInput` structs.
+
+   This is not merely a C++-level schema-matching claim — it is closed
+   at the real Vulkan pipeline construction itself
+   (`src/vulkan_backend/src/vulkan_device.cpp`,
+   `Device::createPipeline()`): exactly **one**
+   `VkVertexInputBindingDescription` is built, with `stride =
+   params.vertexInputLayout.strideBytes` (the mesh's own real, full
+   per-vertex byte size); the `VkVertexInputAttributeDescription` array
+   is built by iterating `params.vertexInputLayout.attributes`
+   **only** — one entry per attribute the caller's `VertexInputLayout`
+   actually lists, each with its own independent `location`, `format`,
+   and `offset` within that one binding. Vulkan's own vertex-fetch stage
+   reads only the byte ranges named by an attribute description that
+   exists; nothing in `VkPipelineVertexInputStateCreateInfo` requires
+   attributes to be contiguous, requires every byte of `stride` to be
+   covered by some attribute, or requires attribute order to follow
+   offset order. A "middle" or "trailing" region of a vertex's own
+   stride with no corresponding `VkVertexInputAttributeDescription`
+   entry is therefore not read by that pipeline at all — confirmed by
+   this real construction code, not inferred from the RHI-level
+   abstraction alone. This is exactly what makes both
+   `minimal_mesh.slang`'s own unused UV region (offset 24–31 of a
+   32-byte stride) and a UV-only shader's own unused color region
+   (offset 12–23) safe: each pipeline's own attribute list simply never
+   names that offset.
 7. **No new error enumerator anywhere.** `SourceParseError`,
    `ArtifactDecodeError`, `CookError`, and `AssetLoadError`'s existing
    categories — `MalformedNumber`, `NonFiniteFloat`, `CountMismatch`,

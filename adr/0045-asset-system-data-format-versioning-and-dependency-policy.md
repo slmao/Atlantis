@@ -38,6 +38,15 @@
   [ADR-0043](0043-asset-system-module-boundary.md) fixes, and the
   composition root performs the GPU handoff. This ADR then moved to
   `Accepted`.
+- **2026-08-25 (Proposed Amendment drafted, not yet accepted):** a
+  "Proposed Amendment" section is appended, alongside
+  [Spec 0017](../specs/0017-mesh-uv-attribute-foundation.md) (`In
+  Review`) and [ADR-0058](0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+  (`Proposed`), narrowing this ADR's own "position and color" format
+  scope to "position, color, and UV0." Everything above that new
+  section remains this ADR's own original, unmodified `Accepted`
+  Decision — the Amendment itself is not in effect until Human Review
+  accepts it.
 
 ## Context
 
@@ -228,3 +237,93 @@ weighed and why each is deferred, not adopted, at this Spec's scope.
   at Human Review's own request — see Context and
   [ADR-0043](0043-asset-system-module-boundary.md)'s own Revision
   History.
+
+## Proposed Amendment — 2026-08-25
+
+**Status: Proposed — awaiting the same Human Review pass as
+[Spec 0017](../specs/0017-mesh-uv-attribute-foundation.md) (`In Review`)
+and [ADR-0058](0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+(`Proposed`). This section records a proposed narrowing of this ADR's
+own Decision text below — it is not itself in effect, and this ADR's
+own Status line above remains `Accepted` for everything above this
+section, unchanged and unmodified, unless and until Human Review
+accepts this Amendment.** Everything above this section is this ADR's
+own original, `Accepted` Decision, Consequences, and Alternatives
+Considered, left completely untouched.
+
+**Deciders:** slmao — Human Review, pending (not yet recorded).
+
+**Related:**
+[Spec 0017](../specs/0017-mesh-uv-attribute-foundation.md) (`In Review`),
+[ADR-0058](0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+(`Proposed`) — this Amendment and ADR-0058 cross-reference each other:
+ADR-0058 makes the actual vertex-layout decision (UV0 attribute,
+schema version, sampling convention); this Amendment records the
+corresponding, narrower change to this ADR's own already-`Accepted`
+format-scope sentence, so the two documents do not duplicate one
+another's content. Neither is to be marked `Accepted` independently of
+the other — both stand or fall together with the same Human Review
+decision on Spec 0017.
+
+### Context for this proposed amendment
+
+This ADR's own `Accepted` Decision (above, unmodified) states the
+runtime artifact and authoring source formats are "scoped exactly to
+this Spec's one supported asset type (a static triangle mesh:
+**per-vertex position and color**, `std::uint16_t` indices)." Spec 0017
+proposes widening the one static mesh vertex layout to add a third,
+mandatory attribute, UV0 — a real, direct narrowing of that sentence's
+own scope, not a compatible extension it already permits. Per this
+repository's own established practice (an `Accepted` ADR's original
+Decision text is never silently rewritten; a scope change gets its own,
+separately-dated, clearly-labeled amendment — see
+[ADR-0041](0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)'s
+own "Accepted Amendment — 2026-08-24" section for the precedent this
+follows), this section is drafted now, alongside Spec 0017 and
+ADR-0058, so Human Review can evaluate the vertex-layout decision and
+its own required consequence to this ADR in one pass — but it is
+explicitly **not** marked `Accepted` here, since Spec 0017 itself has
+not yet been approved. Marking this `Accepted` ahead of that approval
+would misrepresent this ADR's own governance state.
+
+### Proposed Decision (not yet in effect)
+
+If and when [Spec 0017](../specs/0017-mesh-uv-attribute-foundation.md)
+and [ADR-0058](0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+are accepted by Human Review, this ADR's own Decision above is amended,
+in effect, to read:
+
+- The runtime artifact and authoring source formats are scoped to this
+  Spec's one supported asset type, **as extended by Spec 0017**: a
+  static triangle mesh with per-vertex **position, color, and UV0**,
+  `std::uint16_t` indices — not "position and color" alone. This
+  remains one single, fixed, hand-rolled, dependency-free format per
+  this ADR's own unchanged "hand-rolled, dependency-free" Decision
+  above; UV0 introduces no new field *kind* (it is two more `float`s,
+  serialized by the exact same explicit shift/mask little-endian
+  routine every existing float already uses) and no third-party
+  dependency of any kind.
+- The runtime artifact's own mandatory `schema_version` field (this
+  ADR's own unchanged Decision above) is exercised for the first time
+  by a real, in-place format change: version 1 (position + color, 24
+  bytes/vertex) is superseded by version 2 (position + color + UV0, 32
+  bytes/vertex). Consistent with this ADR's own explicit disclosure
+  that "no migration mechanism is built now, only the version marker a
+  future migration would need to gate on" — this Amendment confirms
+  that disclosure was accurate foresight, not an oversight: version 2
+  introduces no migration reader for version 1, matching this format's
+  own established single-supported-version precedent exactly (a
+  version-1 artifact or source file is rejected outright, not
+  compatibly read).
+- This same versioning rule applies identically to the authoring source
+  format's own version marker line, for the same reason.
+
+### Consequences of this proposed amendment (if accepted)
+
+No change to this ADR's own "no new third-party dependency," "no
+migration mechanism," or byte-order Decisions — this Amendment narrows
+one format-scope sentence only. The negative/trade-off this ADR's own
+Decision above already accepted (a hand-rolled format this project must
+maintain and document) grows by exactly one attribute's worth of
+authoring/artifact/loader logic — no new category of maintenance
+burden, only more of the same kind already accepted.

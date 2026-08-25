@@ -1,6 +1,6 @@
 # Spec: Mesh UV Attribute Foundation
 
-- **Status:** Draft
+- **Status:** In Review
 - **Author:** slmao
 - **Created:** 2026-08-25
 - **Related Plan(s):** None yet — this Spec is not implementation-ready
@@ -213,6 +213,28 @@ architecture already supports.
   `examples/minimal_renderer_demo/main.cpp` — none of these touches
   Asset System at all; their own hand-authored vertex data is
   completely unaffected by this Spec and must not be changed).
+  `textured_quad_fixture.cpp` is a distinct, sixth case: not one of the
+  four requiring a mechanical stride widening (it does not consume
+  `StaticMeshAssetData` today), but the one file this Spec proposes to
+  *convert* to Asset-System-sourced vertex data as part of FR9 — see
+  Decision item 11. `src/runtime/src/runtime_application.cpp`'s own
+  consumption is indirect — it builds the `VertexInputLayout` from its
+  own local `Vertex` struct and passes it into `loadAndInstantiateScene()`
+  (`scene_load.cpp`), which threads it through to every real,
+  Asset-System-loaded mesh a scene references, confirmed by direct
+  inspection of `runtime_application.cpp`'s own `loadAndInstantiateScene(config,
+  device_.get(), vertexInputLayout_)` call site. `scene_load.cpp`/
+  `scene_load.h` and `tests/runtime/scene_load_tests.cpp` were also
+  checked directly: the former only receives an already-built
+  `VertexInputLayout` as a pass-through parameter (no local `Vertex`
+  struct of its own), and the latter's every call site passes a
+  default-constructed, empty `VertexInputLayout{}` alongside a null
+  `Device*` — exercising only failure/error paths that never touch a
+  real vertex buffer — so neither needs any change for this Spec.
+  `tests/shader_system/rhi_integration/vertex_input_mapping_tests.cpp`
+  was likewise checked: it unit-tests `toVertexInputLayout()` itself
+  with synthetic offsets/strides, independent of the real mesh artifact
+  format, and also needs no change.
 - **FR9 — Real GPU proof via an asset-sourced, UV-carrying mesh.** At
   least one real, checked-in mesh authoring source, cooked through the
   ordinary `cookStaticMesh()`/`atlantis_add_static_mesh_asset()` path
@@ -298,29 +320,76 @@ none is assumed settled by this Draft.
    weighed and rejected.
 2. **How are existing, no-UV mesh assets handled — migration, default,
    continued old-format support, or explicit rejection?** *Recommended:
-   re-author with real UV values and re-cook; no default, no dual-format
-   support.* No mesh artifact is independently distributed or shipped
-   separately from its own checked-in authoring source — every artifact
-   is a deterministic build output. "Migration" therefore means editing
+   re-author with real UV values and re-cook; no implicit default, no
+   dual-format support.* No mesh artifact is independently distributed
+   or shipped separately from its own checked-in authoring source —
+   every artifact is a deterministic build output, already re-cooked
+   automatically whenever its source file or the cooker binary itself
+   changes (the existing CMake custom command already depends on both).
+   "Migration" therefore means editing
    `assets/meshes/minimal_cube.mesh.txt` (and any other real authored
-   `.mesh.txt`) to add real UV columns, then letting the existing build
-   graph re-cook it — not converting a binary file. A silent `(0, 0)`
-   default is rejected: it would make this Spec's own FR9 proof
-   impossible to build honestly and would leave every migrated mesh's
-   UV data meaningless. See
+   `.mesh.txt`) to add real UV columns and bump its own version line, not
+   converting a binary artifact — there is no scenario in which a real
+   version-1 *artifact* is ever loaded once this Spec's own
+   Implementation lands, since the source that produces it will already
+   have moved to version 2. A silent `(0, 0)` default is rejected as
+   this Spec's own recommendation: it would make FR9's own proof
+   impossible to build honestly and would leave every migrated mesh's UV
+   data meaningless — but this remains **Human Review's own decision to
+   make, not a foregone conclusion**; if Human Review instead directs a
+   `(0, 0)` (or other) default for un-migrated sources, FR9's own proof
+   mesh must still be authored with real, non-default UV values
+   regardless. See
    [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
    Decision item 3.
+
+   **A real, disclosed limitation of `minimal_cube.mesh.txt`'s own
+   migration:** `assets/meshes/minimal_cube.mesh.txt` authors exactly 8
+   vertices (one per cube corner) and 36 indices (12 triangles, 6 faces)
+   — confirmed by direct inspection — meaning each corner vertex is
+   *shared* across the 3 faces that meet at it. A shared vertex can carry
+   exactly one UV value, not one per face; a cube's 6 faces cannot be
+   given a correct, independent texture unwrap on this 8-vertex topology
+   at all, regardless of what UV values are chosen. This Spec's own
+   migration of `minimal_cube.mesh.txt` therefore assigns each of its 8
+   vertices a real, deterministic, finite UV value (satisfying the new
+   mandatory schema and this Spec's own "no implicit default" position)
+   **that is not, and cannot be, a correct per-face texture unwrap** —
+   `minimal_cube` continues to be drawn exclusively by its own existing,
+   UV-blind `minimal_mesh.slang` material, exactly as today, and this
+   Spec makes no claim that `minimal_cube` becomes texture-ready. See
+   Decision item 11 below for why FR9's own real proof mesh must
+   therefore be a quad (or another topology with no cross-face vertex
+   sharing), never the existing cube.
 3. **Does the mesh artifact format version bump? Is an old version
-   read compatibly or rejected?** *Recommended: bump both the
-   authoring-source version (1 → 2) and the artifact schema version
-   (1 → 2); reject any other value outright, no compatible/dual read.*
-   Matches this format's own existing precedent exactly — `parseMeshSource()`
-   already hard-rejects any authoring version line other than its own
-   one supported string, and `decodeMeshArtifact()` already hard-rejects
-   any schema version other than its own one supported constant. Every
-   other Asset System format (texture, scene) works the same way; no
-   format in this codebase has ever supported reading more than one
-   schema version.
+   read compatibly or rejected? Does a well-versioned source file that
+   is still missing UV columns get its own distinct error?**
+   *Recommended: bump both the authoring-source version (1 → 2) and the
+   artifact schema version (1 → 2); reject any other value outright, no
+   compatible/dual read; a version-2-labeled source whose `vertex:` line
+   still has only 6 fields is a distinct, already-existing rejection
+   (`CountMismatch`), never silently accepted as "UV omitted."*
+   Two genuinely different malformed-input shapes exist, and this Spec
+   recommends they stay genuinely distinct, not collapsed into one:
+   (a) a source file whose version line still reads
+   `atlantis_static_mesh_source_version: 1` — rejected by the existing
+   `SourceParseError::UnknownSourceVersion`, exactly as
+   `parseMeshSource()` already rejects any version string other than its
+   own one supported value today; (b) a source file correctly labeled
+   version 2 whose `vertex:` line was not actually updated to 8 fields
+   (a human bumped the version marker but forgot the UV columns) —
+   rejected by the existing `SourceParseError::CountMismatch`
+   (`fields.size() != 8`), the same mechanism that already rejects a
+   line with too few or too many fields today. Neither case is treated
+   as "UV0 intentionally omitted, default to `(0, 0)`" — both are hard
+   parse failures. This matches this format's own existing precedent
+   exactly — `parseMeshSource()` already hard-rejects any authoring
+   version line other than its own one supported string, and
+   `decodeMeshArtifact()` already hard-rejects any schema version other
+   than its own one supported constant. Every other Asset System format
+   (texture, scene) works the same way; no format in this codebase has
+   ever supported reading more than one schema version, and this Spec
+   recommends none start now.
 4. **What is the UV authoring syntax, CPU DTO shape, and exact artifact
    byte layout?** *Recommended:* authoring — `vertex: x y z r g b u v`
    (two trailing float tokens); CPU DTO — `MeshSourceVertex` gains
@@ -338,27 +407,48 @@ none is assumed settled by this Draft.
    would duplicate a decision RHI already owns.
 6. **How does UV origin/V-direction correspond to stb's non-flipped PNG
    row order and the Vulkan sampling path?** *Recommended: adopt
-   `textured_quad_fixture.cpp`'s own already-established, already-
-   verified convention verbatim — `v = 0` is the texture's
-   first-decoded (top) row, `v = 1` is its last-decoded (bottom) row.*
-   This is not a new decision; Spec 0016 already made and empirically
-   verified it on real hardware. This Spec's own new, asset-sourced UV
-   data must be authored consistent with that existing convention, not
-   a new or inverted one.
+   `textured_quad_fixture.cpp`'s own already-established convention
+   verbatim — `v = 0` is the texture's first-decoded (top) row, `v = 1`
+   is its last-decoded (bottom) row.* This is not a new decision; Spec
+   0016 already made it and it already ships, unchanged, in production
+   code. This Spec's own new, asset-sourced UV data must be authored
+   consistent with that existing convention, not a new or inverted one
+   — **but whether the existing golden/test suite has actually proven
+   this convention *correct*, in an absolute sense, versus merely
+   self-consistent, is a real, separate, disclosed limitation — see
+   Decision item 11 below.** This item settles which convention to
+   author to; item 11 settles what can and cannot be proven about it.
 7. **What is the exact vertex stride/attribute-location/format
-   contract, including its relationship to Shader reflection?**
-   *Recommended:* stride is always the mesh's own real, artifact-derived
-   32 bytes; attribute locations follow declaration order when a shader
-   declares all three (position@0, color@1, UV0@2); a shader declaring
-   only a subset is unaffected, since `toVertexInputLayout()`'s own
-   existing cross-validation (Spec 0016) matches the caller's
-   `MeshVertexAttributeSchema` against the shader's own *reflected*
-   attribute set by `location` and count — never against the mesh's
-   full vertex byte layout. `VertexAttributeFormat::Float2` (already
+   contract, including its relationship to Shader reflection — and is
+   "a shader can ignore a middle attribute" actually true at the real
+   Vulkan pipeline level, or only asserted?** *Recommended:* stride is
+   always the mesh's own real, artifact-derived 32 bytes; a shader
+   declaring all three attributes uses position@0, color@1, UV0@2
+   (declaration order, matching this codebase's own convention); a
+   shader declaring only a subset uses whatever `location` numbers that
+   shader itself assigns to its own inputs — `location` is per-shader,
+   never a global registry (`textured_quad.slang`'s own `location(1)` is
+   UV, not color; it is not required to declare a `location(1)` "color"
+   input it does not use). **This is closed at the real Vulkan pipeline
+   construction itself, confirmed by direct inspection of
+   `Device::createPipeline()`
+   (`src/vulkan_backend/src/vulkan_device.cpp`), not asserted from the
+   RHI-level abstraction alone:** exactly one
+   `VkVertexInputBindingDescription` is built (stride = the mesh's own
+   real per-vertex byte size), and the `VkVertexInputAttributeDescription`
+   array is built by iterating `VertexInputLayout::attributes` **only**
+   — one entry per attribute the caller actually lists, each with its
+   own independent `location`/`format`/`offset`. Nothing requires
+   attributes to be contiguous or to cover every byte of `stride`; an
+   offset with no corresponding attribute description is never read by
+   that pipeline. This is what makes both `minimal_mesh.slang`'s own
+   unused UV region (bytes 24–31) and a UV-only shader's own unused
+   color region (bytes 12–23) safe — a real-code-verified fact, not a
+   plausible-sounding claim. `VertexAttributeFormat::Float2` (already
    `Accepted`, Spec 0016) is the UV0 attribute's own RHI format. See
    FR8/FR9 and
    [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
-   Decision item 6.
+   Decision item 6 for the full citation.
 8. **What are the cooker/loader's independent error semantics for
    truncated, overflowing, non-finite, wrong-version, or corrupted
    input?** *Recommended: no new enumerator anywhere — every case is
@@ -391,10 +481,13 @@ none is assumed settled by this Draft.
     assertions/code comments, not left implicit.* See FR9 and item 11
     below.
 11. **Does this Spec reuse the existing `textured_quad` golden, or does
-    it require a new/modified golden?** *Recommended, pending
-    Implementation-time confirmation: replace `textured_quad_fixture.cpp`'s
-    own hand-authored quad vertex data with a real, asset-sourced mesh
-    authored to the exact same position/UV float values already in use
+    it require a new/modified golden — and can the existing golden/test
+    suite actually prove UV origin/V-direction correctness at all?**
+    *Recommended, pending Implementation-time confirmation: replace
+    `textured_quad_fixture.cpp`'s own hand-authored quad vertex data
+    with a real, asset-sourced mesh (never the cube — see Decision item
+    2's own disclosed cube-topology limitation) authored to the exact
+    same position/UV float values already in use
     (`kLeftQuadVertices`/`kRightQuadVertices`), cooked and loaded through
     the ordinary Asset System path, keeping every other part of the
     fixture (two `Material`s, two `SampledTexture`s, the RenderGraph
@@ -422,6 +515,44 @@ none is assumed settled by this Draft.
     [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
     own golden-update-reason rule, with the specific discrepancy
     disclosed in the Plan/Implementation PR — not silently absorbed.
+
+    **A real, separate limitation, disclosed honestly rather than
+    silently inherited: reusing the existing golden/checkerboard proves
+    only self-consistency, not absolute UV-direction correctness.**
+    `assets/textures/textured_quad_source_unorm.png`/`_srgb.png` is a
+    small, regular checkerboard — under a vertical flip, a regular
+    even-row checkerboard becomes its own color-inverted mirror, which
+    is visually very hard for a human to distinguish from the
+    un-flipped original at a glance (both simply "look like a
+    checkerboard"). This Spec's own V38-equivalent human visual review
+    of the *existing* `textured_quad` golden (recorded on
+    [PR #80](https://github.com/slmao/Atlantis/pull/80)) confirmed
+    exactly this and no more: "both checkerboard quads ... clearly
+    visible, the color difference matches expected UNORM-vs-sRGB ...,
+    no black frame or garbage data" — it never claimed, and could not
+    have verified, that `v = 0` genuinely maps to the texture's
+    first-decoded row rather than its last. No automated test in
+    `textured_quad_gpu_tests.cpp` asserts an absolute expected color at
+    a specific, known UV-mapped screen position either — every existing
+    test checks self-consistency (matches the previously-captured
+    golden, differs appropriately between color spaces, differs from an
+    undrawn baseline), confirmed by reading every `TEST_CASE` in that
+    file. **Reusing this same golden/texture for FR9's own proof
+    inherits this same limitation: it would prove UV0 data genuinely
+    reached the GPU from Asset System, but not that this Spec's own
+    stated V-direction convention (Decision item 6 above) is itself
+    correct, only that whatever convention the fixture already used
+    remains unchanged.** This Spec's own recommendation is that this is
+    an **acceptable, disclosed limitation** for FR9's own narrower claim
+    — the convention itself is not new (it is adopted unchanged from
+    Spec 0016's own already-shipped fixture, not invented here), and
+    this Spec's own scope is proving asset-sourced provenance, not
+    re-litigating a convention Spec 0016 already fixed. **Whether Human
+    Review accepts this narrower claim, or instead directs a new,
+    row-asymmetric texture and/or a new pixel-position-specific
+    assertion to independently close the V-direction question for the
+    first time, is itself submitted as part of this decision — this
+    Spec does not silently assume the broader claim.**
 12. **Given `Renderable` has no material/texture reference today, how
     does this Spec's own composition-root boundary hold together?**
     *Recommended: this Spec's FR9 proof is a direct, fixture-level
@@ -584,3 +715,66 @@ At the Spec level, one further alternative was considered and rejected:
 - A distributable, cross-session Asset Catalog and rename-stable GUID
   identity — unchanged, carried forward from Spec 0012/0015.
 - Android/iOS/Linux implementation.
+
+## Readiness for Human Review (2026-08-25 self-review)
+
+A centralized, evidence-driven self-review pass re-verified every claim
+in this Draft directly against current, real code before this note was
+written — not by re-reading this document's own prose. It resolved one
+real governance gap and tightened or newly disclosed several findings;
+none reversed this Spec's own core recommendation (a mandatory,
+fixed, 32-byte vertex layout):
+
+- **Closed:** [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
+  now carries its own "Proposed Amendment — 2026-08-25" section,
+  explicitly `Proposed` (not `Accepted`), cross-referenced with
+  [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+  and this Spec, so all three reach Human Review together rather than
+  leaving ADR-0045's own required narrowing as unrecorded future work.
+- **Closed, with real proof, not assertion:** the vertex-layout/Shader-
+  reflection closure (Decision item 7) is now grounded directly in
+  `Device::createPipeline()`'s own real
+  `VkVertexInputBindingDescription`/`VkVertexInputAttributeDescription`
+  construction (`src/vulkan_backend/src/vulkan_device.cpp`) — confirmed
+  that an attribute-less region of a vertex's own stride (whether
+  trailing or interior) is never read by a pipeline whose own
+  `VertexInputLayout` does not name it. This holds for both directions
+  this Spec needs: a color-only shader ignoring a trailing UV region,
+  and a UV-only shader ignoring an interior color region.
+- **Newly disclosed, not previously stated:** `minimal_cube.mesh.txt`'s
+  own 8-vertex, shared-corner topology cannot express a correct
+  per-face UV unwrap under any UV values — its own migration can only
+  ever carry deterministic, non-default placeholder UV data, never a
+  real texture-ready unwrap, and it must never be proposed as a
+  texture-sampling proof mesh (Decision items 2 and 11).
+- **Newly disclosed, not previously stated:** the existing
+  `textured_quad` golden and its own already-recorded V38 confirmation
+  prove only render self-consistency and Unorm-vs-Srgb color
+  difference — not the absolute correctness of the UV-origin/
+  V-direction convention itself, since a regular checkerboard is
+  visually near-symmetric under a vertical flip and no existing test
+  asserts an absolute expected color at a known UV-mapped position.
+  This is submitted as an explicit Human Review choice (Decision item
+  11), not silently assumed either way.
+- **Re-confirmed by a fresh, broader repository search:** exactly four
+  composition-root call sites require a mechanical vertex-stride
+  widening (FR8); the count and file list are unchanged from this
+  Draft's own original claim, now additionally cross-checked against
+  `scene_load.cpp`/`scene_load_tests.cpp`/`vertex_input_mapping_tests.cpp`,
+  each confirmed unaffected for a distinct, stated reason rather than
+  merely omitted.
+- **No finding in this review pass overturned the core recommendation.**
+  `decodeMeshArtifact()`'s own single-global-constant stride check, and
+  the real Vulkan pipeline evidence above, both continue to support one
+  mandatory, fixed vertex layout over a variable/optional one — no
+  smaller alternative surfaced that still satisfies FR9's own real,
+  asset-sourced GPU proof requirement.
+
+**This Spec, [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md),
+and ADR-0045's own new Proposed Amendment are, on this basis, ready for
+a real, formal Human Review pass** — every decision this Draft asks
+Human Review to make is now backed by direct code evidence or an
+explicit, honest disclosure of what remains genuinely uncertain, rather
+than an assumption. This self-review does not itself approve anything:
+this Spec's own Status remains `In Review`, and both ADRs remain
+`Proposed`, pending that actual Human Review.
