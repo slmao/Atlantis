@@ -46,7 +46,16 @@ the minimal GPU resource/pipeline/draw surface (`Buffer`, `Texture`,
 [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md),
 [plans/0007-minimal-renderer.md](../plans/0007-minimal-renderer.md), and
 [ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md),
-[ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md).
+[ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md);
+a sampled-texture surface (`SampledTexture`, `Sampler`,
+`Device::createSampledTexture()/createSampler()`,
+`CommandList::copyBufferToTexture()`, and `BufferPurpose::Staging` as a
+host-visible upload source) implemented per
+[specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md),
+[plans/0016-texture-sampler-foundation.md](../plans/0016-texture-sampler-foundation.md),
+and
+[ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md),
+merged via [PR #78](https://github.com/slmao/Atlantis/pull/78).
 
 **`vulkan_backend/`** — Atlantis Vulkan Backend: Phase 1's sole graphics
 backend, implementing RHI's interfaces. Target `atlantis_vulkan_backend`,
@@ -90,7 +99,16 @@ dynamic-rendering Core path's post-merge fix (separating it fully from
 [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)'s
 "Accepted Amendment — 2026-08-13", merged via
 [PR #29](https://github.com/slmao/Atlantis/pull/29) (amendment) and
-[PR #30](https://github.com/slmao/Atlantis/pull/30) (fix).
+[PR #30](https://github.com/slmao/Atlantis/pull/30) (fix); `VulkanSampledTexture`/
+`VulkanSampler` and the real one-time CPU→GPU texture upload
+(`copyBufferToTexture()`'s own staging-buffer-to-image copy and
+Undefined→TransferDestination→ShaderRead barrier sequencing) implemented
+per
+[specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md),
+[plans/0016-texture-sampler-foundation.md](../plans/0016-texture-sampler-foundation.md),
+and
+[ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md),
+merged via [PR #78](https://github.com/slmao/Atlantis/pull/78).
 
 **`render_graph/`** — Atlantis RenderGraph: render graph construction,
 compilation, and execution. Target `atlantis_render_graph`, alias
@@ -124,7 +142,19 @@ and [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-re
 multi-attachment/draw-pass execution implemented per
 [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md),
 [plans/0007-minimal-renderer.md](../plans/0007-minimal-renderer.md), and
-[ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md).
+[ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md);
+`ResourceBinding` gained a third bind-kind (`sampledTexture`, alongside
+`target`/`depthTexture` — exactly one of the three non-null per entry),
+tracking a one-time texture upload's own
+Undefined→TransferDestination→ShaderRead transition, with `finalState`
+widened to sampledTexture bindings (the same trailing-transition
+mechanism Spec 0010/ADR-0039 already established, not a new one),
+implemented per
+[specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md),
+[plans/0016-texture-sampler-foundation.md](../plans/0016-texture-sampler-foundation.md),
+and
+[ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md),
+merged via [PR #78](https://github.com/slmao/Atlantis/pull/78).
 
 **`renderer/`** — Atlantis Renderer: the thin, stateless frame
 orchestrator that turns a caller-supplied mesh, material, and camera into
@@ -156,6 +186,17 @@ hand-authored mesh are supported this round — see the spec's own
 Non-Goals for the full list of what this module deliberately does not
 do (Shader System, scene graph/ECS/asset system, multiple materials,
 lighting/texturing, GPU-driven/bindless/instanced draws, and more).
+`Material`'s constructor gained a second, nullable, both-or-neither
+pair — `const atlantis::rhi::SampledTexture*`/`const atlantis::rhi::Sampler*`,
+both defaulting to `nullptr` — so a `Material` may optionally sample one
+fixed texture through one fixed descriptor binding; still one texture
+per `Material`, never a material graph or multiple slots, implemented
+per
+[specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md),
+[plans/0016-texture-sampler-foundation.md](../plans/0016-texture-sampler-foundation.md),
+and
+[ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md),
+merged via [PR #78](https://github.com/slmao/Atlantis/pull/78).
 
 **`shader_system/`** — Atlantis Shader System: a build-time Slang →
 SPIR-V compile/reflect/validate pipeline, superseding
@@ -179,7 +220,7 @@ and [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)–[ADR
 merged via [PR #36](https://github.com/slmao/Atlantis/pull/36).
 
 **`asset_system/`** — Atlantis Asset System: a deterministic
-authoring-source → runtime-artifact pipeline, now for two asset types.
+authoring-source → runtime-artifact pipeline, now for three asset types.
 Target `atlantis_asset_system`, alias `Atlantis::AssetSystem`
 (`Atlantis::Core`-only — no RHI, Renderer, RenderGraph, Shader System,
 Vulkan Backend, Platform, Tools, or `atlantis::world` dependency,
@@ -206,7 +247,21 @@ re-validating every cook-time condition at decode time, never trusting
 the cooker. Neither DTO shape ever names an `atlantis::world::` type
 (`scene_types.h`) — the one place permitted to convert between them,
 `atlantis::world::fromValidatedSceneData()`, lives in `src/world/`, not
-here. Implemented per
+here. Texture (a plain sampled color image, `Rgba8Unorm`/`Rgba8Srgb`):
+`cookTexture()`, `loadTextureAsset()` returning CPU-only
+`TextureAssetData` — never an RHI type; a composition root outside this
+module is responsible for constructing the actual `atlantis::rhi::SampledTexture`.
+`cookTexture()` takes already-decoded pixel bytes and never calls
+`stbi_load()` itself — the PNG decode call, and this module's only
+`Stb::Stb` linkage boundary, lives solely in `tools/asset_cooker/`'s own
+`runCookTextureMode()`, below. `cookTexture()` normalizes its own
+logical path exactly like `cookStaticMesh()`, so every cooked texture
+asset has its own unique, normalized logical path and Asset ID — a
+post-merge Human Review Correction
+([PR #79](https://github.com/slmao/Atlantis/pull/79),
+[PR #80](https://github.com/slmao/Atlantis/pull/80)) fixed an initial
+implementation that let two color-space variants of the same texture
+silently share one Asset ID. Implemented per
 [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md),
 [plans/0012-asset-system-foundation.md](../plans/0012-asset-system-foundation.md),
 [ADR-0043](../adr/0043-asset-system-module-boundary.md)–[ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md);
@@ -214,7 +269,12 @@ the scene graph asset type extended per
 [specs/0015-scene-asset-serialization-foundation.md](../specs/0015-scene-asset-serialization-foundation.md),
 [plans/0015-scene-asset-serialization-foundation.md](../plans/0015-scene-asset-serialization-foundation.md),
 and
-[ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)–[ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md).
+[ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)–[ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md);
+the texture asset type added per
+[specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md),
+[plans/0016-texture-sampler-foundation.md](../plans/0016-texture-sampler-foundation.md),
+and
+[ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md).
 
 **`world/`** — Atlantis World: Atlantis's in-memory, multi-entity scene.
 Target `atlantis_world`, alias `Atlantis::World` (PUBLIC dependency
@@ -256,16 +316,22 @@ and
 
 **`tools/asset_cooker/`** — Atlantis Tools' second real content:
 `atlantis_asset_cooker`, a CLI invoked at build time by CMake's
-`atlantis_add_static_mesh_asset()` (defined in
+`atlantis_add_static_mesh_asset()`/`atlantis_add_scene_asset()`/
+`atlantis_add_texture_asset()` (defined in
 `src/asset_system/CMakeLists.txt`, mirroring
 `atlantis_add_slang_shader_pair()`'s own stamp/`BYPRODUCTS` pattern) to
 cook one declared asset, and by `atlantis_finalize_asset_validation()`
 to run its own `--validate-set` mode over every declared asset's logical
-path. A thin CLI split into a testable library
-(`atlantis_asset_cooker_lib`) and a small `main.cpp` doing
-`--flag=value` argv parsing — links `Atlantis::AssetSystem` and
-`Atlantis::Core` only. Implemented per the same Spec 0012/Plan
-0012/ADR-0043–0045 references above.
+path — kind-agnostic, so it already covers texture logical paths
+exactly as it covers mesh/scene ones. A thin CLI split into a testable
+library (`atlantis_asset_cooker_lib`) and a small `main.cpp` doing
+`--flag=value` argv parsing — publicly links `Atlantis::AssetSystem` and
+`Atlantis::Core`; privately links `Stb::Stb` for its own `--kind=texture`
+mode's `stbi_load()` call site (`runCookTextureMode()`, ADR-0041's own
+Accepted Amendment), the sole place this binary's own PNG decode
+happens. Implemented per the same Spec 0012/Plan 0012/ADR-0043–0045
+references above; texture cook mode added per the same Spec 0016/Plan
+0016/ADR-0055–0057 references above.
 
 **`tools/shader_compiler/`** — Atlantis Tools' first real content:
 `atlantis_shader_compiler`, a CLI invoked at build time by CMake's

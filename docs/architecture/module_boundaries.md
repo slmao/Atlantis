@@ -332,9 +332,9 @@ format's own parse/serialize functions. The cooker's atomic-write
 mechanism and the CMake stamp/`BYPRODUCTS` integration are internal to
 the build graph, not part of the runtime-consumed public API.
 
-**Textures (Spec 0016, code complete on an open Implementation PR):** a
-third asset type, following the same cook/artifact/metadata-sidecar/load
-shape mesh and scene already established --
+**Textures (Spec 0016, implemented and merged):** a third asset type,
+following the same cook/artifact/metadata-sidecar/load shape mesh and
+scene already established --
 `texture_types.h`/`texture_artifact.h`/`texture_metadata.h`/
 `cook_texture.h`/`load_texture.h`. `cookTexture()` takes already-decoded
 pixel bytes and never calls `stbi_load()` itself -- the PNG decode call
@@ -346,7 +346,13 @@ CMake's own dependency graph, not header-grep alone. `TextureColorSpace`
 is this module's own independent enum, never `atlantis::rhi::SampledTextureFormat`
 -- the RHI dependency boundary this section states above is unaffected;
 a composition root outside Asset System (the fixture) is the only place
-that translates one to the other.
+that translates one to the other. `cookTexture()` normalizes its own
+logical path exactly like `cookStaticMesh()`, so every cooked texture
+asset has its own unique, normalized logical path and Asset ID -- a
+post-merge Human Review Correction ([PR #79](https://github.com/slmao/Atlantis/pull/79),
+[PR #80](https://github.com/slmao/Atlantis/pull/80)) fixed an initial
+implementation that let two color-space variants of the same texture
+silently share one Asset ID.
 
 **Extension points:** a rename-stable GUID identity scheme and a real
 derived-data cache are each named, explicitly out-of-scope future work

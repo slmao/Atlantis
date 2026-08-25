@@ -64,11 +64,21 @@ built with.
   [PR #74](https://github.com/slmao/Atlantis/pull/74)): a scene
   authoring grammar, cook/decode pipeline, and a Runtime-side,
   build-tree-private dependency manifest, proven end to end against
-  the existing World Scene golden with zero pixel difference. A
-  distributable, cross-session Asset Catalog and rename-stable GUID
-  identity remain future work (Candidate Order 7,
-  `specs/README.md`) — see `src/README.md`'s own
-  `asset_system/`/`tools/asset_cooker/` entries
+  the existing World Scene golden with zero pixel difference. Extended
+  again with a third asset type, textures (Spec 0016, `Approved`,
+  [PR #78](https://github.com/slmao/Atlantis/pull/78)): a new RHI
+  `SampledTexture`/`Sampler` pair, a RenderGraph sampled-resource
+  binding kind, a one-time CPU→GPU upload sharing the same
+  `Device::submit()` call as the real draw and readback, and a
+  `Material` that may optionally sample one fixed texture. A post-merge
+  Human Review Correction ([PR #79](https://github.com/slmao/Atlantis/pull/79),
+  [PR #80](https://github.com/slmao/Atlantis/pull/80)) fixed an initial
+  implementation gap where two color-space variants of the same texture
+  silently shared one Asset ID — every cooked texture asset now has its
+  own unique, normalized logical path and Asset ID. A distributable,
+  cross-session Asset Catalog and rename-stable GUID identity remain
+  future work (Candidate Order 7, `specs/README.md`) — see
+  `src/README.md`'s own `asset_system/`/`tools/asset_cooker/` entries
 - Vulkan Validation Layers as a correctness gate
 - RenderDoc-based debugging
 
@@ -289,11 +299,22 @@ also implemented (Spec 0013, `Approved`) — see below. World/Scene
 `Approved`) and scene asset serialization (a scene authoring/cook/
 decode/load pipeline reproducing a real, cooked scene at Runtime
 startup, Spec 0015, `Approved`) are also both implemented — see
-[specs/README.md](specs/README.md). Additional asset types beyond
-static mesh/scene (e.g. textures), lighting/material/post-processing
-extensions beyond the one fixed material this stack draws today, a
-distributable cross-session Asset Catalog, and Android/iOS remain
-unimplemented — see [src/README.md](src/README.md).
+[specs/README.md](specs/README.md). Texture & Sampler Foundation (a
+third Asset System asset type, a new RHI `SampledTexture`/`Sampler`
+pair, a RenderGraph sampled-resource binding kind, and a `Material`
+that may optionally sample one fixed texture, Spec 0016, `Approved`,
+implemented and merged via
+[PR #78](https://github.com/slmao/Atlantis/pull/78)) is also
+implemented; a post-merge Human Review Correction
+([PR #79](https://github.com/slmao/Atlantis/pull/79),
+[PR #80](https://github.com/slmao/Atlantis/pull/80)) fixed an initial
+gap where two color-space variants of the same texture silently shared
+one Asset ID — see [specs/README.md](specs/README.md). PBR/lighting/
+post-processing extensions beyond the one fixed material this stack
+draws today, mipmap/compression/streaming/bindless texture support, a
+texture/material scene binding, a distributable cross-session Asset
+Catalog, and Android/iOS remain unimplemented — see
+[src/README.md](src/README.md).
 
 Android and iOS remain specified architecturally only (not implemented);
 Vulkan Backend's Android WSI path is likewise not implemented. Headless
