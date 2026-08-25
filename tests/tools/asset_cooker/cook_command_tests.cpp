@@ -65,12 +65,12 @@ void writeFile(const fs::path& path, const std::string& content) {
 }
 
 constexpr std::string_view kValidTriangleSource =
-    "atlantis_static_mesh_source_version: 1\n"
+    "atlantis_static_mesh_source_version: 2\n"
     "vertex_count: 3\n"
     "index_count: 3\n"
-    "vertex: 0.0 0.0 0.0 1.0 0.0 0.0\n"
-    "vertex: 1.0 0.0 0.0 0.0 1.0 0.0\n"
-    "vertex: 0.0 1.0 0.0 0.0 0.0 1.0\n"
+    "vertex: 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0\n"
+    "vertex: 1.0 0.0 0.0 0.0 1.0 0.0 1.0 0.0\n"
+    "vertex: 0.0 1.0 0.0 0.0 0.0 1.0 0.0 1.0\n"
     "index: 0 1 2\n";
 
 // A different, still-valid mesh, distinct from kValidTriangleSource --
@@ -78,13 +78,13 @@ constexpr std::string_view kValidTriangleSource =
 // replaces its content, not merely leaves the old content in place
 // while silently reporting success.
 constexpr std::string_view kValidSquareSource =
-    "atlantis_static_mesh_source_version: 1\n"
+    "atlantis_static_mesh_source_version: 2\n"
     "vertex_count: 4\n"
     "index_count: 6\n"
-    "vertex: 0.0 0.0 0.0 1.0 1.0 1.0\n"
-    "vertex: 1.0 0.0 0.0 1.0 1.0 1.0\n"
-    "vertex: 1.0 1.0 0.0 1.0 1.0 1.0\n"
-    "vertex: 0.0 1.0 0.0 1.0 1.0 1.0\n"
+    "vertex: 0.0 0.0 0.0 1.0 1.0 1.0 0.0 0.0\n"
+    "vertex: 1.0 0.0 0.0 1.0 1.0 1.0 1.0 0.0\n"
+    "vertex: 1.0 1.0 0.0 1.0 1.0 1.0 1.0 1.0\n"
+    "vertex: 0.0 1.0 0.0 1.0 1.0 1.0 0.0 1.0\n"
     "index: 0 1 2\n"
     "index: 2 3 0\n";
 
@@ -132,6 +132,31 @@ TEST_CASE("runCookCommand fails on a malformed source", "[asset_cooker]") {
   request.outputDir = (dir.path / "out").string();
 
   CHECK(runCookCommand(request) != 0);
+}
+
+TEST_CASE("runCookCommand fails on a well-formed but old (pre-UV0), version-1 source", "[asset_cooker]") {
+  // Plan 0017 Section D4/V11: version 1 (six-field, no UV0) is rejected
+  // outright through the real CLI, no compatible/dual-version read --
+  // distinct from "malformed source" above, since this input is
+  // otherwise well-formed under the old grammar.
+  TempDirGuard dir("cook_old_version");
+  const fs::path assetRoot = dir.path / "assets";
+  writeFile(assetRoot / "meshes" / "old.mesh.txt",
+            "atlantis_static_mesh_source_version: 1\n"
+            "vertex_count: 3\n"
+            "index_count: 3\n"
+            "vertex: 0.0 0.0 0.0 1.0 0.0 0.0\n"
+            "vertex: 1.0 0.0 0.0 0.0 1.0 0.0\n"
+            "vertex: 0.0 1.0 0.0 0.0 0.0 1.0\n"
+            "index: 0 1 2\n");
+
+  CookCommandRequest request;
+  request.sourcePath = (assetRoot / "meshes" / "old.mesh.txt").string();
+  request.assetRoot = assetRoot.string();
+  request.outputDir = (dir.path / "out").string();
+
+  CHECK(runCookCommand(request) != 0);
+  CHECK_FALSE(fs::exists(dir.path / "out" / "old.amesh"));
 }
 
 TEST_CASE("runCookCommand fails when the source path escapes the asset root", "[asset_cooker]") {

@@ -3,6 +3,17 @@
 # tests/image_regression/fixture/minimal_cube_fixture.cpp's own
 # kCubeVertices/kCubeIndices arrays (see assets/meshes/minimal_cube.mesh.txt
 # itself for the values).
+#
+# Plan 0017 Section D6/ADR-0058: migrated to the version-2 grammar --
+# every vertex line gained a trailing, explicit "0.0 0.0" UV0 pair.
+# This is a deterministic placeholder only, never a per-face texture
+# unwrap: this cube's own 8-vertex, shared-corner topology (each corner
+# shared by the 3 faces meeting there) cannot express a correct
+# per-face UV unwrap under any UV values, since a shared vertex can
+# carry exactly one UV value, not one per face. minimal_cube continues
+# to be drawn exclusively by minimal_mesh.slang, which declares no UV
+# input and never reads these values -- this asset is not, and is not
+# claimed to be, texture-ready.
 atlantis_add_static_mesh_asset(
   NAME minimal_cube
   SOURCE meshes/minimal_cube.mesh.txt

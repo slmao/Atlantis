@@ -47,9 +47,15 @@ using atlantis::shader_system::ReflectionMetadata;
 using atlantis::shader_system::rhi_integration::MeshVertexAttributeSchema;
 using atlantis::shader_system::rhi_integration::toVertexInputLayout;
 
+// Plan 0017 Section D5/ADR-0058: gains a trailing UV0 field to match
+// the mesh artifact's own new 32-byte layout. minimal_mesh.slang
+// declares no UV input, so the schema below stays unchanged (position@0,
+// color@1) -- these trailing bytes are present in every vertex this
+// composition root uploads but are never read by this pipeline.
 struct Vertex {
   float position[3];
   float color[3];
+  float uv[2];
 };
 
 // Plan 0015 Section D10 step (g) / final review round (2026-08-24):

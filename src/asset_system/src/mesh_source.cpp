@@ -9,7 +9,11 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_static_mesh_source_version: 1";
+// Plan 0017 Section D1/ADR-0058: version 2 -- position + color + UV0,
+// 8 fields per vertex line. Version 1 (6 fields, no UV) is rejected
+// outright by the exact-string check below; no dual-version reader is
+// implemented.
+constexpr std::string_view kVersionLine = "atlantis_static_mesh_source_version: 2";
 constexpr std::string_view kVertexCountPrefix = "vertex_count: ";
 constexpr std::string_view kIndexCountPrefix = "index_count: ";
 constexpr std::string_view kVertexPrefix = "vertex: ";
@@ -116,12 +120,12 @@ atlantis::Result<ParsedMeshSource, SourceParseError> parseMeshSource(std::string
       return ResultT::Err(SourceParseError::FieldOrderMismatch);
     }
     const auto fields = splitOnSpace(line.substr(kVertexPrefix.size()));
-    if (fields.size() != 6) return ResultT::Err(SourceParseError::CountMismatch);
+    if (fields.size() != 8) return ResultT::Err(SourceParseError::CountMismatch);
 
     MeshSourceVertex vertex;
-    float* const components[6] = {&vertex.positionX, &vertex.positionY, &vertex.positionZ,
-                                   &vertex.colorR,    &vertex.colorG,    &vertex.colorB};
-    for (std::size_t f = 0; f < 6; ++f) {
+    float* const components[8] = {&vertex.positionX, &vertex.positionY, &vertex.positionZ, &vertex.colorR,
+                                   &vertex.colorG,    &vertex.colorB,    &vertex.uvU,        &vertex.uvV};
+    for (std::size_t f = 0; f < 8; ++f) {
       float value = 0.0f;
       if (!parseFloatToken(fields[f], value)) return ResultT::Err(SourceParseError::MalformedNumber);
       if (!std::isfinite(value)) return ResultT::Err(SourceParseError::NonFiniteFloat);
@@ -184,7 +188,8 @@ std::string serializeMeshSource(const ParsedMeshSource& source) {
   for (const MeshSourceVertex& v : source.vertices) {
     out += kVertexPrefix;
     out += std::to_string(v.positionX) + ' ' + std::to_string(v.positionY) + ' ' + std::to_string(v.positionZ) +
-           ' ' + std::to_string(v.colorR) + ' ' + std::to_string(v.colorG) + ' ' + std::to_string(v.colorB);
+           ' ' + std::to_string(v.colorR) + ' ' + std::to_string(v.colorG) + ' ' + std::to_string(v.colorB) + ' ' +
+           std::to_string(v.uvU) + ' ' + std::to_string(v.uvV);
     out += '\n';
   }
 
