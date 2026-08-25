@@ -3,10 +3,11 @@
 - **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-08-25
-- **Related Plan(s):** None yet — this approval authorizes drafting
-  Plan 0017 only. Implementation must wait until Plan 0017 itself
-  completes its own Human Review and its approval PR merges (see
-  [AGENTS.md](../AGENTS.md)'s Golden Rule).
+- **Related Plan(s):**
+  [plans/0017-mesh-uv-attribute-foundation.md](../plans/0017-mesh-uv-attribute-foundation.md)
+  (`In Review`, drafted 2026-08-26). Implementation must wait until this
+  Plan itself completes its own Human Review and its approval PR merges
+  (see [AGENTS.md](../AGENTS.md)'s Golden Rule).
 - **Related ADR(s):**
   [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
   (`Accepted`) — the one new architectural decision this Spec's own
