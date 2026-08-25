@@ -1,19 +1,103 @@
 # Spec: Mesh UV Attribute Foundation
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-08-25
-- **Related Plan(s):** None yet — this Spec is not implementation-ready
-  until Human Review approves it and a Plan is drafted against it (see
+- **Related Plan(s):** None yet — this approval authorizes drafting
+  Plan 0017 only. Implementation must wait until Plan 0017 itself
+  completes its own Human Review and its approval PR merges (see
   [AGENTS.md](../AGENTS.md)'s Golden Rule).
 - **Related ADR(s):**
   [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
-  (`Proposed`) — the one new architectural decision this Spec's own
+  (`Accepted`) — the one new architectural decision this Spec's own
   Architectural Impact identifies. See that ADR's own Related ADR(s)
   field for how it relates to
   [ADR-0043](../adr/0043-asset-system-module-boundary.md)–[ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
-  and
+  (ADR-0045 additionally carries its own "Accepted Amendment —
+  2026-08-25", accepted in the same Human Review pass — see below) and
   [ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md).
+- **Human Review Approval (2026-08-25):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer) on 2026-08-25, accepting this document's own "Decisions
+  for Human Review" section in full, per its own recommendations, with
+  no amendment. This approval also accepts
+  [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+  (`Proposed` → `Accepted`) and
+  [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)'s
+  own companion "Accepted Amendment — 2026-08-25" in the same pass —
+  neither is accepted independently of this Spec. This approval
+  explicitly accepts:
+
+  1. The Asset System static mesh schema is single, fixed, and
+     mandates UV0 — no variable/optional vertex-schema mechanism is
+     introduced (Decision item 1; ADR-0058 Decision item 1 and its own
+     Alternatives Considered).
+  2. The fixed asset layout is position + color + UV0; the exact
+     stride/offset values are as this Spec and ADR-0058 finally define
+     them — 32 bytes/vertex, position at offset 0, color at offset 12,
+     UV0 at offset 24 (Decision item 4; ADR-0058 Decision items 1–2).
+  3. Each shader pipeline declares only the attributes it actually
+     consumes; an undeclared region of a vertex's own stride is never
+     read by Vulkan's own vertex-input stage — accepted on the basis of
+     the verified `Device::createPipeline()` implementation
+     (`vulkan_device.cpp`) this Spec and ADR-0058 cite directly, not on
+     assertion alone (Decision item 7; ADR-0058 Decision item 6).
+  4. The authoring source and runtime artifact both move to a new
+     version; an old version is rejected outright and requires
+     re-cooking — no compatible/dual-version read is built this round
+     (Decision item 3; ADR-0058 Decision item 3).
+  5. A source file missing UV0 columns is an explicit, hard error —
+     never an implicit `(0, 0)` default (Decision items 2–3; FR5).
+  6. UV components must be finite; values outside `[0, 1]` are
+     permitted and are never auto-clamped (Decision item 5; ADR-0058
+     Decision item 4).
+  7. The cooker and loader preserve UV values verbatim, with no
+     implicit flip of any kind; the UV origin and `V`-direction follow
+     the convention this Spec and ADR-0058 already state (Decision item
+     6; ADR-0058 Decision item 5).
+  8. The existing, shared 8-vertex cube (`minimal_cube.mesh.txt`) is
+     migrated with deterministic placeholder UV0 only, continuing to be
+     drawn exclusively by its own existing, non-texture-sampling
+     shader — this Spec makes no claim that the cube gains a correct,
+     per-face UV unwrap (Decision items 2 and 11's own disclosed
+     cube-topology limitation).
+  9. The real texture-sampling verification mesh is a quad or another
+     split-vertex topology capable of a genuine, correct UV unwrap —
+     never the shared-vertex cube — proven, through a fixture-level
+     composition root, to have its UV0 data genuinely originate from
+     Asset System (Decision items 9, 10, 11, and 12).
+  10. The known verification limitation is accepted as-is for this
+      round: the existing checkerboard/golden cannot, by itself, prove
+      the UV-origin/`V`-direction convention's own absolute
+      correctness. CPU-side fixed-byte/round-trip tests are
+      responsible for proving authoring → artifact → load does not
+      alter UV data; the GPU golden is responsible for proving
+      asset-sourced UV genuinely participates in real sampling. No new
+      asymmetric texture or additional golden is added this round to
+      close the absolute-direction question further (Decision item
+      11's own disclosed limitation, accepted rather than escalated).
+  11. The existing `textured_quad` golden is reused in preference to a
+      new one: replacing its own hand-authored vertices with an
+      asset-sourced mesh must reproduce zero pixel difference. If
+      Implementation instead finds a real output change, the golden
+      must be re-captured following
+      [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
+      own golden-update-reason rule and go through genuine human
+      review — never accepted automatically (Decision item 11).
+  12. `World::Renderable`, Material Asset, any texture reference on a
+      Scene Asset, and any Runtime scene-to-material binding all remain
+      out of scope for this Spec. "Material Asset & Scene Binding
+      Foundation" remains an explicit, named, next candidate (Non-Goals;
+      Decision item 12; `specs/README.md`'s own Candidate Order 8).
+  13. No new third-party dependency, no new top-level module, and no
+      new `Atlantis::Renderer`/`Atlantis::RHI`/`Atlantis::RenderGraph`
+      public API — this Spec's own GPU proof reuses Spec 0016's
+      already-implemented `VertexAttributeFormat::Float2` capability
+      unmodified (Architectural Impact; Non-Goals).
+  14. Every other Non-Goal, error-handling semantic, determinism
+      guarantee, little-endian byte-order rule, malformed/corrupted-
+      input rejection path, and module-boundary requirement this
+      document states is accepted as written.
 
 ## Summary
 
@@ -305,8 +389,11 @@ bind-kind) already exists, `Accepted` and implemented, from Spec 0016.
 
 Twelve concrete decisions this Spec resolves, each with a recommended
 answer grounded in direct inspection of current code (cited inline).
-Human Review may accept, reject, or redirect any of them individually —
-none is assumed settled by this Draft.
+**All twelve were accepted by Human Review on 2026-08-25, per each
+one's own recommendation, with no amendment — see the "Human Review
+Approval (2026-08-25)" note at the top of this document for the formal
+record.** The recommendations below are left exactly as originally
+drafted and reviewed.
 
 1. **Is UV0 mandatory, optional, or an explicit vertex-layout/version
    variant?** *Recommended: mandatory, one fixed layout, no variant.*
@@ -572,16 +659,17 @@ none is assumed settled by this Draft.
 
 **Yes** — this Spec identifies one new architectural decision:
 [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
-(`Proposed`), fixing the static mesh vertex layout's own UV0 attribute,
-schema version, and sampling convention. It directly narrows an
+(`Accepted`), fixing the static mesh vertex layout's own UV0 attribute,
+schema version, and sampling convention. It directly narrowed an
 already-`Accepted` sentence of
 [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
-(which currently names the mesh formats as scoped to "position and
-color" only) — an **Accepted Amendment to ADR-0045** recording this
-widening is required once ADR-0058 itself reaches `Accepted`, following
-this repository's own established amendment pattern (see ADR-0041's own
-"Accepted Amendment — 2026-08-24" section for the precedent), not
-performed by this Draft.
+(which previously named the mesh formats as scoped to "position and
+color" only) — [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)'s
+own **"Accepted Amendment — 2026-08-25"** section records this
+widening, accepted in the same Human Review pass as this Spec and
+ADR-0058, following this repository's own established amendment
+pattern (see ADR-0041's own "Accepted Amendment — 2026-08-24" section
+for the precedent).
 
 No other module boundary, public API, dependency, threading model, or
 backend-abstraction contract changes:
@@ -726,11 +814,12 @@ none reversed this Spec's own core recommendation (a mandatory,
 fixed, 32-byte vertex layout):
 
 - **Closed:** [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
-  now carries its own "Proposed Amendment — 2026-08-25" section,
-  explicitly `Proposed` (not `Accepted`), cross-referenced with
-  [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
-  and this Spec, so all three reach Human Review together rather than
-  leaving ADR-0045's own required narrowing as unrecorded future work.
+  gained its own new Amendment section (drafted `Proposed`, cross-
+  referenced with [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+  and this Spec, submitted to the same Human Review pass — since
+  accepted; now "Accepted Amendment — 2026-08-25," see the Human Review
+  Approval note above), rather than leaving ADR-0045's own required
+  narrowing as unrecorded future work.
 - **Closed, with real proof, not assertion:** the vertex-layout/Shader-
   reflection closure (Decision item 7) is now grounded directly in
   `Device::createPipeline()`'s own real
@@ -771,10 +860,15 @@ fixed, 32-byte vertex layout):
   asset-sourced GPU proof requirement.
 
 **This Spec, [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md),
-and ADR-0045's own new Proposed Amendment are, on this basis, ready for
-a real, formal Human Review pass** — every decision this Draft asks
-Human Review to make is now backed by direct code evidence or an
-explicit, honest disclosure of what remains genuinely uncertain, rather
-than an assumption. This self-review does not itself approve anything:
-this Spec's own Status remains `In Review`, and both ADRs remain
-`Proposed`, pending that actual Human Review.
+and ADR-0045's own Amendment were, on this basis, submitted for a real,
+formal Human Review pass** — every decision this document asked Human
+Review to make was backed by direct code evidence or an explicit,
+honest disclosure of what remained genuinely uncertain, rather than an
+assumption. **That Human Review pass completed on 2026-08-25 — see the
+"Human Review Approval (2026-08-25)" note at the top of this document
+for the full, accepted record.** This Spec's own Status is now
+`Approved`; [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+and ADR-0045's own Amendment are both `Accepted`, in the same pass. This
+approval authorizes drafting Plan 0017 only — Implementation itself
+must still wait for Plan 0017's own separate Human Review and merged
+approval PR.

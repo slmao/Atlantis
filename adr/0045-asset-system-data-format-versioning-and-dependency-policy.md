@@ -38,15 +38,15 @@
   [ADR-0043](0043-asset-system-module-boundary.md) fixes, and the
   composition root performs the GPU handoff. This ADR then moved to
   `Accepted`.
-- **2026-08-25 (Proposed Amendment drafted, not yet accepted):** a
-  "Proposed Amendment" section is appended, alongside
-  [Spec 0017](../specs/0017-mesh-uv-attribute-foundation.md) (`In
-  Review`) and [ADR-0058](0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
-  (`Proposed`), narrowing this ADR's own "position and color" format
-  scope to "position, color, and UV0." Everything above that new
-  section remains this ADR's own original, unmodified `Accepted`
-  Decision — the Amendment itself is not in effect until Human Review
-  accepts it.
+- **2026-08-25 (drafted as a Proposed Amendment, then Accepted the same
+  day):** an "Accepted Amendment" section is appended, alongside
+  [Spec 0017](../specs/0017-mesh-uv-attribute-foundation.md) (`Approved`)
+  and [ADR-0058](0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+  (`Accepted`), narrowing this ADR's own "position and color" format
+  scope to "position, color, and UV0" — accepted by Human Review on
+  2026-08-25 as part of Spec 0017's own Human Review Approval.
+  Everything above that new section remains this ADR's own original,
+  unmodified `Accepted` Decision.
 
 ## Context
 
@@ -238,60 +238,59 @@ weighed and why each is deferred, not adopted, at this Spec's scope.
   [ADR-0043](0043-asset-system-module-boundary.md)'s own Revision
   History.
 
-## Proposed Amendment — 2026-08-25
+## Accepted Amendment — 2026-08-25
 
-**Status: Proposed — awaiting the same Human Review pass as
-[Spec 0017](../specs/0017-mesh-uv-attribute-foundation.md) (`In Review`)
-and [ADR-0058](0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
-(`Proposed`). This section records a proposed narrowing of this ADR's
-own Decision text below — it is not itself in effect, and this ADR's
-own Status line above remains `Accepted` for everything above this
-section, unchanged and unmodified, unless and until Human Review
-accepts this Amendment.** Everything above this section is this ADR's
-own original, `Accepted` Decision, Consequences, and Alternatives
-Considered, left completely untouched.
+**Status: Accepted.** Drafted 2026-08-25 as a Proposed Amendment
+alongside [Spec 0017](../specs/0017-mesh-uv-attribute-foundation.md) and
+[ADR-0058](0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md),
+and **formally accepted by Human Review on 2026-08-25** as part of
+Spec 0017's own Human Review Approval — see that Spec's own approval
+note for the full scope of what was accepted. Everything above this
+section remains this ADR's own original, unmodified `Accepted` Decision
+(this ADR's own top-level `Status: Accepted` above is unchanged and
+unaffected by this amendment) — this amendment does not alter, narrow,
+or reinterpret any of it as originally written; it narrows this ADR's
+own "position and color" format-scope sentence under the Decision
+below, now in effect.
 
-**Deciders:** slmao — Human Review, pending (not yet recorded).
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-08-25, accepting this amendment (every Decision
+item below) in full, as drafted, with no change, as part of
+[Spec 0017](../specs/0017-mesh-uv-attribute-foundation.md)'s own Human
+Review Approval.
 
 **Related:**
-[Spec 0017](../specs/0017-mesh-uv-attribute-foundation.md) (`In Review`),
+[Spec 0017](../specs/0017-mesh-uv-attribute-foundation.md) (`Approved`),
 [ADR-0058](0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
-(`Proposed`) — this Amendment and ADR-0058 cross-reference each other:
+(`Accepted`) — this Amendment and ADR-0058 cross-reference each other:
 ADR-0058 makes the actual vertex-layout decision (UV0 attribute,
 schema version, sampling convention); this Amendment records the
 corresponding, narrower change to this ADR's own already-`Accepted`
 format-scope sentence, so the two documents do not duplicate one
-another's content. Neither is to be marked `Accepted` independently of
-the other — both stand or fall together with the same Human Review
-decision on Spec 0017.
+another's content. Both were accepted together, in the same Human
+Review pass on Spec 0017.
 
-### Context for this proposed amendment
+### Context for this amendment
 
 This ADR's own `Accepted` Decision (above, unmodified) states the
 runtime artifact and authoring source formats are "scoped exactly to
 this Spec's one supported asset type (a static triangle mesh:
 **per-vertex position and color**, `std::uint16_t` indices)." Spec 0017
-proposes widening the one static mesh vertex layout to add a third,
-mandatory attribute, UV0 — a real, direct narrowing of that sentence's
-own scope, not a compatible extension it already permits. Per this
-repository's own established practice (an `Accepted` ADR's original
-Decision text is never silently rewritten; a scope change gets its own,
-separately-dated, clearly-labeled amendment — see
+widens the one static mesh vertex layout to add a third, mandatory
+attribute, UV0 — a real, direct narrowing of that sentence's own scope,
+not a compatible extension it already permitted. Per this repository's
+own established practice (an `Accepted` ADR's original Decision text is
+never silently rewritten; a scope change gets its own, separately-dated,
+clearly-labeled amendment — see
 [ADR-0041](0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)'s
 own "Accepted Amendment — 2026-08-24" section for the precedent this
-follows), this section is drafted now, alongside Spec 0017 and
-ADR-0058, so Human Review can evaluate the vertex-layout decision and
-its own required consequence to this ADR in one pass — but it is
-explicitly **not** marked `Accepted` here, since Spec 0017 itself has
-not yet been approved. Marking this `Accepted` ahead of that approval
-would misrepresent this ADR's own governance state.
+follows), this section was drafted alongside Spec 0017 and ADR-0058, so
+Human Review could evaluate the vertex-layout decision and its own
+required consequence to this ADR in one pass.
 
-### Proposed Decision (not yet in effect)
+### Decision
 
-If and when [Spec 0017](../specs/0017-mesh-uv-attribute-foundation.md)
-and [ADR-0058](0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
-are accepted by Human Review, this ADR's own Decision above is amended,
-in effect, to read:
+This ADR's own Decision above is amended, in effect, to read:
 
 - The runtime artifact and authoring source formats are scoped to this
   Spec's one supported asset type, **as extended by Spec 0017**: a
@@ -318,7 +317,7 @@ in effect, to read:
 - This same versioning rule applies identically to the authoring source
   format's own version marker line, for the same reason.
 
-### Consequences of this proposed amendment (if accepted)
+### Consequences of this amendment
 
 No change to this ADR's own "no new third-party dependency," "no
 migration mechanism," or byte-order Decisions — this Amendment narrows

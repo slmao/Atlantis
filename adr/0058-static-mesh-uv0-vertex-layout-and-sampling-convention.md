@@ -1,9 +1,16 @@
 # ADR 0058: Static Mesh Vertex Layout — UV0 Attribute, Schema Version, and Sampling Convention
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-25
-- **Deciders:** slmao — Human Review, pending
-- **Related Spec:** [specs/0017-mesh-uv-attribute-foundation.md](../specs/0017-mesh-uv-attribute-foundation.md) (`Draft`)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-25 as part of Spec 0017's Human Review Approval
+- **Related Spec:** [specs/0017-mesh-uv-attribute-foundation.md](../specs/0017-mesh-uv-attribute-foundation.md) (`Approved`)
+- **Acceptance Record (2026-08-25):** Accepted by Human Review as part
+  of [specs/0017-mesh-uv-attribute-foundation.md](../specs/0017-mesh-uv-attribute-foundation.md)'s
+  own Human Review Approval (2026-08-25) — see that Spec's own approval
+  note for the specific Decision items this ADR corresponds to. This
+  record does not change this ADR's own Decision, Consequences, or
+  Alternatives Considered below.
 - **Related ADR(s):**
   [ADR-0043](0043-asset-system-module-boundary.md) (Asset System module
   boundary — unaffected; this ADR changes the mesh vertex *layout*, not
@@ -16,12 +23,11 @@
   narrowed**: its own already-`Accepted` Decision text names the
   runtime artifact/authoring source formats as scoped to "a static
   triangle mesh: per-vertex position and color" — this ADR widens that
-  to "position, color, and UV0"; the corresponding **Accepted
-  Amendment** to ADR-0045 itself is required once this ADR reaches
-  `Accepted`, not performed by this document, matching this
-  repository's own established amendment pattern — see ADR-0041's own
-  "Accepted Amendment — 2026-08-24" section for the precedent this
-  follows),
+  to "position, color, and UV0"; ADR-0045's own "Accepted Amendment —
+  2026-08-25" section, accepted in the same Human Review pass as this
+  ADR, records that widening, matching this repository's own
+  established amendment pattern — see ADR-0041's own "Accepted
+  Amendment — 2026-08-24" section for the precedent this follows),
   [ADR-0055](0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0056](0056-texture-upload-resource-state-and-descriptor-binding.md)
   (RHI `SampledTexture`/`Sampler`, `VertexAttributeFormat::Float2` — the
   already-`Accepted`, already-implemented infrastructure this ADR's own
