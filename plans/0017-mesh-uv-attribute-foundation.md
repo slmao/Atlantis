@@ -1,8 +1,109 @@
 # Plan: Mesh UV Attribute Foundation
 
 - **Spec:** [specs/0017-mesh-uv-attribute-foundation.md](../specs/0017-mesh-uv-attribute-foundation.md) (`Approved`, Human Review Approval recorded 2026-08-25 — see that Spec's own approval note for the full 14-item accepted record)
-- **Status:** In Review
+- **Status:** `Approved / Ready for Implementation`. See "Human Review
+  Approval" below for the full record.
 - **Author:** slmao
+- **Human Review Approval (2026-08-26):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer) on 2026-08-26, accepting this Plan in full as revised
+  through one final, targeted Plan Review round (below), which found
+  and fixed six real gaps before approval rather than deferring them.
+  This approval explicitly covers:
+
+  1. **D4's own artifact-distribution reasoning, corrected from a
+     permanent policy claim to a scoping of the current build
+     pipeline.** The Plan Review found that stating "no mesh artifact
+     is ever shipped independently of its own source" as an
+     unconditional architectural principle would conflict with
+     [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)'s
+     own already-`Accepted` portable, unconditional little-endian
+     byte-order contract — deliberately written for "both of
+     Atlantis's currently-supported targets (x86-64 Windows
+     development, and the ARM/AArch64 Android ABI)," anticipating a
+     real, portable artifact even though no cross-build distribution
+     mechanism exists yet. D4 is corrected to state its "reject version
+     1, re-cook" decision as this Plan's own policy for today's actual,
+     single-target build pipeline — not a claim that a versioned
+     artifact could never be independently cached, distributed, or
+     restored in the future.
+  2. **Milestone 1's atomic step, verified complete by a fresh
+     repository-wide search, not assumed complete from the original
+     Draft's own file list.** Five further test files
+     (`tests/asset_system/load_tests.cpp`,
+     `tests/tools/asset_cooker/cook_command_tests.cpp`,
+     `tests/tools/asset_cooker/cooker_determinism_tests.cpp`,
+     `tests/runtime/scene_manifest_tests.cpp`,
+     `tests/runtime/scene_load_tests.cpp`) each embed a hardcoded,
+     valid 6-field/version-1 mesh-source string used as input to test
+     something else entirely — each would have broken outright once the
+     parser started rejecting version 1, had this gap not been found
+     and added to the same atomic step. Two lookalike files
+     (`asset_metadata_tests.cpp`,
+     `tests/shader_system/rhi_integration/vertex_input_mapping_tests.cpp`)
+     were positively confirmed, not merely assumed, to need no change.
+     New V37 covers this regression explicitly.
+  3. **The two-independent-quad-mesh design (D7), now justified by an
+     explicit rejection of the smaller-looking alternative, not merely
+     asserted.** Confirmed `textured_quad_fixture.cpp`'s own two
+     `DrawItem`s both already use `identityMatrix()` for
+     `objectToWorld` — a single shared mesh repositioned by two real,
+     non-identity translation matrices was a genuine, considered
+     alternative, rejected specifically because it would introduce a
+     real GPU-side floating-point matrix multiply that does not exist
+     in today's fixture, risking this Milestone's own zero-pixel-
+     difference gate for no compensating architectural benefit. Two
+     independent, already-final-position mesh assets keep
+     `objectToWorld` at `identityMatrix()` for both `DrawItem`s,
+     unchanged from today — the genuinely minimal-*risk* choice, each
+     with its own distinct logical path/AssetId.
+  4. **`textured_quad`'s own status as an existing, already-merged
+     golden, stated unambiguously wherever this Plan discusses it** —
+     this Plan creates no new golden. Its own Implementation must not
+     run any golden generator or touch the existing sidecar's
+     `capture_date`/`source_revision`; all three of this repository's
+     goldens (`minimal_cube`, `world_scene`, `textured_quad`) stay
+     byte-for-byte unmodified on disk (V35), and a real pixel
+     difference against the existing `textured_quad` baseline stops
+     Implementation and returns to Human Review rather than updating
+     the golden automatically.
+  5. **The fixed 32-byte layout / offset-0-12-24 / shader-location
+     closure, re-confirmed consistent** between D2's own byte-offset
+     table and D8's own `MeshVertexAttributeSchema` entries, and
+     between both and `Device::createPipeline()`'s own real
+     `VkVertexInputAttributeDescription` construction cited in Pre-draft
+     verification — no discrepancy found. D8's own explicit removal of
+     `kLeftQuadVertices`/`kRightQuadVertices`/`kQuadIndices`/the local
+     `Vertex` struct (not merely leaving them unused) confirmed as the
+     only way this Milestone's own GPU test can prove UV originates
+     from the loaded artifact, with no retained hand-authored fallback
+     path.
+  6. **The full, continuously-numbered Verification Checklist, V1
+     through V37** (V37 added by this Review round, per item 2 above)
+     — confirmed to cover version-1 rejection, missing/malformed/
+     non-finite UV, fixed-byte round-trips, determinism, CMake
+     re-import triggering, all four composition roots, all three
+     existing goldens, Debug/Release, `ATLANTIS_BUILD_TESTS=OFF`,
+     `ctest -LE gpu`/`-L gpu`, Vulkan Validation Layers, and module
+     boundary — with `/w14062`'s own C4062 probe (V23/V24) correctly
+     scoped as a regression check of existing protection, since this
+     Plan adds no new enumerator anywhere.
+
+  No unresolvable architectural conflict was found — every item above
+  was corrected at the Plan level alone, without reopening or narrowing
+  any decision Spec 0017, ADR-0058, or ADR-0045's own Amendment already
+  settled. **This approval authorizes Implementation only once this
+  Plan's own PR (#83) is merged** — it does not itself constitute that
+  merge.
+
+## Plan Review (2026-08-26, pre-approval)
+
+One final, targeted review pass, not a new open-ended round: verified
+the six specific concerns above directly against current code (not
+against this Plan's own prior prose), fixed each one where a real gap
+or an imprecise claim was found, and found no discrepancy that could
+not be resolved by correcting this Plan's own wording/scope — see the
+Human Review Approval note above for the itemized outcome of each.
 
 This Plan implements Spec 0017 and
 [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
@@ -152,6 +253,38 @@ not carried over from Spec 0017's own citations without re-checking:
   artifact) already has a matching, existing enumerator once loop
   bounds move from six fields/floats to eight. **No new enumerator is
   added anywhere by this Plan.**
+- Repository-wide search for `atlantis_static_mesh_source_version`
+  (the mesh authoring grammar's own version marker) found **five
+  further test files**, beyond `mesh_source_tests.cpp`/
+  `mesh_artifact_tests.cpp` themselves, each embedding a hardcoded,
+  valid 6-field/version-1 mesh-source string as input to test something
+  else entirely (metadata cross-checking, cooker CLI behavior,
+  determinism, Runtime scene-manifest/scene-load logic):
+  `tests/asset_system/load_tests.cpp`,
+  `tests/tools/asset_cooker/cook_command_tests.cpp`,
+  `tests/tools/asset_cooker/cooker_determinism_tests.cpp`,
+  `tests/runtime/scene_manifest_tests.cpp`,
+  `tests/runtime/scene_load_tests.cpp`. Every one of these literals
+  must move to the new 8-field/version-2 grammar in Milestone 1's own
+  atomic step, or the function each file exists to test breaks outright
+  once the parser rejects version 1 — a real, previously undisclosed
+  gap this Plan Review closed by search, not by assumption. The same
+  search also positively confirmed two lookalike files need **no**
+  change: `tests/asset_system/asset_metadata_tests.cpp` (its own
+  `vertex_count: 8`/`vertexStrideBytes == 24` are arbitrary sample
+  values for testing `AssetMetadata`'s own generic serialization,
+  never text `parseMeshSource()` itself parses) and
+  `tests/shader_system/rhi_integration/vertex_input_mapping_tests.cpp`
+  (its own `strideBytes == 24` is a synthetic value for
+  `toVertexInputLayout()`'s own mapping logic, unconnected to
+  `kMeshArtifactVertexStrideBytes`).
+- `tests/image_regression/fixture/textured_quad_fixture.cpp`: both
+  `DrawItem`s' own `objectToWorld` are `identityMatrix()` — **not** two
+  distinct translations of one shared mesh. Confirms that reproducing
+  the two quads' current absolute screen positions via one shared mesh
+  asset plus two non-identity `objectToWorld` transforms is a real
+  alternative to consider (D7 below explains why it is rejected in
+  favor of two independently-baked-position mesh assets).
 
 ## Plan-level decisions (fixed here, not left to Implementation)
 
@@ -247,14 +380,34 @@ Implements Spec 0017 Decision item 2, ADR-0058 Decision item 3.
 
 There is exactly one currently-authored mesh source in this repository,
 `assets/meshes/minimal_cube.mesh.txt` (confirmed by directory listing).
-No mesh artifact is independently shipped — every `.amesh` is a
-deterministic CMake build output, already re-cooked automatically
-whenever its source file or the `atlantis_asset_cooker` binary itself
-changes (`DEPENDS ${source_path} atlantis_asset_cooker`, already
-present). This Plan builds **no migration tool, no compatibility
-reader, and no implicit `(0, 0)` UV default** — `minimal_cube.mesh.txt`
-is edited directly (D7 below), and CMake's own existing dependency
-tracking re-cooks it the next time anyone configures/builds.
+**This is a scoping of the current build pipeline's own behavior, not a
+claim about Asset System's own permanent artifact-distribution policy**
+— [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)'s
+own unconditional little-endian byte-order contract is deliberately
+written to be portable across "both of Atlantis's currently-supported
+targets (x86-64 Windows development, and the ARM/AArch64 Android ABI)"
+precisely because a cooked `.amesh` is designed to be a real, portable
+runtime artifact, not something inherently tied to one host. Today,
+under Atlantis's actual, current CMake build graph, that portability
+has no consumer yet: there is no artifact cache, no cross-build/
+cross-session artifact distribution mechanism, and no Android build
+target at all — every `.amesh` that exists is a deterministic,
+same-machine build output, already re-cooked automatically whenever its
+source file or the `atlantis_asset_cooker` binary itself changes
+(`DEPENDS ${source_path} atlantis_asset_cooker`, already present). This
+Plan's own decoder therefore hard-rejects schema version 1 outright and
+requires re-cooking under the current pipeline — a version-migration
+policy for *this* build's own real, present workflow, not a statement
+that a version-1 artifact could never exist anywhere, now or in the
+future (e.g., a cached build artifact from before this Plan's own
+Implementation, restored without a full re-cook). This Plan builds **no
+migration tool and no implicit `(0, 0)` UV default** for such a case —
+`minimal_cube.mesh.txt` is edited directly (D7 below), and CMake's own
+existing dependency tracking re-cooks it the next time anyone
+configures/builds; a hypothetical future artifact-caching or
+cross-platform distribution mechanism, if one is ever built, would need
+its own explicit version-compatibility policy at that time, which this
+Plan does not attempt to anticipate or design for now.
 
 ### D5. Four composition-root call sites — mechanical stride widening, schema unchanged
 
@@ -303,7 +456,7 @@ Implementation.
 
 ### D7. New quad mesh assets — real UV topology, transcribed from the existing fixture literals
 
-Implements Spec 0017 FR9, Decision items 9/11, ADR-0058 Decision item 5's own "Alternatives Considered" rejection of a shared-vertex approach for this proof.
+Implements Spec 0017 FR9, Decision items 9/11.
 
 Two new mesh authoring sources, mirroring `textured_quad_fixture.cpp`'s
 own two already-hand-authored quads exactly — same positions, same UVs,
@@ -332,13 +485,39 @@ Correction addressed — this mechanism was never shared here). Four
 `TARGET`/`LOGICAL_PATH`), matching `minimal_cube`'s own exact four-line
 pattern.
 
-Two separate mesh assets — not one shared mesh repositioned by a
-non-identity transform — because `textured_quad_fixture.cpp`'s own
-existing camera/projection/`objectToWorld` matrices are all identity
-(Pre-draft verification) and this Plan does not introduce a transform
-model the Spec never authorized; two independent, absolute-position
-meshes is the minimal change that keeps every other part of the fixture
-untouched, per Spec 0017's own Decision item 11.
+**Why two independent mesh assets, not one shared mesh plus two
+`objectToWorld` translations** — the smaller-looking alternative was
+considered explicitly, not dismissed by default. `DrawItem`'s own
+`objectToWorld` field already exists and is already applied by the real
+vertex shader (`mul(pushConstants.objectToWorld, float4(input.position,
+1.0))`, confirmed in `textured_quad.slang`), so a single unit quad
+translated left/right by two different `objectToWorld` matrices is
+mechanically possible with zero new RHI/Renderer/Shader System
+capability — matching this Plan's own Non-Goal against introducing new
+public API. It is rejected anyway, for a concrete reason specific to
+this Plan's own zero-pixel-difference requirement: today,
+`leftItem.objectToWorld`/`rightItem.objectToWorld` are both
+`identityMatrix()` (Pre-draft verification), so the GPU vertex shader's
+own `mul()` is multiplying by identity — the literal position bytes
+reach clip space with no floating-point arithmetic applied to them at
+all. Introducing a real, non-identity translation matrix for either
+quad would introduce a genuine GPU-side matrix-vector multiply that
+does not exist in today's fixture, and floating-point
+multiply-accumulate is not guaranteed bit-identical to a directly
+-supplied literal value even when the two are mathematically equal —
+a real, if narrow, risk to the exact zero-pixel-difference gate this
+Milestone's own acceptance criterion demands. Two independent mesh
+assets, each already carrying its own final absolute position exactly
+as today's hand-authored arrays do, require **no new arithmetic
+anywhere in the draw path** — `objectToWorld` stays `identityMatrix()`
+for both `DrawItem`s, unchanged from today, matching this Plan's own
+"replace the vertex *source*, touch nothing else about how the fixture
+draws" scope exactly. This is the concrete, evidence-based reason two
+assets are the minimal-*risk* choice for this specific requirement,
+even though they are not the minimal *asset-count* choice — each gets
+its own distinct `SOURCE`/logical path/AssetId, with no identity
+concern of the kind Plan 0016's own Correction addressed, since this
+mechanism was never shared here.
 
 ### D8. `textured_quad_fixture.cpp` — load the two new mesh assets, replacing the hand-authored arrays
 
@@ -377,14 +556,29 @@ Implements Spec 0017 FR9, Decision items 9/10/11/12.
   `${ATLANTIS_textured_quad_left_TARGET}`/`${ATLANTIS_textured_quad_right_TARGET}`
   to their own existing `add_dependencies()` call, alongside the two
   texture targets already there.
-- **Golden reuse, not replacement:** the existing
-  `tests/image_regression/goldens/textured_quad/` PNG and sidecar are
-  **not modified by this Plan**. Implementation's own acceptance gate
-  for this milestone is that the fixture's own captured pixels continue
-  to match that unmodified golden with **zero** difference. If a real
-  run finds any difference, Implementation stops and returns to Human
-  Review — it must not update the golden, adjust tolerance, or reinterpret
-  the mismatch as expected, per Spec 0017 Decision item 11 and
+- **`textured_quad` is an existing golden this Plan reuses, not a new
+  one this Plan creates.** It was already captured and merged as part
+  of Spec 0016's own Implementation (PR #78, corrected for AssetId
+  identity by PR #79/#80) — its PNG and sidecar already exist on `main`
+  before this Plan's own first commit. This Plan's own Implementation
+  must not run
+  `atlantis_image_regression_textured_quad_golden_generator` (or any
+  other golden generator) at all, must not write a new PNG or sidecar
+  under `tests/image_regression/goldens/`, and must not touch the
+  existing sidecar's own `capture_date`/`source_revision` fields in any
+  way. The **only** three goldens this repository has —
+  `minimal_cube`, `world_scene`, and `textured_quad` — are all left
+  byte-for-byte unmodified on disk by this entire Plan (V35 below).
+  Implementation's own acceptance gate for this milestone is that the
+  converted fixture's own freshly-captured pixels continue to match
+  that unmodified, pre-existing `textured_quad` golden with **zero**
+  difference, exercised through the fixture's own already-existing
+  capture-compare test path (`textured_quad_gpu_tests.cpp`'s own "Full
+  capture-compare cycle against the committed textured_quad golden
+  passes" case), not a new comparison mechanism. If a real run finds
+  any difference, Implementation stops and returns to Human Review — it
+  must not update the golden, adjust tolerance, or reinterpret the
+  mismatch as expected, per Spec 0017 Decision item 11 and
   [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
   own golden-update-reason rule (a real pixel change here would not fit
   any of that rule's existing categories without a fresh Human Review
@@ -438,12 +632,45 @@ subdivision), not a new pattern invented here.
    - New/extended unit tests: `mesh_source_tests.cpp` (8-field
      parse/serialize round-trip; version-2 acceptance and version-1/
      malformed-count rejection; UV `MalformedNumber`/`NonFiniteFloat`
-     cases), `mesh_artifact_tests.cpp` (32-byte encode/decode
-     round-trip at the new offsets; schema-version-2/stride-32
-     acceptance and version-1/stride-24 rejection; UV `NonFiniteFloat`
-     at decode time), `static_mesh_asset_data_tests.cpp` (confirmed
-     unmodified — existing tests must continue to pass unchanged
-     against the wider stride, itself a regression assertion).
+     cases — every one of this file's own pre-existing test bodies
+     using a hardcoded mesh-source string also moves from a 6-field/
+     version-1 literal to an 8-field/version-2 one, unless the specific
+     case is testing version-1 rejection itself), `mesh_artifact_tests.cpp`
+     (32-byte encode/decode round-trip at the new offsets;
+     schema-version-2/stride-32 acceptance and version-1/stride-24
+     rejection; UV `NonFiniteFloat` at decode time), `static_mesh_asset_data_tests.cpp`
+     (confirmed unmodified — existing tests must continue to pass
+     unchanged against the wider stride, itself a regression
+     assertion).
+   - **Five further existing test files, found by a repository-wide
+     search for `atlantis_static_mesh_source_version`, each embed a
+     hardcoded, valid mesh-source string as *input to test something
+     else* (metadata mismatch, cooker CLI behavior, determinism,
+     Runtime scene-manifest/scene-load logic) — every one of these
+     literals moves from the 6-field/version-1 grammar to the
+     8-field/version-2 grammar in this same atomic step, or the
+     function they exist to test breaks outright once the parser
+     rejects version 1:**
+     `tests/asset_system/load_tests.cpp` (its own `kValidTriangleSource`
+     constant, plus one further, inline "second, different asset"
+     mesh string used by its own metadata-mismatch test),
+     `tests/tools/asset_cooker/cook_command_tests.cpp` (its own
+     `kValidTriangleSource` and `kValidSquareSource` constants),
+     `tests/tools/asset_cooker/cooker_determinism_tests.cpp` (its own
+     `kValidTriangleSource` constant — the same file this Milestone
+     also extends with a new UV-bearing determinism case, below),
+     `tests/runtime/scene_manifest_tests.cpp` and
+     `tests/runtime/scene_load_tests.cpp` (each its own
+     `kValidTriangleSource` constant). **Confirmed, by the same search
+     plus direct inspection, as *not* needing any change:**
+     `tests/asset_system/asset_metadata_tests.cpp` (its own `vertex_count:
+     8`/`vertexStrideBytes == 24` are arbitrary sample values for testing
+     `AssetMetadata`'s own generic serialization round-trip, never a real
+     mesh-source string parsed by `parseMeshSource()`) and
+     `tests/shader_system/rhi_integration/vertex_input_mapping_tests.cpp`
+     (its own `strideBytes == 24` is a synthetic test value for
+     `toVertexInputLayout()`'s own mapping logic, unconnected to
+     `kMeshArtifactVertexStrideBytes`).
    - A new, dedicated CPU round-trip test (D9) proving a UV value
      written in an authoring source reaches `StaticMeshAssetData`
      unchanged, bit-for-bit, through the real `cookStaticMesh()` →
@@ -514,6 +741,11 @@ subdivision), not a new pattern invented here.
   `mesh_uv_round_trip_tests.cpp`)
 - `tests/tools/asset_cooker/cooker_determinism_tests.cpp`,
   `tests/tools/asset_cooker/cook_command_tests.cpp` (Milestone 1)
+- `tests/asset_system/load_tests.cpp`,
+  `tests/runtime/scene_manifest_tests.cpp`,
+  `tests/runtime/scene_load_tests.cpp` (Milestone 1 — existing hardcoded
+  mesh-source fixture literals only, updated to the new grammar; no
+  change to what any of these files actually tests)
 - A new `tests/asset_system/` test file for Milestone 2's own
   quad-asset cook/load proof (exact filename an Implementation-time
   detail, e.g. `textured_quad_mesh_tests.cpp`), and its own
@@ -585,6 +817,7 @@ own Milestone 3 reuses unmodified), both already satisfied on `main`.
 | V34 | Vulkan Validation Layers grepped clean (zero `VUID`/`Validation Error`/`Validation Warning`) across full verbose GPU test output, both configurations | Manual, recorded | Manual |
 | V35 | Every existing golden file (`minimal_cube`, `world_scene`, `textured_quad` — both PNG and sidecar) is byte-for-byte unchanged on disk versus `main` before this Plan's own Implementation began — an explicit `git diff`/checksum check, not inferred from "tests passed" | Manual, `git diff` evidence | Manual |
 | V36 | `git diff --check` clean across every commit in this Plan's own Implementation; no AI/Claude/Anthropic/Co-Authored-By attribution in any commit or PR content | Manual, recorded | Manual |
+| V37 | The five further test files identified by this Plan's own Plan Review (`load_tests.cpp`, `cook_command_tests.cpp`, `cooker_determinism_tests.cpp`, `scene_manifest_tests.cpp`, `scene_load_tests.cpp`) each pass unmodified in outcome after their own hardcoded mesh-source literal moves to the 8-field/version-2 grammar — confirming the literal's own content changed but the behavior each test actually verifies did not | Existing test suites (regression) | GPU-independent |
 
 ## Rollback Plan
 
@@ -596,8 +829,12 @@ mutually load-bearing). Reverting Milestone 1 restores the 24-byte
 format and the four composition roots' own prior `Vertex` shape
 together; `minimal_cube.mesh.txt` reverts to its own pre-Plan 6-field
 content in the same revert. No data migration is needed in either
-direction, since no artifact is ever shipped independently of its own
-regenerated-at-build-time source.
+direction under today's actual build pipeline (D4), since every
+`.amesh` this pipeline produces is regenerated from its own checked-in
+source on the next configure/build — a property of the current,
+single-target Windows workflow this Plan operates under, not a
+permanent guarantee against a future artifact-caching or distribution
+mechanism.
 
 ## Definition of Done
 
