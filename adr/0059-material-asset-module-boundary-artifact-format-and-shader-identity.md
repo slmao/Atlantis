@@ -148,6 +148,28 @@ Catalog, no shader `AssetId`, no new Shader System machinery.**
    `MaterialKind` value later means adding a second hardcoded mapping
    Runtime-side — an explicit, accepted limit on this decision's own
    scope, not a design flaw to correct now.
+
+   **A real, disclosed CMake fix this decision requires, found during
+   this ADR's own centralized final review:** `shaders/textured_quad/`'s
+   own `add_subdirectory()` call is declared inside the root
+   `CMakeLists.txt`'s `if(ATLANTIS_BUILD_TESTS)` block today — its own
+   `CMakeLists.txt` says so explicitly ("Test-only consumer
+   (`tests/image_regression/fixture/`) -- added inside the
+   `ATLANTIS_BUILD_TESTS` block, unlike `minimal_renderer`'s own
+   unconditional placement"). Confirmed directly: with
+   `ATLANTIS_BUILD_TESTS=OFF`, the `textured_quad_shaders` target does
+   not exist. Runtime must build independent of `ATLANTIS_BUILD_TESTS`,
+   so this decision requires moving that one `add_subdirectory()` call
+   to the same unconditional placement `shaders/minimal_renderer`
+   already has, for the identical, already-precedented reason
+   (`atlantis_runtime` needs it). This is a one-line CMake relocation,
+   not new shader content and not a duplicate `.slang` file — the
+   shader's own real, reflected contract (a `CameraUniform{view;
+   projection;}` at binding(0,0), a `PushConstants{objectToWorld}`
+   push constant, `VertexInput{position@0, uv@1}`) is confirmed,
+   directly against the real `.slang` source, to match Runtime's
+   existing `Camera`/`DrawItem` contract exactly — only the vertex-input
+   schema this `MaterialKind` builds differs from `minimal_mesh`'s own.
 4. **Authoring source and cooking:** a small, versioned text grammar
    (mirroring `mesh_source.cpp`/`scene_source.cpp`'s own established
    shape — a version line, then field lines), naming a `kind` token, a
