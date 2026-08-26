@@ -1,5 +1,6 @@
 #include "textured_quad_fixture.h"
 
+#include <atlantis/asset_system/load.h>
 #include <atlantis/asset_system/load_texture.h>
 #include <atlantis/render_graph/execution.h>
 #include <atlantis/render_graph/render_graph_builder.h>
@@ -58,42 +59,33 @@ using atlantis::shader_system::rhi_integration::toVertexInputLayout;
   return words;
 }
 
+// Plan 0017 Section D8/ADR-0058: the real mesh artifact's own 32-byte
+// vertex layout is position(3)+color(3)+UV0(2) -- this local Vertex
+// exists only so offsetof() can compute the real byte offsets below
+// (position at 0, UV0 at 24); the color region (bytes 12-23) is
+// deliberately left undeclared, since textured_quad.slang has no color
+// input and never reads it (Device::createPipeline() only ever
+// constructs a VkVertexInputAttributeDescription for an attribute the
+// caller's own schema names). strideBytes is the mesh's own real,
+// loaded StaticMeshAssetData::vertexStrideBytes() -- never a hardcoded
+// sizeof() -- so this layout stays correct even if the artifact's own
+// stride ever changes independently of this file.
 struct Vertex {
   float position[3];
+  float color[3];
   float uv[2];
 };
 
-[[nodiscard]] std::optional<VertexInputLayout> texturedQuadVertexLayout(const ReflectionMetadata& vertexMetadata) {
+[[nodiscard]] std::optional<VertexInputLayout> texturedQuadVertexLayout(const ReflectionMetadata& vertexMetadata,
+                                                                         std::uint32_t strideBytes) {
   const std::vector<MeshVertexAttributeSchema> schema = {
       MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
       MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
   };
-  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  auto result = toVertexInputLayout(vertexMetadata, schema, strideBytes);
   if (result.isErr()) return std::nullopt;
   return result.value();
 }
-
-// Spec 0016/D11: two 1x2-triangle quads in clip space directly (the
-// fixture's own camera/projection/objectToWorld matrices are all
-// identity, below -- position.xyz passes through to NDC unchanged). No
-// per-vertex color -- the quads' own visible color comes entirely from
-// the sampled texture. v=0 at the top row, v=1 at the bottom row,
-// matching the texture artifact's own "row 0 = first-decoded row (top),
-// no vertical flip" contract (texture_artifact.h) so the checkerboard
-// appears right-side-up.
-constexpr Vertex kLeftQuadVertices[4] = {
-    {{-0.9f, -0.5f, 0.0f}, {0.0f, 1.0f}},
-    {{-0.1f, -0.5f, 0.0f}, {1.0f, 1.0f}},
-    {{-0.1f, 0.5f, 0.0f}, {1.0f, 0.0f}},
-    {{-0.9f, 0.5f, 0.0f}, {0.0f, 0.0f}},
-};
-constexpr Vertex kRightQuadVertices[4] = {
-    {{0.1f, -0.5f, 0.0f}, {0.0f, 1.0f}},
-    {{0.9f, -0.5f, 0.0f}, {1.0f, 1.0f}},
-    {{0.9f, 0.5f, 0.0f}, {1.0f, 0.0f}},
-    {{0.1f, 0.5f, 0.0f}, {0.0f, 0.0f}},
-};
-constexpr std::uint16_t kQuadIndices[6] = {0, 1, 2, 2, 3, 0};
 
 using Mat4 = std::array<float, 16>;
 
@@ -127,7 +119,11 @@ void buildTextureUploadPass(atlantis::render_graph::RenderGraphBuilder& builder,
 Result<TexturedQuadFixture, TexturedQuadSetupError> setUpTexturedQuadFixture(const char* unormArtifactPath,
                                                                               const char* unormMetadataPath,
                                                                               const char* srgbArtifactPath,
-                                                                              const char* srgbMetadataPath) {
+                                                                              const char* srgbMetadataPath,
+                                                                              const char* leftMeshArtifactPath,
+                                                                              const char* leftMeshMetadataPath,
+                                                                              const char* rightMeshArtifactPath,
+                                                                              const char* rightMeshMetadataPath) {
   using ResultT = Result<TexturedQuadFixture, TexturedQuadSetupError>;
 
   const auto vertexSpirv = loadSpirvFile("shaders/textured_quad.vert.spv");
@@ -140,7 +136,20 @@ Result<TexturedQuadFixture, TexturedQuadSetupError> setUpTexturedQuadFixture(con
   if (vertexReflectionResult.isErr()) {
     return ResultT::Err(TexturedQuadSetupError::ShaderLoadFailed);
   }
-  const auto vertexInputLayout = texturedQuadVertexLayout(vertexReflectionResult.value());
+
+  // Plan 0017 Milestone 3: both quads are now Asset-System-sourced --
+  // no hand-authored vertex/UV fallback of any kind. Loaded before the
+  // vertex layout below so the layout's own strideBytes comes from the
+  // real, loaded StaticMeshAssetData, never a hardcoded sizeof().
+  auto leftMeshResult = atlantis::asset_system::loadStaticMeshAsset(leftMeshArtifactPath, leftMeshMetadataPath);
+  if (leftMeshResult.isErr()) return ResultT::Err(TexturedQuadSetupError::AssetLoadFailed);
+  auto rightMeshResult = atlantis::asset_system::loadStaticMeshAsset(rightMeshArtifactPath, rightMeshMetadataPath);
+  if (rightMeshResult.isErr()) return ResultT::Err(TexturedQuadSetupError::AssetLoadFailed);
+  const atlantis::asset_system::StaticMeshAssetData& leftMeshData = leftMeshResult.value();
+  const atlantis::asset_system::StaticMeshAssetData& rightMeshData = rightMeshResult.value();
+
+  const auto vertexInputLayout =
+      texturedQuadVertexLayout(vertexReflectionResult.value(), leftMeshData.vertexStrideBytes());
   if (!vertexInputLayout.has_value()) {
     return ResultT::Err(TexturedQuadSetupError::ShaderLoadFailed);
   }
@@ -216,14 +225,17 @@ Result<TexturedQuadFixture, TexturedQuadSetupError> setUpTexturedQuadFixture(con
   if (materialSrgbResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);
   fixture.materialSrgb = std::move(materialSrgbResult.value());
 
-  auto meshLeftResult = createMesh(*fixture.device, *vertexInputLayout, kLeftQuadVertices, sizeof(kLeftQuadVertices),
-                                    kQuadIndices, static_cast<std::uint32_t>(std::size(kQuadIndices)));
+  auto meshLeftResult =
+      createMesh(*fixture.device, *vertexInputLayout, leftMeshData.vertexBytes().data(),
+                 leftMeshData.vertexBytes().size(), leftMeshData.indices().data(),
+                 static_cast<std::uint32_t>(leftMeshData.indices().size()));
   if (meshLeftResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);
   fixture.meshLeft = std::move(meshLeftResult.value());
 
   auto meshRightResult =
-      createMesh(*fixture.device, *vertexInputLayout, kRightQuadVertices, sizeof(kRightQuadVertices), kQuadIndices,
-                 static_cast<std::uint32_t>(std::size(kQuadIndices)));
+      createMesh(*fixture.device, *vertexInputLayout, rightMeshData.vertexBytes().data(),
+                 rightMeshData.vertexBytes().size(), rightMeshData.indices().data(),
+                 static_cast<std::uint32_t>(rightMeshData.indices().size()));
   if (meshRightResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);
   fixture.meshRight = std::move(meshRightResult.value());
 

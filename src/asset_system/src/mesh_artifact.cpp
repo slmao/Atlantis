@@ -80,6 +80,8 @@ std::vector<std::byte> encodeMeshArtifact(AssetId assetId, const ParsedMeshSourc
     appendFloatLE(out, v.colorR);
     appendFloatLE(out, v.colorG);
     appendFloatLE(out, v.colorB);
+    appendFloatLE(out, v.uvU);
+    appendFloatLE(out, v.uvV);
   }
 
   for (std::uint16_t index : source.indices) appendU16LE(out, index);
@@ -140,7 +142,7 @@ atlantis::Result<DecodedMeshArtifact, ArtifactDecodeError> decodeMeshArtifact(co
   // disagree.
   for (std::uint32_t v = 0; v < vertexCount; ++v) {
     const std::byte* vertexStart = decoded.vertexBytes.data() + static_cast<std::size_t>(v) * vertexStrideBytes;
-    for (std::size_t floatIndex = 0; floatIndex < 6; ++floatIndex) {
+    for (std::size_t floatIndex = 0; floatIndex < 8; ++floatIndex) {
       const float value = readFloatLE(vertexStart + floatIndex * 4);
       if (!std::isfinite(value)) return ResultT::Err(ArtifactDecodeError::NonFiniteFloat);
     }

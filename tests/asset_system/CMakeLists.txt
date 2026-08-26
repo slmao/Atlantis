@@ -7,7 +7,9 @@ add_executable(atlantis_asset_system_tests
   mesh_source_tests.cpp
   asset_metadata_tests.cpp
   mesh_artifact_tests.cpp
+  mesh_uv_round_trip_tests.cpp
   load_tests.cpp
+  textured_quad_mesh_tests.cpp
   module_boundary_tests.cpp
   validated_scene_data_tests.cpp
   scene_source_tests.cpp
@@ -55,6 +57,19 @@ target_compile_definitions(atlantis_asset_system_tests PRIVATE
 )
 add_dependencies(atlantis_asset_system_tests
   ${ATLANTIS_textured_quad_unorm_TARGET} ${ATLANTIS_textured_quad_srgb_TARGET})
+
+# Plan 0017 Milestone 2: the two independent quad mesh assets declared
+# in assets/CMakeLists.txt, made visible to
+# textured_quad_mesh_tests.cpp exactly like the two texture assets
+# above.
+target_compile_definitions(atlantis_asset_system_tests PRIVATE
+  ATLANTIS_textured_quad_left_ARTIFACT_PATH="${ATLANTIS_textured_quad_left_ARTIFACT_PATH}"
+  ATLANTIS_textured_quad_left_METADATA_PATH="${ATLANTIS_textured_quad_left_METADATA_PATH}"
+  ATLANTIS_textured_quad_right_ARTIFACT_PATH="${ATLANTIS_textured_quad_right_ARTIFACT_PATH}"
+  ATLANTIS_textured_quad_right_METADATA_PATH="${ATLANTIS_textured_quad_right_METADATA_PATH}"
+)
+add_dependencies(atlantis_asset_system_tests
+  ${ATLANTIS_textured_quad_left_TARGET} ${ATLANTIS_textured_quad_right_TARGET})
 
 # Plan 0015 Step 5 (V13's own mechanism, V27's SceneCookError portion):
 # exercises atlantis_add_scene_asset() end to end through the real

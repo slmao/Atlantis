@@ -73,12 +73,12 @@ struct TempDirGuard {
 }
 
 constexpr std::string_view kValidTriangleSource =
-    "atlantis_static_mesh_source_version: 1\n"
+    "atlantis_static_mesh_source_version: 2\n"
     "vertex_count: 3\n"
     "index_count: 3\n"
-    "vertex: 0.0 0.0 0.0 1.0 0.0 0.0\n"
-    "vertex: 1.0 0.0 0.0 0.0 1.0 0.0\n"
-    "vertex: 0.0 1.0 0.0 0.0 0.0 1.0\n"
+    "vertex: 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0\n"
+    "vertex: 1.0 0.0 0.0 0.0 1.0 0.0 1.0 0.0\n"
+    "vertex: 0.0 1.0 0.0 0.0 0.0 1.0 0.0 1.0\n"
     "index: 0 1 2\n";
 
 }  // namespace

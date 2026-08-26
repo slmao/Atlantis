@@ -10,11 +10,15 @@
 
 namespace atlantis::asset_system {
 
-// Plan 0012 Section D3: one parsed authoring-source mesh -- position
-// xyz + colour rgb per vertex, std::uint16_t triangle indices. This is
-// the authoring-facing representation (ADR-0035); cook() (Step 4)
+// Plan 0012 Section D3, extended by Plan 0017 Section D1/ADR-0058: one
+// parsed authoring-source mesh -- position xyz + colour rgb + UV0 uv
+// per vertex, std::uint16_t triangle indices. This is the
+// authoring-facing representation (ADR-0035); cook() (Step 4)
 // transforms it into the runtime artifact's own binary layout
-// (mesh_artifact.h).
+// (mesh_artifact.h). UV0 is mandatory for every vertex -- there is no
+// optional/variant vertex layout (ADR-0058's own Decision item 1); a
+// source lacking UV columns is a parse error (SourceParseError::CountMismatch),
+// never an implicit (0, 0) default.
 struct MeshSourceVertex {
   float positionX = 0.0f;
   float positionY = 0.0f;
@@ -22,6 +26,8 @@ struct MeshSourceVertex {
   float colorR = 0.0f;
   float colorG = 0.0f;
   float colorB = 0.0f;
+  float uvU = 0.0f;
+  float uvV = 0.0f;
 };
 
 struct ParsedMeshSource {
