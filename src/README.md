@@ -234,8 +234,12 @@ unconditionally little-endian binary runtime artifact — every field,
 including vertex/transform floats via `std::bit_cast`, assembled by
 explicit shift/mask, never a host-struct `memcpy`), and atomic
 (write-to-temp-then-`rename()`) cooker output. Static mesh (a position/
-colour mesh): `cookStaticMesh()`, `loadStaticMeshAsset()` returning
-CPU-only `StaticMeshAssetData` — never an RHI type; a composition root
+color/UV0 mesh, schema version 2 -- a fixed 32-byte stride at byte
+offsets 0/12/24, mandatory UV0 for every vertex, no optional/variant
+layout; version 1, the pre-UV0 24-byte layout, is rejected outright by
+both the source parser and the artifact decoder, no dual-version reader):
+`cookStaticMesh()`, `loadStaticMeshAsset()` returning CPU-only
+`StaticMeshAssetData` — never an RHI type; a composition root
 outside this module (`tests/image_regression/fixture/`, Atlantis
 Runtime) is responsible for passing that data into the existing,
 unmodified `atlantis::renderer::createMesh()`. Scene graph (a node
@@ -274,7 +278,13 @@ the texture asset type added per
 [specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md),
 [plans/0016-texture-sampler-foundation.md](../plans/0016-texture-sampler-foundation.md),
 and
-[ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md).
+[ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md);
+the static mesh format's UV0 attribute added per
+[specs/0017-mesh-uv-attribute-foundation.md](../specs/0017-mesh-uv-attribute-foundation.md),
+[plans/0017-mesh-uv-attribute-foundation.md](../plans/0017-mesh-uv-attribute-foundation.md),
+and
+[ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md),
+merged via [PR #84](https://github.com/slmao/Atlantis/pull/84).
 
 **`world/`** — Atlantis World: Atlantis's in-memory, multi-entity scene.
 Target `atlantis_world`, alias `Atlantis::World` (PUBLIC dependency
