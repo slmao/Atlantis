@@ -75,10 +75,19 @@ built with.
   [PR #80](https://github.com/slmao/Atlantis/pull/80)) fixed an initial
   implementation gap where two color-space variants of the same texture
   silently shared one Asset ID — every cooked texture asset now has its
-  own unique, normalized logical path and Asset ID. A distributable,
-  cross-session Asset Catalog and rename-stable GUID identity remain
-  future work (Candidate Order 7, `specs/README.md`) — see
-  `src/README.md`'s own `asset_system/`/`tools/asset_cooker/` entries
+  own unique, normalized logical path and Asset ID. Extended once more
+  with a real, mandatory UV0 vertex attribute (Spec 0017, `Approved`,
+  implemented and merged via
+  [PR #84](https://github.com/slmao/Atlantis/pull/84)): the static mesh
+  format bumped to version 2 (position+color+UV0, 32-byte stride), and
+  the textured-quad fixture's own two quad meshes are now genuinely
+  Asset-System-sourced rather than fixture-hardcoded, closing Spec
+  0016's own disclosed follow-up — proven end to end against the
+  existing `textured_quad` golden with zero pixel difference. A
+  distributable, cross-session Asset Catalog and rename-stable GUID
+  identity remain future work (Candidate Order 7, `specs/README.md`) —
+  see `src/README.md`'s own `asset_system/`/`tools/asset_cooker/`
+  entries
 - Vulkan Validation Layers as a correctness gate
 - RenderDoc-based debugging
 
@@ -309,7 +318,14 @@ implemented; a post-merge Human Review Correction
 ([PR #79](https://github.com/slmao/Atlantis/pull/79),
 [PR #80](https://github.com/slmao/Atlantis/pull/80)) fixed an initial
 gap where two color-space variants of the same texture silently shared
-one Asset ID — see [specs/README.md](specs/README.md). PBR/lighting/
+one Asset ID — see [specs/README.md](specs/README.md). Mesh UV
+Attribute Foundation (a real, mandatory UV0 vertex attribute — the
+static mesh format bumped to version 2, position+color+UV0 at a fixed
+32-byte stride, and the textured-quad fixture's own two quad meshes now
+genuinely Asset-System-sourced rather than fixture-hardcoded, closing
+Spec 0016's own disclosed follow-up, Spec 0017, `Approved`, implemented
+and merged via [PR #84](https://github.com/slmao/Atlantis/pull/84)) is
+also implemented — see [specs/README.md](specs/README.md). PBR/lighting/
 post-processing extensions beyond the one fixed material this stack
 draws today, mipmap/compression/streaming/bindless texture support, a
 texture/material scene binding, a distributable cross-session Asset

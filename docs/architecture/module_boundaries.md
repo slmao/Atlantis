@@ -354,6 +354,26 @@ post-merge Human Review Correction ([PR #79](https://github.com/slmao/Atlantis/p
 implementation that let two color-space variants of the same texture
 silently share one Asset ID.
 
+**Mesh UV0 (Spec 0017, implemented and merged):** the static mesh
+authoring/artifact format bumped to schema version 2 -- every vertex is
+now position(3)+color(3)+UV0(2), a fixed 32-byte stride at byte offsets
+0/12/24, mandatory for every vertex, no optional/variant layout
+([ADR-0058](../../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)).
+Version 1 (24-byte, position+color-only) is rejected outright by both
+`parseMeshSource()` and `decodeMeshArtifact()` -- no dual-version
+reader, no compatibility migrator. UV is never clamped or flipped by
+this module; a caller-supplied vertex-input schema decides which byte
+offsets a given shader pipeline actually reads (proven directly against
+`Device::createPipeline()`'s own real `VkVertexInputAttributeDescription`
+construction, which only ever names an attribute the caller's schema
+lists). `minimal_cube`'s own 8-vertex, shared-corner topology carries a
+disclosed `(0.0, 0.0)` placeholder UV0 per vertex -- a schema-migration
+necessity only, never claimed as a per-face texture unwrap. Two
+independent quad mesh assets (`textured_quad_left`, `textured_quad_right`)
+are now cooked through this same pipeline and consumed by the textured
+image-regression fixture via the real `loadStaticMeshAsset()` path, in
+place of that fixture's own former hand-authored vertex/UV arrays.
+
 **Extension points:** a rename-stable GUID identity scheme and a real
 derived-data cache are each named, explicitly out-of-scope future work
 in Spec 0012/Spec 0015 — not designed or scaffolded here. A

@@ -925,15 +925,87 @@ milestone being listed does not authorize starting it — see Section 1.
   any kind; a second graphics backend; and any change to the Scene
   Asset format -- a scene's `Renderable` still names exactly one mesh
   `AssetId`, so a texture/material scene binding remains future work.
-  Two further, explicitly disclosed, blocking follow-up candidates
-  remain named but unsolved: "Mesh UV Attribute Foundation" (real UV0
-  inside Asset System's own mesh pipeline, required before any future
-  asset-sourced-textured-mesh claim -- today's UV0 is fixture-authored,
-  not asset-sourced) and target-independent submission (a
-  `Device::submit()` path admitting no real `RenderTarget`). A
-  distributable, cross-session Asset Catalog/Registry (carried forward
-  from Milestone 12) and Android Platform (Candidate Order 1 below,
-  unchanged priority) remain out of scope.
+  Two further, explicitly disclosed, blocking follow-up candidates were
+  named: "Mesh UV Attribute Foundation" (real UV0 inside Asset System's
+  own mesh pipeline, required before any future asset-sourced-textured-
+  mesh claim -- today's UV0 was fixture-authored, not asset-sourced) --
+  **since resolved, see Milestone 14 below** -- and target-independent
+  submission (a `Device::submit()` path admitting no real
+  `RenderTarget`), which remains unsolved. A distributable, cross-
+  session Asset Catalog/Registry (carried forward from Milestone 12)
+  and Android Platform (Candidate Order 1 below, unchanged priority)
+  remain out of scope.
+
+### Milestone 14 — Mesh UV Attribute Foundation
+
+- **Governance state:** **`Approved` Spec, `Approved` Plan. Implementation
+  merged via [PR #84](https://github.com/slmao/Atlantis/pull/84)
+  (2026-08-26)** —
+  [specs/0017-mesh-uv-attribute-foundation.md](../specs/0017-mesh-uv-attribute-foundation.md),
+  [plans/0017-mesh-uv-attribute-foundation.md](../plans/0017-mesh-uv-attribute-foundation.md).
+  Architectural Impact identified one new decision, filed as
+  [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+  (static mesh UV0 vertex layout and sampling convention), `Accepted`,
+  which directly narrowed an already-`Accepted` sentence of
+  [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
+  (previously scoped to "position and color" only) -- ADR-0045's own
+  "Accepted Amendment -- 2026-08-25" section records that widening,
+  accepted in the same Human Review pass. Closes Spec 0016's own named,
+  disclosed, blocking follow-up (Milestone 13 above).
+- **Scope delivered:** the static mesh authoring/artifact format bumped
+  to version 2 -- every vertex line now carries 8 fields (position +
+  color + UV0), the runtime artifact widens to a fixed 32-byte stride
+  (offsets 0/12/24), version 1 is rejected outright with no
+  compatibility migration; two new, independent, non-shared-vertex quad
+  mesh assets (`textured_quad_left`, `textured_quad_right`), transcribed
+  value-for-value from the textured fixture's own former hand-authored
+  vertex arrays, each with its own distinct logical path/AssetId; the
+  textured fixture itself converted to load both quad meshes via the
+  real `loadStaticMeshAsset()` path -- the former hand-authored vertex/
+  UV data path is removed entirely, with no fallback. No new error
+  enumerator, public module, or compatibility migrator was introduced.
+  `minimal_cube`'s own 8-vertex, shared-corner topology gained a
+  disclosed `(0.0, 0.0)` placeholder UV0 per vertex -- a schema-
+  migration necessity, never claimed as a per-face texture unwrap; this
+  mesh continues to be drawn exclusively by `minimal_mesh.slang`, which
+  declares no UV input and never reads these values.
+- **Verified:** a centralized final code review (still pre-merge, on
+  the Implementation PR itself) found and fixed one mechanical test-
+  coverage gap, then a second, fully independent review pass re-checked
+  the whole diff for old-format residue, artifact encoder/decoder
+  safety, fixture data-path purity, the two new quad assets, old-path
+  regression, test independence, and module/lifecycle boundaries,
+  finding no further defects. That second pass included one empirical
+  mutation probe: temporarily reading the textured fixture's UV
+  attribute from the color region's own byte offset instead of UV0's
+  real offset made the `textured_quad` golden comparison test fail
+  immediately, and pass again cleanly once reverted -- direct,
+  non-theoretical confirmation the golden comparison is a live
+  regression guard, not a tautology. Fresh Debug and Release builds
+  clean; `ctest -LE gpu` 599/599 Debug, 598/598 Release; `ctest -L gpu`
+  26/26 both configurations, real Vulkan-capable hardware; Vulkan
+  Validation Layers grepped clean (zero `VUID`/`Validation Error`/
+  `Validation Warning` matches) across full verbose GPU test output,
+  both configurations; a fresh `ATLANTIS_BUILD_TESTS=OFF` configure
+  cooked all six declared assets successfully; the module-boundary test
+  reconfirmed `Atlantis::AssetSystem` still links `Atlantis::Core` only;
+  `minimal_cube`/`world_scene`/`textured_quad`'s own PNG and sidecar
+  goldens remained byte-for-byte identical to their pre-Implementation
+  state throughout (`git diff` against the base commit, not merely
+  "tests passed") -- no golden generator was run at any point.
+- **Not implemented** (per Spec 0017's own Non-Goals, unchanged): any
+  change to the Scene Asset format or `World::Renderable` -- a scene's
+  `Renderable` still names exactly one mesh `AssetId` and no material/
+  texture reference, so no Runtime-loaded scene became visibly textured
+  by this Milestone; a real, absolute proof of the UV-direction
+  convention's own correctness (the existing checkerboard golden proves
+  render self-consistency, not absolute V-direction, a disclosed,
+  accepted limitation); and any change to `minimal_cube`'s own topology
+  to make it genuinely texture-ready. "Material Asset & Scene Binding
+  Foundation" (Candidate Order 8, Section B below) is the named
+  successor that must close the remaining gap between an asset-sourced
+  UV0 (this Milestone) and a Runtime scene that actually renders
+  textured.
 
 ### Further candidate phases (directional only, no Spec, no ADR)
 

@@ -100,7 +100,7 @@ lifetime detail lives in
 | Atlantis RenderGraph | Central rendering abstraction: passes, dependencies, barriers | As-built | [Spec 0005](../../specs/0005-render-graph-foundation.md) |
 | Atlantis Renderer | Frame orchestration built on RenderGraph + RHI | As-built | [Spec 0007](../../specs/0007-minimal-renderer.md) |
 | Atlantis Shader System | Shader authoring/compilation/reflection (Slang → SPIR-V) | As-built | [Spec 0008](../../specs/0008-shader-system-foundation.md) |
-| Atlantis Asset System | Deterministic authoring-source → runtime-artifact pipeline (three asset types: static mesh, scene, texture); Core-only dependency | As-built | [Spec 0012](../../specs/0012-asset-system-foundation.md), [Spec 0015](../../specs/0015-scene-asset-serialization-foundation.md), [Spec 0016](../../specs/0016-texture-sampler-foundation.md), [ADR-0043](../../adr/0043-asset-system-module-boundary.md)–[ADR-0045](../../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md) |
+| Atlantis Asset System | Deterministic authoring-source → runtime-artifact pipeline (three asset types: static mesh — position/color/UV0 — scene, texture); Core-only dependency | As-built | [Spec 0012](../../specs/0012-asset-system-foundation.md), [Spec 0015](../../specs/0015-scene-asset-serialization-foundation.md), [Spec 0016](../../specs/0016-texture-sampler-foundation.md), [Spec 0017](../../specs/0017-mesh-uv-attribute-foundation.md), [ADR-0043](../../adr/0043-asset-system-module-boundary.md)–[ADR-0045](../../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md), [ADR-0058](../../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md) |
 | Atlantis Runtime | Windows windowed composition root | As-built (Windows windowed composition root); its future Client-boundary/multi-client authority principle remains Approved direction, not yet built | [Spec 0013](../../specs/0013-runtime-host-foundation.md), [ADR-0046](../../adr/0046-runtime-composition-ownership-and-frame-lifecycle.md), [ADR-0047](../../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md), [ADR-0033](../../adr/0033-runtime-authority-and-client-boundary.md) (Client-boundary principle, separate from the module itself) |
 | Atlantis Tools | Offline/developer tooling | As-built (shader-compiler and asset-cooker CLI content; broader scope not yet specced) | [Spec 0008](../../specs/0008-shader-system-foundation.md), [Spec 0012](../../specs/0012-asset-system-foundation.md) |
 
@@ -127,9 +127,9 @@ describes has been built.
 
 - **As-built:** Core, Platform (Windows), RHI, Vulkan Backend,
   RenderGraph, Renderer, Shader System, Asset System (three asset
-  types: static mesh, scene, texture), Runtime (Windows windowed
-  composition root), Tools (shader-compiler and asset-cooker CLI
-  content).
+  types: static mesh — position/color/UV0 — scene, texture), Runtime
+  (Windows windowed composition root), Tools (shader-compiler and
+  asset-cooker CLI content).
 - **Approved direction (partially implemented):** the five-layer/
   ten-module coexistence
   ([ADR-0032](../../adr/0032-conceptual-architecture-layers-versus-source-module-ownership.md));
