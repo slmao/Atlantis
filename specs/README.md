@@ -176,22 +176,28 @@ ordering note.
 | 5 | AI Inference Integration | Spec 0013 (Runtime Host Foundation) | Pluggable inference backend for gameplay/tools use — must not shape Phase 1 rendering abstractions; inference backend not chosen | Candidate — spec not yet drafted; future AI workload, does not shape Phase 1 |
 | 6 | UGC Sandbox and Package Model | Candidate 3 (Gameplay SDK) | Sandboxed, capability-scoped user content execution — UGC VM/language not chosen | Candidate — spec not yet drafted; future UGC workload, does not shape Phase 1 |
 | 7 | Cross-Session Stable Identity and Asset Catalog | Spec 0015 (Scene Asset & Serialization Foundation) | The broader scope Candidate 2's own prior description named ("Stable GUID/handle schemes, schema versioning and migration") plus a general-purpose, persistent `AssetId`→location Asset Catalog/Registry — both explicitly deferred, disclosed, out of Spec 0015's own narrower scene-asset-bake/load scope; renamed from "Serialization and Stable Identity" when Spec 0015 was drafted 2026-08-23, to make clear what Spec 0015 did *not* cover, not to re-promise a specific future design | Candidate — spec not yet drafted; no consumer (save system, networking, Editor, or a second scene needing cross-scene dependency-location sharing) yet exists to design against |
-| 8 | Material Asset & Scene Binding Foundation | Spec 0016 (Texture & Sampler Foundation), Spec 0017 (Mesh UV Attribute Foundation, `Approved`, Section A above) | A real material/texture reference on `World::Renderable` or an equivalent Scene Asset field, and a Runtime material-resolution path no longer hardcoded to one fixed, vertex-color `Material` — `Renderable` today carries exactly one field, `meshAsset` (an `AssetId`), confirmed by direct inspection of `src/world/include/atlantis/world/renderable.h`; Runtime's own scene-driven rendering path has no mechanism to select a textured `Material` for any `Renderable`. Named explicitly by Spec 0017's own Out of Scope / Future Work as its own real, immediate successor — Spec 0017's own UV0 work is this candidate's own prerequisite, not the other way around | Candidate — spec not yet drafted; named 2026-08-25 during Spec 0017's own drafting, confirmed a real gap by direct code inspection, not assumed |
 
 Image Regression Testing, Asset System Foundation, Runtime Host
-Foundation, World/ECS Foundation, and Texture & Sampler Foundation no
-longer appear in this table at all — they were promoted to Section A
-above as Spec 0011, Spec 0012, Spec 0013, Spec 0014, and Spec 0016
-respectively (World/ECS Foundation promoted under the working title
-"World / Scene Foundation," per Spec 0014's own drafting), each once a
-real spec was drafted for it, per this section's own maintenance rules
-below (see Section A for each spec's current status). "Mesh UV
-Attribute Foundation" was never a numbered row in this table — it was
-named only in prose, as Spec 0016's own disclosed, blocking follow-up
-(see that spec's own row above) — so its own promotion to Spec 0017
-(`In Review`, Section A above) removes no row here; Candidate Order 8
-above is newly added, not a renumbering of anything that existed
-before it. **Serialization
+Foundation, World/ECS Foundation, Texture & Sampler Foundation, and
+Material Asset & Scene Binding Foundation no longer appear in this
+table at all — they were promoted to Section A above as Spec 0011,
+Spec 0012, Spec 0013, Spec 0014, Spec 0016, and Spec 0018 respectively
+(World/ECS Foundation promoted under the working title "World / Scene
+Foundation," per Spec 0014's own drafting; Material Asset & Scene
+Binding Foundation promoted directly under its own working title, per
+Spec 0018's own drafting 2026-08-26), each once a real spec was
+drafted for it, per this section's own maintenance rules below (see
+Section A for each spec's current status). "Mesh UV Attribute
+Foundation" was never a numbered row in this table — it was named only
+in prose, as Spec 0016's own disclosed, blocking follow-up (see that
+spec's own row above) — so its own promotion to Spec 0017 (`Approved`,
+Section A above) removed no row here; former Candidate Order 8
+(Material Asset & Scene Binding Foundation, named 2026-08-25 during
+Spec 0017's own drafting) has now itself been promoted to Spec 0018
+(`In Review`, Section A above) — its own dependency on Spec 0017 is
+satisfied, Spec 0017 being `Approved` and implemented. Android Platform
+(Candidate Order 1) and every other remaining row's own numbering is
+otherwise unaffected by either promotion. **Serialization
 and Stable Identity is a partial promotion, not a full one:** its scene-asset-bake/load slice was promoted to Spec
 0015 ("Scene Asset & Serialization Foundation," `Approved`, Section A
 above — see the "Superseded in part again, human-directed 2026-08-23"
