@@ -845,3 +845,44 @@ Definition of Done's own assumption that a failing verification is
 always fixed forward within Implementation — a real pixel difference
 against the existing, unmodified `textured_quad` golden is treated as a
 Human Review question, not an Implementation bug to silently absorb.
+
+**Post-Merge Status Update (2026-08-26):** [Implementation PR #84](https://github.com/slmao/Atlantis/pull/84)
+is merged. All three Milestones landed exactly as specified, one commit
+each, plus a fourth commit adding one test-coverage case a centralized
+final code review found missing (V3's own 6-field boundary — only the
+7-field boundary had a dedicated test) and a fifth, documentation-only
+commit recording the PR-open status at the time. No architectural,
+schema, public-API, error-model, module-boundary, or golden deviation
+occurred; the one test-coverage gap above was the only finding across
+the entire Implementation.
+
+A second, fully independent centralized final review pass was run
+directly against the merged PR #84 branch tip before merge, re-checking
+the whole diff for old-format residue, artifact encoder/decoder safety,
+fixture data-path purity, the two new quad assets, old-path regression,
+test independence, and module/lifecycle boundaries. It found no further
+defects, and included one empirical mutation probe: temporarily
+swapping the textured-quad fixture's UV attribute schema offset from
+`offsetof(Vertex, uv)` (24) to `offsetof(Vertex, color)` (12) caused the
+"Full capture-compare cycle against the committed `textured_quad`
+golden" test to fail immediately, then pass again cleanly once reverted
+— direct, non-theoretical confirmation that the golden comparison is a
+live regression guard against this exact class of bug, not a tautology.
+The review's own findings are recorded in full as a PR comment on
+[PR #84](https://github.com/slmao/Atlantis/pull/84#issuecomment-5419004674).
+
+**Final, as-built verification (post-merge, from the second review
+pass's own record):** fresh Debug and Release builds clean; `ctest -LE
+gpu` 599/599 Debug, 598/598 Release; `ctest -L gpu` 26/26 both
+configurations, real Vulkan-capable hardware; Vulkan Validation Layers
+grepped clean (zero `VUID`/`Validation Error`/`Validation Warning`
+matches) across full verbose GPU test output, both configurations; a
+fresh `ATLANTIS_BUILD_TESTS=OFF` configure cooked all six declared
+assets (`minimal_cube`, `world_scene`, `textured_quad_left`,
+`textured_quad_right`, `textured_quad_unorm`, `textured_quad_srgb`)
+successfully; the module-boundary test passed, reconfirming
+`Atlantis::AssetSystem` still links `Atlantis::Core` only; and
+`minimal_cube`/`world_scene`/`textured_quad`'s own PNG and sidecar
+goldens remain byte-for-byte identical to their pre-Implementation
+state on `main` (`git diff` against the base commit, not merely
+"tests passed").
