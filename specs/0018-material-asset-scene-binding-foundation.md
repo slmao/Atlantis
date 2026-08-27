@@ -1,10 +1,127 @@
 # Spec: Material Asset & Scene Binding Foundation
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-08-26
-- **Related Plan(s):** (none yet — this Spec must be `Approved` first)
-- **Related ADR(s):** [ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md) (`Proposed`), [ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md) (`Proposed`)
+- **Related Plan(s):** (none yet — this approval authorizes drafting
+  Plan 0018 only; it does not itself authorize Implementation, per
+  [AGENTS.md](../AGENTS.md)'s Golden Rule)
+- **Related ADR(s):** [ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md) (`Accepted`), [ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md) (`Accepted`)
+- **Human Review Approval (2026-08-27):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer) on 2026-08-27, accepting this document's own "Decisions
+  for Human Review" section in full, per its own final, corrected
+  recommendations, with no further amendment beyond the fixes already
+  applied during this Spec's own two centralized final-review rounds,
+  both 2026-08-27 (see "Readiness for Human Review" and the two rounds'
+  own findings below). This approval also accepts
+  [ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)
+  and
+  [ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md)
+  (both `Proposed` → `Accepted`) in the same pass — neither is accepted
+  independently of this Spec. **This approval authorizes drafting Plan
+  0018 only. It does not authorize Implementation** — Plan 0018 must
+  itself complete its own Human Review and merge before any code is
+  written, per [AGENTS.md](../AGENTS.md)'s Golden Rule. This approval
+  explicitly accepts:
+
+  1. Material as Asset System's fourth asset type, Core-only,
+     following the exact mesh/scene/texture cook/artifact/metadata-
+     sidecar/load shape (D1; ADR-0059 Decision item 1).
+  2. The minimal `MaterialKind::UnlitTextured` DTO/artifact — kind,
+     texture `AssetId`, `Sampler` parameters mirroring
+     `SamplerCreateParams` exactly — with no color/tint factor this
+     round (D2; ADR-0059 Decision item 2).
+  3. Shader identity as a closed, Runtime-resolved `MaterialKind` enum,
+     with `shaders/textured_quad` formally promoted from a test-only
+     fixture resource to a production built-in shader — unconditional
+     CMake target, no dependency on `tests/` from any production
+     target, the Material artifact storing only the `MaterialKind`
+     enumerator and never a shader path, and existing file/target names
+     kept this round with no effect on any cooked Material artifact's
+     own identity (D3; ADR-0059 Decision item 3).
+  4. An *optional* `AssetId` on `Renderable`, with the precise
+     three-state semantics fixed explicitly: absent → Runtime's
+     existing built-in fallback; present but CPU-unloadable →
+     scene-load-fatal, never a silent fallback; present but not yet
+     GPU-realized → a per-frame, per-entity recoverable skip, never
+     conflated with either of the other two states (D4; ADR-0060
+     Decision item 1/8).
+  5. A Scene Asset authoring/artifact version bump, with the old
+     version rejected outright and no dual-version reader, and an
+     explicit, disclosed migration that leaves every currently-checked-
+     in scene's own rendering unchanged (D5; ADR-0060 Decision item 2/3/4).
+  6. The Material artifact's own binary contract — little-endian,
+     checked arithmetic before allocation, atomic write, determinism —
+     mirroring the mesh/texture precedent, with the `AssetId`-embedding
+     choice and the full, consolidated new-vs-reused error-enumerator
+     accounting left precise for Plan-time closure against the format's
+     own final byte layout (D6; ADR-0059 Decision item 6/7/8).
+  7. The per-scene manifest's `MATERIAL_DEPENDENCIES`/`TEXTURE_DEPENDENCIES`
+     extension — still a build-tree-private, three-column, scene-scoped
+     file, never a general Asset Catalog — with the wrong-asset-kind and
+     unused-declared-dependency questions both resolved explicitly (D7;
+     ADR-0060 Decision item 5).
+  8. The two-phase resolution contract: CPU-only resolve/load inside
+     the existing atomic scene-load publish (Phase 1), and deferred,
+     per-frame GPU realization inside `runFrame()`'s own existing
+     format-change check (Phase 2) — sharing one `CommandList` and one
+     `submit()` with the real draw graph, this frame's own `DrawItem`
+     list built from the candidate bundle directly, staging-buffer
+     lifetime resolved by an explicit `waitIdle()` on realization
+     frames only, verified safe against the real
+     `vkQueueSubmit`/`vkWaitForFences`/`vkDeviceWaitIdle`/`vkQueuePresentKHR`
+     call chain (D8; ADR-0060 Decision item 6).
+  9. GPU ownership/destruction order (`SampledTexture`/`Sampler`
+     outlive every `Material`; both destroyed before `Device`) and the
+     corrected, atomic, all-or-nothing format-change rebuild of the
+     fallback `Material` and the entire `materialResourceMap_` together
+     — never a partial publish, never drawing with an old-format
+     `Pipeline` against a new-format `RenderTarget`, a genuine
+     correctness fix to a latent gap found in Spec 0013's own existing
+     single-`Material` code along the way (D9; ADR-0060 Decision
+     item 9).
+  10. Deduplication via fresh, `AssetId`-keyed resource maps mirroring
+      `meshResourceMap_`'s own shape exactly, with no global mutable
+      registry of any kind (D10; ADR-0060 Decision item 10).
+  11. `World::Renderable` gaining one more plain, optional `AssetId`
+      field, with `World`'s own module boundary, dependency closure,
+      and construction of zero Renderer/RHI types entirely unchanged in
+      kind (D11; ADR-0060 Decision item 1).
+  12. A new, minimal, independent scene+material+texture verification
+      fixture that must directly link and call Runtime's own real
+      `Atlantis::RuntimeHost` code — not a fixture-private lookalike —
+      its own new golden captured under ADR-0042's "Initial baseline
+      bootstrap" category, the three existing goldens confirmed
+      byte-for-byte unchanged, and explicit negative proofs the golden
+      must demonstrate (D12).
+  13. Runtime windowed verification staying smoke-test-plus-genuine-
+      human-visual-confirmation, with no fabricated automated swapchain
+      pixel readback (D13).
+  14. No Renderer/RHI/RenderGraph public API change — confirmed, not
+      assumed, against `Material`'s own existing optional texture pair,
+      `PipelineCreateParams::hasSampledTextureBinding`, and
+      RenderGraph's own existing sampled-resource binding kind (D14).
+  15. PBR, lighting, shadow, and post-processing remaining independent,
+      unblocked future Specs, with "Lighting Foundation" named as the
+      next Candidate Backlog entry, not drafted here (D15).
+
+  No unresolvable architectural conflict was found across either
+  centralized final-review round. The first round found and corrected
+  the deferred-GPU-realization design (D8) and the
+  `shaders/textured_quad` CMake test-gating gap (D3). The second round
+  found and corrected the format-change rebuild's own atomicity (D9) —
+  the original per-entry-independent design would have permitted a
+  partial map publish and, in one failure path, drawing with a
+  format-mismatched `Pipeline` — verified the `waitIdle()`-then-
+  `present()` ordering against the real `vkQueueSubmit`/
+  `vkWaitForFences`/`vkDeviceWaitIdle`/`vkQueuePresentKHR` call chain
+  rather than asserting it, and formalized the shader promotion (D3)
+  and the deferred-realization ownership sequence (D8) as explicit
+  decisions rather than leaving them implicit. Neither round found a
+  case where the recommended design was unsupportable by real, current
+  code; every finding had a real, evidenced fix within the existing
+  architecture.
 
 ## Summary
 
@@ -491,6 +608,22 @@ for this material kind differs from `minimal_mesh`'s own (position@0,
 uv@1 instead of position@0, color@1), mirroring
 `textured_quad_fixture.cpp`'s own already-proven schema exactly.
 
+**Formal status change, stated explicitly, not left implicit:** from
+this decision onward, `shaders/textured_quad/textured_quad.slang` is a
+**production built-in shader** backing `MaterialKind::UnlitTextured` —
+no longer merely a test fixture's own resource that Runtime happens to
+also reuse. This round keeps its existing file and CMake target names
+(`shaders/textured_quad/`, `textured_quad_shaders`) — renaming either
+is legitimate future cleanup, not required here. The Material artifact
+itself stores only the `MaterialKind::UnlitTextured` enumerator value —
+**never** a shader path, filename, or identifying string — and locating
+the compiled shader artifact for a given `MaterialKind` is exclusively
+a small, Runtime-private mapping (mirroring the hardcoded-relative-path
+convention every shader pair already uses). Because of this, a future
+rename of the shader's own file or CMake target changes nothing about
+any already-cooked Material artifact's own identity or bytes — only
+Runtime's own private mapping would need updating.
+
 **Consequence, disclosed:** `MaterialKind` is not a general
 shader-selection mechanism — adding a second kind later means adding a
 second Runtime-side hardcoded shader-pair mapping and, if that shader
@@ -854,8 +987,9 @@ resources:
    map's own current keys; never a separately persisted queue or a
    second source of truth).
 2. For each pending material, attempt realization as one local,
-   all-or-nothing sequence, entirely with function-local, RAII-owned
-   objects until the final step: create its `Sampler`
+   all-or-nothing sequence — a **candidate bundle**, entirely
+   function-local, RAII-owned objects until the final step: create its
+   `Sampler`
    (`Device::createSampler()`, no `RenderTarget` needed); create its
    `SampledTexture` (`Device::createSampledTexture()`, no
    `RenderTarget` needed — this call only allocates the GPU image, it
@@ -888,6 +1022,23 @@ resources:
    tracked resource — `cmd.bindTexture()` is a raw call that simply
    requires the texture to already be `ShaderRead`, which the
    upload pass recorded immediately before it already guarantees.
+   **This same frame's own `DrawItem` list is built using the candidate
+   bundle directly** — an entity whose material was just realized this
+   frame points its `item.material` at the local candidate `Material`,
+   not yet a map entry — so realization becomes visible to drawing on
+   the very frame it succeeds, never deferred to frame N+1. This is
+   safe by construction: `Renderer::drawFrame()`'s own command
+   recording (`cmd.bindPipeline()`/`cmd.bindTexture()`) reads
+   `item.material` synchronously, at record time, and embeds only the
+   real Vulkan handle values (`VkPipeline`, the descriptor's own
+   sampled-image binding) into the command buffer — it never retains
+   the C++ `Material`/`DrawItem` pointer itself past that one recording
+   call. Moving the candidate's own C++ wrapper objects into
+   `materialResourceMap_`/`textureResourceMap_`/`samplerResourceMap_`
+   afterward (step 6) changes their own C++-object address, not the
+   Vulkan handle values already embedded in the command buffer, and no
+   `DrawItem` outlives the one `Renderer::drawFrame()` call that
+   consumed it — so the address change is never observed by anything.
 4. Exactly **one** `Device::submit()` call per frame, covering the
    upload pass(es) (if any were recorded this frame) and the real draw
    graph together — never a second, separate `submit()`. This is
@@ -903,10 +1054,13 @@ resources:
    is safe to destroy via ordinary RAII (function-scope, matching
    `textured_quad_fixture.cpp`'s own existing staging-buffer lifetime
    exactly), and the `SubmissionSignal` `submit()` returned already
-   represents completed GPU work by the time `present()` receives it —
-   a `present()`/`vkQueuePresentKHR` wait on an already-signaled
-   semaphore is a legal, ordinary precondition, not a special case.
-   This adds a one-time CPU stall **only** on the frame(s) a new,
+   wraps an already-signaled `VkSemaphore` by the time `present()`
+   receives it — confirmed legal against the real
+   `vkQueueSubmit`/`vkWaitForFences`/`vkDeviceWaitIdle`/`vkQueuePresentKHR`
+   call chain, not merely asserted; see
+   [ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md)'s
+   own Decision for the full, code-grounded proof. This adds a one-time
+   CPU stall **only** on the frame(s) a new,
    distinct material is first realized — never a per-frame cost once
    every currently-referenced material is realized. A cheaper,
    next-`submit()`-implicit-wait-based staging-buffer reclamation
@@ -941,7 +1095,9 @@ built-in fallback Material (that fallback is reserved for
 `materialAsset == std::nullopt`, per D4 — a *present-but-unrealized*
 reference is a transient or failing state, not "no material," and
 conflating the two would hide a real realization failure behind a
-plausible-looking render).
+plausible-looking render). See D9 for how this same three-way
+distinction (absent / present-not-yet-realized / present-and-realized)
+interacts with an in-progress format-change rebuild specifically.
 
 **Resize/zero-extent/acquire-failure/DeviceLost/shutdown-with-pending-
 realization — each already covered by an existing mechanism, not a new
@@ -994,45 +1150,118 @@ of a contract this codebase already documents and already exercises
 correctly in a real fixture — this Spec adds no new ownership model,
 only a second real consumer of the existing one.
 
-**Decision, part 2 — format-change rebuild extends from one `Material`
-to every entry in `materialResourceMap_`, using the exact tradeoff
-already accepted for the single-Material case:** `PipelineCreateParams::colorFormat`
-is baked into a `Pipeline` at creation time (`types.h:186-201`) — a
-`Material` built against one swapchain format cannot be redrawn
-correctly into a `RenderTarget` of a different format. Today's single-
-`material_` code already accepts this and already has a working,
-Human-Review-precedented resolution: on a detected format change,
-attempt to build a **new** `Pipeline`/`Material` first; only replace
-the old one if the new one succeeds ("old Pipeline (if any) destroyed
-HERE, only after the new one already succeeded",
-`runtime_application.cpp:308-312`); if the rebuild fails, **keep
-drawing with the old, now-format-mismatched `Material` and retry next
-frame** — an explicitly accepted, already-shipped risk (a transient
-wrong-but-drawable frame preferred over a black one), not a new
-tradeoff this Spec invents.
+**Decision, part 2 — format-change rebuild is one atomic, all-or-
+nothing swap of the fallback `Material` and the entire
+`materialResourceMap_` together — corrected during this Spec's own
+final review from a per-entry-independent design that was wrong.**
+`PipelineCreateParams::colorFormat` is baked into a `Pipeline` at
+creation time (`types.h:186-201`) — a `Material` built against one
+swapchain format cannot be correctly bound while drawing into a
+`RenderTarget` of a different format; doing so is a genuine
+mismatched-attachment-format condition (Vulkan Validation Layers would
+flag it), not merely a stylistic wrong-but-harmless frame. Today's
+single-`material_` code does not currently guard against this on its
+own rebuild-failure path — confirmed directly: if `createMaterial()`
+fails during a format change, the code keeps `material_` (built for
+the *old* format) and falls through to draw with it against `*target`
+(already the *new* format) via `Renderer::drawFrame()` two lines later.
+This is a latent, real gap in Spec 0013's own existing code, found
+during this review, not an accepted design — and this Spec's own
+requirement to fold the single fallback `Material` into the *same*
+atomic contract as the new per-material map (immediately below) is
+what surfaces and closes it, as a direct, disclosed, in-scope
+consequence of unifying the two, not an unrelated fix.
 
-This Spec extends the identical create-before-destroy-and-keep-old-on-
-failure rule to **every** entry of `materialResourceMap_`, independently,
-on the same format-change detection: for each already-realized
-material, attempt a new `Pipeline`/`Material` against the new
-`colorFormat` (`SampledTexture`/`Sampler` are **not** rebuilt — a
-texture's own format, `Rgba8Unorm`/`Rgba8Srgb`, is entirely independent
-of the swapchain's own `colorFormat`, confirmed directly:
-`SampledTextureCreateParams`/`SamplerCreateParams` name no swapchain-
-format field at all); on success, replace that one map entry
-(old `Pipeline` destroyed only after the new one exists); on failure,
-leave that one entry unchanged and retry it on a future frame,
-independently of every other entry's own outcome — no entry's own
-rebuild failure blocks or is coupled to any other's.
+**The corrected contract:**
+
+1. **`SampledTexture`/`Sampler` never rebuild on a format change and
+   never need to** — a texture's own format (`Rgba8Unorm`/`Rgba8Srgb`)
+   is independent of the swapchain's `colorFormat`, confirmed directly:
+   `SampledTextureCreateParams`/`SamplerCreateParams` name no
+   swapchain-format field at all. Once a material's own texture has
+   been uploaded once (D8), its `SampledTexture`/`Sampler` survive
+   every subsequent resize and format change unchanged, reused as-is
+   by every rebuild below.
+2. **On format-change detection, build a complete *candidate* batch
+   before touching anything live:** a new fallback `Material`
+   (mirroring today's single-`material_` rebuild call exactly) *and*,
+   for every entry currently in `materialResourceMap_`, a new
+   `Pipeline`/`Material` built against the new `colorFormat`, reusing
+   that entry's own already-existing, already-uploaded
+   `SampledTexture`/`Sampler` unchanged (no new upload, no
+   `CommandList`, no `submit()` — `Device::createPipeline()`/
+   `createMaterial()` are synchronous factory calls needing only the
+   already-known `colorFormat` value). All of this lives in local,
+   RAII-owned variables (a candidate fallback plus a candidate map)
+   until step 3.
+3. **All-or-nothing swap:** only if the candidate fallback *and every
+   single candidate map entry* succeed does Runtime swap them in —
+   `material_` and `materialResourceMap_` are replaced together, in
+   one step, and only then is `lastSeenFormat_` updated. Old
+   `Pipeline`/`Material` objects (fallback and every prior map entry)
+   are destroyed only after the full candidate batch has already
+   replaced them (create-before-destroy, matching today's single-
+   Material ordering, generalized to the whole batch).
+4. **On any single failure, the whole candidate batch is discarded —
+   never a partial publish:** if the fallback rebuild or *any one* map
+   entry's rebuild fails, every already-built candidate object this
+   attempt created is destroyed via ordinary RAII (nothing was ever
+   submitted; safe to abandon unconditionally), and the **existing**
+   `material_`/`materialResourceMap_` are left completely untouched —
+   still valid for the *old* format, still RAII-alive, but **not used
+   to draw this frame**. `lastSeenFormat_` is not updated, so the same
+   rebuild is retried next frame. This is the one behavioral change
+   from today's single-Material code: a rebuild failure no longer
+   falls through to draw with a format-mismatched `Material` — this
+   frame draws nothing (an empty `DrawItem` list; `Renderer::drawFrame()`
+   still correctly clears the target to the new format with no
+   `Pipeline` bound at all, since nothing is drawn), matching the
+   existing `!material_ || !depthTexture_` "nothing valid to draw yet"
+   early-return shape already used elsewhere in `runFrame()`. This is
+   treated with the same non-fatal severity Runtime's own existing
+   `createMaterial()`-failure-during-format-change path already uses
+   (logged, retried, never `lifecycle_.markFailed()`) — no new,
+   invented error classification, and no implicit substitution of any
+   material for another.
+5. **First-time realization of a brand-new, never-before-referenced
+   material (D8) is a separate, incremental path, not folded into this
+   atomic rebuild:** it adds one new entry to `materialResourceMap_`
+   without touching any existing entry, exactly as D8 already
+   specifies. The two paths only ever interact through the same map
+   and the same `colorFormat` value — a newly-realized material is
+   always built against whatever `colorFormat` is current at the
+   moment of its own first realization, so it never itself needs a
+   rebuild the instant after it is created.
 
 **Deduplication interacts with rebuild only as a key, not a value:**
-because `materialResourceMap_` is keyed by material `AssetId`
-(D10), a format-change rebuild replaces the `Material` **value** at an
-existing key in place — it never changes which `AssetId`s are present,
-and every entity already pointing at that `AssetId` (via
-`DrawItem` extraction reading the map fresh each frame, never caching
-a raw pointer across frames) automatically draws with the rebuilt
-`Material` on the very next frame it succeeds.
+`materialResourceMap_` stays keyed by material `AssetId` (D10)
+throughout a successful rebuild — the atomic swap replaces every
+`Material` **value** in place, never changing which `AssetId`s are
+present, and every entity already pointing at that `AssetId` (via
+`DrawItem` extraction reading the map fresh each frame, never caching a
+raw pointer across frames) automatically draws with the rebuilt
+`Material` the very next frame the swap succeeds.
+
+**The three-way distinction across a mixed scene, made explicit (D8's
+own per-entity fallback logic, restated precisely against this
+corrected rebuild contract):**
+
+- An entity whose `materialAsset` is **absent** always draws with
+  whatever `material_` is *currently* live — the candidate fallback
+  only becomes "currently live" once its own atomic swap succeeds; a
+  pending format-change rebuild does not change which fallback is used
+  until that swap completes.
+- An entity whose `materialAsset` is **present but not yet realized**
+  draws only if a complete, current-format candidate resource bundle
+  for it is available *this frame* — otherwise it is skipped (D8),
+  regardless of whether "not yet available" means "still loading" or
+  "mid-format-change-rebuild."
+- An entity whose `materialAsset` is **present and already realized**
+  reuses its own already-uploaded `SampledTexture`/`Sampler` unchanged
+  across a format change (item 1 above), but the `Material`/`Pipeline`
+  it draws with must always come from the *current*, post-swap
+  `materialResourceMap_` — never a stale entry left over from before a
+  still-in-progress rebuild attempt.
 
 ### D10. Deduplication across entities sharing a material/texture
 
@@ -1341,7 +1570,7 @@ Spec 0017's own checklist shape:
 - **A distributable, cross-session Asset Catalog** — remains explicitly
   deferred, as it has been since Spec 0015.
 
-## Readiness for Human Review (2026-08-27 centralized final review)
+## Readiness for Human Review — Round 1 (2026-08-27 centralized final review)
 
 A second, evidence-driven centralized review pass re-verified this
 Draft's own architectural claims directly against real code the review
@@ -1424,9 +1653,70 @@ No finding in this pass reversed this Spec's own core recommendations
 shader-identity scheme; an optional `Renderable` material reference
 with a hardcoded fallback) — every gap found had a real, evidenced fix
 within the existing architecture, confirmed against real signatures and
-real CMake files, not assumed. **This Spec, and both
+real CMake files, not assumed. This Spec, and both
 [ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)/
 [ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md),
-are assessed ready for a formal Human Review pass** — Spec 0018 remains
-`In Review`, both ADRs remain `Proposed`, pending that review's own
-approval, amendment, or rejection.
+were assessed ready for a formal Human Review pass at the end of this
+round — **superseded by Round 2's own finding, below, that the
+format-change rebuild contract this round left as a per-entry-
+independent design was itself a real gap requiring correction before
+approval.**
+
+## Readiness for Human Review — Round 2 (2026-08-27, a further, focused review)
+
+A second, narrowly-scoped review pass re-examined exactly the two
+points Round 1 had not itself scrutinized closely enough: the
+format-change rebuild's own atomicity, and the rigor behind the
+`waitIdle()`-then-`present()` timing claim.
+
+- **Closed, a real correction, not a nuance (D9):** Round 1's own D9
+  let each `materialResourceMap_` entry rebuild independently on a
+  format change, keeping a stale, old-format `Material` on a per-entry
+  rebuild failure. Re-examined against `PipelineCreateParams::colorFormat`
+  being baked into a `Pipeline` at creation time, this is a genuine
+  mismatched-attachment-format condition if that stale `Material` is
+  ever actually drawn — and confirmed directly, today's own existing
+  single-`material_` code has exactly this latent gap on its own
+  rebuild-failure path already (draws with the old-format `material_`
+  against the new-format `*target` two lines after a failed rebuild).
+  D9 is rewritten: format-change rebuild is now one atomic,
+  all-or-nothing candidate-batch swap covering the fallback `Material`
+  and every `materialResourceMap_` entry together; any single failure
+  discards the whole candidate batch, leaves the existing state
+  untouched, and draws nothing that frame (never a format-mismatched
+  draw) — a disclosed, deliberate behavior correction to Spec 0013's
+  own existing code, surfaced only by unifying it into this Spec's own
+  new, generalized contract. `SampledTexture`/`Sampler` are confirmed
+  to never need rebuilding on a format change at all (format-
+  independent), so a rebuild is a purely synchronous, upload-free
+  operation. ADR-0060 rewritten to match.
+- **Closed, verified against real Vulkan calls, not asserted (D8):**
+  the `waitIdle()`-before-`present()` staging-buffer-safety claim is
+  now traced through the real `VulkanDevice::submit()`/`waitIdle()`
+  and `VulkanPresentation::present()` implementations —
+  `vkQueueSubmit`'s own `pSignalSemaphores`, `vkWaitForFences`,
+  `vkDeviceWaitIdle`, and `vkQueuePresentKHR`'s own `pWaitSemaphores` —
+  confirming the exact same `VkSemaphore` is signaled by the frame's
+  own submission and later waited on by `present()`, and that Vulkan's
+  own binary-semaphore contract makes waiting on an already-signaled
+  semaphore ordinary, not a special case. See ADR-0060's own Decision
+  for the full call-by-call proof.
+- **Formalized, not merely implied:** the shader promotion (D3) is now
+  its own explicit, six-point decision (production status, unconditional
+  CMake target, no `tests/` dependency from production, no shader path
+  stored in the Material artifact, a Runtime-private locating mapping,
+  and confirmed forward-compatibility with a future rename); the
+  deferred-realization ownership sequence (D8) now states explicitly
+  that a realization frame's own `DrawItem` list is built from the
+  candidate bundle directly (visible the same frame it succeeds, not
+  the next one), with the C++-object-address-vs-Vulkan-handle safety
+  argument for why this is sound made explicit rather than left
+  implicit.
+
+No finding in this second round left any recommended design
+unsupportable by real, current code or the real Vulkan contract; every
+gap found had a real, evidenced fix, applied above. **This Spec, and
+both ADR-0059/ADR-0060, are approved** — see the Human Review Approval
+note at the top of this document for the complete, itemized record.
+This approval authorizes drafting Plan 0018 only; it does not authorize
+Implementation.

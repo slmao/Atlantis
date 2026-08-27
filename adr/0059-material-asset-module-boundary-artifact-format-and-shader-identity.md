@@ -1,9 +1,18 @@
 # ADR 0059: Material Asset — Module Boundary, Artifact Format, and Shader-Identity Contract
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-26
-- **Deciders:** (pending Human Review)
-- **Related Spec:** [specs/0018-material-asset-scene-binding-foundation.md](../specs/0018-material-asset-scene-binding-foundation.md) (`Draft`)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-27 as part of Spec 0018's Human Review Approval
+- **Related Spec:** [specs/0018-material-asset-scene-binding-foundation.md](../specs/0018-material-asset-scene-binding-foundation.md) (`Approved`)
+- **Acceptance Record (2026-08-27):** Accepted by Human Review as part
+  of [specs/0018-material-asset-scene-binding-foundation.md](../specs/0018-material-asset-scene-binding-foundation.md)'s
+  own Human Review Approval (2026-08-27), following two centralized
+  final-review rounds that found and corrected a real CMake test-gating
+  gap on `shaders/textured_quad` (Decision item 3) — see that Spec's own
+  approval note for the specific Decision items this ADR corresponds
+  to. This record does not change this ADR's own Decision, Consequences,
+  or Alternatives Considered below.
 - **Related ADR(s):**
   [ADR-0043](0043-asset-system-module-boundary.md) (Asset System module
   boundary — extended in membership, unchanged in kind: a fourth asset
@@ -134,42 +143,74 @@ Catalog, no shader `AssetId`, no new Shader System machinery.**
    `atlantis::rhi::Filter`/`AddressMode` when constructing the real
    `Sampler` — the same translation-at-the-boundary pattern
    `TextureColorSpace` → `SampledTextureFormat` already establishes.
-3. **Shader identity — closed enum, Runtime-resolved:** `MaterialKind`
-   is a small, closed enumeration (starting with exactly one value,
-   `UnlitTextured`) that a composition root (Runtime) maps to a fixed,
-   hardcoded, already-compiled shader pair — reusing
-   `shaders/textured_quad/textured_quad.slang` (Spec 0016, already
-   built via the existing `atlantis_add_slang_shader_pair()`
-   declaration, already proven correct against a real, asset-sourced
-   UV0 mesh per Spec 0017's own `textured_quad` golden). No shader
-   gains an `AssetId`, a logical path, or any resolution mechanism
-   beyond the hardcoded-relative-path convention every composition root
-   already uses for every shader pair today. Adding a second
-   `MaterialKind` value later means adding a second hardcoded mapping
-   Runtime-side — an explicit, accepted limit on this decision's own
-   scope, not a design flaw to correct now.
+3. **Shader identity — closed enum, Runtime-resolved, and a formal
+   promotion of `shaders/textured_quad` from a test-only fixture
+   resource to a production built-in shader.** `MaterialKind` is a
+   small, closed enumeration (starting with exactly one value,
+   `UnlitTextured`) that a Runtime-private mapping resolves to a fixed,
+   compiled shader pair. Stated formally, as its own decision, not left
+   implicit:
 
-   **A real, disclosed CMake fix this decision requires, found during
-   this ADR's own centralized final review:** `shaders/textured_quad/`'s
-   own `add_subdirectory()` call is declared inside the root
-   `CMakeLists.txt`'s `if(ATLANTIS_BUILD_TESTS)` block today — its own
-   `CMakeLists.txt` says so explicitly ("Test-only consumer
-   (`tests/image_regression/fixture/`) -- added inside the
-   `ATLANTIS_BUILD_TESTS` block, unlike `minimal_renderer`'s own
-   unconditional placement"). Confirmed directly: with
-   `ATLANTIS_BUILD_TESTS=OFF`, the `textured_quad_shaders` target does
-   not exist. Runtime must build independent of `ATLANTIS_BUILD_TESTS`,
-   so this decision requires moving that one `add_subdirectory()` call
-   to the same unconditional placement `shaders/minimal_renderer`
-   already has, for the identical, already-precedented reason
-   (`atlantis_runtime` needs it). This is a one-line CMake relocation,
-   not new shader content and not a duplicate `.slang` file — the
-   shader's own real, reflected contract (a `CameraUniform{view;
-   projection;}` at binding(0,0), a `PushConstants{objectToWorld}`
-   push constant, `VertexInput{position@0, uv@1}`) is confirmed,
-   directly against the real `.slang` source, to match Runtime's
-   existing `Camera`/`DrawItem` contract exactly — only the vertex-input
-   schema this `MaterialKind` builds differs from `minimal_mesh`'s own.
+   1. `shaders/textured_quad/textured_quad.slang` — today a test-only
+      resource, built only when `ATLANTIS_BUILD_TESTS=ON` and consumed
+      only by `tests/image_regression/fixture/` — is promoted to a
+      **production built-in shader** backing `MaterialKind::UnlitTextured`.
+      This is a real status change this decision makes explicitly, not
+      a silent reuse: from this decision onward, this shader pair is
+      part of Runtime's own production contract, and any future change
+      to it must be reviewed as such, not as test-fixture-only content.
+   2. The CMake target (`textured_quad_shaders`, from
+      `atlantis_add_slang_shader_pair()`) is declared **unconditionally**
+      — its own `add_subdirectory(shaders/textured_quad)` call moves out
+      of the root `CMakeLists.txt`'s `if(ATLANTIS_BUILD_TESTS)` block to
+      the same unconditional placement `shaders/minimal_renderer`
+      already has, for the identical, already-precedented reason
+      (`atlantis_runtime` needs it). Confirmed directly: with
+      `ATLANTIS_BUILD_TESTS=OFF` today, this target does not exist at
+      all — this one-line relocation is what makes it exist
+      unconditionally, matching `minimal_mesh_shaders`'s own existing
+      shape exactly. No new shader content, no duplicate `.slang` file.
+   3. `atlantis_runtime`/`atlantis_runtime_host` depend on this shader
+      target the same way they already depend on `minimal_mesh_shaders`
+      — **never** on anything under `tests/`. `tests/image_regression/fixture/`
+      keeps consuming the exact same, now-unconditional target; nothing
+      about its own build changes.
+   4. The Material artifact stores only `MaterialKind::UnlitTextured` —
+      **never** a shader path, filename, or any string identifying the
+      shader pair. Locating the compiled shader artifact (its `.spv`
+      and reflection JSON) for a given `MaterialKind` is exclusively a
+      **Runtime-private mapping** (a small, internal `switch`/lookup a
+      composition root owns) — the same hardcoded-relative-path
+      convention every shader pair already uses today, not a new
+      mechanism, and never something Asset System itself resolves or
+      even knows exists.
+   5. Contract compatibility is confirmed, not assumed: the shader's
+      own real, reflected shape — `CameraUniform{view; projection;}` at
+      binding(0,0) (32 floats, matching Runtime's existing camera
+      uniform buffer size exactly), `PushConstants{objectToWorld}` at
+      `[[vk::push_constant]]` (16 floats, matching Runtime's existing
+      push-constant size exactly), `VertexInput{position@0 (float3),
+      uv@1 (float2)}`, and one combined-image-sampler descriptor
+      binding at (1, 0) — is confirmed directly against the real
+      `.slang` source to match Runtime's existing `Camera`/`DrawItem`
+      contract with no change; only the vertex-input schema this
+      `MaterialKind` builds (`position@0, uv@1`) differs from
+      `minimal_mesh`'s own (`position@0, color@1`).
+   6. This round keeps the existing file and CMake target names
+      (`shaders/textured_quad/textured_quad.slang`, `textured_quad_shaders`)
+      — a rename is legitimate future cleanup, explicitly **not**
+      required by this decision, and — because the Material artifact
+      never stores a shader path (item 4) — a future rename of either
+      cannot change any already-cooked Material artifact's own identity
+      or bytes; only Runtime's own private mapping would need updating.
+
+   No shader gains an `AssetId`, a logical path, or any resolution
+   mechanism beyond the hardcoded, Runtime-private mapping above.
+   Adding a second `MaterialKind` value later means adding a second
+   such mapping entry (and, if its own backing shader is not yet
+   unconditionally built, the same CMake relocation this decision
+   already makes once) — an explicit, accepted limit on this decision's
+   own scope, not a design flaw to correct now.
 4. **Authoring source and cooking:** a small, versioned text grammar
    (mirroring `mesh_source.cpp`/`scene_source.cpp`'s own established
    shape — a version line, then field lines), naming a `kind` token, a
