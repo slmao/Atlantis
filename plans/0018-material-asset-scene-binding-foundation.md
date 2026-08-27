@@ -1,8 +1,18 @@
 # Plan: Material Asset & Scene Binding Foundation
 
 - **Spec:** [specs/0018-material-asset-scene-binding-foundation.md](../specs/0018-material-asset-scene-binding-foundation.md) (`Approved`, Human Review Approval recorded 2026-08-27 — authorizes drafting this Plan only, not Implementation)
-- **Status:** `In Review`. Not self-approved — see [AGENTS.md](../AGENTS.md)'s Golden Rule. Implementation must not start until a human records approval here, matching Plan 0017's own precedent exactly.
+- **Status:** `Approved / Ready for Implementation`. See "Human Review Approval" below for the full record. **Implementation is authorized only once this Plan's own PR (#87) is merged** — this approval does not itself constitute that merge.
 - **Author:** slmao
+- **Human Review Approval (2026-08-28):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+  maintainer) on 2026-08-28, accepting this Plan in full as revised
+  through one final, targeted Plan Review round (below) — see that
+  section for the full itemized record, including one genuine,
+  previously-undisclosed GPU safety gap found and fixed (old
+  `Material`/`Pipeline` destruction timing during a format-change
+  rebuild, P13). **This approval authorizes Implementation only once
+  this Plan's own PR is merged** — it does not itself constitute that
+  merge.
 - **Related ADR(s):** [ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md) (`Accepted`), [ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md) (`Accepted`)
 
 This Plan implements Spec 0018 and ADR-0059/ADR-0060 exactly as approved.
@@ -14,6 +24,246 @@ explicitly left a mechanical choice open for Plan-time closure (D6's
 `AssetId`-embedding question, D6's error-enumerator naming, D9's exact
 member order), this Plan closes it here, citing the precedent it
 mirrors.
+
+## Human Review Approval (2026-08-28)
+
+A final, targeted Human Review round examined ten specific areas of this
+Plan's own real-code implementability, focused on GPU-resource ownership
+safety, in-flight lifetime correctness, and test-coverage completeness.
+Every item below was closed at the Plan level; no item required
+reopening Spec 0018 or ADR-0059/ADR-0060's own approved text, and no
+item revealed a real API that cannot support the required safety
+property. This approval accepts the Plan as revised:
+
+1. **GPU resource ownership shape, corrected to `unique_ptr`-owning
+   bundles, layered by lifetime.** P10/P12/P13 rewritten: `SampledTexture`
+   (keyed by texture `AssetId`, shared across materials, never rebuilt),
+   `Sampler` (keyed by material `AssetId`, format-independent, created
+   once), and `Material`/`Pipeline` (keyed by material `AssetId`,
+   format-dependent, rebuilt on every format change) are each held as
+   `std::unique_ptr<T>` map values — not value-typed map entries — so a
+   borrowed `const T*` into any of them is stable by construction (the
+   pointee's address is fixed at first allocation and never moves,
+   independent of map rehash, insertion, or whole-map move-assignment),
+   not merely by the (real, but subtler) `std::unordered_map` reference-
+   stability guarantee alone. Publish is a `unique_ptr` move — trivially
+   `noexcept` — into the map; the two genuinely different publish shapes
+   (incremental single-material `emplace()` for first realization, vs.
+   whole-map `noexcept` move-assignment for a format-change rebuild) are
+   now each stated precisely with the exact guarantee each one actually
+   has, not one glossed-over claim for both. See P10, P12, P13.
+2. **Old `Material`/`Pipeline` GPU-in-flight lifetime during a format-
+   change rebuild — a real, previously-undisclosed gap, found and fixed,
+   not merely re-argued.** Fresh, line-level re-verification of
+   `VulkanDevice::submit()`'s retained-submission/fence behavior this
+   round (`vulkan_device.cpp:520,557,571,580`, cited in Pre-draft
+   verification) found that the *existing, already-shipped* Spec 0013
+   format-change block destroys the old `Material`/`Pipeline` (`material_
+   = std::move(newMaterialResult.value());`) **before** this frame's own
+   `submit()` call — i.e., before the one call that actually drains the
+   *previous* frame's retained GPU submission. Since a single-frame-in-
+   flight `submit()` only waits for frame N-1's work at the *start* of
+   frame N's own `submit()` (not earlier in `runFrame()`), the existing
+   code has always had a real, undisclosed window in which the old
+   `Pipeline` is destroyed while frame N-1's GPU work might still
+   reference it. Neither Spec 0018 nor ADR-0060 stated a destruction
+   point at this granularity, so this is a Plan-level closure, not a
+   reopening of either document's own Decision (D9's own "create-before-
+   destroy, all-or-nothing" decision is unaffected and remains the
+   governing rule; this fixes *when*, not *whether*). **The fix (P13,
+   revised):** keep the old bundle alive; record this frame's commands
+   using the *candidate* bundle only (never the old one — already true);
+   call `submit()`; only after `submit()` returns `Ok` (which, per its
+   own internal `waitAndReleaseRetainedSubmission()`, is the actual point
+   frame N-1's GPU work is confirmed finished) is the old bundle safe to
+   drop; the atomic map/fallback swap happens at that same point. On
+   `submit()` failure, the old bundle is retained (never dropped) and the
+   candidate is discarded — the same severity Runtime's existing
+   `classifySubmitError()`/`markFailed()` path already has, unconditionally,
+   with no special-casing needed for "was a rebuild also in flight this
+   frame." This does not require an additional `waitIdle()` beyond
+   `submit()` itself — that extra CPU stall (D8 step 5) exists only for a
+   *newly-uploaded texture's own staging buffer*, a distinct safety need
+   `submit()` alone cannot satisfy (see item 3 below); the *old-Pipeline*
+   hazard is fully closed by `submit()`'s own existing internal drain.
+   New Verification Checklist item V27 (below) makes this a real,
+   executed GPU-observable proof, not merely an inspection claim.
+3. **First-upload sequencing — re-confirmed against real code, and the
+   staging buffer separated from the persisted bundle.** The exact
+   sequence (`acquire target → construct candidate → record upload
+   graph(s) → record draw graph using candidate → submit once → waitIdle
+   only if an upload occurred → publish candidate → present`) is
+   unchanged from the original draft and re-confirmed real (P12,
+   Pre-draft verification `[Claim d]`). One real correction: the staging
+   `Buffer` a first-time texture upload uses must **not** be a field of
+   the bundle that gets moved into the persistent
+   `sampledTextureResourceMap_` (the original draft's
+   `RealizedMaterialCandidate` incorrectly bundled it there, which would
+   have kept every staging buffer alive forever). It is now a
+   frame-local, `runFrame()`-owned `std::vector<atlantis::rhi::Buffer>`
+   collected across this frame's realized candidates, destroyed via
+   ordinary RAII immediately after this frame's conditional `waitIdle()`
+   succeeds — never before, never carried past this one frame. `present()`
+   consuming the same semaphore `submit()` signaled, after an intervening
+   `waitIdle()`, is re-confirmed safe (fences and semaphores are
+   independent primitives; `waitIdle()` never touches semaphore state).
+   Multi-texture upload ordering within one frame is now explicit:
+   `computePendingMaterialIds()` returns a `std::vector`, and
+   `realizePendingMaterials()` iterates it in that same vector's order
+   (itself derived from `World::renderableEntities()`'s own already-
+   deterministic iteration, never an `unordered_map`'s) — so which
+   texture's upload pass is recorded first is reproducible frame-to-frame
+   and rebuild-to-rebuild, not incidental to hash-bucket layout. See P12.
+4. **Format-rebuild-failure frame's "empty `DrawItem` list" — confirmed
+   legal against the real `Renderer` API, with direct code evidence, not
+   argued.** Freshly read `src/renderer/src/renderer.cpp` in full this
+   round: `Renderer::drawFrame()` takes `std::span<const DrawItem>
+   drawItems` (line 19); its one draw pass always declares `writes()` on
+   the color/depth resources and always applies `colorClear`/`depthClear`
+   (lines 24–25, 47–52) *before* the `for (const DrawItem& item :
+   drawItems)` loop (line 27) even runs — an empty span makes that loop
+   iterate zero times, dereferencing no `Material` at all, while the
+   clear-to-new-format-and-depth-1.0 behavior is entirely unconditional
+   and unaffected. No `Material`, `Pipeline`, or descriptor state is
+   required to call `drawFrame()` with zero items. This confirms the
+   original design (P13) needed no alternative "fail the frame early"
+   path — the empty-`DrawItems` route is real, not fictional.
+5. **Built-in shader production wiring — confirmed complete and
+   minimal, reusing `minimal_renderer`'s own exact mechanism.**
+   Unconditional `add_subdirectory(shaders/textured_quad)`, moved to
+   immediately follow `shaders/minimal_renderer`'s own existing
+   unconditional call (root `CMakeLists.txt`, before `src/runtime` is
+   added — order-dependent, per that file's own existing comment);
+   `ATLANTIS_textured_quad_SHADER_OUTPUT_DIR` (already exported by the
+   unmodified `atlantis_add_slang_shader_pair()`) is consumed by a new
+   `ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR` compile definition on
+   `atlantis_runtime`, mirroring `ATLANTIS_RUNTIME_SHADER_DIR`'s own
+   existing pattern exactly; `main.cpp` builds the four full paths from
+   it plus literal filenames, mirroring its own existing four
+   `minimal_mesh.*` lines; Milestone 10's own verification is a real
+   `-DATLANTIS_BUILD_TESTS=OFF` configure+build producing a working
+   `atlantis_runtime.exe`, not an inspection claim; the production target
+   has zero dependency on anything under `tests/`; the Material artifact
+   stores only the `MaterialKind` enumerator, never a path (P3); the
+   shader's own descriptor contract
+   (`texturedMaterialExpectedDescriptorContract()`) is already validated
+   at shader-compile time via the already-existing, already-wired
+   `--expected-contract=textured-material` mechanism (Pre-draft
+   verification) — this Plan authors zero new contract-validation code.
+   See P10, Milestone 10.
+6. **CMake dependency vs. re-import semantics — confirmed precise, no
+   change needed beyond what was already drafted.** Re-confirmed: a
+   texture's own content edit never triggers a material recook (the
+   material's own cooked bytes depend only on the texture's `AssetId`,
+   itself derived from the texture's *logical path* string, known at
+   material-source-authoring time, not from the texture's content); a
+   material's own content edit never triggers a scene recook (the scene
+   artifact stores only the material's `AssetId`, by the identical
+   argument); every `add_dependencies()` this Plan adds is explicitly
+   ordering-only, never added to a `DEPENDS`/stamp input, matching
+   `atlantis_add_scene_asset()`'s own already-`Accepted` precedent and
+   its own explaining comment; the per-scene manifest is generated (via
+   `file(GENERATE)`) only from already-declared `MATERIAL_DEPENDENCIES`/
+   `TEXTURE_DEPENDENCIES` targets, so declaration order is enforced by
+   the existing `FATAL_ERROR`-if-undeclared check (unchanged); the
+   `atlantis_add_texture_asset()` `LOGICAL_PATH` export fix is purely
+   additive (confirmed: no existing caller reads or is affected by a
+   variable it did not previously have). See P5, P9.
+7. **Scene migration and fallback regression — confirmed complete, no
+   change needed.** Milestone 6's repository-wide version-1 sweep (every
+   `.scene.txt` under `assets/`, every embedded scene-source literal
+   under `tests/`, verified by running the full suite, not grep alone)
+   and the explicit, unconditional `materialAsset == std::nullopt →
+   fallbackMaterial_` path (P14, unchanged in *behavior* from today's
+   single, unconditional `item.material = &*material_` line — only
+   *conditional* now) together guarantee every existing scene's own CPU
+   `World` state, fallback rendering path, and pixel output are
+   unaffected; `world_scene`'s own golden is asserted byte-for-byte
+   unchanged (V34) as the direct evidence, not merely an architectural
+   argument.
+8. **`RuntimeHost` helper reuse and negative-test reality — confirmed
+   named precisely, six required proofs enumerated individually.** P16's
+   fixture links `Atlantis::RuntimeHost` and calls the real
+   `atlantis::runtime::loadAndInstantiateScene()` (`scene_load.h`) and
+   the real `atlantis::runtime::computePendingMaterialIds()`/
+   `realizePendingMaterials()` (`material_realization.h`, new, P12) —
+   named files and functions, not "reused logic" in the abstract. Six
+   negative proofs, each its own Verification Checklist item (see V22,
+   V25, V26, V27, and V16's own `MaterialWithoutRenderable` case): wrong
+   material `AssetId` fails (V22); wrong texture `AssetId` fails (V22,
+   via `SceneDependencyUnresolved` surfacing on the material's own
+   embedded texture reference, a distinct code path from the material-
+   `AssetId`-itself-unresolvable case, now its own explicit test case);
+   present-but-not-yet-realized never substitutes the fallback (P14 item
+   3, distinct from item 1 by construction — the two branches are
+   mutually exclusive `if`/`else if` cases, not a shared code path that
+   could silently collapse); a partial format-rebuild failure never
+   publishes a partial map (V26, address-identity assertion, not merely
+   value-equality); the old-Pipeline-drawn-against-new-format hazard is
+   closed structurally (item 2 above closes it by construction — the old
+   bundle is never used to draw once a format change is detected,
+   regardless of the safety-timing fix — and is additionally
+   Validation-Layers-observable per V27); shared texture created exactly
+   once even when two materials reference it (V25's own call-count
+   seam).
+9. **Golden and Runtime windowed boundary — confirmed, with the
+   real-test-coverage question answered explicitly rather than left
+   implicit.** P15's decision (bootstrap scene does not switch) is
+   unchanged. Explicitly stated here: `main.cpp`'s own four new
+   `BootstrapConfig`-population lines are verified by successful
+   compilation (a wrong macro name is a build error, since
+   `ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR` must already be defined
+   by `CMakeLists.txt`) and by code review against the exact,
+   already-established four-line pattern — this is the same verification
+   depth every one of `main.cpp`'s *existing* `BootstrapConfig` fields
+   already has today (none of them are exercised by an automated test;
+   `main.cpp` is never linked into `tests/`, matching Spec 0013's own
+   "thin entry point" precedent). Every other piece of the real pipeline
+   this Plan adds — shader-kind mapping, Phase 1 resolve/load, Phase 2
+   realization, format rebuild, per-entity binding — **is** exercised by
+   Milestone 16's fixture calling the identical, real
+   `Atlantis::RuntimeHost` functions `runFrame()` itself calls (item 8
+   above), not a reimplementation. This is the same coverage shape every
+   prior Runtime-facing Spec in this repository already accepts as
+   sufficient.
+10. **Milestone/verification matrix — reviewed for mergeable splits;
+    none found beyond stated exceptions.** Milestones 1 (types + Tools
+    `AssetKind` enumerator) and 2 (source grammar, its own dedicated test
+    file) were the one candidate for merging (Milestone 1 alone compiles
+    but has zero test coverage of its own). Kept separate deliberately:
+    Milestone 1's own `AssetKind::Material` addition is a real, distinct
+    CMake-adjacent change (the Tools cooker's enum) that Milestone 2 does
+    not touch, and collapsing the two would obscure that Milestone 2's
+    own tests are exercising grammar code with **no** cook/dispatch
+    wiring yet (a deliberately narrower, GPU/Tools-independent test
+    surface) — the two remain independently reviewable for a real
+    reason, not by inertia. No other pair among the seventeen was found
+    mergeable: each of Milestones 3–17 changes a distinct file group
+    with its own, non-overlapping test surface (artifact codec vs.
+    cook/load vs. CMake declaration vs. scene grammar vs. scene artifact
+    vs. `World` vs. manifest vs. shader wiring vs. member layout vs.
+    realization vs. rebuild vs. per-entity binding vs. content vs.
+    fixture/golden vs. closeout), and Milestones 12–14 in particular
+    (realization, rebuild, per-entity binding) are three independently
+    GPU-testable properties whose own separate proofs (V25, V26, V27,
+    V28) would otherwise be impossible to attribute to a specific code
+    change. The Verification Checklist gained two new items (V24, V27)
+    closing the no-throw-publish and old-Pipeline-in-flight-safety gaps
+    found by items 1–2 above, and V25/V26 were widened in place (V25
+    with the dedup/determinism proofs, V26 with the address-identity
+    assertion); V1–V38 now continuously cover: material
+    source/artifact/cook/load (V8–V13); scene version/migration
+    (V14–V16); manifest (V20); CPU transaction (V22–V23); deferred
+    upload and its ownership/no-throw shape (V24–V25); in-flight
+    `Pipeline` lifetime (V27); format rebuild (V26); `ATLANTIS_BUILD_TESTS`
+    ON/OFF (V1–V4); Debug/Release/GPU/Validation (V5–V7, V27); `C4062`
+    (V13); module/link graph (V18–V19, V37); golden bootstrap and manual
+    visual verification (V29, V31–V36).
+
+No unresolvable architectural conflict was found across this round.
+Every finding above was closed with a real, evidenced fix within the
+already-`Approved`/`Accepted` Spec 0018/ADR-0059/ADR-0060 contract —
+none required reopening either document's own text.
 
 ## Plan Review (2026-08-28, pre-Human-Review self-check)
 
@@ -386,14 +636,21 @@ changing nothing about the number of `CommandList`s or `submit()` calls.
 (confirmed via its existing use, `item.material = &*material_;`) — a
 frame's own `DrawItem`s are built, consumed by
 `Renderer::drawFrame()`'s command recording, and destroyed, all within
-one `runFrame()` call, before this Plan's own candidate-to-map move (M12
+one `runFrame()` call, before this Plan's own candidate-to-map move (P12
 step 6) ever runs; `Renderer::drawFrame()`'s own command recording
 (`cmd.bindPipeline()`/`cmd.bindTexture()`) embeds real Vulkan handle
 values into the `VkCommandBuffer` at record time, never retaining the
-C++ `Material*`/`DrawItem*` itself past that call — so the candidate's
-own C++ object address changing when it moves into
-`materialResourceMap_` afterward is never observed by anything that
-already recorded against it this frame.
+C++ `Material*`/`DrawItem*` itself past that call. With the revised,
+`std::unique_ptr`-based ownership shape (P10, Human Review Approval item
+1), this claim is stronger than originally drafted: moving a
+`RealizedMaterialCandidate`'s own `unique_ptr<Material>` into
+`materialResourceMap_` does not change the pointee's address **at
+all** — only the `unique_ptr`'s own bookkeeping relocates — so even a
+hypothetical `DrawItem` that outlived the move (which, per the paragraph
+above, none ever does) would still see a valid address; the original
+"address changes but is never observed" argument (sound for a
+value-typed map, per `std::unordered_map`'s own node-based reference-
+stability guarantee) is now unnecessary, not merely still true.
 
 **`[Claim f]` — headless realization testability, confirmed with a
 concrete, already-existing mechanism:** `tests/image_regression/fixture/
@@ -852,28 +1109,72 @@ pattern exactly. No new field is needed for material/texture/scene
 paths — `sceneDependencyManifestPath` already covers all three
 dependency kinds (P9).
 
-**`RuntimeApplication` member declaration order** — the single
-`optional<Material> material_` slot is replaced, in place (same
-position: immediately after `depthTexture_`, immediately before
-`renderer_`), by seven new members, ordered so C++'s reverse-declaration-
-order destruction gives exactly the texture/sampler-before-material,
-all-before-`device_` sequence D9 requires:
+**`RuntimeApplication` member declaration order and GPU ownership shape
+(revised, Human Review Approval item 1)** — the single `optional<Material>
+material_` slot is replaced, in place (same position: immediately after
+`depthTexture_`, immediately before `renderer_`), by six new members.
+Every GPU-realized resource is held as a `std::unique_ptr<T>` map
+*value* — never a value-typed map entry — so a borrowed `const T*` into
+any of them has an address fixed at first allocation, stable across map
+insertion, rehash, or a whole-map move-assignment; this is a strictly
+stronger, more obvious guarantee than relying on
+`std::unordered_map<AssetId, T>`'s own (real, but subtler) reference-
+stability rule alone, and it is what makes each layer's own "atomic
+publish" a `unique_ptr` move rather than an in-place value assignment.
+Three distinct ownership layers, keyed differently on purpose:
 
 ```cpp
-// GPU-realized, AssetId-keyed (destroyed in this reverse order: material
-// resources first, then samplers, then textures -- all before device_,
-// which stays declared first among GPU-owning members, unchanged).
-std::unordered_map<atlantis::asset_system::AssetId, atlantis::rhi::SampledTexture> sampledTextureResourceMap_;
-std::unordered_map<atlantis::asset_system::AssetId, atlantis::rhi::Sampler> samplerResourceMap_;
-std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Material> materialResourceMap_;
-std::optional<atlantis::renderer::Material> fallbackMaterial_;  // renamed from material_; same role, same lazy-build-on-first-format-known-frame timing
+// Layer 1 -- format-independent, created exactly once, NEVER rebuilt or
+// moved by a format change (Spec 0018 D9 item 1). Keyed by TEXTURE
+// AssetId: two materials naming the same texture AssetId share one
+// entry (D10 dedup) -- confirmed via Pre-draft verification that
+// SampledTextureCreateParams/SamplerCreateParams name no colorFormat
+// field, so nothing here is ever format-dependent.
+std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>> sampledTextureResourceMap_;
+
+// Layer 1b -- also format-independent, created once per MATERIAL
+// (not shared across materials even when they share a texture, since
+// filter/addressMode are the Material DTO's own fields, per Spec D2 --
+// no per-value sampler-caching is attempted, matching Non-Goals' own
+// "no per-pipeline or per-material GPU-object caching/reuse across
+// distinct AssetIds," extended here to Sampler for the same reason).
+// Keyed by MATERIAL AssetId.
+std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::Sampler>> samplerResourceMap_;
+
+// Layer 2 -- format-DEPENDENT (Pipeline bakes in colorFormat, Pre-draft
+// verification, types.h:186-201), rebuilt in full on every format
+// change (D9). Keyed by MATERIAL AssetId. Borrows (raw, non-owning
+// pointers, Material's own existing contract) into Layer 1/1b's
+// already-stable addresses -- never into a value-typed map slot.
+std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::renderer::Material>> materialResourceMap_;
+std::unique_ptr<atlantis::renderer::Material> fallbackMaterial_;  // renamed from material_ (was optional<Material>); same role, same lazy-build-on-first-format-known-frame timing; also format-dependent, also rebuilt by D9
 
 // CPU-only, populated by Phase 1, consumed/cleared by Phase 2 as each
-// entry is realized -- no GPU handle, so relative order versus the four
+// entry is realized -- no GPU handle, value-typed is fine (nothing ever
+// borrows a raw pointer into these), so relative order versus the four
 // members above is not destruction-order-significant.
 std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> materialDataMap_;
 std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap_;
 ```
+
+Declaration order (top to bottom = construction order = reverse
+destruction order) places the two CPU-only maps first among the six (so
+they destruct *last* among the six — irrelevant, since they hold no GPU
+handle, but kept adjacent to `depthTexture_` for readability), followed
+by `sampledTextureResourceMap_`, `samplerResourceMap_`,
+`materialResourceMap_`, `fallbackMaterial_` in that order — so
+destruction order is `fallbackMaterial_` first, then
+`materialResourceMap_` (every owned `Material`/`Pipeline` destroyed;
+each one's own borrowed `SampledTexture*`/`Sampler*` is never
+dereferenced by `Material`'s own destructor, confirmed via
+`material.h`/`material.cpp`, so there is no ordering *requirement*
+between `materialResourceMap_` and Layer 1/1b's own destruction —
+Layer 1/1b are placed after purely to keep the "things a Material can
+borrow from must be declared before the Material" rule visually
+explicit, matching `textured_quad_fixture.cpp`'s own existing
+structural precedent exactly), then `samplerResourceMap_`, then
+`sampledTextureResourceMap_` — all four destroyed before `device_`
+(declared earlier, unchanged).
 
 Every other existing member (`platformSession_` through
 `fragmentSpirv_`) keeps its exact current relative position — this Plan
@@ -887,7 +1188,13 @@ the maps explicitly in `shutdown()` (rather than relying solely on
 destruction order) matches `meshResourceMap_.clear()`'s own existing
 explicit-clear precedent, keeping `shutdown()`'s own sequence the single
 place that visibly documents the teardown order, not merely an implicit
-property of declaration order.
+property of declaration order. `shutdown()`'s own existing
+`device_->waitIdle()` (called whenever `lifecycle_.hasEverRun()`,
+already runs *before* any of the lines above) already guarantees no GPU
+work is in flight before any of these four `.clear()`/`.reset()` calls
+runs — unchanged, and sufficient, since shutdown is a one-time, final
+teardown, not a per-frame operation subject to the single-frame-in-
+flight timing constraint P13 addresses below.
 
 ### P11. Phase 1 — CPU-only scene-load transaction extension — implements Spec D8 (Phase 1), ADR-0060 Decision item 6
 
@@ -980,51 +1287,88 @@ enum class MaterialRealizationError {
 
 // A single successfully-realized material's own new GPU resources --
 // entirely function-local/RAII-owned until the caller decides to keep
-// them (Spec 0018 D8 step 2's own "candidate bundle").
+// them (Spec 0018 D8 step 2's own "candidate bundle"). Revised, Human
+// Review Approval items 1/3: each owning member is a unique_ptr, so its
+// pointee's own address never changes once allocated -- moving this
+// whole struct (e.g. inside the std::unordered_map this function's own
+// caller stores it in, see realizePendingMaterials() below) relocates
+// only the unique_ptr's own bookkeeping, never the pointee a borrowed
+// raw pointer might already reference. newSampledTexture is
+// std::nullopt precisely when this candidate's own textureAssetId is
+// ALREADY a key in the caller's current sampledTextureResourceMap_ (a
+// second material naming an already-realized texture, D10 dedup) --
+// this function itself never re-uploads a texture it can already see is
+// present; the caller is responsible for actually reusing the existing
+// entry when this field is empty. stagingBuffer is deliberately NOT a
+// member of the persisted resource shape (SampledTexture/Sampler/
+// Material) -- it is populated only alongside newSampledTexture, and
+// its own lifetime is the CALLER's responsibility (runFrame() keeps a
+// frame-local std::vector<Buffer> of every staging buffer created this
+// frame, destroyed via RAII only after that frame's own waitIdle()
+// succeeds, Human Review Approval item 3) -- it is never moved into any
+// persistent RuntimeApplication-owned map.
 struct RealizedMaterialCandidate {
+  atlantis::asset_system::AssetId materialAssetId = 0;
   atlantis::asset_system::AssetId textureAssetId = 0;
-  atlantis::rhi::SampledTexture sampledTexture;
-  atlantis::rhi::Sampler sampler;
-  atlantis::rhi::Buffer stagingBuffer;
-  atlantis::renderer::Material material;
+  std::unique_ptr<atlantis::rhi::SampledTexture> newSampledTexture;  // nullptr if textureAssetId is already realized
+  std::optional<atlantis::rhi::Buffer> stagingBuffer;                // present iff newSampledTexture is non-null
+  std::unique_ptr<atlantis::rhi::Sampler> sampler;                    // always new -- keyed per material, never shared (see P10)
+  std::unique_ptr<atlantis::renderer::Material> material;             // always new -- keyed per material, never shared
 };
 
 // Step 2 of Spec 0018 D8: attempts one material's own full realization
 // as one local, all-or-nothing sequence. Never touches any
 // RuntimeApplication-owned map -- purely functional given its inputs.
-// On success, the caller (realizePendingMaterials(), below) is
+// alreadyRealizedTextureIds is sampledTextureResourceMap_'s own current
+// key set (read-only), consulted ONLY to decide whether this candidate
+// needs its own new SampledTexture/staging upload at all (D10 dedup) --
+// this function never mutates or reads any map value, only this one key
+// set. On success, the caller (realizePendingMaterials(), below) is
 // responsible for recording the returned candidate's own texture-upload
-// RenderGraph pass into the shared CommandList (step 3) before this
-// candidate is ever moved into a persistent map.
+// RenderGraph pass (when newSampledTexture is non-null) into the shared
+// CommandList (step 3) before this candidate is ever moved into a
+// persistent map.
 [[nodiscard]] atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOneMaterialCandidate(
     atlantis::rhi::Device& device, const atlantis::shader_system::rhi_integration::MeshVertexAttributeSchema& unlitTexturedVertexSchema,
     const std::vector<std::uint32_t>& unlitTexturedVertexSpirv, const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv,
-    atlantis::rhi::Format colorFormat, const atlantis::asset_system::MaterialAssetData& materialData,
-    const atlantis::asset_system::TextureAssetData& textureData);
+    atlantis::rhi::Format colorFormat, atlantis::asset_system::AssetId materialAssetId,
+    const atlantis::asset_system::MaterialAssetData& materialData,
+    const atlantis::asset_system::TextureAssetData& textureData,
+    const std::vector<atlantis::asset_system::AssetId>& alreadyRealizedTextureIds);
 
 // Step 1 of Spec 0018 D8: the pending set is a pure function of current
-// state, recomputed every frame -- never a persisted queue. referencedIds
-// is every distinct material AssetId any currently-renderable entity
-// names (collected by the caller from World, matching how
-// knownMeshAssetIds is already collected in runFrame() today);
+// state, recomputed every frame -- never a persisted queue. Returns a
+// std::vector, not a std::unordered_set -- its own ORDER is what
+// realizePendingMaterials() below iterates to record upload passes, so
+// this order must itself be deterministic; the caller derives
+// referencedIds from World::renderableEntities()'s own already-
+// deterministic iteration (never an unordered_map), matching how
+// knownMeshAssetIds is already collected in runFrame() today.
 // alreadyRealizedIds is materialResourceMap_'s own current key set.
 [[nodiscard]] std::vector<atlantis::asset_system::AssetId> computePendingMaterialIds(
     const std::vector<atlantis::asset_system::AssetId>& referencedIds,
     const std::vector<atlantis::asset_system::AssetId>& alreadyRealizedIds);
 
-// Steps 2-3 combined, for every pending id this frame: builds every
+// Steps 2-3 combined, for every pending id this frame, IN pendingIds'
+// OWN ORDER (never re-sorted, never bucketed by AssetId hash -- Human
+// Review Approval item 3's own determinism requirement): builds every
 // candidate that succeeds, recording each one's upload pass into
 // commandList (before the caller's own subsequent draw-graph recording)
 // -- never partially recording a candidate that itself failed at any
 // sub-step. Returns the set of successfully-realized candidates, keyed
 // by material AssetId, for the caller to (a) build this frame's own
 // DrawItems from directly (Spec 0018 D8 step 3's own same-frame-visible
-// guarantee) and (b), only after this frame's submit()+conditional
-// waitIdle() both succeed, move into the persistent resource maps (step
-// 6) -- this function itself never touches those maps.
+// guarantee), (b) collect every returned candidate's own stagingBuffer
+// (when present) into its own frame-local list, destroyed only after
+// this frame's own waitIdle() succeeds, and (c), only after this
+// frame's submit()+conditional waitIdle() both succeed, move each
+// candidate's own newSampledTexture/sampler/material into the
+// persistent resource maps (step 6) -- this function itself never
+// touches those maps.
 [[nodiscard]] std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizePendingMaterials(
     atlantis::rhi::Device& device, atlantis::rhi::CommandList& commandList, /* ...shader/schema params... */
     atlantis::rhi::Format colorFormat, const std::vector<atlantis::asset_system::AssetId>& pendingIds,
+    const std::vector<atlantis::asset_system::AssetId>& alreadyRealizedTextureIds,
     const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData>& materialDataMap,
     const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData>& textureDataMap);
 
@@ -1037,63 +1381,154 @@ existing `if (!material_ || !depthTexture_) return;` guard, insert: (1)
 collect `referencedMaterialIds` from `world_->renderableEntities()`
 (mirroring the existing `knownMeshAssetIds` collection loop exactly, but
 reading `Renderable::materialAsset` instead of `meshAsset`, skipping
-absent ones); (2) collect `alreadyRealizedIds` from
-`materialResourceMap_`'s own keys; (3) `computePendingMaterialIds()`;
-(4) if non-empty, `createCommandList()` **once** (the same
-`CommandList` the existing draw-graph recording immediately below
-already creates — this Plan does not add a second `createCommandList()`
-call, only moves the existing one earlier and records into it twice);
-(5) `realizePendingMaterials()`, recording upload passes into that same
-`commandList`; (6) proceed to build this frame's `DrawItems` (M14),
-consulting both `materialResourceMap_` (already-realized) and this
-frame's own local realized-candidates map (newly realized this frame);
-(7) `renderer_.drawFrame()` records the draw graph into the same
+absent ones — this iteration order is what makes step (5) below
+deterministic, per `computePendingMaterialIds()`'s own doc comment);
+(2) collect `alreadyRealizedIds` from `materialResourceMap_`'s own keys
+and `alreadyRealizedTextureIds` from `sampledTextureResourceMap_`'s own
+keys; (3) `computePendingMaterialIds()`; (4) if non-empty,
+`createCommandList()` **once** (the same `CommandList` the existing
+draw-graph recording immediately below already creates — this Plan does
+not add a second `createCommandList()` call, only moves the existing
+one earlier and records into it twice); (5) `realizePendingMaterials()`,
+recording upload passes into that same `commandList`, and collecting
+every returned candidate's own `stagingBuffer` (when present) into a
+frame-local `std::vector<atlantis::rhi::Buffer> pendingStagingBuffers`;
+(6) proceed to build this frame's `DrawItems` (M14), consulting both
+`materialResourceMap_` (already-realized) and this frame's own local
+realized-candidates map (newly realized this frame); (7)
+`renderer_.drawFrame()` records the draw graph into the same
 `commandList`, after the upload passes; (8) **one** `submit()`
 (unchanged call site, unchanged signature); (9) if this frame realized
 at least one new candidate, `device_->waitIdle()` **before** `present()`
-— on success, move every local candidate into
-`sampledTextureResourceMap_`/`samplerResourceMap_`/`materialResourceMap_`;
-on `waitIdle()` failure, treat with the same severity a `submit()`
-failure already has (`lifecycle_.markFailed()`), matching the existing
-"an unrecoverable wait is itself an unrecoverable condition" precedent
-`shutdown()`'s own `waitIdle()` failure handling already establishes;
-(10) `present()` (unchanged call site).
+— on success, `pendingStagingBuffers` goes out of scope here (RAII
+destroys every staging buffer this frame created, now safe — Human
+Review Approval item 3), and every local candidate's own
+`newSampledTexture`/`sampler`/`material` (each already a `unique_ptr`)
+is moved into `sampledTextureResourceMap_`/`samplerResourceMap_`/
+`materialResourceMap_`; on `waitIdle()` failure, treat with the same
+severity a `submit()` failure already has (`lifecycle_.markFailed()`),
+matching the existing "an unrecoverable wait is itself an unrecoverable
+condition" precedent `shutdown()`'s own `waitIdle()` failure handling
+already establishes — `pendingStagingBuffers` and every local candidate
+are simply destroyed via ordinary RAII on this failure path too, since
+`RuntimeApplication` is about to enter `Failed` and no further frames
+will run; (10) `present()` (unchanged call site).
 
-### P13. Format-change atomic rebuild — implements Spec D9
+### P13. Format-change atomic rebuild, and the old-`Pipeline` GPU-in-flight safety fix — implements Spec D9
 
-Extends `material_realization.h`/`.cpp` with:
+**Human Review Approval item 2 — the highest-priority finding of this
+review round, found and fixed here, not merely re-argued:** re-reading
+`VulkanDevice::submit()`'s real retained-submission behavior
+(`vulkan_device.cpp:520,557`: `submit()` calls
+`waitAndReleaseRetainedSubmission()` — draining frame N-1's own retained
+GPU work — **before** its own `vkQueueSubmit()`) against the *existing,
+already-shipped* Spec 0013 format-change block
+(`runtime_application.cpp:309`: `material_ = std::move(newMaterialResult.value());`,
+which destroys the *old* `Material`/`Pipeline` synchronously, at the
+point the format-change check runs — strictly **before** this same
+frame's own later `submit()` call at line 433) surfaces a real,
+previously-undisclosed hazard: between frame N-1's own `submit()`
+returning (which only *queues* frame N-1's GPU work, per this engine's
+single-frame-in-flight design — it does not itself wait for that work to
+finish) and frame N's own `submit()` call (the *only* point that drains
+frame N-1's retained submission), the *existing* code already destroys
+the old `Pipeline` — while frame N-1's GPU work, which may still
+reference that exact `VkPipeline` handle, might still be executing.
+Neither Spec 0018 nor ADR-0060 fixed the destruction point at this
+granularity (D9's own "create-before-destroy" text says *what* survives
+until what, not precisely *when*, relative to GPU submission, "destroy"
+is actually safe) — this is a Plan-level closure of a real gap, fully
+consistent with, and not a reopening of, D9's own governing "never a
+partial publish, never draw with a format-mismatched Pipeline" decision.
+
+**The corrected sequence, verified against the real `submit()`/`waitIdle()`
+contract (Pre-draft verification, fresh this session):**
+
+1. On format-change detection, build a **complete candidate batch**
+   without touching anything live — the *existing* `fallbackMaterial_`/
+   `materialResourceMap_` are read (to know which `AssetId`s need a
+   rebuilt `Material`) but never mutated, moved, or destroyed here.
+2. Record this frame's entire draw graph using **only the candidate
+   batch** — never the existing (about-to-be-superseded) bundle; this
+   was already true in the original design and is unchanged (Human
+   Review Approval item 4 confirms an empty-`DrawItems` fallback exists
+   for the failure case, so no entity is ever drawn with the *old*
+   bundle once a format change is detected, regardless of this timing
+   fix).
+3. Call `submit()` **once**, covering this frame's real draw graph (plus
+   any upload passes from P12, if a new material realization also
+   happens this frame) — unchanged call site and signature.
+4. **Only after `submit()` returns `Ok`** — at which point
+   `waitAndReleaseRetainedSubmission()`'s own internal drain has already
+   confirmed frame N-1's GPU work (the last work that could have
+   referenced the *old* `Pipeline`) has finished — is the existing
+   `fallbackMaterial_`/`materialResourceMap_` batch safe to replace.
+   Only at this point does the actual swap-and-destroy happen:
+   `fallbackMaterial_ = std::move(candidateFallback);` (a `unique_ptr`
+   move — the old `Material` this overwrites is destroyed here, now
+   provably safe) and `materialResourceMap_ = std::move(candidateMaterials);`
+   (a whole-map move-assignment — see below for its own `noexcept`
+   proof), then `lastSeenFormat_` is updated.
+5. **On `submit()` failure:** the candidate batch (never yet moved
+   anywhere) is discarded via ordinary RAII; the *existing*
+   `fallbackMaterial_`/`materialResourceMap_` are **never touched** —
+   they remain exactly as they were, still valid, still usable on a
+   future successful frame. This is not a new severity category:
+   `runFrame()`'s existing `submit()`-failure path already calls
+   `classifySubmitError()` + `lifecycle_.markFailed()` unconditionally,
+   regardless of whether a rebuild was also attempted this frame — no
+   special-casing is needed, since a failed `submit()` already ends the
+   run before any further frame could observe the old bundle's state
+   either way.
+6. **This does not require an additional `waitIdle()` call beyond
+   `submit()` itself.** The extra, explicit `waitIdle()` P12 (D8 step 5)
+   performs on a realization frame exists for a *different* safety need
+   entirely — the newly-uploaded texture's own staging buffer must
+   survive until *this frame's own* upload work is confirmed done, which
+   `submit()`'s internal drain (only ever waiting on the *previous*
+   frame) cannot provide. The old-`Pipeline` hazard this item fixes only
+   ever needs "frame N-1's work is done," which `submit()`'s own existing
+   internal drain already guarantees by the time it returns `Ok` — no
+   new CPU stall is introduced by this fix on a rebuild-only frame (one
+   with no new material realization).
 
 ```cpp
 struct FormatRebuildCandidates {
-  atlantis::renderer::Material fallback;
-  std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Material> materials;
+  std::unique_ptr<atlantis::renderer::Material> fallback;
+  std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::renderer::Material>> materials;
 };
 
 // Spec 0018 D9 steps 2-4: builds a COMPLETE candidate batch (the
 // fallback Material plus one rebuilt Material per CURRENT
 // materialResourceMap_ entry, each reusing that entry's own already-
-// uploaded SampledTexture/Sampler unchanged -- no new upload, no
-// CommandList, no submit()) against the new colorFormat. Returns Err on
-// the FIRST sub-failure (fallback or any one entry) -- the caller (
-// runFrame()) is responsible for discarding the returned partial state
-// via ordinary RAII and leaving the EXISTING fallbackMaterial_/
-// materialResourceMap_ completely untouched, exactly as D9 requires; no
-// partial candidate is ever returned as if it were usable.
+// uploaded SampledTexture/Sampler unchanged, via a borrowed raw
+// pointer into the CALLER's still-live sampledTextureResourceMap_/
+// samplerResourceMap_ -- no new upload, no CommandList, no submit())
+// against the new colorFormat. Never touches currentMaterials, never
+// touches the caller's own fallbackMaterial_ -- purely constructs new,
+// local unique_ptr<Material> objects. Returns Err on the FIRST
+// sub-failure (fallback or any one entry) -- the caller (runFrame())
+// discards the returned partial state via ordinary RAII and leaves the
+// EXISTING fallbackMaterial_/materialResourceMap_ completely untouched;
+// no partial candidate is ever returned as if it were usable. The
+// caller must not swap this result in until its OWN subsequent
+// submit() call (using this candidate batch to record the frame's real
+// draw graph) has returned Ok -- see the sequence above; this function
+// itself has no awareness of submit()/waitIdle() at all.
 [[nodiscard]] atlantis::Result<FormatRebuildCandidates, MaterialRealizationError> rebuildMaterialsForFormatChange(
     atlantis::rhi::Device& device, /* ...shader/schema params for both the fallback and unlit-textured pipelines... */
     atlantis::rhi::Format newColorFormat,
-    const std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Material>& currentMaterials);
+    const std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::renderer::Material>>& currentMaterials);
 ```
 
 `runFrame()`'s existing format-change block
 (`runtime_application.cpp:293-313`) is rewritten to call this instead of
-its own inline `createMaterial()` call: on `Ok`, swap
-`fallbackMaterial_`/`materialResourceMap_` with the candidate batch
-(old objects destroyed only now, create-before-destroy, matching
-today's single-Material ordering) and update `lastSeenFormat_`; on
-`Err`, **do not** update `lastSeenFormat_` (retry next frame, unchanged
-behavior) and set a new, function-scoped `bool formatRebuildFailedThisFrame
-= true` flag.
+its own inline `createMaterial()` call, but the actual swap (step 4
+above) moves to **after** this frame's own `submit()` call — not inline
+in the format-change block as originally drafted. On `Err` from
+`rebuildMaterialsForFormatChange()` itself: **do not** update
+`lastSeenFormat_` (retry next frame, unchanged behavior) and set a new,
+function-scoped `bool formatRebuildFailedThisFrame = true` flag.
 
 **Unconditional override (Plan Review item 5, the one behavioral
 correction D9 makes):** when `formatRebuildFailedThisFrame` is true,
@@ -1101,29 +1536,59 @@ correction D9 makes):** when `formatRebuildFailedThisFrame` is true,
 regardless of what the normal per-entity loop (M14) would otherwise
 produce — including entities whose `materialAsset` is absent, which
 would otherwise still draw with the now-stale-format
-`fallbackMaterial_`. `Renderer::drawFrame()` still runs (clearing the
-target to the new format, per the existing `if (!material_ ||
-!depthTexture_) return;` early-return precedent generalized: a rebuild
-failure is "nothing valid to draw this frame," not merely "no camera").
+`fallbackMaterial_`. `Renderer::drawFrame()` still runs and still
+correctly clears the target to the new format with no `Pipeline` bound
+at all (Human Review Approval item 4, confirmed directly against
+`renderer.cpp:17-55`: `drawFrame()` takes `std::span<const DrawItem>`;
+its one pass's `colorClear`/`depthClear` apply unconditionally, before
+the `for` loop over `drawItems` — which, given an empty span, iterates
+zero times and dereferences no `Material` at all).
+
+**No-throw publish, precisely (Human Review Approval item 1):** the
+format-rebuild swap (`materialResourceMap_ = std::move(candidateMaterials);`)
+is a **whole-map move-assignment** of
+`std::unordered_map<AssetId, std::unique_ptr<Material>>` — provably
+`noexcept` for the default allocator (`std::allocator_traits<std::allocator<...>>::is_always_equal::value`
+is `true`), locked down by
+`static_assert(std::is_nothrow_move_assignable_v<decltype(materialResourceMap_)>)`
+— a strictly stronger guarantee than the *incremental* single-material
+publish path (P12's own `.emplace()` of one new entry, which carries the
+same, already-accepted, ordinary allocation-failure risk every other
+`unordered_map::emplace()` call in this codebase already carries, e.g.
+`meshResourceMap_.emplace(...)` in the existing, shipped
+`scene_load.cpp`). Both `Material` move-constructions themselves
+(`std::unique_ptr<Material>`'s own move) are unconditionally `noexcept`
+regardless of allocator, `static_assert`ed separately (V24).
 
 `shutdown()`'s existing clear sequence (P10) already covers the final
 teardown of both `fallbackMaterial_` and `materialResourceMap_` in the
 correct order; no additional shutdown change is needed for rebuild
-specifically.
+specifically — `shutdown()` itself runs only once, after `runFrame()`
+will never be called again, with its own `waitIdle()` already draining
+everything before any `.reset()`/`.clear()` call, so the per-frame
+timing constraint above simply does not apply there.
 
 ### P14. Per-entity `DrawItem` material binding — implements Spec D4's three-state semantics, D8's per-entity fallback
 
 `runFrame()`'s existing `DrawItem` loop
 (`runtime_application.cpp:397-420`) widens, for each renderable entity:
 
-1. `materialAsset` absent → `item.material = &*fallbackMaterial_;`
-   (unchanged behavior, the exact current line).
+1. `materialAsset` absent → `item.material = fallbackMaterial_.get();`
+   (unchanged *behavior* from today's unconditional `item.material =
+   &*material_;` — only the accessor syntax changes, since
+   `fallbackMaterial_` is now `std::unique_ptr<Material>`, not
+   `std::optional<Material>`, per P10's revised ownership shape).
 2. `materialAsset` present, and a key in either this frame's own
-   newly-realized-candidates map (M12) or in `materialResourceMap_` →
-   `item.material` points at that Material (candidate map checked first,
-   since a just-realized material is not yet in `materialResourceMap_`
-   this same frame, per D8 step 3's "visible on the very frame it
-   succeeds" guarantee).
+   newly-realized-candidates map (P12) or in `materialResourceMap_` →
+   `item.material` points at that entry's own `.get()` (candidate map
+   checked first, since a just-realized material is not yet in
+   `materialResourceMap_` this same frame, per D8 step 3's "visible on
+   the very frame it succeeds" guarantee) — the pointer is stable
+   regardless of which map it came from, per P10's own `unique_ptr`
+   address-stability guarantee, so it remains valid for the one
+   `Renderer::drawFrame()` call this frame makes even though the
+   candidate itself will later move into `materialResourceMap_` (P12
+   step 6, after this frame's own draw is already recorded).
 3. `materialAsset` present, but a key in neither → `continue;` (skip
    this entity for this frame only), using `resolveMaterialAsset()`
    (P9) for the membership check, mirroring `resolveMeshAsset()`'s own
@@ -1202,6 +1667,19 @@ bootstrap" category (Milestone 16 below).
 Each milestone is independently buildable and independently reviewable;
 later milestones depend only on earlier ones, never the reverse.
 
+**Reviewed for mergeable splits (Human Review Approval item 10):**
+Milestones 1 and 2 were the one real candidate (Milestone 1 alone
+compiles but carries zero test coverage of its own) — kept separate
+because Milestone 1's own `AssetKind::Material` Tools-cooker enumerator
+addition is a distinct, CMake-adjacent change Milestone 2 does not touch,
+and collapsing them would obscure that Milestone 2's own tests exercise
+grammar code with no cook/dispatch wiring yet. No other pair among the
+seventeen was found mergeable — each changes a distinct file group with
+its own non-overlapping test surface, and Milestones 12–14 specifically
+are three independently GPU-testable properties (realization, format
+rebuild, per-entity binding) whose own separate proofs (V25, V26, V27,
+V28) would be impossible to attribute to a specific change if merged.
+
 1. **Material CPU types + error domain (P1, P2).** `material_types.h`;
    `errors.h` additions (`MaterialCookError`, `MaterialArtifactDecodeError`,
    `MaterialLoadError`); `AssetKind::Material` added to the Tools
@@ -1276,49 +1754,71 @@ later milestones depend only on earlier ones, never the reverse.
     `atlantis_runtime.exe` — the direct, real proof Spec D3's own gap
     finding is closed, not merely argued.
 11. **`RuntimeApplication` member layout + Phase 1 extension (P10,
-    P11).** The seven-member replacement of `material_`; `SceneLoadOutcome`
-    widening; `loadAndInstantiateScene()`'s steps (c)-(e) extension;
-    `initializeSteps()`'s publish-step widening with the two new
-    `static_assert`s. Tests: a scene with an unresolvable material
-    `AssetId` fails scene load fatally (`SceneDependencyUnresolved`) —
-    never a silent fallback (D4 case 2); a scene with a resolvable but
-    unloadable material (corrupted artifact) fails scene load fatally
-    (`SceneDependencyLoadFailed`); two entities referencing the same
-    material `AssetId` produce exactly one `materialDataMap_`/
+    P11).** The six-member, `unique_ptr`-based replacement of
+    `material_`; `SceneLoadOutcome` widening; `loadAndInstantiateScene()`'s
+    steps (c)-(e) extension; `initializeSteps()`'s publish-step widening
+    with the two new `static_assert`s. Tests: a scene with an
+    unresolvable material `AssetId` fails scene load fatally
+    (`SceneDependencyUnresolved`) — never a silent fallback (D4 case 2);
+    a material that itself resolves and loads but whose own embedded
+    `textureAsset` reference does not resolve **also** fails scene load
+    fatally (`SceneDependencyUnresolved`, a distinct code path, its own
+    test case — Human Review Approval item 8); a scene with a resolvable
+    but unloadable material (corrupted artifact) fails scene load
+    fatally (`SceneDependencyLoadFailed`); two entities referencing the
+    same material `AssetId` produce exactly one `materialDataMap_`/
     `textureDataMap_` entry each (dedup, D10) — all via
     `loadAndInstantiateScene()` called directly with `device = nullptr`
     for the CPU-only failure paths, matching its own existing
     GPU-independent-test precedent.
 12. **Phase 2 deferred GPU realization (P12).**
     `material_realization.h`/`.cpp` (`realizeOneMaterialCandidate()`,
-    `computePendingMaterialIds()`, `realizePendingMaterials()`);
-    `runFrame()` wiring. GPU-dependent tests (tagged `gpu`, matching this
+    `computePendingMaterialIds()`, `realizePendingMaterials()`, each
+    using the revised `unique_ptr`-based `RealizedMaterialCandidate`
+    shape with the staging buffer held separately from the persisted
+    resources); `runFrame()` wiring, including the frame-local
+    `pendingStagingBuffers` vector destroyed only after a successful
+    `waitIdle()`. GPU-dependent tests (tagged `gpu`, matching this
     codebase's existing `ctest -L gpu` convention): a pending material
     realizes exactly once and becomes drawable the same frame (D8 step
     3); a `SamplerCreateFailed`/`SampledTextureCreateFailed`/
     `StagingBufferCreateFailed`/`MaterialCreateFailed` injected failure
     (via a deliberately-invalid parameter, e.g. an oversized dimension)
-    leaves the material pending, retried next frame, never fatal; an
-    already-realized material is never re-uploaded on a subsequent frame
-    (a GPU/Validation-Layers-observable proof, e.g. asserting the
-    staging `Buffer`'s own creation call count via a test-only counting
-    seam, mirroring how existing GPU tests already assert call counts
-    where needed).
-13. **Format-change atomic rebuild (P13).**
-    `rebuildMaterialsForFormatChange()`; `runFrame()`'s format-change
-    block rewritten to call it; the unconditional
-    empty-`DrawItems`-on-rebuild-failure override. GPU tests: a
-    successful format change rebuilds the fallback and every existing
-    map entry together, reusing their own unchanged `SampledTexture`/
-    `Sampler` (asserted via the same call-count seam — zero new
-    `createSampledTexture()`/`createSampler()` calls during a rebuild);
-    an injected rebuild failure (e.g. a deliberately-invalid
-    `colorFormat`) leaves the *existing* fallback/map completely
-    untouched (object identity/address-stable, not merely
-    value-equal) and produces an empty-`DrawItems` frame — the direct,
-    GPU-observable proof of the D9 fix (a frame that would, before this
-    fix, have drawn with a format-mismatched `Pipeline`, now draws
-    nothing instead).
+    leaves the material pending, retried next frame, never fatal; a
+    second material referencing an already-realized texture `AssetId`
+    reuses it (zero new `createSampledTexture()`/upload calls, asserted
+    via a test-only creation-call-count seam — the D10 texture-dedup
+    proof); realizing two distinct materials in one frame records their
+    upload passes in a reproducible, `pendingIds`-vector-derived order,
+    confirmed identical across repeated runs of the same scene (Human
+    Review Approval item 3).
+13. **Format-change atomic rebuild and the old-`Pipeline` in-flight
+    safety fix (P13).** `rebuildMaterialsForFormatChange()`; `runFrame()`'s
+    format-change block rewritten so the candidate batch is built early
+    but the actual swap-and-destroy of the *existing*
+    `fallbackMaterial_`/`materialResourceMap_` is deferred until *after*
+    this frame's own `submit()` call returns `Ok` — never inside the
+    format-change detection block itself (the critical correction —
+    Human Review Approval item 2); the unconditional
+    empty-`DrawItems`-on-rebuild-failure override; the two `static_assert`s
+    distinguishing the incremental single-material publish's own
+    ordinary allocation risk from the format-rebuild's own provably
+    `noexcept` whole-map move-assignment. GPU tests: a successful format
+    change rebuilds the fallback and every existing map entry together,
+    reusing their own unchanged `SampledTexture`/`Sampler` (asserted via
+    the same call-count seam — zero new `createSampledTexture()`/
+    `createSampler()` calls during a rebuild); an injected rebuild
+    failure (e.g. a deliberately-invalid `colorFormat`) leaves the
+    *existing* fallback/map completely untouched (object
+    identity/address-stable, not merely value-equal) and produces an
+    empty-`DrawItems` frame — the direct, GPU-observable proof of the D9
+    fix; a repeated, rapid, real format-change sequence (e.g. crossing
+    displays with different native formats, or a test-only forced-
+    format-change injection on consecutive frames) runs with Vulkan
+    Validation Layers enabled and produces zero object-still-in-use
+    errors — the direct, GPU-observable proof of *this Milestone's own*
+    old-Pipeline-in-flight-safety fix, distinct from and additional to
+    the pre-existing D9 mismatched-format proof.
 14. **Per-entity `DrawItem` binding (P14).** `runFrame()`'s `DrawItem`
     loop widening. GPU test: a three-entity scene (one absent
     `materialAsset`, one present-and-realized, one present-and-
@@ -1511,9 +2011,16 @@ reviewable" requirement.
     own coverage exactly (present/absent id).
 22. Phase 1 CPU transaction: an unresolvable material `AssetId` fails
     scene load fatally (`SceneDependencyUnresolved`), never a silent
-    fallback; an unloadable-but-resolvable material fails scene load
-    fatally (`SceneDependencyLoadFailed`); two entities sharing one
-    material `AssetId` produce exactly one loaded `MaterialAssetData`/
+    fallback; a material that itself resolves and loads successfully but
+    whose own embedded `textureAsset` reference is unresolvable **also**
+    fails scene load fatally (`SceneDependencyUnresolved`, surfacing one
+    level deeper than the material's own resolve step — a distinct code
+    path from the material-`AssetId`-itself-unresolvable case, exercised
+    as its own test case) — this is the "wrong texture `AssetId`" proof
+    item 8 of the Human Review Approval above cites; an
+    unloadable-but-resolvable material fails scene load fatally
+    (`SceneDependencyLoadFailed`); two entities sharing one material
+    `AssetId` produce exactly one loaded `MaterialAssetData`/
     `TextureAssetData` entry each; a failure anywhere in the chain
     leaves `world_`/every resource map completely unpublished (existing
     `RuntimeApplication` state unchanged) — all via direct
@@ -1523,15 +2030,36 @@ reviewable" requirement.
     (i.e., `materialDataMap`/`textureDataMap`'s move-assignment is
     genuinely `noexcept`) — a compile-time-enforced regression guard,
     not a runtime test.
-24. Phase 2 realization (GPU): a pending material realizes and becomes
+24. GPU-resource ownership no-throw proof (Human Review Approval item 1):
+    `static_assert(std::is_nothrow_move_constructible_v<std::unique_ptr<T>>)`
+    for each of `SampledTexture`/`Sampler`/`Material` (trivially true for
+    any `T`, but stated explicitly as the compile-time guarantee the
+    incremental, first-realization publish (`emplace()` of an
+    already-successfully-constructed candidate) actually relies on) —
+    plus a **separate**, stronger
+    `static_assert(std::is_nothrow_move_assignable_v<std::unordered_map<AssetId,
+    std::unique_ptr<atlantis::renderer::Material>>>)` covering the
+    *format-rebuild-specific* whole-map move-assignment publish (true for
+    the default allocator) — the two publish shapes are verified against
+    the two different guarantees each actually has, not one glossed-over
+    claim for both (Human Review Approval item 1).
+25. Phase 2 realization (GPU): a pending material realizes and becomes
     drawable the same frame it is first referenced; each of
     `SamplerCreateFailed`/`SampledTextureCreateFailed`/
     `StagingBufferCreateFailed`/`MaterialCreateFailed` is independently
     driven by a real injected failure and leaves the material pending
-    (never fatal, retried next frame); an already-realized material is
-    never re-uploaded on a later frame (asserted via a real creation-
-    call-count seam).
-25. Format-change rebuild (GPU): a successful rebuild swaps the fallback
+    (never fatal, retried next frame); an already-realized texture is
+    never re-uploaded when a second, different material references the
+    same texture `AssetId` (the D10 dedup proof, asserted via a real
+    creation-call-count seam); a scene realizing two or more distinct
+    materials in the same frame records their upload passes in a
+    deterministic, reproducible order (the same order across repeated
+    runs of the identical scene — asserted by comparing a call-order
+    trace, or byte-identical Validation Layers log ordering, across at
+    least two independent runs), confirmed to derive from
+    `World::renderableEntities()`'s own already-deterministic iteration,
+    never `std::unordered_map` iteration (Human Review Approval item 3).
+26. Format-change rebuild (GPU): a successful rebuild swaps the fallback
     and every map entry together, reusing existing
     `SampledTexture`/`Sampler` unchanged (zero new upload calls); an
     injected rebuild failure leaves the *existing* (pre-rebuild)
@@ -1540,48 +2068,65 @@ reviewable" requirement.
     successfully the next; this is re-run for **both** the
     old→new-format and new→old-format directions (Spec item 12's own
     "both current and new format" requirement).
-26. Per-entity `DrawItem` binding (GPU): the three-state fixture
+27. Old-`Material`/`Pipeline` GPU-in-flight safety during format-change
+    rebuild (Human Review Approval item 2 — the highest-priority finding
+    this review round made): code inspection confirms the old bundle's
+    actual destruction is sequenced strictly **after** this frame's own
+    `submit()` call returns `Ok`, never inside the format-change
+    detection block itself and never before this frame's commands
+    (recorded against the *candidate* bundle only) have been submitted; a
+    real, repeated rapid format-change sequence exercised against actual
+    hardware (e.g., a resize sequence crossing two displays with
+    different native swapchain formats, or a test-only forced-format-
+    change injected on consecutive frames) runs with Vulkan Validation
+    Layers enabled and produces **zero** object-still-in-use/destroyed-
+    while-referenced validation errors across the sequence; on an
+    injected `submit()` failure during a rebuild attempt, the *old*
+    bundle is confirmed still valid and still used successfully on the
+    very next frame (never dropped merely because a rebuild attempt
+    failed to submit).
+28. Per-entity `DrawItem` binding (GPU): the three-state fixture
     (absent/realized/never-resolvable) produces exactly the expected
     `DrawItem` count every frame.
-27. `main.cpp`'s own bootstrap scene is confirmed, by inspection,
+29. `main.cpp`'s own bootstrap scene is confirmed, by inspection,
     unchanged (`world_scene`, not `material_demo_scene`) — Runtime's
     windowed output is bit-for-bit unaffected by this Plan.
-28. Windowed smoke test (programmatic resize/minimize/restore/close via
+30. Windowed smoke test (programmatic resize/minimize/restore/close via
     real Win32 message injection), Debug and Release — unchanged in kind
     from every prior Plan.
-29. Manual, human-performed Runtime windowed visual confirmation
+31. Manual, human-performed Runtime windowed visual confirmation
     (`atlantis_runtime.exe`, both Debug and Release) — confirms the
     window's own visible output is unchanged (still `world_scene`,
     untextured, exactly as before this Plan), since Milestone 15
     explicitly does not switch the bootstrap scene.
-30. New fixture (`material_demo_fixture.cpp`) directly links and calls
+32. New fixture (`material_demo_fixture.cpp`) directly links and calls
     `Atlantis::RuntimeHost`'s real Phase 1/Phase 2 functions — confirmed
     by code inspection, not merely by the fixture passing (a fixture
     could pass while secretly reimplementing the logic; this line item
     is a review gate, not a test assertion).
-31. First golden capture, ADR-0042 "Initial baseline bootstrap"
+33. First golden capture, ADR-0042 "Initial baseline bootstrap"
     procedure: implementation + scene assets committed first; golden
     PNG + sidecar in their own, separate, subsequent commit; sidecar's
     `source_revision` names the prior implementation commit's own hash;
     a human visually confirms non-black frame, correct texture
     orientation, correct material binding; a real GPU/Validation-Layers
     run is clean.
-32. Negative proof: removing the scene's `material=` reference changes
+34. Negative proof: removing the scene's `material=` reference changes
     the captured frame from the golden (untextured fallback) — executed
     and confirmed to actually fail/differ, not merely asserted possible.
-33. Negative proof: corrupting the cooked material artifact's own
+35. Negative proof: corrupting the cooked material artifact's own
     `texture_asset_id` changes the captured frame (wrong texture) from
     the golden — executed and confirmed.
-34. `minimal_cube`, `world_scene`, `textured_quad` goldens (PNG +
+36. `minimal_cube`, `world_scene`, `textured_quad` goldens (PNG +
     sidecar) confirmed byte-for-byte unchanged on disk via `git diff`,
     both immediately before Milestone 16 and again at the end of
     Implementation — evidence, not an inference from "tests passed"
     (Spec 0017's own V35 precedent, reapplied).
-35. Module/link-graph boundary checks (existing include-scanning
+37. Module/link-graph boundary checks (existing include-scanning
     mechanism): `Atlantis::AssetSystem` still Core-only; `Atlantis::World`
     still Core+AssetSystem-only; no new dependency edge from either onto
     `Atlantis::Renderer`/`Atlantis::RHI`/`Atlantis::VulkanBackend`.
-36. Documentation closeout: `specs/README.md`'s Spec 0018 row and this
+38. Documentation closeout: `specs/README.md`'s Spec 0018 row and this
     Plan's own status both state "Implementation PR OPEN," never
     "merged," until a human actually merges it.
 
@@ -1625,7 +2170,7 @@ Deltas specific to this Plan:
 - The three pre-existing goldens are confirmed byte-for-byte unchanged
   by `git diff` evidence attached to the PR, not by test-pass inference
   alone.
-- The new `material_demo` golden's own negative proofs (V32/V33) are
+- The new `material_demo` golden's own negative proofs (V34/V35) are
   each shown to actually fail/differ when triggered, with the
   before/after frames or diff output attached to the PR.
 - `specs/README.md` and this Plan's own status line reflect "Implementation
