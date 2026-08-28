@@ -345,3 +345,121 @@ introduced.**
   existing authored source, and would leave every migrated mesh's own
   UV data meaningless rather than deliberately authored — see Spec
   0017's own migration decision for the full disclosure.
+
+## Proposed Amendment — 2026-08-29
+
+**Status: Proposed.** Drafted 2026-08-29 alongside
+[Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md) and
+[ADR-0063](0063-static-mesh-normal-attribute-schema-version-and-convention.md),
+awaiting Human Review in the same pass as that Spec's own approval.
+Everything above this section remains this ADR's own original,
+unmodified `Accepted` Decision (this ADR's own top-level `Status:
+Accepted` above is unchanged and unaffected by this proposed amendment)
+— this amendment does not alter, narrow, or reinterpret any of it as
+originally written; it proposes narrowing this ADR's own "the one,
+single static mesh vertex layout is exactly position + color + UV0"
+statement under the Decision below, pending Human Review.
+
+**Related:**
+[Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md)
+(`In Review`),
+[ADR-0063](0063-static-mesh-normal-attribute-schema-version-and-convention.md)
+(`Proposed`) — this Amendment and ADR-0063 cross-reference each other,
+mirroring this ADR's own existing relationship with ADR-0045: ADR-0063
+makes the actual normal-attribute vertex-layout decision; this
+Amendment records the corresponding, narrower change to this ADR's own
+already-`Accepted` "one, single vertex layout" Decision, so the two
+documents do not duplicate one another's content. Both await Human
+Review together, in the same pass as Spec 0020's own approval.
+
+### Context for this amendment
+
+This ADR's own `Accepted` Decision (above, unmodified) states "UV0
+becomes a mandatory third attribute of the one, single static mesh
+vertex layout — position (3 floats) + color (3 floats) + UV0 (2
+floats), 8 floats / 32 bytes per vertex" — a closed statement that, by
+naming exactly three attributes and a fixed 32-byte size, implicitly
+fixes the vertex layout's own attribute count. Spec 0020 widens the one
+static mesh vertex layout to add a fourth, mandatory attribute,
+object-space normal — a real, direct narrowing of that closed statement,
+not a compatible extension it already permitted. Per this repository's
+own established practice (an `Accepted` ADR's original Decision text is
+never silently rewritten; a scope change gets its own, separately-dated,
+clearly-labeled amendment — this ADR's own Decision text above already
+follows this same discipline relative to ADR-0045's own prior scope
+statement), this section is drafted alongside Spec 0020 and ADR-0063, so
+Human Review can evaluate the normal-attribute decision and its own
+required consequence to this ADR in one pass.
+
+### Proposed Decision
+
+Pending Human Review, this ADR's own Decision (above) would be amended,
+in effect, to read:
+
+- **Normal becomes a mandatory fourth attribute of the one, single
+  static mesh vertex layout — position (3 floats) + color (3 floats) +
+  UV0 (2 floats) + normal (3 floats), 11 floats / 44 bytes per vertex,
+  replacing the current 8-float / 32-byte layout.** No optional/variant
+  vertex-layout mechanism is introduced — this ADR's own "No
+  optional/variant vertex-layout mechanism is introduced" sentence
+  (Decision, above) continues to hold, now covering four attributes
+  instead of three.
+- **Authoring grammar:** each `vertex:` line gains three trailing
+  space-separated float tokens (`nx ny nz`, extending the existing
+  8-field line to 11) — `MeshSourceVertex` gains `normalX`/`normalY`/
+  `normalZ` fields. The grammar's own version marker becomes
+  `atlantis_static_mesh_source_version: 3`; a source file declaring any
+  other value is rejected with the existing
+  `SourceParseError::UnknownSourceVersion` — no dual-version reader,
+  identical in kind to this ADR's own original version-1-to-2 rule.
+- **Runtime artifact layout:** per-vertex bytes become position xyz
+  (offset 0), color rgb (offset 12), UV0 uv (offset 24), normal xyz
+  (offset 32) — 44 bytes total. `kMeshArtifactVertexStrideBytes`
+  becomes `44`; `kMeshArtifactSchemaVersion` becomes `3`. An artifact
+  whose header declares schema version 1 or 2, or any stride other than
+  44, is rejected with the existing `ArtifactDecodeError::UnknownSchemaVersion`
+  / `UnsupportedVertexStride` — no migration reader, identical in kind
+  to this ADR's own original rule.
+- **No migration mechanism, no back-compat reader, no silent default**
+  — identical in kind to this ADR's own Decision item 3, above. Every
+  currently-authored mesh source file is re-authored with a real,
+  disclosed normal value as part of Spec 0020's own Implementation —
+  none is left on the old 8-field grammar, none silently defaulted to
+  `(0, 0, 0)`.
+- **Value contract:** normal floats must be finite (this ADR's own
+  Decision item 4's existing finiteness check, extended in kind from
+  eight floats to eleven) **and, unlike position/color/UV0, must also
+  fall within `[0.99, 1.01]` of unit length** — a new numeric
+  requirement this ADR's own original Decision item 4 did not need for
+  position/color/UV0 (which carry no comparable "correct magnitude"
+  concept), checked independently at cook time and decode time via a
+  new pair of enumerators, `SourceParseError::NonUnitNormal` /
+  `ArtifactDecodeError::NonUnitNormal`. Neither layer ever rewrites,
+  rescales, or auto-normalizes an authored normal.
+- **Attribute location convention** (this ADR's own Decision item 6,
+  above) continues unchanged in kind — a shader declaring a normal
+  input assigns it whatever `location` number that shader itself
+  chooses, matched only against that same shader's own reflected input
+  list, exactly as position/color/UV0 already work; no shader in this
+  codebase declares one yet (Spec 0020's own Pre-draft verification).
+- **One new error-enumerator pair, `NonUnitNormal`** (parse-time and
+  decode-time) — the one exception to this ADR's own Decision item 7
+  ("No new error enumerator anywhere"), since no existing enumerator
+  covers a "correct magnitude" check; every other new rejection path
+  (wrong field count, wrong version, wrong stride) continues to reuse
+  an existing enumerator, unchanged in kind.
+
+### Consequences of this proposed amendment
+
+No change to this ADR's own UV0-origin/sampling-convention Decision
+(item 5, above), attribute-location-convention Decision (item 6), or
+Vulkan-pipeline-level closure argument — this Amendment, if accepted,
+narrows the vertex-layout attribute-count sentence and value-contract
+sentence only. The negative/trade-off this ADR's own Decision above
+already accepted (four existing composition-root call sites must widen
+their own local `Vertex` struct in lockstep) recurs for this Spec's own
+freshly, independently re-enumerated list (six real touch points, not
+the four this ADR's own 2026-08-25 drafting named — see
+[Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md)'s own
+Pre-draft verification for the full, current list and the two files
+this ADR's own list predates).
