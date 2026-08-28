@@ -1,4 +1,5 @@
 #include "fixture/material_demo_fixture.h"
+#include "support/golden_validity.h"
 
 #include <atlantis/runtime/bootstrap_config.h>
 
@@ -8,26 +9,30 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 
 // Plan 0018 Milestone 16 (Spec 0018 D12, V27-ish coverage extended to the
 // real material path): the material_demo fixture's own GPU-required
-// coverage. This file is committed WITHOUT the golden PNG/sidecar existing
-// yet (ADR-0042's own "Initial baseline bootstrap" two-phase capture
-// process) -- the full capture-compare-against-golden TEST_CASE is added
-// in a separate, later commit alongside the golden itself, matching
-// textured_quad_gpu_tests.cpp's own established precedent exactly. The
-// three coverage cases below are all self-contained (no committed golden
-// required): structural non-degeneracy, the D10 same-AssetId dedup proof
-// (both scene nodes reference the SAME material -- this scene's own
+// coverage. The first three cases below are self-contained (no committed
+// golden required): structural non-degeneracy, the D10 same-AssetId dedup
+// proof (both scene nodes reference the SAME material -- this scene's own
 // defining property, assets/scenes/material_demo.scene.txt), and repeated-
-// call idempotency.
+// call idempotency. The final capture-compare case is added in this same
+// commit as the golden PNG/sidecar itself (ADR-0042's own two-phase
+// capture process: implementation committed first without a golden,
+// golden captured independently against that clean commit, PNG/sidecar
+// and this test case landing together in a separate, subsequent commit --
+// matching textured_quad_gpu_tests.cpp's own established precedent).
 
+using atlantis::image_regression::compareBuffers;
 using atlantis::image_regression::kMaterialDemoExtentPixels;
+using atlantis::image_regression::loadAndValidateGolden;
 using atlantis::image_regression::MaterialDemoFixture;
 using atlantis::image_regression::PixelBuffer;
 using atlantis::image_regression::renderMaterialDemoFrame;
 using atlantis::image_regression::setUpMaterialDemoFixture;
+using atlantis::image_regression::writeFailureArtifacts;
 using atlantis::runtime::BootstrapConfig;
 
 namespace {
@@ -147,4 +152,46 @@ TEST_CASE("Material demo fixture: repeated render cycles against the same fixtur
 
   CHECK(firstResult.value().rgba8 == secondResult.value().rgba8);
   CHECK(fixture.materialResourceMap.size() == 1);
+}
+
+namespace {
+constexpr const char* kMaterialDemoGoldenName = "material_demo/material_demo_512x512_rgba8unorm";
+constexpr const char* kMaterialDemoGoldenSlug = "material_demo_512x512_rgba8unorm";
+}  // namespace
+
+TEST_CASE("Full capture-compare cycle against the committed material_demo golden passes",
+          "[image_regression][gpu][material_demo]") {
+  const std::filesystem::path outputDir = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
+  const std::filesystem::path actualArtifact = outputDir / (std::string(kMaterialDemoGoldenSlug) + "_actual.png");
+  const std::filesystem::path diffArtifact = outputDir / (std::string(kMaterialDemoGoldenSlug) + "_diff.png");
+  std::filesystem::remove(actualArtifact);
+  std::filesystem::remove(diffArtifact);
+
+  auto fixtureResult = setUpMaterialDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  MaterialDemoFixture& fixture = fixtureResult.value();
+
+  auto renderResult = renderMaterialDemoFrame(fixture);
+  REQUIRE(renderResult.isOk());
+  const PixelBuffer& actual = renderResult.value();
+
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult = loadAndValidateGolden(goldensDir / (std::string(kMaterialDemoGoldenName) + ".png"),
+                                             goldensDir / (std::string(kMaterialDemoGoldenName) + ".sidecar.txt"));
+  {
+    INFO("INVALID GOLDEN: the committed material_demo golden must load and validate cleanly");
+    REQUIRE(goldenResult.isOk());
+  }
+  const auto& validatedGolden = goldenResult.value();
+
+  REQUIRE(actual.width == validatedGolden.pixels.width);
+  REQUIRE(actual.height == validatedGolden.pixels.height);
+
+  const auto report = compareBuffers(actual, validatedGolden.pixels);
+  if (!report.passed) {
+    (void)writeFailureArtifacts(outputDir, kMaterialDemoGoldenSlug, actual, validatedGolden.pixels);
+  }
+  REQUIRE(report.passed);
+
+  REQUIRE(fixture.device->waitIdle().isOk());
 }
