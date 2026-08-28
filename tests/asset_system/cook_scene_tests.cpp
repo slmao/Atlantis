@@ -1,5 +1,9 @@
 #include <atlantis/asset_system/cook_scene.h>
 
+#include <atlantis/asset_system/asset_id.h>
+#include <atlantis/asset_system/logical_path.h>
+#include <atlantis/asset_system/scene_artifact.h>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
@@ -83,6 +87,36 @@ TEST_CASE("cookScene succeeds on a well-formed scene and writes both output file
   REQUIRE(result.isOk());
   CHECK(fs::exists(artifactPath));
   CHECK(fs::exists(metadataPath));
+}
+
+TEST_CASE("cookScene resolves a node's material= reference to an AssetId (Plan 0018 Section P6)",
+          "[asset_system][scene][material]") {
+  TempDirGuard dir("material_reference");
+  const fs::path sourcePath = dir.path / "scene.scene.txt";
+  const fs::path artifactPath = dir.path / "scene.ascene";
+  const fs::path metadataPath = dir.path / "scene.ascene.meta.txt";
+  writeFile(sourcePath,
+            "atlantis_scene_source_version: 2\n"
+            "node_count: 1\n"
+            "active_camera: none\n"
+            "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+            "mesh=meshes/minimal_cube.mesh.txt material=materials/unlit_textured_quad.material.txt\n");
+
+  REQUIRE(cookScene(sourcePath.string(), artifactPath.string(), metadataPath.string()).isOk());
+
+  const auto artifactBytes = readFileBytes(artifactPath);
+  std::vector<std::byte> bytes(artifactBytes.size());
+  for (std::size_t i = 0; i < artifactBytes.size(); ++i) {
+    bytes[i] = static_cast<std::byte>(static_cast<unsigned char>(artifactBytes[i]));
+  }
+  const auto decoded = decodeSceneArtifact(bytes);
+  REQUIRE(decoded.isOk());
+  REQUIRE(decoded.value().nodes[0].renderable.has_value());
+  CHECK(decoded.value().nodes[0].renderable->meshAsset ==
+        computeAssetId(normalizeLogicalPath("meshes/minimal_cube.mesh.txt").value()));
+  REQUIRE(decoded.value().nodes[0].renderable->materialAsset.has_value());
+  CHECK(*decoded.value().nodes[0].renderable->materialAsset ==
+        computeAssetId(normalizeLogicalPath("materials/unlit_textured_quad.material.txt").value()));
 }
 
 TEST_CASE("cookScene rejects an unreadable source file", "[asset_system][scene]") {

@@ -114,6 +114,14 @@ enum class SceneArtifactDecodeError {
   NonFiniteValue,
   MetadataParseFailed,
   MetadataArtifactMismatch,
+  // Plan 0018 Section P7: has_material != 0 && has_renderable == 0 -- a
+  // structurally-impossible combination of two independent flags no
+  // existing enumerator covers. cookScene() itself can never produce
+  // this (the grammar has no token arrangement that yields "material
+  // without mesh," Plan 0018 Section P6), but decodeSceneArtifact()
+  // must never trust a well-formed producer -- mirrors
+  // hasCycleByIndex()'s own "never trust the cooker" ethos.
+  MaterialWithoutRenderable,
 };
 
 // Plan 0016 Section D8: cookTexture()'s own validation conditions --
