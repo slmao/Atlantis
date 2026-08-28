@@ -2,6 +2,7 @@
 
 #include <atlantis/asset_system/load.h>
 #include <atlantis/asset_system/load_texture.h>
+#include <atlantis/asset_system/mesh_artifact.h>
 #include <atlantis/render_graph/execution.h>
 #include <atlantis/render_graph/render_graph_builder.h>
 #include <atlantis/renderer/draw_item.h>
@@ -15,6 +16,7 @@
 #include <cstddef>
 #include <cstring>
 #include <fstream>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -59,22 +61,36 @@ using atlantis::shader_system::rhi_integration::toVertexInputLayout;
   return words;
 }
 
-// Plan 0017 Section D8/ADR-0058: the real mesh artifact's own 32-byte
-// vertex layout is position(3)+color(3)+UV0(2) -- this local Vertex
-// exists only so offsetof() can compute the real byte offsets below
-// (position at 0, UV0 at 24); the color region (bytes 12-23) is
-// deliberately left undeclared, since textured_quad.slang has no color
-// input and never reads it (Device::createPipeline() only ever
-// constructs a VkVertexInputAttributeDescription for an attribute the
-// caller's own schema names). strideBytes is the mesh's own real,
-// loaded StaticMeshAssetData::vertexStrideBytes() -- never a hardcoded
+// Plan 0017 Section D8/ADR-0058, extended by Plan 0020 Section P1/P4/
+// ADR-0063: the real mesh artifact's own 44-byte vertex layout is
+// position(3)+color(3)+UV0(2)+normal(3) -- this local Vertex exists
+// only so offsetof() can compute the real byte offsets below (position
+// at 0, UV0 at 24); the color and normal regions are deliberately left
+// undeclared in the schema passed to toVertexInputLayout() below, since
+// textured_quad.slang has neither a color nor a normal input and never
+// reads either (Device::createPipeline() only ever constructs a
+// VkVertexInputAttributeDescription for an attribute the caller's own
+// schema names). strideBytes is the mesh's own real, loaded
+// StaticMeshAssetData::vertexStrideBytes() -- never a hardcoded
 // sizeof() -- so this layout stays correct even if the artifact's own
-// stride ever changes independently of this file.
+// stride ever changes independently of this file; the static_asserts
+// below are still real, useful confirmation that this local struct's
+// own shape genuinely matches the artifact's own real layout, even
+// though this file's own runtime code path does not depend on
+// sizeof(Vertex) for correctness the way the other five composition
+// roots do.
 struct Vertex {
   float position[3];
   float color[3];
   float uv[2];
+  float normal[3];
 };
+static_assert(std::is_standard_layout_v<Vertex>);
+static_assert(offsetof(Vertex, position) == atlantis::asset_system::kMeshArtifactPositionOffsetBytes);
+static_assert(offsetof(Vertex, color) == atlantis::asset_system::kMeshArtifactColorOffsetBytes);
+static_assert(offsetof(Vertex, uv) == atlantis::asset_system::kMeshArtifactUv0OffsetBytes);
+static_assert(offsetof(Vertex, normal) == atlantis::asset_system::kMeshArtifactNormalOffsetBytes);
+static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrideBytes);
 
 [[nodiscard]] std::optional<VertexInputLayout> texturedQuadVertexLayout(const ReflectionMetadata& vertexMetadata,
                                                                          std::uint32_t strideBytes) {

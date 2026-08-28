@@ -9,11 +9,11 @@ namespace atlantis::asset_system {
 
 namespace {
 
-// Plan 0017 Section D1/ADR-0058: version 2 -- position + color + UV0,
-// 8 fields per vertex line. Version 1 (6 fields, no UV) is rejected
-// outright by the exact-string check below; no dual-version reader is
-// implemented.
-constexpr std::string_view kVersionLine = "atlantis_static_mesh_source_version: 2";
+// Plan 0020 Section P1/ADR-0063: version 3 -- position + color + UV0 +
+// object-space normal, 11 fields per vertex line. Version 2 (8 fields,
+// no normal) is rejected outright by the exact-string check below; no
+// dual-version reader is implemented.
+constexpr std::string_view kVersionLine = "atlantis_static_mesh_source_version: 3";
 constexpr std::string_view kVertexCountPrefix = "vertex_count: ";
 constexpr std::string_view kIndexCountPrefix = "index_count: ";
 constexpr std::string_view kVertexPrefix = "vertex: ";
@@ -74,6 +74,25 @@ constexpr std::uint32_t kMaxVertexCount = 65535;
 
 }  // namespace
 
+namespace detail {
+
+double computeNormalLengthSquared(float x, float y, float z) noexcept {
+  const double xd = static_cast<double>(x);
+  const double yd = static_cast<double>(y);
+  const double zd = static_cast<double>(z);
+
+  double lengthSquared = xd * xd;
+  lengthSquared += yd * yd;
+  lengthSquared += zd * zd;
+  return lengthSquared;
+}
+
+bool isNormalLengthSquaredInTolerance(double lengthSquared) noexcept {
+  return lengthSquared >= 0.9801 && lengthSquared <= 1.0201;
+}
+
+}  // namespace detail
+
 atlantis::Result<ParsedMeshSource, SourceParseError> parseMeshSource(std::string_view text) {
   using ResultT = atlantis::Result<ParsedMeshSource, SourceParseError>;
 
@@ -120,17 +139,30 @@ atlantis::Result<ParsedMeshSource, SourceParseError> parseMeshSource(std::string
       return ResultT::Err(SourceParseError::FieldOrderMismatch);
     }
     const auto fields = splitOnSpace(line.substr(kVertexPrefix.size()));
-    if (fields.size() != 8) return ResultT::Err(SourceParseError::CountMismatch);
+    if (fields.size() != 11) return ResultT::Err(SourceParseError::CountMismatch);
 
     MeshSourceVertex vertex;
-    float* const components[8] = {&vertex.positionX, &vertex.positionY, &vertex.positionZ, &vertex.colorR,
-                                   &vertex.colorG,    &vertex.colorB,    &vertex.uvU,        &vertex.uvV};
-    for (std::size_t f = 0; f < 8; ++f) {
+    float* const components[11] = {&vertex.positionX, &vertex.positionY, &vertex.positionZ, &vertex.colorR,
+                                    &vertex.colorG,    &vertex.colorB,    &vertex.uvU,        &vertex.uvV,
+                                    &vertex.normalX,   &vertex.normalY,   &vertex.normalZ};
+    for (std::size_t f = 0; f < 11; ++f) {
       float value = 0.0f;
       if (!parseFloatToken(fields[f], value)) return ResultT::Err(SourceParseError::MalformedNumber);
       if (!std::isfinite(value)) return ResultT::Err(SourceParseError::NonFiniteFloat);
       *components[f] = value;
     }
+
+    // Plan 0020 Section P7/Spec 0020 D3: the normal's own length-squared
+    // check runs only after every one of this vertex's own 11
+    // components (not merely the three normal ones) is already
+    // confirmed finite, above -- matching the existing
+    // per-float-then-per-vertex validation order this format already
+    // established for position/color/UV0.
+    const double lengthSquared = detail::computeNormalLengthSquared(vertex.normalX, vertex.normalY, vertex.normalZ);
+    if (!detail::isNormalLengthSquaredInTolerance(lengthSquared)) {
+      return ResultT::Err(SourceParseError::NonUnitNormal);
+    }
+
     parsed.vertices.push_back(vertex);
     ++lineIndex;
   }
@@ -189,7 +221,8 @@ std::string serializeMeshSource(const ParsedMeshSource& source) {
     out += kVertexPrefix;
     out += std::to_string(v.positionX) + ' ' + std::to_string(v.positionY) + ' ' + std::to_string(v.positionZ) +
            ' ' + std::to_string(v.colorR) + ' ' + std::to_string(v.colorG) + ' ' + std::to_string(v.colorB) + ' ' +
-           std::to_string(v.uvU) + ' ' + std::to_string(v.uvV);
+           std::to_string(v.uvU) + ' ' + std::to_string(v.uvV) + ' ' + std::to_string(v.normalX) + ' ' +
+           std::to_string(v.normalY) + ' ' + std::to_string(v.normalZ);
     out += '\n';
   }
 

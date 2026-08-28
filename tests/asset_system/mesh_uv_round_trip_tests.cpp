@@ -48,12 +48,12 @@ void writeFile(const fs::path& path, const std::string& content) {
 // one at the origin, and one at (1, 1) -- three real, distinct UV
 // values, not a single repeated placeholder.
 constexpr std::string_view kUvBearingSource =
-    "atlantis_static_mesh_source_version: 2\n"
+    "atlantis_static_mesh_source_version: 3\n"
     "vertex_count: 3\n"
     "index_count: 3\n"
-    "vertex: 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0\n"
-    "vertex: 1.0 0.0 0.0 0.0 1.0 0.0 2.5 -3.25\n"
-    "vertex: 0.0 1.0 0.0 0.0 0.0 1.0 1.0 1.0\n"
+    "vertex: 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 0.577350269 0.577350269 0.577350269\n"
+    "vertex: 1.0 0.0 0.0 0.0 1.0 0.0 2.5 -3.25 0.577350269 0.577350269 0.577350269\n"
+    "vertex: 0.0 1.0 0.0 0.0 0.0 1.0 1.0 1.0 0.577350269 0.577350269 0.577350269\n"
     "index: 0 1 2\n";
 
 [[nodiscard]] const float* vertexFloatsAt(const StaticMeshAssetData& data, std::size_t vertexIndex) {
@@ -80,11 +80,13 @@ TEST_CASE("A UV value written in a real authoring source reaches loadStaticMeshA
   REQUIRE(loadResult.isOk());
   const StaticMeshAssetData& data = loadResult.value();
 
-  REQUIRE(data.vertexStrideBytes() == 32);
+  REQUIRE(data.vertexStrideBytes() == 44);
   REQUIRE(data.vertexCount() == 3);
 
-  // UV0 occupies the last two floats of each 32-byte vertex (offset 24,
-  // i.e. float index 6/7 of the 8 floats making up position+color+UV0).
+  // UV0 occupies float index 6/7 of each 44-byte vertex's own 11 floats
+  // (offset 24) -- unaffected by Plan 0020's own normal field, which is
+  // appended after UV0 (float index 8/9/10, offset 32), not inserted
+  // before it.
   const float* v0 = vertexFloatsAt(data, 0);
   const float* v1 = vertexFloatsAt(data, 1);
   const float* v2 = vertexFloatsAt(data, 2);

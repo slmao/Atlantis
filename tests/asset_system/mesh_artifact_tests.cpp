@@ -6,9 +6,15 @@ using namespace atlantis::asset_system;
 
 namespace {
 
+// Plan 0020 Section P2: the trailing three floats are the same real,
+// unit-length placeholder normal reused verbatim from Spec 0020 D5's
+// own already-approved literal, 0.577350269 -- lengthSquared computed
+// (independently, via PowerShell's [double] arithmetic, not this
+// codebase's own detail:: functions) as ~0.999999964, well inside
+// [0.9801, 1.0201].
 [[nodiscard]] ParsedMeshSource makeOneVertexSource() {
   ParsedMeshSource source;
-  source.vertices = {{1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f}};
+  source.vertices = {{1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 0.577350269f, 0.577350269f, 0.577350269f}};
   source.indices = {0, 0, 0};
   return source;
 }
@@ -16,34 +22,36 @@ namespace {
 }  // namespace
 
 TEST_CASE("encodeMeshArtifact matches an independently-computed expected byte vector", "[asset_system]") {
-  // Pins the little-endian contract: independently computed
-  // (.NET's own BitConverter.GetBytes(), not transcribed from memory)
-  // for asset_id=0x0102030405060708 and a single vertex
-  // (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0) with indices {0, 0, 0}.
-  // Plan 0017 Section D2/ADR-0058: the per-vertex layout is now 32
-  // bytes (position xyz, color rgb, UV0 uv), so index_bytes_offset
-  // moves from 40+24=64 to 40+32=72 and total size grows from 70 to
-  // 78. Catches a regression to the wrong header layout, field order,
-  // or offsets -- and would catch a regression to host-endian encoding
-  // on genuinely big-endian hardware. Disclosed limitation: every one
-  // of this project's actual target platforms (x86-64 Windows,
-  // ARM/AArch64 Android) is little-endian, so on the hardware this
-  // test actually runs on, an accidental native-struct memcpy would
-  // currently produce the identical bytes this test expects -- the
-  // real guarantee against that specific regression is the
-  // source-level discipline in mesh_artifact.cpp itself
+  // Pins the little-endian contract: independently computed (.NET's own
+  // BitConverter.GetBytes(), not transcribed from memory) for
+  // asset_id=0x0102030405060708 and a single vertex (1.0, 2.0, 3.0, 4.0,
+  // 5.0, 6.0, 7.0, 8.0, 0.577350269, 0.577350269, 0.577350269) with
+  // indices {0, 0, 0}. Plan 0020 Section P3/P4: the per-vertex layout is
+  // now 44 bytes (position xyz, color rgb, UV0 uv, normal xyz), so
+  // index_bytes_offset moves from 40+32=72 to 40+44=84 and total size
+  // grows from 78 to 90. Catches a regression to the wrong header
+  // layout, field order, or offsets -- and would catch a regression to
+  // host-endian encoding on genuinely big-endian hardware. Disclosed
+  // limitation: every one of this project's actual target platforms
+  // (x86-64 Windows, ARM/AArch64 Android) is little-endian, so on the
+  // hardware this test actually runs on, an accidental native-struct
+  // memcpy would currently produce the identical bytes this test
+  // expects -- the real guarantee against that specific regression is
+  // the source-level discipline in mesh_artifact.cpp itself
   // (appendU32LE/appendU64LE/appendFloatLE, never a memcpy of a
   // multi-byte value), verified by code review, not something a
   // byte-comparison test on little-endian-only hardware can fully
-  // enforce by itself.
+  // enforce by itself. This expected vector is a compile-time constant,
+  // computed once by an independent tool -- this test never calls
+  // encodeMeshArtifact() to produce its own expected value.
   const std::vector<std::byte> expected = {
       // Magic "ATLMESH\0"
       std::byte{0x41}, std::byte{0x54}, std::byte{0x4C}, std::byte{0x4D}, std::byte{0x45}, std::byte{0x53},
       std::byte{0x48}, std::byte{0x00},
-      // schema_version = 2
-      std::byte{0x02}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
-      // vertex_stride_bytes = 32
-      std::byte{0x20}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
+      // schema_version = 3
+      std::byte{0x03}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
+      // vertex_stride_bytes = 44
+      std::byte{0x2C}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
       // asset_id = 0x0102030405060708, little-endian
       std::byte{0x08}, std::byte{0x07}, std::byte{0x06}, std::byte{0x05}, std::byte{0x04}, std::byte{0x03},
       std::byte{0x02}, std::byte{0x01},
@@ -53,8 +61,8 @@ TEST_CASE("encodeMeshArtifact matches an independently-computed expected byte ve
       std::byte{0x03}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
       // vertex_bytes_offset = 40
       std::byte{0x28}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
-      // index_bytes_offset = 40 + 1*32 = 72
-      std::byte{0x48}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
+      // index_bytes_offset = 40 + 1*44 = 84
+      std::byte{0x54}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
       // Vertex 0: position (1.0, 2.0, 3.0)
       std::byte{0x00}, std::byte{0x00}, std::byte{0x80}, std::byte{0x3F}, std::byte{0x00}, std::byte{0x00},
       std::byte{0x00}, std::byte{0x40}, std::byte{0x00}, std::byte{0x00}, std::byte{0x40}, std::byte{0x40},
@@ -64,10 +72,13 @@ TEST_CASE("encodeMeshArtifact matches an independently-computed expected byte ve
       // Vertex 0: UV0 (7.0, 8.0)
       std::byte{0x00}, std::byte{0x00}, std::byte{0xE0}, std::byte{0x40}, std::byte{0x00}, std::byte{0x00},
       std::byte{0x00}, std::byte{0x41},
+      // Vertex 0: normal (0.577350269, 0.577350269, 0.577350269)
+      std::byte{0x3A}, std::byte{0xCD}, std::byte{0x13}, std::byte{0x3F}, std::byte{0x3A}, std::byte{0xCD},
+      std::byte{0x13}, std::byte{0x3F}, std::byte{0x3A}, std::byte{0xCD}, std::byte{0x13}, std::byte{0x3F},
       // Indices {0, 0, 0}, each a std::uint16_t
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
   };
-  REQUIRE(expected.size() == 78);
+  REQUIRE(expected.size() == 90);
 
   const std::vector<std::byte> actual = encodeMeshArtifact(0x0102030405060708ULL, makeOneVertexSource());
   CHECK(actual == expected);
@@ -104,7 +115,8 @@ TEST_CASE("decodeMeshArtifact rejects a bad magic", "[asset_system]") {
 TEST_CASE("decodeMeshArtifact rejects the old, pre-UV0 schema version", "[asset_system]") {
   // Plan 0017 Section D2/ADR-0058: schema version 1 (24-byte,
   // position+color-only stride) is rejected outright -- no migration
-  // reader.
+  // reader. Unchanged by Plan 0020: still rejected under schema version
+  // 3's own check.
   auto bytes = encodeMeshArtifact(1, makeOneVertexSource());
   bytes[8] = std::byte{0x01};  // schema_version's low byte, offset 8
   const auto result = decodeMeshArtifact(bytes);
@@ -112,9 +124,23 @@ TEST_CASE("decodeMeshArtifact rejects the old, pre-UV0 schema version", "[asset_
   CHECK(result.error() == ArtifactDecodeError::UnknownSchemaVersion);
 }
 
-TEST_CASE("decodeMeshArtifact rejects an unknown schema version", "[asset_system]") {
+TEST_CASE("decodeMeshArtifact rejects the old, pre-normal schema version", "[asset_system]") {
+  // Plan 0020 Section P1/ADR-0063: schema version 2 (32-byte,
+  // position+color+UV0-only stride, no normal) is now also rejected
+  // outright, exactly like version 1 already was.
   auto bytes = encodeMeshArtifact(1, makeOneVertexSource());
-  bytes[8] = std::byte{0x03};  // schema_version's low byte, offset 8
+  bytes[8] = std::byte{0x02};  // schema_version's low byte, offset 8
+  const auto result = decodeMeshArtifact(bytes);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == ArtifactDecodeError::UnknownSchemaVersion);
+}
+
+TEST_CASE("decodeMeshArtifact rejects an unknown schema version", "[asset_system]") {
+  // Plan 0020 Plan Review Round 1 item 2: this byte value must name a
+  // schema version still genuinely unrecognized now that 3 is the real,
+  // accepted version -- 4 here, not 3.
+  auto bytes = encodeMeshArtifact(1, makeOneVertexSource());
+  bytes[8] = std::byte{0x04};  // schema_version's low byte, offset 8
   const auto result = decodeMeshArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == ArtifactDecodeError::UnknownSchemaVersion);
@@ -124,7 +150,19 @@ TEST_CASE("decodeMeshArtifact rejects the old, pre-UV0 vertex stride", "[asset_s
   // Plan 0017 Section D2/ADR-0058: stride 24 (the pre-UV0 layout) is
   // rejected outright, exactly like any other unsupported stride.
   auto bytes = encodeMeshArtifact(1, makeOneVertexSource());
-  bytes[12] = std::byte{0x18};  // vertex_stride_bytes's low byte, offset 12: 32 -> 24
+  bytes[12] = std::byte{0x18};  // vertex_stride_bytes's low byte, offset 12: 44 -> 24
+  const auto result = decodeMeshArtifact(bytes);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == ArtifactDecodeError::UnsupportedVertexStride);
+}
+
+TEST_CASE("decodeMeshArtifact rejects the old, pre-normal vertex stride", "[asset_system]") {
+  // Plan 0020 Section P1/ADR-0063: stride 32 (the pre-normal layout) is
+  // now also rejected outright, exactly like any other unsupported
+  // stride -- the direct analog, one attribute later, of the
+  // pre-UV0-stride case above.
+  auto bytes = encodeMeshArtifact(1, makeOneVertexSource());
+  bytes[12] = std::byte{0x20};  // vertex_stride_bytes's low byte, offset 12: 44 -> 32
   const auto result = decodeMeshArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == ArtifactDecodeError::UnsupportedVertexStride);
@@ -156,11 +194,11 @@ TEST_CASE("decodeMeshArtifact rejects inconsistent header offsets", "[asset_syst
 
 TEST_CASE("decodeMeshArtifact rejects an out-of-range index", "[asset_system]") {
   auto bytes = encodeMeshArtifact(1, makeOneVertexSource());
-  // The three index bytes start at offset 40 + 1*32 = 72 (Plan 0017's
-  // own 32-byte stride); set the first index (a std::uint16_t, offset
-  // 72-73) to 5 (>= vertexCount == 1).
-  bytes[72] = std::byte{0x05};
-  bytes[73] = std::byte{0x00};
+  // Plan 0020: the three index bytes now start at offset 40 + 1*44 = 84
+  // (the new 44-byte stride), not the old 72; set the first index (a
+  // std::uint16_t, offset 84-85) to 5 (>= vertexCount == 1).
+  bytes[84] = std::byte{0x05};
+  bytes[85] = std::byte{0x00};
   const auto result = decodeMeshArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == ArtifactDecodeError::IndexOutOfRange);
@@ -181,8 +219,10 @@ TEST_CASE("decodeMeshArtifact rejects a non-finite position/color vertex float",
 
 TEST_CASE("decodeMeshArtifact rejects a non-finite UV0 float", "[asset_system]") {
   // Plan 0017 V7: the UV0 U component (uvU) occupies offset 40 + 24 =
-  // 64 within the first vertex's own 32-byte span (position 0-11,
-  // color 12-23, UV0 24-31).
+  // 64 within the first vertex's own 44-byte span (position 0-11,
+  // color 12-23, UV0 24-31, normal 32-43) -- unaffected by Plan 0020's
+  // own widening, since normal is appended after UV0, not inserted
+  // before it.
   auto bytes = encodeMeshArtifact(1, makeOneVertexSource());
   bytes[64] = std::byte{0xFF};
   bytes[65] = std::byte{0xFF};
@@ -191,4 +231,46 @@ TEST_CASE("decodeMeshArtifact rejects a non-finite UV0 float", "[asset_system]")
   const auto result = decodeMeshArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == ArtifactDecodeError::NonFiniteFloat);
+}
+
+TEST_CASE("decodeMeshArtifact rejects a non-finite normal float", "[asset_system]") {
+  // Plan 0020: the normal X component (normalX) occupies offset
+  // 40 + 32 = 72 within the first vertex's own 44-byte span.
+  auto bytes = encodeMeshArtifact(1, makeOneVertexSource());
+  bytes[72] = std::byte{0xFF};
+  bytes[73] = std::byte{0xFF};
+  bytes[74] = std::byte{0xFF};
+  bytes[75] = std::byte{0xFF};
+  const auto result = decodeMeshArtifact(bytes);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == ArtifactDecodeError::NonFiniteFloat);
+}
+
+TEST_CASE("decodeMeshArtifact rejects a finite normal whose own length-squared is out of tolerance",
+          "[asset_system]") {
+  // Plan 0020 V8a: a real, hand-corrupted artifact byte buffer whose
+  // normal region decodes to a finite value outside [0.9801, 1.0201] --
+  // independently reachable at decode time, never merely re-running the
+  // parse-time NonUnitNormal case. Corrupts the normal region (offset
+  // 72-83, this vertex's own real, previously-valid 0.577350269 values)
+  // to (2.0, 0.0, 0.0), lengthSquared = 4.0, far outside tolerance.
+  auto bytes = encodeMeshArtifact(1, makeOneVertexSource());
+  // normalX = 2.0f little-endian: 0x00 0x00 0x00 0x40
+  bytes[72] = std::byte{0x00};
+  bytes[73] = std::byte{0x00};
+  bytes[74] = std::byte{0x00};
+  bytes[75] = std::byte{0x40};
+  // normalY = 0.0f little-endian: 0x00 0x00 0x00 0x00
+  bytes[76] = std::byte{0x00};
+  bytes[77] = std::byte{0x00};
+  bytes[78] = std::byte{0x00};
+  bytes[79] = std::byte{0x00};
+  // normalZ = 0.0f little-endian: 0x00 0x00 0x00 0x00
+  bytes[80] = std::byte{0x00};
+  bytes[81] = std::byte{0x00};
+  bytes[82] = std::byte{0x00};
+  bytes[83] = std::byte{0x00};
+  const auto result = decodeMeshArtifact(bytes);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == ArtifactDecodeError::NonUnitNormal);
 }

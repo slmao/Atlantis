@@ -34,12 +34,12 @@ struct TempDirGuard {
 };
 
 constexpr std::string_view kValidTriangleSource =
-    "atlantis_static_mesh_source_version: 2\n"
+    "atlantis_static_mesh_source_version: 3\n"
     "vertex_count: 3\n"
     "index_count: 3\n"
-    "vertex: 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0\n"
-    "vertex: 1.0 0.0 0.0 0.0 1.0 0.0 1.0 0.0\n"
-    "vertex: 0.0 1.0 0.0 0.0 0.0 1.0 0.0 1.0\n"
+    "vertex: 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 0.577350269 0.577350269 0.577350269\n"
+    "vertex: 1.0 0.0 0.0 0.0 1.0 0.0 1.0 0.0 0.577350269 0.577350269 0.577350269\n"
+    "vertex: 0.0 1.0 0.0 0.0 0.0 1.0 0.0 1.0 0.577350269 0.577350269 0.577350269\n"
     "index: 0 1 2\n";
 
 // Cooks a real, valid triangle asset into dir, returning
@@ -73,7 +73,7 @@ TEST_CASE("loadStaticMeshAsset loads a well-formed artifact/metadata pair", "[as
   REQUIRE(result.isOk());
   CHECK(result.value().vertexCount() == 3);
   CHECK(result.value().indexCount() == 3);
-  CHECK(result.value().vertexStrideBytes() == 32);
+  CHECK(result.value().vertexStrideBytes() == 44);
 }
 
 TEST_CASE("loadStaticMeshAsset fails when the artifact file does not exist", "[asset_system]") {
@@ -125,13 +125,13 @@ TEST_CASE("loadStaticMeshAsset detects a deliberate artifact/metadata mismatch",
   // vertex_count) now disagree with the artifact's own header.
   const fs::path otherSourcePath = dir.path / "other.mesh.txt";
   writeFile(otherSourcePath,
-            "atlantis_static_mesh_source_version: 2\n"
+            "atlantis_static_mesh_source_version: 3\n"
             "vertex_count: 4\n"
             "index_count: 6\n"
-            "vertex: 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0\n"
-            "vertex: 1.0 0.0 0.0 0.0 0.0 0.0 1.0 0.0\n"
-            "vertex: 1.0 1.0 0.0 0.0 0.0 0.0 1.0 1.0\n"
-            "vertex: 0.0 1.0 0.0 0.0 0.0 0.0 0.0 1.0\n"
+            "vertex: 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.577350269 0.577350269 0.577350269\n"
+            "vertex: 1.0 0.0 0.0 0.0 0.0 0.0 1.0 0.0 0.577350269 0.577350269 0.577350269\n"
+            "vertex: 1.0 1.0 0.0 0.0 0.0 0.0 1.0 1.0 0.577350269 0.577350269 0.577350269\n"
+            "vertex: 0.0 1.0 0.0 0.0 0.0 0.0 0.0 1.0 0.577350269 0.577350269 0.577350269\n"
             "index: 0 1 2\n"
             "index: 2 3 0\n");
   const fs::path otherArtifactPath = dir.path / "other.amesh";
