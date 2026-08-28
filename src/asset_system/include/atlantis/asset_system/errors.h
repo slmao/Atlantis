@@ -157,15 +157,26 @@ enum class TextureLoadError {
 };
 
 // Plan 0018 Section P2: cookMaterial()'s own validation conditions --
-// mirrors TextureCookError's own shape exactly. UnknownMaterialKind is
-// genuinely new (no existing enumerator anywhere covers an unrecognized
-// enum tag); LogicalPathInvalid is a reused name, matching
-// CookError/TextureCookError's own precedent of a same-named enumerator
-// per format.
+// mirrors TextureCookError's own shape exactly. LogicalPathInvalid is a
+// reused name, matching CookError/TextureCookError's own precedent of a
+// same-named enumerator per format.
+//
+// Deviation from Plan 0018 Section P2 (mechanical, disclosed, no
+// architectural effect): the Plan's own error-domain accounting also
+// named a cook-time UnknownMaterialKind. Implementation found this
+// enumerator is never actually reachable -- parseMaterialSource()
+// already rejects any unrecognized "kind:" token at the grammar level
+// (MaterialSourceParseError::UnknownKind) before a ParsedMaterialSource
+// is ever constructed, and MaterialKind has exactly one enumerator this
+// round, so cookMaterial() can never observe an "unknown" MaterialKind
+// value. Kept out per this codebase's own "no speculative abstraction"
+// convention (AGENTS.md) rather than shipped as untestable dead code;
+// the decode-time MaterialArtifactDecodeError::UnknownMaterialKind
+// below is genuinely reachable (an untrusted artifact byte buffer) and
+// is unaffected.
 enum class MaterialCookError {
   SourceFileUnreadable,
   SourceParseFailed,
-  UnknownMaterialKind,
   LogicalPathInvalid,
   AtomicWriteFailed,
 };

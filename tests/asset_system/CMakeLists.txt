@@ -24,6 +24,8 @@ add_executable(atlantis_asset_system_tests
   material_source_tests.cpp
   material_artifact_tests.cpp
   material_metadata_tests.cpp
+  cook_material_tests.cpp
+  load_material_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_system_tests

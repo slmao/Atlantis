@@ -4,10 +4,11 @@
 
 namespace atlantis::tools::asset_cooker {
 
-// Plan 0015 Section D7 / Plan 0016 Section D9: which cook-mode pipeline
-// to run -- StaticMesh (the original, default behavior, unchanged),
-// Scene, or Texture. Never affects validate-set mode.
-enum class AssetKind { StaticMesh, Scene, Texture };
+// Plan 0015 Section D7 / Plan 0016 Section D9 / Plan 0018 Section P4:
+// which cook-mode pipeline to run -- StaticMesh (the original, default
+// behavior, unchanged), Scene, Texture, or Material. Never affects
+// validate-set mode.
+enum class AssetKind { StaticMesh, Scene, Texture, Material };
 
 // Plan 0012 Section D4: two modes. Cook mode (isValidateSet == false)
 // cooks exactly one asset from sourcePath (relative to assetRoot) into

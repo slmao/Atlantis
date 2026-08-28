@@ -24,6 +24,8 @@ add_library(atlantis_asset_system STATIC
   src/material_source.cpp
   src/material_artifact.cpp
   src/material_metadata.cpp
+  src/cook_material.cpp
+  src/load_material.cpp
 )
 add_library(Atlantis::AssetSystem ALIAS atlantis_asset_system)
 
