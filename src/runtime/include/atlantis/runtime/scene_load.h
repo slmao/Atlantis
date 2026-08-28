@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atlantis/asset_system/asset_id.h>
+#include <atlantis/asset_system/material_types.h>
+#include <atlantis/asset_system/texture_types.h>
 #include <atlantis/renderer/mesh.h>
 #include <atlantis/result.h>
 #include <atlantis/rhi/device.h>
@@ -13,9 +15,18 @@
 
 namespace atlantis::runtime {
 
+// Plan 0018 Section P11: materialDataMap/textureDataMap are CPU-only --
+// no SampledTexture, Sampler, Pipeline, or Material is ever constructed
+// by loadAndInstantiateScene() (Spec 0018 D8 Phase 1's own hard
+// constraint: no RenderTarget exists yet at this point in
+// initializeSteps()). materialDataMap is keyed by material AssetId;
+// textureDataMap is keyed by texture AssetId (D10's own free
+// deduplication -- two materials naming the same texture load it once).
 struct SceneLoadOutcome {
   atlantis::world::World world;
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap;
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> materialDataMap;
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap;
 };
 
 // Plan 0015 Section D10, steps (a)-(g) -- factored out of

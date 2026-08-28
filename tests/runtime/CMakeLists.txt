@@ -43,9 +43,14 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH="${ATLANTIS_world_scene_ARTIFACT_PATH}"
   ATLANTIS_RUNTIME_SCENE_METADATA_PATH="${ATLANTIS_world_scene_METADATA_PATH}"
   ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH="${ATLANTIS_world_scene_MANIFEST_PATH}"
+  # Plan 0018 Section P10: the second, MaterialKind::UnlitTextured
+  # built-in shader pair -- mirrors ATLANTIS_RUNTIME_SHADER_DIR's own
+  # sourcing exactly, now that shaders/textured_quad is unconditional.
+  ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
 )
 
-add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})
+add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders textured_quad_shaders
+  ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})
 
 # LABELS "gpu": the existing plain ctest convention Spec 0006/Spec 0010
 # already established -- matching tests/image_regression/CMakeLists.txt's
