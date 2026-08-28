@@ -156,4 +156,43 @@ enum class TextureLoadError {
   MetadataReadFailed,
 };
 
+// Plan 0018 Section P2: cookMaterial()'s own validation conditions --
+// mirrors TextureCookError's own shape exactly. UnknownMaterialKind is
+// genuinely new (no existing enumerator anywhere covers an unrecognized
+// enum tag); LogicalPathInvalid is a reused name, matching
+// CookError/TextureCookError's own precedent of a same-named enumerator
+// per format.
+enum class MaterialCookError {
+  SourceFileUnreadable,
+  SourceParseFailed,
+  UnknownMaterialKind,
+  LogicalPathInvalid,
+  AtomicWriteFailed,
+};
+
+// decodeMaterialArtifact()'s own conditions -- never assumes a
+// well-formed cooker output, independently re-derives every
+// MaterialCookError-adjacent condition from the artifact's own bytes.
+// UnexpectedSize is new: unlike the texture artifact's own variable
+// pixel payload, Material's record is fixed-size (32 bytes) by schema
+// version alone, so any size other than exactly 32 is corruption, not
+// merely "too small."
+enum class MaterialArtifactDecodeError {
+  BadMagic,
+  UnsupportedSchemaVersion,
+  TruncatedHeader,
+  UnexpectedSize,
+  UnknownMaterialKind,
+  UnknownFilter,
+  UnknownAddressMode,
+};
+
+enum class MaterialLoadError {
+  ArtifactFileUnreadable,
+  MetadataFileUnreadable,
+  ArtifactDecodeFailed,
+  MetadataParseFailed,
+  MetadataArtifactMismatch,
+};
+
 }  // namespace atlantis::asset_system
