@@ -529,13 +529,21 @@ void RuntimeApplication::runFrame() {
       realizePendingMaterials(*device_, *commandList, unlitTexturedVertexInputLayout_, unlitTexturedVertexSpirv_,
                                unlitTexturedFragmentSpirv_, currentFormat, pendingMaterialIds,
                                sampledTextureResourceMap_, materialDataMap_, textureDataMap_);
-  bool anyNewUploadThisFrame = false;
-  for (const auto& [assetId, candidate] : realizedCandidates) {
-    if (candidate.newSampledTexture) {
-      anyNewUploadThisFrame = true;
-      break;
-    }
-  }
+  // Plan 0018 Section P12 (Spec 0018 D8 step 5): gated on "at least one
+  // material was newly realized this frame" -- NOT narrowed to "at least
+  // one NEW TEXTURE was uploaded this frame". A realized candidate whose
+  // own texture already exists (D10 dedup against a texture a DIFFERENT
+  // material realized in an earlier frame) still creates a brand-new
+  // Sampler/Pipeline this frame, bound into this frame's own
+  // just-submitted CommandList; if it is not moved into the persistent
+  // resource maps below, it is destroyed via ordinary RAII when
+  // realizedCandidates goes out of scope at the end of this function --
+  // unsafe without this frame's own waitIdle() (submit()'s own internal
+  // drain only ever confirms the PREVIOUS frame's work, never this one),
+  // and it would also mean this material is never actually cached
+  // (computePendingMaterialIds() would find it "pending" again every
+  // subsequent frame, forever).
+  const bool anyMaterialRealizedThisFrame = !realizedCandidates.empty();
 
   // Plan 0018 Section P13 (Human Review Approval item 4, the
   // unconditional override): a rebuild failure this frame means nothing
@@ -648,17 +656,19 @@ void RuntimeApplication::runFrame() {
   }
 
   // Plan 0018 Section P12 (Spec 0018 D8 step 5): this extra CPU stall is
-  // paid only on a frame that newly uploaded at least one texture --
-  // never on an ordinary frame, and never merely because a format
-  // rebuild also happened this frame (that hazard is already fully
-  // closed by submit()'s own internal drain above, needing no further
-  // wait). Blocks until this frame's own upload+draw work has finished,
-  // at which point every staging Buffer this frame's own realizedCandidates
-  // created is safe to destroy (via ordinary RAII, when realizedCandidates
-  // itself goes out of scope at the end of this function) and the
-  // SubmissionSignal present() receives below already wraps an
-  // already-signaled VkSemaphore (Pre-draft verification [Claim d]).
-  if (anyNewUploadThisFrame) {
+  // paid on any frame that newly realized at least one material -- not
+  // narrowed to "newly uploaded a texture" (see anyMaterialRealizedThisFrame's
+  // own comment above) -- never on an ordinary frame, and never merely
+  // because a format rebuild also happened this frame (that hazard is
+  // already fully closed by submit()'s own internal drain above, needing
+  // no further wait). Blocks until this frame's own upload+draw work has
+  // finished, at which point every staging Buffer this frame's own
+  // realizedCandidates created is safe to destroy (via ordinary RAII,
+  // when realizedCandidates itself goes out of scope at the end of this
+  // function) and the SubmissionSignal present() receives below already
+  // wraps an already-signaled VkSemaphore (Pre-draft verification
+  // [Claim d]).
+  if (anyMaterialRealizedThisFrame) {
     auto waitResult = device_->waitIdle();
     if (waitResult.isErr()) {
       ATLANTIS_LOG_ERROR("waitIdle() failed after a realization frame's own submit() -- treated as fatal, matching "
