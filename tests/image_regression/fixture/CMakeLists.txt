@@ -3,6 +3,7 @@ add_library(atlantis_image_regression_fixture STATIC
   world_scene_fixture.cpp
   world_scene_loaded_fixture.cpp
   textured_quad_fixture.cpp
+  material_demo_fixture.cpp
 )
 
 target_include_directories(atlantis_image_regression_fixture
@@ -17,6 +18,18 @@ target_link_libraries(atlantis_image_regression_fixture
     # Plan 0014 Section D10: WorldSceneFixture's own public header names
     # atlantis::world::World in a public field type.
     Atlantis::World
+    # Plan 0018 Milestone 16 (Spec 0018 D12): material_demo_fixture.h's own
+    # public API takes a atlantis::runtime::BootstrapConfig by const
+    # reference -- this is the ONE explicitly-sanctioned exception to
+    # RuntimeHost's usual "no other top-level module may depend on
+    # Atlantis::RuntimeHost" boundary (the whole tests/image_regression/
+    # tree is the sanctioned consumer here, not a new one); PUBLIC (not
+    # PRIVATE, matching Atlantis::World's own placement just above for the
+    # identical reason) so consumers of this library that #include
+    # material_demo_fixture.h -- material_demo_gpu_tests.cpp and the
+    # material_demo golden generator -- see BootstrapConfig's own include
+    # path without a second, redundant direct link.
+    Atlantis::RuntimeHost
   PRIVATE
     Atlantis::VulkanBackend
     Atlantis::RenderGraph

@@ -42,6 +42,7 @@ add_executable(atlantis_image_regression_gpu_tests
   world_scene_gpu_tests.cpp
   world_scene_loaded_gpu_tests.cpp
   textured_quad_gpu_tests.cpp
+  material_demo_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_image_regression_gpu_tests
@@ -90,16 +91,25 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_textured_quad_left_METADATA_PATH="${ATLANTIS_textured_quad_left_METADATA_PATH}"
   ATLANTIS_textured_quad_right_ARTIFACT_PATH="${ATLANTIS_textured_quad_right_ARTIFACT_PATH}"
   ATLANTIS_textured_quad_right_METADATA_PATH="${ATLANTIS_textured_quad_right_METADATA_PATH}"
+  # Plan 0018 Milestone 16: the material_demo fixture's own real, cooked
+  # scene artifact/metadata/manifest paths and the MaterialKind::UnlitTextured
+  # built-in shader pair's own output directory.
+  ATLANTIS_material_demo_scene_ARTIFACT_PATH="${ATLANTIS_material_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_material_demo_scene_METADATA_PATH="${ATLANTIS_material_demo_scene_METADATA_PATH}"
+  ATLANTIS_material_demo_scene_MANIFEST_PATH="${ATLANTIS_material_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_MATERIAL_DEMO_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
 )
 
 # Plan 0012 Step 6: the asset-sourced GPU test case needs
 # minimal_cube's own cooked artifact/metadata to already exist. Plan
 # 0015 Section D11/Step 9: world_scene's own cooked artifact/metadata/
 # manifest likewise. Plan 0017 Milestone 3: textured_quad_left/
-# textured_quad_right likewise.
+# textured_quad_right likewise. Plan 0018 Milestone 16: material_demo_scene
+# likewise.
 add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET}
   ${ATLANTIS_textured_quad_unorm_TARGET} ${ATLANTIS_textured_quad_srgb_TARGET}
-  ${ATLANTIS_textured_quad_left_TARGET} ${ATLANTIS_textured_quad_right_TARGET})
+  ${ATLANTIS_textured_quad_left_TARGET} ${ATLANTIS_textured_quad_right_TARGET}
+  ${ATLANTIS_material_demo_scene_TARGET})
 
 # Same build-tree shader artifact set as the golden generator -- this
 # executable renders the identical fixture. WORKING_DIRECTORY above
