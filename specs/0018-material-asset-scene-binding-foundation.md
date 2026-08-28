@@ -3,9 +3,7 @@
 - **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-08-26
-- **Related Plan(s):** (none yet — this approval authorizes drafting
-  Plan 0018 only; it does not itself authorize Implementation, per
-  [AGENTS.md](../AGENTS.md)'s Golden Rule)
+- **Related Plan(s):** [plans/0018-material-asset-scene-binding-foundation.md](../plans/0018-material-asset-scene-binding-foundation.md) (`In Review` — drafted 2026-08-28; this Spec's own approval authorized drafting the Plan only, per [AGENTS.md](../AGENTS.md)'s Golden Rule; Implementation awaits the Plan's own Human Review Approval)
 - **Related ADR(s):** [ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md) (`Accepted`), [ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md) (`Accepted`)
 - **Human Review Approval (2026-08-27):** Reviewed and approved by
   slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
