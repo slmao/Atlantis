@@ -1,7 +1,7 @@
 # Plan: Material Asset & Scene Binding Foundation
 
 - **Spec:** [specs/0018-material-asset-scene-binding-foundation.md](../specs/0018-material-asset-scene-binding-foundation.md) (`Approved`, Human Review Approval recorded 2026-08-27 — authorizes drafting this Plan only, not Implementation)
-- **Status:** `Approved / Ready for Implementation`. See "Human Review Approval" below for the full record. **Implementation is authorized only once this Plan's own PR (#87) is merged** — this approval does not itself constitute that merge.
+- **Status:** `Approved / Ready for Implementation`. See "Human Review Approval" below for the full record. PR #87 has merged, authorizing Implementation. **Code complete on Implementation PR [#88](https://github.com/slmao/Atlantis/pull/88), OPEN, not yet merged.**
 - **Author:** slmao
 - **Human Review Approval (2026-08-28):** Reviewed and approved by
   slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified

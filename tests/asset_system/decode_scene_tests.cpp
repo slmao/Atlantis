@@ -63,7 +63,7 @@ void writeFile(const fs::path& path, const std::string& content) {
 }
 
 constexpr std::string_view kValidTwoNodeTextSource =
-    "atlantis_scene_source_version: 1\n"
+    "atlantis_scene_source_version: 2\n"
     "node_count: 2\n"
     "active_camera: 2\n"
     "node: node_id=1 parent=none position=1.0 2.0 3.0 rotation=0.1 0.2 0.3 scale=1.0 1.0 1.0 "
@@ -140,7 +140,17 @@ TEST_CASE("decodeSceneArtifact rejects a bad magic", "[asset_system][scene]") {
 
 TEST_CASE("decodeSceneArtifact rejects an unknown schema version", "[asset_system][scene]") {
   auto bytes = encodeSceneArtifact(makeTwoNodes(), {std::nullopt, 0}, 1);
-  bytes[4] = std::byte{0x02};  // schema_version's low byte, offset 4
+  bytes[4] = std::byte{0x03};  // schema_version's low byte, offset 4 -- 2 is now valid (Plan 0018 P7)
+  const auto result = decodeSceneArtifact(bytes);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == SceneArtifactDecodeError::UnknownSchemaVersion);
+}
+
+TEST_CASE("decodeSceneArtifact rejects the superseded schema version 1 outright", "[asset_system][scene]") {
+  // Plan 0018 Section P7 / Spec 0018 D5: version 1 is rejected outright
+  // once the material slot (version 2) exists -- no dual-version reader.
+  auto bytes = encodeSceneArtifact(makeTwoNodes(), {std::nullopt, 0}, 1);
+  bytes[4] = std::byte{0x01};
   const auto result = decodeSceneArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneArtifactDecodeError::UnknownSchemaVersion);
@@ -270,7 +280,7 @@ TEST_CASE("decodeSceneArtifact rejects an implausibly large node_count before al
   bytes[1] = std::byte{'S'};
   bytes[2] = std::byte{'C'};
   bytes[3] = std::byte{'N'};
-  bytes[4] = std::byte{0x01};  // schema_version = 1
+  bytes[4] = std::byte{0x02};  // schema_version = 2 (Plan 0018 P7)
   // node_count at offset 8, a huge value: 0xFFFFFFFF.
   bytes[8] = std::byte{0xFF};
   bytes[9] = std::byte{0xFF};
@@ -280,6 +290,62 @@ TEST_CASE("decodeSceneArtifact rejects an implausibly large node_count before al
   const auto result = decodeSceneArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneArtifactDecodeError::NodeCountOutOfRange);
+}
+
+// ---------------------------------------------------------------------
+// Plan 0018 Section P7: the new material slot.
+// ---------------------------------------------------------------------
+
+TEST_CASE("encodeSceneArtifact then decodeSceneArtifact round-trips a node's materialAsset",
+          "[asset_system][scene][material]") {
+  ValidatedSceneNode node;
+  node.transform = {1.0f, 2.0f, 3.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f};
+  node.renderable = DecodedRenderable{0x0102030405060708ULL, std::optional<AssetId>(0x1122334455667788ULL)};
+
+  const auto bytes = encodeSceneArtifact({node}, {std::nullopt}, std::nullopt);
+  REQUIRE(bytes.size() == kSceneArtifactHeaderSizeBytes + kSceneArtifactNodeRecordSizeBytes);
+
+  const auto result = decodeSceneArtifact(bytes);
+  REQUIRE(result.isOk());
+  REQUIRE(result.value().nodes[0].renderable.has_value());
+  CHECK(result.value().nodes[0].renderable->meshAsset == 0x0102030405060708ULL);
+  REQUIRE(result.value().nodes[0].renderable->materialAsset.has_value());
+  CHECK(*result.value().nodes[0].renderable->materialAsset == 0x1122334455667788ULL);
+}
+
+TEST_CASE("encodeSceneArtifact then decodeSceneArtifact round-trips a renderable with no material",
+          "[asset_system][scene][material]") {
+  ValidatedSceneNode node;
+  node.transform = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f};
+  node.renderable = DecodedRenderable{0x0102030405060708ULL};
+
+  const auto bytes = encodeSceneArtifact({node}, {std::nullopt}, std::nullopt);
+  const auto result = decodeSceneArtifact(bytes);
+  REQUIRE(result.isOk());
+  REQUIRE(result.value().nodes[0].renderable.has_value());
+  CHECK_FALSE(result.value().nodes[0].renderable->materialAsset.has_value());
+}
+
+TEST_CASE("decodeSceneArtifact rejects a hand-crafted material-without-renderable record",
+          "[asset_system][scene][material]") {
+  // cookScene() itself can never produce this (Plan 0018 Section P6's
+  // own grammar-structural guarantee) -- this proves
+  // decodeSceneArtifact()'s own independent, never-trust-the-cooker
+  // check catches it anyway.
+  ValidatedSceneNode node;
+  node.transform = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f};
+  // No renderable set -- has_renderable will encode as 0.
+  auto bytes = encodeSceneArtifact({node}, {std::nullopt}, std::nullopt);
+
+  // Corrupt: set has_material (offset 24 within the one node record,
+  // i.e. kSceneArtifactHeaderSizeBytes + 64) to 1, leaving
+  // has_renderable (offset 52 within the record) at 0.
+  const std::size_t hasMaterialOffset = kSceneArtifactHeaderSizeBytes + 64;
+  bytes[hasMaterialOffset] = std::byte{0x01};
+
+  const auto result = decodeSceneArtifact(bytes);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == SceneArtifactDecodeError::MaterialWithoutRenderable);
 }
 
 // ---------------------------------------------------------------------

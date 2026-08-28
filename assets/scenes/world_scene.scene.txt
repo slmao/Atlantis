@@ -1,4 +1,4 @@
-atlantis_scene_source_version: 1
+atlantis_scene_source_version: 2
 node_count: 6
 active_camera: 6
 node: node_id=1 parent=none position=-2.5 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/minimal_cube.mesh.txt

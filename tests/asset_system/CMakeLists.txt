@@ -21,6 +21,12 @@ add_executable(atlantis_asset_system_tests
   cook_texture_tests.cpp
   load_texture_tests.cpp
   texture_fixture_source_identity_tests.cpp
+  material_source_tests.cpp
+  material_artifact_tests.cpp
+  material_metadata_tests.cpp
+  cook_material_tests.cpp
+  load_material_tests.cpp
+  material_asset_cmake_declaration_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_system_tests
@@ -71,18 +77,42 @@ target_compile_definitions(atlantis_asset_system_tests PRIVATE
 add_dependencies(atlantis_asset_system_tests
   ${ATLANTIS_textured_quad_left_TARGET} ${ATLANTIS_textured_quad_right_TARGET})
 
-# Plan 0015 Step 5 (V13's own mechanism, V27's SceneCookError portion):
-# exercises atlantis_add_scene_asset() end to end through the real
-# build system -- MESH_DEPENDENCIES, manifest generation, and
-# --kind=scene cooking -- without declaring the real Step 9 scene
-# asset yet (Section D7's own Milestone 5 scope). minimal_cube is
-# already declared by add_subdirectory(assets) (root CMakeLists.txt,
-# processed before tests/asset_system), so it is available here as a
-# MESH_DEPENDENCIES entry.
+# Plan 0018 Milestone 5: exercises atlantis_add_material_asset() end to
+# end through the real build system -- --kind=material cooking and its
+# own TEXTURE-not-previously-declared FATAL_ERROR guard -- without
+# declaring the real Milestone 15 material asset yet. textured_quad_unorm
+# is already declared above (assets/CMakeLists.txt, processed before
+# tests/asset_system), so it is available here as the TEXTURE argument.
+# Declared BEFORE the scene below so it can be named as that scene's own
+# MATERIAL_DEPENDENCIES entry.
+atlantis_add_material_asset(
+  NAME cmake_declaration_test_material
+  SOURCE _test_fixtures/cmake_material_declaration_test.material.txt
+  TEXTURE textured_quad_unorm
+)
+add_dependencies(atlantis_asset_system_tests ${ATLANTIS_cmake_declaration_test_material_TARGET})
+target_compile_definitions(atlantis_asset_system_tests PRIVATE
+  ATLANTIS_CMAKE_DECLARATION_TEST_MATERIAL_ARTIFACT_PATH="${ATLANTIS_cmake_declaration_test_material_ARTIFACT_PATH}"
+  ATLANTIS_CMAKE_DECLARATION_TEST_MATERIAL_METADATA_PATH="${ATLANTIS_cmake_declaration_test_material_METADATA_PATH}"
+)
+
+# Plan 0015 Step 5 (V13's own mechanism, V27's SceneCookError portion),
+# widened by Plan 0018 Section P9: exercises atlantis_add_scene_asset()
+# end to end through the real build system -- MESH_DEPENDENCIES,
+# MATERIAL_DEPENDENCIES, TEXTURE_DEPENDENCIES, manifest generation, and
+# --kind=scene cooking. minimal_cube/cmake_declaration_test_material/
+# textured_quad_unorm are all already declared above, so they are
+# available here as dependency entries. The scene source itself (Section
+# D7's own "declared but unreferenced is fine" tolerance) never actually
+# names a material= token -- this declaration proves manifest generation
+# for the two new dependency kinds, independent of what the scene's own
+# node list references.
 atlantis_add_scene_asset(
   NAME cmake_declaration_test_scene
   SOURCE _test_fixtures/cmake_scene_declaration_test.scene.txt
   MESH_DEPENDENCIES minimal_cube
+  MATERIAL_DEPENDENCIES cmake_declaration_test_material
+  TEXTURE_DEPENDENCIES textured_quad_unorm
 )
 add_dependencies(atlantis_asset_system_tests ${ATLANTIS_cmake_declaration_test_scene_TARGET})
 target_compile_definitions(atlantis_asset_system_tests PRIVATE
@@ -92,6 +122,10 @@ target_compile_definitions(atlantis_asset_system_tests PRIVATE
   ATLANTIS_minimal_cube_LOGICAL_PATH="${ATLANTIS_minimal_cube_LOGICAL_PATH}"
   ATLANTIS_minimal_cube_ARTIFACT_PATH="${ATLANTIS_minimal_cube_ARTIFACT_PATH}"
   ATLANTIS_minimal_cube_METADATA_PATH="${ATLANTIS_minimal_cube_METADATA_PATH}"
+  ATLANTIS_cmake_declaration_test_material_LOGICAL_PATH="${ATLANTIS_cmake_declaration_test_material_LOGICAL_PATH}"
+  ATLANTIS_cmake_declaration_test_material_ARTIFACT_PATH="${ATLANTIS_cmake_declaration_test_material_ARTIFACT_PATH}"
+  ATLANTIS_cmake_declaration_test_material_METADATA_PATH="${ATLANTIS_cmake_declaration_test_material_METADATA_PATH}"
+  ATLANTIS_textured_quad_unorm_LOGICAL_PATH="${ATLANTIS_textured_quad_unorm_LOGICAL_PATH}"
 )
 
 catch_discover_tests(atlantis_asset_system_tests DISCOVERY_MODE PRE_TEST)

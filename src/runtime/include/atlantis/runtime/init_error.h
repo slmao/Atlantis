@@ -27,8 +27,17 @@ enum class RuntimeInitError {
   // directly" requirement.
   SceneManifestLoadFailed,    // manifest missing, malformed, or fails its own validation (D8)
   SceneArtifactLoadFailed,    // decodeScene() returned Err
-  SceneDependencyUnresolved,  // a referenced AssetId has no resolver entry
-  SceneDependencyLoadFailed,  // a resolved AssetId's own mesh load failed
+  // Plan 0018 Section P9: widened in kind, not in enumerator count, to
+  // cover material/texture dependency resolution/load too -- the real
+  // call sites (SceneDependencyResolver::find() returning nullptr; a
+  // load call failing) are already identical regardless of which asset
+  // kind's AssetId triggered them, confirmed directly against
+  // scene_manifest.h's own kind-agnostic resolver. A dedicated
+  // Material-named pair would be a new enumerator for a failure mode
+  // that already has one, which Spec 0018 D6's own discipline directs
+  // against.
+  SceneDependencyUnresolved,  // a referenced AssetId (mesh, material, or texture) has no resolver entry
+  SceneDependencyLoadFailed,  // a resolved AssetId's own mesh, material, or texture load failed
 };
 
 // For logging only -- not part of any Result/error contract.

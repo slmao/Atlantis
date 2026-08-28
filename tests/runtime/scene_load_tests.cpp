@@ -2,20 +2,29 @@
 
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/cook.h>
+#include <atlantis/asset_system/cook_material.h>
 #include <atlantis/asset_system/cook_scene.h>
+#include <atlantis/asset_system/cook_texture.h>
+#include <atlantis/asset_system/texture_types.h>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
+#include <vector>
 
 using namespace atlantis::runtime;
 using atlantis::asset_system::AssetId;
 using atlantis::asset_system::computeAssetId;
+using atlantis::asset_system::cookMaterial;
 using atlantis::asset_system::cookScene;
 using atlantis::asset_system::cookStaticMesh;
+using atlantis::asset_system::cookTexture;
+using atlantis::asset_system::TextureColorSpace;
 using atlantis::rhi::VertexInputLayout;
 
 // Plan 0015 Section D10 (V17, V19, V20). Every test here calls
@@ -90,7 +99,7 @@ struct CookedSceneFixture {
 // therefore this scene's own first-reference order.
 [[nodiscard]] CookedSceneFixture cookFixtureScene(const fs::path& dir,
                                                    const std::vector<std::string>& meshLogicalPaths) {
-  std::string source = "atlantis_scene_source_version: 1\n";
+  std::string source = "atlantis_scene_source_version: 2\n";
   source += "node_count: " + std::to_string(meshLogicalPaths.size()) + "\n";
   source += "active_camera: none\n";
   for (std::size_t i = 0; i < meshLogicalPaths.size(); ++i) {
@@ -104,6 +113,70 @@ struct CookedSceneFixture {
   const fs::path metadataPath = dir / "scene.ascene.meta.txt";
   REQUIRE(cookScene(sourcePath.string(), artifactPath.string(), metadataPath.string()).isOk());
   return CookedSceneFixture{artifactPath, metadataPath};
+}
+
+// Plan 0018 Milestone 11 regression coverage (PR #88 final review round):
+// every node names BOTH a mesh and a material (materialLogicalPaths[i] for
+// meshLogicalPaths[i]) -- the grammar's own 13-token case (Plan 0018
+// Section P6) never accepts material= without mesh=.
+[[nodiscard]] CookedSceneFixture cookFixtureSceneWithMaterials(
+    const fs::path& dir, const std::vector<std::string>& meshLogicalPaths,
+    const std::vector<std::string>& materialLogicalPaths) {
+  REQUIRE(meshLogicalPaths.size() == materialLogicalPaths.size());
+  std::string source = "atlantis_scene_source_version: 2\n";
+  source += "node_count: " + std::to_string(meshLogicalPaths.size()) + "\n";
+  source += "active_camera: none\n";
+  for (std::size_t i = 0; i < meshLogicalPaths.size(); ++i) {
+    source += "node: node_id=" + std::to_string(i + 1) +
+              " parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=" +
+              meshLogicalPaths[i] + " material=" + materialLogicalPaths[i] + "\n";
+  }
+  const fs::path sourcePath = dir / "scene_with_material.scene.txt";
+  writeFile(sourcePath, source);
+  const fs::path artifactPath = dir / "scene_with_material.ascene";
+  const fs::path metadataPath = dir / "scene_with_material.ascene.meta.txt";
+  REQUIRE(cookScene(sourcePath.string(), artifactPath.string(), metadataPath.string()).isOk());
+  return CookedSceneFixture{artifactPath, metadataPath};
+}
+
+struct CookedTextureFixture {
+  fs::path artifactPath;
+  fs::path metadataPath;
+};
+
+[[nodiscard]] CookedTextureFixture cookFixtureTexture(const fs::path& dir, const std::string& logicalPath) {
+  constexpr std::uint32_t kExtent = 2;
+  const std::vector<std::uint8_t> pixelBytes(static_cast<std::size_t>(kExtent) * kExtent * 4, 0x7F);
+  const fs::path artifactPath = dir / (logicalPath + ".atex");
+  const fs::path metadataPath = dir / (logicalPath + ".atex.meta.txt");
+  REQUIRE(cookTexture(pixelBytes.data(), kExtent, kExtent, 4, TextureColorSpace::Unorm, logicalPath, artifactPath,
+                       metadataPath)
+              .isOk());
+  return CookedTextureFixture{artifactPath, metadataPath};
+}
+
+struct CookedMaterialFixture {
+  fs::path artifactPath;
+  fs::path metadataPath;
+};
+
+// textureLogicalPath is never validated by cookMaterial() itself (ADR-0059
+// D6/D7, value-level-only reference) -- callers that want a fully
+// resolvable material must separately cook and manifest-declare that same
+// logical path; callers that want a deliberately-unresolvable texture
+// reference may pass a logical path that is never cooked/declared at all.
+[[nodiscard]] CookedMaterialFixture cookFixtureMaterial(const fs::path& dir, const std::string& logicalPath,
+                                                          const std::string& textureLogicalPath) {
+  const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
+  writeFile(sourcePath, "atlantis_material_source_version: 1\n"
+                        "kind: unlit_textured\n"
+                        "texture: " + textureLogicalPath + "\n"
+                        "filter: linear\n"
+                        "address_mode: repeat\n");
+  const fs::path artifactPath = dir / (logicalPath + ".amaterial");
+  const fs::path metadataPath = dir / (logicalPath + ".amaterial.meta.txt");
+  REQUIRE(cookMaterial(sourcePath.string(), logicalPath, artifactPath.string(), metadataPath.string()).isOk());
+  return CookedMaterialFixture{artifactPath, metadataPath};
 }
 
 void writeManifestLine(std::string& manifest, const std::string& logicalPath, const fs::path& artifactPath,
@@ -197,7 +270,7 @@ TEST_CASE("loadAndInstantiateScene: a scene with no Renderable references succee
   // plain, mesh-less node instead, still with zero Renderables.
   const fs::path sourcePath = dir.path / "plain.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 1\n"
+            "atlantis_scene_source_version: 2\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
@@ -255,4 +328,29 @@ TEST_CASE("loadAndInstantiateScene V19: load order follows first-reference order
   const auto result = loadAndInstantiateScene(config, /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneDependencyLoadFailed);
+}
+
+// Plan 0018 Milestone 11 regression coverage (PR #88 final review round --
+// this exact case was in the Approved Plan's own Milestone 11 test list
+// but was never actually added). Material resolution (step (d)) runs
+// entirely before any mesh or material is ever LOADED (step (e)) -- a
+// material AssetId with no manifest entry is therefore caught before
+// device is ever dereferenced, even though this scene's own mesh
+// reference IS resolvable (only resolved, never loaded, on this path).
+TEST_CASE("loadAndInstantiateScene: an unresolvable material AssetId fails scene load fatally with "
+          "SceneDependencyUnresolved (Spec 0018 D4 case 2), before any Entity could exist, no device access",
+          "[runtime][scene][material]") {
+  TempDirGuard dir("unresolved_material");
+  const CookedMeshFixture mesh = cookFixtureMesh(dir.path, "meshes/a.mesh.txt");
+  const CookedSceneFixture scene = cookFixtureSceneWithMaterials(dir.path, {"meshes/a.mesh.txt"},
+                                                                  {"materials/never_declared.material.txt"});
+  std::string manifest;
+  writeManifestLine(manifest, "meshes/a.mesh.txt", mesh.artifactPath, mesh.metadataPath);
+  // No manifest entry for materials/never_declared.material.txt at all.
+  writeFile(dir.path / "manifest.txt", manifest);
+  const BootstrapConfig config = makeConfig(scene.artifactPath, scene.metadataPath, dir.path / "manifest.txt");
+
+  const auto result = loadAndInstantiateScene(config, /*device=*/nullptr, VertexInputLayout{});
+  REQUIRE(result.isErr());
+  CHECK(result.error() == RuntimeInitError::SceneDependencyUnresolved);
 }

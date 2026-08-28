@@ -107,6 +107,34 @@ add_custom_command(TARGET atlantis_image_regression_textured_quad_golden_generat
       "$<TARGET_FILE_DIR:atlantis_image_regression_textured_quad_golden_generator>/shaders/"
 )
 
+# Plan 0018 Milestone 16: a fourth, standalone golden-generator executable
+# for the material_demo fixture -- same reused git/provenance/PNG steps,
+# "render one frame" replaced with renderMaterialDemoFrame(). Unlike the
+# three generators above, this one links Atlantis::RuntimeHost (via
+# Atlantis::ImageRegressionFixture's own PUBLIC dependency, Spec 0018
+# D12's sanctioned exception) to build the BootstrapConfig
+# setUpMaterialDemoFixture() requires.
+add_executable(atlantis_image_regression_material_demo_golden_generator material_demo_main.cpp)
+
+target_link_libraries(atlantis_image_regression_material_demo_golden_generator
+  PRIVATE
+    Atlantis::ImageRegressionFixture
+    Atlantis::ImageRegressionSupport
+    atlantis_compiler_warnings
+)
+
+target_compile_definitions(atlantis_image_regression_material_demo_golden_generator PRIVATE
+  ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+  ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
+  ATLANTIS_material_demo_scene_ARTIFACT_PATH="${ATLANTIS_material_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_material_demo_scene_METADATA_PATH="${ATLANTIS_material_demo_scene_METADATA_PATH}"
+  ATLANTIS_material_demo_scene_MANIFEST_PATH="${ATLANTIS_material_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_MATERIAL_DEMO_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+)
+
+add_dependencies(atlantis_image_regression_material_demo_golden_generator textured_quad_shaders
+  ${ATLANTIS_material_demo_scene_TARGET})
+
 # Deliberately no catch_discover_tests()/LABELS "gpu"/add_test() call in
 # this file -- the concrete enforcement of "never registered with
 # CTest." Deliberately no run_... convenience custom target: this tool

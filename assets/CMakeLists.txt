@@ -122,3 +122,40 @@ atlantis_add_static_mesh_asset(
 set(ATLANTIS_textured_quad_right_ARTIFACT_PATH "${ATLANTIS_textured_quad_right_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_textured_quad_right_METADATA_PATH "${ATLANTIS_textured_quad_right_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_textured_quad_right_TARGET "${ATLANTIS_textured_quad_right_TARGET}" PARENT_SCOPE)
+
+# Plan 0018 Milestone 15: the first real material asset -- reuses Spec
+# 0016's already-cooked, already-proven textured_quad_unorm texture (no
+# new PNG). Declared here, unconditionally, so it is available to
+# material_demo_scene below and to tests/image_regression/'s own
+# Milestone 16 fixture.
+atlantis_add_material_asset(
+  NAME unlit_textured_quad
+  SOURCE materials/unlit_textured_quad.material.txt
+  TEXTURE textured_quad_unorm
+)
+set(ATLANTIS_unlit_textured_quad_ARTIFACT_PATH "${ATLANTIS_unlit_textured_quad_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_unlit_textured_quad_METADATA_PATH "${ATLANTIS_unlit_textured_quad_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_unlit_textured_quad_TARGET "${ATLANTIS_unlit_textured_quad_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_unlit_textured_quad_LOGICAL_PATH "${ATLANTIS_unlit_textured_quad_LOGICAL_PATH}" PARENT_SCOPE)
+
+# Plan 0018 Milestone 15 (Spec 0018 D12): the first real, end-to-end
+# scene->material->texture->UV-mesh scene -- two nodes reusing Spec
+# 0017's own textured_quad_left/textured_quad_right UV-carrying mesh
+# assets (no new mesh authored), both referencing the SAME material
+# AssetId (the required proof of D10's own dedup claim: a single
+# loadMaterialAsset()/loadTextureAsset() call and a single realized GPU
+# resource, shared). This scene is deliberately NOT wired into
+# atlantis_runtime's own BootstrapConfig (Section P15's own explicit
+# decision) -- verification-only, consumed by Milestone 16's own new
+# fixture.
+atlantis_add_scene_asset(
+  NAME material_demo_scene
+  SOURCE scenes/material_demo.scene.txt
+  MESH_DEPENDENCIES textured_quad_left textured_quad_right
+  MATERIAL_DEPENDENCIES unlit_textured_quad
+  TEXTURE_DEPENDENCIES textured_quad_unorm
+)
+set(ATLANTIS_material_demo_scene_ARTIFACT_PATH "${ATLANTIS_material_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_material_demo_scene_METADATA_PATH "${ATLANTIS_material_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_material_demo_scene_MANIFEST_PATH "${ATLANTIS_material_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_material_demo_scene_TARGET "${ATLANTIS_material_demo_scene_TARGET}" PARENT_SCOPE)

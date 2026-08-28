@@ -6,6 +6,7 @@
 #include <atlantis/platform/platform_event.h>
 #include <atlantis/renderer/draw_item.h>
 #include <atlantis/runtime/error_classification.h>
+#include <atlantis/runtime/material_realization.h>
 #include <atlantis/runtime/scene_extraction.h>
 #include <atlantis/runtime/scene_load.h>
 #include <atlantis/shader_system/reflection_loader.h>
@@ -13,6 +14,7 @@
 #include <atlantis/vulkan_backend/vulkan_backend.h>
 #include <atlantis/world/camera.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -20,6 +22,7 @@
 #include <fstream>
 #include <optional>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -87,6 +90,19 @@ static_assert(
     std::is_nothrow_move_assignable_v<decltype(std::declval<SceneLoadOutcome>().meshResourceMap)>,
     "meshResourceMap_ = std::move(outcome.meshResourceMap) in initializeSteps() requires this move-assignment to "
     "be noexcept for the scene-load publish step to be genuinely atomic");
+// Plan 0018 Section P11: two more instantiations of the exact same
+// argument -- std::unordered_map<AssetId, T>'s own move-assignment is
+// noexcept under the default allocator/hash/equality regardless of T,
+// so widening the publish from two moves to four needs no new argument,
+// only these two additional static_asserts (Verification Checklist V23).
+static_assert(
+    std::is_nothrow_move_assignable_v<decltype(std::declval<SceneLoadOutcome>().materialDataMap)>,
+    "materialDataMap_ = std::move(outcome.materialDataMap) in initializeSteps() requires this move-assignment to "
+    "be noexcept for the scene-load publish step to be genuinely atomic");
+static_assert(
+    std::is_nothrow_move_assignable_v<decltype(std::declval<SceneLoadOutcome>().textureDataMap)>,
+    "textureDataMap_ = std::move(outcome.textureDataMap) in initializeSteps() requires this move-assignment to "
+    "be noexcept for the scene-load publish step to be genuinely atomic");
 
 [[nodiscard]] std::optional<std::vector<std::uint32_t>> loadSpirvFile(const std::string& path) {
   std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -105,6 +121,25 @@ static_assert(
   const std::vector<MeshVertexAttributeSchema> schema = {
       MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
       MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, color)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
+// Plan 0018 Section P10/P12: the MaterialKind::UnlitTextured shader
+// pair's own vertex schema -- reads the SAME Vertex struct/mesh stride
+// every mesh in this codebase's own asset pipeline already uses (Spec
+// 0017's 32-byte position+color+UV0 layout is a property of the MESH
+// artifact, not of which material a given DrawItem happens to bind),
+// mapping position@0 and uv@1 into textured_quad.slang's own two
+// vertex-input locations -- color (bytes 12-23) is deliberately left
+// unread, mirroring textured_quad_fixture.cpp's own already-proven,
+// identical schema exactly.
+[[nodiscard]] std::optional<VertexInputLayout> unlitTexturedVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+      MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
   };
   auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
   if (result.isErr()) return std::nullopt;
@@ -149,6 +184,33 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   vertexSpirv_ = std::move(vertexSpirvOpt.value());
   fragmentSpirv_ = std::move(fragmentSpirvOpt.value());
   vertexInputLayout_ = std::move(layoutOpt.value());
+
+  // Step 2b (Plan 0018 Section P10): the second, MaterialKind::UnlitTextured
+  // built-in shader pair -- same shape as step 2 above, mirrored exactly.
+  auto unlitTexturedVertexSpirvOpt = loadSpirvFile(config.unlitTexturedVertexShaderSpirvPath);
+  auto unlitTexturedFragmentSpirvOpt = loadSpirvFile(config.unlitTexturedFragmentShaderSpirvPath);
+  if (!unlitTexturedVertexSpirvOpt.has_value() || !unlitTexturedFragmentSpirvOpt.has_value()) {
+    ATLANTIS_LOG_ERROR("Failed to load shader SPIR-V from {} / {}", config.unlitTexturedVertexShaderSpirvPath,
+                        config.unlitTexturedFragmentShaderSpirvPath);
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  auto unlitTexturedVertexReflectionResult = loadReflectionMetadata(config.unlitTexturedVertexShaderReflectionPath);
+  if (unlitTexturedVertexReflectionResult.isErr()) {
+    ATLANTIS_LOG_ERROR("loadReflectionMetadata() failed for {}", config.unlitTexturedVertexShaderReflectionPath);
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  auto unlitTexturedLayoutOpt = unlitTexturedVertexLayout(unlitTexturedVertexReflectionResult.value());
+  if (!unlitTexturedLayoutOpt.has_value()) {
+    ATLANTIS_LOG_ERROR(
+        "unlitTexturedVertexLayout(): reflected vertex-input attributes do not match the Vertex schema");
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  unlitTexturedVertexSpirv_ = std::move(unlitTexturedVertexSpirvOpt.value());
+  unlitTexturedFragmentSpirv_ = std::move(unlitTexturedFragmentSpirvOpt.value());
+  unlitTexturedVertexInputLayout_ = std::move(unlitTexturedLayoutOpt.value());
 
   // Step 3: Device.
   auto deviceResult = atlantis::vulkan_backend::createDevice(
@@ -211,6 +273,8 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // safe; no catch/rollback exists here because none is needed.
   world_.emplace(std::move(outcome.world));
   meshResourceMap_ = std::move(outcome.meshResourceMap);
+  materialDataMap_ = std::move(outcome.materialDataMap);
+  textureDataMap_ = std::move(outcome.textureDataMap);
 
   lifecycle_.markRunning();
   return atlantis::Result<std::monostate, RuntimeInitError>::Ok(std::monostate{});
@@ -290,25 +354,42 @@ void RuntimeApplication::runFrame() {
   }
   std::unique_ptr<atlantis::rhi::RenderTarget> target = std::move(acquireResult.value());
 
-  // Format-change check: create-before-destroy Material rebuild.
+  // Format-change check (Plan 0018 Section P13, Human Review Approval
+  // item 2 -- the highest-priority finding of that review round):
+  // builds a complete candidate batch NOW, but does NOT swap it in yet
+  // -- the existing fallbackMaterial_/materialResourceMap_ are read-only
+  // here, never mutated, moved, or destroyed. The actual swap-and-
+  // destroy of the OLD bundle is deferred until AFTER this frame's own
+  // submit() call returns Ok (below), which is the actual point
+  // Device::submit()'s own internal waitAndReleaseRetainedSubmission()
+  // has already confirmed the PREVIOUS frame's GPU work -- the last
+  // work that could have referenced the OLD Pipeline -- has finished.
+  // This corrects a real, previously-undisclosed gap in the original,
+  // already-shipped single-Material code (and this Plan's own first
+  // draft, which mirrored it): destroying the old Pipeline synchronously
+  // here, before this frame's own submit() has drained the previous
+  // frame's retained submission, could destroy a Pipeline the GPU might
+  // still be executing against.
   const atlantis::rhi::Format currentFormat = presentation_->metadata().format;
+  std::optional<FormatRebuildCandidates> pendingFormatRebuild;
+  bool formatRebuildFailedThisFrame = false;
   if (!lastSeenFormat_.has_value() || currentFormat != *lastSeenFormat_) {
-    auto newMaterialResult = createMaterial(
-        *device_, {.vertexShader = {.spirvWords = vertexSpirv_.data(), .wordCount = vertexSpirv_.size()},
-                   .fragmentShader = {.spirvWords = fragmentSpirv_.data(), .wordCount = fragmentSpirv_.size()},
-                   .vertexInputLayout = vertexInputLayout_,
-                   .colorFormat = currentFormat,
-                   .depthFormat = DepthFormat::D32Sfloat,
-                   .pushConstantSizeBytes = sizeof(float) * 16});
-    if (newMaterialResult.isErr()) {
+    auto rebuildResult = rebuildMaterialsForFormatChange(*device_, vertexInputLayout_, vertexSpirv_, fragmentSpirv_,
+                                                          unlitTexturedVertexInputLayout_, unlitTexturedVertexSpirv_,
+                                                          unlitTexturedFragmentSpirv_, currentFormat,
+                                                          materialResourceMap_);
+    if (rebuildResult.isErr()) {
       ATLANTIS_LOG_ERROR(
-          "createMaterial() failed during format-change rebuild -- keeping the existing Material and retrying next "
-          "frame");
+          "rebuildMaterialsForFormatChange() failed during format-change rebuild -- keeping the existing "
+          "fallback/materialResourceMap_ and retrying next frame");
       // lastSeenFormat_ intentionally NOT updated -- retry next frame.
+      formatRebuildFailedThisFrame = true;
     } else {
-      material_ = std::move(newMaterialResult.value());  // old Pipeline (if any) destroyed HERE, only after the new
-                                                           // one already succeeded.
-      lastSeenFormat_ = currentFormat;
+      pendingFormatRebuild = std::move(rebuildResult.value());
+      // lastSeenFormat_ is updated only once the swap itself actually
+      // happens (after submit() succeeds, below) -- not here -- so a
+      // subsequent submit() failure never leaves lastSeenFormat_ naming
+      // a format materialResourceMap_ was never actually rebuilt for.
     }
   }
 
@@ -327,7 +408,20 @@ void RuntimeApplication::runFrame() {
     }
   }
 
-  if (!material_ || !depthTexture_) {
+  // Plan 0018 Section P13: the fallback this frame actually draws with
+  // -- the just-built candidate if a rebuild succeeded THIS frame
+  // (never the stale-format fallbackMaterial_ in that case), otherwise
+  // the existing fallbackMaterial_. Reachable as nullptr only if the
+  // format never changed yet AND fallbackMaterial_ was never built,
+  // which cannot happen once execution reaches here (the format-change
+  // block above always runs, and therefore always either fails --
+  // handled by the empty-DrawItems override below -- or succeeds, on
+  // the very first frame; on every later frame lastSeenFormat_ already
+  // has a value and fallbackMaterial_ was already built by then).
+  atlantis::renderer::Material* effectiveFallback =
+      pendingFormatRebuild.has_value() ? pendingFormatRebuild->fallback.get() : fallbackMaterial_.get();
+
+  if (!effectiveFallback || !depthTexture_) {
     return;  // nothing valid to draw yet -- target dropped via RAII, no leaked GPU state
   }
 
@@ -394,30 +488,29 @@ void RuntimeApplication::runFrame() {
   knownMeshAssetIds.reserve(meshResourceMap_.size());
   for (const auto& [assetId, mesh] : meshResourceMap_) knownMeshAssetIds.push_back(assetId);
 
-  std::vector<DrawItem> drawItems;
+  // Plan 0018 Section P12 (Spec 0018 D8 step 1): the pending set is a
+  // pure function of current state, recomputed every frame. referencedMaterialIds
+  // is collected from World's own already-deterministic
+  // renderableEntities() iteration -- never an unordered_map -- so
+  // realizePendingMaterials()'s own upload-pass recording order stays
+  // reproducible frame-to-frame (Human Review Approval item 3).
+  std::vector<atlantis::asset_system::AssetId> referencedMaterialIds;
   for (const atlantis::world::EntityId& id : world_->renderableEntities()) {
     const auto renderableResult = world_->getRenderable(id);
     ATLANTIS_CHECK_MSG(renderableResult.isOk(),
                         "runFrame(): getRenderable() failed for a handle renderableEntities() just returned");
-    const auto resolveResult = resolveMeshAsset(renderableResult.value().meshAsset, knownMeshAssetIds);
-    if (resolveResult.isErr()) {
-      // Recoverable, per-entity: a single bad reference should not halt
-      // an otherwise-valid scene, matching the general "keep going, log,
-      // retry/skip" philosophy the existing format-/extent-change retry
-      // logic above already establishes.
-      ATLANTIS_LOG_ERROR("runFrame(): resolveMeshAsset() could not resolve a Renderable entity's own AssetId");
-      continue;
+    if (const auto& materialAsset = renderableResult.value().materialAsset; materialAsset.has_value()) {
+      if (std::find(referencedMaterialIds.begin(), referencedMaterialIds.end(), *materialAsset) ==
+          referencedMaterialIds.end()) {
+        referencedMaterialIds.push_back(*materialAsset);
+      }
     }
-    const auto worldMatrixResult = world_->getWorldMatrix(id);
-    ATLANTIS_CHECK_MSG(worldMatrixResult.isOk(),
-                        "runFrame(): getWorldMatrix() failed for a handle renderableEntities() just returned");
-
-    DrawItem item;
-    item.mesh = &meshResourceMap_.at(renderableResult.value().meshAsset);
-    item.material = &*material_;
-    item.objectToWorld = worldMatrixResult.value();
-    drawItems.push_back(item);
   }
+  std::vector<atlantis::asset_system::AssetId> alreadyRealizedMaterialIds;
+  alreadyRealizedMaterialIds.reserve(materialResourceMap_.size());
+  for (const auto& [assetId, material] : materialResourceMap_) alreadyRealizedMaterialIds.push_back(assetId);
+  const std::vector<atlantis::asset_system::AssetId> pendingMaterialIds =
+      computePendingMaterialIds(referencedMaterialIds, alreadyRealizedMaterialIds);
 
   auto commandListResult = device_->createCommandList();
   if (commandListResult.isErr()) {
@@ -426,6 +519,114 @@ void RuntimeApplication::runFrame() {
     return;
   }
   std::unique_ptr<atlantis::rhi::CommandList> commandList = std::move(commandListResult.value());
+
+  // Plan 0018 Section P12 (Spec 0018 D8 steps 2-3): records any pending
+  // materials' own upload passes into commandList BEFORE the draw graph
+  // below -- exactly one CommandList, exactly one submit() covers both
+  // (Pre-draft verification [Claim a]). Safe to call unconditionally,
+  // even with an empty pendingMaterialIds (records nothing).
+  std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
+      realizePendingMaterials(*device_, *commandList, unlitTexturedVertexInputLayout_, unlitTexturedVertexSpirv_,
+                               unlitTexturedFragmentSpirv_, currentFormat, pendingMaterialIds,
+                               sampledTextureResourceMap_, materialDataMap_, textureDataMap_);
+  // Plan 0018 Section P12 (Spec 0018 D8 step 5): gated on "at least one
+  // material was newly realized this frame" -- NOT narrowed to "at least
+  // one NEW TEXTURE was uploaded this frame". A realized candidate whose
+  // own texture already exists (D10 dedup against a texture a DIFFERENT
+  // material realized in an earlier frame) still creates a brand-new
+  // Sampler/Pipeline this frame, bound into this frame's own
+  // just-submitted CommandList; if it is not moved into the persistent
+  // resource maps below, it is destroyed via ordinary RAII when
+  // realizedCandidates goes out of scope at the end of this function --
+  // unsafe without this frame's own waitIdle() (submit()'s own internal
+  // drain only ever confirms the PREVIOUS frame's work, never this one),
+  // and it would also mean this material is never actually cached
+  // (computePendingMaterialIds() would find it "pending" again every
+  // subsequent frame, forever).
+  const bool anyMaterialRealizedThisFrame = !realizedCandidates.empty();
+
+  // Plan 0018 Section P13 (Human Review Approval item 4, the
+  // unconditional override): a rebuild failure this frame means nothing
+  // is safe to draw with -- including an entity whose materialAsset is
+  // absent, which would otherwise still draw with the now-stale-format
+  // fallbackMaterial_. Confirmed directly against renderer.cpp:17-55:
+  // Renderer::drawFrame() takes std::span<const DrawItem>; its one
+  // pass's colorClear/depthClear apply unconditionally, before the for
+  // loop over drawItems -- an empty span iterates zero times and
+  // dereferences no Material at all.
+  std::vector<DrawItem> drawItems;
+  if (!formatRebuildFailedThisFrame) {
+    std::vector<atlantis::asset_system::AssetId> knownMaterialIds;
+    if (pendingFormatRebuild.has_value()) {
+      for (const auto& [assetId, material] : pendingFormatRebuild->materials) knownMaterialIds.push_back(assetId);
+    } else {
+      knownMaterialIds = alreadyRealizedMaterialIds;
+    }
+    for (const auto& [assetId, candidate] : realizedCandidates) knownMaterialIds.push_back(assetId);
+
+    for (const atlantis::world::EntityId& id : world_->renderableEntities()) {
+      const auto renderableResult = world_->getRenderable(id);
+      ATLANTIS_CHECK_MSG(renderableResult.isOk(),
+                          "runFrame(): getRenderable() failed for a handle renderableEntities() just returned");
+      const auto resolveResult = resolveMeshAsset(renderableResult.value().meshAsset, knownMeshAssetIds);
+      if (resolveResult.isErr()) {
+        // Recoverable, per-entity: a single bad reference should not
+        // halt an otherwise-valid scene, matching the general "keep
+        // going, log, retry/skip" philosophy the existing format-/
+        // extent-change retry logic above already establishes.
+        ATLANTIS_LOG_ERROR("runFrame(): resolveMeshAsset() could not resolve a Renderable entity's own AssetId");
+        continue;
+      }
+      const auto worldMatrixResult = world_->getWorldMatrix(id);
+      ATLANTIS_CHECK_MSG(worldMatrixResult.isOk(),
+                          "runFrame(): getWorldMatrix() failed for a handle renderableEntities() just returned");
+
+      // Plan 0018 Section P14 (Spec 0018 D4's three-state semantics):
+      // absent -> effectiveFallback (unchanged behavior, only the
+      // accessor changed from &*material_ to a resolved pointer);
+      // present -> a real, asset-sourced Material, resolved through a
+      // priority chain (a pending format-rebuild candidate for this id
+      // first -- it must use the NEW-format Pipeline this frame, never
+      // the stale materialResourceMap_ entry a rebuild is replacing;
+      // then this frame's own newly-realized candidates; then the
+      // existing, already-realized materialResourceMap_); present but
+      // resolved by none of the three -> skip this entity for this
+      // frame only (never the fallback -- D4 case 3, distinct from
+      // case 1 by construction).
+      const atlantis::renderer::Material* resolvedMaterial = effectiveFallback;
+      if (const auto& materialAsset = renderableResult.value().materialAsset; materialAsset.has_value()) {
+        const auto materialResolveResult = resolveMaterialAsset(*materialAsset, knownMaterialIds);
+        if (materialResolveResult.isErr()) {
+          ATLANTIS_LOG_ERROR(
+              "runFrame(): resolveMaterialAsset() could not resolve a Renderable entity's own material AssetId -- "
+              "skipping this entity for this frame only");
+          continue;
+        }
+        resolvedMaterial = nullptr;
+        if (pendingFormatRebuild.has_value()) {
+          const auto it = pendingFormatRebuild->materials.find(*materialAsset);
+          if (it != pendingFormatRebuild->materials.end()) resolvedMaterial = it->second.get();
+        }
+        if (!resolvedMaterial) {
+          const auto it = realizedCandidates.find(*materialAsset);
+          if (it != realizedCandidates.end()) resolvedMaterial = it->second.material.get();
+        }
+        if (!resolvedMaterial) {
+          const auto it = materialResourceMap_.find(*materialAsset);
+          if (it != materialResourceMap_.end()) resolvedMaterial = it->second.get();
+        }
+        ATLANTIS_CHECK_MSG(resolvedMaterial != nullptr,
+                            "runFrame(): resolveMaterialAsset() succeeded but no source map actually had the id -- "
+                            "knownMaterialIds must be out of sync with its own sources");
+      }
+
+      DrawItem item;
+      item.mesh = &meshResourceMap_.at(renderableResult.value().meshAsset);
+      item.material = resolvedMaterial;
+      item.objectToWorld = worldMatrixResult.value();
+      drawItems.push_back(item);
+    }
+  }
 
   renderer_.drawFrame(*commandList, *target, *depthTexture_, *cameraBuffer_, drawItems,
                        atlantis::rhi::ResourceState::PresentSource);
@@ -436,6 +637,57 @@ void RuntimeApplication::runFrame() {
     static_cast<void>(classifySubmitError(submitResult.error()));
     lifecycle_.markFailed();
     return;
+  }
+
+  // Plan 0018 Section P13 (Human Review Approval item 2): only now,
+  // after submit() has returned Ok -- meaning Device::submit()'s own
+  // internal waitAndReleaseRetainedSubmission() has already confirmed
+  // the PREVIOUS frame's GPU work has finished -- is it safe to swap in
+  // the format-rebuild candidate; the OLD fallbackMaterial_/
+  // materialResourceMap_ this overwrites are destroyed here, provably
+  // safe. materialResourceMap_'s own whole-map move-assignment is
+  // provably noexcept for the default allocator (V24); fallbackMaterial_'s
+  // own unique_ptr move is unconditionally noexcept regardless of
+  // allocator.
+  if (pendingFormatRebuild.has_value()) {
+    fallbackMaterial_ = std::move(pendingFormatRebuild->fallback);
+    materialResourceMap_ = std::move(pendingFormatRebuild->materials);
+    lastSeenFormat_ = currentFormat;
+  }
+
+  // Plan 0018 Section P12 (Spec 0018 D8 step 5): this extra CPU stall is
+  // paid on any frame that newly realized at least one material -- not
+  // narrowed to "newly uploaded a texture" (see anyMaterialRealizedThisFrame's
+  // own comment above) -- never on an ordinary frame, and never merely
+  // because a format rebuild also happened this frame (that hazard is
+  // already fully closed by submit()'s own internal drain above, needing
+  // no further wait). Blocks until this frame's own upload+draw work has
+  // finished, at which point every staging Buffer this frame's own
+  // realizedCandidates created is safe to destroy (via ordinary RAII,
+  // when realizedCandidates itself goes out of scope at the end of this
+  // function) and the SubmissionSignal present() receives below already
+  // wraps an already-signaled VkSemaphore (Pre-draft verification
+  // [Claim d]).
+  if (anyMaterialRealizedThisFrame) {
+    auto waitResult = device_->waitIdle();
+    if (waitResult.isErr()) {
+      ATLANTIS_LOG_ERROR("waitIdle() failed after a realization frame's own submit() -- treated as fatal, matching "
+                          "shutdown()'s own identical severity for an unrecoverable wait");
+      lifecycle_.markFailed();
+      return;
+    }
+    // Only after waitIdle() succeeds does a newly-realized material
+    // become visible to any FUTURE frame's own DrawItem resolution --
+    // this frame's own drawItems above already used the local
+    // candidates directly (D8 step 3's "visible the very frame it
+    // succeeds" guarantee), so this publish is for frame N+1 onward.
+    for (auto& [assetId, candidate] : realizedCandidates) {
+      if (candidate.newSampledTexture) {
+        sampledTextureResourceMap_.emplace(candidate.textureAssetId, std::move(candidate.newSampledTexture));
+      }
+      samplerResourceMap_.emplace(assetId, std::move(candidate.sampler));
+      materialResourceMap_.emplace(assetId, std::move(candidate.material));
+    }
   }
 
   auto presentResult = presentation_->present(std::move(target), std::move(submitResult.value()));
@@ -466,7 +718,14 @@ RuntimeExitReason RuntimeApplication::shutdown() {
     }
   }
 
-  material_.reset();
+  // Plan 0018 Section P10: explicit clear, texture/sampler-before-
+  // material order (D9) -- material_.reset()'s own former single line
+  // widens to four, in this exact order, matching
+  // meshResourceMap_.clear()'s own existing explicit-clear precedent.
+  fallbackMaterial_.reset();
+  materialResourceMap_.clear();
+  samplerResourceMap_.clear();
+  sampledTextureResourceMap_.clear();
   depthTexture_.reset();
   cameraBuffer_.reset();
   meshResourceMap_.clear();

@@ -2,6 +2,7 @@
 
 #include <atlantis/asset_system/asset_metadata.h>
 #include <atlantis/asset_system/cook.h>
+#include <atlantis/asset_system/cook_material.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -13,6 +14,7 @@
 using namespace atlantis::runtime;
 using atlantis::asset_system::AssetMetadata;
 using atlantis::asset_system::computeAssetId;
+using atlantis::asset_system::cookMaterial;
 using atlantis::asset_system::cookStaticMesh;
 using atlantis::asset_system::serializeAssetMetadata;
 
@@ -187,6 +189,40 @@ TEST_CASE("loadSceneDependencyManifest V16: rejects a metadata/artifact AssetId 
   const auto result = loadSceneDependencyManifest(manifestPath.string());
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneManifestError::MetadataArtifactMismatch);
+}
+
+TEST_CASE(
+    "loadSceneDependencyManifest Step 5 accepts a manifest entry whose metadata sidecar is a material, not a mesh",
+    "[runtime][scene]") {
+  // Plan 0018 Milestone 16 regression coverage: Step 5's own cross-check
+  // previously called only parseAssetMetadata() (the mesh-specific
+  // 8-line shape), so ANY texture/material manifest entry -- never
+  // exercised before material_demo_scene, the first scene to declare
+  // MATERIAL_DEPENDENCIES/TEXTURE_DEPENDENCIES -- always failed with
+  // MetadataArtifactMismatch even when perfectly well-formed. This test
+  // cooks a real material asset (no real texture needed -- cookMaterial()
+  // never validates the referenced texture's own existence, ADR-0059
+  // D6/D7) and confirms the manifest cross-check now accepts it.
+  TempDirGuard dir("material_sidecar");
+  const std::string logicalPath = "materials/a.material.txt";
+  const fs::path sourcePath = dir.path / "source" / (logicalPath + ".txt");
+  writeFile(sourcePath, "atlantis_material_source_version: 1\n"
+                        "kind: unlit_textured\n"
+                        "texture: textures/does_not_need_to_exist.png\n"
+                        "filter: linear\n"
+                        "address_mode: repeat\n");
+  const fs::path artifactPath = dir.path / (logicalPath + ".amaterial");
+  const fs::path metadataPath = dir.path / (logicalPath + ".amaterial.meta.txt");
+  REQUIRE(cookMaterial(sourcePath.string(), logicalPath, artifactPath.string(), metadataPath.string()).isOk());
+
+  const fs::path manifestPath = dir.path / "material.manifest.txt";
+  writeFile(manifestPath, logicalPath + "\t" + artifactPath.string() + "\t" + metadataPath.string() + "\n");
+
+  const auto result = loadSceneDependencyManifest(manifestPath.string());
+  REQUIRE(result.isOk());
+  const auto* found = result.value().find(computeAssetId(logicalPath));
+  REQUIRE(found != nullptr);
+  CHECK(found->artifactPath == artifactPath.string());
 }
 
 TEST_CASE("loadSceneDependencyManifest V18: an unreferenced entry does not fail the load", "[runtime][scene]") {

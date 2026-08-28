@@ -3,6 +3,7 @@
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/asset_set_validation.h>
 #include <atlantis/asset_system/cook.h>
+#include <atlantis/asset_system/cook_material.h>
 #include <atlantis/asset_system/cook_scene.h>
 #include <atlantis/asset_system/cook_texture.h>
 #include <atlantis/asset_system/logical_path.h>
@@ -54,6 +55,10 @@ constexpr std::string_view kSceneAuthoringExtension = ".scene.txt";
 // basename itself is NAME-derived, not SOURCE-derived -- see
 // runCookTextureMode()'s own comment).
 constexpr std::string_view kTextureAuthoringExtension = ".png";
+// Plan 0018 Section P4: mirrors kAuthoringExtension exactly, for the
+// material pipeline's own source-relative-path/output-basename
+// computation.
+constexpr std::string_view kMaterialAuthoringExtension = ".material.txt";
 
 // Computes the source path relative to the asset root, as a forward-
 // slash string, purely for CLI convenience (constructing an output file
@@ -289,6 +294,45 @@ constexpr std::string_view kTextureAuthoringExtension = ".png";
   return 0;
 }
 
+// Plan 0018 Section P4: mirrors runCookMeshMode()'s own shape exactly
+// -- Material, unlike Scene, IS its own asset type with its own AssetId
+// (Spec 0018 D1), so it takes a logicalPathInput exactly like
+// cookStaticMesh()/cookTexture() do.
+[[nodiscard]] const char* materialCookErrorMessage(atlantis::asset_system::MaterialCookError error) {
+  switch (error) {
+    case atlantis::asset_system::MaterialCookError::SourceFileUnreadable:
+      return "source file unreadable";
+    case atlantis::asset_system::MaterialCookError::SourceParseFailed:
+      return "source parse failed";
+    case atlantis::asset_system::MaterialCookError::LogicalPathInvalid:
+      return "logical path invalid";
+    case atlantis::asset_system::MaterialCookError::AtomicWriteFailed:
+      return "atomic write failed";
+  }
+  return "unknown material cook error";
+}
+
+[[nodiscard]] int runCookMaterialMode(const CookCommandRequest& request) {
+  const std::string relativePath = computeRelativePathString(request.sourcePath, request.assetRoot);
+  const std::string base = stripAuthoringExtension(relativePath, kMaterialAuthoringExtension);
+
+  const fs::path artifactPath = fs::path(request.outputDir) / (base + ".amaterial");
+  const fs::path metadataPath = fs::path(request.outputDir) / (base + ".amaterial.meta.txt");
+
+  const auto result = cookMaterial(request.sourcePath, relativePath, artifactPath.string(), metadataPath.string());
+  if (result.isErr()) {
+    std::cerr << "atlantis_asset_cooker: cook failed: " << materialCookErrorMessage(result.error()) << "\n";
+    return 1;
+  }
+
+  if (!writeStamp(request.stampPath)) {
+    std::cerr << "atlantis_asset_cooker: failed to write stamp file: " << request.stampPath << "\n";
+    return 1;
+  }
+
+  return 0;
+}
+
 [[nodiscard]] int runValidateSetMode(const CookCommandRequest& request) {
   std::ifstream listFile(request.assetListPath);
   if (!listFile.is_open()) {
@@ -332,6 +376,8 @@ int runCookCommand(const CookCommandRequest& request) {
       return runCookSceneMode(request);
     case AssetKind::Texture:
       return runCookTextureMode(request);
+    case AssetKind::Material:
+      return runCookMaterialMode(request);
   }
   return runCookMeshMode(request);
 }

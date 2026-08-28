@@ -4,9 +4,12 @@
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/asset_metadata.h>
 #include <atlantis/asset_system/logical_path.h>
+#include <atlantis/asset_system/material_metadata.h>
+#include <atlantis/asset_system/texture_metadata.h>
 
 #include <algorithm>
 #include <fstream>
+#include <optional>
 #include <sstream>
 
 namespace atlantis::runtime {
@@ -17,6 +20,29 @@ using atlantis::asset_system::AssetId;
 using atlantis::asset_system::computeAssetId;
 using atlantis::asset_system::normalizeLogicalPath;
 using atlantis::asset_system::parseAssetMetadata;
+using atlantis::asset_system::parseMaterialMetadata;
+using atlantis::asset_system::parseTextureMetadata;
+
+// Plan 0018 Milestone 16 (found only by exercising loadSceneDependencyManifest()
+// against a real manifest naming a texture/material dependency for the
+// first time -- world_scene's own manifest, the only one this function
+// was previously ever tested against, names mesh dependencies exclusively):
+// a manifest entry's own metadata sidecar may be in any one of three
+// mutually-exclusive, already-established on-disk shapes (mesh's
+// AssetMetadata, TextureMetadata, MaterialMetadata) -- the manifest text
+// format itself carries no separate "kind" tag (scene_manifest.h's own
+// tab-separated triple is kind-agnostic by design), so Step 5's own
+// sanity cross-check tries each parser in turn. No ambiguity: each
+// format's own first line is a distinct version-magic string
+// ("atlantis_asset_metadata_version: 1" / "atlantis_texture_metadata_version: 1"
+// / "atlantis_material_metadata_version: 1"), so a given metadata text
+// parses successfully under at most one of the three.
+[[nodiscard]] std::optional<AssetId> extractAssetIdFromAnyMetadata(std::string_view metadataText) {
+  if (const auto result = parseAssetMetadata(metadataText); result.isOk()) return result.value().assetId;
+  if (const auto result = parseTextureMetadata(metadataText); result.isOk()) return result.value().assetId;
+  if (const auto result = parseMaterialMetadata(metadataText); result.isOk()) return result.value().assetId;
+  return std::nullopt;
+}
 
 // Duplicated from mesh_source.cpp's own identical helper rather than
 // shared, matching that file's own file-local, not-exported precedent
@@ -174,14 +200,15 @@ atlantis::Result<SceneDependencyResolver, SceneManifestError> loadSceneDependenc
 
   // Step 5: metadata cross-check -- each entry's own metadata sidecar
   // must record the exact AssetId this manifest's own logical-path
-  // field computes.
+  // field computes, regardless of which of the three known sidecar
+  // shapes (mesh/texture/material) this particular entry happens to be.
   for (const ResolvedEntry& entry : resolved) {
     std::string metadataText;
     if (!readFileText(entry.metadataPath, metadataText)) {
       return ResultT::Err(SceneManifestError::MetadataArtifactMismatch);
     }
-    const auto metadataResult = parseAssetMetadata(metadataText);
-    if (metadataResult.isErr() || metadataResult.value().assetId != entry.assetId) {
+    const auto assetIdResult = extractAssetIdFromAnyMetadata(metadataText);
+    if (!assetIdResult.has_value() || *assetIdResult != entry.assetId) {
       return ResultT::Err(SceneManifestError::MetadataArtifactMismatch);
     }
   }

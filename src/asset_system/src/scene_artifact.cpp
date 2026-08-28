@@ -114,6 +114,10 @@ std::vector<std::byte> encodeSceneArtifact(const std::vector<ValidatedSceneNode>
     appendU32LE(out, node.renderable.has_value() ? 1U : 0U);
     appendU64LE(out, node.renderable.has_value() ? node.renderable->meshAsset : 0U);
 
+    const bool hasMaterial = node.renderable.has_value() && node.renderable->materialAsset.has_value();
+    appendU32LE(out, hasMaterial ? 1U : 0U);
+    appendU64LE(out, hasMaterial ? *node.renderable->materialAsset : 0U);
+
     appendU32LE(out, parents[i].has_value() ? 1U : 0U);
     appendU32LE(out, parents[i].has_value() ? static_cast<std::uint32_t>(*parents[i]) : 0U);
   }
@@ -197,12 +201,25 @@ atlantis::Result<DecodedSceneArtifact, SceneArtifactDecodeError> decodeSceneArti
 
     const std::uint32_t hasRenderableFlag = readU32LE(record + 52);
     const std::uint64_t meshAssetId = readU64LE(record + 56);
-    if (hasRenderableFlag != 0) {
-      node.renderable = DecodedRenderable{meshAssetId};
+
+    const std::uint32_t hasMaterialFlag = readU32LE(record + 64);
+    const std::uint64_t materialAssetId = readU64LE(record + 68);
+    // Plan 0018 Section P7: independent, never-trust-the-cooker check --
+    // a material reference with no renderable is a structurally
+    // impossible combination this grammar can never author, but decode
+    // must reject it explicitly, not silently ignore it.
+    if (hasMaterialFlag != 0 && hasRenderableFlag == 0) {
+      return ResultT::Err(SceneArtifactDecodeError::MaterialWithoutRenderable);
     }
 
-    const std::uint32_t hasParentFlag = readU32LE(record + 64);
-    const std::uint32_t parentIndex = readU32LE(record + 68);
+    if (hasRenderableFlag != 0) {
+      node.renderable = DecodedRenderable{meshAssetId, hasMaterialFlag != 0
+                                                            ? std::optional<AssetId>(materialAssetId)
+                                                            : std::optional<AssetId>(std::nullopt)};
+    }
+
+    const std::uint32_t hasParentFlag = readU32LE(record + 76);
+    const std::uint32_t parentIndex = readU32LE(record + 80);
     std::optional<std::size_t> parent;
     if (hasParentFlag != 0) {
       if (parentIndex >= nodeCount) return ResultT::Err(SceneArtifactDecodeError::OutOfRangeParentIndex);

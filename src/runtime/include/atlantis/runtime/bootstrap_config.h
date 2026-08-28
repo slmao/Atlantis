@@ -27,6 +27,16 @@ struct BootstrapConfig {
   std::string sceneArtifactPath;
   std::string sceneMetadataPath;
   std::string sceneDependencyManifestPath;
+  // Plan 0018 Section P10: the second, MaterialKind::UnlitTextured
+  // built-in shader pair -- mirrors vertexShaderSpirvPath/
+  // vertexShaderReflectionPath/fragmentShaderSpirvPath/
+  // fragmentShaderReflectionPath's own sourcing exactly (a new CMake
+  // compile definition plus the compiled shader's own literal
+  // filenames, main.cpp's job, never hardcoded here).
+  std::string unlitTexturedVertexShaderSpirvPath;
+  std::string unlitTexturedVertexShaderReflectionPath;
+  std::string unlitTexturedFragmentShaderSpirvPath;
+  std::string unlitTexturedFragmentShaderReflectionPath;
   bool enableValidationLayers = true;
 };
 

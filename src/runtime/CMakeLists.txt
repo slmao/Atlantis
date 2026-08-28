@@ -12,6 +12,7 @@ add_library(atlantis_runtime_host STATIC
   src/scene_extraction.cpp
   src/scene_manifest.cpp
   src/scene_load.cpp
+  src/material_realization.cpp
   src/runtime_application.cpp
 )
 add_library(Atlantis::RuntimeHost ALIAS atlantis_runtime_host)
@@ -84,9 +85,20 @@ target_compile_definitions(atlantis_runtime PRIVATE
   ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH="${ATLANTIS_world_scene_ARTIFACT_PATH}"
   ATLANTIS_RUNTIME_SCENE_METADATA_PATH="${ATLANTIS_world_scene_METADATA_PATH}"
   ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH="${ATLANTIS_world_scene_MANIFEST_PATH}"
+  # Plan 0018 Section P10: the second, MaterialKind::UnlitTextured
+  # built-in shader pair's own output directory -- reuses the already-
+  # exported ATLANTIS_textured_quad_SHADER_OUTPUT_DIR
+  # (shaders/textured_quad/CMakeLists.txt's own atlantis_add_slang_shader_pair()
+  # call, now unconditional), mirroring ATLANTIS_RUNTIME_SHADER_DIR's own
+  # sourcing exactly.
+  ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
 )
 
 # Guarantees the shader-compile and asset-cook targets have already run
 # before this executable builds -- matching
-# tests/image_regression/CMakeLists.txt's own identical pattern.
-add_dependencies(atlantis_runtime minimal_mesh_shaders ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})
+# tests/image_regression/CMakeLists.txt's own identical pattern. Plan
+# 0018 Section P10: textured_quad_shaders added alongside
+# minimal_mesh_shaders, now that shaders/textured_quad is built
+# unconditionally.
+add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders ${ATLANTIS_minimal_cube_TARGET}
+  ${ATLANTIS_world_scene_TARGET})

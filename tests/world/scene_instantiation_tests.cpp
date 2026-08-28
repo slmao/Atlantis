@@ -105,7 +105,7 @@ constexpr const char* kNode1MeshPath = "meshes/scene_instantiation_node1.mesh.tx
 // camera. Values match the prior revision's own hand-built fixture
 // exactly, just authored as real scene source text instead.
 constexpr const char* kThreeNodeSceneSource =
-    "atlantis_scene_source_version: 1\n"
+    "atlantis_scene_source_version: 2\n"
     "node_count: 3\n"
     "active_camera: 3\n"
     "node: node_id=1 parent=none position=1.0 2.0 3.0 rotation=0.1 0.2 0.3 scale=1.0 1.0 1.0 "
@@ -181,6 +181,43 @@ TEST_CASE("fromValidatedSceneData() instantiates every node with its own compone
   CHECK(transformNode2.value().localEulerAnglesRadians.x == -0.3054f);
 }
 
+TEST_CASE("fromValidatedSceneData() carries a node's material= reference into Renderable::materialAsset",
+          "[world][scene][material]") {
+  // Plan 0018 Section P8 / Milestone 8: a scene node naming both mesh=
+  // and material= instantiates into a World entity whose Renderable
+  // carries both AssetIds.
+  const ValidatedSceneData scene = cookAndDecodeScene(
+      "atlantis_scene_source_version: 2\n"
+      "node_count: 1\n"
+      "active_camera: none\n"
+      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "mesh=meshes/scene_instantiation_node0.mesh.txt material=materials/unlit_textured_quad.material.txt\n");
+  World world = fromValidatedSceneData(scene);
+
+  const std::vector<EntityId> renderables = world.renderableEntities();
+  REQUIRE(renderables.size() == 1);
+
+  const auto renderable = world.getRenderable(renderables[0]);
+  REQUIRE(renderable.isOk());
+  CHECK(renderable.value().meshAsset == meshAssetIdFor(kNode0MeshPath));
+  REQUIRE(renderable.value().materialAsset.has_value());
+  CHECK(*renderable.value().materialAsset == meshAssetIdFor("materials/unlit_textured_quad.material.txt"));
+}
+
+TEST_CASE("fromValidatedSceneData() leaves Renderable::materialAsset absent when no material= is authored",
+          "[world][scene][material]") {
+  const ValidatedSceneData scene = cookAndDecodeScene(kThreeNodeSceneSource);
+  World world = fromValidatedSceneData(scene);
+
+  const std::vector<EntityId> renderables = world.renderableEntities();
+  REQUIRE(renderables.size() == 2);
+  for (const EntityId id : renderables) {
+    const auto renderable = world.getRenderable(id);
+    REQUIRE(renderable.isOk());
+    CHECK_FALSE(renderable.value().materialAsset.has_value());
+  }
+}
+
 TEST_CASE("fromValidatedSceneData() sets up the parent hierarchy correctly", "[world][scene]") {
   const ValidatedSceneData scene = cookAndDecodeScene(kThreeNodeSceneSource);
   World world = fromValidatedSceneData(scene);
@@ -238,7 +275,7 @@ TEST_CASE("fromValidatedSceneData() produces deterministic, repeatable EntityId 
 
 TEST_CASE("fromValidatedSceneData() leaves an empty active camera when the scene declares none", "[world][scene]") {
   constexpr const char* kPlainSceneSource =
-      "atlantis_scene_source_version: 1\n"
+      "atlantis_scene_source_version: 2\n"
       "node_count: 1\n"
       "active_camera: none\n"
       "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";

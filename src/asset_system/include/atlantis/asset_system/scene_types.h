@@ -2,6 +2,8 @@
 
 #include <atlantis/asset_system/asset_id.h>
 
+#include <optional>
+
 namespace atlantis::asset_system {
 
 // Plan 0015 Section D2 / ADR-0053: plain, flat, Atlantis::AssetSystem-
@@ -26,8 +28,14 @@ struct DecodedCamera {
   float farZ = 0.0f;
 };
 
+// Plan 0018 Section P7 / ADR-0060 Decision item 1: materialAsset is an
+// optional, second, independent reference -- std::nullopt means "no
+// material scene binding for this node," Runtime's own existing
+// fallback path (never this type's own concern, which stays a plain,
+// Atlantis::AssetSystem-owned DTO naming no Renderer/RHI type).
 struct DecodedRenderable {
   atlantis::asset_system::AssetId meshAsset = 0;
+  std::optional<atlantis::asset_system::AssetId> materialAsset;
 };
 
 }  // namespace atlantis::asset_system

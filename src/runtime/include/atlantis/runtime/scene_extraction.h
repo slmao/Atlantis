@@ -23,6 +23,11 @@ enum class SceneExtractionError {
   DegenerateCameraForward,  // column 2's own world-space image has near-zero length
   DegenerateCameraBasis,    // forward is (near-)parallel to the canonical world-up axis
   UnresolvedMeshAsset,      // a Renderable's AssetId matches no known, resolved asset
+  // Plan 0018 Section P9: a sibling enumerator, not a new family -- the
+  // identical per-entity, per-frame resolution-failure class
+  // UnresolvedMeshAsset already names, applied to a material AssetId
+  // instead of a mesh one.
+  UnresolvedMaterialAsset,
 };
 
 struct CameraMatrices {
@@ -64,6 +69,14 @@ struct CameraMatrices {
 // type; the caller still uses meshResourceMap_.at(requested) directly
 // to obtain the actual Mesh once this call confirms membership.
 [[nodiscard]] atlantis::Result<std::monostate, SceneExtractionError> resolveMeshAsset(
+    atlantis::asset_system::AssetId requested, const std::vector<atlantis::asset_system::AssetId>& knownIds);
+
+// Plan 0018 Section P9: verbatim-shaped after resolveMeshAsset() -- same
+// linear std::find, same decoupled-from-the-concrete-resource-type
+// rationale. knownIds is the caller's own currently-realized material
+// AssetId set (materialResourceMap_'s own keys, plus this frame's own
+// newly-realized candidates, collected by the caller).
+[[nodiscard]] atlantis::Result<std::monostate, SceneExtractionError> resolveMaterialAsset(
     atlantis::asset_system::AssetId requested, const std::vector<atlantis::asset_system::AssetId>& knownIds);
 
 }  // namespace atlantis::runtime

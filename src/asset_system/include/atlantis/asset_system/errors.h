@@ -114,6 +114,14 @@ enum class SceneArtifactDecodeError {
   NonFiniteValue,
   MetadataParseFailed,
   MetadataArtifactMismatch,
+  // Plan 0018 Section P7: has_material != 0 && has_renderable == 0 -- a
+  // structurally-impossible combination of two independent flags no
+  // existing enumerator covers. cookScene() itself can never produce
+  // this (the grammar has no token arrangement that yields "material
+  // without mesh," Plan 0018 Section P6), but decodeSceneArtifact()
+  // must never trust a well-formed producer -- mirrors
+  // hasCycleByIndex()'s own "never trust the cooker" ethos.
+  MaterialWithoutRenderable,
 };
 
 // Plan 0016 Section D8: cookTexture()'s own validation conditions --
@@ -154,6 +162,56 @@ enum class TextureLoadError {
   MetadataParseFailed,
   MetadataArtifactMismatch,
   MetadataReadFailed,
+};
+
+// Plan 0018 Section P2: cookMaterial()'s own validation conditions --
+// mirrors TextureCookError's own shape exactly. LogicalPathInvalid is a
+// reused name, matching CookError/TextureCookError's own precedent of a
+// same-named enumerator per format.
+//
+// Deviation from Plan 0018 Section P2 (mechanical, disclosed, no
+// architectural effect): the Plan's own error-domain accounting also
+// named a cook-time UnknownMaterialKind. Implementation found this
+// enumerator is never actually reachable -- parseMaterialSource()
+// already rejects any unrecognized "kind:" token at the grammar level
+// (MaterialSourceParseError::UnknownKind) before a ParsedMaterialSource
+// is ever constructed, and MaterialKind has exactly one enumerator this
+// round, so cookMaterial() can never observe an "unknown" MaterialKind
+// value. Kept out per this codebase's own "no speculative abstraction"
+// convention (AGENTS.md) rather than shipped as untestable dead code;
+// the decode-time MaterialArtifactDecodeError::UnknownMaterialKind
+// below is genuinely reachable (an untrusted artifact byte buffer) and
+// is unaffected.
+enum class MaterialCookError {
+  SourceFileUnreadable,
+  SourceParseFailed,
+  LogicalPathInvalid,
+  AtomicWriteFailed,
+};
+
+// decodeMaterialArtifact()'s own conditions -- never assumes a
+// well-formed cooker output, independently re-derives every
+// MaterialCookError-adjacent condition from the artifact's own bytes.
+// UnexpectedSize is new: unlike the texture artifact's own variable
+// pixel payload, Material's record is fixed-size (32 bytes) by schema
+// version alone, so any size other than exactly 32 is corruption, not
+// merely "too small."
+enum class MaterialArtifactDecodeError {
+  BadMagic,
+  UnsupportedSchemaVersion,
+  TruncatedHeader,
+  UnexpectedSize,
+  UnknownMaterialKind,
+  UnknownFilter,
+  UnknownAddressMode,
+};
+
+enum class MaterialLoadError {
+  ArtifactFileUnreadable,
+  MetadataFileUnreadable,
+  ArtifactDecodeFailed,
+  MetadataParseFailed,
+  MetadataArtifactMismatch,
 };
 
 }  // namespace atlantis::asset_system

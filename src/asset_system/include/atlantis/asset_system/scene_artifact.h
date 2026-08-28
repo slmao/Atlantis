@@ -14,12 +14,17 @@ namespace atlantis::asset_system {
 // Plan 0015 Section D5: the scene artifact's binary layout --
 // unconditionally little-endian, explicit shift/mask assembly, never a
 // struct memcpy, matching mesh_artifact.h's own discipline exactly.
-inline constexpr std::uint32_t kSceneArtifactSchemaVersion = 1;
+// Plan 0018 Section P7: schema version 2 inserts a 12-byte material
+// slot (has_material u32 + material_asset_id u64) immediately after the
+// existing renderable slot, before the parent slot -- version 1 is
+// rejected outright, no dual-version reader.
+inline constexpr std::uint32_t kSceneArtifactSchemaVersion = 2;
 inline constexpr std::size_t kSceneArtifactHeaderSizeBytes = 24;
 // position(12) + rotation(12) + scale(12) + has_camera(4) +
 // fov_y/near_z/far_z(12) + has_renderable(4) + mesh_asset_id(8) +
-// has_parent(4) + parent_index(4) = 72 bytes.
-inline constexpr std::size_t kSceneArtifactNodeRecordSizeBytes = 72;
+// has_material(4) + material_asset_id(8) + has_parent(4) +
+// parent_index(4) = 84 bytes.
+inline constexpr std::size_t kSceneArtifactNodeRecordSizeBytes = 84;
 // "Implausibly large" upper bound (D6 step 4) -- this format is hand-
 // authored text at import time, never a high-poly runtime asset;
 // mirrors kMaxVertexCount's own order of magnitude and role exactly

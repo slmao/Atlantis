@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atlantis/asset_system/asset_id.h>
+#include <atlantis/asset_system/material_types.h>
+#include <atlantis/asset_system/texture_types.h>
 #include <atlantis/renderer/material.h>
 #include <atlantis/renderer/mesh.h>
 #include <atlantis/renderer/renderer.h>
@@ -8,6 +10,8 @@
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/device.h>
 #include <atlantis/rhi/presentation.h>
+#include <atlantis/rhi/sampled_texture.h>
+#include <atlantis/rhi/sampler.h>
 #include <atlantis/rhi/texture.h>
 #include <atlantis/rhi/types.h>
 #include <atlantis/runtime/bootstrap_config.h>
@@ -111,7 +115,47 @@ class RuntimeApplication {
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap_;
   std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer_;
   std::unique_ptr<atlantis::rhi::Texture> depthTexture_;  // lazy: first frame's extent-change check
-  std::optional<atlantis::renderer::Material> material_;  // lazy: first frame's format-change check
+
+  // Plan 0018 Section P10 (Human Review Approval item 1): replaces the
+  // former std::optional<Material> material_ in this exact slot. Every
+  // GPU-realized resource is a std::unique_ptr<T> map VALUE, never a
+  // value-typed entry -- a borrowed const T* into any of them has an
+  // address fixed at first allocation, stable across map insertion,
+  // rehash, or a whole-map move-assignment (the format-rebuild's own
+  // atomic swap, P13). Two ownership layers, keyed differently on
+  // purpose:
+  //
+  // Layer 1 -- format-independent, created exactly once, NEVER rebuilt
+  // or moved by a format change (Spec 0018 D9 item 1). Keyed by TEXTURE
+  // AssetId: two materials naming the same texture share one entry
+  // (D10 dedup) -- SampledTextureCreateParams/SamplerCreateParams name
+  // no colorFormat field, so nothing here is ever format-dependent.
+  std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>>
+      sampledTextureResourceMap_;
+  // Layer 1b -- also format-independent, created once per MATERIAL (not
+  // shared across materials even when they share a texture, since
+  // filter/addressMode are the Material DTO's own fields, Spec D2 -- no
+  // per-value sampler-caching is attempted, matching Non-Goals' own "no
+  // per-pipeline or per-material GPU-object caching/reuse across
+  // distinct AssetIds," extended here to Sampler for the same reason).
+  // Keyed by MATERIAL AssetId.
+  std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::Sampler>> samplerResourceMap_;
+  // Layer 2 -- format-DEPENDENT (Pipeline bakes in colorFormat), rebuilt
+  // in full on every format change (D9). Keyed by MATERIAL AssetId.
+  // Borrows (raw, non-owning pointers, Material's own existing
+  // contract) into Layer 1/1b's already-stable addresses -- never into
+  // a value-typed map slot.
+  std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::renderer::Material>>
+      materialResourceMap_;
+  std::unique_ptr<atlantis::renderer::Material> fallbackMaterial_;  // lazy: first frame's format-change check; also
+                                                                     // format-dependent, also rebuilt by D9
+
+  // CPU-only, populated by Phase 1 (initializeSteps()), consumed/cleared
+  // by Phase 2 (runFrame()) as each entry is realized -- no GPU handle,
+  // value-typed is fine (nothing ever borrows a raw pointer into
+  // these).
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> materialDataMap_;
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap_;
 
   atlantis::renderer::Renderer renderer_;  // stateless, default-constructed
   // Plan 0014 Section D8: World owns no GPU resource and has no ordering
@@ -136,6 +180,14 @@ class RuntimeApplication {
   atlantis::rhi::VertexInputLayout vertexInputLayout_;  // resolved once at init, reused for every Material rebuild
   std::vector<std::uint32_t> vertexSpirv_;               // retained for every Material rebuild
   std::vector<std::uint32_t> fragmentSpirv_;
+  // Plan 0018 Section P10/P12: the second, MaterialKind::UnlitTextured
+  // built-in shader pair's own resolved layout/SPIR-V -- mirrors
+  // vertexInputLayout_/vertexSpirv_/fragmentSpirv_'s own role exactly,
+  // resolved once at init (initializeSteps()), reused for every
+  // realization (P12) and rebuild (P13) of a textured Material.
+  atlantis::rhi::VertexInputLayout unlitTexturedVertexInputLayout_;
+  std::vector<std::uint32_t> unlitTexturedVertexSpirv_;
+  std::vector<std::uint32_t> unlitTexturedFragmentSpirv_;
 };
 
 [[nodiscard]] atlantis::Result<RuntimeApplication, RuntimeInitError> createRuntimeApplication(

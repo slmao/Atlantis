@@ -194,7 +194,21 @@ atlantis::Result<std::monostate, SceneCookError> cookScene(const std::string& so
     if (parsedNode.meshLogicalPath.has_value()) {
       const auto normalizedResult = normalizeLogicalPath(*parsedNode.meshLogicalPath);
       if (normalizedResult.isErr()) return ResultT::Err(SceneCookError::SourceParseFailed);
-      node.renderable = DecodedRenderable{computeAssetId(normalizedResult.value())};
+      DecodedRenderable renderable;
+      renderable.meshAsset = computeAssetId(normalizedResult.value());
+
+      // Plan 0018 Section P6: materialLogicalPath is only ever set
+      // alongside meshLogicalPath (a grammar-structural guarantee, see
+      // scene_source.h's own note) -- resolved to an AssetId the exact
+      // same value-level-only way the mesh reference already is (no
+      // existence check, ADR-0059 D6/D7).
+      if (parsedNode.materialLogicalPath.has_value()) {
+        const auto normalizedMaterialResult = normalizeLogicalPath(*parsedNode.materialLogicalPath);
+        if (normalizedMaterialResult.isErr()) return ResultT::Err(SceneCookError::SourceParseFailed);
+        renderable.materialAsset = computeAssetId(normalizedMaterialResult.value());
+      }
+
+      node.renderable = renderable;
     }
 
     nodes.push_back(std::move(node));
