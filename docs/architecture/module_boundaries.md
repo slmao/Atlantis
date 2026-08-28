@@ -374,6 +374,34 @@ are now cooked through this same pipeline and consumed by the textured
 image-regression fixture via the real `loadStaticMeshAsset()` path, in
 place of that fixture's own former hand-authored vertex/UV arrays.
 
+**Material (Spec 0018, implemented and merged), a fourth asset type,
+still Core-only:** a small, versioned DTO — a closed `MaterialKind` enum
+(one enumerator this round, `UnlitTextured`), a texture Asset ID, and
+`Sampler` parameters (`Filter`/`AddressMode`) mirroring
+`atlantis::rhi::SamplerCreateParams` exactly
+([ADR-0059](../../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)).
+`MaterialAssetData` names no RHI type and no shader path/identifier —
+shader identity is a closed, Runtime-private mapping from `MaterialKind`
+to a fixed, already-compiled built-in shader pair, never a Shader Asset
+Catalog. The 32-byte material artifact embeds no self-Asset-ID (the
+texture artifact's own precedent); its embedded texture Asset ID is
+value-level only, never existence-checked here — an unresolvable
+reference is exclusively a Runtime-side error at scene-load time.
+Alongside this, the scene authoring/artifact format bumped to schema
+version 2: a node's `Renderable` slot gained an *optional* material
+Asset ID beside its existing mandatory mesh Asset ID (the per-node
+record widened from 72 to 84 bytes); version 1 is rejected outright, no
+dual-version reader
+([ADR-0060](../../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md)).
+The per-scene manifest (Spec 0015) gained `MATERIAL_DEPENDENCIES`/
+`TEXTURE_DEPENDENCIES` CMake arguments, still the same, unwidened
+three-column, build-tree-private, scene-scoped file — never a fourth
+"kind" column, since Runtime already knows which Asset ID is which kind
+from the scene's own decoded structure. `World::Renderable` widened the
+same way, in kind, as `DecodedRenderable` — one more plain, optional
+`AssetId` field, no change to `World`'s own dependency closure or
+construction of zero Renderer/RHI types.
+
 **Extension points:** a rename-stable GUID identity scheme and a real
 derived-data cache are each named, explicitly out-of-scope future work
 in Spec 0012/Spec 0015 — not designed or scaffolded here. A
@@ -402,10 +430,12 @@ producing each entity's own world matrix via a fully iterative
 every state change is caller-driven.
 
 **Depends on:** Core, and, narrowly, Asset System (for the `AssetId`
-type only, named in `Renderable`'s own public field). No RHI, Renderer,
-RenderGraph, Shader System, Vulkan Backend, Platform, Runtime, or Tools
-dependency in either direction — verified by an include-scanning test
-(`tests/world/module_boundary_tests.cpp`), not merely stated.
+type only, named in `Renderable`'s own two public fields — a mandatory
+`meshAsset` and, since Spec 0018, an *optional* `materialAsset`). No
+RHI, Renderer, RenderGraph, Shader System, Vulkan Backend, Platform,
+Runtime, or Tools dependency in either direction — verified by an
+include-scanning test (`tests/world/module_boundary_tests.cpp`), not
+merely stated.
 
 **Depended on by:** Runtime (the sole real `World` instance's owner) and
 `tests/image_regression/`'s own headless fixture (an independent,
@@ -454,7 +484,12 @@ path; Android/iOS remain architectural, not implemented (see Extension
 points). **Further extended by Spec 0015 (`Approved`), ADR-0052–
 ADR-0054 (all `Accepted`) — implemented and merged via
 [PR #74](https://github.com/slmao/Atlantis/pull/74) (2026-08-23); the
-scene-loading description below already reflects that PR's own code.**
+scene-loading description below already reflects that PR's own code.
+Further extended again by Spec 0018 (`Approved`), ADR-0059/ADR-0060
+(both `Accepted`) — implemented and merged via
+[PR #88](https://github.com/slmao/Atlantis/pull/88) (2026-08-28); the
+Responsibilities/Ownership descriptions below already reflect that PR's
+own code.**
 
 **Responsibilities:** the actual composition root. A private
 `atlantis_runtime_host` static library (`Atlantis::RuntimeHost`) owns
@@ -463,23 +498,49 @@ shutdown; a thin `atlantis_runtime` Windows executable contains only the
 `main()` entry point that constructs and drives it. Owns a Platform
 session for the OS being built (Windows Platform; Android Platform not
 implemented), creates the RHI `Device` and (on the first `SurfaceCreated`
-event) `Presentation` via the Vulkan Backend, loads the `minimal_mesh`
-Shader-System-compiled material, and reads a real scene asset's own
-dependency manifest, decodes its `ValidatedSceneData`, resolves and
-loads every distinct mesh it references (in ascending first-reference
-order, never `AssetId`-sorted order — a keyed `meshResourceMap_`, not a
-single hardcoded asset), and instantiates the one real `World` instance
-via `atlantis::world::fromValidatedSceneData()` — replacing the former
-fixed, hardcoded six-entity validation scene Spec 0014 shipped. Each
-frame: calls `World::updateTransforms()`, extracts the active camera's
-view/projection matrices and builds one `DrawItem` per renderable
-entity via a Runtime-private adapter (`scene_extraction.h`/`.cpp` —
-eye/forward-only camera extraction, never a right/up column, so it
-stays correct under a sheared hierarchy; per-entity `AssetId`
-resolution against `meshResourceMap_`'s own key set — a keyed-map
-membership check, replacing the project's own former single hardcoded
-asset comparison), acquires a `RenderTarget` from `Presentation`, hands
-the `DrawItem`s to `Renderer`, then presents. Also responds to
+event) `Presentation` via the Vulkan Backend, loads both the
+`minimal_mesh` and (Spec 0018) the `MaterialKind::UnlitTextured`
+built-in Shader-System-compiled shader pairs, and reads a real scene
+asset's own dependency manifest, decodes its `ValidatedSceneData`,
+resolves and loads every distinct mesh it references (in ascending
+first-reference order, never `AssetId`-sorted order — a keyed
+`meshResourceMap_`, not a single hardcoded asset) — since Spec 0018,
+also resolves and loads every distinct material an entity's
+`Renderable` names (and each material's own referenced texture,
+deduplicated by texture `AssetId`) into two further CPU-only maps, all
+published atomically together — and instantiates the one real `World`
+instance via `atlantis::world::fromValidatedSceneData()` — replacing
+the former fixed, hardcoded six-entity validation scene Spec 0014
+shipped. Each frame: calls `World::updateTransforms()`, extracts the
+active camera's view/projection matrices, computes which referenced
+materials are not yet GPU-realized and realizes them (Spec 0018 — a
+new, independently-testable `material_realization.h`/`.cpp` module;
+each realized material's own texture-upload RenderGraph pass is
+recorded into the same `CommandList` the draw graph below also uses,
+before it), and builds one `DrawItem` per renderable entity via a
+Runtime-private adapter (`scene_extraction.h`/`.cpp` — eye/forward-only
+camera extraction, never a right/up column, so it stays correct under a
+sheared hierarchy; per-entity mesh `AssetId` resolution against
+`meshResourceMap_`'s own key set — a keyed-map membership check,
+replacing the project's own former single hardcoded asset comparison;
+per-entity material resolution, since Spec 0018, through a priority
+chain — a pending format-rebuild candidate, then a material realized
+this same frame, then the persistent map — falling back to a single
+hardcoded `Material` only when `materialAsset` is absent, and skipping
+the entity for this frame only, never substituting the fallback, when
+it is present but not yet realized), acquires a `RenderTarget` from
+`Presentation`, hands the `DrawItem`s to `Renderer`, submits (one
+`CommandList`, one `submit()` covering any upload passes plus the draw),
+then presents. On a color-format change, Spec 0018 rebuilds a complete
+*candidate* batch (the fallback `Material` plus every existing
+per-material entry) without touching the live bundle, records this
+frame's own draw graph against the candidate only, and swaps the
+candidate in only after this frame's own `submit()` returns `Ok` —
+never destroying the old bundle while GPU work that could still
+reference it (the previous frame's) might not yet have finished, and
+never mixing an old-format `Pipeline` with a new-format `RenderTarget`
+on a rebuild failure (an unconditional empty `DrawItem` list for that
+one frame instead). Also responds to
 Platform-delivered lifecycle events;
 Android-specific lifecycle handling (surface destroyed/recreated, app
 paused/resumed) remains TBD, see Open Questions in
@@ -511,9 +572,18 @@ convention. `Device`, `Presentation`, a keyed map of every loaded
 `Mesh` (`meshResourceMap_`, since Spec 0015 occupying the single `Mesh`
 member's own former declaration slot, so the guarantee below is
 unchanged, not newly invented), the camera `Buffer`, the depth
-`Texture`, and `Material` are owned in that reverse order below it,
-matching `Material → Texture → Buffer → Mesh(es) → Presentation →
-Device → PlatformSession`/window as the fixed destruction sequence.
+`Texture`, and (since Spec 0018) four material-related members in place
+of the former single `Material` — a texture-`AssetId`-keyed
+`SampledTexture` map, a material-`AssetId`-keyed `Sampler` map, a
+material-`AssetId`-keyed `Material` map, and the single fallback
+`Material` — are owned in that reverse order below it, each held as a
+`std::unique_ptr<T>` map *value* so a borrowed raw pointer into any of
+them is address-stable regardless of map rehash/move; the declaration
+order keeps every `SampledTexture`/`Sampler` a `Material` might borrow
+destroyed strictly after that `Material`, matching `fallback Material →
+per-material Materials → Samplers → SampledTextures → Texture → Buffer
+→ Mesh(es) → Presentation → Device → PlatformSession`/window as the
+fixed destruction sequence.
 `RenderTarget` instances acquired each frame are short-lived and scoped
 to that frame — see [resource_lifetime.md](resource_lifetime.md).
 

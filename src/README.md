@@ -220,7 +220,7 @@ and [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)–[ADR
 merged via [PR #36](https://github.com/slmao/Atlantis/pull/36).
 
 **`asset_system/`** — Atlantis Asset System: a deterministic
-authoring-source → runtime-artifact pipeline, now for three asset types.
+authoring-source → runtime-artifact pipeline, now for four asset types.
 Target `atlantis_asset_system`, alias `Atlantis::AssetSystem`
 (`Atlantis::Core`-only — no RHI, Renderer, RenderGraph, Shader System,
 Vulkan Backend, Platform, Tools, or `atlantis::world` dependency,
@@ -246,9 +246,12 @@ unmodified `atlantis::renderer::createMesh()`. Scene graph (a node
 hierarchy with Transform/Camera/Renderable-shaped DTOs, `ValidatedSceneData`
 — no public default constructor, constructible only by `decodeScene()`,
 the sole entry point, enforced by a friend relationship with no
-test-only exception): `cookScene()`/`decodeScene()`, independently
-re-validating every cook-time condition at decode time, never trusting
-the cooker. Neither DTO shape ever names an `atlantis::world::` type
+test-only exception; schema version 2 — the `Renderable` slot's own
+`DecodedRenderable` widened with an *optional* material Asset ID
+alongside its existing mandatory mesh Asset ID, version 1 rejected
+outright, no dual-version reader): `cookScene()`/`decodeScene()`,
+independently re-validating every cook-time condition at decode time,
+never trusting the cooker. Neither DTO shape ever names an `atlantis::world::` type
 (`scene_types.h`) — the one place permitted to convert between them,
 `atlantis::world::fromValidatedSceneData()`, lives in `src/world/`, not
 here. Texture (a plain sampled color image, `Rgba8Unorm`/`Rgba8Srgb`):
@@ -265,7 +268,21 @@ post-merge Human Review Correction
 ([PR #79](https://github.com/slmao/Atlantis/pull/79),
 [PR #80](https://github.com/slmao/Atlantis/pull/80)) fixed an initial
 implementation that let two color-space variants of the same texture
-silently share one Asset ID. Implemented per
+silently share one Asset ID. Material (a small, versioned DTO naming a
+closed `MaterialKind` enum — one enumerator this round,
+`UnlitTextured` — a texture Asset ID, and `Sampler` parameters mirroring
+`atlantis::rhi::SamplerCreateParams` exactly): `cookMaterial()`,
+`loadMaterialAsset()` returning CPU-only `MaterialAssetData` — never an
+RHI type or a shader path/identifier; a composition root outside this
+module (Atlantis Runtime) is responsible for resolving `MaterialKind` to
+a fixed, built-in shader pair and constructing the actual
+`atlantis::rhi::Sampler`/`SampledTexture`/`atlantis::renderer::Material`.
+The Material artifact embeds no self-Asset-ID (the texture artifact's
+own precedent, not the mesh artifact's — self-consistency is fully
+covered by the metadata sidecar's own cross-check); reference
+validation (the embedded texture Asset ID) is value-level only, never an
+existence check — an unresolvable reference surfaces as a Runtime-side
+error at scene-load time, not an Asset System error. Implemented per
 [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md),
 [plans/0012-asset-system-foundation.md](../plans/0012-asset-system-foundation.md),
 [ADR-0043](../adr/0043-asset-system-module-boundary.md)–[ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md);
@@ -284,15 +301,23 @@ the static mesh format's UV0 attribute added per
 [plans/0017-mesh-uv-attribute-foundation.md](../plans/0017-mesh-uv-attribute-foundation.md),
 and
 [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md),
-merged via [PR #84](https://github.com/slmao/Atlantis/pull/84).
+merged via [PR #84](https://github.com/slmao/Atlantis/pull/84); the
+Material asset type and the scene graph's own optional material
+reference added per
+[specs/0018-material-asset-scene-binding-foundation.md](../specs/0018-material-asset-scene-binding-foundation.md),
+[plans/0018-material-asset-scene-binding-foundation.md](../plans/0018-material-asset-scene-binding-foundation.md),
+and
+[ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)–[ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md),
+merged via [PR #88](https://github.com/slmao/Atlantis/pull/88).
 
 **`world/`** — Atlantis World: Atlantis's in-memory, multi-entity scene.
 Target `atlantis_world`, alias `Atlantis::World` (PUBLIC dependency
 `Atlantis::Core` and, narrowly, `Atlantis::AssetSystem` — for the
-`AssetId` type only, named in `Renderable`'s own public field — no RHI,
-Renderer, RenderGraph, Shader System, Vulkan Backend, Platform, Runtime,
-or Tools dependency in either direction, verified by an include-scanning
-test). `World` is a slot map: `createEntity()`/`destroyEntity()` return
+`AssetId` type only, named in `Renderable`'s own two public fields, a
+mandatory `meshAsset` and an *optional* `materialAsset` (Spec 0018) — no
+RHI, Renderer, RenderGraph, Shader System, Vulkan Backend, Platform,
+Runtime, or Tools dependency in either direction, verified by an
+include-scanning test). `World` is a slot map: `createEntity()`/`destroyEntity()` return
 an index+generation `EntityId` handle, formally overflow-safe via
 permanent slot retirement at the generation counter's maximum value;
 `EntityId` carries a `private`, non-owning reference to its own `World`
@@ -377,22 +402,44 @@ manifest-driven load: read the scene's dependency manifest, decode its
 references in ascending first-reference order into a keyed
 `meshResourceMap_`, and instantiate the one real `World` instance via
 `atlantis::world::fromValidatedSceneData()` — replacing the project's
-own former fixed, hardcoded six-entity validation scene; `Material` is
-deliberately deferred to the first frame, since no real swapchain
-format is known before the first `SurfaceCreated` event), a per-frame
-orchestration (event handling, acquire, format-change Material
-rebuild, extent-change depth-texture rebuild,
-`World::updateTransforms()` + Runtime-private camera/asset extraction
-(`scene_extraction.h`/`.cpp`, now resolving against `meshResourceMap_`'s
-own key set rather than one hardcoded `AssetId`) + per-entity
-`DrawItem` build, submit, present), and a single, idempotent
-`shutdown()` that is the sole caller of GPU-resource teardown and the
-sole indirect trigger (via `PlatformSession`'s own destructor) of
-`platform::shutdown()`. `world_` is `std::optional<World>`, published
-via in-place move-construction only once the scene load fully
-succeeds (`World` is not move-assignable); `meshResourceMap_` occupies
-the single former `Mesh` member's own declaration slot, preserving the
-existing GPU-resource reverse-destruction-order guarantee unchanged.
+own former fixed, hardcoded six-entity validation scene. Spec 0018
+widened this same CPU-only load step ("Phase 1") to also resolve and
+load every distinct material an entity's `Renderable` names (and each
+material's own referenced texture, deduplicated by texture Asset ID)
+into two further CPU-only maps, published atomically alongside `world_`/
+`meshResourceMap_`; no `SampledTexture`/`Sampler`/`Material` GPU
+resource is ever constructed here, since no real swapchain format is
+known yet. Real GPU material realization ("Phase 2") is deferred to a
+new, Runtime-private, independently-testable `material_realization.h`/
+`.cpp` module (`computePendingMaterialIds()`, `realizePendingMaterials()`,
+`rebuildMaterialsForFormatChange()`), called from the per-frame
+orchestration below), a per-frame orchestration (event handling,
+acquire, format-change check — now rebuilding a *complete* candidate
+batch (fallback `Material` plus every existing per-material entry, each
+reusing its own already-uploaded `SampledTexture`/`Sampler` unchanged)
+and swapping it in only *after* this frame's own `submit()` returns
+`Ok`, never destroying the old bundle while GPU work that could
+reference it might still be in flight — extent-change depth-texture
+rebuild, `World::updateTransforms()` + Runtime-private camera/asset
+extraction (`scene_extraction.h`/`.cpp`, now resolving against both
+`meshResourceMap_`'s and the per-frame material-resolution result's own
+key sets rather than one hardcoded `AssetId`) + per-entity `DrawItem`
+build — falling back to a single hardcoded `Material` only when an
+entity's own `materialAsset` is absent, never when it is merely not yet
+GPU-realized — + one `submit()` (covering any pending material's own
+texture-upload pass, recorded before the draw graph, plus the draw
+itself) + present), and a single, idempotent `shutdown()` that is the
+sole caller of GPU-resource teardown and the sole indirect trigger (via
+`PlatformSession`'s own destructor) of `platform::shutdown()`. `world_`
+is `std::optional<World>`, published via in-place move-construction
+only once the scene load fully succeeds (`World` is not
+move-assignable); `meshResourceMap_` occupies the single former `Mesh`
+member's own declaration slot, preserving the existing GPU-resource
+reverse-destruction-order guarantee unchanged; the Spec 0018 material/
+texture/sampler resource maps are each held as `std::unique_ptr<T>` map
+values (address-stable borrows, independent of map rehash/move) in a
+declaration order that keeps every `SampledTexture`/`Sampler` a borrowed
+`Material` might reference destroyed strictly after that `Material`.
 Implemented per
 [specs/0013-runtime-host-foundation.md](../specs/0013-runtime-host-foundation.md),
 [plans/0013-runtime-host-foundation.md](../plans/0013-runtime-host-foundation.md),
@@ -407,7 +454,15 @@ the manifest-driven real scene asset load implemented per
 [specs/0015-scene-asset-serialization-foundation.md](../specs/0015-scene-asset-serialization-foundation.md),
 [plans/0015-scene-asset-serialization-foundation.md](../plans/0015-scene-asset-serialization-foundation.md),
 and
-[ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)–[ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md).
+[ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)–[ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md);
+the Phase 1 CPU-transaction widening, Phase 2 deferred GPU material
+realization, and the format-change rebuild's own old-`Pipeline`-in-
+flight safety fix implemented per
+[specs/0018-material-asset-scene-binding-foundation.md](../specs/0018-material-asset-scene-binding-foundation.md),
+[plans/0018-material-asset-scene-binding-foundation.md](../plans/0018-material-asset-scene-binding-foundation.md),
+and
+[ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)–[ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md),
+merged via [PR #88](https://github.com/slmao/Atlantis/pull/88).
 See
 [docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md)
 for the full public/private boundary statement.
