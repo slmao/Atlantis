@@ -923,15 +923,17 @@ milestone being listed does not authorize starting it — see Section 1.
   descriptor system; render-to-texture or sampling a depth attachment
   as a shader resource; lighting, shadowing, HDR, or post-processing of
   any kind; a second graphics backend; and any change to the Scene
-  Asset format -- a scene's `Renderable` still names exactly one mesh
-  `AssetId`, so a texture/material scene binding remains future work.
-  Two further, explicitly disclosed, blocking follow-up candidates were
-  named: "Mesh UV Attribute Foundation" (real UV0 inside Asset System's
-  own mesh pipeline, required before any future asset-sourced-textured-
-  mesh claim -- today's UV0 was fixture-authored, not asset-sourced) --
-  **since resolved, see Milestone 14 below** -- and target-independent
-  submission (a `Device::submit()` path admitting no real
-  `RenderTarget`), which remains unsolved. A distributable, cross-
+  Asset format -- a scene's `Renderable` at this Milestone still named
+  exactly one mesh `AssetId`, so a texture/material scene binding was
+  future work at the time. Two further, explicitly disclosed, blocking
+  follow-up candidates were named: "Mesh UV Attribute Foundation" (real
+  UV0 inside Asset System's own mesh pipeline, required before any
+  future asset-sourced-textured-mesh claim -- today's UV0 was
+  fixture-authored, not asset-sourced) -- **since resolved, see
+  Milestone 14 below** -- and target-independent submission (a
+  `Device::submit()` path admitting no real `RenderTarget`), which
+  remains unsolved. The texture/material scene binding gap itself is
+  **since resolved, see Milestone 15 below**. A distributable, cross-
   session Asset Catalog/Registry (carried forward from Milestone 12)
   and Android Platform (Candidate Order 1 below, unchanged priority)
   remain out of scope.
@@ -1002,10 +1004,117 @@ milestone being listed does not authorize starting it — see Section 1.
   render self-consistency, not absolute V-direction, a disclosed,
   accepted limitation); and any change to `minimal_cube`'s own topology
   to make it genuinely texture-ready. "Material Asset & Scene Binding
-  Foundation" (Candidate Order 8, Section B below) is the named
-  successor that must close the remaining gap between an asset-sourced
-  UV0 (this Milestone) and a Runtime scene that actually renders
-  textured.
+  Foundation" was named as this Milestone's own successor, required to
+  close the remaining gap between an asset-sourced UV0 (this Milestone)
+  and a Runtime scene that actually renders textured -- **since
+  resolved, see Milestone 15 below**.
+
+### Milestone 15 — Material Asset & Scene Binding Foundation
+
+- **Governance state:** **`Approved` Spec, `Approved` Plan. Implemented
+  and merged via [PR #88](https://github.com/slmao/Atlantis/pull/88)
+  (2026-08-28)** —
+  [specs/0018-material-asset-scene-binding-foundation.md](../specs/0018-material-asset-scene-binding-foundation.md),
+  [plans/0018-material-asset-scene-binding-foundation.md](../plans/0018-material-asset-scene-binding-foundation.md).
+  Architectural Impact identified two new decisions, filed as
+  [ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)
+  (Material Asset's own module boundary, artifact/metadata format, and
+  closed `MaterialKind`-to-built-in-shader identity scheme) and
+  [ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md)
+  (Scene Asset/`World` schema widening, per-scene manifest extension,
+  and Runtime's two-phase CPU-transaction/deferred-GPU-realization
+  contract), both `Accepted`. Closes Spec 0016's/Spec 0017's own named,
+  disclosed, blocking follow-up (Milestones 13 and 14 above).
+- **Scope delivered:** Material as Asset System's fourth asset type — a
+  small, versioned DTO naming a closed `MaterialKind` enum (one
+  enumerator this round, `UnlitTextured`), a texture Asset ID, and RHI
+  `Sampler` parameters, following the exact
+  authoring-source/cook/artifact/metadata-sidecar/load shape mesh/
+  scene/texture already established; the 32-byte material artifact
+  embeds no self-Asset-ID (the texture precedent, not the mesh
+  precedent), and its own embedded texture reference is value-level
+  only, never existence-checked in Asset System. The Scene Asset
+  authoring grammar and artifact bumped to schema version 2 (the
+  per-node record widened from 72 to 84 bytes), adding an *optional*
+  per-node material reference; `World::Renderable` widened the same
+  way. Absent material → the existing colored fallback, unchanged pixel
+  output for every scene that does not opt in; present-but-unresolvable
+  is a fatal scene-load error, never a silent fallback. Runtime's own
+  scene-loading pipeline gained a CPU-only Phase 1 (resolves and loads
+  every referenced material/texture, publishing atomically alongside
+  the existing mesh/world publish, all four moves `static_assert`-proven
+  `noexcept`) and a deferred, per-frame GPU realization Phase 2 (a new,
+  independently-testable `material_realization.h`/`.cpp` module) with
+  same-texture dedup (both same-frame and cross-frame) and
+  `unique_ptr`-owning GPU resource bundles for address-stable borrows.
+  The format-change rebuild path — Spec 0013's own single-`Material`
+  code, generalized — now builds a complete candidate batch (fallback
+  plus every in-use material) and swaps it in only after this frame's
+  own `submit()` returns `Ok`, closing a genuine latent gap in the
+  pre-existing code (an old-format `Pipeline` could otherwise be
+  destroyed while the previous frame's GPU work might still reference
+  it). `shaders/textured_quad` was promoted from a test-only fixture
+  resource to an unconditional, production built-in shader pair backing
+  `MaterialKind::UnlitTextured` (builds under `-DATLANTIS_BUILD_TESTS=OFF`,
+  no `tests/` dependency in that build tree). A new `material_demo_scene`
+  (two UV-mesh nodes sharing one real material/texture, the D10 dedup
+  proof) and its own new `material_demo` image-regression golden prove
+  the whole path end to end; the new fixture directly links and calls
+  `Atlantis::RuntimeHost`'s real Phase 1/Phase 2 functions rather than
+  duplicating them (the one sanctioned exception to this test tree's
+  usual per-fixture duplication precedent, Spec 0018 D12). Runtime's own
+  default bootstrap scene deliberately stays `world_scene`, unswitched —
+  `atlantis_runtime.exe`'s windowed output is bit-for-bit unaffected;
+  the real textured path is proven exclusively through the golden/fixture.
+- **Verified:** a centralized final code review round (three further
+  commits, `b50526d`/`d8dbe13`/`2e43a25`, all before merge) found and
+  fixed one real GPU safety bug — `runFrame()`'s Phase 2 wait/publish
+  gate checked the wrong condition for a cross-frame texture-dedup case,
+  which could destroy a brand-new `Sampler`/`Pipeline` without
+  confirming the GPU had finished referencing it — and closed two real
+  test-coverage gaps the Plan's own Verification Checklist had already
+  specified (the old-`Pipeline` GPU-in-flight safety proof during a
+  format-change rebuild, and four Milestone-11-shaped material
+  scene-load cases) but Implementation had not actually delivered; code
+  review found both underlying implementations already correct in each
+  case. One further real, previously-undiscovered gap was found and
+  fixed during the original Implementation itself: `scene_manifest.cpp`'s
+  Step 5 metadata cross-check only understood the mesh-specific sidecar
+  shape, so any texture/material manifest entry always failed even when
+  well-formed; fixed to try all three known, mutually-exclusive sidecar
+  shapes. Fresh Debug/Release builds clean; `ctest -LE gpu` 662/662
+  Debug, 661/661 Release; `ctest -L gpu` 35/35 both configurations on
+  real Vulkan-capable hardware (Intel Arc B370, driver 101.8509),
+  including byte-identical matches against all four goldens; Vulkan
+  Validation Layers grepped clean (zero `VUID`/`Validation Error`/
+  `Validation Warning`) across full verbose GPU test output, both
+  configurations; a fresh `ATLANTIS_BUILD_TESTS=OFF` configure+build
+  produced a working `atlantis_runtime.exe` with zero test executables
+  anywhere in that tree; `/w14062` C4062 positive/negative probe
+  restored with a confirmed zero-diff; module-boundary scan confirmed
+  `Atlantis::AssetSystem` still links `Atlantis::Core` only; the three
+  pre-existing goldens (`minimal_cube`, `world_scene`, `textured_quad`)
+  confirmed byte-for-byte unchanged (SHA-256) throughout. Human visual
+  golden confirmation and manual interactive Runtime windowed
+  verification (both Debug and Release, literal process exit code 0,
+  zero Vulkan Validation Layers output) are both PASS, recorded
+  2026-08-29 as PR comments. See
+  [plans/0018-material-asset-scene-binding-foundation.md](../plans/0018-material-asset-scene-binding-foundation.md)'s
+  own "Post-Merge Status Update" for the full record.
+- **Not implemented** (per Spec 0018's own Non-Goals, unchanged): PBR,
+  metallic/roughness, or any multi-texture material model; lighting,
+  shadowing, or image-based lighting of any kind; post-processing or
+  tone mapping; normal/tangent vertex attributes or normal mapping; a
+  material graph, shader graph, or any user-composable shading system;
+  hot-reload, an editor, or runtime asset mutation; a distributable,
+  cross-session Asset Catalog/Registry, or any rename-stable identity
+  beyond the existing path-derived Asset ID; mipmap generation, texture
+  compression, texture streaming, or a bindless descriptor system;
+  Android/iOS/Linux implementation; multiple materials or textures per
+  entity; and per-pipeline or per-material GPU-object caching/reuse
+  across distinct Asset IDs. "Lighting Foundation" is named as this
+  Milestone's own successor candidate (Candidate Order 8, Section B
+  below).
 
 ### Further candidate phases (directional only, no Spec, no ADR)
 

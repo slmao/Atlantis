@@ -83,10 +83,23 @@ built with.
   the textured-quad fixture's own two quad meshes are now genuinely
   Asset-System-sourced rather than fixture-hardcoded, closing Spec
   0016's own disclosed follow-up — proven end to end against the
-  existing `textured_quad` golden with zero pixel difference. A
-  distributable, cross-session Asset Catalog and rename-stable GUID
-  identity remain future work (Candidate Order 7, `specs/README.md`) —
-  see `src/README.md`'s own `asset_system/`/`tools/asset_cooker/`
+  existing `textured_quad` golden with zero pixel difference. Extended
+  once more with a fourth asset type, Material (Spec 0018, `Approved`,
+  implemented and merged via
+  [PR #88](https://github.com/slmao/Atlantis/pull/88)): a small,
+  versioned DTO naming a closed `MaterialKind`, a texture Asset ID, and
+  RHI `Sampler` parameters; the Scene Asset format and `World::Renderable`
+  each gained an *optional* material reference (absent means the
+  existing untextured fallback, unchanged pixel output for every
+  scene that does not opt in); and Runtime's own scene-loading pipeline
+  now resolves, loads, and deferred-GPU-realizes real, asset-sourced
+  materials/textures per entity — closing the loop first opened by Spec
+  0016's texture support and Spec 0017's asset-sourced UV0, so a
+  Runtime-loaded scene can finally look genuinely textured, proven end
+  to end against a new `material_demo` golden. A distributable,
+  cross-session Asset Catalog and rename-stable GUID identity remain
+  future work (Candidate Order 7, `specs/README.md`) — see
+  `src/README.md`'s own `asset_system/`/`tools/asset_cooker/`
   entries
 - Vulkan Validation Layers as a correctness gate
 - RenderDoc-based debugging
@@ -325,12 +338,18 @@ static mesh format bumped to version 2, position+color+UV0 at a fixed
 genuinely Asset-System-sourced rather than fixture-hardcoded, closing
 Spec 0016's own disclosed follow-up, Spec 0017, `Approved`, implemented
 and merged via [PR #84](https://github.com/slmao/Atlantis/pull/84)) is
-also implemented — see [specs/README.md](specs/README.md). PBR/lighting/
-post-processing extensions beyond the one fixed material this stack
-draws today, mipmap/compression/streaming/bindless texture support, a
-texture/material scene binding, a distributable cross-session Asset
-Catalog, and Android/iOS remain unimplemented — see
-[src/README.md](src/README.md).
+also implemented, as is Material Asset & Scene Binding Foundation
+(Material as a fourth Asset System asset type; an optional per-node
+material reference on the Scene Asset format and `World::Renderable`;
+Runtime's own CPU-transaction/deferred-GPU-realization pipeline binding
+a real, asset-sourced textured `Material` per entity, Spec 0018,
+`Approved`, implemented and merged via
+[PR #88](https://github.com/slmao/Atlantis/pull/88)) — see
+[specs/README.md](specs/README.md). PBR/lighting/post-processing
+extensions beyond the one closed, unlit-textured material kind this
+stack draws today, mipmap/compression/streaming/bindless texture
+support, a distributable cross-session Asset Catalog, and Android/iOS
+remain unimplemented — see [src/README.md](src/README.md).
 
 Android and iOS remain specified architecturally only (not implemented);
 Vulkan Backend's Android WSI path is likewise not implemented. Headless
