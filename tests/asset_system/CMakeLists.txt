@@ -26,6 +26,7 @@ add_executable(atlantis_asset_system_tests
   material_metadata_tests.cpp
   cook_material_tests.cpp
   load_material_tests.cpp
+  material_asset_cmake_declaration_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_system_tests
@@ -97,6 +98,23 @@ target_compile_definitions(atlantis_asset_system_tests PRIVATE
   ATLANTIS_minimal_cube_LOGICAL_PATH="${ATLANTIS_minimal_cube_LOGICAL_PATH}"
   ATLANTIS_minimal_cube_ARTIFACT_PATH="${ATLANTIS_minimal_cube_ARTIFACT_PATH}"
   ATLANTIS_minimal_cube_METADATA_PATH="${ATLANTIS_minimal_cube_METADATA_PATH}"
+)
+
+# Plan 0018 Milestone 5: exercises atlantis_add_material_asset() end to
+# end through the real build system -- --kind=material cooking and its
+# own TEXTURE-not-previously-declared FATAL_ERROR guard -- without
+# declaring the real Milestone 15 material asset yet. textured_quad_unorm
+# is already declared above (assets/CMakeLists.txt, processed before
+# tests/asset_system), so it is available here as the TEXTURE argument.
+atlantis_add_material_asset(
+  NAME cmake_declaration_test_material
+  SOURCE _test_fixtures/cmake_material_declaration_test.material.txt
+  TEXTURE textured_quad_unorm
+)
+add_dependencies(atlantis_asset_system_tests ${ATLANTIS_cmake_declaration_test_material_TARGET})
+target_compile_definitions(atlantis_asset_system_tests PRIVATE
+  ATLANTIS_CMAKE_DECLARATION_TEST_MATERIAL_ARTIFACT_PATH="${ATLANTIS_cmake_declaration_test_material_ARTIFACT_PATH}"
+  ATLANTIS_CMAKE_DECLARATION_TEST_MATERIAL_METADATA_PATH="${ATLANTIS_cmake_declaration_test_material_METADATA_PATH}"
 )
 
 catch_discover_tests(atlantis_asset_system_tests DISCOVERY_MODE PRE_TEST)

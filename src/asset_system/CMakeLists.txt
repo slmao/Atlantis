@@ -235,6 +235,73 @@ function(atlantis_add_texture_asset)
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
+  # Plan 0018 Section P5 (Plan Review item 1): exposes the exact string
+  # cookTexture() was already given as its own logicalPathInput --
+  # additive only, no behavior change to any existing caller (every
+  # existing caller simply gains one more unused-by-them exported
+  # variable), matching atlantis_add_static_mesh_asset()'s own
+  # ATLANTIS_<NAME>_LOGICAL_PATH precedent exactly.
+  # atlantis_add_material_asset() below is this variable's own first
+  # real consumer -- a scene's own TEXTURE_DEPENDENCIES entry needs it
+  # to record a texture's manifest line, the same way
+  # atlantis_add_scene_asset()'s existing MESH_DEPENDENCIES already uses
+  # atlantis_add_static_mesh_asset()'s own _LOGICAL_PATH.
+  set(ATLANTIS_${ARG_NAME}_LOGICAL_PATH "${ARG_SOURCE}" PARENT_SCOPE)
+endfunction()
+
+# Plan 0018 Section P5: declares one material asset for
+# atlantis_asset_cooker to process at build time -- mirrors
+# atlantis_add_scene_asset()'s own shape (a single named dependency
+# instead of a list, since a Material references exactly one texture,
+# ADR-0059's own closed DTO shape) more closely than
+# atlantis_add_static_mesh_asset()'s own no-dependency shape. TEXTURE
+# must already be declared via atlantis_add_texture_asset() above.
+function(atlantis_add_material_asset)
+  set(options "")
+  set(oneValueArgs NAME SOURCE TEXTURE)
+  set(multiValueArgs "")
+  cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+  set(asset_root "${CMAKE_SOURCE_DIR}/assets")
+  set(source_path "${asset_root}/${ARG_SOURCE}")
+  set(output_dir "${CMAKE_BINARY_DIR}/assets")
+
+  string(REGEX REPLACE "\\.material\\.txt$" "" base "${ARG_SOURCE}")
+  set(artifact_path "${output_dir}/${base}.amaterial")
+  set(metadata_path "${output_dir}/${base}.amaterial.meta.txt")
+  set(stamp "${output_dir}/${base}.stamp")
+
+  if(NOT DEFINED ATLANTIS_${ARG_TEXTURE}_ARTIFACT_PATH)
+    message(FATAL_ERROR
+      "atlantis_add_material_asset(${ARG_NAME}): TEXTURE '${ARG_TEXTURE}' is not a "
+      "previously declared texture asset -- declare it via atlantis_add_texture_asset() first.")
+  endif()
+
+  add_custom_command(
+    OUTPUT "${stamp}"
+    BYPRODUCTS "${artifact_path}" "${metadata_path}"
+    COMMAND atlantis_asset_cooker
+      --kind=material --source=${source_path} --asset-root=${asset_root}
+      --output-dir=${output_dir} --stamp=${stamp}
+    DEPENDS ${source_path} atlantis_asset_cooker
+    COMMENT "Cooking material asset: ${ARG_NAME} (${ARG_SOURCE})"
+    VERBATIM
+  )
+  add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
+  # Ordering only, matching atlantis_add_scene_asset()'s own
+  # MESH_DEPENDENCIES rationale exactly: the texture's own content does
+  # not affect this material's own cooked bytes (only its AssetId,
+  # resolved from the source file's own texture= logical-path string,
+  # already known at configure time) -- this add_dependencies() exists
+  # so the full build graph is consistent, not to mark this material's
+  # stamp stale on a texture content edit.
+  add_dependencies(${ARG_NAME}_asset ${ATLANTIS_${ARG_TEXTURE}_TARGET})
+
+  set_property(GLOBAL APPEND PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS "${ARG_SOURCE}")
+  set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
+  set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
+  set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
+  set(ATLANTIS_${ARG_NAME}_LOGICAL_PATH "${ARG_SOURCE}" PARENT_SCOPE)
 endfunction()
 
 # Plan 0012 Section D4: writes every declared asset's logical path
