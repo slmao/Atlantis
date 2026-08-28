@@ -326,3 +326,92 @@ Decision above already accepted (a hand-rolled format this project must
 maintain and document) grows by exactly one attribute's worth of
 authoring/artifact/loader logic — no new category of maintenance
 burden, only more of the same kind already accepted.
+
+## Accepted Amendment — 2026-08-29
+
+**Status: Accepted.** Drafted 2026-08-29 alongside
+[Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md) and
+[ADR-0063](0063-static-mesh-normal-attribute-schema-version-and-convention.md),
+and **formally accepted by Human Review on 2026-08-29** as part of
+Spec 0020's own Human Review Approval, following one final, targeted
+review round — see that Spec's own "Final Review Round" section for
+the full record. Everything above this section — including the
+"Accepted Amendment — 2026-08-25" section immediately above — remains
+this ADR's own original, unmodified `Accepted` Decision (this ADR's own
+top-level `Status: Accepted` is unchanged and unaffected by this
+amendment) — this amendment does not alter, narrow, or reinterpret any
+of it as originally written; it records a second, further narrowing of
+this ADR's own "position, color, and UV0" format-scope sentence (itself
+introduced by the 2026-08-25 amendment above), now in effect.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-08-29, accepting this amendment (every Decision
+item below) in full, as drafted, with no change, as part of
+[Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md)'s own
+Human Review Approval.
+
+**Related:**
+[Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md)
+(`Approved`),
+[ADR-0063](0063-static-mesh-normal-attribute-schema-version-and-convention.md)
+(`Accepted`) — this Amendment and ADR-0063 cross-reference each other:
+ADR-0063 makes the actual normal-attribute decision (schema, byte
+offset, version, numeric contract, coordinate convention); this
+Amendment records the corresponding, narrower change to this ADR's own
+already-`Accepted` (as amended 2026-08-25) format-scope sentence, so
+the two documents do not duplicate one another's content. Both were
+accepted together, in the same Human Review pass on Spec 0020.
+
+### Context for this amendment
+
+This ADR's own "Accepted Amendment — 2026-08-25" section (above)
+narrowed the original Decision's format scope to "a static triangle
+mesh with per-vertex position, color, and UV0." Spec 0020 widens the
+one static mesh vertex layout to add a fourth, mandatory attribute,
+object-space normal — a real, direct narrowing of that sentence's own
+scope, not a compatible extension it already permitted, exactly
+mirroring the 2026-08-25 amendment's own relationship to this ADR's
+original Decision. Per this repository's own established practice (an
+`Accepted` ADR's original Decision text — including a prior, already-
+`Accepted` amendment to it — is never silently rewritten; each further
+scope change gets its own, separately-dated, clearly-labeled amendment),
+this section is drafted alongside Spec 0020 and ADR-0063, so Human
+Review can evaluate the normal-attribute decision and its own required
+consequence to this ADR in one pass.
+
+### Decision
+
+This ADR's own Decision (as already amended 2026-08-25) is further
+amended, in effect, to read:
+
+- The runtime artifact and authoring source formats are scoped to this
+  Spec's one supported asset type, **as extended by Spec 0017 and
+  further extended by Spec 0020**: a static triangle mesh with
+  per-vertex **position, color, UV0, and normal**, `std::uint16_t`
+  indices — not "position, color, and UV0" alone. This remains one
+  single, fixed, hand-rolled, dependency-free format per this ADR's own
+  unchanged "hand-rolled, dependency-free" Decision above; normal
+  introduces no new field *kind* (three more `float`s, serialized by
+  the exact same explicit shift/mask little-endian routine every
+  existing float already uses) and no third-party dependency of any
+  kind.
+- The runtime artifact's own mandatory `schema_version` field (this
+  ADR's own unchanged Decision above) is exercised for a second
+  real, in-place format change: version 2 (position + color + UV0, 32
+  bytes/vertex) is superseded by version 3 (position + color + UV0 +
+  normal, 44 bytes/vertex). Consistent with this ADR's own explicit
+  disclosure that "no migration mechanism is built now" — version 3
+  introduces no migration reader for version 1 or version 2, matching
+  this format's own established single-supported-version precedent
+  exactly (a version-1 or version-2 artifact or source file is
+  rejected outright, not compatibly read).
+- This same versioning rule applies identically to the authoring source
+  format's own version marker line, for the same reason.
+
+### Consequences of this amendment
+
+No change to this ADR's own "no new third-party dependency," "no
+migration mechanism," or byte-order Decisions — this Amendment narrows
+one format-scope sentence only, for the second time. The negative/trade-off this ADR's own Decision above already
+accepted grows by exactly one more attribute's worth of authoring/
+artifact/loader logic — no new category of maintenance burden.
