@@ -327,32 +327,40 @@ maintain and document) grows by exactly one attribute's worth of
 authoring/artifact/loader logic — no new category of maintenance
 burden, only more of the same kind already accepted.
 
-## Proposed Amendment — 2026-08-29
+## Accepted Amendment — 2026-08-29
 
-**Status: Proposed.** Drafted 2026-08-29 alongside
+**Status: Accepted.** Drafted 2026-08-29 alongside
 [Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md) and
 [ADR-0063](0063-static-mesh-normal-attribute-schema-version-and-convention.md),
-awaiting Human Review in the same pass as that Spec's own approval.
-Everything above this section — including the "Accepted Amendment —
-2026-08-25" section immediately above — remains this ADR's own
-original, unmodified `Accepted` Decision (this ADR's own top-level
-`Status: Accepted` is unchanged and unaffected by this proposed
+and **formally accepted by Human Review on 2026-08-29** as part of
+Spec 0020's own Human Review Approval, following one final, targeted
+review round — see that Spec's own "Final Review Round" section for
+the full record. Everything above this section — including the
+"Accepted Amendment — 2026-08-25" section immediately above — remains
+this ADR's own original, unmodified `Accepted` Decision (this ADR's own
+top-level `Status: Accepted` is unchanged and unaffected by this
 amendment) — this amendment does not alter, narrow, or reinterpret any
-of it as originally written; it proposes a second, further narrowing of
+of it as originally written; it records a second, further narrowing of
 this ADR's own "position, color, and UV0" format-scope sentence (itself
-introduced by the 2026-08-25 amendment above), pending Human Review.
+introduced by the 2026-08-25 amendment above), now in effect.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-08-29, accepting this amendment (every Decision
+item below) in full, as drafted, with no change, as part of
+[Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md)'s own
+Human Review Approval.
 
 **Related:**
 [Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md)
-(`In Review`),
+(`Approved`),
 [ADR-0063](0063-static-mesh-normal-attribute-schema-version-and-convention.md)
-(`Proposed`) — this Amendment and ADR-0063 cross-reference each other:
+(`Accepted`) — this Amendment and ADR-0063 cross-reference each other:
 ADR-0063 makes the actual normal-attribute decision (schema, byte
 offset, version, numeric contract, coordinate convention); this
 Amendment records the corresponding, narrower change to this ADR's own
 already-`Accepted` (as amended 2026-08-25) format-scope sentence, so
-the two documents do not duplicate one another's content. Both await
-Human Review together, in the same pass as Spec 0020's own approval.
+the two documents do not duplicate one another's content. Both were
+accepted together, in the same Human Review pass on Spec 0020.
 
 ### Context for this amendment
 
@@ -371,10 +379,10 @@ this section is drafted alongside Spec 0020 and ADR-0063, so Human
 Review can evaluate the normal-attribute decision and its own required
 consequence to this ADR in one pass.
 
-### Proposed Decision
+### Decision
 
-Pending Human Review, this ADR's own Decision (as already amended
-2026-08-25) would be further amended, in effect, to read:
+This ADR's own Decision (as already amended 2026-08-25) is further
+amended, in effect, to read:
 
 - The runtime artifact and authoring source formats are scoped to this
   Spec's one supported asset type, **as extended by Spec 0017 and
@@ -400,11 +408,10 @@ Pending Human Review, this ADR's own Decision (as already amended
 - This same versioning rule applies identically to the authoring source
   format's own version marker line, for the same reason.
 
-### Consequences of this proposed amendment
+### Consequences of this amendment
 
 No change to this ADR's own "no new third-party dependency," "no
-migration mechanism," or byte-order Decisions — this Amendment, if
-accepted, would narrow one format-scope sentence only, for the second
-time. The negative/trade-off this ADR's own Decision above already
+migration mechanism," or byte-order Decisions — this Amendment narrows
+one format-scope sentence only, for the second time. The negative/trade-off this ADR's own Decision above already
 accepted grows by exactly one more attribute's worth of authoring/
 artifact/loader logic — no new category of maintenance burden.

@@ -1,16 +1,24 @@
 # ADR 0063: Static Mesh Normal Attribute — Schema, Version, Numeric Contract, and Coordinate Convention
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-29
-- **Deciders:** slmao
-- **Related Spec:** [specs/0020-mesh-normal-attribute-foundation.md](../specs/0020-mesh-normal-attribute-foundation.md)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-29 as part of [Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md)'s
+  own Human Review Approval, following one final, targeted review round
+  that corrected the numeric contract from a `length`-based,
+  `std::sqrt`-implying tolerance to a `length`-squared, double-precision
+  one, and reversed a comment-only layout-offset decision to four real,
+  named, `static_assert`-checked constants — see that Spec's own "Final
+  Review Round" section for the full record.
+- **Related Spec:** [specs/0020-mesh-normal-attribute-foundation.md](../specs/0020-mesh-normal-attribute-foundation.md) (`Approved`)
 - **Related ADR(s):** [ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)
   (data format/versioning policy — directly narrowed by its own second
-  Proposed Amendment, filed alongside this ADR), [ADR-0058](0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+  Accepted Amendment, accepted in the same Human Review pass as this
+  ADR), [ADR-0058](0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
   (the immediately-prior, structurally-identical precedent for adding a
   mandatory attribute to the one, single static mesh vertex layout —
-  also directly narrowed by its own Proposed Amendment, filed alongside
-  this ADR).
+  also directly narrowed by its own Accepted Amendment, accepted in the
+  same pass).
 
 ## Context
 
@@ -61,16 +69,31 @@ layout. No optional/variant vertex-layout mechanism is introduced.**
    disclosed values (Spec 0020's own D5/D6) as part of this ADR's own
    Implementation; none is left on the old 8-field grammar, none is
    silently defaulted.
-4. **Numeric contract:** each normal component must be finite (the
-   existing `NonFiniteFloat` check, extended in kind from 8 to 11
-   floats — no new enumerator for this part). **The normal vector's own
-   length must fall within `[0.99, 1.01]` of unit length**, checked
+4. **Numeric contract:** each normal component must be finite first
+   (the existing `NonFiniteFloat` check, extended in kind from 8 to 11
+   floats — no new enumerator for this part, and evaluated before the
+   check below). **The normal vector's own length-*squared* — never
+   `length`, never `std::sqrt` — computed via explicit double-precision
+   arithmetic (each `float` component promoted to `double`, an exact,
+   zero-rounding conversion, before `x·x + y·y + z·z`) must fall within
+   `[0.9801, 1.0201]`** (`0.99²`/`1.01²`, the same real ±1%-of-unit-
+   length tolerance stated on the squared quantity, chosen precisely to
+   avoid `std::sqrt`'s own platform/ISA-dependent rounding-path
+   variability across this codebase's own two Phase 1 targets, x86-64
+   Windows today and ARM/AArch64 Android tomorrow), checked
    independently at cook time and decode time, via a new pair of
    enumerators, `SourceParseError::NonUnitNormal` /
-   `ArtifactDecodeError::NonUnitNormal`. Neither layer ever rewrites,
-   rescales, or auto-normalizes an authored normal — a value outside
-   tolerance is rejected outright. A zero vector is rejected by this
-   same check; no separate zero-length case is needed.
+   `ArtifactDecodeError::NonUnitNormal` — confirmed, by a direct search
+   of every current `SourceParseError`/`ArtifactDecodeError` use in this
+   codebase, to be the one genuinely new failure kind neither enum's own
+   existing list expresses (deliberately never `NonFiniteFloat`, whose
+   own name and every existing use already means non-finite, never
+   finite-but-wrong-magnitude). Neither layer ever rewrites, rescales,
+   or auto-normalizes an authored normal — a value outside tolerance is
+   rejected outright. A zero vector, `-0.0` on any component, and an
+   extremely small non-zero vector are all correctly rejected by this
+   same single check — no separate special case exists or is needed for
+   any of them.
 5. **Coordinate convention:** object-space (before any world transform;
    Spec 0019's own D7 is the sole consumer of the transform step),
    right-handed (this codebase's own already-established convention,
@@ -84,28 +107,45 @@ layout. No optional/variant vertex-layout mechanism is introduced.**
    The author bears full responsibility for a correctly-facing normal.
 6. **`minimal_cube.mesh.txt`'s own 8 shared vertices, 12 triangles, and
    36-index list are unchanged** — this ADR adds smooth (vertex-
-   averaged) normals, computed as each corner's own normalized position
-   (`(±0.5, ±0.5, ±0.5)` normalized is exactly `±1/√3 ≈ ±0.57735` per
-   component, sign-matched to the corner) — **explicitly labeled
+   averaged) normals, computed as each corner's own normalized position.
+   Exact decimal literal, chosen so `std::from_chars` recovers a
+   specific, unambiguous `binary32` value: `0.577350269` (nine
+   significant digits of `1/√3 = 0.5773502691896258…`), sign-matched
+   per component to that corner's own `(±0.5, ±0.5, ±0.5)` position —
+   written directly into the checked-in authoring source as a plain
+   literal, never computed by the cooker at build time (this ADR's own
+   item 5 above, restated for emphasis at the one asset where it would
+   be easiest to implement as a convenience). **Explicitly labeled
    smooth-shaded, never described as hard-face**, since no current
    shader reads this region at all and the mesh's own triangle/index
    structure stays byte-for-byte unchanged.
 7. **`textured_quad_left.mesh.txt`/`textured_quad_right.mesh.txt`** each
    receive the uniform normal `(0, 0, 1)` for all four vertices —
-   confirmed correct by direct cross-product computation of each
-   quad's own real index winding against its own real, flat, `z = 0`
-   vertex positions, not assumed.
+   confirmed correct by direct cross-product computation of **both**
+   triangles of **each** quad independently against each quad's own
+   real index winding and real, flat, `z = 0` vertex positions, not
+   assumed from one triangle or from visual orientation; all four
+   independent computations agree.
 8. **No new RHI/RenderGraph/Renderer public API.**
    `atlantis::rhi::VertexAttributeFormat::Float3` and
    `atlantis::shader_system::rhi_integration::VertexAttributeType::Float3`
    already exist and are reused verbatim; `createMesh()`'s own
-   `layout` parameter remains unconditionally unread. The normal's own
-   byte offset (32) is documented in `mesh_artifact.h`'s own existing
-   top-of-file comment, alongside the other three attributes' offsets
-   — no new named `k*OffsetBytes` constant is introduced, keeping this
-   format's own existing "only stride and schema version are named
-   constants; per-attribute offsets are comment-documented" shape
-   unchanged.
+   `layout` parameter remains unconditionally unread. **All four
+   attributes' own byte offsets become real, named, public
+   `constexpr std::size_t` constants in `mesh_artifact.h`** —
+   `kMeshArtifactPositionOffsetBytes = 0`,
+   `kMeshArtifactColorOffsetBytes = 12`, `kMeshArtifactUv0OffsetBytes = 24`,
+   `kMeshArtifactNormalOffsetBytes = 32` — alongside the existing
+   `kMeshArtifactVertexStrideBytes`/`kMeshArtifactSchemaVersion`, closing
+   a real testability gap a comment-only offset would have left open (a
+   future consumer hand-writing the wrong magic offset, with nothing to
+   catch the mistake at build time). Each of the six real composition-
+   root touch points gains four `static_assert`s tying its own local
+   `Vertex` struct's `offsetof()` values to these constants — a
+   compiler-enforced, always-in-sync guarantee, not a documentation
+   convention. This remains zero new *runtime* API anywhere (`constexpr`/
+   `static_assert`/`offsetof` are compile-time only) and introduces no
+   general vertex-schema system.
 
 ## Consequences
 
@@ -142,7 +182,8 @@ See [Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md)'s
 own "Alternatives Considered" section for the full, disclosed
 reasoning behind every rejected option (a per-asset optional vertex
 layout, automatic/cooker-computed normal generation, cooker-side
-auto-normalization, a 24-vertex hard-face `minimal_cube`, a
-placeholder/known-meaningless normal, and a new named per-attribute
-offset constant) — not restated here to avoid duplicating one
+auto-normalization, `std::sqrt`-based length validation, a 24-vertex
+hard-face `minimal_cube`, a placeholder/known-meaningless normal, and a
+named offset constant for normal alone while leaving the other three
+attributes comment-only) — not restated here to avoid duplicating one
 argument in two documents.

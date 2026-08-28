@@ -346,31 +346,39 @@ introduced.**
   UV data meaningless rather than deliberately authored — see Spec
   0017's own migration decision for the full disclosure.
 
-## Proposed Amendment — 2026-08-29
+## Accepted Amendment — 2026-08-29
 
-**Status: Proposed.** Drafted 2026-08-29 alongside
+**Status: Accepted.** Drafted 2026-08-29 alongside
 [Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md) and
 [ADR-0063](0063-static-mesh-normal-attribute-schema-version-and-convention.md),
-awaiting Human Review in the same pass as that Spec's own approval.
-Everything above this section remains this ADR's own original,
-unmodified `Accepted` Decision (this ADR's own top-level `Status:
-Accepted` above is unchanged and unaffected by this proposed amendment)
+and **formally accepted by Human Review on 2026-08-29** as part of
+Spec 0020's own Human Review Approval, following one final, targeted
+review round — see that Spec's own "Final Review Round" section for
+the full record. Everything above this section remains this ADR's own
+original, unmodified `Accepted` Decision (this ADR's own top-level
+`Status: Accepted` above is unchanged and unaffected by this amendment)
 — this amendment does not alter, narrow, or reinterpret any of it as
-originally written; it proposes narrowing this ADR's own "the one,
-single static mesh vertex layout is exactly position + color + UV0"
-statement under the Decision below, pending Human Review.
+originally written; it narrows this ADR's own "the one, single static
+mesh vertex layout is exactly position + color + UV0" statement under
+the Decision below, now in effect.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-08-29, accepting this amendment (every Decision
+item below) in full, as drafted, with no change, as part of
+[Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md)'s own
+Human Review Approval.
 
 **Related:**
 [Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md)
-(`In Review`),
+(`Approved`),
 [ADR-0063](0063-static-mesh-normal-attribute-schema-version-and-convention.md)
-(`Proposed`) — this Amendment and ADR-0063 cross-reference each other,
+(`Accepted`) — this Amendment and ADR-0063 cross-reference each other,
 mirroring this ADR's own existing relationship with ADR-0045: ADR-0063
 makes the actual normal-attribute vertex-layout decision; this
 Amendment records the corresponding, narrower change to this ADR's own
 already-`Accepted` "one, single vertex layout" Decision, so the two
-documents do not duplicate one another's content. Both await Human
-Review together, in the same pass as Spec 0020's own approval.
+documents do not duplicate one another's content. Both were accepted
+together, in the same Human Review pass on Spec 0020.
 
 ### Context for this amendment
 
@@ -391,10 +399,9 @@ statement), this section is drafted alongside Spec 0020 and ADR-0063, so
 Human Review can evaluate the normal-attribute decision and its own
 required consequence to this ADR in one pass.
 
-### Proposed Decision
+### Decision
 
-Pending Human Review, this ADR's own Decision (above) would be amended,
-in effect, to read:
+This ADR's own Decision (above) is amended, in effect, to read:
 
 - **Normal becomes a mandatory fourth attribute of the one, single
   static mesh vertex layout — position (3 floats) + color (3 floats) +
@@ -426,36 +433,66 @@ in effect, to read:
   disclosed normal value as part of Spec 0020's own Implementation —
   none is left on the old 8-field grammar, none silently defaulted to
   `(0, 0, 0)`.
-- **Value contract:** normal floats must be finite (this ADR's own
-  Decision item 4's existing finiteness check, extended in kind from
-  eight floats to eleven) **and, unlike position/color/UV0, must also
-  fall within `[0.99, 1.01]` of unit length** — a new numeric
+- **Value contract:** normal floats must be finite first (this ADR's
+  own Decision item 4's existing finiteness check, extended in kind
+  from eight floats to eleven) **and, unlike position/color/UV0, must
+  also satisfy a length-*squared* check — never `length`, never
+  `std::sqrt` — computed via explicit double-precision arithmetic
+  (each already-finite `float` component promoted to `double`, an
+  exact conversion, before `x·x + y·y + z·z`), required to fall within
+  `[0.9801, 1.0201]`** (`0.99²`/`1.01²`, a real ±1%-of-unit-length
+  tolerance stated on the squared quantity specifically to avoid
+  `std::sqrt`'s own platform/ISA-dependent rounding-path variability
+  across x86-64 Windows and ARM/AArch64 Android) — a new numeric
   requirement this ADR's own original Decision item 4 did not need for
   position/color/UV0 (which carry no comparable "correct magnitude"
   concept), checked independently at cook time and decode time via a
   new pair of enumerators, `SourceParseError::NonUnitNormal` /
   `ArtifactDecodeError::NonUnitNormal`. Neither layer ever rewrites,
-  rescales, or auto-normalizes an authored normal.
+  rescales, or auto-normalizes an authored normal; a zero vector,
+  `-0.0` on any component, and an extremely small non-zero vector are
+  all rejected by this same single check.
 - **Attribute location convention** (this ADR's own Decision item 6,
   above) continues unchanged in kind — a shader declaring a normal
   input assigns it whatever `location` number that shader itself
   chooses, matched only against that same shader's own reflected input
   list, exactly as position/color/UV0 already work; no shader in this
   codebase declares one yet (Spec 0020's own Pre-draft verification).
+- **Layout offsets become real, named constants for all four
+  attributes, not comment-only.** This ADR's own Decision item 6
+  ("Attribute location convention," above) already covers *shader*
+  `location` numbering; this is a separate, `mesh_artifact.h`-level
+  addition — `kMeshArtifactPositionOffsetBytes = 0`,
+  `kMeshArtifactColorOffsetBytes = 12`, `kMeshArtifactUv0OffsetBytes = 24`,
+  `kMeshArtifactNormalOffsetBytes = 32`, alongside the existing
+  `kMeshArtifactVertexStrideBytes`/`kMeshArtifactSchemaVersion` —
+  closing a real testability gap (a comment-only offset gives a future
+  consumer nothing to catch a hand-written magic-number mistake at
+  build time). Each of the six real composition-root touch points gains
+  four `static_assert`s tying its own local `Vertex` struct's own
+  `offsetof()` values to these constants. Zero new *runtime* API;
+  `constexpr`/`static_assert`/`offsetof` are compile-time only, and no
+  general vertex-schema system is introduced.
 - **One new error-enumerator pair, `NonUnitNormal`** (parse-time and
   decode-time) — the one exception to this ADR's own Decision item 7
   ("No new error enumerator anywhere"), since no existing enumerator
-  covers a "correct magnitude" check; every other new rejection path
-  (wrong field count, wrong version, wrong stride) continues to reuse
+  covers a "finite but wrong magnitude" check (confirmed by a direct
+  search of every current `SourceParseError`/`ArtifactDecodeError` use
+  in this codebase — deliberately never `NonFiniteFloat`, whose own
+  name and every existing use already means non-finite); every other
+  new rejection path (wrong field count, wrong version, wrong stride)
+  continues to reuse
   an existing enumerator, unchanged in kind.
 
-### Consequences of this proposed amendment
+### Consequences of this amendment
 
 No change to this ADR's own UV0-origin/sampling-convention Decision
 (item 5, above), attribute-location-convention Decision (item 6), or
-Vulkan-pipeline-level closure argument — this Amendment, if accepted,
-narrows the vertex-layout attribute-count sentence and value-contract
-sentence only. The negative/trade-off this ADR's own Decision above
+Vulkan-pipeline-level closure argument — this Amendment narrows the
+vertex-layout attribute-count sentence and value-contract sentence,
+and additionally adds the new named-offset-constant/
+`static_assert` mechanism above; neither is a change to any of this
+ADR's own already-settled UV0-specific decisions. The negative/trade-off this ADR's own Decision above
 already accepted (four existing composition-root call sites must widen
 their own local `Vertex` struct in lockstep) recurs for this Spec's own
 freshly, independently re-enumerated list (six real touch points, not

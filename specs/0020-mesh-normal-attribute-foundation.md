@@ -1,14 +1,108 @@
 # Spec: Mesh Normal Attribute Foundation
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-08-29
-- **Related Plan(s):** none yet — this Spec must reach `Approved`, and its
-  own future Plan must reach `Approved` and be **fully implemented and
-  merged**, before Plan 0019 ("Lighting Foundation") may be drafted —
-  see [Spec 0019](0019-lighting-foundation.md)'s own D1 and its
-  header's own governance-gate text, which this Spec exists to satisfy.
-- **Related ADR(s):** [ADR-0063](../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md) (`Proposed`), plus Proposed Amendments to [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md) and [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+- **Related Plan(s):** none yet. **This approval authorizes drafting
+  Plan 0020 only — not Implementation.** Once Plan 0020 itself reaches
+  `Approved` and its own Implementation PR has merged, Spec 0019's own
+  Plan-drafting gate lifts — see [Spec 0019](0019-lighting-foundation.md)'s
+  own D1 and header, and this Spec's own D9, both of which this Spec's
+  own approval leaves completely unchanged: reaching `Approved` on this
+  Spec alone is not, and was never claimed to be, sufficient to unblock
+  Plan 0019.
+- **Related ADR(s):** [ADR-0063](../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md) (`Accepted`), plus Accepted Amendments to [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md) and [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+- **Human Review Approval (2026-08-29):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
+  git-identified maintainer) on 2026-08-29, accepting this document's
+  own "Decisions for Human Review" section in full, including
+  `version 3`, the fixed 44-byte layout, the object-space normal
+  convention, the finite/non-zero/unit-length-squared numeric contract,
+  `minimal_cube`'s smooth normals, both quads' `(0, 0, 1)` normals, old-
+  version rejection, no automatic generation/normalization anywhere,
+  and every stated Non-Goal — per this document's own final,
+  corrected recommendations produced during one final, targeted review
+  round (below), and accepting [ADR-0063](../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md)
+  (`Proposed` → `Accepted`) plus the Proposed Amendments to
+  [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)/[ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+  (both → `Accepted Amendment`) in the same pass. **This approval
+  authorizes drafting Plan 0020 only. It does not authorize
+  Implementation.** [Spec 0019](0019-lighting-foundation.md) remains
+  Plan-blocked until this Spec's own Implementation PR has merged —
+  unchanged, unshortened by this approval.
+
+## Final Review Round (2026-08-29) — closed findings, recorded before approval
+
+A single, targeted final review round examined ten specific areas of
+this Spec's own numeric determinism, error-domain precision, and
+layout-contract testability. Every item was closed at the Spec level;
+two produced a real, disclosed *design change* from this Spec's own
+first draft, not merely clarified wording — recorded here so the
+change is visible, not silently folded in:
+
+1. **The normal length check is restated on length-*squared*, in
+   double precision, never `std::sqrt` — a real design change, not a
+   wording fix.** The first draft stated its `[0.99, 1.01]` tolerance
+   on `length` directly, implying a `std::sqrt` call whose own
+   preceding `x·x + y·y + z·z` sum has a real, if small, ISA/compiler-
+   dependent rounding-path variability (fused-multiply-add availability
+   differs between this codebase's own two Phase 1 targets, x86-64
+   Windows and ARM/AArch64 Android) — a genuine determinism risk for a
+   value compared against a fixed boundary, never actually addressed by
+   the first draft's own text. Corrected: the check is now stated and
+   computed on `length`-*squared* (`[0.9801, 1.0201]`, the identical
+   real tolerance restated on the squared quantity), computed via
+   explicit double-precision arithmetic after an exact float-to-double
+   promotion of each already-finite-checked component — `std::sqrt`
+   appears nowhere in this Spec's own numeric contract anymore (D3).
+2. **The layout's own four per-attribute byte offsets become real,
+   named, `constexpr` constants — a real reversal, not a wording fix.**
+   The first draft kept every offset (including the new normal one)
+   documented only in `mesh_artifact.h`'s own prose comment, reasoning
+   from today's own precedent (only stride/schema-version are named).
+   This round's own review correctly identified that a comment is not
+   compile-time-checkable — a future consumer could still hand-write
+   the wrong magic offset with nothing to catch the mistake. Corrected:
+   `kMeshArtifactPositionOffsetBytes`/`ColorOffsetBytes`/
+   `Uv0OffsetBytes`/`NormalOffsetBytes` are added to `mesh_artifact.h`
+   as real, public constants — all four attributes, not normal alone,
+   closing the asymmetry a normal-only constant would have created —
+   and each of the six real composition-root touch points gains four
+   `static_assert`s tying its own local `Vertex` struct to them, a
+   compiler-enforced synchronization guarantee (D7).
+
+Eight further findings closed with real evidence, none requiring a
+further design change: the complete six-scenario error-domain matrix
+confirmed against `errors.h`'s own real, current enumerator lists, with
+a direct-search-confirmed finding that neither `SourceParseError` nor
+`ArtifactDecodeError` is consumed by any exhaustive `switch` anywhere in
+this codebase today, so this Spec's own two new `NonUnitNormal`
+enumerators require no C4062 protection (D2); explicit required test
+cases for the length-squared boundary, `-0.0`, an extremely small
+non-zero vector, and `NaN`/`Inf` ordering (D3); the cube's own smooth
+normals pinned to an exact, `from_chars`-recoverable nine-significant-
+digit decimal literal (`0.577350269`) rather than an approximate value,
+with the resulting bit pattern locked by a pinned-byte test once a real
+build exists, never hand-derived in this Spec's own text (D5); both
+quads' `(0, 0, 1)` normal reconfirmed via **both** triangles of **each**
+quad independently (four total computations, all agreeing), not
+inferred from one triangle (D6); a fresh, explicit re-confirmation that
+no artifact-distribution mechanism exists in this codebase today (not
+silently inherited from ADR-0045's 2026-08-19 statement) and that all
+three real mesh assets are confirmed unconditionally declared, re-
+cookable under `ATLANTIS_BUILD_TESTS=OFF` (Requirements); confirmed
+`specs/README.md`'s own Spec 0019 row already states the real
+Implementation-merged governance gate, never loose "after `Approved`"
+language; confirmed no other `Accepted` ADR beyond ADR-0045/ADR-0058
+closes the mesh vertex schema (a repository-wide search of every ADR
+mentioning "position and color"/vertex layout found only a contextual,
+non-authoritative reference in ADR-0059); and the Testing & Verification
+Plan expanded to an explicit, complete checklist matching every item
+this round's own review named.
+
+No unresolvable architectural conflict was found. Every finding above
+was closed with a real, evidenced fix within this Spec's own existing
+scope.
 
 ## Summary
 
@@ -131,21 +225,42 @@ not a convenience.
   existing float already uses.
 - **Numeric contract (D3):** each normal component must be finite (the
   existing per-vertex `NonFiniteFloat` check, extended from 8 to 11
-  floats per vertex, unchanged in kind); the normal vector's own length
-  must fall within `[0.99, 1.01]` of unit length, checked independently
-  at cook time and decode time — a new
+  floats per vertex, unchanged in kind); the normal vector's own
+  length-*squared* (computed in double precision, never via
+  `std::sqrt`) must fall within `[0.9801, 1.0201]`, checked
+  independently at cook time and decode time — a new
   `SourceParseError::NonUnitNormal` / `ArtifactDecodeError::NonUnitNormal`
   pair (genuinely new failure kinds; no existing enumerator covers
   "correct magnitude"). Neither the cooker nor the decoder ever rewrites
   a normal's own authored bit pattern to force it onto the unit sphere —
   a non-conforming value is rejected outright, never silently corrected.
 - **No migration mechanism, no back-compat reader, no silent default**
-  — identical in kind to ADR-0058's own Decision item 3. Every
+  — identical in kind to ADR-0058's own Decision item 3, grounded in the
+  identical reasoning: "there is no independently-distributed copy of a
+  mesh artifact anywhere — every artifact is a build output,
+  deterministically regenerated from its own checked-in authoring
+  source at build time" ([ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)).
+  **Re-confirmed fresh at this Spec's own drafting time, not silently
+  inherited from ADR-0045's 2026-08-19 statement:** no Android (or any
+  other) build/packaging pipeline exists anywhere in this repository
+  today that distributes a *built* mesh artifact independently of its
+  own checked-in source — confirmed by direct inspection, current as of
+  this Spec's own drafting, not assumed to remain true forever. Every
   currently-authored mesh source file is re-authored with real,
   disclosed normal values as part of this Spec's own Implementation;
   none is left on the old 8-field grammar, and none is silently
   defaulted to `(0, 0, 0)` (which would also fail the new unit-length
   check, structurally preventing this particular silent default).
+  **Confirmed re-cookable under `ATLANTIS_BUILD_TESTS=OFF`:** all three
+  real mesh assets' own `atlantis_add_static_mesh_asset()` declarations
+  (`assets/CMakeLists.txt`) are unconditional — `minimal_cube` and both
+  `textured_quad_left`/`textured_quad_right` are declared outside any
+  `ATLANTIS_BUILD_TESTS` guard (the latter two's own declaration
+  comment states this explicitly: "Declared here, unconditionally
+  (like `minimal_cube`/`world_scene` above)") — so a fresh
+  `-DATLANTIS_BUILD_TESTS=OFF` configure/build re-cooks all three
+  assets against this Spec's own new version-3 grammar with no
+  production-tree gap.
 - **Every real composition-root call site widened in lockstep** — see
   Pre-draft verification for the freshly-confirmed, exhaustive list;
   this Spec's own future Plan may not rely on Spec 0017/ADR-0058's own
@@ -330,8 +445,8 @@ mesh authoring (.mesh.txt, version 3)
         v
 parseMeshSource() -- version-line exact match; per-line field count
   (11, not 8); per-float finiteness (extended to 11); NEW: per-vertex
-  normal-length check in [0.99, 1.01] (D3) -- rejects outright, never
-  normalizes or generates
+  normal length-squared check in [0.9801, 1.0201], double precision,
+  no sqrt (D3) -- rejects outright, never normalizes or generates
         |
         v
 encodeMeshArtifact() -- same explicit little-endian primitives,
@@ -375,51 +490,138 @@ Spec's own drafting brief proposed, verified rather than assumed. No
 padding, no gap, matching the existing format's own "no padding"
 discipline verbatim.
 
-### D2. Authoring/artifact version — a real, distinguishable rejection path for each failure kind
+### D2. Authoring/artifact version and the complete error-domain matrix — six independently-distinguishable failure kinds, confirmed against real enumerators, zero new C4062 exposure (expanded this round — see the Final Review Round note above)
 
-**Decision:** authoring source version `2 → 3`
+**Version decision, unchanged:** authoring source version `2 → 3`
 (`atlantis_static_mesh_source_version: 3`); artifact schema version
 `2 → 3`. Both old versions rejected outright — no dual-version reader,
 no migration mechanism, identical in kind to ADR-0058's own version-1-
-to-2 precedent. **Missing normal and an old version are already,
-structurally distinguishable rejection paths, with no new code
-required to keep them so:** a source file still declaring
-`atlantis_static_mesh_source_version: 2` fails at the version-line
-check (`SourceParseError::UnknownSourceVersion`), evaluated **first**,
-before any per-vertex field is ever read; a source file whose version
-line correctly reads `3` but whose `vertex:` lines still carry only 8
-fields (normal genuinely omitted) fails at the separate,
-already-existing per-line field-count check
-(`SourceParseError::CountMismatch`), evaluated per vertex, only after
-the version check has already passed. The artifact layer has the
-identical two-step structure (`UnknownSchemaVersion` first,
-`UnsupportedVertexStride` second) — confirmed directly against
-`decodeMeshArtifact()`'s own real, current code, not merely asserted.
+to-2 precedent.
 
-### D3. Normal numeric contract — required unit length, checked, never auto-corrected
+**The complete error-domain matrix, six named scenarios, confirmed
+each maps to its own distinguishable rejection path against
+`errors.h`'s own real, current enumerator lists (read in full this
+round) — none conflated with another:**
 
-**Decision:** each normal component must be finite (the existing
-`NonFiniteFloat` check, extended in kind from 8 to 11 floats — no new
-enumerator). The normal vector's own length must fall within `[0.99,
-1.01]` of unit length — a real, stated tolerance (not an unstated "close
-enough"), chosen to tolerate ordinary hand-typed decimal precision
-(e.g. `0.577350` for a cube-corner direction, D5) while still rejecting
-a genuinely unnormalized author error (e.g. `1 1 1`, length ≈ `1.732`,
-well outside tolerance). Checked independently at cook time
-(`parseMeshSource()`) and decode time (`decodeMeshArtifact()`), each via
-a new, shared-in-kind pair of enumerators,
-`SourceParseError::NonUnitNormal` / `ArtifactDecodeError::NonUnitNormal`
-— genuinely new failure kinds; no existing enumerator covers "correct
-magnitude." **Neither layer ever rewrites, rescales, or auto-normalizes
-a normal's own authored bit pattern** — a value outside tolerance is
-rejected outright, matching this Spec's own explicit drafting-brief
-instruction to avoid any transformation of author input that could
-introduce platform floating-point differences. A zero vector (length
-exactly `0`) is rejected by this identical check — no separate
-zero-length special case is needed. `NaN`/`Inf` are rejected by the
-existing, extended `NonFiniteFloat` check, evaluated before the
-length check (matching the existing per-float-then-per-vertex
-validation order).
+| # | Scenario | Layer | Enumerator (real, confirmed) |
+|---|---|---|---|
+| 1 | An 8-field `vertex:` line under the old `atlantis_static_mesh_source_version: 2` marker | cook (`parseMeshSource()`) | `SourceParseError::UnknownSourceVersion` — the version-line check runs **first**, before any per-vertex field is ever read, so this path is reached before field count is even examined |
+| 2 | A correctly-versioned-3 `vertex:` line carrying only 10 fields (one normal component genuinely omitted) | cook | `SourceParseError::CountMismatch` — the existing per-line field-count check (`fields.size() != 11`), reached only *after* the version check already passed |
+| 3 | A finite-count-correct line whose normal component is `NaN`/`Inf` | cook | `SourceParseError::NonFiniteFloat` — the existing per-float finiteness check, extended in kind from 8 to 11 floats, evaluated *before* any magnitude check (D3) |
+| 4 | A finite, correctly-counted normal whose own length-squared falls outside `[0.9801, 1.0201]` | cook | `SourceParseError::NonUnitNormal` — **new** (below); confirmed no existing `SourceParseError` enumerator (`UnknownSourceVersion, MissingField, FieldOrderMismatch, MalformedNumber, NonFiniteFloat, CountMismatch, IndexOutOfRange, IndexCountNotMultipleOfThree, VertexCountOutOfRange, TrailingContent` — the complete, current list) represents "finite but wrong magnitude"; deliberately **not** `NonFiniteFloat` (that enumerator's own name and every existing use of it means non-finite, never finite-but-out-of-range) |
+| 5 | An artifact header declaring the wrong schema version or the wrong stride | decode (`decodeMeshArtifact()`) | `ArtifactDecodeError::UnknownSchemaVersion` / `UnsupportedVertexStride` — both already existing, unchanged in kind |
+| 6 | A hand-corrupted artifact byte buffer whose normal bytes decode to a finite value with an out-of-tolerance length-squared | decode | `ArtifactDecodeError::NonUnitNormal` — **new** (below), the decode-time twin of scenario 4, independently re-derived from the artifact's own bytes, never trusting a well-formed cooker (matching every other artifact-layer check's own "never trust the cooker" discipline) |
+
+**New enumerators, exactly two, added where — and only where — no
+existing one fits:**
+
+```cpp
+enum class SourceParseError {
+  // ... existing enumerators, unchanged ...
+  NonUnitNormal,  // new
+};
+
+enum class ArtifactDecodeError {
+  // ... existing enumerators, unchanged ...
+  NonUnitNormal,  // new
+};
+```
+
+**C4062 requirement, confirmed by direct search, not assumed:** neither
+`SourceParseError` nor `ArtifactDecodeError` is consumed by any
+exhaustive `switch` statement, or any `toString()`-shaped function,
+anywhere in `src/` or `tests/` today (confirmed by a repository-wide
+grep for `switch.*SourceParseError`/`switch.*ArtifactDecodeError` and
+for a `toString(SourceParseError`/`toString(ArtifactDecodeError`
+signature — zero matches for either). Every existing consumer only ever
+compares a returned error value with `==` in a test assertion. **This
+Spec's own two new enumerators therefore require no `/w14062` C4062
+positive/negative probe** — there is no exhaustive switch anywhere that
+a missing case could silently fall through. This is stated as a
+confirmed finding, not a gap: unlike `WorldError`/`RuntimeInitError`-
+shaped enums elsewhere in this codebase (which *do* have a real
+`toString()` switch and *do* need C4062 protection when widened), these
+two error types simply have no such consumer today.
+
+### D3. Normal numeric contract — required unit length-squared, checked in double precision, never auto-corrected (revised this round — see the Final Review Round note above)
+
+**Decision (revised from this Spec's own first draft, which stated the
+tolerance on `length`, implying `std::sqrt`):** each normal component
+must be finite first (the existing `NonFiniteFloat` check, extended in
+kind from 8 to 11 floats — no new enumerator, evaluated before any
+magnitude check, matching the existing per-float-then-per-vertex
+validation order). **The check is then stated and computed on
+length-*squared*, never on `length` itself, and never via
+`std::sqrt`:**
+
+```cpp
+// x, y, z are the three already-finite-checked normal components
+// (float). Promoted to double before every arithmetic operation --
+// float-to-double promotion is always exact (zero rounding, unlike
+// float-to-float multiplication), so this computation carries no
+// platform-dependent rounding risk from the promotion step itself,
+// and IEEE 754 double arithmetic is required to be correctly rounded,
+// per operation, on every conforming target (x86-64 Windows today;
+// ARM/AArch64 Android, Phase 1's own other primary target, tomorrow)
+// -- eliminating the float-level concern (compiler/ISA-dependent FMA
+// fusion changing which single- or double-rounding path a plain
+// float `x*x + y*y + z*z` takes) this Spec's own first draft did not
+// address. No std::sqrt anywhere in this check.
+const double lengthSquared =
+    static_cast<double>(x) * static_cast<double>(x) +
+    static_cast<double>(y) * static_cast<double>(y) +
+    static_cast<double>(z) * static_cast<double>(z);
+const bool unitLength = lengthSquared >= 0.9801 && lengthSquared <= 1.0201;
+```
+
+**Tolerance, exact:** `lengthSquared ∈ [0.9801, 1.0201]` inclusive —
+`0.99²` and `1.01²` respectively, the identical `±1%`-of-unit-length
+tolerance this Spec's own first draft already chose and justified
+(tolerates ordinary hand-typed decimal precision, e.g. `0.577350269`
+for a cube-corner direction, D5, while rejecting a genuinely
+unnormalized author error, e.g. `1 1 1`, `lengthSquared = 3.0`, far
+outside tolerance) — restated here on the squared quantity, not a new
+tolerance decision.
+
+**Checked independently at cook time (`parseMeshSource()`) and decode
+time (`decodeMeshArtifact()`), using the identical formula and
+tolerance — the decoder never trusts the cooker's own result, exactly
+matching this format's own established discipline for every other
+independently-re-validated condition** (schema version, stride,
+finiteness). A new, shared-in-kind pair of enumerators
+(`SourceParseError::NonUnitNormal` / `ArtifactDecodeError::NonUnitNormal`
+— see D2's own complete error-domain matrix) — genuinely new failure
+kinds; no existing enumerator covers "finite but wrong magnitude."
+**Neither layer ever rewrites, rescales,
+or auto-normalizes a normal's own authored bit pattern** — a value
+outside tolerance is rejected outright, matching this Spec's own
+explicit drafting-brief instruction to avoid any transformation of
+author input.
+
+**Required test cases, explicit, not left to Implementation's own
+judgment:**
+
+- **Boundary, both sides:** `lengthSquared` exactly `0.9801` and
+  exactly `1.0201` are both **accepted** (inclusive bounds); a value
+  the smallest representable step below `0.9801`, or above `1.0201`,
+  is **rejected**.
+- **`-0.0` on one or more components:** `std::isfinite(-0.0)` is
+  `true` (accepted by the finiteness check), and `(-0.0)² == +0.0`
+  exactly under IEEE 754 — a normal with a `-0.0` component behaves
+  identically, for this check's own purposes, to the same normal with
+  `+0.0` in that position; a test confirms this explicitly rather than
+  leaving it as an unverified assumption about IEEE 754 semantics.
+- **Extremely small non-zero components** (e.g. all three components
+  `~1e-20`): finite, but `lengthSquared` is effectively `0`, far below
+  `0.9801` — rejected by this same check; no separate "near-zero"
+  special case exists or is needed (this Spec's own first draft already
+  made this claim; this revision keeps it true under the new
+  length-squared formulation).
+- **`NaN`/`Inf` on any component:** rejected by the existing, extended
+  `NonFiniteFloat` check, confirmed to run **before** the length-squared
+  check ever executes (so a `NaN` component never reaches the
+  length-squared arithmetic at all, avoiding any question of `NaN`
+  propagation through the tolerance comparison).
 
 ### D4. Coordinate convention — object-space, right-handed, author-responsible, never auto-flipped
 
@@ -453,18 +655,43 @@ hand-computed re-authoring of the three existing mesh sources) is fully
 responsible for a correctly-facing normal; the cooker's own
 responsibility is limited to the numeric contract (D3) alone.
 
-### D5. The existing shared-vertex cube — smooth, deterministic, honestly-labeled normals; the mesh itself untouched
+### D5. The existing shared-vertex cube — smooth, deterministic, honestly-labeled normals, an exact `from_chars`-recoverable decimal literal; the mesh itself untouched
 
 **Decision:** `minimal_cube.mesh.txt` keeps its own existing 8 shared
-vertices, 12 triangles, and 36-index list completely unchanged — this
-Spec adds **smooth (vertex-averaged) normals**, not hard-face ones,
-computed as each vertex's own position, normalized (the cube's 8
-corners at `(±0.5, ±0.5, ±0.5)` are already symmetric around the
-origin, so the vertex-to-center direction is exactly the vertex
-position itself — no separate centroid computation is needed). The
-exact eight values, hand-computed and disclosed here, not left to
-Implementation's own judgment: each component is `±1/√3 ≈ ±0.57735`,
-sign-matched to that corner's own `(±0.5, ±0.5, ±0.5)` position.
+vertices, 12 triangles, and 36-index list, and its own existing
+position/color/UV0 values, completely unchanged — only a fourth,
+appended normal field is added per `vertex:` line. This Spec adds
+**smooth (vertex-averaged) normals**, not hard-face ones, computed as
+each vertex's own position, normalized (the cube's 8 corners at
+`(±0.5, ±0.5, ±0.5)` are already symmetric around the origin, so the
+vertex-to-center direction is exactly the vertex position itself — no
+separate centroid computation is needed, and none is performed by the
+cooker at build time — see below).
+
+**The exact decimal literal, chosen so `std::from_chars` (this format's
+own existing float-parsing routine, `std::chars_format::general`)
+recovers a specific, unambiguous `binary32` value, not left to
+Implementation's own rounding choice:** `0.577350269` — nine
+significant decimal digits, more than `binary32`'s own ~7.2-decimal-
+digit precision needs to pin the *nearest representable* `float` to
+`1/√3` unambiguously (`1/√3 = 0.5773502691896258…`, rounded to nine
+decimal places). Each of the eight corners' three normal components is
+this exact literal, individually sign-matched to that corner's own
+`(±0.5, ±0.5, ±0.5)` position component (e.g. the corner at
+`(-0.5, -0.5, -0.5)` gets normal `-0.577350269 -0.577350269 -0.577350269`;
+the corner at `(0.5, -0.5, -0.5)` gets `0.577350269 -0.577350269
+-0.577350269`; and so on for all eight, by the identical sign-copy
+rule) — a purely mechanical, Implementation-time transcription this
+Spec's own text already fully determines, not a judgment call.
+
+**The exact resulting little-endian bit pattern is what a pinned-byte
+artifact test locks, once a real build exists — not hand-derived in
+this Spec's own text.** This matches `mesh_artifact_tests.cpp`'s own
+already-established UV0-era precedent exactly: that existing test pins
+whatever `encodeMeshArtifact()` actually produces for a real, disclosed
+source value, rather than a hex literal hand-computed in a Spec
+document — the same discipline applies here, now for eleven floats per
+vertex instead of eight.
 
 **This is explicitly, unambiguously labeled a *smooth-shaded* cube, not
 a hard-face one** — this Spec's own Implementation, comments, and any
@@ -480,25 +707,60 @@ all, so this choice has **zero** effect on any currently-rendered
 pixel), not pre-solving a hard-face-normal need no current consumer
 has.
 
-### D6. The existing textured quads — real, winding-verified object-space normals
+**The cooker never computes this (or any) normal from position at
+build time — restated as a firm constraint on this Decision, not left
+implicit:** the eight `0.577350269`-based values above are written
+directly into `minimal_cube.mesh.txt`'s own checked-in authoring-source
+text, exactly like every other field on that line — `parseMeshSource()`
+reads them as plain, disclosed literals, identically to how it already
+reads position/color/UV0, with no vertex-to-center or any other
+geometric computation anywhere in `mesh_source.cpp`/`mesh_artifact.cpp`.
+This Spec's own D4 (no cooker-side generation of any kind) and this
+sentence are the same rule, stated twice for emphasis at the one asset
+where it would be easiest to "helpfully" implement as a convenience.
+
+### D6. The existing textured quads — real, per-triangle-verified, winding-consistent object-space normals
 
 **Decision:** `textured_quad_left.mesh.txt` and
 `textured_quad_right.mesh.txt` each receive the identical uniform
 normal, `(0, 0, 1)`, for all four of their own vertices — confirmed by
-direct cross-product computation of each quad's own real index winding
-(`0 1 2`, then `2 3 0`) against its own real vertex positions (both
-flat quads lie exactly in the `z = 0` plane, D6's own Pre-draft
-verification), not assumed from the quads' own visual orientation. No
-future Lighting shader is required to determine this value — it is
-fixed, disclosed, and testable via a hand-computed CPU unit test now
-(Testing & Verification Plan), independent of Spec 0019's own eventual
-shader work.
+direct cross-product computation of **both** triangles of **each**
+quad independently (not inferred from one triangle and assumed to hold
+for the other), against each quad's own real index winding and real
+vertex positions (D6's own Pre-draft verification):
 
-### D7. Public API and composition-root exposure — zero new RHI/RenderGraph API, comment-documented byte offset, exhaustive touch-point list
+- **Left quad, triangle `0-1-2`** (`v0=(-0.9,-0.5,0)`,
+  `v1=(-0.1,-0.5,0)`, `v2=(-0.1,0.5,0)`):
+  `cross(v1-v0, v2-v0) = cross((0.8,0,0), (0.8,1.0,0)) = (0, 0, 0.8)`
+  → `(0, 0, +1)` normalized.
+- **Left quad, triangle `2-3-0`** (`v2=(-0.1,0.5,0)`, `v3=(-0.9,0.5,0)`,
+  `v0=(-0.9,-0.5,0)`): `cross(v3-v2, v0-v2) = cross((-0.8,0,0),
+  (-0.8,-1.0,0)) = (0, 0, 0.8)` → `(0, 0, +1)` normalized, **confirmed
+  consistent** with the first triangle, not merely assumed from
+  planarity.
+- **Right quad:** an identical shape translated by `+1.0` on `X` only
+  — since the cross product depends solely on edge *vectors*, never
+  absolute position, translation invariance makes both of the right
+  quad's own triangles produce the identical `(0, 0, +1)` result by the
+  same arithmetic, without needing to re-run the raw numbers a second
+  time.
 
-**Decision:** zero new RHI, RenderGraph, or Renderer public API —
-`atlantis::rhi::VertexAttributeFormat::Float3` and
-`atlantis::shader_system::rhi_integration::VertexAttributeType::Float3`
+**Had these four independent computations disagreed** (a genuinely
+non-planar quad, or an inconsistent winding across its own two
+triangles), this Decision would have surfaced that as a real problem to
+resolve — a bad-quality mesh, or a Spec-level modeling question — rather
+than silently writing one "close enough" uniform value; they agree, so
+a single uniform per-quad normal is the direct, verified consequence of
+this real geometry, not an assumption. A CPU-only unit test asserts
+each of these four triangle-level computations independently
+(Testing & Verification Plan) — no future Lighting shader is required
+to determine or confirm this value.
+
+### D7. Public API and composition-root exposure — zero new RHI/RenderGraph API; layout offsets become real, named, testable constants (reversed this round — see the Final Review Round note above)
+
+**Decision, RHI/RenderGraph/Renderer surface unchanged:** zero new RHI,
+RenderGraph, or Renderer public API — `atlantis::rhi::VertexAttributeFormat::Float3`
+and `atlantis::shader_system::rhi_integration::VertexAttributeType::Float3`
 already exist and are reused verbatim (Pre-draft verification). A
 shader that does not declare a normal input remains structurally
 unaffected — `toVertexInputLayout()`'s own real, count-only matching
@@ -508,19 +770,64 @@ logic and `Device::createPipeline()`'s own per-attribute
 together guarantee the new stride region is simply never read by a
 pipeline whose own `VertexInputLayout` does not name it.
 
-**`StaticMeshAssetData` remains a wholly untyped `std::vector<std::byte>`
-payload — the normal's own byte offset is documented, not exposed as a
-new named C++ constant.** This follows the *existing* precedent exactly:
-position/color/UV0's own offsets (0/12/24) are today documented only in
-`mesh_artifact.h`'s own top-of-file comment, never as a
-`kMeshArtifactPositionOffsetBytes`-shaped symbol — only the vertex
-*stride* and *schema version* are real, named constants. Adding a new,
-asymmetric `kMeshArtifactNormalOffsetBytes` constant while position/
-color/UV0 remain comment-only would be an unjustified, inconsistent
-special case; this Spec instead extends the *existing* header comment
-to document the normal's own offset (32) alongside the other three,
-keeping exactly the same public-surface shape this format has always
-had.
+**Reversed from this Spec's own first draft: the layout's own four
+per-attribute byte offsets become real, named, public
+`constexpr` constants in `mesh_artifact.h` — not comment-only.**
+This Spec's own first draft kept offsets comment-only, reasoning from
+today's precedent (only stride and schema version are named; offsets
+are prose). This round's own review correctly identified a real gap
+that precedent papers over: a comment is not a compile-time-checkable
+single source of truth — a future composition root (or this Spec's own
+six real touch points, re-widened) could still hand-write the wrong
+magic offset with nothing to catch the mistake at build time, exactly
+the risk this Spec's own numeric-contract rigor (D3) exists to avoid
+for the *value* layer. **Decision:** add
+
+```cpp
+inline constexpr std::size_t kMeshArtifactPositionOffsetBytes = 0;
+inline constexpr std::size_t kMeshArtifactColorOffsetBytes = 12;
+inline constexpr std::size_t kMeshArtifactUv0OffsetBytes = 24;
+inline constexpr std::size_t kMeshArtifactNormalOffsetBytes = 32;
+```
+
+to `mesh_artifact.h`, alongside the existing `kMeshArtifactVertexStrideBytes`/
+`kMeshArtifactSchemaVersion` — **all four attributes**, not normal
+alone, closing the asymmetry a normal-only constant would have created
+(every existing offset becomes an equally real symbol, not merely the
+new one). `StaticMeshAssetData` itself stays exactly as it is today (a
+wholly untyped `std::vector<std::byte>` payload, no C++ change to that
+type) — these four constants live in `mesh_artifact.h`, the format's
+own existing home for `kMeshArtifactVertexStrideBytes`, not on
+`StaticMeshAssetData`. This introduces no general vertex-schema system
+(still explicitly rejected, Non-Goals) — four `constexpr std::size_t`
+values are primitive data, not a mechanism.
+
+**The single authoritative source and the exact mechanical
+synchronization each of the six real composition roots uses, stated
+explicitly (closing this round's own "how do six consumers stay in
+sync" question):** `mesh_artifact.h`'s own four constants above are the
+one, single authoritative source. Each of the six composition roots
+(below) keeps its own local `Vertex` struct exactly as ADR-0058's own
+precedent already established (a composition root does not dynamically
+read `StaticMeshAssetData::vertexStrideBytes()` at runtime to build its
+`VertexInputLayout`) — but each now additionally carries four
+`static_assert`s, checked at every compile, tying its own local
+`offsetof()` values to Asset System's own real constants:
+
+```cpp
+static_assert(offsetof(Vertex, position) == atlantis::asset_system::kMeshArtifactPositionOffsetBytes);
+static_assert(offsetof(Vertex, color) == atlantis::asset_system::kMeshArtifactColorOffsetBytes);
+static_assert(offsetof(Vertex, uv) == atlantis::asset_system::kMeshArtifactUv0OffsetBytes);
+static_assert(offsetof(Vertex, normal) == atlantis::asset_system::kMeshArtifactNormalOffsetBytes);
+```
+
+A future change to any offset that is not mirrored in a given
+composition root's own local struct now fails that root's own build
+immediately, at the exact point of the mismatch — a real, compiler-
+enforced guarantee, not a documentation convention a future consumer
+could silently drift from. This uses only standard `constexpr`/
+`static_assert`/`offsetof` — zero new RHI/RenderGraph/Renderer/Asset
+System *runtime* API, matching this Decision's own first sentence.
 
 **Every real composition-root touch point is the freshly-enumerated
 list in Pre-draft verification above — six files, not the four
@@ -528,14 +835,14 @@ ADR-0058 named two Specs ago** (`runtime_application.cpp`,
 `material_demo_fixture.cpp`, `minimal_cube_fixture.cpp`,
 `textured_quad_fixture.cpp`, `world_scene_fixture.cpp`,
 `world_scene_loaded_fixture.cpp`), each widening its own local `Vertex`
-struct by exactly one field (`float normal[3];`) and its own
-`MeshVertexAttributeSchema` unchanged otherwise (no shader referenced
-by any of these six currently declares a normal input, so no
-`.slang` file changes as a consequence of this widening alone).
-`tests/runtime/material_realization_gpu_tests.cpp` is confirmed **not**
-a required touch point (Pre-draft verification's own disclosed
-reasoning) — this Spec's own future Plan states this explicitly rather
-than silently omitting the file from consideration.
+struct by exactly one field (`float normal[3];`), adding the four
+`static_assert`s above, with its own `MeshVertexAttributeSchema`
+unchanged otherwise (no shader referenced by any of these six currently
+declares a normal input, so no `.slang` file changes as a consequence
+of this widening alone). `tests/runtime/material_realization_gpu_tests.cpp`
+is confirmed **not** a required touch point (Pre-draft verification's
+own disclosed reasoning) — this Spec's own future Plan states this
+explicitly rather than silently omitting the file from consideration.
 
 ### D8. Verification boundary — a CPU/GPU-independent data closed loop; no new shader or golden
 
@@ -570,8 +877,8 @@ fixture and golden, once this Spec's own Implementation has merged.
 ### D9. Boundary with Spec 0019 — restated, symmetric with that Spec's own D1/D9
 
 **Decision:** this Spec provides **only** the normal data contract —
-authoring, artifact, load, and a comment-documented byte offset a
-composition root can build a schema against. Normal *transform* math,
+authoring, artifact, load, and a real, named byte-offset constant
+(D7) a composition root can build a schema against. Normal *transform* math,
 `Light`, `LitTextured` Material, the frame lighting uniform, the
 `lit_textured` shader, and any lighting golden are **entirely** Spec
 0019's own domain — this Spec neither implements nor pre-decides any
@@ -579,39 +886,46 @@ of them (matching Spec 0019's own D1, which states the identical
 boundary from its own side). Only once this Spec's own Implementation
 PR has merged does Spec 0019's own Plan gate lift.
 
-### D10. ADR governance — one new Proposed ADR, two Proposed Amendments, no silent rewrite of either Accepted ADR
+### D10. ADR governance — one new ADR, two amendments, no silent rewrite of either Accepted ADR, and no other Accepted ADR left closing the schema unamended
 
 **Decision:** one new, minimal, single-responsibility ADR,
 [ADR-0063](../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md)
-(`Proposed`), recording the normal attribute's own schema/offset/
+(`Accepted`), recording the normal attribute's own schema/offset/
 version/numeric-contract/coordinate-convention decision (D1–D6 above).
 Both [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
 and [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md),
 confirmed by direct re-reading (Pre-draft verification) to each carry
 their own closed, `Accepted` fixed-schema declaration, each receive
-their own dated, separately-labeled Proposed Amendment (Architectural
+their own dated, separately-labeled Accepted Amendment (Architectural
 Impact, below) — **neither ADR's own original `Accepted` Decision text
 is rewritten by so much as one word**; each amendment is appended,
 following ADR-0045's own existing "Accepted Amendment — 2026-08-25"
 section as this repository's own direct, in-file precedent for the
 amendment's own shape. All three documents (the new ADR-0063 plus both
-amendments) await Human Review together, in the same pass as this
-Spec's own approval — matching ADR-0058/ADR-0045's own precedent of
-landing together for Spec 0017's own approval exactly.
+amendments) were accepted together, in the same Human Review pass as
+this Spec's own approval — matching ADR-0058/ADR-0045's own precedent
+of landing together for Spec 0017's own approval exactly. **Confirmed
+by a repository-wide search of every ADR mentioning "position and
+color"/"position, color"/"vertex layout"/"static mesh vertex":** no
+`Accepted` ADR beyond these two closes the mesh vertex schema without
+now being amended — the one other match, [ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md),
+mentions "the one static mesh vertex layout" only as contextual
+narrative about Spec 0017's own past work, never as an independent,
+authoritative closure of the schema itself, and needs no amendment.
 
 ## Architectural Impact
 
 - **New:** [ADR-0063](../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md)
-  (`Proposed`) — the normal attribute's own schema, byte offset, version
+  (`Accepted`) — the normal attribute's own schema, byte offset, version
   bump, numeric contract, and coordinate convention (D1–D6).
-- **Amended (Proposed, not yet Accepted):** [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)'s
+- **Amended (Accepted Amendment):** [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)'s
   own format-scope sentence, narrowed by its 2026-08-25 Amendment to
-  "position, color, and UV0," gains a second, separately-dated
-  Proposed Amendment widening it to "position, color, UV0, and normal."
-- **Amended (Proposed, not yet Accepted):** [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)'s
-  own Decision, which currently closes the vertex layout at exactly
+  "position, color, and UV0," gains a second, separately-dated Accepted
+  Amendment widening it to "position, color, UV0, and normal."
+- **Amended (Accepted Amendment):** [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)'s
+  own Decision, which previously closed the vertex layout at exactly
   three attributes ("the one, single static mesh vertex layout —
-  position + color + UV0"), gains a Proposed Amendment admitting the
+  position + color + UV0"), gains an Accepted Amendment admitting the
   fourth.
 
 Neither amendment alters, narrows, or reinterprets either ADR's own
@@ -657,6 +971,19 @@ is never silently rewritten" discipline exactly.
   (preserve existing triangle/index/rasterization and golden content
   unchanged) — revisit if a future Lit-shaded `minimal_cube` render is
   ever actually wanted with hard-face shading.
+- **A `std::sqrt`-based check on `length` directly, instead of a
+  `length`-*squared* check in double precision.** This Spec's own first
+  draft's own choice — reversed this round (D3): `std::sqrt`'s own
+  exact rounding behavior, while required to be correctly rounded by
+  IEEE 754 for a *single* operation, still leaves the preceding
+  `x·x + y·y + z·z` sum's own rounding path open to real ISA/compiler
+  differences (fused-multiply-add availability differs between x86-64
+  SSE2 and ARM/AArch64 NEON, this codebase's own two Phase 1 targets) —
+  a genuine, if small, determinism risk for a value compared against a
+  fixed tolerance boundary. Comparing `length`-squared in double
+  precision instead avoids `std::sqrt` entirely and, via exact
+  float-to-double promotion, removes the float-level rounding-path
+  question altogether — strictly safer, at zero added complexity.
 - **A placeholder/zero-magnitude normal on `minimal_cube`, explicitly
   marked "not for lighting."** Rejected: would fail this Spec's own new
   unit-length numeric contract (D3) by construction, and — more
@@ -665,44 +992,90 @@ is never silently rewritten" discipline exactly.
   own basic purpose (a real, usable normal attribute) for the one asset
   most likely to be reused as a placeholder lit-scene test subject
   later.
-- **A `kMeshArtifactNormalOffsetBytes`-shaped new named constant**
-  (D7). Rejected as inconsistent with this format's own existing,
-  comment-only documentation of the other three attributes' offsets —
-  revisit only if a future Spec decides to expose *all four* offsets as
-  named constants together, not as a one-off exception for normal alone.
+- **A `kMeshArtifactNormalOffsetBytes`-shaped constant for normal
+  alone, leaving position/color/UV0's own offsets comment-only.**
+  This Spec's own first-draft choice — reversed this round (D7):
+  adding a named constant for normal alone, while position/color/UV0
+  remained prose-only, would have been an unjustified asymmetric
+  special case with no real testability gain for three of the four
+  attributes; this Spec now exposes **all four** offsets as named
+  constants together (D7), closing the gap for the whole layout, not
+  one attribute in isolation.
 
 ## Testing & Verification Plan
 
-- **CPU-level, GPU-independent (the primary proof, per D8):**
-  `parseMeshSource()`/`serializeMeshSource()` round-trip with real
-  normal values; version-3 acceptance, version-2/version-1 rejection
-  (`UnknownSourceVersion`); 11-field acceptance, 8-field rejection
-  (`CountMismatch`, the "missing normal, correct version" case, D2);
-  `NonFiniteFloat` extended to the three new floats; `NonUnitNormal`
-  for a zero vector, a `(1,1,1)`-shaped unnormalized vector, and a
-  value just outside `[0.99, 1.01]`; a pinned-expected-byte-vector test
-  for `encodeMeshArtifact()` against a known small mesh (matching
-  `mesh_artifact_tests.cpp`'s own existing UV0-era pinning-test
-  precedent); `decodeMeshArtifact()` rejecting schema version 1/2,
-  wrong stride (32 or any value other than 44), truncated input, and
-  the identical `NonUnitNormal` cases, independently of the cook-time
-  checks; a deterministic double-cook (`cookStaticMesh()` invoked twice
-  against identical source text produces byte-identical artifacts); a
-  real content-driven re-cook trigger, unaffected in mechanism.
-- **Hand-computed math tests (D6):** a CPU-only unit test asserting the
-  exact `(0, 0, 1)` face-normal result for both existing textured
-  quads' own real index winding, independent of any shader.
-- **Composition-root build/run verification:** all six real touch
-  points (D7) confirmed to compile against the widened 44-byte
-  `Vertex` struct and successfully build/run their own existing test
-  suite.
+- **Source parse/round-trip:** `parseMeshSource()`/`serializeMeshSource()`
+  round-trip with real normal values, including all eight
+  `minimal_cube` corner values (D5) and both quads' `(0, 0, 1)` values
+  (D6).
+- **Fixed little-endian bytes:** a pinned-expected-byte-vector test for
+  `encodeMeshArtifact()` against a known small mesh, extended to eleven
+  floats per vertex (matching `mesh_artifact_tests.cpp`'s own existing
+  UV0-era pinning-test precedent, D5) — the bit pattern is locked from
+  a real build's own output, not hand-derived in this Spec.
+- **Cook/decode independent normal validation:** every scenario in D2's
+  own six-row error-domain matrix, each asserted against its own real,
+  named enumerator — including `NonUnitNormal` at **both** layers,
+  independently (decode-time driven by a real, hand-corrupted artifact
+  byte buffer, never merely re-running the cook-time case).
+- **D3's own explicit boundary/edge-case set:** `lengthSquared` exactly
+  `0.9801` and `1.0201` (both accepted); the smallest representable
+  step outside each bound (both rejected); a `-0.0` component
+  (accepted, behaves identically to `+0.0` for this check); an
+  extremely small non-zero vector (`~1e-20` per component, rejected);
+  `NaN`/`Inf` on one component (rejected by `NonFiniteFloat`, confirmed
+  to run before the length-squared check ever executes).
+- **Version/field-count/stride rejection:** version 2 and version 1
+  source/artifact rejection; a correctly-versioned 10-field line
+  (missing one normal component); truncated artifact input; every
+  stride value other than 44 (including the old `32`).
+- **Deterministic double-cook:** `cookStaticMesh()` invoked twice
+  against identical source text produces byte-identical artifacts.
+- **Re-import triggering:** the existing content-driven re-cook
+  mechanism, unaffected in mechanism, re-verified against all three
+  real mesh assets under the new grammar.
+- **Hand-computed math tests (D6):** a CPU-only unit test asserting
+  each of the four independently-computed triangle-level face-normal
+  results (both triangles, both quads) equals `(0, 0, 1)`, matching
+  D6's own exact, disclosed arithmetic — independent of any shader.
+- **All six real composition-root touch points (D7):** each confirmed
+  to compile (including its own four new `static_assert`s against
+  `mesh_artifact.h`'s own named offset constants) and successfully
+  build/run its own existing test suite against the widened 44-byte
+  `Vertex` struct.
+- **All nine embedded-mesh-source-text test files** (Pre-draft
+  verification's own exact, counted list) confirmed updated and
+  passing — including at least one deliberately-left-at-the-old-
+  field-count case, to prove `CountMismatch` still fires correctly
+  post-widening.
+- **Both `ATLANTIS_BUILD_TESTS` configurations:** a normal `ON` build
+  (the full test suite, above) and a fresh `ATLANTIS_BUILD_TESTS=OFF`
+  configure/build, confirming all three real mesh assets re-cook
+  successfully against the new grammar with zero `tests/` dependency
+  in that build tree (Requirements' own confirmed-unconditional-
+  declaration finding, above).
+- **Both Debug and Release configurations**, matching every prior
+  Spec's own established verification baseline.
 - **The four existing goldens** (`minimal_cube`, `world_scene`,
   `textured_quad`, `material_demo`) confirmed byte-for-byte (PNG/
   sidecar) and pixel-for-pixel unchanged — no shader this Spec touches
   or that any of the six composition roots use declares a normal input,
   so this Spec's own widening is provably inert for every currently-
   rendered pixel.
-- **No new golden, no new shader** — see D8's own full reasoning.
+- **Module boundary:** a fresh include-scan confirming `Atlantis::AssetSystem`
+  still depends on `Atlantis::Core` only — this Spec adds no new
+  dependency to Asset System's own module boundary.
+- **C4062:** confirmed, and stated as a confirmed finding rather than a
+  probe to run, that neither `SourceParseError` nor `ArtifactDecodeError`
+  is consumed by any exhaustive `switch`/`toString()` anywhere in this
+  codebase today (D2) — no `/w14062` positive/negative probe is
+  applicable to this Spec's own two new enumerators. (A C4062 probe
+  remains relevant to any *existing* switch this Spec's Implementation
+  might separately touch, but this Spec's own new enumerators introduce
+  none.)
+- **No new golden, no new shader, no normal-visualization capability of
+  any kind** — see D8's own full reasoning; this Spec's verification is
+  CPU/GPU-independent data-contract proof, in full.
 
 ## Risks & Open Questions
 
