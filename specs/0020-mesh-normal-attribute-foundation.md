@@ -3,14 +3,15 @@
 - **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-08-29
-- **Related Plan(s):** none yet. **This approval authorizes drafting
-  Plan 0020 only — not Implementation.** Once Plan 0020 itself reaches
-  `Approved` and its own Implementation PR has merged, Spec 0019's own
-  Plan-drafting gate lifts — see [Spec 0019](0019-lighting-foundation.md)'s
-  own D1 and header, and this Spec's own D9, both of which this Spec's
-  own approval leaves completely unchanged: reaching `Approved` on this
-  Spec alone is not, and was never claimed to be, sufficient to unblock
-  Plan 0019.
+- **Related Plan(s):** [plans/0020-mesh-normal-attribute-foundation.md](../plans/0020-mesh-normal-attribute-foundation.md)
+  (`In Review`, drafted 2026-08-29). **This Spec's own approval
+  authorized drafting Plan 0020 only — not Implementation.** Once
+  Plan 0020 itself reaches `Approved` and its own Implementation PR has
+  merged, Spec 0019's own Plan-drafting gate lifts — see
+  [Spec 0019](0019-lighting-foundation.md)'s own D1 and header, and this
+  Spec's own D9, both of which remain completely unchanged: reaching
+  `Approved` on this Spec alone was not, and was never claimed to be,
+  sufficient to unblock Plan 0019.
 - **Related ADR(s):** [ADR-0063](../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md) (`Accepted`), plus Accepted Amendments to [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md) and [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
 - **Human Review Approval (2026-08-29):** Reviewed and approved by
   slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
