@@ -28,8 +28,9 @@ World fromValidatedSceneData(const atlantis::asset_system::ValidatedSceneData& s
                           "fromValidatedSceneData(): setCamera() failed for a freshly-created entity");
     }
     if (n.renderable.has_value()) {
-      ATLANTIS_CHECK_MSG(world.setRenderable(id, Renderable{n.renderable->meshAsset}).isOk(),
-                          "fromValidatedSceneData(): setRenderable() failed for a freshly-created entity");
+      ATLANTIS_CHECK_MSG(
+          world.setRenderable(id, Renderable{n.renderable->meshAsset, n.renderable->materialAsset}).isOk(),
+          "fromValidatedSceneData(): setRenderable() failed for a freshly-created entity");
     }
     byIndex.push_back(id);
   }
