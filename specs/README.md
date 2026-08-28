@@ -196,9 +196,34 @@ Section A above) removed no row here; former Candidate Order 8
 (Material Asset & Scene Binding Foundation, named 2026-08-25 during
 Spec 0017's own drafting) has now itself been promoted to Spec 0018
 (`Approved`, Section A above) — its own dependency on Spec 0017 is
-satisfied, Spec 0017 being `Approved` and implemented. Android Platform
-(Candidate Order 1) and every other remaining row's own numbering is
-otherwise unaffected by either promotion. **Serialization
+satisfied, Spec 0017 being `Approved` and implemented. "Lighting
+Foundation" follows the identical "named only in prose, never a
+numbered row" pattern: it was named as Spec 0018's own successor
+candidate (that Spec's own D15), not registered in the table below, and
+has now itself been promoted directly to Spec 0019 (`Approved`, Section
+A above) — its own dependency on Spec 0018 is satisfied, Spec 0018
+being `Approved` and implemented; this promotion likewise removed no row
+here. Android Platform (Candidate Order 1) and every other remaining
+row's own numbering is otherwise unaffected by any of these promotions.
+
+**A disclosed, one-time exception to this section's own "no formal spec
+number is pre-assigned to any entry" rule:** Spec 0019's own Human
+Review Approval (2026-08-29) created a real, named, blocking dependency
+on a spec that does not yet exist as a file — its own D1 requires a
+separate, prerequisite "Mesh Normal Attribute Foundation" work item, and
+Spec 0019's own approval needed a stable name to state that dependency
+against rather than a placeholder subject to renumbering risk later.
+**`Spec 0020` is therefore registered here, by number, ahead of its own
+drafting:** `Spec 0020 — Mesh Normal Attribute Foundation`, not yet
+drafted, not a row in Section A above, not a candidate in the table
+below either (this exception applies to its own number only, not a
+promise about its own eventual scope or design, which remains entirely
+undecided until it is actually drafted and reviewed). Spec 0019's own
+approval authorizes drafting Spec 0020 — nothing more; Spec 0020 itself
+still requires its own full Spec → Plan → Human Review → Implementation
+→ Verification → PR → Merge cycle before Plan 0019 may begin, per
+AGENTS.md's own Golden Rule, entirely unshortened by this numbering
+exception. **Serialization
 and Stable Identity is a partial promotion, not a full one:** its scene-asset-bake/load slice was promoted to Spec
 0015 ("Scene Asset & Serialization Foundation," `Approved`, Section A
 above — see the "Superseded in part again, human-directed 2026-08-23"
