@@ -2176,3 +2176,119 @@ Deltas specific to this Plan:
 - `specs/README.md` and this Plan's own status line reflect "Implementation
   PR OPEN" only — no document anywhere in the repository is left
   claiming this work is merged before a human has actually merged it.
+
+**Post-Merge Status Update (2026-08-28):** [Implementation PR #88](https://github.com/slmao/Atlantis/pull/88)
+is merged. All 17 Milestones landed as planned — 13 implementation
+commits, one commit each for the Milestone 16 fixture/golden-generator
+scaffolding and its separate Milestone 16 golden-capture commit (per
+ADR-0042's own two-phase process), and one documentation-only commit
+recording the PR-open status at the time — followed by a final
+centralized review round (three further commits, `b50526d`/`d8dbe13`/
+`2e43a25`, all before merge) described below. One real,
+previously-undiscovered gap was found and fixed during the original
+Implementation itself (disclosed in its own commit message):
+`scene_manifest.cpp`'s Step 5 metadata cross-check only understood the
+mesh-specific sidecar shape, so any texture/material manifest entry —
+never exercised before `material_demo_scene`, the first scene to
+declare `MATERIAL_DEPENDENCIES`/`TEXTURE_DEPENDENCIES` — always failed
+even when well-formed; fixed to try all three known, mutually-exclusive
+sidecar shapes, with a dedicated regression test. No other architectural,
+schema, public-API, error-model, module-boundary, or golden deviation
+occurred during the original Implementation.
+
+**A centralized final code review round** (still pre-merge, on PR #88
+itself) found and fixed one real GPU safety bug and closed two real
+test-coverage gaps this Plan's own Verification Checklist had already
+called for but Implementation had not actually delivered:
+
+1. **Real bug (`b50526d`):** `runFrame()`'s Phase 2 realization
+   wait/publish gate checked `anyNewUploadThisFrame` (true only if some
+   realized candidate needed a new texture upload) instead of Spec 0018
+   D8 step 5 / this Plan's own Section P12 contract (gate on "at least
+   one material was newly realized this frame," i.e.
+   `!realizedCandidates.empty()`). Consequence: a material whose own
+   texture was already realized by a *different* material in an
+   *earlier* frame (cross-frame D10 dedup, distinct from the same-frame
+   case Milestone 12's own tests already covered) still created a
+   brand-new `Sampler`/`Pipeline` bound into that frame's own
+   just-submitted `CommandList`; with the old gate, if that was the only
+   candidate realized that frame, the entire wait-then-publish block was
+   skipped — the new GPU objects were destroyed via ordinary RAII
+   without `waitIdle()` ever confirming the GPU had finished referencing
+   them, and the material was never actually cached (recreated every
+   subsequent frame). Fixed to gate on `anyMaterialRealizedThisFrame`
+   instead, matching the Spec/Plan text exactly. Does not affect the
+   `material_demo` golden — `material_demo_fixture.cpp`'s own
+   `renderMaterialDemoFrame()` never calls `runFrame()` at all, and no
+   existing test exercised the cross-frame-dedup scenario the bug
+   depended on.
+2. **Coverage gap (`d8dbe13`):** V27 above — the old-`Pipeline`
+   GPU-in-flight safety proof during a format-change rebuild, this
+   Plan's own highest-priority finding (Human Review Approval item 2) —
+   had zero automated test coverage anywhere in this PR's tree; the
+   windowed smoke test only ever exercises the *first* format-known
+   frame, never a genuine second format change against a real,
+   pre-existing `materialResourceMap_` entry. Code review found the
+   actual implementation already correct; this was a coverage gap, not a
+   second bug. Closed with a new GPU test reproducing `runFrame()`'s own
+   real P13 sequence by hand: the old `Material` is proven still fully
+   valid and address-stable through a real `submit()` against the new
+   format, and is moved out (destroyed) only after that `submit()`
+   returns `Ok`, Vulkan Validation Layers enabled throughout.
+3. **Coverage gap (`d8dbe13`/`2e43a25`):** the four material scene-load
+   cases Milestone 11 above explicitly called for were never actually
+   added to `scene_load_tests.cpp`. Code review found the actual
+   `scene_load.cpp` implementation already correct; closed with all four
+   cases (three requiring a real `Device`, since reaching the material
+   loop at all requires every referenced mesh to have already loaded
+   successfully first; one GPU-independent, resolution failing before
+   any load is attempted).
+
+Everything else this review round checked — the per-material `emplace()`
+publish shape (Human Review Approval item 1, confirmed intentional, not
+a deviation), candidate/borrow address stability, the
+`scene_manifest.cpp` fix's own wrong-artifact-kind-rejection design, the
+Material/Scene artifact byte layouts, CMake identity/dependency-ordering
+correctness, `RuntimeHost` helper reality (exactly one real
+implementation of every resolve/load/realize function, confirmed by a
+repository-wide search), single-submit/upload sequencing, and the
+`textured_quad` shader's own real binding contract — was found
+conformant with the Approved Plan/Spec/ADR text on direct inspection,
+with no code change needed.
+
+**Final, as-built verification (post-merge, from the review round's own
+record):** fresh Debug and Release builds clean; `ctest -LE gpu`
+662/662 Debug, 661/661 Release; `ctest -L gpu` 35/35 both configurations,
+real Vulkan-capable hardware (Intel Arc B370, driver 101.8509), including
+byte-identical matches against all four goldens; Vulkan Validation
+Layers grepped clean (zero `VUID`/`Validation Error`/`Validation
+Warning` matches) across full verbose GPU test output, both
+configurations; a fresh `-DATLANTIS_BUILD_TESTS=OFF` configure+build in
+a separate tree produced a working `atlantis_runtime.exe` with zero test
+executables anywhere in that tree; `/w14062` C4062 positive/negative
+probe on the `AssetKind::Material` switch case, restored with a
+confirmed zero-diff; module-boundary scan reconfirmed
+`Atlantis::AssetSystem` still links `Atlantis::Core` only; the three
+pre-existing goldens (`minimal_cube`, `world_scene`, `textured_quad`)
+confirmed byte-for-byte unchanged versus `main` (SHA-256) throughout,
+including after the review round's own three commits.
+
+**V33 (human visual golden confirmation) is PASS** — recorded 2026-08-29
+as a PR comment on [PR #88](https://github.com/slmao/Atlantis/pull/88):
+a non-black frame, both scene nodes correctly composed against the
+scene's real perspective camera, correct checkerboard UV/sampling
+orientation, and consistent shared-material rendering across the two
+deduplicated nodes, with no visible anomaly.
+
+**V31 (manual, human-performed Runtime windowed visual confirmation) is
+PASS, both configurations** — recorded 2026-08-29 as a PR comment on
+[PR #88](https://github.com/slmao/Atlantis/pull/88): a human personally
+launched real, visible Debug and Release `atlantis_runtime.exe` windows
+(`Start-Process`, no programmatic message injection), confirmed window
+visibility, continuous resize, minimize/restore, and a normal close for
+each, with literal process exit code 0 both times and zero Vulkan
+Validation Layers output in the captured logs. Per Milestone 15's own
+decision (unchanged by this review round), the window's own visible
+output is `world_scene` (untextured), not `material_demo_scene` — the
+real textured end-to-end path is proven exclusively through the
+`material_demo` golden/fixture, confirmed separately above.
