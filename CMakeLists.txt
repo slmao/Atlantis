@@ -77,10 +77,21 @@ atlantis_finalize_asset_validation()
 # 7/8): atlantis_add_slang_shader_pair() is defined there, and this call
 # site invokes it.
 add_subdirectory(shaders/minimal_renderer)
-# Plan 0013 Section D1: must come after both add_subdirectory(assets)
-# and add_subdirectory(shaders/minimal_renderer) above -- atlantis_runtime
-# add_dependencies() on minimal_mesh_shaders and
-# ${ATLANTIS_minimal_cube_TARGET}, both declared by those two calls, and
+# Plan 0018 Section P10 / D3: promoted from a test-only fixture resource
+# (formerly added inside the ATLANTIS_BUILD_TESTS block below) to a
+# production built-in shader backing MaterialKind::UnlitTextured --
+# unconditional here, mirroring shaders/minimal_renderer's own placement
+# and the identical reason (atlantis_runtime needs it too). No .slang
+# source content changes; tests/image_regression/fixture/ (added later,
+# inside ATLANTIS_BUILD_TESTS) keeps consuming the exact same target,
+# now simply available unconditionally instead of only under
+# ATLANTIS_BUILD_TESTS.
+add_subdirectory(shaders/textured_quad)
+# Plan 0013 Section D1: must come after add_subdirectory(assets),
+# add_subdirectory(shaders/minimal_renderer), and (Plan 0018 Section P10)
+# add_subdirectory(shaders/textured_quad) above -- atlantis_runtime
+# add_dependencies() on minimal_mesh_shaders, textured_quad_shaders, and
+# ${ATLANTIS_minimal_cube_TARGET}, all declared by those calls, and
 # CMake's add_dependencies() requires the named target to already be
 # declared at the point the call is parsed. Runtime is a product
 # executable, not an example, so it is unconditional here, not inside
@@ -105,10 +116,6 @@ if(ATLANTIS_BUILD_TESTS)
   add_subdirectory(tests/platform)
   add_subdirectory(tests/rhi)
   add_subdirectory(tests/vulkan_backend)
-  # Plan 0016 Milestone 9 (D11): test-only shader pair, unlike
-  # shaders/minimal_renderer's own unconditional placement above --
-  # only tests/image_regression/fixture/ (added next) consumes it.
-  add_subdirectory(shaders/textured_quad)
   add_subdirectory(tests/image_regression)
   add_subdirectory(tests/render_graph)
   add_subdirectory(tests/renderer)
