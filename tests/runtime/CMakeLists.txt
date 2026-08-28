@@ -21,9 +21,14 @@ target_link_libraries(atlantis_runtime_tests
 catch_discover_tests(atlantis_runtime_tests DISCOVERY_MODE PRE_TEST)
 
 # Plan 0013 Step 5 / Section D10: the real windowed smoke test -- links
-# Atlantis::RuntimeHost directly, never atlantis_runtime.
+# Atlantis::RuntimeHost directly, never atlantis_runtime. Plan 0018 PR #88
+# final review round: material_realization_gpu_tests.cpp is headless (an
+# OffscreenTarget, no window) but shares this target for its own
+# ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR/textured_quad_shaders wiring,
+# already declared below.
 add_executable(atlantis_runtime_gpu_tests
   runtime_smoke_gpu_tests.cpp
+  material_realization_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_gpu_tests
