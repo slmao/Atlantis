@@ -1,49 +1,58 @@
 # Plan: Mesh Normal Attribute Foundation
 
 - **Spec:** [specs/0020-mesh-normal-attribute-foundation.md](../specs/0020-mesh-normal-attribute-foundation.md) (`Approved`)
-- **Status:** In Review
+- **Status:** Approved / Ready for Implementation
 - **Author:** slmao
+- **Human Review Approval (2026-08-29):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
+  git-identified maintainer) on 2026-08-29, following the two review
+  rounds recorded below — the second directed a mechanical, disclosed
+  "Human Review Correction" to [Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md)
+  itself (a one-word file-count summary slip, its own already-`Approved`
+  Decisions left completely unmodified), corrected this Plan's own
+  numeric-contract implementation shape (a shared, directly-testable
+  `detail::` function pair, honest about what floating-point
+  determinism is and is not guaranteed, with no new compiler-specific
+  flag), split boundary testing into three distinct, each-independently-
+  implementable kinds, and added a `std::is_standard_layout_v` guard and
+  an explicit fixed-byte/shader-location/error-domain re-confirmation to
+  the Verification Checklist — accepting this document's own three
+  Milestones, its own Milestone 1 atomic boundary, the `version 3`/
+  44-byte fixed layout, the named offset constants, the numeric
+  validation implementation, the three-asset/six-consumer/nine-test-file
+  migration (in its own two, now-corrected categories), the V1–V22
+  Verification Checklist, and every stated Non-Goal, in full. **This
+  approval authorizes Implementation of this Plan only once this PR
+  itself has merged — not before.** [Spec 0019](../specs/0019-lighting-foundation.md)
+  remains Plan-blocked until this Plan's own Implementation PR
+  (a separate, later PR) merges — this approval does not itself
+  constitute that event.
 
-## Plan Review (2026-08-29, pre-approval)
+## Plan Review
 
-A centralized self-review of this Plan's own first draft, performed
-before requesting Human Review, found and corrected the following —
-recorded here rather than silently folded in, matching this
-repository's own established Plan-review disclosure precedent (Plan
-0017's own identical section):
+Two review rounds, both recorded rather than silently folded in,
+matching this repository's own established Plan-review disclosure
+precedent (Plan 0017's own identical section).
 
-1. **A real, mechanical discrepancy in the Approved Spec's own prose,
-   not a design gap:** [Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md)'s
-   own Pre-draft verification says "**Nine** test files carry embedded,
-   literal mesh-source text" but its own following list names exactly
-   **eight** files (`load_tests.cpp`, `mesh_source_tests.cpp`,
-   `mesh_uv_round_trip_tests.cpp`, `material_realization_gpu_tests.cpp`,
-   `scene_load_tests.cpp`, `scene_manifest_tests.cpp`,
-   `cook_command_tests.cpp`, `cooker_determinism_tests.cpp`) — a
-   repository-wide re-search this Plan's own Pre-draft verification
-   below repeats independently confirms **eight**, not nine, and finds
-   no ninth file. This is a trivial, one-word summary-count slip in the
-   Spec's own already-`Approved` prose, not a scope or design error —
-   the actual, itemized file list (what determines real Implementation
-   scope) is complete and correct as written. Per
-   [AGENTS.md](../AGENTS.md) ("Do not modify the spec to make
-   implementation easier"), this Plan does **not** edit the Spec to fix
-   the word "nine" — it uses the objectively correct, independently
-   re-verified count of eight throughout, and discloses the mismatch
-   here rather than silently using either number without comment.
-2. **`tests/asset_system/mesh_artifact_tests.cpp` is a real, necessary
-   ninth touch point the Spec's own list does not separately name** —
-   not because the Spec is wrong to omit it (that file has no embedded
-   `atlantis_static_mesh_source_version` text; it builds a
-   `ParsedMeshSource` directly via `MeshSourceVertex` aggregate
-   initialization, so the Spec's own "embedded mesh-source **text**"
-   search correctly does not match it) but because it is the format's
-   own dedicated pinned-byte/decode-error test file and every byte
-   offset, the pinned-byte-vector test, and several `decodeMeshArtifact()`
-   error cases inside it are hardcoded against the *old* 32-byte layout
-   and must be widened in the same atomic step (Milestone 1, below;
-   Pre-draft verification's own full accounting of this file).
-3. **Two specific existing negative tests would silently change what
+### Round 1 (2026-08-29, first draft)
+
+1. **A real, mechanical discrepancy found in the then-current Approved
+   Spec's own prose, not a design gap** — [Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md)'s
+   own Pre-draft verification said "**Nine** test files carry embedded,
+   literal mesh-source text" but its own following list named exactly
+   **eight**. A repository-wide re-search independently confirmed eight
+   files carry embedded `atlantis_static_mesh_source_version` *text*,
+   and a ninth, real touch point
+   (`tests/asset_system/mesh_artifact_tests.cpp`) exists but constructs
+   `MeshSourceVertex` directly via aggregate initialization, invisible
+   to that same text search — so the word "nine" was correct in total
+   count, wrong in category. **This round's own finding was directed to
+   Human Review rather than silently resolved at Plan level; Human
+   Review has since directed, and this Spec now carries, its own
+   "Human Review Correction — 2026-08-29" section recording exactly
+   this — see Round 2 item 1, below, for this Plan's own consequent
+   update.**
+2. **Two specific existing negative tests would silently change what
    they test, not merely fail to build, if their own embedded literal
    were left unexamined** — found by reading, not assumed:
    `mesh_source_tests.cpp`'s own "rejects an unrecognized version line"
@@ -58,7 +67,7 @@ repository's own established Plan-review disclosure precedent (Plan
    still compiling and, worse, still passing (since a real `4` would
    also correctly reject) — a false sense of coverage this Plan closes
    by naming the exact fix here.
-4. **`tests/tools/asset_cooker/cook_command_tests.cpp`'s own version-1
+3. **`tests/tools/asset_cooker/cook_command_tests.cpp`'s own version-1
    rejection test needs no change** — confirmed by direct reading: it
    asserts a `atlantis_static_mesh_source_version: 1` source is
    rejected by the real CLI, which remains true (version 1 stays
@@ -66,9 +75,100 @@ repository's own established Plan-review disclosure precedent (Plan
    under version 2's. Listed explicitly as **not** requiring an edit,
    rather than left for Implementation to discover.
 
+### Round 2 (2026-08-29, final, pre-approval)
+
+1. **Updated to match [Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md)'s
+   own new "Human Review Correction — 2026-08-29" section:** the real
+   touch-point count is **nine test files, in two categories** — eight
+   carrying embedded, literal mesh-source text (Round 1's own list,
+   unchanged) plus one, `mesh_artifact_tests.cpp`, that constructs
+   `MeshSourceVertex` directly via aggregate initialization. This
+   Plan's own Pre-draft verification, Milestones, Files/Modules
+   Touched, and Verification Checklist below all use this corrected,
+   two-category "nine total" accounting throughout — **not** Round 1's
+   own provisional "eight, not nine" phrasing, which is superseded by
+   the Spec's own now-corrected text, not left standing alongside it.
+2. **Double precision alone does not make the `length`-squared
+   computation's own intermediate values bit-identical across every
+   compiler/target — this round corrects an overclaim risk in the
+   Plan's own first-draft framing of D3, not a change to the tolerance
+   or the accept/reject contract itself.** Fused-multiply-add (FMA)
+   contraction of an `a*b + c`-shaped expression is a compiler/target
+   choice orthogonal to operand width — `double` arithmetic does not,
+   by itself, disable it. Confirmed by a repository-wide search: no
+   `/fp:` flag is set anywhere in this project's CMake configuration
+   today, so every target compiles under MSVC's own default
+   floating-point model, `/fp:precise`, which does not fuse
+   multiply-add into FMA for ordinary scalar code (unlike `/fp:fast`,
+   used nowhere in this project) — the real, current build is not at
+   risk in practice, but this Plan must not claim a guarantee its own
+   design does not actually provide for a hypothetical future
+   toolchain (e.g. a Clang/GCC-based Android target, Phase 1's own
+   other primary platform, not yet implemented) that might default
+   differently. Corrected (P7, below): the exact implementation shape,
+   split into two small, directly-testable `detail::` functions,
+   precise language about what is and is not guaranteed, and
+   confirmation that this Plan adds **no** new compiler-specific FP
+   flag to work around this — the tolerance's own width is the real
+   mitigation, not a forced FP mode.
+3. **The length-squared check moves from "duplicated in each
+   translation unit" (this Plan's own first-draft choice) to one
+   shared, directly-testable `atlantis::asset_system::detail::`
+   function pair, declared in `mesh_source.h`** — matching
+   `atlantis::runtime::detail::checkForDuplicatesAndCollisions()`'s own
+   already-established, real precedent for exactly this need (a real,
+   internal, non-public-contract seam a test can call directly,
+   documented as such in the header). This round's own review found
+   the first draft's "each `.cpp` gets its own copy, matching
+   `splitLines()`-style small-helper duplication" reasoning does not
+   actually fit here: `splitLines()` is duplicated because it is
+   *trivial* and has no independent test of its own; a numeric
+   tolerance boundary is exactly the kind of logic this codebase's own
+   `detail::` idiom exists to make independently testable without
+   becoming part of a module's stable public contract. `mesh_artifact.h`
+   already `#include`s `mesh_source.h` (for `ParsedMeshSource`), so
+   this introduces no new header dependency direction.
+4. **Boundary tests must be restructured into three distinct kinds, not
+   one, or the "exact `0.9801`/`1.0201` boundary" claim is not actually
+   testable the way this Plan's own first draft implied** — `0.99f`
+   squared and the decimal literal `0.9801` are not guaranteed to be
+   the identical `double` value once a real `float` triple is promoted
+   and summed; a test that tries to construct "a normal whose three
+   float components sum-of-squares to exactly `0.9801`" is relying on
+   an unstated, unverified decimal-equality assumption. Corrected (P8,
+   below): pure comparator tests (the boundary itself, via `std::nextafter`
+   on exact `double` literals, never through float components), a
+   separate "real float components, clearly inside/outside" integration
+   layer, and the existing full parse/decode-path tests — three
+   distinct verification items, not one conflated claim.
+5. **`static_assert(std::is_standard_layout_v<Vertex>)`** added to each
+   of the six composition roots' own five existing `static_assert`s
+   (P4) — a `constexpr`/`static_assert`-only addition, zero new runtime
+   API, closing the one remaining implicit assumption `offsetof()`
+   itself already requires (`offsetof` is only well-defined for a
+   standard-layout type) but that this Plan's own first draft never
+   stated as its own explicit, checked precondition.
+6. **Explicit confirmation added that no shader gains a new
+   `[[vk::location(N)]]` declaration as a consequence of this Plan** —
+   `Vertex` gaining a `normal` field changes no composition root's own
+   `MeshVertexAttributeSchema` (each still lists only the attributes
+   its own real shader reflects, unchanged — Pre-draft verification's
+   own already-confirmed finding, restated here as an explicit
+   Verification Checklist item rather than left implicit).
+7. **Explicit confirmation added that `mesh_artifact_tests.cpp`'s own
+   pinned-byte-vector test's *final*, checked-in expected value is a
+   compile-time `constexpr`/literal byte vector, computed once by an
+   independent tool at Implementation time and transcribed — never a
+   runtime call to `encodeMeshArtifact()` used to generate its own
+   "expected" comparison value** — this Plan's own first draft already
+   implied this (matching the existing test's own real, current shape,
+   Pre-draft verification) but did not state it as its own explicit
+   constraint; a test that calls the function under test to produce its
+   own expected value is not a regression test.
+
 No other finding changed this Plan's own structure. The remainder of
-this document reflects these corrections already applied, not tracked
-as open items.
+this document reflects both rounds' own corrections already applied,
+not tracked as open items.
 
 ## Objective
 
@@ -221,7 +321,7 @@ untouched.
   unit-length normal; the version-1-rejection case (line ~87–93,
   **unchanged** — version 1 stays rejected); the
   **version-3-then-"unrecognized"** case (line ~95–99, **must change
-  its literal from `3` to `4`** — Plan Review finding 3, above); every
+  its literal from `3` to `4`** — Plan Review Round 1 item 2, above); every
   other case (wrong field order, malformed numeric/UV token, double-
   space separator, non-finite position/color/UV float, wrong field
   count, the two deliberate "still missing UV0 columns"/"exact old
@@ -256,13 +356,13 @@ untouched.
 - `tests/tools/asset_cooker/cook_command_tests.cpp` — two accept-path
   constants (`kValidTriangleSource`, `kValidSquareSource`, both version
   2) move to version 3/11 fields; the existing version-1-rejection CLI
-  case (Plan Review finding 4, above) is **unchanged**.
+  case (Plan Review Round 1 item 3, above) is **unchanged**.
 - `tests/tools/asset_cooker/cooker_determinism_tests.cpp` — one
   embedded `kValidTriangleSource`-shaped constant, feeding the real
   double-cook determinism test; moves to version 3/11 fields with a
   real normal.
 
-### `tests/asset_system/mesh_artifact_tests.cpp` (full content read — the ninth real touch point, Plan Review finding 2)
+### `tests/asset_system/mesh_artifact_tests.cpp` (full content read — the ninth real touch point, its own distinct category — Spec 0020's own "Human Review Correction — 2026-08-29")
 
 `makeOneVertexSource()` builds one `MeshSourceVertex` via aggregate
 initialization: `{1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f}` (no
@@ -279,7 +379,7 @@ bytes (position/color/UV0), then 6 index bytes — total `78` bytes,
 `REQUIRE(expected.size() == 78)`. Six further tests each construct a
 one-vertex artifact via `encodeMeshArtifact(1, makeOneVertexSource())`
 and corrupt one byte: `"rejects an unknown schema version"` sets byte 8
-to `0x03` (**must become `0x04`** — Plan Review finding 3); `"rejects
+to `0x03` (**must become `0x04`** — Plan Review Round 1 item 2); `"rejects
 the old, pre-UV0 vertex stride"` sets byte 12 to `0x18` (`= 24`, the
 pre-UV0 stride — **stays a valid, meaningful "old stride" test
 unchanged**, since 24 is still not 44); `"rejects an unsupported vertex
@@ -372,7 +472,7 @@ discipline. The out-of-range-index test's own two corrupted bytes move
 from `72`/`73` to `84`/`85`. The schema-version/stride/non-finite tests'
 own byte offsets are otherwise unchanged (Pre-draft verification,
 above) except the "unknown schema version" test's own asserted value,
-`0x03` → `0x04` (Plan Review finding 3).
+`0x03` → `0x04` (Plan Review Round 1 item 2).
 
 ### P4. Named constants and `static_assert` wiring — exact form
 
@@ -391,6 +491,7 @@ Each of the six real composition-root touch points adds, immediately
 after its own `struct Vertex { ... };` definition:
 
 ```cpp
+static_assert(std::is_standard_layout_v<Vertex>);
 static_assert(offsetof(Vertex, position) == atlantis::asset_system::kMeshArtifactPositionOffsetBytes);
 static_assert(offsetof(Vertex, color) == atlantis::asset_system::kMeshArtifactColorOffsetBytes);
 static_assert(offsetof(Vertex, uv) == atlantis::asset_system::kMeshArtifactUv0OffsetBytes);
@@ -398,14 +499,26 @@ static_assert(offsetof(Vertex, normal) == atlantis::asset_system::kMeshArtifactN
 static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrideBytes);
 ```
 
-(The fifth assertion, on `sizeof(Vertex)` against the stride constant,
-is a direct, mechanical strengthening this Plan adds beyond Spec 0020's
-own four-offset text — same `static_assert`/`constexpr` mechanism,
-zero new API, and closes the one remaining gap those four alone would
-leave open: a `Vertex` struct with correct offsets but incorrect
-*trailing padding* would still pass all four offset checks while
-failing to match the real artifact stride.) Each of the six files gains
-one new `#include <atlantis/asset_system/mesh_artifact.h>`.
+(The `sizeof(Vertex)` assertion against the stride constant is a
+direct, mechanical strengthening this Plan adds beyond Spec 0020's own
+four-offset text — same `static_assert`/`constexpr` mechanism, zero new
+API, and closes the one remaining gap those four alone would leave
+open: a `Vertex` struct with correct offsets but incorrect *trailing
+padding* would still pass all four offset checks while failing to
+match the real artifact stride. The leading
+`std::is_standard_layout_v<Vertex>` assertion, added Plan Review Round
+2 item 5, makes explicit the one precondition `offsetof()` itself
+already silently requires — `offsetof` is only well-defined for a
+standard-layout type — rather than leaving it an unstated assumption;
+every one of the six existing `Vertex` structs already satisfies this
+trivially, being a plain aggregate of `float[3]`/`float[2]` arrays with
+no base class, virtual function, or access-specifier mixing, so this
+assertion is expected to pass immediately, not to change behavior — its
+own value is guarding against a *future* accidental change to one of
+these structs, not fixing a present defect.) Each of the six files
+gains one new `#include <atlantis/asset_system/mesh_artifact.h>` (for
+the four offset constants) and one new `#include <type_traits>` (for
+`std::is_standard_layout_v`) if not already present.
 
 ### P5. The two `mesh_source_tests.cpp` field-count boundary cases, exact new shape
 
@@ -435,6 +548,146 @@ placeholder), so this test doubles as a real proof that a geometrically
 meaningful, non-uniform-across-components value (`±0.577350269` mixed
 signs) survives the full pipeline exactly.
 
+### P7. The numeric-contract check: exact implementation shape, honest determinism claim, no new compiler flag (Plan Review Round 2 item 2/3)
+
+**Exact code shape**, placed in `mesh_source.h`'s own new
+`atlantis::asset_system::detail` namespace (declaration) and
+`mesh_source.cpp` (definition) — mirroring
+`atlantis::runtime::detail::checkForDuplicatesAndCollisions()`'s own
+already-established "internal seam, not part of this module's own
+public contract, directly unit-testable" precedent exactly, not a new
+pattern invented here:
+
+```cpp
+namespace atlantis::asset_system::detail {
+
+// Internal seam, exposed for direct unit testing only -- not part of
+// this module's own public contract (mirrors
+// atlantis::runtime::detail::checkForDuplicatesAndCollisions()'s own
+// identical precedent). Spec 0020 D3: computes a normal's own
+// length-squared from its three already-finite-checked float
+// components, via exact float-to-double promotion and a fixed,
+// left-to-right summation order. Promotion from float to double is
+// always exact (zero rounding); this function does not, on its own,
+// guarantee its own returned value is bit-identical across every
+// compiler/target for a given input -- fused-multiply-add (FMA)
+// contraction of `a*a + b` is a compiler/ISA choice orthogonal to
+// operand width, and this function neither forces nor forbids it via
+// any pragma or compiler flag. See isNormalLengthSquaredInTolerance()
+// below for why this does not matter for this format's own real
+// accept/reject contract.
+[[nodiscard]] double computeNormalLengthSquared(float x, float y, float z) noexcept {
+  const double xd = static_cast<double>(x);
+  const double yd = static_cast<double>(y);
+  const double zd = static_cast<double>(z);
+
+  double lengthSquared = xd * xd;
+  lengthSquared += yd * yd;
+  lengthSquared += zd * zd;
+  return lengthSquared;
+}
+
+// Internal seam, exposed for direct unit testing only -- see above.
+// Spec 0020 D3's own exact tolerance: [0.9801, 1.0201] inclusive
+// (0.99^2 / 1.01^2), a real +-1%-of-unit-length margin restated on the
+// squared quantity. This +-1% margin is chosen to be, and confirmed
+// here to remain, vastly wider than the largest possible discrepancy
+// between an FMA-contracted and a separately-rounded computation of a
+// three-term sum of squares (bounded by a small constant multiple of
+// double's own machine epsilon, ~2.22e-16) -- no realistic authored
+// normal changes its own accept/reject outcome based on whether a
+// given compiler/target contracts multiply-add into an FMA
+// instruction. This function does NOT guarantee bit-identical
+// intermediate lengthSquared values across toolchains -- only that the
+// accept/reject decision computeNormalLengthSquared() feeds into here
+// is stable for any input not deliberately engineered to sit within
+// about 1e-15 of the exact boundary, which no human-authored normal
+// ever will.
+[[nodiscard]] bool isNormalLengthSquaredInTolerance(double lengthSquared) noexcept {
+  return lengthSquared >= 0.9801 && lengthSquared <= 1.0201;
+}
+
+}  // namespace atlantis::asset_system::detail
+```
+
+`parseMeshSource()` (`mesh_source.cpp`, same translation unit) and
+`decodeMeshArtifact()` (`mesh_artifact.cpp`, via its own existing
+`#include <atlantis/asset_system/mesh_source.h>` — already present,
+confirmed by Pre-draft verification, needed today only for
+`ParsedMeshSource`) both call
+`detail::isNormalLengthSquaredInTolerance(detail::computeNormalLengthSquared(x, y, z))`
+after their own already-existing finiteness check, returning the new
+`NonUnitNormal` enumerator on `false`. **One shared implementation, not
+two duplicated copies** — this Plan's own first draft called for
+per-translation-unit duplication (matching `splitLines()`'s own
+established small-helper precedent); this round's own review found
+that reasoning does not actually fit a numeric-tolerance boundary,
+which needs to be independently, directly testable, exactly the need
+`detail::` namespaces already exist in this codebase to serve.
+
+**What this Plan does and does not claim, stated precisely, not
+overclaimed:** input `float`→`double` promotion is exact; the
+summation order is fixed by the source code above; the `[0.9801,
+1.0201]` tolerance is a real, generous margin, not a claim that hinges
+on any operation's own exact last-bit rounding; this Plan does **not**
+promise that an arbitrary decimal vector engineered to sit exactly on
+the tolerance boundary produces a bit-identical `lengthSquared` value
+across every possible compiler/target — only that no such engineered
+input exists among this Plan's own real, disclosed authored normals
+(P1/P2), and that the accept/reject *decision* is stable regardless.
+**Real, checked-in artifact determinism (V10 — a double-cook producing
+byte-identical output) comes from a different, independent property:
+`encodeMeshArtifact()` always serializes the author's own original,
+untouched float bits (`appendFloatLE(std::bit_cast<std::uint32_t>(value))`)
+— the numeric-contract check above is a pure accept/reject gate that
+never feeds back into what bytes get written; it either lets the
+author's own original bits through unchanged or rejects the whole
+source outright.** No new compiler-specific floating-point flag (no
+`/fp:strict`, no `-ffp-contract=off`, nothing) is added anywhere by
+this Plan — confirmed today no `/fp:` flag exists in this project's
+CMake configuration at all (Pre-draft verification), and this Plan's
+own tolerance is deliberately wide enough that none is needed.
+
+### P8. Boundary-test structure: three distinct kinds, not one (Plan Review Round 2 item 4)
+
+**Kind 1 — pure comparator, exact boundary, via `std::nextafter` on
+`double` literals, never through `float` components:** a new,
+dedicated unit test calls `detail::isNormalLengthSquaredInTolerance()`
+directly with `0.9801` and `1.0201` (both **accepted**), and with
+`std::nextafter(0.9801, 0.0)` / `std::nextafter(1.0201, 2.0)` (both
+**rejected**) — testing the comparison logic alone, with no float-
+promotion or summation-order question involved at all, since the
+`double` value under test is supplied directly, not computed.
+
+**Kind 2 — real `float` components, clearly inside/clearly outside:** a
+separate unit test calls `detail::computeNormalLengthSquared()` (then
+`isNormalLengthSquaredInTolerance()` on its result) with real `float`
+triples that are unambiguously far from the boundary either way — P1's
+own `0.577350269³`-shaped value (`lengthSquared ≈ 0.999999...`,
+comfortably inside) and `1.0f, 1.0f, 1.0f` (`lengthSquared = 3.0`,
+comfortably outside), plus a "just barely, unambiguously" pair chosen
+with real margin from the exact boundary (e.g. components scaled to
+`lengthSquared ≈ 0.99` and `≈ 1.01`) — this layer deliberately makes
+**no** claim about landing on the exact `0.9801`/`1.0201` value itself;
+that claim belongs to Kind 1 alone.
+
+**Kind 3 — full parse/decode-path integration:** the existing-shaped
+tests itemized below (V5c/V8a in the Verification Checklist) —
+`parseMeshSource()`/`decodeMeshArtifact()` called with real source
+text/artifact bytes, confirming the *whole* path (finiteness check,
+then the two `detail::` functions, then the correct enumerator)
+produces the correct `Result`, not merely that the isolated comparator
+does.
+
+**`-0.0`, extremely small values, exact zero, and `NaN`/`Inf` ordering**
+are each exercised at Kind 2 (`computeNormalLengthSquared()` accepts
+real `float` inputs, including `-0.0f`) and reconfirmed at Kind 3 (the
+full path, proving the finiteness check really does run first) — not
+merely asserted once. `NaN`/`Inf` inputs are never passed to Kind 1 or
+Kind 2 directly (both are downstream of the finiteness check in the
+real call path) — they are exercised exclusively at Kind 3, where the
+finiteness check's own ordering is the actual property under test.
+
 ## Milestones / Task Breakdown
 
 Two implementation milestones plus a closeout milestone. **Milestone 1
@@ -449,7 +702,7 @@ format/parser/encoder/decoder change without also updating all three
 real `.mesh.txt` sources in the same step would make the cooker reject
 every one of this repository's own authored meshes outright, breaking
 the default build; landing the source updates without also widening
-all six composition-root `Vertex` structs (and their own five new
+all six composition-root `Vertex` structs (and their own six new
 `static_assert`s) in the same step would leave those six either
 failing to compile (once the `static_assert`s land) or — if the
 `static_assert`s were somehow deferred — silently reading a 44-byte
@@ -464,37 +717,38 @@ version 3/44 bytes."
      `normalZ`; `kVersionLine` becomes `atlantis_static_mesh_source_version: 3`;
      the per-vertex-line parse widens its own `components[8]` array to
      `components[11]` and its own `fields.size() != 8` check to `!= 11`;
-     a new, dedicated `lengthSquared`-based check (D3's own exact
-     algorithm, `[0.9801, 1.0201]`, double precision, no `std::sqrt`)
-     runs immediately after the (now 11-wide) per-float finiteness
-     loop, returning the new `SourceParseError::NonUnitNormal` on
-     failure. `serializeMeshSource()` widens its own field-by-field
-     `std::to_string` concatenation to eleven values.
+     the new `detail::computeNormalLengthSquared()`/
+     `detail::isNormalLengthSquaredInTolerance()` pair (P7 — declared in
+     `mesh_source.h`'s own new `detail` namespace, defined in
+     `mesh_source.cpp`) runs immediately after the (now 11-wide)
+     per-float finiteness loop, returning the new
+     `SourceParseError::NonUnitNormal` on failure. `serializeMeshSource()`
+     widens its own field-by-field `std::to_string` concatenation to
+     eleven values.
    - `mesh_artifact.h`/`.cpp` (D2's own D2 target): four new offset
      constants (P4); `kMeshArtifactVertexStrideBytes` → `44`;
      `kMeshArtifactSchemaVersion` → `3`; `encodeMeshArtifact()` writes
      three more `appendFloatLE()` calls per vertex;
      `decodeMeshArtifact()`'s own per-vertex finiteness loop widens
-     `floatIndex < 8` to `< 11`, and the identical `lengthSquared`
-     check (a small, shared-in-kind free function this Plan places in
-     an anonymous namespace in `mesh_artifact.cpp`, called from both
-     `parseMeshSource()`'s translation unit *by value-in/bool-out
-     signature only* — **not** a cross-module shared function, since
-     `mesh_source.cpp` and `mesh_artifact.cpp` are two separate,
-     already-existing translation units in the same module with no
-     existing shared-helper header between them; each gets its own
-     copy of the same small function body, matching this format's own
-     established per-file `splitLines()`/`parseUnsigned()`-style
-     duplication precedent exactly, not a new cross-file dependency)
-     runs after decode's own finiteness check, returning
-     `ArtifactDecodeError::NonUnitNormal` on failure.
+     `floatIndex < 8` to `< 11`, then calls the identical, **shared**
+     `detail::computeNormalLengthSquared()`/
+     `detail::isNormalLengthSquaredInTolerance()` pair (P7 — via
+     `mesh_artifact.cpp`'s own existing `#include <atlantis/asset_system/mesh_source.h>`,
+     already present for `ParsedMeshSource`; no new include needed for
+     this specifically) after decode's own finiteness check, returning
+     `ArtifactDecodeError::NonUnitNormal` on failure. **One shared
+     implementation, not a duplicated one per translation unit** — P7's
+     own corrected reasoning, reversing this Plan's own first-draft
+     duplication choice.
    - `assets/meshes/minimal_cube.mesh.txt`,
      `assets/meshes/textured_quad_left.mesh.txt`,
      `assets/meshes/textured_quad_right.mesh.txt`: version line → `3`;
      every `vertex:` line gains its own P1 normal.
    - All six composition-root `Vertex` structs (Pre-draft verification's
-     own table) gain `float normal[3];`, the new `mesh_artifact.h`
-     include, and the five P4 `static_assert`s.
+     own table) gain `float normal[3];`, the new `mesh_artifact.h`/
+     `<type_traits>` includes (where not already present), and the six
+     P4 `static_assert`s (`is_standard_layout_v` plus four offsets plus
+     `sizeof`).
    - `tests/asset_system/mesh_source_tests.cpp`: every accept-path case
      moves to version 3/11 fields with a P2 normal (or, for the
      round-trip test, a value chosen to exercise real, non-trivial
@@ -526,7 +780,7 @@ version 3/44 bytes."
      accept-path constants, `cooker_determinism_tests.cpp`): version
      line → `3`, vertex line(s) widened to 11 fields with a P2 normal;
      `cook_command_tests.cpp`'s own version-1 CLI-rejection case is
-     unchanged (Plan Review finding 4).
+     unchanged (Plan Review Round 1 item 3).
    - New `tests/asset_system/mesh_normal_round_trip_tests.cpp` (P6),
      registered in `tests/asset_system/CMakeLists.txt` alongside its
      existing `mesh_uv_round_trip_tests.cpp` entry.
@@ -582,8 +836,9 @@ version 3/44 bytes."
   `tests/image_regression/fixture/textured_quad_fixture.cpp`,
   `tests/image_regression/fixture/world_scene_fixture.cpp`,
   `tests/image_regression/fixture/world_scene_loaded_fixture.cpp`
-  (Milestone 1 — `Vertex` struct + `static_assert`s + one new include
-  each, no other change)
+  (Milestone 1 — `Vertex` struct + six `static_assert`s + up to two new
+  includes each (`mesh_artifact.h`, `<type_traits>` where not already
+  present), no other change)
 - `tests/asset_system/mesh_source_tests.cpp`,
   `tests/asset_system/mesh_artifact_tests.cpp` (Milestone 1)
 - New `tests/asset_system/mesh_normal_round_trip_tests.cpp` (Milestone 1, P6)
@@ -648,28 +903,56 @@ own Testing & Verification Plan, made concrete and numbered:
 - [ ] V3 — 11-field acceptance; P5's own three field-count boundary
       cases (`CountMismatch`).
 - [ ] V4 — `NonFiniteFloat` on a normal component (`NaN` and `Inf`
-      each), confirmed to run before any magnitude check.
-- [ ] V5 — `NonUnitNormal` at parse time: a zero vector, `1 1 1`,
-      exactly `0.9801`/`1.0201` (both **accepted**), the smallest
-      representable step outside each bound (both **rejected**), a
-      `-0.0` component (**accepted**), an extremely small non-zero
-      vector (**rejected**).
+      each), confirmed to run before either `detail::` function (P7) is
+      ever called.
+- [ ] V5a — **Kind 1 (P8), pure comparator:**
+      `detail::isNormalLengthSquaredInTolerance()` called directly with
+      `0.9801`/`1.0201` (both **accepted**) and
+      `std::nextafter(0.9801, 0.0)`/`std::nextafter(1.0201, 2.0)` (both
+      **rejected**) — no `float` component or summation involved.
+- [ ] V5b — **Kind 2 (P8), real `float` components, unambiguous
+      margin:** `detail::computeNormalLengthSquared()` +
+      `isNormalLengthSquaredInTolerance()` with P1's own
+      `(0.577350269, 0.577350269, 0.577350269)` (clearly inside), `(1, 1,
+      1)` (clearly outside), a `-0.0f` component (accepted, behaves as
+      `+0.0f`), and an extremely small non-zero vector (`~1e-20` per
+      component, rejected) — this layer makes **no** claim about
+      landing on the exact `0.9801`/`1.0201` value; that is V5a's own
+      job alone.
+- [ ] V5c — **Kind 3 (P8), full parse-time integration:**
+      `parseMeshSource()` with real 11-field source text reproducing
+      V5b's own cases end to end, confirming the real
+      `NonUnitNormal`/acceptance outcome through the whole function, not
+      only the isolated `detail::` pair.
 - [ ] V6 — A pinned-expected-byte-vector test for `encodeMeshArtifact()`
-      at the new 44-byte stride/90-byte total size (P3), independently
-      computed, not hand-transcribed.
+      at the new 44-byte stride/90-byte total size (P3) — the checked-in
+      expected vector is a compile-time constant/literal, computed once
+      by an independent tool at Implementation time and transcribed;
+      **the test itself never calls `encodeMeshArtifact()` to produce
+      its own expected value** (Plan Review Round 2 item 7).
 - [ ] V7 — `decodeMeshArtifact()` rejecting schema version 1, 2, and 4
-      (not 3 — Plan Review finding 3); every stride other than 44
+      (not 3 — Plan Review Round 1 item 2); every stride other than 44
       (including 32 and 24); truncated input; inconsistent offsets;
-      out-of-range index at the new offset (P3).
-- [ ] V8 — `NonUnitNormal` at decode time, independently reachable via
-      a real, hand-corrupted artifact byte buffer — never merely
-      re-running the parse-time case.
+      out-of-range index at the new offset (P3, bytes `84`/`85`, not the
+      old `72`/`73` — confirmed the corrected offset targets the
+      *index* region, not accidentally the normal region now occupying
+      bytes `72`–`83`).
+- [ ] V8a — `NonUnitNormal` at decode time (Kind 2-equivalent): a real,
+      hand-corrupted artifact byte buffer whose normal region decodes to
+      a finite value outside `[0.9801, 1.0201]` — independently
+      reachable, never merely re-running the parse-time case.
+- [ ] V8b — Confirmed the *same*, shared `detail::` pair (P7) is what
+      both V5a–c and V8a exercise — not two independent
+      implementations that could silently drift apart.
 - [ ] V9 — `mesh_normal_round_trip_tests.cpp` (P6): a real
       `cookStaticMesh()` → `loadStaticMeshAsset()` round-trip for a
       real P1 normal value, bit-for-bit.
 - [ ] V10 — Deterministic double-cook: `cookStaticMesh()` invoked twice
       against identical, normal-bearing source text produces
-      byte-identical artifacts (`cooker_determinism_tests.cpp`).
+      byte-identical artifacts (`cooker_determinism_tests.cpp`) —
+      confirmed this holds because `encodeMeshArtifact()` always
+      serializes the author's own original float bits unchanged (P7),
+      not because of any property of the numeric-contract check itself.
 - [ ] V11 — Re-import triggering: the existing content-driven re-cook
       mechanism, re-verified against all three real mesh assets under
       the new grammar.
@@ -677,14 +960,26 @@ own Testing & Verification Plan, made concrete and numbered:
       computed triangle-level face-normal results (both triangles, both
       quads) equal `(0, 0, 1)`.
 - [ ] V13 — All six real composition-root touch points compile
-      (including their own five new `static_assert`s each) and their
-      own existing test suites pass, outcome-unmodified, against the
-      widened 44-byte `Vertex`.
-- [ ] V14 — All eight embedded-mesh-source-text files (Pre-draft
-      verification's own exact list) confirmed updated and passing —
-      including `mesh_source_tests.cpp`'s own version-1-unchanged and
+      (including their own six new `static_assert`s each —
+      `is_standard_layout_v` plus four offsets plus `sizeof`, P4) and
+      their own existing test suites pass, outcome-unmodified, against
+      the widened 44-byte `Vertex`.
+- [ ] V13a — Confirmed no composition root's own `MeshVertexAttributeSchema`/
+      shader-reflection wiring changed as a consequence of `Vertex`
+      gaining `normal` — each of the six still lists only the
+      attributes its own real, unmodified shader reflects; **zero** new
+      `[[vk::location(N)]]` declaration in any `.slang` file (restates
+      V22 below at the composition-root level specifically, Plan Review
+      Round 2 item 6).
+- [ ] V14 — All nine real touch points confirmed updated and passing, in
+      their own two categories (Spec 0020's own "Human Review
+      Correction — 2026-08-29"): the eight embedded-mesh-source-text
+      files (Pre-draft verification's own exact list — including
+      `mesh_source_tests.cpp`'s own version-1-unchanged and
       version-4-not-3 cases, and `cook_command_tests.cpp`'s own
-      version-1-unchanged case plus its new version-2-rejection case.
+      version-1-unchanged case plus its new version-2-rejection case)
+      plus `mesh_artifact_tests.cpp` (its own direct-`MeshSourceVertex`-
+      construction category, P3).
 - [ ] V15 — Fresh `ATLANTIS_BUILD_TESTS=ON` configure/build, both Debug
       and Release: `ctest -LE gpu` and `ctest -L gpu` both pass, real
       numbers recorded (not merely "passing").
@@ -702,11 +997,14 @@ own Testing & Verification Plan, made concrete and numbered:
       configurations; the golden generator is **not** run.
 - [ ] V19 — Module/link graph: `Atlantis::AssetSystem` still links
       `Atlantis::Core` only.
-- [ ] V20 — C4062: confirmed (not merely asserted) that neither
-      `SourceParseError` nor `ArtifactDecodeError` gained a new
-      exhaustive-switch consumer during Implementation; no
-      `/w14062` probe is applicable (D2's own confirmed finding,
-      re-checked after Implementation, not only before).
+- [ ] V20 — C4062/error-domain re-check, repository-wide, not merely
+      re-asserted from the Spec: confirmed neither `SourceParseError`
+      nor `ArtifactDecodeError` gained a new exhaustive-switch or
+      `toString()`-shaped consumer anywhere in `src/` or `tests/` during
+      Implementation — a fresh `switch.*SourceParseError`/
+      `switch.*ArtifactDecodeError`/`toString(SourceParseError`/
+      `toString(ArtifactDecodeError` search, zero matches expected; no
+      `/w14062` probe is applicable if that holds.
 - [ ] V21 — `git diff --check` clean; no stray whitespace.
 - [ ] V22 — No new `.slang` file, no new golden, no new RHI/RenderGraph/
       Renderer public API symbol anywhere in the real diff (a direct,

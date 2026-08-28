@@ -105,6 +105,64 @@ No unresolvable architectural conflict was found. Every finding above
 was closed with a real, evidenced fix within this Spec's own existing
 scope.
 
+## Human Review Correction — 2026-08-29
+
+**A mechanical, non-design correction, found during [Plan 0020](../plans/0020-mesh-normal-attribute-foundation.md)'s
+own Plan Review, directed by Human Review to be corrected here rather
+than silently reinterpreted at Plan level.** This Spec's own Pre-draft
+verification (above) states "**Nine** test files carry embedded,
+literal mesh-source text," then lists exactly **eight**
+(`tests/asset_system/load_tests.cpp`,
+`tests/asset_system/mesh_source_tests.cpp`,
+`tests/asset_system/mesh_uv_round_trip_tests.cpp`,
+`tests/runtime/material_realization_gpu_tests.cpp`,
+`tests/runtime/scene_load_tests.cpp`,
+`tests/runtime/scene_manifest_tests.cpp`,
+`tests/tools/asset_cooker/cook_command_tests.cpp`,
+`tests/tools/asset_cooker/cooker_determinism_tests.cpp`). The word
+"nine" was correct in total count, wrong in category: a
+repository-wide search for the string `atlantis_static_mesh_source_version`
+(this Spec's own original search term) genuinely returns only these
+eight files — it cannot and does not find
+`tests/asset_system/mesh_artifact_tests.cpp`, which is a real, necessary
+ninth touch point of the identical kind (a test literal directly tied to
+`MeshSourceVertex`'s own eight-then-eleven-field shape, requiring the
+identical class of edit) but reaches that shape by constructing a
+`MeshSourceVertex` via C++ aggregate initialization
+(`{1.0f, 2.0f, ..., 8.0f}`) rather than by embedding parseable mesh-
+source *text* — so it is invisible to a text-string search for the
+version-line marker, while being every bit as real a required edit as
+the other eight.
+
+**Corrected statement, replacing "Nine test files carry embedded,
+literal mesh-source text" above:** this Spec's own real touch-point
+count is **nine test files in total, in two distinct categories** —
+**eight** files carrying embedded, literal mesh-source *text*
+(the original list above, unchanged, still accurate as a list) plus
+**one** file (`tests/asset_system/mesh_artifact_tests.cpp`) that
+constructs a `MeshSourceVertex` directly via aggregate initialization,
+never through parsed text, and additionally hardcodes byte offsets
+against the artifact's own binary layout (its own pinned-byte-vector
+test and six byte-corruption decode-error cases). Both categories
+require the identical class of edit (widening from eight fields/values
+to eleven) for the identical reason (the one, single vertex layout
+this Spec itself widens) — the distinction is only in *how* each test
+file expresses its own mesh-vertex data, not in whether it must change.
+
+This correction **does not alter, narrow, or reinterpret** this Spec's
+own Decisions for Human Review (D1–D10), its own `Approved` status, or
+any part of its own Human Review Approval recorded above — it corrects
+one summary word and appends the one file category that word's own
+imprecision had left uncounted-by-name. [ADR-0063](../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md)
+and the [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)/[ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+Accepted Amendments are unaffected — none of the three names or
+depends on this specific file count. [Plan 0020](../plans/0020-mesh-normal-attribute-foundation.md)'s
+own traceability and Verification Checklist use this corrected,
+two-category accounting throughout.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — directed and
+approved as part of Plan 0020's own Human Review Approval, 2026-08-29.
+
 ## Summary
 
 [Spec 0019](0019-lighting-foundation.md)'s own D1 named this Spec as a
