@@ -6,6 +6,7 @@
 
 using atlantis::runtime::extractCameraMatrices;
 using atlantis::runtime::Mat4;
+using atlantis::runtime::resolveMaterialAsset;
 using atlantis::runtime::resolveMeshAsset;
 using atlantis::runtime::SceneExtractionError;
 
@@ -138,4 +139,31 @@ TEST_CASE("resolveMeshAsset(): an empty known set returns Err(UnresolvedMeshAsse
   const auto result = resolveMeshAsset(1, {});
   REQUIRE(result.isErr());
   REQUIRE(result.error() == SceneExtractionError::UnresolvedMeshAsset);
+}
+
+// resolveMaterialAsset() -- Plan 0018 Section P9, verbatim-shaped after
+// resolveMeshAsset()'s own coverage.
+TEST_CASE("resolveMaterialAsset(): a member AssetId returns Ok()", "[runtime][scene_extraction][material]") {
+  const auto result = resolveMaterialAsset(42, {42});
+  REQUIRE(result.isOk());
+}
+
+TEST_CASE("resolveMaterialAsset(): a member AssetId among several returns Ok()",
+          "[runtime][scene_extraction][material]") {
+  const auto result = resolveMaterialAsset(2, {1, 2, 3});
+  REQUIRE(result.isOk());
+}
+
+TEST_CASE("resolveMaterialAsset(): a non-member AssetId returns Err(UnresolvedMaterialAsset)",
+          "[runtime][scene_extraction][material]") {
+  const auto result = resolveMaterialAsset(1, {2});
+  REQUIRE(result.isErr());
+  REQUIRE(result.error() == SceneExtractionError::UnresolvedMaterialAsset);
+}
+
+TEST_CASE("resolveMaterialAsset(): an empty known set returns Err(UnresolvedMaterialAsset)",
+          "[runtime][scene_extraction][material]") {
+  const auto result = resolveMaterialAsset(1, {});
+  REQUIRE(result.isErr());
+  REQUIRE(result.error() == SceneExtractionError::UnresolvedMaterialAsset);
 }

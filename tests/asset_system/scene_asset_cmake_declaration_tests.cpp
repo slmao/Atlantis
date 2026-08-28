@@ -34,8 +34,15 @@ TEST_CASE("atlantis_add_scene_asset() produces an artifact and metadata sidecar"
   CHECK(fs::exists(ATLANTIS_CMAKE_DECLARATION_TEST_SCENE_METADATA_PATH));
 }
 
-TEST_CASE("atlantis_add_scene_asset()'s generated manifest is a well-formed, single-entry tab-separated triple",
+TEST_CASE("atlantis_add_scene_asset()'s generated manifest is a well-formed, "
+          "three-entry (mesh/material/texture) tab-separated triple set",
           "[asset_system][scene][cmake]") {
+  // Plan 0018 Section P9: the declaration this manifest comes from gained
+  // MATERIAL_DEPENDENCIES/TEXTURE_DEPENDENCIES alongside the original
+  // MESH_DEPENDENCIES -- one line per dependency, same unchanged 3-column
+  // format, order matching declaration order (mesh, then material, then
+  // texture; SceneDependencyResolver::find() sorts by AssetId for lookup,
+  // so this order is a generator-mechanics detail, not a public contract).
   REQUIRE(fs::exists(ATLANTIS_CMAKE_DECLARATION_TEST_SCENE_MANIFEST_PATH));
   std::string content = readFileText(ATLANTIS_CMAKE_DECLARATION_TEST_SCENE_MANIFEST_PATH);
 
@@ -49,7 +56,25 @@ TEST_CASE("atlantis_add_scene_asset()'s generated manifest is a well-formed, sin
   if (!content.empty() && content.back() == '\n') content.pop_back();
   if (!content.empty() && content.back() == '\r') content.pop_back();
 
-  const std::string expectedLine = std::string(ATLANTIS_minimal_cube_LOGICAL_PATH) + "\t" +
-                                    ATLANTIS_minimal_cube_ARTIFACT_PATH + "\t" + ATLANTIS_minimal_cube_METADATA_PATH;
-  CHECK(content == expectedLine);
+  const std::string meshLine = std::string(ATLANTIS_minimal_cube_LOGICAL_PATH) + "\t" +
+                                ATLANTIS_minimal_cube_ARTIFACT_PATH + "\t" + ATLANTIS_minimal_cube_METADATA_PATH;
+  const std::string materialLine = std::string(ATLANTIS_cmake_declaration_test_material_LOGICAL_PATH) + "\t" +
+                                    ATLANTIS_cmake_declaration_test_material_ARTIFACT_PATH + "\t" +
+                                    ATLANTIS_cmake_declaration_test_material_METADATA_PATH;
+  const std::string textureLine = std::string(ATLANTIS_textured_quad_unorm_LOGICAL_PATH) + "\t" +
+                                   ATLANTIS_textured_quad_unorm_ARTIFACT_PATH + "\t" +
+                                   ATLANTIS_textured_quad_unorm_METADATA_PATH;
+  const std::string expected = meshLine + "\r\n" + materialLine + "\r\n" + textureLine;
+
+  // Re-strip \r for a line-ending-independent comparison, splitting on
+  // \n only, matching this test's own already-established discipline.
+  std::string normalizedContent;
+  for (char c : content) {
+    if (c != '\r') normalizedContent += c;
+  }
+  std::string normalizedExpected;
+  for (char c : expected) {
+    if (c != '\r') normalizedExpected += c;
+  }
+  CHECK(normalizedContent == normalizedExpected);
 }

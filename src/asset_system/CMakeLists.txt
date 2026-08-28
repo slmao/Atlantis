@@ -116,7 +116,17 @@ endfunction()
 function(atlantis_add_scene_asset)
   set(options "")
   set(oneValueArgs NAME SOURCE)
-  set(multiValueArgs MESH_DEPENDENCIES)
+  # Plan 0018 Section P9: MATERIAL_DEPENDENCIES/TEXTURE_DEPENDENCIES
+  # extend the same manifest MESH_DEPENDENCIES already populates -- still
+  # one flat, unchanged, 3-column (logicalPath/artifactPath/metadataPath)
+  # file, never a new column or a new file. TEXTURE_DEPENDENCIES exists
+  # so a material's own transitively-referenced texture resolves through
+  # the SAME manifest a scene's mesh references already use (ADR-0060 D5)
+  # -- required even when the scene itself never directly names that
+  # texture, an explicitly-permitted "declared but only transitively
+  # used" entry, matching MESH_DEPENDENCIES' own existing tolerance for
+  # an unreferenced declared dependency.
+  set(multiValueArgs MESH_DEPENDENCIES MATERIAL_DEPENDENCIES TEXTURE_DEPENDENCIES)
   cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
   set(asset_root "${CMAKE_SOURCE_DIR}/assets")
@@ -137,6 +147,28 @@ function(atlantis_add_scene_asset)
         "atlantis_add_scene_asset(${ARG_NAME}): MESH_DEPENDENCIES entry "
         "'${dep_name}' is not a previously declared asset -- declare it "
         "via atlantis_add_static_mesh_asset() first.")
+    endif()
+    list(APPEND dependency_targets "${ATLANTIS_${dep_name}_TARGET}")
+    string(APPEND manifest_lines
+      "${ATLANTIS_${dep_name}_LOGICAL_PATH}\t${ATLANTIS_${dep_name}_ARTIFACT_PATH}\t${ATLANTIS_${dep_name}_METADATA_PATH}\n")
+  endforeach()
+  foreach(dep_name ${ARG_MATERIAL_DEPENDENCIES})
+    if(NOT DEFINED ATLANTIS_${dep_name}_ARTIFACT_PATH)
+      message(FATAL_ERROR
+        "atlantis_add_scene_asset(${ARG_NAME}): MATERIAL_DEPENDENCIES entry "
+        "'${dep_name}' is not a previously declared asset -- declare it "
+        "via atlantis_add_material_asset() first.")
+    endif()
+    list(APPEND dependency_targets "${ATLANTIS_${dep_name}_TARGET}")
+    string(APPEND manifest_lines
+      "${ATLANTIS_${dep_name}_LOGICAL_PATH}\t${ATLANTIS_${dep_name}_ARTIFACT_PATH}\t${ATLANTIS_${dep_name}_METADATA_PATH}\n")
+  endforeach()
+  foreach(dep_name ${ARG_TEXTURE_DEPENDENCIES})
+    if(NOT DEFINED ATLANTIS_${dep_name}_ARTIFACT_PATH)
+      message(FATAL_ERROR
+        "atlantis_add_scene_asset(${ARG_NAME}): TEXTURE_DEPENDENCIES entry "
+        "'${dep_name}' is not a previously declared asset -- declare it "
+        "via atlantis_add_texture_asset() first.")
     endif()
     list(APPEND dependency_targets "${ATLANTIS_${dep_name}_TARGET}")
     string(APPEND manifest_lines

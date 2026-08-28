@@ -124,4 +124,12 @@ atlantis::Result<std::monostate, SceneExtractionError> resolveMeshAsset(
   return atlantis::Result<std::monostate, SceneExtractionError>::Ok({});
 }
 
+atlantis::Result<std::monostate, SceneExtractionError> resolveMaterialAsset(
+    atlantis::asset_system::AssetId requested, const std::vector<atlantis::asset_system::AssetId>& knownIds) {
+  if (std::find(knownIds.begin(), knownIds.end(), requested) == knownIds.end()) {
+    return atlantis::Result<std::monostate, SceneExtractionError>::Err(SceneExtractionError::UnresolvedMaterialAsset);
+  }
+  return atlantis::Result<std::monostate, SceneExtractionError>::Ok({});
+}
+
 }  // namespace atlantis::runtime
