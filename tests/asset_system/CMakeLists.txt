@@ -22,6 +22,8 @@ add_executable(atlantis_asset_system_tests
   load_texture_tests.cpp
   texture_fixture_source_identity_tests.cpp
   material_source_tests.cpp
+  material_artifact_tests.cpp
+  material_metadata_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_system_tests

@@ -22,6 +22,8 @@ add_library(atlantis_asset_system STATIC
   src/cook_texture.cpp
   src/load_texture.cpp
   src/material_source.cpp
+  src/material_artifact.cpp
+  src/material_metadata.cpp
 )
 add_library(Atlantis::AssetSystem ALIAS atlantis_asset_system)
 
