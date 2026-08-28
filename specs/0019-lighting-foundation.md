@@ -1,55 +1,153 @@
 # Spec: Lighting Foundation
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-08-29
-- **Related Plan(s):** none yet — this Spec must reach `Approved` before a
-  Plan is drafted, per [AGENTS.md](../AGENTS.md)'s Golden Rule.
-- **Related ADR(s):** [ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md) (`Proposed`), [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md) (`Proposed`)
+- **Related Plan(s):** none yet. **Blocked by Spec 0020 implementation** —
+  see D1. This approval authorizes drafting **Spec 0020 only**. Plan
+  0019 may not be drafted until Spec 0020's own Implementation PR has
+  merged (Spec/Plan 0020 both `Approved`, real Implementation verified),
+  per [AGENTS.md](../AGENTS.md)'s Golden Rule and this Spec's own D1.
+- **Related ADR(s):** [ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md) (`Accepted`), [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md) (`Accepted`)
+- **Human Review Approval (2026-08-29):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
+  git-identified maintainer) on 2026-08-29, accepting this document's
+  own "Decisions for Human Review" section in full, per its own final,
+  corrected recommendations produced during one final, targeted review
+  round (below), and accepting [ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md)/[ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)
+  (both `Proposed` → `Accepted`) in the same pass. **This approval
+  authorizes drafting Spec 0020 ("Mesh Normal Attribute Foundation")
+  only. It does not authorize Plan 0019 or any Implementation.** Plan
+  0019 may begin only after Spec 0020's own Implementation PR has
+  merged — see D1's own governance-gate text, which this approval
+  accepts verbatim, not as a placeholder to be revisited later.
 
-## Readiness for Human Review
+## Final Review Round (2026-08-29) — closed findings, recorded before approval
 
-One centralized self-review pass was performed while drafting this
-Spec, before presenting it — mirroring Spec 0018's own two "Readiness
-for Human Review" rounds, scaled to a single, first-draft pass rather
-than a re-review of an already-circulated document. Every real,
-concrete architectural or RHI-boundary claim this Spec makes (the mesh
-format's own real byte layout; `World`'s own real component/dependency
-shape; the scene grammar's own real per-node dispatch mechanism;
-`MaterialKind`'s own real closed shape and disclosed growth path; the
-RHI's own real, single, vertex-only uniform binding; `ShaderStage`'s own
-real single-value shape; the camera buffer's own real per-frame update
-pattern) was verified by reading the actual, current source file in
-full, not assumed from memory of Spec 0018's own drafting or from this
-codebase's own general conventions — see "Pre-draft verification"
-below for the complete, itemized record.
+A single, targeted final review round examined twelve specific areas of
+this Spec's own real-code implementability and honesty, focused on the
+mesh-normal governance gate, GPU resource lifetime/visibility, and
+whether this Spec's own claims about runtime light mutation matched what
+its own design actually does. Every item below was closed at the Spec
+level; two items (D1, D5-adjacent frame-data ownership) produced a real,
+disclosed *design change* from this Spec's own first draft, not merely
+clarified wording — recorded here so the change is visible, not silently
+folded in:
 
-**The one real, load-bearing finding this pass made, not merely a
-nuance:** this codebase has no vertex normal attribute anywhere, and
-genuine diffuse lighting cannot be built without one, without either
-faking it (explicitly forbidden by this Spec's own drafting brief) or
-solving it here (a real, substantial scope addition this Spec's own
-self-review judged too large to bundle cleanly into one delivery
-alongside the rest of this Spec's own scope). D1 recommends resolving
-this as a separate, prerequisite Spec rather than silently assuming
-either answer — stated as this Spec's own most consequential, disclosed
-scheduling dependency, not buried in a footnote.
+1. **D1's own dependency wording corrected from "Approved" to a real
+   governance gate.** The first draft said this Spec's own Plan is
+   blocked once its prerequisite reaches `Approved`; that is
+   insufficient — an `Approved`-but-not-yet-`Implemented` prerequisite
+   Spec has no real, buildable API yet, so a Plan drafted against it
+   would depend on a contract that does not exist in source. Corrected:
+   Plan 0019 is blocked until Spec 0020's own **Implementation PR
+   merges** (Spec 0020 both `Approved` and its Plan `Approved`, real
+   code landed and verified) — not merely until Spec 0020 itself reaches
+   `Approved`. This Spec's own header and D1 now state this precisely,
+   and `specs/README.md` registers `Spec 0020 — Mesh Normal Attribute
+   Foundation` explicitly as the next, already-identified, not-yet-
+   drafted spec (a deliberate, disclosed exception to Section B's own
+   general "no number pre-assigned before drafting" rule, made because
+   Spec 0019's own approval is real and needs a stable, named
+   dependency to point at — see `specs/README.md`'s own note recording
+   this exception).
+2. **The frame lighting data's own update model was not honestly
+   closed — a real design change, not a wording fix.** The first draft
+   re-derived and rewrote the light array into the shared uniform
+   buffer unconditionally every frame, mirroring the camera data's own
+   existing per-frame write, without ever stating plainly whether a
+   runtime change to a `Light` component would or would not reach the
+   GPU, and without any test proving either answer. Corrected: this
+   Spec now commits explicitly to the **static-snapshot** model —
+   `RuntimeApplication` captures the frame lighting array **exactly
+   once**, on the first successful frame (immediately after
+   `World::updateTransforms()` first runs, alongside Phase 2 material
+   realization), and never rewrites it again for that
+   `RuntimeApplication` instance's own lifetime. A runtime change to any
+   `Light` component (via `World::setLight()`) after that point is
+   **not** reflected in any rendered frame — reloading the scene (or
+   restarting Runtime) is required. This is now stated as an explicit
+   Requirement, a Non-Goal, a Known Limitation, and has its own,
+   dedicated negative test (D9/D10, Known Limitations, below). A real
+   future "Dynamic Frame Uniform Updates" capability is named as its own
+   disclosed future candidate, not solved here. The camera view/
+   projection portion of the *same* buffer is completely unaffected —
+   still recomputed and rewritten every frame exactly as it already is
+   today, including its own existing resize/aspect-ratio behavior,
+   which this Spec does not touch (see D9's own explicit "resize is
+   unaffected" note).
+3. **World `Light` semantics were underspecified — now fixed
+   precisely.** D2 is rewritten with an exact field list, an exact
+   direction/position derivation formula (matching `Camera`'s own real
+   extraction code, cited by line), an exact, evidence-based statement
+   of which transform properties (parent composition, negative scale,
+   non-uniform scale, shear) are safe for light direction/position
+   extraction specifically and why (a real linear-algebra argument, not
+   an assertion), an exact error-precedence order (matching `World::validate()`'s
+   own real, current code), and an exact degenerate-transform rejection
+   (mirroring `DegenerateCameraForward`) so Runtime never guesses a
+   direction or silently normalizes an near-zero vector.
+4. **Over-limit lights: corrected from deterministic truncation to a
+   hard cook/decode-time error.** The first draft's own truncation
+   recommendation risked silently masking a real scene-authoring
+   mistake (an author who did not realize a cap exists gets a
+   dimmer-than-intended, silently-incomplete scene with no visible
+   signal beyond a log line). Corrected, matching Spec 0018 D4's own
+   "no silent fallback for a genuinely present-but-broken reference"
+   reasoning: a scene declaring more lights of a given kind than the
+   fixed maximum is a **cook-time and decode-time structural error** —
+   the scene never cooks (or, for a hand-corrupted artifact, never
+   decodes) rather than silently rendering with fewer lights than
+   authored.
+5. **Lighting math was named but not written out — now a complete,
+   exact, per-value-testable specification** (D6): the diffuse term,
+   the directional-light sign convention, the point-light vector/
+   epsilon/attenuation/range formula, the color/intensity value ranges,
+   the explicit absence of an ambient term, the exact clamp location,
+   and the no-tone-mapping boundary are all now stated as literal
+   formulas, not prose description.
+6. **Normal transform's own safety condition was too narrow.**
+   The first draft's "uniform scale" check missed that a *uniform
+   negative* scale (a point reflection) is also mathematically safe
+   under a direct (non-inverse-transpose) 3×3 transform, while a
+   *single-axis* negative scale is not simply "non-uniform" in the same
+   sense — both cases needed a real linear-algebra check, not an
+   intensity-of-belief guess. Corrected: D7 now uses the exact, general,
+   provably-sufficient condition — the world matrix's own upper-left 3×3
+   columns are mutually orthogonal and equal in length (a "conformal"/
+   similarity transform, which includes uniform scale of either sign and
+   pure rotation/reflection, and excludes non-uniform scale and shear)
+   — checked on the *fully composed* world matrix (not merely an
+   entity's own local `Transform.localScale`), since a parent's own
+   non-uniform scale can introduce shear a child's own local transform
+   never had. This is a Runtime-extraction-time, per-entity, per-frame
+   check (not a scene-validation-time one), since it depends on the
+   full, composed hierarchy only `World` can resolve.
+7. **Material/shader boundary detail was named but not specified** —
+   D8 (formerly D4's own material scope, renumbered for clarity in this
+   round) now states the exact CMake target shape, the exact expected
+   descriptor contract (three binding entries, not two — the shared
+   uniform binding reflects from *both* stages), the exact vertex-input
+   schema shape (deferred only on Spec 0020's own exact byte offsets,
+   never on its existence), and confirms, precisely, that no material
+   artifact schema-version bump is required.
+8. **Verification was missing CPU-level math tests and negative
+   coverage for the two new hard-error/skip conditions** (D10): now
+   requires hand-computed-expected-value unit tests for every formula
+   in D6, and dedicated negative tests for the over-limit hard error
+   (finding 4) and the non-conformal-transform skip (finding 6).
+9. **ADR scope re-checked: neither ADR-0061 nor ADR-0062 decides
+   anything about Spec 0020's own eventual mesh-normal schema, stride,
+   offset, or migration** — confirmed by re-reading both ADRs in full
+   during this round; both were already scoped correctly and needed no
+   change on this point, stated here as a closed check, not a silent
+   assumption.
 
-**A second, real finding, load-bearing for D5 specifically:** the RHI's
-own existing uniform-buffer descriptor binding is hardcoded,
-Vulkan-side, to vertex-stage visibility only — a fragment shader cannot
-read it today regardless of what any higher-level API or Shader-System
-reflection contract might suggest. This is not a hypothetical
-constraint invented to justify an ADR; it was found by reading
-`vulkan_device.cpp`'s own real `createPipeline()` implementation line by
-line, and is the one real, disclosed RHI change (ADR-0062) this Spec's
-own design requires.
-
-No unresolvable architectural conflict was found. Every one of this
-Spec's own twelve Decision areas was closed with a real, evidenced
-recommendation grounded in current source — none required inventing an
-unverifiable claim or silently picking an answer AGENTS.md's own Golden
-Rule would call an uncontrolled architectural decision.
+No unresolvable architectural conflict was found. Every finding above
+was closed with a real, evidenced fix within this Spec's own existing
+scope — none required inventing new capability this codebase does not
+already have, beyond the one, already-disclosed RHI stage-visibility
+widening (D5/ADR-0062, unchanged by this round).
 
 ## Summary
 
@@ -64,98 +162,54 @@ optional per-entity component, `Light` (Directional or Point, one
 closed, tagged shape — not a variant type, not a generic ECS registry);
 the Scene Asset format gains an optional light node; Material gains one
 new, minimal kind, `LitTextured`, whose fragment shader reads a
-Runtime-computed, per-frame array of active lights and applies minimal
-Lambertian diffuse shading against a real, asset-sourced vertex normal.
-No PBR, no shadows, no IBL, no post-processing — a closed, honest,
-minimal proof that a scene-authored light actually changes what a
-Runtime-rendered pixel looks like, end to end.
+Runtime-computed, **one-time-captured** array of active lights and
+applies minimal Lambertian diffuse shading against a real, asset-sourced
+vertex normal. No PBR, no shadows, no IBL, no post-processing, no
+runtime light mutation — a closed, honest, minimal proof that a
+scene-authored light actually changes what a Runtime-rendered pixel
+looks like, end to end, for the lifetime of one scene load.
 
-**A load-bearing, evidence-grounded finding this Spec's own drafting
-made, stated up front rather than buried:** this codebase has **no
-vertex normal attribute anywhere** — Asset System's static mesh format
-(schema version 2, Spec 0017) is position(3)+color(3)+UV0(2), 32 bytes,
-full stop (confirmed by direct inspection of every mesh-related file
-under `src/asset_system/`, not assumed). Genuine, non-faked diffuse
-lighting is mathematically impossible without a real per-vertex normal.
-This Spec's own Decision D1 addresses this directly and recommends
-**not** solving it inside this Spec — see D1 for the full, evidenced
-reasoning and the recommended prerequisite.
+**Two load-bearing, evidence-grounded findings this Spec's own drafting
+and final review made, stated up front rather than buried:**
 
-## Motivation / Problem Statement
-
-Confirmed directly against real, current source (see "Pre-draft
-verification" below):
-
-- `atlantis::renderer::Material` owns exactly one `Pipeline`, plus an
-  optional, non-owning `SampledTexture`/`Sampler` pair (Spec 0016). It
-  has no light-related field, no normal-related field, no concept of
-  "how many lights are active."
-- `atlantis::renderer::DrawItem` is `{ mesh, material, objectToWorld }`
-  — no per-object normal matrix, no light index/count, nothing beyond
-  what Spec 0013/0018 already established.
-- `atlantis::rhi::PipelineCreateParams` describes exactly one uniform
-  buffer binding (hardcoded, always present, vertex-stage-only) and one
-  optional combined-image-sampler binding (Spec 0016's
-  `hasSampledTextureBinding`). There is no mechanism to add a second
-  uniform buffer binding, and the existing one's own Vulkan
-  `stageFlags` is hardcoded to `VK_SHADER_STAGE_VERTEX_BIT` only
-  (`vulkan_device.cpp`, `createPipeline()`) — a fragment shader cannot
-  read it today, at all, regardless of what any higher-level API claims.
-- `atlantis::world::Camera`/`Renderable` are `World`'s only two optional
-  per-entity components (`world.h`); a third, `Light`, does not exist.
-  Camera's own direction (`extractCameraMatrices()`,
-  `scene_extraction.cpp`) is derived entirely from the owning entity's
-  own world matrix (`-column2` = forward, `column3` = eye) — it stores
-  no redundant direction/position field of its own. This is the direct,
-  real precedent this Spec's own Light component design follows.
-- The scene authoring grammar's per-node trailing token group is
-  currently exactly one of three mutually exclusive shapes — mesh-only
-  (12 tokens), mesh+material (13 tokens), or camera (14 tokens) — a
-  node cannot carry two trailing groups at once under today's real
-  parsing mechanism (`scene_source.cpp`, confirmed by reading the full
-  parse function). A fourth, light-shaped group is a real, disclosed
-  grammar-extension question this Spec must resolve (see D3).
-- `MaterialKind` is a closed, one-enumerator (`UnlitTextured`) enum by
-  explicit design (ADR-0059 D2/D15), with its own disclosed consequence
-  already on record: "adding a second kind later means adding a second
-  Runtime-side hardcoded shader-pair mapping." This Spec is that
-  anticipated second kind.
-- `RuntimeApplication`'s existing camera uniform `Buffer` is created
-  once (`BufferPurpose::Uniform`, host-visible/persistently-mapped) and
-  overwritten every frame via a direct `memcpy`-shaped loop into
-  `mappedData()` — no RHI "update" call exists or is needed; this is
-  the direct, already-proven precedent for a per-frame-updated frame
-  lighting buffer (see "Pre-draft verification").
-
-The result: today, no amount of scene authoring can make a
-Runtime-loaded scene look *lit* — a scene can carry a real camera, a
-real textured mesh, and a real material, but every pixel's own color is
-either raw vertex color or an unmodified sampled texel, with no light
-source affecting it in any way. This Spec builds the smallest real path
-that changes that, through the same real authoring → cook → artifact →
-load → Runtime-resolve → GPU-realize → `DrawItem` chain Spec 0018
-already established — not a fixture shortcut, not a shader-faked light.
+1. This codebase has **no vertex normal attribute anywhere** — Asset
+   System's static mesh format (schema version 2, Spec 0017) is
+   position(3)+color(3)+UV0(2), 32 bytes, full stop. Genuine, non-faked
+   diffuse lighting is mathematically impossible without a real
+   per-vertex normal. D1 addresses this directly: **this Spec does not
+   itself add one.** A separate, prerequisite Spec 0020 ("Mesh Normal
+   Attribute Foundation") must be drafted, approved, planned,
+   implemented, and merged before this Spec's own Plan may begin.
+2. The engine's own existing frame uniform buffer is trivially
+   writable/mappable at any point in a frame (`Buffer::mappedData()`,
+   host-visible, host-coherent, mapped once at construction) — but
+   *when* Runtime chooses to write light data into it is a real design
+   choice this Spec must commit to, not leave implicit. This Spec
+   commits to a **one-time, static snapshot**, captured once per scene
+   load — see D1 of the Final Review Round above and D9 below for the
+   full contract.
 
 ## Goals
 
 1. `World` gains a third optional per-entity component, `Light` — one
    closed, tagged shape (Directional or Point), following the exact
    flat-struct precedent `Camera`/`Renderable` already establish; no
-   generic ECS registry.
+   generic ECS registry; at most one `Light` per entity.
 2. The Scene Asset authoring/artifact format gains an optional light
    node, following the exact version-bump/no-dual-version-reader
-   discipline every prior Scene Asset extension already used.
+   discipline every prior Scene Asset extension already used, with a
+   real, structural (not merely conventional) cap on the number of
+   lights of each kind a scene may declare.
 3. Material gains exactly one new, minimal kind, `MaterialKind::LitTextured`
    — a closed, Runtime-resolved shader-pair mapping, matching
    `UnlitTextured`'s own exact precedent, reusing the existing Material
-   DTO shape with zero new fields.
-4. Runtime computes one, real, per-frame array of active lights
-   (deterministically ordered, deduplicated by nothing — every light
-   entity contributes independently, unlike Spec 0018's texture/material
-   dedup, since two distinct light entities are never "the same light")
-   and makes it available to a `LitTextured` Material's own fragment
-   shader, applying minimal Lambertian diffuse shading against a real
-   vertex normal.
+   DTO shape with zero new fields and zero material artifact
+   schema-version bump.
+4. Runtime computes one real, one-time array of active lights
+   (captured once per scene load, not re-derived every frame) and makes
+   it available to a `LitTextured` Material's own fragment shader,
+   applying minimal, exactly-specified Lambertian diffuse shading
+   against a real vertex normal.
 5. A real, new, minimal scene+light+material image-regression fixture
    proves the whole path end to end, distinguishing a Directional
    light's own contribution from a Point light's own contribution in
@@ -165,84 +219,107 @@ already established — not a fixture shortcut, not a shader-faked light.
 
 ## Non-Goals
 
+- **Any mesh normal authoring, DTO, artifact, or loader change of any
+  kind.** This Spec consumes Spec 0020's own final, `Approved` and
+  implemented normal contract; it does not itself define, approve, or
+  implement any part of it, and does not pre-decide Spec 0020's own
+  stride, byte offset, schema version, or migration strategy.
+- **Any position-derived, derivative-derived, or shader-hardcoded/
+  assumed-flat normal**, at any point, for any reason, including as a
+  temporary stand-in — explicitly forbidden, not merely discouraged.
+- **Any runtime reflection of a `Light` component change after its
+  scene's own frame lighting data has been captured.** A change to any
+  `Light`'s own color, intensity, range, or owning-entity transform,
+  made after the one-time capture point, is not reflected in any
+  rendered frame for that `RuntimeApplication` instance — reloading the
+  scene (or restarting Runtime) is required to see the change. See D1
+  of the Final Review Round, D9, and "Known Limitations" below.
 - PBR, metallic/roughness, or any physically-based shading model.
 - Shadows or shadow mapping of any kind.
 - Image-based lighting (IBL) or environment maps.
-- Normal mapping or a tangent vertex attribute — see D1; even a plain
-  vertex normal is a real, disclosed open question this Spec does not
-  silently assume, and tangent-space normal mapping is explicitly a
-  later phase regardless of D1's own outcome.
+- Normal mapping or a tangent vertex attribute — a later phase beyond
+  even Spec 0020's own scope.
+- An ambient/fill light term of any kind — see D6; an unlit-facing
+  surface renders pure black this round, by explicit design, not
+  omission.
 - Emissive or transparent materials, or any second `LitColored`
-  (untextured) material kind — see D4.
+  (untextured) material kind — see D8.
 - Clustered, Forward+, or deferred rendering, or any light-culling
-  strategy beyond a fixed, small, CPU-computed active-light array.
+  strategy beyond a fixed, small, one-time-computed active-light array.
 - GPU-driven light culling of any kind.
 - Tone mapping, gamma-encode, HDR intermediate targets, or any other
-  post-processing — see D8.
-- Animation of any kind (a light's own color/intensity/range and every
-  entity's own transform are static per frame, exactly as every existing
-  scene already is).
+  post-processing.
+- Animation of any kind.
 - A material graph, shader graph, or any user-composable shading system.
 - Hot-reload of any kind, an editor, or runtime asset mutation.
 - A distributable, cross-session Asset Catalog/Registry, or any
   rename-stable identity beyond the existing path-derived `AssetId`.
-- Android, iOS, or Linux implementation — Phase 1 remains Windows-only
-  for real hardware verification (per AGENTS.md).
+- Android, iOS, or Linux implementation.
 - A new third-party dependency or a new top-level module.
 - Multiple lights sharing one GPU resource "dedup" concept — unlike a
   shared texture/material (Spec 0018 D10), two light entities are never
-  interchangeable, so there is nothing to deduplicate here.
+  interchangeable.
 - Prewiring any interface, field, or abstraction for Shadow Foundation,
-  PBR Material, IBL, or Post-processing — each remains its own,
-  independent, unblocked future Spec (see D12).
+  PBR Material, IBL, Post-processing, or Dynamic Frame Uniform Updates —
+  each remains its own, independent, unblocked future Spec (see D12,
+  Out of Scope / Future Work).
 
 ## Requirements
 
 ### Functional
 
 - `atlantis::world::LightKind` (`Directional`, `Point`) and
-  `atlantis::world::Light` — a flat struct, matching `Camera`'s own
-  shape exactly (see D2 for the exact field list); `World::setLight()`/
-  `removeLight()`/`getLight()`, and a `lightEntities()` deterministic
+  `atlantis::world::Light` — a flat struct (exact field list: D2).
+  `World::setLight()`/`removeLight()`/`getLight()` (returning by value,
+  error precedence per D2), and `lightEntities()`, a deterministic
   accessor mirroring `renderableEntities()` exactly (ascending
-  slot-index order, a fresh snapshot per call).
-- A scene node may optionally declare a light (see D3 for the exact
-  grammar shape and its own real, evidenced constraint against
-  co-locating a light with a mesh/camera on the same node this round).
-  `cookScene()`/`decodeScene()` resolve and validate it with the same
-  discipline every other node-level field already has (non-finite
-  rejection, independent decode-time re-validation, never trusting the
-  cooker).
+  slot-index order, a fresh snapshot per call). At most one `Light` per
+  entity — the same fixed-slot storage `Camera`/`Renderable` already
+  use.
+- A scene node may optionally declare a light (D3's own exact grammar
+  shape). `cookScene()`/`decodeScene()` resolve and validate it with
+  the same discipline every other node-level field already has
+  (non-finite/negative rejection, independent decode-time
+  re-validation, never trusting the cooker) **plus a hard,
+  structural cap on declared light count per kind** (D3/finding 4,
+  above) — a scene declaring more than the fixed maximum of either kind
+  fails to cook (and, independently, fails to decode if hand-corrupted
+  past the cap), never silently truncates.
 - `atlantis::asset_system::MaterialKind::LitTextured` — a new
-  enumerator on the existing closed `MaterialKind` enum, requiring **no
-  new `MaterialAssetData` field** (see D4) — Runtime maps it to a new,
-  fixed, built-in `Lit` shader pair, following `UnlitTextured`'s own
-  exact CMake-unconditional-production-shader precedent (Spec 0018 D3).
-- A new Runtime-private extraction function (mirroring
-  `extractCameraMatrices()`/`resolveMaterialAsset()`'s own exact
-  precedent) computes, once per frame, a fixed-size, deterministically-
-  ordered array of active lights' own world-space direction/position,
-  color, intensity, and (Point only) range, from `World`'s own
+  enumerator on the existing closed `MaterialKind` enum, requiring
+  **no new `MaterialAssetData` field and no material artifact
+  schema-version bump** (D8). Runtime maps it to a new, fixed, built-in
+  `lit_textured` shader pair, following `UnlitTextured`'s own exact
+  CMake-unconditional-production-shader precedent.
+- A new Runtime-private extraction function computes the active-light
+  array **exactly once**, on the first successful frame (immediately
+  after `World::updateTransforms()` first runs), from `World`'s own
   `lightEntities()` and each entity's own current world matrix — never
-  a redundant, separately-stored direction/position field.
-- This per-frame light array is packed into the *same* existing
-  uniform buffer binding the camera view/projection matrices already
-  occupy (see D5) — no new descriptor binding, no new `Buffer`, no new
-  RHI resource-creation call — updated via the same unconditional,
-  per-frame `memcpy`-into-`mappedData()` pattern the camera buffer
-  already uses.
-- The one RHI-level change this Spec requires (see D5/ADR-0062): the
-  existing, single uniform-buffer descriptor binding's own Vulkan
-  `stageFlags` widens from vertex-only to vertex-and-fragment,
-  unconditionally, for every `Pipeline` — a disclosed, minimal, one-line
-  `vulkan_device.cpp` change; `PipelineCreateParams`'s own public shape
-  is unchanged.
-- A new `Lit` built-in shader pair (`.slang`) samples the material's own
-  texture (unchanged from `UnlitTextured`), reads the per-frame light
-  array from the same uniform binding, computes minimal Lambertian
-  diffuse shading per active light using a real, asset-sourced vertex
-  normal (transformed per D7), and writes the summed result as the
-  final fragment color — no tone-mapping, no gamma-encode (D8).
+  re-derived on any subsequent frame, and never storing a redundant,
+  separately-tracked direction/position field anywhere.
+- This one-time light array is packed into the *same* existing uniform
+  buffer the camera view/projection matrices already occupy (D9) — no
+  new descriptor binding, no new `Buffer`, no new RHI resource-creation
+  call — written once via the same `mappedData()`-write pattern the
+  camera data already uses each frame, then never rewritten again for
+  that `RuntimeApplication` instance's own lifetime. The camera portion
+  of the same buffer is unaffected and continues its own existing,
+  unchanged per-frame rewrite (including its own existing resize/
+  aspect-ratio behavior).
+- The one RHI-level change this Spec requires (D5, unchanged from this
+  Spec's own first draft; see ADR-0062): the existing, single
+  uniform-buffer descriptor binding's own Vulkan `stageFlags` widens
+  from vertex-only to vertex-and-fragment, unconditionally, for every
+  `Pipeline` — a disclosed, minimal, one-line `vulkan_device.cpp`
+  change; `PipelineCreateParams`'s own public shape is unchanged; every
+  existing shader continues to pass unaffected.
+- A new `lit_textured` built-in shader pair samples the material's own
+  texture (unchanged from `UnlitTextured`), reads the one-time light
+  array from the shared uniform binding, computes minimal Lambertian
+  diffuse shading per active light using a real, Spec-0020-sourced
+  vertex normal (transformed per D7), and writes the summed, clamped
+  result as the final fragment color — the exact formulas are fixed in
+  D6, not left to Implementation's own judgment.
 - A new, minimal, independent scene + light + material image-regression
   fixture and its own first golden (ADR-0042's "Initial baseline
   bootstrap" category), proving the real end-to-end path, with a
@@ -251,148 +328,98 @@ already established — not a fixture shortcut, not a shader-faked light.
 
 ### Non-functional
 
-- **Performance:** not a goal of this round, matching Spec 0018's own
-  identical discipline — the per-frame light-array `memcpy` runs
-  unconditionally every frame (no dirty-tracking), matching the camera
-  buffer's own existing, already-accepted per-frame update cost exactly.
+- **Performance:** not a goal of this round. The one-time light-array
+  capture costs one extra, single-frame CPU computation at scene-load
+  time — strictly cheaper than the per-frame re-derivation this Spec's
+  own first draft proposed, not merely equally cheap.
 - **Memory:** the frame lighting data adds a small, fixed number of
-  bytes to the existing camera uniform buffer (exact size fixed by D5's
-  own maximum-light-count decision) — no unbounded growth, no
-  per-light heap allocation.
+  bytes to the existing camera uniform buffer (exact byte layout fixed
+  at Plan time against D5/D6's own std140-alignment convention and
+  fixed maximum counts, below) — no unbounded growth, no per-light heap
+  allocation.
 - **Portability (within the Vulkan-only Phase 1 constraint):** the
   frame lighting struct's own CPU-side layout is unconditionally
-  little-endian/std140-compatible (see D5), matching every other
-  Asset-System/Runtime binary contract's own discipline.
+  little-endian/std140-compatible, matching every other Asset-System/
+  Runtime binary contract's own discipline.
 - **Other:** zero new error enumerator reused where an existing one
-  already fits (mirroring Spec 0017/0018's own discipline); new
-  enumerators are added only where no existing one covers a genuinely
-  new failure mode.
+  already fits; new enumerators are added only where no existing one
+  covers a genuinely new failure mode (D3, D11).
+
+## Known Limitations (stated explicitly, not left implicit)
+
+- **No runtime light mutation is reflected in any rendered frame.**
+  `World::setLight()` remains callable at any time (it is ordinary
+  public `World` API, unrestricted), and a caller that calls it after
+  the one-time frame-lighting-data capture will see the mutation
+  reflected in `World`'s own state — but **not** in any subsequent
+  rendered frame, since Runtime never re-reads `World`'s own light state
+  after that one capture. This is a real, deliberate Phase 1 boundary
+  (Final Review Round finding 2), not an oversight, and has its own
+  dedicated negative test (D10).
+- **Resize does not affect, and is not affected by, this Spec.** The
+  existing camera projection matrix's own per-frame recomputation from
+  the current window/target extent (unrelated to lighting, already
+  shipped, Spec 0013/0014's own behavior) continues completely
+  unchanged — this Spec neither reads nor writes anything related to
+  extent/aspect, and does not attempt to fix or alter that existing
+  behavior, approved or not, as part of this Spec's own scope.
+- **A `LitTextured`-bound entity whose fully composed world transform is
+  not a conformal (orthogonal-columns, equal-length) transform is
+  skipped for drawing, every frame, logged once** (D7) — never rendered
+  with an incorrect normal.
+- **No ambient/fill light** — a surface with no active light facing it
+  renders pure black (D6).
+- **No tone-mapping or gamma-encode** — a scene whose combined light
+  contribution exceeds the display format's own representable range
+  clips with no rolloff (unchanged from every prior Spec's own existing
+  "no HDR target, no post-processing" boundary).
 
 ## Pre-draft verification against real, current source
 
-Confirmed directly against `main` at Spec-drafting time (2026-08-29),
-by reading full files, not from memory of Spec 0018's own drafting:
+Confirmed directly against `main` at Spec-drafting time (2026-08-29) and
+re-confirmed during this Spec's own final review round, by reading full
+files, not from memory:
 
-- **Mesh vertex layout (Spec 0017, `scene_artifact.h`/`mesh_artifact.h`/
-  `material_realization.cpp`'s own `Vertex` struct, all read in full):**
-  `position[3] + color[3] + uv[2]`, 32 bytes, offsets 0/12/24. No
-  `normal` field anywhere in `StaticMeshAssetData`, the mesh source
-  grammar, the mesh artifact, or any composition root's own local
-  `Vertex` struct (`runtime_application.cpp`, `material_demo_fixture.cpp`,
-  `minimal_cube_fixture.cpp`, `textured_quad_fixture.cpp` — all four
-  checked). Confirmed via a targeted `normal`/`Normal` grep across
-  `src/asset_system/` returning only unrelated `normalizeLogicalPath()`
-  matches.
-- **`World`'s real component model (`world.h`, `camera.h`, `renderable.h`,
-  `transform.h`, all read in full):** exactly two optional per-entity
-  components today, `Camera` (`{fovYRadians; nearZ; farZ;}` — no
-  direction field) and `Renderable` (`{meshAsset; materialAsset;}`);
-  each has its own `set*()`/`remove*()`/`get*()` triplet; `Renderable`
-  alone has a dedicated deterministic accessor, `renderableEntities()`
-  (doc comment: "Ascending slot-index order — a fresh `std::vector`
-  snapshot each call, valid as of the call, not a live iterator held
-  across a subsequent `World` mutation"). `World`'s own public API has
-  no matrix-inverse function anywhere — `updateTransforms()`/
-  `getWorldMatrix()` only ever compose `parentWorld · T · R · S`
-  forward, never invert (relevant to D7).
-- **Camera direction/eye extraction (`scene_extraction.cpp`, read in
-  full):** `extractCameraMatrices()` derives `forward = normalize(-column2
-  of cameraWorldMatrix)` and `eye = column3 (translation)` — confirmed,
-  not assumed, that a component's own "facing" data is *never* stored
-  redundantly on the component itself; it is always re-derived from the
-  owning entity's own current world matrix, every frame. This is the
-  exact precedent D2's own Light-direction/position design follows.
-- **Scene authoring grammar's real per-node dispatch (`scene_source.cpp`,
-  full parse function read):** `tokens.size()` is checked against
-  exactly `11` (transform only), `12` (+`mesh=`), `13` (+`mesh=`
-  +`material=`, Spec 0018), or `14` (+three `camera_*=` fields) — a
-  hard `if (tokens.size() == 12 || 13) {...} else if (tokens.size() ==
-  14) {...}` branch. Confirmed directly: there is no existing mechanism
-  for a node to carry two of {mesh[+material], camera, light} at once;
-  each node's own single trailing token group is mutually exclusive by
-  construction, not merely by convention. This fixes the real
-  constraint D3 must resolve.
-- **`MaterialKind`'s own closed shape and disclosed growth path
-  (`material_types.h`, ADR-0059, both read in full):** `enum class
-  MaterialKind { UnlitTextured };` and ADR-0059's own already-`Accepted`
-  "Consequence, disclosed" text: "adding a second kind later means
-  adding a second Runtime-side hardcoded shader-pair mapping and, if
-  that shader is not yet unconditionally built, the same CMake-placement
-  fix this decision already makes once." `MaterialAssetData` is
-  `{kind; textureAsset; filter; addressMode;}` — confirmed a
-  `LitTextured` kind needs no new field here (D4), since it names the
-  same one texture/sampler pair `UnlitTextured` already does; the only
-  per-material difference a `LitTextured` Material needs is which
-  built-in shader pair Runtime maps its `kind` to.
-- **RHI's real, single uniform-buffer descriptor binding
-  (`types.h`'s `PipelineCreateParams`, `vulkan_device.cpp`'s
-  `createPipeline()`, both read in full):** `PipelineCreateParams` has
-  exactly one push-constant range, one hardcoded uniform-buffer binding
-  (always present, no flag controls it), and one *optional*
-  combined-image-sampler binding (`hasSampledTextureBinding`). The
-  uniform binding's own `VkDescriptorSetLayoutBinding.stageFlags` is
-  hardcoded to `VK_SHADER_STAGE_VERTEX_BIT` — confirmed by reading the
-  exact line, not inferred from a comment — meaning a fragment shader
-  cannot read this binding today, full stop, regardless of any Shader
-  System reflection contract claiming otherwise. This is the one real,
-  concrete RHI-boundary blocker D5 must resolve — not a hypothetical
-  one.
-- **`ShaderStage`/`DescriptorBinding` reflection shape (`reflection_metadata.h`,
-  read in full):** `enum class ShaderStage { Vertex, Fragment };` — a
-  single value, not a bitmask; `DescriptorBinding{set; binding; type;
-  stage;}` names exactly one stage per entry. Confirmed: a shader whose
-  vertex *and* fragment stages both reference `{set 0, binding 0}`
-  produces two separate `DescriptorBinding` reflection entries (one per
-  stage's own separately-loaded reflection JSON,
-  `vertexShaderReflectionPath`/`fragmentShaderReflectionPath`), each
-  correctly tagged with its own stage — the Shader-System/Tools-side
-  descriptor-contract-validation mechanism (`descriptor_contract.h`,
-  `texturedMaterialExpectedDescriptorContract()`'s own precedent) can
-  already express this as two expected-contract entries; the *only*
-  real blocker is the RHI-side hardcoded `stageFlags` above, confirmed
-  by reading both files, not assumed from one alone.
-- **`VertexAttributeFormat` (`types.h`):** `{ Float3, Float2 }` — `Float3`
-  already exists and is exactly what a normal attribute would need; no
-  new RHI vertex-format enumerator would be required if D1's own
-  recommendation is later accepted and a future Spec adds one.
-- **Per-frame uniform buffer update, already proven
-  (`runtime_application.cpp`'s `cameraBuffer_` creation and its own
-  `runFrame()` write loop, read in full):** `device_->createBuffer({.purpose
-  = BufferPurpose::Uniform, .sizeBytes = sizeof(float) * 32})`, then
-  every frame, unconditionally: `auto* cameraData =
-  static_cast<float*>(cameraBuffer_->mappedData()); for (...) cameraData[i]
-  = ...;` — no RHI "update" call, no re-creation, no synchronization
-  concern beyond the engine's own existing single-frame-in-flight model.
-  Confirms D5/D9's own "reuse this exact pattern for light data" claim
-  directly, not by inference.
-- **Runtime's own `MaterialKind::UnlitTextured` shader-pair wiring
-  (`bootstrap_config.h`, `main.cpp`, `runtime_application.cpp`,
-  `material_realization.cpp`, all re-read): confirms the exact,
-  precedented shape a `LitTextured` shader-pair addition would mirror
-  — four new `BootstrapConfig` path fields, a second
-  `VertexInputLayout`/SPIR-V pair resolved once at `initializeSteps()`,
-  consumed by `realizeOneMaterialCandidate()`/`rebuildMaterialsForFormatChange()`'s
-  own already-generic, kind-parameterized call shape (both functions
-  already take the shader pair as explicit parameters, never hardcoding
-  `MaterialKind::UnlitTextured` internally — confirmed by re-reading
-  `material_realization.h`'s own function signatures in full — so a
-  `LitTextured` kind is a *new caller-side* shader-pair argument set,
-  not a change to either function's own internals).
-- **Current image-regression fixtures/goldens
-  (`tests/image_regression/`, directory listing plus each fixture's own
-  top-of-file comment read):** four goldens exist today —
-  `minimal_cube`, `world_scene`, `textured_quad`, `material_demo` — the
-  last two each directly link `Atlantis::RuntimeHost` (Spec 0016/0018's
-  own precedent) rather than duplicating Runtime logic; `minimal_cube`/
-  `world_scene` duplicate it, a disclosed, accepted precedent for
-  simpler, stable logic only (`world_scene_loaded_fixture.cpp`'s own
-  top-of-file comment).
-- **Runtime's default bootstrap scene (`main.cpp`, re-read):**
-  `config.sceneArtifactPath` etc. still resolve to `world_scene`,
-  unchanged since Spec 0014 — `material_demo_scene` (Spec 0018) is
-  cooked but never wired in, per that Spec's own explicit P15 decision.
-  This is the direct precedent D10's own bootstrap-scene question
-  follows.
+- **Mesh vertex layout, `World`'s component model, Camera's direction
+  extraction, the scene grammar's per-node dispatch, `MaterialKind`'s
+  closed shape, RHI's single uniform-buffer binding and its hardcoded
+  vertex-only `stageFlags`, `ShaderStage`'s single-value reflection
+  shape, and the camera buffer's existing per-frame update pattern** —
+  all confirmed as originally recorded in this Spec's own first-draft
+  verification pass; unchanged by this round, re-checked, not
+  re-derived from scratch.
+- **`WorldError`'s own real, current enumerator list and `validate()`'s
+  own real precedence** (`world_error.h`, `world.cpp`, both read in
+  full this round): `enum class WorldError { InvalidEntity,
+  WouldCreateCycle, NoCameraComponent, WrongWorld, NoRenderableComponent
+  };` — `World::validate(EntityId)` checks `WrongWorld` (identity
+  mismatch) **first**, then `InvalidEntity` (stale generation,
+  out-of-range index, or a dead slot) **second**; every accessor
+  (`getCamera()`, `getRenderable()`) calls `validate()` first and only
+  then checks its own component-presence condition
+  (`NoCameraComponent`/`NoRenderableComponent`) as a **third**, later
+  step. This fixes the exact, real precedence D2's own `getLight()`/
+  `NoLightComponent` design follows — not invented, transcribed.
+- **`Buffer`'s own real, current public contract** (`buffer.h`, read in
+  full this round): `mappedData()` returns a pointer to host-visible,
+  host-coherent memory, "mapped once, at construction — never
+  remapped," directly writable "at any time" with "no explicit
+  flush/invalidate call required." Confirms directly, not by inference,
+  that a *static, one-time* write and a *per-frame, unconditional*
+  write are **both** already fully supported by the existing RHI
+  `Buffer` contract with zero new API either way — the choice between
+  them (Final Review Round finding 2) is a pure Runtime-side design
+  decision, not gated by any RHI capability gap.
+- **`Renderer`'s real vertex-input/varying data flow** (`textured_quad.slang`,
+  `material_realization.cpp`'s own `Vertex`/schema construction, both
+  re-read this round): confirmed the existing `Varying` struct carries
+  only clip-space `position` and `uv` — **no world-space position or
+  world-space normal is passed from vertex to fragment stage today**,
+  confirming D6/D8's own requirement that the new `lit_textured` vertex
+  shader must compute and pass both as new varyings (using the
+  already-existing `objectToWorld` push constant — no new push-constant
+  range is required, only new vertex-shader-side computation from the
+  one that already exists).
 
 ## Proposed Design
 
@@ -404,714 +431,843 @@ scene authoring (.scene.txt)
   node: ... light=point color=<r,g,b> intensity=<f> range=<f>
         |
         v
-cookScene() -- validates finite/non-negative, resolves LightKind token
+cookScene() -- validates finite/non-negative/in-range fields, resolves
+  LightKind token, rejects the whole scene outright if declared light
+  count per kind exceeds the fixed maximum (finding 4)
         |
         v
 scene artifact (version 3) -- new light slot, decode-time re-validated
-independently of the cooker
+  independently of the cooker, including the same per-kind count cap
         |
         v
 World::Light (via fromValidatedSceneData(), infallible, unchanged in
   kind) -- direction/position NOT stored, re-derived from the owning
-  entity's own world matrix every frame, exactly like Camera already
-  does
+  entity's own world matrix at the ONE point Runtime ever reads it
         |
         v
-Runtime: a new, Runtime-private light-extraction function, called once
-  per frame from runFrame() (mirroring the existing camera-matrix
-  extraction call site exactly) -- walks World::lightEntities() in its
-  own deterministic order, reads each light's own current world matrix
-  + Light component, produces a fixed-size, capped array of active
-  lights' own {direction-or-position, color, intensity, range}
+Runtime, first successful frame only: a new Runtime-private
+  light-extraction function walks World::lightEntities() in its own
+  deterministic order, reads each light's own current world matrix +
+  Light component, produces a fixed-size array of active lights' own
+  {direction-or-position, color, intensity, range} -- captured ONCE,
+  never again
         |
         v
 packed into the SAME existing camera uniform Buffer, appended after the
-  existing view/projection floats -- one Buffer, one binding, one
-  per-frame memcpy, exactly like the camera data already is
+  existing view/projection floats -- written ONCE (unlike the camera
+  portion of the same buffer, which continues its own existing,
+  unrelated per-frame rewrite)
         |
         v
-MaterialKind::LitTextured's own built-in Lit shader pair (fragment
-  stage now ALSO declared against binding (0,0), per ADR-0062's own
-  RHI stage-visibility widening) -- samples the material's own texture
-  (unchanged), reads the light array, computes per-light Lambertian
-  diffuse against a real, asset-sourced vertex normal (D1), sums,
-  writes final color -- no tone-mapping, no gamma-encode
+MaterialKind::LitTextured's own built-in lit_textured shader pair
+  (fragment stage now ALSO declared against binding (0,0), per
+  ADR-0062's own RHI stage-visibility widening) -- vertex stage computes
+  world-space position/normal as new varyings from the existing
+  objectToWorld push constant; fragment stage samples the material's
+  own texture, reads the one-time light array, computes the exact D6
+  formula per active light, sums, clamps, writes final color
         |
         v
 headless golden (new lighting_demo fixture, directly linking
-  Atlantis::RuntimeHost per Spec 0018's own D12 precedent) + windowed
-  Runtime (bootstrap-scene switch itself left to Human Review, D10)
+  Atlantis::RuntimeHost per Spec 0018's own D12 precedent, exercising
+  the real, shared extraction/realization functions -- never a
+  fixture-private reimplementation) + windowed Runtime (bootstrap-scene
+  switch left unswitched, D10, matching Spec 0018's own P15 precedent)
 ```
-
-### Where each new piece lives
-
-| Piece | Module | Mirrors |
-|---|---|---|
-| `LightKind`, `Light` component, `set/remove/getLight()`, `lightEntities()` | `Atlantis::World` | `Camera`'s own exact shape/accessor pattern |
-| Scene grammar `light=` node, artifact light slot | `Atlantis::AssetSystem` | the existing `camera_*=` node/slot, the most structurally similar precedent (also a component-shaped, non-Renderable trailing group) |
-| `MaterialKind::LitTextured` | `Atlantis::AssetSystem` (`material_types.h`) | `MaterialKind::UnlitTextured`, verbatim |
-| Runtime-private light extraction | `Atlantis::Runtime` (new `light_extraction.h`/`.cpp`, or an addition to `scene_extraction.h`/`.cpp` — a Plan-time file-layout choice, not an architectural one) | `extractCameraMatrices()`/`resolveMaterialAsset()` |
-| Frame lighting data packed into the existing camera `Buffer` | `Atlantis::Runtime` (`runtime_application.cpp`) | the existing per-frame `cameraData[i] = ...` write loop |
-| RHI uniform-binding `stageFlags` widening | `Atlantis::RHI`/`Atlantis::VulkanBackend` (`vulkan_device.cpp`) | the existing, unconditional single-binding shape — widened in place, not replaced |
-| `Lit` built-in shader pair | `shaders/lit_textured/` (new directory, mirroring `shaders/textured_quad/`'s own unconditional-production-shader placement, Spec 0018 D3) | `shaders/textured_quad/textured_quad.slang` |
-
-No new top-level module. `Atlantis::World`'s link closure is unchanged
-(`Atlantis::Core` + `Atlantis::AssetSystem`). `Atlantis::AssetSystem`'s
-link closure is unchanged (`Atlantis::Core` only).
 
 ## Decisions for Human Review
 
 Numbered to match this Spec's own governing questions one to one — the
-twelve areas named in this Spec's own drafting brief.
+twelve areas named for this Spec's own drafting and final review.
 
-### D1. Mesh normal prerequisite — recommendation: a separate, prerequisite Spec, not bundled here
+### D1. Mesh normal prerequisite — a real governance gate, not a soft recommendation
 
-**Decision needed:** how this Spec obtains a real, asset-sourced vertex
-normal, given the confirmed fact that none exists anywhere in this
-codebase today (Pre-draft verification, above), and the explicit
-instruction that this Spec must never fake one (no position-derived
-normal, no shader-hardcoded/assumed-flat normal standing in for a real
-asset attribute).
+**Decision (revised, Final Review Round finding 1):** a separate,
+prerequisite Spec, **"Spec 0020 — Mesh Normal Attribute Foundation,"**
+must be drafted, reach `Approved`, have its own Plan reach `Approved`,
+and have its own **Implementation PR merge** before this Spec's own Plan
+0019 may be drafted. Reaching `Approved` on Spec 0020 alone is **not**
+sufficient — an approved-but-unimplemented spec has no real, buildable
+API; a Plan drafted against it would depend on a contract that does not
+yet exist in source, exactly the kind of "Plan depends on real, current
+code" discipline every prior Plan in this codebase (Spec 0018's own
+Pre-draft verification most recently) already insists on.
 
-**Three options, evaluated honestly:**
+**This Spec (0019) never itself contains:** any normal authoring
+grammar field, DTO field, artifact byte, schema version, or migration
+step for Spec 0020's own mesh-normal work. It never pre-decides Spec
+0020's own stride, byte offset, or version number. Everywhere this Spec
+references "a real, asset-sourced vertex normal," it means *whatever
+Spec 0020's own final, `Accepted` contract turns out to be* — this
+Spec's own Plan (0019, drafted only after that contract exists and is
+merged) consumes it as a fixed, given input, the same way Spec 0018's
+own Plan consumed Spec 0017's already-merged UV0 contract without
+redeciding it.
 
-**(a) Bundle a real normal attribute into this Spec's own scope.**
-Would require: a new authoring grammar field (`nx ny nz` per vertex,
-mirroring `MeshSourceVertex`'s own "vertex: x y z r g b" style, widened
-to `x y z r g b nx ny nz`), a new `StaticMeshAssetData` field, a mesh
-artifact schema version bump (3, 44-byte stride at offsets 0/12/24/32),
-outright rejection of version 2, a full repository-wide sweep of every
-existing `.mesh.txt` source and every embedded mesh-source-literal test
-string (mirroring Spec 0017's own Milestone 1 sweep, which was itself
-a dedicated, non-trivial piece of work), a disclosed migration decision
-for `minimal_cube`'s own topology (does it get real per-face normals,
-or another placeholder — and if a placeholder, is a *placeholder
-normal* materially different from the *forbidden* fake/derived normal
-this Spec must not use for its own lighting proof? It is not used for
-lighting there, so it is not the same category of fake, but it must be
-disclosed identically to Spec 0017's own UV0 placeholder disclosure),
-and — the explicit trigger named in this Spec's own drafting brief — a
-Proposed Amendment to both ADR-0045 (data-format/versioning policy,
-already amended once for UV0) and ADR-0058 (static mesh vertex layout,
-already scoped to "position, color, UV0" by its own Accepted Decision
-text).
+**Explicitly forbidden, restated:** no position-derived normal, no
+derivative-derived (screen-space or tangent-approximated) normal, and
+no shader-hardcoded/assumed-flat constant normal, at any point, for any
+reason, including as a temporary stand-in pending Spec 0020. If Spec
+0020 is delayed or rejected, this Spec's own Plan simply does not begin
+— it is not "worked around."
 
-**(b) A separate, prerequisite Spec — "Mesh Normal Attribute
-Foundation" — drafted and approved before this Spec's own Plan begins.**
-Mirrors Spec 0017's own real, direct precedent almost exactly: Spec
-0016 (Texture & Sampler Foundation) named UV0 as its own disclosed,
-blocking follow-up rather than bundling it in; Spec 0017 was drafted,
-approved, planned, and implemented as its own, independent, single-
-responsibility unit, closing that gap cleanly before Spec 0018 (which
-depended on it) was drafted. A vertex normal is, in every structural
-respect, the same *kind* of gap: a new, mandatory, asset-sourced vertex
-attribute requiring the identical grammar/artifact/version/migration/
-ADR-amendment machinery Spec 0017 already built once. This Spec would
-then depend on that prerequisite Spec being `Approved`/implemented,
-exactly as Spec 0018 depended on Spec 0017.
+**Registered explicitly in `specs/README.md`, as a disclosed exception
+to that document's own general numbering rule:** Section B's own
+maintenance rule states "no formal spec number is pre-assigned to any
+entry; numbers are assigned only when a real spec is drafted." This
+Spec's own approval creates a real, named dependency on a spec that does
+not yet exist as a file — `specs/README.md` registers `Spec 0020 —
+Mesh Normal Attribute Foundation` explicitly, by number, ahead of its
+own drafting, as a stated, disclosed, one-time exception made because
+this Spec's own `Approved` status needs a stable name to point its own
+blocking dependency at, not a silent renumbering risk. See
+`specs/README.md`'s own note recording this exception in full.
 
-**(c) A temporary, disclosed stand-in** (derivative normals from
-position, or a shader-hardcoded flat normal) **— explicitly rejected**
-by this Spec's own drafting brief, and independently rejected here on
-the merits: either approach would make the resulting "lighting" pixels
-*not actually driven by asset-authored geometry data*, undermining the
-one property this Spec's own Summary states as its central claim (a
-real, scene-authored light changes what a Runtime-rendered pixel looks
-like, through the real asset pipeline) — the exact same reasoning
-ADR-0059/Spec 0018 already used to reject a fixture-hardcoded material
-bypassing Asset System.
+**Why (b) [a separate Spec] over (a) [bundling normal work directly
+into this Spec] and (c) [a faked normal], restated from this Spec's own
+first-draft reasoning, unchanged by this round:** option (a) would add
+a full mesh-format version bump, a repository-wide sweep, a disclosed
+migration decision, and two ADR amendments (ADR-0045, ADR-0058) on top
+of this Spec's own already-substantial remaining scope — comparable in
+size to Spec 0018's own 17-Milestone unit, and this Spec's own final
+review reconfirmed that combining both remains harder to review, plan,
+and verify as one coherent delivery than keeping them separate. Option
+(c) is independently rejected on the merits, not merely because this
+Spec's own drafting brief forbids it: either approach would make the
+resulting "lighting" pixels not actually driven by asset-authored
+geometry data, undermining this Spec's own central claim.
 
-**Recommendation: (b).** Evidence-based, not merely by analogy: this
-Spec's own remaining scope (World `Light` component, Scene grammar/
-artifact light node, `MaterialKind::LitTextured`, the RHI uniform-binding
-stage-visibility widening, Runtime light extraction, the new
-image-regression fixture/golden) is already a full, real Spec-sized
-unit of work in its own right — comparable in shape to Spec 0018's own
-17-Milestone scope. Adding a full mesh-format version bump, migration
-sweep, and two ADR amendments on top would make this Spec's own single
-delivery meaningfully harder to review, plan, and verify as one
-coherent unit, for a component (the normal attribute) that has its own
-clean, independent, already-precedented shape and no dependency on any
-lighting-specific design decision in this Spec. **Consequence, disclosed
-plainly:** if this recommendation is accepted, this Spec's own Plan
-cannot begin until "Mesh Normal Attribute Foundation" is itself
-`Approved` and implemented — this Spec documents the full lighting
-design now so Human Review can evaluate the whole shape at once, but
-its own Implementation is gated on that prerequisite landing first,
-exactly as Spec 0018's own Plan was gated on Spec 0017.
+### D2. World `Light` component shape and semantics — precise, complete, evidence-grounded
 
-### D2. World `Light` component shape — recommendation: one closed, flat, tagged struct, not a variant, not two components
-
-**Decision:** `enum class LightKind { Directional, Point };` and one
-flat `Light` struct:
+**Decision, exact shape:**
 
 ```cpp
+enum class LightKind { Directional, Point };
+
 struct Light {
   LightKind kind = LightKind::Directional;
-  Vec3 color{1.0f, 1.0f, 1.0f};
-  float intensity = 1.0f;
-  float range = 0.0f;  // Point only; ignored (and decode/cook-time
-                        // rejected as invalid) for Directional -- see D3
+  Vec3 color{1.0f, 1.0f, 1.0f};  // each component in [0, 1] -- D6
+  float intensity = 1.0f;         // finite, >= 0 -- D6
+  float range = 0.0f;             // Point only; ignored for Directional,
+                                   // and rejected outright if authored on
+                                   // a Directional node -- D3
 };
 ```
 
-`World::setLight(EntityId, Light)`/`removeLight(EntityId)`/
-`getLight(EntityId) const`, and `lightEntities() const` — a fresh
-`std::vector<EntityId>` snapshot in ascending slot-index order,
-verbatim-mirroring `renderableEntities()`'s own exact doc comment and
-implementation shape.
+`World::setLight(EntityId, Light) -> Result<monostate, WorldError>`,
+`removeLight(EntityId) -> Result<monostate, WorldError>`,
+`getLight(EntityId) const -> Result<Light, WorldError>` (returns by
+value, matching `getCamera()`/`getRenderable()`'s own identical
+contract exactly — `World` never returns a reference or pointer into
+its own internal storage, unchanged invariant). `lightEntities() const
+-> std::vector<EntityId>` — a fresh snapshot in ascending slot-index
+order, verbatim-mirroring `renderableEntities()`'s own exact doc
+comment and implementation shape.
 
-**Why one component, not two (`DirectionalLight`/`PointLight`):** would
-double `World`'s own component-slot count for no real benefit — an
-entity is never both a directional and a point light simultaneously (a
-closed, mutually-exclusive `kind` tag is the correct shape for "exactly
-one of a small, fixed set," matching `MaterialKind`'s own precedent
-exactly, not `Camera`+`Renderable`'s own precedent of "two genuinely
-independent, freely-combinable components").
+**At most one `Light` per entity** — the same fixed-type, single-slot
+storage `Camera`/`Renderable` already use; `Light` is a third such slot,
+not a list, not a generic component registry.
 
-**Why a flat struct with a `kind` tag, not `std::variant<DirectionalLight,
-PointLight>`:** matches every other closed-kind DTO in this codebase
-(`MaterialAssetData`, `TextureAssetData`) — none use `std::variant` for
-"one of a small, fixed set of shapes"; all use a plain enum plus flat
-fields, with fields irrelevant to the current `kind` simply unread. A
-`std::variant` would be the first of its kind anywhere in `World` or
-Asset System, introducing a new pattern for no functional gain over the
-established one.
+**Direction/position — never stored, always re-derived, exact formula:**
+for a `Directional` light, the world-space light direction is
+`normalize(-column2 of the owning entity's own current world matrix)`
+— the **identical formula and sign convention** `extractCameraMatrices()`
+already uses for Camera's own forward vector (`scene_extraction.cpp`,
+confirmed by direct citation), meaning a light is authored/aimed exactly
+like a camera is aimed (rotate the entity; the light "shines toward"
+its own local -Z axis in world space). For a `Point` light, the
+world-space position is `column3 (translation) of the owning entity's
+own current world matrix` — again identical to Camera's own eye
+extraction. Neither value is ever stored on the `Light` component
+itself.
 
-**Why no direction/position field:** direct precedent, not invention —
-`Camera` stores no direction of its own; `extractCameraMatrices()`
-derives it fresh from the owning entity's own world matrix every frame.
-`Light`'s own direction (Directional) or position (Point) is derived the
-identical way in Runtime's own extraction step (D9) — `-column2`
-(normalized) for direction, `column3` for position — never stored
-redundantly on the component, never capable of drifting out of sync
-with the entity's own `Transform`.
+**Parent transform, negative scale, non-uniform scale, and shear — all
+unrestricted for light direction/position extraction specifically, with
+a real argument, not an assertion:** extracting a single matrix column
+(either `-column2`, normalized, or the raw `column3`) never requires the
+matrix's *other* columns to be orthogonal or uniformly scaled — this is
+exactly the property `scene_extraction.cpp`'s own existing comment
+already states for Camera ("eye/forward-only camera extraction, never a
+right/up column, so it stays correct under a sheared hierarchy"). A
+light entity under a non-uniformly-scaled or sheared parent still
+produces a mathematically well-defined direction/position by this same
+argument. **This is explicitly distinct from D7's own mesh-normal-
+transform restriction** — a per-fragment surface property, not a
+light-source property — and this Spec states the distinction explicitly
+so the two are never confused with each other.
 
-**Entity destruction/parent-transform/deterministic-traversal
-semantics:** unchanged in kind from `Camera`/`Renderable` — a light
-entity's own slot is retired and its `Light` component destroyed
-exactly like any other component on `destroyEntity()`; a light attached
-under a moving parent inherits that parent's own transform through the
-existing, unmodified `updateTransforms()`/`getWorldMatrix()` composition,
-with no light-specific hierarchy logic added anywhere. No generic ECS
-registry — `Light` is a third fixed-type optional slot, exactly like the
-two that already exist.
+**The one real restriction: a degenerate transform is rejected, never
+silently normalized.** If a `Directional` light's own `-column2` has
+near-zero length (a degenerate transform, e.g. zero scale on the
+relevant axis), Runtime's extraction function returns a new,
+dedicated `SceneExtractionError::DegenerateLightDirection` (mirroring
+`DegenerateCameraForward`'s own exact precedent) rather than normalizing
+a near-zero vector to an arbitrary or NaN result. `Point` lights need no
+equivalent check — a raw translation column is always well-defined,
+regardless of any other degeneracy in the matrix.
 
-### D3. Scene authoring/artifact — recommendation: light is its own, standalone node this round; co-location with mesh/camera achieved via the existing parent/child hierarchy, not a same-node grammar extension
+**Entity destroy/cascade:** a `Light` component is destroyed exactly
+like `Camera`/`Renderable` already are on `destroyEntity()`'s own
+existing cascading-delete mechanism — no new logic, no special-casing.
+
+**Error precedence, exact, matching `World::validate()`'s own real,
+current code:** `WrongWorld` (the handle's own identity belongs to a
+different, live `World` instance) is checked **first**; `InvalidEntity`
+(a stale generation, an out-of-range index, or a dead slot) is checked
+**second**; only once both pass does `getLight()` check the
+component-presence condition, returning the new
+`WorldError::NoLightComponent` (mirroring `NoCameraComponent`/
+`NoRenderableComponent`'s own exact naming precedent) as the **third
+and final** check.
+
+**Traversal order:** `lightEntities()`'s own ascending slot-index order
+is the sole source of deterministic light ordering anywhere in this
+Spec's own design — never an `std::unordered_map`, matching every prior
+Spec's own identical discipline.
+
+### D3. Scene authoring/artifact — a standalone light node, a hard structural cap, independent cook/decode validation
 
 **Decision:** `atlantis_scene_source_version: 2 → 3`. A node's own
-trailing token group gains a fourth, mutually-exclusive shape,
+trailing token group gains a fourth, mutually exclusive shape,
 `light=<directional|point> color=<r> <g> <b> intensity=<f> [range=<f>]`
 — present only when the node carries no `mesh=`/`camera_*=` group,
-matching the real, confirmed structural shape of today's parser
-exactly (a new `tokens.size()` case, disjoint from 11/12/13/14, added
-as a fourth `else if` branch — mechanically identical to how Spec
-0018's own 13-token case was added alongside the pre-existing 12/14
-cases). Version 2 sources/artifacts are rejected outright — no
-dual-version reader, matching every prior Scene Asset version bump.
+matching the real, confirmed structural shape of today's parser (a new
+`tokens.size()` case, disjoint from 11/12/13/14, added as a fourth
+`else if` branch). Version 2 sources/artifacts are rejected outright —
+no dual-version reader.
 
-**Why light cannot share a trailing group with mesh/material or camera
-this round, stated as a real constraint, not a stylistic choice:**
-confirmed directly (Pre-draft verification) that today's parser
-dispatches on a single, exclusive `tokens.size()` value per node — there
-is no existing mechanism for "two independent, self-describing trailing
-groups on one line." Building one would mean replacing the entire
-grammar's own position-count-based dispatch with a self-describing,
-prefix-tagged multi-group parser — a real, disclosed, out-of-proportion
-grammar redesign for this Spec's own minimal scope, touching every
-existing node shape's own parsing code, not merely adding a fourth case
-to it.
+**Co-location with mesh/camera on one node — unchanged from this Spec's
+own first draft:** not supported this round; a visible light fixture is
+composed via the existing parent/child hierarchy (a `Renderable`-only
+node and a `Light`-only node, parented together), achieving the one real
+use case a same-node combination would provide with zero grammar
+change.
 
-**How a "visible light fixture" (a lit bulb mesh at the same visual
-location as its own light) is still achievable with zero grammar
-change:** the existing parent/child hierarchy already composes
-transforms across entities — a `Renderable`-only node and a `Light`-only
-node, one parented to the other (or both parented to a shared, empty
-transform-only node), already produce the correct composed world
-position for both, through mechanism this Spec adds nothing to. This is
-the recommended, disclosed pattern for that composition, not a gap.
+**Validation, cook-time and decode-time, independent of each other,
+including the hard structural cap (Final Review Round finding 4):**
 
-**Validation, cook-time and decode-time, independent of each other**
-(matching `MaterialWithoutRenderable`'s own "never trust the cooker"
-precedent exactly): `color` components and `intensity` must be finite
-and non-negative; `range` must be finite and strictly positive for
-`Point`, and is rejected outright (not merely ignored) if present on a
-`directional` light line — an explicit, distinct grammar-level error,
-not a silently-tolerated-then-ignored field, so a malformed source never
-silently produces a technically-valid-but-wrong artifact. `intensity ==
-0` is accepted (a light contributing nothing is not itself invalid — an
-authoring convenience for temporarily disabling a light without
-deleting its node) but is a real, disclosed edge case worth an explicit
-test, not an assumed-fine one.
+- `color`'s three components must each be finite and in `[0.0, 1.0]`;
+  `intensity` must be finite and `>= 0.0` (D6). `range` must be finite
+  and strictly `> 0.0` for `Point`, and is rejected outright (a distinct
+  grammar-level error, not silently ignored) if present on a
+  `directional` light line.
+- **A scene declaring more than 1 `directional`-kind light node, or more
+  than 4 `point`-kind light nodes (D5's own fixed maximum, below), fails
+  to cook outright** — a new `SceneSourceParseError::TooManyLights`
+  (one shared enumerator covering both kinds, matching this Spec's own
+  "reuse where identical in kind" discipline: exceeding either cap is
+  the identical *kind* of failure, only the specific kind/count differs,
+  which the error's own accompanying log message states). This is a
+  cook-time, whole-scene, post-node-collection check, run once all
+  nodes have been parsed — never a per-node check.
+- **Decode-time independently re-validates the identical cap**, never
+  trusting the cooker, mirroring `MaterialWithoutRenderable`'s own
+  precedent exactly: a new `SceneArtifactDecodeError::TooManyLights`,
+  driven by a real, hand-corrupted artifact byte buffer in its own test,
+  not merely a reachable-in-theory path.
+- **Why a hard error, not deterministic truncation (Final Review Round
+  finding 4, restated with its own full reasoning here):** a scene
+  author who declares more lights than the fixed maximum has almost
+  certainly made a real content mistake (accidental duplication, or an
+  unrealized cap) — truncating silently (even in a fully deterministic
+  order) would let that scene "successfully" cook and render, dimmer or
+  differently lit than authored, with no signal beyond a log line
+  nothing in this Spec's own verification path checks. This mirrors
+  Spec 0018 D4's own reasoning for why a present-but-unloadable material
+  reference is scene-load-fatal, not a silent fallback: a genuinely
+  broken/exceeded reference should stop the scene from reaching
+  `Running`, not degrade quietly.
+- `intensity == 0` is accepted (not itself an error) — a light
+  contributing nothing is a valid, if pointless, authoring choice (a
+  disable-without-delete convenience), not a validation failure.
 
-**Renderable/Camera/Light co-existence on one Entity, precisely
-stated:** at the `World` level, yes — nothing in D2's own component
-model prevents an entity from carrying `Renderable` and `Light`
-simultaneously (they are independent optional slots, like `Camera`/
-`Renderable` already are); at the *scene authoring grammar* level, no,
-not this round, per the constraint above — a scene wanting both on
-"the same visual object" authors two nodes and a parent/child
-relationship instead. This is a disclosed, real gap between what
-`World` can represent and what this round's own grammar can author
-directly — future work, not silently pretended away.
+**Renderable/Camera/Light co-existence at the `World` level:**
+unrestricted — nothing in D2's own component model prevents an entity
+from carrying `Renderable` and `Light` simultaneously; the *grammar's*
+own one-trailing-group-per-node limit above is the only real
+restriction, and it applies to node authoring, not to `World`'s own
+representable state.
 
-### D4. Material — recommendation: exactly one new kind, `LitTextured`, no `LitColored`, no material artifact schema change
+### D4. (renumbered — see D8 for Material scope; D4 folded into D3/D8 above, not left as a placeholder)
 
-**Decision:** `MaterialKind::LitTextured` — one new enumerator on the
-existing closed enum, reusing `MaterialAssetData`'s own exact, unchanged
-shape (`{kind; textureAsset; filter; addressMode;}`) — a `LitTextured`
-material still names exactly one texture/sampler pair, identically to
-`UnlitTextured`; the only difference is which built-in shader pair
-Runtime's own closed mapping resolves `kind` to, and that shader's own
-use of the newly-widened, fragment-visible uniform binding (D5).
-**No material artifact schema-version bump is required** — the 32-byte
-record's own `kind` field is already a plain `u32` whose *decoded,
-valid* value set widens (from `{0}` to `{0, 1}`); every existing,
-already-cooked `kind=0` artifact continues decoding identically, byte
-for byte; `decodeMaterialArtifact()`'s own existing `UnknownMaterialKind`
-rejection path is unaffected in shape, only in which raw values it now
-accepts.
+This Spec's own original ten-decision numbering placed Material scope at
+D4; this round's revision folds that content into D8 (below), alongside
+the additional CMake/descriptor-contract/vertex-input detail the final
+review requested for the same topic, so the full Material/shader
+boundary decision is stated once, completely, in one place rather than
+split across two sections.
 
-**Why no `LitColored` (untextured lit) kind this round:** this Spec's
-own "priority coverage" (one Directional, one Point, minimal diffuse,
-multi-entity shared light data) names exactly one real consumer —
-`LitTextured`. Adding a second, parallel kind now would be exactly the
-kind of speculative, no-real-consumer-yet addition ADR-0059 D2 already
-rejected once for a color-tint field, and this Spec's own Non-Goals
-explicitly name "emissive/transparent materials" as out of scope, which
-an untextured-lit kind's own natural next use case would edge toward.
-If a genuine untextured-lit consumer appears later, it is a small,
-additive follow-up — matching `MaterialKind`'s own already-disclosed
-growth path exactly (ADR-0059's own "Consequence, disclosed").
+### D5. Frame lighting data — the existing single uniform buffer binding, its own fixed maximum counts, and the one real RHI stage-visibility decision
 
-**Existing `UnlitTextured` output must be byte-unchanged:** its own
-shader, artifact shape, and Runtime-side mapping are untouched by this
-Spec — confirmed structurally, not merely asserted, since `LitTextured`
-is a wholly additive enumerator value and a wholly separate,
-newly-added Runtime-side shader-pair mapping entry, touching no existing
-code path `UnlitTextured` itself runs through.
+**Decision, unchanged in its own RHI-boundary reasoning from this
+Spec's own first draft, re-confirmed this round:** the one-time light
+array (D9) is packed into the *same* uniform buffer the camera view/
+projection matrices already occupy — appended after the existing 32
+floats, in a fixed, `std140`-compatible layout. No new descriptor
+binding, no `PipelineCreateParams` shape change, no new `Device`
+resource-creation call.
 
-### D5. Frame lighting data — recommendation: reuse and widen the existing single uniform buffer binding; the one real, disclosed RHI decision is widening its Vulkan stage visibility, not adding a new binding
+**The exact CPU/GPU contract, fixed here, not left open (Final Review
+Round finding 4's own "written into the contract" requirement):**
 
-**Decision:** the frame lighting array is packed into the *same*
-uniform buffer the camera view/projection matrices already occupy —
-appended after the existing 32 floats, at a fixed offset, in a fixed,
-`std140`-compatible layout (exact per-light struct size/alignment and
-maximum count fixed at Plan time, informed by this Decision's own
-analysis below). **No new descriptor binding, no `PipelineCreateParams`
-shape change, no new `Device` resource-creation call.**
+```cpp
+// CPU-side layout, std140-compatible, appended after the existing
+// 32-float camera view+projection block. Exact byte offsets (subject to
+// std140's own vec3-padded-to-16-bytes alignment rule) are fixed at
+// Plan time against this exact field list -- not redecided, only
+// laid out precisely.
+struct FrameLightingData {
+  std::uint32_t directionalLightCount = 0;  // 0 or 1 -- D3's own fixed cap
+  std::uint32_t pointLightCount = 0;        // 0..4 -- D3's own fixed cap
+  // (std140 padding to a 16-byte boundary here)
+  struct DirectionalLightGpu {
+    float direction[3];  // world-space, normalized -- D2
+    float _pad0;
+    float color[3];      // D6
+    float intensity;     // D6
+  } directionalLights[1];
+  struct PointLightGpu {
+    float position[3];   // world-space -- D2
+    float range;         // D6
+    float color[3];      // D6
+    float intensity;     // D6
+  } pointLights[4];
+};
+```
 
-**Why this is sufficient, not merely convenient — grounded in the real
-constraint found during this Spec's own drafting (Pre-draft
-verification):** `PipelineCreateParams` has no mechanism for a second
-uniform buffer binding today, and `Device::createPipeline()`'s own
-internal descriptor-set-layout construction is hardcoded to at most two
-bindings (the uniform buffer, always; the combined-image-sampler,
-conditionally). Adding a genuinely *second*, independent uniform buffer
-binding would mean widening `PipelineCreateParams` with a new field,
-extending `createPipeline()`'s own binding-count/pool-size logic to a
-three-binding case, and extending the Shader-System-side expected-
-descriptor-contract mechanism with a new binding-count shape — real,
-disclosed, but avoidable: since this Spec's own lighting data is
-inherently *per-frame*, exactly like the camera data it would sit
-beside, and both are written by the exact same composition root at the
-exact same point in `runFrame()`, there is no structural reason for them
-to occupy two separate buffers or two separate bindings. Reusing the
-one that already exists is the direct, minimal-diff answer, not an
-avoided harder problem.
+Only `directionalLights[0..directionalLightCount)` and
+`pointLights[0..pointLightCount)` are ever meaningful; unused tail slots
+are never read by the shader (bounded by the count fields, not by any
+sentinel value in the unused slots themselves).
 
-**The one real RHI change this decision does require, disclosed
-precisely, not smoothed over (see ADR-0062):** the existing uniform
-binding's own Vulkan `stageFlags` is hardcoded to
-`VK_SHADER_STAGE_VERTEX_BIT` — a `LitTextured` shader's own fragment
-stage cannot read the light data (or, for that matter, the camera data
-already there) without this changing. The recommended fix widens it,
-unconditionally, to `VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT`
-for every `Pipeline` this engine creates, not merely `LitTextured`
-ones — legal, zero-cost Vulkan (a pipeline layout permitting broader
-shader-stage visibility than a given shader module actually uses is
-valid and already exercised elsewhere in this codebase's own Vulkan
-usage patterns); every existing shader (`minimal_mesh`, `textured_quad`)
-simply continues not referencing this binding from its own fragment
-stage, unaffected. This is the one, minimal, disclosed RHI-boundary
-decision this Spec surfaces explicitly for Human Review rather than
-silently assuming — see ADR-0062.
+**Fixed maximum count, restated as a hard contract, not a suggestion:**
+**exactly 1 `Directional` slot and exactly 4 `Point` slots** — chosen to
+comfortably exceed this Spec's own stated minimum coverage (one of
+each) with modest headroom for the verification scene's own two-light-
+kind-distinguishing proof (D10), without speculatively over-
+provisioning. A scene exceeding either cap is a hard cook/decode-time
+error (D3) — this fixed array size is never dynamically resized, and
+Implementation may not silently widen it without a Spec amendment.
 
-**Fixed maximum count — a real number, not left open:** recommend
-**1 Directional + 4 Point** lights (5 total light "slots" in the fixed
-array), chosen to comfortably exceed this Spec's own stated minimum
-coverage (one of each) with modest headroom for the verification
-scene's own two-light-kind-distinguishing proof (D10), without
-speculatively over-provisioning for a use case no consumer this round
-needs. This exact count is a Plan-time-adjustable constant, not an
-architectural commitment — Human Review may pick a different number;
-what is fixed here is that it *is* a small, fixed compile-time constant,
-never a dynamically-sized array.
+**The one real RHI change (unchanged from this Spec's own first draft;
+see ADR-0062 for the full Decision/Consequences record):** the existing
+uniform binding's own Vulkan `stageFlags` widens, unconditionally, from
+`VK_SHADER_STAGE_VERTEX_BIT` to `VK_SHADER_STAGE_VERTEX_BIT |
+VK_SHADER_STAGE_FRAGMENT_BIT`, for every `Pipeline` this engine creates
+— not merely `lit_textured` ones. Legal, zero-cost Vulkan; every
+existing shader (`minimal_mesh`, `textured_quad`) continues not
+referencing this binding from its own fragment stage, unaffected and
+required to continue passing its own existing tests unchanged (D10).
+`PipelineCreateParams`'s own public shape is unchanged; no `Material`/
+`Renderer` public API changes.
 
-**Over-limit lights — recommendation: deterministic truncation, logged,
-never a scene-load failure:** if a scene declares more lights of a
-given kind than the fixed maximum, the first N in `lightEntities()`'s
-own deterministic (ascending slot-index) order are used, and the rest
-are silently-to-the-render-but-not-silently-to-the-log skipped — logged
-once at scene-load time, not per-frame. **Why not a hard error:** a
-scene that happens to exceed the cap should still load and render
-something correct-looking with its own first N lights, matching this
-codebase's own general "recoverable condition, not fatal" philosophy for
-per-entity issues (Spec 0018's own present-but-unresolvable-material
-skip is the closest precedent, though that case is genuinely
-unrecoverable per-entity while this one is a scene-wide, at-cook-or-load-
-time-knowable condition) — Human Review may instead prefer a hard
-cook-time rejection (simpler to reason about, catches the condition
-before it ever reaches Runtime); both are real, defensible options, and
-this Spec states its own recommendation without foreclosing the
-alternative.
+### D6. Lighting math — exact, complete, per-value-testable formulas (no "standard Lambert," no undocumented constants)
 
-### D6. Point-light attenuation — recommendation: a documented, explicitly non-physical linear-range falloff
+**Inputs available in the `lit_textured` fragment shader** (D8's own
+vertex-shader contract makes these available as new varyings, computed
+from the already-existing `objectToWorld` push constant — no new push
+constant):
 
-**Decision:** `attenuation = clamp(1.0 - distance / range, 0.0, 1.0)`,
-multiplied directly into that light's own diffuse contribution;
-`distance` is clamped to a small positive epsilon before division
-(`max(distance, 1e-4)`) to guard the zero-distance case without a branch
-that could itself introduce a discontinuity. **Explicitly and
-permanently non-physical** — real inverse-square attenuation
-(`1 / distance²`), any energy-conserving or physically-calibrated
-unit system, and any softer, smoothstep-shaped falloff curve are all
-named, disclosed, deliberately deferred to a future, real PBR-adjacent
-Spec, not silently approximated here.
+- `worldPosition` (`float3`) — the fragment's own interpolated
+  world-space position.
+- `worldNormal` (`float3`, **not yet normalized** — interpolation across
+  a triangle does not preserve unit length) — the fragment's own
+  interpolated world-space normal, transformed per D7.
+- `texColor` (`float4`) — `texturedSampler.Sample(uv)`, unchanged from
+  `UnlitTextured`.
+- The one-time `FrameLightingData` (D5), read from the shared uniform
+  binding.
 
-**Why this shape, not inverse-square, evidence/reasoning stated
-plainly:** inverse-square attenuation has no natural "range" concept at
-all (it asymptotically approaches, never reaches, zero) — this Spec's
-own D3 already requires an authored `range` field per Point light
-specifically so a light's own influence is bounded and testable (the
-verification scene, D10, needs a light whose contribution is visibly
-different at different distances within a known, finite falloff
-region). A simple linear-in-distance falloff is the smallest function
-that is bounded, monotonic, zero at `range`, one at `distance = 0`, and
-trivially unit-testable without any transcendental function or
-division-by-a-value-that-can-legitimately-be-zero.
+**The exact algorithm, in order:**
 
-**Units:** Phase 1's own linear scalar convention throughout (matching
-`intensity`'s own unitless-multiplier treatment) — `range`/`distance`
-share whatever world-unit scale a scene's own `Transform` values
-already use (this codebase's own existing scenes operate at a roughly
-1–10 world-unit scale, per `scene_extraction.cpp`'s own documented
-epsilon-choice rationale); no physical unit (lumens, candela, meters)
-is claimed or implied.
+```
+N = normalize(worldNormal)
+accumulated = float3(0, 0, 0)   // no ambient term -- explicit, see below
 
-### D7. Normal transform — recommendation: the object-to-world matrix's own upper-left 3×3, with an explicit, non-silent uniform-scale requirement for any `LitTextured`-bound entity
+for i in [0, directionalLightCount):
+    L = -directionalLights[i].direction   // vector FROM the surface
+                                            // TOWARD the light source is
+                                            // the negation of the
+                                            // light's own "shines
+                                            // toward" direction (D2)
+    ndotl = max(dot(N, L), 0.0)
+    accumulated += directionalLights[i].color * directionalLights[i].intensity * ndotl
+
+for j in [0, pointLightCount):
+    toLight = pointLights[j].position - worldPosition
+    dist = max(length(toLight), kPointLightDistanceEpsilon)  // = 1e-4,
+                                                                // guards
+                                                                // the
+                                                                // zero-
+                                                                // distance
+                                                                // case
+                                                                // with no
+                                                                // branch
+    L = toLight / dist
+    ndotl = max(dot(N, L), 0.0)
+    atten = clamp(1.0 - dist / pointLights[j].range, 0.0, 1.0)  // D6's
+                                                                   // own
+                                                                   // Point-
+                                                                   // light
+                                                                   // attenuation,
+                                                                   // linear-
+                                                                   // in-
+                                                                   // distance,
+                                                                   // explicitly
+                                                                   // non-
+                                                                   // physical
+    accumulated += pointLights[j].color * pointLights[j].intensity * ndotl * atten
+
+finalRgb = clamp(texColor.rgb * accumulated, 0.0, 1.0)   // the one and
+                                                            // only clamp,
+                                                            // applied
+                                                            // here,
+                                                            // after
+                                                            // combining
+                                                            // texture and
+                                                            // light, never
+                                                            // per-light
+return float4(finalRgb, texColor.a)
+```
+
+**No ambient/fill term, explicitly:** `accumulated` starts at zero and
+is only ever increased by an active light's own contribution — a
+surface with no active light facing it (every `ndotl` term zero or every
+light too far/wrong-facing) renders pure black. This is a stated,
+deliberate Non-Goal (see above), not an omission Implementation should
+"helpfully" fix with an undocumented constant.
+
+**Color/intensity value ranges, exact, enforced at cook and decode time
+(D3):** each `color` component `∈ [0.0, 1.0]` (a normalized tint, not an
+HDR value); `intensity ∈ [0.0, +∞)`, finite, no upper bound enforced at
+authoring time (the final `clamp(..., 0, 1)` above bounds the visible
+effect regardless of how large `intensity` is authored).
+
+**Point-light attenuation, restated as the one formula, no
+alternative:** `clamp(1.0 - dist / range, 0.0, 1.0)` — a documented,
+explicitly non-physical linear falloff, chosen because it is the
+smallest function that is bounded, monotonic, exactly zero at `range`,
+exactly one at `dist = 0`, and requires no transcendental function or
+division by a value that can legitimately be zero (guarded by
+`kPointLightDistanceEpsilon = 1e-4`, a named, documented constant, not a
+bare literal). Real inverse-square attenuation is explicitly deferred
+(Non-Goals) — has no natural, finite cutoff, in direct tension with this
+Spec's own authored, testable `range` field.
+
+**No tone-mapping, no gamma-encode, restated:** the final `clamp(...,
+0, 1)` above is the *only* transformation applied before writing to the
+target's own `Rgba8Unorm`/`Rgba8Srgb` color attachment — no curve, no
+exposure, no highlight rolloff.
+
+### D7. Normal transform — the exact, general, provably-sufficient safety condition; a Runtime-extraction-time check, not a scene-validation-time or silent one
 
 **Decision:** a vertex normal transforms by the object-to-world
-matrix's own upper-left 3×3 submatrix directly — **not** an
-inverse-transpose normal matrix. This is exactly correct for pure
-rotation and uniform scale, and silently *wrong* (a skewed, non-unit-
-length, non-perpendicular-to-the-surface result) under non-uniform
-scale — a real, disclosed limitation, not an unstated one.
+matrix's own upper-left 3×3 submatrix directly (`worldNormal = mul(
+(float3x3)pushConstants.objectToWorld, input.normal)` in the vertex
+shader, matching D6's own stated vertex-shader contract), **not** an
+inverse-transpose normal matrix — computed once per vertex, interpolated,
+then re-normalized in the fragment shader (D6's own `N = normalize(worldNormal)`).
 
-**Why this is not left as a silent gap, per this Spec's own explicit
-"must not silently produce a mathematically wrong result" instruction:**
-`World` has no matrix-inverse function anywhere in its own public API
-today (Pre-draft verification) — computing a correct inverse-transpose
-normal matrix would require introducing new math capability this
-codebase does not yet have, a real, additional, disclosed cost this
-Spec's own minimal scope does not currently justify. Instead, Runtime's
-own per-entity `DrawItem`-build step (already the exact point Spec 0018
-resolves each entity's own Material) additionally checks whether a
-`LitTextured`-bound entity's own current `Transform.localScale` is
-uniform (`scaleX == scaleY == scaleZ`, within a small epsilon, checked
-per entity, per frame, cheaply) — a non-uniform-scale entity bound to a
-`LitTextured` material is a real, explicit, logged, recoverable
-per-entity condition (mirroring the existing present-but-unresolvable-
-material skip's own severity exactly, D8/D9 of Spec 0018), never a
-silently-wrong-looking render passed off as correct.
+**The exact, general condition under which this is mathematically
+correct, proven, not asserted:** direct transformation by a matrix `M`
+(here, the world matrix's own upper-left 3×3) preserves a normal's own
+correct direction if and only if `M` is a **conformal (angle-preserving)
+linear map** — equivalently, `M`'s own three columns are mutually
+orthogonal and equal in length. This condition is satisfied by pure
+rotation, by uniform scale of *either* sign (including a full point
+reflection), and by any composition of the two; it is violated by
+non-uniform scale and by shear. (Proof sketch, for the record: for `M =
+s·R` with scalar `s ≠ 0` and orthogonal `R`, the mathematically correct
+transform `(M⁻¹)ᵀ = (1/s)·R`, which is a positive-scalar multiple of `M`
+itself whenever `s` and `1/s` share a sign — true for every nonzero real
+`s` — so normalizing `M·n` and normalizing `(M⁻¹)ᵀ·n` give the identical
+direction. For `M` exactly orthogonal, `(M⁻¹)ᵀ = M` exactly. Neither
+property holds when `M`'s own columns have unequal length or are not
+mutually perpendicular.)
 
-**Alternative, disclosed, not chosen:** implementing a real
-inverse-transpose normal matrix (would require a new, small 3×3
-inverse function — itself a small, real, addable piece of Core/World
-math, not a large undertaking, but a genuinely new capability this
-Spec's own drafting did not find an existing precedent for anywhere in
-this codebase). Human Review may prefer this over the detect-and-skip
-approach above if non-uniform scale on a lit entity is expected to be
-common; this Spec's own recommendation optimizes for "ship the smallest
-correct thing, disclose the real limitation explicitly" over
-"implement more math than this round's own verification scene needs."
+**Checked on the fully composed world matrix, not an entity's own local
+`Transform.localScale`:** a parent's own non-uniform scale can introduce
+shear into a child's own effective world-space transform even when the
+child's own local transform is a pure rotation with uniform local
+scale — only the actual, composed `getWorldMatrix()` result can be
+checked correctly. The check itself: the three columns of the world
+matrix's own upper-left 3×3 have equal length (within a small epsilon)
+and are pairwise orthogonal (each pairwise dot product near zero, within
+a small epsilon) — a cheap, per-entity, per-frame computation (three
+lengths, three dot products), no matrix inverse required.
 
-### D8. Lighting color space — recommendation: sample-time linearization is already free; no tone-mapping or gamma-encode is added, and this is a stated, permanent-for-Phase-1 limitation
+**Where this check runs, and its own severity, exactly:** this is a
+**Runtime-extraction-time**, per-entity, per-frame check — not a scene-
+validation-time one, since it depends on the fully composed hierarchy
+`World` alone can resolve, and it is evaluated fresh each frame at the
+same point Spec 0018's own per-entity `DrawItem`-resolution loop already
+runs. An entity bound to a `LitTextured` material whose own current
+world matrix fails this check is **skipped for that frame's own
+`DrawItem` list**, logged once (not per-frame-spammed), via a new
+`SceneExtractionError::NonConformalNormalTransform` (mirroring the
+severity of Spec 0018's own present-but-unresolvable-material skip
+exactly — recoverable, per-entity, never scene-load-fatal) — **never**
+silently rendered with an incorrect normal, and never a scene-load-time
+rejection (since, unlike the light-count cap, this condition genuinely
+depends on live, composed, potentially-parent-chain-dependent state, not
+something knowable from the scene artifact alone).
 
-**Decision:** an `Rgba8Srgb`-format texture sampled by the `Lit` shader
-already receives real, hardware-decoded linear color values at the
-point of sampling — this is existing, already-proven GPU behavior
-(Spec 0016's own `textured_quad` golden proof), unchanged and
-unaffected by this Spec. Lighting math (D6's own attenuation, the
-Lambertian dot-product term) operates on these already-linear sampled
-values and the light's own authored `color`/`intensity` (themselves
-treated as already being in the same linear space, by convention, not
-by any conversion this Spec performs). **The final summed color is
-written directly to the target's own `Rgba8Unorm`/`Rgba8Srgb` color
-attachment with no tone-mapping curve and no gamma-encode step of any
-kind** — the exact same "no HDR intermediate target, no post-processing
-pass" constraint every prior Spec in this codebase already operates
-under, unchanged.
+**Alternative, disclosed, not chosen:** a real inverse-transpose normal
+matrix (requiring a new 3×3-inverse function `World`/Core does not have
+today). Human Review may prefer this over the detect-and-skip approach
+if non-uniform-scale-or-sheared lit entities are expected to be common;
+this Spec's own recommendation optimizes for the smallest correct thing
+this round's own verification scene needs, with the real limitation
+disclosed and non-silent, over implementing more math than is currently
+justified.
 
-**Consequence, disclosed, not smoothed over:** a `LitTextured` scene
-whose combined light contribution exceeds 1.0 in any channel simply
-clips at the display format's own maximum representable value — no
-highlight rolloff, no exposure control. This is an accepted, Phase 1-
-appropriate limitation, not a defect this Spec attempts to solve;
-real tone-mapping is explicitly named future Post-processing-Spec
-territory (Non-Goals).
+### D8. Material/shader boundary — exactly one new `MaterialKind`, its exact CMake/descriptor/vertex-input contract, and confirmation of zero material-artifact schema change
 
-### D9. Runtime integration — recommendation: a new Runtime-private extraction function, deterministically ordered, updated unconditionally every frame, no format-rebuild interaction
+**Decision, MaterialKind scope (unchanged from this Spec's own first
+draft, restated in full here since this round folds D4's own prior
+content into this section):** exactly one new enumerator,
+`MaterialKind::LitTextured`, reusing `MaterialAssetData`'s own existing,
+unchanged shape (`{kind; textureAsset; filter; addressMode;}`) — a
+`LitTextured` material still names exactly one texture/sampler pair,
+identically to `UnlitTextured`. **No `LitColored` (untextured lit)
+kind this round** — no real consumer names one; adding it now would be
+exactly the kind of speculative, no-consumer-yet addition ADR-0059 D2
+already rejected once. No `metallic`, `roughness`, normal-map, or
+emissive parameter of any kind.
 
-**Decision:** light extraction is a new, Runtime-private, GPU-independent,
-independently-testable function (mirroring `extractCameraMatrices()`/
-`resolveMaterialAsset()`'s own exact precedent — explicit parameters,
-no hidden `RuntimeApplication` state access), called once per frame
-from `runFrame()`, at the same point camera-matrix extraction already
-runs. `World` gains zero new dependency (still `Core` + `AssetSystem`
-only) — this function lives in Runtime, reading `World`'s own already-
-public `lightEntities()`/`getLight()`/`getWorldMatrix()` API, exactly
-like every other Runtime-side `World` consumer already does.
+**No material artifact schema-version bump:** the 32-byte record's own
+`kind` field is already a plain `u32` whose *decoded, valid* value set
+widens from `{0}` to `{0, 1}`; every existing, already-cooked `kind=0`
+artifact continues decoding identically, byte for byte;
+`decodeMaterialArtifact()`'s own existing `UnknownMaterialKind`
+rejection path is unaffected in shape.
 
-**Ordering:** derived exclusively from `World::lightEntities()`'s own
-deterministic (ascending slot-index) iteration — never an
-`std::unordered_map`, matching this codebase's own repeatedly-stated
-"never hash-bucket-order-dependent" discipline (Spec 0018's own
-identical requirement for `computePendingMaterialIds()`'s own upload
-ordering).
+**`UnlitTextured` and the colored fallback are byte-unchanged:** neither
+shares any code path, shader, or Runtime-side mapping entry with
+`LitTextured` — confirmed structurally (a wholly additive enumerator
+value, a wholly separate, newly-added shader-pair mapping entry), not
+merely asserted.
 
-**Format change / material rebuild / shared frame uniform lifetime:**
-the frame lighting data's own byte layout is entirely format-
-independent (matching the camera data it sits beside) — it requires no
-rebuild on a color-format change, unlike a `Pipeline`/`Material` itself.
-It is re-derived and re-written into the shared uniform `Buffer`
-unconditionally every frame (matching the camera data's own identical,
-already-accepted per-frame-unconditional-write cost) — no dirty-
-tracking, no "did any light actually change" optimization, matching
-this Spec's own stated Non-functional "performance is not a goal this
-round." This introduces no new synchronization concern beyond the
-engine's own existing single-frame-in-flight model, for the identical
-reason the camera data's own existing per-frame write already doesn't:
-the buffer is host-visible and persistently mapped, and this engine's
-own `submit()`-drains-the-previous-frame contract already guarantees
-the GPU is done reading last frame's own values before this frame's own
-CPU-side write happens.
+**Exact CMake/build contract:** a new `shaders/lit_textured/` directory,
+`shaders/lit_textured/lit_textured.slang` plus
+`shaders/lit_textured/CMakeLists.txt` calling
+`atlantis_add_slang_shader_pair(NAME lit_textured ... EXPECTED_CONTRACT
+lit-textured)`, mirroring `shaders/textured_quad/`'s own exact shape.
+`add_subdirectory(shaders/lit_textured)` is added **unconditionally**
+(production, per Spec 0018 D3's own precedent — no `tests/` dependency
+in an `ATLANTIS_BUILD_TESTS=OFF` build tree), placed immediately after
+`shaders/textured_quad` and before `src/runtime` in the root
+`CMakeLists.txt`.
 
-### D10. Verification scene — recommendation: a new, independent lighting scene; Runtime's default bootstrap scene stays unswitched, matching Spec 0018's own precedent, but is named here as its own explicit Human Review choice, not silently assumed
+**Exact expected descriptor contract, three entries (not two — this is
+the one place D5's own stage-visibility widening becomes directly
+observable at the Shader-System/Tools level):**
+`litTexturedExpectedDescriptorContract()` (new, `descriptor_contract.h`/
+`.cpp`, mirroring `texturedMaterialExpectedDescriptorContract()`'s own
+shape) returns `{set 0, binding 0, UniformBuffer, Vertex}`, `{set 0,
+binding 0, UniformBuffer, Fragment}` (the *same* binding, reflected
+separately from each stage's own separately-loaded reflection JSON,
+confirmed achievable per this Spec's own Pre-draft verification of
+`ShaderStage`/`DescriptorBinding`'s real shape), and `{set 0, binding 1,
+Sampler, Fragment}` (unchanged from the textured contract).
 
-**Decision:** a new, minimal scene authored specifically for this Spec
-(not a reuse of `material_demo_scene` or `world_scene`) — real,
-asset-sourced UV0-and-normal-carrying mesh geometry (gated on D1's own
-prerequisite landing), one Directional light and one Point light, an
-**asymmetric layout** (the Point light positioned close to one distinct
-part of the scene's own geometry, the Directional light illuminating
-the whole scene roughly uniformly from a fixed world direction) so the
-two lights' own distinct contributions are visually separable in the
-captured frame — never a symmetric setup where a self-consistent-but-
-directionally-wrong render could coincidentally still look plausible. A
-new image-regression golden, captured per ADR-0042's own "Initial
-baseline bootstrap" procedure (direct human visual review plus the
-build-time comparator's own self-consistency check plus a real
-GPU/Validation-Layers run, since no prior golden exists to diff
-against). The four existing goldens (`minimal_cube`, `world_scene`,
-`textured_quad`, `material_demo`) are asserted byte-for-byte unchanged
+**Exact vertex-input schema shape, deferred only on Spec 0020's own
+final byte offsets, never on its existence:** the `lit_textured` vertex
+shader's own `VertexInput` needs `position` (existing), a real vertex
+`normal` (Spec 0020's own contract — location and byte offset fixed
+only once that Spec is `Approved` and merged), and `uv` (existing, for
+texture sampling) — three attributes, one more than `UnlitTextured`'s
+own two. The exact `MeshVertexAttributeSchema`/`VertexInputLayout`
+construction is a direct, mechanical Plan-time closure against Spec
+0020's own final field order, not an open design question this Spec
+itself leaves unresolved in kind.
+
+**Exact frame-uniform layout:** D5's own `FrameLightingData` struct,
+appended after the existing camera block in the same buffer — no
+separate contract here beyond D5's own.
+
+### D9. Runtime integration — one-time extraction and capture, its own ownership, Material's non-borrowing of the frame buffer, and non-interaction with format rebuild
+
+**Decision:** light extraction is a new, Runtime-private,
+GPU-independent, independently-testable function (mirroring
+`extractCameraMatrices()`/`resolveMaterialAsset()`'s own exact
+precedent), called **exactly once** — on the first successful frame,
+immediately after `World::updateTransforms()` first runs (the same
+frame Phase 2 material realization / the format-known check first
+succeeds) — never on any subsequent frame. `World` gains zero new
+dependency (still `Core` + `AssetSystem` only).
+
+**Ownership:** the captured `FrameLightingData` is written directly into
+the tail bytes of the same, already-`RuntimeApplication`-owned camera
+`Buffer` — no new GPU resource, no new member, no new destruction-order
+concern anywhere in `RuntimeApplication`'s own member layout. A boolean
+flag (`lightingDataCaptured_` or an equivalent Plan-time-named member)
+guards against ever re-running the capture on a later frame.
+
+**Material's own relationship to the frame buffer — explicitly, not a
+new borrow:** a `LitTextured` `Material` does **not** itself hold any
+reference to the frame lighting buffer — exactly like `UnlitTextured`
+`Material` does not hold a reference to the camera buffer today. The
+binding is entirely a function of the `Pipeline`'s own descriptor set
+(bound generically, by `Renderer::drawFrame()`'s own existing,
+unmodified per-draw binding logic), not something `Material` itself
+owns or borrows. This Spec introduces **no new borrow relationship**
+anywhere in the `Material`/`SampledTexture`/`Sampler` ownership graph
+Spec 0016/0018 already established.
+
+**Format-change rebuild — explicitly unaffected, no new interaction:**
+the frame lighting data's own byte layout is entirely
+`colorFormat`-independent (matching the camera data it sits beside) —
+a color-format change never touches it, never requires it to be
+recaptured, and Spec 0018's own submit-safe old-`Pipeline`-destruction-
+timing contract (build a candidate batch read-only, swap only after
+`submit()` returns `Ok`) is completely unchanged by this Spec, since
+`lit_textured` `Pipeline`s participate in that exact same rebuild
+mechanism with no special-casing.
+
+**Resize — explicitly unaffected, restated from "Known Limitations"
+above:** the existing camera projection matrix's own per-frame
+recomputation from the current extent/aspect ratio is entirely
+unrelated to, and untouched by, this Spec — this Spec does not attempt
+to inspect, fix, or alter that existing, already-shipped behavior.
+
+**No new global light manager:** the captured light data lives entirely
+within `RuntimeApplication`'s own existing member layout (the shared
+buffer plus one boolean flag) — no singleton, no second, parallel
+tracking structure.
+
+### D10. Verification boundary — real Spec 0020 normals, real scene light components, an asymmetric distinguishing scene, CPU math tests, and negative coverage for both new hard-stop conditions
+
+**Decision:** a new, minimal, independent scene authored specifically
+for this Spec (not a reuse of `material_demo_scene`/`world_scene`),
+consuming **Spec 0020's own final, merged, real, asset-sourced vertex
+normal** (this Spec's own fixture may not exist, let alone pass, before
+Spec 0020 has merged — this is the direct, concrete consequence of D1's
+own governance gate), a real scene-authored `Light` (Directional and
+Point, both present), in an **asymmetric layout** — the Point light
+positioned close to one distinct part of the scene's own geometry, the
+Directional light illuminating the whole scene roughly uniformly from a
+fixed, known world direction — so a direction-sign error, a
+position error, or an attenuation-formula error each produce a visibly
+different, wrong-looking frame, never a coincidentally-still-plausible
+one.
+
+**CPU-level math tests, required, not optional (Final Review Round
+finding 8):** every formula in D6 (the diffuse `ndotl` term, the
+directional sign convention, the point-light vector/epsilon/attenuation/
+range formula) gets its own GPU-independent unit test, driven by
+hand-computed expected values for known inputs — not merely exercised
+incidentally by the golden's own end-to-end pixel comparison. D2's own
+direction/position extraction (including the new
+`DegenerateLightDirection` case) and D7's own conformal-transform check
+(including the new `NonConformalNormalTransform` case) get the identical
+treatment.
+
+**Negative tests, required, for both of this round's own new hard-stop
+conditions:**
+
+- A scene declaring more than 1 `directional` or more than 4 `point`
+  lights fails to cook (`SceneSourceParseError::TooManyLights`) and,
+  independently, a hand-corrupted artifact past the cap fails to decode
+  (`SceneArtifactDecodeError::TooManyLights`) — both driven by real
+  inputs, matching every prior Spec's own discipline.
+- A `LitTextured`-bound entity given a deliberately non-conformal
+  (non-uniform-scale or sheared) world transform is confirmed skipped
+  for that frame's own `DrawItem` list, logged once, never
+  scene-load-fatal — a real, executed GPU test, not merely an inspection
+  claim.
+- **A dedicated test proving the static-snapshot boundary itself
+  (Final Review Round finding 2):** calling `World::setLight()` on an
+  already-loaded scene's own light entity, *after* the one-time frame
+  lighting capture has already run, and confirming the next rendered
+  frame's own captured pixels are **unchanged** from before the
+  mutation — the direct, executed proof that this Spec's own "no
+  runtime light mutation is reflected" limitation is real and enforced,
+  not merely claimed in prose.
+
+**GPU-required tests:** the new `LitTextured` material realizes
+correctly through Runtime's existing Phase 2 pipeline (reusing, not
+duplicating, Spec 0018's own `realizePendingMaterials()`); the widened
+uniform binding's own fragment-stage visibility is Validation-Layers-
+clean, for both `lit_textured` shaders (which use it) and every
+existing shader (which continues not to, unaffected); the new fixture's
+own capture-compare test against its own new golden; a real, isolated
+proof that removing either light from the scene changes the captured
+frame from the golden (mirroring Spec 0018's own D12 negative-proof
+precedent), demonstrating each light's own contribution is real, not
+coincidental.
+
+**The four existing goldens** (`minimal_cube`, `world_scene`,
+`textured_quad`, `material_demo`) confirmed byte-for-byte unchanged
 throughout Implementation.
 
-**Runtime's default bootstrap scene — explicit decision, not an
-inherited default:** recommend **no**, matching Spec 0018's own P15
-precedent exactly — `atlantis_runtime.exe` keeps loading `world_scene`;
-the new lighting scene is verification-only, exercised through the new
-fixture/golden, never wired into `main.cpp`'s own `BootstrapConfig`
-population. **Why stated as its own decision rather than silently
-inherited:** the previous Spec's own reasoning (keep the shipped
-Runtime's own windowed output stable; prove the new path exclusively
-through a golden) is sound but was itself an explicit Human-Review-
-facing choice there (Spec 0018 D15's own Requirements text), not an
-automatic default — this Spec asks the same question fresh rather than
-assuming the prior answer carries forward unexamined.
+**Runtime's default bootstrap scene — explicit decision, restated:**
+does **not** switch — `atlantis_runtime.exe` keeps loading `world_scene`,
+matching Spec 0018's own P15 precedent exactly. **Because the bootstrap
+scene does not switch, Runtime's own real integration of this Spec's
+own new code paths must be proven by a real GPU test calling the same,
+shared `Atlantis::RuntimeHost` functions `runFrame()` itself would call
+— never a fixture-private reimplementation, and never inferred merely
+from the new fixture's own, separately-linked capture-compare test
+passing.** This mirrors Spec 0018's own PR #88 final-review finding
+exactly (a real, previously-undiscovered gap was found only because no
+test had ever exercised `rebuildMaterialsForFormatChange()`/certain
+`scene_load.cpp` material-loop paths directly) — this Spec's Plan must
+name, explicitly, which real, shared functions each new GPU test calls,
+not merely claim coverage.
 
 **Fixture shape:** directly links and calls `Atlantis::RuntimeHost`'s
 real Phase 1/Phase 2-equivalent functions (the new light-extraction
-function, the widened per-frame uniform-buffer write, the `LitTextured`
+function, the one-time uniform-buffer write, the `LitTextured`
 material-realization call), following Spec 0018 D12's own precedent
-exactly — not a fixture-private reimplementation.
+exactly.
 
 ### D11. Error domain, module boundaries, threading, ownership, C4062
 
-- **Error domain:** new `SceneSourceParseError`/`SceneArtifactDecodeError`
-  enumerators only where the light node introduces a genuinely new
-  failure mode (an invalid `LightKind` token, a `range` on a
-  `directional` light, non-finite/negative `color`/`intensity`/`range`)
-  — reusing an existing enumerator wherever the failure mode is
-  identical in kind to an existing one (a malformed token count, a
-  missing field), matching Spec 0017/0018's own discipline exactly.
-  `World`'s own `WorldError` gains no new enumerator (`setLight`/
-  `getLight`/`removeLight` reuse the identical validate-then-mutate
-  shape `setCamera`/`getCamera`/`removeCamera` already use, including
-  reusing `WorldError::NoCameraComponent`'s own sibling-naming pattern
-  for a new `NoLightComponent`).
+- **Error domain, complete list, new enumerators only where genuinely
+  new (restated with this round's own additions):**
+  `SceneSourceParseError::TooManyLights` (D3),
+  `SceneArtifactDecodeError::TooManyLights` (D3),
+  `WorldError::NoLightComponent` (D2),
+  `SceneExtractionError::DegenerateLightDirection` (D2),
+  `SceneExtractionError::NonConformalNormalTransform` (D7). Every other
+  new failure mode (a malformed `light=` token, an out-of-`[0,1]`-range
+  color component, a negative intensity, a `range` on a `directional`
+  light) reuses an existing enumerator shaped identically in kind
+  (`InvalidComponentGroup`/`MissingField`/`MalformedNumber`, matching
+  every existing node-field validation precedent), per this Spec's own
+  stated discipline.
 - **Module boundaries:** `World` remains `Core` + `AssetSystem`-only,
   verified by the existing include-scanning test, unmodified in
   mechanism. `Atlantis::AssetSystem` remains `Core`-only. Light
   extraction stays Runtime-private, never a public Runtime API.
 - **Threading:** unchanged — Phase 1's single-logical-thread baseline
-  (ADR-0004) applies identically; the new extraction function documents
-  "not thread-safe" exactly like every sibling function already does.
+  (ADR-0004) applies identically.
 - **Ownership:** the frame lighting data introduces **no new GPU
-  resource** — it is CPU-side data written into the already-owned
-  camera `Buffer`; no new destruction-order concern is introduced
-  anywhere in `RuntimeApplication`'s own member layout.
+  resource** (D9) — no new destruction-order concern anywhere.
 - **C4062:** every new closed `switch` this Spec's own Implementation
   introduces (`LightKind` translation in the extraction function,
   `MaterialKind::LitTextured` in Runtime's shader-pair mapping) gets its
-  own `/w14062` positive-and-negative build probe, matching every prior
-  Spec's own identical discipline.
+  own `/w14062` positive-and-negative build probe.
 
 ### D12. Boundary with future lighting/material work
 
-**Decision:** Shadow Foundation, PBR Material, IBL, and Post-processing
-all remain independent, unblocked future Specs — nothing in this
-Spec's own design presumes or forecloses any of their own future
-shape, and no interface, field, or abstraction is pre-wired for any of
-them ahead of its own approved spec, per AGENTS.md's own "no speculative
-abstraction" principle.
+**Decision, unchanged, with one addition (Final Review Round finding
+2):** Shadow Foundation, PBR Material, IBL, and Post-processing all
+remain independent, unblocked future Specs. **Dynamic Frame Uniform
+Updates** — a real per-frame (or event-driven) update mechanism for the
+frame lighting buffer, resolving this Spec's own static-snapshot
+limitation, including the full Material-borrow-and-prior-frame-GPU-
+lifetime analysis such a mechanism would require — is named here as its
+own, real, independent, unblocked future candidate, not solved or
+prewired for by this Spec.
 
 ## Architectural Impact
 
 This Spec introduces real architectural decisions, filed as two
-`Proposed` ADRs, mirroring Spec 0018's own module-boundary/artifact-
+`Accepted` ADRs (both `Proposed` → `Accepted` in this round's own Human
+Review Approval), mirroring Spec 0018's own module-boundary/artifact-
 format-and-RHI-boundary split:
 
 - [ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md)
   — `World`'s own `Light` component shape and boundary (D2), the Scene
-  Asset format's light-node extension and versioning contract (D3), and
-  Material's new `LitTextured` kind (D4).
+  Asset format's light-node extension and versioning/cap contract (D3),
+  and Material's new `LitTextured` kind (D8).
 - [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)
-  — the frame lighting data's own layout and Runtime integration
-  contract (D5, D9), the one real RHI decision this Spec requires (the
-  uniform-binding Vulkan stage-visibility widening, D5), Point-light
-  attenuation (D6), normal transform (D7), and the lighting color-space
-  boundary (D8).
+  — the frame lighting data's own layout, fixed maximum counts, and
+  one-time-capture ownership contract (D5, D9), the one real RHI
+  decision this Spec requires (the uniform-binding Vulkan
+  stage-visibility widening, D5), Point-light attenuation and the full
+  lighting math (D6), normal transform (D7).
 
-Neither ADR proposes a change to any already-`Accepted` ADR's own
-Decision text. If D1's own recommended prerequisite ("Mesh Normal
-Attribute Foundation") is drafted and approved, *that* Spec — not this
-one — would carry its own Proposed Amendment to ADR-0045 and ADR-0058;
-this Spec introduces no such amendment itself, since it does not itself
-add a mesh vertex attribute.
+**Neither ADR decides anything about Spec 0020's own eventual
+mesh-normal schema, stride, byte offset, version, or migration** —
+confirmed by re-reading both in full during this round; that remains
+exclusively Spec 0020's own, future ADR/ADR-Amendment territory. Neither
+ADR proposes a change to any already-`Accepted` ADR's own Decision text.
 
 ## Alternatives Considered
 
-- **Bundle the normal attribute into this Spec (D1 option (a)).**
-  Considered directly, evidence-based — see D1's own full analysis.
-  Rejected: makes this Spec's own single delivery meaningfully larger
-  and harder to review/plan/verify as one coherent unit, for a
-  component with no dependency on any lighting-specific decision this
-  Spec makes.
+- **Bundle the normal attribute into this Spec (D1).** Rejected — see
+  D1's own full analysis; reconfirmed, with a stricter governance gate,
+  by this round's own final review.
 - **A second uniform buffer binding for lighting data, instead of
-  widening the existing one (D5).** Considered directly — see D5's own
-  full analysis. Rejected as the *default* recommendation (a real,
-  larger RHI change: a new `PipelineCreateParams` field, a third
-  descriptor binding, a new pool-size entry, a new expected-contract
-  shape) when reusing the existing single binding is structurally
-  sufficient and requires only one, disclosed, minimal stage-visibility
-  widening.
-- **Two Light components (`DirectionalLight`/`PointLight`) instead of
-  one tagged `Light` (D2).** Considered directly — rejected: doubles
-  `World`'s own component-slot count for a mutually-exclusive property
-  a single closed-enum tag already expresses correctly, matching
-  `MaterialKind`'s own precedent over `Camera`+`Renderable`'s own
-  "genuinely independent components" precedent.
-- **A fourth manifest-style "kind" column or a general multi-group
-  scene-node grammar (D3).** Considered directly and rejected on the
-  same grounds Spec 0018's own D7 already rejected an equivalent
-  manifest-kind-column proposal — a real grammar redesign this Spec's
-  own minimal scope does not need, when the existing parent/child
-  hierarchy already achieves the one real use case (a lit, visible
-  fixture) a same-node combination would have provided.
+  widening the existing one (D5).** Rejected as the default — a real,
+  larger RHI change, when reusing the existing single binding is
+  structurally sufficient.
+- **Two Light components instead of one tagged `Light` (D2).**
+  Rejected — matches `MaterialKind`'s own precedent over `Camera`+
+  `Renderable`'s own "genuinely independent components" precedent.
+- **A same-node, combinable light+mesh/camera grammar (D3).** Rejected
+  — the existing parent/child hierarchy already achieves the one real
+  use case with zero grammar change.
+- **Deterministic truncation of over-limit lights, instead of a hard
+  cook/decode-time error (D3, Final Review Round finding 4).** Rejected
+  this round, reversing this Spec's own first-draft recommendation — a
+  real risk of silently masking a genuine scene-authoring mistake,
+  disclosed and reasoned through above; a hard, structural error is the
+  smaller, more honest failure mode.
+- **Per-frame re-derivation of the frame lighting data, instead of a
+  one-time static snapshot (D9, Final Review Round finding 2).**
+  Rejected this round, reversing this Spec's own first-draft design —
+  not because it is unsafe (RHI already supports it trivially) but
+  because this Spec's own first draft never honestly committed to
+  whether runtime light mutation would or would not be reflected, and a
+  static, one-time, explicitly-tested boundary is the smaller, more
+  honest commitment for this round's own minimal scope. Dynamic updates
+  remain a real, named future candidate (D12).
 - **Physically-based inverse-square Point-light attenuation (D6).**
-  Considered directly — deferred, not chosen, since it introduces an
-  unbounded-range light with no natural cutoff, in direct tension with
-  this Spec's own authored, testable `range` field; named explicitly as
-  real future PBR-adjacent work, not silently approximated.
+  Rejected for this round — no natural, finite cutoff.
+- **A real inverse-transpose normal matrix (D7).** Rejected as this
+  round's own default — introduces new math capability this codebase
+  does not yet have, for a correctness case this round's own
+  verification scene does not require.
 
 ## Testing & Verification Plan
 
-- Unit tests (GPU-independent): `Light`/`LightKind` round-trip through
-  `World`'s own `set/remove/getLight()`; `lightEntities()` deterministic
-  ordering; the scene grammar's own new `light=` token-count case,
-  every new `SceneSourceParseError`/`SceneArtifactDecodeError`
-  enumerator driven by a real malformed input, not a mocked one
-  (matching every prior Spec's own discipline); the light-extraction
-  function's own direction/position derivation and attenuation formula,
-  tested against hand-computed expected values for known transforms/
-  distances.
-- GPU-required tests: the new `LitTextured` material realizes correctly
-  through Runtime's existing Phase 2 pipeline (reusing, not duplicating,
-  Spec 0018's own `realizePendingMaterials()`); the widened uniform
-  binding's own fragment-stage visibility is Validation-Layers-clean;
-  the new fixture's own capture-compare test against its own new golden;
-  a real, isolated proof that removing either light from the scene
-  changes the captured frame from the golden (mirroring Spec 0018's own
-  D12 negative-proof precedent exactly) — demonstrating each light's
-  own contribution is real, not coincidental.
-- The four existing goldens confirmed byte-for-byte unchanged (SHA-256/
-  `git diff` evidence) throughout Implementation, not inferred from
-  "tests passed."
-- Vulkan Validation Layers clean across the full GPU test suite,
-  including specifically the widened descriptor-binding-stage-visibility
-  change (a real, GPU-observable proof this change is legal, not merely
-  argued from the Vulkan spec's own text).
-- `/w14062` C4062 positive-and-negative probes for every new closed
-  `switch` this Spec's own Implementation introduces.
-- Manual, human-performed Runtime windowed verification (Debug and
-  Release), scoped identically to every prior Spec's own D13-shaped
-  requirement — programmatic lifecycle smoke test plus a genuine human
-  visual confirmation, no fabricated automated pixel readback.
+See D10 for the complete, itemized record (CPU math tests per D6/D2/D7
+formula; negative tests for the light-count cap, the non-conformal-
+transform skip, and the static-snapshot boundary itself; GPU-required
+realization/Validation-Layers/golden/negative-light-removal tests; the
+four existing goldens confirmed byte-for-byte unchanged;
+`/w14062` C4062 probes; manual, human-performed Runtime windowed
+verification, Debug and Release, scoped identically to every prior
+Spec's own D13-shaped requirement).
 
 ## Risks & Open Questions
 
-- **D1's own prerequisite is a real, disclosed scheduling risk, not a
-  hidden one:** if "Mesh Normal Attribute Foundation" is not drafted or
-  does not reach `Approved`, this Spec's own Plan cannot begin at all —
-  stated plainly here so Human Review can weigh it explicitly rather
-  than discover it during Plan drafting.
-- **D5's own maximum-light-count constant is a real, disclosed
-  trade-off** (buffer size and shader-loop cost scale with it; too low
-  a cap makes D5's own truncation behavior more likely to matter for a
-  realistic future scene) — Plan-time-adjustable, not fixed forever by
-  this Spec.
-- **D7's own uniform-scale restriction is a real, disclosed correctness
-  boundary**, not merely a performance one — a scene author who
-  attaches a `LitTextured` material to a non-uniformly-scaled entity
-  gets a detected, logged skip (this Spec's own recommendation) rather
-  than a silently-wrong render, but still does not get correct lighting
-  on that entity without a future Spec adding a real normal-matrix
-  inverse.
+- **D1's own prerequisite remains a real, disclosed scheduling risk:**
+  if Spec 0020 is not drafted, does not reach `Approved`, or its own
+  Implementation does not merge, this Spec's own Plan 0019 cannot begin
+  at all — this Spec's own approval does not change that; it only
+  authorizes drafting Spec 0020 next.
+- **The exact std140 byte offsets for `FrameLightingData` (D5)** are a
+  real, disclosed Plan-time closure against the exact field list already
+  fixed here — a mechanical detail, not an open architectural question.
 - **The exact file location for the new Runtime-private extraction
   function** (a new `light_extraction.h`/`.cpp`, or an addition to the
-  existing `scene_extraction.h`/`.cpp`) is left open for Plan-time
-  closure — a file-organization choice, not an architectural one.
+  existing `scene_extraction.h`/`.cpp`) remains a Plan-time
+  file-organization choice, not an architectural one.
 
 ## Out of Scope / Future Work
 
 Repeating this Spec's own Non-Goals for visibility, plus the named
 successor candidates this Spec's own closure unblocks:
 
-- PBR/metallic-roughness material model — **"PBR Material"**, a real,
-  independent future Spec, unblocked but not started here.
-- Shadow mapping of any kind — **"Shadow Foundation"**, likewise.
-- Image-based lighting / environment maps — **"IBL Foundation"**,
-  likewise.
+- PBR/metallic-roughness material model — **"PBR Material,"** a real,
+  independent future Spec.
+- Shadow mapping of any kind — **"Shadow Foundation."**
+- Image-based lighting / environment maps — **"IBL Foundation."**
 - Tone mapping, gamma-encode, HDR intermediate targets, or any other
-  post-processing — **"Post-processing Foundation"**, likewise.
-- Normal mapping / a tangent vertex attribute — blocked on, but a
-  distinct, later extension beyond, D1's own recommended "Mesh Normal
-  Attribute Foundation" prerequisite.
+  post-processing — **"Post-processing Foundation."**
+- A real, per-frame (or event-driven) update mechanism for the frame
+  lighting buffer, resolving this Spec's own static-snapshot limitation
+  — **"Dynamic Frame Uniform Updates."**
+- Normal mapping / a tangent vertex attribute — a distinct, later
+  extension beyond even Spec 0020's own scope.
 - A material graph, shader graph, hot-reload, editor, runtime asset
   mutation, a distributable Asset Catalog, or Android/iOS/Linux
-  implementation — all remain exactly as out of scope as every prior
-  Spec in this codebase already states them to be.
+  implementation.
 
 None of the above is designed, scaffolded, or interface-reserved for by
 this Spec, per AGENTS.md's own "no speculative abstraction" principle.
