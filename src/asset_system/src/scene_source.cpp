@@ -8,7 +8,10 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_scene_source_version: 1";
+// Plan 0018 Section P6: version 2 adds the optional material= token
+// (13-token node case, below). Version 1 is rejected outright by the
+// version-line check immediately below -- no dual-version reader.
+constexpr std::string_view kVersionLine = "atlantis_scene_source_version: 2";
 constexpr std::string_view kNodeCountPrefix = "node_count: ";
 constexpr std::string_view kActiveCameraPrefix = "active_camera: ";
 constexpr std::string_view kNodePrefix = "node: ";
@@ -16,10 +19,13 @@ constexpr std::string_view kNoneToken = "none";
 
 // node: line field prefixes, fixed order (Plan 0015 Section D3's own
 // literal grammar example) -- the first 11 tokens are always present;
-// a 12th group (either exactly {"mesh="} or exactly {"camera_fov_y=",
-// "camera_near_z=", "camera_far_z="}) is optional. position/rotation/
-// scale each carry ONE prefix on their first value, followed by two
-// bare floats -- matching MeshSourceVertex's own "vertex: x y z r g b"
+// a 12th/13th group is optional: either exactly {"mesh="}, exactly
+// {"mesh=", "material="} (Plan 0018 Section P6 -- material is never
+// valid without mesh in the same line, a structural, not runtime,
+// property of this grammar), or exactly {"camera_fov_y=",
+// "camera_near_z=", "camera_far_z="}. position/rotation/scale each
+// carry ONE prefix on their first value, followed by two bare floats --
+// matching MeshSourceVertex's own "vertex: x y z r g b"
 // single-prefix-then-bare-values style; camera_fov_y/near_z/far_z are
 // each individually prefixed, per D3's own example.
 constexpr std::string_view kNodeIdPrefix = "node_id=";
@@ -28,6 +34,7 @@ constexpr std::string_view kPositionPrefix = "position=";
 constexpr std::string_view kRotationPrefix = "rotation=";
 constexpr std::string_view kScalePrefix = "scale=";
 constexpr std::string_view kMeshPrefix = "mesh=";
+constexpr std::string_view kMaterialPrefix = "material=";
 constexpr std::string_view kCameraFovYPrefix = "camera_fov_y=";
 constexpr std::string_view kCameraNearZPrefix = "camera_near_z=";
 constexpr std::string_view kCameraFarZPrefix = "camera_far_z=";
@@ -142,7 +149,7 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
       return ResultT::Err(SceneSourceParseError::FieldOrderMismatch);
     }
     const auto tokens = splitOnSpace(line.substr(kNodePrefix.size()));
-    if (tokens.size() != 11 && tokens.size() != 12 && tokens.size() != 14) {
+    if (tokens.size() != 11 && tokens.size() != 12 && tokens.size() != 13 && tokens.size() != 14) {
       return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
     }
 
@@ -197,12 +204,20 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
       *vec3Groups[g].z = z;
     }
 
-    if (tokens.size() == 12) {
+    if (tokens.size() == 12 || tokens.size() == 13) {
       if (tokens[11].substr(0, kMeshPrefix.size()) != kMeshPrefix) {
         return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
       }
       node.meshLogicalPath = std::string(tokens[11].substr(kMeshPrefix.size()));
       if (node.meshLogicalPath->empty()) return ResultT::Err(SceneSourceParseError::MissingField);
+
+      if (tokens.size() == 13) {
+        if (tokens[12].substr(0, kMaterialPrefix.size()) != kMaterialPrefix) {
+          return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
+        }
+        node.materialLogicalPath = std::string(tokens[12].substr(kMaterialPrefix.size()));
+        if (node.materialLogicalPath->empty()) return ResultT::Err(SceneSourceParseError::MissingField);
+      }
     } else if (tokens.size() == 14) {
       DecodedCamera camera;
       const std::pair<std::string_view, float*> cameraFields[3] = {
@@ -258,6 +273,10 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
     if (node.meshLogicalPath.has_value()) {
       out += ' ';
       out += std::string(kMeshPrefix) + *node.meshLogicalPath;
+      if (node.materialLogicalPath.has_value()) {
+        out += ' ';
+        out += std::string(kMaterialPrefix) + *node.materialLogicalPath;
+      }
     } else if (node.camera.has_value()) {
       out += ' ';
       out += std::string(kCameraFovYPrefix) + std::to_string(node.camera->fovYRadians) + ' ' +

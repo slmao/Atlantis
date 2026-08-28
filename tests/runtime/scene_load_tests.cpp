@@ -90,7 +90,7 @@ struct CookedSceneFixture {
 // therefore this scene's own first-reference order.
 [[nodiscard]] CookedSceneFixture cookFixtureScene(const fs::path& dir,
                                                    const std::vector<std::string>& meshLogicalPaths) {
-  std::string source = "atlantis_scene_source_version: 1\n";
+  std::string source = "atlantis_scene_source_version: 2\n";
   source += "node_count: " + std::to_string(meshLogicalPaths.size()) + "\n";
   source += "active_camera: none\n";
   for (std::size_t i = 0; i < meshLogicalPaths.size(); ++i) {
@@ -197,7 +197,7 @@ TEST_CASE("loadAndInstantiateScene: a scene with no Renderable references succee
   // plain, mesh-less node instead, still with zero Renderables.
   const fs::path sourcePath = dir.path / "plain.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 1\n"
+            "atlantis_scene_source_version: 2\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");

@@ -17,12 +17,20 @@ namespace atlantis::asset_system {
 // assigned integers (not yet remapped to a dense array index, D4's own
 // job), and a Renderable's mesh reference is still a logical-path
 // string (not yet resolved to an AssetId, also D4's own job).
+// Plan 0018 Section P6: materialLogicalPath is only ever set alongside
+// meshLogicalPath -- the version-2 grammar has no token arrangement
+// that produces "material without mesh" (a structural, not runtime,
+// guarantee; decodeSceneArtifact() independently re-checks the same
+// invariant at the binary level, since it must never trust a
+// well-formed producer -- see scene_artifact.cpp's own
+// MaterialWithoutRenderable check).
 struct ParsedSceneNode {
   std::uint32_t nodeId = 0;
   std::optional<std::uint32_t> parentNodeId;  // std::nullopt for "parent=none"
   DecodedTransform transform;
   std::optional<DecodedCamera> camera;
   std::optional<std::string> meshLogicalPath;
+  std::optional<std::string> materialLogicalPath;
 };
 
 struct ParsedSceneSource {

@@ -60,7 +60,7 @@ void writeFile(const fs::path& path, const std::string& content) {
 }
 
 constexpr std::string_view kValidThreeNodeSource =
-    "atlantis_scene_source_version: 1\n"
+    "atlantis_scene_source_version: 2\n"
     "node_count: 3\n"
     "active_camera: 3\n"
     "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -99,7 +99,7 @@ TEST_CASE("cookScene V28: rejects an empty scene (node_count: 0), writing no art
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   const fs::path artifactPath = dir.path / "scene.ascene";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 1\n"
+            "atlantis_scene_source_version: 2\n"
             "node_count: 0\n"
             "active_camera: none\n");
 
@@ -114,7 +114,7 @@ TEST_CASE("cookScene V2: rejects a duplicate node_id, writing no artifact", "[as
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   const fs::path artifactPath = dir.path / "scene.ascene";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 1\n"
+            "atlantis_scene_source_version: 2\n"
             "node_count: 2\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n"
@@ -130,7 +130,7 @@ TEST_CASE("cookScene V3: rejects a parent naming an undeclared node_id", "[asset
   TempDirGuard dir("undeclared_parent");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 1\n"
+            "atlantis_scene_source_version: 2\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=99 position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
@@ -145,7 +145,7 @@ TEST_CASE("cookScene V4: rejects a direct self-parent cycle", "[asset_system][sc
   TempDirGuard dir("self_cycle");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 1\n"
+            "atlantis_scene_source_version: 2\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=1 position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
@@ -160,7 +160,7 @@ TEST_CASE("cookScene V4: rejects a multi-hop (4-node) parent cycle", "[asset_sys
   TempDirGuard dir("multi_hop_cycle");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 1\n"
+            "atlantis_scene_source_version: 2\n"
             "node_count: 4\n"
             "active_camera: none\n"
             "node: node_id=1 parent=4 position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n"
@@ -178,7 +178,7 @@ TEST_CASE("cookScene V5: rejects active_camera naming an undeclared node_id", "[
   TempDirGuard dir("undeclared_camera");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 1\n"
+            "atlantis_scene_source_version: 2\n"
             "node_count: 1\n"
             "active_camera: 99\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
@@ -193,7 +193,7 @@ TEST_CASE("cookScene V6: rejects active_camera naming a node with no camera_* fi
   TempDirGuard dir("camera_missing_camera");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 1\n"
+            "atlantis_scene_source_version: 2\n"
             "node_count: 1\n"
             "active_camera: 1\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
@@ -208,7 +208,7 @@ TEST_CASE("cookScene V7: rejects a non-finite authored float", "[asset_system][s
   TempDirGuard dir("non_finite");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 1\n"
+            "atlantis_scene_source_version: 2\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=nan 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
@@ -223,7 +223,7 @@ TEST_CASE("cookScene V7: rejects a non-finite camera field", "[asset_system][sce
   TempDirGuard dir("non_finite_camera");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 1\n"
+            "atlantis_scene_source_version: 2\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
