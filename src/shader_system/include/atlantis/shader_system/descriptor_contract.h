@@ -29,6 +29,19 @@ namespace atlantis::shader_system {
 // existence.
 [[nodiscard]] std::vector<DescriptorBinding> texturedMaterialExpectedDescriptorContract();
 
+// Plan 0019 Section P13 / ADR-0062 Decision 2: the fixed, expected
+// descriptor contract the lit_textured shader pair must match -- three
+// bindings: {set 0, binding 0, UniformBuffer, Vertex} and {set 0,
+// binding 0, UniformBuffer, Fragment} (the *same* Vulkan binding,
+// reflected separately from each stage's own separately-loaded
+// reflection JSON -- ReflectionMetadata is per-stage, so the one real
+// Vulkan binding legitimately appears as two entries here, one per
+// stage that references it) plus {set 0, binding 1, Sampler, Fragment}
+// (unchanged from the textured contract). Additive alongside
+// texturedMaterialExpectedDescriptorContract() above, which is
+// untouched.
+[[nodiscard]] std::vector<DescriptorBinding> litTexturedExpectedDescriptorContract();
+
 enum class ContractMismatchError {
   BindingCountMismatch,
   BindingNotFound,        // an expected {set, binding} pair is absent from the reflected shader

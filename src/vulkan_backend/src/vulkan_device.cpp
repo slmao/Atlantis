@@ -849,13 +849,21 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   }
 
   // Camera uniform binding -- Plan 0007 Section 10's fixed, single-purpose
-  // design: exactly one binding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, vertex
-  // stage only.
+  // design: exactly one binding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER.
+  // Plan 0019 Section P12 / ADR-0062 Decision 2: stageFlags widened,
+  // unconditionally, from vertex-only to vertex-and-fragment, for every
+  // Pipeline this engine creates -- the one real RHI-internal change
+  // Lighting Foundation requires (the frame lighting data, appended
+  // after the existing camera floats in this same buffer, is read from
+  // the fragment stage by lit_textured's own shader). Legal, zero-cost
+  // Vulkan; every existing shader (minimal_mesh, textured_quad) simply
+  // continues not referencing this binding from its own fragment stage,
+  // unaffected.
   VkDescriptorSetLayoutBinding uniformBinding{};
   uniformBinding.binding = 0;
   uniformBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
   uniformBinding.descriptorCount = 1;
-  uniformBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  uniformBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
   // Spec 0016 D5: the second, combined-image-sampler binding a textured
   // Material's pipeline needs -- present only when

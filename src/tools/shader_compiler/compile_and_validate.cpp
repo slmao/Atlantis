@@ -27,6 +27,7 @@ namespace {
 using atlantis::shader_system::buildSlangcArgv;
 using atlantis::shader_system::buildSpirvValArgv;
 using atlantis::shader_system::DescriptorBinding;
+using atlantis::shader_system::litTexturedExpectedDescriptorContract;
 using atlantis::shader_system::minimalRendererExpectedDescriptorContract;
 using atlantis::shader_system::PushConstantRange;
 using atlantis::shader_system::texturedMaterialExpectedDescriptorContract;
@@ -134,6 +135,8 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     fullContract = minimalRendererExpectedDescriptorContract();
   } else if (expectedContract == "textured-material") {
     fullContract = texturedMaterialExpectedDescriptorContract();
+  } else if (expectedContract == "lit-textured") {
+    fullContract = litTexturedExpectedDescriptorContract();
   } else {
     std::cerr << "atlantis_shader_compiler: unknown --expected-contract value '" << expectedContract << "'\n";
     return false;
