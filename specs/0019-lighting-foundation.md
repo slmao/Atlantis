@@ -3,11 +3,15 @@
 - **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-08-29
-- **Related Plan(s):** none yet. **Blocked by Spec 0020 implementation** —
-  see D1. This approval authorizes drafting **Spec 0020 only**. Plan
-  0019 may not be drafted until Spec 0020's own Implementation PR has
-  merged (Spec/Plan 0020 both `Approved`, real Implementation verified),
-  per [AGENTS.md](../AGENTS.md)'s Golden Rule and this Spec's own D1.
+- **Related Plan(s):** [plans/0019-lighting-foundation.md](../plans/0019-lighting-foundation.md)
+  (`In Review`, drafted 2026-08-29). D1's own governance gate is
+  satisfied — [Spec 0020](0020-mesh-normal-attribute-foundation.md)'s
+  own Implementation PR ([PR #93](https://github.com/slmao/Atlantis/pull/93))
+  merged 2026-08-29, so this Plan may now be drafted. **Reaching `In
+  Review` on this Plan does not itself authorize Implementation** — a
+  separate Human Review of the Spec+Plan pair together is still
+  required before Implementation may begin, per
+  [AGENTS.md](../AGENTS.md)'s own Golden Rule.
 - **Related ADR(s):** [ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md) (`Accepted`), [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md) (`Accepted`)
 - **Human Review Approval (2026-08-29):** Reviewed and approved by
   slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
