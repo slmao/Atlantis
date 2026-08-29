@@ -19,6 +19,7 @@
 #include <atlantis/shader_system/rhi_integration/vertex_input_mapping.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -1107,4 +1108,167 @@ TEST_CASE("A real Vulkan Device's own descriptor pool grows past its own histori
     sampledTextureResourceMap.clear();
     REQUIRE(device->waitIdle().isOk());
   }
+}
+
+// ---------------------------------------------------------------------
+// Plan 0021 Milestone 3, V16/V17: N=6, deliberately chosen (Spec 0021
+// D13's own "test parameter only" instruction) via a full frame-by-frame
+// derivation, not the naive 2*(N+1) peak formula alone -- N=5 was tried
+// first and found NOT to force a third pool generation (Frame 1's own
+// initial realization already builds enough cumulative pool capacity
+// that Frame 2's own 6 new allocations fit exactly inside pool0+pool1's
+// combined 12-set capacity, zero overflow). The real trace for N=6:
+//
+// Frame 1 (7 total: fallback + 6 materials) -- alloc 1-4 fill pool0
+// (generation 0, cap 4); alloc 5 exhausts pool0, grows pool1
+// (generation 1, cap 8), succeeds; alloc 6-7 land in pool1 (3/8 used,
+// 5 free). End of Frame 1: pool0 = 4/4, pool1 = 3/8, 7 live sets, 2
+// pools, cumulative capacity 12.
+//
+// Frame 2 (7 NEW: new fallback + 6 new materials, OLD 7 still alive) --
+// new alloc 1-5 fill pool1's own remaining 5 free slots (pool1 = 8/8,
+// full); new alloc 6 exhausts BOTH pool0 and pool1, grows pool2
+// (generation 2, cap 16), succeeds; new alloc 7 lands in pool2 (2/16).
+// Peak, before the old batch is destroyed: 14 concurrent live sets,
+// 3 pools (pool0 = 4/4, pool1 = 8/8, pool2 = 2/16) -- a real, traced
+// second growth event, not merely asserted from the naive formula.
+TEST_CASE("N=6 real format-change success, forcing a real SECOND growth event (generation 2, maxSets = 16) -- "
+          "the naive 2*(N+1) peak formula alone does not determine this; a full frame-by-frame trace does "
+          "(Plan 0021 Milestone 3 V16/V17)",
+          "[runtime][gpu][material_realization][format_rebuild]") {
+  auto deviceResult = atlantis::vulkan_backend::createDevice(
+      {.applicationName = "Atlantis Material Realization GPU Tests (N=6 format rebuild, second growth)",
+       .enableValidationLayers = true});
+  REQUIRE(deviceResult.isOk());
+  std::unique_ptr<atlantis::rhi::Device> device = std::move(deviceResult.value());
+
+  auto unlitVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv");
+  auto unlitFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.frag.spv");
+  REQUIRE(unlitVertexSpirv.has_value());
+  REQUIRE(unlitFragmentSpirv.has_value());
+  auto unlitVertexReflectionResult = loadReflectionMetadata(
+      std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.refl.json");
+  REQUIRE(unlitVertexReflectionResult.isOk());
+  const auto unlitLayout = unlitTexturedVertexLayout(unlitVertexReflectionResult.value());
+  REQUIRE(unlitLayout.has_value());
+
+  auto litVertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.vert.spv");
+  auto litFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.spv");
+  REQUIRE(litVertexSpirv.has_value());
+  REQUIRE(litFragmentSpirv.has_value());
+  auto litVertexReflectionResult =
+      loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.vert.refl.json");
+  REQUIRE(litVertexReflectionResult.isOk());
+  const auto litLayout = litTexturedVertexLayout(litVertexReflectionResult.value());
+  REQUIRE(litLayout.has_value());
+
+  auto fallbackVertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.spv");
+  auto fallbackFragmentSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.frag.spv");
+  REQUIRE(fallbackVertexSpirv.has_value());
+  REQUIRE(fallbackFragmentSpirv.has_value());
+  auto fallbackVertexReflectionResult =
+      loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.refl.json");
+  REQUIRE(fallbackVertexReflectionResult.isOk());
+  const auto fallbackLayout = fallbackVertexLayout(fallbackVertexReflectionResult.value());
+  REQUIRE(fallbackLayout.has_value());
+
+  constexpr Extent2D kExtent{4, 4};
+  constexpr AssetId kTextureId = 500;
+  constexpr std::array<AssetId, 6> kMaterialIds = {1, 2, 3, 4, 5, 6};
+
+  std::unordered_map<AssetId, MaterialAssetData> materialDataMap;
+  for (std::size_t i = 0; i < kMaterialIds.size(); ++i) {
+    // Alternate kinds -- three UnlitTextured, three LitTextured.
+    const MaterialKind kind = (i % 2 == 0) ? MaterialKind::UnlitTextured : MaterialKind::LitTextured;
+    materialDataMap.emplace(kMaterialIds[i], MaterialAssetData{.kind = kind, .textureAsset = kTextureId});
+  }
+  std::unordered_map<AssetId, TextureAssetData> textureDataMap;
+  textureDataMap.emplace(kTextureId, makeSolidTextureData(4, 0x44));
+
+  std::unordered_map<AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>> sampledTextureResourceMap;
+  std::unordered_map<AssetId, std::unique_ptr<atlantis::renderer::Material>> materialResourceMap;
+
+  // ---- "Frame" 1: format A -- realize all 6 materials for real. ----
+  {
+    auto offscreenA = device->createOffscreenTarget({.extent = kExtent, .format = Format::Rgba8Unorm});
+    REQUIRE(offscreenA.isOk());
+    auto acquireResult = offscreenA.value()->acquireTarget();
+    REQUIRE(acquireResult.isOk());
+    std::unique_ptr<atlantis::rhi::RenderTarget> target = std::move(acquireResult.value());
+
+    auto commandListResult = device->createCommandList();
+    REQUIRE(commandListResult.isOk());
+    std::unique_ptr<atlantis::rhi::CommandList> commandList = std::move(commandListResult.value());
+
+    const std::vector<AssetId> pendingIds(kMaterialIds.begin(), kMaterialIds.end());
+    std::unordered_map<AssetId, RealizedMaterialCandidate> realized = realizePendingMaterials(
+        *device, *commandList, *unlitLayout, *unlitVertexSpirv, *unlitFragmentSpirv, Format::Rgba8Unorm, *litLayout,
+        *litVertexSpirv, *litFragmentSpirv, pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap);
+    REQUIRE(realized.size() == 6);
+
+    auto submitResult = device->submit(std::move(commandList), *target);
+    REQUIRE(submitResult.isOk());
+    REQUIRE(device->waitIdle().isOk());
+
+    for (auto& [assetId, candidate] : realized) {
+      if (candidate.newSampledTexture) {
+        sampledTextureResourceMap.emplace(candidate.textureAssetId, std::move(candidate.newSampledTexture));
+      }
+      materialResourceMap.emplace(assetId, std::move(candidate.material));
+    }
+  }
+  REQUIRE(materialResourceMap.size() == 6);
+
+  std::unordered_map<AssetId, const atlantis::renderer::Material*> oldMaterialPtrs;
+  for (const auto& id : kMaterialIds) oldMaterialPtrs.emplace(id, materialResourceMap.at(id).get());
+
+  // ---- "Frame" 2: a real format change -- the OLD 6-material batch and
+  // the NEW fallback+6-material candidate batch are both alive
+  // simultaneously (Spec 0018 D9's own required shape), forcing a real
+  // second growth event (this file's own comment above traces the exact
+  // pool-by-pool allocation sequence). ----
+  {
+    auto offscreenB = device->createOffscreenTarget({.extent = kExtent, .format = Format::Rgba8Srgb});
+    REQUIRE(offscreenB.isOk());
+
+    auto rebuildResult = rebuildMaterialsForFormatChange(
+        *device, *fallbackLayout, *fallbackVertexSpirv, *fallbackFragmentSpirv, *unlitLayout, *unlitVertexSpirv,
+        *unlitFragmentSpirv, *litLayout, *litVertexSpirv, *litFragmentSpirv, Format::Rgba8Srgb, materialDataMap,
+        materialResourceMap);
+    REQUIRE(rebuildResult.isOk());
+    auto candidates = std::move(rebuildResult.value());
+    REQUIRE(candidates.fallback != nullptr);
+    REQUIRE(candidates.materials.size() == 6);
+    for (const auto& id : kMaterialIds) {
+      CHECK(candidates.materials.at(id).get() != oldMaterialPtrs.at(id));
+      CHECK(materialResourceMap.at(id).get() == oldMaterialPtrs.at(id));
+    }
+
+    // A real draw/submit against the NEW candidate batch, matching this
+    // same file's own established N=1/N=2 pattern exactly -- the OLD
+    // bundle survives a real submit() against the NEW format, untouched,
+    // destroyed only after that submit() returns Ok.
+    auto acquireResult = offscreenB.value()->acquireTarget();
+    REQUIRE(acquireResult.isOk());
+    std::unique_ptr<atlantis::rhi::RenderTarget> target = std::move(acquireResult.value());
+    auto commandListResult = device->createCommandList();
+    REQUIRE(commandListResult.isOk());
+    auto submitResult = device->submit(std::move(commandListResult.value()), *target);
+    REQUIRE(submitResult.isOk());
+
+    materialResourceMap = std::move(candidates.materials);
+    std::unique_ptr<atlantis::renderer::Material> fallbackMaterial = std::move(candidates.fallback);
+    for (const auto& id : kMaterialIds) {
+      CHECK(materialResourceMap.at(id).get() != oldMaterialPtrs.at(id));
+    }
+
+    REQUIRE(device->waitIdle().isOk());
+  }
+
+  materialResourceMap.clear();
+  sampledTextureResourceMap.clear();
+  REQUIRE(device->waitIdle().isOk());
 }

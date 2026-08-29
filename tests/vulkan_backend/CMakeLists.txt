@@ -44,17 +44,30 @@ catch_discover_tests(atlantis_vulkan_backend_tests DISCOVERY_MODE PRE_TEST)
 # Separate executable, separate registration -- not a second
 # catch_discover_tests() call or a TEST_SPEC filter against the target
 # above, so there is no risk of the same Catch2 test case being
-# registered twice. This test drives Presentation entirely through
-# Atlantis's public API (atlantis/platform/platform.h,
+# registered twice. Every pre-existing file here drives Presentation
+# entirely through Atlantis's public API (atlantis/platform/platform.h,
 # atlantis/vulkan_backend/vulkan_backend.h, atlantis/rhi/presentation.h)
 # and includes no Vulkan header itself, so it needs no Vulkan::Vulkan
-# link and no private src/vulkan_backend/src include path.
+# link. Plan 0021 Milestone 3: descriptor_pool_growth_gpu_tests.cpp is
+# the one exception -- it #includes vulkan_descriptor_pool_growth.h
+# directly (via the new PRIVATE include path below) so its own real
+# capacity-total assertions are computed from the production constants
+# themselves, never a hand-copied literal that could silently drift.
+# That header has no Vulkan dependency of its own (<array>/<cstddef>/
+# <cstdint> only), so this remains a pure include-path addition -- no
+# new Vulkan::Vulkan link is needed for it either.
 add_executable(atlantis_vulkan_backend_gpu_tests
   vulkan_presentation_gpu_tests.cpp
   frame_execution_gpu_tests.cpp
   minimal_renderer_gpu_tests.cpp
   headless_rendering_gpu_tests.cpp
   texture_upload_gpu_tests.cpp
+  descriptor_pool_growth_gpu_tests.cpp
+)
+
+target_include_directories(atlantis_vulkan_backend_gpu_tests
+  PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/vulkan_backend/src
 )
 
 target_link_libraries(atlantis_vulkan_backend_gpu_tests
