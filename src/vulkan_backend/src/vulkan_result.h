@@ -85,4 +85,17 @@ enum class VulkanFailureCategory {
 // Device::createOffscreenTarget()'s own Vulkan calls (Spec 0010).
 [[nodiscard]] atlantis::rhi::OffscreenTargetCreateError toOffscreenTargetCreateError(VkResult result);
 
+// vkAllocateDescriptorSets, inside VulkanDevice's own descriptor-pool
+// allocation scan (Spec 0021/ADR-0064): true only for the two VkResult
+// values that mean "this pool's own capacity is exhausted, a
+// different/new pool may still satisfy this allocation" --
+// VK_ERROR_OUT_OF_POOL_MEMORY and VK_ERROR_FRAGMENTED_POOL. False for
+// every other non-success value (VK_ERROR_DEVICE_LOST,
+// VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY, or any
+// other), which must propagate immediately, unchanged, as
+// PipelineCreateError::DescriptorSetAllocationFailed -- no further pool
+// tried, no growth attempted, identical to this codebase's own
+// pre-Spec-0021 behavior for those cases.
+[[nodiscard]] bool isDescriptorPoolGrowthEligible(VkResult result);
+
 }  // namespace atlantis::vulkan_backend::detail

@@ -4,6 +4,7 @@ add_library(atlantis_vulkan_backend STATIC
   src/vulkan_instance.cpp
   src/instance_api_version.cpp
   src/vulkan_device.cpp
+  src/vulkan_descriptor_pool_growth.cpp
   src/device_extension_list.cpp
   src/dynamic_rendering_entry_points.cpp
   src/vulkan_presentation.cpp

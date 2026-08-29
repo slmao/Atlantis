@@ -17,6 +17,7 @@ add_executable(atlantis_vulkan_backend_tests
   device_extension_list_tests.cpp
   dynamic_rendering_entry_points_tests.cpp
   vulkan_memory_tests.cpp
+  descriptor_pool_growth_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_tests

@@ -8,6 +8,7 @@ using atlantis::rhi::SubmitError;
 using atlantis::vulkan_backend::DeviceCreateError;
 using atlantis::vulkan_backend::PresentationCreateError;
 using atlantis::vulkan_backend::detail::classifyFailure;
+using atlantis::vulkan_backend::detail::isDescriptorPoolGrowthEligible;
 using atlantis::vulkan_backend::detail::toAcquireFailureError;
 using atlantis::vulkan_backend::detail::toCommandListCreateError;
 using atlantis::vulkan_backend::detail::toDeviceCreationError;
@@ -93,4 +94,32 @@ TEST_CASE("toCommandListCreateError maps any failure to CommandBufferAllocationF
           "[vulkan_backend][vulkan_result]") {
   REQUIRE(toCommandListCreateError(VK_ERROR_OUT_OF_HOST_MEMORY) == CommandListCreateError::CommandBufferAllocationFailed);
   REQUIRE(toCommandListCreateError(VK_ERROR_OUT_OF_DEVICE_MEMORY) == CommandListCreateError::CommandBufferAllocationFailed);
+}
+
+// Spec 0021 D3, ADR-0064, Plan 0021 V4-V6: the descriptor-pool
+// growth-eligibility classifier -- pure, GPU-independent, tested with
+// literal VkResult values, matching every classifier above in this same
+// file. This is the only reliable way to prove the classification
+// boundary (including its handling of VK_ERROR_DEVICE_LOST) precisely:
+// no Fake/mock Vulkan Backend test double exists anywhere in this
+// module, so a real VK_ERROR_DEVICE_LOST cannot be reliably injected
+// from a real Device (see Plan 0021's own "Pre-draft verification").
+
+TEST_CASE("isDescriptorPoolGrowthEligible is true for the two real pool-exhaustion results",
+          "[vulkan_backend][vulkan_result][descriptor_pool_growth]") {
+  // V4
+  REQUIRE(isDescriptorPoolGrowthEligible(VK_ERROR_OUT_OF_POOL_MEMORY));
+  // V5
+  REQUIRE(isDescriptorPoolGrowthEligible(VK_ERROR_FRAGMENTED_POOL));
+}
+
+TEST_CASE("isDescriptorPoolGrowthEligible is false for DeviceLost, host/device OOM, and any other failure",
+          "[vulkan_backend][vulkan_result][descriptor_pool_growth]") {
+  // V6: both explicitly-named non-eligible VkResults, plus the general
+  // "anything else" catch-all, matching this file's own existing
+  // "falls back to Other/Unknown" precedent.
+  REQUIRE_FALSE(isDescriptorPoolGrowthEligible(VK_ERROR_DEVICE_LOST));
+  REQUIRE_FALSE(isDescriptorPoolGrowthEligible(VK_ERROR_OUT_OF_HOST_MEMORY));
+  REQUIRE_FALSE(isDescriptorPoolGrowthEligible(VK_ERROR_OUT_OF_DEVICE_MEMORY));
+  REQUIRE_FALSE(isDescriptorPoolGrowthEligible(VK_ERROR_INITIALIZATION_FAILED));
 }
