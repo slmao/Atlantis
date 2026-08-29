@@ -133,6 +133,11 @@ enum class SceneArtifactDecodeError {
   // must never trust a well-formed producer -- mirrors
   // hasCycleByIndex()'s own "never trust the cooker" ethos.
   MaterialWithoutRenderable,
+  // Spec 0019 D3/D11: the decode-time twin of
+  // SceneSourceParseError::TooManyLights above -- independently
+  // re-derived from the artifact's own bytes, never trusting a
+  // well-formed cooker.
+  TooManyLights,
 };
 
 // Plan 0016 Section D8: cookTexture()'s own validation conditions --
