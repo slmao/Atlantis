@@ -2,14 +2,32 @@
 
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/result.h>
+#include <atlantis/world/light.h>
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
 namespace atlantis::runtime {
 
 using Mat4 = std::array<float, 16>;
+
+// Plan 0019 Section P14: promoted from an anonymous-namespace-local
+// helper (scene_extraction.cpp's own pre-existing Vec3, used internally
+// by extractCameraMatrices()) to this public header, since
+// computeLambertianDiffuse() (P14, below) needs a public, nameable
+// Vec3 parameter/return type. scene_extraction.cpp's own internal
+// helpers (length(), cross()) now operate on this single, public
+// definition instead of a separate, file-local one -- one Vec3 type in
+// this file, not two.
+struct Vec3 {
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
+};
 
 // See specs/0014-world-scene-foundation.md,
 // adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md.
@@ -28,12 +46,139 @@ enum class SceneExtractionError {
   // UnresolvedMeshAsset already names, applied to a material AssetId
   // instead of a mesh one.
   UnresolvedMaterialAsset,
+  // Plan 0019 Section P8: mirrors DegenerateCameraForward's own
+  // near-zero-length check, applied to a Directional Light's own
+  // world-matrix-derived direction instead of a camera's own forward
+  // vector.
+  DegenerateLightDirection,
+  // Plan 0019 Section P8/P15: a LitTextured-bound entity's own world
+  // matrix fails checkConformalTransform() -- its upper-left 3x3 is not
+  // (uniform-scale-times-)orthogonal, so the vertex shader's own direct
+  // objectToWorld-based normal transform (P11) would be wrong.
+  NonConformalNormalTransform,
 };
 
 struct CameraMatrices {
   Mat4 view;
   Mat4 projection;
 };
+
+// Plan 0019 Section P7: the single authoritative field table's own
+// direct C++ transcription -- see plans/0019-lighting-foundation.md P7
+// for the full, offset-by-offset rationale. Appended immediately after
+// the existing 128-byte camera view+projection block inside the same
+// uniform Buffer (runtime_application.cpp / P9) -- this struct's own
+// sizeof() is the exact byte count appended, no gap, no overlap.
+// Milestone 6's own real Slang reflection JSON cross-check (P7
+// requirement 7) confirmed this table matches the compiled
+// lit_textured.slang CameraUniform layout exactly (offsets 128/132/136/
+// 144/176 in the absolute buffer, i.e. 0/4/8/16/48 relative to this
+// struct's own start).
+struct alignas(16) FrameLightingData {
+  std::uint32_t directionalLightCount = 0;  // offset 0
+  std::uint32_t pointLightCount = 0;        // offset 4
+  std::uint32_t _pad1[2] = {};              // offset 8 -- explicit padding,
+                                             // never relied on as an implicit
+                                             // compiler-inserted gap (std140's
+                                             // own vec3-array alignment rule;
+                                             // float[3] alone only demands
+                                             // 4-byte C++ alignment, so this
+                                             // gap would NOT appear without
+                                             // this explicit field)
+  struct alignas(16) DirectionalLightGpu {
+    float direction[3] = {};  // offset 0 (within this 32-byte element)
+    float _pad0 = 0.0f;       // offset 12 -- explicit, not implicit
+    float color[3] = {};      // offset 16
+    float intensity = 0.0f;   // offset 28
+  } directionalLights[1]{};   // offset 16, 32 bytes total, array stride 32
+  struct alignas(16) PointLightGpu {
+    float position[3] = {};   // offset 0
+    float range = 0.0f;       // offset 12
+    float color[3] = {};      // offset 16
+    float intensity = 0.0f;   // offset 28
+  } pointLights[4]{};  // offset 48, 128 bytes total, array stride 32
+};
+static_assert(std::is_standard_layout_v<FrameLightingData>);
+static_assert(std::is_standard_layout_v<FrameLightingData::DirectionalLightGpu>);
+static_assert(std::is_standard_layout_v<FrameLightingData::PointLightGpu>);
+static_assert(alignof(FrameLightingData) == 16);
+static_assert(offsetof(FrameLightingData, directionalLightCount) == 0);
+static_assert(offsetof(FrameLightingData, pointLightCount) == 4);
+static_assert(offsetof(FrameLightingData, _pad1) == 8);
+static_assert(offsetof(FrameLightingData, directionalLights) == 16);
+static_assert(offsetof(FrameLightingData, pointLights) == 48);
+static_assert(offsetof(FrameLightingData::DirectionalLightGpu, direction) == 0);
+static_assert(offsetof(FrameLightingData::DirectionalLightGpu, _pad0) == 12);
+static_assert(offsetof(FrameLightingData::DirectionalLightGpu, color) == 16);
+static_assert(offsetof(FrameLightingData::DirectionalLightGpu, intensity) == 28);
+static_assert(offsetof(FrameLightingData::PointLightGpu, position) == 0);
+static_assert(offsetof(FrameLightingData::PointLightGpu, range) == 12);
+static_assert(offsetof(FrameLightingData::PointLightGpu, color) == 16);
+static_assert(offsetof(FrameLightingData::PointLightGpu, intensity) == 28);
+static_assert(sizeof(FrameLightingData::DirectionalLightGpu) == 32);
+static_assert(sizeof(FrameLightingData::PointLightGpu) == 32);
+static_assert(sizeof(FrameLightingData) == 176);
+static_assert(alignof(FrameLightingData::DirectionalLightGpu) == 16);
+static_assert(alignof(FrameLightingData::PointLightGpu) == 16);
+
+// Plan 0019 Section P8: a deliberate, disclosed, narrow break from this
+// file's own "raw values only, no atlantis::world:: type" style --
+// atlantis::runtime (Runtime) already depends on Atlantis::World
+// throughout runtime_application.cpp, so this introduces no new
+// module-boundary dependency, only a new dependency within an
+// already-fully-dependent module's own internal header. The one place
+// this header names an atlantis::world:: type.
+struct LightExtractionInput {
+  atlantis::world::Light light;  // the entity's own current Light component
+  Mat4 worldMatrix;              // the entity's own current world matrix
+};
+
+// A direct transcription of Spec 0019 D2: iterates lights once, in the
+// caller-supplied order (the caller -- World::lightEntities()'s own
+// ascending-slot-index order -- is responsible for that order; this
+// function performs no reordering of its own, matching
+// computePendingMaterialIds()'s own "order is the caller's
+// responsibility" precedent). At most one Directional light and up to
+// four Point lights are ever written -- Plan 0019 Section P8's own
+// TooManyLights semantics: a lights vector violating either cap is a
+// programmer error (unreachable from any real cook/decode-validated
+// scene, both of which already independently cap this count), so this
+// fails fast via ATLANTIS_CHECK_MSG (always evaluated, Debug and
+// Release alike -- assert.h), never a Result::Err, silent truncation,
+// or out-of-bounds write.
+[[nodiscard]] atlantis::Result<FrameLightingData, SceneExtractionError> extractFrameLightingData(
+    const std::vector<LightExtractionInput>& lights);
+
+// Plan 0019 Section P8/P15: a per-entity, per-frame check, called only
+// for a LitTextured-bound entity's own current world matrix --
+// unrelated to light extraction itself, grouped here only because it
+// shares this file's own "world-matrix-driven, SceneExtractionError-
+// returning" shape. Accepts an upper-left 3x3 that is a pure rotation,
+// optionally combined with a uniform scale of either sign (D7's own
+// "conformal" definition); rejects non-uniform scale, shear, or a
+// degenerate (near-zero-length) column.
+[[nodiscard]] atlantis::Result<std::monostate, SceneExtractionError> checkConformalTransform(const Mat4& worldMatrix);
+
+// Plan 0019 Section P14: the one, single C++-side definition -- see
+// shaders/lit_textured/lit_textured.slang's own
+// `static const float kPointLightDistanceEpsilon = 1e-4;` (P11), a
+// second, independent, hand-kept-in-sync literal (C++ and Slang cannot
+// share a single defining header). A stated, accepted
+// single-source-of-truth risk, not a solved problem -- matching
+// descriptor_contract.h's own identical class of disclosed duplication.
+inline constexpr float kPointLightDistanceEpsilon = 1e-4f;
+
+// A direct, line-for-line C++ transcription of lit_textured.slang's own
+// fragmentMain() accumulation loop (P11) -- literal formula parity is
+// the entire point of this function's own existence, verified by
+// Milestone 7's own hand-computed-expected-value unit tests AND,
+// independently, by the golden's own per-pixel cross-check (Milestone
+// 10). Never called by any real rendering path -- this is a
+// test-and-verification-only CPU mirror of GPU-side math, not a second,
+// parallel lighting implementation this codebase now has to keep
+// working.
+[[nodiscard]] Vec3 computeLambertianDiffuse(const Vec3& worldPosition, const Vec3& worldNormal,
+                                             const FrameLightingData& lighting);
 
 // Moved out of runtime_application.cpp's own anonymous namespace (where
 // an identically-shaped copy previously lived) so tests/runtime/ can
