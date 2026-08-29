@@ -8,6 +8,8 @@ add_executable(atlantis_asset_system_tests
   asset_metadata_tests.cpp
   mesh_artifact_tests.cpp
   mesh_uv_round_trip_tests.cpp
+  mesh_normal_round_trip_tests.cpp
+  mesh_normal_validation_tests.cpp
   load_tests.cpp
   textured_quad_mesh_tests.cpp
   module_boundary_tests.cpp

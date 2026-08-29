@@ -1,6 +1,7 @@
 #include "minimal_cube_fixture.h"
 
 #include <atlantis/asset_system/load.h>
+#include <atlantis/asset_system/mesh_artifact.h>
 #include <atlantis/render_graph/execution.h>
 #include <atlantis/render_graph/render_graph_builder.h>
 #include <atlantis/renderer/draw_item.h>
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <cstddef>
 #include <fstream>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -55,18 +57,27 @@ using atlantis::shader_system::rhi_integration::toVertexInputLayout;
 }
 
 // Plan 0017 Section D5/ADR-0058: gains a trailing UV0 field to match
-// the mesh artifact's own new 32-byte layout. minimal_mesh.slang
-// declares no UV input, so the schema below stays unchanged (position@0,
-// color@1) -- these trailing bytes are present in every vertex this
-// fixture uploads but are never read by this pipeline (confirmed
-// against Device::createPipeline()'s own real
+// the mesh artifact's own new 32-byte layout. Plan 0020 Section P1/P4/
+// ADR-0063: gains a further trailing normal field, matching the
+// artifact's own new 44-byte layout. minimal_mesh.slang declares
+// neither a UV nor a normal input, so the schema below stays unchanged
+// (position@0, color@1) -- these trailing bytes are present in every
+// vertex this fixture uploads but are never read by this pipeline
+// (confirmed against Device::createPipeline()'s own real
 // VkVertexInputAttributeDescription construction, which only names the
 // offsets the schema below actually lists).
 struct Vertex {
   float position[3];
   float color[3];
   float uv[2];
+  float normal[3];
 };
+static_assert(std::is_standard_layout_v<Vertex>);
+static_assert(offsetof(Vertex, position) == atlantis::asset_system::kMeshArtifactPositionOffsetBytes);
+static_assert(offsetof(Vertex, color) == atlantis::asset_system::kMeshArtifactColorOffsetBytes);
+static_assert(offsetof(Vertex, uv) == atlantis::asset_system::kMeshArtifactUv0OffsetBytes);
+static_assert(offsetof(Vertex, normal) == atlantis::asset_system::kMeshArtifactNormalOffsetBytes);
+static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrideBytes);
 
 [[nodiscard]] std::optional<VertexInputLayout> minimalMeshVertexLayout(const ReflectionMetadata& vertexMetadata) {
   const std::vector<MeshVertexAttributeSchema> schema = {

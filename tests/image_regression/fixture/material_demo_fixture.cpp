@@ -1,5 +1,6 @@
 #include "material_demo_fixture.h"
 
+#include <atlantis/asset_system/mesh_artifact.h>
 #include <atlantis/render_graph/execution.h>
 #include <atlantis/render_graph/render_graph_builder.h>
 #include <atlantis/renderer/draw_item.h>
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <fstream>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -61,14 +63,22 @@ using atlantis::shader_system::rhi_integration::toVertexInputLayout;
 }
 
 // Duplicated, not shared -- matches textured_quad_fixture.cpp's own
-// identical Vertex schema exactly (Spec 0017's 32-byte position+color+UV0
-// mesh artifact layout; color is deliberately left unread since
-// textured_quad.slang has no color input).
+// identical Vertex schema exactly (Spec 0020's 44-byte position+color+
+// UV0+normal mesh artifact layout; color and normal are deliberately
+// left unread since textured_quad.slang has neither a color nor a
+// normal input).
 struct Vertex {
   float position[3];
   float color[3];
   float uv[2];
+  float normal[3];
 };
+static_assert(std::is_standard_layout_v<Vertex>);
+static_assert(offsetof(Vertex, position) == atlantis::asset_system::kMeshArtifactPositionOffsetBytes);
+static_assert(offsetof(Vertex, color) == atlantis::asset_system::kMeshArtifactColorOffsetBytes);
+static_assert(offsetof(Vertex, uv) == atlantis::asset_system::kMeshArtifactUv0OffsetBytes);
+static_assert(offsetof(Vertex, normal) == atlantis::asset_system::kMeshArtifactNormalOffsetBytes);
+static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrideBytes);
 
 [[nodiscard]] std::optional<VertexInputLayout> unlitTexturedVertexLayout(const ReflectionMetadata& vertexMetadata) {
   const std::vector<MeshVertexAttributeSchema> schema = {

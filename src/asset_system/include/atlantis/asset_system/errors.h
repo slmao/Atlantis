@@ -33,6 +33,13 @@ enum class SourceParseError {
   IndexCountNotMultipleOfThree,
   VertexCountOutOfRange,
   TrailingContent,
+  // Plan 0020 Section P7/Spec 0020 D3: a normal vector's own three
+  // components are all finite (NonFiniteFloat, above, already covers
+  // NaN/Inf) but its own length-squared falls outside [0.9801, 1.0201]
+  // -- a genuinely new failure kind no existing enumerator represents
+  // ("finite but wrong magnitude"), confirmed by direct inspection of
+  // every enumerator above before adding this one.
+  NonUnitNormal,
 };
 
 enum class MetadataParseError {
@@ -53,6 +60,10 @@ enum class ArtifactDecodeError {
   IndexCountNotMultipleOfThree,
   IndexOutOfRange,
   NonFiniteFloat,
+  // Plan 0020 Section P7/Spec 0020 D3: the decode-time twin of
+  // SourceParseError::NonUnitNormal above -- independently re-derived
+  // from the artifact's own bytes, never trusting a well-formed cooker.
+  NonUnitNormal,
 };
 
 enum class AssetLoadError {
