@@ -125,13 +125,22 @@ built with.
   image-based lighting, and post-processing are all explicitly
   unimplemented — this Spec's own Non-Goals, see `src/README.md`. A
   real, pre-existing (Plan 0018-introduced, not Lighting-Foundation-
-  specific) Vulkan Backend limitation was found and disclosed, not
-  fixed, during this Spec's own final review: the RHI descriptor pool's
-  fixed capacity (`maxSets = 4`) is exceeded by a real, currently-
-  supported two-distinct-material color-format change — reproduced by a
-  real GPU regression test, disclosed as a real, dedicated-future-Spec-
-  worthy finding, not solved here (see `src/README.md`'s own
-  `vulkan_backend/` entry for the full root-cause trace). A distributable,
+  specific) Vulkan Backend limitation was found and disclosed during
+  this Spec's own final review — the RHI descriptor pool's fixed
+  capacity (`maxSets = 4`) was exceeded by a real, currently-supported
+  two-distinct-material color-format change, reproduced by a real GPU
+  regression test — and has since been fixed: Descriptor Pool Capacity
+  Foundation (Spec 0021, `Approved`, implemented and merged via
+  [PR #100](https://github.com/slmao/Atlantis/pull/100)) gives
+  `VulkanDevice` a private, growable descriptor-pool set (a fixed
+  `std::array`, never a `std::vector`) that scans existing pools before
+  growing (geometric doubling: 4, 8, 16, 32 — 60 concurrent descriptor
+  sets total), removing the ceiling for the arbitrary-N-material model
+  Spec 0018 already supports, with zero RHI/Renderer/Material public
+  API change — see `src/README.md`'s own `vulkan_backend/` entry. A
+  four-pool/60-concurrent-descriptor-set hard ceiling remains a real,
+  disclosed limit — not bindless, not descriptor indexing, not
+  unlimited material support. A distributable,
   cross-session Asset Catalog and rename-stable GUID identity remain
   future work (Candidate Order 7, `specs/README.md`) — see
   `src/README.md`'s own `asset_system/`/`tools/asset_cooker/` entries

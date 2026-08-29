@@ -1304,8 +1304,95 @@ milestone being listed does not authorize starting it — see Section 1.
   one-time-computed active-light array; tone mapping, gamma-encode, HDR
   intermediate targets, or any other post-processing; runtime light
   mutation reflected in a rendered frame; Android/iOS. The `maxSets = 4`
-  descriptor pool limitation above remains open — not this Milestone's
-  own scope to close.
+  descriptor pool limitation found and disclosed above is fixed by the
+  next Milestone, immediately below.
+
+### Milestone 18 — Descriptor Pool Capacity Foundation
+
+- **Governance state:** **`Approved` Spec, `Approved` Plan. Implemented
+  and merged via [PR #100](https://github.com/slmao/Atlantis/pull/100)
+  (2026-08-30)** —
+  [specs/0021-descriptor-pool-capacity-foundation.md](../specs/0021-descriptor-pool-capacity-foundation.md),
+  [plans/0021-descriptor-pool-capacity-foundation.md](../plans/0021-descriptor-pool-capacity-foundation.md).
+  Architectural Impact identified one decision, filed as
+  [ADR-0064](../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)
+  (the descriptor-pool ownership/growth model), `Accepted`. Closes the
+  real, pre-existing capacity gap the previous Milestone's own final
+  review found, root-caused, and disclosed — human-directed, drafted
+  ahead of Android Platform (Candidate Backlog Section B, Candidate
+  Order 1, unaffected) and ahead of Shadow/PBR/IBL/Post-processing.
+- **Scope delivered:** `VulkanDevice`'s own single, fixed-capacity
+  `VkDescriptorPool` (`maxSets = 4`) is replaced by a private, growable
+  set — a fixed `std::array<DescriptorPoolEntry, 4>` plus an explicit
+  live count, never a `std::vector` (a deliberate exception-safety
+  choice: this render path must stay exception-free, and a `std::vector`
+  growing at runtime risks `std::bad_alloc`/a leak-on-throw window a
+  fixed array structurally cannot). One shared helper,
+  `createDescriptorPoolOfSize()`, creates both the initial pool
+  (generation 0, `maxSets = 4`) and every later-grown pool (generations
+  1-3: `maxSets = 8, 16, 32`, geometric doubling) — they cannot drift
+  apart from each other. Allocation scans every existing pool in
+  creation order, naturally reusing capacity an earlier `VulkanPipeline`
+  destructor already freed, before ever growing; only
+  `VK_ERROR_OUT_OF_POOL_MEMORY`/`VK_ERROR_FRAGMENTED_POOL` are
+  growth-eligible — `VK_ERROR_DEVICE_LOST`/host-or-device out-of-memory
+  fail immediately, no further pool tried, no growth attempted. A fixed,
+  Plan-time-approved hard ceiling (4 pools, 60 concurrent descriptor
+  sets total) stops growth from masking a genuine resource leak as
+  unbounded allocation. Zero RHI/Renderer/Material public API change;
+  `VulkanPipeline` needed no modification at all — its own pre-existing
+  single `descriptorPool_` field and constructor parameter already
+  expressed exactly "the specific pool my one descriptor set belongs
+  to."
+- **Verified:** PR #96's own two original failure proofs (a low-level
+  probe: the 5th of 4 declared `maxSets` Pipelines used to fail; the
+  fallback + `UnlitTextured` + `LitTextured` N=2 format-change used to
+  fail) are now real-hardware **success** regressions in the same test
+  file. A new N=6 regression additionally proves a real *second* growth
+  event (generation 2, `maxSets = 16`), via a full frame-by-frame trace
+  (preserved as a code comment) showing an initially-drafted N=5 does
+  not actually reach a third pool generation. Dedicated pool-mechanics
+  GPU tests prove: the real, production hard ceiling (60 concurrent
+  sets, computed from the shipped constants, never a hardcoded literal)
+  is enforced exactly, and freed capacity is reused rather than
+  triggering further growth (proven indirectly — the pool set is first
+  driven to its own real ceiling, where a 5th pool is structurally
+  impossible, so a subsequent allocation's own success can only come
+  from reuse — no new production introspection API was added); mixed
+  uniform-only/textured allocation crosses a growth boundary without
+  premature, type-specific exhaustion; origin-pool correctness is proven
+  doubly (Validation Layers clean and a real reallocation success); a
+  Pipeline created before a growth event stays genuinely drawable
+  (a real `Renderer::drawFrame()` + `submit()`, not a non-null check)
+  after it; `VulkanDevice`'s own destruction destroys every pool across
+  multiple generations. A pre-merge centralized final review round
+  found and fixed four mechanical issues (two previously-unchecked
+  `vkFreeDescriptorSets` results in `createPipeline()`'s own mid-
+  creation cleanup, now checked; two stale/imprecise comments corrected;
+  a real correction to this Plan's own worst-case call-count estimate,
+  from an incorrectly-additive 5 to the real, mutually-exclusive-cases
+  maximum of 4) — none changing the container, algorithm, capacity
+  contract, or any public API. Fresh Debug/Release builds clean;
+  `ctest -LE gpu` 759/759 Debug, 758/758 Release; `ctest -L gpu` 52/52
+  both configurations on real Vulkan-capable hardware, zero Vulkan
+  Validation Layers hits across full verbose GPU test output; a fresh
+  `ATLANTIS_BUILD_TESTS=OFF` configure+build produced a working
+  `atlantis_runtime.exe` with zero test executables; all five existing
+  goldens confirmed byte-for-byte/pixel-for-pixel unchanged — no golden
+  was regenerated, since this Milestone changes zero rendered pixels.
+  See [plans/0021-descriptor-pool-capacity-foundation.md](../plans/0021-descriptor-pool-capacity-foundation.md)'s
+  own "Post-Merge Status Update" for the full record.
+- **Not implemented:** bindless rendering or descriptor indexing;
+  descriptor buffers; a cross-frame descriptor-*set* caching/reuse
+  system (only pool *capacity* is reused, never an already-allocated
+  set); a general-purpose GPU memory/descriptor allocator; a separate
+  uniform-only vs. textured/lit descriptor-type capacity budget; any
+  dynamic pool shrink/reclaim-to-OS strategy. **The four-pool/60-
+  concurrent-descriptor-set hard ceiling is a real, deliberate,
+  disclosed limit, not a placeholder for unlimited material support** —
+  a future scene needing materially more concurrent descriptor sets
+  than this ceiling allows remains a real, dedicated-future-Spec-worthy
+  finding, not solved here.
 
 ### Further candidate phases (directional only, no Spec, no ADR)
 
