@@ -3,11 +3,12 @@
 - **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-08-29
-- **Related Plan(s):** None yet — **this approval authorizes drafting
-  Plan 0021 only. It does not authorize Implementation.** Plan 0021 must
-  itself go through the same Plan → Human Review path as every prior
-  Plan in this codebase before any code is written, per
-  [AGENTS.md](../AGENTS.md).
+- **Related Plan(s):** [plans/0021-descriptor-pool-capacity-foundation.md](../plans/0021-descriptor-pool-capacity-foundation.md)
+  (`Approved / Ready for Implementation`, drafted 2026-08-29, Human
+  Review Approval recorded 2026-08-29 following one centralized final
+  review round — see the Plan's own "Final Review Round" section).
+  **This approval authorizes Implementation of Plan 0021 only once its
+  own Implementation PR has merged — not before.**
 - **Related ADR(s):** [ADR-0064](../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)
   (`Accepted`)
 - **Human Review Approval (2026-08-29):** Reviewed and approved by
