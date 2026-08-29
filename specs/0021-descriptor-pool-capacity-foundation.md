@@ -4,10 +4,11 @@
 - **Author:** slmao
 - **Created:** 2026-08-29
 - **Related Plan(s):** [plans/0021-descriptor-pool-capacity-foundation.md](../plans/0021-descriptor-pool-capacity-foundation.md)
-  (`In Review`, drafted 2026-08-29). **This Spec's own approval
-  authorized drafting Plan 0021 only. It does not authorize
-  Implementation.** Plan 0021 must itself go through its own Human
-  Review before any code is written, per [AGENTS.md](../AGENTS.md).
+  (`Approved / Ready for Implementation`, drafted 2026-08-29, Human
+  Review Approval recorded 2026-08-29 following one centralized final
+  review round — see the Plan's own "Final Review Round" section).
+  **This approval authorizes Implementation of Plan 0021 only once its
+  own Implementation PR has merged — not before.**
 - **Related ADR(s):** [ADR-0064](../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)
   (`Accepted`)
 - **Human Review Approval (2026-08-29):** Reviewed and approved by

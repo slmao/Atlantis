@@ -2,8 +2,22 @@
 
 - **Spec:** [specs/0021-descriptor-pool-capacity-foundation.md](../specs/0021-descriptor-pool-capacity-foundation.md)
   (`Approved`)
-- **Status:** In Review
+- **Status:** Approved / Ready for Implementation
 - **Author:** slmao
+- **Human Review Approval (2026-08-29):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
+  git-identified maintainer) on 2026-08-29, following the centralized
+  final review round recorded below — accepting this document's own
+  final container/RAII design (a fixed `std::array` plus explicit live
+  count, never `std::vector`), the complete scan/grow/error-mapping
+  algorithm, the fixed capacity-generation table, all four
+  `createPipeline()` call-site edits, the three Milestones and their
+  own atomic boundaries, the full Files/Modules Touched list, and the
+  complete V1-V27 Verification Checklist (including the N=6 correction
+  to V16/V17 and the capacity-derivation fixes to V1-V3/V10/V13) — see
+  the Plan's own "Final Review Round" section for the complete,
+  itemized record. **This approval authorizes Implementation of this
+  Plan only once this PR itself has merged — not before.**
 
 ## Objective
 
@@ -187,10 +201,14 @@ not by restating Spec 0021's own prose:
 No unresolvable conflict with the Approved Spec/ADR was found. One
 implementation-detail correction is disclosed (P1, `VulkanPipeline`
 needs zero changes) and one Plan-level concretization is disclosed (P2,
-a paired pool/size struct instead of a bare `std::vector<VkDescriptorPool>`)
-— both are strictly smaller-footprint or more-precise realizations of
-the same, unchanged, Approved architectural decision, not deviations
-from it. Neither requires returning to Spec/ADR review.
+a paired pool/size struct) — both are strictly smaller-footprint or
+more-precise realizations of the same, unchanged, Approved architectural
+decision, not deviations from it. Neither requires returning to
+Spec/ADR review. **P2's own exact container shape was itself further
+corrected during this Plan's own later final review round — see "Final
+Review Round" below for the complete record; this Plan's own P2/P3/P5/P6
+sections state the corrected, final design directly, not the
+superseded first draft.**
 
 ## Plan-level decisions (fixed here, not left to Implementation)
 
@@ -205,91 +223,167 @@ pool the scan/growth found, rather than the Device's sole pool. Zero
 new field, zero signature change, zero destructor change to
 `vulkan_pipeline.h`/`.cpp`.
 
-### P2. Pool/size pairing: a small named struct, not a bare handle vector
+### P2. Container choice, revised: a fixed `std::array` + live count, never a `std::vector` — full exception-safety reasoning
 
-Vulkan has no "query this pool's own `maxSets`" introspection call, and
-ADR-0064's own geometric-doubling growth strategy (each new pool's own
-`maxSets` equals the *immediately preceding* pool's own `maxSets`)
-needs to know the last pool's own size to compute the next one.
-`VulkanDevice` must therefore track each pool's own `maxSets` alongside
-its handle. Two parallel `std::vector`s (handles and sizes, kept in
-sync by convention only) is a real, avoidable robustness risk this
-codebase's own style (named, structurally-clear types over parallel
-arrays) does not favor. This Plan uses one small, private, aggregate
-struct instead:
+**Finding from this Plan's own final review round, corrected here, not
+silently carried forward:** the first draft of this Plan used
+`std::vector<DescriptorPoolEntry>`. This is a real exception-safety
+defect, not merely a style preference:
+
+- `std::vector::push_back()` can allocate, and a failing allocation
+  throws `std::bad_alloc`. `allocateDescriptorSet()` sits directly on
+  `createPipeline()`'s own call path — the render path this codebase's
+  own Error Handling rules require to stay exception-free (matching
+  Vulkan's own `VkResult` model). An uncaught `std::bad_alloc`
+  propagating out of `createPipeline()` (a function with no
+  `noexcept`/try-catch boundary anywhere above it in the existing call
+  chain — `Material`/`Renderer`/`Runtime` all consume `Result<>` types,
+  never `catch`) would very likely reach `main()` unhandled and
+  terminate the process — a real, if rare, availability regression this
+  codebase's own "recoverable runtime errors use explicit result/error
+  types, not exceptions" rule exists specifically to prevent.
+- **Worse, a leak is possible on that same throw path:**
+  `vkCreateDescriptorPool()` can succeed (a real, valid `VkDescriptorPool`
+  handle now exists) immediately before the `push_back()` call that
+  would record it — if that `push_back()` then throws, the already-created
+  handle is never stored anywhere. A `VkDescriptorPool` is a raw handle,
+  not a C++ object with a destructor; nothing unwinds it. This is a
+  real, reachable GPU-resource leak on the exception path, not merely a
+  process-termination risk.
+- **`reserve(kMaxDescriptorPoolCount)` up front does not fix this, only
+  relocates it:** if capacity is reserved once, before any growth,
+  every *subsequent* `push_back()` (up to the reserved capacity) cannot
+  reallocate and — since `DescriptorPoolEntry`'s own members are
+  trivial (a handle, a `std::uint32_t`) with trivial, non-throwing
+  copy/move — cannot throw either. But the `reserve()` call itself can
+  still throw `std::bad_alloc`, and it would have to run during
+  `VulkanDevice`'s own construction (`createDevice()`, itself a
+  `Result<>`-returning function with the identical "no exceptions"
+  obligation) — the same architectural inconsistency, only moved to a
+  different call site, not resolved.
+
+**Fix: `std::array<DescriptorPoolEntry, kMaxDescriptorPoolCount>` plus
+an explicit live count, never `std::vector`, anywhere.** Spec 0021 D6's
+own hard ceiling is a small, fixed, compile-time constant (4) — a
+`std::array` is not merely "equivalent with a smaller exception
+surface," it is the *more correct* representation of an approved,
+unchanging upper bound: it makes "never more than
+`kMaxDescriptorPoolCount` pools" a structural, type-level invariant
+(there is no fifth slot to write into, even in error), not a
+runtime-checked one, directly serving AGENTS.md's own "prefer... standard
+containers" principle by choosing the standard container that actually
+matches this problem's own fixed-size shape. `std::array`'s own storage
+is inline (member/stack), never heap-allocated, so **no operation on
+`descriptorPools_` can ever throw** — the exception-safety concern is
+eliminated structurally, not merely reduced in probability:
 
 ```cpp
 // vulkan_device.h, in namespace atlantis::vulkan_backend::detail,
 // immediately above class VulkanDevice.
 struct DescriptorPoolEntry {
-  VkDescriptorPool pool;    // handle VALUE -- see P3's own "Handle-value
-                            // safety" note; never a pointer/reference
-                            // into descriptorPools_'s own storage.
-  std::uint32_t maxSets;    // this pool's own maxSets, as passed to
-                            // vkCreateDescriptorPool -- tracked here
-                            // because Vulkan has no query call for it.
+  VkDescriptorPool pool = VK_NULL_HANDLE;  // handle VALUE -- see P5's
+                                            // own "Handle-value safety"
+                                            // note; never a pointer/
+                                            // reference into
+                                            // descriptorPools_'s own
+                                            // storage.
+  std::uint32_t maxSets = 0;               // this pool's own maxSets,
+                                            // as passed to
+                                            // vkCreateDescriptorPool --
+                                            // tracked here because
+                                            // Vulkan has no query call
+                                            // for it. (Default values
+                                            // are defensive only --
+                                            // every real read is
+                                            // already bounded by
+                                            // descriptorPoolCount_,
+                                            // below, so an untouched
+                                            // slot is never actually
+                                            // used.)
 };
 ```
 
-`VulkanDevice::descriptorPools_` becomes `std::vector<DescriptorPoolEntry>`
-(replacing the single `VkDescriptorPool descriptorPool_` member). This
-is a concretization of Spec 0021/ADR-0064's own illustrative
+`VulkanDevice`'s own private members (replacing the single
+`VkDescriptorPool descriptorPool_`):
+
+```cpp
+// Spec 0021/ADR-0064: a fixed-size array, sized to the Approved hard
+// ceiling at compile time -- never a std::vector (see this Plan's own
+// Plan Review, item 1, for the full exception-safety reasoning). Only
+// indices [0, descriptorPoolCount_) are ever live; every entry at or
+// past that index holds DescriptorPoolEntry's own default value and is
+// never read, written past its own creation, or destroyed.
+std::array<detail::DescriptorPoolEntry, detail::kMaxDescriptorPoolCount> descriptorPools_{};
+std::size_t descriptorPoolCount_ = 0;
+```
+
+This is a concretization of Spec 0021/ADR-0064's own illustrative
 `std::vector<VkDescriptorPool>` code, not a deviation from the approved
 model — the approved *decision* ("a Device-owned, growable set of
-pools, tried in creation order, each remembering enough to support
-geometric-doubling growth") is unchanged; only the exact C++ container
-shape realizing "remembering enough" is a Plan-time concretization the
-Spec's own illustrative code did not need to pin down at that level of
-precision (the same way Spec 0021's own D5/D6 left the exact hard-
-ceiling constant's *name* and *file* to Plan time while fixing its
-*value*).
+pools, tried in creation order, up to a 4-pool hard ceiling") is
+unchanged; the exact C++ container realizing "growable... up to a fixed
+ceiling" is a Plan-time concretization, and this Plan's own final
+review found the fixed-array shape to be *more* faithful to that exact
+approved decision than a dynamically-sized one, not merely equivalent.
 
-### P3. New private module: `vulkan_descriptor_pool_growth.h`/`.cpp`
+### P3. New private module: `vulkan_descriptor_pool_growth.h`/`.cpp` — a fixed table, not a computed function
 
-A new header/source pair, `src/vulkan_backend/src/vulkan_descriptor_pool_growth.h`
-and `.cpp`, in `namespace atlantis::vulkan_backend::detail`, holding the
-two named capacity constants and the one pure growth-size function —
-kept separate from `vulkan_result.h` (which is specifically "`VkResult`
--> RHI error mapping," a different concern) and separate from
-`vulkan_device.h`/`.cpp` (so the pure, GPU-independent piece is
-directly unit-testable without pulling in `VulkanDevice`'s own,
-much larger translation unit):
+**Finding from this Plan's own final review round, corrected here:** the
+first draft computed each pool generation's own size via a generic
+`nextDescriptorPoolMaxSets(x) -> x * 2` function. Every one of that
+function's own call sites in this Plan happens to be gated by a ceiling
+check first, so it can never actually be invoked to compute a
+disallowed fifth-generation value in practice — but a generic doubling
+function is still capable, *in isolation*, of producing a value Spec
+0021 D5/D6 never approved (`nextDescriptorPoolMaxSets(32) == 64`, a
+correct answer to a question this Spec never authorized asking). A
+fixed, literal table — indexed directly by generation — locks the
+growth strategy to the exact, approved four-value sequence structurally,
+not merely by the discipline of a single, correctly-gated call site:
 
 ```cpp
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 
 // Spec 0021 D5/D6, ADR-0064: the descriptor-pool growth strategy's own
-// two fixed capacity constants and its one pure sizing function. Pure,
-// GPU-independent, deterministic -- safe to unit-test with literal
-// integer inputs and no real Vulkan call, matching vulkan_result.h's
-// own established "pure classification" precedent.
+// fixed capacity table. Pure, GPU-independent, deterministic -- safe to
+// unit-test with literal integer inputs and no real Vulkan call,
+// matching vulkan_result.h's own established "pure classification"
+// precedent. A fixed table, not a computed doubling function -- see
+// this Plan's own Plan Review, item 5, for why: this locks every real
+// pool's own maxSets to the literal, Approved four-value sequence
+// (4, 8, 16, 32), structurally incapable of producing a fifth-
+// generation or otherwise unapproved value, even in isolation from its
+// own call site's own ceiling check.
 namespace atlantis::vulkan_backend::detail {
-
-// The first pool VulkanDevice ever creates (at Device construction,
-// createDevice()) is sized to this -- unchanged from this codebase's
-// own pre-Spec-0021 value, but now justified differently (Spec 0021
-// D5): correctness no longer depends on this number being "big enough"
-// (growth, below, guarantees that); it is kept small and cheap so the
-// steady-state, already-verified single/double-material scenes this
-// codebase ships today never trigger a growth event at all.
-inline constexpr std::uint32_t kInitialDescriptorPoolMaxSets = 4;
 
 // The total number of pools VulkanDevice's own growable set may ever
 // contain (Spec 0021 D6) -- a leak/defect safety net, never a
-// content-scaling ceiling. 4 pools, geometric doubling from
-// kInitialDescriptorPoolMaxSets, sums to 4+8+16+32 = 60 concurrent
-// descriptor sets before this ceiling is reached.
+// content-scaling ceiling.
 inline constexpr std::size_t kMaxDescriptorPoolCount = 4;
 
-// Returns the maxSets value the NEXT descriptor pool should be created
-// with, given the immediately preceding pool's own maxSets --
-// geometric doubling (Spec 0021 D5), the same amortized-growth shape
-// std::vector's own default growth factor uses. Pure, total (no
-// invalid input -- lastPoolMaxSets is always a real, already-created
-// pool's own positive maxSets).
-[[nodiscard]] std::uint32_t nextDescriptorPoolMaxSets(std::uint32_t lastPoolMaxSets);
+// Index 0 is the initial pool (createDevice()'s own one-time creation);
+// index 1 is the first growth generation; and so on. Geometric
+// doubling from 4 (Spec 0021 D5) -- written here as the four literal,
+// Approved values themselves, not derived at runtime, so this table
+// alone is the single, complete, exact contract. Summing all four
+// gives the real, current hard ceiling on concurrent descriptor sets:
+// 4+8+16+32 = 60.
+inline constexpr std::array<std::uint32_t, kMaxDescriptorPoolCount> kDescriptorPoolMaxSetsByGeneration = {4, 8, 16,
+                                                                                                            32};
+
+// kDescriptorPoolMaxSetsByGeneration[generationIndex]. generationIndex
+// must be < kMaxDescriptorPoolCount -- a violated precondition here is
+// a programmer error (every real call site is already gated by
+// VulkanDevice's own ceiling check before this is ever called), not a
+// recoverable runtime condition, so it is an ATLANTIS_CHECK, matching
+// AGENTS.md's own "programmer errors are assertions, not error
+// returns" rule -- never a std::optional or an out-of-range value
+// silently substituted.
+[[nodiscard]] std::uint32_t descriptorPoolMaxSetsForGeneration(std::size_t generationIndex);
 
 }  // namespace atlantis::vulkan_backend::detail
 ```
@@ -298,12 +392,22 @@ inline constexpr std::size_t kMaxDescriptorPoolCount = 4;
 // vulkan_descriptor_pool_growth.cpp
 #include "vulkan_descriptor_pool_growth.h"
 
+#include <atlantis/assert.h>
+
 namespace atlantis::vulkan_backend::detail {
 
-std::uint32_t nextDescriptorPoolMaxSets(std::uint32_t lastPoolMaxSets) { return lastPoolMaxSets * 2; }
+std::uint32_t descriptorPoolMaxSetsForGeneration(std::size_t generationIndex) {
+  ATLANTIS_CHECK(generationIndex < kMaxDescriptorPoolCount);
+  return kDescriptorPoolMaxSetsByGeneration[generationIndex];
+}
 
 }  // namespace atlantis::vulkan_backend::detail
 ```
+
+`descriptorPoolCount_` (P2) doubles as the generation index of the
+*next* pool to create — when `descriptorPoolCount_ == k`, generations
+`0..k-1` already exist, so the next one to create is generation `k`
+itself: `descriptorPoolMaxSetsForGeneration(descriptorPoolCount_)`.
 
 ### P4. `vulkan_result.h`/`.cpp` addition: the growth-eligibility classifier
 
@@ -346,32 +450,21 @@ identical first line.)
 ```cpp
 // vulkan_device.h, new private member declarations.
 
-// Scans descriptorPools_ in creation order (index 0..last), allocating
-// one VkDescriptorSet of the given layout from the first pool with
-// capacity -- naturally reusing whatever capacity an earlier
+// Scans descriptorPools_[0, descriptorPoolCount_) in creation order,
+// allocating one VkDescriptorSet of the given layout from the first
+// pool with capacity -- naturally reusing whatever capacity an earlier
 // vkFreeDescriptorSets call already returned to any of them (Spec 0021
-// D3/D7). Grows (creates exactly one new pool, geometric doubling) and
-// retries exactly once, only after every existing pool has failed for a
-// growth-eligible reason and the hard ceiling (kMaxDescriptorPoolCount)
-// has not yet been reached. On success, outDescriptorSet/outOriginPool
-// are both set and this returns std::nullopt; on any failure, neither
-// out-param is touched and this returns
-// PipelineCreateError::DescriptorSetAllocationFailed -- the only error
-// this function can ever produce (Plan-level decision P7's own
-// complete mapping table).
+// D3/D7). Grows (creates exactly one new pool, per the fixed
+// generation table, P3) and retries exactly once, only after every
+// existing pool has failed for a growth-eligible reason and the hard
+// ceiling (kMaxDescriptorPoolCount) has not yet been reached. On
+// success, outDescriptorSet/outOriginPool are both set and this
+// returns std::nullopt; on any failure, neither out-param is touched
+// and this returns PipelineCreateError::DescriptorSetAllocationFailed
+// -- the only error this function can ever produce (P7's own complete
+// mapping table).
 [[nodiscard]] std::optional<atlantis::rhi::PipelineCreateError> allocateDescriptorSet(
     VkDescriptorSetLayout layout, VkDescriptorSet& outDescriptorSet, VkDescriptorPool& outOriginPool);
-
-// Creates one new VkDescriptorPool, sized to maxSets, with the
-// identical two-pool-size-entry (UNIFORM_BUFFER, COMBINED_IMAGE_SAMPLER,
-// both == maxSets) / FREE_DESCRIPTOR_SET_BIT shape createDevice()'s own
-// initial pool already uses (P6's own capacity-derivation table).
-// Returns VK_NULL_HANDLE on vkCreateDescriptorPool failure -- the
-// caller (allocateDescriptorSet(), above) maps that to
-// DescriptorSetAllocationFailed; unlike createDevice()'s own one-time
-// call, this is an ordinary, expected-to-be-rare runtime outcome, never
-// treated as a Device-construction-time failure.
-[[nodiscard]] VkDescriptorPool createGrownDescriptorPool(std::uint32_t maxSets) const;
 ```
 
 Exact algorithm (`vulkan_device.cpp`, directly mappable to code):
@@ -384,14 +477,14 @@ std::optional<atlantis::rhi::PipelineCreateError> VulkanDevice::allocateDescript
   allocInfo.descriptorSetCount = 1;
   allocInfo.pSetLayouts = &layout;
 
-  // Step 1: scan every existing pool, in creation order.
-  for (const detail::DescriptorPoolEntry& entry : descriptorPools_) {
-    allocInfo.descriptorPool = entry.pool;
+  // Step 1: scan every existing (live) pool, in creation order.
+  for (std::size_t i = 0; i < descriptorPoolCount_; ++i) {
+    allocInfo.descriptorPool = descriptorPools_[i].pool;
     VkDescriptorSet set = VK_NULL_HANDLE;
     const VkResult result = vkAllocateDescriptorSets(device_, &allocInfo, &set);
     if (result == VK_SUCCESS) {
       outDescriptorSet = set;
-      outOriginPool = entry.pool;
+      outOriginPool = descriptorPools_[i].pool;
       return std::nullopt;
     }
     if (!detail::isDescriptorPoolGrowthEligible(result)) {
@@ -403,23 +496,34 @@ std::optional<atlantis::rhi::PipelineCreateError> VulkanDevice::allocateDescript
   }
 
   // Step 2: every existing pool exhausted for a growth-eligible reason.
-  if (descriptorPools_.size() >= detail::kMaxDescriptorPoolCount) {
+  if (descriptorPoolCount_ >= detail::kMaxDescriptorPoolCount) {
     return atlantis::rhi::PipelineCreateError::DescriptorSetAllocationFailed;
   }
 
-  // Step 3: grow -- create exactly one new pool.
-  const std::uint32_t newMaxSets = detail::nextDescriptorPoolMaxSets(descriptorPools_.back().maxSets);
-  const VkDescriptorPool newPool = createGrownDescriptorPool(newMaxSets);
+  // Step 3: grow -- create exactly one new pool, generation
+  // descriptorPoolCount_ (P3's own fixed table, never computed).
+  const std::uint32_t newMaxSets = detail::descriptorPoolMaxSetsForGeneration(descriptorPoolCount_);
+  const VkDescriptorPool newPool = detail::createDescriptorPoolOfSize(device_, newMaxSets);
   if (newPool == VK_NULL_HANDLE) {
+    // Pre-publish failure (P6's own "two distinct phases" note) --
+    // descriptorPoolCount_ is NOT incremented; no handle exists to leak.
     return atlantis::rhi::PipelineCreateError::DescriptorSetAllocationFailed;
   }
-  // Kept in descriptorPools_ regardless of the retry's own outcome below
-  // (Spec 0021 D9) -- safe, since no set has been allocated from it yet.
-  descriptorPools_.push_back(detail::DescriptorPoolEntry{newPool, newMaxSets});
+  // Publish: a plain assignment into an already-allocated array slot,
+  // immediately following pool creation with zero intervening fallible
+  // operation -- cannot throw (DescriptorPoolEntry's own members are
+  // trivial), cannot leave newPool unpublished (P6's own "Pool
+  // RAII/publish" note explains why no separate guard type is needed
+  // here). Kept in descriptorPools_ regardless of the retry's own
+  // outcome below (Spec 0021 D9) -- safe, since no set has been
+  // allocated from it yet.
+  descriptorPools_[descriptorPoolCount_] = detail::DescriptorPoolEntry{newPool, newMaxSets};
+  ++descriptorPoolCount_;
 
-  // Step 4: retry exactly once against the new pool. No loop -- this is
-  // the ONE retry Spec 0021 D3 specifies, never a second growth attempt
-  // within the same call.
+  // Step 4: retry exactly once against the new pool. No loop, no
+  // recursive call back into this function -- this is the ONE retry
+  // Spec 0021 D3 specifies, never a second growth attempt within the
+  // same call.
   allocInfo.descriptorPool = newPool;
   VkDescriptorSet set = VK_NULL_HANDLE;
   const VkResult retryResult = vkAllocateDescriptorSets(device_, &allocInfo, &set);
@@ -433,12 +537,14 @@ std::optional<atlantis::rhi::PipelineCreateError> VulkanDevice::allocateDescript
 ```
 
 **Termination, explicitly:** Step 1's own loop is bounded by
-`descriptorPools_.size()` (at most `kMaxDescriptorPoolCount == 4`,
-enforced by Step 2's own check before any growth); Step 4 is a single,
-non-looping attempt. Worst case, this function issues at most
-`kMaxDescriptorPoolCount + 1 == 5` `vkAllocateDescriptorSets` calls and
-at most one `vkCreateDescriptorPool` call, always terminating —
-no unbounded loop is possible.
+`descriptorPoolCount_` (at most `kMaxDescriptorPoolCount == 4`,
+enforced by Step 2's own check before any growth, and structurally
+incapable of exceeding the fixed array's own size regardless); Step 4
+is a single, non-looping, non-recursive attempt. Worst case, this
+function issues at most `kMaxDescriptorPoolCount + 1 == 5`
+`vkAllocateDescriptorSets` calls and at most one
+`vkCreateDescriptorPool` call, always terminating — no unbounded loop,
+and no recursive growth, is possible.
 
 **No double-free, explicitly:** this function only ever *allocates*; it
 never frees. Freeing is governed entirely by two, already-existing,
@@ -462,19 +568,47 @@ mid-creation free calls (pipeline-layout failure; final
 Plan does not introduce one — both remain direct, imperative
 `vkFreeDescriptorSets` calls inline in their own failure branch, exactly
 mirroring how the two shader-module `vkDestroyShaderModule` cleanup
-calls in the same function are also not RAII-guarded. `DescriptorPoolGuard`
-(the one RAII type this module uses for a descriptor pool) is, and
-remains, scoped exclusively to `createDevice()`'s own one-time,
-construction-time pool creation — a different code path entirely, never
-reused for per-`createPipeline()`-call cleanup.
+calls in the same function are also not RAII-guarded.
 
-### P6. `createGrownDescriptorPool()` — exact body, and `createPipeline()`'s three call-site edits
+**Scenario-by-scenario re-derivation, confirming the algorithm above
+against every case Human Review named:**
+
+| Scenario | Trace through the algorithm above | Outcome |
+|---|---|---|
+| pool 0 `FRAGMENTED_POOL`, pool 1 `OUT_OF_POOL_MEMORY`, pool 2 succeeds | Step 1: `i=0` growth-eligible, continue; `i=1` growth-eligible, continue; `i=2` `VK_SUCCESS`, return | Success, origin pool = pool 2 |
+| pool 0 `VK_ERROR_DEVICE_LOST` | Step 1: `i=0`, `isDescriptorPoolGrowthEligible` false, immediate return | `DescriptorSetAllocationFailed`; pool 1 is **never tried** |
+| All existing pools capacity-failed, `descriptorPoolCount_ < 4` | Step 1 loop exhausts with no success/immediate-fail; Step 2 passes (count < ceiling); Step 3 creates generation `count`, publishes, retries once | Success or `DescriptorSetAllocationFailed` depending on the retry — never a second growth attempt either way |
+| New pool's first allocation still returns a capacity error | Step 4's `retryResult != VK_SUCCESS` returns immediately | `DescriptorSetAllocationFailed`; no recursion back to Step 1, no second growth |
+| `descriptorPoolCount_ == 4` | Step 2's own check fails before Step 3 ever runs | `DescriptorSetAllocationFailed`; no 5th pool created, no array write past index 3 |
+| `vkCreateDescriptorPool` itself fails (Step 3) | `newPool == VK_NULL_HANDLE`; the array-write/`++descriptorPoolCount_` lines are never reached | `DescriptorSetAllocationFailed`; `descriptorPoolCount_` unmodified, no handle to leak |
+| An unrecognized/"other" `VkResult` | `isDescriptorPoolGrowthEligible` returns `false` for anything other than the two named values | Immediate `DescriptorSetAllocationFailed`, identical to the `DEVICE_LOST` row above |
+
+### P6. `createDescriptorPoolOfSize()` — one shared helper for both the initial pool and every grown pool; `createPipeline()`'s four call-site edits
+
+**Finding from this Plan's own final review round:** the first draft
+gave `createDevice()`'s own initial-pool creation and the new growth
+path two *separate* pieces of pool-creation code — a real, avoidable
+drift risk (Human Review's own explicit concern). Fixed: one shared,
+free function, called from both places, so they cannot drift apart —
+not merely documented to match, but the *same code* both times:
 
 ```cpp
-VkDescriptorPool VulkanDevice::createGrownDescriptorPool(std::uint32_t maxSets) const {
-  // Identical two-pool-size-entry shape to createDevice()'s own initial
-  // pool (Spec 0016 D5's precedent) -- both descriptor types always
-  // sized equal to maxSets itself (P8's own derivation).
+// vulkan_device.cpp, anonymous namespace, alongside the existing guard
+// classes (InstanceGuard/DeviceGuard/etc.). The single source of truth
+// for "what one descriptor pool in this Device's own growable set
+// looks like" -- called by BOTH createDevice()'s own one-time initial-
+// pool creation (generation 0) AND VulkanDevice::allocateDescriptorSet()'s
+// own runtime growth path (generations 1-3). Returns VK_NULL_HANDLE on
+// vkCreateDescriptorPool failure; the two call sites map that
+// differently (createDevice(): DeviceCreateError::DeviceCreationFailed,
+// unchanged, existing path; allocateDescriptorSet():
+// PipelineCreateError::DescriptorSetAllocationFailed, an ordinary,
+// expected-to-be-rare runtime outcome, never a Device-construction-
+// time failure) -- this function itself makes no judgment about which.
+[[nodiscard]] VkDescriptorPool createDescriptorPoolOfSize(VkDevice device, std::uint32_t maxSets) {
+  // Both descriptor types always sized equal to maxSets itself (P8's
+  // own derivation) -- identical shape at every generation, by
+  // construction, since every generation calls this same function.
   VkDescriptorPoolSize poolSizes[2]{};
   poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
   poolSizes[0].descriptorCount = maxSets;
@@ -489,14 +623,51 @@ VkDescriptorPool VulkanDevice::createGrownDescriptorPool(std::uint32_t maxSets) 
   createInfo.pPoolSizes = poolSizes;
 
   VkDescriptorPool pool = VK_NULL_HANDLE;
-  if (vkCreateDescriptorPool(device_, &createInfo, nullptr, &pool) != VK_SUCCESS) {
+  if (vkCreateDescriptorPool(device, &createInfo, nullptr, &pool) != VK_SUCCESS) {
     return VK_NULL_HANDLE;
   }
   return pool;
 }
 ```
 
-`createPipeline()`'s own three required edits (`vulkan_device.cpp`,
+`createDevice()`'s own pool-creation block (`vulkan_device.cpp:1411-1440`)
+becomes a call to this shared function
+(`detail::createDescriptorPoolOfSize(device, detail::kDescriptorPoolMaxSetsByGeneration[0])`),
+still guarded by the existing, unchanged `DescriptorPoolGuard` — no
+structural change to `createDevice()`'s own two-phase construction
+flow, only the pool-sizing/creation code itself now shared.
+
+**Pool RAII and publish order, the two distinct phases named
+explicitly (never conflated, per Human Review's own instruction):**
+
+1. **Pre-publish (inside `createDescriptorPoolOfSize()`):** if
+   `vkCreateDescriptorPool` itself fails, no handle exists at all —
+   nothing to guard, nothing to publish, nothing to clean up. This is
+   the `VK_NULL_HANDLE`-return row in P5's own scenario table above.
+2. **Publish (`allocateDescriptorSet()`'s own Step 3, immediately after
+   a successful `createDescriptorPoolOfSize()` call):** the array-slot
+   assignment and `++descriptorPoolCount_` are the *only* two
+   statements between "a new, valid pool handle exists" and "the pool
+   is live in the Device-owned collection" — and neither can fail
+   (P2's own array-based redesign: no allocation, trivial
+   copy-assignment). **This is why no separate local RAII guard type is
+   introduced for the growth path**, unlike `createDevice()`'s own
+   `DescriptorPoolGuard`: that guard exists because `createDevice()`'s
+   own construction sequence has *multiple*, real, intervening fallible
+   operations between resource creation and final publish (five
+   separate guarded resources, `std::make_unique<VulkanDevice>` itself
+   able to fail); the growth path has zero such intervening operations,
+   so the "guard until published" property holds by direct construction
+   of the code, not by an added type.
+3. **Post-publish, first-allocation-still-fails (Spec 0021 D9's own
+   "kept, not rolled back" case):** a *distinct*, later phase — the
+   pool is already live in `descriptorPools_` (`descriptorPoolCount_`
+   already incremented) by the time Step 4's own retry is even
+   attempted; if that retry fails, the pool is not un-published, exactly
+   as Spec 0021 D9 specifies. This is never the same code path as item 1
+   above — item 1 never increments `descriptorPoolCount_` at all.
+
+`createPipeline()`'s own four required edits (`vulkan_device.cpp`,
 current line numbers per "Pre-draft verification" above):
 
 1. **Lines 900-913** (the direct `vkAllocateDescriptorSets` block)
@@ -522,20 +693,41 @@ current line numbers per "Pre-draft verification" above):
 4. **Line 1052** (`VulkanPipeline` construction): `descriptorPool_` →
    `originPool` — this is the one line that actually threads the real
    origin pool into `VulkanPipeline`'s own existing, unchanged
-   constructor parameter (P1).
+   constructor parameter (P1, restated: **`VulkanPipeline` needs zero
+   changes** — its own existing single `descriptorPool_` field and
+   constructor parameter already mean exactly "the specific pool my one
+   descriptor set belongs to"; nothing in this Plan adds a field to
+   it — every place elsewhere in an earlier draft of this Plan that
+   still implied otherwise has been removed).
+
+**`~VulkanDevice()`'s own destruction order, and moved-from safety,
+re-confirmed fresh (not assumed):** the destructor loop becomes
+`for (std::size_t i = 0; i < descriptorPoolCount_; ++i) { vkDestroyDescriptorPool(device_, descriptorPools_[i].pool, nullptr); }`
+— bounded by the live count, never touching an unused (default,
+`VK_NULL_HANDLE`) array slot; order among iterations is immaterial
+(P0's own "Pre-draft verification" citation of the existing five
+Phase-2 `.release()` calls' own "order does not matter" comment applies
+identically here — no pool depends on another). `VulkanDevice`'s own
+copy/move constructor and copy/move assignment operator are all four
+explicitly `= delete`d (`vulkan_device.h:96-99`, re-confirmed by direct
+reading this round, unchanged by this Plan) — a `VulkanDevice` can
+never be moved from, so a "moved-from double-destroy" is not merely
+handled, it is structurally unreachable: no code path in this codebase
+can ever produce a second `VulkanDevice` instance holding a copy of
+`descriptorPools_`' own live entries.
 
 ### P7. Complete error-mapping table (every real outcome this Plan touches)
 
 | Real outcome | Maps to |
 |---|---|
 | `vkCreateDescriptorPool` fails during `createDevice()`'s own one-time initial-pool creation | `DeviceCreateError::DeviceCreationFailed` — unchanged, pre-existing path, this Plan does not touch it |
-| `vkCreateDescriptorPool` fails inside `createGrownDescriptorPool()` (a runtime growth attempt) | `createGrownDescriptorPool()` returns `VK_NULL_HANDLE`; `allocateDescriptorSet()` maps this to `PipelineCreateError::DescriptorSetAllocationFailed` |
+| `vkCreateDescriptorPool` fails inside `createDescriptorPoolOfSize()` during a runtime growth attempt (Step 3) | `createDescriptorPoolOfSize()` returns `VK_NULL_HANDLE`; `allocateDescriptorSet()` maps this to `PipelineCreateError::DescriptorSetAllocationFailed`, `descriptorPoolCount_` left unmodified |
 | `vkAllocateDescriptorSets` against an existing pool → `VK_ERROR_OUT_OF_POOL_MEMORY` | growth-eligible (P4); scan continues to the next existing pool, or triggers growth if none remain |
 | `vkAllocateDescriptorSets` against an existing pool → `VK_ERROR_FRAGMENTED_POOL` | growth-eligible (P4); same as above |
 | `vkAllocateDescriptorSets` → `VK_ERROR_DEVICE_LOST` | **not** growth-eligible (P4); immediate `PipelineCreateError::DescriptorSetAllocationFailed`, no further pool tried, no growth attempted |
 | `vkAllocateDescriptorSets` → `VK_ERROR_OUT_OF_HOST_MEMORY` | **not** growth-eligible; immediate `DescriptorSetAllocationFailed`, same as above |
 | `vkAllocateDescriptorSets` → `VK_ERROR_OUT_OF_DEVICE_MEMORY` | **not** growth-eligible; immediate `DescriptorSetAllocationFailed`, same as above |
-| Every existing pool growth-eligible-exhausted, and `descriptorPools_.size() >= kMaxDescriptorPoolCount` (the hard ceiling already reached) | `DescriptorSetAllocationFailed` — the pool set never grows past 4 pools |
+| Every existing pool growth-eligible-exhausted, and `descriptorPoolCount_ >= kMaxDescriptorPoolCount` (the hard ceiling already reached) | `DescriptorSetAllocationFailed` — the pool set never grows past 4 pools |
 | New pool created successfully, the one retry against it still fails (any `VkResult`) | `DescriptorSetAllocationFailed`; the new, now-empty pool is kept in `descriptorPools_` (P5's own Step 3 comment), never rolled back |
 | A *later* `createPipeline()` step fails after a successful set allocation (pipeline-layout creation) | unchanged: `PipelineCreateError::PipelineLayoutCreationFailed`; the already-allocated set is freed back to `originPool` (P6 edit 2) |
 | A *later* `createPipeline()` step fails after a successful set allocation (`vkCreateGraphicsPipelines`) | unchanged: `toPipelineCreateError()`'s generic `PipelineCreateError::PipelineCreationFailed`; the already-allocated set is freed back to `originPool` (P6 edit 3) |
@@ -549,12 +741,11 @@ raising a Plan Review objection.
 ### P8. Descriptor pool capacity — full derivation, not just the final numbers
 
 **Per-pool sizing rule (unchanged from today's existing pool, applied
-identically to every grown pool via `createGrownDescriptorPool()`,
+identically to every grown pool via the shared `createDescriptorPoolOfSize()`,
 P6):** every pool's own `maxSets`, `UNIFORM_BUFFER` descriptor count,
 and `COMBINED_IMAGE_SAMPLER` descriptor count are all set to the
-**identical** value. Applying `kInitialDescriptorPoolMaxSets = 4` and
-`nextDescriptorPoolMaxSets(x) = x * 2`, geometric doubling, up to
-`kMaxDescriptorPoolCount = 4` pools total:
+**identical** value. Reading directly from the fixed, Approved table
+(`kDescriptorPoolMaxSetsByGeneration = {4, 8, 16, 32}`, P3):
 
 | Pool | maxSets | `UNIFORM_BUFFER` count | `COMBINED_IMAGE_SAMPLER` count |
 |---|---|---|---|
@@ -572,9 +763,10 @@ or Material-bound, uniform-only or textured/lit — consumes exactly one
 `vulkan_device.cpp:862-866`, unconditional, present in every
 `VkDescriptorSetLayout` this codebase ever builds) and counts exactly
 once against whichever pool's own `maxSets` it was allocated from. Since
-`createGrownDescriptorPool()` (and `createDevice()`'s own identical,
-unchanged initial-pool code) always sets `UNIFORM_BUFFER count ==
-maxSets` for every pool, `UNIFORM_BUFFER` capacity and `maxSets` are
+`createDescriptorPoolOfSize()` (called identically by both `createDevice()`'s
+own initial-pool creation and every growth event, P6) always sets
+`UNIFORM_BUFFER count == maxSets` for every pool, `UNIFORM_BUFFER`
+capacity and `maxSets` are
 consumed in strict 1:1 lockstep *within each individual pool* — neither
 can be exhausted before the other, for any pool at any growth
 generation. A Material-bound Pipeline (`hasSampledTextureBinding =
@@ -598,8 +790,8 @@ own real peak formula `2*(N+1)` — solving `2*(N+1) <= 60` gives `N <=
 29`. This Plan does not encode "29" anywhere in production code, does
 not name it in any comment as a supported maximum, and does not treat
 it as a design target — it is a mechanically-derived *consequence* of
-`kMaxDescriptorPoolCount`/`kInitialDescriptorPoolMaxSets`, restated here
-only to make the real, current headroom legible for this Plan's own
+`kDescriptorPoolMaxSetsByGeneration`'s own fixed table (P3), restated
+here only to make the real, current headroom legible for this Plan's own
 review, exactly as Spec 0021 D6 requires ("never a content-scaling
 ceiling," "checked, not assumed").
 
@@ -611,13 +803,19 @@ recorded here, not silently absorbed, matching this codebase's own
 established Plan Review disclosure precedent (Plan 0020's identical
 section). **This Plan remains `In Review` after this section — no
 finding here constitutes a Human Review approval; that decision belongs
-to the human maintainer.**
+to the human maintainer.** (**Superseded in part by this Plan's own
+later "Final Review Round" below**, which corrected item 3's own
+container choice from `std::vector` to a fixed `std::array` — this
+section is kept, unedited otherwise, as the historical record of this
+Plan's own first-draft self-review, matching this codebase's own
+"record findings, don't silently absorb them" discipline; do not read
+item 3 below as describing the final, `std::vector`-based design — it
+does not use one.)
 
 1. **The `4` pools / `60` sets figure is consistent with Spec 0021 D6
-   exactly** — re-checked: `kInitialDescriptorPoolMaxSets = 4`,
-   geometric doubling, `kMaxDescriptorPoolCount = 4` pools total,
-   `4+8+16+32 = 60`. V3 makes this a direct, literal test assertion, not
-   merely a Plan-prose claim.
+   exactly** — re-checked: `kMaxDescriptorPoolCount = 4` pools total,
+   geometric doubling, `4+8+16+32 = 60`. V3 makes this a direct, literal
+   test assertion, not merely a Plan-prose claim.
 2. **Pool sizes are sufficient for any uniform/textured mixed
    workload, at every pool generation, not only the first** — P8's own
    proof is generation-independent (holds for any `maxSets` value
@@ -629,14 +827,18 @@ to the human maintainer.**
    `descriptorPool_` field is, and remains, a plain `VkDescriptorPool`
    *value* (P1 — no change at all, so no new risk is introduced); (b)
    `allocateDescriptorSet()`'s own algorithm (P5) assigns
-   `outOriginPool` from the local `newPool`/`entry.pool` value, never
-   from a pointer/reference into `descriptorPools_`'s own storage —
-   confirmed by direct reading of the algorithm's own final draft, not
-   merely asserted.
+   `outOriginPool` from a local value, never from a pointer/reference
+   into `descriptorPools_`'s own storage — confirmed by direct reading
+   of the algorithm's own final draft, not merely asserted. **(This
+   Plan's own later final review round replaced the container itself
+   with a fixed `std::array`, for independent exception-safety reasons —
+   see "Final Review Round" below — which makes this specific concern
+   moot rather than merely addressed: a fixed array never reallocates
+   at all.)**
 4. **Every `createPipeline()` failure path frees to the correct pool** —
-   re-traced all three post-allocation failure branches (P6's own three
-   edits): pipeline-layout failure, `vkCreateGraphicsPipelines` failure,
-   and (inside `allocateDescriptorSet()` itself) the failed-retry-after-
+   re-traced all post-allocation failure branches (P6's own edits):
+   pipeline-layout failure, `vkCreateGraphicsPipelines` failure, and
+   (inside `allocateDescriptorSet()` itself) the failed-retry-after-
    growth branch, which frees nothing (no set was ever allocated on that
    path) — confirmed no branch is missing a repoint from the old
    `descriptorPool_` to `originPool`.
@@ -674,29 +876,145 @@ designed (re-confirmed by this self-review) or is a disclosed,
 in-scope Plan-level detail (P1, P2) that narrows or concretizes the
 approved architecture without changing it.
 
+## Final Review Round (2026-08-29) — closed findings, recorded before approval
+
+A single, centralized final review round verified this Plan's own
+concrete implementation shape against real C++/Vulkan safety concerns
+across ten specific areas: container choice and exception safety, pool
+RAII/publish/destruction order, the allocation-result type, exact scan/
+grow termination, geometric-capacity/integer safety, every
+`createPipeline()` failure path, initial-vs-grown pool configuration
+consistency, test realism, `DeviceLost`/lifecycle, and documentation/
+atomic boundaries. Every item below was closed with a real, disclosed
+fix to this Plan's own document — none required objecting to the
+Approved Spec/ADR, changing the RHI public API, the Pipeline ownership
+model, or the four-pool/60-set contract:
+
+1. **`std::vector<DescriptorPoolEntry>` was a real exception-safety
+   defect, not a style question — replaced with a fixed
+   `std::array<DescriptorPoolEntry, kMaxDescriptorPoolCount>` plus an
+   explicit live count.** `push_back()` can throw `std::bad_alloc` on
+   the render path this codebase's own Error Handling rules require to
+   stay exception-free, and — more seriously — a successfully-created
+   `VkDescriptorPool` handle could leak if the *following* `push_back()`
+   call then threw (nothing else would ever reference that handle).
+   `reserve()`-up-front does not resolve this, only relocates the same
+   throw risk to `VulkanDevice`'s own construction. Since the Approved
+   ceiling is a small, fixed, compile-time constant, a `std::array` is
+   the *more correct* representation, not merely a smaller-exception-
+   surface substitute — it makes the four-pool ceiling a structural,
+   type-level invariant. See P2's own full reasoning.
+2. **The initial-pool-creation path (`createDevice()`) and the runtime
+   growth path used two separate, independently-written pieces of pool-
+   creation code — unified into one shared function,
+   `createDescriptorPoolOfSize()`, called identically by both.** This
+   was a real, avoidable drift risk (Human Review's own explicit
+   concern) — the two paths can no longer diverge because they now
+   execute the literal same code. See P6.
+3. **"Hold the new pool in a local RAII guard until published" was
+   asked for explicitly — this Plan states, rather than merely assumes,
+   why no separate guard *type* is needed for the growth path, unlike
+   `createDevice()`'s own `DescriptorPoolGuard`.** With the fixed-array
+   redesign (item 1), the publish step (an array-slot assignment plus
+   an increment) is the literal next statement after pool creation
+   succeeds, with zero intervening fallible operation — the "guarded
+   until published" property holds by direct construction of the code
+   itself. `createDevice()`'s own guard exists because *that* sequence
+   has multiple, real, intervening fallible operations across five
+   separate resources; the growth path does not share that shape. See
+   P6's own "Pool RAII and publish order" note, which also names the
+   two genuinely distinct phases (pre-publish failure vs. post-publish-
+   retry-fails) explicitly, never conflating them.
+4. **A generic `nextDescriptorPoolMaxSets(x) -> x*2` function was
+   replaced with a fixed, literal table, `kDescriptorPoolMaxSetsByGeneration
+   = {4, 8, 16, 32}`, indexed by generation.** The doubling function was
+   never actually reachable beyond the approved four generations (its
+   one call site was already ceiling-gated), but a fixed table locks
+   the growth strategy to the exact, Approved sequence *structurally*,
+   not merely by call-site discipline — directly closing Human Review's
+   own "don't let a surface-generic helper secretly permit a fifth
+   generation" concern. See P3.
+5. **`descriptorPoolMaxSetsForGeneration()`'s own out-of-range input is
+   an `ATLANTIS_CHECK`, never a recoverable error type** — matching
+   AGENTS.md's own "programmer errors are assertions, not error
+   returns" rule exactly; V3 states explicitly that this path is not,
+   and should not be, exercised by a Catch2 assertion, matching this
+   codebase's own existing precedent for every other `ATLANTIS_CHECK`-
+   guarded function.
+6. **V16's own N=5 draft was arithmetically wrong — corrected to N=6
+   with a full frame-by-frame trace, not a re-assertion of the naive
+   `2*(N+1)` peak formula.** The naive peak formula alone does not
+   determine which pool generation a real scenario reaches, because the
+   real, reuse-first scan algorithm means Frame 1's own initial
+   realization already builds cumulative pool capacity that Frame 2's
+   own format-change allocations partially reuse. Tracing N=5 by hand
+   shows Frame 2's own 6 new allocations fit *exactly* inside pool0+
+   pool1's own combined 12-set capacity (already sized during Frame 1)
+   with zero overflow — no third pool is ever created. N=6 is the real,
+   smallest N that forces one. See V16's own full trace table.
+7. **The reuse test (V10) and the origin-pool-correctness test (V13)
+   both now compute their own real capacity totals from
+   `kDescriptorPoolMaxSetsByGeneration`/`kMaxDescriptorPoolCount`
+   directly, never a hand-copied literal** — requiring one new,
+   narrowly-scoped `target_include_directories` addition to
+   `atlantis_vulkan_backend_gpu_tests` (Milestone 3 item 1), confirmed
+   to add no link-graph change (V24). V10 also now explicitly confirms
+   its own dedicated `Device` carries no other, untracked Pipeline that
+   could confound the capacity-total derivation, and states its own
+   real cost (80 Pipeline creations in one `TEST_CASE`) honestly rather
+   than silently.
+8. **V13 now requires two independent proofs of origin-pool
+   correctness (Validation Layers clean *and* a real reallocation
+   success), never either alone** — a wrong-pool free could plausibly
+   pass one check while failing the other; Human Review's own explicit
+   instruction is now a structural requirement of the test itself, not
+   a suggestion left to Implementation's own judgment.
+9. **`VulkanDevice`'s own move/copy special members were re-confirmed,
+   fresh, this round — not assumed** — all four (`copy ctor`, `copy
+   assign`, `move ctor`, `move assign`) are `= delete`d
+   (`vulkan_device.h:96-99`), confirming a "moved-from double-destroy"
+   of `descriptorPools_` is structurally unreachable, not merely
+   unlikely. See P6's own closing note.
+10. **Milestone boundaries re-verified complete**: Milestone 1 remains
+    genuinely independent (no dead code — its own new table/classifier
+    are fully unit-tested in place, simply not yet called); Milestone 2
+    is confirmed to include every piece that must land atomically (the
+    fixed-array member, the shared creation helper, the allocation
+    result type, all four `createPipeline()` call-site edits, the
+    constructor/destructor, and both of PR #96's own test-flip edits —
+    nothing deferred to a later milestone that would leave an
+    intermediate tree half-fixed); Milestone 3 adds only the dedicated
+    stress/reuse verification and the one CMake include-path change
+    that verification needs.
+
+No finding required changing the Accepted Spec/ADR, the RHI public API,
+the `Pipeline` ownership model, or the four-pool/60-set contract. This
+Plan's own container/algorithm/test corrections above are all Plan-level
+concretizations of the same, unchanged, Approved architecture.
+
 ## Milestones / Task Breakdown
 
 ### Milestone 1 — Pure, GPU-independent growth-strategy modules (additive, zero interaction with `VulkanDevice` yet)
 
 1. Add `src/vulkan_backend/src/vulkan_descriptor_pool_growth.h`/`.cpp`
-   (P3): `kInitialDescriptorPoolMaxSets`, `kMaxDescriptorPoolCount`,
-   `nextDescriptorPoolMaxSets()`. Register the new `.cpp` in
+   (P3): `kMaxDescriptorPoolCount`, `kDescriptorPoolMaxSetsByGeneration`,
+   `descriptorPoolMaxSetsForGeneration()`. Register the new `.cpp` in
    `src/vulkan_backend/CMakeLists.txt`'s own `add_library(atlantis_vulkan_backend
    STATIC ...)` source list.
 2. Add `isDescriptorPoolGrowthEligible()` to `vulkan_result.h`/`.cpp`
    (P4) — no new file, extends the existing module.
 3. New GPU-independent test file
    `tests/vulkan_backend/descriptor_pool_growth_tests.cpp` (pure
-   `nextDescriptorPoolMaxSets()`/constant tests — see "Verification
-   Checklist" V1-V3) and an extension to the existing
-   `tests/vulkan_backend/vulkan_result_tests.cpp` (pure
+   `kDescriptorPoolMaxSetsByGeneration`/`descriptorPoolMaxSetsForGeneration()`
+   tests — see "Verification Checklist" V1-V3) and an extension to the
+   existing `tests/vulkan_backend/vulkan_result_tests.cpp` (pure
    `isDescriptorPoolGrowthEligible()` tests — V4-V6). Register the new
    file in `tests/vulkan_backend/CMakeLists.txt`'s own
    `add_executable(atlantis_vulkan_backend_tests ...)` source list.
 
 Repo state after this milestone: builds and passes every existing test
-unchanged; the two new pure functions exist, are fully unit-tested, and
-are not yet called from anywhere else — a deliberately inert,
+unchanged; the new pure table/classifier exist, are fully unit-tested,
+and are not yet called from anywhere else — a deliberately inert,
 independently-reviewable first step.
 
 ### Milestone 2 — `VulkanDevice`'s pool-set core, atomic, together with PR #96's own test flip
@@ -707,43 +1025,59 @@ expect success cannot land separately from the fix itself without
 leaving an intermediate, semantically-false test state):
 
 1. `vulkan_device.h`: replace `VkDescriptorPool descriptorPool_;`
-   (line 186) with `std::vector<detail::DescriptorPoolEntry>
-   descriptorPools_;` (P2); add the `DescriptorPoolEntry` struct
-   declaration (P2) immediately above `class VulkanDevice`; declare
-   `allocateDescriptorSet()`/`createGrownDescriptorPool()` (P5/P6) as
-   new private members; **remove** the `descriptorPool()` accessor
-   (line 135 — confirmed zero callers, "Pre-draft verification" above);
-   update the file-level header comment (lines 36-43) and the member's
-   own doc comment (lines 180-185) to describe the growable set and
+   (line 186) with the fixed-size
+   `std::array<detail::DescriptorPoolEntry, detail::kMaxDescriptorPoolCount>
+   descriptorPools_{};` plus `std::size_t descriptorPoolCount_ = 0;`
+   (P2 — never a `std::vector`, per this Plan's own exception-safety
+   finding); add the `DescriptorPoolEntry` struct declaration (P2)
+   immediately above `class VulkanDevice`; declare
+   `allocateDescriptorSet()` (P5) as a new private member (no
+   `createGrownDescriptorPool()` member — pool creation is a single,
+   shared, anonymous-namespace free function, P6, called directly);
+   **remove** the `descriptorPool()` accessor (line 135 — confirmed
+   zero callers, "Pre-draft verification" above); update the
+   file-level header comment (lines 36-43) and the member's own doc
+   comment (lines 180-185) to describe the fixed-size growable set and
    cite Spec 0021/ADR-0064, replacing the now-superseded "Section 10...
    maxSets = 4" single-pool description.
 2. `vulkan_device.cpp`:
-   - Constructor (`vulkan_device.cpp:405-421`): body wraps the single
-     `descriptorPool` parameter into `descriptorPools_{{descriptorPool,
-     kInitialDescriptorPoolMaxSets}}` (a 1-element vector) — the
-     constructor's own parameter list is unchanged (`createDevice()`'s
-     own guard-based flow still creates exactly one pool at Device
-     construction, P-none change needed there beyond item 4 below).
+   - Anonymous namespace (alongside `InstanceGuard`/`DeviceGuard`/etc.,
+     `vulkan_device.cpp:257-401`): add `createDescriptorPoolOfSize()`
+     (P6) — the one, shared pool-creation function both call sites
+     below use.
+   - Constructor (`vulkan_device.cpp:405-421`): body sets
+     `descriptorPools_[0] = detail::DescriptorPoolEntry{descriptorPool,
+     detail::kDescriptorPoolMaxSetsByGeneration[0]};
+     descriptorPoolCount_ = 1;` — the constructor's own parameter list
+     is unchanged (`createDevice()`'s own guard-based flow still
+     creates exactly one pool at Device construction, via the shared
+     helper, item 4 below).
    - `~VulkanDevice()` (`vulkan_device.cpp:423-456`): replace the single
      `vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);` call
-     with a loop over `descriptorPools_`, destroying every entry's own
-     `.pool` (order-independent, per "Pre-draft verification" above).
-   - Add `allocateDescriptorSet()`/`createGrownDescriptorPool()` bodies
-     (P5/P6) as new `VulkanDevice::` member-function definitions.
+     with a loop `for (std::size_t i = 0; i < descriptorPoolCount_; ++i)`
+     destroying `descriptorPools_[i].pool` (bounded by the live count,
+     order-independent, per "Pre-draft verification" above; moved-from
+     safety re-confirmed via `VulkanDevice`'s own four explicitly
+     `= delete`d copy/move special members, P6).
+   - Add `allocateDescriptorSet()`'s own body (P5) as a new
+     `VulkanDevice::` member-function definition.
    - `createPipeline()`: apply P6's own four exact edits (lines
      900-913, 930, 1047, 1052).
    - `createDevice()`'s own pool-creation block
-     (`vulkan_device.cpp:1411-1440`): replace the bare `4` literals
-     (`maxSets`, both `descriptorPoolSizes[].descriptorCount` entries)
-     with `detail::kInitialDescriptorPoolMaxSets`; update the
-     surrounding comment (lines 1411-1422) to state the new
-     justification (Spec 0021 D5: a small, cheap first pool, correctness
-     now guaranteed by growth, not by this number being "big enough")
-     in place of the now-superseded "Plan 0007 Section 10... single-
-     Material... peak of 2, doubled" reasoning — matching AGENTS.md's
-     own "update or remove a comment in the same change that makes it
-     stale" rule.
-2. `tests/runtime/material_realization_gpu_tests.cpp`: flip PR #96's
+     (`vulkan_device.cpp:1411-1440`): replace the entire inline
+     `VkDescriptorPoolSize`/`VkDescriptorPoolCreateInfo`/
+     `vkCreateDescriptorPool` sequence with a single call to the new,
+     shared `detail::createDescriptorPoolOfSize(device,
+     detail::kDescriptorPoolMaxSetsByGeneration[0])` (P6) — still
+     guarded by the existing, unchanged `DescriptorPoolGuard`; update
+     the surrounding comment (lines 1411-1422) to state the new
+     justification (Spec 0021 D5: a small, cheap first pool,
+     correctness now guaranteed by growth, not by this number being
+     "big enough") in place of the now-superseded "Plan 0007 Section
+     10... single-Material... peak of 2, doubled" reasoning — matching
+     AGENTS.md's own "update or remove a comment in the same change
+     that makes it stale" rule.
+3. `tests/runtime/material_realization_gpu_tests.cpp`: flip PR #96's
    own `TEST_CASE` (`:923-1098`) — Part 1's own loop expectation (all 6
    `createPipeline()` calls now succeed; extend the loop further, to
    confirm growth actually engages past the original `maxSets = 4`
@@ -764,23 +1098,43 @@ tests in the same file, `:161-456`, whose own N=1 peak already fit
 
 ### Milestone 3 — New, dedicated pool-mechanics GPU tests
 
-1. New file `tests/vulkan_backend/descriptor_pool_growth_gpu_tests.cpp`,
+1. `tests/vulkan_backend/CMakeLists.txt`: add
+   `target_include_directories(atlantis_vulkan_backend_gpu_tests PRIVATE
+   ${CMAKE_SOURCE_DIR}/src/vulkan_backend/src)` — matching the
+   GPU-independent target's own existing precedent — so the new GPU
+   test file below can `#include "vulkan_descriptor_pool_growth.h"` and
+   compute its own real capacity totals directly from
+   `kDescriptorPoolMaxSetsByGeneration`/`kMaxDescriptorPoolCount`, never
+   a hand-copied literal that could silently drift from the real,
+   Approved constants (Human Review's own explicit instruction). This
+   adds no new *link* dependency — `vulkan_descriptor_pool_growth.h`
+   itself includes nothing beyond `<array>`/`<cstddef>`/`<cstdint>`, so
+   `Vulkan::Vulkan` does not need linking here either; V24 below
+   confirms this stays a pure include-path addition, not a link-graph
+   change.
+2. New file `tests/vulkan_backend/descriptor_pool_growth_gpu_tests.cpp`,
    registered in `tests/vulkan_backend/CMakeLists.txt`'s own
    `add_executable(atlantis_vulkan_backend_gpu_tests ...)` source list
-   (no new shader/CMake dependency — reuses the existing
-   `minimal_mesh_shaders` copy step already wired for this target, per
-   "Pre-draft verification" above). Covers V7-V15 below: reuse-after-
-   destruction, the real hard ceiling, mid-creation-failure-after-growth
-   leak safety, and mixed uniform-only/textured allocation.
-2. New `TEST_CASE` in `tests/runtime/material_realization_gpu_tests.cpp`
+   (no new shader dependency — reuses the existing `minimal_mesh_shaders`
+   copy step already wired for this target, per "Pre-draft verification"
+   above). Covers V7-V15 below: reuse-after-destruction, the real hard
+   ceiling, mid-creation-failure-after-growth leak safety, and mixed
+   uniform-only/textured allocation. This file creates its own,
+   dedicated `Device` per `TEST_CASE` (matching every other GPU test in
+   this codebase) — no other Pipeline is ever created against that same
+   `Device` outside what each test explicitly controls, so its own
+   capacity-total derivation (`std::accumulate` over
+   `kDescriptorPoolMaxSetsByGeneration`, item 1 above) is never
+   confounded by an untracked fixture allocation.
+3. New `TEST_CASE` in `tests/runtime/material_realization_gpu_tests.cpp`
    (extending the existing file, matching its own established pattern —
-   not a new file, since this is a Material/Runtime-level scenario):
-   an N=5 real format-change success test, deliberately chosen (Spec
-   0021 D13's own "test parameter only" instruction) to push the peak
-   `2*(N+1) = 12` past pool 2's own 8-set capacity into pool 3's own
-   territory, proving a *second* growth event also works end to end
-   through the real Material/Runtime path, not merely the first
-   (V16-V17 below).
+   not a new file, since this is a Material/Runtime-level scenario): an
+   **N=6** real format-change success test — corrected during this
+   Plan's own final review round from an earlier N=5 draft, which a
+   careful frame-by-frame re-derivation showed does *not* actually force
+   a third pool generation (see V16's own full derivation table below
+   for why N=5 stays within the first two pool generations, and why N=6
+   is the real, smallest N that forces a third).
 
 Repo state after this milestone: fully verified per the checklist below.
 
@@ -792,11 +1146,11 @@ Repo state after this milestone: fully verified per the checklist below.
   declaration)
 - `src/vulkan_backend/src/vulkan_result.cpp` (modified — one new
   function definition)
-- `src/vulkan_backend/src/vulkan_device.h` (modified — member/accessor/
-  private-method changes, per Milestone 2)
+- `src/vulkan_backend/src/vulkan_device.h` (modified — member/accessor
+  changes, one new private method, per Milestone 2)
 - `src/vulkan_backend/src/vulkan_device.cpp` (modified — constructor,
-  destructor, `createPipeline()`, `createDevice()`, two new private
-  methods, per Milestone 2)
+  destructor, `createPipeline()`, `createDevice()`, one new anonymous-
+  namespace helper, one new private method, per Milestone 2)
 - `src/vulkan_backend/CMakeLists.txt` (modified — one new source file)
 - `tests/vulkan_backend/descriptor_pool_growth_tests.cpp` (new,
   GPU-independent)
@@ -805,7 +1159,8 @@ Repo state after this milestone: fully verified per the checklist below.
 - `tests/vulkan_backend/descriptor_pool_growth_gpu_tests.cpp` (new,
   GPU-required)
 - `tests/vulkan_backend/CMakeLists.txt` (modified — two new source
-  files registered)
+  files registered, one new `target_include_directories` entry for
+  `atlantis_vulkan_backend_gpu_tests`, per Milestone 3 item 1)
 - `tests/runtime/material_realization_gpu_tests.cpp` (modified — one
   existing `TEST_CASE` flipped to success and un-tagged; one new
   `TEST_CASE` appended)
@@ -833,15 +1188,27 @@ Plan / D13:
 
 **GPU-independent (`ctest -LE gpu`), Milestone 1:**
 
-- [ ] V1. `nextDescriptorPoolMaxSets(4) == 8`.
-- [ ] V2. `nextDescriptorPoolMaxSets(32) == 64` (geometric doubling holds
-  beyond the current ceiling's own last real pool size too — a pure
-  function, not artificially bounded at 32).
-- [ ] V3. `kInitialDescriptorPoolMaxSets == 4` and
-  `kMaxDescriptorPoolCount == 4` (a direct, literal confirmation the
-  named constants match Spec 0021 D5/D6's own approved values exactly —
-  guards against a silent drift between this Plan's own derivation and
-  the constants Implementation actually ships).
+- [ ] V1. `kDescriptorPoolMaxSetsByGeneration == std::array<std::uint32_t, 4>{4, 8, 16, 32}`
+  (a direct, literal confirmation the fixed table matches Spec 0021
+  D5/D6's own approved four-value sequence exactly — guards against a
+  silent drift between this Plan's own derivation and the constants
+  Implementation actually ships) and `kMaxDescriptorPoolCount == 4`.
+- [ ] V2. `descriptorPoolMaxSetsForGeneration(i) ==
+  kDescriptorPoolMaxSetsByGeneration[i]` for every legal `i` in `{0, 1,
+  2, 3}` — all four legal generations, individually, not merely the
+  table's own literal check (V1).
+- [ ] V3. `std::accumulate(kDescriptorPoolMaxSetsByGeneration.begin(),
+  kDescriptorPoolMaxSetsByGeneration.end(), 0u) == 60` — the real,
+  current total hard ceiling on concurrent descriptor sets, computed
+  from the same constants Milestone 3's own GPU tests will read
+  (Milestone 3 item 1), never a separately-hardcoded "60." Calling
+  `descriptorPoolMaxSetsForGeneration()` with `generationIndex >= 4` is
+  a programmer error (`ATLANTIS_CHECK`), matching AGENTS.md's own
+  "programmer errors are assertions, not error returns" rule — not
+  exercised by a Catch2 assertion here, matching this codebase's own
+  existing precedent (no test anywhere in this repository exercises an
+  `ATLANTIS_CHECK` failure path; it is a debug-build-only guard, not a
+  runtime-recoverable condition this Plan's own tests need to cover).
 - [ ] V4. `isDescriptorPoolGrowthEligible(VK_ERROR_OUT_OF_POOL_MEMORY) ==
   true`.
 - [ ] V5. `isDescriptorPoolGrowthEligible(VK_ERROR_FRAGMENTED_POOL) ==
@@ -876,18 +1243,38 @@ Plan / D13:
 
 - [ ] V10. **Ceiling-and-reuse test (single `TEST_CASE`, two phases,
   proving both properties without any new production introspection
-  API — the indirect technique Human Review specified):** Phase 1 —
-  create 60 Pipelines via direct `Device::createPipeline()` calls (the
-  full `4+8+16+32` capacity across all 4 pools); all 60 succeed; the
-  61st fails with exactly `PipelineCreateError::DescriptorSetAllocationFailed`
+  API — the indirect technique Human Review specified):** the test
+  itself computes `kTotalCapacity = std::accumulate(kDescriptorPoolMaxSetsByGeneration.begin(),
+  kDescriptorPoolMaxSetsByGeneration.end(), 0u)` (Milestone 3 item 1's
+  own new include path — never a hardcoded "60" literal in the test
+  itself, so this test tracks the real, approved constants even if a
+  future amendment ever changes them). Phase 1 — create
+  `kTotalCapacity` Pipelines via direct `Device::createPipeline()`
+  calls on one dedicated `Device` this `TEST_CASE` owns exclusively
+  (no other Pipeline is ever created against it — "Pre-draft
+  verification"/Milestone 3 item 2's own confirmation); all
+  `kTotalCapacity` succeed; the next (`kTotalCapacity + 1`th) fails
+  with exactly `PipelineCreateError::DescriptorSetAllocationFailed`
   (the hard ceiling, D6, correctly enforced — no unbounded growth).
-  Phase 2 — destroy 10 of the 60 (freeing capacity in whichever
-  pool(s) they came from); create 10 new Pipelines; all 10 succeed.
-  Since the pool set is already at its own hard ceiling (4 pools) before
-  Phase 2 begins, a 5th pool cannot legally be created — so Phase 2's
-  own success is only possible if the freed capacity was found and
-  reused by the creation-order scan, definitively proving reuse-before-
-  growth (Spec 0021 D3/D7) without querying pool count directly.
+  Phase 2 — destroy 10 of the `kTotalCapacity` (freeing capacity in
+  whichever pool(s) they came from); create 10 new Pipelines; all 10
+  succeed. Since the pool set is already at its own hard ceiling (4
+  pools) before Phase 2 begins, a 5th pool cannot legally be created —
+  so Phase 2's own success is only possible if the freed capacity was
+  found and reused by the creation-order scan, definitively proving
+  reuse-before-growth (Spec 0021 D3/D7) without querying pool count
+  directly. **Cost/stability, evaluated honestly, not assumed:**
+  `kTotalCapacity + 20` (80) `vkCreateGraphicsPipelines` calls in one
+  `TEST_CASE`, each against the checked-in, minimal `minimal_mesh`
+  shader pair with no texture/vertex-buffer upload — the same
+  per-call shape the existing low-level probe (V7) already exercises
+  at a smaller scale; this is deliberately the one, single, more
+  expensive test in this Plan dedicated specifically to proving the
+  reuse property at real, full scale, not scattered redundantly across
+  several tests. If this proves unacceptably slow or unstable on real
+  hardware during Implementation's own verification pass, that is a
+  Verification-stage finding to report, not a reason to silently
+  substitute a smaller, unproven number for `kTotalCapacity`.
 - [ ] V11. Mid-creation-failure-after-growth leaves no leak: force a
   growth event (create enough Pipelines to exhaust pool 1), then
   trigger a `createPipeline()` failure at a step *after* successful
@@ -907,14 +1294,24 @@ Plan / D13:
   across enough `createPipeline()` calls to exhaust pool 1 and trigger
   one growth event; confirm no premature, type-specific exhaustion
   before `maxSets` itself is reached, matching P8's own derivation.
-- [ ] V13. Origin-pool correctness across pools: create enough Pipelines
-  to span at least 2 pool generations; destroy them in a
-  different-from-creation order; confirm every `VulkanPipeline`
-  destructor's own `vkFreeDescriptorSets` call succeeds (the existing
-  `ATLANTIS_CHECK(freeResult == VK_SUCCESS)` in `vulkan_pipeline.cpp:28`
-  — an assertion failure here would abort the test process, an
-  unmistakable, already-existing signal) and zero Validation Layers
-  hits occur.
+- [ ] V13. Origin-pool correctness across pools, proven **doubly**, per
+  Human Review's own explicit instruction (Validation Layers *and* a
+  real reallocation success, never either alone): create enough
+  Pipelines to span at least 2 pool generations; destroy them in a
+  different-from-creation order; **proof 1** — confirm every
+  `VulkanPipeline` destructor's own `vkFreeDescriptorSets` call
+  succeeds (the existing `ATLANTIS_CHECK(freeResult == VK_SUCCESS)` in
+  `vulkan_pipeline.cpp:28` — an assertion failure here would abort the
+  test process, an unmistakable, already-existing signal) and zero
+  Validation Layers hits occur (a set freed back to the *wrong* pool
+  would be exactly the kind of use-after-free/invalid-handle misuse
+  Validation Layers is positioned to catch); **proof 2** — after those
+  destructions, create new Pipelines and confirm they succeed by
+  reusing the now-freed capacity (matching V10's own reuse technique at
+  a smaller scale) — a wrong-pool free would leave the *actually*-used
+  pool still reporting exhaustion even though objects were destroyed,
+  which this second, independent proof would catch even if Validation
+  Layers somehow did not.
 - [ ] V14. Pipelines created before a growth event remain valid and
   usable after it: create one Pipeline (pool 1), force a growth event
   via other allocations, then confirm the first Pipeline's own
@@ -932,16 +1329,39 @@ Plan / D13:
 
 **Real GPU (`ctest -L gpu`), Milestone 3, `material_realization_gpu_tests.cpp` (new `TEST_CASE`):**
 
-- [ ] V16. N=5 real format-change success, through the real
+- [ ] V16. **N=6** real format-change success, through the real
   `rebuildMaterialsForFormatChange()`/`Renderer` path (not the low-level
-  probe): 5 distinct, real Materials (a mix of `UnlitTextured`/
-  `LitTextured`) realized in "Frame 1"; a real color-format change in
-  "Frame 2" with the old 5-material batch and the new fallback+5-
-  material candidate batch both alive (peak `2*(1+5) = 12`, exceeding
-  pool 2's own 8-set capacity, forcing a *second* growth event);
-  `rebuildResult.isOk()`; `candidates.materials.size() == 5`; every
+  probe) — **N=6, not N=5, corrected during this Plan's own final
+  review round by a full frame-by-frame trace, not merely the naive
+  `2*(N+1)` peak formula**, since the *naive* peak alone does not
+  determine whether a third pool generation is actually reached (that
+  depends on how much cumulative pool capacity Frame 1's own initial
+  realization already built, per the real, reuse-first scan
+  algorithm). The exact trace:
+
+  | Step | Allocation | Pool state after |
+  |---|---|---|
+  | Frame 1 (format A): realize fallback + 6 materials, 7 total | alloc 1-4 fill pool 0 (generation 0, cap 4) | pool0 = 4/4 |
+  | | alloc 5 exhausts pool0 → grows pool1 (generation 1, cap 8) → succeeds | pool0=4/4, pool1=1/8 |
+  | | alloc 6, 7 | pool0=4/4, pool1=3/8 (5 free) |
+  | *End Frame 1* | 7 live sets, 2 pools, cumulative capacity 12 | pool0=4/4, pool1=3/8 |
+  | Frame 2 (format change): rebuild fallback + 6 materials, 7 NEW, old 7 still alive | new alloc 1-5 fill pool1's own remaining 5 free slots | pool1=8/8 (full) |
+  | | new alloc 6 exhausts pool0 (full) and pool1 (full) → grows pool2 (generation 2, cap 16) → succeeds | pool2=1/16 |
+  | | new alloc 7 | pool2=2/16 |
+  | *Peak, before old batch destroyed* | 14 concurrent live sets, **3 pools** | pool0=4/4, pool1=8/8, pool2=2/16 |
+
+  This is why **N=5 does not** force a third pool (a symmetric trace
+  for N=5 shows Frame 1 ending with pool0=4/4, pool1=2/8 — 6 free —
+  and Frame 2's own 6 new allocations fit exactly inside that remaining
+  free capacity, 12 total = pool0+pool1's own exact combined capacity,
+  with zero left over but no overflow either) — and why **N=6 is the
+  real, smallest N** that does, matching Spec 0021 D13's own "past the
+  first growth boundary, proving a second growth event also works"
+  instruction precisely, with an exact derivation behind the chosen N,
+  not an approximation. Assertions:
+  `rebuildResult.isOk()`; `candidates.materials.size() == 6`; every
   rebuilt Pipeline address-distinct from its own old counterpart.
-- [ ] V17. The same N=5 scenario's own real `submit()` call (drawing
+- [ ] V17. The same N=6 scenario's own real `submit()` call (drawing
   with the new candidate batch, per Spec 0018 D9's own unmodified
   submit-safe sequence) succeeds with zero Validation Layers hits, and
   the swap-in of the new bundle only happens after that `submit()`
@@ -967,7 +1387,13 @@ Plan / D13:
 - [ ] V24. Module/link graph unchanged: `Atlantis::VulkanBackend`'s own
   `target_link_libraries` (`PUBLIC RHI/Core/Platform`, `PRIVATE
   Vulkan::Vulkan`) confirmed byte-identical to today; no new
-  `target_link_libraries` entry anywhere this Plan touches.
+  `target_link_libraries` entry anywhere this Plan touches. Milestone 3
+  item 1's own new `target_include_directories(atlantis_vulkan_backend_gpu_tests
+  PRIVATE ...)` line is confirmed to be exactly that — an include-path
+  addition only, no accompanying `target_link_libraries` change, and no
+  new `Vulkan::Vulkan` link on that target (`vulkan_descriptor_pool_growth.h`
+  itself has no Vulkan dependency, "Milestone 3" above) — so this item's
+  own "link graph unchanged" claim holds precisely, not loosely.
 - [ ] V25. All five existing goldens (`minimal_cube`, `world_scene`,
   `textured_quad`, `material_demo`, `lighting_demo`) confirmed
   byte-for-byte/pixel-for-pixel unchanged (`git diff main --quiet`
