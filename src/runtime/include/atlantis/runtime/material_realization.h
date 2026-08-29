@@ -92,11 +92,21 @@ struct RealizedMaterialCandidate {
 // RenderGraph pass (when newSampledTexture is non-null) into the shared
 // CommandList (step 3) before this candidate is ever moved into a
 // persistent map.
+// Plan 0019 Section P6: litTexturedVertexInputLayout/litTexturedVertexSpirv/
+// litTexturedFragmentSpirv, inserted immediately after the existing
+// unlitTexturedFragmentSpirv/colorFormat parameters -- the unlitTextured*
+// trio's own signature position is unchanged. This function itself
+// selects between the two shader pairs via the shared, file-local
+// selectShaderPair() helper (material_realization.cpp), keyed off
+// materialData.kind -- never a second, separately-written switch.
 [[nodiscard]] atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOneMaterialCandidate(
     atlantis::rhi::Device& device, const atlantis::rhi::VertexInputLayout& unlitTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& unlitTexturedVertexSpirv,
     const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv, atlantis::rhi::Format colorFormat,
-    atlantis::asset_system::AssetId materialAssetId, const atlantis::asset_system::MaterialAssetData& materialData,
+    const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
+    const std::vector<std::uint32_t>& litTexturedVertexSpirv,
+    const std::vector<std::uint32_t>& litTexturedFragmentSpirv, atlantis::asset_system::AssetId materialAssetId,
+    const atlantis::asset_system::MaterialAssetData& materialData,
     const atlantis::asset_system::TextureAssetData& textureData,
     const std::unordered_map<atlantis::asset_system::AssetId, const atlantis::rhi::SampledTexture*>&
         effectiveSampledTextures);
@@ -130,11 +140,18 @@ struct RealizedMaterialCandidate {
 // candidate's own newSampledTexture/sampler/material into the
 // persistent resource maps -- this function itself never touches those
 // maps.
+// Plan 0019 Section P6: gains the identical litTextured* trio, threaded
+// straight through to realizeOneMaterialCandidate() unchanged in kind
+// from how unlitTextured* is already threaded -- this function never
+// calls selectShaderPair() itself.
 [[nodiscard]] std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizePendingMaterials(
     atlantis::rhi::Device& device, atlantis::rhi::CommandList& commandList,
     const atlantis::rhi::VertexInputLayout& unlitTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& unlitTexturedVertexSpirv,
     const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv, atlantis::rhi::Format colorFormat,
+    const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
+    const std::vector<std::uint32_t>& litTexturedVertexSpirv,
+    const std::vector<std::uint32_t>& litTexturedFragmentSpirv,
     const std::vector<atlantis::asset_system::AssetId>& pendingIds,
     const std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>>&
         sampledTextureResourceMap,
@@ -179,12 +196,28 @@ struct FormatRebuildCandidates {
 // sampler() return the exact same borrowed pointer passed at that
 // object's own construction) -- no separate AssetId-keyed lookup is
 // needed to obtain them, avoiding an unnecessary indirection.
+//
+// Plan 0019 Section P6: gains the litTextured* trio (inserted
+// immediately after unlitTexturedFragmentSpirv/newColorFormat, mirroring
+// realizeOneMaterialCandidate()'s own insertion point) AND a new
+// materialDataMap parameter -- without it, this function has no way to
+// look up a given existing Material's own real MaterialKind and would
+// silently rebuild every material, LitTextured included, through
+// whichever shader pair happened to be named; materialDataMap is keyed
+// identically to currentMaterials (both by material AssetId), so every
+// id in currentMaterials is required to already have a matching entry
+// here.
 [[nodiscard]] atlantis::Result<FormatRebuildCandidates, MaterialRealizationError> rebuildMaterialsForFormatChange(
     atlantis::rhi::Device& device, const atlantis::rhi::VertexInputLayout& fallbackVertexInputLayout,
     const std::vector<std::uint32_t>& fallbackVertexSpirv, const std::vector<std::uint32_t>& fallbackFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& unlitTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& unlitTexturedVertexSpirv,
-    const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv, atlantis::rhi::Format newColorFormat,
+    const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
+    const std::vector<std::uint32_t>& litTexturedVertexSpirv,
+    const std::vector<std::uint32_t>& litTexturedFragmentSpirv, atlantis::rhi::Format newColorFormat,
+    const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData>&
+        materialDataMap,
     const std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::renderer::Material>>&
         currentMaterials);
 

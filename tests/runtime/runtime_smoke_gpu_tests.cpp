@@ -67,6 +67,17 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
       std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.frag.spv";
   config.unlitTexturedFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.frag.refl.json";
+  // Plan 0019 Section P6/P11: mirrors main.cpp's own identical
+  // population of the third, MaterialKind::LitTextured built-in shader
+  // pair.
+  config.litTexturedVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.vert.spv";
+  config.litTexturedVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.vert.refl.json";
+  config.litTexturedFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.spv";
+  config.litTexturedFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.refl.json";
   config.enableValidationLayers = true;
 
   auto appResult = createRuntimeApplication(config);

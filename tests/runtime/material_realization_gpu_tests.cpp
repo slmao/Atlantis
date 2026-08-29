@@ -70,11 +70,16 @@ using atlantis::shader_system::rhi_integration::toVertexInputLayout;
 
 // Duplicated, not shared -- matches every other composition root's own
 // established "duplicated Vertex schema + loadSpirvFile()" precedent
-// (runtime_application.cpp, material_demo_fixture.cpp).
+// (runtime_application.cpp, material_demo_fixture.cpp). Plan 0019
+// Section P6: normal appended (matching the real mesh v3 44-byte
+// stride) so litTexturedVertexLayout() below has a real offset to name
+// -- this file never actually uploads real vertex data through these
+// layouts (it tests Material/Pipeline construction, not drawing).
 struct Vertex {
   float position[3];
   float color[3];
   float uv[2];
+  float normal[3];
 };
 
 [[nodiscard]] std::optional<std::vector<std::uint32_t>> loadSpirvFile(const std::string& path) {
@@ -92,6 +97,21 @@ struct Vertex {
   const std::vector<MeshVertexAttributeSchema> schema = {
       MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
       MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
+// Plan 0019 Section P6: realizePendingMaterials()/rebuildMaterialsForFormatChange()'s
+// own widened signatures require a real litTextured* trio at every call
+// site, even here, where no test in this file ever realizes a
+// MaterialKind::LitTextured material.
+[[nodiscard]] std::optional<VertexInputLayout> litTexturedVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+      MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
+      MeshVertexAttributeSchema{.location = 2, .offsetBytes = offsetof(Vertex, normal)},
   };
   auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
   if (result.isErr()) return std::nullopt;
@@ -157,6 +177,17 @@ TEST_CASE("rebuildMaterialsForFormatChange never touches the caller existing bun
   const auto unlitLayout = unlitTexturedVertexLayout(unlitVertexReflectionResult.value());
   REQUIRE(unlitLayout.has_value());
 
+  auto litVertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.vert.spv");
+  auto litFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.spv");
+  REQUIRE(litVertexSpirv.has_value());
+  REQUIRE(litFragmentSpirv.has_value());
+  auto litVertexReflectionResult = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) +
+                                                           "/lit_textured.vert.refl.json");
+  REQUIRE(litVertexReflectionResult.isOk());
+  const auto litLayout = litTexturedVertexLayout(litVertexReflectionResult.value());
+  REQUIRE(litLayout.has_value());
+
   auto fallbackVertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.spv");
   auto fallbackFragmentSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.frag.spv");
   REQUIRE(fallbackVertexSpirv.has_value());
@@ -194,8 +225,8 @@ TEST_CASE("rebuildMaterialsForFormatChange never touches the caller existing bun
 
     std::unordered_map<AssetId, RealizedMaterialCandidate> realized =
         realizePendingMaterials(*device, *commandList, *unlitLayout, *unlitVertexSpirv, *unlitFragmentSpirv,
-                                 Format::Rgba8Unorm, {kMaterialA}, sampledTextureResourceMap, materialDataMap,
-                                 textureDataMap);
+                                 Format::Rgba8Unorm, *litLayout, *litVertexSpirv, *litFragmentSpirv, {kMaterialA},
+                                 sampledTextureResourceMap, materialDataMap, textureDataMap);
     REQUIRE(realized.size() == 1);
 
     auto submitResult = device->submit(std::move(commandList), *target);
@@ -217,9 +248,10 @@ TEST_CASE("rebuildMaterialsForFormatChange never touches the caller existing bun
     auto offscreenB = device->createOffscreenTarget({.extent = kExtent, .format = Format::Rgba8Srgb});
     REQUIRE(offscreenB.isOk());
 
-    auto rebuildResult = rebuildMaterialsForFormatChange(*device, *fallbackLayout, *fallbackVertexSpirv,
-                                                          *fallbackFragmentSpirv, *unlitLayout, *unlitVertexSpirv,
-                                                          *unlitFragmentSpirv, Format::Rgba8Srgb, materialResourceMap);
+    auto rebuildResult = rebuildMaterialsForFormatChange(
+        *device, *fallbackLayout, *fallbackVertexSpirv, *fallbackFragmentSpirv, *unlitLayout, *unlitVertexSpirv,
+        *unlitFragmentSpirv, *litLayout, *litVertexSpirv, *litFragmentSpirv, Format::Rgba8Srgb, materialDataMap,
+        materialResourceMap);
     REQUIRE(rebuildResult.isOk());
     auto candidates = std::move(rebuildResult.value());
     REQUIRE(candidates.fallback != nullptr);
@@ -290,6 +322,17 @@ TEST_CASE("A second material that dedups its texture against an EARLIER frame's 
   const auto vertexInputLayout = unlitTexturedVertexLayout(vertexReflectionResult.value());
   REQUIRE(vertexInputLayout.has_value());
 
+  auto litVertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.vert.spv");
+  auto litFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.spv");
+  REQUIRE(litVertexSpirv.has_value());
+  REQUIRE(litFragmentSpirv.has_value());
+  auto litVertexReflectionResult = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) +
+                                                           "/lit_textured.vert.refl.json");
+  REQUIRE(litVertexReflectionResult.isOk());
+  const auto litLayout = litTexturedVertexLayout(litVertexReflectionResult.value());
+  REQUIRE(litLayout.has_value());
+
   constexpr Extent2D kExtent{4, 4};
   auto offscreenResult = device->createOffscreenTarget({.extent = kExtent, .format = Format::Rgba8Unorm});
   REQUIRE(offscreenResult.isOk());
@@ -327,8 +370,8 @@ TEST_CASE("A second material that dedups its texture against an EARLIER frame's 
 
     std::unordered_map<AssetId, RealizedMaterialCandidate> realized =
         realizePendingMaterials(*device, *commandList, *vertexInputLayout, *vertexSpirv, *fragmentSpirv,
-                                 Format::Rgba8Unorm, pendingIds, sampledTextureResourceMap, materialDataMap,
-                                 textureDataMap);
+                                 Format::Rgba8Unorm, *litLayout, *litVertexSpirv, *litFragmentSpirv, pendingIds,
+                                 sampledTextureResourceMap, materialDataMap, textureDataMap);
     REQUIRE(realized.size() == 1);
     REQUIRE(realized.at(kMaterialA).newSampledTexture != nullptr);
     REQUIRE(realized.at(kMaterialA).sampler != nullptr);
@@ -366,8 +409,8 @@ TEST_CASE("A second material that dedups its texture against an EARLIER frame's 
 
     std::unordered_map<AssetId, RealizedMaterialCandidate> realized =
         realizePendingMaterials(*device, *commandList, *vertexInputLayout, *vertexSpirv, *fragmentSpirv,
-                                 Format::Rgba8Unorm, pendingIds, sampledTextureResourceMap, materialDataMap,
-                                 textureDataMap);
+                                 Format::Rgba8Unorm, *litLayout, *litVertexSpirv, *litFragmentSpirv, pendingIds,
+                                 sampledTextureResourceMap, materialDataMap, textureDataMap);
 
     // The exact invariant the fix restores: a cross-frame dedup candidate
     // still comes back non-empty, with a real Sampler/Material, even though

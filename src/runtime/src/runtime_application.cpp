@@ -160,6 +160,24 @@ static_assert(
   return result.value();
 }
 
+// Plan 0019 Section P15: the MaterialKind::LitTextured shader pair's own
+// vertex schema -- position@0, uv@1, and (unlike unlitTexturedVertexLayout()
+// above) normal@2, cross-checked against lit_textured.slang's own
+// VertexInput location by toVertexInputLayout()'s own existing
+// reflection-matching (a location/offset typo fails at Implementation
+// time with Result::Err(MappingError::LocationNotFoundInSchema), not
+// silently at runtime).
+[[nodiscard]] std::optional<VertexInputLayout> litTexturedVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+      MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
+      MeshVertexAttributeSchema{.location = 2, .offsetBytes = offsetof(Vertex, normal)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 }  // namespace
 
 RuntimeApplication::RuntimeApplication(PlatformSession&& session) noexcept
@@ -226,6 +244,32 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   unlitTexturedFragmentSpirv_ = std::move(unlitTexturedFragmentSpirvOpt.value());
   unlitTexturedVertexInputLayout_ = std::move(unlitTexturedLayoutOpt.value());
 
+  // Step 2c (Plan 0019 Section P6/P11): the third, MaterialKind::LitTextured
+  // built-in shader pair -- same shape as step 2b above, mirrored exactly.
+  auto litTexturedVertexSpirvOpt = loadSpirvFile(config.litTexturedVertexShaderSpirvPath);
+  auto litTexturedFragmentSpirvOpt = loadSpirvFile(config.litTexturedFragmentShaderSpirvPath);
+  if (!litTexturedVertexSpirvOpt.has_value() || !litTexturedFragmentSpirvOpt.has_value()) {
+    ATLANTIS_LOG_ERROR("Failed to load shader SPIR-V from {} / {}", config.litTexturedVertexShaderSpirvPath,
+                        config.litTexturedFragmentShaderSpirvPath);
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  auto litTexturedVertexReflectionResult = loadReflectionMetadata(config.litTexturedVertexShaderReflectionPath);
+  if (litTexturedVertexReflectionResult.isErr()) {
+    ATLANTIS_LOG_ERROR("loadReflectionMetadata() failed for {}", config.litTexturedVertexShaderReflectionPath);
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  auto litTexturedLayoutOpt = litTexturedVertexLayout(litTexturedVertexReflectionResult.value());
+  if (!litTexturedLayoutOpt.has_value()) {
+    ATLANTIS_LOG_ERROR("litTexturedVertexLayout(): reflected vertex-input attributes do not match the Vertex schema");
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  litTexturedVertexSpirv_ = std::move(litTexturedVertexSpirvOpt.value());
+  litTexturedFragmentSpirv_ = std::move(litTexturedFragmentSpirvOpt.value());
+  litTexturedVertexInputLayout_ = std::move(litTexturedLayoutOpt.value());
+
   // Step 3: Device.
   auto deviceResult = atlantis::vulkan_backend::createDevice(
       {.applicationName = config.applicationName, .enableValidationLayers = config.enableValidationLayers});
@@ -236,9 +280,13 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   }
   device_ = std::move(deviceResult.value());
 
-  // Step 4: camera uniform Buffer.
-  auto cameraBufferResult =
-      device_->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = sizeof(float) * 32});
+  // Step 4: camera uniform Buffer. Plan 0019 Section P7: widened from
+  // sizeof(float) * 32 (view + projection only) to also carry
+  // FrameLightingData (176 bytes) appended immediately after, at
+  // absolute byte offset 128 -- the one-time light-capture write (P9,
+  // runFrame()) targets exactly this tail region.
+  auto cameraBufferResult = device_->createBuffer(
+      {.purpose = BufferPurpose::Uniform, .sizeBytes = sizeof(float) * 32 + sizeof(FrameLightingData)});
   if (cameraBufferResult.isErr()) {
     ATLANTIS_LOG_ERROR("createBuffer() (camera uniform) failed");
     lifecycle_.markFailed();
@@ -388,10 +436,10 @@ void RuntimeApplication::runFrame() {
   std::optional<FormatRebuildCandidates> pendingFormatRebuild;
   bool formatRebuildFailedThisFrame = false;
   if (!lastSeenFormat_.has_value() || currentFormat != *lastSeenFormat_) {
-    auto rebuildResult = rebuildMaterialsForFormatChange(*device_, vertexInputLayout_, vertexSpirv_, fragmentSpirv_,
-                                                          unlitTexturedVertexInputLayout_, unlitTexturedVertexSpirv_,
-                                                          unlitTexturedFragmentSpirv_, currentFormat,
-                                                          materialResourceMap_);
+    auto rebuildResult = rebuildMaterialsForFormatChange(
+        *device_, vertexInputLayout_, vertexSpirv_, fragmentSpirv_, unlitTexturedVertexInputLayout_,
+        unlitTexturedVertexSpirv_, unlitTexturedFragmentSpirv_, litTexturedVertexInputLayout_,
+        litTexturedVertexSpirv_, litTexturedFragmentSpirv_, currentFormat, materialDataMap_, materialResourceMap_);
     if (rebuildResult.isErr()) {
       ATLANTIS_LOG_ERROR(
           "rebuildMaterialsForFormatChange() failed during format-change rebuild -- keeping the existing "
@@ -492,6 +540,41 @@ void RuntimeApplication::runFrame() {
   for (std::size_t i = 0; i < 16; ++i) cameraData[i] = extractionResult.value().view[i];
   for (std::size_t i = 0; i < 16; ++i) cameraData[16 + i] = extractionResult.value().projection[i];
 
+  // Plan 0019 Section P9: the one-time frame lighting snapshot -- guarded
+  // by lightingDataCaptured_, never re-entered on any later frame for
+  // this RuntimeApplication instance's own lifetime. World::setLight()
+  // calls made after this point change World's own CPU state only; no
+  // code path below this guard ever reads World's light state again.
+  if (!lightingDataCaptured_) {
+    std::vector<LightExtractionInput> lightInputs;
+    for (const atlantis::world::EntityId& id : world_->lightEntities()) {
+      const auto lightResult = world_->getLight(id);
+      const auto lightWorldMatrixResult = world_->getWorldMatrix(id);
+      ATLANTIS_CHECK_MSG(lightResult.isOk() && lightWorldMatrixResult.isOk(),
+                          "runFrame(): getLight()/getWorldMatrix() failed for a handle lightEntities() just returned");
+      lightInputs.push_back({lightResult.value(), lightWorldMatrixResult.value()});
+    }
+    const auto lightingResult = extractFrameLightingData(lightInputs);
+    if (lightingResult.isErr()) {
+      // Spec 0019's own fixed light Transform values (Milestone 8's new
+      // scene) are chosen to never be degenerate -- reaching this path is
+      // an unrecoverable construction-bug indicator, matching
+      // extractCameraMatrices()'s own identical "should never happen"
+      // treatment at this same call site's own sibling check above.
+      ATLANTIS_LOG_ERROR("runFrame(): extractFrameLightingData() failed");
+      lifecycle_.markFailed();
+      return;
+    }
+    // reinterpret_cast through the already-obtained cameraData pointer
+    // (Buffer::mappedData() is mapped once, at construction -- a second
+    // call would return the identical pointer) rather than a second,
+    // independent mappedData() call, keeping this write visibly,
+    // textually anchored to the camera-portion write immediately above.
+    auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
+    *lightingData = lightingResult.value();
+    lightingDataCaptured_ = true;
+  }
+
   // Plan 0015 Section D10: knownMeshAssetIds is meshResourceMap_'s own
   // key set, collected once per frame (not once per entity) -- passed
   // to resolveMeshAsset() for the membership check; meshResourceMap_
@@ -541,7 +624,8 @@ void RuntimeApplication::runFrame() {
   // even with an empty pendingMaterialIds (records nothing).
   std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
       realizePendingMaterials(*device_, *commandList, unlitTexturedVertexInputLayout_, unlitTexturedVertexSpirv_,
-                               unlitTexturedFragmentSpirv_, currentFormat, pendingMaterialIds,
+                               unlitTexturedFragmentSpirv_, currentFormat, litTexturedVertexInputLayout_,
+                               litTexturedVertexSpirv_, litTexturedFragmentSpirv_, pendingMaterialIds,
                                sampledTextureResourceMap_, materialDataMap_, textureDataMap_);
   // Plan 0018 Section P12 (Spec 0018 D8 step 5): gated on "at least one
   // material was newly realized this frame" -- NOT narrowed to "at least
@@ -616,6 +700,32 @@ void RuntimeApplication::runFrame() {
               "skipping this entity for this frame only");
           continue;
         }
+
+        // Plan 0019 Section P15: gated on this entity's OWN
+        // MaterialAssetData.kind (already loaded by Phase 1, into
+        // materialDataMap_, read here a second time -- never a new
+        // load) -- an UnlitTextured-bound entity, or one with no
+        // material at all (the untextured fallback path, handled
+        // outside this if block entirely), never calls
+        // checkConformalTransform(); its own world matrix may be
+        // arbitrarily non-uniform-scaled or sheared with no effect.
+        const auto materialDataIt = materialDataMap_.find(*materialAsset);
+        ATLANTIS_CHECK_MSG(materialDataIt != materialDataMap_.end(),
+                            "runFrame(): a resolveMaterialAsset()-confirmed material AssetId must already be a key "
+                            "in materialDataMap_ (Phase 1 load)");
+        if (materialDataIt->second.kind == atlantis::asset_system::MaterialKind::LitTextured) {
+          const auto conformalResult = checkConformalTransform(worldMatrixResult.value());
+          if (conformalResult.isErr()) {
+            // Recoverable, per-entity, per-frame -- never scene-load-
+            // fatal, matching this loop's own established "keep going,
+            // log, skip" philosophy for a bad mesh/material reference.
+            ATLANTIS_LOG_ERROR(
+                "runFrame(): a LitTextured-bound entity's own world matrix failed checkConformalTransform() -- "
+                "skipping this entity for this frame only");
+            continue;
+          }
+        }
+
         resolvedMaterial = nullptr;
         if (pendingFormatRebuild.has_value()) {
           const auto it = pendingFormatRebuild->materials.find(*materialAsset);

@@ -130,9 +130,12 @@ target_compile_definitions(atlantis_image_regression_material_demo_golden_genera
   ATLANTIS_material_demo_scene_METADATA_PATH="${ATLANTIS_material_demo_scene_METADATA_PATH}"
   ATLANTIS_material_demo_scene_MANIFEST_PATH="${ATLANTIS_material_demo_scene_MANIFEST_PATH}"
   ATLANTIS_MATERIAL_DEMO_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+  # Plan 0019 Section P6: see tests/image_regression/CMakeLists.txt's own
+  # identical comment on the gpu_tests target.
+  ATLANTIS_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
 )
 
-add_dependencies(atlantis_image_regression_material_demo_golden_generator textured_quad_shaders
+add_dependencies(atlantis_image_regression_material_demo_golden_generator textured_quad_shaders lit_textured_shaders
   ${ATLANTIS_material_demo_scene_TARGET})
 
 # Deliberately no catch_discover_tests()/LABELS "gpu"/add_test() call in

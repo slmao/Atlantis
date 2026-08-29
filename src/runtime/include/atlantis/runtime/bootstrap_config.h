@@ -37,6 +37,13 @@ struct BootstrapConfig {
   std::string unlitTexturedVertexShaderReflectionPath;
   std::string unlitTexturedFragmentShaderSpirvPath;
   std::string unlitTexturedFragmentShaderReflectionPath;
+  // Plan 0019 Section P6/P11: the third, MaterialKind::LitTextured
+  // built-in shader pair -- mirrors unlitTexturedVertexShaderSpirvPath/
+  // .../unlitTexturedFragmentShaderReflectionPath's own sourcing exactly.
+  std::string litTexturedVertexShaderSpirvPath;
+  std::string litTexturedVertexShaderReflectionPath;
+  std::string litTexturedFragmentShaderSpirvPath;
+  std::string litTexturedFragmentShaderReflectionPath;
   bool enableValidationLayers = true;
 };
 

@@ -51,6 +51,15 @@ struct MaterialDemoFixture {
   atlantis::rhi::VertexInputLayout unlitTexturedVertexInputLayout;
   std::vector<std::uint32_t> unlitTexturedVertexSpirv;
   std::vector<std::uint32_t> unlitTexturedFragmentSpirv;
+  // Plan 0019 Section P6: realizePendingMaterials()'s own widened
+  // signature requires a real litTextured* trio at every call site, even
+  // here, where material_demo_scene never actually realizes a
+  // MaterialKind::LitTextured material (selectShaderPair() never
+  // dispatches into this branch for this fixture) -- loaded the same way
+  // unlitTextured* already is.
+  atlantis::rhi::VertexInputLayout litTexturedVertexInputLayout;
+  std::vector<std::uint32_t> litTexturedVertexSpirv;
+  std::vector<std::uint32_t> litTexturedFragmentSpirv;
 
   // Phase 1 (CPU) outputs, published once by setUpMaterialDemoFixture() and
   // never mutated afterward.
@@ -90,10 +99,13 @@ enum class MaterialDemoSetupError {
 };
 
 // config's sceneArtifactPath/sceneMetadataPath/sceneDependencyManifestPath
-// must name material_demo_scene's own cooked artifacts, and
+// must name material_demo_scene's own cooked artifacts,
 // unlitTexturedVertexShader{SpirvPath,ReflectionPath}/
 // unlitTexturedFragmentShader{SpirvPath,ReflectionPath} must name
-// textured_quad_shaders' own compiled outputs -- reusing
+// textured_quad_shaders' own compiled outputs, and (Plan 0019 Section
+// P6) litTexturedVertexShader{SpirvPath,ReflectionPath}/
+// litTexturedFragmentShader{SpirvPath,ReflectionPath} must name
+// lit_textured_shaders' own compiled outputs -- reusing
 // atlantis::runtime::BootstrapConfig directly (rather than inventing a
 // second, fixture-only parameter list) since loadAndInstantiateScene()
 // itself already takes one. Must be called with the process's current

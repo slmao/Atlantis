@@ -90,6 +90,19 @@ static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrid
   return result.value();
 }
 
+// Plan 0019 Section P6: mirrors runtime_application.cpp's own identical
+// litTexturedVertexLayout() -- position@0, uv@1, normal@2.
+[[nodiscard]] std::optional<VertexInputLayout> litTexturedVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+      MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
+      MeshVertexAttributeSchema{.location = 2, .offsetBytes = offsetof(Vertex, normal)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 }  // namespace
 
 atlantis::Result<MaterialDemoFixture, MaterialDemoSetupError> setUpMaterialDemoFixture(
@@ -107,6 +120,19 @@ atlantis::Result<MaterialDemoFixture, MaterialDemoSetupError> setUpMaterialDemoF
   const auto vertexInputLayout = unlitTexturedVertexLayout(vertexReflectionResult.value());
   if (!vertexInputLayout.has_value()) return ResultT::Err(MaterialDemoSetupError::ShaderLoadFailed);
 
+  // Plan 0019 Section P6: the litTextured* trio, loaded the same way as
+  // unlitTextured* above -- see MaterialDemoFixture's own field comment
+  // for why this fixture needs real (if functionally unused) data here.
+  auto litVertexSpirv = loadSpirvFile(config.litTexturedVertexShaderSpirvPath.c_str());
+  auto litFragmentSpirv = loadSpirvFile(config.litTexturedFragmentShaderSpirvPath.c_str());
+  if (!litVertexSpirv.has_value() || !litFragmentSpirv.has_value()) {
+    return ResultT::Err(MaterialDemoSetupError::ShaderLoadFailed);
+  }
+  auto litVertexReflectionResult = loadReflectionMetadata(config.litTexturedVertexShaderReflectionPath.c_str());
+  if (litVertexReflectionResult.isErr()) return ResultT::Err(MaterialDemoSetupError::ShaderLoadFailed);
+  const auto litVertexInputLayout = litTexturedVertexLayout(litVertexReflectionResult.value());
+  if (!litVertexInputLayout.has_value()) return ResultT::Err(MaterialDemoSetupError::ShaderLoadFailed);
+
   auto deviceResult = atlantis::vulkan_backend::createDevice(
       {.applicationName = "Atlantis Image Regression Fixture (Material Demo)", .enableValidationLayers = true});
   if (deviceResult.isErr()) return ResultT::Err(MaterialDemoSetupError::DeviceCreationFailed);
@@ -116,6 +142,9 @@ atlantis::Result<MaterialDemoFixture, MaterialDemoSetupError> setUpMaterialDemoF
   fixture.unlitTexturedVertexInputLayout = *vertexInputLayout;
   fixture.unlitTexturedVertexSpirv = std::move(*vertexSpirv);
   fixture.unlitTexturedFragmentSpirv = std::move(*fragmentSpirv);
+  fixture.litTexturedVertexInputLayout = *litVertexInputLayout;
+  fixture.litTexturedVertexSpirv = std::move(*litVertexSpirv);
+  fixture.litTexturedFragmentSpirv = std::move(*litFragmentSpirv);
 
   // Phase 1: the real, Runtime-private CPU load/instantiate pipeline --
   // never duplicated here. loadAndInstantiateScene()'s own vertexInputLayout
@@ -132,8 +161,12 @@ atlantis::Result<MaterialDemoFixture, MaterialDemoSetupError> setUpMaterialDemoF
   fixture.materialDataMap = std::move(outcome.materialDataMap);
   fixture.textureDataMap = std::move(outcome.textureDataMap);
 
-  auto cameraBufferResult =
-      fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = sizeof(float) * 32});
+  // Plan 0019 Section P7: widened to match every other camera-buffer-
+  // creating composition root, even though this fixture's own material
+  // is UnlitTextured-only and never reads the appended tail bytes.
+  auto cameraBufferResult = fixture.device->createBuffer(
+      {.purpose = BufferPurpose::Uniform,
+       .sizeBytes = sizeof(float) * 32 + sizeof(atlantis::runtime::FrameLightingData)});
   if (cameraBufferResult.isErr()) return ResultT::Err(MaterialDemoSetupError::ResourceCreationFailed);
   fixture.cameraBuffer = std::move(cameraBufferResult.value());
 
@@ -216,8 +249,9 @@ atlantis::Result<PixelBuffer, MaterialDemoRenderError> renderMaterialDemoFrame(M
   std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
       realizePendingMaterials(*fixture.device, *commandList, fixture.unlitTexturedVertexInputLayout,
                                fixture.unlitTexturedVertexSpirv, fixture.unlitTexturedFragmentSpirv,
-                               kMaterialDemoColorFormat, pendingMaterialIds, fixture.sampledTextureResourceMap,
-                               fixture.materialDataMap, fixture.textureDataMap);
+                               kMaterialDemoColorFormat, fixture.litTexturedVertexInputLayout,
+                               fixture.litTexturedVertexSpirv, fixture.litTexturedFragmentSpirv, pendingMaterialIds,
+                               fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);
 
   std::vector<atlantis::asset_system::AssetId> knownMaterialIds = alreadyRealizedMaterialIds;
   for (const auto& [assetId, candidate] : realizedCandidates) knownMaterialIds.push_back(assetId);
