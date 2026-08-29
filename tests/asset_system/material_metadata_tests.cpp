@@ -20,6 +20,31 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips exac
   CHECK(parsed.value().textureAsset == original.textureAsset);
 }
 
+// Plan 0019 Section P5/D11: the metadata sidecar's own "kind:" field
+// round-trips a LitTextured material too -- a real, previously-
+// undisclosed gap this Plan's own Milestone 5 missed (serializeMaterialMetadata()
+// unconditionally emitted "unlit_textured" regardless of metadata.kind,
+// found via a real loadMaterialAsset() MetadataArtifactMismatch failure
+// while building this Plan's own lighting_demo_scene fixture, not by
+// inspection alone). This is exactly the test that would have caught it.
+TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a LitTextured kind exactly",
+          "[asset_system][material][light]") {
+  MaterialMetadata original;
+  original.assetId = 0x0102030405060708ULL;
+  original.sourceLogicalPath = "materials/lit_textured_quad.material.txt";
+  original.kind = MaterialKind::LitTextured;
+  original.textureAsset = 0x1122334455667788ULL;
+
+  const std::string text = serializeMaterialMetadata(original);
+  CHECK(text.find("kind: lit_textured\n") != std::string::npos);
+  const auto parsed = parseMaterialMetadata(text);
+  REQUIRE(parsed.isOk());
+  CHECK(parsed.value().kind == MaterialKind::LitTextured);
+  CHECK(parsed.value().assetId == original.assetId);
+  CHECK(parsed.value().sourceLogicalPath == original.sourceLogicalPath);
+  CHECK(parsed.value().textureAsset == original.textureAsset);
+}
+
 TEST_CASE("parseMaterialMetadata rejects a wrong line count", "[asset_system][material]") {
   const auto result = parseMaterialMetadata("atlantis_material_metadata_version: 1\n");
   REQUIRE(result.isErr());

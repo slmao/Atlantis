@@ -4,6 +4,7 @@ add_library(atlantis_image_regression_fixture STATIC
   world_scene_loaded_fixture.cpp
   textured_quad_fixture.cpp
   material_demo_fixture.cpp
+  lighting_demo_fixture.cpp
 )
 
 target_include_directories(atlantis_image_regression_fixture
