@@ -314,12 +314,21 @@ TEST_CASE("parseMeshSource accepts a normal with a -0.0 component", "[asset_syst
   CHECK(result.value().vertices[0].normalX == 0.0f);
 }
 
-TEST_CASE("parseMeshSource accepts a normal whose length-squared is exactly at the lower inclusive boundary "
-          "(0.9801)",
+TEST_CASE("parseMeshSource accepts a normal whose length-squared lands just above the lower inclusive boundary "
+          "(0.99 0 0)",
           "[asset_system]") {
-  // 0.99 0 0 -> lengthSquared = 0.9801 exactly (0.99 is exactly
-  // representable to enough precision here that this is the intended,
-  // real boundary value, not an approximation).
+  // Plan 0020 Section P8: this is a Kind 3 (full parse-path
+  // integration) case, not a Kind 1 exact-boundary one -- that claim
+  // belongs to mesh_normal_validation_tests.cpp's own
+  // isNormalLengthSquaredInTolerance(0.9801) case alone, which compares
+  // the double literal 0.9801 against itself with no float involved.
+  // Here, 0.99 is parsed as a float first: 0.99 has no exact binary32
+  // representation, so the real parsed value is
+  // 0.9900000095367431640625, whose exact double promotion squares to
+  // 0.98010001888275156 -- about 1.9e-8 above the literal 0.9801, not
+  // equal to it. This still correctly exercises "a real, parsed value
+  // close to the lower bound is accepted," which is this test's own
+  // actual, honest claim.
   const std::string_view lowerBoundary =
       "atlantis_static_mesh_source_version: 3\n"
       "vertex_count: 3\n"
@@ -332,9 +341,16 @@ TEST_CASE("parseMeshSource accepts a normal whose length-squared is exactly at t
   REQUIRE(result.isOk());
 }
 
-TEST_CASE("parseMeshSource accepts a normal whose length-squared is exactly at the upper inclusive boundary "
-          "(1.0201)",
+TEST_CASE("parseMeshSource accepts a normal whose length-squared lands just below the upper inclusive boundary "
+          "(1.01 0 0)",
           "[asset_system]") {
+  // Same Kind 3 caveat as the lower-boundary test above: 1.01 has no
+  // exact binary32 representation either -- the real parsed value is
+  // 1.0099999904632568359375, whose exact double promotion squares to
+  // 1.0200999807357789, about 1.9e-8 below the literal 1.0201, not
+  // equal to it. Still correctly accepted (comfortably inside the
+  // inclusive range on this side too); the true exact-boundary claim
+  // is Kind 1's alone (mesh_normal_validation_tests.cpp).
   const std::string_view upperBoundary =
       "atlantis_static_mesh_source_version: 3\n"
       "vertex_count: 3\n"
