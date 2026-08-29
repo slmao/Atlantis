@@ -269,6 +269,20 @@ or dependencies have changed. **Android Platform and Vulkan Presentation
 remains `Candidate`, at its own unchanged Candidate Order 1 position
 below, still depending only on Spec 0002/Spec 0003 (both implemented).**
 
+**Reprioritized again, human-directed 2026-08-30:** the human maintainer
+directed "Dynamic Frame Uniform Updates Foundation" to be drafted next,
+ahead of Android Platform and ahead of any future PBR, Shadow, IBL, or
+Post-processing candidate. It has since been drafted directly as
+[Spec 0022](0022-dynamic-frame-uniform-updates-foundation.md)
+(`Approved`, Section A above), following the identical pattern every
+prior reprioritization in this section already used — never occupying a
+row in this table. This is again an explicit human reprioritization, not
+an agent-made scheduling decision, and not a finding that Android
+Platform's own priority, scope, or dependencies have changed. **Android
+Platform and Vulkan Presentation remains `Candidate`, at its own
+unchanged Candidate Order 1 position below, still depending only on
+Spec 0002/Spec 0003 (both implemented).**
+
 Items 5–6 (and any future neural-rendering, GPU-driven-rendering, or
 world-model candidate) are future AI/UGC/neural workloads: per
 [AGENTS.md](../AGENTS.md), they are future phases and must not shape
