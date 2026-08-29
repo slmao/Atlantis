@@ -1,13 +1,119 @@
 # Spec: Descriptor Pool Capacity Foundation
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-08-29
-- **Related Plan(s):** None yet — this Spec must reach `Approved` (with its
-  own ADR `Accepted`) before a Plan may be drafted against it, per
+- **Related Plan(s):** None yet — **this approval authorizes drafting
+  Plan 0021 only. It does not authorize Implementation.** Plan 0021 must
+  itself go through the same Plan → Human Review path as every prior
+  Plan in this codebase before any code is written, per
   [AGENTS.md](../AGENTS.md).
 - **Related ADR(s):** [ADR-0064](../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)
-  (`Proposed`)
+  (`Accepted`)
+- **Human Review Approval (2026-08-29):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
+  git-identified maintainer) on 2026-08-29, accepting this document's
+  own "Decisions for Human Review" section in full, per the corrections
+  produced during one centralized, final review round (below), and
+  accepting [ADR-0064](../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)
+  (`Proposed` → `Accepted`) in the same pass. This approval authorizes
+  drafting Plan 0021 only — see the header note above.
+
+## Final Review Round (2026-08-29) — closed findings, recorded before approval
+
+A single, targeted final review round examined the growable-pool design
+against real Vulkan Backend code across nine specific areas: pool/set
+ownership, growth-and-retry semantics, pool capacity configuration,
+`createPipeline()` RAII, format-change/GPU lifecycle interaction, error
+classification, single-threading/portability, test boundaries, and
+documentation governance. Every item below was closed at the Spec/ADR
+level with a real design correction or an explicit clarification —
+recorded here so each change is visible, not silently folded in:
+
+1. **The growth algorithm's own "always try only the newest pool, grow
+   immediately on its exhaustion" first draft was a real, substantive
+   design gap — corrected to a scan-existing-pools-first algorithm.**
+   The first draft would have created a new pool on every format change
+   whose old batch had not yet been destroyed, even when an *earlier*
+   pool already had spare capacity freed by a previously-destroyed
+   batch — defeating `FREE_DESCRIPTOR_SET_BIT`'s own reuse capability and
+   growing the pool set without bound across a long-running session with
+   many resize/format-change events, despite steady-state *concurrent*
+   usage staying bounded. Corrected: `VulkanDevice` now tries every
+   existing pool, in creation order, before ever growing — D1/D3/D7/D8
+   and the "Proposed Design" section are all rewritten around this
+   corrected algorithm, and D13 gains a dedicated real-GPU test proving
+   reuse actually happens instead of unconditional re-growth.
+2. **The specific `VkResult` values that are, and are not, growth-eligible
+   were named informally but never given a complete, explicit mapping.**
+   D3 now states a full error-classification table:
+   `VK_ERROR_OUT_OF_POOL_MEMORY`/`VK_ERROR_FRAGMENTED_POOL` are the only
+   growth-eligible outcomes; `VK_ERROR_DEVICE_LOST`,
+   `VK_ERROR_OUT_OF_HOST_MEMORY`, and `VK_ERROR_OUT_OF_DEVICE_MEMORY` map
+   immediately, unchanged, to the existing `DescriptorSetAllocationFailed`
+   error with no retry and no pool creation attempted — matching today's
+   existing, already-correct behavior for those cases exactly. D13 gains
+   a dedicated GPU-independent unit test for this classification function
+   in isolation, since reliably injecting a real `VK_ERROR_DEVICE_LOST`
+   from a live Device is not practical.
+3. **`VkDescriptorPool` handle storage safety under `std::vector` growth
+   was implicit, not stated.** The "Proposed Design" section now states
+   explicitly that every stored "which pool" reference — `VulkanDevice`'s
+   own `pools_` vector and `VulkanPipeline`'s own new origin-pool field —
+   is a *copy of the handle value*, never a pointer or reference into
+   `pools_`'s own backing storage, which `std::vector::push_back`'s own
+   growth may relocate. This was already the only correct implementation
+   shape (a `VkDescriptorPool` is an opaque value, not an addressable C++
+   object), but is now a stated implementation constraint for Plan 0021,
+   not left to be independently rediscovered.
+4. **Whether a mixed uniform-only/textured workload could exhaust one
+   descriptor type before `maxSets` itself was asserted, not proven.**
+   D4 now includes a direct proof: every Pipeline's descriptor set
+   consumes exactly one `UNIFORM_BUFFER` descriptor (the always-present
+   binding 0), in strict 1:1 lockstep with `maxSets` itself, so
+   `UNIFORM_BUFFER` capacity can never be the first budget exhausted; a
+   textured/lit Pipeline additionally consumes one
+   `COMBINED_IMAGE_SAMPLER` descriptor at a rate no greater than that
+   lockstep rate, so the sampler budget can never be exhausted first
+   either, for this codebase's current binding shape.
+5. **Whether a newly-grown-but-ultimately-unused pool (a later
+   `createPipeline()` step fails after a successful growth+retry) should
+   be rolled back or kept was unaddressed.** D9 now states explicitly:
+   kept, never rolled back — safe (Phase 1's single-threaded
+   orchestration means nothing else could have raced to use it, and an
+   empty valid pool holds no GPU-in-flight reference), at the cost only
+   of one growth event happening slightly earlier than steady-state
+   strictly required. D13 gains a test-coverage note confirming this
+   pool is neither leaked nor double-destroyed.
+6. **Whether a submit or `DeviceLost` failure could trigger a selective
+   pool reset/reclaim was unstated.** D8 now states explicitly: no —
+   `vkResetDescriptorPool` is not used anywhere in this design (matching
+   today's code exactly), and a pool is destroyed only at `VulkanDevice`'s
+   own destruction, never selectively.
+7. **Single-threading was implied by the surrounding codebase's own
+   baseline but never stated for this design specifically.** D12 now
+   states explicitly that `pools_`, the scan, and growth all run entirely
+   within Phase 1's existing single-threaded frame-orchestration
+   baseline — no locking, no atomics, no concurrent-access design.
+8. **A perceived tension with the "no cross-frame descriptor-set caching"
+   Non-Goal was identified and resolved by precise wording, not by
+   removing the reuse fix.** The Non-Goals section now distinguishes
+   explicitly: this Spec never reuses an already-allocated
+   `VkDescriptorSet` object across Pipelines (every Pipeline still gets
+   its own fresh allocation call, unchanged) — it reuses freed *pool
+   capacity* as the target for a brand-new allocation, a genuinely
+   different, narrower thing.
+9. **D6's own "four pool-growth generations" wording was ambiguous
+   (could be read as 4 or 5 total pools).** Corrected to an unambiguous
+   statement: the ceiling bounds the total number of pools ever in the
+   set (e.g., 4 pools total — the initial pool plus at most 3 growth
+   events — matching the `4+8+16+32 = 60`-set figure already given).
+
+No unresolvable architectural conflict was found, and no finding
+required changing the RHI/Renderer/Material public API, the Pipeline
+ownership model, or introducing any new GPU synchronization mechanism —
+every item above was closed within this Spec/ADR's own existing,
+Vulkan-Backend-private scope.
 
 ## Summary
 
@@ -94,11 +200,17 @@ format change actually occurs at runtime.
   invasive extension-gated model; same reasoning as above, and a real
   portability risk this Spec's own D12 explicitly avoids taking on for a
   problem growth already solves.
-- **A cross-frame descriptor-set caching/reuse system** — this Spec does
-  not attempt to avoid re-allocating a descriptor set for a rebuilt
-  Pipeline; it only ensures the pool underneath can satisfy however many
-  concurrent allocations the existing, unchanged format-change design
-  already requires.
+- **A cross-frame descriptor-*set* caching/reuse system** — this Spec
+  does not attempt to avoid re-allocating a descriptor *set* for a
+  rebuilt Pipeline (every Pipeline still gets its own fresh
+  `vkAllocateDescriptorSets` call, unchanged); it only ensures the *pool*
+  underneath can satisfy however many concurrent set allocations the
+  existing, unchanged format-change design already requires. **Distinct,
+  and not a contradiction of this Non-Goal:** D3/D7's own reuse-before-growth
+  scan reuses freed *pool capacity* (an empty slot a destroyed Pipeline's
+  own earlier `vkFreeDescriptorSets` call already returned) as the
+  target for a brand-new set allocation — it never reuses an
+  already-allocated `VkDescriptorSet` object itself across Pipelines.
 - **A general-purpose GPU memory/descriptor allocator** — the fix stays
   scoped to exactly the one pool `VulkanDevice` already owns; it does not
   generalize into a reusable allocator abstraction for other GPU resource
@@ -134,14 +246,25 @@ format change actually occurs at runtime.
   `LitTextured` material, old batch and new candidate batch both alive
   during a real color-format change) without any RHI/Renderer/Material
   public API change.
-- On the current pool's own `vkAllocateDescriptorSets` returning
-  `VK_ERROR_OUT_OF_POOL_MEMORY` or `VK_ERROR_FRAGMENTED_POOL`,
-  `VulkanDevice` must attempt to grow its own descriptor-pool set (create
+- `VulkanDevice` must try `vkAllocateDescriptorSets` against its own
+  existing pools **in a deterministic, fixed order (creation order)**,
+  reusing whatever capacity a pool has already reclaimed via an earlier
+  `vkFreeDescriptorSets` call — never assuming only the most-recently-
+  created pool can ever have room. Only once **every** existing pool has
+  been tried and every attempt returned `VK_ERROR_OUT_OF_POOL_MEMORY` or
+  `VK_ERROR_FRAGMENTED_POOL` does `VulkanDevice` attempt to grow (create
   one additional pool, per D5's own sizing strategy) and retry the
-  allocation from the newly created pool before surfacing
+  allocation against that newly created pool before surfacing
   `PipelineCreateError::DescriptorSetAllocationFailed` — that error
   remains reachable, unchanged in meaning, once a real, bounded ceiling
-  (D6) is hit.
+  (D6) is hit. Any `vkAllocateDescriptorSets` failure **other than** those
+  two specific `VkResult` values (`VK_ERROR_DEVICE_LOST`,
+  `VK_ERROR_OUT_OF_HOST_MEMORY`, `VK_ERROR_OUT_OF_DEVICE_MEMORY`) is
+  **not** growth-eligible — it maps directly, immediately, to
+  `DescriptorSetAllocationFailed`, with no retry against any other pool
+  and no new pool created, identical to today's existing, unchanged
+  behavior for those cases (D3's own "Error classification" table gives
+  the complete mapping).
 - Every `VulkanPipeline` must free its own one descriptor set back to the
   exact pool it was allocated from (never merely "the Device's first
   pool") — the existing `vkFreeDescriptorSets`
@@ -314,50 +437,101 @@ private implementation.
 VulkanDevice::createDevice()
   creates ONE VkDescriptorPool, sized identically to today's existing
   maxSets = 4 / two-pool-size-entry shape (D5) -- unchanged starting
-  point, not a new number
+  point, not a new number. Appended to VulkanDevice's own
+  std::vector<VkDescriptorPool> pools_.
         |
         v
 VulkanDevice::createPipeline() -- descriptor-set allocation step
-  tries vkAllocateDescriptorSets() against the current ("active") pool
+  for each existing pool in pools_, IN CREATION ORDER (index 0..last):
+    try vkAllocateDescriptorSets() against it
         |
         +-- VK_SUCCESS --------------------------------------> proceed,
-        |                                                       unchanged
+        |    (this may be pools_[0] again, if an earlier Pipeline that
+        |    once held one of its sets has since been destroyed and
+        |    freed that capacity back -- reuse, not merely "the newest
+        |    pool", is the normal, expected path)
         |
         +-- VK_ERROR_OUT_OF_POOL_MEMORY / VK_ERROR_FRAGMENTED_POOL
-              |
-              v
+        |    -> try the NEXT existing pool in pools_; only once every
+        |       existing pool has failed this way does growth trigger
+        |       (below)
+        |
+        +-- any OTHER VkResult (VK_ERROR_DEVICE_LOST,
+             VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY)
+             --> Err(PipelineCreateError::DescriptorSetAllocationFailed)
+                  IMMEDIATELY -- no further pool tried, no growth
+                  attempted, identical to today's existing, unchanged
+                  behavior for these cases (D3's own error-
+                  classification table)
+        |
+        v  (every existing pool tried, every one returned
+        |   OUT_OF_POOL_MEMORY/FRAGMENTED_POOL)
+        v
         has the hard ceiling (D6) already been reached?
               |
               +-- yes --> Err(PipelineCreateError::DescriptorSetAllocationFailed)
               |            -- unchanged shape, unchanged meaning
               |
-              +-- no --> vkCreateDescriptorPool() a new pool, sized per
-                          D5's own geometric growth rule; on success,
-                          this new pool becomes "active"; retry
-                          vkAllocateDescriptorSets() against it exactly
-                          once
+              +-- no --> vkCreateDescriptorPool() ONE new pool, sized
+                          per D5's own geometric growth rule; on
+                          success, appended to pools_; retry
+                          vkAllocateDescriptorSets() against this one
+                          new pool exactly once
                                |
                                +-- succeeds --> proceed, VulkanPipeline
-                               |                 records WHICH pool its
-                               |                 own set came from
+                               |                 records WHICH pool
+                               |                 (by handle VALUE, a
+                               |                 copy -- never a
+                               |                 pointer/reference into
+                               |                 pools_'s own storage,
+                               |                 which std::vector
+                               |                 growth may relocate)
+                               |                 its own set came from
                                |
                                +-- fails again, or pool creation itself
-                                    fails --> Err(DescriptorSetAllocationFailed),
-                                    identical RAII cleanup as every other
+                                    fails --> Err(DescriptorSetAllocationFailed);
+                                    a new pool that WAS successfully
+                                    created but whose retry then failed
+                                    for an unrelated reason (see D9) is
+                                    kept in pools_, not rolled back --
+                                    safe, since no set was ever
+                                    allocated from it; identical RAII
+                                    cleanup, for every OTHER
+                                    already-created resource this call
+                                    made, as every other
                                     createPipeline() failure path
         |
         v
 VulkanPipeline::~VulkanPipeline()
-  vkFreeDescriptorSets() against the SPECIFIC pool this Pipeline's own
-  set was allocated from (not necessarily the Device's first/"active"
-  pool) -- unchanged FREE_DESCRIPTOR_SET_BIT contract, per-pool
+  vkFreeDescriptorSets() against the SPECIFIC pool handle VALUE this
+  Pipeline's own set was allocated from (not necessarily pools_[0]) --
+  unchanged FREE_DESCRIPTOR_SET_BIT contract, per-pool -- restoring that
+  pool's own capacity for the NEXT createPipeline() call's own
+  creation-order scan to find and reuse
         |
         v
 VulkanDevice::~VulkanDevice()
   after the existing drain sequence, vkDestroyDescriptorPool() every
-  pool the growable set ever created -- unchanged log-and-continue
-  discipline
+  pool in pools_ -- unchanged log-and-continue discipline
 ```
+
+**Handle-value safety, stated explicitly:** `VkDescriptorPool` is an
+opaque Vulkan handle *value* (a pointer-sized integral/pointer type on
+every platform Vulkan defines it for), not a C++ object with its own
+address inside `pools_`. Every place this design stores "which pool" —
+`VulkanDevice`'s own `pools_` vector, and `VulkanPipeline`'s own new
+field recording its origin pool — stores a **copy of the handle value
+itself**, never a `VkDescriptorPool*`/reference into `pools_`'s own
+internal storage. This is required, not merely convenient:
+`std::vector::push_back` (the growth operation itself) may reallocate
+its own backing storage, which would invalidate any pointer or reference
+into a previously-inserted element — a handle-by-value copy is entirely
+unaffected by that reallocation, since it is just an opaque integer/
+pointer value identifying a driver-side object, not an address into
+`pools_`'s own memory. This Spec's own eventual Plan must state this
+as an explicit implementation constraint: no `VkDescriptorPool*` or
+`VkDescriptorPool&` is ever taken from `pools_` and stored anywhere
+beyond the lifetime of one `createPipeline()` call's own local scope.
 
 ## Architectural Impact
 
@@ -367,7 +541,7 @@ the Device's full lifetime" to "a Device-owned, growable *set* of pools,
 created on demand, each living for the Device's full lifetime once
 created." This is real, if narrowly scoped, resource-ownership-model
 architecture — [ADR-0064](../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)
-(`Proposed`) records the full decision, alternatives, and trade-offs,
+(`Accepted`) records the full decision, alternatives, and trade-offs,
 per this codebase's convention (matching ADR-0061/ADR-0062's own scope
 for Spec 0019). No RHI, Renderer, or Material public API, dependency,
 threading model, or backend-abstraction contract is touched — confirmed
@@ -424,15 +598,21 @@ exactly, one to one.
 `VkDescriptorPool` objects — `VulkanDevice` owns `std::vector<VkDescriptorPool>`
 (replacing today's single `VkDescriptorPool descriptorPool_` member),
 starting with exactly one pool at Device creation (sized identically to
-today, D5), growing by creating and appending an additional pool only
-when the currently-active pool's own `vkAllocateDescriptorSets` call
-returns `VK_ERROR_OUT_OF_POOL_MEMORY`/`VK_ERROR_FRAGMENTED_POOL`, up to a
+today, D5). Allocation tries every existing pool **in creation order**,
+naturally reusing capacity an earlier `vkFreeDescriptorSets` call already
+returned to any of them (D3) — growth (appending one additional pool)
+triggers only once **every** existing pool has been tried and failed
+with `VK_ERROR_OUT_OF_POOL_MEMORY`/`VK_ERROR_FRAGMENTED_POOL`, up to a
 real, tested, disclosed hard ceiling (D6). `VulkanPipeline` gains a
-second, still non-owning `VkDescriptorPool` field recording *which* pool
-in the set its own one descriptor set was allocated from (needed so its
-own destructor frees back to the correct pool — see "Alternatives
-Considered" above for why per-Pipeline ownership was rejected, and D2
-below for why this specific model suits the current lifecycle).
+second, still non-owning `VkDescriptorPool` field — storing a **copy of
+the handle value**, never a pointer/reference into `pools_`'s own
+storage (see "Proposed Design"'s own "Handle-value safety" note; a
+`std::vector`'s own growth may reallocate, which would invalidate any
+such pointer) — recording *which* pool in the set its own one descriptor
+set was allocated from (needed so its own destructor frees back to the
+correct pool — see "Alternatives Considered" above for why per-Pipeline
+ownership was rejected, and D2 below for why this specific model suits
+the current lifecycle).
 
 ### D2. Why this model suits the current Pipeline/Material/format-change lifecycle
 
@@ -451,13 +631,29 @@ A per-Pipeline pool (rejected above) would still need its own answer to
 "how big," reproducing this same open question at a smaller, per-object
 granularity instead of resolving it once at the Device level.
 
-### D3. Pool exhaustion: grow-and-retry, not immediate error
+### D3. Pool exhaustion: scan-existing-then-grow-and-retry, not immediate error — full error classification
 
-**Recommendation:** grow-and-retry, exactly once per allocation attempt,
-before falling back to the existing `DescriptorSetAllocationFailed`
-error path — see the "Proposed Design" flow above. The existing error
-path is preserved unchanged as the genuine, bounded (D6) exhaustion
-signal, never removed.
+**Recommendation:** try every existing pool, in creation order, before
+ever growing; grow (create one new pool) and retry exactly once only
+after every existing pool has failed for a growth-eligible reason; fall
+back to the existing `DescriptorSetAllocationFailed` error path
+unchanged for every other case. See the "Proposed Design" flow above for
+the full, ordered algorithm. **Complete error classification, every real
+`vkAllocateDescriptorSets`/`vkCreateDescriptorPool` outcome this design
+touches, mapped explicitly (never left implicit):**
+
+| Real outcome | Growth-eligible? | Resulting behavior |
+|---|---|---|
+| `vkAllocateDescriptorSets` against an existing pool returns `VK_SUCCESS` | — | Proceed; that pool (any index, not only the most recently created) is this Pipeline's own origin pool. |
+| `vkAllocateDescriptorSets` against an existing pool returns `VK_ERROR_OUT_OF_POOL_MEMORY` or `VK_ERROR_FRAGMENTED_POOL` | Yes | Try the next existing pool (if any); once every existing pool has failed this way, attempt growth (below). |
+| `vkAllocateDescriptorSets` against an existing pool returns `VK_ERROR_DEVICE_LOST`, `VK_ERROR_OUT_OF_HOST_MEMORY`, or `VK_ERROR_OUT_OF_DEVICE_MEMORY` | **No** | Immediately `Err(PipelineCreateError::DescriptorSetAllocationFailed)` — no further pool tried, no growth attempted; identical to today's existing, unchanged behavior for these cases (today's code already maps every non-success `VkResult` here to this same enumerator uniformly — this Spec narrows *when a retry is attempted*, never *which error is ultimately surfaced*). |
+| Hard ceiling (D6) already reached, every existing pool exhausted for a growth-eligible reason | — | `Err(DescriptorSetAllocationFailed)` — unchanged shape, unchanged meaning. |
+| `vkCreateDescriptorPool` (the growth attempt itself) fails | — | `Err(DescriptorSetAllocationFailed)`; the failed-to-create pool is never appended to `pools_` (nothing to roll back). |
+| `vkAllocateDescriptorSets` against a freshly-grown pool still fails (any `VkResult`) | — | `Err(DescriptorSetAllocationFailed)`, exactly once, no second growth attempt in the same `createPipeline()` call; the newly-created pool is kept in `pools_` regardless (D9 — safe, since it never had any set allocated from it). |
+
+The existing error path is preserved unchanged, in shape and in every
+case that already reaches it today, as the genuine exhaustion signal —
+never removed, never widened to a new enumerator (D11).
 
 ### D4. Uniform-only vs. textured/lit descriptor-type capacity budgets
 
@@ -476,6 +672,28 @@ all-uniform-only-Pipeline scene still "reserves" unused
 `COMBINED_IMAGE_SAMPLER` capacity per set — an accepted, minor
 inefficiency, not a correctness risk, and reversible later without any
 API change if a real workload ever demonstrates it matters.
+
+**Proven, not merely assumed, that no mixed workload can exhaust one
+descriptor type before `maxSets` itself is reached:** every Pipeline's
+own descriptor set — fallback or Material-bound, uniform-only or
+textured/lit — consumes exactly one `UNIFORM_BUFFER` descriptor (the
+always-present binding 0) and counts exactly once against `maxSets`; the
+two are therefore consumed in strict lockstep, 1:1, for every allocation
+this codebase's own current binding shape can produce — `UNIFORM_BUFFER`
+capacity can never be exhausted separately from (before or after)
+`maxSets` itself, since a pool sized `{maxSets, UNIFORM_BUFFER: maxSets}`
+has both ceilings reached by the identical allocation count. A
+Material-bound Pipeline (`hasSampledTextureBinding = true`) additionally
+consumes one `COMBINED_IMAGE_SAMPLER` descriptor, at a rate strictly no
+greater than the uniform/`maxSets` rate (the fallback Pipeline consumes
+zero) — so, sized identically to `maxSets`, the sampler budget can never
+be the *first* budget exhausted either, for any real mix of
+fallback/uniform-only/textured Pipelines this codebase's own
+`PipelineCreateParams` shape can produce today. A future Pipeline kind
+with more than one sampler binding, or a second uniform buffer, would
+invalidate this specific proof and require re-deriving the pool-size
+ratio — explicitly out of this Spec's own scope (no such kind exists or
+is proposed here).
 
 ### D5. New pool initial capacity and growth strategy
 
@@ -507,13 +725,14 @@ consistent with this Spec's own Non-Goals.
 ### D6. Hard ceiling
 
 **Recommendation:** yes — a real, Plan-time-named constant bounding the
-**number of pools** the growable set may ever create (not a bound on
-material count directly), e.g. four pool-growth generations (a
-Plan-time-finalized number, disclosed as a leak/defect safety net, not a
-content-scaling ceiling: reaching it after geometric doubling from a
-starting `maxSets = 4` already represents 60 concurrent descriptor sets
-— `4+8+16+32`— a scale no currently-planned scene approaches). Exceeding
-it returns the existing `PipelineCreateError::DescriptorSetAllocationFailed`,
+**total number of pools ever in the set** (not a bound on material count
+directly) — e.g. 4 pools total (the initial pool plus at most 3 growth
+events; a Plan-time-finalized exact number, disclosed as a leak/defect
+safety net, not a content-scaling ceiling: reaching it after geometric
+doubling from a starting `maxSets = 4` already represents `4+8+16+32 = 60`
+concurrent descriptor sets — a scale no currently-planned scene
+approaches). Exceeding it returns the existing
+`PipelineCreateError::DescriptorSetAllocationFailed`,
 unchanged in shape — a signal that something is likely leaking
 (Pipelines never being destroyed) rather than a legitimate, growing
 content need, exactly the same "checked, not assumed" discipline Plan
@@ -529,7 +748,15 @@ destruction of a superseded `Pipeline`/`Material` already happens only
 after the submit-safe point Spec 0018 D9 established (confirmed by
 direct reading of `runtime_application.cpp:766-780`). This Spec extends
 *which pool* a free targets (D1) without touching *when* any free
-happens.
+happens. **A free's own capacity is available for reuse by the very
+next `createPipeline()` call's own creation-order scan (D3)** — this is
+the direct mechanism by which a long-running session with many
+format-change events over time stays bounded in pool *count*, rather
+than growing once per format change forever: once an old batch's
+Pipelines are destroyed (after their own submit-safe point), their
+capacity returns to whichever pool(s) they came from and is found again
+by the next allocation's own scan, before any further growth is ever
+considered.
 
 ### D8. Safety when the format-change old and new batches are simultaneously alive
 
@@ -538,19 +765,52 @@ exactly the scenario D1's growth mechanism is designed to accommodate —
 the existing, already-correct Spec 0018 D9 coexistence window (old batch
 alive, new candidate batch built, swap only after `submit()` succeeds)
 is untouched; growth simply ensures the pool underneath can satisfy the
-concurrent-allocation peak that window already, correctly, produces.
+concurrent-allocation peak that window already, correctly, produces. The
+old and new batches may legitimately end up with descriptor sets from
+**different** pools in `pools_` (e.g., the old batch's sets came from
+`pools_[0]`, and the new candidate batch's own allocation scan finds
+`pools_[0]` still exhausted by the still-alive old batch and lands on
+`pools_[1]`, freshly grown) — this is expected and correct, not a defect;
+nothing in this design requires a batch's own Pipelines to share one
+pool. **No submit or `DeviceLost` failure ever triggers a selective
+pool reset or reclaim** — pools are never reset (`vkResetDescriptorPool`
+is not used anywhere in this design, matching today's code exactly) and
+are never destroyed except at `VulkanDevice`'s own destruction (D10);
+a submit failure is handled entirely by the existing, unmodified
+`SubmitError`/`lifecycle_.markFailed()` path, with zero interaction with
+the descriptor-pool set.
 
 ### D9. Transactional/RAII behavior when a partial Pipeline creation fails
 
 **Recommendation:** the existing all-or-nothing RAII discipline in
 `createPipeline()` is preserved exactly, extended by exactly one more
-failure branch (a failed growth attempt: either `vkCreateDescriptorPool`
-for the new pool fails, or the retried `vkAllocateDescriptorSets` still
-fails against it) — that branch destroys every resource already
-successfully created earlier in the same call (shader modules,
-descriptor-set layout) in the identical reverse order every other
-failure path already uses, and returns
+failure branch (every existing pool exhausted for a growth-eligible
+reason, then either `vkCreateDescriptorPool` for the new pool fails, or
+the retried `vkAllocateDescriptorSets` still fails against it) — that
+branch destroys every resource already successfully created earlier in
+the same call (shader modules, descriptor-set layout) in the identical
+reverse order every other failure path already uses, and returns
 `PipelineCreateError::DescriptorSetAllocationFailed`, unchanged.
+
+**A newly-created pool that turns out to be unused by this specific
+`createPipeline()` call is kept, not rolled back — an explicit, safe
+policy, stated so a future Plan/Implementation never "helpfully"
+second-guesses it:** if growth's own `vkCreateDescriptorPool` succeeds
+and the retried `vkAllocateDescriptorSets` also succeeds, but a *later*
+step in the same `createPipeline()` call fails (pipeline-layout
+creation, or the final `vkCreateGraphicsPipelines`), the existing,
+unmodified reverse-order cleanup already frees that just-allocated
+descriptor set back into its own (freshly-grown) pool — leaving a
+real, valid, now-empty `VkDescriptorPool` in `pools_`. This pool is
+**never destroyed as part of that unwind** — it remains in `pools_`,
+available capacity for the very next `createPipeline()` call's own
+scan (D3/D7). This is safe (Phase 1's single-threaded orchestration
+means no other call can have raced to use it in between, and an empty,
+valid pool has no GPU-in-flight reference of any kind) and matches this
+Spec's own Non-Goal of never dynamically shrinking/reclaiming a pool
+before Device destruction — the only accepted cost is that one growth
+event happened slightly earlier than steady-state usage strictly
+required, not that anything leaks or is destroyed incorrectly.
 
 ### D10. `DeviceLost`/shutdown behavior
 
@@ -583,7 +843,14 @@ in use elsewhere in `vulkan_device.cpp`
 feature requirement — a future Android Vulkan Backend (Candidate Order 1,
 unaffected by this Spec, see "Cross-cutting note" below) would inherit
 this exact same growable-pool code path unchanged, with no
-platform-conditional branch anywhere in this Spec's own design.
+platform-conditional branch anywhere in this Spec's own design. **No
+locking, atomics, or any multi-threaded allocator design is introduced
+or implied** — `pools_`, the creation-order scan, and growth all run
+entirely within Phase 1's existing single-threaded frame-orchestration
+baseline (AGENTS.md Threading rules), on the same one logical thread
+every other `VulkanDevice` call already runs on; a `std::vector<VkDescriptorPool>`
+with no concurrent access is sufficient, and this Spec does not evaluate
+or propose anything beyond that baseline.
 
 ### D13. Test scale
 
@@ -592,6 +859,29 @@ platform-conditional branch anywhere in this Spec's own design.
 - GPU-independent unit tests for the capacity-calculation/growth-selection
   logic in isolation (a pure function of "current pool sizes so far,
   ceiling" → "next pool size, or exhausted"; no real `Device` needed).
+- **GPU-independent unit tests for the error-classification decision
+  itself** (D3's own table) — a pure function taking a synthetic
+  `VkResult` value (no real `Device`/allocation needed, since `VkResult`
+  is a plain enum) and returning "growth-eligible" or "not
+  growth-eligible": `VK_ERROR_OUT_OF_POOL_MEMORY`/`VK_ERROR_FRAGMENTED_POOL`
+  must classify as growth-eligible; `VK_ERROR_DEVICE_LOST`/
+  `VK_ERROR_OUT_OF_HOST_MEMORY`/`VK_ERROR_OUT_OF_DEVICE_MEMORY` (and any
+  other non-success value) must not — this is the reliable way to prove
+  the classification logic itself is correct, since reliably *injecting*
+  a real `VK_ERROR_DEVICE_LOST` from a real Device on demand is not
+  practical; the real-GPU tests below prove the growth-eligible path
+  end-to-end, this pure-function test proves the classification boundary
+  precisely, including the cases the real-GPU tests cannot reach.
+- **A real-GPU pool-capacity-reuse test**, directly proving D3/D7's own
+  reuse-before-growth claim, not merely asserting it: allocate enough
+  Pipelines to exhaust the first pool and trigger one growth event;
+  destroy a subset of the Pipelines whose sets came from the *first*
+  pool (freeing capacity there, past the submit-safe point); create a
+  new Pipeline and confirm — via the low-level, kind-independent probe
+  pattern the existing N=2 test already uses — that it is satisfied
+  without a second growth event, i.e. that the freed first-pool capacity
+  was actually found and reused by the creation-order scan, not
+  ignored in favor of always growing again.
 - A real-GPU fallback + `UnlitTextured` + `LitTextured` format-change
   **success** test — the exact PR #96 scenario, converted per D14.
 - A real-GPU, deterministic N greater than 2 (Human Review to pick the
@@ -612,7 +902,10 @@ platform-conditional branch anywhere in this Spec's own design.
 - No leak and no partial publish on a mid-creation failure (D9), directly
   exercised (a forced/simulated growth-attempt failure path, or, at
   minimum, static code-review confirmation matching every other
-  `createPipeline()` failure-path test's own existing precedent).
+  `createPipeline()` failure-path test's own existing precedent) —
+  including confirming a newly-grown-but-ultimately-unused pool (D9's own
+  "kept, not rolled back" policy) is neither leaked (still destroyed,
+  correctly, at Device destruction) nor erroneously double-destroyed.
 - No destruction of a still-GPU-referenced descriptor set/pool before the
   submit-safe point (D7/D8) — re-run of the existing, already-passing
   `rebuildMaterialsForFormatChange` GPU tests, confirming zero regression.
