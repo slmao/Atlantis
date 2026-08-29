@@ -49,6 +49,39 @@ TEST_CASE("parseMaterialSource round-trips through serializeMaterialSource", "[a
   CHECK(reparsedResult.value().addressMode == parsedResult.value().addressMode);
 }
 
+// Plan 0019 P5: parses the new kind: lit_textured token.
+TEST_CASE("parseMaterialSource parses kind: lit_textured", "[asset_system][material]") {
+  const auto result = parseMaterialSource(
+      "atlantis_material_source_version: 1\n"
+      "kind: lit_textured\n"
+      "texture: textures/textured_quad_source_unorm.png\n"
+      "filter: linear\n"
+      "address_mode: repeat\n");
+  REQUIRE(result.isOk());
+  CHECK(result.value().kind == MaterialKind::LitTextured);
+}
+
+// Real regression coverage: serializeMaterialSource() once hardcoded
+// "unlit_textured" unconditionally (correct only by coincidence, since
+// exactly one MaterialKind existed at the time) -- this test would have
+// failed against that bug, proving Plan 0019's own fix (selecting the
+// token from source.kind) is real, not merely decorative.
+TEST_CASE("parseMaterialSource round-trips kind: lit_textured through serializeMaterialSource",
+          "[asset_system][material]") {
+  const auto parsedResult = parseMaterialSource(
+      "atlantis_material_source_version: 1\n"
+      "kind: lit_textured\n"
+      "texture: textures/a.png\n"
+      "filter: linear\n"
+      "address_mode: repeat\n");
+  REQUIRE(parsedResult.isOk());
+  const std::string serialized = serializeMaterialSource(parsedResult.value());
+  CHECK(serialized.find("kind: lit_textured\n") != std::string::npos);
+  const auto reparsedResult = parseMaterialSource(serialized);
+  REQUIRE(reparsedResult.isOk());
+  CHECK(reparsedResult.value().kind == MaterialKind::LitTextured);
+}
+
 TEST_CASE("parseMaterialSource rejects an unknown source version", "[asset_system][material]") {
   const auto result = parseMaterialSource(
       "atlantis_material_source_version: 2\n"

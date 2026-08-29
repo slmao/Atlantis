@@ -88,12 +88,39 @@ TEST_CASE("decodeMaterialArtifact rejects an unsupported schema version", "[asse
 }
 
 TEST_CASE("decodeMaterialArtifact rejects an unknown kind value", "[asset_system][material]") {
+  // Plan 0019 P5: this literal must name a value still genuinely
+  // unrecognized now that 1 (LitTextured) is valid -- 2 here, not 1.
   auto bytes = encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
                                        MaterialSamplerAddressMode::Repeat);
-  bytes[12] = std::byte{0x01};  // kind's low byte, offset 12: 0 -> 1 (unknown)
+  bytes[12] = std::byte{0x02};  // kind's low byte, offset 12: 0 -> 2 (unknown)
   const auto result = decodeMaterialArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialArtifactDecodeError::UnknownMaterialKind);
+}
+
+TEST_CASE("encodeMaterialArtifact then decodeMaterialArtifact round-trips MaterialKind::LitTextured",
+          "[asset_system][material]") {
+  const auto encoded = encodeMaterialArtifact(MaterialKind::LitTextured, 0x0102030405060708ULL,
+                                                MaterialSamplerFilter::Linear, MaterialSamplerAddressMode::Repeat);
+  const auto decoded = decodeMaterialArtifact(encoded);
+  REQUIRE(decoded.isOk());
+  CHECK(decoded.value().kind == MaterialKind::LitTextured);
+  CHECK(decoded.value().textureAsset == 0x0102030405060708ULL);
+}
+
+// Plan 0019 P5/V7, V24: kindToField()'s own no-default switch, real,
+// not merely decorative -- a positive probe (temporarily removing the
+// LitTextured case) reproduces a real C4062 build failure; this is the
+// restored, negative half, verified empty-diff against the positive
+// probe's own reversion.
+TEST_CASE("kindToField()'s own C4062 protection: LitTextured decodes to field 1, distinct from UnlitTextured's 0",
+          "[asset_system][material]") {
+  const auto unlit = encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
+                                              MaterialSamplerAddressMode::Repeat);
+  const auto lit = encodeMaterialArtifact(MaterialKind::LitTextured, 1ULL, MaterialSamplerFilter::Linear,
+                                            MaterialSamplerAddressMode::Repeat);
+  CHECK(unlit[12] == std::byte{0x00});
+  CHECK(lit[12] == std::byte{0x01});
 }
 
 TEST_CASE("decodeMaterialArtifact rejects an unknown filter value", "[asset_system][material]") {

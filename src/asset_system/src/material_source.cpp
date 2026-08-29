@@ -14,6 +14,7 @@ constexpr std::string_view kFilterPrefix = "filter: ";
 constexpr std::string_view kAddressModePrefix = "address_mode: ";
 
 constexpr std::string_view kKindUnlitTextured = "unlit_textured";
+constexpr std::string_view kKindLitTextured = "lit_textured";
 constexpr std::string_view kFilterNearest = "nearest";
 constexpr std::string_view kFilterLinear = "linear";
 constexpr std::string_view kAddressModeRepeat = "repeat";
@@ -66,6 +67,8 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
   if (!matchField(lines[1], kKindPrefix, value)) return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
   if (value == kKindUnlitTextured) {
     parsed.kind = MaterialKind::UnlitTextured;
+  } else if (value == kKindLitTextured) {
+    parsed.kind = MaterialKind::LitTextured;
   } else {
     return ResultT::Err(MaterialSourceParseError::UnknownKind);
   }
@@ -102,7 +105,11 @@ std::string serializeMaterialSource(const ParsedMaterialSource& source) {
   out += kVersionLine;
   out += '\n';
   out += kKindPrefix;
-  out += kKindUnlitTextured;  // MaterialKind is a closed, single-enumerator vocabulary this round (ADR-0059 D2/D15)
+  // Plan 0019 P5: MaterialKind is a closed, two-enumerator vocabulary
+  // now (ADR-0061 Decision 3) -- selected by source.kind, not hardcoded
+  // to the single value this file's own first-draft precedent (ADR-0059
+  // D2/D15, exactly one enumerator at the time) previously assumed.
+  out += (source.kind == MaterialKind::UnlitTextured ? kKindUnlitTextured : kKindLitTextured);
   out += '\n';
   out += kTexturePrefix;
   out += source.textureLogicalPath;

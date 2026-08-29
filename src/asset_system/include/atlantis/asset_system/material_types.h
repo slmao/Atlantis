@@ -20,12 +20,16 @@ enum class MaterialSamplerAddressMode {
   ClampToEdge,
 };
 
-// A small, closed enum -- exactly one enumerator this round (ADR-0059
-// Decision item 3). Runtime maps this value to a fixed, built-in shader
-// pair (Plan 0018 Section P10); the Material artifact stores only this
-// enumerator, never a shader path or identifier of any kind.
+// A small, closed enum. Runtime maps each value to a fixed, built-in
+// shader pair (Plan 0018 Section P10, Plan 0019 Section P6); the
+// Material artifact stores only this enumerator, never a shader path or
+// identifier of any kind. LitTextured added by ADR-0061 Decision 3 /
+// plans/0019-lighting-foundation.md P5 -- reuses MaterialAssetData's own
+// existing, unchanged shape; no LitColored (untextured) kind this
+// round, no real consumer names one yet.
 enum class MaterialKind {
   UnlitTextured,
+  LitTextured,
 };
 
 // CPU-side result of loadMaterialAsset() -- names no RHI type, matching
