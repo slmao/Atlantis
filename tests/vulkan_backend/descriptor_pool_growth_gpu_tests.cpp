@@ -37,13 +37,25 @@
 // vkCreatePipelineLayout/vkCreateGraphicsPipelines failure from valid,
 // portable PipelineCreateParams is not achievable deterministically
 // across drivers. The property itself is confirmed by direct reading of
-// VulkanDevice::allocateDescriptorSet() and createPipeline() (Plan 0021
-// P5/P6): a newly-grown pool is published (array-slot write + count
-// increment) with zero intervening fallible operation before the
-// retry, and every later createPipeline() failure branch frees the
-// already-allocated set back to originPool before returning -- matching
-// this codebase's own established precedent of relying on static review
-// for GPU failure paths no test can reliably, portably trigger.
+// these exact branches, not a general "RAII looks correct" claim:
+//   - vulkan_device.cpp:930-931 (VulkanDevice::allocateDescriptorSet(),
+//     Step 3's own publish): the array-slot write and the count
+//     increment are the literal next two statements after
+//     createDescriptorPoolOfSize() succeeds, with zero intervening
+//     fallible operation -- so a newly-grown pool is always published
+//     before Step 4's own retry is ever attempted.
+//   - vulkan_device.cpp:1055 (createPipeline()'s own
+//     PipelineLayoutCreationFailed branch) and vulkan_device.cpp:1174
+//     (its own final vkCreateGraphicsPipelines-failure branch): both
+//     call vkFreeDescriptorSets(device_, originPool, ...) -- the real
+//     origin pool this specific allocation came from, never the array's
+//     current/last entry -- before returning, so the already-allocated
+//     set is always freed back to a pool that stays in descriptorPools_
+//     (never rolled back), leaving it immediately available for the
+//     next createPipeline() call's own scan to reuse.
+// This matches this codebase's own established precedent of relying on
+// static review for GPU failure paths no test can reliably, portably
+// trigger.
 
 namespace {
 
@@ -191,8 +203,14 @@ TEST_CASE(
     CHECK(overflowResult.error() == PipelineCreateError::DescriptorSetAllocationFailed);
   }
 
-  // Phase 2: destroy 10 of the 60, freeing capacity in whichever pool(s)
-  // they came from.
+  // Phase 2: destroy the LAST 10 of the 60 created (pop_back(), reverse
+  // of creation order). Because Phase 1 filled all 60 slots exactly (no
+  // pool had any spare capacity at any point), and the creation-order
+  // scan always fills pool0 (generation 0, 4 slots), then pool1 (8),
+  // then pool2 (16), before ever touching pool3 (generation 3, 32
+  // slots, holding creation indices 28-59), the last 10 created are
+  // provably all in pool3 -- pool0/pool1/pool2 stay 100% full and
+  // untouched by this destruction, never gaining any spare capacity.
   for (int i = 0; i < 10; ++i) {
     pipelines.pop_back();
   }
@@ -200,10 +218,11 @@ TEST_CASE(
 
   // Create 10 new Pipelines. Since the pool set is ALREADY at its own
   // hard ceiling (4 pools) -- unchanged by the destructions above, which
-  // only free capacity WITHIN existing pools, never remove a pool -- a
-  // 5th pool cannot legally be created. Success here is only possible
-  // if the freed capacity was found and reused by the creation-order
-  // scan: definitive, indirect proof of reuse-before-growth (Spec 0021
+  // only free capacity WITHIN pool3, never remove a pool -- a 5th pool
+  // cannot legally be created, and pool0/pool1/pool2 remain full with
+  // nothing to offer. Success here is only possible if the freed pool3
+  // capacity was found and reused by the creation-order scan:
+  // definitive, indirect proof of reuse-before-growth (Spec 0021
   // D3/D7), with no new production introspection API.
   for (int i = 0; i < 10; ++i) {
     auto result = device->createPipeline(

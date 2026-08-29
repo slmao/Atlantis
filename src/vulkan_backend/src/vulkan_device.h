@@ -198,6 +198,17 @@ class VulkanDevice final : public atlantis::rhi::Device {
   // and this returns PipelineCreateError::DescriptorSetAllocationFailed
   // -- the only error this function can ever produce. Called only from
   // createPipeline().
+  //
+  // Termination, exact worst case: at most kMaxDescriptorPoolCount (4)
+  // vkAllocateDescriptorSets calls total, never 5 -- either every
+  // existing pool is already at the ceiling and all 4 are scanned with
+  // no growth attempted (4 scans, 0 retries), or fewer than 4 exist, all
+  // scanned (at most 3 scans) and exactly one retry follows a single
+  // growth event (at most 3 + 1 = 4). These two cases are mutually
+  // exclusive (Step 2's own ceiling check gates growth), never additive
+  // -- growth and a full 4-pool scan cannot both contribute their own
+  // maximum in the same call. At most one vkCreateDescriptorPool call.
+  // No loop, no recursion -- always terminates.
   [[nodiscard]] std::optional<atlantis::rhi::PipelineCreateError> allocateDescriptorSet(
       VkDescriptorSetLayout layout, VkDescriptorSet& outDescriptorSet, VkDescriptorPool& outOriginPool);
 

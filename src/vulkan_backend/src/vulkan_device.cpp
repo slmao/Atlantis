@@ -1047,7 +1047,13 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
   const VkResult layoutResult = vkCreatePipelineLayout(device_, &layoutCreateInfo, nullptr, &pipelineLayout);
   if (layoutResult != VK_SUCCESS) {
-    vkFreeDescriptorSets(device_, originPool, 1, &descriptorSet);
+    // vkFreeDescriptorSets is documented to only ever return VK_SUCCESS
+    // when the pool was created with FREE_DESCRIPTOR_SET_BIT (every pool
+    // in this Device's own set is, unconditionally) -- checked anyway,
+    // per this module's own "every VkResult is checked" rule with no
+    // silent exceptions, matching VulkanPipeline's own destructor.
+    const VkResult freeResult = vkFreeDescriptorSets(device_, originPool, 1, &descriptorSet);
+    ATLANTIS_CHECK(freeResult == VK_SUCCESS);
     vkDestroyDescriptorSetLayout(device_, descriptorSetLayout, nullptr);
     vkDestroyShaderModule(device_, fragmentModule, nullptr);
     vkDestroyShaderModule(device_, vertexModule, nullptr);
@@ -1164,7 +1170,9 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
 
   if (pipelineResult != VK_SUCCESS) {
     vkDestroyPipelineLayout(device_, pipelineLayout, nullptr);
-    vkFreeDescriptorSets(device_, originPool, 1, &descriptorSet);
+    // See the identical vkFreeDescriptorSets rationale above.
+    const VkResult freeResult = vkFreeDescriptorSets(device_, originPool, 1, &descriptorSet);
+    ATLANTIS_CHECK(freeResult == VK_SUCCESS);
     vkDestroyDescriptorSetLayout(device_, descriptorSetLayout, nullptr);
     return ResultT::Err(toPipelineCreateError(pipelineResult));
   }

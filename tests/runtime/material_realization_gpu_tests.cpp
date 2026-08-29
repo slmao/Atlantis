@@ -308,11 +308,19 @@ TEST_CASE("rebuildMaterialsForFormatChange never touches the caller existing bun
 // format-rebuild test immediately above, transcribed for a LitTextured
 // material -- a single material (not two, unlike an earlier draft of
 // this test, which discovered a real, PRE-EXISTING, Plan-0019-unrelated
-// limit: vulkan_device.cpp's own descriptor pool is sized maxSets = 4,
-// so two simultaneous materials surviving both an old AND a new batch
-// during a format-change window (2 old + 2 new + 1 new fallback = 5)
-// already exceeds it regardless of MaterialKind -- disclosed, out of
-// this Plan's own scope to change, not a defect this Plan introduced).
+// limit: vulkan_device.cpp's own descriptor pool WAS sized maxSets = 4
+// as a single, fixed pool at the time this test was written, so two
+// simultaneous materials surviving both an old AND a new batch during a
+// format-change window (2 old + 2 new + 1 new fallback = 5) already
+// exceeded it regardless of MaterialKind -- disclosed at the time, out
+// of Plan 0019's own scope to change, not a defect that Plan
+// introduced. Since fixed by Spec 0021/ADR-0064/Plan 0021 (VulkanDevice
+// now owns a growable pool set) -- see this same file's own later N=2/
+// N=6 TEST_CASEs, below, which exercise exactly this scenario and now
+// succeed. This test's own single-material shape is kept as-is; it was
+// never about the pool limit, only about a real, independent finding
+// (selectShaderPair() dispatch correctness) this comment's own second
+// paragraph describes.
 // rebuildMaterialsForFormatChange()'s own widened, per-candidate
 // selectShaderPair() dispatch (the identical, shared function
 // realizeOneMaterialCandidate() also calls, already pixel-proven
