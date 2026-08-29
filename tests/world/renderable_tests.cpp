@@ -73,18 +73,19 @@ TEST_CASE("getRenderable() and setActiveCamera() report distinct component-absen
   REQUIRE(world.getRenderable(cameraOnly).error() == WorldError::NoRenderableComponent);
 }
 
-// V28(d): every WorldError-producing switch/mapping in this module must
-// remain exhaustive over all five enumerators, with no `default:` case
-// masking a missing one. This repository has no production
-// WorldError-consuming switch (world.cpp only ever produces a
-// WorldError, via if-chains), so this canary switch is the "explicit
+// V28(d), widened by Plan 0019 P1: every WorldError-producing
+// switch/mapping in this module must remain exhaustive over all six
+// enumerators (NoLightComponent is the sixth, Spec 0019 D2), with no
+// `default:` case masking a missing one. This repository has no
+// production WorldError-consuming switch (world.cpp only ever produces
+// a WorldError, via if-chains), so this canary switch is the "explicit
 // enumeration in the test itself" V28 names as the alternative to a
 // production compile-time check -- matching Plan 0013's own established
 // C4062 precedent (error_classification.cpp), scoped here to
-// atlantis_world_tests via CMakeLists.txt's own /w14062. Adding a sixth
-// WorldError enumerator without updating this switch fails to compile
-// under this target's /w14062 /WX.
-TEST_CASE("WorldError's five enumerators are exhaustively covered by a no-default switch", "[world][renderable]") {
+// atlantis_world_tests via CMakeLists.txt's own /w14062. Adding a
+// seventh WorldError enumerator without updating this switch fails to
+// compile under this target's /w14062 /WX.
+TEST_CASE("WorldError's six enumerators are exhaustively covered by a no-default switch", "[world][renderable]") {
   const auto describe = [](WorldError error) -> int {
     switch (error) {
       case WorldError::InvalidEntity:
@@ -97,6 +98,8 @@ TEST_CASE("WorldError's five enumerators are exhaustively covered by a no-defaul
         return 3;
       case WorldError::NoRenderableComponent:
         return 4;
+      case WorldError::NoLightComponent:
+        return 5;
     }
     return -1;  // unreachable if the switch above is exhaustive
   };
@@ -106,4 +109,5 @@ TEST_CASE("WorldError's five enumerators are exhaustively covered by a no-defaul
   REQUIRE(describe(WorldError::NoCameraComponent) == 2);
   REQUIRE(describe(WorldError::WrongWorld) == 3);
   REQUIRE(describe(WorldError::NoRenderableComponent) == 4);
+  REQUIRE(describe(WorldError::NoLightComponent) == 5);
 }

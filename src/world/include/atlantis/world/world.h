@@ -4,6 +4,7 @@
 #include <atlantis/result.h>
 #include <atlantis/world/camera.h>
 #include <atlantis/world/entity_id.h>
+#include <atlantis/world/light.h>
 #include <atlantis/world/renderable.h>
 #include <atlantis/world/transform.h>
 #include <atlantis/world/world_error.h>
@@ -75,6 +76,17 @@ class World {
   // valid as of the call, not a live iterator held across a subsequent
   // World mutation.
   [[nodiscard]] std::vector<EntityId> renderableEntities() const;
+
+  // Spec 0019 D2 / plans/0019-lighting-foundation.md P1: a third optional
+  // per-entity component, at most one per entity, mirroring Camera's own
+  // set/remove/get shape exactly.
+  [[nodiscard]] atlantis::Result<std::monostate, WorldError> setLight(EntityId id, Light light);
+  [[nodiscard]] atlantis::Result<std::monostate, WorldError> removeLight(EntityId id);
+  [[nodiscard]] atlantis::Result<Light, WorldError> getLight(EntityId id) const;
+
+  // Ascending slot-index order -- a fresh std::vector snapshot each call,
+  // mirroring renderableEntities()'s own exact contract.
+  [[nodiscard]] std::vector<EntityId> lightEntities() const;
 
  private:
   // Identity checked before slot/generation, moved-from state checked

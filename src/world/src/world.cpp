@@ -29,6 +29,7 @@ struct Slot {
   std::array<float, 16> cachedWorldMatrix{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};  // valid only after updateTransforms()
   std::optional<Camera> camera;
   std::optional<Renderable> renderable;
+  std::optional<Light> light;  // Spec 0019 D2
   SlotVisitState visitState = SlotVisitState::NotVisited;  // reset at the start of every updateTransforms() call
 };
 
@@ -138,6 +139,7 @@ EntityId World::createEntity() {
   slot.localTransform = Transform{};
   slot.camera.reset();
   slot.renderable.reset();
+  slot.light.reset();
   // slot.generation is NOT touched here -- it was already advanced by
   // the destroyEntity() call that freed this index (or is still 0, for
   // a never-before-used index).
@@ -339,6 +341,36 @@ std::vector<EntityId> World::renderableEntities() const {
   std::vector<EntityId> result;
   for (std::uint32_t i = 0; i < slots_.size(); ++i) {
     if (slots_[i].alive && slots_[i].renderable.has_value()) {
+      result.push_back(EntityId{i, slots_[i].generation, identity_.get()});
+    }
+  }
+  return result;
+}
+
+atlantis::Result<std::monostate, WorldError> World::setLight(EntityId id, Light light) {
+  if (auto r = validate(id); r.isErr()) return r;
+  slots_[id.index()].light = light;
+  return atlantis::Result<std::monostate, WorldError>::Ok({});
+}
+
+atlantis::Result<std::monostate, WorldError> World::removeLight(EntityId id) {
+  if (auto r = validate(id); r.isErr()) return r;
+  slots_[id.index()].light.reset();
+  return atlantis::Result<std::monostate, WorldError>::Ok({});
+}
+
+atlantis::Result<Light, WorldError> World::getLight(EntityId id) const {
+  if (auto r = validate(id); r.isErr()) return atlantis::Result<Light, WorldError>::Err(r.error());
+  const Slot& slot = slots_[id.index()];
+  if (!slot.light.has_value()) return atlantis::Result<Light, WorldError>::Err(WorldError::NoLightComponent);
+  return atlantis::Result<Light, WorldError>::Ok(*slot.light);
+}
+
+std::vector<EntityId> World::lightEntities() const {
+  ATLANTIS_CHECK_MSG(identity_ != nullptr, "World::lightEntities() called on a moved-from World");
+  std::vector<EntityId> result;
+  for (std::uint32_t i = 0; i < slots_.size(); ++i) {
+    if (slots_[i].alive && slots_[i].light.has_value()) {
       result.push_back(EntityId{i, slots_[i].generation, identity_.get()});
     }
   }

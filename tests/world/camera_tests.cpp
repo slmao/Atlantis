@@ -1,5 +1,6 @@
 #include <atlantis/world/camera.h>
 #include <atlantis/world/entity_id.h>
+#include <atlantis/world/light.h>
 #include <atlantis/world/world.h>
 #include <atlantis/world/world_error.h>
 
@@ -106,6 +107,9 @@ TEST_CASE("WrongWorld is reachable from getWorldMatrix()/Camera entry points", "
   REQUIRE(b.setRenderable(fromA, atlantis::world::Renderable{}).error() == WorldError::WrongWorld);
   REQUIRE(b.removeRenderable(fromA).error() == WorldError::WrongWorld);
   REQUIRE(b.getRenderable(fromA).error() == WorldError::WrongWorld);
+  REQUIRE(b.setLight(fromA, atlantis::world::Light{}).error() == WorldError::WrongWorld);
+  REQUIRE(b.removeLight(fromA).error() == WorldError::WrongWorld);
+  REQUIRE(b.getLight(fromA).error() == WorldError::WrongWorld);
 }
 
 // V26 (remaining methods, deferred from entity_lifecycle_tests.cpp's own
