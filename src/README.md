@@ -234,11 +234,18 @@ unconditionally little-endian binary runtime artifact — every field,
 including vertex/transform floats via `std::bit_cast`, assembled by
 explicit shift/mask, never a host-struct `memcpy`), and atomic
 (write-to-temp-then-`rename()`) cooker output. Static mesh (a position/
-color/UV0 mesh, schema version 2 -- a fixed 32-byte stride at byte
-offsets 0/12/24, mandatory UV0 for every vertex, no optional/variant
-layout; version 1, the pre-UV0 24-byte layout, is rejected outright by
-both the source parser and the artifact decoder, no dual-version reader):
-`cookStaticMesh()`, `loadStaticMeshAsset()` returning CPU-only
+color/UV0/object-space-normal mesh, schema version 3 -- a fixed 44-byte
+stride at byte offsets 0/12/24/32 (four named `constexpr` constants in
+`mesh_artifact.h`, not comment-only), mandatory normal for every vertex,
+no optional/variant layout, no auto-generation from position and no
+implicit normalization -- a shared `atlantis::asset_system::detail`
+numeric pair independently re-derives each normal's own double-precision
+length-squared and checks it against a fixed, inclusive `[0.9801,
+1.0201]` tolerance at both cook and load time; versions 1 and 2 (the
+pre-UV0 24-byte and pre-normal 32-byte layouts) are both rejected
+outright by both the source parser and the artifact decoder, no
+dual-version reader): `cookStaticMesh()`, `loadStaticMeshAsset()`
+returning CPU-only
 `StaticMeshAssetData` — never an RHI type; a composition root
 outside this module (`tests/image_regression/fixture/`, Atlantis
 Runtime) is responsible for passing that data into the existing,
@@ -308,7 +315,21 @@ reference added per
 [plans/0018-material-asset-scene-binding-foundation.md](../plans/0018-material-asset-scene-binding-foundation.md),
 and
 [ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)–[ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md),
-merged via [PR #88](https://github.com/slmao/Atlantis/pull/88).
+merged via [PR #88](https://github.com/slmao/Atlantis/pull/88); the
+static mesh format's object-space normal attribute added per
+[specs/0020-mesh-normal-attribute-foundation.md](../specs/0020-mesh-normal-attribute-foundation.md),
+[plans/0020-mesh-normal-attribute-foundation.md](../plans/0020-mesh-normal-attribute-foundation.md),
+[ADR-0063](../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md),
+and Accepted Amendments to
+[ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
+and
+[ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md),
+merged via [PR #93](https://github.com/slmao/Atlantis/pull/93) — a
+normal *data contract* only (authoring → cook → artifact → load), with
+no Lighting, no Lit Material, no shader consuming the new attribute,
+and no rendered-output change; it exists solely as Lighting Foundation
+(Spec 0019, `Approved`; Plan 0019 may now be drafted)'s own named, hard
+prerequisite.
 
 **`world/`** — Atlantis World: Atlantis's in-memory, multi-entity scene.
 Target `atlantis_world`, alias `Atlantis::World` (PUBLIC dependency

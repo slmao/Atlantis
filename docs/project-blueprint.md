@@ -1116,6 +1116,92 @@ milestone being listed does not authorize starting it — see Section 1.
   Milestone's own successor candidate (Candidate Order 8, Section B
   below).
 
+### Milestone 16 — Mesh Normal Attribute Foundation
+
+- **Governance state:** **`Approved` Spec, `Approved` Plan. Implemented
+  and merged via [PR #93](https://github.com/slmao/Atlantis/pull/93)
+  (2026-08-29)** —
+  [specs/0020-mesh-normal-attribute-foundation.md](../specs/0020-mesh-normal-attribute-foundation.md),
+  [plans/0020-mesh-normal-attribute-foundation.md](../plans/0020-mesh-normal-attribute-foundation.md).
+  Architectural Impact identified one new decision, filed as
+  [ADR-0063](../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md)
+  (the normal attribute's own schema, four real named byte-offset
+  constants, version bump, double-precision length-squared numeric
+  contract, and coordinate convention), `Accepted`, plus Accepted
+  Amendments narrowing the already-`Accepted`
+  [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
+  and
+  [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md).
+  Closes Lighting Foundation's own named, hard, non-negotiable
+  prerequisite (Spec 0019 D1) — a real, asset-sourced vertex normal was
+  confirmed absent anywhere in this codebase before this Milestone.
+- **Scope delivered:** the static mesh authoring/artifact format's
+  fourth attribute — a mandatory, object-space normal (3 floats) per
+  vertex, following the exact mechanical pattern Milestone 14 (UV0)
+  already established. Source format version 2 → 3, artifact schema
+  version 2 → 3, per-vertex stride 32 → 44 bytes (position xyz @0,
+  color rgb @12, UV0 uv @24, normal xyz @32 — four named `constexpr`
+  offset constants in `mesh_artifact.h`, not comment-only, each of the
+  six real composition roots' own local `Vertex` struct now
+  `static_assert`-checked against them). Both prior versions are
+  rejected outright, no migration reader. A new, shared
+  `atlantis::asset_system::detail` numeric pair
+  (`computeNormalLengthSquared()`/`isNormalLengthSquaredInTolerance()`)
+  independently re-derives each normal's own double-precision
+  length-squared (exact `float`→`double` promotion, fixed summation
+  order, no `std::sqrt` anywhere) and checks it against a fixed,
+  inclusive `[0.9801, 1.0201]` (±1%) tolerance at *both* cook and load
+  time — the decoder never trusts the cooker. All three real mesh
+  assets gained real, disclosed normal values: `minimal_cube`'s eight
+  corners each get a smooth (vertex-averaged), sign-matched normal;
+  both `textured_quad` meshes get a uniform `(0, 0, 1)`, independently
+  verified by hand cross-product over both triangles of each quad. The
+  cooker never auto-generates a normal from position, and never
+  normalizes an author-supplied value — an out-of-tolerance normal is a
+  hard cook-time/decode-time error (`NonUnitNormal`), not a silent
+  correction. This Milestone's own scope is the normal *data contract*
+  only (authoring → cook → artifact → load) — no Lighting, no Lit
+  Material, no shader reads the new attribute, and no rendered-output
+  change of any kind; every one of the six real composition roots'
+  own shaders is confirmed to gain zero new `[[vk::location(N)]]`
+  declaration as a consequence.
+- **Verified:** a centralized final code review round (still pre-merge,
+  on PR #93 itself) found and fixed two comment-accuracy defects — no
+  functional, schema, numeric-contract, public-API, module-boundary, or
+  golden change resulted from either: two test comments overclaimed
+  that a parsed `0.99`/`1.01` literal lands exactly on the tolerance
+  boundary (independently re-verified it lands ~1.9e-8 to either side,
+  still correctly accepted), and one stale as-built comment still
+  described the mesh artifact's stride as "32-byte" in the present
+  tense. Three further files needed a mechanical
+  `vertexStrideBytes() == 32` → `== 44` fix that Pre-draft
+  verification's own two search methods could not find, disclosed as
+  same-kind stride-constant updates. Fresh Debug/Release builds clean;
+  `ctest -LE gpu` 689/689 Debug, 688/688 Release; `ctest -L gpu` 35/35
+  both configurations on real Vulkan-capable hardware, zero Vulkan
+  Validation Layers hits across full verbose GPU test output; a fresh
+  `ATLANTIS_BUILD_TESTS=OFF` configure+build re-cooked all three real
+  mesh assets and produced a working `atlantis_runtime.exe` with zero
+  test executables in that tree; module-boundary scan confirmed
+  `Atlantis::AssetSystem` still links `Atlantis::Core` only; all four
+  existing goldens (`minimal_cube`, `world_scene`, `textured_quad`,
+  `material_demo`) confirmed byte-for-byte identical to `main` and
+  pixel-for-pixel zero-difference — the golden generator was never run,
+  and never needed to be: this Milestone adds no rendered capability, so
+  a confirmed zero visual change is the entire, correct outcome (no
+  human visual/interactive-window confirmation applies for the same
+  reason). See
+  [plans/0020-mesh-normal-attribute-foundation.md](../plans/0020-mesh-normal-attribute-foundation.md)'s
+  own "Post-Merge Status Update" for the full record.
+- **Not implemented** (per Spec 0020's own Non-Goals, unchanged):
+  tangent/bitangent attributes, normal mapping, or any hard-edge/
+  smoothing-group importer; a hard-face-normal `minimal_cube` variant;
+  any Lighting math, `World` `Light` component, `LitTextured` Material
+  kind, frame lighting uniform data, or shader consuming the new
+  attribute — all remain Lighting Foundation's own scope (Spec 0019,
+  `Approved`; Plan 0019 may now be drafted, not yet started, Candidate
+  Order 8, Section B below).
+
 ### Further candidate phases (directional only, no Spec, no ADR)
 
 The following are named only to communicate long-term direction drawn
