@@ -1,7 +1,9 @@
 #include "fixture/lighting_demo_fixture.h"
+#include "support/golden_validity.h"
 #include "support/pixel_diff.h"
 
 #include <atlantis/asset_system/asset_id.h>
+#include <atlantis/asset_system/cook_scene.h>
 #include <atlantis/asset_system/material_types.h>
 #include <atlantis/runtime/bootstrap_config.h>
 #include <atlantis/runtime/scene_extraction.h>
@@ -13,11 +15,16 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Plan 0019 Section P10/Milestone 10 (Spec 0019 D10, this Plan's own
@@ -34,9 +41,11 @@
 using atlantis::image_regression::compareBuffers;
 using atlantis::image_regression::kLightingDemoExtentPixels;
 using atlantis::image_regression::LightingDemoFixture;
+using atlantis::image_regression::loadAndValidateGolden;
 using atlantis::image_regression::PixelBuffer;
 using atlantis::image_regression::renderLightingDemoFrame;
 using atlantis::image_regression::setUpLightingDemoFixture;
+using atlantis::image_regression::writeFailureArtifacts;
 using atlantis::runtime::BootstrapConfig;
 using atlantis::runtime::computeLambertianDiffuse;
 using atlantis::runtime::extractCameraMatrices;
@@ -402,4 +411,199 @@ TEST_CASE("LightingDemoFixture: repeated render cycles against the same fixture 
 
   CHECK(firstResult.value().rgba8 == secondResult.value().rgba8);
   CHECK(fixture.materialResourceMap.size() == 1);
+}
+
+// ---------------------------------------------------------------------
+// Plan 0019 Milestone 10b: the golden itself, captured on this Plan's
+// own already-committed, clean Milestone 10a implementation (ADR-0042's
+// own two-phase process) -- and the two deliberate-error negative tests
+// that need it (Milestone 9's own "direction-sign error"/"point
+// position-or-attenuation error" requirements): each proves this Plan's
+// own D6 sign convention/attenuation formula is genuinely load-bearing,
+// not merely stated in prose, by showing a real, deliberately-wrong
+// scene fails comparison against the real, human-reviewed golden.
+// ---------------------------------------------------------------------
+
+namespace {
+
+namespace fs = std::filesystem;
+
+std::atomic<int> gScratchCounter{0};
+
+struct TempDirGuard {
+  fs::path path;
+  explicit TempDirGuard(const std::string& label)
+      : path(fs::temp_directory_path() / "atlantis_lighting_demo_gpu_tests" /
+              (label + "_" + std::to_string(gScratchCounter.fetch_add(1)))) {
+    fs::create_directories(path);
+  }
+  ~TempDirGuard() {
+    std::error_code ec;
+    fs::remove_all(path, ec);
+  }
+  TempDirGuard(const TempDirGuard&) = delete;
+  TempDirGuard& operator=(const TempDirGuard&) = delete;
+};
+
+void writeFile(const fs::path& path, const std::string& content) {
+  fs::create_directories(path.parent_path());
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  out << content;
+}
+
+// A direct transcription of assets/scenes/lighting_demo.scene.txt's own
+// real, committed content, with the Directional light's own yaw and the
+// Point light's own range replaced by a caller-supplied token -- every
+// other value (mesh, material, camera, colors, intensities, the Point
+// light's own position) stays byte-identical to the real scene, so each
+// negative test below changes exactly the one value its own name
+// describes, nothing else.
+constexpr std::string_view kLightingDemoSourceTemplate =
+    "atlantis_scene_source_version: 3\n"
+    "node_count: 4\n"
+    "active_camera: 2\n"
+    "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+    "mesh=meshes/minimal_cube.mesh.txt material=materials/lit_textured_quad.material.txt\n"
+    "node: node_id=2 parent=none position=0.0 0.0 5.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+    "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0\n"
+    "node: node_id=3 parent=none position=0.0 0.0 0.0 rotation=0.5 {DIRECTIONAL_YAW} 0.0 scale=1.0 1.0 1.0 "
+    "light=directional color=0.6 0.7 1.0 intensity=1.2\n"
+    "node: node_id=4 parent=none position=0.8 0.3 0.5 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+    "light=point color=1.0 0.6 0.3 intensity=3.0 range={POINT_RANGE}\n";
+
+[[nodiscard]] std::string replaceOnce(std::string text, std::string_view token, const std::string& value) {
+  const auto pos = text.find(token);
+  REQUIRE(pos != std::string::npos);
+  text.replace(pos, token.size(), value);
+  return text;
+}
+
+// Cooks a deliberately-mutated variant of lighting_demo.scene.txt's own
+// content into a temp directory, reusing the REAL, already-cooked mesh/
+// material/texture dependencies verbatim -- their own build-tree
+// artifact paths never change, only the scene's own light values do, so
+// the real, already-generated manifest (config.sceneDependencyManifestPath)
+// is copied unchanged rather than rebuilt.
+[[nodiscard]] BootstrapConfig buildMutatedTestConfig(const fs::path& dir, const std::string& mutatedSourceText) {
+  const fs::path sourcePath = dir / "lighting_demo_mutated.scene.txt";
+  writeFile(sourcePath, mutatedSourceText);
+  const fs::path artifactPath = dir / "lighting_demo_mutated.ascene";
+  const fs::path metadataPath = dir / "lighting_demo_mutated.ascene.meta.txt";
+  REQUIRE(
+      atlantis::asset_system::cookScene(sourcePath.string(), artifactPath.string(), metadataPath.string()).isOk());
+
+  const fs::path manifestPath = dir / "manifest.txt";
+  std::ifstream realManifest(std::string(ATLANTIS_lighting_demo_scene_MANIFEST_PATH), std::ios::binary);
+  std::ostringstream manifestBuffer;
+  manifestBuffer << realManifest.rdbuf();
+  writeFile(manifestPath, manifestBuffer.str());
+
+  BootstrapConfig config = buildTestConfig();
+  config.sceneArtifactPath = artifactPath.string();
+  config.sceneMetadataPath = metadataPath.string();
+  config.sceneDependencyManifestPath = manifestPath.string();
+  return config;
+}
+
+constexpr const char* kLightingDemoGoldenName = "lighting_demo/lighting_demo_512x512_rgba8unorm";
+constexpr const char* kLightingDemoGoldenSlug = "lighting_demo_512x512_rgba8unorm";
+
+}  // namespace
+
+TEST_CASE("Full capture-compare cycle against the committed lighting_demo golden passes",
+          "[image_regression][gpu][lighting]") {
+  const std::filesystem::path outputDir = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
+  const std::filesystem::path actualArtifact = outputDir / (std::string(kLightingDemoGoldenSlug) + "_actual.png");
+  const std::filesystem::path diffArtifact = outputDir / (std::string(kLightingDemoGoldenSlug) + "_diff.png");
+  std::filesystem::remove(actualArtifact);
+  std::filesystem::remove(diffArtifact);
+
+  auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  LightingDemoFixture& fixture = fixtureResult.value();
+
+  auto renderResult = renderLightingDemoFrame(fixture);
+  REQUIRE(renderResult.isOk());
+  const PixelBuffer& actual = renderResult.value();
+
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult = loadAndValidateGolden(goldensDir / (std::string(kLightingDemoGoldenName) + ".png"),
+                                             goldensDir / (std::string(kLightingDemoGoldenName) + ".sidecar.txt"));
+  {
+    INFO("INVALID GOLDEN: the committed lighting_demo golden must load and validate cleanly");
+    REQUIRE(goldenResult.isOk());
+  }
+  const auto& validatedGolden = goldenResult.value();
+
+  REQUIRE(actual.width == validatedGolden.pixels.width);
+  REQUIRE(actual.height == validatedGolden.pixels.height);
+
+  const auto report = compareBuffers(actual, validatedGolden.pixels);
+  if (!report.passed) {
+    (void)writeFailureArtifacts(outputDir, kLightingDemoGoldenSlug, actual, validatedGolden.pixels);
+  }
+  REQUIRE(report.passed);
+
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+TEST_CASE("A deliberate Directional light direction-sign error produces a captured frame that fails comparison "
+          "against the real lighting_demo golden",
+          "[image_regression][gpu][lighting]") {
+  TempDirGuard dir("direction_sign_error");
+  // yaw + pi exactly negates the extracted direction vector (Spec 0019
+  // D2's own -column2 formula, Milestone 7's own extractFrameLightingData()):
+  // Ry(yaw + pi) * localZ = Ry(yaw) * Ry(pi) * localZ = Ry(yaw) * (-localZ)
+  // = -(Ry(yaw) * localZ), since Ry(pi) maps local +Z to local -Z and
+  // leaves Y untouched -- a real, deliberate 180-degree flip of the
+  // light's own authored direction, not merely "a different rotation".
+  const std::string mutatedSource =
+      replaceOnce(replaceOnce(std::string(kLightingDemoSourceTemplate), "{DIRECTIONAL_YAW}", "2.5415927"),
+                  "{POINT_RANGE}", "2.5");
+  const BootstrapConfig config = buildMutatedTestConfig(dir.path, mutatedSource);
+
+  auto fixtureResult = setUpLightingDemoFixture(config);
+  REQUIRE(fixtureResult.isOk());
+  LightingDemoFixture& fixture = fixtureResult.value();
+  auto renderResult = renderLightingDemoFrame(fixture);
+  REQUIRE(renderResult.isOk());
+
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult = loadAndValidateGolden(goldensDir / (std::string(kLightingDemoGoldenName) + ".png"),
+                                             goldensDir / (std::string(kLightingDemoGoldenName) + ".sidecar.txt"));
+  REQUIRE(goldenResult.isOk());
+
+  const auto report = compareBuffers(renderResult.value(), goldenResult.value().pixels);
+  CHECK_FALSE(report.passed);
+  CHECK(report.maxChannelDiff > 20);
+}
+
+TEST_CASE("A deliberate Point light attenuation error (an implausibly small range) produces a captured frame that "
+          "fails comparison against the real lighting_demo golden",
+          "[image_regression][gpu][lighting]") {
+  TempDirGuard dir("point_attenuation_error");
+  // range=0.01 clamps atten = clamp(1 - dist/range, 0, 1) to exactly 0
+  // at any real distance from the cube's own surface (the closest real
+  // surface point is well over 0.01 units from (0.8, 0.3, 0.5)) --
+  // the Point light's own real, visible orange hotspot in the golden
+  // vanishes entirely.
+  const std::string mutatedSource =
+      replaceOnce(replaceOnce(std::string(kLightingDemoSourceTemplate), "{DIRECTIONAL_YAW}", "-0.6"), "{POINT_RANGE}",
+                  "0.01");
+  const BootstrapConfig config = buildMutatedTestConfig(dir.path, mutatedSource);
+
+  auto fixtureResult = setUpLightingDemoFixture(config);
+  REQUIRE(fixtureResult.isOk());
+  LightingDemoFixture& fixture = fixtureResult.value();
+  auto renderResult = renderLightingDemoFrame(fixture);
+  REQUIRE(renderResult.isOk());
+
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult = loadAndValidateGolden(goldensDir / (std::string(kLightingDemoGoldenName) + ".png"),
+                                             goldensDir / (std::string(kLightingDemoGoldenName) + ".sidecar.txt"));
+  REQUIRE(goldenResult.isOk());
+
+  const auto report = compareBuffers(renderResult.value(), goldenResult.value().pixels);
+  CHECK_FALSE(report.passed);
+  CHECK(report.maxChannelDiff > 20);
 }
