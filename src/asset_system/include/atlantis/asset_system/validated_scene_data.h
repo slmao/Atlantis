@@ -15,6 +15,7 @@ struct ValidatedSceneNode {
   DecodedTransform transform;
   std::optional<DecodedCamera> camera;
   std::optional<DecodedRenderable> renderable;
+  std::optional<DecodedLight> light;  // Spec 0019 D3
 };
 
 class ValidatedSceneData;

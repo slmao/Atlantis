@@ -31,6 +31,10 @@ struct ParsedSceneNode {
   std::optional<DecodedCamera> camera;
   std::optional<std::string> meshLogicalPath;
   std::optional<std::string> materialLogicalPath;
+  std::optional<DecodedLight> light;  // Spec 0019 D3: standalone -- never
+                                        // co-present with camera/mesh on the
+                                        // same node, a structural grammar
+                                        // guarantee (P2)
 };
 
 struct ParsedSceneSource {
@@ -52,6 +56,11 @@ enum class SceneSourceParseError {
   InvalidParentToken,
   InvalidComponentGroup,
   TrailingContent,
+  // Spec 0019 D3/D11: a scene declaring more than 1 directional-kind or
+  // more than 4 point-kind light nodes -- a whole-scene, post-node-
+  // collection check, never a per-node one. A hard, structural error,
+  // never a silent, deterministic truncation.
+  TooManyLights,
 };
 
 // Strict, fixed-field-order, plain-text grammar extending

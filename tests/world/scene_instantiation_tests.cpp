@@ -105,7 +105,7 @@ constexpr const char* kNode1MeshPath = "meshes/scene_instantiation_node1.mesh.tx
 // camera. Values match the prior revision's own hand-built fixture
 // exactly, just authored as real scene source text instead.
 constexpr const char* kThreeNodeSceneSource =
-    "atlantis_scene_source_version: 2\n"
+    "atlantis_scene_source_version: 3\n"
     "node_count: 3\n"
     "active_camera: 3\n"
     "node: node_id=1 parent=none position=1.0 2.0 3.0 rotation=0.1 0.2 0.3 scale=1.0 1.0 1.0 "
@@ -187,7 +187,7 @@ TEST_CASE("fromValidatedSceneData() carries a node's material= reference into Re
   // and material= instantiates into a World entity whose Renderable
   // carries both AssetIds.
   const ValidatedSceneData scene = cookAndDecodeScene(
-      "atlantis_scene_source_version: 2\n"
+      "atlantis_scene_source_version: 3\n"
       "node_count: 1\n"
       "active_camera: none\n"
       "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -275,7 +275,7 @@ TEST_CASE("fromValidatedSceneData() produces deterministic, repeatable EntityId 
 
 TEST_CASE("fromValidatedSceneData() leaves an empty active camera when the scene declares none", "[world][scene]") {
   constexpr const char* kPlainSceneSource =
-      "atlantis_scene_source_version: 2\n"
+      "atlantis_scene_source_version: 3\n"
       "node_count: 1\n"
       "active_camera: none\n"
       "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";

@@ -38,4 +38,19 @@ struct DecodedRenderable {
   std::optional<atlantis::asset_system::AssetId> materialAsset;
 };
 
+// Spec 0019 D2 / ADR-0061 Decision item 1 / plans/0019-lighting-foundation.md
+// P2: a deliberately separate, Atlantis::AssetSystem-owned shape from
+// atlantis::world::LightKind/Light -- never names a world:: type, the
+// identical reasoning DecodedCamera already establishes. Flat fields
+// (colorR/G/B), matching DecodedTransform's own flat-field convention,
+// not a nested Vec3-shaped field.
+enum class DecodedLightKind { Directional, Point };
+
+struct DecodedLight {
+  DecodedLightKind kind = DecodedLightKind::Directional;
+  float colorR = 1.0f, colorG = 1.0f, colorB = 1.0f;
+  float intensity = 1.0f;
+  float range = 0.0f;  // Point only; 0.0f for Directional
+};
+
 }  // namespace atlantis::asset_system

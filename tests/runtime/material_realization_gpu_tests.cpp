@@ -555,7 +555,7 @@ struct CookedSceneFixture {
     const fs::path& dir, const std::vector<std::string>& meshLogicalPaths,
     const std::vector<std::string>& materialLogicalPaths) {
   REQUIRE(meshLogicalPaths.size() == materialLogicalPaths.size());
-  std::string source = "atlantis_scene_source_version: 2\n";
+  std::string source = "atlantis_scene_source_version: 3\n";
   source += "node_count: " + std::to_string(meshLogicalPaths.size()) + "\n";
   source += "active_camera: none\n";
   for (std::size_t i = 0; i < meshLogicalPaths.size(); ++i) {
