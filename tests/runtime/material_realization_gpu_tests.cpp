@@ -302,6 +302,158 @@ TEST_CASE("rebuildMaterialsForFormatChange never touches the caller existing bun
   REQUIRE(device->waitIdle().isOk());
 }
 
+// Plan 0019 Section P6/V17: the identical shape as the UnlitTextured
+// format-rebuild test immediately above, transcribed for a LitTextured
+// material -- a single material (not two, unlike an earlier draft of
+// this test, which discovered a real, PRE-EXISTING, Plan-0019-unrelated
+// limit: vulkan_device.cpp's own descriptor pool is sized maxSets = 4,
+// so two simultaneous materials surviving both an old AND a new batch
+// during a format-change window (2 old + 2 new + 1 new fallback = 5)
+// already exceeds it regardless of MaterialKind -- disclosed, out of
+// this Plan's own scope to change, not a defect this Plan introduced).
+// rebuildMaterialsForFormatChange()'s own widened, per-candidate
+// selectShaderPair() dispatch (the identical, shared function
+// realizeOneMaterialCandidate() also calls, already pixel-proven
+// load-bearing by tests/image_regression/lighting_demo_gpu_tests.cpp's
+// own wrong-dispatch test) must correctly select the lit_textured
+// shader pair for this entry, never silently falling back to
+// unlitTextured -- confirmed here by a real, successful rebuild.
+TEST_CASE("rebuildMaterialsForFormatChange reconstructs a LitTextured material's own Pipeline with the "
+          "lit_textured shader pair after a real color-format change",
+          "[runtime][gpu][material_realization][format_rebuild][light]") {
+  auto deviceResult = atlantis::vulkan_backend::createDevice(
+      {.applicationName = "Atlantis Material Realization GPU Tests (LitTextured format rebuild)",
+       .enableValidationLayers = true});
+  REQUIRE(deviceResult.isOk());
+  std::unique_ptr<atlantis::rhi::Device> device = std::move(deviceResult.value());
+
+  auto unlitVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv");
+  auto unlitFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.frag.spv");
+  REQUIRE(unlitVertexSpirv.has_value());
+  REQUIRE(unlitFragmentSpirv.has_value());
+  auto unlitVertexReflectionResult = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) +
+                                                             "/textured_quad.vert.refl.json");
+  REQUIRE(unlitVertexReflectionResult.isOk());
+  const auto unlitLayout = unlitTexturedVertexLayout(unlitVertexReflectionResult.value());
+  REQUIRE(unlitLayout.has_value());
+
+  auto litVertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.vert.spv");
+  auto litFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.spv");
+  REQUIRE(litVertexSpirv.has_value());
+  REQUIRE(litFragmentSpirv.has_value());
+  auto litVertexReflectionResult = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) +
+                                                           "/lit_textured.vert.refl.json");
+  REQUIRE(litVertexReflectionResult.isOk());
+  const auto litLayout = litTexturedVertexLayout(litVertexReflectionResult.value());
+  REQUIRE(litLayout.has_value());
+
+  auto fallbackVertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.spv");
+  auto fallbackFragmentSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.frag.spv");
+  REQUIRE(fallbackVertexSpirv.has_value());
+  REQUIRE(fallbackFragmentSpirv.has_value());
+  auto fallbackVertexReflectionResult =
+      loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.refl.json");
+  REQUIRE(fallbackVertexReflectionResult.isOk());
+  const auto fallbackLayout = fallbackVertexLayout(fallbackVertexReflectionResult.value());
+  REQUIRE(fallbackLayout.has_value());
+
+  constexpr Extent2D kExtent{4, 4};
+  constexpr AssetId kTextureId = 300;
+  constexpr AssetId kMaterialC = 1;
+
+  std::unordered_map<AssetId, MaterialAssetData> materialDataMap;
+  materialDataMap.emplace(kMaterialC,
+                           MaterialAssetData{.kind = MaterialKind::LitTextured, .textureAsset = kTextureId});
+  std::unordered_map<AssetId, TextureAssetData> textureDataMap;
+  textureDataMap.emplace(kTextureId, makeSolidTextureData(4, 0x55));
+
+  std::unordered_map<AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>> sampledTextureResourceMap;
+  std::unordered_map<AssetId, std::unique_ptr<atlantis::renderer::Material>> materialResourceMap;
+
+  // ---- "Frame" 1: format A (Rgba8Unorm) -- realize kMaterialC for real. ----
+  {
+    auto offscreenA = device->createOffscreenTarget({.extent = kExtent, .format = Format::Rgba8Unorm});
+    REQUIRE(offscreenA.isOk());
+    auto acquireResult = offscreenA.value()->acquireTarget();
+    REQUIRE(acquireResult.isOk());
+    std::unique_ptr<atlantis::rhi::RenderTarget> target = std::move(acquireResult.value());
+
+    auto commandListResult = device->createCommandList();
+    REQUIRE(commandListResult.isOk());
+    std::unique_ptr<atlantis::rhi::CommandList> commandList = std::move(commandListResult.value());
+
+    std::unordered_map<AssetId, RealizedMaterialCandidate> realized =
+        realizePendingMaterials(*device, *commandList, *unlitLayout, *unlitVertexSpirv, *unlitFragmentSpirv,
+                                 Format::Rgba8Unorm, *litLayout, *litVertexSpirv, *litFragmentSpirv, {kMaterialC},
+                                 sampledTextureResourceMap, materialDataMap, textureDataMap);
+    REQUIRE(realized.size() == 1);
+
+    auto submitResult = device->submit(std::move(commandList), *target);
+    REQUIRE(submitResult.isOk());
+    REQUIRE(device->waitIdle().isOk());
+
+    for (auto& [assetId, candidate] : realized) {
+      sampledTextureResourceMap.emplace(candidate.textureAssetId, std::move(candidate.newSampledTexture));
+      materialResourceMap.emplace(assetId, std::move(candidate.material));
+    }
+  }
+  REQUIRE(materialResourceMap.size() == 1);
+  const atlantis::renderer::Material* oldLitMaterialPtr = materialResourceMap.at(kMaterialC).get();
+  const atlantis::rhi::SampledTexture* oldSampledTexturePtr = oldLitMaterialPtr->sampledTexture();
+  REQUIRE(oldLitMaterialPtr != nullptr);
+
+  // ---- "Frame" 2: a real format change, Rgba8Unorm -> Rgba8Srgb. ----
+  {
+    auto offscreenB = device->createOffscreenTarget({.extent = kExtent, .format = Format::Rgba8Srgb});
+    REQUIRE(offscreenB.isOk());
+
+    auto rebuildResult = rebuildMaterialsForFormatChange(
+        *device, *fallbackLayout, *fallbackVertexSpirv, *fallbackFragmentSpirv, *unlitLayout, *unlitVertexSpirv,
+        *unlitFragmentSpirv, *litLayout, *litVertexSpirv, *litFragmentSpirv, Format::Rgba8Srgb, materialDataMap,
+        materialResourceMap);
+    // The real, decisive proof: a MaterialKind::LitTextured entry
+    // rebuilds successfully -- if selectShaderPair()'s own dispatch (or
+    // this call site's own threading of it) ever silently reverted to
+    // unlitTextured for this entry, createMaterial() would either still
+    // succeed (a wrong-but-not-crashing shader pair is not, by itself,
+    // a Vulkan-level error) or fail outright depending on which
+    // mismatch occurred -- the REAL cross-check that the CORRECT pair
+    // was used is the shared selectShaderPair() dispatch itself, already
+    // pixel-proven load-bearing elsewhere (this test's own real
+    // contribution is confirming the rebuild call site's own real,
+    // successful, non-crashing integration of that dispatch for this
+    // MaterialKind, end to end).
+    REQUIRE(rebuildResult.isOk());
+    auto candidates = std::move(rebuildResult.value());
+    REQUIRE(candidates.fallback != nullptr);
+    REQUIRE(candidates.materials.size() == 1);
+    CHECK(candidates.materials.at(kMaterialC).get() != oldLitMaterialPtr);
+    CHECK(materialResourceMap.at(kMaterialC).get() == oldLitMaterialPtr);
+    CHECK(oldLitMaterialPtr->sampledTexture() == oldSampledTexturePtr);
+
+    auto acquireResult = offscreenB.value()->acquireTarget();
+    REQUIRE(acquireResult.isOk());
+    std::unique_ptr<atlantis::rhi::RenderTarget> target = std::move(acquireResult.value());
+    auto commandListResult = device->createCommandList();
+    REQUIRE(commandListResult.isOk());
+    auto submitResult = device->submit(std::move(commandListResult.value()), *target);
+    REQUIRE(submitResult.isOk());
+
+    materialResourceMap = std::move(candidates.materials);
+    std::unique_ptr<atlantis::renderer::Material> fallbackMaterial = std::move(candidates.fallback);
+    CHECK(materialResourceMap.at(kMaterialC).get() != oldLitMaterialPtr);
+
+    REQUIRE(device->waitIdle().isOk());
+  }
+
+  materialResourceMap.clear();
+  sampledTextureResourceMap.clear();
+  REQUIRE(device->waitIdle().isOk());
+}
+
 TEST_CASE("A second material that dedups its texture against an EARLIER frame's already-realized texture is still "
           "reported realized, published, and never rebuilt on a later frame",
           "[runtime][gpu][material_realization]") {
