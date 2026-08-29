@@ -1,7 +1,9 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 #include <vulkan/vulkan_core.h>
 
@@ -11,11 +13,26 @@
 #include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/texture.h>
 
+#include "vulkan_descriptor_pool_growth.h"
+
 // Concrete Vulkan implementation of atlantis::rhi::Device (ADR-0014). See
 // vulkan_device.cpp for createDevice()'s full orchestration (instance
 // creation, validation installation, physical device/queue-family
 // selection, logical device/queue creation).
 namespace atlantis::vulkan_backend::detail {
+
+// Spec 0021/ADR-0064: one entry in VulkanDevice's own growable
+// descriptor-pool set. Vulkan has no "query this pool's own maxSets"
+// call, so this pairs each pool's own handle with the maxSets it was
+// created with -- needed to compute the next generation's own size
+// (descriptorPoolMaxSetsForGeneration()). Both members default to a
+// safe "unused slot" value; every real read is bounded by
+// VulkanDevice's own descriptorPoolCount_, so an untouched entry is
+// never actually used.
+struct DescriptorPoolEntry {
+  VkDescriptorPool pool = VK_NULL_HANDLE;
+  std::uint32_t maxSets = 0;
+};
 
 // Exclusively owns its VkInstance, the VkPhysicalDevice it selected, its
 // VkDevice, the single VkQueue created from the selected combined
@@ -36,11 +53,22 @@ namespace atlantis::vulkan_backend::detail {
 // Plan 0007: also owns the resolved dynamic-rendering entry-point pair
 // (whichever of vkCmdBeginRendering/vkCmdEndRendering (core) or
 // vkCmdBeginRenderingKHR/vkCmdEndRenderingKHR (extension) this Device's
-// selected physical device resolved to, Section 8/ADR-0024) and a
-// Device-level VkDescriptorPool (Section 10's fixed-capacity camera-
-// uniform-binding design, maxSets = 4) -- neither is ever exposed on this
-// class's own public accessor surface beyond the narrow, Vulkan-Backend-
-// internal accessors VulkanCommandList/VulkanPipeline need.
+// selected physical device resolved to, Section 8/ADR-0024) and --
+// widened by Spec 0021/ADR-0064 -- a Device-owned, growable *set* of
+// descriptor pools (a fixed-size std::array, never a std::vector: the
+// Approved hard ceiling is a small, fixed, compile-time constant, so a
+// std::array structurally cannot exceed it, and never risks the
+// std::bad_alloc/leak-on-throw exposure a dynamically-growing container
+// would on this render path). Starts with exactly one pool at
+// construction (generation 0, maxSets = 4, unchanged from this
+// codebase's own pre-Spec-0021 value); createPipeline()'s own
+// allocateDescriptorSet() grows it -- one additional pool at a time,
+// geometric doubling per the fixed kDescriptorPoolMaxSetsByGeneration
+// table -- only on real, observed exhaustion, up to
+// kMaxDescriptorPoolCount pools total (60 concurrent descriptor sets).
+// Never exposed on this class's own public accessor surface beyond the
+// narrow, Vulkan-Backend-internal accessors VulkanCommandList/
+// VulkanPipeline need.
 //
 // Not copyable, not movable -- held exclusively behind
 // std::unique_ptr<atlantis::rhi::Device> (ADR-0014); nothing in this
@@ -132,7 +160,6 @@ class VulkanDevice final : public atlantis::rhi::Device {
   // allocation, Section 10) only.
   [[nodiscard]] PFN_vkCmdBeginRenderingKHR cmdBeginRendering() const noexcept { return cmdBeginRendering_; }
   [[nodiscard]] PFN_vkCmdEndRenderingKHR cmdEndRendering() const noexcept { return cmdEndRendering_; }
-  [[nodiscard]] VkDescriptorPool descriptorPool() const noexcept { return descriptorPool_; }
 
   // Waits on submissionFence_ (if a submission is currently retained),
   // resets it, and releases retainedSubmission_ -- the shared first step
@@ -157,6 +184,23 @@ class VulkanDevice final : public atlantis::rhi::Device {
   [[nodiscard]] atlantis::Result<std::monostate, atlantis::rhi::SubmitError> waitAndReleaseRetainedSubmission();
 
  private:
+  // Spec 0021/ADR-0064: scans descriptorPools_[0, descriptorPoolCount_)
+  // in creation order, allocating one VkDescriptorSet of the given
+  // layout from the first pool with capacity -- naturally reusing
+  // whatever capacity an earlier vkFreeDescriptorSets call already
+  // returned to any of them. Grows (creates exactly one new pool, per
+  // the fixed generation table, vulkan_descriptor_pool_growth.h) and
+  // retries exactly once, only after every existing pool has failed for
+  // a growth-eligible reason (isDescriptorPoolGrowthEligible()) and the
+  // hard ceiling (kMaxDescriptorPoolCount) has not yet been reached. On
+  // success, outDescriptorSet/outOriginPool are both set and this
+  // returns std::nullopt; on any failure, neither out-param is touched
+  // and this returns PipelineCreateError::DescriptorSetAllocationFailed
+  // -- the only error this function can ever produce. Called only from
+  // createPipeline().
+  [[nodiscard]] std::optional<atlantis::rhi::PipelineCreateError> allocateDescriptorSet(
+      VkDescriptorSetLayout layout, VkDescriptorSet& outDescriptorSet, VkDescriptorPool& outOriginPool);
+
   VkInstance instance_;
   VkPhysicalDevice physicalDevice_;
   VkDevice device_;
@@ -177,13 +221,20 @@ class VulkanDevice final : public atlantis::rhi::Device {
   PFN_vkCmdBeginRenderingKHR cmdBeginRendering_;
   PFN_vkCmdEndRenderingKHR cmdEndRendering_;
 
-  // Plan 0007 Section 10: Device-level singleton VkDescriptorPool
-  // (maxSets = 4, one VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER pool-size entry),
-  // created once here, mirroring the existing VkCommandPool precedent.
-  // Backs exactly one VkDescriptorSet per VulkanPipeline (allocated at
-  // that Pipeline's own construction, freed at its own destruction) --
-  // never exposed outside vulkan_pipeline.*/vulkan_device.*.
-  VkDescriptorPool descriptorPool_;
+  // Spec 0021/ADR-0064 (originally Plan 0007 Section 10's own single,
+  // fixed-capacity pool): a fixed-size array, sized to the Approved
+  // hard ceiling at compile time -- never a std::vector (a dynamically-
+  // growing container would risk a std::bad_alloc/leak-on-throw
+  // exposure on this render path; see Plan 0021's own Final Review
+  // Round). Only indices [0, descriptorPoolCount_) are ever live; every
+  // entry at or past that index holds DescriptorPoolEntry's own default
+  // value and is never read, written past its own creation, or
+  // destroyed. Backs exactly one VkDescriptorSet per VulkanPipeline
+  // (allocated at that Pipeline's own construction, freed at its own
+  // destruction, back to its own specific origin pool) -- never exposed
+  // outside vulkan_pipeline.*/vulkan_device.*.
+  std::array<DescriptorPoolEntry, kMaxDescriptorPoolCount> descriptorPools_{};
+  std::size_t descriptorPoolCount_ = 0;
 };
 
 }  // namespace atlantis::vulkan_backend::detail
