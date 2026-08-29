@@ -460,15 +460,42 @@ check that affects only `LitTextured`-bound entities, never the unlit
 path. Shadows, PBR, image-based lighting, and post-processing are all
 explicitly out of this Spec's own scope (its own Non-Goals) — none of
 them exist anywhere in this codebase as a result of this work.
-**Disclosed, real, pre-existing limitation found and NOT fixed by this
-Spec** (Plan 0018-introduced, unrelated to lighting): the Vulkan
+**Disclosed, real, pre-existing limitation found during this Spec's own
+final review** (Plan 0018-introduced, unrelated to lighting): the Vulkan
 Backend's own `VkDescriptorPool` (`VulkanDevice`, Device-global, fixed
-`maxSets = 4`) is sized for Plan 0007's own original "exactly one
+`maxSets = 4`) was sized for Plan 0007's own original "exactly one
 Material" assumption, never revisited when Plan 0018 introduced
 arbitrary-N-materials support — a real, currently-supported two-
-distinct-material color-format change exceeds it, reproduced by a real
-GPU regression test; disclosed as a real, dedicated-future-Spec-worthy
-finding, not solved here.
+distinct-material color-format change exceeded it, reproduced by a real
+GPU regression test. **Fixed by Descriptor Pool Capacity Foundation,
+immediately below.**
+
+**Descriptor Pool Capacity Foundation (Spec 0021, implemented and
+merged via [PR #100](https://github.com/slmao/Atlantis/pull/100)):**
+`VulkanDevice`'s own single, fixed-capacity `VkDescriptorPool` is
+replaced by a private, growable set — a fixed
+`std::array<DescriptorPoolEntry, 4>` plus an explicit live count, never
+a `std::vector` (this render path must stay exception-free; a
+dynamically-growing container risks `std::bad_alloc`/a leak-on-throw
+window a fixed array cannot,
+[ADR-0064](../../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)).
+One shared helper creates both the initial pool (generation 0,
+`maxSets = 4`) and every later-grown pool (generations 1-3: `maxSets =
+8, 16, 32`, geometric doubling), so they cannot drift apart.
+Allocation scans every existing pool in creation order, reusing freed
+capacity, before ever growing — only `VK_ERROR_OUT_OF_POOL_MEMORY`/
+`VK_ERROR_FRAGMENTED_POOL` are growth-eligible; `VK_ERROR_DEVICE_LOST`/
+host-or-device out-of-memory fail immediately, no growth attempted. A
+fixed, Plan-time-approved hard ceiling (4 pools, 60 concurrent
+descriptor sets total) stops growth from masking a genuine leak as
+unbounded allocation. Zero RHI/Renderer/Material public API change;
+`VulkanPipeline` needed no modification — its own pre-existing single
+`descriptorPool_` field already expressed "the specific pool my one
+descriptor set belongs to," only the value threaded into it changed.
+**The four-pool/60-concurrent-descriptor-set hard ceiling is a real,
+deliberate, disclosed limit, not bindless rendering, not descriptor
+indexing, and not unbounded material support** — a future scene
+genuinely needing more remains its own, dedicated future finding.
 
 **Extension points:** a rename-stable GUID identity scheme and a real
 derived-data cache are each named, explicitly out-of-scope future work

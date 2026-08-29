@@ -96,7 +96,7 @@ lifetime detail lives in
 | Atlantis Core | Foundation: logging, assertions, `Result<T,E>`, non-graphics utilities | As-built | [Spec 0001](../../specs/0001-project-foundation.md) |
 | Atlantis Platform | Per-OS windowing/surface/lifecycle abstraction | As-built (Windows); Android/iOS architecture-only | [Spec 0002](../../specs/0002-platform-foundation.md), [ADR-0005](../../adr/0005-platform-module-multi-os-windowing.md) |
 | Atlantis RHI | Backend-agnostic Render Hardware Interface | As-built | [Spec 0003](../../specs/0003-rhi-vulkan-windowed-foundation.md), [ADR-0001](../../adr/0001-rhi-backend-independence.md) |
-| Atlantis Vulkan Backend | Sole Phase 1 implementation of RHI, on Vulkan | As-built | [Spec 0003](../../specs/0003-rhi-vulkan-windowed-foundation.md) |
+| Atlantis Vulkan Backend | Sole Phase 1 implementation of RHI, on Vulkan — `VulkanDevice`'s own descriptor-pool capacity is now a private, growable set (fixed `std::array`, 4 pools/60 concurrent descriptor sets, never unbounded) | As-built | [Spec 0003](../../specs/0003-rhi-vulkan-windowed-foundation.md), [Spec 0021](../../specs/0021-descriptor-pool-capacity-foundation.md), [ADR-0064](../../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md) |
 | Atlantis RenderGraph | Central rendering abstraction: passes, dependencies, barriers | As-built | [Spec 0005](../../specs/0005-render-graph-foundation.md) |
 | Atlantis Renderer | Frame orchestration built on RenderGraph + RHI | As-built | [Spec 0007](../../specs/0007-minimal-renderer.md) |
 | Atlantis Shader System | Shader authoring/compilation/reflection (Slang → SPIR-V) | As-built | [Spec 0008](../../specs/0008-shader-system-foundation.md) |
