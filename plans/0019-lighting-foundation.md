@@ -2917,3 +2917,77 @@ disclosed above.
 3. Explicit human instruction to merge — this session does not
    self-approve or self-merge, per this repository's own standing
    governance.
+
+**Post-Merge Status Update (2026-08-29):** [Implementation PR #96](https://github.com/slmao/Atlantis/pull/96)
+is merged. All three pending items above are now closed: V27's own
+manual, interactive windowed verification (`atlantis_runtime.exe`, both
+Debug and Release, launched as a real, visible window via
+`Start-Process -PassThru -Wait`, never hidden and never driven by
+programmatic message injection) was personally performed and confirmed
+by the repository maintainer — `world_scene` (Runtime's own unswitched
+default bootstrap scene) renders identically to its pre-Plan
+appearance, resize/minimize/restore/close all behave normally, literal
+`ExitCode` 0 both times, zero log hits (`VUID`/Validation Error/
+Validation Warning/WARN/ERROR/FATAL) both times, recorded as an English
+PR comment; the PR itself was reviewed and merged by the repository
+maintainer, not self-approved.
+
+One additional review-round commit landed on the branch after the
+"Implementation Status Update" section above was written, closing a gap
+that section's own centralized review had only partially closed:
+
+- **`8a4386d`** — the `maxSets = 4` descriptor pool finding (already
+  summarized above) was strengthened from a documented risk into two
+  real, executed proofs: (1) a low-level, kind-independent
+  `Device::createPipeline()` probe confirming the exact failure mode is
+  `PipelineCreateError::DescriptorSetAllocationFailed`, the fifth
+  concurrent Pipeline being the first to fail against the real
+  `maxSets = 4` ceiling; and (2) the real-shape regression test this
+  review round required — fallback + one `UnlitTextured` + one
+  `LitTextured` material, realized once, then a real color-format
+  change with the OLD 2-material batch and the NEW fallback+2-material
+  candidate batch both alive simultaneously (Spec 0018 D9's own
+  required shape) — 5 concurrent descriptor sets against a 4-set pool,
+  confirmed to fail with `MaterialRealizationError::MaterialCreateFailed`.
+  Root-caused precisely: this ceiling's own derivation
+  ([Plan 0007](../plans/0007-minimal-renderer.md) Section 10) was
+  explicitly scoped to "exactly one Material exists in steady state," a
+  Non-Goal Plan 0018 later lifted without ever revisiting this pool's
+  own fixed capacity — a real, pre-existing Plan-0018-introduced gap,
+  not a Lighting Foundation defect, and **not fixed here**: a correct
+  fix needs a new resource-allocation strategy (dynamic pool growth,
+  per-Pipeline pool ownership, or a newly-approved fixed-capacity
+  contract), each a real ownership/lifecycle/API decision requiring its
+  own Spec/ADR under this repository's own Golden Rule, never a
+  mechanical Implementation-time change and never a magic-number bump.
+  This Plan's own real, shipped scenarios (`lighting_demo_scene`:
+  exactly one material; `LightingDemoFixture`: never changes color
+  format) never exercise this ceiling, so it did not block this PR's
+  own merge. The same commit also live-executed (and restored) a real
+  C4062 positive probe on `selectShaderPair()`'s own switch — the
+  earlier Milestone 8 commit had only verified this by inspection of
+  the shared `/w14062` flag, never a live probe.
+
+**Final, as-built verification (post-merge, from the review round's own
+record):** fresh Debug and Release builds clean; `ctest -LE gpu`
+754/754 Debug, 753/753 Release (the one-fewer-in-Release gap is the
+same pre-existing, documented Debug-only `ATLANTIS_ASSERT` test Plan
+0020's own registry entry already discloses — not a regression);
+`ctest -L gpu` 46/46 both configurations (up from 45 in the earlier
+section above — the new descriptor-pool regression test), zero Vulkan
+Validation Layers hits (`VUID`/Validation Error/Validation Warning)
+across full verbose output, both configurations; a fresh
+`ATLANTIS_BUILD_TESTS=OFF` configure+build produced a working
+`atlantis_runtime.exe` with zero test executables anywhere in that
+tree; module-boundary scan reconfirmed `Atlantis::World` still links
+`Atlantis::Core`+`Atlantis::AssetSystem` only and `Atlantis::AssetSystem`
+still links `Atlantis::Core` only; both `kindToField()`'s and
+`selectShaderPair()`'s own C4062 protection were live-probed (positive:
+a real `C2220`/`C4062` build failure citing the exact missing
+enumerator; negative: restored to an empty diff, rebuilt clean) this
+same round; `git diff --check` clean. All four existing goldens
+(`minimal_cube`, `world_scene`, `textured_quad`, `material_demo`)
+confirmed byte-for-byte identical to `main`; the new `lighting_demo`
+golden has no uncommitted changes, matching its own already-human-
+reviewed, already-committed state. No further Must Fix items were
+identified by the centralized final review round described above.

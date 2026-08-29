@@ -106,12 +106,35 @@ built with.
   auto-generation from position, no normalization) — a normal *data
   contract* only, with zero new shader, zero new golden, and zero
   rendered-output change; it exists purely as this codebase's own
-  named, hard prerequisite for Lighting Foundation (Spec 0019,
-  `Approved`; Plan 0019 may now be drafted, not yet started). A
-  distributable, cross-session Asset Catalog and rename-stable GUID
-  identity remain future work (Candidate Order 7, `specs/README.md`) —
-  see `src/README.md`'s own `asset_system/`/`tools/asset_cooker/`
-  entries
+  named, hard prerequisite for Lighting Foundation (Spec 0019, below).
+  Lighting Foundation itself is now implemented (Spec 0019, `Approved`,
+  implemented and merged via
+  [PR #96](https://github.com/slmao/Atlantis/pull/96)): `World` gains a
+  third optional component, `Light` (Directional or Point); the Scene
+  Asset format gains an optional, capped light node; `Material` gains a
+  second kind, `LitTextured`; Runtime computes a fixed-size array of
+  active lights exactly once per session (a static snapshot — a
+  `World::setLight()` call after that point changes CPU state only, it
+  is never reflected in a rendered frame without a full scene reload)
+  and publishes it through the existing camera uniform buffer, widened
+  from vertex-only to vertex-and-fragment visibility; a new
+  `lit_textured` shader pair applies exact Lambertian diffuse shading
+  against the real, Spec-0020-sourced per-vertex normal, proven end to
+  end against a new, human-reviewed `lighting_demo` golden with zero
+  change to any of the four pre-existing goldens. Shadows, PBR,
+  image-based lighting, and post-processing are all explicitly
+  unimplemented — this Spec's own Non-Goals, see `src/README.md`. A
+  real, pre-existing (Plan 0018-introduced, not Lighting-Foundation-
+  specific) Vulkan Backend limitation was found and disclosed, not
+  fixed, during this Spec's own final review: the RHI descriptor pool's
+  fixed capacity (`maxSets = 4`) is exceeded by a real, currently-
+  supported two-distinct-material color-format change — reproduced by a
+  real GPU regression test, disclosed as a real, dedicated-future-Spec-
+  worthy finding, not solved here (see `src/README.md`'s own
+  `vulkan_backend/` entry for the full root-cause trace). A distributable,
+  cross-session Asset Catalog and rename-stable GUID identity remain
+  future work (Candidate Order 7, `specs/README.md`) — see
+  `src/README.md`'s own `asset_system/`/`tools/asset_cooker/` entries
 - Vulkan Validation Layers as a correctness gate
 - RenderDoc-based debugging
 
@@ -367,12 +390,16 @@ prerequisite Lighting Foundation (Spec 0019, below) depends on, Spec
 0020, `Approved`, implemented and merged via
 [PR #93](https://github.com/slmao/Atlantis/pull/93)) is also
 implemented — see [specs/README.md](specs/README.md). Lighting
-Foundation itself (Spec 0019, `Approved`; Plan 0019 may now be drafted,
-not yet started — see [specs/README.md](specs/README.md)) and
-PBR/post-processing extensions beyond it, mipmap/compression/
-streaming/bindless texture support, a distributable cross-session Asset
-Catalog, and Android/iOS all remain unimplemented — see
-[src/README.md](src/README.md).
+Foundation itself (`World`'s new `Light` component, an optional Scene
+light node, `Material`'s new `LitTextured` kind, a one-time-captured
+frame lighting snapshot, and a `lit_textured` shader applying exact
+Lambertian diffuse shading — Spec 0019, `Approved`, implemented and
+merged via [PR #96](https://github.com/slmao/Atlantis/pull/96)) is also
+implemented — see [specs/README.md](specs/README.md). PBR, shadows,
+image-based lighting, and post-processing extensions beyond it,
+mipmap/compression/streaming/bindless texture support, a distributable
+cross-session Asset Catalog, and Android/iOS all remain unimplemented —
+see [src/README.md](src/README.md).
 
 Android and iOS remain specified architecturally only (not implemented);
 Vulkan Backend's Android WSI path is likewise not implemented. Headless

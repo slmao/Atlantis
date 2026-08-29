@@ -429,6 +429,47 @@ this codebase reads the new attribute, and no rendered output changes
 as a result; it exists solely as Lighting Foundation's own named, hard
 prerequisite (Spec 0019 D1).
 
+**Lighting Foundation (Spec 0019, implemented and merged via
+[PR #96](https://github.com/slmao/Atlantis/pull/96)):** `atlantis::world::World`
+gains a third optional per-entity component, `Light` (Directional or
+Point — a flat DTO, no direction/position of its own, both re-derived
+from the owning entity's own current world matrix), mirroring
+`Camera`/`Renderable`'s own existing shape exactly
+([ADR-0061](../../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md)).
+The Scene Asset format gains an optional, structurally capped light
+node (one Directional, up to four Point) at both the source-grammar and
+artifact layers, schema version bumped 2 → 3 the same way Material's
+own addition (Spec 0018) bumped it 1 → 2; `MaterialKind` gains a second
+enumerator, `LitTextured`. Runtime computes a fixed-size,
+`alignas(16)`, 176-byte `FrameLightingData` array exactly once per
+session — the first frame `World::updateTransforms()` runs — and
+publishes it through the *existing* camera uniform `Buffer` (widened
+from 128 to 304 bytes), never a second buffer or a new RHI/Renderer
+public API; the one real RHI-internal change is the existing uniform
+binding's own Vulkan `stageFlags` widening from vertex-only to
+vertex-and-fragment (one value, one line,
+[ADR-0062](../../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)).
+**No runtime light-update capability of any kind:** a `World::setLight()`
+call after that one-time capture changes `World`'s own CPU state only —
+it is never reflected in a rendered frame without a full scene reload,
+proven by a real, executed reverse test comparing the published GPU
+buffer bytes bit-for-bit before and after. A new `lit_textured` shader
+pair applies exact Lambertian diffuse shading against the real,
+Spec-0020-sourced per-vertex normal, gated by a conformal-transform
+check that affects only `LitTextured`-bound entities, never the unlit
+path. Shadows, PBR, image-based lighting, and post-processing are all
+explicitly out of this Spec's own scope (its own Non-Goals) — none of
+them exist anywhere in this codebase as a result of this work.
+**Disclosed, real, pre-existing limitation found and NOT fixed by this
+Spec** (Plan 0018-introduced, unrelated to lighting): the Vulkan
+Backend's own `VkDescriptorPool` (`VulkanDevice`, Device-global, fixed
+`maxSets = 4`) is sized for Plan 0007's own original "exactly one
+Material" assumption, never revisited when Plan 0018 introduced
+arbitrary-N-materials support — a real, currently-supported two-
+distinct-material color-format change exceeds it, reproduced by a real
+GPU regression test; disclosed as a real, dedicated-future-Spec-worthy
+finding, not solved here.
+
 **Extension points:** a rename-stable GUID identity scheme and a real
 derived-data cache are each named, explicitly out-of-scope future work
 in Spec 0012/Spec 0015 — not designed or scaffolded here. A
