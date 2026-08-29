@@ -1195,12 +1195,117 @@ milestone being listed does not authorize starting it — see Section 1.
   own "Post-Merge Status Update" for the full record.
 - **Not implemented** (per Spec 0020's own Non-Goals, unchanged):
   tangent/bitangent attributes, normal mapping, or any hard-edge/
-  smoothing-group importer; a hard-face-normal `minimal_cube` variant;
-  any Lighting math, `World` `Light` component, `LitTextured` Material
-  kind, frame lighting uniform data, or shader consuming the new
-  attribute — all remain Lighting Foundation's own scope (Spec 0019,
-  `Approved`; Plan 0019 may now be drafted, not yet started, Candidate
-  Order 8, Section B below).
+  smoothing-group importer; a hard-face-normal `minimal_cube` variant —
+  Lighting math, `World` `Light` component, `LitTextured` Material kind,
+  frame lighting uniform data, and a shader consuming the new attribute
+  are all delivered by the next Milestone, immediately below.
+
+### Milestone 17 — Lighting Foundation
+
+- **Governance state:** **`Approved` Spec, `Approved` Plan. Implemented
+  and merged via [PR #96](https://github.com/slmao/Atlantis/pull/96)
+  (2026-08-29)** —
+  [specs/0019-lighting-foundation.md](../specs/0019-lighting-foundation.md),
+  [plans/0019-lighting-foundation.md](../plans/0019-lighting-foundation.md).
+  Architectural Impact identified two new decisions, filed as
+  [ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md)
+  (`World`'s new `Light` component, the Scene Asset format's light-node
+  extension and its own hard, structural per-kind light-count cap, and
+  Material's new `LitTextured` kind) and
+  [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)
+  (the frame lighting data's own one-time-capture contract and exact
+  CPU/GPU layout, the one real RHI decision this Spec required, and the
+  complete, exact lighting math), both `Accepted`. Closed this
+  codebase's own first real lighting capability — Milestone 16's own
+  mesh normal attribute (Spec 0020) was this Milestone's own named,
+  hard, non-negotiable prerequisite.
+- **Scope delivered:** `atlantis::world::World` gains a third optional
+  per-entity component, `Light` (Directional or Point — no direction/
+  position of its own, both re-derived from the owning entity's own
+  current world matrix, mirroring `Camera`/`Renderable`'s own existing
+  shape). The Scene Asset format gains an optional, structurally capped
+  light node (one Directional, up to four Point — a fifth light of
+  either kind is a hard cook-time/decode-time error, never a silent
+  truncation), schema version bumped 2 → 3. `MaterialKind` gains a
+  second enumerator, `LitTextured`, dispatched through one shared,
+  C4062-guarded `selectShaderPair()` helper used identically by initial
+  material realization and by a color-format-change rebuild. Runtime
+  computes a fixed-size, `alignas(16)`, 176-byte `FrameLightingData`
+  snapshot exactly once per session (the first frame `World::updateTransforms()`
+  runs) and publishes it through the *existing* camera uniform `Buffer`
+  (widened 128 → 304 bytes) — no second buffer, no new RHI/Renderer
+  public API; the one real RHI-internal change is the existing uniform
+  binding's own Vulkan `stageFlags` widening from vertex-only to
+  vertex-and-fragment (one line). A new `lit_textured` shader pair
+  applies exact Lambertian diffuse shading against the real,
+  Spec-0020-sourced per-vertex normal, gated by a conformal-transform
+  check affecting only `LitTextured`-bound entities, never the unlit
+  path. **No runtime light-update capability of any kind:** a
+  `World::setLight()` call after the one-time capture changes `World`'s
+  own CPU state only — never reflected in a rendered frame without a
+  full scene reload, proven by a real, executed reverse test comparing
+  the published GPU buffer bytes bit-for-bit, before and after. A new,
+  independent, asymmetric `lighting_demo` scene/fixture/golden proves
+  the whole path end to end — Directional and Point light contributions
+  each independently, visibly distinguishable, with dedicated negative
+  tests proving a deliberate direction-sign error, point-attenuation
+  error, non-conformal-transform case, and wrong-shader-dispatch case
+  are each independently, visibly detectable — with zero change to any
+  of the four pre-existing goldens.
+- **Verified:** a centralized final review round (still pre-merge, on
+  PR #96 itself) traced the real Vulkan descriptor pool's own
+  ownership/allocation/lifecycle and found, root-caused, and disclosed
+  (without fixing) a real, pre-existing limitation: `VulkanDevice`'s own
+  fixed-capacity `VkDescriptorPool` (`maxSets = 4`, sized under Plan
+  0007's own original "exactly one Material" assumption, never
+  revisited when Plan 0018 introduced arbitrary-N-materials support) is
+  exceeded by a real, currently-supported two-distinct-material
+  color-format change — reproduced by a real GPU regression test
+  (`tests/runtime/material_realization_gpu_tests.cpp`) and disclosed as
+  a real, dedicated-future-Spec-worthy finding, not solved here; this
+  Spec's own real, shipped scenarios (exactly one material, no format
+  change) never exercise it. The same review round also found and
+  fixed, within this Plan's own scope, a
+  real, previously-undisclosed gap in `material_metadata.cpp` (its own
+  sidecar serializer/parser, a sibling of `material_source.cpp` that an
+  earlier Milestone had widened but this one had not) — both now
+  correctly round-trip `LitTextured`. Fresh Debug/Release builds clean;
+  `ctest -LE gpu` 754/754 Debug, 753/753 Release; `ctest -L gpu` 46/46
+  both configurations, zero Vulkan Validation Layers hits across full
+  verbose GPU test output; a fresh `ATLANTIS_BUILD_TESTS=OFF`
+  configure+build produced a working `atlantis_runtime.exe` with zero
+  test executables in that tree; module-boundary scan confirmed
+  `Atlantis::World` still links `Atlantis::Core`+`Atlantis::AssetSystem`
+  only and `Atlantis::AssetSystem` still links `Atlantis::Core` only;
+  real, positive-and-restored C4062 probes on both the widened
+  `kindToField()` switch and the new `selectShaderPair()` switch; all
+  four pre-existing goldens (`minimal_cube`, `world_scene`,
+  `textured_quad`, `material_demo`) confirmed byte-for-byte identical to
+  `main`; the new `lighting_demo` golden was captured on a clean commit,
+  human-reviewed (non-black, no garbage, Directional/Point contributions
+  each independently visible, composition matching the scene's own
+  asymmetric design) and approved before landing, per ADR-0042's own
+  two-phase golden process. A real, human-performed, live windowed
+  verification (V27) — `atlantis_runtime.exe`, both configurations,
+  launched as a real visible window, not a hidden/scripted one —
+  confirmed Runtime's own unswitched default bootstrap scene
+  (`world_scene`, never changed to `lighting_demo`) renders identically
+  to its pre-Spec appearance, with normal resize/minimize/restore/close
+  behavior, exit code 0 both times, zero log hits both times. See
+  [plans/0019-lighting-foundation.md](../plans/0019-lighting-foundation.md)'s
+  own "Post-Merge Status Update" for the full record.
+- **Not implemented** (per Spec 0019's own Non-Goals, unchanged): PBR,
+  metallic/roughness, or any physically-based shading model; shadows or
+  shadow mapping of any kind; image-based lighting (IBL) or environment
+  maps; normal mapping or a tangent vertex attribute; any ambient/fill
+  light term (an unlit-facing surface renders pure black, by design);
+  emissive or transparent materials; clustered/Forward+/deferred
+  rendering or any light-culling strategy beyond the fixed, small,
+  one-time-computed active-light array; tone mapping, gamma-encode, HDR
+  intermediate targets, or any other post-processing; runtime light
+  mutation reflected in a rendered frame; Android/iOS. The `maxSets = 4`
+  descriptor pool limitation above remains open — not this Milestone's
+  own scope to close.
 
 ### Further candidate phases (directional only, no Spec, no ADR)
 

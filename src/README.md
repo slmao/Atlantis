@@ -108,7 +108,26 @@ per
 [plans/0016-texture-sampler-foundation.md](../plans/0016-texture-sampler-foundation.md),
 and
 [ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md),
-merged via [PR #78](https://github.com/slmao/Atlantis/pull/78).
+merged via [PR #78](https://github.com/slmao/Atlantis/pull/78); the
+camera uniform binding's own Vulkan `stageFlags` widened from
+vertex-only to vertex-and-fragment (one value, one line — no second
+`VkDescriptorSetLayoutBinding`, no new RHI/Renderer public API)
+implemented per
+[specs/0019-lighting-foundation.md](../specs/0019-lighting-foundation.md)
+and
+[ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md),
+merged via [PR #96](https://github.com/slmao/Atlantis/pull/96).
+**Disclosed, real, unresolved limitation:** this module's own
+`VkDescriptorPool` (`VulkanDevice`, Device-global, fixed `maxSets = 4`,
+[Plan 0007](../plans/0007-minimal-renderer.md) Section 10) was sized for
+a "exactly one Material" assumption that no longer holds since Spec
+0018 introduced arbitrary-N-materials support — a real, currently-
+supported two-distinct-material color-format change exceeds it,
+reproduced by a real GPU regression test
+(`tests/runtime/material_realization_gpu_tests.cpp`); not yet fixed —
+a correct fix needs a real resource-ownership/lifecycle decision
+([PR #96](https://github.com/slmao/Atlantis/pull/96)'s own review
+record has the full root-cause trace).
 
 **`render_graph/`** — Atlantis RenderGraph: render graph construction,
 compilation, and execution. Target `atlantis_render_graph`, alias
@@ -346,9 +365,14 @@ instance's heap-allocated, address-stable identity token (never a
 writable public field, never an accessor for it), so a handle used
 against a different, live `World` instance is rejected with
 `WorldError::WrongWorld`, never silently misapplied to the wrong entity.
-Each entity carries a mandatory `Transform` plus two optional
-components, `Camera` and `Renderable` — fixed-type storage, not a
-generic ECS registry. `setParent()` maintains an atomic parent/child
+Each entity carries a mandatory `Transform` plus three optional
+components, `Camera`, `Renderable`, and (Spec 0019) `Light` (Directional
+or Point — no direction/position of its own, both re-derived from the
+owning entity's own current world matrix, the one time Runtime ever
+reads them) — fixed-type storage, not a generic ECS registry.
+`lightEntities()` mirrors `renderableEntities()`'s own exact
+determinism contract (ascending slot-index order, a fresh snapshot per
+call). `setParent()` maintains an atomic parent/child
 hierarchy with cycle prevention; `destroyEntity()` cascades to every
 transitive descendant via a collect-then-mutate worklist, never a
 recursive walk. `updateTransforms()` is a fully iterative (non-
@@ -368,7 +392,13 @@ indices are never persisted as `EntityId`. Implemented per
 `fromValidatedSceneData()` extended per
 [specs/0015-scene-asset-serialization-foundation.md](../specs/0015-scene-asset-serialization-foundation.md)
 and
-[ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md).
+[ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md);
+the `Light` component added per
+[specs/0019-lighting-foundation.md](../specs/0019-lighting-foundation.md),
+[plans/0019-lighting-foundation.md](../plans/0019-lighting-foundation.md),
+and
+[ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md),
+merged via [PR #96](https://github.com/slmao/Atlantis/pull/96).
 
 **`tools/asset_cooker/`** — Atlantis Tools' second real content:
 `atlantis_asset_cooker`, a CLI invoked at build time by CMake's
@@ -483,7 +513,20 @@ flight safety fix implemented per
 [plans/0018-material-asset-scene-binding-foundation.md](../plans/0018-material-asset-scene-binding-foundation.md),
 and
 [ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)–[ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md),
-merged via [PR #88](https://github.com/slmao/Atlantis/pull/88).
+merged via [PR #88](https://github.com/slmao/Atlantis/pull/88). A
+second `MaterialKind`, `LitTextured`, dispatched through one shared,
+C4062-guarded `selectShaderPair()` helper both `realizeOneMaterialCandidate()`
+and `rebuildMaterialsForFormatChange()` call identically, plus a
+one-time-captured, 176-byte `FrameLightingData` snapshot written into
+the existing camera `Buffer`'s own tail bytes (widened 128 → 304 bytes)
+exactly once per session, immediately after `World::updateTransforms()`
+first runs — never re-captured, never updated by a later
+`World::setLight()` call — implemented per
+[specs/0019-lighting-foundation.md](../specs/0019-lighting-foundation.md),
+[plans/0019-lighting-foundation.md](../plans/0019-lighting-foundation.md),
+and
+[ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md)–[ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md),
+merged via [PR #96](https://github.com/slmao/Atlantis/pull/96).
 See
 [docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md)
 for the full public/private boundary statement.
