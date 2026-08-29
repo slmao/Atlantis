@@ -96,10 +96,21 @@ built with.
   materials/textures per entity — closing the loop first opened by Spec
   0016's texture support and Spec 0017's asset-sourced UV0, so a
   Runtime-loaded scene can finally look genuinely textured, proven end
-  to end against a new `material_demo` golden. A distributable,
-  cross-session Asset Catalog and rename-stable GUID identity remain
-  future work (Candidate Order 7, `specs/README.md`) — see
-  `src/README.md`'s own `asset_system/`/`tools/asset_cooker/`
+  to end against a new `material_demo` golden. Extended once more with
+  a real, mandatory object-space normal vertex attribute (Spec 0020,
+  `Approved`, implemented and merged via
+  [PR #93](https://github.com/slmao/Atlantis/pull/93)): the static mesh
+  format bumped to version 3 (position+color+UV0+normal, 44-byte
+  stride), with a double-precision length-squared numeric contract
+  independently re-derived at both cook and load time (no
+  auto-generation from position, no normalization) — a normal *data
+  contract* only, with zero new shader, zero new golden, and zero
+  rendered-output change; it exists purely as this codebase's own
+  named, hard prerequisite for Lighting Foundation (Spec 0019,
+  `Approved`; Plan 0019 may now be drafted, not yet started). A
+  distributable, cross-session Asset Catalog and rename-stable GUID
+  identity remain future work (Candidate Order 7, `specs/README.md`) —
+  see `src/README.md`'s own `asset_system/`/`tools/asset_cooker/`
   entries
 - Vulkan Validation Layers as a correctness gate
 - RenderDoc-based debugging
@@ -345,11 +356,23 @@ Runtime's own CPU-transaction/deferred-GPU-realization pipeline binding
 a real, asset-sourced textured `Material` per entity, Spec 0018,
 `Approved`, implemented and merged via
 [PR #88](https://github.com/slmao/Atlantis/pull/88)) — see
-[specs/README.md](specs/README.md). PBR/lighting/post-processing
-extensions beyond the one closed, unlit-textured material kind this
-stack draws today, mipmap/compression/streaming/bindless texture
-support, a distributable cross-session Asset Catalog, and Android/iOS
-remain unimplemented — see [src/README.md](src/README.md).
+[specs/README.md](specs/README.md). Mesh Normal Attribute Foundation (a
+real, mandatory object-space normal vertex attribute — the static mesh
+format bumped to version 3, position+color+UV0+normal at a fixed
+44-byte stride, with a double-precision length-squared numeric contract
+independently re-derived at both cook and load time, no
+auto-generation/normalization — a normal *data contract* only, zero new
+shader, zero rendered-output change, existing solely as the named, hard
+prerequisite Lighting Foundation (Spec 0019, below) depends on, Spec
+0020, `Approved`, implemented and merged via
+[PR #93](https://github.com/slmao/Atlantis/pull/93)) is also
+implemented — see [specs/README.md](specs/README.md). Lighting
+Foundation itself (Spec 0019, `Approved`; Plan 0019 may now be drafted,
+not yet started — see [specs/README.md](specs/README.md)) and
+PBR/post-processing extensions beyond it, mipmap/compression/
+streaming/bindless texture support, a distributable cross-session Asset
+Catalog, and Android/iOS all remain unimplemented — see
+[src/README.md](src/README.md).
 
 Android and iOS remain specified architecturally only (not implemented);
 Vulkan Backend's Android WSI path is likewise not implemented. Headless

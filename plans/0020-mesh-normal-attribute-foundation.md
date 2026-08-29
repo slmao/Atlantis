@@ -1039,3 +1039,115 @@ Checklist above already enumerates in full — this Plan adds no new
 rendered capability, so the Definition of Done's own image-regression/
 human-visual-review items apply only in their negative form here (V18:
 confirm zero change, not review a new capture).
+
+**Post-Merge Status Update (2026-08-29):** [Implementation PR #93](https://github.com/slmao/Atlantis/pull/93)
+is merged. All 3 Milestones landed as planned, across four commits: one
+atomic Milestone 1 commit (the version 2→3 format migration in full —
+schema/layout/four named offset constants/parser/encoder/decoder, the
+shared `atlantis::asset_system::detail` numeric-validation pair, all
+three real mesh assets, all six composition roots, all nine test touch
+points, plus the two new dedicated test files, `mesh_normal_round_trip_tests.cpp`
+and `mesh_normal_validation_tests.cpp`); a follow-up commit closing a
+real Verification Checklist gap found only during Milestone 2's own
+explicit V1–V22 tabulation, not during Milestone 1 itself — V12's own
+"hand-computed math test (D6)," a CPU-only cross-product proof that all
+four independently-computed triangle-level face normals (both triangles
+of both quads) equal `(0, 0, 1)`, had never actually been written;
+closed with a new `TEST_CASE` in `textured_quad_mesh_tests.cpp`; a
+Milestone 3 commit (registry/status documentation only, recording
+"code complete, OPEN" at the time); and a centralized final code review
+commit (below).
+
+Three additional files needed a mechanical `vertexStrideBytes() == 32`
+→ `== 44` fix that Pre-draft verification's own two search methods
+(embedded mesh-source-text grep, direct `MeshSourceVertex`-construction
+grep) could not find, since neither applies to them —
+`textured_quad_mesh_tests.cpp` (two occurrences),
+`tests/asset_system/load_tests.cpp`, and
+`tests/asset_system/mesh_uv_round_trip_tests.cpp` — each asserting a
+hardcoded stride against an already-cooked real artifact. Disclosed in
+the original Implementation commit as same-kind stride-constant
+updates, not schema/contract changes.
+
+**A centralized final code review round** (still pre-merge, on PR #93
+itself, commit `c7a1fce`) found and fixed two comment-accuracy defects
+— no functional, schema, numeric-contract, public-API, module-boundary,
+or golden change resulted from either:
+
+1. Two `TEST_CASE`s in `mesh_source_tests.cpp` ("... exactly at the
+   lower/upper inclusive boundary ...") claimed their own parsed
+   `0.99`/`1.01` `float` literal produces `lengthSquared` equal to
+   `0.9801`/`1.0201` exactly. Independently re-verified (matching this
+   codebase's own `detail::computeNormalLengthSquared()` float→double
+   promotion path) that this is not the case: `float(0.99)` promotes
+   and squares to `0.98010001888275156` (~1.9e-8 above `0.9801`), and
+   `float(1.01)` squares to `1.0200999807357789` (~1.9e-8 below
+   `1.0201`) — both still correctly accepted (comfortably inside the
+   inclusive range on their own side), but neither actually lands on
+   the exact boundary value its own name and comment claimed. This
+   Plan's own Section P8 boundary-test taxonomy reserves the "lands on
+   the exact value" claim for Kind 1 alone
+   (`mesh_normal_validation_tests.cpp`'s own
+   `isNormalLengthSquaredInTolerance(0.9801)` case, comparing the
+   double literal against itself, no `float` involved) — these two
+   tests are Kind 3 (full parse-path integration) and should never have
+   made a Kind-1-only claim. Renamed both `TEST_CASE`s and rewrote their
+   own comments to state the real, verified arithmetic honestly; the
+   underlying accept assertions and the numeric contract itself were
+   both already correct and remain unchanged.
+2. `src/runtime/src/runtime_application.cpp`'s own
+   `unlitTexturedVertexLayout()` comment still described "Spec 0017's
+   32-byte position+color+UV0 layout" as the mesh artifact's own
+   current, present-tense stride, though Milestone 1 had already
+   widened every real mesh artifact to 44 bytes. This function's own
+   behavior was never affected (it reads only position and UV0
+   regardless of trailing stride width) — a documentation-only
+   correction.
+
+Everything else this review round checked — the shared `detail::`
+function pair's own single-implementation guarantee (traced the
+`#include` chain confirming `mesh_artifact.cpp` reaches
+`mesh_source.h`'s functions only via its own existing
+`mesh_artifact.h` include, never a duplicate), the finiteness-before-
+length-check ordering at both the source-parse and artifact-decode
+layers, the full, word-boundary-precise repository-wide error-domain
+usage-site enumeration (the earlier, unqualified substring search had
+over-matched unrelated enums like `SceneSourceParseError`; corrected
+here), every pinned byte in `mesh_artifact_tests.cpp`'s own expected
+vector (independently re-verified via PowerShell's `[BitConverter]`,
+including the `index_bytes_offset = 84`/total size `90` header fields
+and all eleven per-vertex floats), the real assets' own sign-matched
+`minimal_cube` normals and uniform quad `(0, 0, 1)` values against
+`git diff main` (confirming zero change to any non-normal field or the
+index/triangle order), and the module/link graph — was found conformant
+with the Approved Plan/Spec/ADR text on direct inspection, with no
+further code change needed. The re-import mechanism was additionally
+live-exercised, not merely reviewed in source: `minimal_cube.mesh.txt`'s
+own mtime was touched and its CMake asset target rebuilt, confirming
+the real cooker actually re-ran (not merely that it would) and produced
+a byte-identical, deterministic artifact.
+
+**Final, as-built verification (post-merge, from the review round's own
+record):** fresh Debug and Release builds clean; `ctest -LE gpu`
+689/689 Debug, 688/688 Release (the one-fewer-in-Release gap is the
+pre-existing, documented Debug-only `ATLANTIS_ASSERT` test — not a
+regression); `ctest -L gpu` 35/35 both configurations, real
+Vulkan-capable hardware, zero Vulkan Validation Layers hits (`VUID`/
+`Validation Error`/`Validation Warning`, grepped across full verbose
+output, both configurations); a fresh `-DATLANTIS_BUILD_TESTS=OFF`
+configure+build in a separate tree re-cooked all three real mesh assets
+successfully and produced a working `atlantis_runtime.exe` with zero
+test executables anywhere in that tree; module-boundary scan reconfirmed
+`Atlantis::AssetSystem` still links `Atlantis::Core` only; `git diff
+--check` clean. All four existing goldens (`minimal_cube`, `world_scene`,
+`textured_quad`, `material_demo`) confirmed byte-for-byte identical to
+`main` (`git diff main --quiet -- tests/image_regression/goldens/`
+exits 0) and pixel-for-pixel zero-difference via their own passing
+capture-compare GPU tests — the golden generator was never run, and
+never needed to be: as this Plan's own Definition of Done delta already
+stated above, this Plan adds no rendered capability and no shader reads
+the new normal attribute, so a real, confirmed zero visual change is
+the entire, correct outcome. No `V33`/`V31`-style human visual/
+interactive-window confirmation applies to this Plan for the same
+reason — there is no new or changed rendered output for a human to
+review.

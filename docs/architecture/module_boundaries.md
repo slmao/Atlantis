@@ -402,6 +402,33 @@ same way, in kind, as `DecodedRenderable` — one more plain, optional
 `AssetId` field, no change to `World`'s own dependency closure or
 construction of zero Renderer/RHI types.
 
+**Mesh Normal (Spec 0020, implemented and merged):** the static mesh
+authoring/artifact format bumped to schema version 3 -- every vertex is
+now position(3)+color(3)+UV0(2)+normal(3), a fixed 44-byte stride at
+byte offsets 0/12/24/32, mandatory for every vertex, no optional/
+variant layout, four named `constexpr` offset constants in
+`mesh_artifact.h`
+([ADR-0063](../../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md)).
+Versions 1 and 2 (24-byte position+color-only, 32-byte pre-normal) are
+both rejected outright by both `parseMeshSource()` and
+`decodeMeshArtifact()` -- no dual-version reader, no compatibility
+migrator. A shared `atlantis::asset_system::detail` numeric pair
+independently re-derives each normal's own double-precision
+length-squared and checks it against a fixed, inclusive `[0.9801,
+1.0201]` tolerance at *both* cook and load time -- the decoder never
+trusts the cooker's own already-performed check. The cooker never
+auto-generates a normal from position and never normalizes an
+author-supplied value; an out-of-tolerance normal is a hard cook-time/
+decode-time error (`NonUnitNormal`), not a silent correction.
+`minimal_cube`'s own eight corners each carry a real, smooth
+(vertex-averaged), sign-matched normal; both `textured_quad` meshes
+carry a uniform `(0, 0, 1)`, independently verified by hand
+cross-product over both triangles of each quad. This is a normal *data
+contract* only (authoring → cook → artifact → load) -- no shader in
+this codebase reads the new attribute, and no rendered output changes
+as a result; it exists solely as Lighting Foundation's own named, hard
+prerequisite (Spec 0019 D1).
+
 **Extension points:** a rename-stable GUID identity scheme and a real
 derived-data cache are each named, explicitly out-of-scope future work
 in Spec 0012/Spec 0015 — not designed or scaffolded here. A
