@@ -126,4 +126,9 @@ atlantis::rhi::OffscreenTargetCreateError toOffscreenTargetCreateError(VkResult 
   return atlantis::rhi::OffscreenTargetCreateError::ImageCreationFailed;
 }
 
+bool isDescriptorPoolGrowthEligible(VkResult result) {
+  ATLANTIS_CHECK(result != VK_SUCCESS);
+  return result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL;
+}
+
 }  // namespace atlantis::vulkan_backend::detail

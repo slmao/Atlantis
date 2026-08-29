@@ -374,9 +374,15 @@ class FenceGuard {
   VkFence fence_;
 };
 
-// Plan 0007 Section 10: guard for VulkanDevice's Device-level
-// VkDescriptorPool (maxSets = 4, the camera-uniform-binding design's own
-// fixed-capacity pool).
+// Plan 0007 Section 10 / Spec 0021 D9: guard for a single VkDescriptorPool
+// -- used only for createDevice()'s own one-time, construction-time
+// initial pool (generation 0). VulkanDevice's own later growth path
+// (allocateDescriptorSet()) does not use this guard: with the fixed-
+// array-based pool set, the publish step (an array-slot assignment plus
+// a count increment) is the literal next statement after pool creation
+// succeeds, with zero intervening fallible operation, so the "guarded
+// until published" property holds by direct construction of that code
+// -- see Plan 0021's own "Pool RAII and publish order" note.
 class DescriptorPoolGuard {
  public:
   DescriptorPoolGuard(VkDevice device, VkDescriptorPool descriptorPool) : device_(device), pool_(descriptorPool) {}
@@ -400,6 +406,43 @@ class DescriptorPoolGuard {
   VkDescriptorPool pool_;
 };
 
+// Spec 0021/ADR-0064, Plan 0021 P6: the single source of truth for "what
+// one descriptor pool in VulkanDevice's own growable set looks like" --
+// called by BOTH createDevice()'s own one-time initial-pool creation
+// (generation 0, below) AND VulkanDevice::allocateDescriptorSet()'s own
+// runtime growth path (generations 1-3) -- the two call sites cannot
+// drift apart from each other because they execute the same code.
+// VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT is required (not
+// optional) so vkFreeDescriptorSets (VulkanPipeline's destructor) is
+// valid usage; both descriptor types are always sized equal to maxSets
+// itself (Spec 0021 D4/P8's own derivation: every real descriptor set
+// consumes exactly one UNIFORM_BUFFER descriptor and at most one
+// COMBINED_IMAGE_SAMPLER descriptor, so sizing both equal to maxSets
+// means neither can be exhausted before maxSets itself is). Returns
+// VK_NULL_HANDLE on vkCreateDescriptorPool failure -- this function
+// itself makes no judgment about how a caller should map that; each
+// call site below does.
+[[nodiscard]] VkDescriptorPool createDescriptorPoolOfSize(VkDevice device, std::uint32_t maxSets) {
+  VkDescriptorPoolSize poolSizes[2]{};
+  poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  poolSizes[0].descriptorCount = maxSets;
+  poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  poolSizes[1].descriptorCount = maxSets;
+
+  VkDescriptorPoolCreateInfo createInfo{};
+  createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  createInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+  createInfo.maxSets = maxSets;
+  createInfo.poolSizeCount = 2;
+  createInfo.pPoolSizes = poolSizes;
+
+  VkDescriptorPool pool = VK_NULL_HANDLE;
+  if (vkCreateDescriptorPool(device, &createInfo, nullptr, &pool) != VK_SUCCESS) {
+    return VK_NULL_HANDLE;
+  }
+  return pool;
+}
+
 }  // namespace
 
 VulkanDevice::VulkanDevice(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, VkQueue queue,
@@ -417,8 +460,15 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkPhysicalDevice physicalDevice,
       commandPool_(commandPool),
       submissionFence_(submissionFence),
       cmdBeginRendering_(cmdBeginRendering),
-      cmdEndRendering_(cmdEndRendering),
-      descriptorPool_(descriptorPool) {}
+      cmdEndRendering_(cmdEndRendering) {
+  // Spec 0021 D5: the first pool (generation 0) is always sized to
+  // kDescriptorPoolMaxSetsByGeneration[0] -- createDevice() already
+  // created it via that exact value (see createDescriptorPoolOfSize()'s
+  // own call site there), so this simply publishes the already-created
+  // pool as this growable set's own first, live entry.
+  descriptorPools_[0] = DescriptorPoolEntry{descriptorPool, kDescriptorPoolMaxSetsByGeneration[0]};
+  descriptorPoolCount_ = 1;
+}
 
 VulkanDevice::~VulkanDevice() {
   // Plan 0006 Section 9: defensive drain, run unconditionally. The
@@ -438,10 +488,16 @@ VulkanDevice::~VulkanDevice() {
 
   vkDestroyFence(device_, submissionFence_, nullptr);
   vkDestroyCommandPool(device_, commandPool_, nullptr);
-  // Plan 0007 Section 10: destroyed before VkDevice, after every
-  // VulkanPipeline that could have held a VkDescriptorSet from this pool
-  // -- caller discipline (Section 14), same tier as VkCommandPool above.
-  vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
+  // Plan 0007 Section 10 / Spec 0021 D10: destroyed before VkDevice,
+  // after every VulkanPipeline that could have held a VkDescriptorSet
+  // from any of these pools -- caller discipline (Section 14), same
+  // tier as VkCommandPool above, unchanged by the growable-set widening.
+  // Bounded by descriptorPoolCount_ -- every live pool destroyed exactly
+  // once; order among them is immaterial (no pool depends on another,
+  // matching this file's own Phase-2 release-order precedent below).
+  for (std::size_t i = 0; i < descriptorPoolCount_; ++i) {
+    vkDestroyDescriptorPool(device_, descriptorPools_[i].pool, nullptr);
+  }
 
   // Destruction order: the three objects above, then VkDevice, then the
   // explicit VkDebugUtilsMessengerEXT (if any), then VkInstance -- matches
@@ -823,6 +879,72 @@ VulkanDevice::createTexture(const atlantis::rhi::TextureCreateParams& params) {
       std::make_unique<VulkanTexture>(device_, image, memory, imageView, params.extent, params.format));
 }
 
+std::optional<atlantis::rhi::PipelineCreateError> VulkanDevice::allocateDescriptorSet(
+    VkDescriptorSetLayout layout, VkDescriptorSet& outDescriptorSet, VkDescriptorPool& outOriginPool) {
+  VkDescriptorSetAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  allocInfo.descriptorSetCount = 1;
+  allocInfo.pSetLayouts = &layout;
+
+  // Step 1: scan every existing (live) pool, in creation order --
+  // naturally reusing whatever capacity an earlier vkFreeDescriptorSets
+  // call already returned to any of them (Spec 0021 D3/D7), never
+  // assuming only the most-recently-created pool can have room.
+  for (std::size_t i = 0; i < descriptorPoolCount_; ++i) {
+    allocInfo.descriptorPool = descriptorPools_[i].pool;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    const VkResult result = vkAllocateDescriptorSets(device_, &allocInfo, &set);
+    if (result == VK_SUCCESS) {
+      outDescriptorSet = set;
+      outOriginPool = descriptorPools_[i].pool;
+      return std::nullopt;
+    }
+    if (!isDescriptorPoolGrowthEligible(result)) {
+      // VK_ERROR_DEVICE_LOST / host-or-device OOM -- immediate,
+      // unchanged failure. No further pool tried, no growth attempted.
+      return atlantis::rhi::PipelineCreateError::DescriptorSetAllocationFailed;
+    }
+    // OUT_OF_POOL_MEMORY / FRAGMENTED_POOL -- try the next existing pool.
+  }
+
+  // Step 2: every existing pool exhausted for a growth-eligible reason.
+  if (descriptorPoolCount_ >= kMaxDescriptorPoolCount) {
+    return atlantis::rhi::PipelineCreateError::DescriptorSetAllocationFailed;
+  }
+
+  // Step 3: grow -- create exactly one new pool, generation
+  // descriptorPoolCount_ (the fixed generation table, never computed).
+  const std::uint32_t newMaxSets = descriptorPoolMaxSetsForGeneration(descriptorPoolCount_);
+  const VkDescriptorPool newPool = createDescriptorPoolOfSize(device_, newMaxSets);
+  if (newPool == VK_NULL_HANDLE) {
+    // Pre-publish failure -- descriptorPoolCount_ is NOT incremented;
+    // no handle exists to leak.
+    return atlantis::rhi::PipelineCreateError::DescriptorSetAllocationFailed;
+  }
+  // Publish: a plain assignment into an already-allocated array slot,
+  // immediately following pool creation with zero intervening fallible
+  // operation -- cannot throw (DescriptorPoolEntry's own members are
+  // trivial), cannot leave newPool unpublished. Kept in descriptorPools_
+  // regardless of the retry's own outcome below (Spec 0021 D9) -- safe,
+  // since no set has been allocated from it yet.
+  descriptorPools_[descriptorPoolCount_] = DescriptorPoolEntry{newPool, newMaxSets};
+  ++descriptorPoolCount_;
+
+  // Step 4: retry exactly once against the new pool. No loop, no
+  // recursive call back into this function -- this is the ONE retry
+  // Spec 0021 D3 specifies, never a second growth attempt within the
+  // same call.
+  allocInfo.descriptorPool = newPool;
+  VkDescriptorSet set = VK_NULL_HANDLE;
+  const VkResult retryResult = vkAllocateDescriptorSets(device_, &allocInfo, &set);
+  if (retryResult != VK_SUCCESS) {
+    return atlantis::rhi::PipelineCreateError::DescriptorSetAllocationFailed;
+  }
+  outDescriptorSet = set;
+  outOriginPool = newPool;
+  return std::nullopt;
+}
+
 atlantis::Result<std::unique_ptr<atlantis::rhi::Pipeline>, atlantis::rhi::PipelineCreateError>
 VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) {
   using ResultT = atlantis::Result<std::unique_ptr<atlantis::rhi::Pipeline>, atlantis::rhi::PipelineCreateError>;
@@ -897,19 +1019,17 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
     return ResultT::Err(atlantis::rhi::PipelineCreateError::DescriptorSetLayoutCreationFailed);
   }
 
-  VkDescriptorSetAllocateInfo setAllocInfo{};
-  setAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-  setAllocInfo.descriptorPool = descriptorPool_;
-  setAllocInfo.descriptorSetCount = 1;
-  setAllocInfo.pSetLayouts = &descriptorSetLayout;
-
+  // Spec 0021/ADR-0064: scans the growable pool set, growing (up to the
+  // Approved hard ceiling) on real, observed exhaustion -- see
+  // allocateDescriptorSet()'s own doc comment for the full algorithm.
   VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
-  const VkResult setAllocResult = vkAllocateDescriptorSets(device_, &setAllocInfo, &descriptorSet);
-  if (setAllocResult != VK_SUCCESS) {
+  VkDescriptorPool originPool = VK_NULL_HANDLE;
+  if (const auto allocError = allocateDescriptorSet(descriptorSetLayout, descriptorSet, originPool);
+      allocError.has_value()) {
     vkDestroyDescriptorSetLayout(device_, descriptorSetLayout, nullptr);
     vkDestroyShaderModule(device_, fragmentModule, nullptr);
     vkDestroyShaderModule(device_, vertexModule, nullptr);
-    return ResultT::Err(atlantis::rhi::PipelineCreateError::DescriptorSetAllocationFailed);
+    return ResultT::Err(*allocError);
   }
 
   VkPushConstantRange pushConstantRange{};
@@ -927,7 +1047,13 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
   const VkResult layoutResult = vkCreatePipelineLayout(device_, &layoutCreateInfo, nullptr, &pipelineLayout);
   if (layoutResult != VK_SUCCESS) {
-    vkFreeDescriptorSets(device_, descriptorPool_, 1, &descriptorSet);
+    // vkFreeDescriptorSets is documented to only ever return VK_SUCCESS
+    // when the pool was created with FREE_DESCRIPTOR_SET_BIT (every pool
+    // in this Device's own set is, unconditionally) -- checked anyway,
+    // per this module's own "every VkResult is checked" rule with no
+    // silent exceptions, matching VulkanPipeline's own destructor.
+    const VkResult freeResult = vkFreeDescriptorSets(device_, originPool, 1, &descriptorSet);
+    ATLANTIS_CHECK(freeResult == VK_SUCCESS);
     vkDestroyDescriptorSetLayout(device_, descriptorSetLayout, nullptr);
     vkDestroyShaderModule(device_, fragmentModule, nullptr);
     vkDestroyShaderModule(device_, vertexModule, nullptr);
@@ -1044,12 +1170,14 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
 
   if (pipelineResult != VK_SUCCESS) {
     vkDestroyPipelineLayout(device_, pipelineLayout, nullptr);
-    vkFreeDescriptorSets(device_, descriptorPool_, 1, &descriptorSet);
+    // See the identical vkFreeDescriptorSets rationale above.
+    const VkResult freeResult = vkFreeDescriptorSets(device_, originPool, 1, &descriptorSet);
+    ATLANTIS_CHECK(freeResult == VK_SUCCESS);
     vkDestroyDescriptorSetLayout(device_, descriptorSetLayout, nullptr);
     return ResultT::Err(toPipelineCreateError(pipelineResult));
   }
 
-  return ResultT::Ok(std::make_unique<VulkanPipeline>(device_, descriptorPool_, pipeline, pipelineLayout,
+  return ResultT::Ok(std::make_unique<VulkanPipeline>(device_, originPool, pipeline, pipelineLayout,
                                                         descriptorSetLayout, descriptorSet));
 }
 
@@ -1408,33 +1536,22 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
   }
   detail::FenceGuard fenceGuard(device, submissionFence);
 
-  // Plan 0007 Section 10: the camera-uniform-binding design's fixed-
-  // capacity descriptor pool, created once here, mirroring the command
-  // pool/fence precedent above. maxSets = 4 (double this Plan's own
-  // derived peak concurrent count of 2 -- see Section 10's own
-  // derivation), VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT
-  // required so vkFreeDescriptorSets (VulkanPipeline's destructor) is
-  // valid usage.
-  //
-  // Spec 0016 D5: a second pool-size entry for the combined-image-sampler
-  // binding textured Materials use -- sized the same as the uniform entry
-  // above so an all-textured workload does not exhaust the pool any
-  // sooner than an all-uniform-only one would.
-  VkDescriptorPoolSize descriptorPoolSizes[2]{};
-  descriptorPoolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-  descriptorPoolSizes[0].descriptorCount = 4;
-  descriptorPoolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  descriptorPoolSizes[1].descriptorCount = 4;
-
-  VkDescriptorPoolCreateInfo descriptorPoolCreateInfo{};
-  descriptorPoolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-  descriptorPoolCreateInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-  descriptorPoolCreateInfo.maxSets = 4;
-  descriptorPoolCreateInfo.poolSizeCount = 2;
-  descriptorPoolCreateInfo.pPoolSizes = descriptorPoolSizes;
-
-  VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
-  if (vkCreateDescriptorPool(device, &descriptorPoolCreateInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
+  // Spec 0021/ADR-0064 (originally Plan 0007 Section 10's own fixed-
+  // capacity descriptor pool): the FIRST pool (generation 0) of
+  // VulkanDevice's own growable set, created once here, mirroring the
+  // command pool/fence precedent above -- sized to
+  // kDescriptorPoolMaxSetsByGeneration[0] (4, unchanged from this
+  // codebase's own pre-Spec-0021 value, but now justified differently:
+  // correctness no longer depends on this number being "big enough" --
+  // VulkanDevice::allocateDescriptorSet()'s own growth guarantees that
+  // -- it is kept small and cheap so the steady-state, already-verified
+  // single/double-material scenes this codebase ships today never
+  // trigger a growth event at all). createDescriptorPoolOfSize() is the
+  // single, shared helper this pool and every later-grown pool both use
+  // (Spec 0021 D4/P8) -- they cannot drift apart from each other.
+  const VkDescriptorPool descriptorPool =
+      detail::createDescriptorPoolOfSize(device, detail::kDescriptorPoolMaxSetsByGeneration[0]);
+  if (descriptorPool == VK_NULL_HANDLE) {
     return ResultT::Err(DeviceCreateError::DeviceCreationFailed);
   }
   detail::DescriptorPoolGuard descriptorPoolGuard(device, descriptorPool);

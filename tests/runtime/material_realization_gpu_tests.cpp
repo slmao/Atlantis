@@ -19,6 +19,7 @@
 #include <atlantis/shader_system/rhi_integration/vertex_input_mapping.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -307,11 +308,19 @@ TEST_CASE("rebuildMaterialsForFormatChange never touches the caller existing bun
 // format-rebuild test immediately above, transcribed for a LitTextured
 // material -- a single material (not two, unlike an earlier draft of
 // this test, which discovered a real, PRE-EXISTING, Plan-0019-unrelated
-// limit: vulkan_device.cpp's own descriptor pool is sized maxSets = 4,
-// so two simultaneous materials surviving both an old AND a new batch
-// during a format-change window (2 old + 2 new + 1 new fallback = 5)
-// already exceeds it regardless of MaterialKind -- disclosed, out of
-// this Plan's own scope to change, not a defect this Plan introduced).
+// limit: vulkan_device.cpp's own descriptor pool WAS sized maxSets = 4
+// as a single, fixed pool at the time this test was written, so two
+// simultaneous materials surviving both an old AND a new batch during a
+// format-change window (2 old + 2 new + 1 new fallback = 5) already
+// exceeded it regardless of MaterialKind -- disclosed at the time, out
+// of Plan 0019's own scope to change, not a defect that Plan
+// introduced. Since fixed by Spec 0021/ADR-0064/Plan 0021 (VulkanDevice
+// now owns a growable pool set) -- see this same file's own later N=2/
+// N=6 TEST_CASEs, below, which exercise exactly this scenario and now
+// succeed. This test's own single-material shape is kept as-is; it was
+// never about the pool limit, only about a real, independent finding
+// (selectShaderPair() dispatch correctness) this comment's own second
+// paragraph describes.
 // rebuildMaterialsForFormatChange()'s own widened, per-candidate
 // selectShaderPair() dispatch (the identical, shared function
 // realizeOneMaterialCandidate() also calls, already pixel-proven
@@ -874,64 +883,50 @@ TEST_CASE("loadAndInstantiateScene: two entities referencing the same material A
 }
 
 // ---------------------------------------------------------------------
-// A real, pre-existing, PRE-Plan-0019 architectural ceiling, confirmed
-// empirically during this PR's own final centralized review -- NOT a
-// Lighting Foundation defect, NOT fixed here (see the finding's own full
-// writeup in this PR's review record and plans/0019-lighting-foundation.md's
-// own "Implementation Status Update"). Recorded here as a real,
-// executed, low-level root-cause probe plus the real-shape regression
-// test the review explicitly required.
+// A real, pre-existing, PRE-Plan-0019 architectural ceiling -- FIXED by
+// Spec 0021/ADR-0062/Plan 0021 (Descriptor Pool Capacity Foundation).
+// Originally found and disclosed, not fixed, during Spec 0019's own
+// final centralized review (see plans/0019-lighting-foundation.md's own
+// "Implementation Status Update" for that original finding). This
+// TEST_CASE previously documented the failure as a known limitation;
+// it now proves the fix, per Spec 0021 D14's own explicit instruction
+// ("this test... should be revisited... not 'fixed' by flipping the
+// assertion" -- read here as "rewrite the surrounding comment too, not
+// merely flip one assertion in place").
 //
-// Root cause, traced precisely: VulkanDevice's own VkDescriptorPool
-// (vulkan_device.cpp, createDevice()) is a single, Device-global,
-// fixed-capacity pool -- maxSets = 4 -- created exactly once, before any
-// scene is ever loaded, and never resized or replaced for the rest of
-// that Device's own lifetime. Its own capacity derivation (Plan 0007
-// Section 10, comment at the call site) is explicit and load-bearing:
-// "exactly one Material exists in steady state (Non-Goals: single
-// material, no dynamic material-creation loop)" -- Plan 0007's own
-// peak-concurrent-count-of-2 (one OLD Pipeline's descriptor set,
-// momentarily alive alongside one NEW one during that ONE material's
-// own format-change rebuild) is the entire basis for maxSets = 4 (double
-// that peak, a stated, accounted-for margin, not a round number).
+// Root cause, as originally traced: VulkanDevice's own VkDescriptorPool
+// was a single, Device-global, fixed-capacity pool -- maxSets = 4 --
+// created exactly once and never resized, derived from Plan 0007
+// Section 10's own now-stale "exactly one Material exists in steady
+// state" assumption. Plan 0018 later lifted that assumption
+// (arbitrary-N-materials, materialResourceMap_) without revisiting this
+// pool's own fixed capacity; the real peak concurrent descriptor-set
+// count during a format-change window, for N materials plus one
+// fallback, is 2*(N+1) (Spec 0018 D9's own "old batch and new candidate
+// batch both alive until submit() succeeds" design) -- N=1 exactly
+// saturated the historical ceiling; N=2 exceeded it.
 //
-// Plan 0018 (Material Asset & Scene Binding Foundation) later lifted
-// the "exactly one Material" constraint this derivation entirely
-// depends on -- introducing an arbitrary-N-materials model
-// (materialResourceMap_, keyed by AssetId) -- WITHOUT ever revisiting
-// this pool's own fixed capacity. The real peak concurrent descriptor-
-// set count during a format-change window, for N distinct materials
-// plus one fallback, is 2*(N+1) (Spec 0018 D9's own "old batch and new
-// candidate batch both alive until submit() succeeds" design, restated
-// in material_realization.h's own documentation) -- N=1 already lands
-// exactly on the historical ceiling (2*2=4); N=2 already exceeds it
-// (2*3=6 > 4), independent of MaterialKind entirely (proven below with
-// one UnlitTextured and one LitTextured material specifically, but the
-// identical failure reproduces with two UnlitTextured materials, or any
-// other kind combination -- confirmed by the low-level, kind-independent
-// diagnostic below).
-//
-// Independently confirmed via a direct, low-level Device::createPipeline()
-// probe (bypassing createMaterial()'s own CreateMaterialError, which
-// folds every PipelineCreateError sub-reason into a single
-// PipelineCreationFailed enumerator and would otherwise hide which real
-// RHI-level error occurs): four Pipelines succeed; the fifth fails with
-// exactly PipelineCreateError::DescriptorSetAllocationFailed (index 2 in
-// that enum's own declared order) -- matching Plan 0007's own explicit,
-// named, anticipated failure mode exactly, not some other, unrelated
-// Vulkan error.
-TEST_CASE("A real Vulkan Device's own descriptor pool (maxSets = 4, Plan 0007's own single-material-only "
-          "capacity derivation) is exhausted by a real, currently-supported two-distinct-material format "
-          "change -- confirmed root cause, not fixed here (out of Plan 0019's own scope, pre-existing since "
-          "Plan 0018)",
-          "[runtime][gpu][material_realization][format_rebuild][known_limitation]") {
-  // Part 1: the low-level, kind-independent root-cause probe -- confirms
-  // the EXACT failure mode a fixed-capacity, Device-global descriptor
-  // pool produces once its own maxSets is exceeded, entirely independent
-  // of MaterialKind, Material, or format-change machinery.
+// Fixed by Spec 0021/ADR-0064: VulkanDevice now owns a growable set of
+// descriptor pools (a fixed std::array<DescriptorPoolEntry, 4>, never a
+// std::vector), scanning every existing pool in creation order before
+// growing (geometric doubling: 4, 8, 16, 32 -- 60 concurrent descriptor
+// sets total) on real, observed VK_ERROR_OUT_OF_POOL_MEMORY/
+// VK_ERROR_FRAGMENTED_POOL exhaustion. No RHI/Renderer/Material public
+// API changed.
+TEST_CASE("A real Vulkan Device's own descriptor pool grows past its own historical maxSets = 4 ceiling "
+          "and a real, currently-supported two-distinct-material format change now succeeds "
+          "(Spec 0021/ADR-0064/Plan 0021 fix -- formerly a documented known limitation since Plan 0018)",
+          "[runtime][gpu][material_realization][format_rebuild]") {
+  // Part 1: the low-level, kind-independent probe -- confirms growth
+  // actually engages past the historical maxSets = 4 ceiling, entirely
+  // independent of MaterialKind, Material, or format-change machinery.
+  // 7 Pipelines: the first 4 exhaust generation-0's own capacity; the
+  // 5th-7th only succeed if a second pool (generation 1, maxSets = 8)
+  // was actually created and used -- proving growth engaged, not merely
+  // that the historical ceiling stopped being hit by coincidence.
   {
     auto deviceResult = atlantis::vulkan_backend::createDevice(
-        {.applicationName = "Atlantis Descriptor Pool Root-Cause Probe", .enableValidationLayers = true});
+        {.applicationName = "Atlantis Descriptor Pool Growth Probe", .enableValidationLayers = true});
     REQUIRE(deviceResult.isOk());
     std::unique_ptr<atlantis::rhi::Device> device = std::move(deviceResult.value());
 
@@ -946,8 +941,7 @@ TEST_CASE("A real Vulkan Device's own descriptor pool (maxSets = 4, Plan 0007's 
     REQUIRE(layout.has_value());
 
     std::vector<std::unique_ptr<atlantis::rhi::Pipeline>> pipelines;
-    bool exhaustionObservedAtExpectedPoint = false;
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 7; ++i) {
       auto result = device->createPipeline(
           {.vertexShader = {.spirvWords = vertexSpirv->data(), .wordCount = vertexSpirv->size()},
            .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
@@ -955,31 +949,25 @@ TEST_CASE("A real Vulkan Device's own descriptor pool (maxSets = 4, Plan 0007's 
            .colorFormat = atlantis::rhi::Format::Rgba8Unorm,
            .depthFormat = atlantis::rhi::DepthFormat::D32Sfloat,
            .pushConstantSizeBytes = sizeof(float) * 16});
-      if (result.isErr()) {
-        // The 5th Pipeline (0-indexed 4) is the first to exceed
-        // maxSets = 4 -- the first four succeed and consume the pool's
-        // own entire declared capacity.
-        CHECK(i == 4);
-        CHECK(result.error() == atlantis::rhi::PipelineCreateError::DescriptorSetAllocationFailed);
-        exhaustionObservedAtExpectedPoint = true;
-        break;
-      }
+      // Every one of the 7 must succeed -- the 5th-7th only can if
+      // growth (a second pool) actually happened.
+      REQUIRE(result.isOk());
       pipelines.push_back(std::move(result.value()));
     }
-    REQUIRE(exhaustionObservedAtExpectedPoint);
     REQUIRE(device->waitIdle().isOk());
   }
 
-  // Part 2: the real-shape regression test this review explicitly
-  // required -- fallback + one UnlitTextured + one LitTextured material,
-  // realized once (format A), then a real format change (format B) with
-  // the OLD batch (2 materials) and the NEW candidate batch (fallback +
-  // 2 materials) both alive simultaneously, exactly as Spec 0018 D9's
-  // own design requires. 2 (old) + 3 (new) = 5 concurrent descriptor
-  // sets > maxSets = 4.
+  // Part 2: the real-shape regression -- fallback + one UnlitTextured +
+  // one LitTextured material, realized once (format A), then a real
+  // format change (format B) with the OLD batch (2 materials) and the
+  // NEW candidate batch (fallback + 2 materials) both alive
+  // simultaneously, exactly as Spec 0018 D9's own design requires. 2
+  // (old) + 3 (new) = 5 concurrent descriptor sets -- exceeds the
+  // historical maxSets = 4 ceiling, now satisfied by one growth event
+  // (generation 1, maxSets = 8).
   {
     auto deviceResult = atlantis::vulkan_backend::createDevice(
-        {.applicationName = "Atlantis Material Realization GPU Tests (N=2 format rebuild, known limitation)",
+        {.applicationName = "Atlantis Material Realization GPU Tests (N=2 format rebuild, growth fix)",
          .enableValidationLayers = true});
     REQUIRE(deviceResult.isOk());
     std::unique_ptr<atlantis::rhi::Device> device = std::move(deviceResult.value());
@@ -1070,7 +1058,11 @@ TEST_CASE("A real Vulkan Device's own descriptor pool (maxSets = 4, Plan 0007's 
     // simultaneously at the point rebuildMaterialsForFormatChange()
     // itself runs (Spec 0018 D9's own required shape -- it has not yet
     // returned, so nothing has been freed yet): 2 + 3 = 5 concurrent
-    // descriptor sets, one more than the pool's own maxSets = 4. ----
+    // descriptor sets, one more than the historical maxSets = 4 ceiling
+    // -- now satisfied by VulkanDevice's own growable pool set (Spec
+    // 0021/ADR-0064). ----
+    const atlantis::renderer::Material* oldUnlitMaterialPtr = materialResourceMap.at(kMaterialUnlit).get();
+    const atlantis::renderer::Material* oldLitMaterialPtr = materialResourceMap.at(kMaterialLit).get();
     {
       auto offscreenB = device->createOffscreenTarget({.extent = kExtent, .format = Format::Rgba8Srgb});
       REQUIRE(offscreenB.isOk());
@@ -1079,20 +1071,212 @@ TEST_CASE("A real Vulkan Device's own descriptor pool (maxSets = 4, Plan 0007's 
           *device, *fallbackLayout, *fallbackVertexSpirv, *fallbackFragmentSpirv, *unlitLayout, *unlitVertexSpirv,
           *unlitFragmentSpirv, *litLayout, *litVertexSpirv, *litFragmentSpirv, Format::Rgba8Srgb, materialDataMap,
           materialResourceMap);
-      // This REQUIRE(isErr()) is the point of this test: it documents a
-      // real, currently-reproducible limitation, not an expectation that
-      // Implementation should silently work around. If this assertion
-      // ever starts failing (rebuildResult.isOk() instead), the
-      // descriptor pool's own capacity model has been fixed by a later,
-      // properly-reviewed change -- this test (and its own extensive
-      // comment above) should be revisited and very likely deleted at
-      // that point, not "fixed" by flipping the assertion.
-      REQUIRE(rebuildResult.isErr());
-      CHECK(rebuildResult.error() == atlantis::runtime::MaterialRealizationError::MaterialCreateFailed);
+      // The real, decisive proof this Spec 0021/ADR-0064/Plan 0021 fix
+      // requires: the format change that previously failed with exactly
+      // 5 concurrent descriptor sets now succeeds.
+      REQUIRE(rebuildResult.isOk());
+      auto candidates = std::move(rebuildResult.value());
+      REQUIRE(candidates.fallback != nullptr);
+      REQUIRE(candidates.materials.size() == 2);
+      // Genuinely new objects -- never the same Pipeline reused across a
+      // format change (Spec 0018 D9 item 1 is about SampledTexture/
+      // Sampler only, never Pipeline/Material).
+      CHECK(candidates.materials.at(kMaterialUnlit).get() != oldUnlitMaterialPtr);
+      CHECK(candidates.materials.at(kMaterialLit).get() != oldLitMaterialPtr);
+      // rebuildMaterialsForFormatChange() itself must never touch the
+      // caller's own existing map -- confirmed by address identity.
+      CHECK(materialResourceMap.at(kMaterialUnlit).get() == oldUnlitMaterialPtr);
+      CHECK(materialResourceMap.at(kMaterialLit).get() == oldLitMaterialPtr);
+
+      // A real draw/submit against the NEW candidate batch, not merely
+      // a non-null-object check -- matching this same file's own
+      // existing N=1 format-rebuild tests exactly: the OLD bundle
+      // survives a real submit() against the NEW format, untouched,
+      // destroyed only after that submit() returns Ok.
+      auto acquireResult = offscreenB.value()->acquireTarget();
+      REQUIRE(acquireResult.isOk());
+      std::unique_ptr<atlantis::rhi::RenderTarget> target = std::move(acquireResult.value());
+      auto commandListResult = device->createCommandList();
+      REQUIRE(commandListResult.isOk());
+      auto submitResult = device->submit(std::move(commandListResult.value()), *target);
+      REQUIRE(submitResult.isOk());
+
+      // Only now, after submit() has returned Ok, is it safe to swap in
+      // the candidate batch -- matching runtime_application.cpp's own
+      // P13 sequence exactly.
+      materialResourceMap = std::move(candidates.materials);
+      std::unique_ptr<atlantis::renderer::Material> fallbackMaterial = std::move(candidates.fallback);
+      CHECK(materialResourceMap.at(kMaterialUnlit).get() != oldUnlitMaterialPtr);
+      CHECK(materialResourceMap.at(kMaterialLit).get() != oldLitMaterialPtr);
+
+      REQUIRE(device->waitIdle().isOk());
     }
 
     materialResourceMap.clear();
     sampledTextureResourceMap.clear();
     REQUIRE(device->waitIdle().isOk());
   }
+}
+
+// ---------------------------------------------------------------------
+// Plan 0021 Milestone 3, V16/V17: N=6, deliberately chosen (Spec 0021
+// D13's own "test parameter only" instruction) via a full frame-by-frame
+// derivation, not the naive 2*(N+1) peak formula alone -- N=5 was tried
+// first and found NOT to force a third pool generation (Frame 1's own
+// initial realization already builds enough cumulative pool capacity
+// that Frame 2's own 6 new allocations fit exactly inside pool0+pool1's
+// combined 12-set capacity, zero overflow). The real trace for N=6:
+//
+// Frame 1 (7 total: fallback + 6 materials) -- alloc 1-4 fill pool0
+// (generation 0, cap 4); alloc 5 exhausts pool0, grows pool1
+// (generation 1, cap 8), succeeds; alloc 6-7 land in pool1 (3/8 used,
+// 5 free). End of Frame 1: pool0 = 4/4, pool1 = 3/8, 7 live sets, 2
+// pools, cumulative capacity 12.
+//
+// Frame 2 (7 NEW: new fallback + 6 new materials, OLD 7 still alive) --
+// new alloc 1-5 fill pool1's own remaining 5 free slots (pool1 = 8/8,
+// full); new alloc 6 exhausts BOTH pool0 and pool1, grows pool2
+// (generation 2, cap 16), succeeds; new alloc 7 lands in pool2 (2/16).
+// Peak, before the old batch is destroyed: 14 concurrent live sets,
+// 3 pools (pool0 = 4/4, pool1 = 8/8, pool2 = 2/16) -- a real, traced
+// second growth event, not merely asserted from the naive formula.
+TEST_CASE("N=6 real format-change success, forcing a real SECOND growth event (generation 2, maxSets = 16) -- "
+          "the naive 2*(N+1) peak formula alone does not determine this; a full frame-by-frame trace does "
+          "(Plan 0021 Milestone 3 V16/V17)",
+          "[runtime][gpu][material_realization][format_rebuild]") {
+  auto deviceResult = atlantis::vulkan_backend::createDevice(
+      {.applicationName = "Atlantis Material Realization GPU Tests (N=6 format rebuild, second growth)",
+       .enableValidationLayers = true});
+  REQUIRE(deviceResult.isOk());
+  std::unique_ptr<atlantis::rhi::Device> device = std::move(deviceResult.value());
+
+  auto unlitVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv");
+  auto unlitFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.frag.spv");
+  REQUIRE(unlitVertexSpirv.has_value());
+  REQUIRE(unlitFragmentSpirv.has_value());
+  auto unlitVertexReflectionResult = loadReflectionMetadata(
+      std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.refl.json");
+  REQUIRE(unlitVertexReflectionResult.isOk());
+  const auto unlitLayout = unlitTexturedVertexLayout(unlitVertexReflectionResult.value());
+  REQUIRE(unlitLayout.has_value());
+
+  auto litVertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.vert.spv");
+  auto litFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.spv");
+  REQUIRE(litVertexSpirv.has_value());
+  REQUIRE(litFragmentSpirv.has_value());
+  auto litVertexReflectionResult =
+      loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.vert.refl.json");
+  REQUIRE(litVertexReflectionResult.isOk());
+  const auto litLayout = litTexturedVertexLayout(litVertexReflectionResult.value());
+  REQUIRE(litLayout.has_value());
+
+  auto fallbackVertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.spv");
+  auto fallbackFragmentSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.frag.spv");
+  REQUIRE(fallbackVertexSpirv.has_value());
+  REQUIRE(fallbackFragmentSpirv.has_value());
+  auto fallbackVertexReflectionResult =
+      loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.refl.json");
+  REQUIRE(fallbackVertexReflectionResult.isOk());
+  const auto fallbackLayout = fallbackVertexLayout(fallbackVertexReflectionResult.value());
+  REQUIRE(fallbackLayout.has_value());
+
+  constexpr Extent2D kExtent{4, 4};
+  constexpr AssetId kTextureId = 500;
+  constexpr std::array<AssetId, 6> kMaterialIds = {1, 2, 3, 4, 5, 6};
+
+  std::unordered_map<AssetId, MaterialAssetData> materialDataMap;
+  for (std::size_t i = 0; i < kMaterialIds.size(); ++i) {
+    // Alternate kinds -- three UnlitTextured, three LitTextured.
+    const MaterialKind kind = (i % 2 == 0) ? MaterialKind::UnlitTextured : MaterialKind::LitTextured;
+    materialDataMap.emplace(kMaterialIds[i], MaterialAssetData{.kind = kind, .textureAsset = kTextureId});
+  }
+  std::unordered_map<AssetId, TextureAssetData> textureDataMap;
+  textureDataMap.emplace(kTextureId, makeSolidTextureData(4, 0x44));
+
+  std::unordered_map<AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>> sampledTextureResourceMap;
+  std::unordered_map<AssetId, std::unique_ptr<atlantis::renderer::Material>> materialResourceMap;
+
+  // ---- "Frame" 1: format A -- realize all 6 materials for real. ----
+  {
+    auto offscreenA = device->createOffscreenTarget({.extent = kExtent, .format = Format::Rgba8Unorm});
+    REQUIRE(offscreenA.isOk());
+    auto acquireResult = offscreenA.value()->acquireTarget();
+    REQUIRE(acquireResult.isOk());
+    std::unique_ptr<atlantis::rhi::RenderTarget> target = std::move(acquireResult.value());
+
+    auto commandListResult = device->createCommandList();
+    REQUIRE(commandListResult.isOk());
+    std::unique_ptr<atlantis::rhi::CommandList> commandList = std::move(commandListResult.value());
+
+    const std::vector<AssetId> pendingIds(kMaterialIds.begin(), kMaterialIds.end());
+    std::unordered_map<AssetId, RealizedMaterialCandidate> realized = realizePendingMaterials(
+        *device, *commandList, *unlitLayout, *unlitVertexSpirv, *unlitFragmentSpirv, Format::Rgba8Unorm, *litLayout,
+        *litVertexSpirv, *litFragmentSpirv, pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap);
+    REQUIRE(realized.size() == 6);
+
+    auto submitResult = device->submit(std::move(commandList), *target);
+    REQUIRE(submitResult.isOk());
+    REQUIRE(device->waitIdle().isOk());
+
+    for (auto& [assetId, candidate] : realized) {
+      if (candidate.newSampledTexture) {
+        sampledTextureResourceMap.emplace(candidate.textureAssetId, std::move(candidate.newSampledTexture));
+      }
+      materialResourceMap.emplace(assetId, std::move(candidate.material));
+    }
+  }
+  REQUIRE(materialResourceMap.size() == 6);
+
+  std::unordered_map<AssetId, const atlantis::renderer::Material*> oldMaterialPtrs;
+  for (const auto& id : kMaterialIds) oldMaterialPtrs.emplace(id, materialResourceMap.at(id).get());
+
+  // ---- "Frame" 2: a real format change -- the OLD 6-material batch and
+  // the NEW fallback+6-material candidate batch are both alive
+  // simultaneously (Spec 0018 D9's own required shape), forcing a real
+  // second growth event (this file's own comment above traces the exact
+  // pool-by-pool allocation sequence). ----
+  {
+    auto offscreenB = device->createOffscreenTarget({.extent = kExtent, .format = Format::Rgba8Srgb});
+    REQUIRE(offscreenB.isOk());
+
+    auto rebuildResult = rebuildMaterialsForFormatChange(
+        *device, *fallbackLayout, *fallbackVertexSpirv, *fallbackFragmentSpirv, *unlitLayout, *unlitVertexSpirv,
+        *unlitFragmentSpirv, *litLayout, *litVertexSpirv, *litFragmentSpirv, Format::Rgba8Srgb, materialDataMap,
+        materialResourceMap);
+    REQUIRE(rebuildResult.isOk());
+    auto candidates = std::move(rebuildResult.value());
+    REQUIRE(candidates.fallback != nullptr);
+    REQUIRE(candidates.materials.size() == 6);
+    for (const auto& id : kMaterialIds) {
+      CHECK(candidates.materials.at(id).get() != oldMaterialPtrs.at(id));
+      CHECK(materialResourceMap.at(id).get() == oldMaterialPtrs.at(id));
+    }
+
+    // A real draw/submit against the NEW candidate batch, matching this
+    // same file's own established N=1/N=2 pattern exactly -- the OLD
+    // bundle survives a real submit() against the NEW format, untouched,
+    // destroyed only after that submit() returns Ok.
+    auto acquireResult = offscreenB.value()->acquireTarget();
+    REQUIRE(acquireResult.isOk());
+    std::unique_ptr<atlantis::rhi::RenderTarget> target = std::move(acquireResult.value());
+    auto commandListResult = device->createCommandList();
+    REQUIRE(commandListResult.isOk());
+    auto submitResult = device->submit(std::move(commandListResult.value()), *target);
+    REQUIRE(submitResult.isOk());
+
+    materialResourceMap = std::move(candidates.materials);
+    std::unique_ptr<atlantis::renderer::Material> fallbackMaterial = std::move(candidates.fallback);
+    for (const auto& id : kMaterialIds) {
+      CHECK(materialResourceMap.at(id).get() != oldMaterialPtrs.at(id));
+    }
+
+    REQUIRE(device->waitIdle().isOk());
+  }
+
+  materialResourceMap.clear();
+  sampledTextureResourceMap.clear();
+  REQUIRE(device->waitIdle().isOk());
 }
