@@ -1,8 +1,37 @@
 # Plan: Lighting Foundation
 
 - **Spec:** [specs/0019-lighting-foundation.md](../specs/0019-lighting-foundation.md) (`Approved`)
-- **Status:** In Review
+- **Status:** Approved / Ready for Implementation
 - **Author:** slmao
+- **Human Review Approval (2026-08-29):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
+  git-identified maintainer) on 2026-08-29, following one final,
+  targeted review round (13 named items — the `FrameLightingData`
+  176-byte layout and its own required `alignas(16)`/explicit-padding/
+  value-initialization/`static_assert` discipline; the static-snapshot
+  uniform-buffer lifecycle and its own real ownership/borrow facts;
+  `MaterialKind` dispatch consolidated into one shared, C4062-guarded
+  helper and `rebuildMaterialsForFormatChange()`'s own real
+  `materialDataMap` gap; descriptor visibility's exact Vulkan/Shader-
+  System contract; `World`/Scene `Light` semantics and `TooManyLights`'
+  own error semantics across all three real paths; a dedicated,
+  cross-validated CPU reference implementation for the lighting math;
+  Lit/Unlit dispatch precision for the normal-transform check;
+  scene-source-version migration atomicity across all eleven real
+  touch points; document proportion — see this document's own "Second
+  review round" section for the complete, itemized record). All 13
+  items closed with real, verified, file-and-line-cited content; no new
+  architectural conflict was found against this Spec or either ADR's
+  own already-`Accepted` text. **This approval authorizes
+  Implementation of this Plan only once its own Implementation PR is
+  opened and merged — this PR ([PR #95](https://github.com/slmao/Atlantis/pull/95))
+  itself remaining `Approved / Ready for Implementation` is not itself
+  that event.** Neither [Spec 0019](../specs/0019-lighting-foundation.md)
+  nor [ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md)/
+  [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)
+  had their own already-`Accepted`/`Approved` text modified by either
+  review round — every finding was resolved entirely within this Plan's
+  own Plan-level-decision authority.
 
 ## Pre-draft verification gate
 
@@ -800,39 +829,134 @@ from `kindToField()`'s `switch`, confirming a build failure) and a
 negative probe (restoring it, confirming a clean, empty `git diff`) are
 both required — Spec 0019 D11 names this switch explicitly.
 
-### P6. Runtime material realization — the widened shader-pair selection
+### P6. Runtime material realization — the widened shader-pair selection, factored into one shared helper
 
-`realizeOneMaterialCandidate()`, `realizePendingMaterials()`, and
-`rebuildMaterialsForFormatChange()` (`material_realization.h`/`.cpp`)
-each gain three new parameters — `litTexturedVertexInputLayout`,
-`litTexturedVertexSpirv`, `litTexturedFragmentSpirv` — inserted
-immediately after their own existing `unlitTexturedFragmentSpirv`/
-`colorFormat` parameter (a mechanical, additive signature widening,
-matching `rebuildMaterialsForFormatChange()`'s own already-established
-precedent of carrying **two** shader-pair parameter groups in one
-signature, for a different reason). `realizeOneMaterialCandidate()`'s
-own internal `createMaterial()` call site becomes a `switch
-(materialData.kind)` selecting which shader-pair's own `spirvWords`/
-`wordCount`/`vertexInputLayout` feed `PipelineCreateParams` — a
-`/w14062` positive/negative probe on this new `switch`, matching P5's
-identical requirement (Spec 0019 D11 names this switch explicitly, as
-"`MaterialKind::LitTextured` in Runtime's shader-pair mapping").
-`realizePendingMaterials()`'s own single call site
-(`material_realization.cpp:194-197`) threads the three new parameters
-through unchanged in kind (a pure pass-through, exactly like its
-existing `unlitTextured*` parameters already are).
-`rebuildMaterialsForFormatChange()`'s own per-candidate rebuild loop
-gains the identical `switch (materialData.kind)` — reading each
-existing `Material`'s own `kind` from the caller-supplied
-`materialDataMap` the same way `realizeOneMaterialCandidate()` already
-does (this function does not currently take a `materialDataMap`
-parameter — **it must gain one**, since today it rebuilds every
-material blind to `MaterialKind` entirely, borrowing only the existing
-`SampledTexture*`/`Sampler*` off each current `Material` object; this
-is a second, disclosed, necessary signature widening beyond the three
-shader-pair parameters, load-bearing because a format change must
-rebuild a `LitTextured` material's `Pipeline` with the `lit_textured`
-shader pair, never silently falling back to `unlitTextured`).
+**Real entry points that construct a `PipelineCreateParams`/call
+`createMaterial()` today, enumerated exhaustively (confirmed by
+re-reading `material_realization.cpp` in full a second time during this
+review round, not assumed complete from memory):** exactly two —
+`realizeOneMaterialCandidate()` (`material_realization.cpp:125-137`,
+Phase 2's own new-material path) and `rebuildMaterialsForFormatChange()`'s
+own per-candidate rebuild loop (`material_realization.cpp:257-260`,
+the format-change path). **`realizePendingMaterials()` is not a third
+entry point** — it calls `realizeOneMaterialCandidate()` once per
+pending id and never itself constructs `PipelineCreateParams`; it needs
+the six new shader-pair parameters only to thread them through
+unchanged, exactly like its existing `unlitTextured*` parameters
+already are. The **fallback colored material** (Spec 0013's own
+original, untextured `Material`, still built once per format via
+`rebuildMaterialsForFormatChange()`'s own `fallback` field) is
+**not** `MaterialKind`-dispatched at all — it has no associated
+`MaterialAssetData`, is never looked up by `AssetId`, and continues
+using its own existing, separate `fallbackVertexInputLayout`/
+`fallbackVertexSpirv`/`fallbackFragmentSpirv` parameters, completely
+unaffected by this Plan (confirmed: `rebuildMaterialsForFormatChange()`'s
+own signature already keeps the fallback's own three parameters
+textually and semantically separate from the `unlitTextured*`/now
+`litTextured*` groups — this Plan adds no new fallback-adjacent
+parameter). An **unknown/unrecognized `MaterialKind` value** cannot
+reach either real entry point at all: both are called only with a
+`MaterialAssetData` already produced by `loadMaterialAsset()`, which
+itself can only ever return `MaterialKind::UnlitTextured` or
+`MaterialKind::LitTextured` (P5's own widened, exhaustive
+`kindToField()`/decode `if`/`else` chain — `UnknownMaterialKind` is a
+load-time `Result::Err`, never a value that reaches a `MaterialAssetData`
+object at all) — so the two real entry points' own `switch` need no
+`unknown`-kind branch of their own; the "unknown kind" failure mode is
+already fully closed at `loadMaterialAsset()`'s own boundary, upstream
+of both.
+
+**A single, shared, file-local (anonymous-namespace) helper in
+`material_realization.cpp`** — not two separately-written `switch`
+statements — is the one real dispatch point both entry points call,
+closing the duplication risk a future third `MaterialKind` would
+otherwise create (two switches to remember to update, not one):
+
+```cpp
+namespace {
+
+struct ShaderPairRef {
+  const atlantis::rhi::VertexInputLayout* vertexInputLayout;
+  const std::vector<std::uint32_t>* vertexSpirv;
+  const std::vector<std::uint32_t>* fragmentSpirv;
+};
+
+// The one, single Runtime-private dispatch point selecting a
+// MaterialKind's own real, built-in shader pair -- both real
+// PipelineCreateParams-constructing call sites (realizeOneMaterialCandidate(),
+// rebuildMaterialsForFormatChange()'s own per-candidate loop) call this,
+// never their own separate switch. No `default:` label -- MaterialKind
+// gaining a third enumerator without a matching case here is a build-time
+// C4062 error, not a silent fallback. The ATLANTIS_CHECK_MSG(false, ...)
+// after the switch is a genuinely unreachable, fail-fast guard (never a
+// silent default value) -- reached only if a future MaterialKind
+// enumerator is added AND its own C4062-flagged missing case is
+// force-suppressed, which this codebase's own /WX (warnings-as-errors)
+// build configuration does not permit to happen silently.
+[[nodiscard]] ShaderPairRef selectShaderPair(
+    atlantis::asset_system::MaterialKind kind,
+    const atlantis::rhi::VertexInputLayout& unlitTexturedVertexInputLayout,
+    const std::vector<std::uint32_t>& unlitTexturedVertexSpirv,
+    const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
+    const std::vector<std::uint32_t>& litTexturedVertexSpirv,
+    const std::vector<std::uint32_t>& litTexturedFragmentSpirv) {
+  switch (kind) {
+    case atlantis::asset_system::MaterialKind::UnlitTextured:
+      return {&unlitTexturedVertexInputLayout, &unlitTexturedVertexSpirv, &unlitTexturedFragmentSpirv};
+    case atlantis::asset_system::MaterialKind::LitTextured:
+      return {&litTexturedVertexInputLayout, &litTexturedVertexSpirv, &litTexturedFragmentSpirv};
+  }
+  ATLANTIS_CHECK_MSG(false, "selectShaderPair(): unreachable -- MaterialKind's own closed switch above is exhaustive");
+  return {&unlitTexturedVertexInputLayout, &unlitTexturedVertexSpirv, &unlitTexturedFragmentSpirv};  // never reached
+}
+
+}  // namespace
+```
+
+`ATLANTIS_CHECK_MSG` is confirmed (`assert.h`, re-read this round) to be
+**always evaluated, Debug and Release alike** — not the debug-only
+`ATLANTIS_ASSERT` — so this fallback genuinely aborts the process via
+`reportFailure()` (`ATLANTIS_LOG_FATAL` then `std::abort()`) in both
+configurations if ever reached; it is not a silent, compiled-out no-op
+in Release, and the function's own trailing `return` after it exists
+only to satisfy the compiler's own "not all control paths return a
+value" diagnostic, never as a reachable fallback value. This matches
+this file's own existing `/w14062` C4062 convention exactly —
+`material_artifact.cpp`'s own `kindToField()` (P5) already uses the
+identical "exhaustive `switch`, no `default:` label, one trailing
+fallback statement after the switch purely for the compiler" shape;
+`selectShaderPair()`'s own fallback is stricter (fail-fast abort,
+rather than `kindToField()`'s own silent-default-value fallback) — a
+deliberate, disclosed strengthening for this new function, not a
+claim that `kindToField()`'s own already-shipped, Plan-0018-era shape
+needs changing (out of this Plan's own scope).
+
+`realizeOneMaterialCandidate()`/`rebuildMaterialsForFormatChange()`
+each gain six new parameters — `litTexturedVertexInputLayout`,
+`litTexturedVertexSpirv`, `litTexturedFragmentSpirv`, plus the existing
+`unlitTextured*` trio's own signature position is unchanged — inserted
+immediately after the existing `unlitTexturedFragmentSpirv`/
+`colorFormat` parameter, then call `selectShaderPair(materialData.kind,
+...)` once, using its returned `ShaderPairRef` to fill
+`PipelineCreateParams`. `realizePendingMaterials()`'s own single call
+site (`material_realization.cpp:194-197`) threads the six new
+`litTextured*`/`unlitTextured*` arguments straight through to
+`realizeOneMaterialCandidate()`, unchanged in kind from how it already
+threads `unlitTextured*` today — it never calls `selectShaderPair()`
+itself.
+
+**`rebuildMaterialsForFormatChange()` gains a `materialDataMap`
+parameter it does not have today** — confirmed, re-verified this
+round: it currently rebuilds every material blind to `MaterialKind`
+entirely, borrowing only the existing `SampledTexture*`/`Sampler*` off
+each current `Material` object. Without this new parameter, a format
+change would have no way to look up a given existing `Material`'s own
+real `kind` and would silently rebuild every material — including a
+real `LitTextured` one — through whichever shader pair the function's
+own (today, single) parameter set happens to name; this is a real,
+load-bearing gap this Plan's own widening closes, not a cosmetic
+signature addition.
 
 Every one of these three functions' own call sites
 (`runtime_application.cpp`, `material_demo_fixture.cpp`, the new
@@ -843,60 +967,194 @@ loaded at each of those call sites today) and, for
 `rebuildMaterialsForFormatChange()` specifically, the existing
 `materialDataMap` member each caller already owns.
 
+**Format-change contract, restated as explicit, individually checked
+items — every one of these is Spec 0018's own already-shipped,
+already-`Approved` behavior, confirmed unaffected in mechanism by this
+Plan, not re-decided here:**
+
+- A format change still builds a **complete** candidate batch (the
+  fallback plus one rebuilt `Material` per current
+  `materialResourceMap_` entry, `LitTextured` and `UnlitTextured` alike,
+  each now correctly reusing its own real shader pair per
+  `selectShaderPair()` above) before ever touching the caller's
+  existing, live maps.
+- The **current color format**'s own candidate batch is recorded for
+  that same frame's own draw — never a stale, previously-built batch
+  from an earlier frame.
+- The **old** `Material`/`Pipeline` bundle the caller still holds
+  remains alive and untouched until that frame's own `submit()` call
+  has returned `Ok` — this Plan introduces no new code path that reads
+  or destroys the old bundle any earlier.
+- If `submit()` fails, the old bundle is **not** touched — the newly
+  built candidate batch (a purely local, not-yet-swapped-in value) is
+  simply discarded via ordinary RAII, exactly as today.
+- The **new** target is never drawn with the **old** `Pipeline` — the
+  candidate batch built against the new format is what that same
+  frame's own draw call actually uses once `submit()` has recorded it.
+- The frame lighting buffer, and every `SampledTexture`/`Sampler` a
+  rebuilt `Material` reuses (borrowed, unchanged pointers into the
+  caller's own still-live `sampledTextureResourceMap_`/
+  `samplerResourceMap_`), survive a format change **unchanged** — a
+  format change rebuilds `Pipeline`s only, never re-uploads a texture,
+  never recreates a sampler, and (P7/P9 above) never touches or
+  recaptures the frame lighting data.
+
 ### P7. Frame lighting data — exact CPU struct, exact std140 byte layout, buffer sizing
 
 Lives in the existing `scene_extraction.h` (P8 states the file-location
-reasoning), immediately after the existing `CameraMatrices` struct:
+reasoning), immediately after the existing `CameraMatrices` struct.
+
+**The single authoritative field table** — every other reference to
+this layout anywhere in this Plan (the C++ struct below, P11's own
+Slang `CameraUniform`, the Milestone 6/Verification Checklist
+cross-checks) is required to match this table exactly; the table is
+the source, not a summary of the code:
+
+| Field | Type | Offset | Size | Alignment | Array stride |
+|---|---|---|---|---|---|
+| `directionalLightCount` | `uint32` (scalar) | 0 | 4 | 4 | — |
+| `pointLightCount` | `uint32` (scalar) | 4 | 4 | 4 | — |
+| `_pad1` | `uint32[2]` (explicit padding) | 8 | 8 | 4 | — |
+| `directionalLights[0].direction` | `float3` (vector) | 16 | 12 | 4 | — |
+| `directionalLights[0]._pad0` | `float` (explicit padding) | 28 | 4 | 4 | — |
+| `directionalLights[0].color` | `float3` (vector) | 32 | 12 | 4 | — |
+| `directionalLights[0].intensity` | `float` (scalar) | 44 | 4 | 4 | — |
+| `directionalLights[]` (array, 1 element) | `DirectionalLightGpu[1]` | 16 | 32 | 16 | 32 |
+| `pointLights[i].position` | `float3` (vector) | `48 + 32i` | 12 | 4 | — |
+| `pointLights[i].range` | `float` (scalar) | `60 + 32i` | 4 | 4 | — |
+| `pointLights[i].color` | `float3` (vector) | `64 + 32i` | 12 | 4 | — |
+| `pointLights[i].intensity` | `float` (scalar) | `76 + 32i` | 4 | 4 | — |
+| `pointLights[]` (array, 4 elements, `i` = 0..3) | `PointLightGpu[4]` | 48 | 128 | 16 | 32 |
+| **`FrameLightingData` total** | — | — | **176** | 16 | — |
+
+Every array element's own 32-byte size is itself a multiple of 16 —
+the std140 rule that makes `arrayStride == elementSize` valid here with
+no further per-element padding beyond what each element's own internal
+layout (`direction`/`_pad0` or `range` filling the gap after a `float3`)
+already provides. `directionalLights`/`pointLights` each individually
+begin on a 16-byte boundary (`16`, `48`) — the `_pad1` field exists
+*solely* to make `16` reachable from `pointLightCount`'s own end (`8`)
+without leaving an implicit, compiler-dependent gap.
 
 ```cpp
-struct FrameLightingData {
+struct alignas(16) FrameLightingData {
   std::uint32_t directionalLightCount = 0;  // offset 0
   std::uint32_t pointLightCount = 0;        // offset 4
-  std::uint32_t _pad1[2]{};                 // offset 8 -- pads to a 16-byte
-                                             // boundary for the array below
-                                             // (std140's own vec3-array rule;
-                                             // C++ does not insert this gap
-                                             // on its own, since float[3] only
-                                             // demands 4-byte alignment)
-  struct DirectionalLightGpu {
-    float direction[3];    // offset 0 (within this 32-byte element)
-    float _pad0 = 0.0f;    // offset 12
-    float color[3];        // offset 16
-    float intensity = 0.0f;  // offset 28
-  } directionalLights[1];  // offset 16, 32 bytes total
-  struct PointLightGpu {
-    float position[3];     // offset 0
-    float range = 0.0f;    // offset 12
-    float color[3];        // offset 16
-    float intensity = 0.0f;  // offset 28
-  } pointLights[4];  // offset 48, 128 bytes total (4 x 32)
+  std::uint32_t _pad1[2] = {};              // offset 8 -- explicit padding,
+                                             // never relied on as an implicit
+                                             // compiler-inserted gap (std140's
+                                             // own vec3-array alignment rule;
+                                             // float[3] alone only demands
+                                             // 4-byte C++ alignment, so this
+                                             // gap would NOT appear without
+                                             // this explicit field)
+  struct alignas(16) DirectionalLightGpu {
+    float direction[3] = {};  // offset 0 (within this 32-byte element)
+    float _pad0 = 0.0f;       // offset 12 -- explicit, not implicit
+    float color[3] = {};      // offset 16
+    float intensity = 0.0f;   // offset 28
+  } directionalLights[1]{};   // offset 16, 32 bytes total, array stride 32
+  struct alignas(16) PointLightGpu {
+    float position[3] = {};   // offset 0
+    float range = 0.0f;       // offset 12
+    float color[3] = {};      // offset 16
+    float intensity = 0.0f;   // offset 28
+  } pointLights[4]{};  // offset 48, 128 bytes total, array stride 32
 };
 static_assert(std::is_standard_layout_v<FrameLightingData>);
+static_assert(std::is_standard_layout_v<FrameLightingData::DirectionalLightGpu>);
+static_assert(std::is_standard_layout_v<FrameLightingData::PointLightGpu>);
+static_assert(alignof(FrameLightingData) == 16);
 static_assert(offsetof(FrameLightingData, directionalLightCount) == 0);
 static_assert(offsetof(FrameLightingData, pointLightCount) == 4);
+static_assert(offsetof(FrameLightingData, _pad1) == 8);
 static_assert(offsetof(FrameLightingData, directionalLights) == 16);
 static_assert(offsetof(FrameLightingData, pointLights) == 48);
+static_assert(offsetof(FrameLightingData::DirectionalLightGpu, direction) == 0);
+static_assert(offsetof(FrameLightingData::DirectionalLightGpu, _pad0) == 12);
+static_assert(offsetof(FrameLightingData::DirectionalLightGpu, color) == 16);
+static_assert(offsetof(FrameLightingData::DirectionalLightGpu, intensity) == 28);
+static_assert(offsetof(FrameLightingData::PointLightGpu, position) == 0);
+static_assert(offsetof(FrameLightingData::PointLightGpu, range) == 12);
+static_assert(offsetof(FrameLightingData::PointLightGpu, color) == 16);
+static_assert(offsetof(FrameLightingData::PointLightGpu, intensity) == 28);
 static_assert(sizeof(FrameLightingData::DirectionalLightGpu) == 32);
 static_assert(sizeof(FrameLightingData::PointLightGpu) == 32);
 static_assert(sizeof(FrameLightingData) == 176);
+static_assert(alignof(FrameLightingData::DirectionalLightGpu) == 16);
+static_assert(alignof(FrameLightingData::PointLightGpu) == 16);
 ```
+
+**Required of Implementation, restated as explicit, individually
+checkable requirements (not merely implied by the code sample above):**
+
+1. `alignas(16)` on `FrameLightingData` itself and on both nested
+   element types — matching a std140 constant buffer's own base
+   alignment rule for a struct/array, not left to the platform ABI's
+   own default (which would be 4 bytes for these all-`float`/`uint32_t`
+   member types, insufficient on its own).
+2. Every padding field (`_pad1`, `_pad0`) is **explicit**, named, and
+   listed in the table above — never an implicit, unnamed compiler gap
+   relied on by inference from `sizeof`/`offsetof` alone.
+3. Every instance of this type is **value-initialized**
+   (`FrameLightingData data{};`, or the in-class default member
+   initializers shown above, which achieve the identical zero-fill for
+   every field including padding) — never default-constructed with
+   indeterminate padding bytes that could then be `memcpy`'d/written
+   verbatim into the mapped GPU buffer. This matters concretely here:
+   P9's own write is `*lightingData = lightingResult.value();` — an
+   assignment from a `FrameLightingData` this Plan's own
+   `extractFrameLightingData()` constructs as a local variable; that
+   local variable's own construction path (inside `extractFrameLightingData()`'s
+   own implementation) must itself value-initialize, or the padding
+   bytes reaching the GPU are whatever stack garbage happened to be
+   present — implementation-time requirement, verified by V9 below via
+   a real byte-level test, not merely a code-review-time impression.
+4. `static_assert(std::is_standard_layout_v<...>)` on all three types
+   (the struct itself, both nested element types) — `offsetof` is only
+   defined behavior on a standard-layout type; this is a precondition
+   check, not decoration.
+5. Every `sizeof`/`alignof`/`offsetof` value in the table above has its
+   own `static_assert`, shown in full above — no field's own offset is
+   asserted only implicitly via the total `sizeof` check.
+6. A dedicated, fixed-byte unit test (GPU-independent) constructs one
+   real `FrameLightingData` value with distinct, individually
+   recognizable values in every field (`directionalLightCount`,
+   `pointLightCount`, both padding regions left at their
+   value-initialized zero, every `direction`/`color`/`intensity`/
+   `position`/`range` field of at least one populated
+   `DirectionalLightGpu`/`PointLightGpu` element), `memcpy`s it into a
+   raw `std::byte` buffer, and asserts specific byte ranges independently
+   — count fields at `0`-`7`, the padding region at `8`-`15` reads back
+   as all-zero (proving value-initialization actually zeroed it, not
+   merely that the struct compiles), and each populated light element's
+   own fields at their exact table-listed offsets — mirroring Plan
+   0020's own "pinned-byte-vector, independently computed, never
+   produced by calling the encoder itself" discipline, applied here to
+   a GPU payload struct instead of an asset artifact.
+7. Milestone 6's own real Slang reflection JSON (compiled from P11's
+   `lit_textured.slang`) is inspected — not merely trusted — to confirm
+   the shader-side `CameraUniform` struct's own reported member offsets
+   for `directionalLights`/`pointLights` match this table's `16`/`48`
+   exactly. **If this cross-check fails, Implementation returns to this
+   Plan for a byte-layout correction — it may not silently adjust either
+   side's own struct fields to make them match without recording the
+   correction here first**, since this table is this Plan's own single
+   authoritative source, per this section's own opening sentence.
 
 Absolute buffer layout: bytes `0`-`127` are the existing camera
 view+projection block (unchanged); bytes `128`-`303` are
-`FrameLightingData` (176 bytes), appended immediately after. Camera
-`Buffer` sizing (`runtime_application.cpp:241`,
-`material_demo_fixture.cpp:136`, and every other camera-buffer-creating
-composition root this Plan's own Milestones touch) widens from
-`sizeof(float) * 32` to `sizeof(float) * 32 + sizeof(atlantis::runtime::FrameLightingData)`
-— `128 + 176 = 304` bytes total. The Slang-side `CameraUniform` struct
-(P11) is widened to match this exact layout field-for-field — `ConstantBuffer<T>`'s
-own std140 (well, Slang's own default constant-buffer layout, which for
-this codebase's own already-`std140`-disciplined convention is
-confirmed equivalent for this field shape) rules produce the identical
-byte offsets a hand-verified Slang reflection JSON confirms at
-Implementation time (V-checklist item, below) — this Plan does not
-merely assert layout equivalence, it requires Implementation to
-confirm it via a real compile.
+`FrameLightingData` (176 bytes), appended immediately after — `128 +
+176 = 304` bytes total, matching the table's own `176`-byte total added
+to the existing, unchanged 128-byte camera block. Camera `Buffer`
+sizing (`runtime_application.cpp:241`, `material_demo_fixture.cpp:136`,
+and every other camera-buffer-creating composition root this Plan's
+own Milestones touch) widens from `sizeof(float) * 32` to `sizeof(float)
+* 32 + sizeof(atlantis::runtime::FrameLightingData)`. The Slang-side
+`CameraUniform` struct (P11) is widened to match this exact table
+field-for-field, offset-for-offset — Milestone 6's own real reflection
+check (requirement 7, above) is the actual verification; this table is
+the intended, disclosed target, not an unverified assumption.
 
 ### P8. Light extraction — file location, function shape, resolving Spec 0019's own explicitly-left-open question
 
@@ -964,22 +1222,68 @@ own "order is the caller's responsibility, this function preserves it"
 precedent); for each `LightExtractionInput` whose `light.kind ==
 LightKind::Directional`, compute `-column2`/normalize/degenerate-check
 exactly as `extractCameraMatrices()` does, writing the first such
-result into `directionalLights[0]` and setting `directionalLightCount = 1`
-(a second `Directional` entry in `lights` is a caller-side programmer
-error — `ATLANTIS_CHECK_MSG`-asserted, never a `Result`, since the
-cook/decode-time cap already makes this structurally unreachable from
-any real, validated scene, matching `realizePendingMaterials()`'s own
-`ATLANTIS_CHECK_MSG` precedent for an analogous "the caller already
-guarantees this" invariant); for each `Point`-kind entry (up to 4,
-identically asserted), compute `column3` directly (no degenerate case —
-D2's own "a raw translation column is always well-defined" — into
-`pointLights[i]`, incrementing `pointLightCount`. Returns
-`Err(DegenerateLightDirection)` on the **first** degenerate
+result into `directionalLights[0]` and setting `directionalLightCount = 1`;
+for each `Point`-kind entry (up to 4), compute `column3` directly (no
+degenerate case — D2's own "a raw translation column is always
+well-defined") into `pointLights[i]`, incrementing `pointLightCount`.
+Returns `Err(DegenerateLightDirection)` on the **first** degenerate
 `Directional` light found (there can be at most one, per the cap, so
 "first" and "only" coincide) — a real, disclosed, deliberately
 simple choice: this Plan does not need a "which of several possibly-
 degenerate lights" precedence question, since the cap makes at most one
 `Directional` light reachable at all.
+
+**`TooManyLights`, its own error semantics across all three real
+paths a light count can ever be checked on — restated explicitly,
+since each path is genuinely different in kind, not three copies of
+the identical mechanism:**
+
+1. **Source cook** (`SceneSourceParseError::TooManyLights`, P3): a
+   real `Result::Err` returned by `parseSceneSource()` — the
+   *authoring*-time gate, the earliest point a real content mistake
+   can be caught, before any artifact byte is ever written.
+2. **Artifact decode** (`SceneArtifactDecodeError::TooManyLights`, P4):
+   a real `Result::Err` returned by `decodeSceneArtifact()` — the
+   *load*-time gate, independently re-derived from the artifact's own
+   bytes, never trusting that the cooker's own check above actually
+   ran (the standard "never trust a well-formed producer" doctrine this
+   codebase already applies to every other structural invariant).
+3. **Programmatic `World` extraction** (`extractFrameLightingData()`,
+   this section): **not** a `Result::Err` case at all, and
+   deliberately so — by the time a `LightExtractionInput` vector
+   reaches this function, both gates above have already run for
+   *every* light that could possibly have come from a real,
+   cook/decode-validated scene; a `lights` vector containing a second
+   `Directional` entry or a fifth `Point` entry is only reachable by a
+   caller that bypassed both real gates entirely — hand-constructing
+   `World::Light` components directly via `World::setLight()` calls a
+   test, or some future, not-yet-existing code path, made without ever
+   going through `cookScene()`/`decodeScene()`. This is a **programmer
+   error**, in AGENTS.md's own exact sense ("programmer errors are
+   assertions, not error returns"), not a recoverable runtime
+   condition a real, scene-file-driven Runtime could ever actually
+   encounter — so `ATLANTIS_CHECK_MSG` (not a `Result`) is the correct,
+   precedent-matching mechanism, not an inconsistency with the two
+   `Result`-returning gates above it.
+
+**This is confirmed, not merely asserted, to be a genuine fail-fast,
+never a silent truncation or an out-of-bounds write:** `ATLANTIS_CHECK_MSG`
+(`assert.h`, re-read this round) is documented as "always evaluated,
+Debug and Release" — unlike the separate, debug-only `ATLANTIS_ASSERT`/
+`ATLANTIS_ASSERT_MSG` macros (compiled to `((void)0)` under `NDEBUG`),
+`ATLANTIS_CHECK_MSG`'s own condition is evaluated in **every** build
+configuration and, on failure, calls `atlantis::assertions::reportFailure()`,
+whose own default handler logs via `ATLANTIS_LOG_FATAL` and then calls
+`std::abort()`. A `lights` vector violating the cap therefore **aborts
+the process immediately, in both Debug and Release**, before
+`directionalLights[1]`/`pointLights[4]`'s own fixed bounds could ever
+be written past — never a silent truncation (the extra entries are
+simply never reached, since the abort happens on the very first
+already-at-cap entry) and never an out-of-bounds write (the array
+indices `directionalLights[0]`/`pointLights[0..3]` are only ever
+written after the corresponding count is confirmed `< 1`/`< 4`,
+matching this precise ordering, not written speculatively first and
+checked after).
 
 ### P9. Runtime integration — the one-time capture site, ownership, the new boolean flag
 
@@ -1031,6 +1335,112 @@ separately-typed pointer from a fresh `mappedData()` call) keeps this
 one write visibly, textually anchored to the write immediately above
 it, matching this codebase's own preference for locality over
 independently-re-deriving an already-available value.
+
+**Static snapshot and uniform buffer lifecycle — every point restated as
+a direct, individually verified answer, not left to be inferred:**
+
+- **One buffer, not two.** Camera view/projection and the frame
+  lighting payload occupy the *same* `atlantis::rhi::Buffer`
+  (`cameraBuffer_` in `RuntimeApplication`, `cameraBuffer` in
+  `MaterialDemoFixture`/the new `lighting_demo` fixture) — bytes
+  `0`-`127` and `128`-`303` of one allocation, per P7. No second
+  `Buffer`, no second `Device::createBuffer()` call, anywhere this Plan
+  touches.
+- **Which frame, which step:** the snapshot is captured on the first
+  frame `runFrame()` reaches the point immediately after the existing
+  camera-portion write (`runtime_application.cpp:493`, itself
+  immediately preceded by `world_->updateTransforms()` at line `449`)
+  — guarded by `lightingDataCaptured_`, never re-entered on any later
+  frame for that `RuntimeApplication` instance's own lifetime.
+- **Both `UnlitTextured` and `LitTextured` `Material`s borrow the
+  identical buffer, and neither owns a reference to it.** Confirmed
+  directly against `material.h` (Pre-draft verification, above):
+  `Material`'s own only borrowed pointers are `sampledTexture_`/
+  `sampler_` — it has no `Buffer*`/`Buffer&` member of any kind, for
+  either kind. The camera/lighting `Buffer` is bound **generically**,
+  per draw call, by `Renderer::drawFrame()`'s own existing, unmodified
+  binding logic (`renderer.drawFrame(*commandList, *target,
+  *depthTexture_, *cameraBuffer_, drawItems, ...)` — the buffer is a
+  plain function parameter, read fresh every call, never something a
+  `Material` object itself stores a pointer to). **This is the reason
+  no new borrow relationship, and no new ownership-order constraint
+  relative to `Material`, is introduced by this Plan** — there was
+  never an ownership dependency between `cameraBuffer_` and any
+  `Material` to begin with, for either kind.
+- **Creation order (verified, not assumed):** `cameraBuffer_` is
+  created in `initializeSteps()` Step 4 (`runtime_application.cpp:239-247`)
+  — before any `Material` of any kind is ever constructed (every
+  `Material` — the fallback, `UnlitTextured`, and now `LitTextured` — is
+  built lazily, later, inside `runFrame()`'s own format-check/Phase 2
+  realization). This ordering is not a correctness requirement (the
+  paragraph above already establishes why no borrow exists), but it is
+  real, and this Plan disturbs nothing about it.
+- **Destruction order (verified against the real, current
+  `shutdown()`, not assumed by analogy):** `runtime_application.cpp:739-747`'s
+  own explicit sequence is `fallbackMaterial_.reset()` →
+  `materialResourceMap_.clear()` → `samplerResourceMap_.clear()` →
+  `sampledTextureResourceMap_.clear()` → `depthTexture_.reset()` →
+  `cameraBuffer_.reset()` → `meshResourceMap_.clear()` →
+  `presentation_.reset()` → `device_.reset()`. Every `Material`-owning
+  container is reset *before* `cameraBuffer_`. **This ordering exists
+  for a real, different reason** — `Material` genuinely does borrow
+  `SampledTexture*`/`Sampler*` (unlike the camera/lighting buffer), so
+  those owned resources must outlive every `Material` referencing them,
+  which is exactly why `fallbackMaterial_`/`materialResourceMap_` are
+  reset before `samplerResourceMap_`/`sampledTextureResourceMap_` — the
+  buffer's own position in this sequence is incidental to that real
+  constraint, not driven by it. **Confirmed by contrast:**
+  `MaterialDemoFixture` (`material_demo_fixture.h`, no explicit
+  destructor of its own) declares `sampledTextureResourceMap`/
+  `samplerResourceMap`/`materialResourceMap` *before* `cameraBuffer` —
+  meaning that struct's own implicit, reverse-declaration-order
+  destruction destroys `cameraBuffer` **before** the material maps, the
+  *opposite* order from `RuntimeApplication`'s own explicit sequence.
+  **Both orders are safe**, precisely because — as established above —
+  no `Material` ever borrows the buffer either way; this Plan does not
+  need to, and does not, impose a specific buffer-vs.-material
+  destruction order on the new `lighting_demo` fixture (P10) — it may
+  follow either existing precedent, Implementation's own choice, with
+  no correctness consequence either way. This Plan adds zero new
+  RAII-owned type and zero new member to either lifetime chain, so no
+  new destruction-order constraint is introduced anywhere by this Plan
+  itself.
+- **`rebuildMaterialsForFormatChange()` reuses this exact same buffer
+  object, unconditionally.** A color-format change (Spec 0018's own
+  existing mechanism, unmodified in shape by this Plan) rebuilds
+  `Pipeline`s, never `cameraBuffer_` itself — the frame lighting data's
+  own byte layout is `colorFormat`-independent (P7 — nothing in
+  `FrameLightingData` names or depends on a color format), so a format
+  change never touches, invalidates, or requires recapturing it. This
+  is a direct, structural consequence of P7's own layout, not a
+  separate mechanism this Plan must additionally implement.
+- **`World::setLight()` after the snapshot changes CPU `World` state
+  only, never the published GPU bytes — a real, executed proof, not a
+  prose claim (V15, strengthened below):** the one-time capture path
+  above is the *only* place `runFrame()` (or any fixture) ever writes
+  into the `FrameLightingData` region of the buffer; once
+  `lightingDataCaptured_` is `true`, no code path this Plan introduces
+  reads `World`'s own light state again for the remainder of that
+  `RuntimeApplication`/fixture instance's own lifetime.
+- **Shutdown, scene-load failure, and first-frame failure each leave no
+  partial snapshot.** `lightingDataCaptured_` starts `false` and is set
+  to `true` **only** on the line immediately after the write
+  (`lightingDataCaptured_ = true;`, the last statement in the guarded
+  block) — every early-return path above it (the `ATLANTIS_CHECK_MSG`
+  failure, and the `lightingResult.isErr()` branch's own
+  `lifecycle_.markFailed(); return;`) leaves the flag `false` and the
+  buffer's own tail bytes at whatever they were before this call (zero,
+  from `Buffer` construction, on the very first attempt — `Buffer`'s
+  own creation contract, unaffected by this Plan, is not required by
+  this Plan to zero-initialize its own memory beyond what `Device::createBuffer()`
+  already does today for every other buffer). A scene-load failure
+  (before `RuntimeApplication` ever reaches `Running`) never reaches
+  `runFrame()` at all — the guarded block above is unreachable in that
+  case, exactly like the camera-portion write immediately above it is
+  also unreachable. **No new `Buffer` update/rewrite API of any kind is
+  introduced** — the single, guarded write inside `runFrame()` (and the
+  fixture's own direct analog) is the entire write surface this Plan
+  adds.
 
 **Ownership/destruction order, restated as its own explicit
 Verification Checklist item (below) since AGENTS.md requires ownership
@@ -1194,6 +1604,32 @@ the real, current, unconditional-for-every-`Pipeline` widening and cite
 ADR-0062 Decision 2 — never left stale (AGENTS.md's own comment-currency
 rule, applied here to a comment this Plan's own change makes false).
 
+**Exactly one `VkDescriptorSetLayoutBinding` at `(set 0, binding 0)`,
+restated as a direct negative confirmation, not merely an absence of a
+stated alternative:** `vulkan_device.cpp:854-858`'s own
+`uniformBinding` construction is untouched in every field except
+`stageFlags` — `binding = 0`, `descriptorType =
+VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER`, `descriptorCount = 1` all stay
+exactly as they are. This Plan creates **no second**
+`VkDescriptorSetLayoutBinding` for the widened visibility — a Vulkan
+`VkDescriptorSetLayoutBinding`'s own `stageFlags` field is a bitmask by
+design specifically so one binding can be visible to multiple stages
+without being declared twice at the Vulkan API level; the *shader
+reflection contract* (P13, immediately below) lists the same `(0, 0)`
+pair twice **only** because `ReflectionMetadata` is per-stage-JSON, a
+Shader-System-level bookkeeping fact — this has no Vulkan-level
+counterpart and creates no second `VkDescriptorSetLayoutBinding`,
+`VkDescriptorSetLayout`, or descriptor-pool entry anywhere in
+`vulkan_device.cpp`'s own real construction code.
+`combinedImageSamplerBinding` (`vulkan_device.cpp:865-869`, binding 1)
+is untouched in every field, including `stageFlags` (stays
+fragment-only — no shader this Plan adds or touches ever samples a
+texture from the vertex stage). **Zero new RHI or Renderer public API**
+— `PipelineCreateParams` (`rhi/types.h:186-201`) gains no new field;
+`Device`/`Renderer`'s own public method signatures are untouched; this
+one-line, one-value change is entirely internal to `Device::createPipeline()`'s
+own already-private descriptor-set-layout construction.
+
 ### P13. Shader System descriptor contract — `litTexturedExpectedDescriptorContract()`
 
 ```cpp
@@ -1207,6 +1643,301 @@ std::vector<DescriptorBinding> litTexturedExpectedDescriptorContract() {
 `compile_and_validate.cpp`'s own `--expected-contract` dispatch gains
 `else if (expectedContract == "lit-textured") { fullContract =
 litTexturedExpectedDescriptorContract(); }`.
+
+**The real validation call chain, restated end to end (Pre-draft
+verification's own investigation, re-confirmed this round by re-tracing
+it a second time, not merely re-citing the earlier finding):**
+`compile_and_validate.cpp`'s own Step 7 calls
+`validateDescriptorContractForStage(metadata, stage, expectedContract)`
+**once per compiled entry point** (once for the vertex reflection, once
+for the fragment reflection — `compile_and_validate.cpp:308-309`).
+Each call filters `litTexturedExpectedDescriptorContract()`'s own
+three-entry list down to the entries whose `.stage` matches (`std::copy_if`,
+`compile_and_validate.cpp:141-143`) *before* calling the shared
+`validateDescriptorContract()` — so the vertex call validates against a
+**one-entry** scoped list (`{0,0,UniformBuffer,Vertex}`), the fragment
+call against a **two-entry** scoped list (`{0,0,UniformBuffer,Fragment}`,
+`{0,1,Sampler,Fragment}`). `validateDescriptorContract()` itself is
+never called with the full, unscoped three-entry list — its own
+`(set, binding)`-only matching (not also `stage`) is therefore never
+exercised against two same-`(set,binding)` entries in the same call,
+closing the theoretical ambiguity Pre-draft verification identified,
+without any change to either function.
+
+**Forward and negative test coverage, both directions, both new and
+existing shaders:**
+
+- **Positive:** `lit_textured`'s own real vertex reflection reports
+  exactly `{0,0,UniformBuffer}` (no `{0,1,...}` — the vertex stage never
+  references the sampler); its own real fragment reflection reports
+  exactly `{0,0,UniformBuffer}` **and** `{0,1,Sampler}` — both
+  independently confirmed against the real, compiled Slang output, not
+  merely against this Plan's own P11 source listing.
+- **Negative (a genuine contract-mismatch case, not merely a
+  passing-case sanity check):** a deliberately mis-declared
+  `lit_textured` variant (Implementation-time test fixture, not shipped)
+  that omits the fragment stage's own uniform-buffer reference is
+  confirmed to fail `validateDescriptorContractForStage()` with
+  `ContractMismatchError::BindingNotFound` — proving this check is a
+  real, executed gate, not a tautology that would pass regardless of
+  the shader's own actual reflected shape (mirroring Plan 0017's own
+  precedent of an empirical mutation probe for exactly this class of
+  "does the check actually check anything" question).
+- **Existing shaders unaffected, both directions:** `minimal_mesh`'s
+  own `minimalRendererExpectedDescriptorContract()` and
+  `textured_quad`'s own `texturedMaterialExpectedDescriptorContract()`
+  are both confirmed byte-identical to their own pre-Plan definitions
+  (a `git diff` check on `descriptor_contract.cpp` limited to those two
+  functions' own bodies) — their own real, compiled reflection output
+  is unaffected by `vulkan_device.cpp`'s own stage-visibility widening
+  (P12), since neither shader references the uniform binding from its
+  own fragment stage regardless of what the Vulkan-level `stageFlags`
+  bitmask now permits; their own existing build-time validation
+  continues to pass unmodified.
+
+### P14. A shared, non-circular lighting-math test contract — the CPU reference implementation, and how it is cross-validated against the real shader, not merely against itself
+
+**The risk, stated directly:** D6's own exact formula (P11's own
+`lit_textured.slang` fragment shader) and a CPU-side "hand-computed
+expected value" unit test (Milestone 7/V10) must not independently
+invent two different sets of magic constants that happen to agree only
+because one was copied from the other without any real cross-check —
+and a test that merely calls `extractFrameLightingData()`/some future
+CPU helper and asserts its own output equals itself proves nothing
+about whether that helper's own formula is *correct*, only that it is
+*consistent with itself*.
+
+**Decision: one CPU reference implementation, written once, used two
+different ways.** A new, pure, GPU-independent function —
+`computeLambertianDiffuse()`, added to `scene_extraction.h`/`.cpp`
+alongside `extractFrameLightingData()` (the same file, since it shares
+that file's own "small, pure, testable Runtime-private math helper"
+role, though it is not itself called by `extractFrameLightingData()`,
+which only extracts light *parameters*, never applies the lighting
+*equation* — that equation is real GPU-side work, per D6/D8, and this
+CPU function exists solely to make it independently testable and
+independently cross-checkable, not to duplicate it into a second,
+CPU-side rendering path):
+
+```cpp
+// A direct, line-for-line C++ transcription of lit_textured.slang's own
+// fragmentMain() accumulation loop (P11) -- literal formula parity is
+// the entire point of this function's own existence, verified by the
+// V10 unit tests below AND, independently, by the golden's own
+// per-pixel cross-check (Milestone 10). Never called by any real
+// rendering path -- this is a test-and-verification-only CPU mirror of
+// GPU-side math, not a second, parallel lighting implementation this
+// codebase now has to keep working.
+[[nodiscard]] Vec3 computeLambertianDiffuse(const Vec3& worldPosition, const Vec3& worldNormal,
+                                             const FrameLightingData& lighting);
+
+inline constexpr float kPointLightDistanceEpsilon = 1e-4f;  // the one, single C++-side definition
+```
+
+`kPointLightDistanceEpsilon`'s own value (`1e-4`) is defined **exactly
+once** on the C++ side, as a named `constexpr`, never a bare literal
+inside `computeLambertianDiffuse()`'s own body — `lit_textured.slang`'s
+own `static const float kPointLightDistanceEpsilon = 1e-4;` (P11) is a
+**second, independent, hand-kept-in-sync literal**, not a shared
+symbol (C++ and Slang cannot share a single defining header) — this is
+the same, already-accepted class of risk `descriptor_contract.h`'s own
+file-level comment already discloses for the Shader-System/Vulkan-Backend
+binding-layout duplication ("a stated, accepted single-source-of-truth
+risk, not a solved problem"); this Plan applies the identical
+discipline here rather than inventing a new one, and requires a
+same-value code comment on **both** literals cross-referencing the
+other by file/line, so a future change to one is at least visible
+next to a pointer to the other.
+
+**How the CPU reference is cross-validated against the real GPU shader
+— not merely against itself:**
+
+1. **V10 (Milestone 7, GPU-independent):** `computeLambertianDiffuse()`
+   is called directly with hand-derived inputs and hand-derived
+   expected outputs (worked out on paper/independently, per formula —
+   directional `ndotl`, the sign convention, the point vector/epsilon/
+   attenuation/range chain, the final clamp) — this proves the CPU
+   function itself matches D6's own written formula, the same kind of
+   proof Plan 0020's own `mesh_normal_validation_tests.cpp` already
+   established for a different numeric contract (a pure-function,
+   hand-computed-expected-value test, never comparing a function's
+   output to itself).
+2. **A real, executed per-pixel cross-check against the actual GPU
+   output (Milestone 10, GPU-required — the actual answer to "does the
+   shader agree with the CPU reference," not merely "does the CPU
+   reference agree with the Spec text"):** the new `lighting_demo`
+   fixture computes, in C++, via `computeLambertianDiffuse()`, the
+   expected lit color at one or more specific, known scene points
+   (using the real scene's own real light parameters, real vertex
+   position/normal, and the real captured texture color at that UV),
+   and asserts the corresponding real, captured GPU pixel is within a
+   small, disclosed tolerance of that independently-computed value —
+   not merely that the captured frame differs from an all-black/
+   all-unlit baseline (a weaker, real-but-insufficient check this Plan
+   also performs, per D10's own negative-light-removal requirement,
+   but does not rely on alone). A tolerance is required, not exact
+   equality, because interpolation across a triangle and the shader's
+   own GPU-side floating-point execution are not required to be
+   bit-identical to a CPU double/float reference — the tolerance's own
+   exact value is an Implementation-time closure against the real,
+   observed discrepancy on real hardware, disclosed in the PR, not
+   silently widened if the first attempt fails to pass.
+
+This closes the circularity risk directly: V10 proves the CPU
+reference matches the *written* formula; the Milestone 10 per-pixel
+check proves the *real GPU shader* matches the CPU reference (and,
+transitively, the written formula) — neither test alone would close
+the loop; both together do.
+
+### P15. Normal transform and the conformal check — precisely which entities it runs on, and why the attribute-location claim is checked, not merely stated
+
+**`checkConformalTransform()` (P8) is called from exactly one site: the
+per-entity `DrawItem`-building loop, and only for an entity whose
+resolved `Material` has `MaterialKind::LitTextured`.** The call is
+gated by the same per-entity `resolveMaterialAsset()`/`Material`-lookup
+result the loop already computes (P6's own `selectShaderPair()` is a
+`Material`-realization-time concern; this is a separate,
+`DrawItem`-build-time concern reading that same, already-resolved
+`Material`'s own — or, more precisely, that entity's own
+`MaterialAssetData.kind` — value a second time, from the already-loaded
+`materialDataMap`, not a new load). An `UnlitTextured`-bound entity, or
+a `Renderable` with no material at all (the untextured, colored
+fallback path), **never** calls `checkConformalTransform()` — its own
+world matrix may be arbitrarily non-uniform-scaled or sheared with no
+effect on this Plan's own behavior, exactly matching Spec 0019's own
+"unlit renderable is not restricted" Non-Goal statement and D7's own
+explicit "a per-fragment surface property... this is explicitly
+distinct from D2's own light-source-direction extraction" framing —
+restated here as a real, code-level dispatch condition, not merely a
+prose distinction.
+
+**Mesh normal attribute — location and offset, cross-checked, not
+merely asserted equal:** `lit_textured.slang`'s own `VertexInput`
+(P11) declares `normal` at `[[vk::location(2)]]`; the C++-side
+`MeshVertexAttributeSchema` every composition root building this
+material's own `VertexInputLayout` constructs (Milestone 8) must name
+`{.location = 2, .offsetBytes = atlantis::asset_system::kMeshArtifactNormalOffsetBytes}`
+(`= 32`, Spec 0020's own real, merged constant, re-confirmed present in
+`mesh_artifact.h` by this Plan's own Pre-draft verification) —
+`toVertexInputLayout()`'s own existing cross-validation (matches by
+`location`, confirmed against the real reflected `VertexInputAttribute`
+set, Pre-draft verification above) is the actual, executed proof this
+mapping is correct; a location or offset typo here fails at
+`Result::Err(MappingError::LocationNotFoundInSchema)` at
+Implementation time, not silently at runtime.
+
+**CPU fixed-matrix test coverage for `checkConformalTransform()`
+(Milestone 7/V12), enumerated exhaustively — every case D7's own proof
+sketch names, each a real, hand-constructed 3×3 matrix, not a
+randomized or property-based sweep:** (1) identity — accepted; (2) a
+pure rotation (a real, non-trivial rotation matrix, not merely
+identity) — accepted; (3) uniform positive scale (e.g. `2× I`) —
+accepted; (4) uniform **negative** scale (e.g. `-1× I`, a full point
+reflection — D7's own explicitly-named "uniform scale of *either*
+sign" case, the one most likely to be missed by an implementation that
+only checks "all three column lengths equal" without also confirming
+the *sign* case is not otherwise excluded elsewhere) — accepted; (5)
+non-uniform scale (e.g. `diag(2, 1, 1)`) — rejected; (6) shear (a real
+off-diagonal term breaking column orthogonality, e.g. a matrix with a
+nonzero `(0,1)` entry beyond what any pure rotation would produce) —
+rejected; (7) a degenerate case (one column's own length at or near
+zero) — rejected, exercising the same near-zero-length numerical
+boundary `DegenerateLightDirection`'s own test already exercises for a
+different matrix column, confirming both checks share a consistent
+epsilon treatment even though they are two independent functions.
+
+### P16. Scene source/artifact version migration — every real touch point, enumerated, and the atomicity guarantee
+
+**Every real, current file naming `atlantis_scene_source_version`,
+found by a repository-wide search during this review round (not
+estimated from memory), excluding historical Spec/Plan/ADR documents
+(left untouched, per AGENTS.md):**
+
+- `src/asset_system/src/scene_source.cpp` — the version-line constant
+  itself (`"atlantis_scene_source_version: 2"` → `"... 3"`, P3).
+- `tests/asset_system/scene_source_tests.cpp`,
+  `cook_scene_tests.cpp`, `decode_scene_tests.cpp`,
+  `validated_scene_data_tests.cpp` — each carries embedded scene-source
+  text with a version line; each is widened to version 3, and (per
+  Plan 0020's own established discipline for exactly this kind of
+  migration) at least one dedicated test case per file confirms version
+  2 is now rejected outright (`UnknownSourceVersion`), matching every
+  prior version bump's own established negative-coverage pattern.
+- `tests/runtime/scene_load_tests.cpp`,
+  `material_realization_gpu_tests.cpp` — embedded scene-source text,
+  version line bumped; no other change unless a test's own real
+  behavior specifically concerns the scene grammar's own light-adjacent
+  field count (none currently does).
+- `tests/world/scene_instantiation_tests.cpp` — embedded scene-source
+  text feeding the real `cookScene()`→`decodeScene()`→
+  `fromValidatedSceneData()` path (Milestone 4's own test uses this
+  exact file), version line bumped.
+- **The two existing, real, checked-in scene assets consumed by two of
+  the four existing goldens — `assets/scenes/world_scene.scene.txt` and
+  `assets/scenes/material_demo.scene.txt` — both need their own version
+  line bumped from `2` to `3`, even though neither one declares a light
+  node.** This is not optional: once `scene_source.cpp`'s own required
+  version-line constant changes, any real `.scene.txt` file still
+  declaring `version: 2` fails to parse at all
+  (`SceneSourceParseError::UnknownSourceVersion`) — both of these real,
+  golden-backing assets would stop cooking entirely if their own
+  version lines were not updated in the identical commit. This has zero
+  effect on either golden's own rendered pixels (a version-line text
+  change is invisible in cooked output), so V18's own "four existing
+  goldens byte-for-byte unchanged" requirement is unaffected — but the
+  *build* would break without this update, which is precisely why it is
+  named here explicitly rather than left to be discovered as a build
+  failure during Implementation.
+- `assets/_test_fixtures/cmake_scene_declaration_test.scene.txt` — a
+  CMake-declaration-mechanism test fixture (unrelated to any real
+  golden), version line bumped the same way, confirmed by this search
+  to be the eleventh and final real, non-historical touch point.
+
+**The atomicity guarantee, restated as an explicit constraint on how
+Milestone 2/3 (below) may be committed — mirroring Plan 0020's own
+"Milestone 1 is atomic, indivisible" discipline exactly:** the
+version-line constant change (`scene_source.cpp`) and every one of the
+ten other real files above land in the **same** commit as Milestone
+2/3's own grammar/artifact changes — Implementation may never leave an
+intermediate, committed state where `scene_source.cpp`'s own parser
+requires version 3 while any real `.scene.txt` asset or embedded test
+string still declares version 2, and may never leave a state where the
+artifact decoder's own `kSceneArtifactNodeRecordSizeBytes` is `112`
+while any test's own hardcoded byte-offset literal (an
+Implementation-time search requirement: any literal `76`, `80`, `84`
+used as a parent-slot byte offset in `decode_scene_tests.cpp` or
+elsewhere, now stale per P4's own moved `104`/`108` offsets) has not
+been updated to match — mirroring the identical class of gap Plan
+0020's own Implementation found and disclosed for the mesh artifact's
+own analogous offset-literal migration. **Explicit intermediate states
+that must never exist, even transiently within a single Implementation
+session's own uncommitted work, let alone across two separate
+commits:** (a) the new scene decoder paired with old-version scene
+source/artifacts; (b) `MaterialKind::LitTextured` cooked into a real
+material asset before Runtime's own `selectShaderPair()` (P6) exists to
+dispatch it; (c) a scene declaring a `light=` node cooked successfully
+before `World::setLight()` (P1) exists to receive it via
+`fromValidatedSceneData()`; (d) `shaders/lit_textured/` declared in
+CMake before `MaterialKind::LitTextured`/`litTexturedExpectedDescriptorContract()`
+exist for its own build-time contract validation to check against.
+Every one of (a)-(d) is a real, checkable "does this reference resolve"
+condition, not merely a stylistic ordering preference — Milestones 1-6
+(below) are sequenced specifically so none of them is ever true at any
+commit boundary.
+
+**Existing, no-light, `UnlitTextured`-only scenes/CPU data — `world_scene`,
+`textured_quad`'s own fixtures (which use no Scene Asset at all,
+confirmed by Pre-draft verification's own file-by-file reading — the
+`textured_quad` golden's own fixture builds `DrawItem`s directly, never
+through `cookScene()`), and `minimal_cube`'s own fixture (likewise
+Scene-Asset-free) — are confirmed to require zero CPU-data change
+beyond the version-line bump named above for the two that do use the
+Scene Asset pipeline (`world_scene`, `material_demo`).** No mesh, no
+material, no `World` component data for any pre-existing entity changes
+in kind or value — only the scene *source text's own version line*
+changes, a build-time-only edit with zero rendered-output consequence,
+directly supporting V18's own zero-golden-change requirement rather
+than being in tension with it.
 
 ## Milestones / Task Breakdown
 
@@ -1299,24 +2030,72 @@ small enough to review in isolation.
    uniform binding's own fragment-stage visibility confirmed
    Validation-Layers-clean for both `lit_textured` (which now uses it)
    and every existing shader (which continues not to, unaffected).
-9. **Static-snapshot boundary + non-conformal-transform skip, negative
-   tests** (D9/D10's own explicitly-required negative coverage):
-   a dedicated GPU test proving `World::setLight()` called *after* the
-   one-time capture does **not** change the next rendered frame's own
-   captured pixels; a dedicated GPU test proving a `LitTextured`-bound
-   entity given a deliberately non-conformal world transform is skipped
-   for that frame's own `DrawItem` list, logged once, never
-   scene-load-fatal.
+9. **Static-snapshot boundary, non-conformal-transform skip, and
+   shader-selection negative tests — the full, exhaustive set D9/D10
+   require, each independently, each a real, executed proof:**
+   - A dedicated GPU test proving `World::setLight()` called *after*
+     the one-time capture does **not** change the next rendered
+     frame's own captured pixels (V15).
+   - **The identical test, strengthened to the raw-byte level, not
+     only the rendered-pixel level (this review round's own item 2):**
+     the same test additionally reads the mapped `cameraBuffer_`'s own
+     `FrameLightingData` tail bytes directly (`mappedData()`, no GPU
+     readback needed — the buffer is host-visible) both before and
+     after the post-capture `World::setLight()` call, asserting the
+     bytes are bit-for-bit identical, while independently confirming
+     `World::getLight()` on the same entity now returns the *new*
+     value — proving the CPU/`World`-side state and the published GPU
+     bytes have genuinely diverged, not merely that the final image
+     happens to look the same.
+   - A dedicated GPU test proving a `LitTextured`-bound entity given a
+     deliberately non-conformal world transform is skipped for that
+     frame's own `DrawItem` list, logged once, never scene-load-fatal
+     (V16).
+   - A dedicated GPU test proving a deliberate direction-sign error
+     (a `Directional` light authored pointing away from the scene
+     instead of toward it) produces a captured frame that fails
+     comparison against the real `lighting_demo` golden — the direct,
+     executed proof that this Plan's own D6 sign convention (P11) is
+     load-bearing, not merely stated in prose.
+   - A dedicated GPU test proving a deliberate `Point` light
+     position/attenuation error (the light moved far outside the
+     scene's own geometry, or `range` set to an implausibly small
+     value) produces a captured frame that fails comparison against the
+     golden — the direct, executed proof for the point-light half of
+     D6, mirroring the directional case above.
+   - A dedicated test proving a `LitTextured` material that, through a
+     deliberate test-only misconfiguration, is realized via
+     `selectShaderPair()` fed the **wrong** kind (as if it were
+     `UnlitTextured`) produces a visibly, detectably different result
+     from the real, correctly-dispatched case — the direct, executed
+     proof that `selectShaderPair()`'s own dispatch (P6) is genuinely
+     load-bearing, not a distinction without a difference (mirrors this
+     Milestone's own sibling direction-sign/attenuation checks, applied
+     to shader *selection* rather than light *parameters*).
+   - The existing `TooManyLights` (source/decode) and
+     `DegenerateLightDirection` negative tests (Milestones 2/3/7) are
+     confirmed to still pass unmodified as part of this Milestone's own
+     full-suite run — restated here as an explicit acceptance-gate
+     item, not merely assumed carried over from their own earlier
+     Milestone.
 10. **New fixture + first golden** (P10, D10's own two-commit split —
     ADR-0042's own "Initial baseline bootstrap" category): commit (a)
-    `lighting_demo_fixture.h`/`.cpp` (mirroring
-    `material_demo_fixture.cpp` exactly, calling every real, shared
-    function this Plan's own Milestones 6-9 already built/widened — no
-    duplication), its own `CMakeLists.txt`/test registration, a real,
-    isolated proof that removing either light from the scene changes
-    the captured frame (two additional, temporary scene variants or an
-    equivalent programmatic light-removal path, mirroring Spec 0018
-    D12's own negative-proof precedent) — landed **without** its own
+    `lighting_demo_fixture.h`/`.cpp` — calling, never duplicating,
+    every real, shared function this Plan's own Milestones 1-9 already
+    built/widened: `loadAndInstantiateScene()`, `World::lightEntities()`/
+    `getLight()`/`getWorldMatrix()`, `extractFrameLightingData()`,
+    `checkConformalTransform()`, `computePendingMaterialIds()`,
+    `realizePendingMaterials()` (with the widened `litTextured*`
+    arguments), `selectShaderPair()` (indirectly, via
+    `realizePendingMaterials()`/`rebuildMaterialsForFormatChange()` —
+    never re-implemented in the fixture itself), and
+    `computeLambertianDiffuse()` (P14, for the fixture's own per-pixel
+    cross-check) — mirroring `material_demo_fixture.cpp`'s own exact
+    shape and Spec 0018 D12's own "direct link, never reimplement"
+    precedent; its own `CMakeLists.txt`/test registration; every
+    negative test named in Milestone 9 above; the D14/D10-required
+    per-pixel cross-check against `computeLambertianDiffuse()`'s own
+    independently-computed expected color — landed **without** its own
     golden PNG/sidecar yet, so this commit's own diff is reviewable as
     pure implementation; commit (b), separate, adds the golden capture
     itself (`tests/image_regression/goldens/lighting_demo/`), generated
@@ -1476,7 +2255,19 @@ Maps directly to Spec 0019's own D10, made concrete and numbered.
       realizes correctly through Phase 1/Phase 2 (reusing, not
       duplicating, `realizePendingMaterials()`); the one-time light
       capture happens exactly once (a boolean-flag/log-count check
-      across multiple simulated frames).
+      across multiple simulated frames). **Names the specific test
+      satisfying D10's own "Runtime's real integration must be proven
+      by a real GPU test calling the same, shared functions `runFrame()`
+      itself would call" requirement, since the default bootstrap scene
+      does not switch (D10, restated): the new `lighting_demo_fixture.cpp`'s
+      own setup/render functions (Milestone 10) — which call
+      `loadAndInstantiateScene()`, `extractFrameLightingData()`,
+      `realizePendingMaterials()` (with the widened `litTextured*`
+      arguments), and `checkConformalTransform()` directly, the
+      identical shared functions `runFrame()` itself calls — are that
+      proof; no separate, additional test is required beyond confirming
+      this fixture's own call sites name the real functions (a direct
+      code-review check) and that its own tests pass.**
 - [ ] V15 — Static-snapshot boundary: `World::setLight()` called after
       the one-time capture does not change the next rendered frame's
       own captured pixels — a real, executed proof, not an inspection
@@ -1492,11 +2283,16 @@ Maps directly to Spec 0019's own D10, made concrete and numbered.
       `unlitTextured`) after a real color-format change, GPU-required.
 - [ ] V18 — The four existing goldens (`minimal_cube`, `world_scene`,
       `textured_quad`, `material_demo`) confirmed byte-for-byte
-      identical to `main` and pixel-for-pixel zero-difference, both
-      configurations, throughout every Milestone — checked after
-      Milestone 8 (first Runtime-integration point) and again at final
-      verification, not assumed unaffected merely because this Plan's
-      own new code is additive.
+      identical to `main` (SHA-256 match on both the PNG and its own
+      metadata sidecar, matching Plan 0018/0020's own established
+      verification method exactly — `git diff main --quiet` on the
+      goldens directory is the authoritative check, a naive external
+      `sha256sum` on the working tree is not, per this codebase's own
+      documented CRLF-normalization caveat) and pixel-for-pixel
+      zero-difference, both configurations, throughout every Milestone
+      — checked after Milestone 8 (first Runtime-integration point) and
+      again at final verification, not assumed unaffected merely
+      because this Plan's own new code is additive.
 - [ ] V19 — New `lighting_demo` golden: captured on a clean tree
       against Milestone 10(a)'s own already-merged implementation
       (never against a dirty/uncommitted tree); the Directional light's
@@ -1535,6 +2331,64 @@ Maps directly to Spec 0019's own D10, made concrete and numbered.
       that this Plan's own RHI-internal stage-visibility widening (V13)
       has zero visible effect on the one scene Runtime actually boots
       by default.
+
+**The following items, V28 onward, were added during this Plan's own
+final, targeted review round (below) — new item numbers, none reusing
+or renumbering V1-V27 above:**
+
+- [ ] V28 — `FrameLightingData`'s own fixed-byte test (P7 requirement
+      6): a real value with distinct, individually recognizable field
+      values, `memcpy`'d into a raw buffer, asserted byte-range-by-byte-range
+      against the P7 table — including the padding regions reading back
+      as all-zero (proving value-initialization, not merely that the
+      type compiles) and every `alignas(16)`/`sizeof`/`alignof`/`offsetof`
+      `static_assert` from P7 actually present in the checked-in header.
+- [ ] V29 — `computeLambertianDiffuse()` (P14) cross-validated two
+      ways, neither alone sufficient: hand-computed-expected-value unit
+      tests against the written D6 formula (folds into V10 above,
+      restated here as its own explicit cross-validation-chain item),
+      **and** a real, executed per-pixel comparison between this
+      function's own CPU-computed expected color and the real, captured
+      GPU pixel at one or more known scene points, within a disclosed
+      tolerance (Milestone 10) — the second half is the actual proof the
+      real shader agrees with the CPU reference, not merely that the CPU
+      reference agrees with itself.
+- [ ] V30 — Static-snapshot boundary, byte-level (this review round's
+      own strengthening of V15): the published `FrameLightingData`
+      bytes inside `cameraBuffer_`, read directly via `mappedData()`,
+      are bit-for-bit identical before and after a post-capture
+      `World::setLight()` call, while `World::getLight()` on the same
+      entity is independently confirmed to return the new value —
+      proving CPU/GPU divergence directly, not only inferring it from
+      unchanged rendered pixels.
+- [ ] V31 — Direction-sign and Point-position/attenuation negative
+      tests (Milestone 9): a deliberately wrong-signed `Directional`
+      light and a deliberately mispositioned/wrongly-attenuated `Point`
+      light each independently produce a captured frame that fails
+      comparison against the real `lighting_demo` golden.
+- [ ] V32 — Shader-selection negative test (Milestone 9): a
+      deliberately misdispatched `LitTextured` material (fed
+      `unlitTextured*` shader-pair arguments instead of its own real
+      `litTextured*` ones, via a test-only call to
+      `realizeOneMaterialCandidate()`, never a change to
+      `selectShaderPair()` itself) produces a visibly, detectably
+      different result from the real, correctly-dispatched case.
+- [ ] V33 — Migration atomicity (P16): every one of the eleven real,
+      enumerated touch points (the version-line constant plus ten real
+      files) confirmed updated in the same commit; a full-repository
+      search for any remaining literal `atlantis_scene_source_version: 2`
+      and any stale `76`/`80`/`84` parent-slot byte-offset literal
+      returns zero matches after Milestone 3 lands.
+- [ ] V34 — New golden provenance (D10/Milestone 10, restated as its
+      own explicit checklist item): the `lighting_demo` golden's own
+      metadata sidecar records a real `source_revision` pointing at
+      Milestone 10(a)'s own already-merged implementation commit (never
+      an uncommitted/dirty-tree capture); a human reviewer has visually
+      confirmed the captured frame shows a non-black, non-garbage image
+      with the Directional and Point contributions each independently
+      visible and distinguishable, recorded as a PR comment (matching
+      Spec 0018's own V33/Plan 0020's own V-checklist precedent for
+      exactly this class of human sign-off), before commit 10(b) lands.
 
 ## Rollback Plan
 
@@ -1689,6 +2543,121 @@ pass's own transcription:
    objection against Spec 0019, ADR-0061, or ADR-0062's own already-
    `Accepted` text.
 
-No unresolved finding remains. This Plan's own Status stays `In
-Review` — Human Review, not this self-review pass, is the gate that
-authorizes Implementation.
+### Second review round (final, targeted — 13 named items, closed before Human Review Approval)
+
+A second, later, explicitly-scoped review pass, run against 13 specific
+questions a human reviewer raised after this Plan's own first draft —
+each closed with real, verified content added directly to the sections
+above, not merely answered in this log:
+
+7. **`FrameLightingData`'s 176-byte layout re-derived a third time,
+   this time as a literal, single field-by-field table** (P7) — field
+   name, type, offset, size, alignment, array stride, culminating in
+   the same `176` total the first review round's own item 2 already
+   confirmed — reproduced successfully from the table alone, field by
+   field, with `alignas(16)`, explicit (never implicit) padding,
+   value-initialization, `is_standard_layout_v`, and a complete
+   `sizeof`/`alignof`/`offsetof` `static_assert` set now required
+   explicitly, plus a dedicated fixed-byte test (V28) and a real Slang
+   reflection cross-check (P7 requirement 7, V9) — closing the "must
+   not be approved if 176 cannot be reproduced from a real field table"
+   condition this round's own review explicitly set.
+8. **Static snapshot / uniform buffer lifecycle re-derived from real,
+   cited ownership facts, not restated from Spec prose** (P9) — traced
+   `RuntimeApplication`'s own real member declaration order and its own
+   real, explicit `shutdown()` reset sequence (`runtime_application.cpp:739-747`),
+   and, by contrast, `MaterialDemoFixture`'s own different (but equally
+   safe) implicit destruction order — establishing, as a directly
+   verified fact rather than an assumption, that `Material` never
+   borrows the camera/lighting buffer at all (confirmed against
+   `material.h`'s own real field list), so no ownership-order
+   constraint between them exists to violate either way. Strengthened
+   V15 into a byte-level check (V30), not only a pixel-level one.
+9. **`MaterialKind` dispatch consolidated into one shared, file-local
+   `selectShaderPair()` helper** (P6), replacing this Plan's own first
+   draft's "two separately-written switches" — both real
+   `PipelineCreateParams`-constructing entry points
+   (`realizeOneMaterialCandidate()`, `rebuildMaterialsForFormatChange()`'s
+   own rebuild loop) now call the identical function; confirmed
+   `realizePendingMaterials()` is not a third such entry point (it
+   never itself constructs `PipelineCreateParams`) and the fallback
+   colored material is never `MaterialKind`-dispatched at all (it has
+   no associated `MaterialAssetData`) — both facts re-verified against
+   the real file, not assumed. Confirmed `selectShaderPair()`'s own
+   `switch` matches this codebase's own real, existing no-`default:`-label
+   C4062 convention (`kindToField()`'s own real shape, re-inspected this
+   round), with a stricter, fail-fast (`ATLANTIS_CHECK_MSG`, confirmed
+   always-evaluated in both Debug and Release, not the debug-only
+   `ATLANTIS_ASSERT`) fallback.
+10. **Descriptor visibility restated as an explicit negative
+    confirmation** (P12/P13) — exactly one `VkDescriptorSetLayoutBinding`
+    at `(0,0)`, its own `stageFlags` a bitmask (never a second Vulkan
+    binding), zero new RHI/Renderer public API; the real
+    `validateDescriptorContractForStage()`/`validateDescriptorContract()`
+    call chain re-traced a second time end to end (not merely re-cited);
+    a genuine negative descriptor-contract-mismatch test added (not
+    only a positive pass-case), mirroring Plan 0017's own empirical
+    mutation-probe precedent for "does this check actually check
+    anything."
+11. **`TooManyLights`'s own error semantics restated across all three
+    real paths explicitly** (P1/P8) — source cook and artifact decode
+    both real `Result::Err` gates (unchanged from the first draft);
+    programmatic `World` extraction is confirmed, by direct citation of
+    `assert.h`'s own real macro documentation, to be a genuine,
+    always-evaluated (Debug **and** Release), fail-fast abort via
+    `ATLANTIS_CHECK_MSG` — never a silently-compiled-out `ATLANTIS_ASSERT`,
+    never a silent truncation, and never an out-of-bounds array write
+    (the abort happens before any write past the cap could occur).
+12. **A dedicated CPU reference implementation,
+    `computeLambertianDiffuse()`, added** (P14) specifically to close
+    the "CPU test vs. GPU shader, two independently-invented magic
+    constants" circularity risk this round's own review named directly
+    — cross-validated two ways (hand-computed-formula unit tests, V10/V29,
+    **and** a real, executed per-pixel comparison against the actual
+    GPU-captured output, Milestone 10/V29), neither alone sufficient,
+    both together closing the loop; `kPointLightDistanceEpsilon`'s own
+    C++/Slang duplication is disclosed explicitly as the same,
+    already-accepted class of "hand-kept-in-sync" risk
+    `descriptor_contract.h` already discloses for a different pair of
+    files, not silently introduced as a new, undisclosed one.
+13. **Lit/Unlit dispatch precision and the migration-atomicity
+    guarantee both made explicit** (P15/P16) — `checkConformalTransform()`
+    confirmed called from exactly one site, gated on
+    `MaterialKind::LitTextured` specifically, never for an `UnlitTextured`
+    or fallback-material entity; the mesh normal attribute's own
+    location/offset cross-checked via `toVertexInputLayout()`'s own
+    real, existing validation, not merely asserted equal by inspection;
+    a full, repository-wide search for every real file naming
+    `atlantis_scene_source_version` found eleven real, non-historical
+    touch points (not the smaller set the first draft's own Files/
+    Modules Touched section implied), including two real, existing,
+    golden-backing scene assets (`world_scene.scene.txt`,
+    `material_demo.scene.txt`) that need their own version line bumped
+    even though neither declares a light — a genuine expansion of this
+    Plan's own known touch-point list, now recorded as its own explicit
+    atomicity requirement (P16, V33) rather than left implicit in the
+    original Files/Modules Touched enumeration.
+
+**Document proportion, checked directly against this round's own
+request:** re-scanned the full document for verbatim or near-verbatim
+reproduction of any Approved Spec/ADR's own "Consequences"/"Alternatives
+Considered" reasoning — found none; every section above states a real
+file, a real line citation, a real byte offset, real code, or a real,
+newly-traced call chain, not a re-argument of *why* Spec 0019/ADR-0061/
+ADR-0062 already decided what they decided. No trim was therefore
+needed to satisfy this round's own "delete long repeated argumentation,
+keep implementation facts" instruction — the growth in this document's
+own length across both review rounds is entirely new, previously-absent
+verified content (the P7 table, P9's ownership citations, P6's shared
+helper, P14's cross-validation design, P16's eleven-file enumeration),
+not restated Spec/ADR prose.
+
+**All 13 named items are closed. No new architectural conflict was
+found against Spec 0019, ADR-0061, or ADR-0062's own already-`Accepted`
+text — every finding this second round surfaced was resolvable
+entirely within this Plan's own Plan-level-decision authority, the
+identical conclusion the first round already reached for its own,
+smaller finding set.** See this document's own "Human Review Approval"
+note, at the top of this document, for the resulting status change —
+this Plan's own **Status** field now reads `Approved / Ready for
+Implementation`.
