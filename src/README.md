@@ -117,17 +117,39 @@ implemented per
 and
 [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md),
 merged via [PR #96](https://github.com/slmao/Atlantis/pull/96).
-**Disclosed, real, unresolved limitation:** this module's own
-`VkDescriptorPool` (`VulkanDevice`, Device-global, fixed `maxSets = 4`,
-[Plan 0007](../plans/0007-minimal-renderer.md) Section 10) was sized for
-a "exactly one Material" assumption that no longer holds since Spec
-0018 introduced arbitrary-N-materials support — a real, currently-
-supported two-distinct-material color-format change exceeds it,
-reproduced by a real GPU regression test
-(`tests/runtime/material_realization_gpu_tests.cpp`); not yet fixed —
-a correct fix needs a real resource-ownership/lifecycle decision
-([PR #96](https://github.com/slmao/Atlantis/pull/96)'s own review
-record has the full root-cause trace).
+`VulkanDevice`'s own descriptor-pool capacity, originally a single,
+Device-global, fixed `maxSets = 4` pool
+([Plan 0007](../plans/0007-minimal-renderer.md) Section 10, sized for a
+"exactly one Material" assumption that no longer held once Spec 0018
+introduced arbitrary-N-materials support — a real, currently-supported
+two-distinct-material color-format change exceeded it, reproduced by a
+real GPU regression test, disclosed during Spec 0019's own final review
+— [PR #96](https://github.com/slmao/Atlantis/pull/96)'s own review
+record has the full root-cause trace), **has since been fixed**:
+`VulkanDevice` now privately owns a fixed-size
+`std::array<DescriptorPoolEntry, 4>` descriptor-pool set (never a
+`std::vector` — a deliberate exception-safety choice, see
+[ADR-0064](../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)),
+starting with one pool (`maxSets = 4`) and growing — one pool at a time,
+geometric doubling (`4, 8, 16, 32`), only on a real, observed
+`VK_ERROR_OUT_OF_POOL_MEMORY`/`VK_ERROR_FRAGMENTED_POOL` — up to a hard
+ceiling of 4 pools (60 concurrent descriptor sets total); every
+allocation scans existing pools in creation order first, naturally
+reusing capacity an earlier `VulkanPipeline` destructor already freed,
+before ever creating a new pool; `VK_ERROR_DEVICE_LOST`/host-or-device
+out-of-memory fail immediately with no growth attempted. Implemented
+per
+[specs/0021-descriptor-pool-capacity-foundation.md](../specs/0021-descriptor-pool-capacity-foundation.md),
+[plans/0021-descriptor-pool-capacity-foundation.md](../plans/0021-descriptor-pool-capacity-foundation.md),
+and
+[ADR-0064](../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md),
+merged via [PR #100](https://github.com/slmao/Atlantis/pull/100) — zero
+RHI/Renderer/Material public API change; `VulkanPipeline` itself needed
+no modification at all. **The four-pool/60-concurrent-descriptor-set
+hard ceiling remains a real, disclosed, deliberate limit** — this is
+not bindless rendering, not descriptor indexing, and does not support
+an unbounded number of concurrent materials; see that Spec's own
+Non-Goals.
 
 **`render_graph/`** — Atlantis RenderGraph: render graph construction,
 compilation, and execution. Target `atlantis_render_graph`, alias

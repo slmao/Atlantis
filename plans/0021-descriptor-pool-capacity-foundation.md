@@ -1422,3 +1422,91 @@ See [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
 No delta specific to this Plan beyond what the Verification Checklist
 above already states in full — every applicable item there restates or
 sharpens the general Definition of Done for this Plan's own real scope.
+
+## Post-Merge Status Update (2026-08-30)
+
+**Implemented and merged via [PR #100](https://github.com/slmao/Atlantis/pull/100).**
+All three Milestones landed exactly as this Plan specifies, as three
+atomic commits, followed by one additional, disclosed commit from a
+pre-merge centralized final review round (mechanical fixes only — see
+below). This section is purely additive; nothing above it, including
+the Verification Checklist's own unchecked `[ ]` boxes, has been
+edited — matching this codebase's own established convention (Plan
+0020's own identical precedent) that a Plan's real completion record
+lives in this appended section, in prose, not in retroactively-checked
+boxes.
+
+**Final, as-built verification:** fresh Debug and Release builds clean;
+`ctest -LE gpu` 759/759 Debug, 758/758 Release (the one-fewer-in-Release
+gap is the pre-existing, documented Debug-only `ATLANTIS_ASSERT` test,
+unrelated to this Plan); `ctest -L gpu` 52/52 both configurations on
+real Vulkan-capable hardware, Vulkan Validation Layers grepped clean
+(zero `VUID`/`Validation Error`/`Validation Warning`) across the full
+`-L gpu -VV` output, both configurations; a fresh
+`ATLANTIS_BUILD_TESTS=OFF` configure+build produced a working
+`atlantis_runtime.exe` with zero test executables anywhere in that
+tree; all five existing goldens (`minimal_cube`, `world_scene`,
+`textured_quad`, `material_demo`, `lighting_demo`) confirmed byte-for-
+byte/pixel-for-pixel unchanged — the golden generator was never run,
+since this Plan's own Implementation changes zero rendered pixels;
+`git diff --check` clean throughout. PR #96's own two original failure
+proofs (the low-level 5th-of-4-Pipeline probe; the fallback +
+`UnlitTextured` + `LitTextured` N=2 format-change) are now converted,
+real-hardware **success** regressions in the same test file, per this
+Plan's own Milestone 2. A new N=6 regression additionally proves a real
+*second* growth event (generation 2, `maxSets = 16`), via a full
+frame-by-frame trace showing an initially-drafted N=5 does not actually
+reach a third pool generation — see that trace, preserved as a code
+comment, in `tests/runtime/material_realization_gpu_tests.cpp`.
+
+**A pre-merge centralized final review round** (recorded on PR #100's
+own review history) found and fixed four mechanical issues, none
+changing the container, algorithm, capacity contract, or any public
+API:
+
+1. `createPipeline()`'s own two mid-creation-failure `vkFreeDescriptorSets`
+   calls (pipeline-layout failure; final `vkCreateGraphicsPipelines`
+   failure) did not capture and check their own `VkResult` — a gap that
+   pre-dated this Plan's own Implementation (the original, single-pool
+   code had the identical gap), but Implementation touched both exact
+   lines to repoint them at the real origin pool, so AGENTS.md's own
+   "every `VkResult` is checked" rule was applied to close it, matching
+   `VulkanPipeline`'s own destructor precedent exactly.
+2. Two stale/imprecise code comments were corrected (a pre-existing,
+   unrelated `TEST_CASE`'s own comment that described the now-fixed
+   `maxSets = 4` limit in the present tense; the 60-set ceiling-and-
+   reuse GPU test's own "whichever pool(s)" phrasing, sharpened to name
+   the exact pool a creation-order/scan-fill argument proves the reused
+   capacity must come from).
+3. The `V11` static-review disclosure (mid-creation-failure-after-growth
+   leaves no leak) was strengthened to cite exact `file:line` branches
+   in `vulkan_device.cpp` instead of a general RAII claim.
+4. **A real correction to this Plan's own text, disclosed here, not
+   silently edited above:** Section P5's own "Termination, explicitly"
+   paragraph (and this Plan's own later summaries) stated the worst-case
+   number of `vkAllocateDescriptorSets` calls per `allocateDescriptorSet()`
+   invocation as `kMaxDescriptorPoolCount + 1 == 5`. **This was wrong —
+   the real worst case is 4, never 5.** The error was treating two
+   mutually exclusive code paths as additive: either every one of the 4
+   existing pools is already at the ceiling and all 4 are scanned with
+   no growth ever attempted (4 scans, 0 retries), *or* fewer than 4
+   pools exist, all of them are scanned (at most 3 scans, since Step 2's
+   own ceiling check gates growth before a 4th-pool scenario could ever
+   reach Step 3/4) and exactly one retry follows a single growth event
+   (at most `3 + 1 = 4`). These two cases cannot both contribute their
+   own maximum in the same call — Step 2's own ceiling check is exactly
+   what prevents "scan all 4, then also grow and retry" from ever
+   happening. The real, shipped algorithm and its real behavior were
+   never affected by this documentation error — only this Plan's own
+   *stated* bound was loose (5 is still a valid, if unnecessarily loose,
+   upper bound on the true worst case of 4). `allocateDescriptorSet()`'s
+   own doc comment in `vulkan_device.h` now states the correct, exact
+   derivation directly at the source. This paragraph is the disclosed
+   correction for this Plan's own original P5 text, which is left
+   unedited above, per this codebase's own "corrections are additive,
+   originals stay intact" convention.
+
+No Implementation deviation from this Plan's own approved Milestones,
+algorithm, container choice, or capacity contract occurred at any
+point. See [specs/README.md](../specs/README.md)'s own Spec 0021 row
+for the equivalent summary at the Spec-registry level.
