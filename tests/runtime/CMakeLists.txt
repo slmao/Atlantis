@@ -52,9 +52,15 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   # built-in shader pair -- mirrors ATLANTIS_RUNTIME_SHADER_DIR's own
   # sourcing exactly, now that shaders/textured_quad is unconditional.
   ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+  # Plan 0019 Section P6: the third, MaterialKind::LitTextured built-in
+  # shader pair -- material_realization_gpu_tests.cpp's own widened
+  # realizePendingMaterials()/rebuildMaterialsForFormatChange() calls
+  # need a real litTextured* trio, even where no test in this file
+  # realizes one.
+  ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
 )
 
-add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders textured_quad_shaders
+add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
   ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})
 
 # LABELS "gpu": the existing plain ctest convention Spec 0006/Spec 0010

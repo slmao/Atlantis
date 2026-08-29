@@ -72,7 +72,7 @@ std::atomic<int> gScratchCounter{0};
   const fs::path metadataPath = dir / "scene.ascene.meta.txt";
   {
     std::ofstream out(sourcePath, std::ios::binary | std::ios::trunc);
-    out << "atlantis_scene_source_version: 2\n"
+    out << "atlantis_scene_source_version: 3\n"
            "node_count: 1\n"
            "active_camera: none\n"
            "node: node_id=1 parent=none position=1.0 2.0 3.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";

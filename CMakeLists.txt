@@ -87,15 +87,23 @@ add_subdirectory(shaders/minimal_renderer)
 # now simply available unconditionally instead of only under
 # ATLANTIS_BUILD_TESTS.
 add_subdirectory(shaders/textured_quad)
+# Plan 0019 Section P11/D8: the lit_textured shader pair backing
+# MaterialKind::LitTextured -- unconditional here, matching
+# shaders/textured_quad's own identical placement/reasoning; declared
+# immediately after shaders/textured_quad and before src/runtime, per
+# Spec 0019 D8's own exact placement instruction.
+add_subdirectory(shaders/lit_textured)
 # Plan 0013 Section D1: must come after add_subdirectory(assets),
-# add_subdirectory(shaders/minimal_renderer), and (Plan 0018 Section P10)
-# add_subdirectory(shaders/textured_quad) above -- atlantis_runtime
-# add_dependencies() on minimal_mesh_shaders, textured_quad_shaders, and
-# ${ATLANTIS_minimal_cube_TARGET}, all declared by those calls, and
-# CMake's add_dependencies() requires the named target to already be
-# declared at the point the call is parsed. Runtime is a product
-# executable, not an example, so it is unconditional here, not inside
-# the ATLANTIS_BUILD_EXAMPLES block below.
+# add_subdirectory(shaders/minimal_renderer), (Plan 0018 Section P10)
+# add_subdirectory(shaders/textured_quad), and (Plan 0019 Section P11)
+# add_subdirectory(shaders/lit_textured) above -- atlantis_runtime
+# add_dependencies() on minimal_mesh_shaders, textured_quad_shaders,
+# lit_textured_shaders, and ${ATLANTIS_minimal_cube_TARGET}, all
+# declared by those calls, and CMake's add_dependencies() requires the
+# named target to already be declared at the point the call is parsed.
+# Runtime is a product executable, not an example, so it is
+# unconditional here, not inside the ATLANTIS_BUILD_EXAMPLES block
+# below.
 add_subdirectory(src/runtime)
 
 if(ATLANTIS_BUILD_EXAMPLES)

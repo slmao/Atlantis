@@ -130,10 +130,39 @@ target_compile_definitions(atlantis_image_regression_material_demo_golden_genera
   ATLANTIS_material_demo_scene_METADATA_PATH="${ATLANTIS_material_demo_scene_METADATA_PATH}"
   ATLANTIS_material_demo_scene_MANIFEST_PATH="${ATLANTIS_material_demo_scene_MANIFEST_PATH}"
   ATLANTIS_MATERIAL_DEMO_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+  # Plan 0019 Section P6: see tests/image_regression/CMakeLists.txt's own
+  # identical comment on the gpu_tests target.
+  ATLANTIS_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
 )
 
-add_dependencies(atlantis_image_regression_material_demo_golden_generator textured_quad_shaders
+add_dependencies(atlantis_image_regression_material_demo_golden_generator textured_quad_shaders lit_textured_shaders
   ${ATLANTIS_material_demo_scene_TARGET})
+
+# Plan 0019 Section P10/Milestone 10b: a fifth, standalone golden-
+# generator executable for the lighting_demo fixture -- same reused
+# git/provenance/PNG steps, "render one frame" replaced with
+# renderLightingDemoFrame().
+add_executable(atlantis_image_regression_lighting_demo_golden_generator lighting_demo_main.cpp)
+
+target_link_libraries(atlantis_image_regression_lighting_demo_golden_generator
+  PRIVATE
+    Atlantis::ImageRegressionFixture
+    Atlantis::ImageRegressionSupport
+    atlantis_compiler_warnings
+)
+
+target_compile_definitions(atlantis_image_regression_lighting_demo_golden_generator PRIVATE
+  ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+  ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
+  ATLANTIS_lighting_demo_scene_ARTIFACT_PATH="${ATLANTIS_lighting_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_lighting_demo_scene_METADATA_PATH="${ATLANTIS_lighting_demo_scene_METADATA_PATH}"
+  ATLANTIS_lighting_demo_scene_MANIFEST_PATH="${ATLANTIS_lighting_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_LIGHTING_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+  ATLANTIS_LIGHTING_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+)
+
+add_dependencies(atlantis_image_regression_lighting_demo_golden_generator textured_quad_shaders lit_textured_shaders
+  ${ATLANTIS_lighting_demo_scene_TARGET})
 
 # Deliberately no catch_discover_tests()/LABELS "gpu"/add_test() call in
 # this file -- the concrete enforcement of "never registered with

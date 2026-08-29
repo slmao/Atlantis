@@ -1,0 +1,5 @@
+atlantis_material_source_version: 1
+kind: lit_textured
+texture: textures/textured_quad_source_unorm.png
+filter: linear
+address_mode: repeat

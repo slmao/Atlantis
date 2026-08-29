@@ -159,3 +159,42 @@ set(ATLANTIS_material_demo_scene_ARTIFACT_PATH "${ATLANTIS_material_demo_scene_A
 set(ATLANTIS_material_demo_scene_METADATA_PATH "${ATLANTIS_material_demo_scene_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_material_demo_scene_MANIFEST_PATH "${ATLANTIS_material_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
 set(ATLANTIS_material_demo_scene_TARGET "${ATLANTIS_material_demo_scene_TARGET}" PARENT_SCOPE)
+
+# Plan 0019 Section P10: the first real MaterialKind::LitTextured
+# material asset -- reuses Spec 0016's already-cooked, already-proven
+# textured_quad_unorm texture (no new PNG), matching unlit_textured_quad's
+# own identical reuse above. Declared here, unconditionally, mirroring
+# unlit_textured_quad's own placement exactly -- test-only consumer
+# (the new lighting_demo_fixture, Milestone 10), never wired into
+# atlantis_runtime's own BootstrapConfig (D10's own explicit "Runtime's
+# own default bootstrap scene stays world_scene" decision).
+atlantis_add_material_asset(
+  NAME lit_textured_quad
+  SOURCE materials/lit_textured_quad.material.txt
+  TEXTURE textured_quad_unorm
+)
+set(ATLANTIS_lit_textured_quad_ARTIFACT_PATH "${ATLANTIS_lit_textured_quad_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_lit_textured_quad_METADATA_PATH "${ATLANTIS_lit_textured_quad_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_lit_textured_quad_TARGET "${ATLANTIS_lit_textured_quad_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_lit_textured_quad_LOGICAL_PATH "${ATLANTIS_lit_textured_quad_LOGICAL_PATH}" PARENT_SCOPE)
+
+# Plan 0019 Section P10 (Spec 0019 D10): a new, independent verification
+# scene -- never a reuse of material_demo_scene/world_scene. Reuses
+# minimal_cube (already carrying real, Spec-0020-sourced per-vertex
+# normals) for the one LitTextured-bound Renderable; a Directional light
+# aimed via its own rotation (never axis-aligned, so a sign/swap error
+# is visible) and a Point light positioned close to one distinct corner
+# of the cube (never centered) -- an asymmetric composition, so a
+# direction, position, or attenuation-formula error each produce a
+# visibly different, wrong frame (see the scene source's own values).
+atlantis_add_scene_asset(
+  NAME lighting_demo_scene
+  SOURCE scenes/lighting_demo.scene.txt
+  MESH_DEPENDENCIES minimal_cube
+  MATERIAL_DEPENDENCIES lit_textured_quad
+  TEXTURE_DEPENDENCIES textured_quad_unorm
+)
+set(ATLANTIS_lighting_demo_scene_ARTIFACT_PATH "${ATLANTIS_lighting_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_lighting_demo_scene_METADATA_PATH "${ATLANTIS_lighting_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_lighting_demo_scene_MANIFEST_PATH "${ATLANTIS_lighting_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_lighting_demo_scene_TARGET "${ATLANTIS_lighting_demo_scene_TARGET}" PARENT_SCOPE)

@@ -1,5 +1,7 @@
 #include <atlantis/runtime/scene_extraction.h>
 
+#include <atlantis/assert.h>
+
 #include <algorithm>
 #include <cmath>
 
@@ -11,18 +13,23 @@ constexpr float kDegenerateLengthEpsilon = 1e-6f;  // this codebase's own scenes
                                                      // 1-10 world-unit scale -- see Plan 0014 Deviations
                                                      // for why this exact value is not further tuned
 
-struct Vec3 {
-  float x = 0.0f;
-  float y = 0.0f;
-  float z = 0.0f;
-};
-
+// Plan 0019 Section P7: this file's own Vec3 struct moved to
+// scene_extraction.h (now atlantis::runtime::Vec3) -- these helpers
+// operate on that single, public definition.
 [[nodiscard]] float length(const Vec3& v) {
   return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
 }
 
 [[nodiscard]] Vec3 cross(const Vec3& a, const Vec3& b) {
   return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+
+[[nodiscard]] float dot(const Vec3& a, const Vec3& b) {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+[[nodiscard]] Vec3 normalize(const Vec3& v, float len) {
+  return {v.x / len, v.y / len, v.z / len};
 }
 
 }  // namespace
@@ -130,6 +137,180 @@ atlantis::Result<std::monostate, SceneExtractionError> resolveMaterialAsset(
     return atlantis::Result<std::monostate, SceneExtractionError>::Err(SceneExtractionError::UnresolvedMaterialAsset);
   }
   return atlantis::Result<std::monostate, SceneExtractionError>::Ok({});
+}
+
+// Plan 0019 Section P8: a direct transcription of Spec 0019 D2. Iterates
+// `lights` once, in the caller-supplied order, writing the first
+// Directional entry into directionalLights[0] (identical
+// -column2/normalize/degenerate-check formula extractCameraMatrices()
+// uses for a camera's own forward vector, reusing the same
+// kDegenerateLengthEpsilon constant verbatim) and every Point entry
+// (up to four) into pointLights[] via its own translation column
+// (column 3, always well-defined -- no degenerate case for a raw
+// position). A lights vector violating either cap (a second Directional,
+// a fifth Point) is a programmer error -- unreachable from any real
+// cook/decode-validated scene, both of which already independently cap
+// this count (P3/P4) -- so ATLANTIS_CHECK_MSG aborts immediately, in
+// both Debug and Release, before either fixed-size array could ever be
+// written past.
+atlantis::Result<FrameLightingData, SceneExtractionError> extractFrameLightingData(
+    const std::vector<LightExtractionInput>& lights) {
+  FrameLightingData data{};
+
+  for (const LightExtractionInput& input : lights) {
+    if (input.light.kind == atlantis::world::LightKind::Directional) {
+      if (data.directionalLightCount >= 1) {
+        // Reached only if a caller bypasses both real gates (P3's
+        // parseSceneSource(), P4's decodeSceneArtifact()) entirely --
+        // e.g. hand-constructed World::setLight() calls, in a test or
+        // some future, not-yet-existing code path. ATLANTIS_CHECK_MSG's
+        // default handler aborts the process here, in both Debug and
+        // Release (assert.h); the `continue` below is a defense-in-depth
+        // guard so that even a caller that has replaced the failure
+        // handler with a non-aborting one (assertions::setFailureHandler())
+        // still can never write past directionalLights[0] -- the
+        // "never an out-of-bounds write" guarantee holds unconditionally,
+        // not only under the default handler.
+        ATLANTIS_CHECK_MSG(false,
+                            "extractFrameLightingData(): a second Directional light reached this function -- "
+                            "both parseSceneSource() (P3) and decodeSceneArtifact() (P4) already cap this at "
+                            "one; this is a programmer error (e.g. World::setLight() called directly, "
+                            "bypassing both gates), not a recoverable runtime condition");
+        continue;
+      }
+      const Mat4& m = input.worldMatrix;
+      const Vec3 negColumn2{-m[8], -m[9], -m[10]};
+      const float len = length(negColumn2);
+      if (len < kDegenerateLengthEpsilon) {
+        return atlantis::Result<FrameLightingData, SceneExtractionError>::Err(
+            SceneExtractionError::DegenerateLightDirection);
+      }
+      const Vec3 direction = normalize(negColumn2, len);
+      FrameLightingData::DirectionalLightGpu& gpu = data.directionalLights[0];
+      gpu.direction[0] = direction.x;
+      gpu.direction[1] = direction.y;
+      gpu.direction[2] = direction.z;
+      gpu.color[0] = input.light.color.x;
+      gpu.color[1] = input.light.color.y;
+      gpu.color[2] = input.light.color.z;
+      gpu.intensity = input.light.intensity;
+      data.directionalLightCount = 1;
+    } else {
+      if (data.pointLightCount >= 4) {
+        // Identical reasoning to the Directional branch above, applied
+        // to the four-element pointLights[] bound.
+        ATLANTIS_CHECK_MSG(false,
+                            "extractFrameLightingData(): a fifth Point light reached this function -- both "
+                            "parseSceneSource() (P3) and decodeSceneArtifact() (P4) already cap this at four; "
+                            "this is a programmer error (e.g. World::setLight() called directly, bypassing "
+                            "both gates), not a recoverable runtime condition");
+        continue;
+      }
+      const Mat4& m = input.worldMatrix;
+      FrameLightingData::PointLightGpu& gpu = data.pointLights[data.pointLightCount];
+      gpu.position[0] = m[12];
+      gpu.position[1] = m[13];
+      gpu.position[2] = m[14];
+      gpu.range = input.light.range;
+      gpu.color[0] = input.light.color.x;
+      gpu.color[1] = input.light.color.y;
+      gpu.color[2] = input.light.color.z;
+      gpu.intensity = input.light.intensity;
+      ++data.pointLightCount;
+    }
+  }
+
+  return atlantis::Result<FrameLightingData, SceneExtractionError>::Ok(data);
+}
+
+// Plan 0019 Section P8/P15 (Spec 0019 D7): the upper-left 3x3 of
+// worldMatrix is conformal iff it equals a uniform scale (either sign)
+// times an orthogonal matrix -- equivalently, its three column vectors
+// are pairwise orthogonal and of equal length. A uniform NEGATIVE scale
+// (e.g. -1 * I, a full point reflection) still satisfies both: -I is
+// itself an orthogonal matrix (its columns stay pairwise orthogonal and
+// equal-length), matching D7's own explicitly-named "uniform scale of
+// either sign" acceptance case.
+atlantis::Result<std::monostate, SceneExtractionError> checkConformalTransform(const Mat4& worldMatrix) {
+  const Vec3 col0{worldMatrix[0], worldMatrix[1], worldMatrix[2]};
+  const Vec3 col1{worldMatrix[4], worldMatrix[5], worldMatrix[6]};
+  const Vec3 col2{worldMatrix[8], worldMatrix[9], worldMatrix[10]};
+
+  const float len0 = length(col0);
+  const float len1 = length(col1);
+  const float len2 = length(col2);
+  // Reuses the identical near-zero-length numerical boundary
+  // DegenerateLightDirection's own check already exercises for a
+  // different matrix column (P15's own explicit "consistent epsilon
+  // treatment" requirement).
+  if (len0 < kDegenerateLengthEpsilon || len1 < kDegenerateLengthEpsilon || len2 < kDegenerateLengthEpsilon) {
+    return atlantis::Result<std::monostate, SceneExtractionError>::Err(
+        SceneExtractionError::NonConformalNormalTransform);
+  }
+
+  // A 1% relative tolerance on squared length/dot-product magnitudes --
+  // an Implementation-time closure (disclosed here, not silently
+  // widened) accommodating ordinary floating-point matrix composition
+  // error for genuinely conformal inputs, while still rejecting every
+  // hand-constructed non-uniform-scale/shear test case (Milestone 7/V12)
+  // by a comfortable margin.
+  constexpr float kRelativeToleranceSquared = 1e-4f;
+
+  const float len0Sq = len0 * len0;
+  const float len1Sq = len1 * len1;
+  const float len2Sq = len2 * len2;
+  const float avgLenSq = (len0Sq + len1Sq + len2Sq) / 3.0f;
+  const float lengthTolerance = kRelativeToleranceSquared * avgLenSq;
+
+  const bool lengthsEqual = std::abs(len0Sq - avgLenSq) <= lengthTolerance &&
+                             std::abs(len1Sq - avgLenSq) <= lengthTolerance &&
+                             std::abs(len2Sq - avgLenSq) <= lengthTolerance;
+
+  const bool orthogonal = std::abs(dot(col0, col1)) <= lengthTolerance &&
+                           std::abs(dot(col0, col2)) <= lengthTolerance &&
+                           std::abs(dot(col1, col2)) <= lengthTolerance;
+
+  if (!lengthsEqual || !orthogonal) {
+    return atlantis::Result<std::monostate, SceneExtractionError>::Err(
+        SceneExtractionError::NonConformalNormalTransform);
+  }
+  return atlantis::Result<std::monostate, SceneExtractionError>::Ok({});
+}
+
+// Plan 0019 Section P14: a direct, line-for-line C++ transcription of
+// lit_textured.slang's own fragmentMain() accumulation loop (P11) --
+// the texture-color multiply and the final clamp are deliberately NOT
+// part of this function (they are the caller's own concern, mirroring
+// exactly how the shader itself applies them only once, after this
+// accumulation, never per-light) -- this returns only the accumulated
+// per-fragment lighting contribution.
+Vec3 computeLambertianDiffuse(const Vec3& worldPosition, const Vec3& worldNormal, const FrameLightingData& lighting) {
+  const Vec3 N = normalize(worldNormal, length(worldNormal));
+  Vec3 accumulated{0.0f, 0.0f, 0.0f};  // no ambient term -- explicit, see D6
+
+  for (std::uint32_t i = 0; i < lighting.directionalLightCount; ++i) {
+    const FrameLightingData::DirectionalLightGpu& dl = lighting.directionalLights[i];
+    const Vec3 L{-dl.direction[0], -dl.direction[1], -dl.direction[2]};
+    const float ndotl = std::max(dot(N, L), 0.0f);
+    accumulated.x += dl.color[0] * dl.intensity * ndotl;
+    accumulated.y += dl.color[1] * dl.intensity * ndotl;
+    accumulated.z += dl.color[2] * dl.intensity * ndotl;
+  }
+
+  for (std::uint32_t j = 0; j < lighting.pointLightCount; ++j) {
+    const FrameLightingData::PointLightGpu& pl = lighting.pointLights[j];
+    const Vec3 toLight{pl.position[0] - worldPosition.x, pl.position[1] - worldPosition.y,
+                        pl.position[2] - worldPosition.z};
+    const float dist = std::max(length(toLight), kPointLightDistanceEpsilon);
+    const Vec3 L = normalize(toLight, dist);
+    const float ndotl = std::max(dot(N, L), 0.0f);
+    const float atten = std::clamp(1.0f - dist / pl.range, 0.0f, 1.0f);
+    accumulated.x += pl.color[0] * pl.intensity * ndotl * atten;
+    accumulated.y += pl.color[1] * pl.intensity * ndotl * atten;
+    accumulated.z += pl.color[2] * pl.intensity * ndotl * atten;
+  }
+
+  return accumulated;
 }
 
 }  // namespace atlantis::runtime

@@ -1,7 +1,7 @@
 #include <atlantis/log.h>
 #include <atlantis/runtime/bootstrap_config.h>
 
-#include "../fixture/material_demo_fixture.h"
+#include "../fixture/lighting_demo_fixture.h"
 #include "../support/pixel_diff.h"
 #include "../support/png_codec.h"
 #include "../support/provenance.h"
@@ -17,8 +17,8 @@
 #include <utility>
 
 // Standalone developer tool -- never CTest-registered, mirrors
-// textured_quad_main.cpp's own exact structure (Plan 0018 Milestone 16).
-// Spec 0018 D12's own two-phase golden capture process, matching every
+// material_demo_main.cpp's own exact structure (Plan 0019 Milestone
+// 10b). ADR-0042's own two-phase golden capture process, matching every
 // prior golden generator in this directory: this tool is only ever run
 // against an already-committed, clean working tree (Step 1 below), so a
 // golden it produces always has a real, resolvable source_revision
@@ -27,14 +27,14 @@
 namespace {
 
 using atlantis::image_regression::encodePng;
-using atlantis::image_regression::MaterialDemoFixture;
+using atlantis::image_regression::LightingDemoFixture;
 using atlantis::image_regression::parseEnvironmentProvenance;
 using atlantis::image_regression::parseGoldenProvenance;
 using atlantis::image_regression::PixelBuffer;
 using atlantis::image_regression::Provenance;
-using atlantis::image_regression::renderMaterialDemoFrame;
+using atlantis::image_regression::renderLightingDemoFrame;
 using atlantis::image_regression::serializeGoldenProvenance;
-using atlantis::image_regression::setUpMaterialDemoFixture;
+using atlantis::image_regression::setUpLightingDemoFixture;
 using atlantis::runtime::BootstrapConfig;
 
 struct GitCommandResult {
@@ -88,33 +88,31 @@ void printProvenanceFieldIfDifferent(const char* fieldName, const std::string& o
   }
 }
 
-// Mirrors main.cpp's/runtime_smoke_gpu_tests.cpp's own identical
-// population of the material_demo_scene's own cooked paths and the
-// MaterialKind::UnlitTextured built-in shader pair -- every value below
-// comes from a configure-time compile definition, never a CLI argument.
+// Mirrors material_demo_main.cpp's own identical population of the
+// lighting_demo_scene's own cooked paths and both built-in shader
+// pairs -- every value below comes from a configure-time compile
+// definition, never a CLI argument.
 [[nodiscard]] BootstrapConfig buildConfig() {
   BootstrapConfig config;
-  config.sceneArtifactPath = ATLANTIS_material_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_material_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_material_demo_scene_MANIFEST_PATH;
-  config.unlitTexturedVertexShaderSpirvPath = std::string(ATLANTIS_MATERIAL_DEMO_SHADER_DIR) + "/textured_quad.vert.spv";
+  config.sceneArtifactPath = ATLANTIS_lighting_demo_scene_ARTIFACT_PATH;
+  config.sceneMetadataPath = ATLANTIS_lighting_demo_scene_METADATA_PATH;
+  config.sceneDependencyManifestPath = ATLANTIS_lighting_demo_scene_MANIFEST_PATH;
+  config.unlitTexturedVertexShaderSpirvPath =
+      std::string(ATLANTIS_LIGHTING_DEMO_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath =
-      std::string(ATLANTIS_MATERIAL_DEMO_SHADER_DIR) + "/textured_quad.vert.refl.json";
+      std::string(ATLANTIS_LIGHTING_DEMO_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.refl.json";
   config.unlitTexturedFragmentShaderSpirvPath =
-      std::string(ATLANTIS_MATERIAL_DEMO_SHADER_DIR) + "/textured_quad.frag.spv";
+      std::string(ATLANTIS_LIGHTING_DEMO_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.frag.spv";
   config.unlitTexturedFragmentShaderReflectionPath =
-      std::string(ATLANTIS_MATERIAL_DEMO_SHADER_DIR) + "/textured_quad.frag.refl.json";
-  // Plan 0019 Section P6: MaterialDemoFixture's own widened
-  // realizePendingMaterials() call requires a real litTextured* trio
-  // too, even though material_demo_scene never realizes one.
+      std::string(ATLANTIS_LIGHTING_DEMO_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.frag.refl.json";
   config.litTexturedVertexShaderSpirvPath =
-      std::string(ATLANTIS_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.vert.spv";
+      std::string(ATLANTIS_LIGHTING_DEMO_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.vert.spv";
   config.litTexturedVertexShaderReflectionPath =
-      std::string(ATLANTIS_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.vert.refl.json";
+      std::string(ATLANTIS_LIGHTING_DEMO_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.vert.refl.json";
   config.litTexturedFragmentShaderSpirvPath =
-      std::string(ATLANTIS_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.spv";
+      std::string(ATLANTIS_LIGHTING_DEMO_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.spv";
   config.litTexturedFragmentShaderReflectionPath =
-      std::string(ATLANTIS_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.refl.json";
+      std::string(ATLANTIS_LIGHTING_DEMO_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.refl.json";
   return config;
 }
 
@@ -124,10 +122,10 @@ int main(int argc, char** argv) {
   atlantis::log::setMinLevel(atlantis::LogLevel::Info);
 
   if (argc != 2) {
-    ATLANTIS_LOG_ERROR("usage: atlantis_image_regression_material_demo_golden_generator <golden-name>");
+    ATLANTIS_LOG_ERROR("usage: atlantis_image_regression_lighting_demo_golden_generator <golden-name>");
     ATLANTIS_LOG_ERROR(
-        "  e.g.: atlantis_image_regression_material_demo_golden_generator "
-        "material_demo/material_demo_512x512_rgba8unorm");
+        "  e.g.: atlantis_image_regression_lighting_demo_golden_generator "
+        "lighting_demo/lighting_demo_512x512_rgba8unorm");
     return 2;
   }
   const std::string goldenName = argv[1];
@@ -185,17 +183,17 @@ int main(int argc, char** argv) {
   }
   const auto& environmentProvenance = environmentProvenanceResult.value();
 
-  auto fixtureResult = setUpMaterialDemoFixture(buildConfig());
+  auto fixtureResult = setUpLightingDemoFixture(buildConfig());
   if (fixtureResult.isErr()) {
-    ATLANTIS_LOG_ERROR("setUpMaterialDemoFixture() failed");
+    ATLANTIS_LOG_ERROR("setUpLightingDemoFixture() failed");
     return 1;
   }
-  MaterialDemoFixture fixture = std::move(fixtureResult.value());
+  LightingDemoFixture fixture = std::move(fixtureResult.value());
 
-  auto renderResult = renderMaterialDemoFrame(fixture);
+  auto renderResult = renderLightingDemoFrame(fixture);
   const auto finalWaitResult = fixture.device->waitIdle();
   if (renderResult.isErr()) {
-    ATLANTIS_LOG_ERROR("renderMaterialDemoFrame() failed");
+    ATLANTIS_LOG_ERROR("renderLightingDemoFrame() failed");
     return 1;
   }
   if (finalWaitResult.isErr()) {
@@ -214,8 +212,8 @@ int main(int argc, char** argv) {
   provenance.vulkanLoaderApiVersion = environmentProvenance.vulkanLoaderApiVersion;
   provenance.vulkanRequestedInstanceApiVersion = environmentProvenance.vulkanRequestedInstanceApiVersion;
   provenance.vulkanPhysicalDeviceApiVersion = environmentProvenance.vulkanPhysicalDeviceApiVersion;
-  provenance.extentWidth = atlantis::image_regression::kMaterialDemoExtentPixels;
-  provenance.extentHeight = atlantis::image_regression::kMaterialDemoExtentPixels;
+  provenance.extentWidth = atlantis::image_regression::kLightingDemoExtentPixels;
+  provenance.extentHeight = atlantis::image_regression::kLightingDemoExtentPixels;
   provenance.format = "Rgba8Unorm";
 
   const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;

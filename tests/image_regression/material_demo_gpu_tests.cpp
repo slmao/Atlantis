@@ -49,6 +49,17 @@ namespace {
       std::string(ATLANTIS_MATERIAL_DEMO_SHADER_DIR) + "/textured_quad.frag.spv";
   config.unlitTexturedFragmentShaderReflectionPath =
       std::string(ATLANTIS_MATERIAL_DEMO_SHADER_DIR) + "/textured_quad.frag.refl.json";
+  // Plan 0019 Section P6: MaterialDemoFixture's own widened
+  // realizePendingMaterials() call requires a real litTextured* trio
+  // too, even though material_demo_scene never realizes one.
+  config.litTexturedVertexShaderSpirvPath =
+      std::string(ATLANTIS_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.vert.spv";
+  config.litTexturedVertexShaderReflectionPath =
+      std::string(ATLANTIS_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.vert.refl.json";
+  config.litTexturedFragmentShaderSpirvPath =
+      std::string(ATLANTIS_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.spv";
+  config.litTexturedFragmentShaderReflectionPath =
+      std::string(ATLANTIS_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.refl.json";
   return config;
 }
 

@@ -1,0 +1,7 @@
+atlantis_scene_source_version: 3
+node_count: 4
+active_camera: 2
+node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/minimal_cube.mesh.txt material=materials/lit_textured_quad.material.txt
+node: node_id=2 parent=none position=0.0 0.0 5.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0
+node: node_id=3 parent=none position=0.0 0.0 0.0 rotation=0.5 -0.6 0.0 scale=1.0 1.0 1.0 light=directional color=0.6 0.7 1.0 intensity=1.2
+node: node_id=4 parent=none position=0.8 0.3 0.5 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=1.0 0.6 0.3 intensity=3.0 range=2.5

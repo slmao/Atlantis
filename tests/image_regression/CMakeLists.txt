@@ -43,6 +43,7 @@ add_executable(atlantis_image_regression_gpu_tests
   world_scene_loaded_gpu_tests.cpp
   textured_quad_gpu_tests.cpp
   material_demo_gpu_tests.cpp
+  lighting_demo_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_image_regression_gpu_tests
@@ -98,6 +99,20 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_material_demo_scene_METADATA_PATH="${ATLANTIS_material_demo_scene_METADATA_PATH}"
   ATLANTIS_material_demo_scene_MANIFEST_PATH="${ATLANTIS_material_demo_scene_MANIFEST_PATH}"
   ATLANTIS_MATERIAL_DEMO_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+  # Plan 0019 Section P6: MaterialDemoFixture's own widened
+  # realizePendingMaterials() call requires a real litTextured* trio too
+  # (material_demo_gpu_tests.cpp's own buildTestConfig()), even though
+  # material_demo_scene never actually realizes one.
+  ATLANTIS_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  # Plan 0019 Section P10/Milestone 10: the lighting_demo fixture's own
+  # real, cooked scene artifact/metadata/manifest paths and both built-in
+  # shader pairs' own output directories (LightingDemoFixture needs both,
+  # mirroring MaterialDemoFixture's own identical need above).
+  ATLANTIS_lighting_demo_scene_ARTIFACT_PATH="${ATLANTIS_lighting_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_lighting_demo_scene_METADATA_PATH="${ATLANTIS_lighting_demo_scene_METADATA_PATH}"
+  ATLANTIS_lighting_demo_scene_MANIFEST_PATH="${ATLANTIS_lighting_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_LIGHTING_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+  ATLANTIS_LIGHTING_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
 )
 
 # Plan 0012 Step 6: the asset-sourced GPU test case needs
@@ -105,11 +120,12 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
 # 0015 Section D11/Step 9: world_scene's own cooked artifact/metadata/
 # manifest likewise. Plan 0017 Milestone 3: textured_quad_left/
 # textured_quad_right likewise. Plan 0018 Milestone 16: material_demo_scene
+# likewise. Plan 0019 Section P10/Milestone 10: lighting_demo_scene
 # likewise.
 add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET}
   ${ATLANTIS_textured_quad_unorm_TARGET} ${ATLANTIS_textured_quad_srgb_TARGET}
   ${ATLANTIS_textured_quad_left_TARGET} ${ATLANTIS_textured_quad_right_TARGET}
-  ${ATLANTIS_material_demo_scene_TARGET})
+  ${ATLANTIS_material_demo_scene_TARGET} ${ATLANTIS_lighting_demo_scene_TARGET})
 
 # Same build-tree shader artifact set as the golden generator -- this
 # executable renders the identical fixture. WORKING_DIRECTORY above
@@ -119,7 +135,7 @@ add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TAR
 # instead precisely because they must resolve identically regardless of
 # which directory ctest (or a human) happens to invoke this executable
 # from.
-add_dependencies(atlantis_image_regression_gpu_tests minimal_mesh_shaders textured_quad_shaders)
+add_dependencies(atlantis_image_regression_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders)
 add_custom_command(TARGET atlantis_image_regression_gpu_tests POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_image_regression_gpu_tests>/shaders"

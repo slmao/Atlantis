@@ -14,6 +14,7 @@ enum class WorldError {
   NoCameraComponent,      // setActiveCamera() target has no Camera
   WrongWorld,             // handle's identity belongs to a different, live World instance
   NoRenderableComponent,  // getRenderable() target has no Renderable
+  NoLightComponent,       // getLight() target has no Light -- Spec 0019 D2
 };
 
 }  // namespace atlantis::world

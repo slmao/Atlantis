@@ -32,6 +32,8 @@ void appendU64LE(std::vector<std::byte>& out, std::uint64_t value) {
   switch (kind) {
     case MaterialKind::UnlitTextured:
       return 0;
+    case MaterialKind::LitTextured:
+      return 1;
   }
   return 0;
 }
@@ -98,6 +100,8 @@ atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMat
   const std::uint32_t kindField = readU32LE(bytes.data() + 12);
   if (kindField == 0) {
     decoded.kind = MaterialKind::UnlitTextured;
+  } else if (kindField == 1) {
+    decoded.kind = MaterialKind::LitTextured;
   } else {
     return ResultT::Err(MaterialArtifactDecodeError::UnknownMaterialKind);
   }

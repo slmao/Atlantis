@@ -24,6 +24,20 @@ std::vector<DescriptorBinding> texturedMaterialExpectedDescriptorContract() {
           DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
+// Plan 0019 Section P13: the same binding 0 appears twice, once per
+// stage that references it (ADR-0062 Decision 2's own fragment-stage
+// widening) -- validateDescriptorContractForStage()'s own real,
+// existing per-stage filtering (compile_and_validate.cpp) always scopes
+// this full, three-entry list down to just the entries whose own
+// .stage matches before ever calling validateDescriptorContract(), so
+// the repeated (0, 0) pair is never compared against itself ambiguously
+// in practice.
+std::vector<DescriptorBinding> litTexturedExpectedDescriptorContract() {
+  return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
+          DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
+          DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+}
+
 atlantis::Result<std::monostate, ContractMismatchError> validateDescriptorContract(
     const ReflectionMetadata& metadata, const std::vector<DescriptorBinding>& expected) {
   using ResultType = atlantis::Result<std::monostate, ContractMismatchError>;

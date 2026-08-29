@@ -3,9 +3,14 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <iterator>
+#include <vector>
+
 using atlantis::shader_system::ContractMismatchError;
 using atlantis::shader_system::DescriptorBinding;
 using atlantis::shader_system::DescriptorType;
+using atlantis::shader_system::litTexturedExpectedDescriptorContract;
 using atlantis::shader_system::minimalRendererExpectedDescriptorContract;
 using atlantis::shader_system::ReflectionMetadata;
 using atlantis::shader_system::ShaderStage;
@@ -95,4 +100,83 @@ TEST_CASE("validateDescriptorContract() rejects a UniformBuffer where the textur
   const auto result = validateDescriptorContract(metadata, texturedMaterialExpectedDescriptorContract());
   REQUIRE(result.isErr());
   REQUIRE(result.error() == ContractMismatchError::DescriptorTypeMismatch);
+}
+
+// Plan 0019 Section P13: litTexturedExpectedDescriptorContract()'s own
+// three-entry shape -- {0,0,UniformBuffer,Vertex}, {0,0,UniformBuffer,
+// Fragment}, {0,1,Sampler,Fragment}. Tested exactly the way the real
+// caller (compile_and_validate.cpp's own validateDescriptorContractForStage())
+// uses it: pre-scoped to one stage at a time via the identical
+// std::copy_if filter, never the full, unscoped three-entry list in one
+// call -- confirming the real usage pattern, not merely the function's
+// own isolated return shape.
+TEST_CASE("validateDescriptorContract() accepts litTexturedExpectedDescriptorContract()'s own vertex-scoped entry",
+          "[shader_system][descriptor_contract][light]") {
+  const auto metadata = metadataWithBindings({
+      DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
+  });
+  const std::vector<DescriptorBinding> full = litTexturedExpectedDescriptorContract();
+  std::vector<DescriptorBinding> vertexScoped;
+  std::copy_if(full.begin(), full.end(), std::back_inserter(vertexScoped),
+               [](const DescriptorBinding& b) { return b.stage == ShaderStage::Vertex; });
+  REQUIRE(vertexScoped.size() == 1);
+  const auto result = validateDescriptorContract(metadata, vertexScoped);
+  REQUIRE(result.isOk());
+}
+
+TEST_CASE("validateDescriptorContract() accepts litTexturedExpectedDescriptorContract()'s own fragment-scoped "
+          "two-entry match",
+          "[shader_system][descriptor_contract][light]") {
+  const auto metadata = metadataWithBindings({
+      DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
+      DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+  });
+  const std::vector<DescriptorBinding> full = litTexturedExpectedDescriptorContract();
+  std::vector<DescriptorBinding> fragmentScoped;
+  std::copy_if(full.begin(), full.end(), std::back_inserter(fragmentScoped),
+               [](const DescriptorBinding& b) { return b.stage == ShaderStage::Fragment; });
+  REQUIRE(fragmentScoped.size() == 2);
+  const auto result = validateDescriptorContract(metadata, fragmentScoped);
+  REQUIRE(result.isOk());
+}
+
+// Real, genuine negative cases -- not merely passing-case sanity checks
+// (mirrors Plan 0017's own empirical mutation-probe precedent for "does
+// this check actually check anything"): a fragment reflection that
+// never declares its own uniform-buffer reference fails, proving this
+// check is a real, executed gate.
+TEST_CASE("validateDescriptorContract() rejects a fragment reflection missing its own uniform-buffer reference "
+          "entirely (count mismatch) against the lit-textured fragment-scoped contract",
+          "[shader_system][descriptor_contract][light]") {
+  const auto metadata = metadataWithBindings({
+      DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+  });
+  const std::vector<DescriptorBinding> full = litTexturedExpectedDescriptorContract();
+  std::vector<DescriptorBinding> fragmentScoped;
+  std::copy_if(full.begin(), full.end(), std::back_inserter(fragmentScoped),
+               [](const DescriptorBinding& b) { return b.stage == ShaderStage::Fragment; });
+  REQUIRE(fragmentScoped.size() == 2);
+  const auto result = validateDescriptorContract(metadata, fragmentScoped);
+  REQUIRE(result.isErr());
+  REQUIRE(result.error() == ContractMismatchError::BindingCountMismatch);
+}
+
+TEST_CASE("validateDescriptorContract() rejects a fragment reflection whose uniform buffer is at the wrong "
+          "binding index (BindingNotFound) against the lit-textured fragment-scoped contract",
+          "[shader_system][descriptor_contract][light]") {
+  // Same binding COUNT (2) as the real contract, but binding 0's own
+  // uniform buffer is missing -- replaced by an unrelated binding 2 --
+  // so the size check passes and BindingNotFound is the real, specific
+  // reason this fails.
+  const auto metadata = metadataWithBindings({
+      DescriptorBinding{.set = 0, .binding = 2, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
+      DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+  });
+  const std::vector<DescriptorBinding> full = litTexturedExpectedDescriptorContract();
+  std::vector<DescriptorBinding> fragmentScoped;
+  std::copy_if(full.begin(), full.end(), std::back_inserter(fragmentScoped),
+               [](const DescriptorBinding& b) { return b.stage == ShaderStage::Fragment; });
+  const auto result = validateDescriptorContract(metadata, fragmentScoped);
+  REQUIRE(result.isErr());
+  REQUIRE(result.error() == ContractMismatchError::BindingNotFound);
 }

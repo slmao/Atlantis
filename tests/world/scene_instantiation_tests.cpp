@@ -25,6 +25,8 @@ using atlantis::world::Camera;
 using atlantis::world::EntityId;
 using atlantis::world::fromValidatedSceneData;
 using atlantis::world::kInvalidEntityId;
+using atlantis::world::Light;
+using atlantis::world::LightKind;
 using atlantis::world::Renderable;
 using atlantis::world::Transform;
 using atlantis::world::World;
@@ -105,7 +107,7 @@ constexpr const char* kNode1MeshPath = "meshes/scene_instantiation_node1.mesh.tx
 // camera. Values match the prior revision's own hand-built fixture
 // exactly, just authored as real scene source text instead.
 constexpr const char* kThreeNodeSceneSource =
-    "atlantis_scene_source_version: 2\n"
+    "atlantis_scene_source_version: 3\n"
     "node_count: 3\n"
     "active_camera: 3\n"
     "node: node_id=1 parent=none position=1.0 2.0 3.0 rotation=0.1 0.2 0.3 scale=1.0 1.0 1.0 "
@@ -187,7 +189,7 @@ TEST_CASE("fromValidatedSceneData() carries a node's material= reference into Re
   // and material= instantiates into a World entity whose Renderable
   // carries both AssetIds.
   const ValidatedSceneData scene = cookAndDecodeScene(
-      "atlantis_scene_source_version: 2\n"
+      "atlantis_scene_source_version: 3\n"
       "node_count: 1\n"
       "active_camera: none\n"
       "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -216,6 +218,44 @@ TEST_CASE("fromValidatedSceneData() leaves Renderable::materialAsset absent when
     REQUIRE(renderable.isOk());
     CHECK_FALSE(renderable.value().materialAsset.has_value());
   }
+}
+
+// Plan 0019 Milestone 4 / V6: a real cookScene() -> decodeScene() ->
+// fromValidatedSceneData() path produces a World entity with the
+// correct Light component -- not a hand-built ValidatedSceneData.
+TEST_CASE("fromValidatedSceneData() carries a node's light= declaration into World::Light",
+          "[world][scene][light]") {
+  const ValidatedSceneData scene = cookAndDecodeScene(
+      "atlantis_scene_source_version: 3\n"
+      "node_count: 2\n"
+      "active_camera: none\n"
+      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "light=directional color=0.2 0.4 0.6 intensity=1.5\n"
+      "node: node_id=2 parent=none position=1.0 2.0 3.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "light=point color=1.0 0.5 0.0 intensity=3.0 range=10.0\n");
+  World world = fromValidatedSceneData(scene);
+
+  const std::vector<EntityId> lights = world.lightEntities();
+  REQUIRE(lights.size() == 2);
+
+  const auto directional = world.getLight(lights[0]);
+  REQUIRE(directional.isOk());
+  CHECK(directional.value().kind == LightKind::Directional);
+  CHECK(directional.value().color.x == 0.2f);
+  CHECK(directional.value().color.y == 0.4f);
+  CHECK(directional.value().color.z == 0.6f);
+  CHECK(directional.value().intensity == 1.5f);
+
+  const auto point = world.getLight(lights[1]);
+  REQUIRE(point.isOk());
+  CHECK(point.value().kind == LightKind::Point);
+  CHECK(point.value().color.x == 1.0f);
+  CHECK(point.value().intensity == 3.0f);
+  CHECK(point.value().range == 10.0f);
+
+  // A light-only node carries no Renderable/Camera.
+  CHECK_FALSE(world.getRenderable(lights[0]).isOk());
+  CHECK_FALSE(world.getCamera(lights[0]).isOk());
 }
 
 TEST_CASE("fromValidatedSceneData() sets up the parent hierarchy correctly", "[world][scene]") {
@@ -275,7 +315,7 @@ TEST_CASE("fromValidatedSceneData() produces deterministic, repeatable EntityId 
 
 TEST_CASE("fromValidatedSceneData() leaves an empty active camera when the scene declares none", "[world][scene]") {
   constexpr const char* kPlainSceneSource =
-      "atlantis_scene_source_version: 2\n"
+      "atlantis_scene_source_version: 3\n"
       "node_count: 1\n"
       "active_camera: none\n"
       "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";

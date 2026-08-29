@@ -1,6 +1,7 @@
 #include <atlantis/asset_system/scene_source.h>
 
 #include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <system_error>
 
@@ -8,10 +9,11 @@ namespace atlantis::asset_system {
 
 namespace {
 
-// Plan 0018 Section P6: version 2 adds the optional material= token
-// (13-token node case, below). Version 1 is rejected outright by the
-// version-line check immediately below -- no dual-version reader.
-constexpr std::string_view kVersionLine = "atlantis_scene_source_version: 2";
+// Plan 0019 Section P3/P16: version 3 adds the optional light= token
+// (16/17-token node case, below). Version 2 (and version 1) are both
+// rejected outright by the version-line check immediately below -- no
+// dual-version reader.
+constexpr std::string_view kVersionLine = "atlantis_scene_source_version: 3";
 constexpr std::string_view kNodeCountPrefix = "node_count: ";
 constexpr std::string_view kActiveCameraPrefix = "active_camera: ";
 constexpr std::string_view kNodePrefix = "node: ";
@@ -38,6 +40,16 @@ constexpr std::string_view kMaterialPrefix = "material=";
 constexpr std::string_view kCameraFovYPrefix = "camera_fov_y=";
 constexpr std::string_view kCameraNearZPrefix = "camera_near_z=";
 constexpr std::string_view kCameraFarZPrefix = "camera_far_z=";
+
+// Spec 0019 D3/P2: light=<directional|point> color=<r> <g> <b>
+// intensity=<f> [range=<f>] -- a fifth, disjoint trailing-group shape,
+// 16 tokens total for directional (11 base + 5), 17 for point (11 + 6).
+constexpr std::string_view kLightPrefix = "light=";
+constexpr std::string_view kColorPrefix = "color=";
+constexpr std::string_view kIntensityPrefix = "intensity=";
+constexpr std::string_view kRangePrefix = "range=";
+constexpr std::string_view kDirectionalToken = "directional";
+constexpr std::string_view kPointToken = "point";
 
 // mesh_source.cpp's own established helpers, duplicated here rather
 // than shared -- both source files keep these file-local (anonymous
@@ -149,7 +161,8 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
       return ResultT::Err(SceneSourceParseError::FieldOrderMismatch);
     }
     const auto tokens = splitOnSpace(line.substr(kNodePrefix.size()));
-    if (tokens.size() != 11 && tokens.size() != 12 && tokens.size() != 13 && tokens.size() != 14) {
+    if (tokens.size() != 11 && tokens.size() != 12 && tokens.size() != 13 && tokens.size() != 14 &&
+        tokens.size() != 16 && tokens.size() != 17) {
       return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
     }
 
@@ -231,10 +244,104 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
         *cameraFields[f].second = value;
       }
       node.camera = camera;
+    } else if (tokens.size() == 16 || tokens.size() == 17) {
+      // Spec 0019 D3/P3: light=<directional|point> color=<r> <g> <b>
+      // intensity=<f> [range=<f>]. Value-domain checks (finite, [0,1]
+      // color, non-negative intensity, positive range) are grammar-level
+      // here, reusing InvalidComponentGroup -- the identical *kind* of
+      // defect the wrong-prefix checks below already represent (Spec
+      // 0019 D3's own "a distinct grammar-level error" framing, D11's
+      // own reuse list).
+      if (tokens[11].substr(0, kLightPrefix.size()) != kLightPrefix) {
+        return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
+      }
+      const std::string_view kindToken = tokens[11].substr(kLightPrefix.size());
+      DecodedLight light;
+      if (kindToken == kDirectionalToken) {
+        light.kind = DecodedLightKind::Directional;
+      } else if (kindToken == kPointToken) {
+        light.kind = DecodedLightKind::Point;
+      } else {
+        return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
+      }
+      // range= is mandatory for point (17 tokens) and forbidden for
+      // directional (16 tokens) -- the tokens.size() the branch above
+      // already dispatched on is the structural proof of this, restated
+      // here so a directional line naming 17 tokens (a malformed line
+      // whose own extra token is NOT range=, since the light kind
+      // determines what "one more token" could legally be) is still
+      // caught, not silently accepted as "close enough."
+      if (kindToken == kDirectionalToken && tokens.size() != 16) {
+        return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
+      }
+      if (kindToken == kPointToken && tokens.size() != 17) {
+        return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
+      }
+
+      if (tokens[12].substr(0, kColorPrefix.size()) != kColorPrefix) {
+        return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
+      }
+      float r = 0.0f, g = 0.0f, b = 0.0f;
+      if (!consumePrefixedFloat(tokens[12], kColorPrefix, r) || !parseFloatToken(tokens[13], g) ||
+          !parseFloatToken(tokens[14], b)) {
+        return ResultT::Err(SceneSourceParseError::MalformedNumber);
+      }
+      if (!std::isfinite(r) || r < 0.0f || r > 1.0f || !std::isfinite(g) || g < 0.0f || g > 1.0f ||
+          !std::isfinite(b) || b < 0.0f || b > 1.0f) {
+        return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
+      }
+      light.colorR = r;
+      light.colorG = g;
+      light.colorB = b;
+
+      float intensity = 0.0f;
+      if (!consumePrefixedFloat(tokens[15], kIntensityPrefix, intensity)) {
+        return ResultT::Err(SceneSourceParseError::MalformedNumber);
+      }
+      // Note: intensity >= 0.0f alone would incorrectly accept
+      // +Infinity (true under IEEE-754) -- the separate isfinite()
+      // check is load-bearing, not redundant with the range check.
+      if (!std::isfinite(intensity) || intensity < 0.0f) {
+        return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
+      }
+      light.intensity = intensity;
+
+      if (kindToken == kPointToken) {
+        float range = 0.0f;
+        if (!consumePrefixedFloat(tokens[16], kRangePrefix, range)) {
+          return ResultT::Err(SceneSourceParseError::MalformedNumber);
+        }
+        if (!std::isfinite(range) || range <= 0.0f) {
+          return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
+        }
+        light.range = range;
+      }
+
+      node.light = light;
     }
 
     parsed.nodes.push_back(std::move(node));
     ++lineIndex;
+  }
+
+  // Spec 0019 D3/finding 4: a whole-scene, post-node-collection check --
+  // never a per-node one, and a hard, structural error, never a silent,
+  // deterministic truncation. Checked before TrailingContent below, so a
+  // scene that is both over-cap and has trailing garbage reports the cap
+  // violation first, matching this function's own established "earlier
+  // checks take precedence" ordering throughout.
+  std::uint32_t directionalCount = 0;
+  std::uint32_t pointCount = 0;
+  for (const ParsedSceneNode& n : parsed.nodes) {
+    if (!n.light.has_value()) continue;
+    if (n.light->kind == DecodedLightKind::Directional) {
+      ++directionalCount;
+    } else {
+      ++pointCount;
+    }
+  }
+  if (directionalCount > 1 || pointCount > 4) {
+    return ResultT::Err(SceneSourceParseError::TooManyLights);
   }
 
   if (lineIndex != lines.size()) return ResultT::Err(SceneSourceParseError::TrailingContent);
@@ -282,6 +389,20 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
       out += std::string(kCameraFovYPrefix) + std::to_string(node.camera->fovYRadians) + ' ' +
              std::string(kCameraNearZPrefix) + std::to_string(node.camera->nearZ) + ' ' +
              std::string(kCameraFarZPrefix) + std::to_string(node.camera->farZ);
+    } else if (node.light.has_value()) {
+      out += ' ';
+      out += std::string(kLightPrefix) +
+             (node.light->kind == DecodedLightKind::Directional ? std::string(kDirectionalToken)
+                                                                  : std::string(kPointToken));
+      out += ' ';
+      out += std::string(kColorPrefix) + std::to_string(node.light->colorR) + ' ' +
+             std::to_string(node.light->colorG) + ' ' + std::to_string(node.light->colorB);
+      out += ' ';
+      out += std::string(kIntensityPrefix) + std::to_string(node.light->intensity);
+      if (node.light->kind == DecodedLightKind::Point) {
+        out += ' ';
+        out += std::string(kRangePrefix) + std::to_string(node.light->range);
+      }
     }
 
     out += '\n';

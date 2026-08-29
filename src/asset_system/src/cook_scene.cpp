@@ -191,6 +191,20 @@ atlantis::Result<std::monostate, SceneCookError> cookScene(const std::string& so
       node.camera = parsedNode.camera;
     }
 
+    // Spec 0019 D3: parseSceneSource() has already fully validated every
+    // light field (finite, value-domain) by the time cookScene() runs --
+    // this redundant re-check mirrors the identical, already-established
+    // camera/transform precedent immediately above (defense in depth,
+    // not dead code).
+    if (parsedNode.light.has_value()) {
+      if (!std::isfinite(parsedNode.light->colorR) || !std::isfinite(parsedNode.light->colorG) ||
+          !std::isfinite(parsedNode.light->colorB) || !std::isfinite(parsedNode.light->intensity) ||
+          !std::isfinite(parsedNode.light->range)) {
+        return ResultT::Err(SceneCookError::NonFiniteValue);
+      }
+      node.light = parsedNode.light;
+    }
+
     if (parsedNode.meshLogicalPath.has_value()) {
       const auto normalizedResult = normalizeLogicalPath(*parsedNode.meshLogicalPath);
       if (normalizedResult.isErr()) return ResultT::Err(SceneCookError::SourceParseFailed);

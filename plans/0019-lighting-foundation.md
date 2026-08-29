@@ -2661,3 +2661,259 @@ smaller finding set.** See this document's own "Human Review Approval"
 note, at the top of this document, for the resulting status change —
 this Plan's own **Status** field now reads `Approved / Ready for
 Implementation`.
+
+## Implementation Status Update (2026-08-29, pre-merge)
+
+[Implementation PR #96](https://github.com/slmao/Atlantis/pull/96) is
+**OPEN, not yet merged** — this section records the real, as-built
+state at the point Implementation reached code-complete; it is not a
+merge announcement (matching Plan 0020's own "Post-Merge Status Update"
+precedent in shape, but explicitly pre-merge here, since this Plan's
+own governance requires the Implementation PR to stay open pending
+separate human merge authorization).
+
+**All 11 Milestones landed, each its own atomic commit, in Plan order,
+plus one governance-fix commit and two disclosed, in-scope follow-up
+commits:**
+
+- `6f9d078` — governance fix: restored Spec 0020's own row in
+  `specs/README.md`, silently dropped by an earlier merge's own
+  conflict resolution (found during this Plan's own pre-Implementation
+  governance-gate verification, before any Milestone work began).
+- `299fc00` (M1) `World` `Light` component — `light.h` (new), `world.h`/
+  `.cpp`/`world_error.h` widened; 9 new `tests/world/light_tests.cpp`
+  cases plus a real C4062 positive/negative probe on the existing
+  `WorldError` canary switch.
+- `aa2673a` (M2) Scene grammar bump to source version 3, the `light=`
+  node; ~15 new grammar tests including the `TooManyLights` cap at and
+  over the boundary.
+- `a4d6fdc` (M3) Scene artifact byte layout (84 → 112-byte node stride,
+  the light slot between material and parent); a pinned-byte encode
+  test, decode-time re-validation via hand-corrupted bytes at exact
+  offsets, and `TooManyLights` at decode time.
+- `2603400` (M4) `fromValidatedSceneData()`'s own light-instantiation
+  block, proven via the real `cookScene()`→`decodeScene()`→
+  `fromValidatedSceneData()` path.
+- `5be3dbd` (M5) `MaterialKind::LitTextured` — `material_artifact.cpp`'s
+  `kindToField()` widened, a real C4062 probe; found and fixed a real,
+  pre-existing `material_source.cpp` bug (`serializeMaterialSource()`
+  unconditionally emitted `unlit_textured` regardless of `source.kind`)
+  in the same pass.
+- `aa7eb9c` (M6) `lit_textured.slang` (new), its own descriptor
+  contract, and the one-line `vulkan_device.cpp` `stageFlags` widening
+  (vertex-only → vertex|fragment) — the RHI-internal core of ADR-0062
+  Decision 2. Independently verified the real, compiled Slang
+  reflection JSON's own `CameraUniform` member offsets against this
+  Plan's own P7 table via a raw `slangc -reflection-json` probe: exact
+  match, no correction needed to either side.
+- `24f230e` (M7) `FrameLightingData` (176 bytes, `alignas(16)`, explicit
+  padding, full `static_assert` set), `extractFrameLightingData()`,
+  `checkConformalTransform()`, `computeLambertianDiffuse()` — every
+  hand-computed unit test independently derived from D6's own written
+  formula, never from calling the functions under test and comparing
+  output to itself.
+- `b2d9aba` (M8) Runtime integration — the shared `selectShaderPair()`
+  dispatch (no `default:` label, C4062-protected), the one-time
+  lighting snapshot (`lightingDataCaptured_`), `checkConformalTransform()`
+  gating strictly on `MaterialKind::LitTextured`, the camera Buffer
+  widened to 304 bytes, and the new `lighting_demo_scene`/
+  `lit_textured_quad` test-only assets. Found and fixed, in the same
+  commit, a real, previously-undisclosed gap in `material_metadata.cpp`
+  (below).
+- `ceefcdf`+`b333e76` (M10a + its own generator-tool prerequisite)
+  `lighting_demo_fixture.h`/`.cpp` and its full negative-test suite
+  (static-snapshot reverse proof at both the pixel and raw-byte level,
+  the non-conformal-transform skip proof, the wrong-shader-dispatch
+  proof, the D14 per-pixel cross-check against
+  `computeLambertianDiffuse()`) — landed with **no golden**, reviewable
+  as pure implementation, per ADR-0042's own two-phase process.
+- `f91f696` (M10b) The golden itself (`tests/image_regression/goldens/lighting_demo/`),
+  captured on the M10a/generator-tool commit
+  (`b333e76c4e896cfcd0e5fa47c635f841ea8d9416`, this golden's own
+  `source_revision`), human-reviewed and approved before landing (see
+  "Human confirmation" below); plus the golden-comparison test and the
+  direction-sign-error/point-attenuation-error negative tests that need
+  it.
+- `8b4aef8` A V17-closing follow-up: a dedicated GPU test proving
+  `rebuildMaterialsForFormatChange()` reconstructs a `LitTextured`
+  material's own Pipeline with the `lit_textured` shader pair after a
+  real color-format change — this exact scenario had no test anywhere
+  in the tree until this commit.
+- This section itself (M11) — `specs/README.md` updated to state code
+  complete, OPEN, not yet merged (never claimed merged).
+
+**Two real, disclosed findings, both fixed within this Plan's own
+scope, neither a change to any Approved public API/schema/error model/
+module boundary/GPU lifecycle/lighting formula:**
+
+1. **`material_metadata.cpp`'s own sidecar serializer/parser** — a
+   sibling of `material_source.cpp` this Plan's own Milestone 5 widened
+   for the *grammar* layer but missed for the *metadata sidecar* layer.
+   `serializeMaterialMetadata()` unconditionally emitted
+   `kind: unlit_textured` regardless of the real `MaterialKind`, and
+   `parseMaterialMetadata()` rejected `lit_textured` outright — together
+   making `loadMaterialAsset()` fail every real `LitTextured` material
+   with `MetadataArtifactMismatch` (artifact `kind=1` vs. metadata
+   `kind=UnlitTextured`). Found via a real `loadMaterialAsset()` failure
+   while first cooking `lit_textured_quad` (Milestone 8), not by
+   inspection — fixed mirroring `material_source.cpp`'s own
+   already-correct kind-selection pattern, with a new round-trip test
+   (`material_metadata_tests.cpp`) that is exactly the test that would
+   have caught it.
+2. **`vulkan_device.cpp`'s own hardcoded descriptor pool sizing**
+   (`maxSets = 4`, an earlier Plan's own resource-limit decision) —
+   surfaced while writing the V17-closing test above: two simultaneous
+   materials undergoing a format change (both the OLD batch and the NEW
+   candidate batch alive at once, by design, Spec 0018 D9) already
+   reaches `2*(N+1)` live descriptor sets for `N` materials plus one
+   fallback; `N=1` already reaches the limit exactly, `N=2` exceeds it,
+   regardless of `MaterialKind`. **Not fixed here** — a genuine,
+   pre-existing Vulkan-Backend scalability ceiling outside this Plan's
+   own scope (Lighting Foundation does not touch descriptor-pool
+   sizing); the V17 test uses exactly one material, matching the
+   pre-existing `UnlitTextured` format-rebuild test's own identical
+   shape, and this finding is disclosed here for a future Plan's own
+   consideration.
+
+**Verification Checklist (V1–V34): every item executed, not
+summarized.** Rather than editing the checklist's own checkboxes above
+in place (this repository's own established convention — see Plan
+0020's own identical, still-unchecked checklist, its real record living
+in its own "Post-Merge Status Update" prose instead, not in the
+checkbox glyphs) — the real result for every V-item:
+
+- V1–V12, V28, V29 (World `Light`, Scene grammar/artifact/`TooManyLights`/
+  `fromValidatedSceneData()`, `MaterialKind`, `lit_textured` shader/
+  descriptor contract, the `FrameLightingData` byte-layout/fixed-byte
+  proof, D6 math, `DegenerateLightDirection`, `checkConformalTransform()`,
+  `computeLambertianDiffuse()`'s own hand-computed half) — all
+  GPU-independent, all confirmed passing as part of Milestones 1–7's own
+  per-commit test runs, re-confirmed in the final full-suite run below.
+- V13, V14, V17 (RHI stage-visibility widening confirmed via a real
+  `lit_textured` GPU test; Runtime integration proven by
+  `lighting_demo_fixture.cpp`'s own real, shared-function call sites;
+  format-change rebuild confirmed for `LitTextured` specifically) — all
+  GPU-required, confirmed via Milestones 6/8/10's own GPU test runs and
+  the `8b4aef8` V17-closing commit.
+- V15, V16, V30 (static-snapshot boundary at both the pixel and raw-byte
+  level; non-conformal-transform skip) — confirmed via
+  `lighting_demo_gpu_tests.cpp`'s own dedicated test cases (Milestone
+  10a).
+- V18 — confirmed at Milestone 8 (first Runtime-integration point) and
+  again at final verification: `git diff main --quiet -- tests/image_regression/goldens/minimal_cube/
+  tests/image_regression/goldens/world_scene/ tests/image_regression/goldens/textured_quad/
+  tests/image_regression/goldens/material_demo/` reports no difference,
+  both configurations, throughout.
+- V19, V34 — the new `lighting_demo` golden captured on the clean
+  `b333e76` commit; Directional and Point contributions independently
+  visible (the asymmetric scene layout); the direction-sign-error and
+  point-attenuation-error negative tests (Milestone 10b) are the real,
+  isolated negative proof. **Mechanism note on V34's own "recorded as a
+  PR comment" wording:** human confirmation of the captured image was
+  obtained interactively, before commit 10(b) landed, matching this
+  item's own substance — but no PR existed yet at that point (PR
+  creation is this Plan's own explicit, final step, after code-complete
+  verification), so the confirmation could not literally be a PR
+  comment at the time; a comment recording that same approval is posted
+  on PR #96 itself as part of this Milestone.
+- V20, V21, V23 — fresh Debug and Release builds clean; `ctest -LE gpu`
+  754/754 Debug, 753/753 Release (the one-fewer-in-Release gap is the
+  same pre-existing, documented Debug-only `ATLANTIS_ASSERT` test Plan
+  0020's own registry entry already discloses); `ctest -L gpu` 45/45
+  both configurations; zero `VUID`/Validation Error/Validation Warning
+  across full verbose `ctest -L gpu` output, both configurations.
+- V22 — a fresh `ATLANTIS_BUILD_TESTS=OFF` configure+build: zero test
+  executables anywhere in the tree; `atlantis_runtime.exe` builds and
+  links. **Disclosed clarification, not a defect:** `lighting_demo_scene`/
+  `lit_textured_quad` (and `lit_textured_shaders`) DO still get declared
+  and cooked/compiled in this tree, exactly like `material_demo_scene`/
+  `unlit_textured_quad` already do today (both declared unconditionally
+  in `assets/CMakeLists.txt`, outside any `ATLANTIS_BUILD_TESTS` guard,
+  matching this Plan's own P10 instruction to mirror `material_demo_scene`'s
+  own placement exactly) — this Plan's own V22 wording ("none of them
+  exist in that tree at all") does not hold even for the pre-existing
+  `material_demo_scene` precedent, so this is a pre-existing Plan-
+  drafting imprecision, not a regression this Plan introduced. The
+  substantively real part of V22 — zero test *executables*, Runtime's
+  own default bootstrap scene (`world_scene`) unaffected — is confirmed.
+- V24 — `/w14062` C4062 probes real and executed: `kindToField()`'s
+  widened switch (Milestone 5, both positive and negative probe,
+  restored to an empty diff); `selectShaderPair()`'s own no-`default`
+  switch (Milestone 8, protected by `atlantis_runtime_host`'s own
+  already-existing `/w14062`, confirmed by inspection — its own
+  `ATLANTIS_CHECK_MSG` fail-fast fallback is unreachable in a build that
+  compiles clean); light extraction's own `LightKind` dispatch
+  (Milestone 7) is implemented as an `if`/`else` chain, not a `switch`
+  — no C4062 probe applies to it, confirmed by inspection of the actual
+  implementation shape.
+- V25 — re-confirmed at final verification: `Atlantis::World` links
+  `Atlantis::Core` + `Atlantis::AssetSystem` only; `Atlantis::AssetSystem`
+  links `Atlantis::Core` only.
+- V26 — `git diff main --check` clean across the whole branch.
+- V27 — **Pending, human-required.** A manual, interactive, windowed
+  run of `atlantis_runtime.exe` (Debug and Release), visually confirming
+  `world_scene` (Runtime's own unswitched default bootstrap scene)
+  renders identically to its own pre-Plan appearance, cannot be
+  performed by this Implementation session itself — flagged as the one
+  outstanding manual-verification item before merge.
+- V31, V32 — the direction-sign/point-attenuation negative tests
+  (Milestone 10b) and the wrong-shader-dispatch negative test
+  (Milestone 10a) each independently confirmed. **Disclosed mechanism
+  difference on V32:** implemented by forcing the realized material's
+  own `MaterialAssetData.kind` to `UnlitTextured` before realization
+  (so the real, unmodified `selectShaderPair()` itself makes the wrong
+  dispatch decision), rather than V32's own literally-suggested
+  mechanism (a test-only call to `realizeOneMaterialCandidate()` fed
+  swapped `unlitTextured*`/`litTextured*` arguments, bypassing
+  `selectShaderPair()` entirely). Both mechanisms prove the identical
+  conclusion (dispatch is load-bearing); the mechanism actually used
+  additionally exercises the real `selectShaderPair()` decision itself,
+  not merely a hand-swapped argument list — a deliberate, disclosed
+  Implementation-time test-design choice, not a contract change.
+- V33 — re-confirmed at final verification: a full-repository search
+  for `atlantis_scene_source_version: 2` finds only the one deliberate,
+  intentional negative-test literal in `scene_source_tests.cpp`; a
+  search for `record + 76`/`record + 80`/`record + 84` finds only the
+  new light-slot field reads at their own correct P4 offsets, zero
+  stale parent-slot references remain.
+
+**A centralized final code review**, focused specifically on the items
+named at the start of this task: the 176-byte CPU/Slang layout
+(genuinely identical, independently verified via raw `slangc` reflection
+— Milestone 6); padding initialization (V28's own fixed-byte test proves
+every padding region reads back zero); the static snapshot (V15/V30
+prove it is never accidentally updated, at both the pixel and raw-byte
+level); lit/unlit dispatch consistency (both `realizeOneMaterialCandidate()`
+and `rebuildMaterialsForFormatChange()` call the identical, shared
+`selectShaderPair()` — confirmed by direct source inspection, and now
+also GPU-tested for the rebuild path specifically by V17's own
+`8b4aef8` commit); a failed format change never draws with the old-format
+`Pipeline` (the format-change control flow itself — build-now/swap-only-
+after-`submit()`-succeeds — is untouched by this Plan's own edits,
+confirmed by direct re-reading of the surrounding code, only the
+`rebuildMaterialsForFormatChange()` call's own argument list was
+widened); the old GPU bundle destroyed only after the submit-safe point
+(same, unmodified); exactly one descriptor binding (confirmed,
+`vulkan_device.cpp`'s own `uniformBinding` construction untouched in
+every field except `stageFlags`); no silent light-count truncation
+(`extractFrameLightingData()`'s own `ATLANTIS_CHECK_MSG` fail-fast,
+strengthened with a defense-in-depth `continue` guard so the
+never-out-of-bounds guarantee holds even under a replaced, non-aborting
+failure handler); the lit normal-transform check never affecting the
+unlit path (gated strictly on `MaterialAssetData.kind == LitTextured`,
+confirmed in both `runtime_application.cpp` and
+`lighting_demo_fixture.cpp`); the fixture's genuine `RuntimeHost` reuse
+(confirmed — every real function `lighting_demo_fixture.cpp` needs is
+called directly, none reimplemented); and the new golden's own
+sufficiency to expose direction/attenuation/normal errors (confirmed —
+both deliberate-error negative tests genuinely fail comparison against
+it) — found no further defect requiring a fix beyond the two already
+disclosed above.
+
+**Pending, human-required items before this PR may be merged:**
+
+1. V27's own manual, interactive windowed verification (above).
+2. Final human review/approval of PR #96 itself.
+3. Explicit human instruction to merge — this session does not
+   self-approve or self-merge, per this repository's own standing
+   governance.

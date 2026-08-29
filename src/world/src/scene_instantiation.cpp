@@ -32,6 +32,16 @@ World fromValidatedSceneData(const atlantis::asset_system::ValidatedSceneData& s
           world.setRenderable(id, Renderable{n.renderable->meshAsset, n.renderable->materialAsset}).isOk(),
           "fromValidatedSceneData(): setRenderable() failed for a freshly-created entity");
     }
+    if (n.light.has_value()) {
+      Light light;
+      light.kind = n.light->kind == atlantis::asset_system::DecodedLightKind::Directional ? LightKind::Directional
+                                                                                            : LightKind::Point;
+      light.color = {n.light->colorR, n.light->colorG, n.light->colorB};
+      light.intensity = n.light->intensity;
+      light.range = n.light->range;
+      ATLANTIS_CHECK_MSG(world.setLight(id, light).isOk(),
+                          "fromValidatedSceneData(): setLight() failed for a freshly-created entity");
+    }
     byIndex.push_back(id);
   }
 

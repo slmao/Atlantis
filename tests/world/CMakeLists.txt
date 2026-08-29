@@ -5,6 +5,7 @@ add_executable(atlantis_world_tests
   update_transforms_tests.cpp
   camera_tests.cpp
   renderable_tests.cpp
+  light_tests.cpp
   traversal_determinism_tests.cpp
   module_boundary_tests.cpp
   scene_instantiation_tests.cpp

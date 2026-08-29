@@ -17,6 +17,19 @@ constexpr std::string_view kTextureAssetPrefix = "texture_asset: ";
 constexpr std::size_t kExpectedLineCount = 5;
 
 constexpr std::string_view kKindUnlitTextured = "unlit_textured";
+// Plan 0019 Section P5/D11: MaterialKind widened to a second
+// enumerator -- this sidecar's own "kind:" field must accept/emit both
+// values, mirroring material_source.cpp's own identical widening
+// exactly. A real, previously-undisclosed gap this Plan's own
+// Milestone 5 missed: this metadata-sidecar serializer/parser is a
+// SIBLING of material_source.cpp's grammar, not the same file, and
+// still hardcoded a single-enumerator vocabulary (this file's own former
+// comment, "MaterialKind is a closed, single-enumerator vocabulary this
+// round (ADR-0059 D2/D15)", is now stale and removed below) -- found via
+// a real loadMaterialAsset() failure (MetadataArtifactMismatch) while
+// building this Plan's own lighting_demo_scene fixture, not by
+// inspection alone.
+constexpr std::string_view kKindLitTextured = "lit_textured";
 
 // Duplicated from texture_metadata.cpp's own identical helpers rather
 // than shared, matching that file's own file-local, not-exported
@@ -82,6 +95,8 @@ atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std
   if (!matchField(lines[3], kKindPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (value == kKindUnlitTextured) {
     metadata.kind = MaterialKind::UnlitTextured;
+  } else if (value == kKindLitTextured) {
+    metadata.kind = MaterialKind::LitTextured;
   } else {
     return ResultT::Err(MetadataParseError::MalformedValue);
   }
@@ -103,7 +118,7 @@ std::string serializeMaterialMetadata(const MaterialMetadata& metadata) {
   out += metadata.sourceLogicalPath;
   out += '\n';
   out += kKindPrefix;
-  out += kKindUnlitTextured;  // MaterialKind is a closed, single-enumerator vocabulary this round (ADR-0059 D2/D15)
+  out += (metadata.kind == MaterialKind::UnlitTextured ? kKindUnlitTextured : kKindLitTextured);
   out += '\n';
   out += kTextureAssetPrefix;
   out += toHexString(metadata.textureAsset);

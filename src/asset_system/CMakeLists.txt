@@ -41,6 +41,21 @@ target_link_libraries(atlantis_asset_system
     atlantis_compiler_warnings
 )
 
+# Plan 0019 Section P5: real, compile-time enum-exhaustiveness protection
+# for material_artifact.cpp's own kindToField() no-default switch over
+# MaterialKind requires MSVC's C4062 ("enumerator ... not handled"),
+# which is off by default even at /W4 -- matching
+# src/runtime/CMakeLists.txt's own already-established /w14062
+# precedent (classifyPresentationError()/classifySubmitError()) and
+# src/tools/asset_cooker/CMakeLists.txt's own identical pattern. Scoped
+# to this target only -- cmake/CompilerWarnings.cmake (shared by every
+# target in this repository) is deliberately not touched. The
+# repository's existing, already-present /WX promotes C4062 to a hard
+# build error once this target opts into seeing it.
+target_compile_options(atlantis_asset_system PRIVATE
+  $<$<CXX_COMPILER_ID:MSVC>:/w14062>
+)
+
 # Plan 0012 Section D4/D9: declares one static mesh asset for
 # atlantis_asset_cooker to process at build time, mirroring
 # atlantis_add_slang_shader_pair()'s own stamp/BYPRODUCTS pattern

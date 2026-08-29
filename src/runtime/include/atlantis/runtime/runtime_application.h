@@ -114,6 +114,13 @@ class RuntimeApplication {
   // Material/Texture/Buffer and before Presentation/Device.
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap_;
   std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer_;
+  // Plan 0019 Section P9: declared immediately after cameraBuffer_
+  // (ownership-adjacent members grouped together) -- guards the
+  // one-time frame lighting data capture inside runFrame(). No new GPU
+  // resource, no new destructor concern: cameraBuffer_'s own existing
+  // .reset() in shutdown() already covers the tail bytes this Plan
+  // appends into it; nothing new is separately owned by this flag.
+  bool lightingDataCaptured_ = false;
   std::unique_ptr<atlantis::rhi::Texture> depthTexture_;  // lazy: first frame's extent-change check
 
   // Plan 0018 Section P10 (Human Review Approval item 1): replaces the
@@ -188,6 +195,13 @@ class RuntimeApplication {
   atlantis::rhi::VertexInputLayout unlitTexturedVertexInputLayout_;
   std::vector<std::uint32_t> unlitTexturedVertexSpirv_;
   std::vector<std::uint32_t> unlitTexturedFragmentSpirv_;
+  // Plan 0019 Section P6/P11: the third, MaterialKind::LitTextured
+  // built-in shader pair's own resolved layout/SPIR-V -- mirrors
+  // unlitTexturedVertexInputLayout_/unlitTexturedVertexSpirv_/
+  // unlitTexturedFragmentSpirv_'s own role exactly.
+  atlantis::rhi::VertexInputLayout litTexturedVertexInputLayout_;
+  std::vector<std::uint32_t> litTexturedVertexSpirv_;
+  std::vector<std::uint32_t> litTexturedFragmentSpirv_;
 };
 
 [[nodiscard]] atlantis::Result<RuntimeApplication, RuntimeInitError> createRuntimeApplication(

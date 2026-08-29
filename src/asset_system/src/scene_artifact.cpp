@@ -118,6 +118,14 @@ std::vector<std::byte> encodeSceneArtifact(const std::vector<ValidatedSceneNode>
     appendU32LE(out, hasMaterial ? 1U : 0U);
     appendU64LE(out, hasMaterial ? *node.renderable->materialAsset : 0U);
 
+    appendU32LE(out, node.light.has_value() ? 1U : 0U);
+    appendU32LE(out, node.light.has_value() ? static_cast<std::uint32_t>(node.light->kind) : 0U);
+    appendFloatLE(out, node.light.has_value() ? node.light->colorR : 0.0f);
+    appendFloatLE(out, node.light.has_value() ? node.light->colorG : 0.0f);
+    appendFloatLE(out, node.light.has_value() ? node.light->colorB : 0.0f);
+    appendFloatLE(out, node.light.has_value() ? node.light->intensity : 0.0f);
+    appendFloatLE(out, node.light.has_value() ? node.light->range : 0.0f);
+
     appendU32LE(out, parents[i].has_value() ? 1U : 0U);
     appendU32LE(out, parents[i].has_value() ? static_cast<std::uint32_t>(*parents[i]) : 0U);
   }
@@ -218,8 +226,31 @@ atlantis::Result<DecodedSceneArtifact, SceneArtifactDecodeError> decodeSceneArti
                                                             : std::optional<AssetId>(std::nullopt)};
     }
 
-    const std::uint32_t hasParentFlag = readU32LE(record + 76);
-    const std::uint32_t parentIndex = readU32LE(record + 80);
+    // Spec 0019 D3/P4: light slot, inserted after material, before
+    // parent -- independently re-validated here, never trusting the
+    // cooker (parseSceneSource()'s own already-performed check).
+    const std::uint32_t hasLightFlag = readU32LE(record + 76);
+    const std::uint32_t lightKindRaw = readU32LE(record + 80);
+    const float colorR = readFloatLE(record + 84);
+    const float colorG = readFloatLE(record + 88);
+    const float colorB = readFloatLE(record + 92);
+    const float intensity = readFloatLE(record + 96);
+    const float range = readFloatLE(record + 100);
+    if (hasLightFlag != 0) {
+      if (lightKindRaw != 0 && lightKindRaw != 1) return ResultT::Err(SceneArtifactDecodeError::NonFiniteValue);
+      const bool isPoint = lightKindRaw == 1;
+      if (!std::isfinite(colorR) || colorR < 0.0f || colorR > 1.0f || !std::isfinite(colorG) || colorG < 0.0f ||
+          colorG > 1.0f || !std::isfinite(colorB) || colorB < 0.0f || colorB > 1.0f || !std::isfinite(intensity) ||
+          intensity < 0.0f || (isPoint && (!std::isfinite(range) || range <= 0.0f)) ||
+          (!isPoint && range != 0.0f)) {
+        return ResultT::Err(SceneArtifactDecodeError::NonFiniteValue);
+      }
+      node.light = DecodedLight{isPoint ? DecodedLightKind::Point : DecodedLightKind::Directional, colorR, colorG,
+                                 colorB, intensity, isPoint ? range : 0.0f};
+    }
+
+    const std::uint32_t hasParentFlag = readU32LE(record + 104);
+    const std::uint32_t parentIndex = readU32LE(record + 108);
     std::optional<std::size_t> parent;
     if (hasParentFlag != 0) {
       if (parentIndex >= nodeCount) return ResultT::Err(SceneArtifactDecodeError::OutOfRangeParentIndex);
@@ -228,6 +259,23 @@ atlantis::Result<DecodedSceneArtifact, SceneArtifactDecodeError> decodeSceneArti
 
     decoded.nodes.push_back(std::move(node));
     decoded.parents.push_back(parent);
+  }
+
+  // Spec 0019 D3/finding 4: the light-count cap, independently
+  // re-counted here -- never trusting the cooker's own already-performed
+  // check.
+  {
+    std::uint32_t directionalCount = 0;
+    std::uint32_t pointCount = 0;
+    for (const auto& node : decoded.nodes) {
+      if (!node.light.has_value()) continue;
+      if (node.light->kind == DecodedLightKind::Directional) {
+        ++directionalCount;
+      } else {
+        ++pointCount;
+      }
+    }
+    if (directionalCount > 1 || pointCount > 4) return ResultT::Err(SceneArtifactDecodeError::TooManyLights);
   }
 
   // Step 6: cycle re-check, array-index-based -- safe now that every
