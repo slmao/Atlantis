@@ -400,15 +400,26 @@ prerequisite Lighting Foundation (Spec 0019, below) depends on, Spec
 [PR #93](https://github.com/slmao/Atlantis/pull/93)) is also
 implemented — see [specs/README.md](specs/README.md). Lighting
 Foundation itself (`World`'s new `Light` component, an optional Scene
-light node, `Material`'s new `LitTextured` kind, a one-time-captured
-frame lighting snapshot, and a `lit_textured` shader applying exact
-Lambertian diffuse shading — Spec 0019, `Approved`, implemented and
-merged via [PR #96](https://github.com/slmao/Atlantis/pull/96)) is also
-implemented — see [specs/README.md](specs/README.md). PBR, shadows,
-image-based lighting, and post-processing extensions beyond it,
-mipmap/compression/streaming/bindless texture support, a distributable
-cross-session Asset Catalog, and Android/iOS all remain unimplemented —
-see [src/README.md](src/README.md).
+light node, `Material`'s new `LitTextured` kind, a frame lighting
+snapshot, and a `lit_textured` shader applying exact Lambertian diffuse
+shading — Spec 0019, `Approved`, implemented and merged via
+[PR #96](https://github.com/slmao/Atlantis/pull/96)) is also implemented
+— see [specs/README.md](specs/README.md). That snapshot's own original
+"captured once per session, never updated again" limitation has since
+been fixed: Dynamic Frame Uniform Updates Foundation (Spec 0022,
+`Approved`, corrected design, implemented and merged via
+[PR #106](https://github.com/slmao/Atlantis/pull/106)) re-extracts and
+republishes the complete 176-byte payload from `World`'s live state
+every successful frame, so `World::setLight()` and a Light's own local/
+parent `Transform` changes are now reflected on the next successful
+frame — with no new RHI API and no new synchronization primitive; a
+first-draft proposal for a new RHI wait method was found unnecessary
+during that Spec's own governance gate and never implemented
+([ADR-0065](adr/0065-explicit-pre-write-submission-drain-for-frame-uniform-safety.md),
+`Rejected`). PBR, shadows, image-based lighting, and post-processing
+extensions beyond it, mipmap/compression/streaming/bindless texture
+support, a distributable cross-session Asset Catalog, and Android/iOS
+all remain unimplemented — see [src/README.md](src/README.md).
 
 Android and iOS remain specified architecturally only (not implemented);
 Vulkan Backend's Android WSI path is likewise not implemented. Headless
