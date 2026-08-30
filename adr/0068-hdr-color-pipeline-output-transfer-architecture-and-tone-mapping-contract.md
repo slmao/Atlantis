@@ -1,9 +1,17 @@
 # ADR 0068: HDR Color Pipeline & Output Transfer Architecture and Tone-Mapping Contract
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-31
-- **Deciders:** slmao (repository maintainer)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-31 as part of
+  [specs/0024-hdr-color-pipeline-output-transfer-foundation.md](../specs/0024-hdr-color-pipeline-output-transfer-foundation.md)'s
+  own Human Review Approval.
 - **Related Spec:** [specs/0024-hdr-color-pipeline-output-transfer-foundation.md](../specs/0024-hdr-color-pipeline-output-transfer-foundation.md)
+  (`Approved`)
+- **Acceptance Record (2026-08-31):** Accepted by Human Review as part
+  of Spec 0024's own Human Review Approval (2026-08-31, commit
+  `9771f94`). Does not change this ADR's own Decision, Consequences, or
+  Alternatives Considered above.
 
 ## Context
 
@@ -235,8 +243,12 @@ no branch on which). This directly continues
 headless rendering share the same Renderer/RHI stack"*. Both passes
 are declared, compiled, and executed by the **same, single,
 unmodified** `RenderGraphBuilder::compile()`/`render_graph::execute()`
-call pair `Renderer::drawFrame()` already makes once per frame — no ad
-hoc submit, no bypass of RenderGraph, and `RenderGraphBuilder`'s own
+call pair `Renderer::drawFrame()` already makes once per frame,
+recording both passes into the one `CommandList` the caller already
+submits exactly once per frame — `Renderer` still never calls
+`Device::submit()`/`Presentation::present()` itself (ADR-0022,
+unchanged); no ad hoc submit, no bypass of RenderGraph, and
+`RenderGraphBuilder`'s own
 public surface (`declarePass`/`declareResource`/`reads`/`writes`/
 `setExecute`/`compile`) needs **zero change**: it is already fully
 general for an N-pass graph (Spec 0005's own original design), and its

@@ -1,10 +1,18 @@
 # Spec: HDR Color Pipeline & Output Transfer Foundation
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-08-31
-- **Related Plan(s):** None yet — this Spec must reach `Approved` first
-- **Related ADR(s):** [ADR-0068](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md) (`Proposed`)
+- **Related Plan(s):** None yet — Plan 0024 not yet drafted
+- **Related ADR(s):** [ADR-0068](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md) (`Accepted`)
+- **Human Review Approval (2026-08-31):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
+  git-identified maintainer) on 2026-08-31, accepting this document's
+  own "Decisions for Human Review" (D1–D10) in full, as finalized in
+  commit `9771f94` (the two review rounds this PR itself records — see
+  "Review History" below). Accepting ADR-0068 (`Proposed` →
+  `Accepted`) in the same pass. **This approval authorizes drafting
+  Plan 0024 only, once PR #113 merges — not any Implementation.**
 
 ## Summary
 
@@ -193,7 +201,7 @@ defeat the entire purpose of the new intermediate.
 ## Architectural Impact
 
 **Yes** — one ADR, [ADR-0068](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md)
-(`Proposed`), covering all of it as a single, tightly-coupled decision:
+(`Accepted`), covering all of it as a single, tightly-coupled decision:
 a new RHI resource type with `Result`-based (never `ATLANTIS_CHECK`)
 capability failure semantics, three new/overloaded `CommandList`
 methods, two closed output-transform shader/Pipeline variants selected
@@ -243,22 +251,34 @@ reject; formulas and full rationale live once, in ADR-0068.
   values at several inputs spanning negative, below-`1.0`, exactly-
   `1.0`, and well-above-`1.0`; a shader-reflection-vs-C++-layout
   cross-check for `HdrColorTarget`'s own format/usage and both new
-  descriptor contracts (D4).
-- **Headless/GPU integration:**
-  - Initial `HdrColorTarget` creation/resize, including the new
-    capability check (D1).
-  - **A real GPU test injecting an unsupported-format condition and
-    confirming `Result::Err(FormatFeaturesUnsupported)` is returned** —
-    not merely code-inspected (D1).
+  descriptor contracts (D4). **The `FormatFeaturesUnsupported`
+  classification (D1) is unit-tested against synthetic
+  `VkFormatFeatureFlags` inputs (both bits present, one missing, both
+  missing) — a pure decision-function test, never a real GPU or a
+  fabricated "this hardware lacks the format" condition**, which no
+  real device this Spec's own test hardware presents can genuinely
+  exhibit.
+- **Headless/GPU integration** (positive capability and the full
+  render path only — never a manufactured negative-hardware
+  condition):
+  - Initial `HdrColorTarget` creation/resize on real hardware,
+    confirming the capability check's own positive path succeeds
+    (D1).
   - The two-pass RenderGraph compiles and executes without a Vulkan
     Validation Layers warning/error on all three existing
     `MaterialKind`s, both windowed and offscreen origins, **under both
     final-target format classes** (a real `*_Unorm` target and a real
     `*_Srgb` target — two real GPU runs, not one, D4).
-  - **A real pixel-equivalence test**: the same linear input through
-    the `*_Unorm` explicit-OETF path and the `*_Srgb` hardware-OETF
-    path produce the same displayed result (D4) — the two encode
-    mechanisms are proven equivalent, not merely asserted.
+  - **A real display-equivalence test, with a defined, non-zero
+    tolerance** (not ADR-0042's own zero-tolerance golden policy, which
+    governs a different comparison — a fixed reference image on one
+    known GPU/driver, not two live-computed paths against each other):
+    the same linear input through the `*_Unorm` explicit-OETF path and
+    the `*_Srgb` hardware-OETF path must match within that tolerance —
+    a real GPU's own fixed-function sRGB encode is not guaranteed
+    byte-identical to a shader-computed piecewise formula across
+    vendors; the exact tolerance value is an Implementation-time
+    measurement, not asserted here.
   - A real, above-`1.0`-input pixel comparison proving the tone-map
     curve actually rolled off versus the pre-Spec behavior.
   - A real N=6 descriptor-pool stress test re-confirming D6's own
@@ -314,11 +334,9 @@ reject; formulas and full rationale live once, in ADR-0068.
 
 ## Review History
 
-Two centralized reviews, both on PR #113, checked every recommendation
-against real, current code before revising it in place — full
-rationale lives once, in ADR-0068's own text and Consequences, not
-restated here. **No correction from either round is self-approved** —
-Spec status stays `In Review`, ADR-0068 stays `Proposed`.
+Three passes on PR #113, all before this Spec's own Human Review
+Approval above — full rationale lives once, in ADR-0068's own text and
+Consequences, not restated here.
 
 - **Round 1 (2026-08-31):** established `HdrColorTarget` inherits
   neither `RenderTarget` nor `SampledTexture` (Guard 2/`format()`-type
@@ -339,3 +357,12 @@ Spec status stays `In Review`, ADR-0068 stays `Proposed`.
   looser "strictly less for all `N`" claim; made `HdrColorTarget`'s
   resource contract and the fullscreen-triangle draw's own persistent
   `Buffer`/`Sampler`/Pipeline ownership fully explicit.
+- **Round 3 (2026-08-31):** verified all twelve final decisions and the
+  verification boundary against the then-current documents and found
+  one real gap — the format-capability negative-path test moved from a
+  real-GPU condition (unreachable on conformant hardware) to a
+  GPU-independent synthetic classification test, with real GPU coverage
+  scoped to the positive path only; the `*_Unorm`/`*_Srgb`
+  display-equivalence test now states a defined, non-zero tolerance
+  rather than exact equality. Human Review Approval recorded
+  immediately after.
