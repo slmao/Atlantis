@@ -209,125 +209,62 @@ vertex to fragment stage anywhere in this codebase yet.
   entities are expected to be common — a real, disclosed, open
   alternative, not foreclosed by this ADR.
 
-## Accepted Amendment — 2026-08-30
+## Proposed Amendment — 2026-08-30
 
-**Status of this section:** proposed during
-[Spec 0023](../specs/0023-pbr-material-foundation.md)'s own centralized
-final review (2026-08-30). **Formally accepted by Human Review on
-2026-08-30** — see "Human Review — Amendment Acceptance (2026-08-30)"
-immediately below. **Does not itself change this ADR's own top-level
-Status** (`Accepted`, unchanged) or rewrite any of the Decision/
-Consequences/Alternatives Considered text above — all of it is
-preserved verbatim, exactly matching this codebase's own established
-amendment pattern (ADR-0041's/ADR-0042's own prior Accepted Amendments).
-Recorded here, on this ADR, rather than on ADR-0067, because the shared
-Camera/Lighting uniform buffer this amendment extends is this ADR's own
-decision to begin with — not a decision that belongs to whichever later
-Material kind happens to need one more field from it.
+**Status:** proposed during [Spec 0023](../specs/0023-pbr-material-foundation.md)
+(`In Review`)'s own drafting/review; **not yet accepted — pending Human
+Review alongside Spec 0023 and ADR-0067.** Does not change this ADR's
+own top-level Status (`Accepted`) or any text above, which is preserved
+verbatim.
 
-### Human Review — Amendment Acceptance (2026-08-30)
+**What it does.** `PbrDirectLit` needs the camera's own world-space
+position, which this buffer does not carry. This amendment authorizes
+appending a **third, separate, tail-only struct** after the existing
+two — never widening either of them:
 
-**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
-Approval recorded 2026-08-30, as part of
-[specs/0023-pbr-material-foundation.md](../specs/0023-pbr-material-foundation.md)'s
-own Human Review Approval, in the same pass as
-[ADR-0067](0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)
-(`Proposed` → `Accepted`) — the two were not independently approvable;
-see ADR-0067's own Consequences for that stated dependency. The
-amendment below is accepted exactly as specified, bounded by the two
-explicit conditions stated (existing 304-byte region's own layout never
-altered; no existing shader ever required to change source), each
-verified against real code during that same final review round (this
-ADR's own "What prompted this amendment" section below). No further
-Human Review is pending for this amendment.
+```
+offset   0..127   CameraMatrices              128 bytes -- UNCHANGED
+offset 128..303   FrameLightingData           176 bytes -- UNCHANGED
+offset 304..319   CameraWorldPositionData      16 bytes -- NEW
+total buffer size                            = 320 bytes
+```
 
-### What prompted this amendment
+```cpp
+struct alignas(16) CameraWorldPositionData {
+  float x, y, z;        // offset 0 (buffer offset 304), 12 bytes
+  float _pad = 0.0f;    // offset 12 (buffer offset 316), 4 bytes, explicit
+};                        // sizeof == 16
+```
 
-Spec 0023 (PBR Material Foundation)'s own BRDF needs the camera's own
-world-space position, which no shader in this codebase has ever had —
-this ADR's own Decision above defines the shared uniform buffer's exact
-128 (Camera) + 176 (Lighting) = 304-byte layout, but names no mechanism
-for a later Material kind to add one more, frame-scoped field to it
-without either reopening this ADR's own committed layout or inventing
-an entirely separate buffer/binding. Real evidence, gathered during
-Spec 0023's own centralized final review, closes this cleanly:
-`extractCameraMatrices()`
-(`src/runtime/src/scene_extraction.cpp:107`) already computes the exact
-value needed (`eye`, the camera's world position) as a local
-intermediate, currently discarded; and
-`VulkanCommandList::bindUniformBuffer()`
-(`src/vulkan_backend/src/vulkan_command_list.cpp:250`) already binds
-this buffer with `bufferInfo.range = VK_WHOLE_SIZE`, the exact real
-mechanism that already lets `UnlitTextured`'s 128-byte
-`CameraUniform` and `LitTextured`'s 304-byte `CameraUniform` safely
-share one physical buffer today, each reading only its own declared
-prefix, with zero coordination between them.
+`CameraMatrices` and `FrameLightingData` keep their exact existing
+sizes, offsets, and internal layouts — this amendment touches neither.
+Confirmed by real evidence, not asserted: `extractCameraMatrices()`
+(`scene_extraction.cpp:107`) already computes the exact value needed
+(`eye`) as a discarded local; `VulkanCommandList::bindUniformBuffer()`
+binds this buffer with `bufferInfo.range = VK_WHOLE_SIZE`
+(`vulkan_command_list.cpp:250`) — the same mechanism that already lets
+`textured_quad.slang` (real, unmodified, reflects a 128-byte block) and
+`lit_textured.slang` (real, unmodified, reflects a 304-byte block) share
+this buffer today, each reading only its own declared prefix, unaware of
+what follows it. A real `slangc` compile of a candidate
+`pbr_direct_lit.slang` declaring the full 320-byte struct reflects
+`cameraWorldPosition` at offset 304 and a total block size of 320, on
+both stages.
 
-### Amendment
+**Conditions, both required:** (1) the existing 304-byte region's
+layout is never altered, reordered, or reinterpreted; (2) a shader that
+does not need the new field declares only its own existing prefix and
+is never required to change source. Only `pbr_direct_lit.slang`
+declares the full 320-byte struct; `textured_quad.slang`/
+`lit_textured.slang` are untouched.
 
-**A later Material kind may append new, trailing fields after the
-existing 304-byte Camera+Lighting region, growing the shared buffer's
-own total size — never inserted between `CameraMatrices` and
-`FrameLightingData` — under two conditions, both real, structural
-requirements, not guidelines:**
+**Scope.** Authorizes exactly this one field. A further future
+extension is its own future Spec/ADR decision under the same two
+conditions, not pre-authorized here.
 
-1. **The existing 304-byte region's own internal layout is never
-   altered, reordered, or reinterpreted** — every field, every offset
-   relative to its own struct's start, `CameraMatrices`'s own first 128
-   bytes and `FrameLightingData`'s own 176 bytes, stays exactly as this
-   ADR's own Decision above already states.
-2. **Every shader that does not need a newly-appended field continues
-   to declare only its own existing prefix of the buffer and is never
-   required to change source** — relying on `VK_WHOLE_SIZE`'s own
-   existing binding contract (above), the same mechanism already
-   silently relied upon between `UnlitTextured`'s 128-byte and
-   `LitTextured`'s 304-byte own prefixes today, extended to a third,
-   longer prefix without requiring either of the first two to change.
-
-**This amendment authorizes exactly one concrete extension, not a
-general, open-ended one:** [ADR-0067](0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)
-D-15's own `cameraWorldPosition` field (`float3` + 4 bytes of explicit,
-named padding, matching this ADR's own existing `DirectionalLightGpu`
-`_pad0` convention) — the shared buffer grows from 304 to exactly 320
-bytes, `CameraMatrices` from 128 to exactly 144 bytes. A further,
-different future extension is its own future Spec/ADR decision, subject
-to the same two conditions above, not pre-authorized by this amendment's
-own general wording alone.
-
-### Consequences of this amendment
-
-- Closes a real gap: this ADR's own original Decision named a fixed,
-  304-byte layout with no stated mechanism for a later, legitimate
-  extension — a later Spec either had to reopen this ADR's own
-  Decision outright, or silently grow the buffer with no formal record,
-  both worse than a scoped, disclosed amendment.
-- The two conditions above are narrow by construction — condition 1
-  forecloses ever reinterpreting the existing 304 bytes; condition 2
-  forecloses ever requiring an existing shader to change source as the
-  price of someone else's new field.
-- No change to this ADR's own Decision on the one-time-vs-per-frame
-  capture question (superseded separately, by Plan 0022, entirely
-  unrelated to buffer *size*) or the stage-visibility widening Decision
-  2 already made — this amendment only concerns the buffer's own total
-  byte length.
-
-### Alternatives considered (this amendment's own scope)
-
-- **Reopen and rewrite this ADR's own Decision to state a new, final
-  320-byte layout directly**, rather than a general, condition-bounded
-  amendment. Rejected: this ADR's own Decision is written to be
-  presently accurate for the 304-byte layout Spec 0019/Spec 0022 both
-  already shipped and verified against — rewriting it to a
-  PBR-specific number would misrepresent what those two already-merged
-  Specs actually built and verified, and would need rewriting again for
-  every future Material kind's own future field. A scoped amendment
-  records growth as growth, not as if 320 bytes had always been the
-  design.
-- **A wholly separate, second uniform buffer for `PbrDirectLit`-only
-  frame data, leaving this ADR's own 304-byte buffer untouched.**
-  Rejected: a second buffer needs its own descriptor binding, directly
-  reopening Spec 0021's own descriptor-pool-capacity proof (which this
-  Spec's own Goal 2 is specifically designed to avoid) for one `float3`
-  of genuinely frame-scoped, not per-Pipeline-specific, data — a
-  disproportionate structural cost next to appending 16 bytes to an
-  already-shared, already-`VK_WHOLE_SIZE`-bound buffer.
+**Alternatives rejected:** rewriting this ADR's own Decision to state
+320 bytes directly (would misrepresent what Spec 0019/0022 actually
+shipped and verified); a second, independent uniform buffer for
+`PbrDirectLit` alone (reopens Spec 0021's descriptor-pool-capacity
+proof for one `float3` of frame-scoped data — disproportionate next to
+appending 16 bytes to an already-shared, `VK_WHOLE_SIZE`-bound buffer).
