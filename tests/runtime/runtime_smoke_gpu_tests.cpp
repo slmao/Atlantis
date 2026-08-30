@@ -65,6 +65,20 @@ using atlantis::world::World;
 // safe, ordinary CPU read of memory the app already owns and keeps
 // current, not a new synchronization primitive.
 namespace atlantis::runtime {
+
+// Independently pins the real byte offset runtime_application.cpp's own
+// construction establishes (createBuffer()'s own sizeof(float) * 32 +
+// sizeof(FrameLightingData) size, and the cameraData + 32 write) --
+// derived here from first principles (two 4x4 float matrices: view,
+// then projection), not copied from that file's own expression, so a
+// real drift between the two fails to *compile* here, not silently
+// reads the wrong bytes.
+constexpr std::size_t kLightingByteOffset = 2 * 16 * sizeof(float);  // 2 matrices, 16 floats each
+static_assert(kLightingByteOffset == 128);
+static_assert(kLightingByteOffset == sizeof(float) * 32, "must match runtime_application.cpp's own real offset");
+static_assert(kLightingByteOffset + sizeof(FrameLightingData) == 304,
+              "must match cameraBuffer_'s own real, constructed size");
+
 struct RuntimeSmokeTestAccess {
   static std::size_t renderableEntityCount(const RuntimeApplication& app) {
     return app.world_->renderableEntities().size();
@@ -75,7 +89,7 @@ struct RuntimeSmokeTestAccess {
   [[nodiscard]] static FrameLightingData lightingPayloadBytes(const RuntimeApplication& app) {
     const auto* cameraBytes = static_cast<const std::byte*>(app.cameraBuffer_->mappedData());
     FrameLightingData lighting{};
-    std::memcpy(&lighting, cameraBytes + sizeof(float) * 32, sizeof(FrameLightingData));
+    std::memcpy(&lighting, cameraBytes + kLightingByteOffset, sizeof(FrameLightingData));
     return lighting;
   }
 };
@@ -170,12 +184,27 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   // createEntity()/setLight()/setLocalTransform() against the real,
   // running app's own live World between ordinary app.runFrame() calls
   // -- the identical thing World::setLight() is for -- and only ever
-  // *reads* cameraBuffer_'s own bytes (via lightingPayloadBytes()) after
-  // a runFrame() call has already returned, at which point that frame's
-  // own real, already-safe write (Spec 0022's own corrected design:
-  // downstream of Presentation's own pre-existing Step 0 drain) has
-  // already completed. Every further frame below goes through the exact
-  // same acquireNextTarget()/Step 0/updateTransforms()/submit()/
+  // *reads* cameraBuffer_'s own bytes (via lightingPayloadBytes()), never
+  // writes them.
+  //
+  // The precise host/device concurrency argument (HOST_COHERENT alone
+  // does not settle this -- it only makes a write visible without an
+  // explicit flush, it says nothing about read/read concurrency, which
+  // needs its own argument): lightingPayloadBytes() is called only after
+  // a runFrame() call has already returned. At that point, that same
+  // frame's own real write into cameraBuffer_ (inside runFrame() itself)
+  // has already completed on the CPU side -- ordinary sequential
+  // execution, not a synchronization claim. Whether that frame's own
+  // *GPU* work (which reads cameraBuffer_ via the shader's uniform
+  // binding) has *also* finished executing by then is a separate
+  // question this test does not need to answer, because it does not
+  // matter: this test only ever *reads* cameraBuffer_'s bytes, never
+  // writes them, so at worst this is a host read concurrent with a GPU
+  // read of the identical bytes -- a read/read pair, which is never a
+  // data race in any memory model, coherent or not (only a read/write or
+  // write/write pair is). No new wait, no new synchronization primitive,
+  // is needed for this test to be safe. Every further frame below goes
+  // through the exact same acquireNextTarget()/Step 0/updateTransforms()/submit()/
   // present() sequence the 3 frames above already did -- nothing here
   // bypasses or reorders it.
   using atlantis::runtime::RuntimeSmokeTestAccess;

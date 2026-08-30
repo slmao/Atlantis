@@ -566,13 +566,27 @@ void RuntimeApplication::runFrame() {
   }
   const auto lightingResult = extractFrameLightingData(lightInputs);
   if (lightingResult.isErr()) {
-    // extractFrameLightingData() builds its own complete, local
-    // FrameLightingData value and returns it by value only on success --
-    // reaching this Err path never touches cameraData, so no mapped byte
-    // is ever partially overwritten. A degenerate light Transform is an
-    // unrecoverable construction-bug indicator, matching
-    // extractCameraMatrices()'s own identical "should never happen"
-    // treatment at this same call site's own sibling check above.
+    // extractFrameLightingData()'s own two real failure modes are not
+    // the same kind of thing, precisely: (1) Err(DegenerateLightDirection)
+    // -- what this branch actually handles -- is a genuine Result-based
+    // return; the function builds its own complete, local
+    // FrameLightingData value and returns it by value only on the Ok
+    // path, so reaching this branch never touches cameraData, and no
+    // mapped byte is ever partially overwritten. (2) too many lights of
+    // one kind is a categorically different, fail-fast
+    // ATLANTIS_CHECK_MSG abort (Debug and Release alike) inside
+    // extractFrameLightingData() itself -- not a Result at all in
+    // production; reaching it terminates the process before control
+    // could ever return here, so it is likewise never a partial
+    // cameraData write, but for a different reason (the process is
+    // already gone, not that an Err was gracefully handled). Both
+    // reachable-in-principle failures are, for different reasons, never
+    // a partial write -- neither is a Result-based transactional
+    // rollback of an in-flight write. A degenerate light Transform
+    // reaching case (1) is an unrecoverable construction-bug indicator,
+    // matching extractCameraMatrices()'s own identical "should never
+    // happen" treatment at this same call site's own sibling check
+    // above.
     ATLANTIS_LOG_ERROR("runFrame(): extractFrameLightingData() failed");
     lifecycle_.markFailed();
     return;

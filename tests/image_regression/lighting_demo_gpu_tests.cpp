@@ -61,6 +61,22 @@ using atlantis::world::Transform;
 
 namespace {
 
+// Independently pins the real byte offset the shared camera/Lighting
+// Buffer's own construction establishes (lighting_demo_fixture.cpp's own
+// createBuffer() call and cameraData + 32 write) -- derived here from
+// first principles (two 4x4 float matrices: view, then projection), not
+// copied from that file's own sizeof(float) * 32 expression, so a real
+// drift between the two fails to *compile*, not silently reads the
+// wrong bytes. Plan 0022 Section M2/M3's own review round explicitly
+// requires this cross-check, not a shared magic number.
+constexpr std::size_t kCameraMatrixCount = 2;  // view, then projection
+constexpr std::size_t kFloatsPerMatrix = 16;   // one 4x4 matrix
+constexpr std::size_t kLightingByteOffset = kCameraMatrixCount * kFloatsPerMatrix * sizeof(float);
+static_assert(kLightingByteOffset == 128);
+static_assert(kLightingByteOffset == sizeof(float) * 32, "must match lighting_demo_fixture.cpp's own real offset");
+static_assert(kLightingByteOffset + sizeof(atlantis::runtime::FrameLightingData) == 304,
+              "must match the shared Buffer's own real, constructed size");
+
 [[nodiscard]] BootstrapConfig buildTestConfig() {
   BootstrapConfig config;
   config.sceneArtifactPath = ATLANTIS_lighting_demo_scene_ARTIFACT_PATH;
@@ -269,7 +285,7 @@ TEST_CASE("LightingDemoFixture: World::setLight() before a second render call ch
   // Buffer -- no GPU readback needed.
   const auto* cameraBytes = static_cast<const std::byte*>(fixture.cameraBuffer->mappedData());
   std::array<std::byte, sizeof(FrameLightingData)> bytesAfterFirstRender{};
-  std::memcpy(bytesAfterFirstRender.data(), cameraBytes + sizeof(float) * 32, bytesAfterFirstRender.size());
+  std::memcpy(bytesAfterFirstRender.data(), cameraBytes + kLightingByteOffset, bytesAfterFirstRender.size());
 
   const std::vector<EntityId> lights = fixture.world->lightEntities();
   REQUIRE_FALSE(lights.empty());
@@ -299,7 +315,7 @@ TEST_CASE("LightingDemoFixture: World::setLight() before a second render call ch
   CHECK_FALSE(secondResult.value().rgba8 == firstPixels.rgba8);
 
   std::array<std::byte, sizeof(FrameLightingData)> bytesAfterSecondRender{};
-  std::memcpy(bytesAfterSecondRender.data(), cameraBytes + sizeof(float) * 32, bytesAfterSecondRender.size());
+  std::memcpy(bytesAfterSecondRender.data(), cameraBytes + kLightingByteOffset, bytesAfterSecondRender.size());
   CHECK_FALSE(bytesAfterFirstRender == bytesAfterSecondRender);
 
   // Precisely: the published intensity field for this light's own slot
@@ -613,14 +629,14 @@ TEST_CASE("LightingDemoFixture: shifting the Directional light's own color towar
   const auto originalLightResult = fixture.world->getLight(*directionalLight);
   REQUIRE(originalLightResult.isOk());
 
-  // Pure red, at a large intensity -- Lambertian accumulation multiplies
-  // this light's own contribution by its own color channel-wise, so its
-  // red channel's own share of this light's contribution can only grow
-  // relative to the original (0.6, 0.7, 1.0) color, which itself is
-  // blue-leaning, not red-leaning.
+  // Pure red -- intensity and direction untouched (isolating this test to
+  // color alone). Lambertian accumulation multiplies this light's own
+  // contribution by its own color channel-wise, so its red channel's own
+  // share of this light's contribution can only grow relative to the
+  // original (0.6, 0.7, 1.0) color, which itself is blue-leaning, not
+  // red-leaning -- true at any fixed intensity, not only a boosted one.
   Light red = originalLightResult.value();
   red.color = {1.0f, 0.0f, 0.0f};
-  red.intensity = 5.0f;
   REQUIRE(fixture.world->setLight(*directionalLight, red).isOk());
 
   auto secondResult = renderLightingDemoFrame(fixture);
@@ -751,12 +767,12 @@ TEST_CASE("LightingDemoFixture: shifting the Point light's own color toward pure
   const auto originalLightResult = fixture.world->getLight(*pointLight);
   REQUIRE(originalLightResult.isOk());
 
-  // Pure green, at a large intensity -- the real scene's own Point color
-  // (1.0, 0.6, 0.3) is red-leaning, not green-leaning, so the green
-  // channel's own share can only grow.
+  // Pure green -- intensity and position untouched (isolating this test
+  // to color alone). The real scene's own Point color (1.0, 0.6, 0.3) is
+  // red-leaning, not green-leaning, so the green channel's own share can
+  // only grow, true at any fixed intensity/position.
   Light green = originalLightResult.value();
   green.color = {0.0f, 1.0f, 0.0f};
-  green.intensity = 5.0f;
   REQUIRE(fixture.world->setLight(*pointLight, green).isOk());
 
   auto secondResult = renderLightingDemoFrame(fixture);
@@ -906,7 +922,7 @@ TEST_CASE("LightingDemoFixture: creating a new Point light near the sample point
       channelSum(pixelAt(firstResult.value(), pixelCoord->first, pixelCoord->second));
   const auto* cameraBytesBefore = static_cast<const std::byte*>(fixture.cameraBuffer->mappedData());
   FrameLightingData lightingBefore{};
-  std::memcpy(&lightingBefore, cameraBytesBefore + sizeof(float) * 32, sizeof(FrameLightingData));
+  std::memcpy(&lightingBefore, cameraBytesBefore + kLightingByteOffset, sizeof(FrameLightingData));
   REQUIRE(lightingBefore.pointLightCount == 1);
 
   const EntityId newLight = fixture.world->createEntity();
@@ -928,7 +944,7 @@ TEST_CASE("LightingDemoFixture: creating a new Point light near the sample point
 
   const auto* cameraBytesAfter = static_cast<const std::byte*>(fixture.cameraBuffer->mappedData());
   FrameLightingData lightingAfter{};
-  std::memcpy(&lightingAfter, cameraBytesAfter + sizeof(float) * 32, sizeof(FrameLightingData));
+  std::memcpy(&lightingAfter, cameraBytesAfter + kLightingByteOffset, sizeof(FrameLightingData));
   CHECK(lightingAfter.pointLightCount == 2);
 }
 
@@ -970,7 +986,7 @@ TEST_CASE("LightingDemoFixture: destroying the scene's own Point light entity da
 
   const auto* cameraBytesAfter = static_cast<const std::byte*>(fixture.cameraBuffer->mappedData());
   FrameLightingData lightingAfter{};
-  std::memcpy(&lightingAfter, cameraBytesAfter + sizeof(float) * 32, sizeof(FrameLightingData));
+  std::memcpy(&lightingAfter, cameraBytesAfter + kLightingByteOffset, sizeof(FrameLightingData));
   CHECK(lightingAfter.directionalLightCount == 1);  // the Directional light is untouched
   CHECK(lightingAfter.pointLightCount == 0);
   // The now-unused slot 0 (this scene's only Point light occupied it) is
@@ -1010,7 +1026,7 @@ TEST_CASE("LightingDemoFixture: two setLight() calls against the same entity bef
 
   const auto* cameraBytesAfter = static_cast<const std::byte*>(fixture.cameraBuffer->mappedData());
   FrameLightingData lightingAfter{};
-  std::memcpy(&lightingAfter, cameraBytesAfter + sizeof(float) * 32, sizeof(FrameLightingData));
+  std::memcpy(&lightingAfter, cameraBytesAfter + kLightingByteOffset, sizeof(FrameLightingData));
   CHECK(lightingAfter.directionalLights[0].intensity == 222.0f);
 }
 
