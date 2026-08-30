@@ -195,6 +195,13 @@ class RuntimeApplication {
   atlantis::rhi::VertexInputLayout litTexturedVertexInputLayout_;
   std::vector<std::uint32_t> litTexturedVertexSpirv_;
   std::vector<std::uint32_t> litTexturedFragmentSpirv_;
+  // Plan 0023 Milestone 5: the fourth, MaterialKind::PbrDirectLit
+  // built-in shader pair's own resolved layout/SPIR-V -- mirrors
+  // litTexturedVertexInputLayout_/litTexturedVertexSpirv_/
+  // litTexturedFragmentSpirv_'s own role exactly.
+  atlantis::rhi::VertexInputLayout pbrDirectLitVertexInputLayout_;
+  std::vector<std::uint32_t> pbrDirectLitVertexSpirv_;
+  std::vector<std::uint32_t> pbrDirectLitFragmentSpirv_;
 };
 
 [[nodiscard]] atlantis::Result<RuntimeApplication, RuntimeInitError> createRuntimeApplication(

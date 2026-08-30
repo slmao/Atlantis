@@ -82,7 +82,8 @@ TEST_CASE("Renderer::drawFrame() records a full bind/draw sequence per DrawItem 
   atlantis::renderer::Mesh sharedMesh(
       std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Vertex, 0),
       std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Index, 0), 3);
-  atlantis::renderer::Material sharedMaterial(std::make_unique<FakePipeline>());
+  atlantis::renderer::Material sharedMaterial(std::make_unique<FakePipeline>(),
+                                               atlantis::renderer::MaterialPushConstantLayout::ObjectToWorldOnly);
 
   DrawItem itemA;
   itemA.mesh = &sharedMesh;
@@ -148,7 +149,8 @@ TEST_CASE("Renderer::drawFrame() passes finalColorState through unmodified, neve
   atlantis::renderer::Mesh sharedMesh(
       std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Vertex, 0),
       std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Index, 0), 3);
-  atlantis::renderer::Material sharedMaterial(std::make_unique<FakePipeline>());
+  atlantis::renderer::Material sharedMaterial(std::make_unique<FakePipeline>(),
+                                               atlantis::renderer::MaterialPushConstantLayout::ObjectToWorldOnly);
 
   DrawItem item;
   item.mesh = &sharedMesh;
@@ -191,7 +193,9 @@ TEST_CASE("Renderer::drawFrame() with an untextured Material records no bindText
           "[renderer][ownership][sampled_texture]") {
   atlantis::renderer::Mesh mesh(std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Vertex, 0),
                                  std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Index, 0), 3);
-  atlantis::renderer::Material material(std::make_unique<FakePipeline>());  // untextured -- sampledTexture() == nullptr
+  atlantis::renderer::Material material(
+      std::make_unique<FakePipeline>(),
+      atlantis::renderer::MaterialPushConstantLayout::ObjectToWorldOnly);  // untextured -- sampledTexture() == nullptr
   REQUIRE(material.sampledTexture() == nullptr);
   REQUIRE(material.sampler() == nullptr);
 
@@ -223,7 +227,9 @@ TEST_CASE("Renderer::drawFrame() with a textured Material records bindTexture im
                                  std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Index, 0), 3);
   FakeSampledTexture fakeTexture("texture");
   FakeSampler fakeSampler("sampler");
-  atlantis::renderer::Material material(std::make_unique<FakePipeline>(), &fakeTexture, &fakeSampler);
+  atlantis::renderer::Material material(std::make_unique<FakePipeline>(),
+                                         atlantis::renderer::MaterialPushConstantLayout::ObjectToWorldOnly,
+                                         &fakeTexture, &fakeSampler);
   REQUIRE(material.sampledTexture() == &fakeTexture);
   REQUIRE(material.sampler() == &fakeSampler);
 

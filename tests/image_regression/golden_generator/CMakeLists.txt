@@ -133,10 +133,13 @@ target_compile_definitions(atlantis_image_regression_material_demo_golden_genera
   # Plan 0019 Section P6: see tests/image_regression/CMakeLists.txt's own
   # identical comment on the gpu_tests target.
   ATLANTIS_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  # Plan 0023 Milestone 5: see tests/image_regression/CMakeLists.txt's
+  # own identical comment on the gpu_tests target.
+  ATLANTIS_MATERIAL_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
 )
 
 add_dependencies(atlantis_image_regression_material_demo_golden_generator textured_quad_shaders lit_textured_shaders
-  ${ATLANTIS_material_demo_scene_TARGET})
+  pbr_direct_lit_shaders ${ATLANTIS_material_demo_scene_TARGET})
 
 # Plan 0019 Section P10/Milestone 10b: a fifth, standalone golden-
 # generator executable for the lighting_demo fixture -- same reused
@@ -159,10 +162,13 @@ target_compile_definitions(atlantis_image_regression_lighting_demo_golden_genera
   ATLANTIS_lighting_demo_scene_MANIFEST_PATH="${ATLANTIS_lighting_demo_scene_MANIFEST_PATH}"
   ATLANTIS_LIGHTING_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
   ATLANTIS_LIGHTING_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  # Plan 0023 Milestone 5: see tests/image_regression/CMakeLists.txt's
+  # own identical comment on the gpu_tests target.
+  ATLANTIS_LIGHTING_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
 )
 
 add_dependencies(atlantis_image_regression_lighting_demo_golden_generator textured_quad_shaders lit_textured_shaders
-  ${ATLANTIS_lighting_demo_scene_TARGET})
+  pbr_direct_lit_shaders ${ATLANTIS_lighting_demo_scene_TARGET})
 
 # Deliberately no catch_discover_tests()/LABELS "gpu"/add_test() call in
 # this file -- the concrete enforcement of "never registered with

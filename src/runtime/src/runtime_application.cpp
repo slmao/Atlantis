@@ -178,6 +178,25 @@ static_assert(
   return result.value();
 }
 
+// Plan 0023 Milestone 4/5: the MaterialKind::PbrDirectLit shader pair's
+// own vertex schema -- byte-identical to litTexturedVertexLayout()'s
+// own schema above (position@0/uv@1/normal@2, matching
+// pbr_direct_lit.slang's own VertexInput exactly), kept as its own,
+// separately-named function rather than reusing litTexturedVertexLayout()
+// directly -- matching this file's own established one-function-per-
+// shader-pair convention, and cross-checked against pbr_direct_lit's
+// own real reflection metadata, not lit_textured's.
+[[nodiscard]] std::optional<VertexInputLayout> pbrDirectLitVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+      MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
+      MeshVertexAttributeSchema{.location = 2, .offsetBytes = offsetof(Vertex, normal)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 }  // namespace
 
 RuntimeApplication::RuntimeApplication(PlatformSession&& session) noexcept
@@ -269,6 +288,33 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   litTexturedVertexSpirv_ = std::move(litTexturedVertexSpirvOpt.value());
   litTexturedFragmentSpirv_ = std::move(litTexturedFragmentSpirvOpt.value());
   litTexturedVertexInputLayout_ = std::move(litTexturedLayoutOpt.value());
+
+  // Step 2d (Plan 0023 Milestone 5): the fourth, MaterialKind::PbrDirectLit
+  // built-in shader pair -- same shape as step 2c above, mirrored exactly.
+  auto pbrDirectLitVertexSpirvOpt = loadSpirvFile(config.pbrDirectLitVertexShaderSpirvPath);
+  auto pbrDirectLitFragmentSpirvOpt = loadSpirvFile(config.pbrDirectLitFragmentShaderSpirvPath);
+  if (!pbrDirectLitVertexSpirvOpt.has_value() || !pbrDirectLitFragmentSpirvOpt.has_value()) {
+    ATLANTIS_LOG_ERROR("Failed to load shader SPIR-V from {} / {}", config.pbrDirectLitVertexShaderSpirvPath,
+                        config.pbrDirectLitFragmentShaderSpirvPath);
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  auto pbrDirectLitVertexReflectionResult = loadReflectionMetadata(config.pbrDirectLitVertexShaderReflectionPath);
+  if (pbrDirectLitVertexReflectionResult.isErr()) {
+    ATLANTIS_LOG_ERROR("loadReflectionMetadata() failed for {}", config.pbrDirectLitVertexShaderReflectionPath);
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  auto pbrDirectLitLayoutOpt = pbrDirectLitVertexLayout(pbrDirectLitVertexReflectionResult.value());
+  if (!pbrDirectLitLayoutOpt.has_value()) {
+    ATLANTIS_LOG_ERROR(
+        "pbrDirectLitVertexLayout(): reflected vertex-input attributes do not match the Vertex schema");
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  pbrDirectLitVertexSpirv_ = std::move(pbrDirectLitVertexSpirvOpt.value());
+  pbrDirectLitFragmentSpirv_ = std::move(pbrDirectLitFragmentSpirvOpt.value());
+  pbrDirectLitVertexInputLayout_ = std::move(pbrDirectLitLayoutOpt.value());
 
   // Step 3: Device.
   auto deviceResult = atlantis::vulkan_backend::createDevice(
@@ -444,7 +490,8 @@ void RuntimeApplication::runFrame() {
     auto rebuildResult = rebuildMaterialsForFormatChange(
         *device_, vertexInputLayout_, vertexSpirv_, fragmentSpirv_, unlitTexturedVertexInputLayout_,
         unlitTexturedVertexSpirv_, unlitTexturedFragmentSpirv_, litTexturedVertexInputLayout_,
-        litTexturedVertexSpirv_, litTexturedFragmentSpirv_, currentFormat, materialDataMap_, materialResourceMap_);
+        litTexturedVertexSpirv_, litTexturedFragmentSpirv_, pbrDirectLitVertexInputLayout_, pbrDirectLitVertexSpirv_,
+        pbrDirectLitFragmentSpirv_, currentFormat, materialDataMap_, materialResourceMap_);
     if (rebuildResult.isErr()) {
       ATLANTIS_LOG_ERROR(
           "rebuildMaterialsForFormatChange() failed during format-change rebuild -- keeping the existing "
@@ -668,7 +715,8 @@ void RuntimeApplication::runFrame() {
   std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
       realizePendingMaterials(*device_, *commandList, unlitTexturedVertexInputLayout_, unlitTexturedVertexSpirv_,
                                unlitTexturedFragmentSpirv_, currentFormat, litTexturedVertexInputLayout_,
-                               litTexturedVertexSpirv_, litTexturedFragmentSpirv_, pendingMaterialIds,
+                               litTexturedVertexSpirv_, litTexturedFragmentSpirv_, pbrDirectLitVertexInputLayout_,
+                               pbrDirectLitVertexSpirv_, pbrDirectLitFragmentSpirv_, pendingMaterialIds,
                                sampledTextureResourceMap_, materialDataMap_, textureDataMap_);
   // Plan 0018 Section P12 (Spec 0018 D8 step 5): gated on "at least one
   // material was newly realized this frame" -- NOT narrowed to "at least

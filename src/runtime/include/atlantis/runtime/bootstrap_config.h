@@ -44,6 +44,13 @@ struct BootstrapConfig {
   std::string litTexturedVertexShaderReflectionPath;
   std::string litTexturedFragmentShaderSpirvPath;
   std::string litTexturedFragmentShaderReflectionPath;
+  // Plan 0023 Milestone 5: the fourth, MaterialKind::PbrDirectLit
+  // built-in shader pair -- mirrors litTexturedVertexShaderSpirvPath/
+  // .../litTexturedFragmentShaderReflectionPath's own sourcing exactly.
+  std::string pbrDirectLitVertexShaderSpirvPath;
+  std::string pbrDirectLitVertexShaderReflectionPath;
+  std::string pbrDirectLitFragmentShaderSpirvPath;
+  std::string pbrDirectLitFragmentShaderReflectionPath;
   bool enableValidationLayers = true;
 };
 

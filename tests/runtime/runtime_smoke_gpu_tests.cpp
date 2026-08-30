@@ -142,6 +142,16 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
       std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.spv";
   config.litTexturedFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.refl.json";
+  // Plan 0023 Milestone 5: mirrors main.cpp's own identical population
+  // of the fourth, MaterialKind::PbrDirectLit built-in shader pair.
+  config.pbrDirectLitVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.vert.spv";
+  config.pbrDirectLitVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.vert.refl.json";
+  config.pbrDirectLitFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.spv";
+  config.pbrDirectLitFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.refl.json";
   config.enableValidationLayers = true;
 
   auto appResult = createRuntimeApplication(config);

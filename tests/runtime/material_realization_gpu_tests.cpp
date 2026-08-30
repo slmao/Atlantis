@@ -120,6 +120,23 @@ struct Vertex {
   return result.value();
 }
 
+// Plan 0023 Milestone 5: realizePendingMaterials()/rebuildMaterialsForFormatChange()'s
+// own further-widened signatures require a real pbrDirectLit* trio at
+// every call site, even here, where no test in this file ever realizes
+// a MaterialKind::PbrDirectLit material. Byte-identical schema to
+// litTexturedVertexLayout() above (pbr_direct_lit.slang's own vertex
+// input matches lit_textured.slang's exactly, Milestone 4).
+[[nodiscard]] std::optional<VertexInputLayout> pbrDirectLitVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+      MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
+      MeshVertexAttributeSchema{.location = 2, .offsetBytes = offsetof(Vertex, normal)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 [[nodiscard]] TextureAssetData makeSolidTextureData(std::uint32_t extent, std::uint8_t value) {
   TextureAssetData data;
   data.width = extent;
@@ -190,6 +207,23 @@ TEST_CASE("rebuildMaterialsForFormatChange never touches the caller existing bun
   const auto litLayout = litTexturedVertexLayout(litVertexReflectionResult.value());
   REQUIRE(litLayout.has_value());
 
+  // Plan 0023 Milestone 5: the fourth, MaterialKind::PbrDirectLit
+  // built-in shader pair -- material_realization.h's own further-widened
+  // realizePendingMaterials()/rebuildMaterialsForFormatChange() calls
+  // need a real pbrDirectLit* trio too, even where this TEST_CASE never
+  // realizes one.
+  auto pbrVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.vert.spv");
+  auto pbrFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.spv");
+  REQUIRE(pbrVertexSpirv.has_value());
+  REQUIRE(pbrFragmentSpirv.has_value());
+  auto pbrVertexReflectionResult = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) +
+                                                           "/pbr_direct_lit.vert.refl.json");
+  REQUIRE(pbrVertexReflectionResult.isOk());
+  const auto pbrLayout = pbrDirectLitVertexLayout(pbrVertexReflectionResult.value());
+  REQUIRE(pbrLayout.has_value());
+
   auto fallbackVertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.spv");
   auto fallbackFragmentSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.frag.spv");
   REQUIRE(fallbackVertexSpirv.has_value());
@@ -227,7 +261,7 @@ TEST_CASE("rebuildMaterialsForFormatChange never touches the caller existing bun
 
     std::unordered_map<AssetId, RealizedMaterialCandidate> realized =
         realizePendingMaterials(*device, *commandList, *unlitLayout, *unlitVertexSpirv, *unlitFragmentSpirv,
-                                 Format::Rgba8Unorm, *litLayout, *litVertexSpirv, *litFragmentSpirv, {kMaterialA},
+                                 Format::Rgba8Unorm, *litLayout, *litVertexSpirv, *litFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, {kMaterialA},
                                  sampledTextureResourceMap, materialDataMap, textureDataMap);
     REQUIRE(realized.size() == 1);
 
@@ -252,7 +286,7 @@ TEST_CASE("rebuildMaterialsForFormatChange never touches the caller existing bun
 
     auto rebuildResult = rebuildMaterialsForFormatChange(
         *device, *fallbackLayout, *fallbackVertexSpirv, *fallbackFragmentSpirv, *unlitLayout, *unlitVertexSpirv,
-        *unlitFragmentSpirv, *litLayout, *litVertexSpirv, *litFragmentSpirv, Format::Rgba8Srgb, materialDataMap,
+        *unlitFragmentSpirv, *litLayout, *litVertexSpirv, *litFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, Format::Rgba8Srgb, materialDataMap,
         materialResourceMap);
     REQUIRE(rebuildResult.isOk());
     auto candidates = std::move(rebuildResult.value());
@@ -360,6 +394,23 @@ TEST_CASE("rebuildMaterialsForFormatChange reconstructs a LitTextured material's
   const auto litLayout = litTexturedVertexLayout(litVertexReflectionResult.value());
   REQUIRE(litLayout.has_value());
 
+  // Plan 0023 Milestone 5: the fourth, MaterialKind::PbrDirectLit
+  // built-in shader pair -- material_realization.h's own further-widened
+  // realizePendingMaterials()/rebuildMaterialsForFormatChange() calls
+  // need a real pbrDirectLit* trio too, even where this TEST_CASE never
+  // realizes one.
+  auto pbrVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.vert.spv");
+  auto pbrFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.spv");
+  REQUIRE(pbrVertexSpirv.has_value());
+  REQUIRE(pbrFragmentSpirv.has_value());
+  auto pbrVertexReflectionResult = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) +
+                                                           "/pbr_direct_lit.vert.refl.json");
+  REQUIRE(pbrVertexReflectionResult.isOk());
+  const auto pbrLayout = pbrDirectLitVertexLayout(pbrVertexReflectionResult.value());
+  REQUIRE(pbrLayout.has_value());
+
   auto fallbackVertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.spv");
   auto fallbackFragmentSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.frag.spv");
   REQUIRE(fallbackVertexSpirv.has_value());
@@ -397,7 +448,7 @@ TEST_CASE("rebuildMaterialsForFormatChange reconstructs a LitTextured material's
 
     std::unordered_map<AssetId, RealizedMaterialCandidate> realized =
         realizePendingMaterials(*device, *commandList, *unlitLayout, *unlitVertexSpirv, *unlitFragmentSpirv,
-                                 Format::Rgba8Unorm, *litLayout, *litVertexSpirv, *litFragmentSpirv, {kMaterialC},
+                                 Format::Rgba8Unorm, *litLayout, *litVertexSpirv, *litFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, {kMaterialC},
                                  sampledTextureResourceMap, materialDataMap, textureDataMap);
     REQUIRE(realized.size() == 1);
 
@@ -422,7 +473,7 @@ TEST_CASE("rebuildMaterialsForFormatChange reconstructs a LitTextured material's
 
     auto rebuildResult = rebuildMaterialsForFormatChange(
         *device, *fallbackLayout, *fallbackVertexSpirv, *fallbackFragmentSpirv, *unlitLayout, *unlitVertexSpirv,
-        *unlitFragmentSpirv, *litLayout, *litVertexSpirv, *litFragmentSpirv, Format::Rgba8Srgb, materialDataMap,
+        *unlitFragmentSpirv, *litLayout, *litVertexSpirv, *litFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, Format::Rgba8Srgb, materialDataMap,
         materialResourceMap);
     // The real, decisive proof: a MaterialKind::LitTextured entry
     // rebuilds successfully -- if selectShaderPair()'s own dispatch (or
@@ -495,6 +546,23 @@ TEST_CASE("A second material that dedups its texture against an EARLIER frame's 
   const auto litLayout = litTexturedVertexLayout(litVertexReflectionResult.value());
   REQUIRE(litLayout.has_value());
 
+  // Plan 0023 Milestone 5: the fourth, MaterialKind::PbrDirectLit
+  // built-in shader pair -- material_realization.h's own further-widened
+  // realizePendingMaterials()/rebuildMaterialsForFormatChange() calls
+  // need a real pbrDirectLit* trio too, even where this TEST_CASE never
+  // realizes one.
+  auto pbrVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.vert.spv");
+  auto pbrFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.spv");
+  REQUIRE(pbrVertexSpirv.has_value());
+  REQUIRE(pbrFragmentSpirv.has_value());
+  auto pbrVertexReflectionResult = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) +
+                                                           "/pbr_direct_lit.vert.refl.json");
+  REQUIRE(pbrVertexReflectionResult.isOk());
+  const auto pbrLayout = pbrDirectLitVertexLayout(pbrVertexReflectionResult.value());
+  REQUIRE(pbrLayout.has_value());
+
   constexpr Extent2D kExtent{4, 4};
   auto offscreenResult = device->createOffscreenTarget({.extent = kExtent, .format = Format::Rgba8Unorm});
   REQUIRE(offscreenResult.isOk());
@@ -532,7 +600,7 @@ TEST_CASE("A second material that dedups its texture against an EARLIER frame's 
 
     std::unordered_map<AssetId, RealizedMaterialCandidate> realized =
         realizePendingMaterials(*device, *commandList, *vertexInputLayout, *vertexSpirv, *fragmentSpirv,
-                                 Format::Rgba8Unorm, *litLayout, *litVertexSpirv, *litFragmentSpirv, pendingIds,
+                                 Format::Rgba8Unorm, *litLayout, *litVertexSpirv, *litFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, pendingIds,
                                  sampledTextureResourceMap, materialDataMap, textureDataMap);
     REQUIRE(realized.size() == 1);
     REQUIRE(realized.at(kMaterialA).newSampledTexture != nullptr);
@@ -571,7 +639,7 @@ TEST_CASE("A second material that dedups its texture against an EARLIER frame's 
 
     std::unordered_map<AssetId, RealizedMaterialCandidate> realized =
         realizePendingMaterials(*device, *commandList, *vertexInputLayout, *vertexSpirv, *fragmentSpirv,
-                                 Format::Rgba8Unorm, *litLayout, *litVertexSpirv, *litFragmentSpirv, pendingIds,
+                                 Format::Rgba8Unorm, *litLayout, *litVertexSpirv, *litFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, pendingIds,
                                  sampledTextureResourceMap, materialDataMap, textureDataMap);
 
     // The exact invariant the fix restores: a cross-frame dedup candidate
@@ -996,6 +1064,21 @@ TEST_CASE("A real Vulkan Device's own descriptor pool grows past its own histori
     const auto litLayout = litTexturedVertexLayout(litVertexReflectionResult.value());
     REQUIRE(litLayout.has_value());
 
+    // Plan 0023 Milestone 5: the fourth, MaterialKind::PbrDirectLit
+    // built-in shader pair -- see the top-level TEST_CASE blocks' own
+    // identical comment.
+    auto pbrVertexSpirv =
+        loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.vert.spv");
+    auto pbrFragmentSpirv =
+        loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.spv");
+    REQUIRE(pbrVertexSpirv.has_value());
+    REQUIRE(pbrFragmentSpirv.has_value());
+    auto pbrVertexReflectionResult = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) +
+                                                             "/pbr_direct_lit.vert.refl.json");
+    REQUIRE(pbrVertexReflectionResult.isOk());
+    const auto pbrLayout = pbrDirectLitVertexLayout(pbrVertexReflectionResult.value());
+    REQUIRE(pbrLayout.has_value());
+
     auto fallbackVertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.spv");
     auto fallbackFragmentSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.frag.spv");
     REQUIRE(fallbackVertexSpirv.has_value());
@@ -1036,8 +1119,8 @@ TEST_CASE("A real Vulkan Device's own descriptor pool grows past its own histori
 
       std::unordered_map<AssetId, RealizedMaterialCandidate> realized = realizePendingMaterials(
           *device, *commandList, *unlitLayout, *unlitVertexSpirv, *unlitFragmentSpirv, Format::Rgba8Unorm, *litLayout,
-          *litVertexSpirv, *litFragmentSpirv, {kMaterialUnlit, kMaterialLit}, sampledTextureResourceMap,
-          materialDataMap, textureDataMap);
+          *litVertexSpirv, *litFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv,
+          {kMaterialUnlit, kMaterialLit}, sampledTextureResourceMap, materialDataMap, textureDataMap);
       REQUIRE(realized.size() == 2);
 
       auto submitResult = device->submit(std::move(commandList), *target);
@@ -1069,7 +1152,7 @@ TEST_CASE("A real Vulkan Device's own descriptor pool grows past its own histori
 
       auto rebuildResult = rebuildMaterialsForFormatChange(
           *device, *fallbackLayout, *fallbackVertexSpirv, *fallbackFragmentSpirv, *unlitLayout, *unlitVertexSpirv,
-          *unlitFragmentSpirv, *litLayout, *litVertexSpirv, *litFragmentSpirv, Format::Rgba8Srgb, materialDataMap,
+          *unlitFragmentSpirv, *litLayout, *litVertexSpirv, *litFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, Format::Rgba8Srgb, materialDataMap,
           materialResourceMap);
       // The real, decisive proof this Spec 0021/ADR-0064/Plan 0021 fix
       // requires: the format change that previously failed with exactly
@@ -1173,6 +1256,21 @@ TEST_CASE("N=6 real format-change success, forcing a real SECOND growth event (g
   const auto litLayout = litTexturedVertexLayout(litVertexReflectionResult.value());
   REQUIRE(litLayout.has_value());
 
+  // Plan 0023 Milestone 5: the fourth, MaterialKind::PbrDirectLit
+  // built-in shader pair -- see the earlier TEST_CASE blocks' own
+  // identical comment.
+  auto pbrVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.vert.spv");
+  auto pbrFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.spv");
+  REQUIRE(pbrVertexSpirv.has_value());
+  REQUIRE(pbrFragmentSpirv.has_value());
+  auto pbrVertexReflectionResult = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) +
+                                                           "/pbr_direct_lit.vert.refl.json");
+  REQUIRE(pbrVertexReflectionResult.isOk());
+  const auto pbrLayout = pbrDirectLitVertexLayout(pbrVertexReflectionResult.value());
+  REQUIRE(pbrLayout.has_value());
+
   auto fallbackVertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.spv");
   auto fallbackFragmentSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.frag.spv");
   REQUIRE(fallbackVertexSpirv.has_value());
@@ -1214,7 +1312,8 @@ TEST_CASE("N=6 real format-change success, forcing a real SECOND growth event (g
     const std::vector<AssetId> pendingIds(kMaterialIds.begin(), kMaterialIds.end());
     std::unordered_map<AssetId, RealizedMaterialCandidate> realized = realizePendingMaterials(
         *device, *commandList, *unlitLayout, *unlitVertexSpirv, *unlitFragmentSpirv, Format::Rgba8Unorm, *litLayout,
-        *litVertexSpirv, *litFragmentSpirv, pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap);
+        *litVertexSpirv, *litFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, pendingIds,
+        sampledTextureResourceMap, materialDataMap, textureDataMap);
     REQUIRE(realized.size() == 6);
 
     auto submitResult = device->submit(std::move(commandList), *target);
@@ -1244,7 +1343,7 @@ TEST_CASE("N=6 real format-change success, forcing a real SECOND growth event (g
 
     auto rebuildResult = rebuildMaterialsForFormatChange(
         *device, *fallbackLayout, *fallbackVertexSpirv, *fallbackFragmentSpirv, *unlitLayout, *unlitVertexSpirv,
-        *unlitFragmentSpirv, *litLayout, *litVertexSpirv, *litFragmentSpirv, Format::Rgba8Srgb, materialDataMap,
+        *unlitFragmentSpirv, *litLayout, *litVertexSpirv, *litFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, Format::Rgba8Srgb, materialDataMap,
         materialResourceMap);
     REQUIRE(rebuildResult.isOk());
     auto candidates = std::move(rebuildResult.value());

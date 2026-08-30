@@ -108,6 +108,21 @@ static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrid
   return result.value();
 }
 
+// Plan 0023 Milestone 5: realizePendingMaterials()'s own further-widened
+// signature requires a real pbrDirectLit* trio too -- byte-identical
+// schema to litTexturedVertexLayout() above (pbr_direct_lit.slang's own
+// vertex input matches lit_textured.slang's exactly, Milestone 4).
+[[nodiscard]] std::optional<VertexInputLayout> pbrDirectLitVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+      MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
+      MeshVertexAttributeSchema{.location = 2, .offsetBytes = offsetof(Vertex, normal)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 }  // namespace
 
 atlantis::Result<LightingDemoFixture, LightingDemoSetupError> setUpLightingDemoFixture(
@@ -134,6 +149,16 @@ atlantis::Result<LightingDemoFixture, LightingDemoSetupError> setUpLightingDemoF
   const auto litVertexInputLayout = litTexturedVertexLayout(litVertexReflectionResult.value());
   if (!litVertexInputLayout.has_value()) return ResultT::Err(LightingDemoSetupError::ShaderLoadFailed);
 
+  auto pbrVertexSpirv = loadSpirvFile(config.pbrDirectLitVertexShaderSpirvPath.c_str());
+  auto pbrFragmentSpirv = loadSpirvFile(config.pbrDirectLitFragmentShaderSpirvPath.c_str());
+  if (!pbrVertexSpirv.has_value() || !pbrFragmentSpirv.has_value()) {
+    return ResultT::Err(LightingDemoSetupError::ShaderLoadFailed);
+  }
+  auto pbrVertexReflectionResult = loadReflectionMetadata(config.pbrDirectLitVertexShaderReflectionPath.c_str());
+  if (pbrVertexReflectionResult.isErr()) return ResultT::Err(LightingDemoSetupError::ShaderLoadFailed);
+  const auto pbrVertexInputLayout = pbrDirectLitVertexLayout(pbrVertexReflectionResult.value());
+  if (!pbrVertexInputLayout.has_value()) return ResultT::Err(LightingDemoSetupError::ShaderLoadFailed);
+
   auto deviceResult = atlantis::vulkan_backend::createDevice(
       {.applicationName = "Atlantis Image Regression Fixture (Lighting Demo)", .enableValidationLayers = true});
   if (deviceResult.isErr()) return ResultT::Err(LightingDemoSetupError::DeviceCreationFailed);
@@ -146,6 +171,9 @@ atlantis::Result<LightingDemoFixture, LightingDemoSetupError> setUpLightingDemoF
   fixture.litTexturedVertexInputLayout = *litVertexInputLayout;
   fixture.litTexturedVertexSpirv = std::move(*litVertexSpirv);
   fixture.litTexturedFragmentSpirv = std::move(*litFragmentSpirv);
+  fixture.pbrDirectLitVertexInputLayout = *pbrVertexInputLayout;
+  fixture.pbrDirectLitVertexSpirv = std::move(*pbrVertexSpirv);
+  fixture.pbrDirectLitFragmentSpirv = std::move(*pbrFragmentSpirv);
 
   // Phase 1: the real, Runtime-private CPU load/instantiate pipeline --
   // never duplicated here.
@@ -259,7 +287,9 @@ atlantis::Result<PixelBuffer, LightingDemoRenderError> renderLightingDemoFrame(L
       realizePendingMaterials(*fixture.device, *commandList, fixture.unlitTexturedVertexInputLayout,
                                fixture.unlitTexturedVertexSpirv, fixture.unlitTexturedFragmentSpirv,
                                kLightingDemoColorFormat, fixture.litTexturedVertexInputLayout,
-                               fixture.litTexturedVertexSpirv, fixture.litTexturedFragmentSpirv, pendingMaterialIds,
+                               fixture.litTexturedVertexSpirv, fixture.litTexturedFragmentSpirv,
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, pendingMaterialIds,
                                fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);
 
   std::vector<atlantis::asset_system::AssetId> knownMaterialIds = alreadyRealizedMaterialIds;

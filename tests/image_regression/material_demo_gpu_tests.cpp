@@ -60,6 +60,17 @@ namespace {
       std::string(ATLANTIS_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.spv";
   config.litTexturedFragmentShaderReflectionPath =
       std::string(ATLANTIS_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.refl.json";
+  // Plan 0023 Milestone 5: MaterialDemoFixture's own further-widened
+  // realizePendingMaterials() call requires a real pbrDirectLit* trio
+  // too, even though material_demo_scene never realizes one.
+  config.pbrDirectLitVertexShaderSpirvPath =
+      std::string(ATLANTIS_MATERIAL_DEMO_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.vert.spv";
+  config.pbrDirectLitVertexShaderReflectionPath =
+      std::string(ATLANTIS_MATERIAL_DEMO_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.vert.refl.json";
+  config.pbrDirectLitFragmentShaderSpirvPath =
+      std::string(ATLANTIS_MATERIAL_DEMO_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.spv";
+  config.pbrDirectLitFragmentShaderReflectionPath =
+      std::string(ATLANTIS_MATERIAL_DEMO_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.refl.json";
   return config;
 }
 

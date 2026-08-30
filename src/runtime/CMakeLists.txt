@@ -99,6 +99,13 @@ target_compile_definitions(atlantis_runtime PRIVATE
   # call, unconditional), mirroring ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR's
   # own sourcing exactly.
   ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  # Plan 0023 Milestone 5: the fourth, MaterialKind::PbrDirectLit
+  # built-in shader pair's own output directory -- reuses the already-
+  # exported ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR
+  # (shaders/pbr_direct_lit/CMakeLists.txt's own atlantis_add_slang_shader_pair()
+  # call, unconditional), mirroring ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR's
+  # own sourcing exactly.
+  ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
 )
 
 # Guarantees the shader-compile and asset-cook targets have already run
@@ -107,6 +114,7 @@ target_compile_definitions(atlantis_runtime PRIVATE
 # 0018 Section P10: textured_quad_shaders added alongside
 # minimal_mesh_shaders, now that shaders/textured_quad is built
 # unconditionally. Plan 0019 Section P6: lit_textured_shaders added the
-# same way.
+# same way. Plan 0023 Milestone 5: pbr_direct_lit_shaders added the same
+# way.
 add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
-  ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})
+  pbr_direct_lit_shaders ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})

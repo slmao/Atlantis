@@ -58,10 +58,16 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   # need a real litTextured* trio, even where no test in this file
   # realizes one.
   ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  # Plan 0023 Milestone 5: the fourth, MaterialKind::PbrDirectLit
+  # built-in shader pair -- material_realization_gpu_tests.cpp's own
+  # further-widened realizePendingMaterials()/rebuildMaterialsForFormatChange()
+  # calls need a real pbrDirectLit* trio too, even where no test in this
+  # file realizes one.
+  ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
 )
 
 add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
-  ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})
+  pbr_direct_lit_shaders ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})
 
 # LABELS "gpu": the existing plain ctest convention Spec 0006/Spec 0010
 # already established -- matching tests/image_regression/CMakeLists.txt's

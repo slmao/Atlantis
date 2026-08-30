@@ -104,6 +104,10 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   # (material_demo_gpu_tests.cpp's own buildTestConfig()), even though
   # material_demo_scene never actually realizes one.
   ATLANTIS_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  # Plan 0023 Milestone 5: MaterialDemoFixture's own further-widened
+  # realizePendingMaterials() call requires a real pbrDirectLit* trio
+  # too, even though material_demo_scene never actually realizes one.
+  ATLANTIS_MATERIAL_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   # Plan 0019 Section P10/Milestone 10: the lighting_demo fixture's own
   # real, cooked scene artifact/metadata/manifest paths and both built-in
   # shader pairs' own output directories (LightingDemoFixture needs both,
@@ -113,6 +117,10 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_lighting_demo_scene_MANIFEST_PATH="${ATLANTIS_lighting_demo_scene_MANIFEST_PATH}"
   ATLANTIS_LIGHTING_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
   ATLANTIS_LIGHTING_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  # Plan 0023 Milestone 5: LightingDemoFixture's own further-widened
+  # realizePendingMaterials() call requires a real pbrDirectLit* trio
+  # too, even though lighting_demo_scene never actually realizes one.
+  ATLANTIS_LIGHTING_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
 )
 
 # Plan 0012 Step 6: the asset-sourced GPU test case needs
@@ -135,7 +143,8 @@ add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TAR
 # instead precisely because they must resolve identically regardless of
 # which directory ctest (or a human) happens to invoke this executable
 # from.
-add_dependencies(atlantis_image_regression_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders)
+add_dependencies(atlantis_image_regression_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
+  pbr_direct_lit_shaders)
 add_custom_command(TARGET atlantis_image_regression_gpu_tests POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_image_regression_gpu_tests>/shaders"

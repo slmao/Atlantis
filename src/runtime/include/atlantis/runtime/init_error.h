@@ -38,6 +38,14 @@ enum class RuntimeInitError {
   // against.
   SceneDependencyUnresolved,  // a referenced AssetId (mesh, material, or texture) has no resolver entry
   SceneDependencyLoadFailed,  // a resolved AssetId's own mesh, material, or texture load failed
+  // Plan 0023 Milestone 5 (ADR-0066 item 6): PbrDirectLit-only --
+  // cookMaterial() can never run this check (it never resolves its own
+  // texture reference, ADR-0059 Decision 7); this is Runtime's own
+  // existing Phase 1 scene-dependency-resolution point (ADR-0060
+  // Decision 6), the first point in the pipeline with both a material's
+  // own kind and its resolved texture's own real colorSpace. Never an
+  // Asset System type -- Milestone 1's own scope stays untouched.
+  PbrBaseColorTextureNotSrgb,
 };
 
 // For logging only -- not part of any Result/error contract.
