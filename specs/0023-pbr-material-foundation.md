@@ -309,13 +309,36 @@ Drafted at explicit human direction, ahead of Android Platform
 of Shadow, IBL, and Post-processing — see `specs/README.md`'s own
 updated Section B note.
 
-## Proposed Correction — 2026-08-30 (D9's own push-constant-layout discriminator)
+## Accepted Correction — 2026-08-30 (D9's own push-constant-layout discriminator)
 
-**Status: proposed, pending Human Review — not yet accepted. Does not
-change this Spec's own top-level Status (`Approved`) or rewrite any
-text above, all of which is preserved verbatim**, matching this
-codebase's own established correction discipline (e.g. Spec 0020's own
-"Human Review Correction" precedent).
+**Status: formally accepted by Human Review on 2026-08-30** — see
+"Human Review — Correction Acceptance (2026-08-30)" immediately below.
+**Does not change this Spec's own top-level Status (`Approved`) or
+rewrite any text above, all of which is preserved verbatim**, matching
+this codebase's own established correction discipline (e.g. Spec 0020's
+own "Human Review Correction" precedent).
+
+### Human Review — Correction Acceptance (2026-08-30)
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-08-30, in direct response to the implementability
+gap [PR #109](https://github.com/slmao/Atlantis/pull/109) (Plan 0023's
+own drafting) surfaced in D9's original text. The correction below is
+accepted exactly as specified: a new, closed, Renderer-owned
+`MaterialPushConstantLayout` enum (`ObjectToWorldOnly`/`PbrDirectLit`),
+`Material`-private storage with a `const`-qualified accessor and no
+setter (never a `const` data member), Runtime choosing the layout
+explicitly at Material-construction time, an exhaustive `switch` with
+no `default:` label in `Renderer::drawFrame()`, zero RHI public API
+change, `DrawItem` unchanged, no value-based inference, `Material`'s
+existing move-construction/move-assignment contract preserved, and the
+Renderer public accessor count corrected from three to four. **No ADR
+Amendment is required**, per this correction's own reasoning below,
+accepted as stated. **This acceptance authorizes, once this PR merges,
+resuming and continuing review of Plan 0023 (revised to reference this
+corrected mechanism) — it does not itself authorize any
+Implementation.** No further Human Review is pending for this
+correction.
 
 **What prompted this correction.** D9's own original text says
 `Material` gains three new, "`const`", borrowed-value fields and that
@@ -365,7 +388,7 @@ the rest of D9 (three PBR parameter values live on `Material`;
 directly) is unchanged and reaffirmed:**
 
 A new, closed, `Atlantis::Renderer`-owned enum,
-`PushConstantLayout { ObjectToWorld64, PbrDirectLit96 }`, is added
+`MaterialPushConstantLayout { ObjectToWorldOnly, PbrDirectLit }`, is added
 alongside `Material`. `Material` stores it as a plain (non-`const`)
 private value, set exactly once in the constructor and never reassigned
 afterward — "immutable" by encapsulation (a private value plus a
@@ -373,8 +396,8 @@ afterward — "immutable" by encapsulation (a private value plus a
 never by a `const` data member, exactly matching the reasoning above.
 Runtime's own `createMaterial()` call sites (one per `MaterialKind`,
 already the single place that already knows which kind is being
-realized) pass the correct enum value explicitly — `ObjectToWorld64`
-for `UnlitTextured`/`LitTextured`, `PbrDirectLit96` for `PbrDirectLit`
+realized) pass the correct enum value explicitly — `ObjectToWorldOnly`
+for `UnlitTextured`/`LitTextured`, `PbrDirectLit` for `PbrDirectLit`
 — never inferred from `baseColorFactor`/`metallicFactor`/
 `roughnessFactor`'s own values (which cannot reliably distinguish the
 two: ADR-0066 item 1's own defaults give every non-PBR `Material` the
@@ -385,25 +408,25 @@ exhaustively on `item.material->pushConstantLayout()` — a closed
 `switch` with no `default:` label, exercising this repository's own
 `/w14062`/`/WX` C4062 discipline exactly as `selectShaderPair()`'s own
 `MaterialKind` switch already does (ADR-0067 D-7) — building the
-existing 64-byte `objectToWorld`-only payload for `ObjectToWorld64` and
+existing 64-byte `objectToWorld`-only payload for `ObjectToWorldOnly` and
 the 96-byte payload (ADR-0067 D-3's own exact layout) for
-`PbrDirectLit96`, before calling the existing, unmodified
+`PbrDirectLit`, before calling the existing, unmodified
 `CommandList::pushConstant(const void*, std::size_t)`.
 
 ```cpp
 // atlantis::renderer, material.h — additive to the existing class.
-enum class PushConstantLayout { ObjectToWorld64, PbrDirectLit96 };
+enum class MaterialPushConstantLayout { ObjectToWorldOnly, PbrDirectLit };
 
 class Material {
  public:
   explicit Material(std::unique_ptr<atlantis::rhi::Pipeline> pipeline,
-                     PushConstantLayout pushConstantLayout,
+                     MaterialPushConstantLayout pushConstantLayout,
                      const atlantis::rhi::SampledTexture* sampledTexture = nullptr,
                      const atlantis::rhi::Sampler* sampler = nullptr,
                      std::array<float, 4> baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f},
                      float metallicFactor = 1.0f, float roughnessFactor = 1.0f) noexcept;
   // ~Material(), copy/move members unchanged from today.
-  [[nodiscard]] PushConstantLayout pushConstantLayout() const noexcept { return pushConstantLayout_; }
+  [[nodiscard]] MaterialPushConstantLayout pushConstantLayout() const noexcept { return pushConstantLayout_; }
   [[nodiscard]] const std::array<float, 4>& baseColorFactor() const noexcept { return baseColorFactor_; }
   [[nodiscard]] float metallicFactor() const noexcept { return metallicFactor_; }
   [[nodiscard]] float roughnessFactor() const noexcept { return roughnessFactor_; }
@@ -411,7 +434,7 @@ class Material {
 
  private:
   // pipeline_/sampledTexture_/sampler_ unchanged from today.
-  PushConstantLayout pushConstantLayout_;         // NOT const -- see reasoning above
+  MaterialPushConstantLayout pushConstantLayout_;         // NOT const -- see reasoning above
   std::array<float, 4> baseColorFactor_{1.0f, 1.0f, 1.0f, 1.0f};  // NOT const
   float metallicFactor_ = 1.0f;                    // NOT const
   float roughnessFactor_ = 1.0f;                   // NOT const
