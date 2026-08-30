@@ -561,7 +561,28 @@ method
 ([ADR-0065](../adr/0065-explicit-pre-write-submission-drain-for-frame-uniform-safety.md))
 was found unnecessary during that Spec's own governance gate and was
 never implemented; `ADR-0065` is `Rejected`, not a current architectural
-decision.
+decision. A third `MaterialKind`, `PbrDirectLit` — a metallic-roughness
+Cook-Torrance BRDF for Directional/Point lights, sharing the existing
+single-texture Material architecture — is implemented per
+[specs/0023-pbr-material-foundation.md](../specs/0023-pbr-material-foundation.md),
+[plans/0023-pbr-material-foundation.md](../plans/0023-pbr-material-foundation.md),
+and
+[ADR-0066](../adr/0066-pbr-material-asset-parameter-set-and-color-space-contract.md)–[ADR-0067](../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md),
+merged via [PR #111](https://github.com/slmao/Atlantis/pull/111). It
+extends the Material artifact/schema to 56 bytes, the push constant to
+96 bytes (vertex+fragment stage visibility), and the camera uniform
+buffer to 320 bytes (a new, separate `CameraWorldPositionData` tail,
+Camera/Lighting's own existing 304 bytes untouched); `Material` gains a
+`MaterialPushConstantLayout` discriminator so `Renderer::drawFrame()`
+selects the correct push-constant payload shape per `DrawItem`, via an
+exhaustive, C4062-guarded switch mirroring `selectShaderPair()`'s own.
+`PbrPushConstants` itself is a private Renderer header
+(`src/renderer/src/pbr_push_constants.h`), not part of this module's
+public `include/` — it carries no cross-module contract, unlike
+`CameraWorldPositionData`. **This is a direct-lighting PBR baseline
+only** — HDR intermediate storage, output transfer/tone-mapping,
+image-based lighting, shadows, and normal mapping/tangent-space input
+are all unimplemented, per this Spec's own Non-Goals.
 See
 [docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md)
 for the full public/private boundary statement.

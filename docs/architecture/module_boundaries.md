@@ -526,6 +526,43 @@ which would have recorded the originally-proposed new RHI method, is
 `Rejected` — its own Decision was never implemented and must not be read
 as a current architectural decision.
 
+**PBR Material Foundation (Direct Lighting) (Spec 0023, implemented and
+merged via [PR #111](https://github.com/slmao/Atlantis/pull/111)):**
+`MaterialKind` gains a third enumerator, `PbrDirectLit` — a metallic-
+roughness Cook-Torrance BRDF (Lambertian diffuse + GGX/Trowbridge-Reitz
+normal distribution + Smith-Schlick-GGX geometry with Karis's direct-
+lighting `k = (roughness+1)²/8` remap + Schlick Fresnel) for Directional/
+Point lights, sharing `UnlitTextured`/`LitTextured`'s own single-texture
+Material architecture. The Material artifact/schema bumps to 56 bytes
+(`baseColorFactor`/`metallicFactor`/`roughnessFactor`,
+[ADR-0066](../../adr/0066-pbr-material-asset-parameter-set-and-color-space-contract.md));
+the existing push constant widens to 96 bytes with vertex-and-fragment
+stage visibility, and the camera uniform buffer extends to 320 bytes via
+a new, separate `CameraWorldPositionData` tail appended after the
+existing, untouched 304-byte Camera+Lighting region
+([ADR-0067](../../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)).
+`atlantis::renderer::Material` gains a `MaterialPushConstantLayout`
+discriminator (`ObjectToWorldOnly` / `PbrDirectLit`) so
+`Renderer::drawFrame()` selects the correct push-constant payload shape
+per `DrawItem` via an exhaustive, C4062-guarded switch — no new
+`DrawItem` field, no RHI public API change; the Vulkan `stageFlags`
+widening is Vulkan-Backend-private, exactly like Spec 0019's own
+uniform-binding widening. A base-color texture bound to a `PbrDirectLit`
+material must be `Rgba8Srgb` — a Unorm texture fails scene load with
+`RuntimeInitError::PbrBaseColorTextureNotSrgb`, checked once at Runtime
+scene-load time, never a per-frame check or an assert. `PbrPushConstants`
+itself is a private Renderer header
+(`src/renderer/src/pbr_push_constants.h`, found and corrected during
+this Spec's own final review — an earlier draft had placed it under
+Renderer's public `include/`) — it carries no cross-module contract,
+unlike `CameraWorldPositionData`, whose own public placement remains
+correct. **This is a direct-lighting PBR baseline only, not
+Filament-quality PBR** — this Spec's own Non-Goals explicitly exclude
+HDR intermediate storage, output transfer/tone-mapping (the existing
+hard-clip-only output contract is unchanged), image-based lighting,
+shadows, and normal mapping/tangent-space input; none of them exist
+anywhere in this codebase as a result of this work.
+
 **Extension points:** a rename-stable GUID identity scheme and a real
 derived-data cache are each named, explicitly out-of-scope future work
 in Spec 0012/Spec 0015 — not designed or scaffolded here. A

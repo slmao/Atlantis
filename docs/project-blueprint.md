@@ -1483,6 +1483,80 @@ milestone being listed does not authorize starting it — see Section 1.
   purpose GPU upload scheduler; Android/iOS/Linux implementation; any
   Editor/Client-facing API.
 
+### Milestone 20 — PBR Material Foundation (Direct Lighting)
+
+- **Governance state:** **`Approved` Spec (carries an "Accepted
+  Correction — 2026-08-30" for D9's own push-constant-layout
+  discriminator), `Approved / Ready for Implementation` Plan.
+  Implemented and merged via
+  [PR #111](https://github.com/slmao/Atlantis/pull/111) (2026-08-31)** —
+  [specs/0023-pbr-material-foundation.md](../specs/0023-pbr-material-foundation.md),
+  [plans/0023-pbr-material-foundation.md](../plans/0023-pbr-material-foundation.md).
+  Human-directed, drafted ahead of Candidate Backlog Section B's own
+  Android Platform (Candidate Order 1, unaffected) and ahead of
+  Shadow/IBL/Post-processing.
+- **Scope delivered:** a third `MaterialKind`, `PbrDirectLit` — a
+  metallic-roughness Cook-Torrance BRDF (Lambertian diffuse + GGX/
+  Trowbridge-Reitz normal distribution + Smith-Schlick-GGX geometry with
+  Karis's direct-lighting `k = (roughness+1)²/8` remap + Schlick
+  Fresnel) for Directional/Point lights, sharing the existing single-
+  texture Material architecture. The Material artifact/schema bumps to
+  56 bytes (`baseColorFactor`/`metallicFactor`/`roughnessFactor`); the
+  push constant bumps to 96 bytes with vertex-and-fragment stage
+  visibility; the camera uniform buffer extends to 320 bytes via a new,
+  separate `CameraWorldPositionData` tail appended after the existing,
+  untouched 304-byte Camera+Lighting region. `Material` gains a
+  `MaterialPushConstantLayout` discriminator (`ObjectToWorldOnly` /
+  `PbrDirectLit`) so `Renderer::drawFrame()` selects the correct
+  push-constant payload shape per `DrawItem` via an exhaustive,
+  C4062-guarded switch mirroring `selectShaderPair()`'s own. A
+  base-color texture bound to a `PbrDirectLit` material must be
+  `Rgba8Srgb`; a Unorm texture fails scene load with
+  `RuntimeInitError::PbrBaseColorTextureNotSrgb`, never a per-frame
+  retry or an assert. One non-shared-vertex UV-sphere mesh and four PBR
+  material assets (dielectric/metallic × rough/smooth) compose a new
+  `pbr_material_demo` validation scene. Zero new RHI public API; the
+  Vulkan `stageFlags` widening is Vulkan-Backend-private.
+- **Verified:** CPU BRDF reference tests (independently implemented,
+  never sharing code with the shader); shader-reflection-vs-C++-layout
+  cross-checks for `PbrPushConstants` and the 320-byte camera buffer;
+  real-GPU parameter-transmission, format-change, and mixed-`MaterialKind`
+  scene tests; Spec 0021 (N=2/N=6 descriptor-pool) and Spec 0022
+  (dynamic Lighting) regression, both re-run against `PbrDirectLit`.
+  Fresh Debug/Release builds clean; `ctest -LE gpu` 798/798 Debug,
+  797/797 Release (the one-fewer-in-Release gap is the pre-existing,
+  documented Debug-only `ATLANTIS_ASSERT` test); `ctest -L gpu` 71/71
+  both configurations, zero Vulkan Validation Layers hits across full
+  verbose GPU test output; a fresh `ATLANTIS_BUILD_TESTS=OFF`
+  configure+build produced a working `atlantis_runtime.exe` with zero
+  test executables; C4062 positive/negative probes confirmed both the
+  `MaterialPushConstantLayout` switch and the `MaterialKind` switches
+  fail to compile with a case omitted; module/link graph confirmed
+  `Atlantis::AssetSystem` still links `Atlantis::Core` only and
+  `Atlantis::RHI`'s public API unchanged; all five existing goldens
+  confirmed byte-for-byte unchanged, and the new `pbr_material_demo`
+  golden was captured, human-reviewed (all four corner cases visually
+  distinguishable under the existing clamp-only output contract), and
+  approved per ADR-0042's bootstrap process. A centralized final review
+  round on PR #111 itself, before merge, found and fixed two further
+  real defects within this Plan's own scope: a `std::to_string(float)`
+  precision bug in the material metadata/source sidecar's own text
+  serialization (fixed with `std::to_chars`, a shortest-round-trip
+  guarantee) and `PbrPushConstants`'s placement under Renderer's public
+  `include/` with no governance document ever naming that location
+  (demoted to a private `src/renderer/src/` header, zero functional
+  change). See
+  [plans/0023-pbr-material-foundation.md](../plans/0023-pbr-material-foundation.md)'s
+  own "Post-Merge Status Update" for the full record.
+- **Not implemented:** this is a direct-lighting PBR baseline only, not
+  Filament-quality PBR (this Spec's own Non-Goals) — HDR intermediate
+  storage, output transfer/tone-mapping (the existing hard-clip-only
+  output contract is unchanged), image-based lighting, shadows, and
+  normal mapping/tangent-space input are all explicitly unimplemented;
+  Shadow, IBL, and Post-processing remain deferred, unrelated to this
+  Milestone's own scope; Android/iOS/Linux implementation and any
+  Editor/Client-facing API remain out of scope.
+
 ### Further candidate phases (directional only, no Spec, no ADR)
 
 The following are named only to communicate long-term direction drawn
