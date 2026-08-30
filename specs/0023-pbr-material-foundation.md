@@ -1,19 +1,153 @@
 # Spec: PBR Material Foundation (Direct Lighting)
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-08-30
-- **Related Plan(s):** none yet — this Spec's own Human Review Approval,
-  once recorded, authorizes drafting a Plan only, not any Implementation,
-  matching every prior Spec in this repository's own governance pattern.
+- **Related Plan(s):** none yet — this Spec's own Human Review Approval
+  authorizes drafting a Plan only, not any Implementation, matching
+  every prior Spec in this repository's own governance pattern.
 - **Related ADR(s):**
   [ADR-0066](../adr/0066-pbr-material-asset-parameter-set-and-color-space-contract.md)
-  (`Proposed` — Material asset parameter set, artifact schema, base-color
+  (`Accepted` — Material asset parameter set, artifact schema, base-color
   texture color-space contract) and
   [ADR-0067](../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)
-  (`Proposed` — exact BRDF, push-constant extension, rendering contract),
+  (`Accepted` — exact BRDF, push-constant extension, rendering contract),
   deliberately two single-responsibility ADRs, not one, per this Spec's
-  own drafting brief.
+  own drafting brief. A third, real architectural piece — extending the
+  shared Camera/Lighting uniform buffer to carry a camera world-space
+  position — is recorded as an **Accepted Amendment to
+  [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)**
+  (the ADR that already owns that buffer's own layout), not as a third
+  new ADR and not folded into ADR-0067 — see ADR-0067 D-15 for the
+  motivating BRDF need and ADR-0062's own "Proposed Amendment —
+  2026-08-30" section (now `Accepted`) for the complete, self-contained
+  amendment text.
+- **Human Review Approval (2026-08-30):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
+  git-identified maintainer) on 2026-08-30, accepting this document's
+  own "Decisions for Human Review" section in full, per the corrections
+  produced during one centralized, final review round (below) — see
+  that section for the complete, itemized record. Accepting
+  [ADR-0066](../adr/0066-pbr-material-asset-parameter-set-and-color-space-contract.md)
+  (`Proposed` → `Accepted`),
+  [ADR-0067](../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)
+  (`Proposed` → `Accepted`), and
+  [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)'s
+  own "Accepted Amendment — 2026-08-30" (its own top-level ADR Status
+  unchanged at `Accepted`) in the same pass.
+  **This approval authorizes drafting Plan 0023 only — not any
+  Implementation.**
+
+## Final Review Round (2026-08-30) — closed findings, recorded before approval
+
+A single, targeted centralized final review examined this Spec and its
+two ADRs against real Slang reflection JSON (a live `slangc` compile of
+the candidate push-constant block, both stages), a real MSVC layout
+probe (`sizeof`/`alignof`/`offsetof` on two candidate C++ structs), a
+real `vulkaninfo` query of this session's own reference GPU, and a
+direct reading of `extractCameraMatrices()`/`bindUniformBuffer()`'s own
+real code — not by re-deriving conclusions from the original drafting
+round's own reasoning alone. Every item below was closed with a real
+design correction or an explicit, evidence-backed lock — recorded here
+so each change is visible, not silently folded in:
+
+1. **The push-constant total size was a real, confirmed error, not a
+   disclosed estimate — corrected from 88 to 96 bytes.** The original
+   draft summed each field's own byte width (64+16+4+4=88) and stopped,
+   conflating "the last field's own end offset" with "the real
+   push-constant range size." A real `slangc` compile of the candidate
+   block (both stages) and a real MSVC `alignas(16)` layout probe both
+   independently confirm the true total is **96 bytes** — Slang rounds
+   the push-constant block's own container size up to a 16-byte
+   boundary. `PbrPushConstants` is corrected to `alignas(16)`
+   (`sizeof == 96`), matching this codebase's own existing
+   `FrameLightingData`/`DirectionalLightGpu` convention exactly.
+   Headroom against Vulkan's own guaranteed 128-byte minimum corrected
+   from 40 to 32 bytes — every occurrence in the Spec and ADR-0067
+   updated (D7/D8, ADR-0067 D-6/D-8/D-11 and its own Consequences/
+   Alternatives Considered).
+2. **The BRDF's own geometry-term remap carried a real citation error —
+   `k = alpha/2` is Karis's IBL remap, not his direct-lighting one.**
+   Corrected to the correctly-cited direct-lighting remap,
+   `k = (roughness+1)²/8`, using the clamped perceptual `roughness`
+   value directly, never `alpha` — a real, load-bearing distinction the
+   original draft's single shared variable name obscured. Fixed in
+   ADR-0067 D-1/D-2 and this Spec's own D12, with `kMinAlpha`'s own
+   scope (guards `alpha` for `D` only, never `k`) stated explicitly to
+   prevent the same conflation recurring (ADR-0067 D-4).
+3. **Push-constant fragment-stage visibility, left as two undecided
+   alternatives, is now locked to uniformly widening every Pipeline's
+   `stageFlags` to `VERTEX | FRAGMENT`** — matching ADR-0062's own
+   already-shipped precedent exactly, closing the simpler,
+   precedent-matching choice with real evidence (this codebase's own
+   already-documented "stray, harmless, unread `pushConstantBuffer`
+   reflection entry" fact, `slang_json_transform.cpp:244-255`, plus
+   standard Vulkan pipeline-layout compatibility rules) rather than
+   deferring the choice to Human Review. The rejected per-Pipeline
+   RHI-internal-field alternative is recorded in ADR-0067's own
+   Alternatives Considered, not left as an open implementation
+   question (ADR-0067 D-7, this Spec's own D7/D8).
+4. **Camera world-space position, a real gap the original drafting round
+   surfaced but did not close, is now locked** to extending the shared
+   Camera/Lighting uniform buffer (304 → 320 bytes), the new field
+   appended *after* the existing region, never inserted — confirmed
+   safe for `UnlitTextured`/`LitTextured` by `VulkanCommandList::
+   bindUniformBuffer()`'s own real `VK_WHOLE_SIZE` binding
+   (`vulkan_command_list.cpp:250`), and confirmed cheap by
+   `extractCameraMatrices()`'s own already-computed, currently-discarded
+   `eye` value (`scene_extraction.cpp:107`). All three other real
+   options (shader-side inverse-view extraction; a per-draw push
+   constant; reusing existing padding) were compared and rejected with
+   stated reasons (ADR-0067 D-15). Recorded as an **Accepted Amendment
+   to ADR-0062** — the ADR that already owns this buffer's own layout —
+   rather than folded into ADR-0067's own, unrelated BRDF/push-constant
+   scope, per this review's own explicit governance instruction.
+5. **The output-color-space contract (no tone-mapping, hard clamp) now
+   carries an explicit, binding condition on the new golden's own
+   human-review step**, not merely a disclosed trade-off: the four
+   corner cases (dielectric/metallic × rough/smooth) must be confirmed
+   *visually distinguishable* under the existing contract at
+   golden-capture time, or Implementation must stop and a dedicated
+   Output Transfer Function Spec is the correct next step — never a
+   local, `PbrDirectLit`-only gamma/tone-map patch, which would
+   reintroduce cross-`MaterialKind` output inconsistency (ADR-0067 D-9,
+   this Spec's own D14/D17).
+6. **The Material artifact's own new 56-byte size, previously stated as
+   "32 + 24," now carries a complete, field-by-field byte table**
+   confirming no hidden padding exists anywhere in this format (a
+   hand-serialized, explicit shift/mask byte stream, never a C++ struct
+   memcpy) — a provable sum, not an estimate (ADR-0066 item 3).
+7. **Parameter semantics — `baseColorFactor.a`'s real (in)effect,
+   `-0.0f` handling, and whether `PbrDirectLit` requires a texture —
+   were previously implicit; all three are now closed explicitly**,
+   including the real, confirmed finding that this engine has zero
+   alpha-blending capability anywhere (`blendEnable = VK_FALSE`, every
+   Pipeline, `vulkan_device.cpp:1125`) — `baseColorFactor.a` is stored
+   and validated but currently inert, matching the texture's own
+   already-inert alpha channel exactly (ADR-0066 item 8).
+8. **The base-color-texture sRGB validation's own scope was implicit —
+   now stated explicitly as `PbrDirectLit`-only**, with an explicit
+   confirmation that Spec 0016's own dual-format GPU test fixture and
+   every currently-shipped `UnlitTextured`/`LitTextured` Material are
+   unaffected (this Spec's own D6).
+9. **The validation sphere mesh's own exact requirements (topology,
+   attributes, radius, winding, pole handling, determinism, one-mesh-
+   many-transforms) were left as "a sphere" — now fully specified**,
+   closed against this codebase's own real, existing mesh-authoring and
+   validation conventions (this Spec's own D16).
+10. **The new PBR golden's own discriminating power was asserted, not
+    demonstrated as verifiable** — an asymmetric four-sphere layout and
+    a concrete set of reversible negative/mutation tests (metallic
+    forced to 0; roughness forced constant; camera position sign
+    flipped; Fresnel blend disabled; Point attenuation bypassed) are now
+    required, each confirmed to make the corresponding test/golden
+    comparison actually fail before being accepted as real coverage
+    (this Spec's own D17, Testing & Verification Plan).
+
+No unresolvable architectural conflict was found. Every item above was
+closed within this Spec's own existing, evidence-grounded scope — no
+finding required a second base-color texture, a new descriptor binding,
+or reopening Spec 0021's own descriptor-pool-capacity proof.
 
 ## Summary
 
@@ -170,8 +304,11 @@ Android Platform, Shadow Foundation, IBL, and Post-processing — see
   device feature, no platform-specific branch.
 - **Other:** zero new third-party dependency; zero change to
   `Atlantis::AssetSystem`'s Core-only link closure; zero change to
-  `Atlantis::RHI`'s/`Atlantis::Renderer`'s public API surface beyond one
-  new, additive `PipelineCreateParams` field (ADR-0067 D-7).
+  `Atlantis::RHI`'s public API surface at all (ADR-0067 D-7's own locked
+  recommendation — uniform push-constant stage-flags widening — adds no
+  new RHI type, field, or method); `Atlantis::Renderer`'s public API
+  gains exactly three new, additive accessors on `Material` (D9) and no
+  other change.
 
 ## Pre-draft verification against real, current source
 
@@ -412,29 +549,44 @@ new resource type, no new binding.
 
 ## Architectural Impact
 
-**Yes** — two distinct architectural decisions, deliberately recorded as
-two single-responsibility ADRs, not one:
+**Yes** — three distinct architectural decisions, deliberately kept as
+two new, single-responsibility ADRs plus one scoped amendment to an
+already-`Accepted` ADR, never bundled together:
 
 - **[ADR-0066](../adr/0066-pbr-material-asset-parameter-set-and-color-space-contract.md)
-  (`Proposed`):** widens `MaterialAssetData`'s own field set and the
+  (`Accepted`):** widens `MaterialAssetData`'s own field set and the
   Material artifact's own binary schema (a real Asset System data-format
   decision), and adds a new Runtime-side texture-color-space
   cross-validation (closing a gap ADR-0057 already disclosed and left
   open).
 - **[ADR-0067](../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)
-  (`Proposed`):** extends the RHI's own push-constant byte layout and
-  introduces a new, RHI-internal, per-Pipeline push-constant
-  stage-visibility concept (a real RHI/Vulkan-Backend resource-contract
-  decision) — `CommandList`'s own public API surface gains exactly one
-  additive field on `PipelineCreateParams`; no existing public method
-  signature changes.
+  (`Accepted`):** extends the RHI's own push-constant byte layout
+  (locked at 96 bytes, real Slang/MSVC evidence) and uniformly widens
+  every Pipeline's own push-constant stage visibility to `VERTEX |
+  FRAGMENT` (matching ADR-0062's own already-shipped precedent) — no
+  new RHI type, field, or method; `CommandList`'s own public API surface
+  is entirely unchanged.
+- **[ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)'s
+  own Accepted Amendment — 2026-08-30** (not a new ADR): extends the
+  already-`Accepted` shared Camera/Lighting uniform buffer with one new,
+  trailing, frame-scoped field (camera world-space position), growing
+  it from 304 to 320 bytes, under two structural conditions (existing
+  304-byte region's own layout never altered; no existing shader ever
+  required to change source) — recorded on ADR-0062 because that ADR
+  already owns this buffer's own layout decision, not folded into
+  ADR-0067's own, unrelated BRDF/push-constant scope.
 
-These two decisions are deliberately not bundled into one ADR — the
-first is a pure Asset System data-format/validation decision with no
-Vulkan/GPU content; the second is a pure RHI/rendering-math decision with
-no Asset System content — matching this codebase's own established
-"one ADR, one architectural responsibility" convention (e.g. ADR-0061 vs.
-ADR-0062 for Spec 0019's own Light-component-vs-frame-uniform split).
+These three are deliberately kept apart — the first is a pure Asset
+System data-format/validation decision with no Vulkan/GPU content; the
+second is a pure RHI/rendering-math decision with no Asset System
+content; the third is a scoped extension of an existing, unrelated
+frame-data decision that happens to be motivated by the second —
+matching this codebase's own established "one ADR, one architectural
+responsibility" convention (e.g. ADR-0061 vs. ADR-0062 for Spec 0019's
+own Light-component-vs-frame-uniform split) and its own established
+amendment-over-new-ADR convention for a scoped extension of an already-
+`Accepted` decision (ADR-0041's/ADR-0042's own prior Accepted
+Amendments).
 
 No RenderGraph, World, Scene, or Platform module boundary is touched by
 either decision. `Atlantis::AssetSystem`'s Core-only dependency closure
@@ -539,13 +691,26 @@ Phase 1 scene-dependency-resolution point, reusing an already-read
 value — no new Asset System mechanism). `baseColorFactor` is authored
 and consumed in linear space, matching the sampled, hardware-linearized
 texture value it multiplies against (ADR-0066 Decision item 7).
+**Validation scope confirmed precise, not "all Materials":** this check
+runs only when `kind == PbrDirectLit` — every existing `UnlitTextured`/
+`LitTextured` Material asset (both currently-shipped ones, using
+`Rgba8Unorm` textures) is completely unaffected, and Spec 0016's own
+dedicated dual-format GPU test fixture (which cooks and samples the
+identical source image as both `Rgba8Unorm` and `Rgba8Srgb`, neither
+via a `PbrDirectLit` material) is equally unaffected — this new
+validation adds a constraint on one new `MaterialKind` only, never
+narrows what `Rgba8Unorm`/`Rgba8Srgb` textures may be used for
+elsewhere.
 
 ### D7. Per-material parameter transmission method
 
 **Recommendation:** extended push constants — `objectToWorld` (64
 bytes, unchanged) + `baseColorFactor`/`metallicFactor`/`roughnessFactor`
-(24 bytes) = 88 bytes, fitting comfortably within Vulkan's guaranteed
-128-byte minimum (ADR-0025) with 40 bytes to spare. See
+(24 bytes, ending at byte offset 88), whose real, Slang-reflection- and
+MSVC-layout-confirmed total block size is **96 bytes** (`alignas(16)`,
+ADR-0067 D-6 — corrected during final review from an earlier
+hand-computed 88), fitting comfortably within Vulkan's guaranteed
+128-byte minimum (ADR-0025) with **32 bytes to spare**. See
 [ADR-0067](../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)
 D-6/D-7 and "Alternatives Considered" there for why a new per-material
 uniform buffer was evaluated and not recommended for this round (it
@@ -554,45 +719,72 @@ given the push-constant headroom already available).
 
 ### D8. If push constants: exact layout, byte count, stage visibility, compatibility
 
-**Recommendation:** see
+**Recommendation, locked (no longer left open for Human Review):** see
 [ADR-0067](../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)
-D-6 (exact 88-byte layout, `objectToWorld` at its existing offset 0/size
-64, the three new fields at offset 64) and D-7 (a new, RHI-internal,
-per-Pipeline push-constant stage-flags field on `PipelineCreateParams`,
-defaulting to today's vertex-only behavior for every existing call site
-— `CommandList::pushConstant()`'s own public signature unchanged). D-7
-explicitly discloses and does not silently reject a simpler alternative
-(uniformly widen every Pipeline, matching ADR-0062's own precedent) —
-Human Review may pick either. `objectToWorld`'s own existing push range
-is unchanged in offset/size for `UnlitTextured`/`LitTextured`; only
-`PbrDirectLit`'s own Pipeline gets the wider range. Full compatibility
-argument: ADR-0067 D-8.
+D-6 (exact 96-byte layout — real Slang reflection and a real MSVC
+`alignas(16)` layout probe both confirm this, not the field-sum-only
+88 an earlier draft assumed — `objectToWorld` at its existing offset
+0/size 64, the three new fields ending at offset 88, 8 bytes of
+Slang's own trailing block-rounding padding) and D-7 (every Pipeline's
+own push-constant `stageFlags` uniformly widened to `VERTEX |
+FRAGMENT`, matching ADR-0062's own already-shipped precedent exactly —
+no new RHI-internal field, no `PipelineCreateParams` change,
+`CommandList::pushConstant()`'s own public signature unchanged). D-7's
+own real evidence (the Shader System's already-documented "stray,
+harmless, unread `pushConstantBuffer` reflection entry" fact, plus
+standard Vulkan pipeline-layout compatibility rules) closes the
+per-Pipeline-field alternative as unnecessary — it is recorded only in
+ADR-0067's own Alternatives Considered now, not left as an open
+implementation choice. `objectToWorld`'s own existing push range is
+unchanged in offset/size for `UnlitTextured`/`LitTextured`; only
+`PbrDirectLit`'s own Pipeline gets the wider (96-byte) range. Full
+compatibility argument: ADR-0067 D-8.
 
 ### D9. `Material` ownership of PBR parameters; Renderer read path; public API
 
-**Recommendation:** `atlantis::renderer::Material` itself gains **no**
-new field — the three PBR parameters live only in `MaterialAssetData`
-(Asset System, CPU-side) and are baked directly into the per-`DrawItem`
-push-constant payload at the point `Renderer::drawFrame()` already
-constructs that payload from `item.objectToWorld`, widened to also read
-the bound `Material`'s own originating `MaterialAssetData` (or a small,
-Runtime-owned side table keyed the same way `materialResourceMap_`
-already is) for `PbrDirectLit` items specifically. This keeps
-`atlantis::renderer::Material`'s own public shape (`pipeline()`,
-`sampledTexture()`, `sampler()`) completely unchanged — a real,
-disclosed, Plan-time question is whether the *cleanest* implementation
-instead adds three optional fields to `Material` itself (mirroring how
-`sampledTexture_`/`sampler_` already are optional, borrowed fields) —
-**explicitly left open for Human Review to pick**, since both are
-functionally equivalent and neither changes `DrawItem`'s own shape
-(D10) or `Renderer::drawFrame()`'s own bind/push *order*.
+**Recommendation, locked (no longer left open for Human Review):**
+`atlantis::renderer::Material` gains three new, optional, borrowed-by-
+value fields — `baseColorFactor` (4 floats), `metallicFactor`,
+`roughnessFactor` — set once in its constructor exactly like
+`sampledTexture_`/`sampler_` already are (present-or-default, no
+setter, fixed for the object's lifetime). This is the locked choice
+over a Runtime-owned side table: `Material` already exists specifically
+to hold "whatever a Pipeline needs to draw with" (it already owns
+`pipeline_` and borrows `sampledTexture_`/`sampler_`) — three more POD
+`float` values is a direct, minimal extension of an existing,
+established shape, while a side table would introduce a **new**
+parallel state structure whose keys must be kept in lockstep with
+`materialResourceMap_`'s own keys, a new invariant this codebase does
+not otherwise need. `realizeOneMaterialCandidate()`
+(`material_realization.cpp:119-183`) already has `materialData` (the
+loaded `MaterialAssetData`) in scope at the exact point it calls
+`createMaterial()` — passing `materialData.baseColorFactor`/
+`metallicFactor`/`roughnessFactor` through to `Material`'s own
+constructor is a direct, local change, not a new data-flow path.
+`Renderer::drawFrame()`'s existing per-`DrawItem` loop
+(`renderer.cpp:27-41`) reads `item.material->baseColorFactor()`/etc.
+(new, `const`, `noexcept` accessors matching `pipeline()`/
+`sampledTexture()`/`sampler()`'s own existing shape) to build the
+push-constant payload passed to `pushConstant()` — `AssetSystem`'s own
+`MaterialAssetData` DTO is never passed into `Renderer` directly,
+preserving the existing module boundary (Runtime is still the sole
+translator from Asset System DTOs to Renderer/RHI types, matching
+ADR-0059/ADR-0060's own established boundary). `UnlitTextured`/
+`LitTextured` Materials simply never read these three fields when
+constructing their own (unchanged, 64-byte) push-constant payload —
+matching how they already ignore `sampledTexture_`/`sampler_` when
+`nullptr`. Survives a format-change rebuild unchanged: `Material`'s own
+three new fields are copied from the same, already-resolved
+`materialData` every rebuild candidate is already built from
+(`rebuildMaterialsForFormatChange()`, `material_realization.cpp:277-332`),
+never re-defaulted or dropped.
 
 ### D10. `DrawItem` — stays unchanged
 
 **Recommendation:** yes, unchanged — `DrawItem`'s own three fields
 (`mesh`, `material`, `objectToWorld`) are sufficient; the three new PBR
-parameters are reached via `item.material`'s own already-referenced
-`MaterialAssetData`/side-table (D9), never a new `DrawItem` field.
+parameters are reached via `item.material`'s own new fields (D9), never
+a new `DrawItem` field.
 
 ### D11. Runtime `MaterialKind` dispatch and format-change rebuild
 
@@ -603,7 +795,14 @@ third path through `realizeOneMaterialCandidate()`/
 mechanism (both already `MaterialKind`-parametric via the shader-pair
 selection they already delegate) — no new realization phase, no new map,
 no new format-change-detection mechanism. See "Pre-draft verification"
-above for the exact real call sites this reuses unchanged.
+above for the exact real call sites this reuses unchanged. **PBR
+parameters do not regress or reset across a format-change rebuild**
+(D9 above): every rebuild candidate is built from the same, already-
+resolved `materialData` (`MaterialAssetData`, unchanged by a format
+change) each material's own first realization already used — `Material`'s
+own three new fields (D9) are copied fresh from that same source on
+every rebuild, never re-defaulted, never carried over stale from the
+old batch.
 
 ### D12. Exact BRDF
 
@@ -611,32 +810,42 @@ above for the exact real call sites this reuses unchanged.
 [ADR-0067](../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)
 D-1 through D-5 for the complete, named-constant, per-division-guarded
 formula (Lambertian diffuse with metallic energy split; GGX/Trowbridge-
-Reitz normal distribution; Schlick-GGX geometry with Karis's
-direct-lighting `k = alpha/2` remap; Schlick Fresnel with dielectric
-`F0 = 0.04`/metallic `F0 = baseColor` blend; ADR-0062's existing,
-unchanged linear Point attenuation; multi-light accumulation via the
-identical `for`-loop-and-`+=` shape `lit_textured.slang` already uses).
+Reitz normal distribution; Schlick-GGX geometry with Karis's own
+**direct-lighting** `k = (roughness+1)²/8` remap — corrected during
+final review from an earlier draft's mislabeled `k = alpha/2`, which is
+actually Karis's *IBL* remap, not his direct-lighting one; Schlick
+Fresnel with dielectric `F0 = 0.04`/metallic `F0 = baseColor` blend;
+ADR-0062's existing, unchanged linear Point attenuation; multi-light
+accumulation via the identical `for`-loop-and-`+=` shape
+`lit_textured.slang` already uses).
 
 ### D13. Coordinate/normal/view/light vector conventions
 
-**Recommendation:** identical conventions to `lit_textured.slang`'s own
-existing, already-verified code — world-space `N` from
+**Recommendation, locked (no longer left open for Human Review):**
+identical conventions to `lit_textured.slang`'s own existing,
+already-verified code — world-space `N` from
 `mul((float3x3)objectToWorld, input.normal)` (unchanged), world-space
 `L` derived per-light exactly as `lit_textured.slang` already derives it
 (`-direction` for Directional, `normalize(position - worldPosition)` for
 Point). The one new vector, `V` (view direction), is
-`normalize(cameraWorldPosition - worldPosition)` — **`cameraWorldPosition`
-is not currently exposed to any shader** (`CameraUniform` carries only
-`view`/`projection` matrices, never an explicit eye-position vector) —
-this Spec's own Plan must add it, either as a new, small
-`CameraUniform` field (widening the existing 304-byte buffer by 12-16
-bytes, a real, disclosed layout change every consumer of that buffer
-must account for) or derived in-shader from the inverse of `view`'s own
-translation component (`-transpose(mat3(view)) * view[3].xyz`, avoiding
-any buffer-layout change at the cost of one small per-fragment matrix
-extraction). **Explicitly left open for Human Review** — this is a real,
-previously-unnoticed gap this Spec's own investigation surfaced, not a
-silently-resolved detail; see "Risks & Open Questions."
+`normalize(cameraWorldPosition - worldPosition)` — `cameraWorldPosition`
+is supplied by extending the shared Camera/Lighting uniform buffer, per
+[ADR-0067](../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)
+D-15 (a real, previously-unnoticed gap this Spec's own investigation
+surfaced, now closed with real evidence — `extractCameraMatrices()`
+already computes this exact value, `scene_extraction.cpp:107`, and
+currently discards it): the shared buffer grows from 304 to 320 bytes,
+the new field appended *after* the existing region (never inserted
+between `CameraMatrices` and `FrameLightingData`), confirmed to require
+zero source change to either `textured_quad.slang` or `lit_textured.slang`
+— both keep reading exactly their own existing byte ranges (0-127 and
+0-303 respectively), unaffected by the buffer's growth, per
+`VulkanCommandList::bindUniformBuffer()`'s own existing `VK_WHOLE_SIZE`
+binding (`vulkan_command_list.cpp:250`). This closes what the original
+drafting round left as an open question — see ADR-0067 D-15 for the
+complete comparison against the three rejected alternatives (shader-side
+inverse-view extraction; a per-draw push constant; reusing existing
+padding) and the accompanying Accepted Amendment to ADR-0062.
 
 ### D14. Output color space
 
@@ -647,7 +856,16 @@ D-9 for the full, disclosed trade-off (bright specular highlights on
 smooth surfaces hard-clip rather than tone-map; this engine's current
 RenderTarget format is UNORM, confirmed via
 `vulkan_presentation.cpp:107-112` and every golden fixture, with no
-hardware or shader-side display-encode step anywhere today).
+hardware or shader-side display-encode step anywhere today) and its own
+explicit, binding condition on this Spec's new golden's human-review
+step (D17): the four corner cases must be confirmed *visually
+distinguishable*, not merely non-black — a real, blocking finding at
+golden-capture time if they are not, requiring a dedicated Output
+Transfer Function Spec rather than a local, `PbrDirectLit`-only patch.
+All three `MaterialKind`s this engine ships follow this identical
+output contract — consistency across `MaterialKind`s in one scene was a
+real concern this review raised, and is exactly what not giving
+`PbrDirectLit` its own output transform achieves.
 
 ### D15. Direct-light cap and 176-byte `FrameLightingData`
 
@@ -655,34 +873,123 @@ hardware or shader-side display-encode step anywhere today).
 the identical, already-extracted per-light data `lit_textured.slang`
 already consumes; only the per-light *math* changes.
 
-### D16. Validation mesh choice
+### D16. Validation mesh choice — exact requirements, closed
 
-**Recommendation:** a new, hand-authored, non-shared-vertex sphere
-`.mesh.txt` (e.g. a UV-sphere or icosphere), generated by an offline,
-throwaway script (never committed as engine/tooling code — this
-codebase's own convention is 100% hand-authored `.mesh.txt` text
-sources today, confirmed by "Pre-draft verification" above; no
-procedural mesh-generation capability is added to the engine or its
-Tools) and checked in as an ordinary text mesh source, following the
-exact same authoring format every other mesh asset already uses. **Not**
-the existing cube or quads — a flat face's `N·V` varies too weakly to
-demonstrate this BRDF's own roughness/metallic-driven highlight shape
-and falloff, confirmed by direct inspection of the only three existing
-mesh assets (Pre-draft verification above).
+**Recommendation:** a new, hand-authored, non-shared-vertex UV-sphere
+`.mesh.txt`, generated by an offline, throwaway script (never committed
+as engine/tooling code — this codebase's own convention is 100%
+hand-authored `.mesh.txt` text sources today, confirmed by "Pre-draft
+verification" above; no procedural mesh-generation capability is added
+to the engine or its Tools) and checked in as an ordinary text mesh
+source, following the exact same authoring format every other mesh
+asset already uses. **Not** the existing cube or quads — a flat face's
+`N·V` varies too weakly to demonstrate this BRDF's own roughness/
+metallic-driven highlight shape and falloff, confirmed by direct
+inspection of the only three existing mesh assets (Pre-draft
+verification above). **Exact requirements, locked for the Plan to
+implement against, not left as generic "a sphere":**
 
-### D17. New PBR validation scene and golden
+- **Topology:** UV-sphere (latitude/longitude), not icosphere —
+  simplest to hand-verify row/column count and pole handling
+  deterministically; a Plan-time-fixed segment count (e.g. 16 latitude
+  × 24 longitude bands — exact numbers a Plan-time detail, chosen for a
+  visually smooth silhouette at this Spec's own golden resolution,
+  512×512, matching every other golden's own extent).
+- **Non-shared-vertex, matching the existing `textured_quad_left/right`
+  precedent exactly:** every triangle gets its own duplicated vertices
+  (never an indexed shared-vertex topology like `minimal_cube`'s own),
+  so each vertex carries a hard, unambiguous per-face or smoothly-
+  interpolated-per-vertex normal without any shared-vertex averaging
+  ambiguity.
+- **Attributes, matching the existing, unchanged 44-byte vertex layout
+  exactly (position/color/UV0/normal, no tangent — Non-Goals):**
+  position on the unit sphere scaled by a fixed, Plan-time-named radius;
+  color a fixed, inert placeholder (e.g. white — `PbrDirectLit` never
+  reads vertex color); UV0 standard equirectangular (`u = longitude /
+  2π`, `v = latitude / π`, with the two pole rows collapsing to
+  degenerate but still well-defined UV coordinates); normal the exact,
+  analytically-known unit-length outward radial direction at each
+  vertex (`normalize(position - center)`), never approximated.
+- **Radius and center:** a fixed, Plan-time-named radius (e.g. `1.0`)
+  centered at the mesh's own local origin — object-to-world placement
+  (position/scale) is the scene's own job (D17), not baked into the
+  mesh.
+- **Winding order:** counter-clockwise front-facing, matching every
+  other existing mesh asset's own established convention (confirmed
+  consistent across `minimal_cube`/`textured_quad_left/right` — a
+  Plan-time direct check, not re-derived here).
+- **Normal length:** exactly unit length at every vertex (an analytic
+  sphere normal is exact, not approximated/averaged) — must independently
+  pass the identical length-squared tolerance check Spec 0020's own
+  `MeshSourceVertex` validation already applies to every authored normal,
+  with zero special-casing for this mesh.
+- **Pole handling:** the two polar rows (a UV-sphere's own natural
+  degenerate case, where multiple vertices at one pole share the same
+  position but different UV `u`) are duplicated per-longitude-segment,
+  never collapsed to a single shared vertex — consistent with this
+  mesh's own non-shared-vertex topology overall.
+- **Determinism:** vertex and index emission order is fixed and
+  reproducible (row-major, latitude-then-longitude) — re-running the
+  offline generation script must produce byte-identical `.mesh.txt`
+  output, though the **checked-in `.mesh.txt` file itself, not the
+  script, is this Spec's own authoritative source** (matching D16's own
+  "never committed as engine/tooling code" framing) — the repository
+  does not claim this asset can be regenerated by any in-repo tool.
+- **Verification, not regeneration, is what this Spec's own test suite
+  owns:** GPU-independent tests parse the checked-in `.mesh.txt` and
+  confirm vertex count, non-shared-vertex topology (no duplicate
+  position+normal pairs collapsed), every normal's own unit length, UV0
+  range `[0, 1]`, and consistent counter-clockwise winding — proving the
+  checked-in asset's own real properties, never assuming the generation
+  method was correct.
+- **One mesh asset, reused via multiple scene-node transforms — not
+  four separate mesh files.** D17's own four material corner cases
+  (dielectric/metallic × rough/smooth) are four distinct `PbrDirectLit`
+  *materials* applied to four scene nodes that all reference the
+  *same* one sphere `AssetId`, exactly matching how `world_scene.scene.txt`
+  already instances `minimal_cube` five times from one mesh asset —
+  duplicating the mesh itself four times would be pure, unjustified
+  asset duplication with no benefit, since geometry is identical across
+  all four corners.
+
+### D17. New PBR validation scene and golden — discriminating power made explicit
 
 **Recommendation:** a new scene (e.g. `pbr_material_demo.scene.txt`)
-placing several instances of the new sphere mesh (D16), each with a
-distinct `PbrDirectLit` material spanning the four corners of the
-metallic/roughness space this BRDF's own math is sensitive to —
-dielectric-rough, dielectric-smooth, metallic-rough, metallic-smooth —
-lit by both one Directional and one Point light (matching
+placing **four instances of the one sphere mesh** (D16) at distinct,
+non-mirror-symmetric positions (an asymmetric layout, matching
 `lighting_demo`'s own existing "both light kinds independently visible"
-asymmetric design precedent). Golden captured per ADR-0042's existing
-"Initial baseline bootstrap" amendment (Implementation committed first,
-capture against a clean commit, human-reviewed, PNG/sidecar landed in a
-separate, later commit) — no relaxation of that process.
+asymmetric design precedent — never a simple row/grid a mirrored render
+could accidentally still pass), each with its own distinct
+`PbrDirectLit` material spanning all four corners of the metallic ×
+roughness space this BRDF's own math is sensitive to — dielectric-rough,
+dielectric-smooth, metallic-rough, metallic-smooth — lit by both one
+Directional and one Point light, positioned so **each light's own
+contribution is independently visible on at least one sphere from a
+angle the other light does not equally illuminate** (matching
+`lighting_demo`'s own already-verified "Directional/Point contributions
+each independently visible" human-review bar).
+
+**Explicit discriminating-power requirement, not left implicit:** the
+scene/camera/light layout must let a human reviewer (and this Spec's
+own real-GPU parameter-transmission test) visually and numerically
+confirm all of: dielectric vs. metallic (a real Fresnel/`F0` difference
+at grazing angles); rough vs. smooth (highlight size/sharpness); that
+`baseColorFactor` reaches the fragment shader (a visible tint
+difference between two otherwise-identical spheres); and that both
+light kinds contribute (per above). See the Testing & Verification
+Plan's own new "Negative/mutation tests" item for the concrete,
+reversible failure-injection tests that prove this discriminating power
+is real, not asserted.
+
+Golden captured per ADR-0042's existing "Initial baseline bootstrap"
+amendment (Implementation committed first, capture against a clean
+commit, human-reviewed, PNG/sidecar landed in a separate, later commit)
+— no relaxation of that process. **Human-review bar for this specific
+golden, stated precisely (not "non-black, non-garbage" alone):** the
+four corner cases must be confirmed visually distinguishable from one
+another under this Spec's own existing, unmodified clamp-only output
+contract (ADR-0067 D-9) — a real, binding condition on this golden's
+own acceptance, not a soft aspiration (D14 above).
 
 ### D18. Material asset/schema/artifact version bump
 
@@ -722,7 +1029,20 @@ consuming exactly the same one `UNIFORM_BUFFER` + at most one
 `COMBINED_IMAGE_SAMPLER` descriptor pair every existing textured
 Pipeline already consumes — re-confirmed directly against real,
 current `vulkan_device.cpp:984-1011` (Pre-draft verification above),
-not merely asserted from the Spec 0021 text alone.
+not merely asserted from the Spec 0021 text alone. **Confirmed the new
+PBR parameters cannot silently introduce a third descriptor binding by
+construction, not merely by design intent:** `baseColorFactor`/
+`metallicFactor`/`roughnessFactor` travel exclusively as push-constant
+bytes (ADR-0067 D-6/D-7) — Slang's own reflection separates
+`descriptorTableSlot` bindings from `pushConstantBuffer` bindings as two
+structurally distinct binding kinds (confirmed directly in this
+review's own real `pbr_direct_lit.slang` probe reflection JSON: `camera`
+and `texturedSampler` each reflect as `descriptorTableSlot`,
+`pushConstants` reflects as `pushConstantBuffer`, never conflated) — a
+push-constant field can never be reflected as, or accidentally become, a
+third descriptor binding regardless of how many scalar fields it grows
+to contain, up to Vulkan's own guaranteed push-constant capacity
+(ADR-0067 D-6/D-11).
 
 ### D22. Windows/future-Android portability
 
@@ -768,8 +1088,9 @@ At minimum, matching this codebase's own established layered-testing
 discipline (`docs/process/testing-strategy.md`):
 
 - **Material source/artifact/cook/decode**: fixed-byte round-trip tests
-  for the widened 56-byte (or Plan-finalized exact size) artifact;
-  version-bump rejection test (an old, 32-byte artifact is rejected,
+  for the widened, exact 56-byte artifact (ADR-0066's own byte table,
+  confirmed a provable sum, not a Plan-time estimate); version-bump
+  rejection test (an old, 32-byte artifact is rejected,
   not silently accepted); per-parameter range-error tests
   (`baseColorFactor`/`metallicFactor`/`roughnessFactor` each
   independently NaN/Inf/out-of-`[0,1]`, at both cook time and decode
@@ -835,11 +1156,37 @@ discipline (`docs/process/testing-strategy.md`):
   Vulkan Validation Layers grepped clean (zero `VUID`/`Validation
   Error`/`Validation Warning`); a fresh `ATLANTIS_BUILD_TESTS=OFF`
   configure+build; confirmation that `Atlantis::AssetSystem`'s Core-only
-  link closure and `Atlantis::Renderer`'s/`Atlantis::RHI`'s public link
-  graph are unchanged beyond the one additive `PipelineCreateParams`
-  field; a `git diff --check` pass on the final Implementation diff.
+  link closure is unchanged and that `Atlantis::Renderer`'s/
+  `Atlantis::RHI`'s public API gains only `Material`'s own three new
+  accessors (D9) and no other signature change (D7's own locked
+  recommendation adds no new `PipelineCreateParams`/RHI-internal field
+  at all — ADR-0067 D-7); a `git diff --check` pass on the final
+  Implementation diff.
+- **Negative/mutation tests, confirming the verification suite itself
+  can actually catch a real regression, not only pass on correct code**
+  (added during centralized final review): at minimum, one test each
+  confirming a real, deliberate failure is caught — `metallicFactor`
+  fixed at `0` regardless of authored value (dielectric/metallic
+  visually indistinguishable, must be caught); `roughnessFactor` fixed
+  at one constant value regardless of authored value (rough/smooth
+  indistinguishable); `cameraWorldPosition`'s own sign flipped (specular
+  highlight lands on the wrong side of the surface); `F0` computed
+  without the metallic/dielectric blend (metals look dielectric or vice
+  versa); Point-light attenuation (D5) disabled/bypassed (Point
+  contribution never falls off with distance). Each must be confirmed,
+  by deliberately introducing it and reverting, to make the
+  corresponding CPU reference test or golden comparison actually fail —
+  not merely asserted to be "obviously" caught.
 
 ## Risks & Open Questions
+
+**Status after centralized final review (2026-08-30):** every item this
+Spec's own original drafting round left open for Human Review is now
+closed with real evidence — see each numbered Decision above and
+ADR-0066/ADR-0067's own corresponding Decision items for the exact
+resolution. What remains below are genuine, permanent risk disclosures
+— real, evidence-grounded bets this Spec makes and discloses, not
+unresolved design forks blocking approval.
 
 - **D5's own single-texture-plus-scalars scope is a real, disclosed bet,
   not a proven-sufficient design** — if real Implementation evidence
@@ -849,31 +1196,48 @@ discipline (`docs/process/testing-strategy.md`):
   architectural decision (a second descriptor binding, reopening Spec
   0021's own pool-capacity proof) requiring its own Spec/ADR/Human
   Review — **never silently added** during this Spec's own eventual
-  Plan or Implementation, per this Spec's own drafting brief.
-- **D13's own camera-world-position gap is a real, previously-unnoticed
-  finding this Spec's own investigation surfaced**, not a
-  pre-existing, disclosed limitation of any prior Spec — no shader in
-  this codebase today has any notion of the camera's own world-space
-  position (`CameraUniform` carries only `view`/`projection`). Human
-  Review must pick between widening the shared uniform buffer (a real,
-  disclosed layout change affecting `UnlitTextured`/`LitTextured`'s own
-  descriptor binding, though not their own shader's *reads*) or an
-  in-shader matrix-inverse extraction (no buffer change, small added
-  ALU cost) before this Spec's own eventual Plan can proceed.
-- **ADR-0067 D-7's own "Open for Human Review" choice** (a new,
-  per-Pipeline RHI-internal field vs. uniformly widening every
-  Pipeline's push-constant stage visibility, matching ADR-0062's
-  precedent) is a real, disclosed fork this Spec does not resolve
-  unilaterally.
-- **D9's own "does `Material` gain new fields, or does Renderer read a
-  side table" question** is left open for Human Review — both are
-  functionally equivalent at this Spec's own level of design; the
-  eventual Plan needs a single, chosen answer before Implementation.
-- **The geometry-term remap (ADR-0067 D-2) and whether inverse-square
-  Point attenuation should ever be revisited** are both disclosed,
-  not-fully-closed judgment calls a future Spec/ADR could reopen with
-  new evidence — not treated as permanently settled by this Spec alone
-  beyond its own stated scope.
+  Plan or Implementation, per this Spec's own drafting brief. This risk
+  is permanent by design (D5's own recommendation is deliberately
+  scoped this way), not an artifact of incomplete review.
+- **D9 (`Material` ownership of PBR parameters — locked to new fields,
+  not a side table), D13 (camera world-space position — locked to
+  extending the shared uniform buffer, ADR-0067 D-15), and ADR-0067 D-7
+  (push-constant fragment-stage visibility — locked to uniformly
+  widening every Pipeline, matching ADR-0062's precedent) were all real,
+  open forks in this Spec's own original drafting round.** Each is now
+  closed with real evidence (a real Slang reflection probe, a real MSVC
+  layout probe, a real `vulkaninfo` query, and a direct reading of
+  `extractCameraMatrices()`'s and `bindUniformBuffer()`'s own real code)
+  during this Spec's own centralized final review — see D9/D13 above and
+  ADR-0067 D-6/D-7/D-15 for the complete, itemized resolution of each.
+  None of these three remains an open implementation choice.
+- **The push-constant total size correction (88 → 96 bytes, D7/D8;
+  ADR-0067 D-6) and the geometry-term citation correction (`k =
+  alpha/2` → `k = (roughness+1)²/8`, D12; ADR-0067 D-2) were both real
+  errors in this Spec's own first draft, not disclosed trade-offs** —
+  both are now fixed, with the real evidence that caught each recorded
+  in place, per this codebase's own governance discipline of showing a
+  correction rather than silently rewriting the original mistake away.
+- **D9's own decision to give `Material` three new POD fields is a
+  small, permanent, disclosed API-surface cost** (three new accessors,
+  `atlantis::renderer::Material`) — accepted as the minimal, most
+  directly precedented extension of an already-established shape, not
+  re-opened as a risk.
+- **The choice of Schlick-GGX (with a now-correctly-cited direct-
+  lighting `k`) over a height-correlated Smith visibility term (D12;
+  ADR-0067 D-2's own Alternatives Considered) remains a legitimate,
+  disclosed judgment call**, not a citation error — a future Spec/ADR
+  could revisit it with new evidence (e.g. a measured visual accuracy
+  gap), but this Spec's own recommendation is not blocked on that
+  question.
+- **D14's own output-color-space contract now carries a real, binding
+  condition on the new golden's own human-review step** (ADR-0067 D-9):
+  if the four corner cases are found visually indistinguishable under
+  the existing hard-clip contract at golden-capture time, that is a
+  real, blocking finding requiring a dedicated Output Transfer Function
+  Spec before this Spec's own Implementation may land that golden — not
+  a risk this Spec's own approval defers indefinitely, but one its own
+  Implementation phase must actively check for.
 
 ## Out of Scope / Future Work
 

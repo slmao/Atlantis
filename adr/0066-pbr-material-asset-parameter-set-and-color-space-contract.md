@@ -1,12 +1,24 @@
 # ADR 0066: PBR Material Asset — Parameter Set, Artifact Schema, and Base-Color Texture Color-Space Contract
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-30
-- **Deciders:** slmao — pending Human Review as part of
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-30 as part of
   [specs/0023-pbr-material-foundation.md](../specs/0023-pbr-material-foundation.md)'s
   own Human Review Approval.
 - **Related Spec:** [specs/0023-pbr-material-foundation.md](../specs/0023-pbr-material-foundation.md)
-  (`In Review`)
+  (`Approved`)
+- **Acceptance Record (2026-08-30):** Accepted by Human Review as part
+  of [specs/0023-pbr-material-foundation.md](../specs/0023-pbr-material-foundation.md)'s
+  own Human Review Approval (2026-08-30), following one centralized
+  final review round that closed real-effect/inertness disclosures for
+  `baseColorFactor.a` (item 8), confirmed the `PbrDirectLit`-only scope
+  of the base-color-texture sRGB validation against every existing
+  Material asset (item 8), and produced a complete, provable byte table
+  for the widened 56-byte artifact (item 3) — see that Spec's own
+  "Final Review Round" section for the full record. This record does
+  not change this ADR's own Decision, Consequences, or Alternatives
+  Considered below.
 - **Related ADR(s):**
   [ADR-0059](0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)
   (`Accepted` — this ADR extends `MaterialAssetData`'s own field set and
@@ -147,17 +159,52 @@ gap ADR-0057 already disclosed and left open.**
    the three new lines, matching ADR-0060's own migration precedent
    exactly ("no existing node gains a `material=` token").
 3. **Binary artifact — schema version bump, fixed new size, no dual
-   reader.** The 32-byte header widens by exactly 24 bytes (`float4` = 16
-   bytes + two `float`s = 8 bytes) to a new fixed size (Plan-time-named
-   constant, e.g. `kMaterialArtifactHeaderSizeBytesV3 = 56`), encoded
-   with the same little-endian, explicit-shift/mask discipline
+   reader. Exact byte table, confirmed against real, current
+   `material_artifact.cpp`/`.h`, not inferred from "+24":**
+
+   | Field | Offset | Size | Encoding |
+   |---|---|---|---|
+   | magic (`"ATLMAT\0\0"`) | 0 | 8 | raw bytes, unchanged |
+   | schema version | 8 | 4 | `u32` LE, unchanged field, new value |
+   | `kind` | 12 | 4 | `u32` LE (enum tag), unchanged |
+   | `textureAsset` | 16 | 8 | `u64` LE (`AssetId`), unchanged |
+   | `filter` | 24 | 4 | `u32` LE (enum tag), unchanged |
+   | `addressMode` | 28 | 4 | `u32` LE (enum tag), unchanged |
+   | `baseColorFactor` | 32 | 16 | 4× `f32` LE (IEEE-754 bit pattern), **new** |
+   | `metallicFactor` | 48 | 4 | `f32` LE, **new** |
+   | `roughnessFactor` | 52 | 4 | `f32` LE, **new** |
+   | **total** | — | **56** | |
+
+   The first six rows (bytes 0-31) are exactly today's real, current
+   32-byte layout, confirmed unchanged in offset, size, and encoding —
+   this is a genuine widening, not a reinterpretation of existing bytes.
+   **No padding, anywhere, at any offset — confirmed structurally, not
+   assumed:** this codebase's own artifact encoders (`material_artifact.cpp`,
+   like every other Asset System artifact) serialize via explicit
+   little-endian shift/mask byte-packing into a `std::vector<std::byte>`
+   (or equivalent), never a raw C++ `struct` `memcpy` — there is no
+   compiler-inserted alignment padding to account for anywhere in this
+   table, unlike a C++/GPU-side struct (contrast ADR-0067 D-6's own
+   96-byte push-constant finding, which *does* involve real compiler/
+   Slang padding because that side genuinely is a typed struct/GPU
+   block). `kMaterialArtifactHeaderSizeBytesV3 = 56` (exact
+   Plan-time-named constant) is therefore an exact, provable sum
+   (32 existing + 16 + 4 + 4 = 56), not a rounded or padded estimate.
+   Encoded with the same little-endian, explicit-shift/mask discipline
    `material_artifact.cpp` already uses for every other field
    ([ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)'s
    unconditional little-endian contract). Decode rejects any size other
-   than the new fixed size outright — an old, 32-byte artifact is a
-   real, distinct decode error (`UnexpectedSize`, unchanged enumerator,
-   now triggered by the old size instead of a corrupted one), never
-   silently accepted or defaulted.
+   than 56 outright — an old, 32-byte artifact is a real, distinct
+   decode error (`UnexpectedSize`, unchanged enumerator, now triggered
+   by the old size instead of a corrupted one), never silently accepted
+   or defaulted. **Every `MaterialKind` uses this identical, single
+   56-byte layout — `UnlitTextured`/`LitTextured` artifacts also widen
+   to 56 bytes and carry the same default `baseColorFactor`/
+   `metallicFactor`/`roughnessFactor` values (item 1 above), never a
+   per-`MaterialKind`-length record** — restated here precisely because
+   it is the fact that makes "no dual reader, single schema version"
+   possible at all (Alternatives Considered already rejects a
+   per-`MaterialKind` sub-format).
 4. **Metadata sidecar** widens to also carry `baseColorFactor`/
    `metallicFactor`/`roughnessFactor`, cross-validated against the
    artifact's own decoded values by `loadMaterialAsset()` exactly as
@@ -230,7 +277,57 @@ gap ADR-0057 already disclosed and left open.**
    Related Spec/Related ADR-0067 states the exact BRDF formula the
    product feeds into) — no additional gamma/color-space conversion is
    introduced anywhere in this chain.
-8. **No new error enumerator where an existing one already fits**,
+8. **Parameter semantics, closed explicitly, not left implicit —
+   added during centralized final review:**
+   - `baseColorFactor` is authored and consumed in **linear** space
+     (item 7) — never sRGB-encoded, never itself decoded; it multiplies
+     an already-hardware-linearized sampled texel value directly.
+   - `baseColorFactor.a` and the sampled texture's own alpha channel are
+     both defined, stored, and written to the color attachment, but are
+     **currently functionally inert**: `VulkanDevice::createPipeline()`'s
+     own `VkPipelineColorBlendAttachmentState` hardcodes `blendEnable =
+     VK_FALSE` for every Pipeline this engine creates
+     (`vulkan_device.cpp:1125`, confirmed directly) — no blending of any
+     kind exists anywhere in this engine today. This matches
+     `lit_textured.slang`'s own already-shipped, already-inert alpha
+     passthrough exactly (its own `texColor.a`, written unconditionally,
+     with the identical no-blending consequence). `baseColorFactor` is
+     kept RGBA (not RGB-only) because RGBA is this parameter's own
+     standard, glTF-metallic-roughness-compatible shape, and forecloses
+     a future Transparency/Blending spec needing a schema bump purely to
+     add the alpha channel back — but this ADR makes no claim that alpha
+     does anything observable in a rendered frame today, and neither
+     this ADR's own Testing & Verification Plan nor the Related Spec's
+     new golden treats alpha as a rendering-behavior test target.
+   - `metallicFactor`/`roughnessFactor` are each closed to `[0, 1]`
+     inclusive (item 5) — no open question remains on their own range.
+   - `-0.0f` is not specially canonicalized to `+0.0f` anywhere in this
+     chain — IEEE-754 `-0.0f` already satisfies every range check this
+     ADR defines (`-0.0f ∈ [0, 1]`, `std::isfinite(-0.0f)` is `true`),
+     round-trips byte-identically through the little-endian cook/decode
+     path (item 3's own table), and is numerically indistinguishable
+     from `+0.0f` in every arithmetic use ADR-0067's own BRDF makes of
+     these values — no special-casing is needed or added.
+   - **`PbrDirectLit` requires a texture reference, exactly like
+     `UnlitTextured`/`LitTextured` already do — no texture-less,
+     pure-factor-only `PbrDirectLit` material is introduced by this
+     round.** Confirmed directly: `realizeOneMaterialCandidate()`
+     (`material_realization.cpp:119-183`) unconditionally realizes a
+     `SampledTexture` from `materialData.textureAsset` for every
+     `MaterialKind` today, with no existing texture-less path; this ADR
+     does not add one. A future, separate Spec may introduce a
+     texture-less/pure-factor `PbrDirectLit` variant if a real content
+     need arises — not designed or reserved for here.
+   - `UnlitTextured`/`LitTextured` Materials ignore all three new fields
+     unconditionally, regardless of value — `selectShaderPair()`
+     (`material_realization.cpp:100-115`) never reads
+     `MaterialAssetData::baseColorFactor`/`metallicFactor`/
+     `roughnessFactor` for either kind; their own default values (item
+     1) exist only so the shared 56-byte artifact layout (item 3) has a
+     defined, harmless value to encode, never because either shader
+     consumes them.
+
+9. **No new error enumerator where an existing one already fits**,
    matching ADR-0059's own Decision 8 discipline exactly: `BadMagic`,
    `UnsupportedSchemaVersion`, `SizeMismatch` (now triggered by the new
    fixed size), and `LogicalPathInvalid` are all reused unchanged; only
@@ -290,6 +387,12 @@ gap ADR-0057 already disclosed and left open.**
   stylized effect) — accepted for this foundation round, reversible
   later by a real, evidence-driven future ADR if a genuine consumer
   needs it.
+- `baseColorFactor.a` is a stored, cook/decode-validated parameter with
+  **no observable rendering effect today** (item 8) — this engine has no
+  blending of any kind for any Pipeline; accepted because RGBA is the
+  standard, glTF-compatible shape for this parameter and avoids a future
+  schema bump purely to add alpha back once a Transparency spec exists,
+  at the honest cost of one currently-inert field.
 
 ## Alternatives Considered
 
@@ -340,7 +443,11 @@ gap ADR-0057 already disclosed and left open.**
 ## Amendment note
 
 This ADR's own three new cook-time/decode-time error enumerators (items
-5, 6, 8 above) and the exact new fixed artifact size (item 3) are
-Plan-time details, named here by example only — finalized once, by the
-eventual Plan, and re-confirmed against real Slang/C++ reflection rather
-than self-certified, per this Spec's own Testing & Verification Plan.
+5, 6, 9 above) are Plan-time details, named here by example only — the
+exact new fixed artifact size (item 3, 56 bytes) is not a Plan-time
+detail — it is a real, provable sum confirmed by this ADR's own byte
+table (item 3) during centralized final review, not an estimate for a
+future Plan to verify. Error enumerator names are finalized once, by
+the eventual Plan, and re-confirmed against real C++/decode behavior
+rather than self-certified, per this Spec's own Testing & Verification
+Plan.
