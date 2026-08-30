@@ -121,6 +121,26 @@ static_assert(sizeof(FrameLightingData) == 176);
 static_assert(alignof(FrameLightingData::DirectionalLightGpu) == 16);
 static_assert(alignof(FrameLightingData::PointLightGpu) == 16);
 
+// ADR-0062's own Accepted Amendment (Plan 0023 Milestone 2): a new,
+// separate, tail-only struct appended after the existing, completely
+// unmodified 304-byte CameraMatrices+FrameLightingData region -- never
+// widening either of them. Explicit tail pad, matching
+// DirectionalLightGpu's own identical _pad0 convention -- never
+// compiler-implicit.
+struct alignas(16) CameraWorldPositionData {
+  float x = 0.0f;  // offset 0 (buffer offset 304)
+  float y = 0.0f;
+  float z = 0.0f;
+  float _pad = 0.0f;  // offset 12 (buffer offset 316) -- explicit, not implicit
+};
+static_assert(std::is_standard_layout_v<CameraWorldPositionData>);
+static_assert(alignof(CameraWorldPositionData) == 16);
+static_assert(offsetof(CameraWorldPositionData, x) == 0);
+static_assert(offsetof(CameraWorldPositionData, y) == 4);
+static_assert(offsetof(CameraWorldPositionData, z) == 8);
+static_assert(offsetof(CameraWorldPositionData, _pad) == 12);
+static_assert(sizeof(CameraWorldPositionData) == 16);
+
 // Plan 0019 Section P8: a deliberate, disclosed, narrow break from this
 // file's own "raw values only, no atlantis::world:: type" style --
 // atlantis::runtime (Runtime) already depends on Atlantis::World
@@ -202,6 +222,17 @@ inline constexpr float kPointLightDistanceEpsilon = 1e-4f;
 // would make it divide by a near-zero length.
 [[nodiscard]] atlantis::Result<CameraMatrices, SceneExtractionError> extractCameraMatrices(
     const Mat4& cameraWorldMatrix, float fovYRadians, float nearZ, float farZ, float aspect);
+
+// Plan 0023 Milestone 2 (ADR-0062's own Accepted Amendment): a small,
+// separate function -- never a widening of extractCameraMatrices()'s
+// own return type, which stays exactly CameraMatrices, unchanged. Reads
+// the same column-12/13/14 translation extractCameraMatrices() already
+// derives internally as its own local `eye` (scene_extraction.cpp), but
+// as an independent, infallible extraction -- the camera's own world
+// matrix is already known-valid by the time this is called (the same
+// cameraWorldMatrix extractCameraMatrices() itself validates), so this
+// function never fails.
+[[nodiscard]] CameraWorldPositionData extractCameraWorldPosition(const Mat4& cameraWorldMatrix);
 
 // Trivial by design (ADR-0051's own Decision step 4 fixes only the
 // existence and input/output shape of asset resolution, not a

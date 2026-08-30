@@ -284,9 +284,14 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // sizeof(float) * 32 (view + projection only) to also carry
   // FrameLightingData (176 bytes) appended immediately after, at
   // absolute byte offset 128 -- the one-time light-capture write (P9,
-  // runFrame()) targets exactly this tail region.
+  // runFrame()) targets exactly this tail region. Plan 0023 Milestone 2
+  // (ADR-0062's own Accepted Amendment): further widened with a
+  // tail-only CameraWorldPositionData (16 bytes) appended after
+  // FrameLightingData, at absolute byte offset 304 -- CameraMatrices
+  // and FrameLightingData themselves stay byte-for-byte unmodified.
   auto cameraBufferResult = device_->createBuffer(
-      {.purpose = BufferPurpose::Uniform, .sizeBytes = sizeof(float) * 32 + sizeof(FrameLightingData)});
+      {.purpose = BufferPurpose::Uniform,
+       .sizeBytes = sizeof(float) * 32 + sizeof(FrameLightingData) + sizeof(CameraWorldPositionData)});
   if (cameraBufferResult.isErr()) {
     ATLANTIS_LOG_ERROR("createBuffer() (camera uniform) failed");
     lifecycle_.markFailed();
@@ -602,6 +607,16 @@ void RuntimeApplication::runFrame() {
   // value-initializes a fresh result every call).
   auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
   *lightingData = lightingResult.value();
+
+  // Plan 0023 Milestone 2 (ADR-0062's own Accepted Amendment): tail-only
+  // CameraWorldPositionData write, unconditional every frame like the
+  // camera-matrix and lighting writes immediately above -- appended
+  // after FrameLightingData's own 176 bytes (44 floats), landing at
+  // absolute byte offset 304 (32 + 44 = 76 floats in). Derived from the
+  // same cameraWorldMatrix already extracted above for
+  // extractCameraMatrices(), independently, via extractCameraWorldPosition().
+  auto* cameraWorldPositionData = reinterpret_cast<CameraWorldPositionData*>(cameraData + 32 + 44);
+  *cameraWorldPositionData = extractCameraWorldPosition(cameraWorldMatrixResult.value());
 
   // Plan 0015 Section D10: knownMeshAssetIds is meshResourceMap_'s own
   // key set, collected once per frame (not once per entity) -- passed

@@ -123,6 +123,19 @@ atlantis::Result<CameraMatrices, SceneExtractionError> extractCameraMatrices(con
   return atlantis::Result<CameraMatrices, SceneExtractionError>::Ok(result);
 }
 
+CameraWorldPositionData extractCameraWorldPosition(const Mat4& cameraWorldMatrix) {
+  // Mirrors extractCameraMatrices()'s own `eye` derivation above (column
+  // 3 / indices 12,13,14) -- deliberately independent, not shared
+  // through a common helper, matching this function's own infallible
+  // contract (extractCameraMatrices() may fail on a degenerate forward
+  // or basis; a plain translation read never can).
+  CameraWorldPositionData result;
+  result.x = cameraWorldMatrix[12];
+  result.y = cameraWorldMatrix[13];
+  result.z = cameraWorldMatrix[14];
+  return result;
+}
+
 atlantis::Result<std::monostate, SceneExtractionError> resolveMeshAsset(
     atlantis::asset_system::AssetId requested, const std::vector<atlantis::asset_system::AssetId>& knownIds) {
   if (std::find(knownIds.begin(), knownIds.end(), requested) == knownIds.end()) {
