@@ -37,12 +37,15 @@ namespace atlantis::image_regression {
 // fixture-private reimplementation of any of them (Spec 0019 D10's own
 // named requirement).
 //
-// Unlike MaterialDemoFixture, this fixture's own lightingDataCaptured
-// flag is load-bearing, not merely mirrored for shape-consistency: the
-// D10 static-snapshot negative test explicitly calls
-// renderLightingDemoFrame() TWICE against the same fixture object, and
-// the second call must NOT recapture the frame lighting data even if
-// World's own light state changed in between (Plan 0019 Section P9).
+// Plan 0022 Section M2: this fixture is now the single, authoritative
+// dynamic-Lighting fixture, mirroring RuntimeApplication's own corrected
+// design exactly. renderLightingDemoFrame() re-extracts and republishes
+// the complete FrameLightingData from World's live state on every call
+// against this same fixture -- not a one-time capture. The former
+// one-time-capture guard (a real, currently-shipped Spec-0019 behavior
+// this Plan supersedes, per Spec 0022's own explicit authority to revise
+// Spec 0019's own D1) is removed; there is no longer a
+// lightingDataCaptured field here to load-bear anything.
 struct LightingDemoFixture {
   std::unique_ptr<atlantis::rhi::Device> device;
   atlantis::rhi::VertexInputLayout unlitTexturedVertexInputLayout;
@@ -71,12 +74,6 @@ struct LightingDemoFixture {
   std::unique_ptr<atlantis::rhi::Buffer> readbackBuffer;
 
   std::optional<atlantis::world::World> world;
-
-  // Plan 0019 Section P9: the fixture-local direct analog of
-  // RuntimeApplication::lightingDataCaptured_ -- guards the one-time
-  // frame lighting data capture inside renderLightingDemoFrame(), never
-  // reset by anything other than a fresh setUpLightingDemoFixture() call.
-  bool lightingDataCaptured = false;
 };
 
 inline constexpr std::uint32_t kLightingDemoExtentPixels = 512;
@@ -112,14 +109,18 @@ enum class LightingDemoRenderError {
   WaitIdleFailed,
 };
 
-// One full acquire -> realize (Phase 2) -> one-time-light-capture (Plan
-// 0019 Section P9, guarded by fixture.lightingDataCaptured) -> draw
-// (gated by checkConformalTransform() for every LitTextured-bound
-// entity, Section P15) -> copy -> submit -> waitIdle cycle. May be
-// called more than once against the same LightingDemoFixture -- a
-// second call finds every material already realized and, critically,
-// never recaptures the frame lighting data even if World's own light
-// state changed in between (the D10 static-snapshot proof).
+// One full acquire -> updateTransforms() -> Lighting extraction and
+// publish (Plan 0022 Section M2: every call re-extracts, unconditional)
+// -> realize (Phase 2) -> draw (gated by checkConformalTransform() for
+// every LitTextured-bound entity, Section P15) -> copy -> submit ->
+// waitIdle cycle. May be called more than once against the same
+// LightingDemoFixture, reusing the same cameraBuffer/depthTexture/
+// offscreenTarget/readbackBuffer/Mesh/Material/Pipeline/descriptor-set
+// map across every cycle -- never recreated. Each call's own
+// world->updateTransforms()/Lighting-extraction/publish step is safe
+// only because the *previous* call's own waitIdle() already confirmed
+// that call's GPU work has finished before this call's own CPU writes
+// begin -- see this fixture's own .cpp for the exact call order.
 [[nodiscard]] atlantis::Result<PixelBuffer, LightingDemoRenderError> renderLightingDemoFrame(
     LightingDemoFixture& fixture);
 

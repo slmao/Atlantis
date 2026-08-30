@@ -150,8 +150,8 @@ TEST_CASE("Lighting demo fixture renders a non-degenerate frame with real lit-cu
   CHECK(coverageFraction(frame) > 0.01);
 }
 
-TEST_CASE("LightingDemoFixture: World::setLight() after the one-time capture changes World state but never the "
-          "already-published GPU FrameLightingData bytes",
+TEST_CASE("LightingDemoFixture: World::setLight() before a second render call changes both the published GPU "
+          "FrameLightingData bytes and the rendered pixels -- Plan 0022's own corrected, dynamic contract",
           "[image_regression][gpu][lighting]") {
   auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
   REQUIRE(fixtureResult.isOk());
@@ -159,15 +159,14 @@ TEST_CASE("LightingDemoFixture: World::setLight() after the one-time capture cha
 
   auto firstResult = renderLightingDemoFrame(fixture);
   REQUIRE(firstResult.isOk());
-  REQUIRE(fixture.lightingDataCaptured);
   const PixelBuffer firstPixels = firstResult.value();
 
   // Snapshot the published FrameLightingData tail bytes (absolute
   // offset 128, 176 bytes) directly from the mapped, host-visible
   // Buffer -- no GPU readback needed.
   const auto* cameraBytes = static_cast<const std::byte*>(fixture.cameraBuffer->mappedData());
-  std::array<std::byte, sizeof(FrameLightingData)> bytesBefore{};
-  std::memcpy(bytesBefore.data(), cameraBytes + sizeof(float) * 32, bytesBefore.size());
+  std::array<std::byte, sizeof(FrameLightingData)> bytesAfterFirstRender{};
+  std::memcpy(bytesAfterFirstRender.data(), cameraBytes + sizeof(float) * 32, bytesAfterFirstRender.size());
 
   const std::vector<EntityId> lights = fixture.world->lightEntities();
   REQUIRE_FALSE(lights.empty());
@@ -187,23 +186,30 @@ TEST_CASE("LightingDemoFixture: World::setLight() after the one-time capture cha
   REQUIRE(changedLightResult.isOk());
   CHECK(changedLightResult.value().intensity == 999.0f);
 
-  // ...but the published GPU bytes did not, bit-for-bit, even before a
-  // second render call.
-  std::array<std::byte, sizeof(FrameLightingData)> bytesAfterMutationOnly{};
-  std::memcpy(bytesAfterMutationOnly.data(), cameraBytes + sizeof(float) * 32, bytesAfterMutationOnly.size());
-  CHECK(bytesBefore == bytesAfterMutationOnly);
-
-  // A second render call -- lightingDataCaptured is already true, so no
-  // recapture happens; the rendered pixels must be byte-identical to
-  // the first render's own (nothing else in this static scene changes
-  // between the two calls).
+  // ...and, unlike Spec 0019's own original one-time-capture contract
+  // this Spec 0022/Plan 0022 supersede, the mutation IS reflected: a
+  // second render call re-extracts and republishes the complete
+  // FrameLightingData from World's own current state, so both the
+  // published bytes and the rendered pixels change to reflect it.
   auto secondResult = renderLightingDemoFrame(fixture);
   REQUIRE(secondResult.isOk());
-  CHECK(secondResult.value().rgba8 == firstPixels.rgba8);
+  CHECK_FALSE(secondResult.value().rgba8 == firstPixels.rgba8);
 
   std::array<std::byte, sizeof(FrameLightingData)> bytesAfterSecondRender{};
   std::memcpy(bytesAfterSecondRender.data(), cameraBytes + sizeof(float) * 32, bytesAfterSecondRender.size());
-  CHECK(bytesBefore == bytesAfterSecondRender);
+  CHECK_FALSE(bytesAfterFirstRender == bytesAfterSecondRender);
+
+  // Precisely: the published intensity field for this light's own slot
+  // now matches the mutated value, not the original one -- reinterpret
+  // the raw snapshot back through the real, shared FrameLightingData
+  // layout (never through hand-computed byte offsets, which would risk
+  // silently drifting from the real, static_assert-locked layout).
+  FrameLightingData publishedLighting{};
+  std::memcpy(&publishedLighting, bytesAfterSecondRender.data(), sizeof(FrameLightingData));
+  const float publishedIntensity = changedLightResult.value().kind == atlantis::world::LightKind::Directional
+                                        ? publishedLighting.directionalLights[0].intensity
+                                        : publishedLighting.pointLights[0].intensity;
+  CHECK(publishedIntensity == 999.0f);
 }
 
 TEST_CASE("LightingDemoFixture: a LitTextured-bound entity given a deliberately non-conformal world transform is "
