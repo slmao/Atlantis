@@ -38,6 +38,16 @@ std::vector<DescriptorBinding> litTexturedExpectedDescriptorContract() {
           DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
+// Plan 0023 Milestone 3: identical binding shape to
+// litTexturedExpectedDescriptorContract() above -- see this function's
+// own header comment for why a separate, independently-named function
+// is kept rather than reusing that one directly.
+std::vector<DescriptorBinding> pbrDirectLitExpectedDescriptorContract() {
+  return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
+          DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
+          DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+}
+
 atlantis::Result<std::monostate, ContractMismatchError> validateDescriptorContract(
     const ReflectionMetadata& metadata, const std::vector<DescriptorBinding>& expected) {
   using ResultType = atlantis::Result<std::monostate, ContractMismatchError>;
