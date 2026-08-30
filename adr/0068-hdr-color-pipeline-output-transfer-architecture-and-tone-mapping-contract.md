@@ -85,11 +85,10 @@ RHI method.
 ### D-1. A new, single-purpose RHI resource type — `HdrColorTarget` — its full lifecycle and Vulkan implementation boundary
 
 A new resource type, distinct from `RenderTarget`/`Texture`/
-`SampledTexture` — **inheriting from neither** (a real, disclosed
-correction from this ADR's own final review, see the note at the end
-of this Decision) — matching this codebase's own established "one
-purpose-built type per resource shape" precedent rather than relaxing
-`RenderTarget`'s existing write-only contract. `HdrColorTarget` owns
+`SampledTexture` — **inheriting from neither** (see the note at the
+end of this Decision for why) — matching this codebase's own
+established "one purpose-built type per resource shape" precedent
+rather than relaxing `RenderTarget`'s existing write-only contract. `HdrColorTarget` owns
 one GPU image created with both `VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT`
 and `VK_IMAGE_USAGE_SAMPLED_BIT`, exposing exactly two narrow
 capabilities: bind as a color-attachment-output target for the
@@ -153,61 +152,73 @@ output-transform pass.
   public headers beyond the new, backend-agnostic `HdrColorTarget`
   interface itself.
 
-**Correction from this ADR's own final review (2026-08-31):** the
-original draft implied `HdrColorTarget` could reuse
-`CommandList::beginRendering(RenderTarget&, ...)` and
-`CommandList::bindTexture(const SampledTexture&, ...)` unmodified.
-Real code shows this does not work cleanly: `HdrColorTarget` publicly
-inheriting `RenderTarget` (to satisfy `beginRendering()`'s existing
-signature) would make it visible to Guard 2 via the *same* `target`
-field check that already rejects any bound `RenderTarget` with a
-declared read usage — directly reopening the "relax `RenderTarget`'s
-write-only contract" alternative this ADR's own Alternatives
-Considered explicitly rejects. Separately, `SampledTexture::format()`
-returns `SampledTextureFormat` (`Rgba8Unorm`/`Rgba8Srgb` only,
-Spec 0016/ADR-0055's own authored-texture-color-space vocabulary) —
-`HdrFormat::Rgba16Float` does not fit that enum without conflating
-"authored texture color space" with "internal render-target format," a
-real semantic mismatch, so `HdrColorTarget` does not inherit
-`SampledTexture` either. **Corrected Decision: `HdrColorTarget` is a
-wholly independent type, inheriting neither existing interface — see
-D-3 for the real, disclosed new `CommandList` surface this requires.**
+`HdrColorTarget` inherits neither existing type: `RenderTarget`
+(Guard 2 would then reject its own required read usage) nor
+`SampledTexture` (`format()` returns `SampledTextureFormat`, which
+cannot represent `HdrFormat`). See D-3 for the resulting new
+`CommandList` surface.
 
-### D-2. Format — a new, single-variant `HdrFormat` enum, verified against real hardware and defended by a runtime capability check
+### D-2. Format — a new, single-variant `HdrFormat` enum; a runtime capability check with real `Result` error semantics, not `ATLANTIS_CHECK`
 
 One value this round, `HdrFormat::Rgba16Float`
 (`VK_FORMAT_R16G16B16A16_SFLOAT`), mirroring `DepthFormat`'s own
 established "one variant" precedent
-(`src/rhi/include/atlantis/rhi/types.h:71-74`). This is Vulkan's own
-well-established, universally-implemented choice for exactly this
-purpose. Real evidence gathered during this ADR's own final review —
+(`src/rhi/include/atlantis/rhi/types.h:71-74`).
+
+**Only the two `optimalTilingFeatures` bits this design actually
+uses are checked** — `VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT` (the
+geometry pass writes it) and `VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT`
+(the output-transform pass samples it). Not checked, because not
+used: `COLOR_ATTACHMENT_BLEND_BIT` (this engine has zero alpha-
+blending capability anywhere, `blendEnable = VK_FALSE` on every
+`Pipeline`, unchanged by this ADR); `SAMPLED_IMAGE_FILTER_LINEAR_BIT`
+(the output-transform pass samples at an exact 1:1 texel mapping —
+`HdrColorTarget` and the final target always share the same extent,
+D-1's own resize rule — so its `Sampler` uses `Filter::Nearest`, never
+`Linear`); `TRANSFER_SRC_BIT`/`TRANSFER_DST_BIT` (D-9: `HdrColorTarget`
+is never read back or copied to/from directly). Real evidence — a
 `vulkaninfo --show-formats` run against this repository's own real
 target GPU (Intel Arc B370, the same device every existing golden's
-own sidecar records) — confirms its `optimalTilingFeatures` include
-`COLOR_ATTACHMENT_BIT`, `COLOR_ATTACHMENT_BLEND_BIT`, `SAMPLED_IMAGE_BIT`,
-`SAMPLED_IMAGE_FILTER_LINEAR_BIT`, `TRANSFER_SRC_BIT`, and
-`TRANSFER_DST_BIT` on this device.
+own sidecar records) — confirms both required bits present on that
+device's `optimalTilingFeatures`.
 
-**Correction from this ADR's own final review (2026-08-31):** the
-original draft asserted this format's Vulkan-spec-mandatory support
-("no capability query needed") from memory alone, mirroring
-`DepthFormat::D32Sfloat`'s own comment without independently
-re-verifying the primary specification table's exact wording this
-round (a tooling-access limitation during review, not a finding that
-the guarantee is false). Rather than repeat an unverified assertion,
-**`Device::createHdrColorTarget()`'s own Vulkan Backend implementation
-must query `vkGetPhysicalDeviceFormatProperties()` for
-`Rgba16Float`'s real `VkFormat` and `ATLANTIS_CHECK` that
-`optimalTilingFeatures` actually contains the four required bits above
-at creation time** — a defensive, one-time, startup-only check (never
-a per-frame cost), matching this codebase's own "every `VkResult` is
-checked" discipline. This closes the gap regardless of whether the
-mandatory-table citation is word-for-word exact: a genuine capability
-gap on some future, non-conformant, or exotic implementation fails
-loudly and immediately, never silently produces wrong pixels. A future
-Spec may extend `HdrFormat` (a second variant, e.g. for a memory/
-bandwidth trade-off) the same way a future `DepthFormat` extension
-would.
+**A missing capability is a runtime error, not a programmer error —
+`ATLANTIS_CHECK` is the wrong mechanism.** A device's real, physical
+feature set is environmental fact, discovered at runtime, exactly like
+`PresentationError::SurfaceLost`/`SwapchainCreationFailed` — not a
+violated precondition within this process. `Device::createHdrColorTarget()`'s
+own Vulkan Backend implementation queries
+`vkGetPhysicalDeviceFormatProperties()` for `Rgba16Float` *before*
+attempting any image creation; if either required bit is absent, it
+returns `Result::Err(HdrColorTargetCreateError::FormatFeaturesUnsupported)`
+immediately, never proceeding to `vkCreateImage`. `HdrColorTargetCreateError`
+is a new, narrow RHI error enumerator (no existing one expresses this
+failure mode):
+
+```cpp
+enum class HdrColorTargetCreateError {
+  FormatFeaturesUnsupported,  // vkGetPhysicalDeviceFormatProperties() missing a required bit -- checked first
+  AllocationFailed,           // mirrors TextureCreateError/OffscreenTargetCreateError
+  ImageCreationFailed,
+  ImageViewCreationFailed,
+};
+```
+
+**Vulkan Backend mapping:** `FormatFeaturesUnsupported` is returned
+directly from the capability check above, never from a `VkResult`.
+`AllocationFailed`/`ImageCreationFailed`/`ImageViewCreationFailed`
+classify `vkCreateImage`/`vkAllocateMemory`/`vkBindImageMemory`/
+`vkCreateImageView` failures exactly as `createTexture()`'s own
+existing classification already does for the depth `Texture`
+(`toTextureCreateError()`, `vulkan_result.cpp:109-112`): any non-
+`VK_SUCCESS` `vkCreateImage`/`vkBindImageMemory` result, including
+`VK_ERROR_DEVICE_LOST`, maps to `ImageCreationFailed`; a memory-type-
+selection failure (no compatible `VkMemoryPropertyFlags`, found before
+any `VkResult` is even returned) maps to `AllocationFailed` — the same
+two-case split `createTexture()` already makes, no new
+`VkResult`-classification rule. A future Spec may extend `HdrFormat`
+(a second variant) the same way a future `DepthFormat` extension
+would, each carrying its own capability check.
 
 ### D-3. RenderGraph/Renderer integration — two passes, both windowed and offscreen share them unconditionally; the real, complete new `CommandList`/`RenderGraph` surface
 
@@ -236,9 +247,7 @@ automatically from the shared `HdrColorTarget` resource's own
 write-then-read usage declarations — the same mechanism that already
 orders every existing multi-usage resource in this codebase.
 
-**The real, complete new surface this Decision requires (corrected and
-made exhaustive during this ADR's own final review, see D-1's own
-correction note above):**
+**The real, complete new surface this Decision requires:**
 
 - `ResourceBinding` gains one new field, `HdrColorTarget* hdrColorTarget`
   (D-1).
@@ -270,28 +279,43 @@ correction note above):**
   when it widened Guard 0/1 from two kinds to three for
   `SampledTexture` — not a new precedent.
 - `Device::createHdrColorTarget(...)` (D-1).
-- `Renderer::drawFrame()`'s own public signature gains one new
-  required parameter, the caller-owned `HdrColorTarget&` (D-1's
-  stateless-orchestrator constraint) — a real, disclosed public API
-  change, the first to this signature since
+- `Renderer::drawFrame()`'s own public signature gains new required
+  parameters, all caller-owned/borrowed (D-1's stateless-orchestrator
+  constraint) — a real, disclosed public API change, the first to this
+  signature since
   [ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)/its
-  own [Accepted Amendment](0022-minimal-renderer-public-api-and-resource-ownership.md).
+  own [Accepted Amendment](0022-minimal-renderer-public-api-and-resource-ownership.md):
+  the `HdrColorTarget&`; the fullscreen-triangle vertex/index `Buffer`
+  pair; the already-selected output-transform `Pipeline&` and its
+  `Sampler&` (D-6 — the caller, not `Renderer`, picks which of the two
+  closed shader-contract variants applies, exactly once per format-
+  negotiation event, mirroring `selectShaderPair()`'s own existing
+  composition-root-level pattern for `MaterialKind`).
 
-**The fullscreen-triangle vertex/index `Buffer` pair is caller-owned**,
-matching `HdrColorTarget`'s own D-1 ownership rule (`Renderer` stays a
-stateless orchestrator) — created once, at composition-root startup
-(alongside the `HdrColorTarget`'s own initial creation), and reused
-unchanged every frame thereafter, never recreated on resize (unlike
-the extent-dependent `HdrColorTarget` itself, D-1) since its own
-content never varies. **Deliberately not an Asset-System asset** — no
-`.mesh.txt`, no cook step, no `AssetId` — its three fixed clip-space
-positions are a fixed implementation detail of the output-transform
-mechanism itself, never scene content a scene author selects; a tiny,
-hardcoded C++ literal, created via the same
-`Device::createBuffer(BufferPurpose::Vertex/Index)` calls every other
-mesh already uses, reused through the existing
-`bindVertexBuffer()`/`bindIndexBuffer()`/`drawIndexed()` path — no new
-non-indexed draw call.
+**Every one of these is caller-owned, `Renderer` only borrows:**
+
+- The fullscreen-triangle vertex/index `Buffer` pair — created once,
+  at composition-root startup (alongside `HdrColorTarget`'s own
+  initial creation), reused unchanged every frame, never recreated on
+  resize (unlike the extent-dependent `HdrColorTarget` itself, D-1)
+  since its own content never varies. **Deliberately not an
+  Asset-System asset** — no `.mesh.txt`, no cook step, no `AssetId` —
+  its three fixed clip-space positions are a fixed implementation
+  detail of the output-transform mechanism itself; a tiny, hardcoded
+  C++ literal, created via the same
+  `Device::createBuffer(BufferPurpose::Vertex/Index)` calls every
+  other mesh already uses, reused through the existing
+  `bindVertexBuffer()`/`bindIndexBuffer()`/`drawIndexed()` path — no
+  new non-indexed draw call.
+- The output-transform `Sampler` — `{Filter::Nearest, AddressMode::ClampToEdge}`
+  (D-2's own 1:1-mapping rationale), created once via the existing
+  `Device::createSampler()`, reused every frame.
+- **Both** output-transform `Pipeline`s (D-6's own `*_Unorm`/`*_Srgb`
+  variants) — created once per real negotiated-format class change (the
+  same trigger as today's existing format-change rebuild, D-4), the
+  composition root selects which one to pass into `drawFrame()` this
+  frame; `Renderer` itself never creates, owns, or selects between
+  them.
 
 ### D-4. Every Pipeline's geometry-pass `colorFormat` becomes the fixed HDR format
 
@@ -307,34 +331,32 @@ format, mirroring today's exact rebuild trigger, narrowed to one
 Pipeline instead of N.
 
 **Exact, re-derived effect on Spec 0021/ADR-0064's own descriptor-pool
-capacity proof (added during this ADR's own final review — the
-original draft did not state this precisely):**
-`createDescriptorPoolOfSize()` (`vulkan_device.cpp:425-437`) sizes one
-`UNIFORM_BUFFER` and one `COMBINED_IMAGE_SAMPLER` descriptor slot per
-`maxSets` unit — capacity is counted in descriptor *sets* (one per
-live `Pipeline`'s bound Material/pass), matching Spec 0021's own "at
-most one combined-image-sampler descriptor per Pipeline" premise
-exactly, unaffected by this ADR (D-10 below still holds to at most one
-combined-image-sampler binding per Pipeline). Because the N geometry
-Pipelines above no longer participate in format-change rebuild at all,
-Spec 0021/ADR-0064's own `2×(N+1)` worst-case format-change-churn
-formula no longer applies to them — their own descriptor sets are
-allocated once, permanently, never freed-and-reallocated by a
-format-change event. Format-change churn instead applies to exactly
-the one new output-transform Pipeline (whose own `colorFormat` *does*
-vary with the final target's negotiated format), contributing at most
-2 transient descriptor sets (old + new, briefly overlapping during the
-existing safe swap) to any format-change event's own peak, regardless
-of scene `MaterialKind` count N. **Net peak: `N` steady-state geometry
-sets + 1 steady-state output-transform set + at most 2 transient
-output-transform sets during a format-change event — strictly less
-pressure than today's own `2×(N+1)` formula for any `N ≥ 2`**, well
-within the existing 4-pool/60-descriptor-set ceiling for every `N` this
-engine's own real scenes currently use (`≤6`, per the existing N=6
-stress test). This derivation must be reconfirmed with a real GPU
-stress test at Implementation time (this Spec's own Testing &
-Verification Plan) — not merely trusted from this written derivation
-alone.
+capacity proof:** `createDescriptorPoolOfSize()` (`vulkan_device.cpp:425-437`)
+sizes one `UNIFORM_BUFFER` and one `COMBINED_IMAGE_SAMPLER` descriptor
+slot per `maxSets` unit — capacity is counted in descriptor *sets*
+(one per live `Pipeline`), matching Spec 0021's own "at most one
+combined-image-sampler descriptor per Pipeline" premise (D-10 below
+holds this for the output-transform Pipeline too). Let `N` be the
+count of distinct material-asset Pipelines in the current scene
+(`fallbackMaterial_`, `material_realization.cpp:338-366`, always
+exists and is counted separately, floor 1). Because every geometry
+Pipeline — `N` material Pipelines plus the fallback — now targets the
+fixed HDR format, none of them participates in format-change rebuild
+any longer; only the output-transform Pipeline's own `colorFormat`
+still varies with the final target's negotiated format (D-6), and at
+most 2 of its own descriptor sets (old + new) briefly coexist during
+the existing safe swap.
+
+**Steady state: `N + 2`** (`N` material Pipelines + 1 fallback + 1
+output-transform). **Peak, during a format-change event: `N + 3`**
+(steady state + 1 transient output-transform set). Compared against
+Spec 0021's own existing `2×(N+1)` formula: **equal at `N = 1`
+(`4 = 4`), lower at `N ≥ 2`** — not a blanket improvement at every `N`,
+only from `N = 2` on. At the existing N=6 stress test, `9` vs. `14`,
+both well within the real, `Accepted` 4-pool/60-descriptor-set ceiling
+(ADR-0064). This derivation must be reconfirmed with a real N=6 GPU
+stress test at Implementation time (Testing & Verification Plan) —
+not merely trusted from this written derivation alone.
 
 ### D-5. Tone-mapping — fixed-exposure Reinhard, one literal formula
 
@@ -354,10 +376,9 @@ auto-exposure, no luminance histogram, no eye-adaptation state; a
 future spec may add one, replacing `kBaselineExposure`'s fixed value
 with a computed one without changing this Decision's own curve.
 
-**Numeric edge cases, made explicit during this ADR's own final
-review** (the original draft did not state them): the `max(...,0)`
-floor is the *only* new clamp this Decision introduces, and it applies
-to raw linear radiance *before* exposure/Reinhard — a defensive guard
+**Numeric edge cases:** the `max(...,0)` floor is the *only* new clamp
+this Decision introduces, and it applies to raw linear radiance
+*before* exposure/Reinhard — a defensive guard
 against a theoretically-impossible-but-unverified negative geometry-
 pass output (radiance is never negative by construction, but
 Reinhard's own `x/(1+x)` is not monotonic for `x < -1` and could
@@ -377,47 +398,49 @@ existing `MaterialKind`'s own NaN guards (`kMinDot`/`kMinAlpha`/
 `kPointLightDistanceEpsilon` floors, ADR-0067 D-1) are unchanged by
 this ADR and continue to prevent NaN at its own source.
 
-### D-6. Linear-to-display transfer — manual sRGB OETF, written to a `*_Unorm` target only
+### D-6. Linear-to-display transfer — two closed shader/Pipeline variants, selected by final-target format class, never narrowing surface negotiation
 
-The output-transform shader applies the exact piecewise sRGB transfer
-function — `linear <= 0.0031308 ? linear * 12.92 : 1.055 *
-pow(linear, 1.0/2.4) - 0.055`, per channel, applied to `tonemapped`
-(never a `pow(x, 1/2.2)` approximation) — and writes the encoded byte
-value to a `*_Unorm`-format final `RenderTarget` — never an
-`*_Srgb`-format one, closing a real double-encode risk (an `*_Srgb`
-target's own automatic hardware encode, applied on top of this
-shader's own manual one, would double-encode).
+`selectSurfaceFormat()`'s existing four-format candidate list
+(`Bgra8Unorm`/`Bgra8Srgb`/`Rgba8Unorm`/`Rgba8Srgb`,
+`vulkan_presentation.cpp:111-116`) is **unchanged** — Windows and
+Android are both primary targets ([AGENTS.md](../AGENTS.md)); this ADR
+never rejects startup because a real surface happens to report only
+`*_Srgb` variants.
 
-**Correction from this ADR's own final review (2026-08-31):** the
-original draft asserted the negotiated final target is always
-`*_Unorm` without closing the gap. Real code shows this is not
-guaranteed: `selectSurfaceFormat()`'s own real preference list
-(`vulkan_presentation.cpp:111-116`) tries all four RHI-approved
-formats in order (`Bgra8Unorm`, `Bgra8Srgb`, `Rgba8Unorm`,
-`Rgba8Srgb`) and returns the *first the real surface actually
-reports* — on a real surface reporting only `*_Srgb` variants, it
-would select one today, silently producing the exact double-encode
-this Decision exists to prevent. **Corrected Decision:
-`kApprovedFormatsInPreferenceOrder` narrows to exactly the two
-`*_Unorm` entries (`Bgra8Unorm`, `Rgba8Unorm`) — a real, disclosed,
-Vulkan-Backend-private behavior change**, justified because after this
-ADR lands, every draw path shares the one output-transform pass (D-3),
-so an `*_Srgb` final target is never a correct choice for any of them.
-A real surface reporting only `*_Srgb` variants (no `*_Unorm` at all)
-fails swapchain creation via the existing
-`PresentationError::SwapchainCreationFailed` — the exact same
-`Result`-based failure `selectSurfaceFormat()` returning
-`std::nullopt` already produces today for "no acceptable format
-found." No new error enumerator is introduced. `OffscreenTarget`'s own
-`format` parameter is caller-supplied, not negotiated — every existing
-call site (Runtime, every image-regression fixture) already hardcodes
-`Rgba8Unorm` explicitly (confirmed real-code evidence), so this
-narrowing changes zero existing behavior for the offscreen path; a
-future offscreen caller requesting an `*_Srgb` `OffscreenTargetCreateParams::format`
-is a real, disclosed gap this ADR leaves for Implementation to close
-(reject at `createOffscreenTarget()` with the existing
-`OffscreenTargetCreateError` shape, or a new, narrow validation — left
-to the Plan, not decided here).
+Two closed output-transform shader/Pipeline contracts — never branched
+by `MaterialKind`, never a new global — cover the two format classes:
+
+- **`*_Unorm` final target:** the shader applies D-5's tone-mapping
+  *and* the exact piecewise sRGB OETF — `linear <= 0.0031308 ? linear
+  * 12.92 : 1.055 * pow(linear, 1.0/2.4) - 0.055`, per channel — then
+  writes the encoded byte value directly.
+- **`*_Srgb` final target:** the shader applies D-5's tone-mapping and
+  writes the **linear** `tonemapped` value unencoded; the target
+  image's own `VK_FORMAT_*_SRGB` view causes the GPU's fixed-function
+  output-merger to perform the identical sRGB encode in hardware on
+  store. **The shader never applies the manual OETF here** — doing so
+  would double-encode.
+
+Both variants share the *same* tone-mapping math (D-5) up to
+`tonemapped`; they differ in exactly one place — whether the OETF runs
+in the shader or in fixed-function hardware — and are defined to
+produce the same final displayed pixel. `OffscreenTarget`'s own
+`format` stays caller-supplied; every real call site (Runtime, every
+image-regression fixture) already hardcodes `Rgba8Unorm`, so goldens
+always take the explicit-OETF variant — unaffected by this Decision.
+
+**Selection, disclosed exactly:** the composition root (Runtime, or an
+image-regression fixture) already knows the final target's real,
+negotiated `Format` (`presentation_->metadata().format`, or the
+literal `OffscreenTargetCreateParams::format` it supplied) at the same
+point it already detects a format change (D-4's own existing trigger).
+A new, exhaustive, C4062-guarded classification —
+`isSrgbFormat(atlantis::rhi::Format) -> bool`, covering all four
+`Format` enumerators, no `default:` — selects which of the two
+pre-compiled output-transform `Pipeline`/`Sampler` pairs to pass into
+`Renderer::drawFrame()` this frame (D-3). `Renderer` itself performs no
+classification and holds no format-dependent state — it draws whatever
+`Pipeline` it is handed, identically either way.
 
 ### D-7. Existing shaders' own final `clamp(..., 0, 1)` is removed
 
@@ -451,30 +474,32 @@ widening. The comparison methodology itself
 ([ADR-0042](0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md),
 zero channel tolerance, zero failing-pixel budget) is unchanged.
 
-### D-10. The output-transform shader pair's own descriptor contract, and shared coverage across all three `MaterialKind`s (added during this ADR's own final review — not stated precisely in the original draft)
+### D-10. The output-transform shader pair's own descriptor contract — two closed variants (D-6), identical shape, shared across all three `MaterialKind`s
 
-Mirroring `descriptor_contract.h`'s established per-kind-function
-pattern, a new `outputTransformExpectedDescriptorContract()`: exactly
-one binding — `{set 0, binding 0, CombinedImageSampler, Fragment}`,
-sampling the `HdrColorTarget` — no uniform buffer (fixed exposure,
-D-5, is a shader-compile-time constant, not per-frame state) and no
-push constant (the fullscreen triangle needs no per-draw transform;
-its three clip-space positions are baked directly into D-3's own
-checked-in vertex buffer). This is a smaller, simpler contract than
-every existing `MaterialKind`'s own (each binds at least one uniform
-buffer) — validated by `atlantis_shader_compiler` via a new
-`"output-transform"` contract name, mirroring `"pbr-direct-lit"`'s own
-addition to `compile_and_validate.cpp`
-(`validateDescriptorContractForStage()`/
-`validatePushConstantsForVertexStage()`, the latter confirming
-`pushConstantSizeBytes == 0` for this one contract, unlike every
-other). **All three existing `MaterialKind`s genuinely share this one
-output-transform pass and shader pair identically** — the
-output-transform pass has no `MaterialKind`-specific branch anywhere;
-it runs exactly once per frame, downstream of every geometry-pass
+Two `.slang` files (`output_transform_unorm`, `output_transform_srgb`,
+D-6), each with its own vertex shader (identical — the checked-in
+fullscreen-triangle positions, D-3) and its own fragment shader
+(identical up to `tonemapped`; the `*_Unorm` variant alone applies the
+sRGB OETF). Both share the *same* descriptor contract — mirroring
+`descriptor_contract.h`'s established per-kind-function pattern, one
+new `outputTransformExpectedDescriptorContract()` reused by both:
+exactly one binding — `{set 0, binding 0, CombinedImageSampler,
+Fragment}`, sampling the `HdrColorTarget` — no uniform buffer (fixed
+exposure, D-5, is a shader-compile-time constant) and no push constant
+(no per-draw transform). Validated by `atlantis_shader_compiler` via
+two new contract names, `"output-transform-unorm"`/
+`"output-transform-srgb"`, mirroring `"pbr-direct-lit"`'s own addition
+to `compile_and_validate.cpp` (`pushConstantSizeBytes == 0` for both,
+unlike every `MaterialKind` contract).
+
+**All three existing `MaterialKind`s genuinely share whichever one
+variant applies this frame, identically** — neither variant has any
+`MaterialKind`-specific branch anywhere; the output-transform pass
+runs exactly once per frame, downstream of every geometry-pass
 `DrawItem`, reading whatever the geometry pass accumulated into the
 shared `HdrColorTarget` regardless of which `MaterialKind`s
-contributed to it.
+contributed to it. Selection between the two variants (D-6) depends
+only on the final target's format class, never on scene content.
 
 ### D-11. Portability
 
@@ -490,9 +515,10 @@ at startup, not merely asserted once here for all devices everywhere.
 No `VK_EXT_hdr_metadata`, `VK_COLOR_SPACE_HDR10_ST2084_EXT`, or any
 other literal-HDR-*display* WSI extension is introduced anywhere —
 this ADR's own "HDR" is strictly an internal, scene-referred linear
-intermediate; the swapchain's own negotiated (format, color space)
-pair (D-6's own narrowed `kApprovedFormatsInPreferenceOrder`) and
-Vulkan Backend's existing WSI boundary are otherwise untouched.
+intermediate; the swapchain's own existing four-format negotiation
+(`selectSurfaceFormat()`, unchanged, D-6) and Vulkan Backend's existing
+WSI boundary are untouched — startup never fails because of which of
+the four RHI-approved formats a real surface happens to report.
 
 ## Consequences
 
@@ -532,20 +558,18 @@ Vulkan Backend's existing WSI boundary are otherwise untouched.
   HDR-range content — a mandatory, human-reviewed re-capture of all
   six is required at Plan/Implementation time, disclosed here so it is
   never treated as a surprise regression.
-- The real, complete new RHI public surface (D-1/D-3, made exhaustive
-  during this ADR's own final review): one new resource type
-  (`HdrColorTarget`), one new `HdrFormat` enum, one new `Device`
-  factory method, three new/overloaded `CommandList` methods
-  (`transitionResource`, `beginRendering`, `bindTexture`), and one new
-  `ResourceBinding` field — larger than the original draft's own
-  "one type, one field" framing implied; reviewed and accepted here in
-  full, not incidental.
-- `VulkanPresentation::selectSurfaceFormat()`'s own candidate list
-  permanently narrows from four RHI-approved formats to two (D-6) — a
-  real, disclosed behavior change to already-shipped Vulkan Backend
-  code, not merely additive; a real surface reporting only `*_Srgb`
-  variants now fails swapchain creation where it previously would have
-  succeeded.
+- The real, complete new RHI public surface (D-1/D-3): one new
+  resource type (`HdrColorTarget`), one new `HdrFormat` enum, one new
+  `HdrColorTargetCreateError` enum, one new `Device` factory method,
+  three new/overloaded `CommandList` methods (`transitionResource`,
+  `beginRendering`, `bindTexture`), and one new `ResourceBinding`
+  field — reviewed and accepted here in full, not incidental.
+- Two closed output-transform shader/Pipeline variants (D-6) instead of
+  one — real, disclosed additional shader-compiler/asset surface (two
+  new `.slang` files, two new descriptor contracts, D-10), and a real
+  new composition-root-level classification (`isSrgbFormat()`) that
+  must be kept exhaustive as this repository's own C4062/`WX`
+  discipline already enforces elsewhere.
 
 ## Alternatives Considered
 
@@ -566,15 +590,18 @@ Vulkan Backend's existing WSI boundary are otherwise untouched.
   byte-level regression going undetected than D-5's own single
   rational function. Registered as a named future candidate operator,
   not blocking this ADR.
-- **Rely on an `*_Srgb`-format final `RenderTarget` for the OETF encode
-  instead of a manual one (D-6).** Rejected — a manual-vs-automatic
-  encode choice that depends on which of four approved formats happens
-  to be negotiated is a real, latent double-encode/no-encode bug
-  waiting to happen; picking exactly one mechanism (manual, D-6) and
-  structurally excluding the other (narrowing
-  `kApprovedFormatsInPreferenceOrder` to `*_Unorm` only) closes it
-  outright, rather than merely relying on `*_Unorm` happening to be
-  the negotiation's own current first preference.
+- **Narrow `selectSurfaceFormat()`'s own candidate list to `*_Unorm`
+  only**, refusing startup on a real surface reporting only `*_Srgb`
+  variants. Rejected — Windows and Android are both primary targets;
+  neither should ever fail to start over which of four already-
+  approved formats a real surface happens to report. Superseded by
+  D-6's own two-closed-variant design, which handles both format
+  classes correctly instead of excluding one.
+- **One shader always applying the manual OETF, regardless of the
+  final target's format class.** Rejected — would double-encode on an
+  `*_Srgb` target (hardware encode on top of the shader's own manual
+  one); the two-variant split (D-6) is the only way to keep exactly
+  one encode operation per pixel on both format classes.
 - **`HdrColorTarget` publicly inheriting `RenderTarget` and/or
   `SampledTexture`**, to reuse `beginRendering()`/`bindTexture()`
   unmodified, instead of new/overloaded `CommandList` methods (D-1/D-3).
