@@ -178,8 +178,12 @@ TEST_CASE("loadMaterialAsset detects a metadata/artifact mismatch scoped to meta
     buffer << in.rdbuf();
     metadataText = buffer.str();
   }
-  const std::string oldLine = "metallic_factor: 0.500000";
-  const std::string newLine = "metallic_factor: 0.750000";
+  // Plan 0023's own final review: serializeMaterialMetadata() now formats
+  // via formatFloat() (std::to_chars, shortest round-trip), not the former
+  // std::to_string()'s fixed 6-decimal-place output -- "0.5", not
+  // "0.500000". These literals follow that real, current serialized text.
+  const std::string oldLine = "metallic_factor: 0.5";
+  const std::string newLine = "metallic_factor: 0.75";
   const auto pos = metadataText.find(oldLine);
   REQUIRE(pos != std::string::npos);
   metadataText.replace(pos, oldLine.size(), newLine);
