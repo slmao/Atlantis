@@ -1,10 +1,15 @@
 # Spec: Dynamic Frame Uniform Updates Foundation
 
-- **Status:** `In Review` (previously `Approved`; reopened — see "Correction —
-  2026-08-30" below. **Do not treat the original "Human Review Approval"
-  section further down this document as current** — it approved a design
-  whose central justification this correction retracts. A fresh approval
-  covering the corrected design follows the correction.)
+- **Status:** `Approved` (was briefly `Approved`, then reopened to
+  `In Review` on 2026-08-30 — see "Correction — 2026-08-30" below — then
+  re-approved the same day, on the corrected design, following a
+  centralized final review that traced the windowed safety chain end to
+  end, exhaustively audited every offscreen multi-cycle path, and
+  verified the dynamic Lighting/`World` transform model against real
+  code. See "Human Review Approval (corrected design)" further down for
+  the current approval record. **Do not treat the original "Human Review
+  Approval" section near the end of this document as current** — it
+  approved a design whose central justification this correction retracts.)
 - **Author:** slmao
 - **Created:** 2026-08-30
 - **Related Plan(s):** None yet.
@@ -84,6 +89,109 @@ Motivation described:
   its `bindUniformBuffer()`/`bindTexture()` calls also happen after
   `acquireNextTarget()` returns.
 
+**The full windowed safety chain, traced end to end, with every claim
+checked against the real call, not assumed:**
+
+1. `RuntimeApplication::runFrame()` calls `presentation_->acquireNextTarget()`
+   (`runtime_application.cpp:407`).
+2. `VulkanPresentation::acquireNextTarget()`'s Step 0
+   (`vulkan_presentation.cpp:540`) calls `device_.waitAndReleaseRetainedSubmission()`.
+3. That function (`vulkan_device.cpp:514-533`) early-returns `Ok` with **no
+   Vulkan call at all** if `hasRetainedSubmission_` is `false` (line
+   517-519) — true only on the very first frame of a `Device`'s lifetime,
+   before any `submit()` has ever been called. On every later frame, it
+   calls `vkWaitForFences(device_, 1, &submissionFence_, VK_TRUE, UINT64_MAX)`
+   (line 521). `submissionFence_` is the **same** `VkFence` object
+   `VulkanDevice::submit()` passes to `vkQueueSubmit` when creating the
+   retained submission (`vulkan_device.cpp:613`,
+   `vkQueueSubmit(queue_, 1, &submitInfo, submissionFence_)`) — confirmed
+   by both call sites reading the identical `submissionFence_` member; the
+   wait is never against an unrelated or stale fence. Per the Vulkan
+   specification, a fence signaled by `vkQueueSubmit` signals only once
+   every operation in that submission — including every shader invocation
+   that read the uniform buffer or a bound descriptor set during that
+   submission's execution — has completed on the GPU; `vkWaitForFences`
+   returning `VK_SUCCESS` is therefore a complete proof that the previous
+   frame's GPU-side use of both is finished.
+4. On success, `waitAndReleaseRetainedSubmission()` calls `vkResetFences`
+   (line 525) and `retainedSubmission_.reset()` (line 530) — releasing the
+   previous frame's `CommandList`/`VkCommandBuffer` only. This function
+   never references a `VkSemaphore` anywhere in its body (confirmed by
+   reading its full text) — it cannot release or otherwise affect
+   `VulkanPresentation`'s own `renderFinishedSemaphores_`
+   (`vulkan_presentation.cpp:514-516`), which are a separate, per-swapchain-image
+   vector Step 0 never touches.
+5. `acquireNextTarget()` continues: `recreateIfNeeded()`, the zero-extent
+   check, `vkAcquireNextImageKHR`, returning a `RenderTarget` to
+   `runFrame()`.
+6. Back in `runFrame()`: the Camera write (`:539-541`), the Lighting write
+   (`:573-575`, once the guard below is removed, every frame), and
+   `Renderer::drawFrame()` (`:755`) — whose `bindUniformBuffer()`/
+   `bindTexture()` calls issue `vkUpdateDescriptorSets()`
+   (`vulkan_command_list.cpp:262`/`:304`) — all happen strictly after step
+   4 completed for this frame.
+7. `device_->submit()` (`:758`) is called. Its own internal call to
+   `waitAndReleaseRetainedSubmission()` (`vulkan_device.cpp:576`) is, on
+   this same frame, a **verified no-op**: step 4 already reset
+   `hasRetainedSubmission_` to `false` and released `retainedSubmission_`,
+   so this second call hits the identical early return described in step
+   3 — no second `vkWaitForFences` call, no double-wait, no behavior
+   change to `submit()` itself. `submit()` then calls `vkQueueSubmit`
+   (line 613) and stores *this* frame's own `CommandList` as the new
+   `retainedSubmission_` (line 618-619), to be drained by the *next*
+   frame's own Step 0.
+8. `presentation_->present()` (`:817`) consumes this frame's own
+   `SubmissionSignal`, wrapping the per-image `renderFinishedSemaphore`
+   `access->renderFinishedSemaphore()` supplied
+   (`vulkan_device.cpp:590-594`, `:599`) — a semaphore Step 0 never
+   referenced in steps 2-4 above.
+
+Every link in this chain is a direct citation to real code, not an
+inference from Vulkan's general semantics alone: **the windowed Camera
+and descriptor-set-update path has no currently-reachable race**, on the
+evidence above.
+
+**Step 0 across every `acquireNextTarget()` outcome — corrected from the
+original draft, which did not state this explicitly.** Step 0
+(`vulkan_presentation.cpp:540`) is the first statement in the function
+body, before `recreateIfNeeded()` (`:551`), before the zero-extent check
+(`:568`), and before `vkAcquireNextImageKHR` itself (`:574`) — so it runs
+**unconditionally, on every single call**, regardless of what that call's
+own outcome turns out to be:
+
+- **Normal acquire** (proceeds to a real `RenderTarget`): Step 0 already
+  ran.
+- **Zero extent / swapchain not yet (re)created** (`:568-570`, returns
+  `Ok(nullptr)`): Step 0 already ran — this frame drains the previous
+  submission and then does no further GPU work.
+- **Deferred/out-of-date** (`VK_ERROR_OUT_OF_DATE_KHR`, `:578-582`,
+  returns `Ok(nullptr)`): Step 0 already ran, before `vkAcquireNextImageKHR`
+  was even called.
+- **Suboptimal** (`VK_SUBOPTIMAL_KHR`, `:583-587`, proceeds with a real
+  target, recreates next call): Step 0 already ran.
+- **Acquire failure** (`AcquireAction::Fail`, `:588-589`, returns `Err`):
+  Step 0 already ran, before the failing `vkAcquireNextImageKHR` call.
+- **Swapchain recreation** (`recreateIfNeeded()`, `:551-554`, may destroy
+  and rebuild the swapchain): happens *after* Step 0, by design — Step
+  0's own header comment states one of its two reasons for existing is
+  precisely so recreation never destroys a swapchain image a previous
+  frame's GPU work might still be using.
+- **Step 0's own failure** (`vkWaitForFences`/`vkResetFences` returning
+  other than `VK_SUCCESS` — `DeviceLost` or a `SubmitError` otherwise,
+  `:541-546`): the *only* path where `acquireNextTarget()` returns before
+  reaching `recreateIfNeeded()`/the zero-extent check/`vkAcquireNextImageKHR`
+  at all — the whole call short-circuits immediately.
+
+This is **existing Presentation behavior, not a new design this Spec
+introduces.** Dynamic Lighting does not change it, does not add a new
+wait, and does not change its frequency or position. This Spec makes no
+promise about a failed/deferred frame "avoiding" a wait it already pays
+today — it only promises that a *successful* frame's own extraction uses
+current `World` state (see Requirements below); whether an
+unsuccessful/deferred frame still pays Step 0's own pre-existing cost is
+an orthogonal, already-settled fact this Spec neither changes nor needs
+to justify.
+
 **The original Spec's "windowed and headless share one safety model"
 claim was also inaccurate.** `RuntimeApplication::runFrame()` never
 references `OffscreenTarget` — it is windowed-only; there is no headless
@@ -91,13 +199,36 @@ composition root reusing `runFrame()`. The offscreen/headless path
 (`tests/image_regression/fixture/*.cpp`, `tests/vulkan_backend/headless_rendering_gpu_tests.cpp`,
 `tests/runtime/material_realization_gpu_tests.cpp`) calls
 `Device::createOffscreenTarget()` directly and never constructs a
-`Presentation`, so it never benefits from Step 0. Every such test found
-during this correction's re-investigation is single-frame (one acquire,
-one write, one submit, one readback — no cross-frame reuse of a shared
-uniform buffer), so none of them currently exercises Hazard A/B in
-practice; a *future* multi-frame offscreen dynamic-uniform test would be
-exposed, however — see "Corrected Design" below for how this is handled
-without a new RHI API.
+`Presentation`, so it never benefits from Step 0.
+
+This correction's own re-investigation exhaustively enumerated every
+`createOffscreenTarget()` consumer in the repository (`tests/image_regression/fixture/*.cpp`,
+`tests/runtime/material_realization_gpu_tests.cpp`,
+`tests/vulkan_backend/{descriptor_pool_growth,headless_rendering,texture_upload}_gpu_tests.cpp`,
+`examples/headless_rendering_demo/main.cpp`) and every `submit()` call
+site within each (a grep-counted, file-by-file audit, not a sample).
+Several of the six image-regression fixtures are genuinely single-frame
+(one acquire, one write, one submit, one readback), but at least three
+files are genuinely **multi-cycle**: `headless_rendering_gpu_tests.cpp`
+(three- and two-cycle loops, `:142-177`/`:243-280`), `material_realization_gpu_tests.cpp`
+(an N=6 format-change stress loop, `:1143-1281`, among others), and
+`textured_quad_fixture.cpp` (two sequential render passes against the
+same `cameraBuffer`, `:299-462`). Correcting the original draft's
+"every test is single-frame" claim: **every one of these multi-cycle
+call sites, without exception, already calls `REQUIRE(device->waitIdle().isOk())`
+(or the fixture's own equivalent `waitIdle()` check) immediately after
+that cycle's `submit()` and before the next cycle's own writes** — a
+grep across both files confirms every `submit()` line is followed, within
+a few lines, by a `waitIdle()` line, before the loop body's next
+iteration begins. This is not incidental: it is the established,
+universal convention every existing offscreen multi-cycle test in this
+codebase already follows, and it is why none of them currently exercises
+Hazard A/B in practice — not merely because no test happens to be
+multi-cycle. A *new* multi-cycle offscreen fixture that followed this
+same, already-universal convention would be exposed to no new risk; one
+that deviated from it (skipped the per-cycle `waitIdle()`) would be — see
+"Corrected Design" below for why the new fixture follows the existing
+convention exactly, needing no new RHI API.
 
 **What is retracted.** The claim that a real, currently-shipped
 synchronization gap exists in the Camera update path on the windowed
@@ -211,10 +342,55 @@ cost and no new API surface.
 2. The extraction itself is a full re-read of `World`'s current light
    state each time (`world_->lightEntities()`/`getLight()`/
    `getWorldMatrix()`), not a diff against previously-published bytes —
-   this naturally covers every source of change (`setLight()`, a Light
-   entity's own `Transform`, a parent-hierarchy `Transform` change, Light
-   entity creation/removal) without any new dirty-bit or revision-counter
-   state, and without two authoritative data sets ever coexisting.
+   this naturally covers every source of change without any new dirty-bit
+   or revision-counter state, and without two authoritative data sets ever
+   coexisting. **Verified, not assumed, for each source of change:**
+   - `setLight()`/`removeLight()` (`world.cpp:350-360`) write directly
+     into `slots_[id.index()].light`; `getLight()` (`:362-367`) and
+     `lightEntities()` (`:369-374`, iterating `slots_[i].alive &&
+     slots_[i].light.has_value()`) read that same field live, with no
+     cache — a call to either immediately after `setLight()`/entity
+     creation/entity destruction observes the new state, no
+     `updateTransforms()` involved.
+   - A Light's own `Transform`, and a parent's `Transform`, are different:
+     `setLocalTransform()`/`setParent()` (`world.cpp:218-222`/`:193-211`)
+     only write `localTransform`/`parent`; the `cachedWorldMatrix`
+     `getWorldMatrix()` actually returns (`world.cpp:272-274`, `return
+     ...slots_[id.index()].cachedWorldMatrix`) is stale until the *next*
+     `World::updateTransforms()` call recomputes it — an unconditional,
+     full re-traversal of every entity (`world.cpp:235-270`; no per-entity
+     dirty gate inside `World` itself). This is confirmed already safe:
+     `runtime_application.cpp:497` calls `world_->updateTransforms()`
+     unconditionally, every frame, *before* the Lighting-extraction block
+     (`:549` onward) — not once at scene load, as an incautious reading of
+     "remove the guard" alone might suggest. Removing
+     `lightingDataCaptured_`'s guard is therefore sufficient on its own:
+     the world-matrix freshness this depends on is already guaranteed by
+     an existing, unrelated, always-unconditional call this Spec does not
+     need to add, move, or otherwise touch.
+   - **176-byte payload write boundary, confirmed non-overlapping and
+     fully value-initialized every call:** the Camera write
+     (`runtime_application.cpp:539-541`) writes exactly `cameraData[0..31]`
+     (128 bytes); the Lighting write (`:573-575`) writes through
+     `reinterpret_cast<FrameLightingData*>(cameraData + 32)` — byte offset
+     128, the next 176 bytes, matching the buffer's own
+     `sizeof(float) * 32 + sizeof(FrameLightingData)` = 304-byte total
+     size (`:288-289`) exactly, with no gap and no overlap between the two
+     writes. `extractFrameLightingData()` (`scene_extraction.cpp:156-224`)
+     begins with `FrameLightingData data{};` (line 158) — a **fresh,
+     value-initialized local object on every call**, not an in-place
+     mutation of a persisted one; every one of `FrameLightingData`'s own
+     members carries a default member initializer (`= 0`, `= {}`,
+     `directionalLights[1]{}`, `pointLights[4]{}`,
+     `scene_extraction.h:78-99`), so every call zeros all 176 bytes first,
+     then fills in only the entries actually present this call. The write
+     at `:573-575` is a full struct assignment (`*lightingData =
+     lightingResult.value();`), copying all 176 bytes — so a Point Light
+     destroyed since the previous frame (reducing `pointLightCount`) is
+     provably zeroed in the very next extraction's output, and the write
+     that publishes it overwrites the *entire* 176-byte region, never only
+     the bytes for currently-present lights. No frame ever publishes a
+     partial update or a stale trailing slot.
 3. A zero-extent/deferred-acquire/acquire-failure frame already returns
    before reaching the write (existing early-return guards,
    `runtime_application.cpp:403-416`) — unchanged, and correct: the next
@@ -301,6 +477,19 @@ unreviewed" abstraction AGENTS.md's Golden Rule exists to prevent.
   — the next successful frame always re-extracts current `World` state.
 - No two authoritative Lighting data sets (a removed static-snapshot flag
   and a new mechanism) ever coexist.
+- Every extraction overwrites the full 176-byte region, so a light count
+  that has decreased since the previous frame leaves no stale trailing
+  slot bytes (see Corrected Design item 2's own byte-boundary evidence).
+- No dirty-bit, revision-counter, or "update already consumed" state is
+  introduced anywhere — a concept that does not apply under full
+  re-extraction (see Corrected Design item 2).
+- Spec 0019's own existing hard caps (at most one Directional light, at
+  most four Point lights) and its existing fail-fast contract
+  (`ATLANTIS_CHECK_MSG`, `scene_extraction.cpp:174-179`/`:202-207` — a
+  programmer error, not a recoverable runtime condition) are unchanged
+  and continue to apply to every frame's own extraction, not only the
+  first — this Spec does not relax, silently truncate past, or otherwise
+  alter that existing contract by making extraction run every frame.
 
 ### Non-functional
 
@@ -332,27 +521,43 @@ symmetry" alternative and why it is rejected).
 
 **GPU-independent:**
 
+- Every successful frame rebuilds the complete 176-byte `FrameLightingData`
+  from `World`'s current state — `extractFrameLightingData()` produces a
+  fully value-initialized result on every call (already true today,
+  `scene_extraction.cpp:158`), re-confirmed by a test that calls it twice
+  with a shrinking light set and checks the second call's trailing,
+  now-unused slot bytes are zero, not carried over from the first call's
+  own local (each call constructs its own `FrameLightingData data{}` —
+  there is no shared/mutated state to carry anything over, but the test
+  proves this rather than relying on reading the source).
+- Reducing the light count between two extraction calls zeros the
+  now-unused trailing `directionalLights`/`pointLights` slots (the same
+  test above, stated as its own explicit checklist item).
+- Multiple `setLight()` calls against the same entity before one
+  extraction call publish only the final call's value.
 - `lightingDataCaptured_` has zero remaining references anywhere in the
-  repository after this change (a grep-based check, trivially automatable).
-- The Lighting-extraction block runs on every successful frame in a
-  GPU-independent unit/integration test double for the extraction logic
-  itself (matching however `extractFrameLightingData()` is already unit
-  tested today, if it is — Plan 0022 confirms and extends that coverage,
-  not this Spec).
-- Multiple `World` mutations within one synthetic "frame" resolve to the
-  final state only.
+  repository after this change (a grep-based check, trivially
+  automatable — `grep -r lightingDataCaptured_` across `src/`/`tests/`).
+- No new RHI interface exists after this change: `atlantis::rhi::Device`'s
+  pure-virtual method count and signatures are unchanged from today
+  (a GPU-independent test or a simple diff of `device.h` against `main`
+  suffices) — confirming Architectural Impact truly stayed `None`.
 
 **Real Vulkan/GPU — reusing the existing multi-frame windowed pattern
-where suf ficient:**
+where sufficient:**
 
 - Multi-frame Camera regression: unchanged behavior, reconfirmed via the
   existing `runtime_smoke_gpu_tests.cpp`-style multi-frame loop.
 - Multi-frame Lighting regression via the new offscreen fixture (Corrected
-  Design item 5): Directional Light direction/color/intensity, Point
-  Light position/intensity, Light `Transform`, parent-hierarchy
-  `Transform`, and Light entity creation/removal each independently
-  change the readback pixels as expected, across multiple cycles, each
-  cycle protected by `waitIdle()` per Corrected Design.
+  Design item 5), one cycle per independently-varied parameter:
+  Directional Light direction, Directional Light color/intensity, Point
+  Light position, Point Light color/intensity, a Light's own local
+  `Transform`, a Light's parent's `Transform`, and Light entity
+  creation/removal — each shown to change the readback pixels in the
+  direction the real lighting math predicts (reusing
+  `computeLambertianDiffuse()`, `scene_extraction.h:180-181`, as the CPU
+  reference this codebase already established for this exact purpose in
+  Spec 0019).
 - Final-value semantics: multiple mutations before one cycle's own
   extraction point publish only the last state.
 - No stale/undefined bytes: a cycle with no Lighting change publishes
@@ -362,27 +567,117 @@ where suf ficient:**
   own simpler acquire contract (no swapchain, no zero-extent case) — the
   fixture's own coverage is scoped to what an offscreen target can
   actually exercise.
+- The new fixture's own multi-cycle protection: cycle 1 begins with no
+  retained submission (a fresh `Device`), needing no wait before its own
+  first write; cycle 2 onward is safe only because cycle *N-1*'s own
+  `submit()` was followed by a successful `waitIdle()` before cycle *N*'s
+  own writes began — exactly matching the established convention (see
+  Corrected Motivation above) and re-verified for this specific new
+  fixture, not merely assumed by analogy.
+- Multi-cycle reuse of the *same* `Buffer`, `Pipeline`, and descriptor set
+  across cycles (not a fresh set each cycle) — the new fixture is
+  required to actually exercise this, matching the real, established
+  reuse pattern `headless_rendering_gpu_tests.cpp`/`material_realization_gpu_tests.cpp`
+  already use, not a simplified one-shot-per-cycle setup that would prove
+  less.
+- **Honest disclosure on negative/regression testing for the timing
+  hazard itself:** a reliable, deterministic negative test that proves
+  "removing the per-cycle `waitIdle()` reliably fails" cannot be
+  constructed with confidence — the underlying hazard is a genuine data
+  race, whose manifestation depends on GPU execution timing relative to
+  CPU timing, not a deterministic condition a test can force on demand.
+  Ordinary Vulkan Validation Layers (core validation, already enabled)
+  are not guaranteed to catch a descriptor-set-updated-while-pending
+  hazard without the optional Synchronization Validation feature
+  explicitly enabled, which this codebase's instance creation was not
+  found to enable during this investigation. This Spec does not claim a
+  negative test proves the fix necessary or sufficient beyond the
+  call-order and Vulkan-specification evidence already presented above;
+  Plan 0022 may investigate enabling Synchronization Validation for this
+  specific test as a stretch goal, but this Spec does not mandate it and
+  does not pretend a flaky or unreliable negative test would constitute
+  proof if one were added anyway.
 - Format-change (Spec 0018 D9) + dynamic Lighting in the same frame:
   windowed-only scenario (format changes are a swapchain-surface concept)
   — covered by extending `runtime_smoke_gpu_tests.cpp`-style windowed
   testing, not the new offscreen fixture.
-- Validation Layers clean throughout.
+- Validation Layers clean throughout, including the new fixture's own
+  multi-cycle run.
+
+**Regression coverage — confirming nothing this Spec touches breaks
+already-approved behavior:**
+
+- Presentation's own Step 0 and its two original reasons for existing
+  (semaphore-reuse safety, swapchain-recreation safety) are unchanged —
+  this Spec adds no code to `VulkanPresentation`.
+- Spec 0018 D9's format-change candidate submit-safe swap-in timing is
+  unchanged — this Spec adds no code to that path.
+- Spec 0021's descriptor-pool growth/reuse behavior and its own existing
+  N=2/N=6 regression tests are unchanged — this Spec adds no code to
+  `VulkanDevice`'s pool-allocation path.
+- Both `waitIdle()`'s own existing callers (staging/readback safety points
+  in the existing offscreen fixtures) and `submit()`'s own internal
+  defensive drain keep their exact current behavior — reused, not
+  replaced or duplicated, by the new fixture and by Lighting's own
+  per-frame extraction.
 
 **Golden strategy:** the five existing goldens
 (`minimal_cube`/`world_scene`/`textured_quad`/`material_demo`/`lighting_demo`)
 remain byte-for-byte identical and pixel-zero-difference — none is
 touched or regenerated. The new multi-cycle offscreen fixture is a
 **test-only** harness producing programmatic pixel comparisons between
-cycles (not a stored golden PNG) — matching this Spec's own original
-golden-strategy decision, still valid: a relative "changed as expected"
+cycles (not a stored golden PNG) — a relative "changed as expected"
 claim is proven more directly by a within-test comparison than by a new
-fixed baseline image. If Plan 0022 later finds a real need for a stored
-baseline, it follows ADR-0042's own two-phase bootstrap with human review
-— not mandated by this Spec.
+fixed baseline image, giving dual CPU-byte-level (`FrameLightingData`
+bytes) and real-GPU-pixel-level (readback) evidence for the same claim,
+matching this Spec's own requirement that CPU-byte checks alone are not
+sufficient. If Plan 0022 later finds a real need for a stored baseline,
+it follows ADR-0042's own two-phase bootstrap with human review — not
+mandated by this Spec.
 
 **Full matrix:** Debug and Release, `ctest -L gpu` and `ctest -LE gpu`,
 Vulkan Validation Layers clean, a clean `ATLANTIS_BUILD_TESTS=OFF` build,
 module/link boundary scan, `git diff --check`.
+
+## Offscreen Fixture Boundary (constraints on what Plan 0022 may add)
+
+The new multi-cycle offscreen fixture is a **test-private** harness. Plan
+0022 may:
+
+- Add a new test file or extend an existing one under `tests/vulkan_backend/`
+  or `tests/runtime/` (the Plan decides which, per Risks below).
+- Reuse Runtime's own real `extractFrameLightingData()`/
+  `extractCameraMatrices()`/`World` extraction logic directly (these are
+  already non-`Runtime`-private, reusable functions,
+  `scene_extraction.h`) — never a duplicated, parallel re-implementation
+  of the same math.
+- Reuse `Renderer::drawFrame()`/`RenderGraph` exactly as every existing
+  fixture already does — no bypass of RenderGraph, no ad hoc direct
+  submission.
+- Establish each cycle's own safety point with the existing, already-public
+  `Device::waitIdle()` — nothing new.
+
+Plan 0022 may **not**:
+
+- Add any new RHI method, including `Device::waitForPreviousSubmission()`
+  (rejected, ADR-0065) or any similarly-scoped alternative.
+- Create a second `RuntimeApplication`-equivalent frame-orchestration
+  loop — the new fixture is a narrow, test-scoped acquire/write/submit/
+  `waitIdle()`/readback cycle, not a parallel "headless Runtime."
+- Describe the new fixture as sharing `RuntimeApplication::runFrame()`'s
+  own frame orchestration — it does not, and must not be documented as if
+  it did (the error this correction itself is fixing).
+- Introduce any generic dependency-injection, service-locator, or
+  `Device` test-double architecture to build it.
+
+If reusing Runtime's own real extraction logic in a `tests/vulkan_backend/`-located
+fixture requires exposing a `Runtime`-private helper at a slightly wider
+(but still internal, non-public, non-RHI) visibility, Plan 0022 must
+judge and state explicitly whether that is ordinary test wiring (no
+architectural impact) or a real boundary change (needing its own
+Architectural Impact entry) — this Spec does not presuppose which, and
+does not authorize the Plan to silently decide it is the former without
+saying so.
 
 ## Risks & Open Questions
 
@@ -392,10 +687,15 @@ module/link boundary scan, `git diff --check`.
 - Whether the new offscreen fixture belongs under
   `tests/vulkan_backend/` (matching `headless_rendering_gpu_tests.cpp`'s
   own location) or `tests/runtime/` (since it exercises Runtime's own
-  extraction logic) — a file-organization choice for the Plan.
+  extraction logic) — a file-organization choice for the Plan, bounded by
+  the Offscreen Fixture Boundary section above.
 - Whether `extractFrameLightingData()` already has adequate
   GPU-independent unit coverage for being called every frame (versus
   once) — Plan 0022 must confirm, not assume.
+- Whether reusing Runtime's own extraction logic from a
+  `tests/vulkan_backend/`-located fixture needs a small, non-architectural
+  visibility widening, or belongs in `tests/runtime/` instead specifically
+  to avoid that question — see the Offscreen Fixture Boundary section.
 
 No Human Review decision items remain that require choosing among real
 architectural alternatives — the corrected design has exactly one shape,
@@ -407,13 +707,67 @@ Everything in Non-Goals above.
 
 ## Human Review Approval (corrected design)
 
-**Approved by slmao <slmaosjtu@gmail.com>, 2026-08-30**, covering the
-corrected design only (Correction, Corrected Motivation, Corrected
-Design, and the Goals/Requirements/Testing sections that follow them).
-This approval **retracts** the original "Human Review Approval" recorded
-further below in this document, which covered a design this correction
-found unnecessary. ADR-0065 is `Rejected` alongside this approval — see
-its own "Rejected — 2026-08-30" section.
+**Approved by slmao <slmaosjtu@gmail.com>, 2026-08-30**, following a
+second, centralized final review round (the same day as the correction
+itself) that re-verified the corrected problem statement and narrowed
+scope against real code, rather than accepting the correction's own first
+draft at face value. This approval **retracts** the original "Human
+Review Approval" recorded further below in this document, which covered
+a design this correction found unnecessary. ADR-0065 remains `Rejected`
+— see its own "Rejected — 2026-08-30" section.
+
+This second review round traced, and this approval specifically covers:
+
+- **The windowed safety chain, end to end** — Step 0
+  (`vulkan_presentation.cpp:527-546`) → `waitAndReleaseRetainedSubmission()`
+  (`vulkan_device.cpp:514-533`) → `vkWaitForFences` on the same
+  `submissionFence_` `submit()` itself signals
+  (`vulkan_device.cpp:613`/`:521`) → `retainedSubmission_.reset()`
+  (CommandList only, never a `VkSemaphore`) → the Camera/Lighting writes
+  and `Renderer::drawFrame()`'s descriptor updates, all strictly after —
+  → `submit()`'s own internal second drain call, verified a no-op → the
+  per-image `renderFinishedSemaphore` `present()` consumes, verified never
+  touched by Step 0. See Correction's own itemized trace above.
+- **Step 0's behavior across every `acquireNextTarget()` outcome** —
+  confirmed unconditional (normal, zero-extent, deferred/out-of-date,
+  suboptimal, acquire-failure, and Step 0's own failure), confirmed to be
+  pre-existing Presentation behavior this Spec neither introduces nor
+  changes, not silently described as new work.
+- **Every offscreen/headless multi-cycle path in the repository**,
+  exhaustively enumerated (not sampled) — confirmed every existing
+  multi-cycle `submit()` call site already pairs with a `waitIdle()`
+  before the next cycle's own writes, with no exception found.
+- **The dynamic Lighting/`World` transform model**, verified against real
+  `World`/`RuntimeApplication` code — `setLight()`/light
+  creation/removal are live, uncached; `updateTransforms()` already runs
+  unconditionally every frame, before Lighting extraction, so Light/
+  parent `Transform` changes are already covered by removing
+  `lightingDataCaptured_` alone, with no additional call needed.
+- **The 176-byte payload's write boundary** — Camera and Lighting write
+  non-overlapping byte ranges; `FrameLightingData` is freshly
+  value-initialized on every extraction call, so a shrinking light count
+  is provably zeroed, never stale.
+- **No new RHI API anywhere** — confirmed by a full re-scan of the
+  corrected Spec's own body for residual current-tense "new API" claims
+  (none found) and by confirming `atlantis::rhi::Device`'s pure-virtual
+  surface is unchanged.
+- **The offscreen fixture's own boundary** — test-private, reuses
+  existing extraction/`Renderer`/`RenderGraph`/`waitIdle()` machinery, adds
+  no new RHI method, no second frame-orchestration loop, and is not
+  described as sharing `RuntimeApplication`'s own orchestration.
+- **The expanded verification matrix**, including an honest disclosure
+  that a deterministic negative test for the underlying timing hazard
+  cannot be reliably constructed, and that Validation Layers' core
+  checks are not guaranteed to catch it without Synchronization
+  Validation explicitly enabled — stated plainly rather than claimed as
+  proven.
+- **All five existing goldens unchanged**; the new fixture uses
+  programmatic multi-cycle pixel/byte comparison, not a new stored
+  baseline, unless Plan 0022 finds a real need and follows ADR-0042.
+- **Every Non-Goal above** — no ring buffer, no staging/copy model, no
+  multi-frame-in-flight framework, no bindless/descriptor indexing, no
+  Android/iOS/Linux code, no Editor/Client API, no new thread/lock/
+  dependency.
 
 This approval authorizes drafting Plan 0022 against the corrected design
 only: removing `lightingDataCaptured_` and its guard so Lighting is
