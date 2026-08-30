@@ -10,12 +10,22 @@ namespace atlantis::renderer {
 // PbrDirectLit (Milestone 5). objectToWorld keeps ObjectToWorldOnly's
 // existing offset/size (0, 64 bytes) unchanged -- only PbrDirectLit's own
 // Pipeline gets the wider range; the three existing 64-byte call sites
-// (material_realization.cpp:176,301,324) are unaffected. Owned by this
-// module (not Runtime) because Renderer::drawFrame() (Milestone 5) is the
-// sole assembler and pushConstant() caller for this exact byte layout --
-// mirrors CameraWorldPositionData's own explicit-tail-pad,
-// static_assert-pinned style (scene_extraction.h), applied here to the
-// module that actually writes these bytes.
+// (material_realization.cpp:176,301,324) are unaffected.
+//
+// Deliberately a PRIVATE header (src/renderer/src/, not
+// src/renderer/include/atlantis/renderer/) -- found and corrected during
+// Plan 0023's own final review: this struct carries no cross-module
+// contract of its own (unlike CameraWorldPositionData, which multiple
+// composition roots outside Runtime genuinely write into a shared
+// buffer) -- renderer.cpp is its own sole real production consumer, and
+// including it from a test target uses the same relative-path pattern
+// tests/shader_system/json_parser_tests.cpp's own inclusion of
+// src/shader_system/src/json_parser.h already establishes for a
+// module's own private header. Exposing it under this module's public
+// include/ would have silently widened Atlantis::Renderer's own public
+// API surface with a type neither Spec 0023, Plan 0023, nor ADR-0067
+// ever named a header location for -- narrowing it back to private,
+// zero-functionality-change, is the conservative resolution.
 struct alignas(16) PbrPushConstants {
   float objectToWorld[16] = {};    // offset 0,  64 bytes -- unchanged
   float baseColorFactor[4] = {};   // offset 64, 16 bytes

@@ -4,7 +4,8 @@
 
 #include <atlantis/assert.h>
 #include <atlantis/render_graph/execution.h>
-#include <atlantis/renderer/pbr_push_constants.h>
+
+#include "pbr_push_constants.h"
 
 namespace atlantis::renderer {
 

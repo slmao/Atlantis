@@ -5,7 +5,6 @@
 // GPU, no real window -- only a real slangc invocation (a build tool,
 // already required, ADR-0025/Plan 0008) and file I/O.
 
-#include <atlantis/renderer/pbr_push_constants.h>
 #include <atlantis/runtime/scene_extraction.h>
 #include <atlantis/shader_system/reflection_loader.h>
 #include <atlantis/shader_system/reflection_metadata.h>
@@ -18,6 +17,15 @@
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
+
+// PbrPushConstants is a PRIVATE Renderer header (src/renderer/src/,
+// found and corrected during Plan 0023's own final review -- see that
+// header's own comment for why), reached here the same way
+// tests/shader_system/json_parser_tests.cpp already reaches
+// shader_system's own private json_parser.h: a relative path, never a
+// new target_include_directories() entry and never promoting it to
+// Renderer's own public include/.
+#include "../../src/renderer/src/pbr_push_constants.h"
 
 using atlantis::renderer::PbrPushConstants;
 using atlantis::runtime::CameraWorldPositionData;
