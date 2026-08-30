@@ -416,7 +416,21 @@ frame — with no new RHI API and no new synchronization primitive; a
 first-draft proposal for a new RHI wait method was found unnecessary
 during that Spec's own governance gate and never implemented
 ([ADR-0065](adr/0065-explicit-pre-write-submission-drain-for-frame-uniform-safety.md),
-`Rejected`). PBR, shadows, image-based lighting, and post-processing
+`Rejected`). A direct-lighting PBR baseline is now also implemented: PBR
+Material Foundation (Spec 0023, `Approved`, implemented and merged via
+[PR #111](https://github.com/slmao/Atlantis/pull/111)) adds a third
+`MaterialKind`, `PbrDirectLit` — a metallic-roughness Cook-Torrance BRDF
+(Directional/Point lights, no ambient/specular term beyond it) sharing
+the existing single-texture Material architecture, an extended 96-byte
+push constant, and the extended 320-byte Camera/Lighting/camera-world-
+position uniform buffer — proven against a new, human-reviewed
+`pbr_material_demo` golden (four spheres spanning dielectric/metallic ×
+rough/smooth) with zero change to any of the five pre-existing goldens.
+**This is a direct-lighting PBR baseline only, not Filament-quality
+PBR:** HDR intermediate storage, output transfer/tone-mapping,
+image-based lighting, shadows, and normal mapping/tangent-space input
+are all explicitly unimplemented — this Spec's own Non-Goals, see
+`src/README.md`. Shadows, image-based lighting, and post-processing
 extensions beyond it, mipmap/compression/streaming/bindless texture
 support, a distributable cross-session Asset Catalog, and Android/iOS
 all remain unimplemented — see [src/README.md](src/README.md).
