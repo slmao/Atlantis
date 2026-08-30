@@ -208,3 +208,74 @@ vertex to fragment stage anywhere in this codebase yet.
   inverse-transpose approach instead if non-conformal transforms on lit
   entities are expected to be common — a real, disclosed, open
   alternative, not foreclosed by this ADR.
+
+## Accepted Amendment — 2026-08-30
+
+**Status:** proposed during [Spec 0023](../specs/0023-pbr-material-foundation.md)
+(`Approved`)'s own drafting/review. **Formally accepted by Human Review
+on 2026-08-30** — see "Human Review — Amendment Acceptance (2026-08-30)"
+immediately below. Does not change this ADR's own top-level Status
+(`Accepted`) or any text above, which is preserved verbatim.
+
+### Human Review — Amendment Acceptance (2026-08-30)
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-08-30, as part of Spec 0023's own Human Review
+Approval (commit `0fc6a14`), in the same pass as
+[ADR-0067](0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)
+(`Proposed` → `Accepted`) — the two were not independently approvable.
+The amendment below is accepted exactly as specified, bounded by its
+own two explicit conditions. No further Human Review is pending for
+this amendment.
+
+**What it does.** `PbrDirectLit` needs the camera's own world-space
+position, which this buffer does not carry. This amendment authorizes
+appending a **third, separate, tail-only struct** after the existing
+two — never widening either of them:
+
+```
+offset   0..127   CameraMatrices              128 bytes -- UNCHANGED
+offset 128..303   FrameLightingData           176 bytes -- UNCHANGED
+offset 304..319   CameraWorldPositionData      16 bytes -- NEW
+total buffer size                            = 320 bytes
+```
+
+```cpp
+struct alignas(16) CameraWorldPositionData {
+  float x, y, z;        // offset 0 (buffer offset 304), 12 bytes
+  float _pad = 0.0f;    // offset 12 (buffer offset 316), 4 bytes, explicit
+};                        // sizeof == 16
+```
+
+`CameraMatrices` and `FrameLightingData` keep their exact existing
+sizes, offsets, and internal layouts — this amendment touches neither.
+Confirmed by real evidence, not asserted: `extractCameraMatrices()`
+(`scene_extraction.cpp:107`) already computes the exact value needed
+(`eye`) as a discarded local; `VulkanCommandList::bindUniformBuffer()`
+binds this buffer with `bufferInfo.range = VK_WHOLE_SIZE`
+(`vulkan_command_list.cpp:250`) — the same mechanism that already lets
+`textured_quad.slang` (real, unmodified, reflects a 128-byte block) and
+`lit_textured.slang` (real, unmodified, reflects a 304-byte block) share
+this buffer today, each reading only its own declared prefix, unaware of
+what follows it. A real `slangc` compile of a candidate
+`pbr_direct_lit.slang` declaring the full 320-byte struct reflects
+`cameraWorldPosition` at offset 304 and a total block size of 320, on
+both stages.
+
+**Conditions, both required:** (1) the existing 304-byte region's
+layout is never altered, reordered, or reinterpreted; (2) a shader that
+does not need the new field declares only its own existing prefix and
+is never required to change source. Only `pbr_direct_lit.slang`
+declares the full 320-byte struct; `textured_quad.slang`/
+`lit_textured.slang` are untouched.
+
+**Scope.** Authorizes exactly this one field. A further future
+extension is its own future Spec/ADR decision under the same two
+conditions, not pre-authorized here.
+
+**Alternatives rejected:** rewriting this ADR's own Decision to state
+320 bytes directly (would misrepresent what Spec 0019/0022 actually
+shipped and verified); a second, independent uniform buffer for
+`PbrDirectLit` alone (reopens Spec 0021's descriptor-pool-capacity
+proof for one `float3` of frame-scoped data — disproportionate next to
+appending 16 bytes to an already-shared, `VK_WHOLE_SIZE`-bound buffer).
