@@ -44,6 +44,7 @@ add_executable(atlantis_image_regression_gpu_tests
   textured_quad_gpu_tests.cpp
   material_demo_gpu_tests.cpp
   lighting_demo_gpu_tests.cpp
+  pbr_material_demo_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_image_regression_gpu_tests
@@ -121,6 +122,16 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   # realizePendingMaterials() call requires a real pbrDirectLit* trio
   # too, even though lighting_demo_scene never actually realizes one.
   ATLANTIS_LIGHTING_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  # Plan 0023 Milestone 8: the pbr_material_demo fixture's own real,
+  # cooked scene artifact/metadata/manifest paths and all three built-in
+  # shader pairs' own output directories, mirroring
+  # ATLANTIS_LIGHTING_DEMO_*'s own identical need above.
+  ATLANTIS_pbr_material_demo_scene_ARTIFACT_PATH="${ATLANTIS_pbr_material_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_pbr_material_demo_scene_METADATA_PATH="${ATLANTIS_pbr_material_demo_scene_METADATA_PATH}"
+  ATLANTIS_pbr_material_demo_scene_MANIFEST_PATH="${ATLANTIS_pbr_material_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_PBR_MATERIAL_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIAL_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
 )
 
 # Plan 0012 Step 6: the asset-sourced GPU test case needs
@@ -129,11 +140,12 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
 # manifest likewise. Plan 0017 Milestone 3: textured_quad_left/
 # textured_quad_right likewise. Plan 0018 Milestone 16: material_demo_scene
 # likewise. Plan 0019 Section P10/Milestone 10: lighting_demo_scene
-# likewise.
+# likewise. Plan 0023 Milestone 8: pbr_material_demo_scene likewise.
 add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET}
   ${ATLANTIS_textured_quad_unorm_TARGET} ${ATLANTIS_textured_quad_srgb_TARGET}
   ${ATLANTIS_textured_quad_left_TARGET} ${ATLANTIS_textured_quad_right_TARGET}
-  ${ATLANTIS_material_demo_scene_TARGET} ${ATLANTIS_lighting_demo_scene_TARGET})
+  ${ATLANTIS_material_demo_scene_TARGET} ${ATLANTIS_lighting_demo_scene_TARGET}
+  ${ATLANTIS_pbr_material_demo_scene_TARGET})
 
 # Same build-tree shader artifact set as the golden generator -- this
 # executable renders the identical fixture. WORKING_DIRECTORY above
