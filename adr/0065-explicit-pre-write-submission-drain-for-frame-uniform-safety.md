@@ -1,10 +1,46 @@
 # ADR 0065: Explicit Pre-Write Submission Drain for Frame Uniform Safety
 
-- **Status:** `Accepted`
+- **Status:** `Rejected` (was `Accepted` 2026-08-30; rejected the same day
+  — see "Rejected — 2026-08-30" immediately below. The Context/Decision/
+  Consequences/Alternatives sections that follow are preserved unedited as
+  the historical record of the original, incorrect decision — this is not
+  a silent rewrite.)
 - **Date:** 2026-08-30
 - **Deciders:** slmao <slmaosjtu@gmail.com>
 - **Related Spec:** [Spec 0022 — Dynamic Frame Uniform Updates Foundation](../specs/0022-dynamic-frame-uniform-updates-foundation.md)
-  (`Approved`)
+  (`In Review` — reopened; see that Spec's own "Correction — 2026-08-30"
+  section)
+
+## Rejected — 2026-08-30
+
+Before drafting Plan 0022, this Spec/ADR's technical premise was
+re-verified against real code. `VulkanPresentation::acquireNextTarget()`
+already contains a "Step 0" (`src/vulkan_backend/src/vulkan_presentation.cpp:527-546`)
+that calls `VulkanDevice::waitAndReleaseRetainedSubmission()` —
+**already a public method** (`vulkan_device.h:184`, public specifically so
+`acquireNextTarget()` could call it) — unconditionally, before
+`vkAcquireNextImageKHR`, before `runFrame()`'s format-change build, before
+the Camera/Lighting mapped writes, and before `Renderer::drawFrame()`'s
+descriptor updates. This predates this ADR entirely: it was added during
+Plan 0006's own post-implementation GPU testing, to fix a swapchain
+acquire-semaphore reuse hazard, and as a side effect already closes, on
+the windowed `RuntimeApplication` path, exactly the hazard this ADR's own
+Context section describes. The Context/Decision below were written
+without having traced this call — the searches that produced them missed
+it (pattern searches that did not include the actual method name being
+called, and a verification `Read` that started partway through
+`acquireNextTarget()`'s own body, after this exact code). See Spec 0022's
+own "Correction — 2026-08-30" section for the complete evidence and the
+corrected design, which needs no new RHI API: the windowed path is already
+safe via the existing Step 0, and the one genuinely new need (a multi-cycle
+offscreen fixture for real GPU pixel evidence, since readback is
+offscreen-only in this codebase) is already met by the existing, already-
+public `Device::waitIdle()`, following a pattern
+(`tests/vulkan_backend/headless_rendering_gpu_tests.cpp:156-173`) this
+codebase already established. `Device::waitForPreviousSubmission()` is
+not added. Everything below this notice is retained as the historical
+record of the original decision and the reasoning that led to it — it is
+not currently in effect and must not inform Plan 0022.
 
 ## Context
 
