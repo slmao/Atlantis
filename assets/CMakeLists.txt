@@ -198,3 +198,85 @@ set(ATLANTIS_lighting_demo_scene_ARTIFACT_PATH "${ATLANTIS_lighting_demo_scene_A
 set(ATLANTIS_lighting_demo_scene_METADATA_PATH "${ATLANTIS_lighting_demo_scene_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_lighting_demo_scene_MANIFEST_PATH "${ATLANTIS_lighting_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
 set(ATLANTIS_lighting_demo_scene_TARGET "${ATLANTIS_lighting_demo_scene_TARGET}" PARENT_SCOPE)
+
+# Plan 0023 Milestone 6 (Spec 0023 D16): one non-shared-vertex UV-sphere
+# (16x24 bands, poles duplicated per-longitude-segment, never collapsed;
+# see assets/meshes/pbr_sphere.mesh.txt's own generation for the exact
+# topology) -- the one mesh all four new PbrDirectLit material assets
+# below share, via four distinct transforms.
+atlantis_add_static_mesh_asset(
+  NAME pbr_sphere
+  SOURCE meshes/pbr_sphere.mesh.txt
+)
+set(ATLANTIS_pbr_sphere_ARTIFACT_PATH "${ATLANTIS_pbr_sphere_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sphere_METADATA_PATH "${ATLANTIS_pbr_sphere_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sphere_TARGET "${ATLANTIS_pbr_sphere_TARGET}" PARENT_SCOPE)
+
+# Plan 0023 Milestone 6 (ADR-0066/D17): four MaterialKind::PbrDirectLit
+# material assets spanning dielectric/metallic x rough/smooth --
+# reusing the already-cooked, already-Rgba8Srgb textured_quad_srgb
+# texture (Spec 0016), never a new PNG. base_color_factor is left at
+# its own default (1,1,1,1) for all four -- no real, disclosed reason
+# to vary it was found during Implementation; metallic_factor/
+# roughness_factor alone provide the four corners' own discriminating
+# power (D17).
+atlantis_add_material_asset(
+  NAME pbr_dielectric_rough
+  SOURCE materials/pbr_dielectric_rough.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_pbr_dielectric_rough_ARTIFACT_PATH "${ATLANTIS_pbr_dielectric_rough_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_dielectric_rough_METADATA_PATH "${ATLANTIS_pbr_dielectric_rough_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_dielectric_rough_TARGET "${ATLANTIS_pbr_dielectric_rough_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_dielectric_rough_LOGICAL_PATH "${ATLANTIS_pbr_dielectric_rough_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME pbr_dielectric_smooth
+  SOURCE materials/pbr_dielectric_smooth.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_pbr_dielectric_smooth_ARTIFACT_PATH "${ATLANTIS_pbr_dielectric_smooth_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_dielectric_smooth_METADATA_PATH "${ATLANTIS_pbr_dielectric_smooth_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_dielectric_smooth_TARGET "${ATLANTIS_pbr_dielectric_smooth_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_dielectric_smooth_LOGICAL_PATH "${ATLANTIS_pbr_dielectric_smooth_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME pbr_metallic_rough
+  SOURCE materials/pbr_metallic_rough.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_pbr_metallic_rough_ARTIFACT_PATH "${ATLANTIS_pbr_metallic_rough_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_metallic_rough_METADATA_PATH "${ATLANTIS_pbr_metallic_rough_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_metallic_rough_TARGET "${ATLANTIS_pbr_metallic_rough_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_metallic_rough_LOGICAL_PATH "${ATLANTIS_pbr_metallic_rough_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME pbr_metallic_smooth
+  SOURCE materials/pbr_metallic_smooth.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_pbr_metallic_smooth_ARTIFACT_PATH "${ATLANTIS_pbr_metallic_smooth_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_metallic_smooth_METADATA_PATH "${ATLANTIS_pbr_metallic_smooth_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_metallic_smooth_TARGET "${ATLANTIS_pbr_metallic_smooth_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_metallic_smooth_LOGICAL_PATH "${ATLANTIS_pbr_metallic_smooth_LOGICAL_PATH}" PARENT_SCOPE)
+
+# Plan 0023 Milestone 6 (Spec 0023 D17): a new, independent verification
+# scene -- four pbr_sphere nodes (one per material above, an asymmetric
+# 2x2 grid, never centered-and-identical) plus one Directional and one
+# Point light (asymmetric direction/position, matching lighting_demo_scene's
+# own identical "never axis-aligned/centered" precedent) and one camera.
+# Deliberately NOT wired into atlantis_runtime's own BootstrapConfig
+# (matching material_demo_scene's/lighting_demo_scene's own identical
+# precedent) -- verification-only, consumed by Milestone 8's own new
+# fixture.
+atlantis_add_scene_asset(
+  NAME pbr_material_demo_scene
+  SOURCE scenes/pbr_material_demo.scene.txt
+  MESH_DEPENDENCIES pbr_sphere
+  MATERIAL_DEPENDENCIES pbr_dielectric_rough pbr_dielectric_smooth pbr_metallic_rough pbr_metallic_smooth
+  TEXTURE_DEPENDENCIES textured_quad_srgb
+)
+set(ATLANTIS_pbr_material_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_material_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_material_demo_scene_METADATA_PATH "${ATLANTIS_pbr_material_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_material_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_material_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_material_demo_scene_TARGET "${ATLANTIS_pbr_material_demo_scene_TARGET}" PARENT_SCOPE)
