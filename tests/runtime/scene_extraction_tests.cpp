@@ -363,6 +363,87 @@ TEST_CASE("extractFrameLightingData(): a fifth Point light fails fast via ATLANT
 }
 
 // ---------------------------------------------------------------------
+// Plan 0022 Section M1/V3: extractFrameLightingData() is called once per
+// successful frame now, not once per process lifetime -- these two
+// TEST_CASEs lock the two properties that makes safe: every call is a
+// fresh, fully value-initialized result (so a shrinking light count
+// between calls leaves no stale trailing-slot bytes), and the function
+// itself is stateless/pure (it owns no "already captured" concept --
+// final-value-across-mutations semantics is entirely a property of
+// which LightExtractionInputs the caller passes in, decided by World's
+// own already-live lightEntities()/getLight()/getWorldMatrix(), not by
+// anything tracked here).
+// ---------------------------------------------------------------------
+
+TEST_CASE("extractFrameLightingData(): a second call with fewer Point lights than the first zeros the "
+          "now-unused trailing slot, including its own padding",
+          "[runtime][scene_extraction][light]") {
+  const Mat4 identity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  Light firstPoint;
+  firstPoint.kind = LightKind::Point;
+  firstPoint.intensity = 1.0f;
+  Light secondPoint;
+  secondPoint.kind = LightKind::Point;
+  secondPoint.intensity = 2.0f;
+
+  const auto firstCallResult =
+      extractFrameLightingData({LightExtractionInput{firstPoint, identity}, LightExtractionInput{secondPoint, identity}});
+  REQUIRE(firstCallResult.isOk());
+  REQUIRE(firstCallResult.value().pointLightCount == 2);
+
+  // Second, independent call -- fewer lights, not a mutation of the
+  // first call's own result (extractFrameLightingData() takes its own
+  // argument by const&, returns by value; there is no shared state
+  // between these two calls to mutate).
+  const auto secondCallResult = extractFrameLightingData({LightExtractionInput{firstPoint, identity}});
+  REQUIRE(secondCallResult.isOk());
+  REQUIRE(secondCallResult.value().pointLightCount == 1);
+  REQUIRE(std::abs(secondCallResult.value().pointLights[0].intensity - 1.0f) < kEpsilon);
+
+  // The now-unused second slot -- never touched by this call, since only
+  // one light was passed -- is nonetheless all-zero: FrameLightingData's
+  // own default member initializers (`= {}`) zero every field of a
+  // fresh, freshly-value-initialized result, exactly as they would on
+  // the very first extraction the process ever performs.
+  const FrameLightingData::PointLightGpu& unusedSlot = secondCallResult.value().pointLights[1];
+  CHECK(unusedSlot.position[0] == 0.0f);
+  CHECK(unusedSlot.position[1] == 0.0f);
+  CHECK(unusedSlot.position[2] == 0.0f);
+  CHECK(unusedSlot.range == 0.0f);
+  CHECK(unusedSlot.color[0] == 0.0f);
+  CHECK(unusedSlot.color[1] == 0.0f);
+  CHECK(unusedSlot.color[2] == 0.0f);
+  CHECK(unusedSlot.intensity == 0.0f);
+
+  // The struct's own explicit padding is likewise zero -- not merely
+  // "probably", since it is default-member-initialized identically to
+  // every other field.
+  CHECK(secondCallResult.value()._pad1[0] == 0);
+  CHECK(secondCallResult.value()._pad1[1] == 0);
+}
+
+TEST_CASE("extractFrameLightingData(): calling it twice with byte-identical input produces byte-identical "
+          "output -- it is a stateless, pure function; final-value-across-mutations semantics belongs to the "
+          "caller, not to this function",
+          "[runtime][scene_extraction][light]") {
+  const Mat4 identity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  Light point;
+  point.kind = LightKind::Point;
+  point.color = {0.25f, 0.5f, 0.75f};
+  point.intensity = 3.0f;
+  const std::vector<LightExtractionInput> inputs{LightExtractionInput{point, identity}};
+
+  const auto firstResult = extractFrameLightingData(inputs);
+  const auto secondResult = extractFrameLightingData(inputs);
+  REQUIRE(firstResult.isOk());
+  REQUIRE(secondResult.isOk());
+
+  FrameLightingData firstBytes = firstResult.value();
+  FrameLightingData secondBytes = secondResult.value();
+  CHECK(std::memcmp(&firstBytes, &secondBytes, sizeof(FrameLightingData)) == 0);
+}
+
+// ---------------------------------------------------------------------
 // checkConformalTransform() -- Plan 0019 Sections P8/P15 (Spec 0019 D7),
 // Milestone 7/V12. Every hand-constructed 3x3 case D7's own proof
 // sketch names.

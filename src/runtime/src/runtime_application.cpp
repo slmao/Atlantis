@@ -540,40 +540,54 @@ void RuntimeApplication::runFrame() {
   for (std::size_t i = 0; i < 16; ++i) cameraData[i] = extractionResult.value().view[i];
   for (std::size_t i = 0; i < 16; ++i) cameraData[16 + i] = extractionResult.value().projection[i];
 
-  // Plan 0019 Section P9: the one-time frame lighting snapshot -- guarded
-  // by lightingDataCaptured_, never re-entered on any later frame for
-  // this RuntimeApplication instance's own lifetime. World::setLight()
-  // calls made after this point change World's own CPU state only; no
-  // code path below this guard ever reads World's light state again.
-  if (!lightingDataCaptured_) {
-    std::vector<LightExtractionInput> lightInputs;
-    for (const atlantis::world::EntityId& id : world_->lightEntities()) {
-      const auto lightResult = world_->getLight(id);
-      const auto lightWorldMatrixResult = world_->getWorldMatrix(id);
-      ATLANTIS_CHECK_MSG(lightResult.isOk() && lightWorldMatrixResult.isOk(),
-                          "runFrame(): getLight()/getWorldMatrix() failed for a handle lightEntities() just returned");
-      lightInputs.push_back({lightResult.value(), lightWorldMatrixResult.value()});
-    }
-    const auto lightingResult = extractFrameLightingData(lightInputs);
-    if (lightingResult.isErr()) {
-      // Spec 0019's own fixed light Transform values (Milestone 8's new
-      // scene) are chosen to never be degenerate -- reaching this path is
-      // an unrecoverable construction-bug indicator, matching
-      // extractCameraMatrices()'s own identical "should never happen"
-      // treatment at this same call site's own sibling check above.
-      ATLANTIS_LOG_ERROR("runFrame(): extractFrameLightingData() failed");
-      lifecycle_.markFailed();
-      return;
-    }
-    // reinterpret_cast through the already-obtained cameraData pointer
-    // (Buffer::mappedData() is mapped once, at construction -- a second
-    // call would return the identical pointer) rather than a second,
-    // independent mappedData() call, keeping this write visibly,
-    // textually anchored to the camera-portion write immediately above.
-    auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
-    *lightingData = lightingResult.value();
-    lightingDataCaptured_ = true;
+  // Plan 0022 Section M1 (Spec 0022's own corrected design): every
+  // successful frame re-extracts and publishes the complete, current
+  // FrameLightingData from World's live state -- not a one-time
+  // snapshot. Safe at this exact point without any new synchronization
+  // primitive because it is the same, already-safe write point the
+  // Camera write immediately above already occupies, downstream of
+  // VulkanPresentation::acquireNextTarget()'s own pre-existing Step 0
+  // drain (vulkan_presentation.cpp) and world_->updateTransforms()
+  // (above) -- see Spec 0022's own "Corrected Motivation"/"Corrected
+  // Design" sections for the full evidence. World::setLight()/
+  // setLocalTransform()/setParent()/createEntity()/destroyEntity()
+  // calls made against World are all reflected here on the next
+  // successful frame reaching this point -- lightEntities()/getLight()
+  // are live, uncached reads, and updateTransforms() above already
+  // refreshes every entity's own cachedWorldMatrix unconditionally,
+  // every frame, before this block runs.
+  std::vector<LightExtractionInput> lightInputs;
+  for (const atlantis::world::EntityId& id : world_->lightEntities()) {
+    const auto lightResult = world_->getLight(id);
+    const auto lightWorldMatrixResult = world_->getWorldMatrix(id);
+    ATLANTIS_CHECK_MSG(lightResult.isOk() && lightWorldMatrixResult.isOk(),
+                        "runFrame(): getLight()/getWorldMatrix() failed for a handle lightEntities() just returned");
+    lightInputs.push_back({lightResult.value(), lightWorldMatrixResult.value()});
   }
+  const auto lightingResult = extractFrameLightingData(lightInputs);
+  if (lightingResult.isErr()) {
+    // extractFrameLightingData() builds its own complete, local
+    // FrameLightingData value and returns it by value only on success --
+    // reaching this Err path never touches cameraData, so no mapped byte
+    // is ever partially overwritten. A degenerate light Transform is an
+    // unrecoverable construction-bug indicator, matching
+    // extractCameraMatrices()'s own identical "should never happen"
+    // treatment at this same call site's own sibling check above.
+    ATLANTIS_LOG_ERROR("runFrame(): extractFrameLightingData() failed");
+    lifecycle_.markFailed();
+    return;
+  }
+  // reinterpret_cast through the already-obtained cameraData pointer
+  // (Buffer::mappedData() is mapped once, at construction -- a second
+  // call would return the identical pointer) rather than a second,
+  // independent mappedData() call, keeping this write visibly,
+  // textually anchored to the camera-portion write immediately above.
+  // A full struct assignment -- all 176 bytes, every frame -- so a light
+  // count that has decreased since the previous frame leaves no stale
+  // trailing slot bytes (extractFrameLightingData() itself already
+  // value-initializes a fresh result every call).
+  auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
+  *lightingData = lightingResult.value();
 
   // Plan 0015 Section D10: knownMeshAssetIds is meshResourceMap_'s own
   // key set, collected once per frame (not once per entity) -- passed
