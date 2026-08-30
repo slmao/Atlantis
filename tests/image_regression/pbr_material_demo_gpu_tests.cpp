@@ -164,3 +164,50 @@ TEST_CASE("PBR material demo fixture: repeated render cycles against the same fi
   CHECK(firstResult.value().rgba8 == secondResult.value().rgba8);
   CHECK(fixture.materialResourceMap.size() == 4);
 }
+
+namespace {
+constexpr const char* kPbrMaterialDemoGoldenName = "pbr_material_demo/pbr_material_demo_512x512_rgba8unorm";
+constexpr const char* kPbrMaterialDemoGoldenSlug = "pbr_material_demo_512x512_rgba8unorm";
+}  // namespace
+
+// Plan 0023 Milestone 9: lands together with the golden PNG/sidecar
+// themselves, in their own separate commit, per ADR-0042's own two-
+// phase capture process -- mirrors
+// "Full capture-compare cycle against the committed material_demo
+// golden passes"'s own identical structure exactly.
+TEST_CASE("Full capture-compare cycle against the committed pbr_material_demo golden passes",
+          "[image_regression][gpu][pbr]") {
+  const std::filesystem::path outputDir = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
+  const std::filesystem::path actualArtifact = outputDir / (std::string(kPbrMaterialDemoGoldenSlug) + "_actual.png");
+  const std::filesystem::path diffArtifact = outputDir / (std::string(kPbrMaterialDemoGoldenSlug) + "_diff.png");
+  std::filesystem::remove(actualArtifact);
+  std::filesystem::remove(diffArtifact);
+
+  auto fixtureResult = setUpPbrMaterialDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  PbrMaterialDemoFixture& fixture = fixtureResult.value();
+
+  auto renderResult = renderPbrMaterialDemoFrame(fixture);
+  REQUIRE(renderResult.isOk());
+  const PixelBuffer& actual = renderResult.value();
+
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult = loadAndValidateGolden(goldensDir / (std::string(kPbrMaterialDemoGoldenName) + ".png"),
+                                             goldensDir / (std::string(kPbrMaterialDemoGoldenName) + ".sidecar.txt"));
+  {
+    INFO("INVALID GOLDEN: the committed pbr_material_demo golden must load and validate cleanly");
+    REQUIRE(goldenResult.isOk());
+  }
+  const auto& validatedGolden = goldenResult.value();
+
+  REQUIRE(actual.width == validatedGolden.pixels.width);
+  REQUIRE(actual.height == validatedGolden.pixels.height);
+
+  const auto report = compareBuffers(actual, validatedGolden.pixels);
+  if (!report.passed) {
+    (void)writeFailureArtifacts(outputDir, kPbrMaterialDemoGoldenSlug, actual, validatedGolden.pixels);
+  }
+  REQUIRE(report.passed);
+
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
