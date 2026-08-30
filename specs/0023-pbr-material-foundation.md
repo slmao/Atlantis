@@ -308,3 +308,178 @@ Drafted at explicit human direction, ahead of Android Platform
 (`specs/README.md` Section B, Candidate Order 1, unaffected) and ahead
 of Shadow, IBL, and Post-processing — see `specs/README.md`'s own
 updated Section B note.
+
+## Proposed Correction — 2026-08-30 (D9's own push-constant-layout discriminator)
+
+**Status: proposed, pending Human Review — not yet accepted. Does not
+change this Spec's own top-level Status (`Approved`) or rewrite any
+text above, all of which is preserved verbatim**, matching this
+codebase's own established correction discipline (e.g. Spec 0020's own
+"Human Review Correction" precedent).
+
+**What prompted this correction.** D9's own original text says
+`Material` gains three new, "`const`", borrowed-value fields and that
+`Renderer::drawFrame()` builds either payload "keyed off the bound
+`Material`'s own `pipeline().pushConstantSizeBytes()` (or an equivalent
+already-available signal)" — language that, during Plan 0023's own
+drafting (PR #109), was found to name a mechanism that does not exist
+and could not be implemented as written. Confirmed directly against
+real, current source:
+
+- `atlantis::rhi::Pipeline` (`src/rhi/include/atlantis/rhi/pipeline.h`)
+  is deliberately, explicitly opaque — its own class comment states "no
+  accessor beyond the destructor," mirroring `SubmissionSignal`'s own
+  identical precedent (Spec 0006) — there is no
+  `pushConstantSizeBytes()` accessor, and adding one would reopen
+  `Pipeline`'s own already-`Accepted` (ADR-0022) no-accessor contract, a
+  real RHI public API change this Spec's own Requirements explicitly
+  rule out ("zero change to `Atlantis::RHI`'s public API").
+- `Atlantis::Renderer` (`src/renderer/CMakeLists.txt`) links only
+  `Atlantis::Core`, `Atlantis::RHI`, `Atlantis::RenderGraph` — never
+  `Atlantis::AssetSystem` — confirmed by a comment in that same file
+  stating linking `Atlantis::Platform`/`Atlantis::VulkanBackend`/
+  `Vulkan::Vulkan` would itself violate Spec 0007's own Acceptance
+  Criteria; the identical module-boundary discipline applies to
+  `Atlantis::AssetSystem`. `Renderer::drawFrame()` therefore cannot read
+  `atlantis::asset_system::MaterialKind` to decide a payload shape.
+- `atlantis::renderer::Material`'s own move-assignment operator is
+  `= default` (`material.h`) — a `const`-qualified, non-pointer data
+  member (e.g. a `const` scalar or `const std::array`) would cause the
+  compiler to implicitly delete that operator, breaking every existing
+  caller that moves a `Material` today. (This is distinct from
+  `Material`'s own existing `const atlantis::rhi::SampledTexture*
+  sampledTexture_` field — a pointer *to* `const` data, whose own
+  pointer value remains freely reassignable and does not block move-
+  assignment; the risk is specifically a `const`-qualified member
+  itself, not a pointer that happens to point at `const` data.)
+
+Given these three facts, `Renderer::drawFrame()` has no way to query
+`Pipeline` and no way to read `MaterialKind` — the choice of push-
+constant payload shape must be a signal `Material` itself carries,
+decided once, explicitly, by Runtime, at construction time.
+
+**Corrected D9, replacing D9's own "keyed off ... `pipeline().push
+ConstantSizeBytes()`" language and its "`const` ... fields" wording —
+the rest of D9 (three PBR parameter values live on `Material`;
+`DrawItem` unchanged; `AssetSystem` DTOs never reach `Renderer`
+directly) is unchanged and reaffirmed:**
+
+A new, closed, `Atlantis::Renderer`-owned enum,
+`PushConstantLayout { ObjectToWorld64, PbrDirectLit96 }`, is added
+alongside `Material`. `Material` stores it as a plain (non-`const`)
+private value, set exactly once in the constructor and never reassigned
+afterward — "immutable" by encapsulation (a private value plus a
+`const`-qualified accessor returning it by value, with no setter),
+never by a `const` data member, exactly matching the reasoning above.
+Runtime's own `createMaterial()` call sites (one per `MaterialKind`,
+already the single place that already knows which kind is being
+realized) pass the correct enum value explicitly — `ObjectToWorld64`
+for `UnlitTextured`/`LitTextured`, `PbrDirectLit96` for `PbrDirectLit`
+— never inferred from `baseColorFactor`/`metallicFactor`/
+`roughnessFactor`'s own values (which cannot reliably distinguish the
+two: ADR-0066 item 1's own defaults give every non-PBR `Material` the
+identical inert `baseColorFactor=(1,1,1,1)`/`metallic=1`/`roughness=1`
+values a real `PbrDirectLit` material could equally have authored).
+`Renderer::drawFrame()`'s existing per-`DrawItem` loop switches
+exhaustively on `item.material->pushConstantLayout()` — a closed
+`switch` with no `default:` label, exercising this repository's own
+`/w14062`/`/WX` C4062 discipline exactly as `selectShaderPair()`'s own
+`MaterialKind` switch already does (ADR-0067 D-7) — building the
+existing 64-byte `objectToWorld`-only payload for `ObjectToWorld64` and
+the 96-byte payload (ADR-0067 D-3's own exact layout) for
+`PbrDirectLit96`, before calling the existing, unmodified
+`CommandList::pushConstant(const void*, std::size_t)`.
+
+```cpp
+// atlantis::renderer, material.h — additive to the existing class.
+enum class PushConstantLayout { ObjectToWorld64, PbrDirectLit96 };
+
+class Material {
+ public:
+  explicit Material(std::unique_ptr<atlantis::rhi::Pipeline> pipeline,
+                     PushConstantLayout pushConstantLayout,
+                     const atlantis::rhi::SampledTexture* sampledTexture = nullptr,
+                     const atlantis::rhi::Sampler* sampler = nullptr,
+                     std::array<float, 4> baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f},
+                     float metallicFactor = 1.0f, float roughnessFactor = 1.0f) noexcept;
+  // ~Material(), copy/move members unchanged from today.
+  [[nodiscard]] PushConstantLayout pushConstantLayout() const noexcept { return pushConstantLayout_; }
+  [[nodiscard]] const std::array<float, 4>& baseColorFactor() const noexcept { return baseColorFactor_; }
+  [[nodiscard]] float metallicFactor() const noexcept { return metallicFactor_; }
+  [[nodiscard]] float roughnessFactor() const noexcept { return roughnessFactor_; }
+  // pipeline()/sampledTexture()/sampler() unchanged from today.
+
+ private:
+  // pipeline_/sampledTexture_/sampler_ unchanged from today.
+  PushConstantLayout pushConstantLayout_;         // NOT const -- see reasoning above
+  std::array<float, 4> baseColorFactor_{1.0f, 1.0f, 1.0f, 1.0f};  // NOT const
+  float metallicFactor_ = 1.0f;                    // NOT const
+  float roughnessFactor_ = 1.0f;                   // NOT const
+};
+```
+
+**Alternatives considered and rejected, real evidence for each:**
+
+- **`std::optional<PbrMaterialParameters>`, presence as the
+  discriminator.** Rejected: conflates "does this Material have PBR
+  parameter *values*" with "which push-constant *size* this Pipeline
+  expects" — two questions this Spec's own Goal 2/D5 already treats as
+  independent (a future kind could want scalar parameters without
+  wanting a 96-byte layout). Does not extend to a third future layout
+  without a second, independent optional, and Renderer would then test
+  presence via an `if`-chain, not a single exhaustive `switch` — no
+  compiler-enforced (C4062) coverage the way a closed enum gives today.
+- **A bare `Material::isPbrDirectLit()` boolean/mode accessor.**
+  Rejected: the same reasoning as above, one level blunter — a bool
+  does not scale to a third layout without accreting further,
+  non-exhaustive booleans; an enum with a `switch` is the smallest
+  change that stays C4062-protected as this Spec's own Non-Goals list
+  of future candidates (a second texture, tone mapping, etc.) is
+  eventually drawn on.
+- **Extending the opaque RHI `Pipeline` accessor.** Rejected — see the
+  three confirmed facts above; this is a real RHI public API change
+  this Spec's own Requirements already rule out, and would require its
+  own ADR revisiting ADR-0022's own no-accessor contract, disproportionate
+  to a Renderer-internal bookkeeping need.
+- **Modifying `DrawItem`.** Rejected: directly reopens D10's own
+  already-`Approved` "unchanged" decision with no new evidence — the
+  three confirmed facts above are about *how Renderer decides*, not
+  about needing new per-draw data `DrawItem` doesn't already carry.
+- **Uniformly pushing 96 bytes for every Pipeline.** Rejected, and not
+  merely undesirable: `UnlitTextured`/`LitTextured`'s own
+  `VkPushConstantRange::size` stays exactly `64` (ADR-0067 D-3/D-8) —
+  calling `vkCmdPushConstants` with `size = 96` against a Pipeline whose
+  own declared range is `64` is a real Vulkan Validation Layers
+  violation, not a stylistic mismatch.
+- **Inferring the layout from `baseColorFactor`/`metallicFactor`/
+  `roughnessFactor`'s own values.** Rejected — see the defaults
+  collision named above: a real, concrete counter-example, not a
+  theoretical concern.
+
+**Consequences of this correction, stated precisely:**
+
+- The Requirements section's own "Other" bullet above ("`Material` gains
+  exactly three new accessors") is superseded by this correction — the
+  real count is **four** (`pushConstantLayout()` plus the three PBR
+  parameter accessors). The original bullet's text is left unedited
+  above; this correction is the authoritative count going forward.
+- **No ADR Amendment is needed.** This mechanism is a
+  Renderer/`Material`-internal implementation detail — no new RHI type,
+  field, or public method (`CommandList::pushConstant()`'s own
+  signature is untouched); no new dependency; no new Vulkan object or
+  `VkPushConstantRange` value beyond what ADR-0067 D-3 already defines.
+  It does not cross this repository's own "new public API/module
+  boundary/dependency" bar (`AGENTS.md`) any more than `Material`
+  gaining `sampledTexture_`/`sampler_` in Spec 0016 did without its own
+  dedicated ADR. ADR-0067 D-7's own "Error domain" bullet (the
+  `selectShaderPair()` C4062 discipline) is extended in kind, not
+  contradicted, by this second, Renderer-side closed switch.
+- **Plan 0023 (PR #109) itself is not corrected by this section** — its
+  own Milestone 5 currently repeats D9's own now-superseded
+  `pipeline().pushConstantSizeBytes()` language. Updating it is a
+  separate, later action once this correction is itself accepted, not
+  performed as part of this correction.
+- Goal 4, D5, D10, D21, and every other Decision this correction does
+  not name are unaffected and unreopened — `DrawItem` stays unchanged
+  (D10 reaffirmed), the RHI public API stays unchanged, and the
+  single-texture/no-new-descriptor-binding design (D5/D21) is untouched.
