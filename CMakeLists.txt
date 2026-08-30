@@ -93,10 +93,17 @@ add_subdirectory(shaders/textured_quad)
 # immediately after shaders/textured_quad and before src/runtime, per
 # Spec 0019 D8's own exact placement instruction.
 add_subdirectory(shaders/lit_textured)
+# Plan 0023 Milestone 4: the pbr_direct_lit shader pair backing
+# MaterialKind::PbrDirectLit -- unconditional here, matching
+# shaders/lit_textured's own identical placement/reasoning; declared
+# immediately after shaders/lit_textured and before src/runtime, for
+# the same add_dependencies()-ordering reason documented below.
+add_subdirectory(shaders/pbr_direct_lit)
 # Plan 0013 Section D1: must come after add_subdirectory(assets),
 # add_subdirectory(shaders/minimal_renderer), (Plan 0018 Section P10)
-# add_subdirectory(shaders/textured_quad), and (Plan 0019 Section P11)
-# add_subdirectory(shaders/lit_textured) above -- atlantis_runtime
+# add_subdirectory(shaders/textured_quad), (Plan 0019 Section P11)
+# add_subdirectory(shaders/lit_textured), and (Plan 0023 Milestone 4)
+# add_subdirectory(shaders/pbr_direct_lit) above -- atlantis_runtime
 # add_dependencies() on minimal_mesh_shaders, textured_quad_shaders,
 # lit_textured_shaders, and ${ATLANTIS_minimal_cube_TARGET}, all
 # declared by those calls, and CMake's add_dependencies() requires the
