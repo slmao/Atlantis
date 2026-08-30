@@ -13,9 +13,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+using atlantis::runtime::CameraWorldPositionData;
 using atlantis::runtime::checkConformalTransform;
 using atlantis::runtime::computeLambertianDiffuse;
+using atlantis::runtime::computePbrDirectLighting;
 using atlantis::runtime::extractCameraMatrices;
+using atlantis::runtime::extractCameraWorldPosition;
 using atlantis::runtime::extractFrameLightingData;
 using atlantis::runtime::FrameLightingData;
 using atlantis::runtime::LightExtractionInput;
@@ -95,6 +98,24 @@ TEST_CASE("extractCameraMatrices(): stays robust against the V8 shear-producing 
   const auto result = extractCameraMatrices(shearedCameraWorld, 1.0f, 0.1f, 100.0f, 1.0f);
   REQUIRE(result.isOk());
   requireOrthonormalProperBasis(result.value().view);
+}
+
+// Plan 0023 Milestone 7: extractCameraWorldPosition() -- confirms it
+// reads exactly the same column-12/13/14 translation
+// extractCameraMatrices() itself already derives internally as its own
+// local `eye` (scene_extraction.cpp:107), independently re-asserted
+// here since this file's own real render tests
+// (pbr_render_gpu_tests.cpp) build their own camera buffer directly,
+// never calling this function -- this is this function's own only
+// real, dedicated test.
+TEST_CASE("extractCameraWorldPosition(): reads the world matrix's own translation column (12/13/14), matching "
+          "extractCameraMatrices()'s own identical eye derivation",
+          "[runtime][scene_extraction][pbr]") {
+  const Mat4 cameraWorld{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 2.5f, -1.5f, 7.0f, 1};
+  const CameraWorldPositionData result = extractCameraWorldPosition(cameraWorld);
+  REQUIRE(result.x == 2.5f);
+  REQUIRE(result.y == -1.5f);
+  REQUIRE(result.z == 7.0f);
 }
 
 // V15 (negatively-scaled ancestor): a mirrored (negative-determinant)
@@ -606,6 +627,267 @@ TEST_CASE("computeLambertianDiffuse(): zero lights of either kind returns exactl
   REQUIRE(result.x == 0.0f);
   REQUIRE(result.y == 0.0f);
   REQUIRE(result.z == 0.0f);
+}
+
+// ---------------------------------------------------------------------
+// computePbrDirectLighting() -- Plan 0023 Milestone 7 (ADR-0067 D-1/D-2).
+// Every expected value below is independently derived from D-1's own
+// written formula -- computed with a separate, standalone reference
+// implementation (never this codebase's own C++ or Slang source, never
+// produced by calling computePbrDirectLighting() itself and asserting
+// the output equals itself). N=V=L=(0,0,1) is used for several cases
+// specifically because it collapses NdotH/NdotV/NdotL/VdotH all to 1,
+// making the resulting arithmetic checkable by hand as well
+// (D = alpha^2/(pi*alpha^4) = 1/(pi*alpha^2); G = 1 exactly, regardless
+// of k, since NdotV=NdotL=1 makes each G1 term's own denominator equal
+// its own numerator; F = F0, since VdotH=1 makes (1-VdotH)^5 = 0).
+// ---------------------------------------------------------------------
+
+TEST_CASE("computePbrDirectLighting(): dielectric, mid roughness, N=V=L aligned -- matches the independently "
+          "computed closed-form value",
+          "[runtime][scene_extraction][pbr]") {
+  FrameLightingData lighting;
+  lighting.directionalLightCount = 1;
+  lighting.directionalLights[0].direction[2] = -1.0f;  // L = -direction = (0,0,1)
+  lighting.directionalLights[0].color[0] = 1.0f;
+  lighting.directionalLights[0].color[1] = 1.0f;
+  lighting.directionalLights[0].color[2] = 1.0f;
+  lighting.directionalLights[0].intensity = 1.0f;
+
+  // worldPosition=(0,0,0), worldNormal=(0,0,1), cameraWorldPosition=(0,0,5)
+  // -> V=(0,0,1) -- N=V=L all aligned. metallic=0, roughness=0.5,
+  // baseColor=(1,1,1). Independently computed: 0.35650707 (all channels).
+  const Vec3 result = computePbrDirectLighting(Vec3{0, 0, 0}, Vec3{0, 0, 1}, Vec3{0, 0, 5}, Vec3{1, 1, 1}, 0.0f, 0.5f,
+                                                lighting);
+  REQUIRE(std::abs(result.x - 0.3565071f) < 1e-3f);
+  REQUIRE(std::abs(result.y - 0.3565071f) < 1e-3f);
+  REQUIRE(std::abs(result.z - 0.3565071f) < 1e-3f);
+}
+
+TEST_CASE("computePbrDirectLighting(): metallic, mid roughness, non-uniform baseColor tints the specular (F0), "
+          "N=V=L aligned",
+          "[runtime][scene_extraction][pbr]") {
+  FrameLightingData lighting;
+  lighting.directionalLightCount = 1;
+  lighting.directionalLights[0].direction[2] = -1.0f;
+  lighting.directionalLights[0].color[0] = 1.0f;
+  lighting.directionalLights[0].color[1] = 1.0f;
+  lighting.directionalLights[0].color[2] = 1.0f;
+  lighting.directionalLights[0].intensity = 1.0f;
+
+  // metallic=1.0 (diffuseColor -> 0, F0 -> baseColor exactly), roughness=0.5,
+  // baseColor=(0.8,0.5,0.2). Independently computed:
+  // (1.0185916, 0.6366198, 0.2546479).
+  const Vec3 result = computePbrDirectLighting(Vec3{0, 0, 0}, Vec3{0, 0, 1}, Vec3{0, 0, 5}, Vec3{0.8f, 0.5f, 0.2f},
+                                                1.0f, 0.5f, lighting);
+  REQUIRE(std::abs(result.x - 1.0185916f) < 2e-3f);
+  REQUIRE(std::abs(result.y - 0.6366198f) < 2e-3f);
+  REQUIRE(std::abs(result.z - 0.2546479f) < 2e-3f);
+}
+
+TEST_CASE("computePbrDirectLighting(): roughness=0 is floored by kMinAlpha, never dividing by zero -- large but "
+          "finite, matching the independently computed closed-form value",
+          "[runtime][scene_extraction][pbr]") {
+  FrameLightingData lighting;
+  lighting.directionalLightCount = 1;
+  lighting.directionalLights[0].direction[2] = -1.0f;
+  lighting.directionalLights[0].color[0] = 1.0f;
+  lighting.directionalLights[0].color[1] = 1.0f;
+  lighting.directionalLights[0].color[2] = 1.0f;
+  lighting.directionalLights[0].intensity = 1.0f;
+
+  // roughness=0.0 -> alpha = max(0, kMinAlpha) = kMinAlpha = 1e-3, a
+  // legitimate, authorable mirror-like surface (never rejected at cook
+  // time, ADR-0067 D-2) -- a real, disclosed large specular value at
+  // this exact N=V=L=H alignment (ADR-0067 D-6's own "can hard-clip"
+  // disclosure), never NaN/Inf. An independent float64 reference
+  // computation of this same formula gives ~3183.4, but D's own
+  // NdotH*NdotH*(alpha*alpha-1.0)+1.0 term is a real catastrophic
+  // cancellation at this alpha (subtracting two float32 values within
+  // 1e-6 of each other) -- float32's own ~7-decimal-digit precision
+  // loses most of alpha*alpha's own significance there, so this
+  // function's own real float32 result diverges substantially from the
+  // float64 reference (a genuine, expected float32-vs-float64 artifact
+  // of the formula's own literal transcription, matching what real GPU
+  // hardware would also compute in float32 -- not a defect to "fix" by
+  // reformulating D, which would break literal parity with the shader).
+  // Only the qualitative "large, finite, positive" property is checked
+  // here.
+  const Vec3 result =
+      computePbrDirectLighting(Vec3{0, 0, 0}, Vec3{0, 0, 1}, Vec3{0, 0, 5}, Vec3{1, 1, 1}, 0.0f, 0.0f, lighting);
+  REQUIRE(std::isfinite(result.x));
+  REQUIRE(std::isfinite(result.y));
+  REQUIRE(std::isfinite(result.z));
+  REQUIRE(result.x > 10.0f);
+}
+
+TEST_CASE("computePbrDirectLighting(): a grazing-angle N.L still produces a small, positive, finite contribution",
+          "[runtime][scene_extraction][pbr]") {
+  FrameLightingData lighting;
+  lighting.directionalLightCount = 1;
+  // direction chosen so L = -direction has a ~1 degree elevation above
+  // the surface (N.L ~= sin(1 deg) ~= 0.01745, matching an 89-degree
+  // grazing incidence).
+  lighting.directionalLights[0].direction[0] = -0.99985f;
+  lighting.directionalLights[0].direction[2] = -0.01745f;
+  lighting.directionalLights[0].color[0] = 1.0f;
+  lighting.directionalLights[0].color[1] = 1.0f;
+  lighting.directionalLights[0].color[2] = 1.0f;
+  lighting.directionalLights[0].intensity = 1.0f;
+
+  // N=(0,0,1), V=(0,0,1) (camera above), metallic=0, roughness=0.5,
+  // baseColor=(1,1,1). Independently computed: 0.0053679.
+  const Vec3 result = computePbrDirectLighting(Vec3{0, 0, 0}, Vec3{0, 0, 1}, Vec3{0, 0, 5}, Vec3{1, 1, 1}, 0.0f, 0.5f,
+                                                lighting);
+  REQUIRE(result.x > 0.0f);
+  REQUIRE(std::isfinite(result.x));
+  REQUIRE(std::abs(result.x - 0.0053679f) < 1e-3f);
+}
+
+TEST_CASE("computePbrDirectLighting(): the Schlick Fresnel term makes a large, real difference at a wide "
+          "view/light split -- a disabled Fresnel blend (F forced to F0) would diverge far outside tolerance",
+          "[runtime][scene_extraction][pbr]") {
+  FrameLightingData lighting;
+  lighting.directionalLightCount = 1;
+  // V and L both 60 degrees from N, on opposite sides -- H lands
+  // exactly on N (NdotH=1), but VdotH=0.5 (not 1), so the Schlick term
+  // (1-VdotH)^5 = 0.03125 contributes materially to F, unlike the
+  // N=V=L-aligned cases above (VdotH=1 there, Schlick term = 0
+  // regardless of Fresnel).
+  lighting.directionalLights[0].direction[0] = 0.8660254f;  // L = -direction = (-0.8660254, 0, 0.5)
+  lighting.directionalLights[0].direction[2] = -0.5f;
+  lighting.directionalLights[0].color[0] = 1.0f;
+  lighting.directionalLights[0].color[1] = 1.0f;
+  lighting.directionalLights[0].color[2] = 1.0f;
+  lighting.directionalLights[0].intensity = 1.0f;
+
+  // worldPosition=(0,0,0), worldNormal=(0,0,1), cameraWorldPosition
+  // along V=(0.8660254,0,0.5) scaled by 5. metallic=0, roughness=0.3,
+  // baseColor=(1,1,1). Independently computed: 1.0855018.
+  const Vec3 result = computePbrDirectLighting(Vec3{0, 0, 0}, Vec3{0, 0, 1}, Vec3{4.330127f, 0, 2.5f},
+                                                Vec3{1, 1, 1}, 0.0f, 0.3f, lighting);
+  REQUIRE(std::abs(result.x - 1.0855018f) < 5e-3f);
+}
+
+TEST_CASE("computePbrDirectLighting(): N.L <= 0 (facing away) contributes exactly zero, never a negative value",
+          "[runtime][scene_extraction][pbr]") {
+  FrameLightingData lighting;
+  lighting.directionalLightCount = 1;
+  lighting.directionalLights[0].direction[2] = -1.0f;  // L = (0,0,1)
+  lighting.directionalLights[0].color[0] = 1.0f;
+  lighting.directionalLights[0].intensity = 1.0f;
+
+  // worldNormal = (0,0,-1) -- facing directly away from L.
+  const Vec3 result = computePbrDirectLighting(Vec3{0, 0, 0}, Vec3{0, 0, -1}, Vec3{0, 0, -5}, Vec3{1, 1, 1}, 0.0f,
+                                                0.5f, lighting);
+  REQUIRE(result.x == 0.0f);
+  REQUIRE(result.y == 0.0f);
+  REQUIRE(result.z == 0.0f);
+}
+
+TEST_CASE("computePbrDirectLighting(): a Point light beyond its own range attenuates to exactly zero",
+          "[runtime][scene_extraction][pbr]") {
+  FrameLightingData lighting;
+  lighting.pointLightCount = 1;
+  lighting.pointLights[0].position[2] = 15.0f;
+  lighting.pointLights[0].range = 10.0f;  // dist (15) > range (10)
+  lighting.pointLights[0].color[0] = 1.0f;
+  lighting.pointLights[0].intensity = 1.0f;
+
+  const Vec3 result = computePbrDirectLighting(Vec3{0, 0, 0}, Vec3{0, 0, 1}, Vec3{0, 0, 5}, Vec3{1, 1, 1}, 0.0f, 0.5f,
+                                                lighting);
+  REQUIRE(result.x == 0.0f);
+  REQUIRE(result.y == 0.0f);
+  REQUIRE(result.z == 0.0f);
+}
+
+TEST_CASE("computePbrDirectLighting(): a Point light at (near-)zero distance is clamped by "
+          "kPointLightDistanceEpsilon, never dividing by zero",
+          "[runtime][scene_extraction][pbr]") {
+  FrameLightingData lighting;
+  lighting.pointLightCount = 1;
+  lighting.pointLights[0].position[0] = 1e-6f;
+  lighting.pointLights[0].range = 1.0f;
+  lighting.pointLights[0].color[0] = 1.0f;
+  lighting.pointLights[0].color[1] = 1.0f;
+  lighting.pointLights[0].color[2] = 1.0f;
+  lighting.pointLights[0].intensity = 1.0f;
+
+  const Vec3 result = computePbrDirectLighting(Vec3{0, 0, 0}, Vec3{1, 0, 0}, Vec3{5, 0, 0}, Vec3{1, 1, 1}, 0.0f, 0.5f,
+                                                lighting);
+  REQUIRE(std::isfinite(result.x));
+  REQUIRE(std::isfinite(result.y));
+  REQUIRE(std::isfinite(result.z));
+}
+
+TEST_CASE("computePbrDirectLighting(): multi-light accumulation is the exact per-light sum -- two Directional "
+          "lights of different colors combine additively",
+          "[runtime][scene_extraction][pbr]") {
+  FrameLightingData lightingBoth;
+  lightingBoth.directionalLightCount = 2;
+  lightingBoth.directionalLights[0].direction[2] = -1.0f;
+  lightingBoth.directionalLights[0].color[0] = 1.0f;
+  lightingBoth.directionalLights[0].intensity = 1.0f;
+  lightingBoth.directionalLights[1].direction[2] = -1.0f;
+  lightingBoth.directionalLights[1].color[1] = 1.0f;
+  lightingBoth.directionalLights[1].intensity = 1.0f;
+
+  FrameLightingData lightingFirstOnly;
+  lightingFirstOnly.directionalLightCount = 1;
+  lightingFirstOnly.directionalLights[0] = lightingBoth.directionalLights[0];
+
+  FrameLightingData lightingSecondOnly;
+  lightingSecondOnly.directionalLightCount = 1;
+  lightingSecondOnly.directionalLights[0] = lightingBoth.directionalLights[1];
+
+  const Vec3 pos{0, 0, 0}, normal{0, 0, 1}, cam{0, 0, 5}, baseColor{1, 1, 1};
+  const Vec3 both = computePbrDirectLighting(pos, normal, cam, baseColor, 0.3f, 0.4f, lightingBoth);
+  const Vec3 first = computePbrDirectLighting(pos, normal, cam, baseColor, 0.3f, 0.4f, lightingFirstOnly);
+  const Vec3 second = computePbrDirectLighting(pos, normal, cam, baseColor, 0.3f, 0.4f, lightingSecondOnly);
+
+  REQUIRE(std::abs(both.x - first.x) < kEpsilon);
+  REQUIRE(std::abs(both.y - second.y) < kEpsilon);
+  REQUIRE(std::abs(both.x - (first.x + second.x)) < kEpsilon);
+  REQUIRE(std::abs(both.y - (first.y + second.y)) < kEpsilon);
+  REQUIRE(std::abs(both.z - (first.z + second.z)) < kEpsilon);
+}
+
+TEST_CASE("computePbrDirectLighting(): every dielectric/metallic x low/high roughness combination stays NaN/Inf "
+          "free across both light kinds",
+          "[runtime][scene_extraction][pbr]") {
+  FrameLightingData lighting;
+  lighting.directionalLightCount = 1;
+  lighting.directionalLights[0].direction[0] = 0.3f;
+  lighting.directionalLights[0].direction[1] = -0.5f;
+  lighting.directionalLights[0].direction[2] = -0.8f;
+  lighting.directionalLights[0].color[0] = 1.0f;
+  lighting.directionalLights[0].color[1] = 0.8f;
+  lighting.directionalLights[0].color[2] = 0.6f;
+  lighting.directionalLights[0].intensity = 1.5f;
+  lighting.pointLightCount = 1;
+  lighting.pointLights[0].position[0] = 1.0f;
+  lighting.pointLights[0].position[1] = 1.0f;
+  lighting.pointLights[0].position[2] = 2.0f;
+  lighting.pointLights[0].range = 5.0f;
+  lighting.pointLights[0].color[0] = 0.5f;
+  lighting.pointLights[0].color[1] = 0.5f;
+  lighting.pointLights[0].color[2] = 1.0f;
+  lighting.pointLights[0].intensity = 2.0f;
+
+  const Vec3 pos{0.2f, -0.1f, 0.0f}, normal{0.0f, 0.1f, 1.0f}, cam{0.5f, 0.3f, 4.0f}, baseColor{0.7f, 0.4f, 0.3f};
+  const float metallicValues[] = {0.0f, 1.0f};
+  const float roughnessValues[] = {0.0f, 1.0f};
+  for (float metallic : metallicValues) {
+    for (float roughness : roughnessValues) {
+      const Vec3 result = computePbrDirectLighting(pos, normal, cam, baseColor, metallic, roughness, lighting);
+      REQUIRE(std::isfinite(result.x));
+      REQUIRE(std::isfinite(result.y));
+      REQUIRE(std::isfinite(result.z));
+      REQUIRE(result.x >= 0.0f);
+      REQUIRE(result.y >= 0.0f);
+      REQUIRE(result.z >= 0.0f);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------

@@ -153,6 +153,24 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
       textureDataMap.emplace(materialAssetData.textureAsset, std::move(textureAssetResult.value()));
     }
 
+    // Plan 0023 Milestone 5 (ADR-0066 item 6): PbrDirectLit-only base-
+    // color-texture Rgba8Srgb requirement -- cookMaterial() can never
+    // run this check (it never resolves its own texture reference,
+    // ADR-0059 Decision 7), so this is the first point in the pipeline
+    // with both this material's own kind and its resolved texture's own
+    // real colorSpace. Looked up uniformly here, not duplicated into
+    // both branches above -- correct whether this material's own
+    // texture was just loaded this iteration or already present in
+    // textureDataMap from an earlier material's own dedup (D10). Every
+    // existing UnlitTextured/LitTextured Material is unaffected.
+    if (materialAssetData.kind == atlantis::asset_system::MaterialKind::PbrDirectLit) {
+      const atlantis::asset_system::TextureAssetData& textureData = textureDataMap.at(materialAssetData.textureAsset);
+      if (textureData.colorSpace != atlantis::asset_system::TextureColorSpace::Srgb) {
+        ATLANTIS_LOG_ERROR("PbrDirectLit material's own base-color texture is not Rgba8Srgb");
+        return ResultT::Err(RuntimeInitError::PbrBaseColorTextureNotSrgb);
+      }
+    }
+
     materialDataMap.emplace(distinctMaterialIds[i], materialAssetData);
   }
 

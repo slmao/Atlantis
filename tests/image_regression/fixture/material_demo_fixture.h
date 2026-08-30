@@ -60,6 +60,13 @@ struct MaterialDemoFixture {
   atlantis::rhi::VertexInputLayout litTexturedVertexInputLayout;
   std::vector<std::uint32_t> litTexturedVertexSpirv;
   std::vector<std::uint32_t> litTexturedFragmentSpirv;
+  // Plan 0023 Milestone 5: realizePendingMaterials()'s own further-
+  // widened signature requires a real pbrDirectLit* trio too, even
+  // here, where this fixture never realizes a MaterialKind::PbrDirectLit
+  // material -- loaded the same way litTextured* already is.
+  atlantis::rhi::VertexInputLayout pbrDirectLitVertexInputLayout;
+  std::vector<std::uint32_t> pbrDirectLitVertexSpirv;
+  std::vector<std::uint32_t> pbrDirectLitFragmentSpirv;
 
   // Phase 1 (CPU) outputs, published once by setUpMaterialDemoFixture() and
   // never mutated afterward.

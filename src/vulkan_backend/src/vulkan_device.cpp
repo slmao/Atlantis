@@ -1033,7 +1033,13 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   }
 
   VkPushConstantRange pushConstantRange{};
-  pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  // Plan 0023 Milestone 3 (ADR-0067 D-4): uniformly widened to VERTEX |
+  // FRAGMENT for every Pipeline, unconditionally -- not gated by
+  // MaterialKind. A Vulkan-Backend-private implementation change only;
+  // confirmed safe for UnlitTextured/LitTextured (neither shader's
+  // fragment stage declares or reads push-constant data) and required
+  // by PbrDirectLit, whose fragment stage genuinely reads it.
+  pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
   pushConstantRange.offset = 0;
   pushConstantRange.size = static_cast<std::uint32_t>(params.pushConstantSizeBytes);
 

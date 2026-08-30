@@ -198,20 +198,32 @@ enum class TextureLoadError {
 // the decode-time MaterialArtifactDecodeError::UnknownMaterialKind
 // below is genuinely reachable (an untrusted artifact byte buffer) and
 // is unaffected.
+// BaseColorFactorOutOfRange/MaterialFactorOutOfRange added by Plan 0023
+// Milestone 1 (ADR-0066 item 5): baseColorFactor's four components and
+// metallicFactor/roughnessFactor must each be finite and in [0, 1] --
+// checked at cook time here, and independently re-checked at decode
+// time (MaterialArtifactDecodeError, below) against the artifact's own
+// decoded bytes, never trusted from a well-formed cooker output alone.
 enum class MaterialCookError {
   SourceFileUnreadable,
   SourceParseFailed,
   LogicalPathInvalid,
   AtomicWriteFailed,
+  BaseColorFactorOutOfRange,
+  MaterialFactorOutOfRange,
 };
 
 // decodeMaterialArtifact()'s own conditions -- never assumes a
 // well-formed cooker output, independently re-derives every
 // MaterialCookError-adjacent condition from the artifact's own bytes.
 // UnexpectedSize is new: unlike the texture artifact's own variable
-// pixel payload, Material's record is fixed-size (32 bytes) by schema
-// version alone, so any size other than exactly 32 is corruption, not
-// merely "too small."
+// pixel payload, Material's record is fixed-size (56 bytes, Plan 0023
+// Milestone 1) by schema version alone, so any size other than exactly
+// 56 is corruption, not merely "too small" -- including a real, old,
+// 32-byte schema-version-1 artifact. BaseColorFactorOutOfRange/
+// MaterialFactorOutOfRange (Plan 0023 Milestone 1, ADR-0066 item 5)
+// mirror MaterialCookError's own two new enumerators, independently
+// re-checked here against the decoded bytes.
 enum class MaterialArtifactDecodeError {
   BadMagic,
   UnsupportedSchemaVersion,
@@ -220,6 +232,8 @@ enum class MaterialArtifactDecodeError {
   UnknownMaterialKind,
   UnknownFilter,
   UnknownAddressMode,
+  BaseColorFactorOutOfRange,
+  MaterialFactorOutOfRange,
 };
 
 enum class MaterialLoadError {

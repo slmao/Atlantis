@@ -7,6 +7,7 @@
 #include <atlantis/renderer/material.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 
 namespace atlantis::runtime {
@@ -103,15 +104,56 @@ struct ShaderPairRef {
     const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& litTexturedVertexSpirv,
-    const std::vector<std::uint32_t>& litTexturedFragmentSpirv) {
+    const std::vector<std::uint32_t>& litTexturedFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrDirectLitVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrDirectLitVertexSpirv,
+    const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv) {
   switch (kind) {
     case atlantis::asset_system::MaterialKind::UnlitTextured:
       return {&unlitTexturedVertexInputLayout, &unlitTexturedVertexSpirv, &unlitTexturedFragmentSpirv};
     case atlantis::asset_system::MaterialKind::LitTextured:
       return {&litTexturedVertexInputLayout, &litTexturedVertexSpirv, &litTexturedFragmentSpirv};
+    case atlantis::asset_system::MaterialKind::PbrDirectLit:
+      // Plan 0023 Milestone 5: replaces the Milestone 1 bootstrap
+      // placeholder now that this function's own signature carries the
+      // real PBR shader triple.
+      return {&pbrDirectLitVertexInputLayout, &pbrDirectLitVertexSpirv, &pbrDirectLitFragmentSpirv};
   }
   ATLANTIS_CHECK_MSG(false, "selectShaderPair(): unreachable -- MaterialKind's own closed switch above is exhaustive");
   return {&unlitTexturedVertexInputLayout, &unlitTexturedVertexSpirv, &unlitTexturedFragmentSpirv};  // never reached
+}
+
+// Plan 0023 Milestone 5 (Spec 0023 D9's own Accepted Correction): the
+// second, Renderer-facing closed-switch dispatch this Milestone adds --
+// unlike selectShaderPair() above (which selects a Pipeline's own
+// shader source), this one selects which push-constant PAYLOAD SHAPE a
+// given MaterialKind's own Material expects, consumed by createMaterial()
+// call sites below. No `default:` label, same C4062 protection as
+// selectShaderPair().
+[[nodiscard]] atlantis::renderer::MaterialPushConstantLayout pushConstantLayoutFor(
+    atlantis::asset_system::MaterialKind kind) {
+  switch (kind) {
+    case atlantis::asset_system::MaterialKind::UnlitTextured:
+    case atlantis::asset_system::MaterialKind::LitTextured:
+      return atlantis::renderer::MaterialPushConstantLayout::ObjectToWorldOnly;
+    case atlantis::asset_system::MaterialKind::PbrDirectLit:
+      return atlantis::renderer::MaterialPushConstantLayout::PbrDirectLit;
+  }
+  ATLANTIS_CHECK_MSG(false, "pushConstantLayoutFor(): unreachable -- MaterialKind's own closed switch above is exhaustive");
+  return atlantis::renderer::MaterialPushConstantLayout::ObjectToWorldOnly;  // never reached
+}
+
+[[nodiscard]] std::size_t pushConstantSizeBytesFor(atlantis::asset_system::MaterialKind kind) {
+  switch (kind) {
+    case atlantis::asset_system::MaterialKind::UnlitTextured:
+    case atlantis::asset_system::MaterialKind::LitTextured:
+      return sizeof(float) * 16;
+    case atlantis::asset_system::MaterialKind::PbrDirectLit:
+      return 96;
+  }
+  ATLANTIS_CHECK_MSG(false,
+                      "pushConstantSizeBytesFor(): unreachable -- MaterialKind's own closed switch above is exhaustive");
+  return sizeof(float) * 16;  // never reached
 }
 
 }  // namespace
@@ -122,7 +164,10 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
     const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv, atlantis::rhi::Format colorFormat,
     const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& litTexturedVertexSpirv,
-    const std::vector<std::uint32_t>& litTexturedFragmentSpirv, atlantis::asset_system::AssetId materialAssetId,
+    const std::vector<std::uint32_t>& litTexturedFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrDirectLitVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrDirectLitVertexSpirv,
+    const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv, atlantis::asset_system::AssetId materialAssetId,
     const atlantis::asset_system::MaterialAssetData& materialData,
     const atlantis::asset_system::TextureAssetData& textureData,
     const std::unordered_map<atlantis::asset_system::AssetId, const atlantis::rhi::SampledTexture*>&
@@ -164,7 +209,15 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
   const ShaderPairRef shaderPair =
       selectShaderPair(materialData.kind, unlitTexturedVertexInputLayout, unlitTexturedVertexSpirv,
                         unlitTexturedFragmentSpirv, litTexturedVertexInputLayout, litTexturedVertexSpirv,
-                        litTexturedFragmentSpirv);
+                        litTexturedFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,
+                        pbrDirectLitFragmentSpirv);
+  // Plan 0023 Milestone 5: pushConstantSizeBytes/pushConstantLayout are
+  // 96/PbrDirectLit only for that kind (every other kind keeps today's
+  // 64/ObjectToWorldOnly, unchanged); materialData's three PBR fields
+  // (defaulted to {1,1,1,1}/1.0f/1.0f for every non-PBR kind since
+  // Milestone 1) are forwarded to createMaterial() unconditionally --
+  // harmless for a kind whose own Renderer-side switch (renderer.cpp)
+  // never reads them.
   auto materialResult = createMaterial(
       device,
       {.vertexShader = {.spirvWords = shaderPair.vertexSpirv->data(), .wordCount = shaderPair.vertexSpirv->size()},
@@ -173,9 +226,12 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
        .vertexInputLayout = *shaderPair.vertexInputLayout,
        .colorFormat = colorFormat,
        .depthFormat = DepthFormat::D32Sfloat,
-       .pushConstantSizeBytes = sizeof(float) * 16,
+       .pushConstantSizeBytes = pushConstantSizeBytesFor(materialData.kind),
        .hasSampledTextureBinding = true},
-      sampledTexturePtr, candidate.sampler.get());
+      sampledTexturePtr, candidate.sampler.get(), pushConstantLayoutFor(materialData.kind),
+      {materialData.baseColorFactor[0], materialData.baseColorFactor[1], materialData.baseColorFactor[2],
+       materialData.baseColorFactor[3]},
+      materialData.metallicFactor, materialData.roughnessFactor);
   if (materialResult.isErr()) return ResultT::Err(MaterialRealizationError::MaterialCreateFailed);
   candidate.material = std::make_unique<atlantis::renderer::Material>(std::move(materialResult.value()));
 
@@ -202,6 +258,9 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
     const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& litTexturedVertexSpirv,
     const std::vector<std::uint32_t>& litTexturedFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrDirectLitVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrDirectLitVertexSpirv,
+    const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv,
     const std::vector<atlantis::asset_system::AssetId>& pendingIds,
     const std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>>&
         sampledTextureResourceMap,
@@ -239,8 +298,9 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
 
     auto candidateResult = realizeOneMaterialCandidate(
         device, unlitTexturedVertexInputLayout, unlitTexturedVertexSpirv, unlitTexturedFragmentSpirv, colorFormat,
-        litTexturedVertexInputLayout, litTexturedVertexSpirv, litTexturedFragmentSpirv, id, materialIt->second,
-        textureIt->second, effectiveSampledTextures);
+        litTexturedVertexInputLayout, litTexturedVertexSpirv, litTexturedFragmentSpirv, pbrDirectLitVertexInputLayout,
+        pbrDirectLitVertexSpirv, pbrDirectLitFragmentSpirv, id, materialIt->second, textureIt->second,
+        effectiveSampledTextures);
     if (candidateResult.isErr()) {
       ATLANTIS_LOG_ERROR("realizeOneMaterialCandidate() failed -- material stays pending, retried next frame");
       continue;
@@ -282,7 +342,10 @@ atlantis::Result<FormatRebuildCandidates, MaterialRealizationError> rebuildMater
     const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& litTexturedVertexSpirv,
-    const std::vector<std::uint32_t>& litTexturedFragmentSpirv, atlantis::rhi::Format newColorFormat,
+    const std::vector<std::uint32_t>& litTexturedFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrDirectLitVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrDirectLitVertexSpirv,
+    const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv, atlantis::rhi::Format newColorFormat,
     const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData>&
         materialDataMap,
     const std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::renderer::Material>>&
@@ -311,7 +374,13 @@ atlantis::Result<FormatRebuildCandidates, MaterialRealizationError> rebuildMater
     const ShaderPairRef shaderPair =
         selectShaderPair(materialDataIt->second.kind, unlitTexturedVertexInputLayout, unlitTexturedVertexSpirv,
                           unlitTexturedFragmentSpirv, litTexturedVertexInputLayout, litTexturedVertexSpirv,
-                          litTexturedFragmentSpirv);
+                          litTexturedFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,
+                          pbrDirectLitFragmentSpirv);
+    // Plan 0023 Milestone 5: matches realizeOneMaterialCandidate()'s own
+    // identical pushConstantSizeBytes/pushConstantLayout/PBR-field
+    // forwarding, keyed off this entry's own real MaterialKind
+    // (materialDataIt->second), never inferred from the OLD Material
+    // being replaced.
     auto rebuiltResult = createMaterial(
         device,
         {.vertexShader = {.spirvWords = shaderPair.vertexSpirv->data(),
@@ -321,9 +390,12 @@ atlantis::Result<FormatRebuildCandidates, MaterialRealizationError> rebuildMater
          .vertexInputLayout = *shaderPair.vertexInputLayout,
          .colorFormat = newColorFormat,
          .depthFormat = DepthFormat::D32Sfloat,
-         .pushConstantSizeBytes = sizeof(float) * 16,
+         .pushConstantSizeBytes = pushConstantSizeBytesFor(materialDataIt->second.kind),
          .hasSampledTextureBinding = true},
-        oldMaterial->sampledTexture(), oldMaterial->sampler());
+        oldMaterial->sampledTexture(), oldMaterial->sampler(), pushConstantLayoutFor(materialDataIt->second.kind),
+        {materialDataIt->second.baseColorFactor[0], materialDataIt->second.baseColorFactor[1],
+         materialDataIt->second.baseColorFactor[2], materialDataIt->second.baseColorFactor[3]},
+        materialDataIt->second.metallicFactor, materialDataIt->second.roughnessFactor);
     if (rebuiltResult.isErr()) return ResultT::Err(MaterialRealizationError::MaterialCreateFailed);
     candidates.materials.emplace(id, std::make_unique<atlantis::renderer::Material>(std::move(rebuiltResult.value())));
   }

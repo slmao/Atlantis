@@ -178,6 +178,25 @@ static_assert(
   return result.value();
 }
 
+// Plan 0023 Milestone 4/5: the MaterialKind::PbrDirectLit shader pair's
+// own vertex schema -- byte-identical to litTexturedVertexLayout()'s
+// own schema above (position@0/uv@1/normal@2, matching
+// pbr_direct_lit.slang's own VertexInput exactly), kept as its own,
+// separately-named function rather than reusing litTexturedVertexLayout()
+// directly -- matching this file's own established one-function-per-
+// shader-pair convention, and cross-checked against pbr_direct_lit's
+// own real reflection metadata, not lit_textured's.
+[[nodiscard]] std::optional<VertexInputLayout> pbrDirectLitVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+      MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
+      MeshVertexAttributeSchema{.location = 2, .offsetBytes = offsetof(Vertex, normal)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 }  // namespace
 
 RuntimeApplication::RuntimeApplication(PlatformSession&& session) noexcept
@@ -270,6 +289,33 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   litTexturedFragmentSpirv_ = std::move(litTexturedFragmentSpirvOpt.value());
   litTexturedVertexInputLayout_ = std::move(litTexturedLayoutOpt.value());
 
+  // Step 2d (Plan 0023 Milestone 5): the fourth, MaterialKind::PbrDirectLit
+  // built-in shader pair -- same shape as step 2c above, mirrored exactly.
+  auto pbrDirectLitVertexSpirvOpt = loadSpirvFile(config.pbrDirectLitVertexShaderSpirvPath);
+  auto pbrDirectLitFragmentSpirvOpt = loadSpirvFile(config.pbrDirectLitFragmentShaderSpirvPath);
+  if (!pbrDirectLitVertexSpirvOpt.has_value() || !pbrDirectLitFragmentSpirvOpt.has_value()) {
+    ATLANTIS_LOG_ERROR("Failed to load shader SPIR-V from {} / {}", config.pbrDirectLitVertexShaderSpirvPath,
+                        config.pbrDirectLitFragmentShaderSpirvPath);
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  auto pbrDirectLitVertexReflectionResult = loadReflectionMetadata(config.pbrDirectLitVertexShaderReflectionPath);
+  if (pbrDirectLitVertexReflectionResult.isErr()) {
+    ATLANTIS_LOG_ERROR("loadReflectionMetadata() failed for {}", config.pbrDirectLitVertexShaderReflectionPath);
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  auto pbrDirectLitLayoutOpt = pbrDirectLitVertexLayout(pbrDirectLitVertexReflectionResult.value());
+  if (!pbrDirectLitLayoutOpt.has_value()) {
+    ATLANTIS_LOG_ERROR(
+        "pbrDirectLitVertexLayout(): reflected vertex-input attributes do not match the Vertex schema");
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  pbrDirectLitVertexSpirv_ = std::move(pbrDirectLitVertexSpirvOpt.value());
+  pbrDirectLitFragmentSpirv_ = std::move(pbrDirectLitFragmentSpirvOpt.value());
+  pbrDirectLitVertexInputLayout_ = std::move(pbrDirectLitLayoutOpt.value());
+
   // Step 3: Device.
   auto deviceResult = atlantis::vulkan_backend::createDevice(
       {.applicationName = config.applicationName, .enableValidationLayers = config.enableValidationLayers});
@@ -284,9 +330,14 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // sizeof(float) * 32 (view + projection only) to also carry
   // FrameLightingData (176 bytes) appended immediately after, at
   // absolute byte offset 128 -- the one-time light-capture write (P9,
-  // runFrame()) targets exactly this tail region.
+  // runFrame()) targets exactly this tail region. Plan 0023 Milestone 2
+  // (ADR-0062's own Accepted Amendment): further widened with a
+  // tail-only CameraWorldPositionData (16 bytes) appended after
+  // FrameLightingData, at absolute byte offset 304 -- CameraMatrices
+  // and FrameLightingData themselves stay byte-for-byte unmodified.
   auto cameraBufferResult = device_->createBuffer(
-      {.purpose = BufferPurpose::Uniform, .sizeBytes = sizeof(float) * 32 + sizeof(FrameLightingData)});
+      {.purpose = BufferPurpose::Uniform,
+       .sizeBytes = sizeof(float) * 32 + sizeof(FrameLightingData) + sizeof(CameraWorldPositionData)});
   if (cameraBufferResult.isErr()) {
     ATLANTIS_LOG_ERROR("createBuffer() (camera uniform) failed");
     lifecycle_.markFailed();
@@ -439,7 +490,8 @@ void RuntimeApplication::runFrame() {
     auto rebuildResult = rebuildMaterialsForFormatChange(
         *device_, vertexInputLayout_, vertexSpirv_, fragmentSpirv_, unlitTexturedVertexInputLayout_,
         unlitTexturedVertexSpirv_, unlitTexturedFragmentSpirv_, litTexturedVertexInputLayout_,
-        litTexturedVertexSpirv_, litTexturedFragmentSpirv_, currentFormat, materialDataMap_, materialResourceMap_);
+        litTexturedVertexSpirv_, litTexturedFragmentSpirv_, pbrDirectLitVertexInputLayout_, pbrDirectLitVertexSpirv_,
+        pbrDirectLitFragmentSpirv_, currentFormat, materialDataMap_, materialResourceMap_);
     if (rebuildResult.isErr()) {
       ATLANTIS_LOG_ERROR(
           "rebuildMaterialsForFormatChange() failed during format-change rebuild -- keeping the existing "
@@ -603,6 +655,16 @@ void RuntimeApplication::runFrame() {
   auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
   *lightingData = lightingResult.value();
 
+  // Plan 0023 Milestone 2 (ADR-0062's own Accepted Amendment): tail-only
+  // CameraWorldPositionData write, unconditional every frame like the
+  // camera-matrix and lighting writes immediately above -- appended
+  // after FrameLightingData's own 176 bytes (44 floats), landing at
+  // absolute byte offset 304 (32 + 44 = 76 floats in). Derived from the
+  // same cameraWorldMatrix already extracted above for
+  // extractCameraMatrices(), independently, via extractCameraWorldPosition().
+  auto* cameraWorldPositionData = reinterpret_cast<CameraWorldPositionData*>(cameraData + 32 + 44);
+  *cameraWorldPositionData = extractCameraWorldPosition(cameraWorldMatrixResult.value());
+
   // Plan 0015 Section D10: knownMeshAssetIds is meshResourceMap_'s own
   // key set, collected once per frame (not once per entity) -- passed
   // to resolveMeshAsset() for the membership check; meshResourceMap_
@@ -653,7 +715,8 @@ void RuntimeApplication::runFrame() {
   std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
       realizePendingMaterials(*device_, *commandList, unlitTexturedVertexInputLayout_, unlitTexturedVertexSpirv_,
                                unlitTexturedFragmentSpirv_, currentFormat, litTexturedVertexInputLayout_,
-                               litTexturedVertexSpirv_, litTexturedFragmentSpirv_, pendingMaterialIds,
+                               litTexturedVertexSpirv_, litTexturedFragmentSpirv_, pbrDirectLitVertexInputLayout_,
+                               pbrDirectLitVertexSpirv_, pbrDirectLitFragmentSpirv_, pendingMaterialIds,
                                sampledTextureResourceMap_, materialDataMap_, textureDataMap_);
   // Plan 0018 Section P12 (Spec 0018 D8 step 5): gated on "at least one
   // material was newly realized this frame" -- NOT narrowed to "at least
@@ -737,19 +800,30 @@ void RuntimeApplication::runFrame() {
         // outside this if block entirely), never calls
         // checkConformalTransform(); its own world matrix may be
         // arbitrarily non-uniform-scaled or sheared with no effect.
+        // Plan 0023 Milestone 8 (found and fixed during this Milestone's
+        // own implementation, applying an already-Approved rule, not a
+        // new design decision): PbrDirectLit shares this exact same
+        // gating requirement -- pbr_direct_lit.slang's own vertexMain()
+        // transforms the normal identically to lit_textured.slang's own
+        // `mul((float3x3)pushConstants.objectToWorld, input.normal)`
+        // (Milestone 4), so a non-conformal PbrDirectLit-bound entity's
+        // own world normal would silently be wrong with no defensive
+        // skip if left out of this gate, exactly the defect class Spec
+        // 0019 D7/P15 already fixed for LitTextured.
         const auto materialDataIt = materialDataMap_.find(*materialAsset);
         ATLANTIS_CHECK_MSG(materialDataIt != materialDataMap_.end(),
                             "runFrame(): a resolveMaterialAsset()-confirmed material AssetId must already be a key "
                             "in materialDataMap_ (Phase 1 load)");
-        if (materialDataIt->second.kind == atlantis::asset_system::MaterialKind::LitTextured) {
+        if (materialDataIt->second.kind == atlantis::asset_system::MaterialKind::LitTextured ||
+            materialDataIt->second.kind == atlantis::asset_system::MaterialKind::PbrDirectLit) {
           const auto conformalResult = checkConformalTransform(worldMatrixResult.value());
           if (conformalResult.isErr()) {
             // Recoverable, per-entity, per-frame -- never scene-load-
             // fatal, matching this loop's own established "keep going,
             // log, skip" philosophy for a bad mesh/material reference.
             ATLANTIS_LOG_ERROR(
-                "runFrame(): a LitTextured-bound entity's own world matrix failed checkConformalTransform() -- "
-                "skipping this entity for this frame only");
+                "runFrame(): a LitTextured- or PbrDirectLit-bound entity's own world matrix failed "
+                "checkConformalTransform() -- skipping this entity for this frame only");
             continue;
           }
         }

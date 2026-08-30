@@ -99,13 +99,31 @@ struct RealizedMaterialCandidate {
 // selects between the two shader pairs via the shared, file-local
 // selectShaderPair() helper (material_realization.cpp), keyed off
 // materialData.kind -- never a second, separately-written switch.
+// Plan 0023 Milestone 5: pbrDirectLitVertexInputLayout/
+// pbrDirectLitVertexSpirv/pbrDirectLitFragmentSpirv, inserted
+// immediately after the litTextured* trio, mirroring its own insertion
+// point exactly. The PbrDirectLit-only base-color-texture Rgba8Srgb
+// requirement (ADR-0066 item 6) is NOT checked here -- it runs earlier,
+// at Runtime's own Phase 1 scene-dependency-resolution point
+// (scene_load.cpp, ADR-0060 Decision 6), the first point in the
+// pipeline with both a material's own kind and its resolved texture's
+// own real colorSpace, and the only point whose own Result error type
+// (RuntimeInitError) can actually carry the ADR's own required
+// RuntimeInitError::PbrBaseColorTextureNotSrgb sub-code -- this
+// function's own Result error type (MaterialRealizationError) is a
+// different, steady-state-retry-shaped domain (a failure here simply
+// leaves a material pending, retried next frame, never a fatal scene-
+// load failure), so it cannot mechanically carry that sub-code.
 [[nodiscard]] atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOneMaterialCandidate(
     atlantis::rhi::Device& device, const atlantis::rhi::VertexInputLayout& unlitTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& unlitTexturedVertexSpirv,
     const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv, atlantis::rhi::Format colorFormat,
     const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& litTexturedVertexSpirv,
-    const std::vector<std::uint32_t>& litTexturedFragmentSpirv, atlantis::asset_system::AssetId materialAssetId,
+    const std::vector<std::uint32_t>& litTexturedFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrDirectLitVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrDirectLitVertexSpirv,
+    const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv, atlantis::asset_system::AssetId materialAssetId,
     const atlantis::asset_system::MaterialAssetData& materialData,
     const atlantis::asset_system::TextureAssetData& textureData,
     const std::unordered_map<atlantis::asset_system::AssetId, const atlantis::rhi::SampledTexture*>&
@@ -144,6 +162,8 @@ struct RealizedMaterialCandidate {
 // straight through to realizeOneMaterialCandidate() unchanged in kind
 // from how unlitTextured* is already threaded -- this function never
 // calls selectShaderPair() itself.
+// Plan 0023 Milestone 5: gains the identical pbrDirectLit* trio, same
+// insertion point and threading as litTextured*.
 [[nodiscard]] std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizePendingMaterials(
     atlantis::rhi::Device& device, atlantis::rhi::CommandList& commandList,
     const atlantis::rhi::VertexInputLayout& unlitTexturedVertexInputLayout,
@@ -152,6 +172,9 @@ struct RealizedMaterialCandidate {
     const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& litTexturedVertexSpirv,
     const std::vector<std::uint32_t>& litTexturedFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrDirectLitVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrDirectLitVertexSpirv,
+    const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv,
     const std::vector<atlantis::asset_system::AssetId>& pendingIds,
     const std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>>&
         sampledTextureResourceMap,
@@ -207,6 +230,10 @@ struct FormatRebuildCandidates {
 // identically to currentMaterials (both by material AssetId), so every
 // id in currentMaterials is required to already have a matching entry
 // here.
+//
+// Plan 0023 Milestone 5: gains the identical pbrDirectLit* trio,
+// inserted immediately after litTextured*, mirroring
+// realizeOneMaterialCandidate()'s own insertion point.
 [[nodiscard]] atlantis::Result<FormatRebuildCandidates, MaterialRealizationError> rebuildMaterialsForFormatChange(
     atlantis::rhi::Device& device, const atlantis::rhi::VertexInputLayout& fallbackVertexInputLayout,
     const std::vector<std::uint32_t>& fallbackVertexSpirv, const std::vector<std::uint32_t>& fallbackFragmentSpirv,
@@ -215,7 +242,10 @@ struct FormatRebuildCandidates {
     const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& litTexturedVertexSpirv,
-    const std::vector<std::uint32_t>& litTexturedFragmentSpirv, atlantis::rhi::Format newColorFormat,
+    const std::vector<std::uint32_t>& litTexturedFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrDirectLitVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrDirectLitVertexSpirv,
+    const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv, atlantis::rhi::Format newColorFormat,
     const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData>&
         materialDataMap,
     const std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::renderer::Material>>&

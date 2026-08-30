@@ -61,6 +61,18 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(const s
   if (artifact.kind != metadata.kind || artifact.textureAsset != metadata.textureAsset) {
     return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
   }
+  // Plan 0023 Milestone 1 (ADR-0066 item 4): the three new fields are
+  // cross-validated exactly as kind/textureAsset already are above --
+  // both sides are written from the identical cook-time values, so an
+  // exact, non-tolerant comparison is correct, not merely convenient.
+  for (std::size_t i = 0; i < 4; ++i) {
+    if (artifact.baseColorFactor[i] != metadata.baseColorFactor[i]) {
+      return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
+    }
+  }
+  if (artifact.metallicFactor != metadata.metallicFactor || artifact.roughnessFactor != metadata.roughnessFactor) {
+    return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
+  }
 
   // Self-consistency, not just artifact-vs-metadata agreement: the
   // metadata sidecar's own two fields (its recorded Asset ID and its
@@ -75,6 +87,9 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(const s
   data.textureAsset = artifact.textureAsset;
   data.filter = artifact.filter;
   data.addressMode = artifact.addressMode;
+  for (std::size_t i = 0; i < 4; ++i) data.baseColorFactor[i] = artifact.baseColorFactor[i];
+  data.metallicFactor = artifact.metallicFactor;
+  data.roughnessFactor = artifact.roughnessFactor;
   return ResultT::Ok(std::move(data));
 }
 

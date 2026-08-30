@@ -6,6 +6,7 @@
 #include <atlantis/asset_system/material_metadata.h>
 #include <atlantis/asset_system/material_source.h>
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -55,6 +56,11 @@ namespace fs = std::filesystem;
   return writeBytesAtomically(finalPath, text.data(), text.size());
 }
 
+// Plan 0023 Milestone 1 (ADR-0066 item 5): finite and in [0, 1] --
+// shared by both the four baseColorFactor components and the two
+// scalar factors.
+[[nodiscard]] bool isValidFactor(float value) { return std::isfinite(value) && value >= 0.0f && value <= 1.0f; }
+
 }  // namespace
 
 atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::string& sourceFilePath,
@@ -87,15 +93,28 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   if (normalizedTextureResult.isErr()) return ResultT::Err(MaterialCookError::LogicalPathInvalid);
   const AssetId textureAssetId = computeAssetId(normalizedTextureResult.value());
 
+  // Step 3.5 (Plan 0023 Milestone 1, ADR-0066 item 5): value-range
+  // validation, both directions -- never a naive parse-and-trust.
+  for (float component : parsed.baseColorFactor) {
+    if (!isValidFactor(component)) return ResultT::Err(MaterialCookError::BaseColorFactorOutOfRange);
+  }
+  if (!isValidFactor(parsed.metallicFactor) || !isValidFactor(parsed.roughnessFactor)) {
+    return ResultT::Err(MaterialCookError::MaterialFactorOutOfRange);
+  }
+
   // Step 4: encode + atomic write.
-  const std::vector<std::byte> artifactBytes =
-      encodeMaterialArtifact(parsed.kind, textureAssetId, parsed.filter, parsed.addressMode);
+  const std::vector<std::byte> artifactBytes = encodeMaterialArtifact(
+      parsed.kind, textureAssetId, parsed.filter, parsed.addressMode, parsed.baseColorFactor, parsed.metallicFactor,
+      parsed.roughnessFactor);
 
   MaterialMetadata metadata;
   metadata.assetId = selfAssetId;
   metadata.sourceLogicalPath = normalizedSelfPath;
   metadata.kind = parsed.kind;
   metadata.textureAsset = textureAssetId;
+  for (std::size_t i = 0; i < 4; ++i) metadata.baseColorFactor[i] = parsed.baseColorFactor[i];
+  metadata.metallicFactor = parsed.metallicFactor;
+  metadata.roughnessFactor = parsed.roughnessFactor;
   const std::string metadataText = serializeMaterialMetadata(metadata);
 
   if (!writeBytesAtomically(artifactOutputPath, reinterpret_cast<const char*>(artifactBytes.data()),

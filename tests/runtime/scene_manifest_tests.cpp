@@ -206,7 +206,7 @@ TEST_CASE(
   TempDirGuard dir("material_sidecar");
   const std::string logicalPath = "materials/a.material.txt";
   const fs::path sourcePath = dir.path / "source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 1\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 2\n"
                         "kind: unlit_textured\n"
                         "texture: textures/does_not_need_to_exist.png\n"
                         "filter: linear\n"

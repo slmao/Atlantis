@@ -1,7 +1,11 @@
 #include <atlantis/renderer/renderer.h>
 
+#include <algorithm>
+
 #include <atlantis/assert.h>
 #include <atlantis/render_graph/execution.h>
+
+#include "pbr_push_constants.h"
 
 namespace atlantis::renderer {
 
@@ -36,7 +40,28 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
       if (item.material->sampledTexture() != nullptr) {
         cmd.bindTexture(*item.material->sampledTexture(), *item.material->sampler());
       }
-      cmd.pushConstant(item.objectToWorld.data(), item.objectToWorld.size() * sizeof(float));
+      // Plan 0023 Milestone 5 (Spec 0023 D9's own Accepted Correction):
+      // an exhaustive switch, no default: label -- this repository's own
+      // /w14062 /WX already makes a missed MaterialPushConstantLayout
+      // case a compile error, exercised here exactly as
+      // selectShaderPair()'s own switch already exercises it. Never a
+      // new DrawItem field (D10, reaffirmed) -- objectToWorld is read
+      // from the existing item.objectToWorld in both arms.
+      switch (item.material->pushConstantLayout()) {
+        case MaterialPushConstantLayout::ObjectToWorldOnly:
+          cmd.pushConstant(item.objectToWorld.data(), item.objectToWorld.size() * sizeof(float));
+          break;
+        case MaterialPushConstantLayout::PbrDirectLit: {
+          PbrPushConstants payload;
+          std::copy(item.objectToWorld.begin(), item.objectToWorld.end(), std::begin(payload.objectToWorld));
+          const auto& baseColorFactor = item.material->baseColorFactor();
+          std::copy(baseColorFactor.begin(), baseColorFactor.end(), std::begin(payload.baseColorFactor));
+          payload.metallicFactor = item.material->metallicFactor();
+          payload.roughnessFactor = item.material->roughnessFactor();
+          cmd.pushConstant(&payload, sizeof(payload));
+          break;
+        }
+      }
       cmd.drawIndexed(item.mesh->indexCount());
     }
   });

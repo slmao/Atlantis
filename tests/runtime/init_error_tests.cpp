@@ -25,6 +25,8 @@ TEST_CASE("toString(RuntimeInitError) returns a distinct, non-empty string for e
       // Plan 0015 Section D2.
       RuntimeInitError::SceneManifestLoadFailed,      RuntimeInitError::SceneArtifactLoadFailed,
       RuntimeInitError::SceneDependencyUnresolved,    RuntimeInitError::SceneDependencyLoadFailed,
+      // Plan 0023 Milestone 5 (ADR-0066 item 6).
+      RuntimeInitError::PbrBaseColorTextureNotSrgb,
   };
 
   for (std::size_t i = 0; i < std::size(kAllValues); ++i) {

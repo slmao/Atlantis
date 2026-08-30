@@ -1,0 +1,8 @@
+atlantis_material_source_version: 2
+kind: pbr_direct_lit
+texture: textures/textured_quad_source_srgb.png
+filter: linear
+address_mode: repeat
+base_color_factor: 1.0 1.0 1.0 1.0
+metallic_factor: 1.0
+roughness_factor: 0.9

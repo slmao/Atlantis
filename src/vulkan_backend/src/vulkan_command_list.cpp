@@ -319,8 +319,13 @@ void VulkanCommandList::bindTexture(const atlantis::rhi::SampledTexture& texture
 
 void VulkanCommandList::pushConstant(const void* data, std::size_t sizeBytes) {
   ATLANTIS_CHECK(boundPipelineLayout_ != VK_NULL_HANDLE);
-  vkCmdPushConstants(commandBuffer_, boundPipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                      static_cast<std::uint32_t>(sizeBytes), data);
+  // Plan 0023 Milestone 3 (ADR-0067 D-4): matches this Pipeline's own
+  // widened VkPushConstantRange::stageFlags (vulkan_device.cpp) --
+  // VERTEX | FRAGMENT unconditionally, for every Pipeline. Vulkan
+  // requires this call's stageFlags to exactly match the range it
+  // targets.
+  vkCmdPushConstants(commandBuffer_, boundPipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                      0, static_cast<std::uint32_t>(sizeBytes), data);
 }
 
 void VulkanCommandList::drawIndexed(std::uint32_t indexCount) {

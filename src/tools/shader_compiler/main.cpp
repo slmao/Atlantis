@@ -64,7 +64,8 @@ int main(int argc, char** argv) {
                         sawFragmentEntry && sawOutputDir && sawExpectedContract && sawStamp;
   if (!sawAllRequiredFlags) {
     std::cerr << "usage: atlantis_shader_compiler --slangc-path=<path> --spirv-val-path=<path> --source=<path> "
-                 "--vertex-entry=<name> --fragment-entry=<name> --output-dir=<dir> --expected-contract=<name> "
+                 "--vertex-entry=<name> --fragment-entry=<name> --output-dir=<dir> "
+                 "--expected-contract=<minimal-renderer|textured-material|lit-textured|pbr-direct-lit> "
                  "--stamp=<path>\n";
     return 1;
   }

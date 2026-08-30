@@ -79,6 +79,17 @@ static_assert(kLightingByteOffset == sizeof(float) * 32, "must match runtime_app
 static_assert(kLightingByteOffset + sizeof(FrameLightingData) == 304,
               "must match cameraBuffer_'s own real, constructed size");
 
+// Plan 0023 Milestone 2 (ADR-0062's own Accepted Amendment): independently
+// pins the new tail region's own real byte offset -- derived here from
+// first principles (the same 128-byte camera region plus
+// FrameLightingData's own real sizeof), not copied from
+// runtime_application.cpp's own `cameraData + 32 + 44` expression, so a
+// real drift between the two fails to *compile* here.
+constexpr std::size_t kCameraWorldPositionByteOffset = kLightingByteOffset + sizeof(FrameLightingData);
+static_assert(kCameraWorldPositionByteOffset == 304);
+static_assert(kCameraWorldPositionByteOffset + sizeof(CameraWorldPositionData) == 320,
+              "must match cameraBuffer_'s own real, constructed size");
+
 struct RuntimeSmokeTestAccess {
   static std::size_t renderableEntityCount(const RuntimeApplication& app) {
     return app.world_->renderableEntities().size();
@@ -131,6 +142,16 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
       std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.spv";
   config.litTexturedFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR) + "/lit_textured.frag.refl.json";
+  // Plan 0023 Milestone 5: mirrors main.cpp's own identical population
+  // of the fourth, MaterialKind::PbrDirectLit built-in shader pair.
+  config.pbrDirectLitVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.vert.spv";
+  config.pbrDirectLitVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.vert.refl.json";
+  config.pbrDirectLitFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.spv";
+  config.pbrDirectLitFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.refl.json";
   config.enableValidationLayers = true;
 
   auto appResult = createRuntimeApplication(config);

@@ -42,6 +42,20 @@ namespace atlantis::shader_system {
 // untouched.
 [[nodiscard]] std::vector<DescriptorBinding> litTexturedExpectedDescriptorContract();
 
+// Plan 0023 Milestone 3 (ADR-0067 D-3/D-4): the fixed, expected
+// descriptor contract the pbr_direct_lit shader pair must match --
+// identical shape to litTexturedExpectedDescriptorContract() above (the
+// same Camera/Lighting/CameraWorldPosition uniform buffer bound to both
+// stages, plus the same one combined image sampler on the fragment
+// stage) -- PbrDirectLit shares the existing single-texture Material
+// architecture and reads camera/lighting data from its fragment stage
+// exactly as lit_textured already does. A separate, named function
+// (not a reuse of litTexturedExpectedDescriptorContract() itself) to
+// keep each MaterialKind's own contract independently named and
+// independently callable, matching this header's own existing
+// per-kind pattern.
+[[nodiscard]] std::vector<DescriptorBinding> pbrDirectLitExpectedDescriptorContract();
+
 enum class ContractMismatchError {
   BindingCountMismatch,
   BindingNotFound,        // an expected {set, binding} pair is absent from the reflected shader

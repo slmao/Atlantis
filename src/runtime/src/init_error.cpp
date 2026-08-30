@@ -30,6 +30,8 @@ const char* toString(RuntimeInitError error) noexcept {
       return "SceneDependencyUnresolved";
     case RuntimeInitError::SceneDependencyLoadFailed:
       return "SceneDependencyLoadFailed";
+    case RuntimeInitError::PbrBaseColorTextureNotSrgb:
+      return "PbrBaseColorTextureNotSrgb";
   }
   // Reached only if a future RuntimeInitError value is added without a
   // corresponding case above -- see exit_reason.cpp's identical comment

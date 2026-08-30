@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -29,6 +30,7 @@ using atlantis::shader_system::buildSpirvValArgv;
 using atlantis::shader_system::DescriptorBinding;
 using atlantis::shader_system::litTexturedExpectedDescriptorContract;
 using atlantis::shader_system::minimalRendererExpectedDescriptorContract;
+using atlantis::shader_system::pbrDirectLitExpectedDescriptorContract;
 using atlantis::shader_system::PushConstantRange;
 using atlantis::shader_system::texturedMaterialExpectedDescriptorContract;
 using atlantis::shader_system::ReflectionMetadata;
@@ -137,6 +139,8 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     fullContract = texturedMaterialExpectedDescriptorContract();
   } else if (expectedContract == "lit-textured") {
     fullContract = litTexturedExpectedDescriptorContract();
+  } else if (expectedContract == "pbr-direct-lit") {
+    fullContract = pbrDirectLitExpectedDescriptorContract();
   } else {
     std::cerr << "atlantis_shader_compiler: unknown --expected-contract value '" << expectedContract << "'\n";
     return false;
@@ -165,13 +169,38 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
 // deliberately only runs against the vertex stage's own metadata; a
 // stray PushConstantRange on the fragment stage's own metadata is
 // expected, harmless, and not validated here.
-[[nodiscard]] bool validatePushConstantsForVertexStage(const ReflectionMetadata& vertexMetadata) {
+// Plan 0023 Milestone 3: contract-aware -- pbr-direct-lit expects a
+// 96-byte block (PbrPushConstants, ADR-0067 D-3) here; the other three
+// contracts (minimal-renderer/textured-material/lit-textured) keep the
+// existing 64-byte (ObjectToWorldOnly) expectation, unchanged.
+[[nodiscard]] bool validatePushConstantsForVertexStage(const ReflectionMetadata& vertexMetadata,
+                                                        const std::string& expectedContract) {
+  const std::uint32_t expectedSizeBytes = expectedContract == "pbr-direct-lit" ? 96 : sizeof(float) * 16;
   const std::vector<PushConstantRange> expected = {
-      PushConstantRange{.offsetBytes = 0, .sizeBytes = sizeof(float) * 16, .stage = ShaderStage::Vertex}};
+      PushConstantRange{.offsetBytes = 0, .sizeBytes = expectedSizeBytes, .stage = ShaderStage::Vertex}};
   if (vertexMetadata.pushConstantRanges != expected) {
     std::cerr << "atlantis_shader_compiler: vertex stage push-constant layout does not match the fixed "
                  "expectation (offset 0, size "
-              << sizeof(float) * 16 << ", vertex stage)\n";
+              << expectedSizeBytes << ", vertex stage)\n";
+    return false;
+  }
+  return true;
+}
+
+// Plan 0023 Milestone 3 (ADR-0067 D-4): a second, new check, run only
+// for pbr-direct-lit -- unlike UnlitTextured/LitTextured (where a
+// fragment-stage pushConstantBuffer reflection entry is the already-
+// documented "stray, harmless, unread" case, see
+// validateDescriptorContractForStage()'s own header comment above),
+// PbrDirectLit's own fragment stage genuinely reads push-constant data,
+// so its reflected range must be validated too -- confirmed to exactly
+// match the vertex stage's own {offset:0, size:96}.
+[[nodiscard]] bool validatePushConstantsForFragmentStage(const ReflectionMetadata& fragmentMetadata) {
+  const std::vector<PushConstantRange> expected = {
+      PushConstantRange{.offsetBytes = 0, .sizeBytes = 96, .stage = ShaderStage::Fragment}};
+  if (fragmentMetadata.pushConstantRanges != expected) {
+    std::cerr << "atlantis_shader_compiler: fragment stage push-constant layout does not match the fixed "
+                 "pbr-direct-lit expectation (offset 0, size 96, fragment stage)\n";
     return false;
   }
   return true;
@@ -307,12 +336,15 @@ int compileAndValidate(const CompileAndValidateRequest& request) {
     return 1;
   }
 
-  const bool validationOk =
+  bool validationOk =
       validateDescriptorContractForStage(vertexResult->metadata, ShaderStage::Vertex, request.expectedContract) &&
       validateDescriptorContractForStage(fragmentResult->metadata, ShaderStage::Fragment, request.expectedContract) &&
-      validatePushConstantsForVertexStage(vertexResult->metadata) &&
+      validatePushConstantsForVertexStage(vertexResult->metadata, request.expectedContract) &&
       validateUniqueVertexInputLocations(vertexResult->metadata) &&
       validateCrossStageInterface(vertexResult->metadata, fragmentResult->metadata);
+  if (validationOk && request.expectedContract == "pbr-direct-lit") {
+    validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata);
+  }
   if (!validationOk) {
     std::filesystem::remove_all(tempDir);
     return 1;
