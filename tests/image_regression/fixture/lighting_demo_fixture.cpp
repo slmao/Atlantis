@@ -213,27 +213,26 @@ atlantis::Result<PixelBuffer, LightingDemoRenderError> renderLightingDemoFrame(L
   for (std::size_t i = 0; i < 16; ++i) cameraData[i] = extractionResult.value().view[i];
   for (std::size_t i = 0; i < 16; ++i) cameraData[16 + i] = extractionResult.value().projection[i];
 
-  // Plan 0019 Section P9: the one-time frame lighting snapshot -- the
+  // Plan 0022 Section M2: re-extracts and republishes the complete
+  // FrameLightingData from World's live state on every call -- the
   // fixture-local direct analog of runtime_application.cpp's own
-  // identical guarded block. Guarded by fixture.lightingDataCaptured,
-  // never re-entered on any later renderLightingDemoFrame() call
-  // against this same fixture object.
-  if (!fixture.lightingDataCaptured) {
-    std::vector<LightExtractionInput> lightInputs;
-    for (const atlantis::world::EntityId& id : fixture.world->lightEntities()) {
-      const auto lightResult = fixture.world->getLight(id);
-      const auto lightWorldMatrixResult = fixture.world->getWorldMatrix(id);
-      if (lightResult.isErr() || lightWorldMatrixResult.isErr()) {
-        return ResultT::Err(LightingDemoRenderError::LightExtractionFailed);
-      }
-      lightInputs.push_back({lightResult.value(), lightWorldMatrixResult.value()});
+  // identical, now-unconditional block. Safe because the *previous*
+  // call against this same fixture (if any) already called
+  // fixture.device->waitIdle() (below) before returning -- this call's
+  // own CPU writes below never race that previous call's GPU work.
+  std::vector<LightExtractionInput> lightInputs;
+  for (const atlantis::world::EntityId& id : fixture.world->lightEntities()) {
+    const auto lightResult = fixture.world->getLight(id);
+    const auto lightWorldMatrixResult = fixture.world->getWorldMatrix(id);
+    if (lightResult.isErr() || lightWorldMatrixResult.isErr()) {
+      return ResultT::Err(LightingDemoRenderError::LightExtractionFailed);
     }
-    const auto lightingResult = extractFrameLightingData(lightInputs);
-    if (lightingResult.isErr()) return ResultT::Err(LightingDemoRenderError::LightExtractionFailed);
-    auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
-    *lightingData = lightingResult.value();
-    fixture.lightingDataCaptured = true;
+    lightInputs.push_back({lightResult.value(), lightWorldMatrixResult.value()});
   }
+  const auto lightingResult = extractFrameLightingData(lightInputs);
+  if (lightingResult.isErr()) return ResultT::Err(LightingDemoRenderError::LightExtractionFailed);
+  auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
+  *lightingData = lightingResult.value();
 
   std::vector<atlantis::asset_system::AssetId> referencedMaterialIds;
   for (const auto& id : fixture.world->renderableEntities()) {

@@ -885,3 +885,105 @@ Deltas specific to this Plan: none — every applicable item (build clean,
 tests pass, Validation Layers clean, goldens unchanged, module boundaries
 respected, PR links Spec/ADR) is already covered by the Verification
 Checklist above.
+
+## Implementation Status Update (2026-08-30)
+
+**Code complete on Implementation PR [#106](https://github.com/slmao/Atlantis/pull/106),
+OPEN, not yet merged.** This section is purely additive — the "Human
+Review Approval" note and every Milestone/decision recorded above it are
+left unedited, matching this repository's own established post-merge
+status-update convention (e.g. Plan 0021's own "Post-Merge Status
+Update" section).
+
+All four Milestones landed as planned, as three commits on
+`feature/0022-dynamic-frame-uniform-updates-foundation` (M1; M2; M3 —
+Milestone 4 is verification/documentation only, not a separate code
+commit):
+
+- **M1**: `RuntimeApplication::lightingDataCaptured_` and its guard
+  removed; the Lighting-extraction block runs unconditionally, at its
+  existing, unmoved position. Two new GPU-independent `TEST_CASE`s added
+  to `tests/runtime/scene_extraction_tests.cpp`.
+- **M2**: `LightingDemoFixture::lightingDataCaptured` and its guard
+  removed — the exact mechanical twin of M1. The one now-invalidated
+  `TEST_CASE` (the old "second render never recaptures" negative test)
+  replaced with its positive counterpart; every other pre-existing
+  `TEST_CASE` in `lighting_demo_gpu_tests.cpp` confirmed unchanged.
+- **M3**: ten new dynamic multi-cycle `TEST_CASE`s added to
+  `lighting_demo_gpu_tests.cpp` (Directional direction/color/intensity,
+  Point position/color/intensity, local/parent `Transform`, `setParent()`,
+  light creation/destruction, same-cycle multiple mutations); the
+  already-existing `RuntimeSmokeTestAccess` test-only friend extended
+  with two accessors, and the existing windowed smoke `TEST_CASE`
+  extended (not duplicated) with real byte-level dynamic-Lighting proof.
+- **M4**: full verification matrix executed (below); `specs/README.md`
+  and this section updated.
+
+**Deviations from this Plan's own original text, both found and
+resolved during Milestone 3's own implementation, disclosed here rather
+than silently absorbed:**
+
+1. The real scene's own authored Point light position does not
+   illuminate this file's own established sample point at all —
+   confirmed empirically (every in-place mutation published
+   byte-identical pixels before/after, regardless of which property was
+   mutated), not assumed at Plan-drafting time. Every affected `TEST_CASE`
+   now repositions the light first, to a location a different,
+   already-passing test's own placement had already proven works — a
+   `TEST_CASE`-level implementation detail, not a change to this Plan's
+   own Milestone scope, decisions, or file list.
+2. A second, independent windowed `RuntimeApplication` lifecycle in a
+   sibling `TEST_CASE` (as this Plan's own M3 text originally described)
+   passed in isolation but crashed the test process when run together
+   with the pre-existing windowed smoke test — the same-process multiple
+   windowed `initialize()`/`shutdown()` Platform limitation an earlier,
+   unrelated Spec's own final review already found and explicitly
+   disclosed as out of scope. Resolved by extending the existing single
+   `TEST_CASE`'s own lifecycle instead of adding a second one — same
+   file, same friend struct, same accessors, no scope change, no attempt
+   to fix the underlying Platform limitation (still out of this Plan's
+   own approved scope).
+3. An earlier, intermediate verification pass on this branch reported a
+   failure in `textured_quad_gpu_tests.cpp` (a file this Plan never
+   touches) and disclosed it as a pre-existing, unrelated issue. Further
+   investigation found this was a false alarm: the failure was an
+   artifact of invoking the test executable directly from the wrong
+   working directory during ad hoc verification — the same binary passes
+   cleanly (276/276 assertions) when run from its own directory, matching
+   exactly how `ctest` itself invokes it, and every `ctest -L gpu` run
+   throughout this Plan's own implementation already reported it passing.
+   No real pre-existing bug exists; that earlier disclosure is retracted
+   here.
+
+**Final, as-built verification:** fresh Debug and Release builds clean;
+`ctest -LE gpu` 761/761 (Debug, +2 over the pre-Plan-0022 baseline of
+759) and 760/760 (Release, +2 over 758); `ctest -L gpu` 62/62 both
+configurations (+10 over the pre-Plan-0022 baseline of 52 — the ten new
+dynamic Lighting `TEST_CASE`s; the windowed smoke test count is
+unchanged at one, extended rather than duplicated); Vulkan Validation
+Layers grepped clean (zero `VUID`/Validation Error/Validation Warning)
+across full verbose GPU test output, both configurations; a fresh
+`ATLANTIS_BUILD_TESTS=OFF` configure+build produced a working
+`atlantis_runtime.exe` with zero test executables; `git diff --stat`
+against `src/rhi/`, `src/vulkan_backend/`, every `CMakeLists.txt`,
+`adr/`, and `tests/image_regression/goldens/` all returned empty —
+zero touches, confirming no RHI/Vulkan-Backend/CMake/ADR/golden change
+anywhere; all five existing goldens confirmed byte-for-byte unchanged
+and, via the still-passing golden-comparison `TEST_CASE` itself,
+pixel-zero-difference; `git diff --check` clean; working tree clean.
+
+All 14 of this Plan's own Plan-Review self-check items (Runtime frame
+order unmoved; `World` transforms still precede Lighting extraction;
+Camera/Lighting byte ranges non-overlapping and unchanged; every frame's
+own payload fully initialized; extraction failure never writes a partial
+payload; the old static-snapshot fixture contract fully removed, not
+merely shadowed; no two semantically-opposite fixtures coexisting;
+multi-cycle tests genuinely reuse the same `Buffer`/`Pipeline`/descriptor
+set; `waitIdle()` genuinely precedes each next cycle's own CPU write; the
+windowed test performs no unsynchronized host write; GPU assertions
+identify a specific direction/channel/count, never a bare inequality;
+five goldens zero-diff; zero RHI/Vulkan-Backend/CMake/API change; zero
+new thread/lock/dependency/platform code) were re-verified against real
+diffs and real test runs immediately before opening
+[PR #106](https://github.com/slmao/Atlantis/pull/106), not merely
+asserted from memory.
