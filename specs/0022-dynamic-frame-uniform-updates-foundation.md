@@ -12,7 +12,8 @@
   approved a design whose central justification this correction retracts.)
 - **Author:** slmao
 - **Created:** 2026-08-30
-- **Related Plan(s):** None yet.
+- **Related Plan(s):** [plans/0022-dynamic-frame-uniform-updates-foundation.md](../plans/0022-dynamic-frame-uniform-updates-foundation.md)
+  (`In Review`)
 - **Related ADR(s):** [ADR-0065](../adr/0065-explicit-pre-write-submission-drain-for-frame-uniform-safety.md)
   (`Rejected` — see that ADR's own "Rejected — 2026-08-30" section and the
   correction below). This Spec's corrected design needs **no** ADR — see
