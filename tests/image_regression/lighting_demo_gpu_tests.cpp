@@ -56,6 +56,7 @@ using atlantis::runtime::Mat4;
 using atlantis::runtime::Vec3;
 using atlantis::world::EntityId;
 using atlantis::world::Light;
+using atlantis::world::LightKind;
 using atlantis::world::Transform;
 
 namespace {
@@ -125,6 +126,108 @@ struct Vec4 {
 
 [[nodiscard]] Vec4 transformPoint(const Mat4& m, const Vec3& p) {
   return transformVec4(m, Vec4{p.x, p.y, p.z, 1.0f});
+}
+
+// ---------------------------------------------------------------------
+// Plan 0022 Section M3: shared helpers for the dynamic multi-cycle tests
+// below only -- the pre-existing "known cube vertex" TEST_CASE above
+// keeps its own inline copy of the identical derivation untouched (this
+// file's own V9 requirement: every pre-existing TEST_CASE stays
+// byte-for-byte unchanged), so this is a deliberate, disclosed
+// duplication of that one, already-established, non-degenerate sample
+// point -- not a new, independently-derived one that could introduce a
+// second, divergent claim about where on the cube is safe to sample.
+// ---------------------------------------------------------------------
+
+struct SamplePoint {
+  Vec3 worldPosition;
+  Vec3 worldNormal;
+};
+
+// Centroid of the near face's own first triangle (index list "5 4 7"),
+// minimal_cube.mesh.txt -- see the pre-existing "known cube vertex" test
+// above for the full derivation and why this point (not a shared vertex)
+// is the only real, discriminating position.
+[[nodiscard]] SamplePoint knownCubeSamplePoint() {
+  return {{(0.5f - 0.5f - 0.5f) / 3.0f, (-0.5f - 0.5f + 0.5f) / 3.0f, 0.5f},
+          {(0.577350269f - 0.577350269f - 0.577350269f) / 3.0f,
+           (-0.577350269f - 0.577350269f + 0.577350269f) / 3.0f, 0.577350269f}};
+}
+
+// Projects a world-space point through the fixture's own real, current
+// active Camera into a screen pixel coordinate -- reuses the real,
+// shared extractCameraMatrices() (camera projection math is not any of
+// these tests' own subject) rather than reimplementing it a second time.
+[[nodiscard]] std::optional<std::pair<std::uint32_t, std::uint32_t>> screenPixelFor(LightingDemoFixture& fixture,
+                                                                                     const Vec3& worldPosition) {
+  const auto activeCamera = fixture.world->activeCamera();
+  if (!activeCamera.has_value()) return std::nullopt;
+  const auto cameraWorldMatrixResult = fixture.world->getWorldMatrix(*activeCamera);
+  const auto cameraComponentResult = fixture.world->getCamera(*activeCamera);
+  if (cameraWorldMatrixResult.isErr() || cameraComponentResult.isErr()) return std::nullopt;
+  const auto cameraMatricesResult =
+      extractCameraMatrices(cameraWorldMatrixResult.value(), cameraComponentResult.value().fovYRadians,
+                             cameraComponentResult.value().nearZ, cameraComponentResult.value().farZ, 1.0f);
+  if (cameraMatricesResult.isErr()) return std::nullopt;
+
+  const Vec4 viewPos = transformPoint(cameraMatricesResult.value().view, worldPosition);
+  const Vec4 clipPos = transformVec4(cameraMatricesResult.value().projection, viewPos);
+  if (clipPos.w == 0.0f) return std::nullopt;
+  const float ndcX = clipPos.x / clipPos.w;
+  const float ndcY = clipPos.y / clipPos.w;
+  const auto screenX = static_cast<std::uint32_t>(
+      std::lround((ndcX * 0.5f + 0.5f) * static_cast<float>(kLightingDemoExtentPixels)));
+  const auto screenY = static_cast<std::uint32_t>(
+      std::lround((ndcY * 0.5f + 0.5f) * static_cast<float>(kLightingDemoExtentPixels)));
+  if (screenX >= kLightingDemoExtentPixels || screenY >= kLightingDemoExtentPixels) return std::nullopt;
+  return std::make_pair(screenX, screenY);
+}
+
+// Sum of a pixel's own three color channels -- a robust, independent
+// "overall brightness" proxy: monotonic in each light's own additive
+// Lambertian contribution regardless of which channel it lands in,
+// without this test file needing to re-derive the exact per-channel
+// Lambertian formula for every mutation below (that exact derivation
+// already exists, cross-validated, in the pre-existing "known cube
+// vertex" test above -- duplicating it for every mutation here would
+// itself be a new, unreviewed source of error, not an independent check).
+[[nodiscard]] int channelSum(const std::array<std::uint8_t, 4>& pixel) {
+  return static_cast<int>(pixel[0]) + static_cast<int>(pixel[1]) + static_cast<int>(pixel[2]);
+}
+
+// The scene's own single Directional (or Point) light entity -- returns
+// std::nullopt only if lighting_demo_scene's own real, committed content
+// ever stops declaring exactly one of each kind (REQUIRE()d by every
+// caller below, never silently tolerated).
+[[nodiscard]] std::optional<EntityId> findLightByKind(LightingDemoFixture& fixture, LightKind kind) {
+  for (const EntityId& id : fixture.world->lightEntities()) {
+    const auto lightResult = fixture.world->getLight(id);
+    if (lightResult.isOk() && lightResult.value().kind == kind) return id;
+  }
+  return std::nullopt;
+}
+
+// The real scene's own authored Point light position, (0.8, 0.3, 0.5)
+// (assets/scenes/lighting_demo.scene.txt), does not illuminate
+// knownCubeSamplePoint() at all -- confirmed empirically (not assumed):
+// every one of this file's own dynamic Point-light tests that mutated
+// the light IN PLACE at its authored position, before this helper
+// existed, published byte-for-byte identical pixels before and after,
+// regardless of the mutation (color, intensity, moving it further away,
+// destroying it, or reparenting it) -- conclusive evidence its own
+// Lambertian contribution at that specific sample point is already zero
+// (a negative N-dot-L, clamped), not that the dynamic-update path itself
+// is broken. Every test below that needs to observe a real Point-light
+// effect at the sample point first repositions it here -- the identical
+// "close to the sample point, offset along its own surface normal"
+// placement the "creating a new Point light" test already independently
+// established works -- so its own "before" state already reflects a
+// real, non-zero contribution.
+void repositionPointLightNearSample(LightingDemoFixture& fixture, const EntityId& pointLight,
+                                     const SamplePoint& sample) {
+  Transform closeToSample;
+  closeToSample.localPosition = {sample.worldPosition.x, sample.worldPosition.y, sample.worldPosition.z + 0.3f};
+  REQUIRE(fixture.world->setLocalTransform(pointLight, closeToSample).isOk());
 }
 
 }  // namespace
@@ -417,6 +520,498 @@ TEST_CASE("LightingDemoFixture: repeated render cycles against the same fixture 
 
   CHECK(firstResult.value().rgba8 == secondResult.value().rgba8);
   CHECK(fixture.materialResourceMap.size() == 1);
+}
+
+// ---------------------------------------------------------------------
+// Plan 0022 Section M3: multi-cycle dynamic Lighting verification, all
+// against the same LightingDemoFixture -- each test below changes
+// exactly one real source of Lighting change (never a bare
+// "bufferA != bufferB" catch-all) and checks a hand-derived,
+// independently-reasoned-about direction/magnitude at the fixture's own
+// established, non-degenerate sample point, never a value obtained by
+// calling extractFrameLightingData()/computeLambertianDiffuse() to
+// generate its own "expected" side.
+// ---------------------------------------------------------------------
+
+TEST_CASE("LightingDemoFixture: rotating the Directional light to face away from the known sample point "
+          "strictly darkens it on the next render cycle -- covers both 'direction change' and 'Directional "
+          "local transform change'",
+          "[image_regression][gpu][lighting][dynamic]") {
+  auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  LightingDemoFixture& fixture = fixtureResult.value();
+
+  const SamplePoint sample = knownCubeSamplePoint();
+
+  // screenPixelFor() must run after the first renderLightingDemoFrame()
+  // call, not before: the active Camera's own cachedWorldMatrix is only
+  // valid once World::updateTransforms() has run at least once (it
+  // defaults to identity otherwise, per World's own documented
+  // contract), and updateTransforms() only ever runs inside
+  // renderLightingDemoFrame() itself -- never during
+  // setUpLightingDemoFixture().
+  auto firstResult = renderLightingDemoFrame(fixture);
+  REQUIRE(firstResult.isOk());
+  const auto pixelCoord = screenPixelFor(fixture, sample.worldPosition);
+  REQUIRE(pixelCoord.has_value());
+  const int brightnessBefore =
+      channelSum(pixelAt(firstResult.value(), pixelCoord->first, pixelCoord->second));
+
+  const auto directionalLight = findLightByKind(fixture, LightKind::Directional);
+  REQUIRE(directionalLight.has_value());
+  const auto originalTransformResult = fixture.world->getLocalTransform(*directionalLight);
+  REQUIRE(originalTransformResult.isOk());
+
+  // yaw + pi negates the extracted direction vector exactly (Spec 0019
+  // D2's own -column2 formula: Ry(yaw + pi) = Ry(yaw) * Ry(pi), and
+  // Ry(pi) maps local +Z to local -Z) -- the identical, already-
+  // independently-verified mutation the pre-existing "deliberate
+  // Directional light direction-sign error" golden negative test above
+  // already uses, applied here at runtime via setLocalTransform() rather
+  // than by re-cooking a scene. A light now facing directly away from a
+  // surface it previously illuminated can only ever contribute zero to
+  // that surface's own Lambertian accumulation (N-dot-L clamped to zero)
+  // -- so the total contribution at this sample point can only drop.
+  Transform rotated = originalTransformResult.value();
+  rotated.localEulerAnglesRadians.y += 3.14159265f;
+  REQUIRE(fixture.world->setLocalTransform(*directionalLight, rotated).isOk());
+
+  auto secondResult = renderLightingDemoFrame(fixture);
+  REQUIRE(secondResult.isOk());
+  const int brightnessAfter =
+      channelSum(pixelAt(secondResult.value(), pixelCoord->first, pixelCoord->second));
+
+  CHECK(brightnessAfter < brightnessBefore);
+}
+
+TEST_CASE("LightingDemoFixture: shifting the Directional light's own color toward pure red changes the "
+          "sample pixel's own red-channel share",
+          "[image_regression][gpu][lighting][dynamic]") {
+  auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  LightingDemoFixture& fixture = fixtureResult.value();
+
+  const SamplePoint sample = knownCubeSamplePoint();
+
+  // screenPixelFor() must run after the first renderLightingDemoFrame()
+  // call, not before: the active Camera's own cachedWorldMatrix is only
+  // valid once World::updateTransforms() has run at least once (it
+  // defaults to identity otherwise, per World's own documented
+  // contract), and updateTransforms() only ever runs inside
+  // renderLightingDemoFrame() itself -- never during
+  // setUpLightingDemoFixture().
+  auto firstResult = renderLightingDemoFrame(fixture);
+  REQUIRE(firstResult.isOk());
+  const auto pixelCoord = screenPixelFor(fixture, sample.worldPosition);
+  REQUIRE(pixelCoord.has_value());
+  const auto pixelBefore = pixelAt(firstResult.value(), pixelCoord->first, pixelCoord->second);
+  const float redShareBefore =
+      static_cast<float>(pixelBefore[0]) / static_cast<float>(std::max(1, channelSum(pixelBefore)));
+
+  const auto directionalLight = findLightByKind(fixture, LightKind::Directional);
+  REQUIRE(directionalLight.has_value());
+  const auto originalLightResult = fixture.world->getLight(*directionalLight);
+  REQUIRE(originalLightResult.isOk());
+
+  // Pure red, at a large intensity -- Lambertian accumulation multiplies
+  // this light's own contribution by its own color channel-wise, so its
+  // red channel's own share of this light's contribution can only grow
+  // relative to the original (0.6, 0.7, 1.0) color, which itself is
+  // blue-leaning, not red-leaning.
+  Light red = originalLightResult.value();
+  red.color = {1.0f, 0.0f, 0.0f};
+  red.intensity = 5.0f;
+  REQUIRE(fixture.world->setLight(*directionalLight, red).isOk());
+
+  auto secondResult = renderLightingDemoFrame(fixture);
+  REQUIRE(secondResult.isOk());
+  const auto pixelAfter = pixelAt(secondResult.value(), pixelCoord->first, pixelCoord->second);
+  const float redShareAfter =
+      static_cast<float>(pixelAfter[0]) / static_cast<float>(std::max(1, channelSum(pixelAfter)));
+
+  CHECK(redShareAfter > redShareBefore);
+}
+
+TEST_CASE("LightingDemoFixture: increasing the Directional light's own intensity strictly brightens the "
+          "known sample pixel on the next render cycle",
+          "[image_regression][gpu][lighting][dynamic]") {
+  auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  LightingDemoFixture& fixture = fixtureResult.value();
+
+  const SamplePoint sample = knownCubeSamplePoint();
+
+  // screenPixelFor() must run after the first renderLightingDemoFrame()
+  // call, not before: the active Camera's own cachedWorldMatrix is only
+  // valid once World::updateTransforms() has run at least once (it
+  // defaults to identity otherwise, per World's own documented
+  // contract), and updateTransforms() only ever runs inside
+  // renderLightingDemoFrame() itself -- never during
+  // setUpLightingDemoFixture().
+  auto firstResult = renderLightingDemoFrame(fixture);
+  REQUIRE(firstResult.isOk());
+  const auto pixelCoord = screenPixelFor(fixture, sample.worldPosition);
+  REQUIRE(pixelCoord.has_value());
+  const int brightnessBefore =
+      channelSum(pixelAt(firstResult.value(), pixelCoord->first, pixelCoord->second));
+
+  const auto directionalLight = findLightByKind(fixture, LightKind::Directional);
+  REQUIRE(directionalLight.has_value());
+  const auto originalLightResult = fixture.world->getLight(*directionalLight);
+  REQUIRE(originalLightResult.isOk());
+
+  Light brighter = originalLightResult.value();
+  brighter.intensity *= 4.0f;  // a large, unmistakable increase
+  REQUIRE(fixture.world->setLight(*directionalLight, brighter).isOk());
+
+  auto secondResult = renderLightingDemoFrame(fixture);
+  REQUIRE(secondResult.isOk());
+  const int brightnessAfter =
+      channelSum(pixelAt(secondResult.value(), pixelCoord->first, pixelCoord->second));
+
+  CHECK(brightnessAfter > brightnessBefore);
+}
+
+TEST_CASE("LightingDemoFixture: moving the Point light far from the sample point strictly darkens it on the "
+          "next render cycle -- covers both 'position/attenuation change' and 'Point local transform change'",
+          "[image_regression][gpu][lighting][dynamic]") {
+  auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  LightingDemoFixture& fixture = fixtureResult.value();
+
+  const SamplePoint sample = knownCubeSamplePoint();
+  const auto pointLight = findLightByKind(fixture, LightKind::Point);
+  REQUIRE(pointLight.has_value());
+  repositionPointLightNearSample(fixture, *pointLight, sample);
+
+  // screenPixelFor() must run after the first renderLightingDemoFrame()
+  // call, not before: the active Camera's own cachedWorldMatrix is only
+  // valid once World::updateTransforms() has run at least once (it
+  // defaults to identity otherwise, per World's own documented
+  // contract), and updateTransforms() only ever runs inside
+  // renderLightingDemoFrame() itself -- never during
+  // setUpLightingDemoFixture(). The repositioning above happens before
+  // this first call, so this "before" snapshot already reflects the
+  // repositioned light's own real contribution.
+  auto firstResult = renderLightingDemoFrame(fixture);
+  REQUIRE(firstResult.isOk());
+  const auto pixelCoord = screenPixelFor(fixture, sample.worldPosition);
+  REQUIRE(pixelCoord.has_value());
+  const int brightnessBefore =
+      channelSum(pixelAt(firstResult.value(), pixelCoord->first, pixelCoord->second));
+
+  // The repositioned light's own range is unchanged (2.5, the real
+  // scene's own authored value) -- moving it 100 units away puts it far
+  // outside that range at this sample point, so lit_textured.slang's own
+  // clamp(1 - dist/range, 0, 1) attenuation formula (Plan 0019 Section
+  // P11, mirrored exactly by computeLambertianDiffuse()) clamps its own
+  // contribution to exactly zero.
+  Transform farAway;
+  farAway.localPosition = {100.0f, 100.0f, 100.0f};
+  REQUIRE(fixture.world->setLocalTransform(*pointLight, farAway).isOk());
+
+  auto secondResult = renderLightingDemoFrame(fixture);
+  REQUIRE(secondResult.isOk());
+  const int brightnessAfter =
+      channelSum(pixelAt(secondResult.value(), pixelCoord->first, pixelCoord->second));
+
+  CHECK(brightnessAfter < brightnessBefore);
+}
+
+TEST_CASE("LightingDemoFixture: shifting the Point light's own color toward pure green changes the sample "
+          "pixel's own green-channel share",
+          "[image_regression][gpu][lighting][dynamic]") {
+  auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  LightingDemoFixture& fixture = fixtureResult.value();
+
+  const SamplePoint sample = knownCubeSamplePoint();
+  const auto pointLight = findLightByKind(fixture, LightKind::Point);
+  REQUIRE(pointLight.has_value());
+  repositionPointLightNearSample(fixture, *pointLight, sample);
+
+  // screenPixelFor() must run after the first renderLightingDemoFrame()
+  // call, not before: the active Camera's own cachedWorldMatrix is only
+  // valid once World::updateTransforms() has run at least once (it
+  // defaults to identity otherwise, per World's own documented
+  // contract), and updateTransforms() only ever runs inside
+  // renderLightingDemoFrame() itself -- never during
+  // setUpLightingDemoFixture(). The repositioning above happens before
+  // this first call, so this "before" snapshot already reflects the
+  // repositioned light's own real (still red-leaning, unmutated color)
+  // contribution.
+  auto firstResult = renderLightingDemoFrame(fixture);
+  REQUIRE(firstResult.isOk());
+  const auto pixelCoord = screenPixelFor(fixture, sample.worldPosition);
+  REQUIRE(pixelCoord.has_value());
+  const auto pixelBefore = pixelAt(firstResult.value(), pixelCoord->first, pixelCoord->second);
+  const float greenShareBefore =
+      static_cast<float>(pixelBefore[1]) / static_cast<float>(std::max(1, channelSum(pixelBefore)));
+
+  const auto originalLightResult = fixture.world->getLight(*pointLight);
+  REQUIRE(originalLightResult.isOk());
+
+  // Pure green, at a large intensity -- the real scene's own Point color
+  // (1.0, 0.6, 0.3) is red-leaning, not green-leaning, so the green
+  // channel's own share can only grow.
+  Light green = originalLightResult.value();
+  green.color = {0.0f, 1.0f, 0.0f};
+  green.intensity = 5.0f;
+  REQUIRE(fixture.world->setLight(*pointLight, green).isOk());
+
+  auto secondResult = renderLightingDemoFrame(fixture);
+  REQUIRE(secondResult.isOk());
+  const auto pixelAfter = pixelAt(secondResult.value(), pixelCoord->first, pixelCoord->second);
+  const float greenShareAfter =
+      static_cast<float>(pixelAfter[1]) / static_cast<float>(std::max(1, channelSum(pixelAfter)));
+
+  CHECK(greenShareAfter > greenShareBefore);
+}
+
+TEST_CASE("LightingDemoFixture: increasing the Point light's own intensity strictly brightens the known "
+          "sample pixel on the next render cycle",
+          "[image_regression][gpu][lighting][dynamic]") {
+  auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  LightingDemoFixture& fixture = fixtureResult.value();
+
+  const SamplePoint sample = knownCubeSamplePoint();
+  const auto pointLight = findLightByKind(fixture, LightKind::Point);
+  REQUIRE(pointLight.has_value());
+  repositionPointLightNearSample(fixture, *pointLight, sample);
+
+  // Also dim the light before the first render -- at this close range
+  // (0.3 units away), the real scene's own authored intensity (3.0)
+  // already saturates every channel to 255, leaving no headroom for a
+  // further increase to ever register as "brighter" (255 clamped stays
+  // 255 regardless of how much more intensity is added). A dim starting
+  // point leaves that headroom.
+  const auto dimLightResult = fixture.world->getLight(*pointLight);
+  REQUIRE(dimLightResult.isOk());
+  Light dim = dimLightResult.value();
+  dim.intensity = 0.4f;
+  REQUIRE(fixture.world->setLight(*pointLight, dim).isOk());
+
+  // screenPixelFor() must run after the first renderLightingDemoFrame()
+  // call, not before: the active Camera's own cachedWorldMatrix is only
+  // valid once World::updateTransforms() has run at least once (it
+  // defaults to identity otherwise, per World's own documented
+  // contract), and updateTransforms() only ever runs inside
+  // renderLightingDemoFrame() itself -- never during
+  // setUpLightingDemoFixture(). The repositioning/dimming above happens
+  // before this first call, so this "before" snapshot already reflects
+  // the repositioned, dimmed light's own real, non-saturated contribution.
+  auto firstResult = renderLightingDemoFrame(fixture);
+  REQUIRE(firstResult.isOk());
+  const auto pixelCoord = screenPixelFor(fixture, sample.worldPosition);
+  REQUIRE(pixelCoord.has_value());
+  const int brightnessBefore =
+      channelSum(pixelAt(firstResult.value(), pixelCoord->first, pixelCoord->second));
+  REQUIRE(brightnessBefore < 765);  // not already saturated -- real headroom exists to show an increase
+
+  Light brighter = dim;
+  brighter.intensity = 5.0f;
+  REQUIRE(fixture.world->setLight(*pointLight, brighter).isOk());
+
+  auto secondResult = renderLightingDemoFrame(fixture);
+  REQUIRE(secondResult.isOk());
+  const int brightnessAfter =
+      channelSum(pixelAt(secondResult.value(), pixelCoord->first, pixelCoord->second));
+
+  CHECK(brightnessAfter > brightnessBefore);
+}
+
+TEST_CASE("LightingDemoFixture: reparenting the Point light under a new entity and moving that parent far "
+          "away darkens the sample pixel on the next render cycle -- covers both 'parent transform change' "
+          "and 'setParent() hierarchy change'",
+          "[image_regression][gpu][lighting][dynamic]") {
+  auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  LightingDemoFixture& fixture = fixtureResult.value();
+
+  const SamplePoint sample = knownCubeSamplePoint();
+  const auto pointLight = findLightByKind(fixture, LightKind::Point);
+  REQUIRE(pointLight.has_value());
+  repositionPointLightNearSample(fixture, *pointLight, sample);
+
+  // screenPixelFor() must run after the first renderLightingDemoFrame()
+  // call, not before: the active Camera's own cachedWorldMatrix is only
+  // valid once World::updateTransforms() has run at least once (it
+  // defaults to identity otherwise, per World's own documented
+  // contract), and updateTransforms() only ever runs inside
+  // renderLightingDemoFrame() itself -- never during
+  // setUpLightingDemoFixture(). The repositioning above happens before
+  // this first call, so this "before" snapshot already reflects the
+  // repositioned light's own real contribution -- and, critically, its
+  // own local position is now *relative to a still-absent parent* (root),
+  // which the reparent step below preserves unless the parent itself
+  // moves.
+  auto firstResult = renderLightingDemoFrame(fixture);
+  REQUIRE(firstResult.isOk());
+  const auto pixelCoord = screenPixelFor(fixture, sample.worldPosition);
+  REQUIRE(pixelCoord.has_value());
+  const int brightnessBefore =
+      channelSum(pixelAt(firstResult.value(), pixelCoord->first, pixelCoord->second));
+
+  // A brand-new parent entity, at the world origin (identity Transform)
+  // -- setParent() alone changes nothing observable yet, since an
+  // identity parent transform composes to the same world matrix the
+  // light already had as a root entity.
+  const EntityId parent = fixture.world->createEntity();
+  REQUIRE(fixture.world->setParent(*pointLight, parent).isOk());
+
+  auto afterReparentOnlyResult = renderLightingDemoFrame(fixture);
+  REQUIRE(afterReparentOnlyResult.isOk());
+  const int brightnessAfterReparentOnly =
+      channelSum(pixelAt(afterReparentOnlyResult.value(), pixelCoord->first, pixelCoord->second));
+  CHECK(brightnessAfterReparentOnly == brightnessBefore);
+
+  // Now move the PARENT far away -- the Point light's own local
+  // Transform is untouched; its world position changes only because its
+  // new parent's own world position did (World::updateTransforms()'s own
+  // hierarchy composition, not a leaf-entity change).
+  Transform parentFarAway;
+  parentFarAway.localPosition = {100.0f, 100.0f, 100.0f};
+  REQUIRE(fixture.world->setLocalTransform(parent, parentFarAway).isOk());
+
+  auto secondResult = renderLightingDemoFrame(fixture);
+  REQUIRE(secondResult.isOk());
+  const int brightnessAfter =
+      channelSum(pixelAt(secondResult.value(), pixelCoord->first, pixelCoord->second));
+
+  CHECK(brightnessAfter < brightnessAfterReparentOnly);
+}
+
+TEST_CASE("LightingDemoFixture: creating a new Point light near the sample point brightens it on the next "
+          "render cycle, and the CPU-visible pointLightCount increases",
+          "[image_regression][gpu][lighting][dynamic]") {
+  auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  LightingDemoFixture& fixture = fixtureResult.value();
+
+  const SamplePoint sample = knownCubeSamplePoint();
+
+  // screenPixelFor() must run after the first renderLightingDemoFrame()
+  // call, not before: the active Camera's own cachedWorldMatrix is only
+  // valid once World::updateTransforms() has run at least once (it
+  // defaults to identity otherwise, per World's own documented
+  // contract), and updateTransforms() only ever runs inside
+  // renderLightingDemoFrame() itself -- never during
+  // setUpLightingDemoFixture().
+  auto firstResult = renderLightingDemoFrame(fixture);
+  REQUIRE(firstResult.isOk());
+  const auto pixelCoord = screenPixelFor(fixture, sample.worldPosition);
+  REQUIRE(pixelCoord.has_value());
+  const int brightnessBefore =
+      channelSum(pixelAt(firstResult.value(), pixelCoord->first, pixelCoord->second));
+  const auto* cameraBytesBefore = static_cast<const std::byte*>(fixture.cameraBuffer->mappedData());
+  FrameLightingData lightingBefore{};
+  std::memcpy(&lightingBefore, cameraBytesBefore + sizeof(float) * 32, sizeof(FrameLightingData));
+  REQUIRE(lightingBefore.pointLightCount == 1);
+
+  const EntityId newLight = fixture.world->createEntity();
+  Transform closeToSample;
+  closeToSample.localPosition = {sample.worldPosition.x, sample.worldPosition.y, sample.worldPosition.z + 0.3f};
+  REQUIRE(fixture.world->setLocalTransform(newLight, closeToSample).isOk());
+  Light brightPointLight;
+  brightPointLight.kind = LightKind::Point;
+  brightPointLight.color = {1.0f, 1.0f, 1.0f};
+  brightPointLight.intensity = 5.0f;
+  brightPointLight.range = 3.0f;
+  REQUIRE(fixture.world->setLight(newLight, brightPointLight).isOk());
+
+  auto secondResult = renderLightingDemoFrame(fixture);
+  REQUIRE(secondResult.isOk());
+  const int brightnessAfter =
+      channelSum(pixelAt(secondResult.value(), pixelCoord->first, pixelCoord->second));
+  CHECK(brightnessAfter > brightnessBefore);
+
+  const auto* cameraBytesAfter = static_cast<const std::byte*>(fixture.cameraBuffer->mappedData());
+  FrameLightingData lightingAfter{};
+  std::memcpy(&lightingAfter, cameraBytesAfter + sizeof(float) * 32, sizeof(FrameLightingData));
+  CHECK(lightingAfter.pointLightCount == 2);
+}
+
+TEST_CASE("LightingDemoFixture: destroying the scene's own Point light entity darkens the sample point on "
+          "the next render cycle, and the CPU-visible pointLightCount decreases with the freed slot zeroed",
+          "[image_regression][gpu][lighting][dynamic]") {
+  auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  LightingDemoFixture& fixture = fixtureResult.value();
+
+  const SamplePoint sample = knownCubeSamplePoint();
+  const auto pointLight = findLightByKind(fixture, LightKind::Point);
+  REQUIRE(pointLight.has_value());
+  repositionPointLightNearSample(fixture, *pointLight, sample);
+
+  // screenPixelFor() must run after the first renderLightingDemoFrame()
+  // call, not before: the active Camera's own cachedWorldMatrix is only
+  // valid once World::updateTransforms() has run at least once (it
+  // defaults to identity otherwise, per World's own documented
+  // contract), and updateTransforms() only ever runs inside
+  // renderLightingDemoFrame() itself -- never during
+  // setUpLightingDemoFixture(). The repositioning above happens before
+  // this first call, so this "before" snapshot already reflects the
+  // repositioned light's own real contribution.
+  auto firstResult = renderLightingDemoFrame(fixture);
+  REQUIRE(firstResult.isOk());
+  const auto pixelCoord = screenPixelFor(fixture, sample.worldPosition);
+  REQUIRE(pixelCoord.has_value());
+  const int brightnessBefore =
+      channelSum(pixelAt(firstResult.value(), pixelCoord->first, pixelCoord->second));
+
+  REQUIRE(fixture.world->destroyEntity(*pointLight).isOk());
+
+  auto secondResult = renderLightingDemoFrame(fixture);
+  REQUIRE(secondResult.isOk());
+  const int brightnessAfter =
+      channelSum(pixelAt(secondResult.value(), pixelCoord->first, pixelCoord->second));
+  CHECK(brightnessAfter < brightnessBefore);
+
+  const auto* cameraBytesAfter = static_cast<const std::byte*>(fixture.cameraBuffer->mappedData());
+  FrameLightingData lightingAfter{};
+  std::memcpy(&lightingAfter, cameraBytesAfter + sizeof(float) * 32, sizeof(FrameLightingData));
+  CHECK(lightingAfter.directionalLightCount == 1);  // the Directional light is untouched
+  CHECK(lightingAfter.pointLightCount == 0);
+  // The now-unused slot 0 (this scene's only Point light occupied it) is
+  // fully zeroed -- extractFrameLightingData() value-initializes a fresh
+  // result every call, so a destroyed light's own prior slot never
+  // carries over stale bytes into a later frame.
+  CHECK(lightingAfter.pointLights[0].position[0] == 0.0f);
+  CHECK(lightingAfter.pointLights[0].position[1] == 0.0f);
+  CHECK(lightingAfter.pointLights[0].position[2] == 0.0f);
+  CHECK(lightingAfter.pointLights[0].intensity == 0.0f);
+}
+
+TEST_CASE("LightingDemoFixture: two setLight() calls against the same entity before one render call publish "
+          "only the final value",
+          "[image_regression][gpu][lighting][dynamic]") {
+  auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  LightingDemoFixture& fixture = fixtureResult.value();
+
+  auto firstResult = renderLightingDemoFrame(fixture);
+  REQUIRE(firstResult.isOk());
+
+  const auto directionalLight = findLightByKind(fixture, LightKind::Directional);
+  REQUIRE(directionalLight.has_value());
+  const auto originalLightResult = fixture.world->getLight(*directionalLight);
+  REQUIRE(originalLightResult.isOk());
+
+  Light intermediate = originalLightResult.value();
+  intermediate.intensity = 111.0f;
+  REQUIRE(fixture.world->setLight(*directionalLight, intermediate).isOk());
+  Light final_ = originalLightResult.value();
+  final_.intensity = 222.0f;
+  REQUIRE(fixture.world->setLight(*directionalLight, final_).isOk());
+
+  auto secondResult = renderLightingDemoFrame(fixture);
+  REQUIRE(secondResult.isOk());
+
+  const auto* cameraBytesAfter = static_cast<const std::byte*>(fixture.cameraBuffer->mappedData());
+  FrameLightingData lightingAfter{};
+  std::memcpy(&lightingAfter, cameraBytesAfter + sizeof(float) * 32, sizeof(FrameLightingData));
+  CHECK(lightingAfter.directionalLights[0].intensity == 222.0f);
 }
 
 // ---------------------------------------------------------------------
