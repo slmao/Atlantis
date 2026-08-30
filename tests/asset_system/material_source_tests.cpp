@@ -135,6 +135,32 @@ TEST_CASE("parseMaterialSource round-trips kind: pbr_direct_lit and its own PBR 
   CHECK(reparsedResult.value().roughnessFactor == parsedResult.value().roughnessFactor);
 }
 
+// Real, disclosed regression coverage (found during Plan 0023's own
+// final review): std::to_string(float)'s fixed 6-decimal-place
+// formatting does not round-trip every float32 value exactly -- this
+// would have failed against serializeMaterialSource()'s own former
+// std::to_string()-based formatting, proving the fix (std::to_chars(),
+// a shortest-round-trip guarantee) is real.
+TEST_CASE("parseMaterialSource round-trips a metallic_factor/roughness_factor value std::to_string(float) would "
+          "NOT preserve exactly",
+          "[asset_system][material]") {
+  const auto parsedResult = parseMaterialSource(
+      "atlantis_material_source_version: 2\n"
+      "kind: pbr_direct_lit\n"
+      "texture: textures/foo.png\n"
+      "filter: linear\n"
+      "address_mode: repeat\n"
+      "base_color_factor: 1.0 1.0 1.0 1.0\n"
+      "metallic_factor: 0.123456789\n"
+      "roughness_factor: 0.333333333\n");
+  REQUIRE(parsedResult.isOk());
+  const std::string serialized = serializeMaterialSource(parsedResult.value());
+  const auto reparsedResult = parseMaterialSource(serialized);
+  REQUIRE(reparsedResult.isOk());
+  CHECK(reparsedResult.value().metallicFactor == parsedResult.value().metallicFactor);
+  CHECK(reparsedResult.value().roughnessFactor == parsedResult.value().roughnessFactor);
+}
+
 TEST_CASE("parseMaterialSource rejects a malformed base_color_factor component", "[asset_system][material]") {
   const auto result = parseMaterialSource(
       "atlantis_material_source_version: 2\n"

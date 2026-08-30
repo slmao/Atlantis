@@ -100,6 +100,24 @@ constexpr std::string_view kKindLitTextured = "lit_textured";
   return result.ec == std::errc{} && result.ptr == token.data() + token.size();
 }
 
+// Real, disclosed fix (found during Plan 0023's own final review):
+// std::to_string(float) formats with a fixed 6 digits after the
+// decimal point, which does NOT round-trip every float32 value back
+// through parseFloatToken()'s own std::from_chars() exactly (e.g.
+// 0.123456789f -> "0.123457" -> a DIFFERENT float32 bit pattern) --
+// this file's own cross-validation (load_material.cpp's exact-equality
+// artifact-vs-metadata comparison) would then spuriously reject a
+// legitimately, self-consistently cooked material. std::to_chars()
+// with no explicit precision produces the shortest decimal string that
+// round-trips back to the exact original bit pattern (the C++17
+// <charconv> guarantee) -- symmetric with parseFloatToken()'s own
+// std::from_chars() use above.
+[[nodiscard]] std::string formatFloat(float value) {
+  char buffer[32];
+  const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+  return std::string(buffer, result.ptr);
+}
+
 }  // namespace
 
 atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std::string_view text) {
@@ -178,14 +196,14 @@ std::string serializeMaterialMetadata(const MaterialMetadata& metadata) {
   out += kBaseColorFactorPrefix;
   for (std::size_t i = 0; i < 4; ++i) {
     if (i != 0) out += ' ';
-    out += std::to_string(metadata.baseColorFactor[i]);
+    out += formatFloat(metadata.baseColorFactor[i]);
   }
   out += '\n';
   out += kMetallicFactorPrefix;
-  out += std::to_string(metadata.metallicFactor);
+  out += formatFloat(metadata.metallicFactor);
   out += '\n';
   out += kRoughnessFactorPrefix;
-  out += std::to_string(metadata.roughnessFactor);
+  out += formatFloat(metadata.roughnessFactor);
   out += '\n';
   return out;
 }

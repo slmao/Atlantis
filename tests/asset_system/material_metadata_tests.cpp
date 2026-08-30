@@ -84,6 +84,31 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a Pb
   CHECK(parsed.value().roughnessFactor == original.roughnessFactor);
 }
 
+// Real, disclosed regression coverage (found during Plan 0023's own
+// final review): std::to_string(float)'s fixed 6-decimal-place
+// formatting does not round-trip every float32 value exactly (unlike
+// the "round" literals every other test in this file happens to use) --
+// this would have failed against serializeMaterialMetadata()'s own
+// former std::to_string()-based formatting, proving the fix
+// (std::to_chars(), a shortest-round-trip guarantee) is real.
+TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a metallicFactor value "
+          "std::to_string(float) would NOT preserve exactly",
+          "[asset_system][material]") {
+  MaterialMetadata original;
+  original.assetId = 0x0102030405060708ULL;
+  original.sourceLogicalPath = "materials/pbr_precise.material.txt";
+  original.kind = MaterialKind::PbrDirectLit;
+  original.textureAsset = 0x1122334455667788ULL;
+  original.metallicFactor = 0.123456789f;
+  original.roughnessFactor = 1.0f / 3.0f;
+
+  const std::string text = serializeMaterialMetadata(original);
+  const auto parsed = parseMaterialMetadata(text);
+  REQUIRE(parsed.isOk());
+  CHECK(parsed.value().metallicFactor == original.metallicFactor);
+  CHECK(parsed.value().roughnessFactor == original.roughnessFactor);
+}
+
 TEST_CASE("parseMaterialMetadata rejects a wrong line count", "[asset_system][material]") {
   const auto result = parseMaterialMetadata("atlantis_material_metadata_version: 2\n");
   REQUIRE(result.isErr());

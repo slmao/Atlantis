@@ -74,6 +74,24 @@ constexpr std::string_view kAddressModeClampToEdge = "clamp_to_edge";
   return result.ec == std::errc{} && result.ptr == token.data() + token.size();
 }
 
+// Real, disclosed fix (found during Plan 0023's own final review):
+// std::to_string(float) formats with a fixed 6 digits after the
+// decimal point, which does NOT round-trip every float32 value back
+// through parseFloatToken()'s own std::from_chars() exactly (e.g.
+// 0.123456789f -> "0.123457" -> a DIFFERENT float32 bit pattern) --
+// load_material.cpp's own exact-equality artifact-vs-metadata
+// cross-validation shares this same risk, matching
+// material_metadata.cpp's own identical fix. std::to_chars() with no
+// explicit precision produces the shortest decimal string that
+// round-trips back to the exact original bit pattern (the C++17
+// <charconv> guarantee) -- symmetric with parseFloatToken()'s own
+// std::from_chars() use above.
+[[nodiscard]] std::string formatFloat(float value) {
+  char buffer[32];
+  const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+  return std::string(buffer, result.ptr);
+}
+
 }  // namespace
 
 atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSource(std::string_view text) {
@@ -193,14 +211,14 @@ std::string serializeMaterialSource(const ParsedMaterialSource& source) {
   out += kBaseColorFactorPrefix;
   for (std::size_t i = 0; i < 4; ++i) {
     if (i != 0) out += ' ';
-    out += std::to_string(source.baseColorFactor[i]);
+    out += formatFloat(source.baseColorFactor[i]);
   }
   out += '\n';
   out += kMetallicFactorPrefix;
-  out += std::to_string(source.metallicFactor);
+  out += formatFloat(source.metallicFactor);
   out += '\n';
   out += kRoughnessFactorPrefix;
-  out += std::to_string(source.roughnessFactor);
+  out += formatFloat(source.roughnessFactor);
   out += '\n';
   return out;
 }

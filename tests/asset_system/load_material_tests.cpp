@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
+#include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -103,6 +104,52 @@ TEST_CASE("loadMaterialAsset loads a well-formed PbrDirectLit material with its 
   CHECK(result.value().baseColorFactor[3] == 1.0f);
   CHECK(result.value().metallicFactor == 0.5f);
   CHECK(result.value().roughnessFactor == 0.25f);
+}
+
+// Real, disclosed regression coverage (found during Plan 0023's own
+// final review): a non-"round" float value (one std::to_string(float)'s
+// fixed 6-decimal-place formatting does NOT round-trip exactly, unlike
+// every other value this test file's own literals happen to use) --
+// this would have failed with MetadataArtifactMismatch against
+// serializeMaterialMetadata()'s own former std::to_string()-based
+// formatting (metadata.cpp's own text round-trip loses precision;
+// load_material.cpp's own exact-equality artifact-vs-metadata check
+// then spuriously rejects a legitimately, self-consistently cooked
+// material), proving the fix (std::to_chars(), a shortest-round-trip
+// guarantee) is real, not merely decorative.
+TEST_CASE("loadMaterialAsset round-trips a metallic_factor value that std::to_string(float) would NOT preserve "
+          "through the metadata sidecar's own text encoding",
+          "[asset_system][material]") {
+  TempDirGuard dir("pbr_precise_float_roundtrip");
+  const fs::path sourcePath = dir.path / "pbr_precise.material.txt";
+  writeFile(sourcePath,
+            "atlantis_material_source_version: 2\n"
+            "kind: pbr_direct_lit\n"
+            "texture: textures/textured_quad_source_srgb.png\n"
+            "filter: linear\n"
+            "address_mode: repeat\n"
+            "base_color_factor: 1.0 1.0 1.0 1.0\n"
+            "metallic_factor: 0.123456789\n"
+            "roughness_factor: 0.333333333\n");
+  const fs::path artifactPath = dir.path / "pbr_precise.amaterial";
+  const fs::path metadataPath = dir.path / "pbr_precise.amaterial.meta.txt";
+  const auto cookResult = cookMaterial(sourcePath.string(), "materials/pbr_precise.material.txt",
+                                        artifactPath.string(), metadataPath.string());
+  REQUIRE(cookResult.isOk());
+
+  const auto result = loadMaterialAsset(artifactPath, metadataPath);
+  REQUIRE(result.isOk());
+  // The exact float32 nearest to the source text's own decimal literal
+  // -- confirms the metadata sidecar's own round-trip preserved the
+  // precise bit pattern, not merely "close enough".
+  float expectedMetallic = 0.0f;
+  const std::string_view metallicText = "0.123456789";
+  std::from_chars(metallicText.data(), metallicText.data() + metallicText.size(), expectedMetallic);
+  float expectedRoughness = 0.0f;
+  const std::string_view roughnessText = "0.333333333";
+  std::from_chars(roughnessText.data(), roughnessText.data() + roughnessText.size(), expectedRoughness);
+  CHECK(result.value().metallicFactor == expectedMetallic);
+  CHECK(result.value().roughnessFactor == expectedRoughness);
 }
 
 TEST_CASE("loadMaterialAsset detects a metadata/artifact mismatch scoped to metallicFactor alone",
