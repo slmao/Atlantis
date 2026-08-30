@@ -1,9 +1,31 @@
 # Plan: PBR Material Foundation (Direct Lighting)
 
 - **Spec:** [specs/0023-pbr-material-foundation.md](../specs/0023-pbr-material-foundation.md)
-  (`Approved`)
-- **Status:** In Review
+  (`Approved`, carrying its own "Accepted Correction — 2026-08-30"
+  for D9's own push-constant-layout discriminator, implemented in
+  Milestone 5 below)
+- **Status:** Approved / Ready for Implementation
 - **Author:** slmao
+- **Human Review Approval (2026-08-30):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
+  git-identified maintainer) on 2026-08-30, following one final,
+  targeted review round that closed a real implementability gap in
+  this Plan's own original Milestone 5 (its own "keyed off the bound
+  `Material`'s own `pipeline().pushConstantSizeBytes()`" language named
+  a mechanism that does not exist, per Spec 0023's own Accepted
+  Correction), corrected Milestone 3's own RHI/Vulkan-Backend boundary
+  wording and added a required fragment-stage push-constant check
+  specific to `pbr-direct-lit`, moved `PbrBaseColorTextureNotSrgb`'s
+  own error domain from Milestone 1 (Asset System) to Milestone 5
+  (Runtime), and closed real touch-point gaps in Milestone 6 (reusing
+  the already-declared `textured_quad_srgb` texture asset, confirming
+  `AssetId` uniqueness, and completing the scene's own
+  `TEXTURE_DEPENDENCIES` declaration) and Milestones 7–9 (mutation
+  tests as temporary, reverted probes; the golden bootstrap's own
+  clean-commit — not `main`-merge — requirement; an explicit stop
+  condition restated in Milestone 9 itself). **This approval authorizes
+  Implementation of this Plan only once its own Implementation PR has
+  merged — not before.**
 
 ## Objective
 
@@ -26,9 +48,16 @@ already settled.
 `roughnessFactor` (ADR-0066 items 1–4); `MaterialKind::PbrDirectLit`
 added to the closed enum; artifact schema version bumped, decode-
 rejects any size other than 56 (ADR-0066 item 3's own byte table);
-cook/decode dual range validation (item 5); new error enumerators for
-out-of-range factors and (Milestone 5's own consumer)
-`PbrBaseColorTextureNotSrgb`.
+cook/decode dual range validation, new `BaseColorFactorOutOfRange`/
+`MaterialFactorOutOfRange`-shaped error enumerators (item 5). **Error
+domain stays strictly Asset-System-scoped:** every enumerator this
+Milestone adds belongs to `CookError`/`TextureLoadError`-shaped
+enumerations already owned by `atlantis_asset_system` and covers only
+this module's own parameter/source/artifact failure modes — it names no
+Runtime or RHI type and depends on neither.
+`PbrBaseColorTextureNotSrgb` is **not** part of this Milestone — it is
+a Runtime-side scene-load error, added in Milestone 5 (below), never an
+Asset System concept.
 
 - `src/asset_system/include/atlantis/asset_system/material_types.h`,
   `material_source.h`, `material_artifact.h`, `material_metadata.h`
@@ -94,6 +123,14 @@ Per ADR-0067 D-3/D-4: a new, `alignas(16)` `PbrPushConstants` (96
 bytes, explicit tail pad at offset 88); every Pipeline's own
 `VkPushConstantRange::stageFlags` uniformly widened to `VERTEX |
 FRAGMENT` — one, unconditional change, not gated by `MaterialKind`.
+**This `stageFlags` change is a Vulkan-Backend-*private* implementation
+change, not an RHI API widening** — it lives entirely inside
+`vulkan_device.cpp`/`vulkan_command_list.cpp` (Vulkan Backend), never
+touching `src/rhi/include/`'s own public headers; `CommandList::
+pushConstant(const void*, std::size_t)`'s own public signature,
+`Pipeline`'s own opaque public shape, and every other RHI public type
+are byte-for-byte unchanged — confirmed by Verification Checklist item
+9 below, which this Milestone must keep passing.
 
 - `src/vulkan_backend/src/vulkan_device.cpp:1035-1045`
   (`createPipeline()`'s push-constant-range `stageFlags`)
@@ -108,19 +145,33 @@ FRAGMENT` — one, unconditional change, not gated by `MaterialKind`.
   (uniform + combined sampler)
 - `src/tools/shader_compiler/compile_and_validate.cpp`: a new
   `"pbr-direct-lit"` branch in `validateDescriptorContractForStage()`
-  (`:134-143`); `validatePushConstantsForVertexStage()` (`:168-178`,
-  today hardcoded to `{offset:0, size:64}`) becomes contract-aware — a
-  new expected-size parameter/branch so `pbr-direct-lit` expects
-  `{offset:0, size:96}` while the other three contracts keep `64`,
-  every existing call site's own expectation unchanged
+  (`:134-143`) — the existing `"minimal-renderer"`/`"textured-material"`/
+  `"lit-textured"` branches, and their own `64`-byte descriptor shapes,
+  are unmodified. `validatePushConstantsForVertexStage()`
+  (`:168-178`, today hardcoded to `{offset:0, size:64}`, vertex-stage
+  only) becomes contract-aware for its own existing vertex-only check —
+  `pbr-direct-lit` expects `{offset:0, size:96}` there, the other three
+  contracts keep `64`, unchanged. **A second, new check, specific to
+  `pbr-direct-lit` only:** because `PbrDirectLit`'s own fragment stage
+  genuinely reads push-constant data (unlike `UnlitTextured`/
+  `LitTextured`, where a fragment-stage `pushConstantBuffer` reflection
+  entry is the already-documented "stray, harmless, unread" case,
+  ADR-0067 D-4), this Milestone adds a fragment-stage push-constant
+  check exercised only for `pbr-direct-lit` — confirming the fragment
+  stage's own reflected range is *also* `{offset:0, size:96}`, matching
+  the vertex stage's own value exactly. The three existing contracts are
+  not given this second check (their own fragment-stage push-constant
+  reflection stays the documented, deliberately-unvalidated stray case).
 - `src/tools/shader_compiler/main.cpp:67`: usage string's own
   `--expected-contract=<name>` documentation updated to name the new
   value
 
-**Atomic:** the RHI stage-flags widening, the new push-constant struct,
-and the shader-compiler's own updated validation land together — a
-build where the compiler accepts a 96-byte block but the RHI still
-creates a 64-byte range (or vice versa) is never checked in.
+**Atomic:** the Vulkan-Backend-private `stageFlags` widening, the new
+push-constant struct, and the shader-compiler's own updated validation
+(both the vertex-stage size branch and the new `pbr-direct-lit`-only
+fragment-stage check) land together — a build where the compiler
+accepts a 96-byte block on one stage but not the other, or where the
+Vulkan Backend still creates a 64-byte range, is never checked in.
 
 ### Milestone 4 — `pbr_direct_lit.slang` shader source and CMake wiring
 
@@ -140,15 +191,17 @@ shape.
   matching `lit_textured`'s own unconditional placement (`:95`) — this
   shader is production, built-in content, not test-only
 
-### Milestone 5 — `MaterialKind::PbrDirectLit` dispatch, Runtime realization/rebuild, `Material`'s new PBR fields
+### Milestone 5 — `MaterialKind::PbrDirectLit` dispatch, Runtime realization/rebuild, `Material`'s new PBR fields and layout discriminator
 
-Per Spec 0023 D9/D11: `selectShaderPair()` gains a third, closed-switch
-arm; `Material` gains three new, `const`, constructor-set fields
-(`baseColorFactor`/`metallicFactor`/`roughnessFactor`) mirroring
-`sampledTexture_`/`sampler_`'s own shape; `DrawItem` unchanged; PBR
-params flow from `MaterialAssetData` through `createMaterial()` into
-`Material`'s new fields and are read by `Renderer::drawFrame()`'s
-existing per-`DrawItem` loop when building the push-constant payload.
+Per Spec 0023 D9 (as revised by its own **Accepted Correction —
+2026-08-30**) and D11: `selectShaderPair()` gains a third, closed-switch
+arm; `Material` gains a `MaterialPushConstantLayout` discriminator plus
+three new PBR parameter values; `DrawItem` unchanged; PBR params flow
+from `MaterialAssetData` through `createMaterial()` into `Material`'s
+new fields and are read by `Renderer::drawFrame()`'s existing
+per-`DrawItem` loop when building the push-constant payload. This
+Milestone implements the Accepted Correction's own recommendation
+exactly — no further design choice is left to Implementation:
 
 - `src/runtime/include/atlantis/runtime/bootstrap_config.h`: new
   `pbrDirectLitVertexShaderReflectionPath`/`...FragmentShaderReflectionPath`,
@@ -164,25 +217,67 @@ existing per-`DrawItem` loop when building the push-constant payload.
   widened to also pass the PBR triple
 - `src/runtime/include/atlantis/runtime/material_realization.h`,
   `src/runtime/src/material_realization.cpp`: `selectShaderPair()`
-  (`:100-115`) gains the `PbrDirectLit` arm;
+  (`:100-115`) gains the `PbrDirectLit` arm, no `default:` label
+  (C4062-protected, `/w14062`/`/WX`);
   `realizeOneMaterialCandidate()` (`:119-183`) passes
-  `pushConstantSizeBytes = 96` only for this kind and forwards
-  `materialData`'s three new fields into `createMaterial()`
+  `pushConstantSizeBytes = 96` and
+  `MaterialPushConstantLayout::PbrDirectLit` only for this kind (every
+  other kind passes `pushConstantSizeBytes = 64` and
+  `MaterialPushConstantLayout::ObjectToWorldOnly`, unchanged from
+  today), forwards `materialData`'s three PBR fields into
+  `createMaterial()`, and — for this kind only — resolves and checks
+  the material's own texture `colorSpace == Srgb`, failing with a new
+  `RuntimeInitError::PbrBaseColorTextureNotSrgb` sub-code on mismatch
+  (ADR-0066 item 6). **Error domain, precisely:** this new enumerator
+  belongs to `RuntimeInitError` (Runtime's own existing error type,
+  `src/runtime/include/atlantis/runtime/runtime_application.h`'s own
+  enum), added as one new arm to Runtime's own existing error-handling
+  switch(es)/tests — never an Asset System type, and never depended on
+  by Asset System (Milestone 1's own scope stays untouched).
 - `src/renderer/include/atlantis/renderer/material.h`,
-  `src/renderer/src/material.cpp`: three new fields/accessors on
-  `Material`, `createMaterial()`'s own signature widened (optional
-  parameters, defaulting to inert values so every existing call site
-  compiles unchanged)
+  `src/renderer/src/material.cpp`: implements the Accepted Correction's
+  own exact shape —
+  ```cpp
+  enum class MaterialPushConstantLayout { ObjectToWorldOnly, PbrDirectLit };
+  ```
+  a new, required (non-defaulted) constructor parameter of this type;
+  four new `[[nodiscard]] ... const noexcept` accessors
+  (`pushConstantLayout()`, `baseColorFactor()`, `metallicFactor()`,
+  `roughnessFactor()`); four new **plain, non-`const`** private value
+  members (`MaterialPushConstantLayout pushConstantLayout_;
+  std::array<float, 4> baseColorFactor_{1,1,1,1}; float
+  metallicFactor_ = 1.0f; float roughnessFactor_ = 1.0f;`), each set
+  exactly once in the constructor's own initializer list and never
+  reassigned anywhere else — "immutable" by encapsulation (no setter),
+  never by a `const`-qualified member, preserving `Material`'s own
+  existing `= default` move-constructor/move-assignment operator
+  exactly as today (a `const` member would silently delete it — the
+  real defect this Correction closed). Every existing call site
+  (`UnlitTextured`/`LitTextured`'s own two `createMaterial()` calls in
+  `material_realization.cpp`) passes
+  `MaterialPushConstantLayout::ObjectToWorldOnly` explicitly — never
+  inferred, matching the Correction's own explicit prohibition on
+  value-based inference.
 - `src/renderer/src/renderer.cpp:27-41`: the existing per-`DrawItem`
-  loop's `pushConstant()` call widened to build either the existing
-  64-byte payload or the new 96-byte payload, keyed off the bound
-  `Material`'s own `pipeline().pushConstantSizeBytes()` (or an
-  equivalent already-available signal) — never a new `DrawItem` field
-  (D10)
+  loop's own single `pushConstant()` call site is replaced by an
+  exhaustive `switch (item.material->pushConstantLayout())` with **no
+  `default:` label** (this repository's own `/w14062`/`/WX` already
+  makes a missed case a compile error, exercised here exactly as
+  `selectShaderPair()`'s own switch already exercises it) —
+  `MaterialPushConstantLayout::ObjectToWorldOnly` builds and pushes the
+  existing, byte-identical 64-byte `objectToWorld`-only payload;
+  `MaterialPushConstantLayout::PbrDirectLit` builds and pushes the new
+  96-byte payload (`objectToWorld` + `baseColorFactor()` +
+  `metallicFactor()` + `roughnessFactor()` + explicit tail pad,
+  ADR-0067 D-3's own exact layout) — both calling the existing,
+  unmodified `CommandList::pushConstant(const void*, std::size_t)`.
+  Never a new `DrawItem` field (D10, reaffirmed).
 
-**Atomic:** the dispatch arm, the Runtime loading/plumbing, and
-`Material`'s new fields land together — `selectShaderPair()` gaining a
-case with no corresponding Runtime member to load from, or vice versa,
+**Atomic:** the dispatch arm, the Runtime loading/plumbing, `Material`'s
+new discriminator/fields, and `Renderer::drawFrame()`'s own new
+exhaustive switch land together — `selectShaderPair()` gaining a case
+with no corresponding Runtime member to load from, `Material` gaining
+fields with no Renderer-side switch arm to consume them, or vice versa,
 is never checked in.
 
 ### Milestone 6 — Sphere mesh, PBR material assets, validation scene
@@ -194,20 +289,58 @@ assets spanning dielectric/metallic × rough/smooth; one new,
 asymmetric four-node scene reusing the one sphere mesh via four
 transforms.
 
+**Real texture dependency, confirmed, not assumed:** `assets/CMakeLists.txt:87-94`
+already declares `textured_quad_srgb` (`SOURCE
+textures/textured_quad_source_srgb.png`, `COLOR_SPACE Srgb`) — an
+already-cooked, already-`Rgba8Srgb` texture asset, today consumed only
+by Spec 0016's own isolated color-space GPU test fixture, never by a
+production Material. This Milestone reuses it for all four new PBR
+materials — **no new texture PNG and no new `atlantis_add_texture_asset()`
+call** — each material's own `atlantis_add_material_asset(...)`
+declaration passes `TEXTURE textured_quad_srgb` (the exact single-value
+argument name `unlit_textured_quad`'s own real declaration already
+uses, `assets/CMakeLists.txt:131-139`); Runtime's own existing
+`textureResourceMap_` (`AssetId`-keyed, ADR-0060 Decision 10) dedups the
+one real GPU `SampledTexture` across all four materials automatically —
+no new dedup logic needed.
+
+**`AssetId` uniqueness, confirmed, not assumed:** every Asset System
+`AssetId` is computed from an asset's own normalized *logical path*
+(`computeAssetId(normalizeLogicalPath(...))`, unchanged by this Plan) —
+never from content. The one new mesh (`pbr_sphere`) and each of the
+four new materials (`pbr_dielectric_rough`/`pbr_dielectric_smooth`/
+`pbr_metallic_rough`/`pbr_metallic_smooth`) each get their own distinct
+`NAME`/`SOURCE` logical path, so each gets a distinct `AssetId` by
+construction — no collision is possible under the existing mechanism,
+confirmed by this same, already-relied-upon property every other
+multi-asset scene in this codebase (`world_scene`, `material_demo`)
+already depends on.
+
 - `assets/meshes/pbr_sphere.mesh.txt` (new — exact topology/attribute/
   winding/pole requirements per Spec 0023 D16 detail)
 - `assets/materials/pbr_dielectric_rough.material.txt`,
   `pbr_dielectric_smooth.material.txt`, `pbr_metallic_rough.material.txt`,
-  `pbr_metallic_smooth.material.txt` (new — each referencing one
-  `Rgba8Srgb`-cooked base-color texture)
+  `pbr_metallic_smooth.material.txt` (new — `kind: pbr_direct_lit`,
+  `texture: textures/textured_quad_source_srgb.png`, each authoring its
+  own distinct `metallic_factor`/`roughness_factor` pair spanning the
+  four corners; `base_color_factor` left at its own default unless a
+  real, disclosed reason to vary it is found during Implementation)
 - `assets/scenes/pbr_material_demo.scene.txt` (new — four sphere
-  nodes, one Directional + one Point light, asymmetric layout per D17)
+  nodes, one Directional + one Point light, asymmetric layout per D17;
+  never wired into `atlantis_runtime`'s own `BootstrapConfig`, matching
+  `material_demo_scene`'s/`lighting_demo_scene`'s own identical
+  precedent — verification-only, consumed by Milestone 8's own new
+  fixture)
 - `assets/CMakeLists.txt`: `atlantis_add_static_mesh_asset()` for the
   sphere (mirroring `:17-20`'s own `minimal_cube` call);
-  `atlantis_add_material_asset()` ×4 (mirroring `:131-139`'s own
-  pattern); `atlantis_add_scene_asset()` for the new scene, with
-  `MESH_DEPENDENCIES pbr_sphere` and `MATERIAL_DEPENDENCIES` naming all
-  four
+  `atlantis_add_material_asset(... TEXTURE textured_quad_srgb)` ×4
+  (mirroring `:131-139`'s own exact pattern); one
+  `atlantis_add_scene_asset()` for the new scene, with
+  `MESH_DEPENDENCIES pbr_sphere`, `MATERIAL_DEPENDENCIES` naming all
+  four materials, and `TEXTURE_DEPENDENCIES textured_quad_srgb`
+  (mirroring `material_demo_scene`'s/`lighting_demo_scene`'s own
+  complete three-argument shape, `:150-155`) — no dependency argument
+  omitted
 
 ### Milestone 7 — New tests
 
@@ -236,7 +369,13 @@ transforms.
   (Spec 0023 D17 detail — `metallicFactor` forced to 0,
   `roughnessFactor` forced constant, camera-position sign flipped,
   Fresnel blend disabled, Point attenuation bypassed — each confirmed
-  to make its own test assertion or golden comparison actually fail)
+  to make its own test assertion or golden comparison actually fail).
+  **Each mutation is a temporary, reversible verification probe, never
+  committed code:** applied locally, its own failure confirmed, then
+  fully reverted before the corresponding real test/fixture is
+  committed — matching Plan 0022's own "three temporary mutation
+  probes... reverted, working tree left clean" precedent exactly; the
+  Implementation PR's own final diff contains no trace of any mutation.
 - **Spec 0021 regression:** existing N=2/N=6 tests
   (`tests/runtime/material_realization_gpu_tests.cpp`) re-run
   unmodified; one new case substituting a `PbrDirectLit` material into
@@ -263,17 +402,29 @@ transforms.
 This milestone lands and passes its own real-pixel comparison-cycle
 self-consistency check (ADR-0042's own bootstrap evidence requirement)
 **before** Milestone 9's own golden files exist — no golden PNG/sidecar
-is part of this commit.
+is part of this commit. **Does not require first merging into
+`main`:** ADR-0042's own "Source revision, precisely" requirement is a
+*clean, already-committed working tree* at capture time — an
+Implementation branch's own real, clean commit satisfies this exactly
+as a `main` commit would; the golden's own sidecar records whatever
+commit hash was actually clean at capture time, per ADR-0042 verbatim.
 
 ### Milestone 9 — New PBR golden (separate commit, ADR-0042 bootstrap)
 
 `tests/image_regression/goldens/pbr_material_demo/pbr_material_demo_512x512_rgba8unorm.png`
-+ sidecar. Captured against the clean commit Milestone 8 lands on;
-human-reviewed per Spec 0023 D17/ADR-0067 D-6's own binding
-visual-distinguishability condition (the four corner cases must be
-confirmed distinguishable under the existing clamp-only contract — see
-"Risks" below for the disclosed stop condition if they are not); landed
-in its own commit, never folded into Milestone 8's.
++ sidecar. Captured against the clean commit Milestone 8 lands on
+(Implementation's own branch, not necessarily `main` yet — see
+Milestone 8 above); human-reviewed per Spec 0023 D17/ADR-0067 D-6's own
+binding visual-distinguishability condition; landed in its own commit,
+never folded into Milestone 8's. **Explicit stop condition, restated
+here, not only in Risks below:** if the four corner cases
+(dielectric/metallic × rough/smooth) are not visually distinguishable
+from one another under the existing clamp-only output contract, this
+Milestone does not land — no golden is captured, accepted, cropped,
+re-lit, or otherwise adjusted to mask the problem. Implementation stops
+and reports back; per Spec 0023's own D14/Risks, the correct next step
+is a dedicated Output Transfer Function Spec, never a local,
+`PbrDirectLit`-only patch.
 
 ## Files / Modules Touched (expected)
 
@@ -300,13 +451,16 @@ M1 → M2/M3 (independent of each other) → M4 (needs M2's field names,
 M3's contract) → M5 (needs M1's schema, M3's push-constant size, M4's
 compiled shader) → M6 (needs M1's material grammar, M5's kind) → M7
 (needs M1–M6 all in place) → M8 (needs M5/M6) → M9 (needs M8 on a
-clean, already-merged commit — never the same commit).
+clean, already-committed commit — not necessarily merged into `main`,
+per Milestone 8's own note — but never the same commit as M8's own).
 
 The five atomic groupings this Plan does not split across commits:
 M1 (schema + full migration); M2 (buffer layout + its own independent
-assertion); M3 (push-constant struct + RHI widening + shader-compiler
-contract); M5 (dispatch + Runtime plumbing + `Material`'s new fields);
-M8/M9 (fixture-then-golden, strictly separate commits, never combined).
+assertion); M3 (push-constant struct + Vulkan-Backend-private
+`stageFlags` widening + shader-compiler contract — no RHI public API
+change); M5 (dispatch + Runtime plumbing + `Material`'s new
+discriminator/fields + `Renderer`'s new exhaustive switch); M8/M9
+(fixture-then-golden, strictly separate commits, never combined).
 
 ## Verification Checklist
 
@@ -336,12 +490,18 @@ M8/M9 (fixture-then-golden, strictly separate commits, never combined).
 7. [ ] `ATLANTIS_BUILD_TESTS=OFF` configure+build produces a working
    `atlantis_runtime.exe` with zero test executables, re-cooking every
    asset (including the new sphere/materials/scene) successfully.
-8. [ ] C4062 (`/w14062`/`/WX`): `selectShaderPair()`'s closed switch
-   confirmed to fail to compile if a case is omitted.
+8. [ ] C4062 (`/w14062`/`/WX`): both `selectShaderPair()`'s own
+   `MaterialKind` switch and `Renderer::drawFrame()`'s own new
+   `MaterialPushConstantLayout` switch (Milestone 5) confirmed to fail
+   to compile if a case is omitted from either.
 9. [ ] Module/link graph: `Atlantis::AssetSystem` still links
    `Atlantis::Core` only; `Atlantis::RHI`'s public API confirmed
-   unchanged in shape (no new type/field/method) beyond `Material`'s
-   three new accessors.
+   byte-for-byte unchanged (no new type/field/method — the Milestone 3
+   `stageFlags` widening is Vulkan-Backend-private, not an RHI change);
+   `Atlantis::Renderer`'s own public API gains exactly four new
+   `Material` accessors (`pushConstantLayout()`, `baseColorFactor()`,
+   `metallicFactor()`, `roughnessFactor()` — corrected from an earlier
+   count of three, Spec 0023's own Accepted Correction).
 10. [ ] `git diff --check` clean on the final Implementation diff.
 
 ## Rollback Plan
