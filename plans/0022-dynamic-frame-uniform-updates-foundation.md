@@ -987,3 +987,78 @@ new thread/lock/dependency/platform code) were re-verified against real
 diffs and real test runs immediately before opening
 [PR #106](https://github.com/slmao/Atlantis/pull/106), not merely
 asserted from memory.
+
+## Post-Merge Status Update (2026-08-30)
+
+**Merged via [PR #106](https://github.com/slmao/Atlantis/pull/106).**
+This section is purely additive — the "Human Review Approval" note, the
+"Implementation Status Update" section above (including its own
+mid-implementation deviation disclosures and the retraction of an
+intermediate, incorrect `textured_quad_gpu_tests.cpp` failure claim), and
+every Milestone/decision recorded above them are left unedited, matching
+this repository's own established post-merge status-update convention
+(e.g. Plan 0021's own "Post-Merge Status Update").
+
+A centralized final review round, conducted on PR #106 itself before
+merge, re-verified the implementation from scratch against real diffs
+and real test runs (not test-pass inference alone) and found and fixed
+four further, real, mechanical issues, all within this Plan's own
+already-approved scope — see the PR's own commit history for the full,
+itemized record:
+
+1. **Independent byte-layout cross-check.** Test files had used the same
+   `sizeof(float) * 32` literal expression as production for the
+   Camera/Lighting boundary offset — self-certifying, not independent.
+   Both `tests/image_regression/lighting_demo_gpu_tests.cpp` and
+   `tests/runtime/runtime_smoke_gpu_tests.cpp` now derive the offset from
+   first principles (two 4x4 float matrices) as a local `constexpr`,
+   cross-checked via `static_assert` against both the literal `128` and
+   production's own expression, and against the shared `Buffer`'s own
+   real 304-byte total size — a real drift would now fail to *compile*.
+2. **Precise error-mode documentation.** `extractFrameLightingData()`
+   has two categorically different failure modes — a genuine
+   `Result`-based `Err`, and a fail-fast `ATLANTIS_CHECK_MSG` abort that
+   is not a `Result` at all in production. `runtime_application.cpp`'s
+   own comment now states both precisely.
+3. **Test isolation.** Two color-shift dynamic Lighting tests had boosted
+   intensity alongside the color mutation, muddying which single
+   property each test isolated; the intensity boost was removed and both
+   tests re-confirmed to still pass on the color signal alone.
+4. **Strengthened the windowed dynamic-Lighting test's own safety
+   comment** with the precise host/device concurrency argument:
+   `HOST_COHERENT` alone does not settle read/read concurrency (only
+   write visibility) — the test only ever reads `cameraBuffer_`'s bytes
+   after `runFrame()` has returned, never writes them, so at worst it is
+   a host read concurrent with a possibly-still-executing GPU read of the
+   identical bytes, never a data race, needing no new synchronization.
+
+All four fixes were verified via three temporary mutation probes (each
+applied, confirmed the corresponding test genuinely failed without the
+real mutation, then reverted — no probe code merged), confirming the new
+dynamic tests are genuinely discriminating, not vacuously passing.
+
+**Also corrected on this same review round:** the Implementation Status
+Update's own intermediate disclosure that `textured_quad_gpu_tests.cpp`
+had a pre-existing, unrelated failure was itself found to be a false
+alarm — an artifact of invoking the test binary directly from the wrong
+working directory during ad hoc verification, not a real bug. The full
+suite (all five golden families, including `textured_quad`) passes
+cleanly when run correctly (matching exactly how `ctest` itself invokes
+every test). No code or test change was needed for this correction —
+only the documentation record itself, already reflected above.
+
+**Final, as-built verification, re-executed after all of this round's
+fixes (unchanged from the Implementation Status Update's own numbers
+above, confirming the fixes introduced zero regression):** fresh Debug
+and Release builds clean; `ctest -LE gpu` 761/761 Debug, 760/760
+Release; `ctest -L gpu` 62/62 both configurations; zero Vulkan
+Validation Layers hits across full verbose GPU test output, both
+configurations; a fresh `ATLANTIS_BUILD_TESTS=OFF` configure+build
+produced a working `atlantis_runtime.exe` with zero test executables;
+`git diff --stat` against `src/rhi/`, `src/vulkan_backend/`, every
+`CMakeLists.txt`, `adr/`, and `tests/image_regression/goldens/` all
+empty; the full `atlantis_image_regression_gpu_tests.exe` suite (all
+five golden families, run from its own directory) passed 35/35 test
+cases, 2570/2570 assertions; Spec 0018 format-change and Spec 0021
+descriptor-pool (N=6) regression suites re-run individually, both
+passing; `git diff --check` clean; working tree clean.

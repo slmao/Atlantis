@@ -1394,6 +1394,95 @@ milestone being listed does not authorize starting it — see Section 1.
   than this ceiling allows remains a real, dedicated-future-Spec-worthy
   finding, not solved here.
 
+### Milestone 19 — Dynamic Frame Uniform Updates Foundation
+
+- **Governance state:** **`Approved` Spec (corrected design), `Approved /
+  Ready for Implementation` Plan. Implemented and merged via
+  [PR #106](https://github.com/slmao/Atlantis/pull/106) (2026-08-30)** —
+  [specs/0022-dynamic-frame-uniform-updates-foundation.md](../specs/0022-dynamic-frame-uniform-updates-foundation.md),
+  [plans/0022-dynamic-frame-uniform-updates-foundation.md](../plans/0022-dynamic-frame-uniform-updates-foundation.md).
+  This Spec's own first draft proposed a new RHI synchronization method
+  to close what it believed was a real, currently-shipped Camera/
+  Lighting write-timing race; a pre-drafting governance gate for this
+  Plan found that claim false — `VulkanPresentation::acquireNextTarget()`
+  already contains an unconditional, pre-existing drain
+  (`waitAndReleaseRetainedSubmission()`, itself already public, added
+  during Plan 0006's own post-implementation GPU testing for an
+  unrelated hazard) that closes it on the windowed path — and the Spec
+  was corrected before approval to a substantially narrower design.
+  [ADR-0065](../adr/0065-explicit-pre-write-submission-drain-for-frame-uniform-safety.md),
+  which would have recorded that new RHI method, is `Rejected` — its own
+  Decision was never implemented; it is not a current architectural
+  decision and must not be read as one. Human-directed, drafted ahead of
+  Android Platform (Candidate Backlog Section B, Candidate Order 1,
+  unaffected) and ahead of Shadow/PBR/IBL/Post-processing.
+- **Scope delivered:** Spec 0019's own disclosed "captured once, never
+  updated again" Lighting limitation is closed. `RuntimeApplication::lightingDataCaptured_`
+  and `LightingDemoFixture::lightingDataCaptured` (a distinct, fixture-
+  local flag backing its own now-superseded static-snapshot negative
+  test, replaced with its positive counterpart) are both removed. Every
+  successful windowed frame now re-extracts and republishes the complete
+  176-byte `FrameLightingData` from `World`'s live state, at the exact
+  call point already safe without any new synchronization primitive —
+  downstream of `VulkanPresentation::acquireNextTarget()`'s own
+  pre-existing Step 0 drain and `world_->updateTransforms()` (both
+  unmoved, unchanged), before `Renderer::drawFrame()`. `World::setLight()`,
+  a Light's own local `Transform`, a parent's `Transform`, and Light
+  entity creation/removal are all reflected on the next successful
+  frame — `World::updateTransforms()` already refreshed every entity's
+  own cached world matrix unconditionally, every frame, before this
+  point; only the one-time capture guard around reading the result was
+  removed. The Camera(128-byte)/Lighting(176-byte) = 304-byte shared
+  Buffer layout is unchanged. Zero RHI/Renderer/Material public API
+  change; zero new synchronization primitive; zero new file, module, or
+  third-party dependency.
+- **Verified:** ten new dynamic multi-cycle `TEST_CASE`s were added
+  against the same, single `LightingDemoFixture` (never a second, forked
+  fixture) — Directional/Point Light direction, color, intensity,
+  position/attenuation, a light's own local `Transform`, a parent's
+  `Transform` plus `setParent()`, entity creation, entity destruction
+  (with the freed payload slot confirmed zeroed), and same-frame multiple
+  mutations resolving to final-value semantics — each isolating one real
+  property, with independently-reasoned expected directions/magnitudes,
+  confirmed genuinely discriminating via temporary mutation probes during
+  final review (each correctly failed without its own real mutation, then
+  reverted). The existing windowed smoke test was extended (never
+  duplicated into a second windowed lifecycle, which was found during
+  development to trip a real, pre-existing, unrelated same-process
+  multiple-window Platform limitation) with real byte-level proof —
+  reading `cameraBuffer_`'s own real bytes after a genuine second/third
+  `runFrame()` call — directly against `RuntimeApplication` itself, via
+  one new accessor on the already-existing `RuntimeSmokeTestAccess`
+  test-only friend, never a new friend pattern or public API. Offscreen
+  multi-cycle verification reuses the exact same submit-then-`waitIdle()`
+  safety boundary this codebase's own existing multi-cycle GPU tests
+  already establish — no new pattern. Fresh Debug/Release builds clean;
+  `ctest -LE gpu` 761/761 Debug, 760/760 Release; `ctest -L gpu` 62/62
+  both configurations, zero Vulkan Validation Layers hits across full
+  verbose GPU test output; a fresh `ATLANTIS_BUILD_TESTS=OFF`
+  configure+build produced a working `atlantis_runtime.exe` with zero
+  test executables; all five existing goldens (`minimal_cube`,
+  `world_scene`, `textured_quad`, `material_demo`, `lighting_demo`)
+  confirmed byte-for-byte unchanged and pixel-zero-difference — no golden
+  was regenerated, since this Milestone changes zero static rendered
+  pixels; a centralized final review round found and fixed four
+  mechanical issues (an independent, first-principles cross-check for
+  the shared 128/176/304-byte layout, replacing test code that had
+  shared production's own literal expression; precise documentation of
+  `extractFrameLightingData()`'s two distinct failure modes; two color
+  tests' own variable-isolation tightened; a strengthened host/device
+  concurrency argument for the new windowed accessor) — none changing
+  scope, the container/algorithm, or any public API. See
+  [plans/0022-dynamic-frame-uniform-updates-foundation.md](../plans/0022-dynamic-frame-uniform-updates-foundation.md)'s
+  own "Implementation Status Update" for the full record.
+- **Not implemented:** PBR Material, Shadow, IBL, or Post-processing (all
+  explicitly deferred, unrelated to this Milestone's own scope); a ring
+  buffer, staging-copy, or any other multi-frame-in-flight uniform
+  model (Plan 0006's single-frame-in-flight baseline is untouched, not
+  revisited); bindless rendering or descriptor indexing; a general-
+  purpose GPU upload scheduler; Android/iOS/Linux implementation; any
+  Editor/Client-facing API.
+
 ### Further candidate phases (directional only, no Spec, no ADR)
 
 The following are named only to communicate long-term direction drawn
