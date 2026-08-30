@@ -32,6 +32,32 @@ constexpr float kDegenerateLengthEpsilon = 1e-6f;  // this codebase's own scenes
   return {v.x / len, v.y / len, v.z / len};
 }
 
+// Plan 0023 Milestone 7: small Vec3 arithmetic helpers, added alongside
+// length()/cross()/dot()/normalize() above -- computePbrDirectLighting()'s
+// own BRDF math (ADR-0067 D-1) is significantly more component-wise
+// arithmetic than computeLambertianDiffuse()'s, so these keep it
+// readable without introducing operator overloads Vec3 itself does not
+// declare.
+[[nodiscard]] Vec3 vecAdd(const Vec3& a, const Vec3& b) {
+  return {a.x + b.x, a.y + b.y, a.z + b.z};
+}
+
+[[nodiscard]] Vec3 vecSub(const Vec3& a, const Vec3& b) {
+  return {a.x - b.x, a.y - b.y, a.z - b.z};
+}
+
+[[nodiscard]] Vec3 vecScale(const Vec3& v, float s) {
+  return {v.x * s, v.y * s, v.z * s};
+}
+
+[[nodiscard]] Vec3 vecMul(const Vec3& a, const Vec3& b) {
+  return {a.x * b.x, a.y * b.y, a.z * b.z};
+}
+
+[[nodiscard]] Vec3 vecLerp(const Vec3& a, const Vec3& b, float t) {
+  return vecAdd(vecScale(a, 1.0f - t), vecScale(b, t));
+}
+
 }  // namespace
 
 Mat4 identityMatrix() {
@@ -321,6 +347,79 @@ Vec3 computeLambertianDiffuse(const Vec3& worldPosition, const Vec3& worldNormal
     accumulated.x += pl.color[0] * pl.intensity * ndotl * atten;
     accumulated.y += pl.color[1] * pl.intensity * ndotl * atten;
     accumulated.z += pl.color[2] * pl.intensity * ndotl * atten;
+  }
+
+  return accumulated;
+}
+
+// Plan 0023 Milestone 7 (ADR-0067 D-1/D-2): a direct, line-for-line C++
+// transcription of pbr_direct_lit.slang's own fragmentMain() BRDF
+// accumulation loop -- see this function's own header comment for the
+// full contract (texture sampling/final clamp are the caller's own
+// concern, matching computeLambertianDiffuse()'s own convention).
+Vec3 computePbrDirectLighting(const Vec3& worldPosition, const Vec3& worldNormal, const Vec3& cameraWorldPosition,
+                               const Vec3& baseColor, float metallicFactor, float roughnessFactor,
+                               const FrameLightingData& lighting) {
+  const float metallic = std::clamp(metallicFactor, 0.0f, 1.0f);
+  const float roughness = std::clamp(roughnessFactor, 0.0f, 1.0f);
+  const float alpha = std::max(roughness * roughness, kMinAlpha);
+  const Vec3 F0 = vecLerp(Vec3{0.04f, 0.04f, 0.04f}, baseColor, metallic);
+  const Vec3 diffuseColor = vecScale(baseColor, 1.0f - metallic);
+
+  const Vec3 N = normalize(worldNormal, length(worldNormal));
+  const Vec3 toCamera = vecSub(cameraWorldPosition, worldPosition);
+  const Vec3 V = normalize(toCamera, length(toCamera));
+  Vec3 accumulated{0.0f, 0.0f, 0.0f};  // no ambient term, matching every other MaterialKind
+
+  // Shared per-light BRDF terms -- one lambda, called identically from
+  // both loops below, matching pbr_direct_lit.slang's own duplication
+  // of this same block per light kind (never factored into a shared
+  // Slang function either, D-1's own pseudocode shape).
+  const auto accumulateLight = [&](const Vec3& L, const Vec3& radiance) {
+    const float NdotL = std::max(dot(N, L), 0.0f);
+    if (NdotL <= 0.0f) return;  // branch, not a trailing multiply -- D/G/F can independently produce NaN
+
+    const float NdotV = std::max(dot(N, V), kMinDot);
+    const Vec3 H = normalize(vecAdd(L, V), length(vecAdd(L, V)));
+    const float NdotH = std::max(dot(N, H), 0.0f);
+    const float VdotH = std::max(dot(V, H), 0.0f);
+
+    const float D = (alpha * alpha) / (kPi * std::pow(NdotH * NdotH * (alpha * alpha - 1.0f) + 1.0f, 2.0f));
+
+    // Karis's own DIRECT-LIGHTING remap, using roughness directly --
+    // never alpha (alpha/2 is his IBL remap, not used here).
+    const float k = (roughness + 1.0f) * (roughness + 1.0f) / 8.0f;
+    const float G1V = NdotV / (NdotV * (1.0f - k) + k);
+    const float G1L = NdotL / (NdotL * (1.0f - k) + k);
+    const float G = G1V * G1L;
+
+    const Vec3 F = vecAdd(F0, vecScale(vecSub(Vec3{1.0f, 1.0f, 1.0f}, F0), std::pow(1.0f - VdotH, 5.0f)));
+
+    const float specularScalar = (D * G) / std::max(4.0f * NdotV * NdotL, kMinDot);
+    const Vec3 specular = vecScale(F, specularScalar);
+    const Vec3 kD = vecScale(vecSub(Vec3{1.0f, 1.0f, 1.0f}, F), 1.0f - metallic);
+
+    const Vec3 diffuseTerm = vecScale(vecMul(kD, diffuseColor), 1.0f / kPi);
+    const Vec3 lightContribution = vecScale(vecMul(vecAdd(diffuseTerm, specular), radiance), NdotL);
+    accumulated = vecAdd(accumulated, lightContribution);
+  };
+
+  for (std::uint32_t i = 0; i < lighting.directionalLightCount; ++i) {
+    const FrameLightingData::DirectionalLightGpu& dl = lighting.directionalLights[i];
+    const Vec3 L{-dl.direction[0], -dl.direction[1], -dl.direction[2]};
+    const Vec3 radiance = vecScale(Vec3{dl.color[0], dl.color[1], dl.color[2]}, dl.intensity);
+    accumulateLight(L, radiance);
+  }
+
+  for (std::uint32_t j = 0; j < lighting.pointLightCount; ++j) {
+    const FrameLightingData::PointLightGpu& pl = lighting.pointLights[j];
+    const Vec3 toLight{pl.position[0] - worldPosition.x, pl.position[1] - worldPosition.y,
+                        pl.position[2] - worldPosition.z};
+    const float dist = std::max(length(toLight), kPointLightDistanceEpsilon);
+    const Vec3 L = normalize(toLight, dist);
+    const float atten = std::clamp(1.0f - dist / pl.range, 0.0f, 1.0f);
+    const Vec3 radiance = vecScale(Vec3{pl.color[0], pl.color[1], pl.color[2]}, pl.intensity * atten);
+    accumulateLight(L, radiance);
   }
 
   return accumulated;

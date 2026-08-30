@@ -9,6 +9,7 @@ add_executable(atlantis_runtime_tests
   scene_extraction_tests.cpp
   scene_manifest_tests.cpp
   scene_load_tests.cpp
+  pbr_reflection_cross_check_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_tests
@@ -17,6 +18,22 @@ target_link_libraries(atlantis_runtime_tests
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )
+
+# Plan 0023 Milestone 7: pbr_reflection_cross_check_tests.cpp's own
+# GPU-independent cross-check needs (1) the already-built, always-fresh
+# pbr_direct_lit.vert/frag.refl.json artifacts (ATLANTIS's own
+# transformed schema -- for the PbrPushConstants push-constant-range
+# check) and (2) a real slangc invocation of its own against the
+# CURRENT pbr_direct_lit.slang source (for the 320-byte camera-buffer
+# check, whose own field-level struct layout ATLANTIS's transformed
+# schema does not retain, ADR-0030's own scope) -- never a stale,
+# committed golden JSON for either.
+target_compile_definitions(atlantis_runtime_tests PRIVATE
+  ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  ATLANTIS_SLANGC_EXECUTABLE="${ATLANTIS_SLANGC_EXECUTABLE}"
+  ATLANTIS_PBR_DIRECT_LIT_SLANG_SOURCE="${CMAKE_SOURCE_DIR}/shaders/pbr_direct_lit/pbr_direct_lit.slang"
+)
+add_dependencies(atlantis_runtime_tests pbr_direct_lit_shaders)
 
 catch_discover_tests(atlantis_runtime_tests DISCOVERY_MODE PRE_TEST)
 
@@ -29,6 +46,7 @@ catch_discover_tests(atlantis_runtime_tests DISCOVERY_MODE PRE_TEST)
 add_executable(atlantis_runtime_gpu_tests
   runtime_smoke_gpu_tests.cpp
   material_realization_gpu_tests.cpp
+  pbr_render_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_gpu_tests

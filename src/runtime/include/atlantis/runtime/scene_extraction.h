@@ -188,6 +188,16 @@ struct LightExtractionInput {
 // descriptor_contract.h's own identical class of disclosed duplication.
 inline constexpr float kPointLightDistanceEpsilon = 1e-4f;
 
+// Plan 0023 Milestone 7 (ADR-0067 D-1/D-2): the one, single C++-side
+// definitions -- see shaders/pbr_direct_lit/pbr_direct_lit.slang's own
+// identical `static const` declarations (Milestone 4), second,
+// independent, hand-kept-in-sync literals, matching
+// kPointLightDistanceEpsilon's own identical, already-disclosed
+// single-source-of-truth risk above.
+inline constexpr float kPi = 3.14159265358979323846f;
+inline constexpr float kMinAlpha = 1e-3f;
+inline constexpr float kMinDot = 1e-4f;
+
 // A direct, line-for-line C++ transcription of lit_textured.slang's own
 // fragmentMain() accumulation loop (P11) -- literal formula parity is
 // the entire point of this function's own existence, verified by
@@ -198,6 +208,25 @@ inline constexpr float kPointLightDistanceEpsilon = 1e-4f;
 // parallel lighting implementation this codebase now has to keep
 // working.
 [[nodiscard]] Vec3 computeLambertianDiffuse(const Vec3& worldPosition, const Vec3& worldNormal,
+                                             const FrameLightingData& lighting);
+
+// Plan 0023 Milestone 7 (ADR-0067 D-1/D-2): a direct, line-for-line C++
+// transcription of pbr_direct_lit.slang's own fragmentMain() BRDF
+// accumulation loop -- literal formula parity is the entire point of
+// this function's own existence, independently verified by hand-
+// computed-expected-value unit tests, never by calling the shader's own
+// compiled output or sharing any helper with it. Mirrors
+// computeLambertianDiffuse()'s own established convention exactly:
+// texture sampling and the final clamp are NOT part of this function
+// (the caller's own concern) -- baseColor is already
+// texColor.rgb * baseColorFactor.rgb, matching the shader's own
+// pre-accumulation step; this returns only the accumulated
+// per-fragment lighting contribution, unclamped. Never called by any
+// real rendering path -- test-and-verification-only, like
+// computeLambertianDiffuse() itself.
+[[nodiscard]] Vec3 computePbrDirectLighting(const Vec3& worldPosition, const Vec3& worldNormal,
+                                             const Vec3& cameraWorldPosition, const Vec3& baseColor,
+                                             float metallicFactor, float roughnessFactor,
                                              const FrameLightingData& lighting);
 
 // Moved out of runtime_application.cpp's own anonymous namespace (where
