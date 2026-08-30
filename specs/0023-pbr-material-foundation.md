@@ -3,8 +3,9 @@
 - **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-08-30
-- **Related Plan(s):** none yet — this Spec's own Human Review Approval
-  authorizes drafting a Plan only, not any Implementation.
+- **Related Plan(s):** [plans/0023-pbr-material-foundation.md](../plans/0023-pbr-material-foundation.md)
+  (`In Review`) — this Spec's own Human Review Approval authorizes
+  drafting this Plan only, not any Implementation.
 - **Related ADR(s):**
   [ADR-0066](../adr/0066-pbr-material-asset-parameter-set-and-color-space-contract.md)
   (`Accepted` — Material asset parameter set, artifact schema,
