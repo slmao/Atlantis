@@ -449,11 +449,12 @@ public API; the one real RHI-internal change is the existing uniform
 binding's own Vulkan `stageFlags` widening from vertex-only to
 vertex-and-fragment (one value, one line,
 [ADR-0062](../../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)).
-**No runtime light-update capability of any kind:** a `World::setLight()`
-call after that one-time capture changes `World`'s own CPU state only —
-it is never reflected in a rendered frame without a full scene reload,
-proven by a real, executed reverse test comparing the published GPU
-buffer bytes bit-for-bit before and after. A new `lit_textured` shader
+**Disclosed, real, pre-existing limitation found and not fixed by this
+Spec: no runtime light-update capability of any kind** — a
+`World::setLight()` call after that one-time capture changed `World`'s
+own CPU state only, never reflected in a rendered frame without a full
+scene reload. **Fixed by Dynamic Frame Uniform Updates Foundation,
+below.** A new `lit_textured` shader
 pair applies exact Lambertian diffuse shading against the real,
 Spec-0020-sourced per-vertex normal, gated by a conformal-transform
 check that affects only `LitTextured`-bound entities, never the unlit
@@ -496,6 +497,34 @@ descriptor set belongs to," only the value threaded into it changed.
 deliberate, disclosed limit, not bindless rendering, not descriptor
 indexing, and not unbounded material support** — a future scene
 genuinely needing more remains its own, dedicated future finding.
+
+**Dynamic Frame Uniform Updates Foundation (Spec 0022, corrected design,
+implemented and merged via [PR #106](https://github.com/slmao/Atlantis/pull/106)):**
+closes Lighting Foundation's own disclosed "no runtime light-update
+capability" limitation above. `RuntimeApplication`'s own one-time-capture
+guard (`lightingDataCaptured_`) is removed; the complete 176-byte
+`FrameLightingData` is re-extracted from `World`'s live state and
+republished every successful frame, at the exact call point already safe
+without any new synchronization primitive or RHI API — this Spec's own
+first draft proposed adding one, believing a real Camera/Lighting
+write-timing race existed on the windowed path; a pre-drafting Plan
+governance gate found that belief false (`VulkanPresentation::acquireNextTarget()`
+already contains an unconditional, pre-existing drain, added during Plan
+0006's own post-implementation GPU testing for an unrelated hazard, that
+already closes it), and the Spec was corrected to this narrower design
+before approval. `World::setLight()`, a Light's own local/parent
+`Transform`, and Light entity creation/removal are all reflected on the
+next successful frame — `World::updateTransforms()` already refreshed
+every entity's own cached world matrix unconditionally, every frame,
+before this point; only the guard around reading the result was removed.
+The Camera(128-byte)/Lighting(176-byte) = 304-byte shared Buffer layout,
+the existing uniform binding's own stage visibility, and every other
+Spec 0019 decision are unchanged. Zero RHI/Renderer/Material public API
+change; zero new synchronization primitive.
+[ADR-0065](../../adr/0065-explicit-pre-write-submission-drain-for-frame-uniform-safety.md),
+which would have recorded the originally-proposed new RHI method, is
+`Rejected` — its own Decision was never implemented and must not be read
+as a current architectural decision.
 
 **Extension points:** a rename-stable GUID identity scheme and a real
 derived-data cache are each named, explicitly out-of-scope future work

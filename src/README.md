@@ -539,16 +539,29 @@ merged via [PR #88](https://github.com/slmao/Atlantis/pull/88). A
 second `MaterialKind`, `LitTextured`, dispatched through one shared,
 C4062-guarded `selectShaderPair()` helper both `realizeOneMaterialCandidate()`
 and `rebuildMaterialsForFormatChange()` call identically, plus a
-one-time-captured, 176-byte `FrameLightingData` snapshot written into
-the existing camera `Buffer`'s own tail bytes (widened 128 → 304 bytes)
-exactly once per session, immediately after `World::updateTransforms()`
-first runs — never re-captured, never updated by a later
-`World::setLight()` call — implemented per
+176-byte `FrameLightingData` payload written into the existing camera
+`Buffer`'s own tail bytes (widened 128 → 304 bytes) — implemented per
 [specs/0019-lighting-foundation.md](../specs/0019-lighting-foundation.md),
 [plans/0019-lighting-foundation.md](../plans/0019-lighting-foundation.md),
 and
 [ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md)–[ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md),
-merged via [PR #96](https://github.com/slmao/Atlantis/pull/96).
+merged via [PR #96](https://github.com/slmao/Atlantis/pull/96). That
+payload's own original one-time-per-session capture (never re-captured,
+never updated by a later `World::setLight()` call) has since been fixed:
+it is now re-extracted from `World`'s live state and republished every
+successful frame — `World::setLight()`, a Light's own local/parent
+`Transform`, and Light entity creation/removal are all reflected on the
+next successful frame — via
+[specs/0022-dynamic-frame-uniform-updates-foundation.md](../specs/0022-dynamic-frame-uniform-updates-foundation.md),
+[plans/0022-dynamic-frame-uniform-updates-foundation.md](../plans/0022-dynamic-frame-uniform-updates-foundation.md),
+merged via [PR #106](https://github.com/slmao/Atlantis/pull/106), with
+zero RHI/Renderer/Material public API change and zero new
+synchronization primitive — a first-draft proposal for a new RHI wait
+method
+([ADR-0065](../adr/0065-explicit-pre-write-submission-drain-for-frame-uniform-safety.md))
+was found unnecessary during that Spec's own governance gate and was
+never implemented; `ADR-0065` is `Rejected`, not a current architectural
+decision.
 See
 [docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md)
 for the full public/private boundary statement.
