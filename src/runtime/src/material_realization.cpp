@@ -109,6 +109,18 @@ struct ShaderPairRef {
       return {&unlitTexturedVertexInputLayout, &unlitTexturedVertexSpirv, &unlitTexturedFragmentSpirv};
     case atlantis::asset_system::MaterialKind::LitTextured:
       return {&litTexturedVertexInputLayout, &litTexturedVertexSpirv, &litTexturedFragmentSpirv};
+    case atlantis::asset_system::MaterialKind::PbrDirectLit:
+      // Plan 0023 Milestone 1 bootstrap only: MaterialKind::PbrDirectLit
+      // exists as of this commit (Asset System schema), but this
+      // function's own signature is not yet widened with the PBR shader
+      // triple -- that is Milestone 5's own real scope. No real content
+      // in this codebase can cook/load a PbrDirectLit-kind Material yet
+      // (Milestone 6 authors the first one), so this arm is genuinely
+      // unreachable today -- an honest, fail-fast placeholder satisfying
+      // this switch's own C4062 exhaustiveness requirement, never a
+      // silent wrong-shader fallback.
+      ATLANTIS_CHECK_MSG(false, "selectShaderPair(): PbrDirectLit not yet wired -- Plan 0023 Milestone 5");
+      return {&unlitTexturedVertexInputLayout, &unlitTexturedVertexSpirv, &unlitTexturedFragmentSpirv};
   }
   ATLANTIS_CHECK_MSG(false, "selectShaderPair(): unreachable -- MaterialKind's own closed switch above is exhaustive");
   return {&unlitTexturedVertexInputLayout, &unlitTexturedVertexSpirv, &unlitTexturedFragmentSpirv};  // never reached

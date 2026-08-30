@@ -1,5 +1,6 @@
 #include <atlantis/asset_system/material_source.h>
 
+#include <charconv>
 #include <cstddef>
 #include <vector>
 
@@ -7,14 +8,18 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_material_source_version: 1";
+constexpr std::string_view kVersionLine = "atlantis_material_source_version: 2";
 constexpr std::string_view kKindPrefix = "kind: ";
 constexpr std::string_view kTexturePrefix = "texture: ";
 constexpr std::string_view kFilterPrefix = "filter: ";
 constexpr std::string_view kAddressModePrefix = "address_mode: ";
+constexpr std::string_view kBaseColorFactorPrefix = "base_color_factor: ";
+constexpr std::string_view kMetallicFactorPrefix = "metallic_factor: ";
+constexpr std::string_view kRoughnessFactorPrefix = "roughness_factor: ";
 
 constexpr std::string_view kKindUnlitTextured = "unlit_textured";
 constexpr std::string_view kKindLitTextured = "lit_textured";
+constexpr std::string_view kKindPbrDirectLit = "pbr_direct_lit";
 constexpr std::string_view kFilterNearest = "nearest";
 constexpr std::string_view kFilterLinear = "linear";
 constexpr std::string_view kAddressModeRepeat = "repeat";
@@ -48,6 +53,27 @@ constexpr std::string_view kAddressModeClampToEdge = "clamp_to_edge";
   return true;
 }
 
+// Duplicated from mesh_source.cpp's own identical helpers (Plan 0023
+// Milestone 1), matching this file's own established "duplicated, not
+// shared" precedent for this class of helper.
+[[nodiscard]] std::vector<std::string_view> splitOnSpace(std::string_view s) {
+  std::vector<std::string_view> tokens;
+  std::size_t start = 0;
+  for (std::size_t i = 0; i <= s.size(); ++i) {
+    if (i == s.size() || s[i] == ' ') {
+      tokens.push_back(s.substr(start, i - start));
+      start = i + 1;
+    }
+  }
+  return tokens;
+}
+
+[[nodiscard]] bool parseFloatToken(std::string_view token, float& out) {
+  if (token.empty()) return false;
+  const auto result = std::from_chars(token.data(), token.data() + token.size(), out, std::chars_format::general);
+  return result.ec == std::errc{} && result.ptr == token.data() + token.size();
+}
+
 }  // namespace
 
 atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSource(std::string_view text) {
@@ -55,9 +81,17 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
 
   const std::vector<std::string_view> lines = splitLines(text);
 
-  constexpr std::size_t kExpectedLineCount = 5;
-  if (lines.size() < kExpectedLineCount) return ResultT::Err(MaterialSourceParseError::MissingField);
-  if (lines.size() > kExpectedLineCount) return ResultT::Err(MaterialSourceParseError::TrailingContent);
+  // Plan 0023 Milestone 1 (ADR-0066 item 2): version-2 grammar is either
+  // exactly 5 lines (the three new numeric fields absent, defaults
+  // apply) or exactly 8 lines (all three present, fixed order) -- no
+  // partial subset, no dual-version reader.
+  constexpr std::size_t kMinLineCount = 5;
+  constexpr std::size_t kMaxLineCount = 8;
+  if (lines.size() < kMinLineCount) return ResultT::Err(MaterialSourceParseError::MissingField);
+  if (lines.size() > kMaxLineCount) return ResultT::Err(MaterialSourceParseError::TrailingContent);
+  if (lines.size() != kMinLineCount && lines.size() != kMaxLineCount) {
+    return ResultT::Err(MaterialSourceParseError::TrailingContent);
+  }
 
   if (lines[0] != kVersionLine) return ResultT::Err(MaterialSourceParseError::UnknownSourceVersion);
 
@@ -69,6 +103,8 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
     parsed.kind = MaterialKind::UnlitTextured;
   } else if (value == kKindLitTextured) {
     parsed.kind = MaterialKind::LitTextured;
+  } else if (value == kKindPbrDirectLit) {
+    parsed.kind = MaterialKind::PbrDirectLit;
   } else {
     return ResultT::Err(MaterialSourceParseError::UnknownKind);
   }
@@ -97,6 +133,31 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
     return ResultT::Err(MaterialSourceParseError::UnknownAddressMode);
   }
 
+  if (lines.size() == kMaxLineCount) {
+    if (!matchField(lines[5], kBaseColorFactorPrefix, value)) {
+      return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+    }
+    const std::vector<std::string_view> baseColorTokens = splitOnSpace(value);
+    if (baseColorTokens.size() != 4) return ResultT::Err(MaterialSourceParseError::MalformedNumber);
+    for (std::size_t i = 0; i < 4; ++i) {
+      if (!parseFloatToken(baseColorTokens[i], parsed.baseColorFactor[i])) {
+        return ResultT::Err(MaterialSourceParseError::MalformedNumber);
+      }
+    }
+
+    if (!matchField(lines[6], kMetallicFactorPrefix, value)) {
+      return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+    }
+    if (!parseFloatToken(value, parsed.metallicFactor)) return ResultT::Err(MaterialSourceParseError::MalformedNumber);
+
+    if (!matchField(lines[7], kRoughnessFactorPrefix, value)) {
+      return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+    }
+    if (!parseFloatToken(value, parsed.roughnessFactor)) {
+      return ResultT::Err(MaterialSourceParseError::MalformedNumber);
+    }
+  }
+
   return ResultT::Ok(std::move(parsed));
 }
 
@@ -105,11 +166,15 @@ std::string serializeMaterialSource(const ParsedMaterialSource& source) {
   out += kVersionLine;
   out += '\n';
   out += kKindPrefix;
-  // Plan 0019 P5: MaterialKind is a closed, two-enumerator vocabulary
-  // now (ADR-0061 Decision 3) -- selected by source.kind, not hardcoded
-  // to the single value this file's own first-draft precedent (ADR-0059
-  // D2/D15, exactly one enumerator at the time) previously assumed.
-  out += (source.kind == MaterialKind::UnlitTextured ? kKindUnlitTextured : kKindLitTextured);
+  // Plan 0023 Milestone 1: MaterialKind is a closed, three-enumerator
+  // vocabulary now (ADR-0066 item 1) -- selected by source.kind.
+  if (source.kind == MaterialKind::UnlitTextured) {
+    out += kKindUnlitTextured;
+  } else if (source.kind == MaterialKind::LitTextured) {
+    out += kKindLitTextured;
+  } else {
+    out += kKindPbrDirectLit;
+  }
   out += '\n';
   out += kTexturePrefix;
   out += source.textureLogicalPath;
@@ -119,6 +184,23 @@ std::string serializeMaterialSource(const ParsedMaterialSource& source) {
   out += '\n';
   out += kAddressModePrefix;
   out += (source.addressMode == MaterialSamplerAddressMode::Repeat ? kAddressModeRepeat : kAddressModeClampToEdge);
+  out += '\n';
+  // Plan 0023 Milestone 1: the three new numeric fields are always
+  // serialized (round-trip testing exercises the 8-line form
+  // exclusively; the 5-line, defaults-only form is exercised only by
+  // parseMaterialSource() directly against a literal, never produced by
+  // this function).
+  out += kBaseColorFactorPrefix;
+  for (std::size_t i = 0; i < 4; ++i) {
+    if (i != 0) out += ' ';
+    out += std::to_string(source.baseColorFactor[i]);
+  }
+  out += '\n';
+  out += kMetallicFactorPrefix;
+  out += std::to_string(source.metallicFactor);
+  out += '\n';
+  out += kRoughnessFactorPrefix;
+  out += std::to_string(source.roughnessFactor);
   out += '\n';
   return out;
 }

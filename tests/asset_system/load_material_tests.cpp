@@ -40,7 +40,7 @@ void writeFile(const fs::path& path, const std::string& content) {
 }
 
 constexpr std::string_view kValidSource =
-    "atlantis_material_source_version: 1\n"
+    "atlantis_material_source_version: 2\n"
     "kind: unlit_textured\n"
     "texture: textures/textured_quad_source_unorm.png\n"
     "filter: linear\n"
@@ -70,6 +70,77 @@ TEST_CASE("loadMaterialAsset loads a well-formed artifact/metadata pair", "[asse
   CHECK(result.value().textureAsset == computeAssetId("textures/textured_quad_source_unorm.png"));
   CHECK(result.value().filter == MaterialSamplerFilter::Linear);
   CHECK(result.value().addressMode == MaterialSamplerAddressMode::Repeat);
+  CHECK(result.value().baseColorFactor[0] == 1.0f);
+  CHECK(result.value().metallicFactor == 1.0f);
+  CHECK(result.value().roughnessFactor == 1.0f);
+}
+
+TEST_CASE("loadMaterialAsset loads a well-formed PbrDirectLit material with its own PBR parameters",
+          "[asset_system][material]") {
+  TempDirGuard dir("pbr_success");
+  const fs::path sourcePath = dir.path / "pbr_dielectric_rough.material.txt";
+  writeFile(sourcePath,
+            "atlantis_material_source_version: 2\n"
+            "kind: pbr_direct_lit\n"
+            "texture: textures/textured_quad_source_srgb.png\n"
+            "filter: linear\n"
+            "address_mode: repeat\n"
+            "base_color_factor: 0.8 0.2 0.1 1.0\n"
+            "metallic_factor: 0.5\n"
+            "roughness_factor: 0.25\n");
+  const fs::path artifactPath = dir.path / "pbr_dielectric_rough.amaterial";
+  const fs::path metadataPath = dir.path / "pbr_dielectric_rough.amaterial.meta.txt";
+  const auto cookResult = cookMaterial(sourcePath.string(), "materials/pbr_dielectric_rough.material.txt",
+                                        artifactPath.string(), metadataPath.string());
+  REQUIRE(cookResult.isOk());
+
+  const auto result = loadMaterialAsset(artifactPath, metadataPath);
+  REQUIRE(result.isOk());
+  CHECK(result.value().kind == MaterialKind::PbrDirectLit);
+  CHECK(result.value().baseColorFactor[0] == 0.8f);
+  CHECK(result.value().baseColorFactor[1] == 0.2f);
+  CHECK(result.value().baseColorFactor[2] == 0.1f);
+  CHECK(result.value().baseColorFactor[3] == 1.0f);
+  CHECK(result.value().metallicFactor == 0.5f);
+  CHECK(result.value().roughnessFactor == 0.25f);
+}
+
+TEST_CASE("loadMaterialAsset detects a metadata/artifact mismatch scoped to metallicFactor alone",
+          "[asset_system][material]") {
+  TempDirGuard dir("metallic_mismatch");
+  const fs::path sourcePath = dir.path / "pbr.material.txt";
+  writeFile(sourcePath,
+            "atlantis_material_source_version: 2\n"
+            "kind: pbr_direct_lit\n"
+            "texture: textures/textured_quad_source_srgb.png\n"
+            "filter: linear\n"
+            "address_mode: repeat\n"
+            "base_color_factor: 1.0 1.0 1.0 1.0\n"
+            "metallic_factor: 0.5\n"
+            "roughness_factor: 0.25\n");
+  const fs::path artifactPath = dir.path / "pbr.amaterial";
+  const fs::path metadataPath = dir.path / "pbr.amaterial.meta.txt";
+  const auto cookResult = cookMaterial(sourcePath.string(), "materials/pbr.material.txt", artifactPath.string(),
+                                        metadataPath.string());
+  REQUIRE(cookResult.isOk());
+
+  std::string metadataText;
+  {
+    std::ifstream in(metadataPath, std::ios::binary);
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    metadataText = buffer.str();
+  }
+  const std::string oldLine = "metallic_factor: 0.500000";
+  const std::string newLine = "metallic_factor: 0.750000";
+  const auto pos = metadataText.find(oldLine);
+  REQUIRE(pos != std::string::npos);
+  metadataText.replace(pos, oldLine.size(), newLine);
+  writeFile(metadataPath, metadataText);
+
+  const auto result = loadMaterialAsset(artifactPath, metadataPath);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == MaterialLoadError::MetadataArtifactMismatch);
 }
 
 TEST_CASE("loadMaterialAsset fails when the artifact file does not exist", "[asset_system][material]") {
@@ -121,7 +192,7 @@ TEST_CASE("loadMaterialAsset detects a deliberate artifact/metadata mismatch", "
   // now disagrees with the artifact's own decoded texture_asset_id.
   const fs::path otherSourcePath = dir.path / "other.material.txt";
   writeFile(otherSourcePath,
-            "atlantis_material_source_version: 1\n"
+            "atlantis_material_source_version: 2\n"
             "kind: unlit_textured\n"
             "texture: textures/other.png\n"
             "filter: linear\n"

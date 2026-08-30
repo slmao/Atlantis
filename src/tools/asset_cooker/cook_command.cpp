@@ -308,6 +308,10 @@ constexpr std::string_view kMaterialAuthoringExtension = ".material.txt";
       return "logical path invalid";
     case atlantis::asset_system::MaterialCookError::AtomicWriteFailed:
       return "atomic write failed";
+    case atlantis::asset_system::MaterialCookError::BaseColorFactorOutOfRange:
+      return "base_color_factor component out of range (must be finite, in [0, 1])";
+    case atlantis::asset_system::MaterialCookError::MaterialFactorOutOfRange:
+      return "metallic_factor/roughness_factor out of range (must be finite, in [0, 1])";
   }
   return "unknown material cook error";
 }
