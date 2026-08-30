@@ -1,23 +1,32 @@
 # Spec: PBR Material Foundation (Direct Lighting)
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-08-30
-- **Related Plan(s):** none yet — this Spec's own Human Review Approval,
-  once recorded, authorizes drafting a Plan only, not any Implementation.
+- **Related Plan(s):** none yet — this Spec's own Human Review Approval
+  authorizes drafting a Plan only, not any Implementation.
 - **Related ADR(s):**
   [ADR-0066](../adr/0066-pbr-material-asset-parameter-set-and-color-space-contract.md)
-  (`Proposed` — Material asset parameter set, artifact schema,
+  (`Accepted` — Material asset parameter set, artifact schema,
   base-color texture color-space contract) and
   [ADR-0067](../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)
-  (`Proposed` — exact BRDF, push-constant extension, rendering
+  (`Accepted` — exact BRDF, push-constant extension, rendering
   contract), deliberately two single-responsibility ADRs. A third,
   real piece — extending the shared Camera/Lighting uniform buffer
-  with a camera world-space position — is recorded as a **Proposed
+  with a camera world-space position — is recorded as an **Accepted
   Amendment to
   [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)**
   (the ADR that already owns that buffer's layout), not a third ADR
-  and not folded into ADR-0067. None of the three is yet accepted.
+  and not folded into ADR-0067.
+- **Human Review Approval (2026-08-30):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
+  git-identified maintainer) on 2026-08-30, accepting this document's
+  own "Decisions for Human Review" (D1–D25) in full, as recorded in
+  commit `0fc6a14`. Accepting ADR-0066 and ADR-0067 (`Proposed` →
+  `Accepted`) and ADR-0062's own Amendment (`Proposed Amendment` →
+  `Accepted Amendment`, that ADR's own top-level Status unchanged at
+  `Accepted`) in the same pass. **This approval authorizes drafting
+  Plan 0023 only, once this PR merges — not any Implementation.**
 
 ## Summary
 
@@ -154,10 +163,10 @@ new subsystem, resource type, or binding.
 
 ## Architectural Impact
 
-**Yes** — three decisions, kept apart: **ADR-0066** (`Proposed` — Asset
+**Yes** — three decisions, kept apart: **ADR-0066** (`Accepted` — Asset
 System data-format/validation, no Vulkan content); **ADR-0067**
-(`Proposed` — RHI/rendering-math, no Asset System content); **ADR-0062's
-own Proposed Amendment** (extends its already-`Accepted` buffer layout
+(`Accepted` — RHI/rendering-math, no Asset System content); **ADR-0062's
+own Accepted Amendment** (extends its already-`Accepted` buffer layout
 by 16 tail bytes, recorded there because that ADR already owns the
 decision — not folded into ADR-0067). Matches this codebase's own "one
 ADR, one responsibility" and amendment-over-new-ADR conventions
@@ -285,9 +294,9 @@ display/output transform remain separate, unimplemented future work
 - **The Schlick-GGX vs. height-correlated Smith choice** (ADR-0067
   Alternatives) remains a legitimate, revisitable judgment call, not
   blocking this Spec's own approval.
-- **ADR-0062's own Amendment is not yet accepted** — this Spec, ADR-0066,
-  ADR-0067, and that Amendment must all be accepted together for
-  Plan-drafting to proceed; none is independently sufficient.
+- **ADR-0062's own Amendment required acceptance alongside this Spec,
+  ADR-0066, and ADR-0067** for Plan-drafting to proceed — all four were
+  accepted together in this Spec's own Human Review Approval above.
 
 ## Out of Scope / Future Work
 

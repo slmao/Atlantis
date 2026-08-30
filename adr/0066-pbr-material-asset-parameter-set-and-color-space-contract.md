@@ -1,12 +1,17 @@
 # ADR 0066: PBR Material Asset — Parameter Set, Artifact Schema, and Base-Color Texture Color-Space Contract
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-30
-- **Deciders:** slmao — pending Human Review as part of
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-30 as part of
   [specs/0023-pbr-material-foundation.md](../specs/0023-pbr-material-foundation.md)'s
   own Human Review Approval.
 - **Related Spec:** [specs/0023-pbr-material-foundation.md](../specs/0023-pbr-material-foundation.md)
-  (`In Review`)
+  (`Approved`)
+- **Acceptance Record (2026-08-30):** Accepted by Human Review as part
+  of Spec 0023's own Human Review Approval (2026-08-30, commit
+  `0fc6a14`). Does not change this ADR's own Decision, Consequences, or
+  Alternatives Considered above.
 - **Related ADR(s):**
   [ADR-0059](0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)
   (`Accepted` — extends `MaterialAssetData`'s field set and the

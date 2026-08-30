@@ -1,24 +1,31 @@
 # ADR 0067: PBR Direct-Lighting BRDF, Push-Constant Extension, and Rendering Contract
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-30
-- **Deciders:** slmao — pending Human Review as part of
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
+  approved 2026-08-30 as part of
   [specs/0023-pbr-material-foundation.md](../specs/0023-pbr-material-foundation.md)'s
   own Human Review Approval.
 - **Related Spec:** [specs/0023-pbr-material-foundation.md](../specs/0023-pbr-material-foundation.md)
-  (`In Review`)
+  (`Approved`)
+- **Acceptance Record (2026-08-30):** Accepted by Human Review as part
+  of Spec 0023's own Human Review Approval (2026-08-30, commit
+  `0fc6a14`), in the same pass as ADR-0062's own Amendment below (not
+  independently approvable without it — see this ADR's own
+  Consequences). Does not change this ADR's own Decision, Consequences,
+  or Alternatives Considered above.
 - **Related ADR(s):**
   [ADR-0025](0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)
   (`Accepted` — states Vulkan's own guaranteed minimum push-constant
   capacity, 128 bytes across all stages, which this ADR's own layout is
   sized against),
   [ADR-0062](0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)
-  (`Accepted`, carrying its own **Proposed Amendment — 2026-08-30**,
-  not yet accepted — that Amendment is the sole authoritative source
-  for the shared Camera/Lighting/CameraWorldPosition buffer layout;
-  this ADR only summarizes and links it, never redefines it),
+  (`Accepted`, carrying its own **Accepted Amendment — 2026-08-30**,
+  the sole authoritative source for the shared Camera/Lighting/
+  CameraWorldPosition buffer layout; this ADR only summarizes and links
+  it, never redefines it),
   [ADR-0066](0066-pbr-material-asset-parameter-set-and-color-space-contract.md)
-  (`Proposed` — the three parameter fields this ADR consumes).
+  (`Accepted` — the three parameter fields this ADR consumes).
 
 ## Context
 

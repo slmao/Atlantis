@@ -209,13 +209,24 @@ vertex to fragment stage anywhere in this codebase yet.
   entities are expected to be common — a real, disclosed, open
   alternative, not foreclosed by this ADR.
 
-## Proposed Amendment — 2026-08-30
+## Accepted Amendment — 2026-08-30
 
 **Status:** proposed during [Spec 0023](../specs/0023-pbr-material-foundation.md)
-(`In Review`)'s own drafting/review; **not yet accepted — pending Human
-Review alongside Spec 0023 and ADR-0067.** Does not change this ADR's
-own top-level Status (`Accepted`) or any text above, which is preserved
-verbatim.
+(`Approved`)'s own drafting/review. **Formally accepted by Human Review
+on 2026-08-30** — see "Human Review — Amendment Acceptance (2026-08-30)"
+immediately below. Does not change this ADR's own top-level Status
+(`Accepted`) or any text above, which is preserved verbatim.
+
+### Human Review — Amendment Acceptance (2026-08-30)
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-08-30, as part of Spec 0023's own Human Review
+Approval (commit `0fc6a14`), in the same pass as
+[ADR-0067](0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)
+(`Proposed` → `Accepted`) — the two were not independently approvable.
+The amendment below is accepted exactly as specified, bounded by its
+own two explicit conditions. No further Human Review is pending for
+this amendment.
 
 **What it does.** `PbrDirectLit` needs the camera's own world-space
 position, which this buffer does not carry. This amendment authorizes
