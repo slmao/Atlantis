@@ -20,14 +20,31 @@ constexpr atlantis::rhi::ClearColorValue kBackgroundClearColor{0.05f, 0.05f, 0.0
 
 void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& colorTarget,
                           atlantis::rhi::Texture& depthTarget, atlantis::rhi::Buffer& cameraUniformBuffer,
-                          std::span<const DrawItem> drawItems, atlantis::rhi::ResourceState finalColorState) {
+                          std::span<const DrawItem> drawItems, atlantis::rhi::ResourceState finalColorState,
+                          atlantis::rhi::HdrColorTarget& hdrColorTarget,
+                          atlantis::rhi::Buffer& fullscreenTriangleVertexBuffer,
+                          atlantis::rhi::Buffer& fullscreenTriangleIndexBuffer,
+                          atlantis::rhi::Pipeline& outputTransformPipeline,
+                          atlantis::rhi::Sampler& outputTransformSampler) {
   atlantis::render_graph::RenderGraphBuilder builder;
-  const auto colorResource = builder.declareResource("color");
+  // Plan 0024 Milestone 5 (ADR-0068 D-1/D-3): the existing single "draw"
+  // pass now writes hdrResource (the scene-referred linear HDR
+  // intermediate) instead of the caller's final colorTarget directly --
+  // its own DrawItem loop below is otherwise byte-for-byte unchanged. A
+  // new "output_transform" pass reads hdrResource (ShaderRead) and
+  // writes finalColorResource -- the caller's real, final colorTarget.
+  // Both passes are declared, compiled, and executed by this same,
+  // single builder/compile()/execute() call -- no second CommandList,
+  // no ad hoc submit; Renderer still never calls Device::submit()/
+  // Presentation::present() itself.
+  const auto hdrResource = builder.declareResource("hdr_color");
   const auto depthResource = builder.declareResource("depth");
-  const auto pass = builder.declarePass("draw");
-  builder.writes(pass, colorResource, atlantis::rhi::ResourceState::ColorAttachmentOutput);
-  builder.writes(pass, depthResource, atlantis::rhi::ResourceState::DepthAttachmentReadWrite);
-  builder.setExecute(pass, [&commandList, &cameraUniformBuffer, drawItems](atlantis::rhi::CommandList& cmd) {
+  const auto finalColorResource = builder.declareResource("final_color");
+
+  const auto drawPass = builder.declarePass("draw");
+  builder.writes(drawPass, hdrResource, atlantis::rhi::ResourceState::ColorAttachmentOutput);
+  builder.writes(drawPass, depthResource, atlantis::rhi::ResourceState::DepthAttachmentReadWrite);
+  builder.setExecute(drawPass, [&commandList, &cameraUniformBuffer, drawItems](atlantis::rhi::CommandList& cmd) {
     for (const DrawItem& item : drawItems) {
       cmd.bindPipeline(item.material->pipeline());
       cmd.bindVertexBuffer(item.mesh->vertexBuffer());
@@ -66,15 +83,31 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
     }
   });
 
+  const auto outputTransformPass = builder.declarePass("output_transform");
+  builder.reads(outputTransformPass, hdrResource, atlantis::rhi::ResourceState::ShaderRead);
+  builder.writes(outputTransformPass, finalColorResource, atlantis::rhi::ResourceState::ColorAttachmentOutput);
+  builder.setExecute(outputTransformPass, [&commandList, &hdrColorTarget, &fullscreenTriangleVertexBuffer,
+                                            &fullscreenTriangleIndexBuffer, &outputTransformPipeline,
+                                            &outputTransformSampler](atlantis::rhi::CommandList& cmd) {
+    cmd.bindPipeline(outputTransformPipeline);
+    cmd.bindVertexBuffer(fullscreenTriangleVertexBuffer);
+    cmd.bindIndexBuffer(fullscreenTriangleIndexBuffer);
+    cmd.bindTexture(hdrColorTarget, outputTransformSampler);
+    cmd.drawIndexed(3);
+  });
+
   auto compileResult = builder.compile();
-  ATLANTIS_CHECK_MSG(compileResult.isOk(), "Renderer's fixed one-pass graph never fails to compile");
+  ATLANTIS_CHECK_MSG(compileResult.isOk(), "Renderer's fixed two-pass graph never fails to compile");
 
   const std::vector<atlantis::render_graph::ResourceBinding> bindings{
       {.resource = compileResult.value().resourceAt(0),
+       .colorClear = kBackgroundClearColor,
+       .hdrColorTarget = &hdrColorTarget},
+      {.resource = compileResult.value().resourceAt(1), .depthTexture = &depthTarget, .depthClear = 1.0f},
+      {.resource = compileResult.value().resourceAt(2),
        .target = &colorTarget,
        .colorClear = kBackgroundClearColor,
        .finalState = finalColorState},
-      {.resource = compileResult.value().resourceAt(1), .depthTexture = &depthTarget, .depthClear = 1.0f},
   };
   atlantis::render_graph::execute(compileResult.value(), bindings, commandList);
 }
