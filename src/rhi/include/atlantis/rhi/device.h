@@ -5,6 +5,7 @@
 #include <atlantis/result.h>
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/command_list.h>
+#include <atlantis/rhi/hdr_color_target.h>
 #include <atlantis/rhi/offscreen_target.h>
 #include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/render_target.h>
@@ -87,6 +88,15 @@ class Device {
 
   [[nodiscard]] virtual atlantis::Result<std::unique_ptr<Sampler>, SamplerCreateError> createSampler(
       const SamplerCreateParams& params) = 0;
+
+  // Plan 0024 Milestone 1 (ADR-0068 D-1/D-2): stateless factory call,
+  // matching createOffscreenTarget()/createSampledTexture() exactly --
+  // Device does not retain a reference (ADR-0003). A missing device
+  // capability is a real Result::Err (HdrColorTargetCreateError::
+  // FormatFeaturesUnsupported), never an ATLANTIS_CHECK -- see that
+  // enumerator's own comment.
+  [[nodiscard]] virtual atlantis::Result<std::unique_ptr<HdrColorTarget>, HdrColorTargetCreateError>
+  createHdrColorTarget(const HdrColorTargetCreateParams& params) = 0;
 };
 
 }  // namespace atlantis::rhi

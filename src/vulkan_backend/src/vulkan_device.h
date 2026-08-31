@@ -148,6 +148,10 @@ class VulkanDevice final : public atlantis::rhi::Device {
   [[nodiscard]] atlantis::Result<std::unique_ptr<atlantis::rhi::Sampler>, atlantis::rhi::SamplerCreateError>
   createSampler(const atlantis::rhi::SamplerCreateParams& params) override;
 
+  [[nodiscard]] atlantis::Result<std::unique_ptr<atlantis::rhi::HdrColorTarget>,
+                                  atlantis::rhi::HdrColorTargetCreateError>
+  createHdrColorTarget(const atlantis::rhi::HdrColorTargetCreateParams& params) override;
+
   [[nodiscard]] VkInstance instance() const noexcept { return instance_; }
   [[nodiscard]] VkPhysicalDevice physicalDevice() const noexcept { return physicalDevice_; }
   [[nodiscard]] VkDevice device() const noexcept { return device_; }

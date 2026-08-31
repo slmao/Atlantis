@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include <atlantis/assert.h>
@@ -17,6 +18,7 @@
 #include "validation.h"
 #include "vulkan_buffer.h"
 #include "vulkan_command_list.h"
+#include "vulkan_hdr_color_target.h"
 #include "vulkan_instance.h"
 #include "vulkan_memory.h"
 #include "vulkan_offscreen_target.h"
@@ -705,6 +707,40 @@ namespace {
   return VK_FORMAT_UNDEFINED;
 }
 
+// Plan 0024 Milestone 1 (ADR-0068 D-2): one variant this round, a
+// separate overload from every toVkFormat() above, mirroring
+// SampledTextureFormat's own identical "own vocabulary, own overload"
+// precedent -- HdrFormat is not a Format value.
+[[nodiscard]] VkFormat toVkFormat(atlantis::rhi::HdrFormat format) {
+  switch (format) {
+    case atlantis::rhi::HdrFormat::Rgba16Float:
+      return VK_FORMAT_R16G16B16A16_SFLOAT;
+  }
+  ATLANTIS_CHECK_MSG(false, "toVkFormat(HdrFormat) called with an unhandled enumerator");
+  return VK_FORMAT_UNDEFINED;
+}
+
+// Plan 0024 Milestone 1 (ADR-0068 D-2): a pure, free classification --
+// no VkPhysicalDevice/VkInstance involved, takes a plain
+// VkFormatFeatureFlags value. This is the one piece of logic the
+// GPU-independent negative test calls directly with synthetic inputs
+// (Milestone 8); it is never exercised through a real Vulkan call in
+// that test. Only the two bits HdrColorTarget's own two real usages
+// need are checked -- COLOR_ATTACHMENT_BIT (the geometry pass writes
+// it) and SAMPLED_IMAGE_BIT (the output-transform pass samples it).
+// Deliberately NOT checked, because not used by this design:
+// COLOR_ATTACHMENT_BLEND_BIT (this engine has zero alpha-blending
+// capability anywhere, blendEnable = VK_FALSE on every Pipeline);
+// SAMPLED_IMAGE_FILTER_LINEAR_BIT (the output-transform pass samples
+// at an exact 1:1 texel mapping, Filter::Nearest); TRANSFER_SRC_BIT/
+// TRANSFER_DST_BIT (HdrColorTarget is never read back or copied
+// to/from directly).
+[[nodiscard]] bool hasRequiredHdrColorTargetFeatures(VkFormatFeatureFlags optimalTilingFeatures) {
+  constexpr VkFormatFeatureFlags kRequired =
+      VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+  return (optimalTilingFeatures & kRequired) == kRequired;
+}
+
 [[nodiscard]] VkFilter toVkFilter(atlantis::rhi::Filter filter) {
   switch (filter) {
     case atlantis::rhi::Filter::Nearest:
@@ -1141,7 +1177,14 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   dynamicState.dynamicStateCount = 2;
   dynamicState.pDynamicStates = dynamicStates;
 
-  const VkFormat colorFormat = toVkFormat(params.colorFormat);
+  // Plan 0024 Milestone 1 (ADR-0068 D-2/D-4): params.colorFormat is a
+  // structural std::variant<Format, HdrFormat> -- std::visit resolves
+  // to whichever toVkFormat() overload matches the alternative
+  // actually held, by ordinary overload resolution. Every geometry
+  // Pipeline now holds HdrFormat::Rgba16Float here; the output-
+  // transform Pipeline pair alone holds a real Format.
+  const VkFormat colorFormat =
+      std::visit([](auto format) { return toVkFormat(format); }, params.colorFormat);
   const VkFormat depthFormat = toVkFormat(params.depthFormat);
 
   VkPipelineRenderingCreateInfo renderingCreateInfo{};
@@ -1341,6 +1384,96 @@ VulkanDevice::createSampledTexture(const atlantis::rhi::SampledTextureCreatePara
 
   return ResultT::Ok(
       std::make_unique<VulkanSampledTexture>(device_, image, memory, imageView, params.extent, params.format));
+}
+
+// Plan 0024 Milestone 1 (ADR-0068 D-1/D-2): mirrors createOffscreenTarget()/
+// createSampledTexture()'s own identical create/alloc/bind/view
+// sequence, usage VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+// VK_IMAGE_USAGE_SAMPLED_BIT -- but checks the real device's own
+// VkFormatFeatureFlags FIRST, before any VkResult-producing Vulkan
+// call: a missing capability is a real runtime fact, not a programmer
+// error, so it is a real Result::Err (FormatFeaturesUnsupported),
+// never ATLANTIS_CHECK.
+atlantis::Result<std::unique_ptr<atlantis::rhi::HdrColorTarget>, atlantis::rhi::HdrColorTargetCreateError>
+VulkanDevice::createHdrColorTarget(const atlantis::rhi::HdrColorTargetCreateParams& params) {
+  using ResultT =
+      atlantis::Result<std::unique_ptr<atlantis::rhi::HdrColorTarget>, atlantis::rhi::HdrColorTargetCreateError>;
+
+  const VkFormat vkFormat = toVkFormat(params.format);
+
+  VkFormatProperties formatProperties{};
+  vkGetPhysicalDeviceFormatProperties(physicalDevice_, vkFormat, &formatProperties);
+  if (!hasRequiredHdrColorTargetFeatures(formatProperties.optimalTilingFeatures)) {
+    return ResultT::Err(atlantis::rhi::HdrColorTargetCreateError::FormatFeaturesUnsupported);
+  }
+
+  VkImageCreateInfo imageCreateInfo{};
+  imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
+  imageCreateInfo.format = vkFormat;
+  imageCreateInfo.extent = VkExtent3D{params.extent.width, params.extent.height, 1};
+  imageCreateInfo.mipLevels = 1;
+  imageCreateInfo.arrayLayers = 1;
+  imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+  // Color-attachment for the geometry pass, sampled for the
+  // output-transform pass -- both required (ADR-0068 D-1).
+  imageCreateInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+  VkImage image = VK_NULL_HANDLE;
+  const VkResult createResult = vkCreateImage(device_, &imageCreateInfo, nullptr, &image);
+  if (createResult != VK_SUCCESS) {
+    return ResultT::Err(toHdrColorTargetCreateError(createResult));
+  }
+
+  VkMemoryRequirements requirements{};
+  vkGetImageMemoryRequirements(device_, image, &requirements);
+
+  const std::optional<std::uint32_t> memoryTypeIndex = selectMemoryTypeIndexForDevice(
+      physicalDevice_, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if (!memoryTypeIndex.has_value()) {
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(atlantis::rhi::HdrColorTargetCreateError::AllocationFailed);
+  }
+
+  VkMemoryAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = requirements.size;
+  allocInfo.memoryTypeIndex = *memoryTypeIndex;
+
+  VkDeviceMemory memory = VK_NULL_HANDLE;
+  const VkResult allocResult = vkAllocateMemory(device_, &allocInfo, nullptr, &memory);
+  if (allocResult != VK_SUCCESS) {
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(atlantis::rhi::HdrColorTargetCreateError::AllocationFailed);
+  }
+
+  const VkResult bindResult = vkBindImageMemory(device_, image, memory, 0);
+  if (bindResult != VK_SUCCESS) {
+    vkFreeMemory(device_, memory, nullptr);
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(toHdrColorTargetCreateError(bindResult));
+  }
+
+  VkImageViewCreateInfo viewCreateInfo{};
+  viewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  viewCreateInfo.image = image;
+  viewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  viewCreateInfo.format = vkFormat;
+  viewCreateInfo.subresourceRange = VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+  VkImageView imageView = VK_NULL_HANDLE;
+  const VkResult viewResult = vkCreateImageView(device_, &viewCreateInfo, nullptr, &imageView);
+  if (viewResult != VK_SUCCESS) {
+    vkFreeMemory(device_, memory, nullptr);
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(atlantis::rhi::HdrColorTargetCreateError::ImageViewCreationFailed);
+  }
+
+  return ResultT::Ok(
+      std::make_unique<VulkanHdrColorTarget>(device_, image, memory, imageView, params.extent, params.format));
 }
 
 atlantis::Result<std::unique_ptr<atlantis::rhi::Sampler>, atlantis::rhi::SamplerCreateError>
