@@ -243,6 +243,46 @@ struct PipelineCreateParams {
   // behavior unconditionally -- zero source change at any existing
   // call site.
   bool hasSampledTextureBinding = false;
+  // Plan 0024 Milestone 6: discovered during Implementation, not
+  // anticipated by the Plan's own file list -- every existing Pipeline
+  // this Device creates has always had an unconditional
+  // VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER at binding 0
+  // (vulkan_device.cpp's own createPipeline()), but the new output-
+  // transform shader contract (Milestone 3, ADR-0068 D-10,
+  // outputTransformExpectedDescriptorContract()) declares binding 0 as
+  // a Sampler with no uniform buffer at all -- creating that Pipeline
+  // through the unmodified, always-uniform-at-0 layout is a genuine
+  // descriptor-type mismatch against the shader module's own compiled
+  // SPIR-V, not a hypothetical one. true (default) reproduces today's
+  // exact layout unconditionally -- zero source change at any existing
+  // call site; when false, no uniform-buffer binding is created at
+  // all, and hasSampledTextureBinding's own binding (when also true)
+  // moves from index 1 down to index 0 -- the exact, and only, shape
+  // the output-transform contract needs. Confirmed against Human
+  // Review direction (chat, 2026-09-01) before this field was added:
+  // widen createPipeline()'s own contract now, as a disclosed,
+  // additive correction, rather than silently working around it.
+  bool hasCameraUniformBinding = true;
+  // Plan 0024 Milestone 6: discovered during Implementation alongside
+  // hasCameraUniformBinding above, same root cause -- every existing
+  // Pipeline this Device creates has always had depth test/write
+  // unconditionally enabled and a real depthAttachmentFormat
+  // (DepthFormat has exactly one value, D32Sfloat -- no "none"), but
+  // the output-transform pass (Renderer's own second RenderGraph pass,
+  // Milestone 5) binds no depth resource at all -- its own
+  // ResourceBinding never sets .depthTexture, so beginRendering()
+  // correctly passes depth == nullptr and VkRenderingInfo::
+  // pDepthAttachment is nullptr for that pass. A Pipeline whose own
+  // VkPipelineRenderingCreateInfo::depthAttachmentFormat names a real
+  // format, bound during a render-pass instance with no depth
+  // attachment, is a genuine Vulkan validation violation, not a
+  // hypothetical one. true (default) reproduces today's exact
+  // behavior unconditionally -- zero source change at any existing
+  // call site; when false, depth test and depth write are both
+  // disabled and depthAttachmentFormat is left VK_FORMAT_UNDEFINED.
+  // Confirmed against Human Review direction (chat, 2026-09-01),
+  // mirroring hasCameraUniformBinding's own identical resolution.
+  bool hasDepthAttachment = true;
 };
 
 // Why three distinct *CreateError enums below, not one shared

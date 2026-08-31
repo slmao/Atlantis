@@ -1028,23 +1028,34 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   // params.hasSampledTextureBinding is set (an uniform-only Material's
   // pipeline keeps the single-binding layout above unchanged, per D5a's
   // "uniform-only Material behavior unchanged" constraint).
+  //
+  // Plan 0024 Milestone 6 (discovered during Implementation, Human
+  // Review direction 2026-09-01 -- see PipelineCreateParams::
+  // hasCameraUniformBinding's own comment, types.h): this binding's own
+  // slot moves from index 1 to index 0 when the caller omits the
+  // uniform binding entirely (params.hasCameraUniformBinding == false)
+  // -- the exact, only shape the new output-transform descriptor
+  // contract (ADR-0068 D-10) needs: one Sampler, at binding 0, no
+  // uniform buffer.
   VkDescriptorSetLayoutBinding combinedImageSamplerBinding{};
-  combinedImageSamplerBinding.binding = 1;
+  combinedImageSamplerBinding.binding = params.hasCameraUniformBinding ? 1 : 0;
   combinedImageSamplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   combinedImageSamplerBinding.descriptorCount = 1;
   combinedImageSamplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-  const VkDescriptorSetLayoutBinding bothBindings[2] = {uniformBinding, combinedImageSamplerBinding};
+  // Built as a small, ordered vector rather than a fixed 2-slot array --
+  // params.hasCameraUniformBinding == false (new this Milestone) means
+  // the uniform binding is not merely unused but genuinely ABSENT from
+  // the layout, not just excluded from the count with a stale pointer
+  // still referencing it.
+  std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings;
+  if (params.hasCameraUniformBinding) setLayoutBindings.push_back(uniformBinding);
+  if (params.hasSampledTextureBinding) setLayoutBindings.push_back(combinedImageSamplerBinding);
 
   VkDescriptorSetLayoutCreateInfo setLayoutCreateInfo{};
   setLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  if (params.hasSampledTextureBinding) {
-    setLayoutCreateInfo.bindingCount = 2;
-    setLayoutCreateInfo.pBindings = bothBindings;
-  } else {
-    setLayoutCreateInfo.bindingCount = 1;
-    setLayoutCreateInfo.pBindings = &uniformBinding;
-  }
+  setLayoutCreateInfo.bindingCount = static_cast<std::uint32_t>(setLayoutBindings.size());
+  setLayoutCreateInfo.pBindings = setLayoutBindings.data();
 
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   const VkResult setLayoutResult =
@@ -1155,10 +1166,17 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   multisampleState.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
   multisampleState.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
+  // Plan 0024 Milestone 6 (discovered during Implementation, Human
+  // Review direction 2026-09-01 -- see PipelineCreateParams::
+  // hasDepthAttachment's own comment, types.h): both fields default to
+  // their existing unconditional values; params.hasDepthAttachment ==
+  // false (the output-transform Pipeline pair alone) disables depth
+  // test/write entirely, matching that pass's own real, depth-attachment-
+  // free VkRenderingInfo.
   VkPipelineDepthStencilStateCreateInfo depthStencilState{};
   depthStencilState.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-  depthStencilState.depthTestEnable = VK_TRUE;
-  depthStencilState.depthWriteEnable = VK_TRUE;
+  depthStencilState.depthTestEnable = params.hasDepthAttachment ? VK_TRUE : VK_FALSE;
+  depthStencilState.depthWriteEnable = params.hasDepthAttachment ? VK_TRUE : VK_FALSE;
   depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS;
 
   VkPipelineColorBlendAttachmentState colorBlendAttachment{};
@@ -1185,7 +1203,13 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   // transform Pipeline pair alone holds a real Format.
   const VkFormat colorFormat =
       std::visit([](auto format) { return toVkFormat(format); }, params.colorFormat);
-  const VkFormat depthFormat = toVkFormat(params.depthFormat);
+  // Plan 0024 Milestone 6 (see hasDepthAttachment's own comment,
+  // types.h): VK_FORMAT_UNDEFINED when this Pipeline has no depth
+  // attachment at all -- matching the real, depth-attachment-free
+  // VkRenderingInfo the output-transform pass's own beginRendering()
+  // call site produces; toVkFormat(DepthFormat) is only ever called
+  // when a real depth attachment format is actually needed.
+  const VkFormat depthFormat = params.hasDepthAttachment ? toVkFormat(params.depthFormat) : VK_FORMAT_UNDEFINED;
 
   VkPipelineRenderingCreateInfo renderingCreateInfo{};
   renderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
