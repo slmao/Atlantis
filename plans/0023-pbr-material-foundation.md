@@ -541,3 +541,64 @@ No deltas beyond this Plan's own Verification Checklist above.
   output contract, Implementation must stop before landing that
   golden and report back rather than proceeding to a dedicated Output
   Transfer Function Spec unilaterally.
+
+## Post-Merge Status Update (2026-08-31)
+
+**Merged via [PR #111](https://github.com/slmao/Atlantis/pull/111).**
+All nine Milestones landed as planned. A centralized final code review,
+conducted on PR #111 itself before merge, re-verified the implementation
+against real diffs and real test runs and found two further real defects
+within this Plan's own scope, both fixed and committed to the same PR:
+
+1. **Float round-trip.** `serializeMaterialMetadata()`/`serializeMaterialSource()`
+   formatted `baseColorFactor`/`metallicFactor`/`roughnessFactor` via
+   `std::to_string(float)` (fixed 6 decimal places), which does not
+   round-trip every float32 value exactly — `load_material.cpp`'s own
+   exact-equality artifact-vs-metadata cross-validation could then
+   spuriously reject a legitimately, self-consistently cooked material
+   for a non-"round" factor value. Fixed with a `formatFloat()` helper
+   using `std::to_chars` (shortest round-trip guarantee), plus
+   regression coverage in three test files. No shipped `.material.txt`
+   uses a non-round value today, so this was a latent risk, not a live
+   failure; cooked `.amaterial`/`.meta.txt` artifacts are build-tree-only
+   and never committed, so the fix has zero repository-content impact.
+2. **`PbrPushConstants` public-API placement.** Milestone 3 placed this
+   struct under Renderer's public `include/atlantis/renderer/`, on a
+   mistaken analogy to `CameraWorldPositionData` (a genuine cross-module
+   contract). `PbrPushConstants` has no such contract — `Renderer::drawFrame()`
+   is its own sole real consumer — and no governance document ever named
+   a header location for it. Demoted to a private
+   `src/renderer/src/pbr_push_constants.h` (git-detected rename); the one
+   test needing the type reaches it via a relative-path include, mirroring
+   this codebase's own `json_parser_tests.cpp` precedent for a module's
+   private header. Zero functional change, zero `CMakeLists.txt` change.
+
+Both fixes were verified via real C4062 positive/negative compiler
+probes (`Renderer::drawFrame()`'s `MaterialPushConstantLayout` switch and
+`material_realization.cpp`'s `MaterialKind` switches, each confirmed to
+fail to compile with a case omitted, then restored clean) and a full
+non-GPU/GPU re-run. **Final, as-built verification, re-executed after
+both fixes:** fresh Debug/Release builds clean; `ctest -LE gpu` 798/798
+Debug, 797/797 Release (the one-fewer-in-Release gap is the pre-existing,
+documented Debug-only `ATLANTIS_ASSERT` test — confirmed, not merely
+assumed, by diffing the two configurations' own discovered test lists);
+`ctest -L gpu` 71/71 both configurations, zero Vulkan Validation Layers
+hits (`VUID`/Validation Error/Validation Warning) across full verbose GPU
+test output; a fresh `ATLANTIS_BUILD_TESTS=OFF` configure+build produced
+a working `atlantis_runtime.exe` with zero test executables; module/link
+graph unchanged (`Atlantis::AssetSystem` still links `Atlantis::Core`
+only, `Atlantis::RHI`'s public API byte-for-byte unchanged, zero new
+`target_include_directories()`/`target_link_libraries()` entry from
+either fix); `git diff --check` clean; working tree clean. All five
+existing goldens (`minimal_cube`, `world_scene`, `textured_quad`,
+`material_demo`, `lighting_demo`) confirmed byte-for-byte unchanged; the
+new `pbr_material_demo` golden's sidecar `source_revision` matches
+Milestone 8's own commit (`fb188cf`) exactly.
+
+**This Plan delivers a direct-lighting PBR baseline only — not
+Filament-quality PBR.** HDR intermediate storage, output transfer/
+tone-mapping, image-based lighting, shadows, and normal mapping/
+tangent-space input all remain unimplemented, matching Spec 0023's own
+Non-Goals; Milestone 9's own binding visual-distinguishability condition
+(ADR-0067 D-6) was met under the existing hard-clip output contract, not
+relaxed or worked around.
