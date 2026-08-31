@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <atlantis/rhi/buffer.h>
+#include <atlantis/rhi/hdr_color_target.h>
 #include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/sampled_texture.h>
 #include <atlantis/rhi/sampler.h>
@@ -36,6 +37,13 @@ struct RecordedSampledTextureTransition {
   atlantis::rhi::ResourceState after;
 };
 
+// Plan 0024 Milestone 2.
+struct RecordedHdrColorTargetTransition {
+  const atlantis::rhi::HdrColorTarget* target;
+  atlantis::rhi::ResourceState before;
+  atlantis::rhi::ResourceState after;
+};
+
 struct RecordedClear {
   const atlantis::rhi::RenderTarget* target;
   atlantis::rhi::ClearColorValue color;
@@ -53,6 +61,12 @@ struct RecordedCopyBufferToTexture {
 
 struct RecordedBindTexture {
   const atlantis::rhi::SampledTexture* texture;
+  const atlantis::rhi::Sampler* sampler;
+};
+
+// Plan 0024 Milestone 2.
+struct RecordedHdrBindTexture {
+  const atlantis::rhi::HdrColorTarget* texture;
   const atlantis::rhi::Sampler* sampler;
 };
 
@@ -96,6 +110,21 @@ class FakeSampledTexture final : public atlantis::rhi::SampledTexture {
   [[nodiscard]] atlantis::rhi::SampledTextureFormat format() const override {
     return atlantis::rhi::SampledTextureFormat::Rgba8Unorm;
   }
+  [[nodiscard]] std::string_view label() const { return label_; }
+
+ private:
+  std::string label_;
+};
+
+// Also usable as a bindable HdrColorTarget stand-in in tests -- carries
+// no real GPU resource, just an identity (label) and fixed extent/
+// format (Plan 0024 Milestone 2).
+class FakeHdrColorTarget final : public atlantis::rhi::HdrColorTarget {
+ public:
+  explicit FakeHdrColorTarget(std::string_view label) : label_(label) {}
+
+  [[nodiscard]] atlantis::rhi::Extent2D extent() const override { return atlantis::rhi::Extent2D{1, 1}; }
+  [[nodiscard]] atlantis::rhi::HdrFormat format() const override { return atlantis::rhi::HdrFormat::Rgba16Float; }
   [[nodiscard]] std::string_view label() const { return label_; }
 
  private:
@@ -152,6 +181,17 @@ struct RecordedBeginRendering {
   float depthClear;
 };
 
+// Plan 0024 Milestone 2 -- the HdrColorTarget-shaped beginRendering()
+// overload's own recording, kept separate from RecordedBeginRendering
+// above (a distinct target type), mirroring RecordedSampledTextureTransition's
+// own "separate struct, not a shared/variant one" precedent.
+struct RecordedBeginRenderingHdr {
+  const atlantis::rhi::HdrColorTarget* color;
+  const atlantis::rhi::Texture* depth;
+  atlantis::rhi::ClearColorValue colorClear;
+  float depthClear;
+};
+
 struct RecordedPushConstant {
   std::size_t sizeBytes;
 };
@@ -182,6 +222,13 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
     events.push_back(EventKind::SampledTextureTransition);
   }
 
+  // Plan 0024 Milestone 2.
+  void transitionResource(atlantis::rhi::HdrColorTarget& target, atlantis::rhi::ResourceState before,
+                           atlantis::rhi::ResourceState after) override {
+    hdrColorTargetTransitions.push_back(RecordedHdrColorTargetTransition{&target, before, after});
+    events.push_back(EventKind::HdrColorTargetTransition);
+  }
+
   void clearColor(atlantis::rhi::RenderTarget& target, atlantis::rhi::ClearColorValue color) override {
     clears.push_back(RecordedClear{&target, color});
     events.push_back(EventKind::Clear);
@@ -191,6 +238,13 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
                        atlantis::rhi::ClearColorValue colorClear, float depthClear) override {
     beginRenderingCalls.push_back(RecordedBeginRendering{&color, depth, colorClear, depthClear});
     events.push_back(EventKind::BeginRendering);
+  }
+
+  // Plan 0024 Milestone 2.
+  void beginRendering(atlantis::rhi::HdrColorTarget& color, atlantis::rhi::Texture* depth,
+                       atlantis::rhi::ClearColorValue colorClear, float depthClear) override {
+    beginRenderingHdrCalls.push_back(RecordedBeginRenderingHdr{&color, depth, colorClear, depthClear});
+    events.push_back(EventKind::BeginRenderingHdr);
   }
 
   void endRendering() override { events.push_back(EventKind::EndRendering); }
@@ -218,6 +272,12 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
   void bindTexture(const atlantis::rhi::SampledTexture& texture, const atlantis::rhi::Sampler& sampler) override {
     boundTextures.push_back(RecordedBindTexture{&texture, &sampler});
     events.push_back(EventKind::BindTexture);
+  }
+
+  // Plan 0024 Milestone 2.
+  void bindTexture(const atlantis::rhi::HdrColorTarget& texture, const atlantis::rhi::Sampler& sampler) override {
+    boundHdrTextures.push_back(RecordedHdrBindTexture{&texture, &sampler});
+    events.push_back(EventKind::BindHdrTexture);
   }
 
   void pushConstant(const void* data, std::size_t sizeBytes) override {
@@ -252,14 +312,17 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
     Transition,
     TextureTransition,
     SampledTextureTransition,
+    HdrColorTargetTransition,  // Plan 0024 Milestone 2
     Clear,
     BeginRendering,
+    BeginRenderingHdr,  // Plan 0024 Milestone 2
     EndRendering,
     BindPipeline,
     BindVertexBuffer,
     BindIndexBuffer,
     BindUniformBuffer,
     BindTexture,
+    BindHdrTexture,  // Plan 0024 Milestone 2
     PushConstant,
     DrawIndexed,
     CopyToBuffer,
@@ -269,13 +332,16 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
   std::vector<RecordedTransition> transitions;
   std::vector<RecordedTextureTransition> textureTransitions;
   std::vector<RecordedSampledTextureTransition> sampledTextureTransitions;
+  std::vector<RecordedHdrColorTargetTransition> hdrColorTargetTransitions;  // Plan 0024 Milestone 2
   std::vector<RecordedClear> clears;
   std::vector<RecordedBeginRendering> beginRenderingCalls;
+  std::vector<RecordedBeginRenderingHdr> beginRenderingHdrCalls;  // Plan 0024 Milestone 2
   std::vector<const atlantis::rhi::Pipeline*> boundPipelines;
   std::vector<const atlantis::rhi::Buffer*> boundVertexBuffers;
   std::vector<const atlantis::rhi::Buffer*> boundIndexBuffers;
   std::vector<const atlantis::rhi::Buffer*> boundUniformBuffers;
   std::vector<RecordedBindTexture> boundTextures;
+  std::vector<RecordedHdrBindTexture> boundHdrTextures;  // Plan 0024 Milestone 2
   std::vector<RecordedPushConstant> pushConstants;
   std::vector<std::vector<std::byte>> pushConstantData;  // parallel to pushConstants -- the actual bytes copied
   std::vector<std::uint32_t> drawIndexedCounts;

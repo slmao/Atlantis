@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include <atlantis/rhi/buffer.h>
+#include <atlantis/rhi/hdr_color_target.h>
 #include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/render_target.h>
 #include <atlantis/rhi/sampled_texture.h>
@@ -116,6 +117,29 @@ class CommandList {
   // cmd.bindTexture(*item.material->sampledTexture(), ...) call can pass
   // without an unsafe const_cast.
   virtual void bindTexture(const SampledTexture& texture, const Sampler& sampler) = 0;
+
+  // Plan 0024 Milestone 2 (ADR-0068 D-1/D-3): a fourth
+  // transitionResource() overload, alongside the RenderTarget/depth-
+  // Texture/SampledTexture ones above -- same shape, new target type.
+  // Used by render_graph::execute() for the HdrColorTarget's own
+  // Undefined -> ColorAttachmentOutput (geometry pass) ->
+  // ShaderRead (output-transform pass) sequence.
+  virtual void transitionResource(HdrColorTarget& target, ResourceState before, ResourceState after) = 0;
+
+  // A second beginRendering() overload -- true C++ overloading, same
+  // name, distinct parameter type, no new method name -- used only for
+  // the geometry pass writing into an HdrColorTarget instead of a
+  // RenderTarget. endRendering() itself needs no overload; it already
+  // takes no parameters. Called only by render_graph::execute(), same
+  // convention as the RenderTarget overload above.
+  virtual void beginRendering(HdrColorTarget& color, Texture* depth, ClearColorValue colorClear,
+                               float depthClear) = 0;
+
+  // A second bindTexture() overload, used only by the output-transform
+  // pass to sample the HdrColorTarget -- same precondition as the
+  // SampledTexture overload above (texture must be in
+  // ResourceState::ShaderRead when this is recorded).
+  virtual void bindTexture(const HdrColorTarget& texture, const Sampler& sampler) = 0;
 };
 
 }  // namespace atlantis::rhi
