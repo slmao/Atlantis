@@ -161,7 +161,7 @@ struct ShaderPairRef {
 atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOneMaterialCandidate(
     atlantis::rhi::Device& device, const atlantis::rhi::VertexInputLayout& unlitTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& unlitTexturedVertexSpirv,
-    const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv, atlantis::rhi::Format colorFormat,
+    const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& litTexturedVertexSpirv,
     const std::vector<std::uint32_t>& litTexturedFragmentSpirv,
@@ -224,7 +224,11 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
        .fragmentShader = {.spirvWords = shaderPair.fragmentSpirv->data(),
                            .wordCount = shaderPair.fragmentSpirv->size()},
        .vertexInputLayout = *shaderPair.vertexInputLayout,
-       .colorFormat = colorFormat,
+       // Plan 0024 Milestone 6 (ADR-0068 D-1/D-3): every geometry
+       // Pipeline now renders into the fixed HDR intermediate, never
+       // the caller's real, final Format -- M1's retyped colorFormat
+       // (std::variant<Format, HdrFormat>) accepts this directly.
+       .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = pushConstantSizeBytesFor(materialData.kind),
        .hasSampledTextureBinding = true},
@@ -254,7 +258,7 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
     atlantis::rhi::Device& device, atlantis::rhi::CommandList& commandList,
     const atlantis::rhi::VertexInputLayout& unlitTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& unlitTexturedVertexSpirv,
-    const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv, atlantis::rhi::Format colorFormat,
+    const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& litTexturedVertexSpirv,
     const std::vector<std::uint32_t>& litTexturedFragmentSpirv,
@@ -297,7 +301,7 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
                         "textureDataMap by Phase 1");
 
     auto candidateResult = realizeOneMaterialCandidate(
-        device, unlitTexturedVertexInputLayout, unlitTexturedVertexSpirv, unlitTexturedFragmentSpirv, colorFormat,
+        device, unlitTexturedVertexInputLayout, unlitTexturedVertexSpirv, unlitTexturedFragmentSpirv,
         litTexturedVertexInputLayout, litTexturedVertexSpirv, litTexturedFragmentSpirv, pbrDirectLitVertexInputLayout,
         pbrDirectLitVertexSpirv, pbrDirectLitFragmentSpirv, id, materialIt->second, textureIt->second,
         effectiveSampledTextures);
@@ -334,6 +338,20 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
   return realized;
 }
 
+bool isSrgbFormat(atlantis::rhi::Format format) {
+  switch (format) {
+    case atlantis::rhi::Format::Unknown:
+    case atlantis::rhi::Format::Bgra8Unorm:
+    case atlantis::rhi::Format::Rgba8Unorm:
+      return false;
+    case atlantis::rhi::Format::Bgra8Srgb:
+    case atlantis::rhi::Format::Rgba8Srgb:
+      return true;
+  }
+  ATLANTIS_CHECK_MSG(false, "isSrgbFormat(): unreachable -- Format's own closed switch above is exhaustive");
+  return false;  // never reached
+}
+
 atlantis::Result<FormatRebuildCandidates, MaterialRealizationError> rebuildMaterialsForFormatChange(
     atlantis::rhi::Device& device, const atlantis::rhi::VertexInputLayout& fallbackVertexInputLayout,
     const std::vector<std::uint32_t>& fallbackVertexSpirv, const std::vector<std::uint32_t>& fallbackFragmentSpirv,
@@ -345,7 +363,7 @@ atlantis::Result<FormatRebuildCandidates, MaterialRealizationError> rebuildMater
     const std::vector<std::uint32_t>& litTexturedFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& pbrDirectLitVertexInputLayout,
     const std::vector<std::uint32_t>& pbrDirectLitVertexSpirv,
-    const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv, atlantis::rhi::Format newColorFormat,
+    const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv,
     const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData>&
         materialDataMap,
     const std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::renderer::Material>>&
@@ -359,7 +377,13 @@ atlantis::Result<FormatRebuildCandidates, MaterialRealizationError> rebuildMater
                .fragmentShader = {.spirvWords = fallbackFragmentSpirv.data(),
                                    .wordCount = fallbackFragmentSpirv.size()},
                .vertexInputLayout = fallbackVertexInputLayout,
-               .colorFormat = newColorFormat,
+               // Plan 0024 Milestone 6: fixed HDR intermediate format,
+               // matching realizeOneMaterialCandidate()'s own identical
+               // change -- see rebuildMaterialsForFormatChange()'s own
+               // header comment for why this rebuild still runs on
+               // every format-change event despite this value never
+               // actually changing.
+               .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
                .depthFormat = DepthFormat::D32Sfloat,
                .pushConstantSizeBytes = sizeof(float) * 16});
   if (fallbackResult.isErr()) return ResultT::Err(MaterialRealizationError::MaterialCreateFailed);
@@ -388,7 +412,7 @@ atlantis::Result<FormatRebuildCandidates, MaterialRealizationError> rebuildMater
          .fragmentShader = {.spirvWords = shaderPair.fragmentSpirv->data(),
                              .wordCount = shaderPair.fragmentSpirv->size()},
          .vertexInputLayout = *shaderPair.vertexInputLayout,
-         .colorFormat = newColorFormat,
+         .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
          .depthFormat = DepthFormat::D32Sfloat,
          .pushConstantSizeBytes = pushConstantSizeBytesFor(materialDataIt->second.kind),
          .hasSampledTextureBinding = true},

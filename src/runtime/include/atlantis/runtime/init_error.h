@@ -46,6 +46,17 @@ enum class RuntimeInitError {
   // own kind and its resolved texture's own real colorSpace. Never an
   // Asset System type -- Milestone 1's own scope stays untouched.
   PbrBaseColorTextureNotSrgb,
+  // Plan 0024 Milestone 6 (ADR-0068 D-1/D-3/D-6): one new, distinct
+  // enumerator per new resource kind created once at startup,
+  // mirroring CameraBufferCreateFailed's own precedent exactly --
+  // every one of these is fatal, no retry, matching that resource's
+  // own first-creation failure handling.
+  HdrColorTargetCreateFailed,
+  FullscreenTriangleVertexBufferCreateFailed,
+  FullscreenTriangleIndexBufferCreateFailed,
+  OutputTransformSamplerCreateFailed,
+  OutputTransformUnormPipelineCreateFailed,
+  OutputTransformSrgbPipelineCreateFailed,
 };
 
 // For logging only -- not part of any Result/error contract.

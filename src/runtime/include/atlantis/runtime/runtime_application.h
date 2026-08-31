@@ -9,6 +9,8 @@
 #include <atlantis/result.h>
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/device.h>
+#include <atlantis/rhi/hdr_color_target.h>
+#include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/presentation.h>
 #include <atlantis/rhi/sampled_texture.h>
 #include <atlantis/rhi/sampler.h>
@@ -115,6 +117,17 @@ class RuntimeApplication {
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap_;
   std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer_;
   std::unique_ptr<atlantis::rhi::Texture> depthTexture_;  // lazy: first frame's extent-change check
+  // Plan 0024 Milestone 6 (ADR-0068 D-1/D-3): the scene-referred linear
+  // HDR intermediate the geometry pass now writes into instead of the
+  // final colorTarget directly -- recreated in the SAME branch, at the
+  // SAME trigger, as depthTexture_ immediately above (both are eager,
+  // direct reassignments, safe for the same reason: this frame's own
+  // Presentation::acquireNextTarget(), called earlier this same frame,
+  // has already drained the previous frame's GPU work before that
+  // branch ever runs). Declared immediately after depthTexture_,
+  // preserving the existing reverse-destruction-order guarantee with
+  // no new ordering rule.
+  std::unique_ptr<atlantis::rhi::HdrColorTarget> hdrColorTarget_;
 
   // Plan 0018 Section P10 (Human Review Approval item 1): replaces the
   // former std::optional<Material> material_ in this exact slot. Every
@@ -149,6 +162,25 @@ class RuntimeApplication {
       materialResourceMap_;
   std::unique_ptr<atlantis::renderer::Material> fallbackMaterial_;  // lazy: first frame's format-change check; also
                                                                      // format-dependent, also rebuilt by D9
+
+  // Plan 0024 Milestone 6 (ADR-0068 D-1/D-3/D-6): the output-transform
+  // pass's own fixed, never-scene-content geometry -- created once at
+  // startup, alongside cameraBuffer_'s own existing startup sequence,
+  // never resized or recreated. fullscreenTriangleVertexBuffer_/
+  // ...IndexBuffer_/outputTransformSampler_ are format-independent
+  // (nothing about a fullscreen triangle or a Sampler bakes in a
+  // colorFormat); outputTransformUnormPipeline_/...SrgbPipeline_ are
+  // format-dependent (a Pipeline bakes in colorFormat, D-4), like
+  // fallbackMaterial_/materialResourceMap_ immediately above -- both
+  // created once at startup against the FIRST real swapchain format,
+  // and rebuilt (one at a time, whichever isSrgbFormat() currently
+  // selects) by the same format-change mechanism, via
+  // FormatRebuildCandidates::outputTransformPipeline.
+  std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleVertexBuffer_;
+  std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleIndexBuffer_;
+  std::unique_ptr<atlantis::rhi::Sampler> outputTransformSampler_;
+  std::unique_ptr<atlantis::rhi::Pipeline> outputTransformUnormPipeline_;
+  std::unique_ptr<atlantis::rhi::Pipeline> outputTransformSrgbPipeline_;
 
   // CPU-only, populated by Phase 1 (initializeSteps()), consumed/cleared
   // by Phase 2 (runFrame()) as each entry is realized -- no GPU handle,
@@ -202,6 +234,18 @@ class RuntimeApplication {
   atlantis::rhi::VertexInputLayout pbrDirectLitVertexInputLayout_;
   std::vector<std::uint32_t> pbrDirectLitVertexSpirv_;
   std::vector<std::uint32_t> pbrDirectLitFragmentSpirv_;
+  // Plan 0024 Milestone 6 (ADR-0068 D-6): the two output-transform
+  // shader pairs' own resolved layout/SPIR-V -- mirrors
+  // pbrDirectLitVertexInputLayout_/pbrDirectLitVertexSpirv_/
+  // pbrDirectLitFragmentSpirv_'s own role exactly, resolved once at
+  // init (initializeSteps()), reused for every
+  // outputTransformUnormPipeline_/...SrgbPipeline_ (re)build.
+  atlantis::rhi::VertexInputLayout outputTransformUnormVertexInputLayout_;
+  std::vector<std::uint32_t> outputTransformUnormVertexSpirv_;
+  std::vector<std::uint32_t> outputTransformUnormFragmentSpirv_;
+  atlantis::rhi::VertexInputLayout outputTransformSrgbVertexInputLayout_;
+  std::vector<std::uint32_t> outputTransformSrgbVertexSpirv_;
+  std::vector<std::uint32_t> outputTransformSrgbFragmentSpirv_;
 };
 
 [[nodiscard]] atlantis::Result<RuntimeApplication, RuntimeInitError> createRuntimeApplication(

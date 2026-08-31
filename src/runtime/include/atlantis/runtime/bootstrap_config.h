@@ -51,6 +51,17 @@ struct BootstrapConfig {
   std::string pbrDirectLitVertexShaderReflectionPath;
   std::string pbrDirectLitFragmentShaderSpirvPath;
   std::string pbrDirectLitFragmentShaderReflectionPath;
+  // Plan 0024 Milestone 6 (ADR-0068 D-6): the two output-transform
+  // shader pairs -- mirrors pbrDirectLitVertexShaderSpirvPath/
+  // .../pbrDirectLitFragmentShaderReflectionPath's own sourcing exactly.
+  std::string outputTransformUnormVertexShaderSpirvPath;
+  std::string outputTransformUnormVertexShaderReflectionPath;
+  std::string outputTransformUnormFragmentShaderSpirvPath;
+  std::string outputTransformUnormFragmentShaderReflectionPath;
+  std::string outputTransformSrgbVertexShaderSpirvPath;
+  std::string outputTransformSrgbVertexShaderReflectionPath;
+  std::string outputTransformSrgbFragmentShaderSpirvPath;
+  std::string outputTransformSrgbFragmentShaderReflectionPath;
   bool enableValidationLayers = true;
 };
 

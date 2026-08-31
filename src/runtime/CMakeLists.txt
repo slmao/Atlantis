@@ -106,6 +106,16 @@ target_compile_definitions(atlantis_runtime PRIVATE
   # call, unconditional), mirroring ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR's
   # own sourcing exactly.
   ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  # Plan 0024 Milestone 6: the two output-transform shader pairs' own
+  # output directories -- reuse the already-exported
+  # ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR/
+  # ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR
+  # (shaders/output_transform_unorm/CMakeLists.txt,
+  # shaders/output_transform_srgb/CMakeLists.txt, unconditional),
+  # mirroring ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR's own sourcing
+  # exactly.
+  ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR="${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}"
 )
 
 # Guarantees the shader-compile and asset-cook targets have already run
@@ -115,6 +125,8 @@ target_compile_definitions(atlantis_runtime PRIVATE
 # minimal_mesh_shaders, now that shaders/textured_quad is built
 # unconditionally. Plan 0019 Section P6: lit_textured_shaders added the
 # same way. Plan 0023 Milestone 5: pbr_direct_lit_shaders added the same
-# way.
+# way. Plan 0024 Milestone 6: output_transform_unorm_shaders/
+# output_transform_srgb_shaders added the same way.
 add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
-  pbr_direct_lit_shaders ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})
+  pbr_direct_lit_shaders output_transform_unorm_shaders output_transform_srgb_shaders
+  ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})
