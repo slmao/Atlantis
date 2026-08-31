@@ -109,6 +109,11 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   # realizePendingMaterials() call requires a real pbrDirectLit* trio
   # too, even though material_demo_scene never actually realizes one.
   ATLANTIS_MATERIAL_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  # Plan 0024 Milestone 7 (ADR-0068 D-1/D-3/D-6): MaterialDemoFixture's
+  # own output-transform Pipeline -- this fixture's colorFormat is fixed
+  # Rgba8Unorm, so only the UNORM variant's own output directory is
+  # ever needed.
+  ATLANTIS_MATERIAL_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
   # Plan 0019 Section P10/Milestone 10: the lighting_demo fixture's own
   # real, cooked scene artifact/metadata/manifest paths and both built-in
   # shader pairs' own output directories (LightingDemoFixture needs both,
@@ -122,6 +127,10 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   # realizePendingMaterials() call requires a real pbrDirectLit* trio
   # too, even though lighting_demo_scene never actually realizes one.
   ATLANTIS_LIGHTING_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  # Plan 0024 Milestone 7: LightingDemoFixture's own output-transform
+  # Pipeline -- mirrors ATLANTIS_MATERIAL_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR's
+  # own identical need above.
+  ATLANTIS_LIGHTING_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
   # Plan 0023 Milestone 8: the pbr_material_demo fixture's own real,
   # cooked scene artifact/metadata/manifest paths and all three built-in
   # shader pairs' own output directories, mirroring
@@ -132,6 +141,10 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_PBR_MATERIAL_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
   ATLANTIS_PBR_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_PBR_MATERIAL_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  # Plan 0024 Milestone 7: PbrMaterialDemoFixture's own output-transform
+  # Pipeline -- mirrors ATLANTIS_MATERIAL_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR's
+  # own identical need above.
+  ATLANTIS_PBR_MATERIAL_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
 )
 
 # Plan 0012 Step 6: the asset-sourced GPU test case needs
@@ -156,7 +169,7 @@ add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TAR
 # which directory ctest (or a human) happens to invoke this executable
 # from.
 add_dependencies(atlantis_image_regression_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
-  pbr_direct_lit_shaders)
+  pbr_direct_lit_shaders output_transform_unorm_shaders)
 add_custom_command(TARGET atlantis_image_regression_gpu_tests POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_image_regression_gpu_tests>/shaders"
@@ -171,5 +184,17 @@ add_custom_command(TARGET atlantis_image_regression_gpu_tests POST_BUILD
       "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.vert.refl.json"
       "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.frag.spv"
       "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_gpu_tests>/shaders/"
+  # Plan 0024 Milestone 7 (ADR-0068 D-1/D-3/D-6): the output-transform-
+  # unorm shader pair -- needed by minimal_cube_fixture.cpp/
+  # world_scene_fixture.cpp/world_scene_loaded_fixture.cpp/
+  # textured_quad_fixture.cpp, which all follow this same WORKING_DIRECTORY-
+  # relative "shaders/<name>.{vert,frag}.spv" convention (never
+  # BootstrapConfig) -- mirrors the two copy commands above exactly.
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.spv"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.refl.json"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.spv"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.refl.json"
       "$<TARGET_FILE_DIR:atlantis_image_regression_gpu_tests>/shaders/"
 )

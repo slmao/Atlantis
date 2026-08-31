@@ -8,7 +8,9 @@
 #include <atlantis/result.h>
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/device.h>
+#include <atlantis/rhi/hdr_color_target.h>
 #include <atlantis/rhi/offscreen_target.h>
+#include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/sampled_texture.h>
 #include <atlantis/rhi/sampler.h>
 #include <atlantis/rhi/texture.h>
@@ -67,6 +69,13 @@ struct MaterialDemoFixture {
   atlantis::rhi::VertexInputLayout pbrDirectLitVertexInputLayout;
   std::vector<std::uint32_t> pbrDirectLitVertexSpirv;
   std::vector<std::uint32_t> pbrDirectLitFragmentSpirv;
+  // Plan 0024 Milestone 7 (ADR-0068 D-1/D-3/D-6): this fixture's own
+  // colorFormat (kMaterialDemoColorFormat below) is Rgba8Unorm and
+  // never changes at runtime -- only the UNORM output-transform variant
+  // is ever loaded/built, once, at construction.
+  atlantis::rhi::VertexInputLayout outputTransformUnormVertexInputLayout;
+  std::vector<std::uint32_t> outputTransformUnormVertexSpirv;
+  std::vector<std::uint32_t> outputTransformUnormFragmentSpirv;
 
   // Phase 1 (CPU) outputs, published once by setUpMaterialDemoFixture() and
   // never mutated afterward.
@@ -88,6 +97,14 @@ struct MaterialDemoFixture {
   std::unique_ptr<atlantis::rhi::Texture> depthTexture;
   std::unique_ptr<atlantis::rhi::OffscreenTarget> offscreenTarget;
   std::unique_ptr<atlantis::rhi::Buffer> readbackBuffer;
+  // Plan 0024 Milestone 7 (ADR-0068 D-1/D-3/D-6): this fixture's own
+  // independent HDR intermediate/fullscreen-triangle geometry/output-
+  // transform Pipeline, created once at construction.
+  std::unique_ptr<atlantis::rhi::HdrColorTarget> hdrColorTarget;
+  std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleVertexBuffer;
+  std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleIndexBuffer;
+  std::unique_ptr<atlantis::rhi::Sampler> outputTransformSampler;
+  std::unique_ptr<atlantis::rhi::Pipeline> outputTransformPipeline;
 
   // std::optional, not a bare World: World is move-constructible but not
   // move-assignable (ADR-0049/Spec 0014) -- matches

@@ -14,6 +14,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
 #include <fstream>
 #include <type_traits>
 #include <utility>
@@ -163,6 +164,84 @@ using Mat4 = std::array<float, 16>;
   return result;
 }
 
+// Plan 0024 Milestone 7: the output-transform pass's own fixed vertex
+// schema -- NOT sourced from the mesh Vertex struct above, mirrors
+// runtime_application.cpp's own identical outputTransformVertexLayout().
+[[nodiscard]] std::optional<VertexInputLayout> outputTransformVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = 0},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(float) * 2);
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
+// Plan 0024 Milestone 7 (ADR-0068 D-1/D-3/D-6): this fixture's own HDR
+// intermediate, fullscreen-triangle geometry/sampler, and output-
+// transform Pipeline -- shared by both setUpMinimalCubeFixture() and
+// setUpMinimalCubeFixtureFromAsset() below (identical in every respect
+// except where the mesh's own vertex/index bytes come from, this
+// file's own top-of-file note), so factored into one file-local helper
+// rather than duplicated. Follows the same WORKING_DIRECTORY-relative
+// "shaders/output_transform_unorm.{vert,frag}.spv" convention every
+// shader load in this file already uses. Returns std::nullopt on
+// success; the fixture's own hdrColorTarget/fullscreenTriangle*/
+// outputTransformSampler/outputTransformPipeline members are populated
+// only on that path.
+[[nodiscard]] std::optional<FixtureSetupError> setUpOutputTransformResources(MinimalCubeFixture& fixture,
+                                                                              Extent2D extent) {
+  const auto outputTransformVertexSpirv = loadSpirvFile("shaders/output_transform_unorm.vert.spv");
+  const auto outputTransformFragmentSpirv = loadSpirvFile("shaders/output_transform_unorm.frag.spv");
+  if (!outputTransformVertexSpirv.has_value() || !outputTransformFragmentSpirv.has_value()) {
+    return FixtureSetupError::ShaderLoadFailed;
+  }
+  auto outputTransformVertexReflectionResult = loadReflectionMetadata("shaders/output_transform_unorm.vert.refl.json");
+  if (outputTransformVertexReflectionResult.isErr()) return FixtureSetupError::ShaderLoadFailed;
+  const auto outputTransformVertexInputLayout =
+      outputTransformVertexLayout(outputTransformVertexReflectionResult.value());
+  if (!outputTransformVertexInputLayout.has_value()) return FixtureSetupError::ShaderLoadFailed;
+
+  auto hdrColorTargetResult = fixture.device->createHdrColorTarget({.extent = extent});
+  if (hdrColorTargetResult.isErr()) return FixtureSetupError::ResourceCreationFailed;
+  fixture.hdrColorTarget = std::move(hdrColorTargetResult.value());
+
+  const float fullscreenTriangleVertices[6] = {-1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f};
+  auto fullscreenTriangleVertexBufferResult = fixture.device->createBuffer(
+      {.purpose = BufferPurpose::Vertex, .sizeBytes = sizeof(fullscreenTriangleVertices)});
+  if (fullscreenTriangleVertexBufferResult.isErr()) return FixtureSetupError::ResourceCreationFailed;
+  fixture.fullscreenTriangleVertexBuffer = std::move(fullscreenTriangleVertexBufferResult.value());
+  std::memcpy(fixture.fullscreenTriangleVertexBuffer->mappedData(), fullscreenTriangleVertices,
+              sizeof(fullscreenTriangleVertices));
+
+  const std::uint16_t fullscreenTriangleIndices[3] = {0, 1, 2};
+  auto fullscreenTriangleIndexBufferResult = fixture.device->createBuffer(
+      {.purpose = BufferPurpose::Index, .sizeBytes = sizeof(fullscreenTriangleIndices)});
+  if (fullscreenTriangleIndexBufferResult.isErr()) return FixtureSetupError::ResourceCreationFailed;
+  fixture.fullscreenTriangleIndexBuffer = std::move(fullscreenTriangleIndexBufferResult.value());
+  std::memcpy(fixture.fullscreenTriangleIndexBuffer->mappedData(), fullscreenTriangleIndices,
+              sizeof(fullscreenTriangleIndices));
+
+  auto outputTransformSamplerResult = fixture.device->createSampler(
+      {.filter = atlantis::rhi::Filter::Linear, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+  if (outputTransformSamplerResult.isErr()) return FixtureSetupError::ResourceCreationFailed;
+  fixture.outputTransformSampler = std::move(outputTransformSamplerResult.value());
+
+  auto outputTransformPipelineResult = fixture.device->createPipeline(
+      {.vertexShader = {.spirvWords = outputTransformVertexSpirv->data(),
+                         .wordCount = outputTransformVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = outputTransformFragmentSpirv->data(),
+                           .wordCount = outputTransformFragmentSpirv->size()},
+       .vertexInputLayout = *outputTransformVertexInputLayout,
+       .colorFormat = kFixtureColorFormat,
+       .hasSampledTextureBinding = true,
+       .hasCameraUniformBinding = false,
+       .hasDepthAttachment = false});
+  if (outputTransformPipelineResult.isErr()) return FixtureSetupError::ResourceCreationFailed;
+  fixture.outputTransformPipeline = std::move(outputTransformPipelineResult.value());
+
+  return std::nullopt;
+}
+
 }  // namespace
 
 Result<MinimalCubeFixture, FixtureSetupError> setUpMinimalCubeFixture() {
@@ -208,7 +287,12 @@ Result<MinimalCubeFixture, FixtureSetupError> setUpMinimalCubeFixture() {
       *fixture.device, {.vertexShader = {.spirvWords = vertexSpirv->data(), .wordCount = vertexSpirv->size()},
                          .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
                          .vertexInputLayout = *vertexInputLayout,
-                         .colorFormat = kFixtureColorFormat,
+                         // Plan 0024 Milestone 7 (ADR-0068 D-1/D-3): every
+                         // geometry Pipeline now renders into the fixed HDR
+                         // intermediate, never this fixture's own real
+                         // kFixtureColorFormat directly -- mirrors
+                         // material_realization.cpp's own identical change.
+                         .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
                          .depthFormat = DepthFormat::D32Sfloat,
                          .pushConstantSizeBytes = sizeof(float) * 16});
   if (materialResult.isErr()) {
@@ -238,6 +322,11 @@ Result<MinimalCubeFixture, FixtureSetupError> setUpMinimalCubeFixture() {
     return Result<MinimalCubeFixture, FixtureSetupError>::Err(FixtureSetupError::ResourceCreationFailed);
   }
   fixture.readbackBuffer = std::move(readbackBufferResult.value());
+
+  if (const auto outputTransformError = setUpOutputTransformResources(fixture, extent);
+      outputTransformError.has_value()) {
+    return Result<MinimalCubeFixture, FixtureSetupError>::Err(*outputTransformError);
+  }
 
   return Result<MinimalCubeFixture, FixtureSetupError>::Ok(std::move(fixture));
 }
@@ -273,7 +362,9 @@ Result<PixelBuffer, FixtureRenderError> renderOneFrame(MinimalCubeFixture& fixtu
 
   Renderer renderer;
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, drawItems,
-                      rhi::ResourceState::TransferSource);
+                      rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
+                      *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
+                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler);
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");
@@ -373,7 +464,12 @@ Result<MinimalCubeFixture, FixtureSetupError> setUpMinimalCubeFixtureFromAsset(c
       *fixture.device, {.vertexShader = {.spirvWords = vertexSpirv->data(), .wordCount = vertexSpirv->size()},
                          .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
                          .vertexInputLayout = *vertexInputLayout,
-                         .colorFormat = kFixtureColorFormat,
+                         // Plan 0024 Milestone 7 (ADR-0068 D-1/D-3): every
+                         // geometry Pipeline now renders into the fixed HDR
+                         // intermediate, never this fixture's own real
+                         // kFixtureColorFormat directly -- mirrors
+                         // material_realization.cpp's own identical change.
+                         .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
                          .depthFormat = DepthFormat::D32Sfloat,
                          .pushConstantSizeBytes = sizeof(float) * 16});
   if (materialResult.isErr()) {
@@ -403,6 +499,11 @@ Result<MinimalCubeFixture, FixtureSetupError> setUpMinimalCubeFixtureFromAsset(c
     return Result<MinimalCubeFixture, FixtureSetupError>::Err(FixtureSetupError::ResourceCreationFailed);
   }
   fixture.readbackBuffer = std::move(readbackBufferResult.value());
+
+  if (const auto outputTransformError = setUpOutputTransformResources(fixture, extent);
+      outputTransformError.has_value()) {
+    return Result<MinimalCubeFixture, FixtureSetupError>::Err(*outputTransformError);
+  }
 
   return Result<MinimalCubeFixture, FixtureSetupError>::Ok(std::move(fixture));
 }

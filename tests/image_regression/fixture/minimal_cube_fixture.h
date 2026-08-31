@@ -5,7 +5,10 @@
 #include <atlantis/result.h>
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/device.h>
+#include <atlantis/rhi/hdr_color_target.h>
 #include <atlantis/rhi/offscreen_target.h>
+#include <atlantis/rhi/pipeline.h>
+#include <atlantis/rhi/sampler.h>
 #include <atlantis/rhi/texture.h>
 #include <atlantis/rhi/types.h>
 
@@ -34,6 +37,18 @@ struct MinimalCubeFixture {
   std::unique_ptr<atlantis::rhi::Texture> depthTexture;
   std::unique_ptr<atlantis::rhi::OffscreenTarget> offscreenTarget;
   std::unique_ptr<atlantis::rhi::Buffer> readbackBuffer;
+  // Plan 0024 Milestone 7 (ADR-0068 D-1/D-3/D-6): this fixture's own
+  // independent HDR intermediate/fullscreen-triangle geometry/output-
+  // transform Pipeline, created once at construction. The output-
+  // transform shader pair's own SPIR-V is not retained past setup
+  // (unlike the mesh shader pair above) -- it is consumed only to build
+  // outputTransformPipeline below and, like vertexSpirv/fragmentSpirv,
+  // never needed again after that.
+  std::unique_ptr<atlantis::rhi::HdrColorTarget> hdrColorTarget;
+  std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleVertexBuffer;
+  std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleIndexBuffer;
+  std::unique_ptr<atlantis::rhi::Sampler> outputTransformSampler;
+  std::unique_ptr<atlantis::rhi::Pipeline> outputTransformPipeline;
 };
 
 inline constexpr std::uint32_t kFixtureExtentPixels = 512;
