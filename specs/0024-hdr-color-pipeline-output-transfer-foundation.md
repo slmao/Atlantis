@@ -3,7 +3,12 @@
 - **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-08-31
-- **Related Plan(s):** [plans/0024-hdr-color-pipeline-output-transfer-foundation.md](../plans/0024-hdr-color-pipeline-output-transfer-foundation.md) (`In Review`)
+- **Related Plan(s):** [plans/0024-hdr-color-pipeline-output-transfer-foundation.md](../plans/0024-hdr-color-pipeline-output-transfer-foundation.md)
+  (**`Approved / Ready for Implementation`**, Human Review Approval
+  recorded 2026-08-31 following one final review round — see that
+  Plan's own Human Review Approval note. **This approval authorizes
+  Implementation of that Plan only once its own Implementation PR has
+  merged — not before.**)
 - **Related ADR(s):** [ADR-0068](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md) (`Accepted`)
 - **Human Review Approval (2026-08-31):** Reviewed and approved by
   slmao (`slmao <slmaosjtu@gmail.com>`, this repository's

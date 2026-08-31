@@ -1,10 +1,26 @@
 # Plan: HDR Color Pipeline & Output Transfer Foundation
 
 - **Spec:** [specs/0024-hdr-color-pipeline-output-transfer-foundation.md](../specs/0024-hdr-color-pipeline-output-transfer-foundation.md)
-  (`Approved`, Human Review Approval 2026-08-31 — authorizes drafting
-  this Plan only, not Implementation)
-- **Status:** In Review
+  (`Approved`, Human Review Approval 2026-08-31)
+- **Status:** Approved / Ready for Implementation
 - **Author:** slmao
+- **Human Review Approval (2026-08-31):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
+  git-identified maintainer) on 2026-08-31, following one final,
+  targeted review round that retyped `PipelineCreateParams::colorFormat`
+  to a structural `std::variant<Format, HdrFormat>` (rejecting an
+  earlier required-field-plus-optional-override design as a real
+  illegal-state risk), pinned every new RHI/`CommandList`/
+  `RenderGraph` signature exactly, traced the one-`CommandList`/one-
+  `submit()` guarantee and all six resource-lifecycle scenarios
+  against real, existing mechanisms, made the fullscreen-triangle
+  geometry and both output-shader contracts fully closed, isolated the
+  format-capability negative test into a pure classification function,
+  and made the golden-migration sequencing airtight — see this
+  document's own Milestones 1, 2, 5, 6, 8, and 9 for the exact,
+  in-place corrections. **This approval authorizes Implementation of
+  this Plan only once its own Implementation PR has merged — not
+  before.**
 
 ## Objective
 
