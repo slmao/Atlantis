@@ -30,6 +30,7 @@ using atlantis::shader_system::buildSpirvValArgv;
 using atlantis::shader_system::DescriptorBinding;
 using atlantis::shader_system::litTexturedExpectedDescriptorContract;
 using atlantis::shader_system::minimalRendererExpectedDescriptorContract;
+using atlantis::shader_system::outputTransformExpectedDescriptorContract;
 using atlantis::shader_system::pbrDirectLitExpectedDescriptorContract;
 using atlantis::shader_system::PushConstantRange;
 using atlantis::shader_system::texturedMaterialExpectedDescriptorContract;
@@ -141,6 +142,11 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     fullContract = litTexturedExpectedDescriptorContract();
   } else if (expectedContract == "pbr-direct-lit") {
     fullContract = pbrDirectLitExpectedDescriptorContract();
+  } else if (expectedContract == "output-transform-unorm" || expectedContract == "output-transform-srgb") {
+    // Plan 0024 Milestone 3 (ADR-0068 D-10): both output-transform
+    // variants share the identical descriptor contract -- one function,
+    // not two.
+    fullContract = outputTransformExpectedDescriptorContract();
   } else {
     std::cerr << "atlantis_shader_compiler: unknown --expected-contract value '" << expectedContract << "'\n";
     return false;
@@ -173,15 +179,24 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
 // 96-byte block (PbrPushConstants, ADR-0067 D-3) here; the other three
 // contracts (minimal-renderer/textured-material/lit-textured) keep the
 // existing 64-byte (ObjectToWorldOnly) expectation, unchanged.
+// Plan 0024 Milestone 3 (ADR-0068 D-10): both output-transform
+// contracts expect a genuinely EMPTY range list, not a zero-sized
+// entry -- the fullscreen triangle needs no per-draw transform, and
+// Slang's raw JSON has no pushConstantBuffer resource to reflect at
+// all when a shader declares none.
 [[nodiscard]] bool validatePushConstantsForVertexStage(const ReflectionMetadata& vertexMetadata,
                                                         const std::string& expectedContract) {
-  const std::uint32_t expectedSizeBytes = expectedContract == "pbr-direct-lit" ? 96 : sizeof(float) * 16;
-  const std::vector<PushConstantRange> expected = {
-      PushConstantRange{.offsetBytes = 0, .sizeBytes = expectedSizeBytes, .stage = ShaderStage::Vertex}};
+  std::vector<PushConstantRange> expected;
+  if (expectedContract == "output-transform-unorm" || expectedContract == "output-transform-srgb") {
+    // expected stays empty.
+  } else {
+    const std::uint32_t expectedSizeBytes = expectedContract == "pbr-direct-lit" ? 96 : sizeof(float) * 16;
+    expected = {PushConstantRange{.offsetBytes = 0, .sizeBytes = expectedSizeBytes, .stage = ShaderStage::Vertex}};
+  }
   if (vertexMetadata.pushConstantRanges != expected) {
     std::cerr << "atlantis_shader_compiler: vertex stage push-constant layout does not match the fixed "
-                 "expectation (offset 0, size "
-              << expectedSizeBytes << ", vertex stage)\n";
+                 "expectation for contract '"
+              << expectedContract << "'\n";
     return false;
   }
   return true;
