@@ -132,6 +132,27 @@ using atlantis::rhi::ResourceState;
   };
 }
 
+// Plan 0024 Milestone 2 (ADR-0068 D-3): the output-transform pass's own
+// read of the HDR intermediate the geometry pass just wrote --
+// discovered missing from this table during real-GPU testing
+// (Milestone 7), even though execution.cpp's own dispatch and this
+// exact transition were already specified in Milestone 2's own text.
+// Source layout/access/stage mirror colorAttachmentOutputToTransferSource()
+// above (same "just-written color attachment" starting point);
+// destination layout/access/stage mirror transferDestinationToShaderRead()
+// above (same "about to be sampled in the fragment shader" ending
+// point) -- never a new combination invented for this entry.
+[[nodiscard]] ImageBarrierPlan colorAttachmentOutputToShaderRead() {
+  return ImageBarrierPlan{
+      .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+      .srcStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+      .dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+  };
+}
+
 }  // namespace
 
 ImageBarrierPlan planTransition(ResourceState before, ResourceState after) {
@@ -163,6 +184,9 @@ ImageBarrierPlan planTransition(ResourceState before, ResourceState after) {
   }
   if (before == ResourceState::TransferDestination && after == ResourceState::ShaderRead) {
     return transferDestinationToShaderRead();
+  }
+  if (before == ResourceState::ColorAttachmentOutput && after == ResourceState::ShaderRead) {
+    return colorAttachmentOutputToShaderRead();
   }
 
   ATLANTIS_CHECK_MSG(false, "planTransition() called with a (before, after) pair this round does not define");
