@@ -1,15 +1,23 @@
 // Plan 0023 Milestone 4 (ADR-0067 D-1/D-2, ADR-0062's own Accepted
 // Amendment): a metallic-roughness Cook-Torrance BRDF (Lambertian
 // diffuse + GGX/Smith-Schlick specular) for Directional and Point
-// lights, sharing lit_textured.slang's own vertex-input shape, one
-// combined-image-sampler binding, and the same
-// "final clamp is the only transformation" output contract. The
-// CameraUniform layout below mirrors Milestone 2's own real C++
-// field-for-field, offset-for-offset (CameraMatrices unchanged,
-// FrameLightingData unchanged, CameraWorldPositionData appended at the
-// tail, offset 304) -- Milestone 7's own real Slang reflection cross-
-// check is the actual verification of that claim, not this comment
-// alone. PushConstants mirrors PbrPushConstants (Milestone 3) exactly.
+// lights, sharing lit_textured.slang's own vertex-input shape and one
+// combined-image-sampler binding. The CameraUniform layout below
+// mirrors Milestone 2's own real C++ field-for-field, offset-for-offset
+// (CameraMatrices unchanged, FrameLightingData unchanged,
+// CameraWorldPositionData appended at the tail, offset 304) --
+// Milestone 7's own real Slang reflection cross-check is the actual
+// verification of that claim, not this comment alone. PushConstants
+// mirrors PbrPushConstants (Milestone 3) exactly.
+//
+// Plan 0024 Milestone 4 (ADR-0068 D-7): the former "final clamp is the
+// only transformation" output contract no longer applies to this
+// shader -- its own final clamp is removed; fragmentMain() now returns
+// scene-referred linear HDR, written into a caller-owned HdrColorTarget
+// instead of the final presentable target. Tone-mapping and the
+// display transfer function now happen once, downstream, in the new
+// output-transform pass -- see shaders/output_transform_unorm/ and
+// shaders/output_transform_srgb/.
 
 struct Varying {
     float4 position : SV_Position;
@@ -176,10 +184,13 @@ float4 fragmentMain(Varying input) : SV_Target {
         }
     }
 
-    // The one and only clamp, applied here, after accumulating every
-    // light -- never per-light. No tone-mapping, no gamma-encode
-    // (ADR-0067 D-6, same contract every MaterialKind in this engine
-    // already uses).
-    float3 finalRgb = clamp(accumulated, 0.0, 1.0);
-    return float4(finalRgb, alphaOut);
+    // Plan 0024 Milestone 4 (ADR-0068 D-7): the former "one and only
+    // clamp, applied here" is removed -- this shader's own output is
+    // now scene-referred linear HDR, written into a caller-owned
+    // HdrColorTarget (Rgba16Float) instead of the final presentable
+    // target. Clamping to [0,1] here would defeat the entire purpose of
+    // the HDR intermediate: a bright highlight above 1.0 must survive
+    // to reach the output-transform pass's own tone-mapping curve, not
+    // be pre-clipped away. No other line in this function changes.
+    return float4(accumulated, alphaOut);
 }

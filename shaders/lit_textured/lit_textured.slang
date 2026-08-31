@@ -102,8 +102,12 @@ float4 fragmentMain(Varying input) : SV_Target {
         accumulated += camera.pointLights[j].color * camera.pointLights[j].intensity * ndotl * atten;
     }
 
-    // The one and only clamp, applied here, after combining texture and
-    // light -- never per-light. No tone-mapping, no gamma-encode.
-    float3 finalRgb = clamp(texColor.rgb * accumulated, 0.0, 1.0);
-    return float4(finalRgb, texColor.a);
+    // Plan 0024 Milestone 4 (ADR-0068 D-7): the former "one and only
+    // clamp, applied here" is removed -- this shader's own output is
+    // now scene-referred linear HDR, written into a caller-owned
+    // HdrColorTarget instead of the final presentable target. Tone-
+    // mapping and the display transfer function now happen once,
+    // downstream, in the new output-transform pass. No other line in
+    // this function changes.
+    return float4(texColor.rgb * accumulated, texColor.a);
 }
