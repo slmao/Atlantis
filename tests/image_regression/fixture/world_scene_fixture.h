@@ -6,7 +6,10 @@
 #include <atlantis/result.h>
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/device.h>
+#include <atlantis/rhi/hdr_color_target.h>
 #include <atlantis/rhi/offscreen_target.h>
+#include <atlantis/rhi/pipeline.h>
+#include <atlantis/rhi/sampler.h>
 #include <atlantis/rhi/texture.h>
 #include <atlantis/rhi/types.h>
 #include <atlantis/world/world.h>
@@ -33,6 +36,14 @@ struct WorldSceneFixture {
   std::unique_ptr<atlantis::rhi::Texture> depthTexture;
   std::unique_ptr<atlantis::rhi::OffscreenTarget> offscreenTarget;
   std::unique_ptr<atlantis::rhi::Buffer> readbackBuffer;
+  // Plan 0024 Milestone 7 (ADR-0068 D-1/D-3/D-6): this fixture's own
+  // independent HDR intermediate/fullscreen-triangle geometry/output-
+  // transform Pipeline, created once at construction.
+  std::unique_ptr<atlantis::rhi::HdrColorTarget> hdrColorTarget;
+  std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleVertexBuffer;
+  std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleIndexBuffer;
+  std::unique_ptr<atlantis::rhi::Sampler> outputTransformSampler;
+  std::unique_ptr<atlantis::rhi::Pipeline> outputTransformPipeline;
   atlantis::world::World world;
   atlantis::asset_system::AssetId knownMinimalCubeAssetId = 0;
 };

@@ -28,6 +28,7 @@ namespace {
 
 using atlantis::render_graph::test::FakeBuffer;
 using atlantis::render_graph::test::FakeCommandList;
+using atlantis::render_graph::test::FakeHdrColorTarget;
 using atlantis::render_graph::test::FakePipeline;
 using atlantis::render_graph::test::FakeRenderTarget;
 using atlantis::render_graph::test::FakeSampledTexture;
@@ -109,18 +110,33 @@ TEST_CASE("Renderer::drawFrame() records a full bind/draw sequence per DrawItem 
   // this test.
   FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
 
+  // Plan 0024 Milestone 5: the output-transform pass's own five new,
+  // caller-owned resources -- Renderer only ever borrows them.
+  FakeHdrColorTarget hdrColorTarget("hdr");
+  FakeBuffer fullscreenVertexBuffer(atlantis::rhi::BufferPurpose::Vertex, 0);
+  FakeBuffer fullscreenIndexBuffer(atlantis::rhi::BufferPurpose::Index, 0);
+  FakePipeline outputTransformPipeline;
+  FakeSampler outputTransformSampler("output_transform_sampler");
+
   Renderer renderer;
   renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
-                      atlantis::rhi::ResourceState::PresentSource);
+                      atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler);
 
-  REQUIRE(commandList.boundPipelines.size() == 2);
-  REQUIRE(commandList.boundVertexBuffers.size() == 2);
-  REQUIRE(commandList.boundIndexBuffers.size() == 2);
+  // Plan 0024 Milestone 5: one more bindPipeline/bindVertexBuffer/
+  // bindIndexBuffer/drawIndexed than before -- the output-transform
+  // pass's own fullscreen-triangle draw, in addition to the two
+  // DrawItems' own geometry-pass draws. bindUniformBuffer/pushConstant
+  // counts are unchanged -- the output-transform pass calls neither.
+  REQUIRE(commandList.boundPipelines.size() == 3);
+  REQUIRE(commandList.boundVertexBuffers.size() == 3);
+  REQUIRE(commandList.boundIndexBuffers.size() == 3);
   REQUIRE(commandList.boundUniformBuffers.size() == 2);
   REQUIRE(commandList.pushConstants.size() == 2);
-  REQUIRE(commandList.drawIndexedCounts.size() == 2);
+  REQUIRE(commandList.drawIndexedCounts.size() == 3);
   REQUIRE(commandList.drawIndexedCounts[0] == 3);
   REQUIRE(commandList.drawIndexedCounts[1] == 3);
+  REQUIRE(commandList.drawIndexedCounts[2] == 3);  // the fullscreen triangle's own 3 indices
 
   // Distinct push-constant bytes per DrawItem -- the two DrawItems' own
   // objectToWorld values must not have collided.
@@ -131,9 +147,27 @@ TEST_CASE("Renderer::drawFrame() records a full bind/draw sequence per DrawItem 
   REQUIRE(firstAsFloats[12] == 5.0f);
   REQUIRE(secondAsFloats[12] == -5.0f);
 
+  // Plan 0024 Milestone 5: the geometry pass now writes hdrColorTarget
+  // (the new beginRendering(HdrColorTarget&, ...) overload, with the
+  // depth attachment) -- the output-transform pass writes colorTarget
+  // (the existing beginRendering(RenderTarget&, ...) overload, with no
+  // depth attachment, since it declares no DepthAttachmentReadWrite
+  // usage).
+  REQUIRE(commandList.beginRenderingHdrCalls.size() == 1);
+  REQUIRE(commandList.beginRenderingHdrCalls[0].color == &hdrColorTarget);
+  REQUIRE(commandList.beginRenderingHdrCalls[0].depth == &depthTarget);
+
   REQUIRE(commandList.beginRenderingCalls.size() == 1);
   REQUIRE(commandList.beginRenderingCalls[0].color == &colorTarget);
-  REQUIRE(commandList.beginRenderingCalls[0].depth == &depthTarget);
+  REQUIRE(commandList.beginRenderingCalls[0].depth == nullptr);
+
+  // The output-transform pass's own bindTexture(HdrColorTarget&, ...)
+  // call -- a distinct overload/event from the SampledTexture one
+  // (BindHdrTexture, not BindTexture) -- see the two Material-textured/
+  // untextured test cases below for that overload's own coverage.
+  REQUIRE(commandList.boundHdrTextures.size() == 1);
+  REQUIRE(commandList.boundHdrTextures[0].texture == &hdrColorTarget);
+  REQUIRE(commandList.boundHdrTextures[0].sampler == &outputTransformSampler);
 }
 
 TEST_CASE("Renderer::drawFrame() passes finalColorState through unmodified, never branching on it",
@@ -164,13 +198,24 @@ TEST_CASE("Renderer::drawFrame() passes finalColorState through unmodified, neve
   FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
   Renderer renderer;
 
+  // Plan 0024 Milestone 5: the output-transform pass's own five new,
+  // caller-owned resources, shared by both calls below -- Renderer only
+  // ever borrows them.
+  FakeHdrColorTarget hdrColorTarget("hdr");
+  FakeBuffer fullscreenVertexBuffer(atlantis::rhi::BufferPurpose::Vertex, 0);
+  FakeBuffer fullscreenIndexBuffer(atlantis::rhi::BufferPurpose::Index, 0);
+  FakePipeline outputTransformPipeline;
+  FakeSampler outputTransformSampler("output_transform_sampler");
+
   FakeCommandList windowedCommandList;
   renderer.drawFrame(windowedCommandList, colorTarget, depthTarget, cameraBuffer, drawItems,
-                      atlantis::rhi::ResourceState::PresentSource);
+                      atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler);
 
   FakeCommandList headlessCommandList;
   renderer.drawFrame(headlessCommandList, colorTarget, depthTarget, cameraBuffer, drawItems,
-                      atlantis::rhi::ResourceState::TransferSource);
+                      atlantis::rhi::ResourceState::TransferSource, hdrColorTarget, fullscreenVertexBuffer,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler);
 
   REQUIRE(windowedCommandList.events == headlessCommandList.events);
   REQUIRE(windowedCommandList.transitions.size() == headlessCommandList.transitions.size());
@@ -211,9 +256,24 @@ TEST_CASE("Renderer::drawFrame() with an untextured Material records no bindText
   FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
   FakeCommandList commandList;
   Renderer renderer;
-  renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
-                      atlantis::rhi::ResourceState::PresentSource);
 
+  // Plan 0024 Milestone 5: the output-transform pass's own five new,
+  // caller-owned resources -- Renderer only ever borrows them.
+  FakeHdrColorTarget hdrColorTarget("hdr");
+  FakeBuffer fullscreenVertexBuffer(atlantis::rhi::BufferPurpose::Vertex, 0);
+  FakeBuffer fullscreenIndexBuffer(atlantis::rhi::BufferPurpose::Index, 0);
+  FakePipeline outputTransformPipeline;
+  FakeSampler outputTransformSampler("output_transform_sampler");
+
+  renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
+                      atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler);
+
+  // The Material's own untextured DrawItem records no SampledTexture-
+  // shaped bindTexture() call -- the output-transform pass's own
+  // bindTexture(HdrColorTarget&, ...) call is a distinct overload/event
+  // (BindHdrTexture, not BindTexture), so it does not interfere with
+  // either check below.
   REQUIRE(commandList.boundTextures.empty());
   for (const FakeCommandList::EventKind event : commandList.events) {
     REQUIRE(event != FakeCommandList::EventKind::BindTexture);
@@ -246,9 +306,23 @@ TEST_CASE("Renderer::drawFrame() with a textured Material records bindTexture im
   FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
   FakeCommandList commandList;
   Renderer renderer;
-  renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
-                      atlantis::rhi::ResourceState::PresentSource);
 
+  // Plan 0024 Milestone 5: the output-transform pass's own five new,
+  // caller-owned resources -- Renderer only ever borrows them.
+  FakeHdrColorTarget hdrColorTarget("hdr");
+  FakeBuffer fullscreenVertexBuffer(atlantis::rhi::BufferPurpose::Vertex, 0);
+  FakeBuffer fullscreenIndexBuffer(atlantis::rhi::BufferPurpose::Index, 0);
+  FakePipeline outputTransformPipeline;
+  FakeSampler outputTransformSampler("output_transform_sampler");
+
+  renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
+                      atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler);
+
+  // boundTextures counts only the SampledTexture-shaped bindTexture()
+  // overload -- the output-transform pass's own bindTexture(HdrColorTarget&,
+  // ...) call is recorded separately (boundHdrTextures), so this count
+  // is unaffected.
   REQUIRE(commandList.boundTextures.size() == 2);
   REQUIRE(commandList.boundTextures[0].texture == &fakeTexture);
   REQUIRE(commandList.boundTextures[0].sampler == &fakeSampler);

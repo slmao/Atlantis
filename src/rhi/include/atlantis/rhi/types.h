@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <variant>
 #include <vector>
 
 namespace atlantis::rhi {
@@ -29,6 +30,19 @@ enum class Format {
   Bgra8Srgb,
   Rgba8Unorm,
   Rgba8Srgb,
+};
+
+// Plan 0024 Milestone 1 (ADR-0068 D-2): the fixed, single-variant HDR
+// scene-color-intermediate format -- one value this round, mirroring
+// DepthFormat's own established "one variant, no capability query
+// needed for the format's own existence -- a real, executed
+// vkGetPhysicalDeviceFormatProperties() check still runs at creation
+// time, HdrColorTargetCreateError below" precedent. Deliberately a
+// separate enum from Format above, never a fifth Format value -- see
+// PipelineCreateParams::colorFormat's own comment for why the two
+// vocabularies stay structurally distinct.
+enum class HdrFormat {
+  Rgba16Float,  // VK_FORMAT_R16G16B16A16_SFLOAT
 };
 
 struct SwapchainMetadata {
@@ -159,6 +173,18 @@ struct OffscreenTargetCreateParams {
 
 [[nodiscard]] bool operator==(const OffscreenTargetCreateParams& lhs, const OffscreenTargetCreateParams& rhs);
 
+// Plan 0024 Milestone 1 (ADR-0068 D-1): creation-time parameters for
+// the new HdrColorTarget scene-color intermediate. format defaults to
+// the one real, usable HdrFormat value, mirroring
+// OffscreenTargetCreateParams's own identical "never a to-VkFormat
+// invalid default" rationale above.
+struct HdrColorTargetCreateParams {
+  Extent2D extent;
+  HdrFormat format = HdrFormat::Rgba16Float;
+};
+
+[[nodiscard]] bool operator==(const HdrColorTargetCreateParams& lhs, const HdrColorTargetCreateParams& rhs);
+
 struct VertexAttribute {
   std::uint32_t location = 0;
   std::uint32_t offsetBytes = 0;
@@ -187,7 +213,26 @@ struct PipelineCreateParams {
   ShaderStageBytecode vertexShader;
   ShaderStageBytecode fragmentShader;
   VertexInputLayout vertexInputLayout;
-  Format colorFormat = Format::Unknown;          // matches the bound RenderTarget's format at Material construction time
+  // Plan 0024 Milestone 1 (ADR-0068 D-2/D-4): a structural one-of, not
+  // a required Format field plus an optional HdrFormat override -- that
+  // shape was rejected during this Plan's own final review as a real
+  // illegal-state risk (both set, or neither) and a priority
+  // convention to document and get wrong, not a structural guarantee.
+  // std::variant<Format, HdrFormat> makes "exactly one of the two
+  // format vocabularies" true by construction, matching this exact
+  // module family's own established precedent for "structurally
+  // exactly one of a closed set of kinds"
+  // (render_graph::CompileError = std::variant<MultipleProducersError,
+  // DependencyCycleError>; platform::PlatformEvent's own explicit
+  // rationale, "std::variant chosen over a polymorphic event base,
+  // consistent with atlantis::Result's existing value-type style").
+  // Every geometry-pass Pipeline (every MaterialKind) now holds
+  // HdrFormat::Rgba16Float here; the new output-transform Pipeline
+  // pair alone holds a real Format, matching whichever final target it
+  // renders into. Format::Unknown inside the Format alternative
+  // remains the one pre-existing illegal *value* (toVkFormat(Format)
+  // already asserts on it) -- unchanged, not a new concept.
+  std::variant<Format, HdrFormat> colorFormat = Format::Unknown;
   DepthFormat depthFormat = DepthFormat::D32Sfloat;
   std::size_t pushConstantSizeBytes = 0;          // this round: sizeof(float) * 16 (one 4x4 matrix)
   // Spec 0016/ADR-0056: caller-derived from the shader's own real
@@ -198,6 +243,46 @@ struct PipelineCreateParams {
   // behavior unconditionally -- zero source change at any existing
   // call site.
   bool hasSampledTextureBinding = false;
+  // Plan 0024 Milestone 6: discovered during Implementation, not
+  // anticipated by the Plan's own file list -- every existing Pipeline
+  // this Device creates has always had an unconditional
+  // VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER at binding 0
+  // (vulkan_device.cpp's own createPipeline()), but the new output-
+  // transform shader contract (Milestone 3, ADR-0068 D-10,
+  // outputTransformExpectedDescriptorContract()) declares binding 0 as
+  // a Sampler with no uniform buffer at all -- creating that Pipeline
+  // through the unmodified, always-uniform-at-0 layout is a genuine
+  // descriptor-type mismatch against the shader module's own compiled
+  // SPIR-V, not a hypothetical one. true (default) reproduces today's
+  // exact layout unconditionally -- zero source change at any existing
+  // call site; when false, no uniform-buffer binding is created at
+  // all, and hasSampledTextureBinding's own binding (when also true)
+  // moves from index 1 down to index 0 -- the exact, and only, shape
+  // the output-transform contract needs. Confirmed against Human
+  // Review direction (chat, 2026-09-01) before this field was added:
+  // widen createPipeline()'s own contract now, as a disclosed,
+  // additive correction, rather than silently working around it.
+  bool hasCameraUniformBinding = true;
+  // Plan 0024 Milestone 6: discovered during Implementation alongside
+  // hasCameraUniformBinding above, same root cause -- every existing
+  // Pipeline this Device creates has always had depth test/write
+  // unconditionally enabled and a real depthAttachmentFormat
+  // (DepthFormat has exactly one value, D32Sfloat -- no "none"), but
+  // the output-transform pass (Renderer's own second RenderGraph pass,
+  // Milestone 5) binds no depth resource at all -- its own
+  // ResourceBinding never sets .depthTexture, so beginRendering()
+  // correctly passes depth == nullptr and VkRenderingInfo::
+  // pDepthAttachment is nullptr for that pass. A Pipeline whose own
+  // VkPipelineRenderingCreateInfo::depthAttachmentFormat names a real
+  // format, bound during a render-pass instance with no depth
+  // attachment, is a genuine Vulkan validation violation, not a
+  // hypothetical one. true (default) reproduces today's exact
+  // behavior unconditionally -- zero source change at any existing
+  // call site; when false, depth test and depth write are both
+  // disabled and depthAttachmentFormat is left VK_FORMAT_UNDEFINED.
+  // Confirmed against Human Review direction (chat, 2026-09-01),
+  // mirroring hasCameraUniformBinding's own identical resolution.
+  bool hasDepthAttachment = true;
 };
 
 // Why three distinct *CreateError enums below, not one shared
@@ -235,6 +320,20 @@ enum class SamplerCreateError {
 // OffscreenTarget's color image creation is structurally identical
 // (image + memory + view).
 enum class OffscreenTargetCreateError {
+  AllocationFailed,
+  ImageCreationFailed,
+  ImageViewCreationFailed,
+};
+
+// Plan 0024 Milestone 1 (ADR-0068 D-1/D-2): mirrors TextureCreateError/
+// OffscreenTargetCreateError's own identical shape, plus one new,
+// narrow enumerator this creation call alone needs.
+enum class HdrColorTargetCreateError {
+  // A device's real, physical VkFormatFeatureFlags for HdrFormat's own
+  // VkFormat lack a required bit -- a real runtime fact, discovered at
+  // creation time, never a programmer error (never ATLANTIS_CHECK).
+  // Checked, and returned, before any VkResult-producing Vulkan call.
+  FormatFeaturesUnsupported,
   AllocationFailed,
   ImageCreationFailed,
   ImageViewCreationFailed,

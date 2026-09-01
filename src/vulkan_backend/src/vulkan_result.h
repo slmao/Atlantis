@@ -85,6 +85,13 @@ enum class VulkanFailureCategory {
 // Device::createOffscreenTarget()'s own Vulkan calls (Spec 0010).
 [[nodiscard]] atlantis::rhi::OffscreenTargetCreateError toOffscreenTargetCreateError(VkResult result);
 
+// vkCreateImage/vkAllocateMemory/vkBindImageMemory/vkCreateImageView --
+// Device::createHdrColorTarget()'s own Vulkan calls (Plan 0024
+// Milestone 1). FormatFeaturesUnsupported is never returned from this
+// function -- it is returned directly from createHdrColorTarget()'s
+// own capability check, before any of these Vulkan calls run.
+[[nodiscard]] atlantis::rhi::HdrColorTargetCreateError toHdrColorTargetCreateError(VkResult result);
+
 // vkAllocateDescriptorSets, inside VulkanDevice's own descriptor-pool
 // allocation scan (Spec 0021/ADR-0064): true only for the two VkResult
 // values that mean "this pool's own capacity is exhausted, a

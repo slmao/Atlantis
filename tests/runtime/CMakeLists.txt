@@ -82,10 +82,19 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   # calls need a real pbrDirectLit* trio too, even where no test in this
   # file realizes one.
   ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  # Plan 0024 Milestone 6/7 (ADR-0068 D-1/D-3/D-6): pbr_render_gpu_tests.cpp's
+  # own renderOneFrame() helper needs the output-transform-unorm shader
+  # pair (its own kColorFormat is fixed Rgba8Unorm), mirroring
+  # ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR's own sourcing exactly.
+  ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  # runtime_smoke_gpu_tests.cpp's own real RuntimeApplication needs both
+  # output-transform variants, mirroring main.cpp's own identical need.
+  ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR="${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}"
 )
 
 add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
-  pbr_direct_lit_shaders ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})
+  pbr_direct_lit_shaders output_transform_unorm_shaders output_transform_srgb_shaders
+  ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})
 
 # LABELS "gpu": the existing plain ctest convention Spec 0006/Spec 0010
 # already established -- matching tests/image_regression/CMakeLists.txt's

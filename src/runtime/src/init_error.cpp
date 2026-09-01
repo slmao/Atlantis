@@ -32,6 +32,20 @@ const char* toString(RuntimeInitError error) noexcept {
       return "SceneDependencyLoadFailed";
     case RuntimeInitError::PbrBaseColorTextureNotSrgb:
       return "PbrBaseColorTextureNotSrgb";
+    case RuntimeInitError::HdrColorTargetCreateFailed:
+      return "HdrColorTargetCreateFailed";
+    case RuntimeInitError::FullscreenTriangleVertexBufferCreateFailed:
+      return "FullscreenTriangleVertexBufferCreateFailed";
+    case RuntimeInitError::FullscreenTriangleIndexBufferCreateFailed:
+      return "FullscreenTriangleIndexBufferCreateFailed";
+    case RuntimeInitError::OutputTransformSamplerCreateFailed:
+      return "OutputTransformSamplerCreateFailed";
+    case RuntimeInitError::OutputTransformUnormPipelineCreateFailed:
+      return "OutputTransformUnormPipelineCreateFailed";
+    case RuntimeInitError::OutputTransformSrgbPipelineCreateFailed:
+      return "OutputTransformSrgbPipelineCreateFailed";
+    case RuntimeInitError::FallbackMaterialCreateFailed:
+      return "FallbackMaterialCreateFailed";
   }
   // Reached only if a future RuntimeInitError value is added without a
   // corresponding case above -- see exit_reason.cpp's identical comment

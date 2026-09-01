@@ -6,7 +6,10 @@
 #include <atlantis/renderer/draw_item.h>
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/command_list.h>
+#include <atlantis/rhi/hdr_color_target.h>
+#include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/render_target.h>
+#include <atlantis/rhi/sampler.h>
 #include <atlantis/rhi/texture.h>
 
 namespace atlantis::renderer {
@@ -38,15 +41,35 @@ class Renderer {
   //
   // finalColorState: required, backend-agnostic (Spec 0010/ADR-0022
   // Accepted Amendment) -- the state colorTarget must be left in when
-  // this call returns. Passed through unmodified as the internal draw
-  // pass's trailing-transition target; Renderer does not interpret,
-  // validate, or branch on this value, and gains no knowledge of why the
-  // caller chose it. A windowed caller supplies
+  // this call returns. Passed through unmodified as the output-
+  // transform pass's own trailing-transition target; Renderer does not
+  // interpret, validate, or branch on this value, and gains no
+  // knowledge of why the caller chose it. A windowed caller supplies
   // atlantis::rhi::ResourceState::PresentSource; a headless caller
   // supplies atlantis::rhi::ResourceState::TransferSource directly.
+  //
+  // Plan 0024 Milestone 5 (ADR-0068 D-1/D-3): five new, all-borrowed
+  // parameters -- Renderer stays a stateless orchestrator, owning none
+  // of them. hdrColorTarget is the scene-referred linear HDR
+  // intermediate the geometry pass now writes into instead of
+  // colorTarget directly. fullscreenTriangleVertexBuffer/
+  // ...IndexBuffer are the output-transform pass's own fixed, 3-vertex/
+  // 3-index geometry (never scene content). outputTransformPipeline/
+  // ...Sampler are whichever of the two closed *_Unorm/*_Srgb variants
+  // the caller has already selected to match colorTarget's own real
+  // format class (ADR-0068 D-6) -- Renderer performs no such
+  // classification itself and holds no format-dependent state; it
+  // draws whatever Pipeline it is handed, identically either way.
+  // Still exactly one CommandList, one RenderGraphBuilder::compile()/
+  // render_graph::execute() call pair -- Renderer still never calls
+  // Device::submit()/Presentation::present() itself.
   void drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& colorTarget,
                  atlantis::rhi::Texture& depthTarget, atlantis::rhi::Buffer& cameraUniformBuffer,
-                 std::span<const DrawItem> drawItems, atlantis::rhi::ResourceState finalColorState);
+                 std::span<const DrawItem> drawItems, atlantis::rhi::ResourceState finalColorState,
+                 atlantis::rhi::HdrColorTarget& hdrColorTarget,
+                 atlantis::rhi::Buffer& fullscreenTriangleVertexBuffer,
+                 atlantis::rhi::Buffer& fullscreenTriangleIndexBuffer,
+                 atlantis::rhi::Pipeline& outputTransformPipeline, atlantis::rhi::Sampler& outputTransformSampler);
 };
 
 }  // namespace atlantis::renderer

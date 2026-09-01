@@ -21,7 +21,12 @@ target_link_libraries(atlantis_minimal_renderer_demo
 # reference below) makes CMake's own build-order guarantee actually
 # apply -- this target is never scheduled to build until the shader
 # pair's own stamp-backed target has finished.
-add_dependencies(atlantis_minimal_renderer_demo minimal_mesh_shaders)
+# Plan 0024 Milestone 6/7 (ADR-0068 D-1/D-3/D-6): both output-transform
+# shader pairs added the same way -- this demo presents to a real
+# swapchain (unlike the fixed-format fixtures/headless demo), so it
+# needs both variants available.
+add_dependencies(atlantis_minimal_renderer_demo minimal_mesh_shaders output_transform_unorm_shaders
+  output_transform_srgb_shaders)
 add_custom_command(TARGET atlantis_minimal_renderer_demo POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_minimal_renderer_demo>/shaders"
@@ -30,6 +35,18 @@ add_custom_command(TARGET atlantis_minimal_renderer_demo POST_BUILD
       "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.vert.refl.json"
       "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.spv"
       "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_minimal_renderer_demo>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.spv"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.refl.json"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.spv"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_minimal_renderer_demo>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}/output_transform_srgb.vert.spv"
+      "${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}/output_transform_srgb.vert.refl.json"
+      "${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}/output_transform_srgb.frag.spv"
+      "${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}/output_transform_srgb.frag.refl.json"
       "$<TARGET_FILE_DIR:atlantis_minimal_renderer_demo>/shaders/"
 )
 

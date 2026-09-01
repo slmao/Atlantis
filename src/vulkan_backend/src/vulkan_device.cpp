@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include <atlantis/assert.h>
@@ -14,9 +15,11 @@
 #include "device_extension_list.h"
 #include "dynamic_rendering.h"
 #include "dynamic_rendering_entry_points.h"
+#include "hdr_color_target_capability.h"
 #include "validation.h"
 #include "vulkan_buffer.h"
 #include "vulkan_command_list.h"
+#include "vulkan_hdr_color_target.h"
 #include "vulkan_instance.h"
 #include "vulkan_memory.h"
 #include "vulkan_offscreen_target.h"
@@ -705,6 +708,26 @@ namespace {
   return VK_FORMAT_UNDEFINED;
 }
 
+// Plan 0024 Milestone 1 (ADR-0068 D-2): one variant this round, a
+// separate overload from every toVkFormat() above, mirroring
+// SampledTextureFormat's own identical "own vocabulary, own overload"
+// precedent -- HdrFormat is not a Format value.
+[[nodiscard]] VkFormat toVkFormat(atlantis::rhi::HdrFormat format) {
+  switch (format) {
+    case atlantis::rhi::HdrFormat::Rgba16Float:
+      return VK_FORMAT_R16G16B16A16_SFLOAT;
+  }
+  ATLANTIS_CHECK_MSG(false, "toVkFormat(HdrFormat) called with an unhandled enumerator");
+  return VK_FORMAT_UNDEFINED;
+}
+
+// Plan 0024 Milestone 8: hasRequiredHdrColorTargetFeatures() moved to
+// its own private header/source (hdr_color_target_capability.h/.cpp),
+// mirroring resource_state_mapping.h's own identical "pure function,
+// unit-testable without Vulkan" shape -- the anonymous namespace it
+// used to live in (translation-unit-private) could not be reached by a
+// GPU-independent test in a different .cpp file.
+
 [[nodiscard]] VkFilter toVkFilter(atlantis::rhi::Filter filter) {
   switch (filter) {
     case atlantis::rhi::Filter::Nearest:
@@ -992,23 +1015,34 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   // params.hasSampledTextureBinding is set (an uniform-only Material's
   // pipeline keeps the single-binding layout above unchanged, per D5a's
   // "uniform-only Material behavior unchanged" constraint).
+  //
+  // Plan 0024 Milestone 6 (discovered during Implementation, Human
+  // Review direction 2026-09-01 -- see PipelineCreateParams::
+  // hasCameraUniformBinding's own comment, types.h): this binding's own
+  // slot moves from index 1 to index 0 when the caller omits the
+  // uniform binding entirely (params.hasCameraUniformBinding == false)
+  // -- the exact, only shape the new output-transform descriptor
+  // contract (ADR-0068 D-10) needs: one Sampler, at binding 0, no
+  // uniform buffer.
   VkDescriptorSetLayoutBinding combinedImageSamplerBinding{};
-  combinedImageSamplerBinding.binding = 1;
+  combinedImageSamplerBinding.binding = params.hasCameraUniformBinding ? 1 : 0;
   combinedImageSamplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   combinedImageSamplerBinding.descriptorCount = 1;
   combinedImageSamplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-  const VkDescriptorSetLayoutBinding bothBindings[2] = {uniformBinding, combinedImageSamplerBinding};
+  // Built as a small, ordered vector rather than a fixed 2-slot array --
+  // params.hasCameraUniformBinding == false (new this Milestone) means
+  // the uniform binding is not merely unused but genuinely ABSENT from
+  // the layout, not just excluded from the count with a stale pointer
+  // still referencing it.
+  std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings;
+  if (params.hasCameraUniformBinding) setLayoutBindings.push_back(uniformBinding);
+  if (params.hasSampledTextureBinding) setLayoutBindings.push_back(combinedImageSamplerBinding);
 
   VkDescriptorSetLayoutCreateInfo setLayoutCreateInfo{};
   setLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  if (params.hasSampledTextureBinding) {
-    setLayoutCreateInfo.bindingCount = 2;
-    setLayoutCreateInfo.pBindings = bothBindings;
-  } else {
-    setLayoutCreateInfo.bindingCount = 1;
-    setLayoutCreateInfo.pBindings = &uniformBinding;
-  }
+  setLayoutCreateInfo.bindingCount = static_cast<std::uint32_t>(setLayoutBindings.size());
+  setLayoutCreateInfo.pBindings = setLayoutBindings.data();
 
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   const VkResult setLayoutResult =
@@ -1119,10 +1153,17 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   multisampleState.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
   multisampleState.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
+  // Plan 0024 Milestone 6 (discovered during Implementation, Human
+  // Review direction 2026-09-01 -- see PipelineCreateParams::
+  // hasDepthAttachment's own comment, types.h): both fields default to
+  // their existing unconditional values; params.hasDepthAttachment ==
+  // false (the output-transform Pipeline pair alone) disables depth
+  // test/write entirely, matching that pass's own real, depth-attachment-
+  // free VkRenderingInfo.
   VkPipelineDepthStencilStateCreateInfo depthStencilState{};
   depthStencilState.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-  depthStencilState.depthTestEnable = VK_TRUE;
-  depthStencilState.depthWriteEnable = VK_TRUE;
+  depthStencilState.depthTestEnable = params.hasDepthAttachment ? VK_TRUE : VK_FALSE;
+  depthStencilState.depthWriteEnable = params.hasDepthAttachment ? VK_TRUE : VK_FALSE;
   depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS;
 
   VkPipelineColorBlendAttachmentState colorBlendAttachment{};
@@ -1141,8 +1182,21 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   dynamicState.dynamicStateCount = 2;
   dynamicState.pDynamicStates = dynamicStates;
 
-  const VkFormat colorFormat = toVkFormat(params.colorFormat);
-  const VkFormat depthFormat = toVkFormat(params.depthFormat);
+  // Plan 0024 Milestone 1 (ADR-0068 D-2/D-4): params.colorFormat is a
+  // structural std::variant<Format, HdrFormat> -- std::visit resolves
+  // to whichever toVkFormat() overload matches the alternative
+  // actually held, by ordinary overload resolution. Every geometry
+  // Pipeline now holds HdrFormat::Rgba16Float here; the output-
+  // transform Pipeline pair alone holds a real Format.
+  const VkFormat colorFormat =
+      std::visit([](auto format) { return toVkFormat(format); }, params.colorFormat);
+  // Plan 0024 Milestone 6 (see hasDepthAttachment's own comment,
+  // types.h): VK_FORMAT_UNDEFINED when this Pipeline has no depth
+  // attachment at all -- matching the real, depth-attachment-free
+  // VkRenderingInfo the output-transform pass's own beginRendering()
+  // call site produces; toVkFormat(DepthFormat) is only ever called
+  // when a real depth attachment format is actually needed.
+  const VkFormat depthFormat = params.hasDepthAttachment ? toVkFormat(params.depthFormat) : VK_FORMAT_UNDEFINED;
 
   VkPipelineRenderingCreateInfo renderingCreateInfo{};
   renderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
@@ -1341,6 +1395,96 @@ VulkanDevice::createSampledTexture(const atlantis::rhi::SampledTextureCreatePara
 
   return ResultT::Ok(
       std::make_unique<VulkanSampledTexture>(device_, image, memory, imageView, params.extent, params.format));
+}
+
+// Plan 0024 Milestone 1 (ADR-0068 D-1/D-2): mirrors createOffscreenTarget()/
+// createSampledTexture()'s own identical create/alloc/bind/view
+// sequence, usage VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+// VK_IMAGE_USAGE_SAMPLED_BIT -- but checks the real device's own
+// VkFormatFeatureFlags FIRST, before any VkResult-producing Vulkan
+// call: a missing capability is a real runtime fact, not a programmer
+// error, so it is a real Result::Err (FormatFeaturesUnsupported),
+// never ATLANTIS_CHECK.
+atlantis::Result<std::unique_ptr<atlantis::rhi::HdrColorTarget>, atlantis::rhi::HdrColorTargetCreateError>
+VulkanDevice::createHdrColorTarget(const atlantis::rhi::HdrColorTargetCreateParams& params) {
+  using ResultT =
+      atlantis::Result<std::unique_ptr<atlantis::rhi::HdrColorTarget>, atlantis::rhi::HdrColorTargetCreateError>;
+
+  const VkFormat vkFormat = toVkFormat(params.format);
+
+  VkFormatProperties formatProperties{};
+  vkGetPhysicalDeviceFormatProperties(physicalDevice_, vkFormat, &formatProperties);
+  if (!hasRequiredHdrColorTargetFeatures(formatProperties.optimalTilingFeatures)) {
+    return ResultT::Err(atlantis::rhi::HdrColorTargetCreateError::FormatFeaturesUnsupported);
+  }
+
+  VkImageCreateInfo imageCreateInfo{};
+  imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
+  imageCreateInfo.format = vkFormat;
+  imageCreateInfo.extent = VkExtent3D{params.extent.width, params.extent.height, 1};
+  imageCreateInfo.mipLevels = 1;
+  imageCreateInfo.arrayLayers = 1;
+  imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+  // Color-attachment for the geometry pass, sampled for the
+  // output-transform pass -- both required (ADR-0068 D-1).
+  imageCreateInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+  VkImage image = VK_NULL_HANDLE;
+  const VkResult createResult = vkCreateImage(device_, &imageCreateInfo, nullptr, &image);
+  if (createResult != VK_SUCCESS) {
+    return ResultT::Err(toHdrColorTargetCreateError(createResult));
+  }
+
+  VkMemoryRequirements requirements{};
+  vkGetImageMemoryRequirements(device_, image, &requirements);
+
+  const std::optional<std::uint32_t> memoryTypeIndex = selectMemoryTypeIndexForDevice(
+      physicalDevice_, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if (!memoryTypeIndex.has_value()) {
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(atlantis::rhi::HdrColorTargetCreateError::AllocationFailed);
+  }
+
+  VkMemoryAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = requirements.size;
+  allocInfo.memoryTypeIndex = *memoryTypeIndex;
+
+  VkDeviceMemory memory = VK_NULL_HANDLE;
+  const VkResult allocResult = vkAllocateMemory(device_, &allocInfo, nullptr, &memory);
+  if (allocResult != VK_SUCCESS) {
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(atlantis::rhi::HdrColorTargetCreateError::AllocationFailed);
+  }
+
+  const VkResult bindResult = vkBindImageMemory(device_, image, memory, 0);
+  if (bindResult != VK_SUCCESS) {
+    vkFreeMemory(device_, memory, nullptr);
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(toHdrColorTargetCreateError(bindResult));
+  }
+
+  VkImageViewCreateInfo viewCreateInfo{};
+  viewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  viewCreateInfo.image = image;
+  viewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  viewCreateInfo.format = vkFormat;
+  viewCreateInfo.subresourceRange = VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+  VkImageView imageView = VK_NULL_HANDLE;
+  const VkResult viewResult = vkCreateImageView(device_, &viewCreateInfo, nullptr, &imageView);
+  if (viewResult != VK_SUCCESS) {
+    vkFreeMemory(device_, memory, nullptr);
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(atlantis::rhi::HdrColorTargetCreateError::ImageViewCreationFailed);
+  }
+
+  return ResultT::Ok(
+      std::make_unique<VulkanHdrColorTarget>(device_, image, memory, imageView, params.extent, params.format));
 }
 
 atlantis::Result<std::unique_ptr<atlantis::rhi::Sampler>, atlantis::rhi::SamplerCreateError>

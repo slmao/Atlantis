@@ -11,6 +11,7 @@ namespace atlantis::vulkan_backend::detail {
 
 class VulkanSampledTexture;
 class VulkanSampler;
+class VulkanHdrColorTarget;
 
 // Owns its VkCommandBuffer's allocation from device/commandPool (frees it
 // in its destructor via vkFreeCommandBuffers) but does not own device or
@@ -71,6 +72,20 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   void drawIndexed(std::uint32_t indexCount) override;
   void copyRenderTargetToBuffer(atlantis::rhi::RenderTarget& source, atlantis::rhi::Buffer& destination) override;
   void copyBufferToTexture(atlantis::rhi::Buffer& source, atlantis::rhi::SampledTexture& destination) override;
+
+  // Plan 0024 Milestone 2 (ADR-0068 D-1/D-3): three new/overloaded
+  // methods for HdrColorTarget -- a fourth transitionResource()
+  // overload, a second beginRendering() overload (used only for the
+  // geometry pass writing into an HdrColorTarget), and a second
+  // bindTexture() overload (used only by the output-transform pass to
+  // sample it, at binding 0 -- the output-transform descriptor
+  // contract's own sole binding, unlike the material contracts' own
+  // binding 1, ADR-0068 D-10).
+  void transitionResource(atlantis::rhi::HdrColorTarget& target, atlantis::rhi::ResourceState before,
+                           atlantis::rhi::ResourceState after) override;
+  void beginRendering(atlantis::rhi::HdrColorTarget& color, atlantis::rhi::Texture* depth,
+                       atlantis::rhi::ClearColorValue colorClear, float depthClear) override;
+  void bindTexture(const atlantis::rhi::HdrColorTarget& texture, const atlantis::rhi::Sampler& sampler) override;
 
   // Exists solely for VulkanDevice::submit() (vkEndCommandBuffer,
   // vkQueueSubmit) -- never reached from RHI's public surface.

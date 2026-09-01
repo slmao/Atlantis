@@ -48,6 +48,12 @@ std::vector<DescriptorBinding> pbrDirectLitExpectedDescriptorContract() {
           DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
+// Plan 0024 Milestone 3 (ADR-0068 D-10): a genuinely smaller contract
+// than every MaterialKind's own -- one binding, no uniform buffer.
+std::vector<DescriptorBinding> outputTransformExpectedDescriptorContract() {
+  return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+}
+
 atlantis::Result<std::monostate, ContractMismatchError> validateDescriptorContract(
     const ReflectionMetadata& metadata, const std::vector<DescriptorBinding>& expected) {
   using ResultType = atlantis::Result<std::monostate, ContractMismatchError>;

@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstring>
 #include <fstream>
 #include <type_traits>
 #include <utility>
@@ -123,6 +124,18 @@ static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrid
   return result.value();
 }
 
+// Plan 0024 Milestone 7: the output-transform pass's own fixed vertex
+// schema -- NOT sourced from the mesh Vertex struct above, mirrors
+// runtime_application.cpp's own identical outputTransformVertexLayout().
+[[nodiscard]] std::optional<VertexInputLayout> outputTransformVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = 0},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(float) * 2);
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 }  // namespace
 
 atlantis::Result<LightingDemoFixture, LightingDemoSetupError> setUpLightingDemoFixture(
@@ -159,6 +172,21 @@ atlantis::Result<LightingDemoFixture, LightingDemoSetupError> setUpLightingDemoF
   const auto pbrVertexInputLayout = pbrDirectLitVertexLayout(pbrVertexReflectionResult.value());
   if (!pbrVertexInputLayout.has_value()) return ResultT::Err(LightingDemoSetupError::ShaderLoadFailed);
 
+  // Plan 0024 Milestone 7: the output-transform-unorm shader pair --
+  // this fixture's own colorFormat is fixed Rgba8Unorm, so only this
+  // one variant is ever loaded.
+  auto outputTransformVertexSpirv = loadSpirvFile(config.outputTransformUnormVertexShaderSpirvPath.c_str());
+  auto outputTransformFragmentSpirv = loadSpirvFile(config.outputTransformUnormFragmentShaderSpirvPath.c_str());
+  if (!outputTransformVertexSpirv.has_value() || !outputTransformFragmentSpirv.has_value()) {
+    return ResultT::Err(LightingDemoSetupError::ShaderLoadFailed);
+  }
+  auto outputTransformVertexReflectionResult =
+      loadReflectionMetadata(config.outputTransformUnormVertexShaderReflectionPath.c_str());
+  if (outputTransformVertexReflectionResult.isErr()) return ResultT::Err(LightingDemoSetupError::ShaderLoadFailed);
+  const auto outputTransformVertexInputLayout =
+      outputTransformVertexLayout(outputTransformVertexReflectionResult.value());
+  if (!outputTransformVertexInputLayout.has_value()) return ResultT::Err(LightingDemoSetupError::ShaderLoadFailed);
+
   auto deviceResult = atlantis::vulkan_backend::createDevice(
       {.applicationName = "Atlantis Image Regression Fixture (Lighting Demo)", .enableValidationLayers = true});
   if (deviceResult.isErr()) return ResultT::Err(LightingDemoSetupError::DeviceCreationFailed);
@@ -174,6 +202,9 @@ atlantis::Result<LightingDemoFixture, LightingDemoSetupError> setUpLightingDemoF
   fixture.pbrDirectLitVertexInputLayout = *pbrVertexInputLayout;
   fixture.pbrDirectLitVertexSpirv = std::move(*pbrVertexSpirv);
   fixture.pbrDirectLitFragmentSpirv = std::move(*pbrFragmentSpirv);
+  fixture.outputTransformUnormVertexInputLayout = *outputTransformVertexInputLayout;
+  fixture.outputTransformUnormVertexSpirv = std::move(*outputTransformVertexSpirv);
+  fixture.outputTransformUnormFragmentSpirv = std::move(*outputTransformFragmentSpirv);
 
   // Phase 1: the real, Runtime-private CPU load/instantiate pipeline --
   // never duplicated here.
@@ -210,6 +241,47 @@ atlantis::Result<LightingDemoFixture, LightingDemoSetupError> setUpLightingDemoF
       fixture.device->createBuffer({.purpose = BufferPurpose::Readback, .sizeBytes = readbackSizeBytes});
   if (readbackBufferResult.isErr()) return ResultT::Err(LightingDemoSetupError::ResourceCreationFailed);
   fixture.readbackBuffer = std::move(readbackBufferResult.value());
+
+  // Plan 0024 Milestone 7 (ADR-0068 D-1/D-3/D-6): this fixture's own
+  // HDR intermediate, fullscreen-triangle geometry/sampler, and output-
+  // transform Pipeline.
+  auto hdrColorTargetResult = fixture.device->createHdrColorTarget({.extent = extent});
+  if (hdrColorTargetResult.isErr()) return ResultT::Err(LightingDemoSetupError::ResourceCreationFailed);
+  fixture.hdrColorTarget = std::move(hdrColorTargetResult.value());
+
+  const float fullscreenTriangleVertices[6] = {-1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f};
+  auto fullscreenTriangleVertexBufferResult = fixture.device->createBuffer(
+      {.purpose = BufferPurpose::Vertex, .sizeBytes = sizeof(fullscreenTriangleVertices)});
+  if (fullscreenTriangleVertexBufferResult.isErr()) return ResultT::Err(LightingDemoSetupError::ResourceCreationFailed);
+  fixture.fullscreenTriangleVertexBuffer = std::move(fullscreenTriangleVertexBufferResult.value());
+  std::memcpy(fixture.fullscreenTriangleVertexBuffer->mappedData(), fullscreenTriangleVertices,
+              sizeof(fullscreenTriangleVertices));
+
+  const std::uint16_t fullscreenTriangleIndices[3] = {0, 1, 2};
+  auto fullscreenTriangleIndexBufferResult = fixture.device->createBuffer(
+      {.purpose = BufferPurpose::Index, .sizeBytes = sizeof(fullscreenTriangleIndices)});
+  if (fullscreenTriangleIndexBufferResult.isErr()) return ResultT::Err(LightingDemoSetupError::ResourceCreationFailed);
+  fixture.fullscreenTriangleIndexBuffer = std::move(fullscreenTriangleIndexBufferResult.value());
+  std::memcpy(fixture.fullscreenTriangleIndexBuffer->mappedData(), fullscreenTriangleIndices,
+              sizeof(fullscreenTriangleIndices));
+
+  auto outputTransformSamplerResult = fixture.device->createSampler(
+      {.filter = atlantis::rhi::Filter::Linear, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+  if (outputTransformSamplerResult.isErr()) return ResultT::Err(LightingDemoSetupError::ResourceCreationFailed);
+  fixture.outputTransformSampler = std::move(outputTransformSamplerResult.value());
+
+  auto outputTransformPipelineResult = fixture.device->createPipeline(
+      {.vertexShader = {.spirvWords = fixture.outputTransformUnormVertexSpirv.data(),
+                         .wordCount = fixture.outputTransformUnormVertexSpirv.size()},
+       .fragmentShader = {.spirvWords = fixture.outputTransformUnormFragmentSpirv.data(),
+                           .wordCount = fixture.outputTransformUnormFragmentSpirv.size()},
+       .vertexInputLayout = fixture.outputTransformUnormVertexInputLayout,
+       .colorFormat = kLightingDemoColorFormat,
+       .hasSampledTextureBinding = true,
+       .hasCameraUniformBinding = false,
+       .hasDepthAttachment = false});
+  if (outputTransformPipelineResult.isErr()) return ResultT::Err(LightingDemoSetupError::ResourceCreationFailed);
+  fixture.outputTransformPipeline = std::move(outputTransformPipelineResult.value());
 
   return ResultT::Ok(std::move(fixture));
 }
@@ -286,7 +358,7 @@ atlantis::Result<PixelBuffer, LightingDemoRenderError> renderLightingDemoFrame(L
   std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
       realizePendingMaterials(*fixture.device, *commandList, fixture.unlitTexturedVertexInputLayout,
                                fixture.unlitTexturedVertexSpirv, fixture.unlitTexturedFragmentSpirv,
-                               kLightingDemoColorFormat, fixture.litTexturedVertexInputLayout,
+                               fixture.litTexturedVertexInputLayout,
                                fixture.litTexturedVertexSpirv, fixture.litTexturedFragmentSpirv,
                                fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
                                fixture.pbrDirectLitFragmentSpirv, pendingMaterialIds,
@@ -338,7 +410,9 @@ atlantis::Result<PixelBuffer, LightingDemoRenderError> renderLightingDemoFrame(L
 
   Renderer renderer;
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, drawItems,
-                      rhi::ResourceState::TransferSource);
+                      rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
+                      *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
+                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler);
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");

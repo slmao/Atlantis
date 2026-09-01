@@ -4,6 +4,7 @@
 
 #include "resource_state_mapping.h"
 #include "vulkan_buffer.h"
+#include "vulkan_hdr_color_target.h"
 #include "vulkan_pipeline.h"
 #include "vulkan_render_target.h"
 #include "vulkan_render_target_access.h"
@@ -118,6 +119,30 @@ void VulkanCommandList::transitionResource(atlantis::rhi::SampledTexture& target
   vkCmdPipelineBarrier(commandBuffer_, plan.srcStage, plan.dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
 }
 
+// Plan 0024 Milestone 2: single real implementer -- static_cast,
+// matching transitionResource(SampledTexture&, ...)'s own identical
+// precedent immediately above.
+void VulkanCommandList::transitionResource(atlantis::rhi::HdrColorTarget& target, atlantis::rhi::ResourceState before,
+                                            atlantis::rhi::ResourceState after) {
+  auto& vulkanHdrColorTarget = static_cast<VulkanHdrColorTarget&>(target);
+  const ImageBarrierPlan plan = planTransition(before, after);
+
+  const VkImageMemoryBarrier barrier{
+      .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+      .pNext = nullptr,
+      .srcAccessMask = plan.srcAccessMask,
+      .dstAccessMask = plan.dstAccessMask,
+      .oldLayout = plan.oldLayout,
+      .newLayout = plan.newLayout,
+      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+      .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+      .image = vulkanHdrColorTarget.image(),
+      .subresourceRange = fullColorResourceRange(),
+  };
+
+  vkCmdPipelineBarrier(commandBuffer_, plan.srcStage, plan.dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+}
+
 void VulkanCommandList::clearColor(atlantis::rhi::RenderTarget& target, atlantis::rhi::ClearColorValue color) {
   // Pointer-form, exception-free -- same rationale as transitionResource()
   // above. Fixed here too even though this spec's own headless path never
@@ -193,6 +218,59 @@ void VulkanCommandList::beginRendering(atlantis::rhi::RenderTarget& color, atlan
   // (renderArea, just above), so it sets both here, once per attachment
   // scope, covering every draw call recorded until the matching
   // endRendering().
+  const VkViewport viewport{
+      .x = 0.0f,
+      .y = 0.0f,
+      .width = static_cast<float>(extent.width),
+      .height = static_cast<float>(extent.height),
+      .minDepth = 0.0f,
+      .maxDepth = 1.0f,
+  };
+  vkCmdSetViewport(commandBuffer_, 0, 1, &viewport);
+  vkCmdSetScissor(commandBuffer_, 0, 1, &renderingInfo.renderArea);
+}
+
+// Plan 0024 Milestone 2: a direct copy of beginRendering(RenderTarget&,
+// ...) above, with VulkanHdrColorTarget substituted via static_cast
+// (single real implementer, no dynamic_cast/VulkanRenderTargetAccess --
+// HdrColorTarget is not a RenderTarget).
+void VulkanCommandList::beginRendering(atlantis::rhi::HdrColorTarget& color, atlantis::rhi::Texture* depth,
+                                        atlantis::rhi::ClearColorValue colorClear, float depthClear) {
+  auto& vulkanHdrColorTarget = static_cast<VulkanHdrColorTarget&>(color);
+
+  VkRenderingAttachmentInfo colorAttachment{};
+  colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+  colorAttachment.imageView = vulkanHdrColorTarget.imageView();
+  colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+  colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  colorAttachment.clearValue.color = VkClearColorValue{.float32 = {colorClear.r, colorClear.g, colorClear.b, colorClear.a}};
+
+  VkRenderingAttachmentInfo depthAttachment{};
+  if (depth != nullptr) {
+    auto& vulkanDepth = static_cast<VulkanTexture&>(*depth);
+    depthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    depthAttachment.imageView = vulkanDepth.imageView();
+    depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depthAttachment.clearValue.depthStencil = VkClearDepthStencilValue{depthClear, 0};
+  }
+
+  const atlantis::rhi::Extent2D extent = color.extent();
+  VkRenderingInfo renderingInfo{};
+  renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+  renderingInfo.renderArea = VkRect2D{{0, 0}, {extent.width, extent.height}};
+  renderingInfo.layerCount = 1;
+  renderingInfo.colorAttachmentCount = 1;
+  renderingInfo.pColorAttachments = &colorAttachment;
+  renderingInfo.pDepthAttachment = depth != nullptr ? &depthAttachment : nullptr;
+
+  ATLANTIS_CHECK(cmdBeginRendering_ != nullptr);
+  cmdBeginRendering_(commandBuffer_, &renderingInfo);
+
+  // See beginRendering(RenderTarget&, ...)'s own identical comment
+  // above for why this viewport/scissor set is required here.
   const VkViewport viewport{
       .x = 0.0f,
       .y = 0.0f,
@@ -313,6 +391,43 @@ void VulkanCommandList::bindTexture(const atlantis::rhi::SampledTexture& texture
   // is what actually makes this write visible to the upcoming draw call;
   // it is not merely redundant with bindUniformBuffer()'s own call, since
   // that earlier call could not have known about this write yet.
+  vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipelineLayout_, 0, 1,
+                           &boundDescriptorSet_, 0, nullptr);
+}
+
+// Plan 0024 Milestone 2 (ADR-0068 D-10): used only by the output-
+// transform pass, which draws the fullscreen triangle exactly once per
+// frame -- unlike bindTexture(SampledTexture&, ...) above (called
+// repeatedly for multiple DrawItems sharing one Material in the same
+// recording), there is no repeated-call redundancy to memoize here, so
+// this overload always issues the descriptor write unconditionally.
+// dstBinding = 0, not 1 -- the output-transform descriptor contract's
+// own sole binding (no uniform buffer at binding 0, unlike every
+// MaterialKind contract), matching outputTransformExpectedDescriptorContract().
+void VulkanCommandList::bindTexture(const atlantis::rhi::HdrColorTarget& texture,
+                                     const atlantis::rhi::Sampler& sampler) {
+  ATLANTIS_CHECK(boundDescriptorSet_ != VK_NULL_HANDLE);
+  const auto& vulkanHdrColorTarget = static_cast<const VulkanHdrColorTarget&>(texture);
+  const auto& vulkanSampler = static_cast<const VulkanSampler&>(sampler);
+
+  VkDescriptorImageInfo imageInfo{};
+  imageInfo.sampler = vulkanSampler.sampler();
+  imageInfo.imageView = vulkanHdrColorTarget.imageView();
+  // Precondition, enforced by render_graph::execute()'s own algorithm,
+  // not re-checked here: texture must already be in
+  // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL (ResourceState::ShaderRead)
+  // when this is called.
+  imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+  VkWriteDescriptorSet write{};
+  write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  write.dstSet = boundDescriptorSet_;
+  write.dstBinding = 0;
+  write.descriptorCount = 1;
+  write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  write.pImageInfo = &imageInfo;
+
+  vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
   vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipelineLayout_, 0, 1,
                            &boundDescriptorSet_, 0, nullptr);
 }

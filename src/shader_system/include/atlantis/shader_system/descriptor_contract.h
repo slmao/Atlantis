@@ -56,6 +56,17 @@ namespace atlantis::shader_system {
 // per-kind pattern.
 [[nodiscard]] std::vector<DescriptorBinding> pbrDirectLitExpectedDescriptorContract();
 
+// Plan 0024 Milestone 3 (ADR-0068 D-10): the fixed, expected descriptor
+// contract BOTH output-transform shader pairs (output-transform-unorm
+// and output-transform-srgb) must match -- exactly one binding, {set 0,
+// binding 0, Sampler, Fragment}, sampling the HdrColorTarget. No
+// uniform buffer (fixed exposure is a shader-compile-time constant, not
+// per-frame state) and no push constant (the fullscreen triangle needs
+// no per-draw transform) -- a smaller, simpler contract than every
+// MaterialKind's own. One function, not two -- both variants share this
+// identical shape; only their own fragment-stage math differs.
+[[nodiscard]] std::vector<DescriptorBinding> outputTransformExpectedDescriptorContract();
+
 enum class ContractMismatchError {
   BindingCountMismatch,
   BindingNotFound,        // an expected {set, binding} pair is absent from the reflected shader

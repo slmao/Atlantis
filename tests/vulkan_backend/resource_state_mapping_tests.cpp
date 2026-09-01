@@ -136,15 +136,37 @@ TEST_CASE("planTransition maps TransferDestination -> ShaderRead to a transfer-t
   REQUIRE(failures.empty());
 }
 
-TEST_CASE("planTransition still asserts on a plausible-sounding but unlisted SampledTexture-adjacent pair",
+TEST_CASE("planTransition maps ColorAttachmentOutput -> ShaderRead to a color-output-to-fragment-read barrier",
           "[vulkan_backend][resource_state_mapping]") {
-  // Spec 0016 adds exactly the two new entries above -- an unlisted pair
-  // naming one of the new states, even one that sounds plausible, must
-  // still fire the existing closed-table assertion (V14).
+  // Plan 0024 Milestone 2 (ADR-0068 D-3): the output-transform pass's
+  // own read of the HDR intermediate the geometry pass just wrote --
+  // this table entry was discovered missing during real-GPU testing
+  // (Milestone 7), even though this exact transition was already
+  // specified in Milestone 2's own text.
   std::vector<RecordedFailure> failures;
   ScopedFailureHandler handler(failures);
 
-  static_cast<void>(planTransition(ResourceState::ColorAttachmentOutput, ResourceState::ShaderRead));
+  const auto plan = planTransition(ResourceState::ColorAttachmentOutput, ResourceState::ShaderRead);
+  REQUIRE(plan.oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  REQUIRE(plan.newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  REQUIRE(plan.srcAccessMask == VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+  REQUIRE(plan.dstAccessMask == VK_ACCESS_SHADER_READ_BIT);
+  REQUIRE(plan.srcStage == VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+  REQUIRE(plan.dstStage == VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+  REQUIRE(failures.empty());
+}
+
+TEST_CASE("planTransition still asserts on a plausible-sounding but unlisted SampledTexture-adjacent pair",
+          "[vulkan_backend][resource_state_mapping]") {
+  // Spec 0016 adds exactly the two new entries above, and Plan 0024
+  // Milestone 2 adds ColorAttachmentOutput -> ShaderRead (confirmed
+  // real, above) -- an unlisted pair naming one of these states, even
+  // one that sounds plausible, must still fire the existing closed-
+  // table assertion (V14).
+  std::vector<RecordedFailure> failures;
+  ScopedFailureHandler handler(failures);
+
+  static_cast<void>(planTransition(ResourceState::ShaderRead, ResourceState::ColorAttachmentOutput));
 
   REQUIRE_FALSE(failures.empty());
 }

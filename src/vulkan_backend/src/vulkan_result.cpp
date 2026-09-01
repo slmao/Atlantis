@@ -126,6 +126,11 @@ atlantis::rhi::OffscreenTargetCreateError toOffscreenTargetCreateError(VkResult 
   return atlantis::rhi::OffscreenTargetCreateError::ImageCreationFailed;
 }
 
+atlantis::rhi::HdrColorTargetCreateError toHdrColorTargetCreateError(VkResult result) {
+  ATLANTIS_CHECK(result != VK_SUCCESS);
+  return atlantis::rhi::HdrColorTargetCreateError::ImageCreationFailed;
+}
+
 bool isDescriptorPoolGrowthEligible(VkResult result) {
   ATLANTIS_CHECK(result != VK_SUCCESS);
   return result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL;

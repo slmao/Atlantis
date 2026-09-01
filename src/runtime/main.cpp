@@ -57,6 +57,22 @@ int main() {
       std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.spv";
   config.pbrDirectLitFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.refl.json";
+  config.outputTransformUnormVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_UNORM_SHADER_DIR) + "/output_transform_unorm.vert.spv";
+  config.outputTransformUnormVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_UNORM_SHADER_DIR) + "/output_transform_unorm.vert.refl.json";
+  config.outputTransformUnormFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_UNORM_SHADER_DIR) + "/output_transform_unorm.frag.spv";
+  config.outputTransformUnormFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_UNORM_SHADER_DIR) + "/output_transform_unorm.frag.refl.json";
+  config.outputTransformSrgbVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR) + "/output_transform_srgb.vert.spv";
+  config.outputTransformSrgbVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR) + "/output_transform_srgb.vert.refl.json";
+  config.outputTransformSrgbFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR) + "/output_transform_srgb.frag.spv";
+  config.outputTransformSrgbFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR) + "/output_transform_srgb.frag.refl.json";
   config.enableValidationLayers = true;
 
   auto appResult = createRuntimeApplication(config);

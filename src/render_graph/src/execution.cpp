@@ -49,15 +49,19 @@ using atlantis::rhi::ResourceState;
 
 void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bindings,
              atlantis::rhi::CommandList& commandList) {
-  // Guard 0 (Spec 0007; widened to three kinds by Spec 0016): every entry
-  // binds exactly one of target/depthTexture/sampledTexture, and no two
-  // entries bind the same resource.
+  // Guard 0 (Spec 0007; widened to three kinds by Spec 0016, four by
+  // Plan 0024 Milestone 2): every entry binds exactly one of
+  // target/depthTexture/sampledTexture/hdrColorTarget, and no two
+  // entries bind the same resource. This is the real mechanism that
+  // rejects both zero-resource and multi-resource ambiguity uniformly
+  // for all four kinds.
   std::unordered_set<std::size_t> seenBindingResources;
   for (const ResourceBinding& binding : bindings) {
     const int boundCount = (binding.target != nullptr) + (binding.depthTexture != nullptr) +
-                            (binding.sampledTexture != nullptr);
-    ATLANTIS_CHECK_MSG(boundCount == 1,
-                        "ResourceBinding must bind exactly one of target/depthTexture/sampledTexture");
+                            (binding.sampledTexture != nullptr) + (binding.hdrColorTarget != nullptr);
+    ATLANTIS_CHECK_MSG(
+        boundCount == 1,
+        "ResourceBinding must bind exactly one of target/depthTexture/sampledTexture/hdrColorTarget");
     const auto [it, inserted] = seenBindingResources.insert(binding.resource.index());
     (void)it;
     ATLANTIS_CHECK_MSG(inserted, "ResourceBinding must not bind the same resource twice");
@@ -117,6 +121,7 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
       atlantis::rhi::RenderTarget* targetPtr = binding->target;
       atlantis::rhi::Texture* depthPtr = binding->depthTexture;
       atlantis::rhi::SampledTexture* sampledTexturePtr = binding->sampledTexture;
+      atlantis::rhi::HdrColorTarget* hdrColorTargetPtr = binding->hdrColorTarget;
 
       const std::size_t key = usage.resource.index();
       const ResourceState previous = currentState.count(key) ? currentState[key] : binding->incomingState;
@@ -125,8 +130,10 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
           commandList.transitionResource(*targetPtr, previous, *usage.state);
         } else if (depthPtr != nullptr) {
           commandList.transitionResource(*depthPtr, previous, *usage.state);
-        } else {
+        } else if (sampledTexturePtr != nullptr) {
           commandList.transitionResource(*sampledTexturePtr, previous, *usage.state);
+        } else {
+          commandList.transitionResource(*hdrColorTargetPtr, previous, *usage.state);
         }
         currentState[key] = *usage.state;
       }
@@ -144,8 +151,20 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
       // here without first confirming they were actually found.
       const bool canBeginRendering = colorBinding != nullptr && (!depthUsagePresent || depthBinding != nullptr);
       if (canBeginRendering) {
-        commandList.beginRendering(*colorBinding->target, depthUsagePresent ? depthBinding->depthTexture : nullptr,
-                                    colorBinding->colorClear, depthUsagePresent ? depthBinding->depthClear : 1.0f);
+        // Plan 0024 Milestone 2: the pass writing ColorAttachmentOutput
+        // may be bound via either the target field (existing draw pass,
+        // a real RenderTarget) or the hdrColorTarget field (the new
+        // geometry pass writing into the HDR intermediate) -- Guard 0
+        // already guarantees colorBinding has exactly one of the two
+        // set, so exactly one of these two branches ever fires.
+        atlantis::rhi::Texture* depthPtr = depthUsagePresent ? depthBinding->depthTexture : nullptr;
+        const float depthClearValue = depthUsagePresent ? depthBinding->depthClear : 1.0f;
+        if (colorBinding->target != nullptr) {
+          commandList.beginRendering(*colorBinding->target, depthPtr, colorBinding->colorClear, depthClearValue);
+        } else {
+          commandList.beginRendering(*colorBinding->hdrColorTarget, depthPtr, colorBinding->colorClear,
+                                      depthClearValue);
+        }
         if (executeFn) {
           executeFn(commandList);
         }
@@ -178,7 +197,9 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
   // pass therefore declares only the TransferDestination usage, and
   // ShaderRead is reached here, once, after every pass has executed.
   for (const ResourceBinding& binding : bindings) {
-    if (binding.target == nullptr && binding.sampledTexture == nullptr) continue;
+    if (binding.target == nullptr && binding.sampledTexture == nullptr && binding.hdrColorTarget == nullptr) {
+      continue;
+    }
     if (!binding.finalState.has_value()) continue;
     const std::size_t key = binding.resource.index();
     const auto it = currentState.find(key);
@@ -186,8 +207,10 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
     if (it->second != *binding.finalState) {
       if (binding.target != nullptr) {
         commandList.transitionResource(*binding.target, it->second, *binding.finalState);
-      } else {
+      } else if (binding.sampledTexture != nullptr) {
         commandList.transitionResource(*binding.sampledTexture, it->second, *binding.finalState);
+      } else {
+        commandList.transitionResource(*binding.hdrColorTarget, it->second, *binding.finalState);
       }
       it->second = *binding.finalState;
     }

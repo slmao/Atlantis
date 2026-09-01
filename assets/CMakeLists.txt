@@ -280,3 +280,19 @@ set(ATLANTIS_pbr_material_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_material_demo
 set(ATLANTIS_pbr_material_demo_scene_METADATA_PATH "${ATLANTIS_pbr_material_demo_scene_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_material_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_material_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_material_demo_scene_TARGET "${ATLANTIS_pbr_material_demo_scene_TARGET}" PARENT_SCOPE)
+
+# Plan 0024 Milestone 10: a focused HDR roll-off baseline. One existing
+# rough-dielectric PBR sphere is lit by one deliberately over-range
+# Directional light; the scene is verification-only and is not wired
+# into Runtime's default BootstrapConfig.
+atlantis_add_scene_asset(
+  NAME hdr_roll_off_demo_scene
+  SOURCE scenes/hdr_roll_off_demo.scene.txt
+  MESH_DEPENDENCIES pbr_sphere
+  MATERIAL_DEPENDENCIES pbr_dielectric_rough
+  TEXTURE_DEPENDENCIES textured_quad_srgb
+)
+set(ATLANTIS_hdr_roll_off_demo_scene_ARTIFACT_PATH "${ATLANTIS_hdr_roll_off_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_hdr_roll_off_demo_scene_METADATA_PATH "${ATLANTIS_hdr_roll_off_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_hdr_roll_off_demo_scene_MANIFEST_PATH "${ATLANTIS_hdr_roll_off_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_hdr_roll_off_demo_scene_TARGET "${ATLANTIS_hdr_roll_off_demo_scene_TARGET}" PARENT_SCOPE)

@@ -8,6 +8,7 @@
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/command_list.h>
 #include <atlantis/rhi/device.h>
+#include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/sampled_texture.h>
 #include <atlantis/rhi/sampler.h>
 #include <atlantis/rhi/types.h>
@@ -94,11 +95,18 @@ struct RealizedMaterialCandidate {
 // persistent map.
 // Plan 0019 Section P6: litTexturedVertexInputLayout/litTexturedVertexSpirv/
 // litTexturedFragmentSpirv, inserted immediately after the existing
-// unlitTexturedFragmentSpirv/colorFormat parameters -- the unlitTextured*
-// trio's own signature position is unchanged. This function itself
-// selects between the two shader pairs via the shared, file-local
-// selectShaderPair() helper (material_realization.cpp), keyed off
-// materialData.kind -- never a second, separately-written switch.
+// unlitTexturedFragmentSpirv parameter -- the unlitTextured* trio's own
+// signature position is unchanged. This function itself selects between
+// the two shader pairs via the shared, file-local selectShaderPair()
+// helper (material_realization.cpp), keyed off materialData.kind --
+// never a second, separately-written switch.
+// Plan 0024 Milestone 6 (ADR-0068 D-1/D-3): the former colorFormat
+// parameter (a real atlantis::rhi::Format, once threaded straight into
+// this call's own createMaterial() invocation) is removed -- every
+// geometry Pipeline now renders into the fixed HDR intermediate
+// (HdrFormat::Rgba16Float), never the caller's final swapchain/
+// offscreen Format, so no per-call format ever needs to reach this
+// function at all.
 // Plan 0023 Milestone 5: pbrDirectLitVertexInputLayout/
 // pbrDirectLitVertexSpirv/pbrDirectLitFragmentSpirv, inserted
 // immediately after the litTextured* trio, mirroring its own insertion
@@ -117,7 +125,7 @@ struct RealizedMaterialCandidate {
 [[nodiscard]] atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOneMaterialCandidate(
     atlantis::rhi::Device& device, const atlantis::rhi::VertexInputLayout& unlitTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& unlitTexturedVertexSpirv,
-    const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv, atlantis::rhi::Format colorFormat,
+    const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& litTexturedVertexSpirv,
     const std::vector<std::uint32_t>& litTexturedFragmentSpirv,
@@ -164,11 +172,14 @@ struct RealizedMaterialCandidate {
 // calls selectShaderPair() itself.
 // Plan 0023 Milestone 5: gains the identical pbrDirectLit* trio, same
 // insertion point and threading as litTextured*.
+// Plan 0024 Milestone 6: the former colorFormat parameter is removed,
+// mirroring realizeOneMaterialCandidate()'s own identical removal --
+// this function only ever forwarded it unchanged.
 [[nodiscard]] std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizePendingMaterials(
     atlantis::rhi::Device& device, atlantis::rhi::CommandList& commandList,
     const atlantis::rhi::VertexInputLayout& unlitTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& unlitTexturedVertexSpirv,
-    const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv, atlantis::rhi::Format colorFormat,
+    const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
     const std::vector<std::uint32_t>& litTexturedVertexSpirv,
     const std::vector<std::uint32_t>& litTexturedFragmentSpirv,
@@ -183,72 +194,37 @@ struct RealizedMaterialCandidate {
     const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData>&
         textureDataMap);
 
-// Spec 0018 D9 steps 2-4: builds a COMPLETE candidate batch (the
-// fallback Material plus one rebuilt Material per CURRENT
-// materialResourceMap_ entry, each reusing that entry's own already-
-// uploaded SampledTexture/Sampler unchanged, via a borrowed raw pointer
-// into the CALLER's still-live sampledTextureResourceMap_/
-// samplerResourceMap_ -- no new upload, no CommandList, no submit())
-// against the new colorFormat. Never touches currentMaterials, never
-// touches the caller's own fallbackMaterial_ -- purely constructs new,
-// local unique_ptr<Material> objects. Returns Err on the FIRST
-// sub-failure (fallback or any one entry) -- the caller (runFrame())
-// discards the returned partial state via ordinary RAII and leaves the
-// EXISTING fallbackMaterial_/materialResourceMap_ completely untouched;
-// no partial candidate is ever returned as if it were usable.
-//
-// CRITICAL (Human Review Approval item 2): the caller must not swap
-// this result in until its OWN subsequent submit() call (recording the
-// frame's real draw graph using this candidate batch) has returned Ok
-// -- this function itself has no awareness of submit()/waitIdle() at
-// all, and never destroys the caller's existing fallback/map. The old
-// Material/Pipeline bundle the caller still holds must remain alive and
-// untouched until that submit() confirms (via its own internal
-// waitAndReleaseRetainedSubmission() drain) that the previous frame's
-// GPU work -- the last work that could have referenced the OLD
-// Pipeline -- has finished.
-struct FormatRebuildCandidates {
-  std::unique_ptr<atlantis::renderer::Material> fallback;
-  std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::renderer::Material>> materials;
-};
+// Plan 0024 Milestone 6 (correction, ADR-0068 D-4, discovered during
+// Implementation -- Human Review direction, chat, 2026-09-01): every
+// geometry Pipeline (fallback and every MaterialKind) now targets the
+// fixed HdrFormat::Rgba16Float, never the caller's real, negotiated
+// Format -- D-4's own text is explicit that this means NONE of them
+// participate in format-change rebuild any longer ("this is a real
+// simplification, not merely a substitution"). The former
+// rebuildMaterialsForFormatChange()/FormatRebuildCandidates (Spec 0018
+// Section P13/D9) existed ONLY to rebuild format-dependent geometry
+// Pipelines on a format-change event -- with nothing left for it to
+// do, it is retired here rather than kept as dead production code.
+// fallbackMaterial_ is now created once at startup
+// (runtime_application.cpp's own initializeSteps()), exactly like
+// realizeOneMaterialCandidate()'s own materials already were --
+// neither needs any format-triggered rebuild path any more. Only the
+// output-transform Pipeline (D-6) still varies with the final target's
+// negotiated format; runFrame()'s own format-change branch builds and
+// swaps that one Pipeline directly (a raw Device::createPipeline()
+// call, not a Material -- see runtime_application.cpp), with no
+// intermediate candidate-bundle type needed for a single resource.
 
-// Deliberately takes no separate sampledTextureResourceMap_/
-// samplerResourceMap_ parameter: each rebuilt Material reuses its own
-// EXISTING SampledTexture*/Sampler* by reading them straight off the
-// CURRENT Material object being replaced (Material::sampledTexture()/
-// sampler() return the exact same borrowed pointer passed at that
-// object's own construction) -- no separate AssetId-keyed lookup is
-// needed to obtain them, avoiding an unnecessary indirection.
-//
-// Plan 0019 Section P6: gains the litTextured* trio (inserted
-// immediately after unlitTexturedFragmentSpirv/newColorFormat, mirroring
-// realizeOneMaterialCandidate()'s own insertion point) AND a new
-// materialDataMap parameter -- without it, this function has no way to
-// look up a given existing Material's own real MaterialKind and would
-// silently rebuild every material, LitTextured included, through
-// whichever shader pair happened to be named; materialDataMap is keyed
-// identically to currentMaterials (both by material AssetId), so every
-// id in currentMaterials is required to already have a matching entry
-// here.
-//
-// Plan 0023 Milestone 5: gains the identical pbrDirectLit* trio,
-// inserted immediately after litTextured*, mirroring
-// realizeOneMaterialCandidate()'s own insertion point.
-[[nodiscard]] atlantis::Result<FormatRebuildCandidates, MaterialRealizationError> rebuildMaterialsForFormatChange(
-    atlantis::rhi::Device& device, const atlantis::rhi::VertexInputLayout& fallbackVertexInputLayout,
-    const std::vector<std::uint32_t>& fallbackVertexSpirv, const std::vector<std::uint32_t>& fallbackFragmentSpirv,
-    const atlantis::rhi::VertexInputLayout& unlitTexturedVertexInputLayout,
-    const std::vector<std::uint32_t>& unlitTexturedVertexSpirv,
-    const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv,
-    const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
-    const std::vector<std::uint32_t>& litTexturedVertexSpirv,
-    const std::vector<std::uint32_t>& litTexturedFragmentSpirv,
-    const atlantis::rhi::VertexInputLayout& pbrDirectLitVertexInputLayout,
-    const std::vector<std::uint32_t>& pbrDirectLitVertexSpirv,
-    const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv, atlantis::rhi::Format newColorFormat,
-    const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData>&
-        materialDataMap,
-    const std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::renderer::Material>>&
-        currentMaterials);
+// Plan 0024 Milestone 6 (ADR-0068 D-6): the one place that decides
+// which of the two output-transform shader contracts (unorm/srgb) a
+// given final Format needs -- mirrors selectShaderPair()'s own closed-
+// switch/no-default shape exactly (material_realization.cpp). Called
+// both by runFrame()'s own format-change branch (to decide which of
+// outputTransformUnormPipeline_/...SrgbPipeline_ needs rebuilding, and
+// which one drawFrame() should be handed this frame) and by every
+// image-regression fixture's own construction-time Pipeline selection
+// (Milestone 7, no runtime format-change path exists there -- each
+// fixture calls this once).
+[[nodiscard]] bool isSrgbFormat(atlantis::rhi::Format format);
 
 }  // namespace atlantis::runtime
