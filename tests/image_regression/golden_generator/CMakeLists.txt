@@ -218,6 +218,34 @@ target_compile_definitions(atlantis_image_regression_pbr_material_demo_golden_ge
 add_dependencies(atlantis_image_regression_pbr_material_demo_golden_generator textured_quad_shaders
   lit_textured_shaders pbr_direct_lit_shaders output_transform_unorm_shaders ${ATLANTIS_pbr_material_demo_scene_TARGET})
 
+# Plan 0024 Milestone 10: a seventh standalone generator for the
+# focused HDR roll-off baseline, using the same fixture/render path as
+# pbr_material_demo with its own over-range authored scene.
+add_executable(atlantis_image_regression_hdr_roll_off_demo_golden_generator hdr_roll_off_demo_main.cpp)
+
+target_link_libraries(atlantis_image_regression_hdr_roll_off_demo_golden_generator
+  PRIVATE
+    Atlantis::ImageRegressionFixture
+    Atlantis::ImageRegressionSupport
+    atlantis_compiler_warnings
+)
+
+target_compile_definitions(atlantis_image_regression_hdr_roll_off_demo_golden_generator PRIVATE
+  ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+  ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
+  ATLANTIS_hdr_roll_off_demo_scene_ARTIFACT_PATH="${ATLANTIS_hdr_roll_off_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_hdr_roll_off_demo_scene_METADATA_PATH="${ATLANTIS_hdr_roll_off_demo_scene_METADATA_PATH}"
+  ATLANTIS_hdr_roll_off_demo_scene_MANIFEST_PATH="${ATLANTIS_hdr_roll_off_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_HDR_ROLL_OFF_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+  ATLANTIS_HDR_ROLL_OFF_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  ATLANTIS_HDR_ROLL_OFF_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  ATLANTIS_HDR_ROLL_OFF_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+)
+
+add_dependencies(atlantis_image_regression_hdr_roll_off_demo_golden_generator textured_quad_shaders
+  lit_textured_shaders pbr_direct_lit_shaders output_transform_unorm_shaders
+  ${ATLANTIS_hdr_roll_off_demo_scene_TARGET})
+
 # Deliberately no catch_discover_tests()/LABELS "gpu"/add_test() call in
 # this file -- the concrete enforcement of "never registered with
 # CTest." Deliberately no run_... convenience custom target: this tool
