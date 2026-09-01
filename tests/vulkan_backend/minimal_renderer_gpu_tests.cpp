@@ -201,6 +201,21 @@ TEST_CASE("Buffer/Texture/Pipeline creation and destruction", "[vulkan_backend][
     REQUIRE(resizedResult.value()->extent().height == 384);
   }
 
+  SECTION("An HDR color target can be created and replaced at a resized extent") {
+    auto targetResult = device->createHdrColorTarget({.extent = Extent2D{256, 256}});
+    REQUIRE(targetResult.isOk());
+    REQUIRE(targetResult.value()->extent().width == 256);
+    REQUIRE(targetResult.value()->extent().height == 256);
+    REQUIRE(targetResult.value()->format() == atlantis::rhi::HdrFormat::Rgba16Float);
+    targetResult.value().reset();
+
+    auto resizedResult = device->createHdrColorTarget({.extent = Extent2D{512, 384}});
+    REQUIRE(resizedResult.isOk());
+    REQUIRE(resizedResult.value()->extent().width == 512);
+    REQUIRE(resizedResult.value()->extent().height == 384);
+    REQUIRE(resizedResult.value()->format() == atlantis::rhi::HdrFormat::Rgba16Float);
+  }
+
   SECTION("A Pipeline can be created from the Shader-System-produced SPIR-V pair, and destroyed without error") {
     const auto vertexSpirv = loadSpirvFile("shaders/minimal_mesh.vert.spv");
     const auto fragmentSpirv = loadSpirvFile("shaders/minimal_mesh.frag.spv");

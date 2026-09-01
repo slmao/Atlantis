@@ -1,6 +1,7 @@
 #include "fixture/lighting_demo_fixture.h"
 #include "support/golden_validity.h"
 #include "support/pixel_diff.h"
+#include "support/tone_mapping_reference.h"
 
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/cook_scene.h>
@@ -45,6 +46,7 @@ using atlantis::image_regression::loadAndValidateGolden;
 using atlantis::image_regression::PixelBuffer;
 using atlantis::image_regression::renderLightingDemoFrame;
 using atlantis::image_regression::setUpLightingDemoFixture;
+using atlantis::image_regression::tonemapAndEncodeUnorm;
 using atlantis::image_regression::writeFailureArtifacts;
 using atlantis::runtime::BootstrapConfig;
 using atlantis::runtime::computeLambertianDiffuse;
@@ -128,13 +130,18 @@ static_assert(kLightingByteOffset + sizeof(atlantis::runtime::FrameLightingData)
 }
 
 [[nodiscard]] bool nearBackgroundClearColor(const std::array<std::uint8_t, 4>& pixel) {
-  // Renderer's own fixed kBackgroundClearColor (0.05, 0.05, 0.08, 1.0) ->
-  // approximately (13, 13, 20, 255) in Rgba8Unorm bytes, matching
-  // material_demo_gpu_tests.cpp's own identical constant.
+  // Plan 0024 Milestone 8: Renderer's scene-linear clear color now
+  // passes through the same Reinhard + sRGB OETF output transform as
+  // drawn geometry; it is no longer written directly as UNORM bytes.
+  const auto encodedByte = [](float linearValue) {
+    return static_cast<int>(std::lround(tonemapAndEncodeUnorm(linearValue) * 255.0f));
+  };
+  const int expectedRedGreen = encodedByte(0.05f);
+  const int expectedBlue = encodedByte(0.08f);
   const int tolerance = 6;
-  return std::abs(static_cast<int>(pixel[0]) - 13) <= tolerance &&
-         std::abs(static_cast<int>(pixel[1]) - 13) <= tolerance &&
-         std::abs(static_cast<int>(pixel[2]) - 20) <= tolerance;
+  return std::abs(static_cast<int>(pixel[0]) - expectedRedGreen) <= tolerance &&
+         std::abs(static_cast<int>(pixel[1]) - expectedRedGreen) <= tolerance &&
+         std::abs(static_cast<int>(pixel[2]) - expectedBlue) <= tolerance;
 }
 
 [[nodiscard]] double coverageFraction(const PixelBuffer& frame) {
@@ -526,11 +533,15 @@ TEST_CASE("LightingDemoFixture: a captured pixel at a known cube vertex matches 
                        (c00[2] + c10[2] + c01[2] + c11[2]) * 0.25f};
 
   const Vec3 accumulated = computeLambertianDiffuse(worldPosition, worldNormal, lightingResult.value());
-  const auto clamp01 = [](float v) { return std::max(0.0f, std::min(1.0f, v)); };
+  // Plan 0024 Milestone 8: lit_textured now produces scene-linear HDR;
+  // the final UNORM target receives Reinhard tone-mapping followed by
+  // the output-transform shader's exact sRGB OETF.
+  const auto outputByte = [](float linearValue) {
+    return static_cast<std::uint8_t>(std::lround(tonemapAndEncodeUnorm(linearValue) * 255.0f));
+  };
   const std::array<std::uint8_t, 3> expectedRgb{
-      static_cast<std::uint8_t>(std::lround(clamp01(texColor.x * accumulated.x) * 255.0f)),
-      static_cast<std::uint8_t>(std::lround(clamp01(texColor.y * accumulated.y) * 255.0f)),
-      static_cast<std::uint8_t>(std::lround(clamp01(texColor.z * accumulated.z) * 255.0f))};
+      outputByte(texColor.x * accumulated.x), outputByte(texColor.y * accumulated.y),
+      outputByte(texColor.z * accumulated.z)};
 
   const auto actualPixel = pixelAt(frame, screenX, screenY);
   // A disclosed tolerance -- GPU-side float execution, triangle-

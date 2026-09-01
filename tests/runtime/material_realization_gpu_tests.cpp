@@ -19,6 +19,8 @@
 #include <atlantis/shader_system/rhi_integration/vertex_input_mapping.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
 
+#include "../../src/vulkan_backend/src/vulkan_descriptor_pool_growth.h"
+
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -26,6 +28,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -154,6 +157,15 @@ struct Vertex {
       MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, color)},
   };
   auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
+[[nodiscard]] std::optional<VertexInputLayout> outputTransformVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = 0},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(float) * 2);
   if (result.isErr()) return std::nullopt;
   return result.value();
 }
@@ -682,6 +694,123 @@ TEST_CASE("loadAndInstantiateScene: a PbrDirectLit material whose own resolved b
 // see material_realization_gpu_tests.cpp's own new N=6 TEST_CASE
 // (Milestone 8) for the real re-confirmation of D-4's own N+2/N+3
 // formula against this exact growable pool mechanism.
+TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+3 and succeeds against the real 60-set ceiling",
+          "[runtime][gpu][material_realization][descriptor_pool_growth][hdr]") {
+  using atlantis::vulkan_backend::detail::kDescriptorPoolMaxSetsByGeneration;
+
+  constexpr std::size_t kMaterialPipelineCount = 6;
+  constexpr std::size_t kFallbackPipelineCount = 1;
+  constexpr std::size_t kSteadyOutputTransformPipelineCount = 1;
+  constexpr std::size_t kTransientOutputTransformPipelineCount = 1;
+  constexpr std::size_t kExpectedSteadySetCount = kMaterialPipelineCount + kFallbackPipelineCount +
+                                                   kSteadyOutputTransformPipelineCount;
+  constexpr std::size_t kExpectedPeakSetCount =
+      kExpectedSteadySetCount + kTransientOutputTransformPipelineCount;
+  static_assert(kExpectedSteadySetCount == 8);  // N + 2
+  static_assert(kExpectedPeakSetCount == 9);    // N + 3
+
+  const std::size_t totalDescriptorSetCapacity =
+      std::accumulate(kDescriptorPoolMaxSetsByGeneration.begin(), kDescriptorPoolMaxSetsByGeneration.end(),
+                      std::size_t{0});
+  REQUIRE(totalDescriptorSetCapacity == 60);
+  REQUIRE(kExpectedPeakSetCount < totalDescriptorSetCapacity);
+
+  auto deviceResult = atlantis::vulkan_backend::createDevice(
+      {.applicationName = "Atlantis N=6 HDR Descriptor Pool GPU Test", .enableValidationLayers = true});
+  REQUIRE(deviceResult.isOk());
+  std::unique_ptr<atlantis::rhi::Device> device = std::move(deviceResult.value());
+
+  const auto fallbackVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.spv");
+  const auto fallbackFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.frag.spv");
+  auto fallbackReflection =
+      loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.refl.json");
+  REQUIRE(fallbackVertexSpirv.has_value());
+  REQUIRE(fallbackFragmentSpirv.has_value());
+  REQUIRE(fallbackReflection.isOk());
+  const auto fallbackLayout = fallbackVertexLayout(fallbackReflection.value());
+  REQUIRE(fallbackLayout.has_value());
+
+  auto fallbackPipelineResult = device->createPipeline(
+      {.vertexShader = {.spirvWords = fallbackVertexSpirv->data(), .wordCount = fallbackVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = fallbackFragmentSpirv->data(), .wordCount = fallbackFragmentSpirv->size()},
+       .vertexInputLayout = *fallbackLayout,
+       .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
+       .depthFormat = atlantis::rhi::DepthFormat::D32Sfloat,
+       .pushConstantSizeBytes = sizeof(float) * 16});
+  REQUIRE(fallbackPipelineResult.isOk());
+  std::unique_ptr<atlantis::rhi::Pipeline> fallbackPipeline = std::move(fallbackPipelineResult.value());
+  REQUIRE(fallbackPipeline != nullptr);
+
+  const auto materialVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv");
+  const auto materialFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.frag.spv");
+  auto materialReflection = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) +
+                                                    "/textured_quad.vert.refl.json");
+  REQUIRE(materialVertexSpirv.has_value());
+  REQUIRE(materialFragmentSpirv.has_value());
+  REQUIRE(materialReflection.isOk());
+  const auto materialLayout = unlitTexturedVertexLayout(materialReflection.value());
+  REQUIRE(materialLayout.has_value());
+
+  std::vector<std::unique_ptr<atlantis::rhi::Pipeline>> materialPipelines;
+  materialPipelines.reserve(kMaterialPipelineCount);
+  for (std::size_t i = 0; i < kMaterialPipelineCount; ++i) {
+    auto materialPipelineResult = device->createPipeline(
+        {.vertexShader = {.spirvWords = materialVertexSpirv->data(), .wordCount = materialVertexSpirv->size()},
+         .fragmentShader = {.spirvWords = materialFragmentSpirv->data(),
+                             .wordCount = materialFragmentSpirv->size()},
+         .vertexInputLayout = *materialLayout,
+         .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
+         .depthFormat = atlantis::rhi::DepthFormat::D32Sfloat,
+         .pushConstantSizeBytes = sizeof(float) * 16,
+         .hasSampledTextureBinding = true});
+    REQUIRE(materialPipelineResult.isOk());
+    materialPipelines.push_back(std::move(materialPipelineResult.value()));
+  }
+  REQUIRE(materialPipelines.size() == kMaterialPipelineCount);
+
+  const auto makeOutputTransformPipeline = [&](const char* shaderDirectory, const char* shaderName,
+                                                Format finalFormat) -> std::unique_ptr<atlantis::rhi::Pipeline> {
+    const std::string shaderPrefix = std::string(shaderDirectory) + "/" + shaderName;
+    const auto vertexSpirv = loadSpirvFile(shaderPrefix + ".vert.spv");
+    const auto fragmentSpirv = loadSpirvFile(shaderPrefix + ".frag.spv");
+    auto reflection = loadReflectionMetadata(shaderPrefix + ".vert.refl.json");
+    REQUIRE(vertexSpirv.has_value());
+    REQUIRE(fragmentSpirv.has_value());
+    REQUIRE(reflection.isOk());
+    const auto layout = outputTransformVertexLayout(reflection.value());
+    REQUIRE(layout.has_value());
+    auto result = device->createPipeline(
+        {.vertexShader = {.spirvWords = vertexSpirv->data(), .wordCount = vertexSpirv->size()},
+         .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
+         .vertexInputLayout = *layout,
+         .colorFormat = finalFormat,
+         .hasSampledTextureBinding = true,
+         .hasCameraUniformBinding = false,
+         .hasDepthAttachment = false});
+    REQUIRE(result.isOk());
+    return std::move(result.value());
+  };
+
+  std::unique_ptr<atlantis::rhi::Pipeline> steadyOutputTransformPipeline = makeOutputTransformPipeline(
+      ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_UNORM_SHADER_DIR, "output_transform_unorm", Format::Rgba8Unorm);
+  REQUIRE(steadyOutputTransformPipeline != nullptr);
+  REQUIRE(1 + materialPipelines.size() + 1 == kExpectedSteadySetCount);
+
+  // The second output-transform Pipeline is the prepared-but-not-yet-
+  // swapped format-change candidate. All geometry Pipelines remain
+  // alive and fixed at Rgba16Float; only these old/new output sets
+  // coexist, producing the real N+3 peak.
+  std::unique_ptr<atlantis::rhi::Pipeline> transientOutputTransformPipeline = makeOutputTransformPipeline(
+      ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR, "output_transform_srgb", Format::Rgba8Srgb);
+  REQUIRE(transientOutputTransformPipeline != nullptr);
+  REQUIRE(1 + materialPipelines.size() + 2 == kExpectedPeakSetCount);
+  REQUIRE(device->waitIdle().isOk());
+}
+
 TEST_CASE("A real Vulkan Device's own descriptor pool grows past its own historical maxSets = 4 ceiling "
           "(Spec 0021/ADR-0064/Plan 0021 fix -- formerly a documented known limitation since Plan 0018)",
           "[runtime][gpu][material_realization][descriptor_pool_growth]") {
@@ -725,4 +854,3 @@ TEST_CASE("A real Vulkan Device's own descriptor pool grows past its own histori
     REQUIRE(device->waitIdle().isOk());
   }
 }
-
