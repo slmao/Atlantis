@@ -8,7 +8,10 @@
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/command_list.h>
 #include <atlantis/rhi/device.h>
+#include <atlantis/rhi/hdr_color_target.h>
 #include <atlantis/rhi/offscreen_target.h>
+#include <atlantis/rhi/pipeline.h>
+#include <atlantis/rhi/sampler.h>
 #include <atlantis/rhi/types.h>
 #include <atlantis/shader_system/reflection_loader.h>
 #include <atlantis/shader_system/rhi_integration/vertex_input_mapping.h>
@@ -18,6 +21,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <memory>
 #include <optional>
@@ -106,6 +110,18 @@ struct Vertex {
       MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, color)},
   };
   auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
+// Plan 0024 Milestone 6/7: the output-transform pass's own fixed vertex
+// schema -- NOT sourced from the mesh Vertex struct above, mirrors
+// runtime_application.cpp's own identical outputTransformVertexLayout().
+[[nodiscard]] std::optional<VertexInputLayout> outputTransformVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = 0},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(float) * 2);
   if (result.isErr()) return std::nullopt;
   return result.value();
 }
@@ -199,11 +215,19 @@ struct Rgba8 {
 // 8-bit-UNORM-quantized sample values this demo's own content check
 // compares against (Spec 0010 Requirements: "in the direction the fixed
 // mesh/camera/material fixture predicts"), not as a shared constant.
+// Plan 0024 Milestone 6/7 (ADR-0068 D-5/D-6): this fixed linear color is
+// now cleared into the HDR intermediate, then carried through the
+// output-transform pass's own floor/exposure/Reinhard tone-mapping and
+// explicit sRGB OETF before landing in this demo's own Rgba8Unorm
+// OffscreenTarget -- no longer a raw, unencoded linear-to-byte
+// quantization. Recomputed: Reinhard(0.05) = 0.05/1.05 = 0.047619,
+// sRGB-encoded = 0.241707 -> round(*255) = 62; Reinhard(0.08) =
+// 0.08/1.08 = 0.074074, sRGB-encoded = 0.301681 -> round(*255) = 77.
 [[nodiscard]] bool closeToBackground(const Rgba8& pixel) {
   constexpr int kTolerance = 12;
-  constexpr int kBackgroundR = 13;  // round(0.05 * 255)
-  constexpr int kBackgroundG = 13;  // round(0.05 * 255)
-  constexpr int kBackgroundB = 20;  // round(0.08 * 255)
+  constexpr int kBackgroundR = 62;
+  constexpr int kBackgroundG = 62;
+  constexpr int kBackgroundB = 77;
   return std::abs(static_cast<int>(pixel.r) - kBackgroundR) <= kTolerance &&
          std::abs(static_cast<int>(pixel.g) - kBackgroundG) <= kTolerance &&
          std::abs(static_cast<int>(pixel.b) - kBackgroundB) <= kTolerance;
@@ -277,6 +301,29 @@ int main() {
     return EXIT_FAILURE;
   }
 
+  // Plan 0024 Milestone 6/7 (ADR-0068 D-1/D-3/D-6): the output-transform-
+  // unorm shader pair -- this demo's own colorFormat is fixed
+  // Rgba8Unorm, so only this one variant is ever loaded.
+  const auto outputTransformVertexSpirv = loadSpirvFile("shaders/output_transform_unorm.vert.spv");
+  const auto outputTransformFragmentSpirv = loadSpirvFile("shaders/output_transform_unorm.frag.spv");
+  if (!outputTransformVertexSpirv.has_value() || !outputTransformFragmentSpirv.has_value()) {
+    ATLANTIS_LOG_ERROR("Failed to load shaders/output_transform_unorm.{{vert,frag}}.spv");
+    return EXIT_FAILURE;
+  }
+  auto outputTransformVertexReflectionResult = loadReflectionMetadata("shaders/output_transform_unorm.vert.refl.json");
+  if (outputTransformVertexReflectionResult.isErr()) {
+    ATLANTIS_LOG_ERROR("Failed to load shaders/output_transform_unorm.vert.refl.json");
+    return EXIT_FAILURE;
+  }
+  const auto outputTransformVertexInputLayout =
+      outputTransformVertexLayout(outputTransformVertexReflectionResult.value());
+  if (!outputTransformVertexInputLayout.has_value()) {
+    ATLANTIS_LOG_ERROR(
+        "outputTransformVertexLayout(): reflected vertex-input attributes do not match the fullscreen-triangle "
+        "schema");
+    return EXIT_FAILURE;
+  }
+
   // No atlantis::platform::initialize() call -- this composition never
   // needs a window, a message pump, or any Platform symbol.
   auto deviceResult = vulkan_backend::createDevice(
@@ -315,7 +362,11 @@ int main() {
       *device, {.vertexShader = {.spirvWords = vertexSpirv->data(), .wordCount = vertexSpirv->size()},
                 .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
                 .vertexInputLayout = *vertexInputLayout,
-                .colorFormat = kColorFormat,
+                // Plan 0024 Milestone 6/7 (ADR-0068 D-1/D-3): every
+                // geometry Pipeline now renders into the fixed HDR
+                // intermediate, never this demo's own real kColorFormat
+                // directly.
+                .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
                 .depthFormat = DepthFormat::D32Sfloat,
                 .pushConstantSizeBytes = sizeof(float) * 16});
   if (materialResult.isErr()) {
@@ -368,6 +419,108 @@ int main() {
   }
   std::unique_ptr<rhi::Buffer> readbackBuffer = std::move(readbackBufferResult.value());
 
+  // Plan 0024 Milestone 6/7 (ADR-0068 D-1/D-3/D-6): this demo's own HDR
+  // intermediate, fullscreen-triangle geometry/sampler, and output-
+  // transform Pipeline -- created once, alongside every other resource
+  // above.
+  auto hdrColorTargetResult = device->createHdrColorTarget({.extent = kExtent});
+  if (hdrColorTargetResult.isErr()) {
+    ATLANTIS_LOG_ERROR("createHdrColorTarget() failed");
+    readbackBuffer.reset();
+    offscreenTarget.reset();
+    depthTexture.reset();
+    material.reset();
+    cameraBuffer.reset();
+    mesh.reset();
+    device.reset();
+    return EXIT_FAILURE;
+  }
+  std::unique_ptr<rhi::HdrColorTarget> hdrColorTarget = std::move(hdrColorTargetResult.value());
+
+  const float fullscreenTriangleVertices[6] = {-1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f};
+  auto fullscreenTriangleVertexBufferResult =
+      device->createBuffer({.purpose = BufferPurpose::Vertex, .sizeBytes = sizeof(fullscreenTriangleVertices)});
+  if (fullscreenTriangleVertexBufferResult.isErr()) {
+    ATLANTIS_LOG_ERROR("createBuffer() (fullscreen-triangle vertex) failed");
+    hdrColorTarget.reset();
+    readbackBuffer.reset();
+    offscreenTarget.reset();
+    depthTexture.reset();
+    material.reset();
+    cameraBuffer.reset();
+    mesh.reset();
+    device.reset();
+    return EXIT_FAILURE;
+  }
+  std::unique_ptr<rhi::Buffer> fullscreenTriangleVertexBuffer = std::move(fullscreenTriangleVertexBufferResult.value());
+  std::memcpy(fullscreenTriangleVertexBuffer->mappedData(), fullscreenTriangleVertices,
+              sizeof(fullscreenTriangleVertices));
+
+  const std::uint16_t fullscreenTriangleIndices[3] = {0, 1, 2};
+  auto fullscreenTriangleIndexBufferResult =
+      device->createBuffer({.purpose = BufferPurpose::Index, .sizeBytes = sizeof(fullscreenTriangleIndices)});
+  if (fullscreenTriangleIndexBufferResult.isErr()) {
+    ATLANTIS_LOG_ERROR("createBuffer() (fullscreen-triangle index) failed");
+    fullscreenTriangleVertexBuffer.reset();
+    hdrColorTarget.reset();
+    readbackBuffer.reset();
+    offscreenTarget.reset();
+    depthTexture.reset();
+    material.reset();
+    cameraBuffer.reset();
+    mesh.reset();
+    device.reset();
+    return EXIT_FAILURE;
+  }
+  std::unique_ptr<rhi::Buffer> fullscreenTriangleIndexBuffer = std::move(fullscreenTriangleIndexBufferResult.value());
+  std::memcpy(fullscreenTriangleIndexBuffer->mappedData(), fullscreenTriangleIndices,
+              sizeof(fullscreenTriangleIndices));
+
+  auto outputTransformSamplerResult = device->createSampler(
+      {.filter = atlantis::rhi::Filter::Linear, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+  if (outputTransformSamplerResult.isErr()) {
+    ATLANTIS_LOG_ERROR("createSampler() (output-transform) failed");
+    fullscreenTriangleIndexBuffer.reset();
+    fullscreenTriangleVertexBuffer.reset();
+    hdrColorTarget.reset();
+    readbackBuffer.reset();
+    offscreenTarget.reset();
+    depthTexture.reset();
+    material.reset();
+    cameraBuffer.reset();
+    mesh.reset();
+    device.reset();
+    return EXIT_FAILURE;
+  }
+  std::unique_ptr<rhi::Sampler> outputTransformSampler = std::move(outputTransformSamplerResult.value());
+
+  auto outputTransformPipelineResult = device->createPipeline(
+      {.vertexShader = {.spirvWords = outputTransformVertexSpirv->data(),
+                         .wordCount = outputTransformVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = outputTransformFragmentSpirv->data(),
+                           .wordCount = outputTransformFragmentSpirv->size()},
+       .vertexInputLayout = *outputTransformVertexInputLayout,
+       .colorFormat = kColorFormat,
+       .hasSampledTextureBinding = true,
+       .hasCameraUniformBinding = false,
+       .hasDepthAttachment = false});
+  if (outputTransformPipelineResult.isErr()) {
+    ATLANTIS_LOG_ERROR("createPipeline() (output-transform) failed");
+    outputTransformSampler.reset();
+    fullscreenTriangleIndexBuffer.reset();
+    fullscreenTriangleVertexBuffer.reset();
+    hdrColorTarget.reset();
+    readbackBuffer.reset();
+    offscreenTarget.reset();
+    depthTexture.reset();
+    material.reset();
+    cameraBuffer.reset();
+    mesh.reset();
+    device.reset();
+    return EXIT_FAILURE;
+  }
+  std::unique_ptr<rhi::Pipeline> outputTransformPipeline = std::move(outputTransformPipelineResult.value());
+
   Renderer renderer;
   bool failed = false;
   int cyclesCompleted = 0;
@@ -407,7 +560,9 @@ int main() {
     // (Spec 0010/ADR-0022 Accepted Amendment) -- no intermediate,
     // meaningless presentation-shaped layout is ever recorded.
     renderer.drawFrame(*commandList, *target, *depthTexture, *cameraBuffer, drawItems,
-                        atlantis::rhi::ResourceState::TransferSource);
+                        atlantis::rhi::ResourceState::TransferSource, *hdrColorTarget,
+                        *fullscreenTriangleVertexBuffer, *fullscreenTriangleIndexBuffer, *outputTransformPipeline,
+                        *outputTransformSampler);
 
     // Caller-built copy-pass graph (Spec 0010's own flow) -- separate
     // from, and executed after, Renderer::drawFrame()'s own internal
@@ -479,6 +634,11 @@ int main() {
   // Lifetime precondition (ADR-0003/0038): every Buffer/Texture/
   // OffscreenTarget/Pipeline this Device backed is destroyed before the
   // Device itself.
+  outputTransformPipeline.reset();
+  outputTransformSampler.reset();
+  fullscreenTriangleIndexBuffer.reset();
+  fullscreenTriangleVertexBuffer.reset();
+  hdrColorTarget.reset();
   readbackBuffer.reset();
   offscreenTarget.reset();
   depthTexture.reset();

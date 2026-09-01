@@ -7,7 +7,10 @@
 #include <atlantis/renderer/renderer.h>
 #include <atlantis/rhi/command_list.h>
 #include <atlantis/rhi/device.h>
+#include <atlantis/rhi/hdr_color_target.h>
 #include <atlantis/rhi/offscreen_target.h>
+#include <atlantis/rhi/pipeline.h>
+#include <atlantis/rhi/sampler.h>
 #include <atlantis/rhi/types.h>
 #include <atlantis/shader_system/reflection_loader.h>
 #include <atlantis/shader_system/rhi_integration/vertex_input_mapping.h>
@@ -15,6 +18,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <memory>
 #include <numeric>
@@ -110,6 +114,18 @@ struct Vertex {
       MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, color)},
   };
   auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
+// Plan 0024 Milestone 6/7: the output-transform pass's own fixed vertex
+// schema -- NOT sourced from the mesh Vertex struct above, mirrors
+// runtime_application.cpp's own identical outputTransformVertexLayout().
+[[nodiscard]] std::optional<VertexInputLayout> outputTransformVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = 0},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(float) * 2);
   if (result.isErr()) return std::nullopt;
   return result.value();
 }
@@ -363,7 +379,10 @@ TEST_CASE("A Pipeline created before a growth event remains valid and genuinely 
                 .fragmentShader = {.spirvWords = fixture->fragmentSpirv.data(),
                                     .wordCount = fixture->fragmentSpirv.size()},
                 .vertexInputLayout = fixture->vertexInputLayout,
-                .colorFormat = kColorFormat,
+                // Plan 0024 Milestone 6/7 (ADR-0068 D-1/D-3): every
+                // geometry Pipeline now renders into the fixed HDR
+                // intermediate, never kColorFormat directly.
+                .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
                 .depthFormat = DepthFormat::D32Sfloat,
                 .pushConstantSizeBytes = sizeof(float) * 16});
   REQUIRE(materialResult.isOk());
@@ -416,6 +435,59 @@ TEST_CASE("A Pipeline created before a growth event remains valid and genuinely 
   REQUIRE(acquireResult.isOk());
   std::unique_ptr<RenderTarget> target = std::move(acquireResult.value());
 
+  // Plan 0024 Milestone 6/7 (ADR-0068 D-1/D-3/D-6): this test's own HDR
+  // intermediate, fullscreen-triangle geometry/sampler, and output-
+  // transform Pipeline -- kColorFormat above is fixed Rgba8Unorm, so
+  // only this one variant is ever built.
+  auto hdrColorTargetResult = device->createHdrColorTarget({.extent = kExtent});
+  REQUIRE(hdrColorTargetResult.isOk());
+  std::unique_ptr<atlantis::rhi::HdrColorTarget> hdrColorTarget = std::move(hdrColorTargetResult.value());
+
+  const float fullscreenTriangleVertices[6] = {-1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f};
+  auto fullscreenTriangleVertexBufferResult =
+      device->createBuffer({.purpose = BufferPurpose::Vertex, .sizeBytes = sizeof(fullscreenTriangleVertices)});
+  REQUIRE(fullscreenTriangleVertexBufferResult.isOk());
+  std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleVertexBuffer =
+      std::move(fullscreenTriangleVertexBufferResult.value());
+  std::memcpy(fullscreenTriangleVertexBuffer->mappedData(), fullscreenTriangleVertices,
+              sizeof(fullscreenTriangleVertices));
+
+  const std::uint16_t fullscreenTriangleIndices[3] = {0, 1, 2};
+  auto fullscreenTriangleIndexBufferResult =
+      device->createBuffer({.purpose = BufferPurpose::Index, .sizeBytes = sizeof(fullscreenTriangleIndices)});
+  REQUIRE(fullscreenTriangleIndexBufferResult.isOk());
+  std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleIndexBuffer =
+      std::move(fullscreenTriangleIndexBufferResult.value());
+  std::memcpy(fullscreenTriangleIndexBuffer->mappedData(), fullscreenTriangleIndices,
+              sizeof(fullscreenTriangleIndices));
+
+  auto outputTransformSamplerResult = device->createSampler(
+      {.filter = atlantis::rhi::Filter::Linear, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+  REQUIRE(outputTransformSamplerResult.isOk());
+  std::unique_ptr<atlantis::rhi::Sampler> outputTransformSampler = std::move(outputTransformSamplerResult.value());
+
+  const auto outputTransformVertexSpirv = loadSpirvFile("shaders/output_transform_unorm.vert.spv");
+  const auto outputTransformFragmentSpirv = loadSpirvFile("shaders/output_transform_unorm.frag.spv");
+  REQUIRE(outputTransformVertexSpirv.has_value());
+  REQUIRE(outputTransformFragmentSpirv.has_value());
+  const auto outputTransformVertexReflection = loadReflectionMetadata("shaders/output_transform_unorm.vert.refl.json");
+  REQUIRE(outputTransformVertexReflection.isOk());
+  const auto outputTransformVertexInputLayout = outputTransformVertexLayout(outputTransformVertexReflection.value());
+  REQUIRE(outputTransformVertexInputLayout.has_value());
+
+  auto outputTransformPipelineResult = device->createPipeline(
+      {.vertexShader = {.spirvWords = outputTransformVertexSpirv->data(),
+                         .wordCount = outputTransformVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = outputTransformFragmentSpirv->data(),
+                           .wordCount = outputTransformFragmentSpirv->size()},
+       .vertexInputLayout = *outputTransformVertexInputLayout,
+       .colorFormat = kColorFormat,
+       .hasSampledTextureBinding = true,
+       .hasCameraUniformBinding = false,
+       .hasDepthAttachment = false});
+  REQUIRE(outputTransformPipelineResult.isOk());
+  std::unique_ptr<atlantis::rhi::Pipeline> outputTransformPipeline = std::move(outputTransformPipelineResult.value());
+
   DrawItem item;
   item.mesh = &mesh;
   item.material = &material;
@@ -428,7 +500,8 @@ TEST_CASE("A Pipeline created before a growth event remains valid and genuinely 
 
   Renderer renderer;
   renderer.drawFrame(*commandList, *target, *depthTexture, *cameraBuffer, drawItems,
-                      atlantis::rhi::ResourceState::TransferSource);
+                      atlantis::rhi::ResourceState::TransferSource, *hdrColorTarget, *fullscreenTriangleVertexBuffer,
+                      *fullscreenTriangleIndexBuffer, *outputTransformPipeline, *outputTransformSampler);
 
   auto submitResult = device->submit(std::move(commandList), *target);
   REQUIRE(submitResult.isOk());

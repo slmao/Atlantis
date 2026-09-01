@@ -103,7 +103,14 @@ catch_discover_tests(atlantis_vulkan_backend_gpu_tests
 # Plan 0008 Section 7/8: the build-tree, Shader-System-produced artifact
 # set, copied next to this executable's own build output -- replaces
 # Plan 0007's checked-in shaders/minimal_renderer/*.spv copy.
-add_dependencies(atlantis_vulkan_backend_gpu_tests minimal_mesh_shaders)
+# Plan 0024 Milestone 6/7 (ADR-0068 D-1/D-3/D-6): both output-transform
+# shader pairs -- minimal_renderer_gpu_tests.cpp presents to a real
+# swapchain (needs both variants); headless_rendering_gpu_tests.cpp/
+# descriptor_pool_growth_gpu_tests.cpp use a fixed Rgba8Unorm
+# OffscreenTarget (unorm only), but both are copied here unconditionally
+# since all three share this one executable/copy step.
+add_dependencies(atlantis_vulkan_backend_gpu_tests minimal_mesh_shaders output_transform_unorm_shaders
+  output_transform_srgb_shaders)
 add_custom_command(TARGET atlantis_vulkan_backend_gpu_tests POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders"
@@ -112,5 +119,17 @@ add_custom_command(TARGET atlantis_vulkan_backend_gpu_tests POST_BUILD
       "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.vert.refl.json"
       "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.spv"
       "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.spv"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.refl.json"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.spv"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}/output_transform_srgb.vert.spv"
+      "${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}/output_transform_srgb.vert.refl.json"
+      "${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}/output_transform_srgb.frag.spv"
+      "${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}/output_transform_srgb.frag.refl.json"
       "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders/"
 )

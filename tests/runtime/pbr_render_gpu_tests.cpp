@@ -16,7 +16,9 @@
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/command_list.h>
 #include <atlantis/rhi/device.h>
+#include <atlantis/rhi/hdr_color_target.h>
 #include <atlantis/rhi/offscreen_target.h>
+#include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/sampled_texture.h>
 #include <atlantis/rhi/sampler.h>
 #include <atlantis/rhi/types.h>
@@ -54,7 +56,10 @@ using atlantis::rhi::Device;
 using atlantis::rhi::Extent2D;
 using atlantis::rhi::Filter;
 using atlantis::rhi::Format;
+using atlantis::rhi::HdrColorTarget;
+using atlantis::rhi::HdrFormat;
 using atlantis::rhi::OffscreenTarget;
+using atlantis::rhi::Pipeline;
 using atlantis::rhi::SampledTextureCreateParams;
 using atlantis::rhi::SampledTextureFormat;
 using atlantis::rhi::SamplerCreateParams;
@@ -122,6 +127,18 @@ constexpr std::array<float, 16> kIdentityMatrix = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0,
       MeshVertexAttributeSchema{.location = 2, .offsetBytes = offsetof(Vertex, normal)},
   };
   auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
+// Plan 0024 Milestone 6/7: the output-transform pass's own fixed vertex
+// schema -- NOT sourced from the mesh Vertex struct above, mirrors
+// runtime_application.cpp's own identical outputTransformVertexLayout().
+[[nodiscard]] std::optional<VertexInputLayout> outputTransformVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = 0},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(float) * 2);
   if (result.isErr()) return std::nullopt;
   return result.value();
 }
@@ -267,13 +284,73 @@ struct PbrTestRig {
   if (readbackBufferResult.isErr()) return std::nullopt;
   std::unique_ptr<atlantis::rhi::Buffer> readbackBuffer = std::move(readbackBufferResult.value());
 
+  // Plan 0024 Milestone 6/7 (ADR-0068 D-1/D-3/D-6): this call's own HDR
+  // intermediate, fullscreen-triangle geometry/sampler, and output-
+  // transform Pipeline -- everything fresh per call, matching this
+  // function's own established "no multi-cycle fixture" convention
+  // above.
+  auto hdrColorTargetResult = device.createHdrColorTarget({.extent = kExtent});
+  if (hdrColorTargetResult.isErr()) return std::nullopt;
+  std::unique_ptr<HdrColorTarget> hdrColorTarget = std::move(hdrColorTargetResult.value());
+
+  const float fullscreenTriangleVertices[6] = {-1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f};
+  auto fullscreenTriangleVertexBufferResult =
+      device.createBuffer({.purpose = BufferPurpose::Vertex, .sizeBytes = sizeof(fullscreenTriangleVertices)});
+  if (fullscreenTriangleVertexBufferResult.isErr()) return std::nullopt;
+  std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleVertexBuffer =
+      std::move(fullscreenTriangleVertexBufferResult.value());
+  std::memcpy(fullscreenTriangleVertexBuffer->mappedData(), fullscreenTriangleVertices,
+              sizeof(fullscreenTriangleVertices));
+
+  const std::uint16_t fullscreenTriangleIndices[3] = {0, 1, 2};
+  auto fullscreenTriangleIndexBufferResult =
+      device.createBuffer({.purpose = BufferPurpose::Index, .sizeBytes = sizeof(fullscreenTriangleIndices)});
+  if (fullscreenTriangleIndexBufferResult.isErr()) return std::nullopt;
+  std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleIndexBuffer =
+      std::move(fullscreenTriangleIndexBufferResult.value());
+  std::memcpy(fullscreenTriangleIndexBuffer->mappedData(), fullscreenTriangleIndices,
+              sizeof(fullscreenTriangleIndices));
+
+  auto outputTransformSamplerResult =
+      device.createSampler({.filter = Filter::Linear, .addressMode = AddressMode::ClampToEdge});
+  if (outputTransformSamplerResult.isErr()) return std::nullopt;
+  std::unique_ptr<atlantis::rhi::Sampler> outputTransformSampler = std::move(outputTransformSamplerResult.value());
+
+  const auto outputTransformVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_UNORM_SHADER_DIR) +
+                     "/output_transform_unorm.vert.spv");
+  const auto outputTransformFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_UNORM_SHADER_DIR) +
+                     "/output_transform_unorm.frag.spv");
+  if (!outputTransformVertexSpirv.has_value() || !outputTransformFragmentSpirv.has_value()) return std::nullopt;
+  auto outputTransformVertexReflectionResult = loadReflectionMetadata(
+      std::string(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_UNORM_SHADER_DIR) + "/output_transform_unorm.vert.refl.json");
+  if (outputTransformVertexReflectionResult.isErr()) return std::nullopt;
+  const auto outputTransformVertexInputLayout =
+      outputTransformVertexLayout(outputTransformVertexReflectionResult.value());
+  if (!outputTransformVertexInputLayout.has_value()) return std::nullopt;
+
+  auto outputTransformPipelineResult = device.createPipeline(
+      {.vertexShader = {.spirvWords = outputTransformVertexSpirv->data(),
+                         .wordCount = outputTransformVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = outputTransformFragmentSpirv->data(),
+                           .wordCount = outputTransformFragmentSpirv->size()},
+       .vertexInputLayout = *outputTransformVertexInputLayout,
+       .colorFormat = kColorFormat,
+       .hasSampledTextureBinding = true,
+       .hasCameraUniformBinding = false,
+       .hasDepthAttachment = false});
+  if (outputTransformPipelineResult.isErr()) return std::nullopt;
+  std::unique_ptr<Pipeline> outputTransformPipeline = std::move(outputTransformPipelineResult.value());
+
   auto commandListResult = device.createCommandList();
   if (commandListResult.isErr()) return std::nullopt;
   std::unique_ptr<CommandList> commandList = std::move(commandListResult.value());
 
   Renderer renderer;
   renderer.drawFrame(*commandList, *target, *depthTextureResult.value(), cameraBuffer, drawItems,
-                      atlantis::rhi::ResourceState::TransferSource);
+                      atlantis::rhi::ResourceState::TransferSource, *hdrColorTarget, *fullscreenTriangleVertexBuffer,
+                      *fullscreenTriangleIndexBuffer, *outputTransformPipeline, *outputTransformSampler);
 
   atlantis::render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");
@@ -323,7 +400,7 @@ TEST_CASE("PbrDirectLit parameter transmission: two draws differing only in meta
         {.vertexShader = {.spirvWords = rig.pbrVertexSpirv.data(), .wordCount = rig.pbrVertexSpirv.size()},
          .fragmentShader = {.spirvWords = rig.pbrFragmentSpirv.data(), .wordCount = rig.pbrFragmentSpirv.size()},
          .vertexInputLayout = rig.pbrLayout,
-         .colorFormat = kColorFormat,
+         .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
          .depthFormat = DepthFormat::D32Sfloat,
          .pushConstantSizeBytes = 96,
          .hasSampledTextureBinding = true},
@@ -411,7 +488,7 @@ TEST_CASE("A mixed UnlitTextured+LitTextured+PbrDirectLit scene renders all thre
       {.vertexShader = {.spirvWords = unlitVertexSpirv->data(), .wordCount = unlitVertexSpirv->size()},
        .fragmentShader = {.spirvWords = unlitFragmentSpirv->data(), .wordCount = unlitFragmentSpirv->size()},
        .vertexInputLayout = *unlitLayout,
-       .colorFormat = kColorFormat,
+       .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = sizeof(float) * 16,
        .hasSampledTextureBinding = true},
@@ -423,7 +500,7 @@ TEST_CASE("A mixed UnlitTextured+LitTextured+PbrDirectLit scene renders all thre
       {.vertexShader = {.spirvWords = litVertexSpirv->data(), .wordCount = litVertexSpirv->size()},
        .fragmentShader = {.spirvWords = litFragmentSpirv->data(), .wordCount = litFragmentSpirv->size()},
        .vertexInputLayout = *litLayout,
-       .colorFormat = kColorFormat,
+       .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = sizeof(float) * 16,
        .hasSampledTextureBinding = true},
@@ -435,7 +512,7 @@ TEST_CASE("A mixed UnlitTextured+LitTextured+PbrDirectLit scene renders all thre
       {.vertexShader = {.spirvWords = rig.pbrVertexSpirv.data(), .wordCount = rig.pbrVertexSpirv.size()},
        .fragmentShader = {.spirvWords = rig.pbrFragmentSpirv.data(), .wordCount = rig.pbrFragmentSpirv.size()},
        .vertexInputLayout = rig.pbrLayout,
-       .colorFormat = kColorFormat,
+       .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = 96,
        .hasSampledTextureBinding = true},
@@ -514,7 +591,7 @@ TEST_CASE("PbrDirectLit reflects a runtime Light intensity change on the next fr
       {.vertexShader = {.spirvWords = rig.pbrVertexSpirv.data(), .wordCount = rig.pbrVertexSpirv.size()},
        .fragmentShader = {.spirvWords = rig.pbrFragmentSpirv.data(), .wordCount = rig.pbrFragmentSpirv.size()},
        .vertexInputLayout = rig.pbrLayout,
-       .colorFormat = kColorFormat,
+       .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = 96,
        .hasSampledTextureBinding = true},
