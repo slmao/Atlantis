@@ -1,6 +1,6 @@
 schema_version: 1
-capture_date: 2026-08-24T16:53:33Z
-source_revision: 0b16a441a368d644027aa17de8e66899a402e909
+capture_date: 2026-09-01T15:49:30Z
+source_revision: 904e49ae7b1f3bc79c29d1704e036f9cd5921273
 gpu_vendor: Intel
 gpu_model: Intel(R) Arc(TM) B370 GPU
 driver_version: 101.8509
