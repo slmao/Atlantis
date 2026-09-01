@@ -153,15 +153,23 @@ class RuntimeApplication {
   // distinct AssetIds," extended here to Sampler for the same reason).
   // Keyed by MATERIAL AssetId.
   std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::Sampler>> samplerResourceMap_;
-  // Layer 2 -- format-DEPENDENT (Pipeline bakes in colorFormat), rebuilt
-  // in full on every format change (D9). Keyed by MATERIAL AssetId.
-  // Borrows (raw, non-owning pointers, Material's own existing
-  // contract) into Layer 1/1b's already-stable addresses -- never into
-  // a value-typed map slot.
+  // Layer 2 -- Plan 0024 Milestone 6 (correction, ADR-0068 D-4, Human
+  // Review direction 2026-09-01): NO LONGER format-dependent -- every
+  // Pipeline here targets the fixed HdrFormat::Rgba16Float
+  // unconditionally (material_realization.cpp), so this map only ever
+  // grows (via realizePendingMaterials(), Phase 2), never rebuilt by a
+  // format change. Keyed by MATERIAL AssetId. Borrows (raw, non-owning
+  // pointers, Material's own existing contract) into Layer 1/1b's
+  // already-stable addresses -- never into a value-typed map slot.
   std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::renderer::Material>>
       materialResourceMap_;
-  std::unique_ptr<atlantis::renderer::Material> fallbackMaterial_;  // lazy: first frame's format-change check; also
-                                                                     // format-dependent, also rebuilt by D9
+  // Plan 0024 Milestone 6 (correction, ADR-0068 D-4): created once at
+  // startup (initializeSteps()), alongside cameraBuffer_ -- no longer
+  // deferred to the first frame's format-change check, since its own
+  // Pipeline is format-independent (same reasoning as
+  // materialResourceMap_ immediately above) and needs nothing but the
+  // already-available shader pair to construct.
+  std::unique_ptr<atlantis::renderer::Material> fallbackMaterial_;
 
   // Plan 0024 Milestone 6 (ADR-0068 D-1/D-3/D-6): the output-transform
   // pass's own fixed, never-scene-content geometry -- created once at
@@ -170,12 +178,12 @@ class RuntimeApplication {
   // ...IndexBuffer_/outputTransformSampler_ are format-independent
   // (nothing about a fullscreen triangle or a Sampler bakes in a
   // colorFormat); outputTransformUnormPipeline_/...SrgbPipeline_ are
-  // format-dependent (a Pipeline bakes in colorFormat, D-4), like
-  // fallbackMaterial_/materialResourceMap_ immediately above -- both
-  // created once at startup against the FIRST real swapchain format,
-  // and rebuilt (one at a time, whichever isSrgbFormat() currently
-  // selects) by the same format-change mechanism, via
-  // FormatRebuildCandidates::outputTransformPipeline.
+  // the ONE remaining format-dependent pair in this whole class (a
+  // Pipeline bakes in colorFormat, D-4) -- first built on the first
+  // real format-change event (runFrame(), not initializeSteps(), since
+  // no real format is known before the first SurfaceCreated), and
+  // rebuilt (one at a time, whichever isSrgbFormat() currently selects)
+  // on every subsequent one.
   std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleVertexBuffer_;
   std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleIndexBuffer_;
   std::unique_ptr<atlantis::rhi::Sampler> outputTransformSampler_;

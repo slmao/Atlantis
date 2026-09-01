@@ -44,6 +44,8 @@ const char* toString(RuntimeInitError error) noexcept {
       return "OutputTransformUnormPipelineCreateFailed";
     case RuntimeInitError::OutputTransformSrgbPipelineCreateFailed:
       return "OutputTransformSrgbPipelineCreateFailed";
+    case RuntimeInitError::FallbackMaterialCreateFailed:
+      return "FallbackMaterialCreateFailed";
   }
   // Reached only if a future RuntimeInitError value is added without a
   // corresponding case above -- see exit_reason.cpp's identical comment

@@ -57,6 +57,13 @@ enum class RuntimeInitError {
   OutputTransformSamplerCreateFailed,
   OutputTransformUnormPipelineCreateFailed,
   OutputTransformSrgbPipelineCreateFailed,
+  // ADR-0068 D-4 (correction discovered during Implementation,
+  // 2026-09-01): fallbackMaterial_'s own Pipeline no longer depends on
+  // a real, negotiated Format (it targets the fixed
+  // HdrFormat::Rgba16Float, like every other geometry Pipeline), so it
+  // is now created once at startup rather than deferred to the first
+  // frame -- mirrors CameraBufferCreateFailed's own precedent exactly.
+  FallbackMaterialCreateFailed,
 };
 
 // For logging only -- not part of any Result/error contract.
