@@ -15,6 +15,7 @@
 #include "device_extension_list.h"
 #include "dynamic_rendering.h"
 #include "dynamic_rendering_entry_points.h"
+#include "hdr_color_target_capability.h"
 #include "validation.h"
 #include "vulkan_buffer.h"
 #include "vulkan_command_list.h"
@@ -720,26 +721,12 @@ namespace {
   return VK_FORMAT_UNDEFINED;
 }
 
-// Plan 0024 Milestone 1 (ADR-0068 D-2): a pure, free classification --
-// no VkPhysicalDevice/VkInstance involved, takes a plain
-// VkFormatFeatureFlags value. This is the one piece of logic the
-// GPU-independent negative test calls directly with synthetic inputs
-// (Milestone 8); it is never exercised through a real Vulkan call in
-// that test. Only the two bits HdrColorTarget's own two real usages
-// need are checked -- COLOR_ATTACHMENT_BIT (the geometry pass writes
-// it) and SAMPLED_IMAGE_BIT (the output-transform pass samples it).
-// Deliberately NOT checked, because not used by this design:
-// COLOR_ATTACHMENT_BLEND_BIT (this engine has zero alpha-blending
-// capability anywhere, blendEnable = VK_FALSE on every Pipeline);
-// SAMPLED_IMAGE_FILTER_LINEAR_BIT (the output-transform pass samples
-// at an exact 1:1 texel mapping, Filter::Nearest); TRANSFER_SRC_BIT/
-// TRANSFER_DST_BIT (HdrColorTarget is never read back or copied
-// to/from directly).
-[[nodiscard]] bool hasRequiredHdrColorTargetFeatures(VkFormatFeatureFlags optimalTilingFeatures) {
-  constexpr VkFormatFeatureFlags kRequired =
-      VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-  return (optimalTilingFeatures & kRequired) == kRequired;
-}
+// Plan 0024 Milestone 8: hasRequiredHdrColorTargetFeatures() moved to
+// its own private header/source (hdr_color_target_capability.h/.cpp),
+// mirroring resource_state_mapping.h's own identical "pure function,
+// unit-testable without Vulkan" shape -- the anonymous namespace it
+// used to live in (translation-unit-private) could not be reached by a
+// GPU-independent test in a different .cpp file.
 
 [[nodiscard]] VkFilter toVkFilter(atlantis::rhi::Filter filter) {
   switch (filter) {

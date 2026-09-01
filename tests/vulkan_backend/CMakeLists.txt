@@ -18,6 +18,7 @@ add_executable(atlantis_vulkan_backend_tests
   dynamic_rendering_entry_points_tests.cpp
   vulkan_memory_tests.cpp
   descriptor_pool_growth_tests.cpp
+  hdr_color_target_capability_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_tests

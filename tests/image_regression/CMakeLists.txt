@@ -13,6 +13,7 @@ add_executable(atlantis_image_regression_tests
   png_codec_tests.cpp
   provenance_tests.cpp
   golden_validity_tests.cpp
+  tone_mapping_reference_tests.cpp
 )
 
 target_link_libraries(atlantis_image_regression_tests
