@@ -1,0 +1,13 @@
+schema_version: 1
+capture_date: 2026-09-01T16:45:46Z
+source_revision: 0567b37369f4210e957af58866bd621c71f818a7
+gpu_vendor: Intel
+gpu_model: Intel(R) Arc(TM) B370 GPU
+driver_version: 101.8509
+os_build: Windows 11 Home, Build 26200
+vulkan_loader_api_version: 1.4.357
+vulkan_requested_instance_api_version: 1.3.0
+vulkan_physical_device_api_version: 1.4.335
+extent_width: 512
+extent_height: 512
+format: Rgba8Unorm

@@ -1,4 +1,5 @@
 #include "fixture/hdr_roll_off_demo_fixture.h"
+#include "support/golden_validity.h"
 #include "support/tone_mapping_reference.h"
 
 #include <atlantis/runtime/bootstrap_config.h>
@@ -10,15 +11,19 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <set>
 #include <string>
 
 using atlantis::image_regression::HdrRollOffDemoFixture;
 using atlantis::image_regression::kHdrRollOffDemoExtentPixels;
+using atlantis::image_regression::loadAndValidateGolden;
 using atlantis::image_regression::PixelBuffer;
+using atlantis::image_regression::compareBuffers;
 using atlantis::image_regression::renderHdrRollOffDemoFrame;
 using atlantis::image_regression::setUpHdrRollOffDemoFixture;
 using atlantis::image_regression::tonemapAndEncodeUnorm;
+using atlantis::image_regression::writeFailureArtifacts;
 using atlantis::runtime::BootstrapConfig;
 
 namespace {
@@ -156,4 +161,51 @@ TEST_CASE("HDR roll-off demo realizes one shared PBR material and renders repeat
   CHECK(firstResult.value().rgba8 == secondResult.value().rgba8);
   CHECK(fixture.materialResourceMap.size() == 1);
   CHECK(fixture.sampledTextureResourceMap.size() == 1);
+}
+
+namespace {
+constexpr const char* kHdrRollOffDemoGoldenName =
+    "hdr_roll_off_demo/hdr_roll_off_demo_512x512_rgba8unorm";
+constexpr const char* kHdrRollOffDemoGoldenSlug = "hdr_roll_off_demo_512x512_rgba8unorm";
+}  // namespace
+
+// Plan 0024 Milestone 10: this case lands only with the separately
+// captured PNG/sidecar, after the fixture/code commit, per ADR-0042.
+TEST_CASE("Full capture-compare cycle against the committed hdr_roll_off_demo golden passes",
+          "[image_regression][gpu][hdr_roll_off]") {
+  const std::filesystem::path outputDir = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
+  const std::filesystem::path actualArtifact =
+      outputDir / (std::string(kHdrRollOffDemoGoldenSlug) + "_actual.png");
+  const std::filesystem::path diffArtifact =
+      outputDir / (std::string(kHdrRollOffDemoGoldenSlug) + "_diff.png");
+  std::filesystem::remove(actualArtifact);
+  std::filesystem::remove(diffArtifact);
+
+  auto fixtureResult = setUpHdrRollOffDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  HdrRollOffDemoFixture& fixture = fixtureResult.value();
+
+  auto renderResult = renderHdrRollOffDemoFrame(fixture);
+  REQUIRE(renderResult.isOk());
+  const PixelBuffer& actual = renderResult.value();
+
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult = loadAndValidateGolden(
+      goldensDir / (std::string(kHdrRollOffDemoGoldenName) + ".png"),
+      goldensDir / (std::string(kHdrRollOffDemoGoldenName) + ".sidecar.txt"));
+  {
+    INFO("INVALID GOLDEN: the committed hdr_roll_off_demo golden must load and validate cleanly");
+    REQUIRE(goldenResult.isOk());
+  }
+  const auto& validatedGolden = goldenResult.value();
+
+  REQUIRE(actual.width == validatedGolden.pixels.width);
+  REQUIRE(actual.height == validatedGolden.pixels.height);
+
+  const auto report = compareBuffers(actual, validatedGolden.pixels);
+  if (!report.passed) {
+    (void)writeFailureArtifacts(outputDir, kHdrRollOffDemoGoldenSlug, actual, validatedGolden.pixels);
+  }
+  REQUIRE(report.passed);
+  REQUIRE(fixture.device->waitIdle().isOk());
 }
