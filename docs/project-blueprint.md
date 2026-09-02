@@ -1548,14 +1548,13 @@ milestone being listed does not authorize starting it — see Section 1.
   change). See
   [plans/0023-pbr-material-foundation.md](../plans/0023-pbr-material-foundation.md)'s
   own "Post-Merge Status Update" for the full record.
-- **Not implemented:** this is a direct-lighting PBR baseline only, not
-  Filament-quality PBR (this Spec's own Non-Goals) — HDR intermediate
-  storage, output transfer/tone-mapping (the existing hard-clip-only
-  output contract is unchanged), image-based lighting, shadows, and
-  normal mapping/tangent-space input are all explicitly unimplemented;
-  Shadow, IBL, and Post-processing remain deferred, unrelated to this
-  Milestone's own scope; Android/iOS/Linux implementation and any
-  Editor/Client-facing API remain out of scope.
+- **Subsequent status:** Spec 0024 implemented the HDR intermediate and shared
+  output-transfer pass via [PR #115](https://github.com/slmao/Atlantis/pull/115).
+  Image-based lighting, shadows, and normal mapping/tangent-space input remain
+  unimplemented; draft [Spec 0025](../specs/0025-image-based-lighting-foundation.md)
+  begins the IBL foundation. Physical camera/exposure and post-processing
+  beyond the fixed output transform remain deferred; Android/iOS/Linux
+  implementation and any Editor/Client-facing API remain out of scope.
 
 ### Further candidate phases (directional only, no Spec, no ADR)
 

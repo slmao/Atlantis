@@ -426,14 +426,14 @@ push constant, and the extended 320-byte Camera/Lighting/camera-world-
 position uniform buffer — proven against a new, human-reviewed
 `pbr_material_demo` golden (four spheres spanning dielectric/metallic ×
 rough/smooth) with zero change to any of the five pre-existing goldens.
-**This is a direct-lighting PBR baseline only, not Filament-quality
-PBR:** HDR intermediate storage, output transfer/tone-mapping,
-image-based lighting, shadows, and normal mapping/tangent-space input
-are all explicitly unimplemented — this Spec's own Non-Goals, see
-`src/README.md`. Shadows, image-based lighting, and post-processing
-extensions beyond it, mipmap/compression/streaming/bindless texture
-support, a distributable cross-session Asset Catalog, and Android/iOS
-all remain unimplemented — see [src/README.md](src/README.md).
+Spec 0024 then implemented the shared `Rgba16Float` HDR scene intermediate,
+fixed-exposure Reinhard output transform, and correct sRGB transfer path for
+both presentable-target format classes, merged via
+[PR #115](https://github.com/slmao/Atlantis/pull/115). This is still not
+Filament-quality PBR: image-based lighting, shadows, normal mapping/
+tangent-space input, physical camera/exposure, and post-processing beyond the
+fixed output transform remain unimplemented. The next drafted milestone is
+[Spec 0025](specs/0025-image-based-lighting-foundation.md), the IBL foundation.
 
 Android and iOS remain specified architecturally only (not implemented);
 Vulkan Backend's Android WSI path is likewise not implemented. Headless
