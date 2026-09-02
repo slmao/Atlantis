@@ -1,9 +1,12 @@
 # ADR 0070: IBL Frame Binding and Cubemap Resource Contract
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-02
-- **Deciders:** slmao
-- **Related Spec:** [specs/0025-image-based-lighting-foundation.md](../specs/0025-image-based-lighting-foundation.md) (`Draft`)
+- **Deciders:** slmao — Human Review, approved 2026-09-02
+- **Related Spec:** [specs/0025-image-based-lighting-foundation.md](../specs/0025-image-based-lighting-foundation.md) (`Approved`)
+- **Acceptance Record (2026-09-02):** Accepted by Human Review as part of
+  Spec 0025's approval in the Codex task. This record authorizes Plan drafting
+  only after the approval record merges; it does not authorize implementation.
 
 ## Context
 

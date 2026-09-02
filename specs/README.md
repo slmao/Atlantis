@@ -68,6 +68,10 @@ merged. Its implementation is merged; it introduced the `Rgba16Float` HDR
 scene target, one shared output-transform pass, fixed-exposure Reinhard
 tone-mapping, and dual `_Unorm`/`_Srgb` output encoding.
 
+**Status update (2026-09-02):** Spec 0025 is `Approved`; ADR-0069 and
+ADR-0070 are `Accepted` by Human Review. This authorizes drafting Plan 0025
+after the approval record merges, not implementation.
+
 No spec above is marked `Complete` — this registry only uses the status
 values `specs/README.md` and `plans/README.md` already define
 (`Draft` / `In Review` / `Approved` / `Rejected` / `Superseded`, and for

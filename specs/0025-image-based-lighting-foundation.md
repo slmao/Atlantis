@@ -1,10 +1,15 @@
 # Spec: Image-Based Lighting Foundation
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-09-02
-- **Related Plan(s):** None — draft this only after this Spec and its ADRs are approved.
-- **Related ADR(s):** [ADR-0069](../adr/0069-environment-asset-preprocessing-and-ownership.md) (`Proposed`); [ADR-0070](../adr/0070-ibl-frame-binding-and-cubemap-resource-contract.md) (`Proposed`)
+- **Related Plan(s):** None — draft only after this approval record merges.
+- **Related ADR(s):** [ADR-0069](../adr/0069-environment-asset-preprocessing-and-ownership.md) (`Accepted`); [ADR-0070](../adr/0070-ibl-frame-binding-and-cubemap-resource-contract.md) (`Accepted`)
+- **Human Review Approval (2026-09-02):** Approved by the human maintainer
+  in the Codex task following review of this Spec and ADR-0069/ADR-0070.
+  This approval accepts the IBL-first scope and both architectural decisions;
+  it authorizes drafting Plan 0025 after this approval record merges, not
+  implementation.
 
 ## Summary
 
