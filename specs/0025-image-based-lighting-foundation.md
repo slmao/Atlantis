@@ -3,7 +3,7 @@
 - **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-09-02
-- **Related Plan(s):** [plans/0025-image-based-lighting-foundation.md](../plans/0025-image-based-lighting-foundation.md) (`Draft`)
+- **Related Plan(s):** [plans/0025-image-based-lighting-foundation.md](../plans/0025-image-based-lighting-foundation.md) (`Approved / Ready for Implementation`; implementation starts only after [PR #118](https://github.com/slmao/Atlantis/pull/118) merges)
 - **Related ADR(s):** [ADR-0069](../adr/0069-environment-asset-preprocessing-and-ownership.md) (`Accepted`); [ADR-0070](../adr/0070-ibl-frame-binding-and-cubemap-resource-contract.md) (`Accepted`)
 - **Human Review Approval (2026-09-02):** Approved by the human maintainer
   in the Codex task following review of this Spec and ADR-0069/ADR-0070.

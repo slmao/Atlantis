@@ -1,8 +1,14 @@
 # Plan: Image-Based Lighting Foundation
 
 - **Spec:** [specs/0025-image-based-lighting-foundation.md](../specs/0025-image-based-lighting-foundation.md) (`Approved`, including its 2026-09-03 Accepted Correction)
-- **Status:** Draft
+- **Status:** Approved / Ready for Implementation
 - **Author:** slmao
+- **Human Review Approval (2026-09-03):** Approved by the human maintainer's
+  explicit confirmation in the Codex task after reviewing
+  [PR #118](https://github.com/slmao/Atlantis/pull/118). This accepts P1–P4,
+  all ten implementation gates below, and the complete verification checklist.
+  Implementation is authorized only after this approval record merges to
+  `main` through PR #118.
 
 ## Objective
 
@@ -14,8 +20,8 @@ no-environment rendering must remain byte-identical.
 
 ## Plan-Stage Decisions
 
-These values close Spec 0025's remaining implementation choices. They are
-proposals until this Plan receives Human Review approval.
+These values close Spec 0025's remaining implementation choices and are
+accepted by the Human Review approval recorded above.
 
 ### P1 — Environment artifact and preprocessing constants
 
@@ -372,9 +378,9 @@ Approval of this Plan accepts P1–P4 and the following implementation gates:
    completion and releases staging/CPU payload afterward.
 10. One new fixture/golden only; every existing golden remains byte-identical.
 
-Human Review approval of this Plan is the distinct Spec+Plan implementation
-gate required by AGENTS.md. Until recorded here, no implementation is
-authorized.
+The approval recorded at the top of this Plan is the distinct Spec+Plan
+implementation gate required by AGENTS.md. Implementation remains blocked
+until this approval record merges to `main` through PR #118.
 
 ## Definition of Done
 

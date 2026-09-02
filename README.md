@@ -434,8 +434,9 @@ Filament-quality PBR: image-based lighting, shadows, normal mapping/
 tangent-space input, physical camera/exposure, and post-processing beyond the
 fixed output transform remain unimplemented. The next approved milestone is
 [Spec 0025](specs/0025-image-based-lighting-foundation.md), the IBL foundation;
-its [Plan 0025](plans/0025-image-based-lighting-foundation.md) is drafted and
-awaiting Human Review before implementation.
+its [Plan 0025](plans/0025-image-based-lighting-foundation.md) is approved and
+ready for implementation after its approval record in
+[PR #118](https://github.com/slmao/Atlantis/pull/118) merges.
 
 Android and iOS remain specified architecturally only (not implemented);
 Vulkan Backend's Android WSI path is likewise not implemented. Headless
