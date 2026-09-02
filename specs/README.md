@@ -72,6 +72,12 @@ tone-mapping, and dual `_Unorm`/`_Srgb` output encoding.
 ADR-0070 are `Accepted` by Human Review. This authorizes drafting Plan 0025
 after the approval record merges, not implementation.
 
+**Plan-preflight correction pending Human Review (2026-09-02):** the approved
+Spec's “content-derived `AssetId`” / ADR-0069's “content-addressed” wording
+conflicts with Accepted ADR-0044's normalized-logical-path-derived identity.
+Spec 0025 and ADR-0069 now carry an explicit Proposed Correction/Amendment;
+Plan 0025 remains blocked until that correction is accepted and merged.
+
 No spec above is marked `Complete` — this registry only uses the status
 values `specs/README.md` and `plans/README.md` already define
 (`Draft` / `In Review` / `Approved` / `Rejected` / `Superseded`, and for

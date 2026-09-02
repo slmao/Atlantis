@@ -66,3 +66,43 @@ consumer. `World` and Scene artifacts do not gain an environment field.
   Asset System module boundary and ownership model.
 - **A new third-party IBL processor:** rejected for now; no dependency has
   been reviewed or is needed for the initial cooker.
+
+## Proposed Amendment — 2026-09-02 (`AssetId` derivation correction)
+
+**Status of this section:** Awaiting Human Review. The ADR's top-level status
+remains `Accepted`, and the original Decision text above is preserved as the
+historical record. If accepted, this amendment supersedes only the word
+“content-addressed” in that Decision.
+
+### Context
+
+Plan 0025 preflight found that “content-addressed” conflicts with the existing,
+Accepted [ADR-0044](0044-asset-system-identity-provenance-and-import-methodology.md):
+Atlantis `AssetId` is path-derived through `normalizeLogicalPath()` plus
+`computeAssetId()` (64-bit FNV-1a), consistently across current asset types.
+No content-hash identity mechanism exists, and this IBL feature has no reviewed
+reason to create a second one.
+
+### Amended Decision
+
+The `.aenv` artifact is versioned and deterministically cooked, but its
+`AssetId` is derived from its normalized logical path using the existing
+ADR-0044 mechanism. If the artifact embeds an `AssetId`, Asset System compares
+it with the independently parsed metadata sidecar and with a fresh
+`computeAssetId(metadata.sourceLogicalPath)` result before returning
+`EnvironmentAssetData`.
+
+Content determinism and asset identity remain separate contracts: identical
+source bytes/settings produce identical cooked payload bytes apart from any
+path-derived identity/provenance fields, while distinct logical paths produce
+distinct `AssetId` values even when source bytes match.
+
+### Consequences
+
+- Environment assets share the same identity/collision behavior as mesh,
+  texture, and material assets.
+- No new persistent identity, catalog, or content-addressable storage design is
+  introduced.
+- A byte-for-byte deterministic-payload test must compare inputs with the same
+  normalized logical path; a separate test proves different logical paths
+  produce different embedded IDs.
