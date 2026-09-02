@@ -1551,8 +1551,9 @@ milestone being listed does not authorize starting it — see Section 1.
 - **Subsequent status:** Spec 0024 implemented the HDR intermediate and shared
   output-transfer pass via [PR #115](https://github.com/slmao/Atlantis/pull/115).
   Image-based lighting, shadows, and normal mapping/tangent-space input remain
-  unimplemented; draft [Spec 0025](../specs/0025-image-based-lighting-foundation.md)
-  begins the IBL foundation. Physical camera/exposure and post-processing
+  unimplemented; approved [Spec 0025](../specs/0025-image-based-lighting-foundation.md)
+  begins the IBL foundation, with its [draft Plan](../plans/0025-image-based-lighting-foundation.md)
+  awaiting Human Review. Physical camera/exposure and post-processing
   beyond the fixed output transform remain deferred; Android/iOS/Linux
   implementation and any Editor/Client-facing API remain out of scope.
 
