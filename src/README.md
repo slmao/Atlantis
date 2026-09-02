@@ -579,10 +579,12 @@ exhaustive, C4062-guarded switch mirroring `selectShaderPair()`'s own.
 `PbrPushConstants` itself is a private Renderer header
 (`src/renderer/src/pbr_push_constants.h`), not part of this module's
 public `include/` — it carries no cross-module contract, unlike
-`CameraWorldPositionData`. **This is a direct-lighting PBR baseline
-only** — HDR intermediate storage, output transfer/tone-mapping,
-image-based lighting, shadows, and normal mapping/tangent-space input
-are all unimplemented, per this Spec's own Non-Goals.
+`CameraWorldPositionData`. Spec 0024 subsequently added the shared
+`Rgba16Float` HDR intermediate and output-transform pass (merged via
+[PR #115](https://github.com/slmao/Atlantis/pull/115)). Image-based lighting,
+shadows, and normal mapping/tangent-space input remain unimplemented; the
+draft [Spec 0025](../specs/0025-image-based-lighting-foundation.md) defines the
+next IBL foundation.
 See
 [docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md)
 for the full public/private boundary statement.
