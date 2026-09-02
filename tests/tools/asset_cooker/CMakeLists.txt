@@ -5,6 +5,7 @@
 add_executable(atlantis_asset_cooker_command_tests
   cook_command_tests.cpp
   texture_cook_command_tests.cpp
+  environment_cook_command_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_cooker_command_tests
@@ -36,6 +37,8 @@ add_executable(atlantis_asset_cooker_determinism_tests
 
 target_compile_definitions(atlantis_asset_cooker_determinism_tests PRIVATE
   ATLANTIS_ASSET_COOKER_EXECUTABLE="$<TARGET_FILE:atlantis_asset_cooker>"
+  ATLANTIS_IBL_STUDIO_SOURCE_PATH="${CMAKE_SOURCE_DIR}/assets/environments/ibl_studio_source.hdr"
+  ATLANTIS_ASSET_ROOT="${CMAKE_SOURCE_DIR}/assets"
 )
 
 target_link_libraries(atlantis_asset_cooker_determinism_tests

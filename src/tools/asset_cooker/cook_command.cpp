@@ -3,6 +3,7 @@
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/asset_set_validation.h>
 #include <atlantis/asset_system/cook.h>
+#include <atlantis/asset_system/cook_environment.h>
 #include <atlantis/asset_system/cook_material.h>
 #include <atlantis/asset_system/cook_scene.h>
 #include <atlantis/asset_system/cook_texture.h>
@@ -15,8 +16,9 @@
 #include <string>
 #include <vector>
 
-// Plan 0016 Section D9: the one and only stb_image call site in this
-// entire codebase's own runtime-adjacent code -- the second
+// Plan 0016 Section D9, extended by Plan 0025 Milestone 2: the one and only
+// stb_image implementation translation unit in this target. It owns both the
+// existing stbi_load() PNG path and the new stbi_loadf() Radiance HDR path -- the second
 // implementation-macro translation unit in the repository (ADR-0041's
 // own "one implementation-macro TU per linking target" Accepted
 // Amendment; the first is tests/image_regression/support/png_codec.cpp),
@@ -59,6 +61,7 @@ constexpr std::string_view kTextureAuthoringExtension = ".png";
 // material pipeline's own source-relative-path/output-basename
 // computation.
 constexpr std::string_view kMaterialAuthoringExtension = ".material.txt";
+constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
 
 // Computes the source path relative to the asset root, as a forward-
 // slash string, purely for CLI convenience (constructing an output file
@@ -316,6 +319,60 @@ constexpr std::string_view kMaterialAuthoringExtension = ".material.txt";
   return "unknown material cook error";
 }
 
+[[nodiscard]] const char* environmentCookErrorMessage(EnvironmentCookError error) {
+  switch (error) {
+    case EnvironmentCookError::LogicalPathInvalid:
+      return "logical path invalid";
+    case EnvironmentCookError::InvalidSourceDimensions:
+      return "HDR source must be a non-zero 2:1 equirectangular image";
+    case EnvironmentCookError::SourceSizeOverflow:
+      return "HDR source size overflow";
+    case EnvironmentCookError::NonFiniteSourceValue:
+      return "HDR source contains a non-finite RGB value";
+    case EnvironmentCookError::NegativeSourceValue:
+      return "HDR source contains a negative RGB value";
+    case EnvironmentCookError::OutputValueOverflow:
+      return "processed environment exceeds binary16 range";
+    case EnvironmentCookError::AtomicWriteFailed:
+      return "atomic write failed";
+  }
+  return "unknown environment cook error";
+}
+
+[[nodiscard]] int runCookEnvironmentMode(const CookCommandRequest& request) {
+  const std::string relativePath = computeRelativePathString(request.sourcePath, request.assetRoot);
+  if (relativePath.size() <= kEnvironmentAuthoringExtension.size() ||
+      !relativePath.ends_with(kEnvironmentAuthoringExtension)) {
+    std::cerr << "atlantis_asset_cooker: environment source must use the .hdr extension: " << request.sourcePath
+              << "\n";
+    return 1;
+  }
+  int width = 0;
+  int height = 0;
+  int channelsInFile = 0;
+  float* decoded = stbi_loadf(request.sourcePath.c_str(), &width, &height, &channelsInFile, 4);
+  if (decoded == nullptr) {
+    std::cerr << "atlantis_asset_cooker: failed to decode Radiance HDR source: " << request.sourcePath << "\n";
+    return 1;
+  }
+
+  const std::string base = fs::path(request.stampPath).stem().string();
+  const fs::path artifactPath = fs::path(request.outputDir) / (base + ".aenv");
+  const fs::path metadataPath = fs::path(request.outputDir) / (base + ".aenv.meta.txt");
+  const auto result = cookEnvironment(decoded, static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height),
+                                      relativePath, artifactPath, metadataPath);
+  stbi_image_free(decoded);
+  if (result.isErr()) {
+    std::cerr << "atlantis_asset_cooker: cook failed: " << environmentCookErrorMessage(result.error()) << "\n";
+    return 1;
+  }
+  if (!writeStamp(request.stampPath)) {
+    std::cerr << "atlantis_asset_cooker: failed to write stamp file: " << request.stampPath << "\n";
+    return 1;
+  }
+  return 0;
+}
+
 [[nodiscard]] int runCookMaterialMode(const CookCommandRequest& request) {
   const std::string relativePath = computeRelativePathString(request.sourcePath, request.assetRoot);
   const std::string base = stripAuthoringExtension(relativePath, kMaterialAuthoringExtension);
@@ -382,6 +439,8 @@ int runCookCommand(const CookCommandRequest& request) {
       return runCookTextureMode(request);
     case AssetKind::Material:
       return runCookMaterialMode(request);
+    case AssetKind::Environment:
+      return runCookEnvironmentMode(request);
   }
   return runCookMeshMode(request);
 }

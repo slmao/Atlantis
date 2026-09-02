@@ -1,0 +1,10 @@
+asset: environments/ibl_studio_source.hdr
+generator: repository-authored analytic equirectangular studio environment
+generator_version: 1
+generation_command: pwsh -File assets/environments/generate_ibl_studio_source.ps1 -Destination assets/environments/ibl_studio_source.hdr
+dimensions: 1024x512
+encoding: Radiance RGBE, scanline RLE, -Y +X
+formula: neutral low-level room plus three normalized-direction exponential area lobes (warm key, cool fill, blue rim)
+tool: PowerShell 7.6.4 / .NET System.Math and System.IO
+sha256: a5d9b1a50102f8f2761a61be0574b5036277a8da61268c922d3f82ebe839e4e4
+license: Atlantis repository-authored; no third-party source data

@@ -296,3 +296,13 @@ set(ATLANTIS_hdr_roll_off_demo_scene_ARTIFACT_PATH "${ATLANTIS_hdr_roll_off_demo
 set(ATLANTIS_hdr_roll_off_demo_scene_METADATA_PATH "${ATLANTIS_hdr_roll_off_demo_scene_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_hdr_roll_off_demo_scene_MANIFEST_PATH "${ATLANTIS_hdr_roll_off_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
 set(ATLANTIS_hdr_roll_off_demo_scene_TARGET "${ATLANTIS_hdr_roll_off_demo_scene_TARGET}" PARENT_SCOPE)
+
+# Plan 0025 Milestone 2: repository-authored linear HDR studio environment.
+atlantis_add_environment_asset(
+  NAME ibl_studio
+  SOURCE environments/ibl_studio_source.hdr
+)
+set(ATLANTIS_ibl_studio_ARTIFACT_PATH "${ATLANTIS_ibl_studio_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_ibl_studio_METADATA_PATH "${ATLANTIS_ibl_studio_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_ibl_studio_TARGET "${ATLANTIS_ibl_studio_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_ibl_studio_LOGICAL_PATH "${ATLANTIS_ibl_studio_LOGICAL_PATH}" PARENT_SCOPE)
