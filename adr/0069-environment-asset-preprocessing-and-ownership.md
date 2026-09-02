@@ -67,12 +67,14 @@ consumer. `World` and Scene artifacts do not gain an environment field.
 - **A new third-party IBL processor:** rejected for now; no dependency has
   been reviewed or is needed for the initial cooker.
 
-## Proposed Amendment — 2026-09-02 (`AssetId` derivation correction)
+## Accepted Amendment — 2026-09-03 (`AssetId` derivation correction)
 
-**Status of this section:** Awaiting Human Review. The ADR's top-level status
-remains `Accepted`, and the original Decision text above is preserved as the
-historical record. If accepted, this amendment supersedes only the word
-“content-addressed” in that Decision.
+**Status of this section:** Accepted by Human Review through the maintainer's
+merge of [PR #117](https://github.com/slmao/Atlantis/pull/117), confirmed in
+the Codex task on 2026-09-03. The ADR's top-level status remains `Accepted`,
+and the original Decision text above is preserved as the historical record.
+This amendment supersedes only the word “content-addressed” in that Decision
+and authorizes Plan 0025 drafting, not implementation.
 
 ### Context
 

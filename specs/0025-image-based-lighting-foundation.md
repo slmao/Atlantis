@@ -3,7 +3,7 @@
 - **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-09-02
-- **Related Plan(s):** None — draft only after this approval record merges.
+- **Related Plan(s):** [plans/0025-image-based-lighting-foundation.md](../plans/0025-image-based-lighting-foundation.md) (`Approved / Ready for Implementation`; implementation starts only after [PR #118](https://github.com/slmao/Atlantis/pull/118) merges)
 - **Related ADR(s):** [ADR-0069](../adr/0069-environment-asset-preprocessing-and-ownership.md) (`Accepted`); [ADR-0070](../adr/0070-ibl-frame-binding-and-cubemap-resource-contract.md) (`Accepted`)
 - **Human Review Approval (2026-09-02):** Approved by the human maintainer
   in the Codex task following review of this Spec and ADR-0069/ADR-0070.
@@ -230,13 +230,15 @@ filmic tone mapping/color grading/bloom, and higher-order/multi-scattering
 IBL quality work. Together these remain the staged route toward the user's
 Filament-quality target, not a claim that one Spec reaches it.
 
-## Proposed Correction — 2026-09-02 (environment `AssetId` derivation)
+## Accepted Correction — 2026-09-03 (environment `AssetId` derivation)
 
-**Status:** Awaiting Human Review. This section does not change this Spec's
-top-level `Approved` status or rewrite the original approved text above. If
-accepted, it supersedes only the phrase “content-derived `AssetId`” in the
-first Functional Requirement and accepts ADR-0069's matching Proposed
-Amendment below.
+**Status:** Accepted by Human Review through the maintainer's merge of
+[PR #117](https://github.com/slmao/Atlantis/pull/117), confirmed in the Codex
+task on 2026-09-03. This section does not change this Spec's top-level
+`Approved` status or rewrite the original approved text above. It supersedes
+only the phrase “content-derived `AssetId`” in the first Functional
+Requirement and accepts ADR-0069's matching Amendment below. This approval
+authorizes Plan 0025 drafting, not implementation.
 
 Plan 0025 preflight checked the approved wording against the real Asset System
 and found a direct conflict: [ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md)
