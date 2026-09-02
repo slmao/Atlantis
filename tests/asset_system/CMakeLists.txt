@@ -22,6 +22,11 @@ add_executable(atlantis_asset_system_tests
   texture_artifact_tests.cpp
   cook_texture_tests.cpp
   load_texture_tests.cpp
+  environment_metadata_tests.cpp
+  environment_artifact_tests.cpp
+  load_environment_tests.cpp
+  environment_processing_tests.cpp
+  cook_environment_tests.cpp
   texture_fixture_source_identity_tests.cpp
   material_source_tests.cpp
   material_artifact_tests.cpp
@@ -36,6 +41,10 @@ target_link_libraries(atlantis_asset_system_tests
     Atlantis::AssetSystem
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
+)
+
+target_include_directories(atlantis_asset_system_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/src/asset_system/src
 )
 
 # Plan 0012 V9: an absolute, configure-time path to scan for forbidden

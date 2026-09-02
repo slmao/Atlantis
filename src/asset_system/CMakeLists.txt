@@ -21,6 +21,11 @@ add_library(atlantis_asset_system STATIC
   src/texture_artifact.cpp
   src/cook_texture.cpp
   src/load_texture.cpp
+  src/environment_metadata.cpp
+  src/environment_artifact.cpp
+  src/load_environment.cpp
+  src/environment_processing.cpp
+  src/cook_environment.cpp
   src/material_source.cpp
   src/material_artifact.cpp
   src/material_metadata.cpp

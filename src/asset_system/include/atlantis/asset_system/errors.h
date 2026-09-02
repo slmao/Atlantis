@@ -180,6 +180,35 @@ enum class TextureLoadError {
   MetadataReadFailed,
 };
 
+enum class EnvironmentArtifactDecodeError {
+  TruncatedHeader,
+  BadMagic,
+  UnsupportedSchemaVersion,
+  InvalidDimensions,
+  InvalidMipCount,
+  InconsistentPayloadLayout,
+  SizeOverflow,
+  NonFiniteValue,
+};
+
+enum class EnvironmentLoadError {
+  ArtifactFileUnreadable,
+  MetadataFileUnreadable,
+  ArtifactDecodeFailed,
+  MetadataParseFailed,
+  MetadataArtifactMismatch,
+};
+
+enum class EnvironmentCookError {
+  LogicalPathInvalid,
+  InvalidSourceDimensions,
+  SourceSizeOverflow,
+  NonFiniteSourceValue,
+  NegativeSourceValue,
+  OutputValueOverflow,
+  AtomicWriteFailed,
+};
+
 // Plan 0018 Section P2: cookMaterial()'s own validation conditions --
 // mirrors TextureCookError's own shape exactly. LogicalPathInvalid is a
 // reused name, matching CookError/TextureCookError's own precedent of a
