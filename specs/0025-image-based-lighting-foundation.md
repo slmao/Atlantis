@@ -229,3 +229,34 @@ shadow maps, tangent-space normal maps/AO, physical camera and exposure,
 filmic tone mapping/color grading/bloom, and higher-order/multi-scattering
 IBL quality work. Together these remain the staged route toward the user's
 Filament-quality target, not a claim that one Spec reaches it.
+
+## Proposed Correction — 2026-09-02 (environment `AssetId` derivation)
+
+**Status:** Awaiting Human Review. This section does not change this Spec's
+top-level `Approved` status or rewrite the original approved text above. If
+accepted, it supersedes only the phrase “content-derived `AssetId`” in the
+first Functional Requirement and accepts ADR-0069's matching Proposed
+Amendment below.
+
+Plan 0025 preflight checked the approved wording against the real Asset System
+and found a direct conflict: [ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md)
+already fixes every current `AssetId` as 64-bit FNV-1a over a normalized
+logical path. `asset_id.h` exposes exactly that one derivation through
+`computeAssetId()`; no content-hash identity exists. Creating a second identity
+rule only for `.aenv` would violate the established cross-asset contract and
+would be an unreviewed persistent-identity design.
+
+**Corrected requirement:** the environment cooker normalizes the source's
+asset-root-relative logical path using the existing `normalizeLogicalPath()`
+contract and derives the environment `AssetId` with the existing
+`computeAssetId()` function, exactly like mesh, texture, and material assets.
+The `.aenv` artifact may embed that path-derived value and its metadata sidecar
+must record and independently cross-check the same value. Identical source
+bytes at two different normalized logical paths therefore remain two distinct
+assets, while repeated cooking at the same logical path retains the same
+`AssetId`.
+
+This correction introduces no new identity scheme, hash function, dependency,
+module boundary, or implementation authorization. Cooker byte determinism for
+identical inputs/settings remains required and is independent of asset
+identity.
