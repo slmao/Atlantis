@@ -301,7 +301,11 @@ int main(int argc, char** argv) {
   provenance.environmentSourceSha256 = ATLANTIS_IBL_DEMO_SOURCE_SHA256;
   provenance.environmentArtifactSha256 = ATLANTIS_IBL_DEMO_ARTIFACT_SHA256;
   provenance.environmentCookerSettings = "schema=1,face=256,mips=9,dfg=128,samples=1024";
-  provenance.goldenUpdateReason = "initial Spec 0025 IBL baseline";
+  // Plan 0026 Milestone 7 (ADR-0071): re-capture reason for this golden
+  // update -- edited here, ahead of each real capture run, matching this
+  // repository's own established convention (the prior capture hardcoded
+  // "initial Spec 0025 IBL baseline" the same way).
+  provenance.goldenUpdateReason = "visible sky background added, Spec 0026";
 #endif
 
   const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
