@@ -2,6 +2,7 @@
 
 #include <atlantis/assert.h>
 #include <atlantis/asset_system/mesh_artifact.h>
+#include <atlantis/asset_system/load_environment.h>
 #include <atlantis/log.h>
 #include <atlantis/platform/platform.h>
 #include <atlantis/platform/platform_event.h>
@@ -229,6 +230,13 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // from it directly, never assigned into after the fact (PlatformSession's
   // move-assignment operator is deleted; see platform_session.h).
 
+  const bool hasEnvironment = !config.environmentArtifactPath.empty();
+  if (validateEnvironmentBootstrapConfig(config).isErr()) {
+    ATLANTIS_LOG_ERROR("Invalid optional environment bootstrap configuration");
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::EnvironmentConfigInvalid);
+  }
+
   // Step 2: shader load (SPIR-V + reflection JSON) and VertexInputLayout resolution.
   auto vertexSpirvOpt = loadSpirvFile(config.vertexShaderSpirvPath);
   auto fragmentSpirvOpt = loadSpirvFile(config.fragmentShaderSpirvPath);
@@ -334,7 +342,31 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   pbrDirectLitFragmentSpirv_ = std::move(pbrDirectLitFragmentSpirvOpt.value());
   pbrDirectLitVertexInputLayout_ = std::move(pbrDirectLitLayoutOpt.value());
 
-  // Step 2e (Plan 0024 Milestone 6, ADR-0068 D-6): the fifth and sixth
+  // Step 2e (Plan 0025/M7): the IBL PBR pair is loaded only when an
+  // environment is configured; no-environment bootstrap never validates or
+  // retains it and therefore preserves the old PBR path structurally.
+  if (hasEnvironment) {
+    auto pbrIblVertexSpirvOpt = loadSpirvFile(config.pbrIblVertexShaderSpirvPath);
+    auto pbrIblFragmentSpirvOpt = loadSpirvFile(config.pbrIblFragmentShaderSpirvPath);
+    auto pbrIblVertexReflectionResult = loadReflectionMetadata(config.pbrIblVertexShaderReflectionPath);
+    if (!pbrIblVertexSpirvOpt.has_value() || !pbrIblFragmentSpirvOpt.has_value() ||
+        pbrIblVertexReflectionResult.isErr()) {
+      ATLANTIS_LOG_ERROR("Failed to load the configured pbrIbl shader pair");
+      lifecycle_.markFailed();
+      return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+    }
+    auto pbrIblLayoutOpt = pbrDirectLitVertexLayout(pbrIblVertexReflectionResult.value());
+    if (!pbrIblLayoutOpt.has_value()) {
+      ATLANTIS_LOG_ERROR("pbrIbl reflected vertex inputs do not match the PBR Vertex schema");
+      lifecycle_.markFailed();
+      return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+    }
+    pbrIblVertexSpirv_ = std::move(pbrIblVertexSpirvOpt.value());
+    pbrIblFragmentSpirv_ = std::move(pbrIblFragmentSpirvOpt.value());
+    pbrIblVertexInputLayout_ = std::move(pbrIblLayoutOpt.value());
+  }
+
+  // Step 2f (Plan 0024 Milestone 6, ADR-0068 D-6): the output-transform
   // built-in shader pairs -- the two output-transform variants -- same
   // shape as step 2d above, mirrored exactly, except the vertex layout
   // is resolved via outputTransformVertexLayout() (the fixed
@@ -413,9 +445,7 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // tail-only CameraWorldPositionData (16 bytes) appended after
   // FrameLightingData, at absolute byte offset 304 -- CameraMatrices
   // and FrameLightingData themselves stay byte-for-byte unmodified.
-  auto cameraBufferResult = device_->createBuffer(
-      {.purpose = BufferPurpose::Uniform,
-       .sizeBytes = sizeof(float) * 32 + sizeof(FrameLightingData) + sizeof(CameraWorldPositionData)});
+  auto cameraBufferResult = device_->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 464});
   if (cameraBufferResult.isErr()) {
     ATLANTIS_LOG_ERROR("createBuffer() (camera uniform) failed");
     lifecycle_.markFailed();
@@ -529,6 +559,18 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   }
   SceneLoadOutcome& outcome = sceneLoadResult.value();
 
+  std::optional<atlantis::asset_system::EnvironmentAssetData> loadedEnvironment;
+  if (hasEnvironment) {
+    auto environmentResult = atlantis::asset_system::loadEnvironmentAsset(config.environmentArtifactPath,
+                                                                           config.environmentMetadataPath);
+    if (environmentResult.isErr()) {
+      ATLANTIS_LOG_ERROR("loadEnvironmentAsset() failed");
+      lifecycle_.markFailed();
+      return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::EnvironmentLoadFailed);
+    }
+    loadedEnvironment = std::move(environmentResult.value());
+  }
+
   // Publish -- only now, both fully built (D10 step (g)). World is
   // move-constructible but NOT move-assignable (ADR-0049/Spec 0014,
   // unchanged) -- world_ is std::optional<World> and this is emplace(),
@@ -544,6 +586,7 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   meshResourceMap_ = std::move(outcome.meshResourceMap);
   materialDataMap_ = std::move(outcome.materialDataMap);
   textureDataMap_ = std::move(outcome.textureDataMap);
+  environmentData_ = std::move(loadedEnvironment);
 
   lifecycle_.markRunning();
   return atlantis::Result<std::monostate, RuntimeInitError>::Ok(std::monostate{});
@@ -871,6 +914,19 @@ void RuntimeApplication::runFrame() {
   auto* cameraWorldPositionData = reinterpret_cast<CameraWorldPositionData*>(cameraData + 32 + 44);
   *cameraWorldPositionData = extractCameraWorldPosition(cameraWorldMatrixResult.value());
 
+  // Plan 0025/P3: the final 144 bytes are SH9 float4 coefficients. During
+  // first-frame realization they come from the still-owned CPU payload; on
+  // later frames the persistent environment aggregate retains the small
+  // uniform payload after the large CPU texture arrays have been released.
+  float* irradianceSh = cameraData + 80;
+  const std::array<float, 36>* irradianceShSource = nullptr;
+  if (environmentData_.has_value()) {
+    irradianceShSource = &environmentData_->irradianceSh;
+  } else if (environmentLightingResources_.has_value()) {
+    irradianceShSource = &environmentLightingResources_->irradianceSh;
+  }
+  writeEnvironmentIrradianceSh(std::span<float, 36>(irradianceSh, 36), irradianceShSource);
+
   // Plan 0015 Section D10: knownMeshAssetIds is meshResourceMap_'s own
   // key set, collected once per frame (not once per entity) -- passed
   // to resolveMeshAsset() for the membership check; meshResourceMap_
@@ -913,6 +969,23 @@ void RuntimeApplication::runFrame() {
   }
   std::unique_ptr<atlantis::rhi::CommandList> commandList = std::move(commandListResult.value());
 
+  // Plan 0025/M7: realize the fixed environment once, on the first drawable
+  // frame. Both uploads are recorded before all material uploads and the draw
+  // graph in this same CommandList. Nothing is published yet.
+  std::optional<EnvironmentLightingCandidate> environmentCandidate;
+  if (environmentData_.has_value() && !environmentLightingResources_.has_value()) {
+    auto environmentCandidateResult = realizeEnvironmentCandidate(*device_, *environmentData_);
+    if (environmentCandidateResult.isErr()) {
+      ATLANTIS_LOG_ERROR("realizeEnvironmentCandidate() failed");
+      lifecycle_.markFailed();
+      return;
+    }
+    environmentCandidate.emplace(std::move(environmentCandidateResult.value()));
+    recordEnvironmentUploads(*commandList, *environmentCandidate);
+  }
+
+  const bool environmentEnabled = environmentData_.has_value() || environmentLightingResources_.has_value();
+
   // Plan 0018 Section P12 (Spec 0018 D8 steps 2-3): records any pending
   // materials' own upload passes into commandList BEFORE the draw graph
   // below -- exactly one CommandList, exactly one submit() covers both
@@ -922,7 +995,8 @@ void RuntimeApplication::runFrame() {
       realizePendingMaterials(*device_, *commandList, unlitTexturedVertexInputLayout_, unlitTexturedVertexSpirv_,
                                unlitTexturedFragmentSpirv_, litTexturedVertexInputLayout_,
                                litTexturedVertexSpirv_, litTexturedFragmentSpirv_, pbrDirectLitVertexInputLayout_,
-                               pbrDirectLitVertexSpirv_, pbrDirectLitFragmentSpirv_, pendingMaterialIds,
+                               pbrDirectLitVertexSpirv_, pbrDirectLitFragmentSpirv_, pbrIblVertexInputLayout_,
+                               pbrIblVertexSpirv_, pbrIblFragmentSpirv_, environmentEnabled, pendingMaterialIds,
                                sampledTextureResourceMap_, materialDataMap_, textureDataMap_);
   // Plan 0018 Section P12 (Spec 0018 D8 step 5): gated on "at least one
   // material was newly realized this frame" -- NOT narrowed to "at least
@@ -1045,9 +1119,17 @@ void RuntimeApplication::runFrame() {
     drawItems.push_back(item);
   }
 
+  std::optional<atlantis::renderer::EnvironmentLighting> environmentLightingView;
+  if (environmentCandidate.has_value()) {
+    environmentLightingView.emplace(environmentCandidate->resources.borrowedView());
+  } else if (environmentLightingResources_.has_value()) {
+    environmentLightingView.emplace(environmentLightingResources_->borrowedView());
+  }
+
   renderer_.drawFrame(*commandList, *target, *depthTexture_, *cameraBuffer_, drawItems,
                        atlantis::rhi::ResourceState::PresentSource, *hdrColorTarget_, *fullscreenTriangleVertexBuffer_,
-                       *fullscreenTriangleIndexBuffer_, *effectiveOutputTransformPipeline, *outputTransformSampler_);
+                       *fullscreenTriangleIndexBuffer_, *effectiveOutputTransformPipeline, *outputTransformSampler_,
+                       environmentLightingView.has_value() ? &*environmentLightingView : nullptr);
 
   auto submitResult = device_->submit(std::move(commandList), *target);
   if (submitResult.isErr()) {
@@ -1092,7 +1174,7 @@ void RuntimeApplication::runFrame() {
   // function) and the SubmissionSignal present() receives below already
   // wraps an already-signaled VkSemaphore (Pre-draft verification
   // [Claim d]).
-  if (anyMaterialRealizedThisFrame) {
+  if (anyMaterialRealizedThisFrame || environmentCandidate.has_value()) {
     auto waitResult = device_->waitIdle();
     if (waitResult.isErr()) {
       ATLANTIS_LOG_ERROR("waitIdle() failed after a realization frame's own submit() -- treated as fatal, matching "
@@ -1111,6 +1193,10 @@ void RuntimeApplication::runFrame() {
       }
       samplerResourceMap_.emplace(assetId, std::move(candidate.sampler));
       materialResourceMap_.emplace(assetId, std::move(candidate.material));
+    }
+    if (environmentCandidate.has_value()) {
+      environmentLightingResources_.emplace(std::move(environmentCandidate->resources));
+      environmentData_.reset();
     }
   }
 

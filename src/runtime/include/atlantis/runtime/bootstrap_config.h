@@ -1,6 +1,10 @@
 #pragma once
 
+#include <atlantis/result.h>
+#include <atlantis/runtime/init_error.h>
+
 #include <string>
+#include <variant>
 
 namespace atlantis::runtime {
 
@@ -51,6 +55,15 @@ struct BootstrapConfig {
   std::string pbrDirectLitVertexShaderReflectionPath;
   std::string pbrDirectLitFragmentShaderSpirvPath;
   std::string pbrDirectLitFragmentShaderReflectionPath;
+  // Plan 0025/P3: optional environment selection. Artifact and metadata
+  // paths are either both empty or both populated. The pbrIbl shader paths
+  // are required only in the populated case.
+  std::string environmentArtifactPath;
+  std::string environmentMetadataPath;
+  std::string pbrIblVertexShaderSpirvPath;
+  std::string pbrIblVertexShaderReflectionPath;
+  std::string pbrIblFragmentShaderSpirvPath;
+  std::string pbrIblFragmentShaderReflectionPath;
   // Plan 0024 Milestone 6 (ADR-0068 D-6): the two output-transform
   // shader pairs -- mirrors pbrDirectLitVertexShaderSpirvPath/
   // .../pbrDirectLitFragmentShaderReflectionPath's own sourcing exactly.
@@ -64,5 +77,9 @@ struct BootstrapConfig {
   std::string outputTransformSrgbFragmentShaderReflectionPath;
   bool enableValidationLayers = true;
 };
+
+// GPU/window-independent validation for the optional environment portion.
+[[nodiscard]] atlantis::Result<std::monostate, RuntimeInitError> validateEnvironmentBootstrapConfig(
+    const BootstrapConfig& config);
 
 }  // namespace atlantis::runtime

@@ -2,6 +2,8 @@
 # no real window required to run.
 add_executable(atlantis_runtime_tests
   lifecycle_state_tests.cpp
+  bootstrap_config_tests.cpp
+  environment_realization_tests.cpp
   exit_reason_tests.cpp
   error_classification_tests.cpp
   init_error_tests.cpp
@@ -47,6 +49,8 @@ catch_discover_tests(atlantis_runtime_tests DISCOVERY_MODE PRE_TEST)
 add_executable(atlantis_runtime_gpu_tests
   runtime_smoke_gpu_tests.cpp
   material_realization_gpu_tests.cpp
+  environment_realization_gpu_tests.cpp
+  material_ibl_selection_gpu_tests.cpp
   pbr_render_gpu_tests.cpp
 )
 
@@ -83,6 +87,9 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   # calls need a real pbrDirectLit* trio too, even where no test in this
   # file realizes one.
   ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_RUNTIME_ENVIRONMENT_ARTIFACT_PATH="${ATLANTIS_ibl_studio_ARTIFACT_PATH}"
+  ATLANTIS_RUNTIME_ENVIRONMENT_METADATA_PATH="${ATLANTIS_ibl_studio_METADATA_PATH}"
   # Plan 0024 Milestone 6/7 (ADR-0068 D-1/D-3/D-6): pbr_render_gpu_tests.cpp's
   # own renderOneFrame() helper needs the output-transform-unorm shader
   # pair (its own kColorFormat is fixed Rgba8Unorm), mirroring
@@ -94,8 +101,8 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
 )
 
 add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
-  pbr_direct_lit_shaders output_transform_unorm_shaders output_transform_srgb_shaders
-  ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})
+  pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders output_transform_srgb_shaders
+  ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET} ${ATLANTIS_ibl_studio_TARGET})
 
 # LABELS "gpu": the existing plain ctest convention Spec 0006/Spec 0010
 # already established -- matching tests/image_regression/CMakeLists.txt's

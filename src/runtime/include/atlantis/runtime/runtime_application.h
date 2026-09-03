@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atlantis/asset_system/asset_id.h>
+#include <atlantis/asset_system/environment_types.h>
 #include <atlantis/asset_system/material_types.h>
 #include <atlantis/asset_system/texture_types.h>
 #include <atlantis/renderer/material.h>
@@ -17,6 +18,7 @@
 #include <atlantis/rhi/texture.h>
 #include <atlantis/rhi/types.h>
 #include <atlantis/runtime/bootstrap_config.h>
+#include <atlantis/runtime/environment_realization.h>
 #include <atlantis/runtime/exit_reason.h>
 #include <atlantis/runtime/init_error.h>
 #include <atlantis/runtime/lifecycle_state.h>
@@ -106,6 +108,9 @@ class RuntimeApplication {
   PlatformSession platformSession_;
   std::unique_ptr<atlantis::rhi::Device> device_;
   std::unique_ptr<atlantis::rhi::Presentation> presentation_;  // lazy: constructed on first SurfaceCreated
+  // Plan 0025/M7: declared before borrowing Materials so reverse destruction
+  // releases all Materials first, then environment resources, then Device.
+  std::optional<EnvironmentLightingResources> environmentLightingResources_;
   // Plan 0015 Section D10: replaces the old std::optional<Mesh> mesh_ in
   // this exact declaration slot -- keyed by the AssetId every Renderable
   // references, populated only once, atomically, at the end of a
@@ -196,6 +201,9 @@ class RuntimeApplication {
   // these).
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> materialDataMap_;
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap_;
+  // CPU payload exists only until first-frame realization has submitted and
+  // waitIdle() has succeeded. Empty also represents no configured environment.
+  std::optional<atlantis::asset_system::EnvironmentAssetData> environmentData_;
 
   atlantis::renderer::Renderer renderer_;  // stateless, default-constructed
   // Plan 0014 Section D8: World owns no GPU resource and has no ordering
@@ -242,6 +250,9 @@ class RuntimeApplication {
   atlantis::rhi::VertexInputLayout pbrDirectLitVertexInputLayout_;
   std::vector<std::uint32_t> pbrDirectLitVertexSpirv_;
   std::vector<std::uint32_t> pbrDirectLitFragmentSpirv_;
+  atlantis::rhi::VertexInputLayout pbrIblVertexInputLayout_;
+  std::vector<std::uint32_t> pbrIblVertexSpirv_;
+  std::vector<std::uint32_t> pbrIblFragmentSpirv_;
   // Plan 0024 Milestone 6 (ADR-0068 D-6): the two output-transform
   // shader pairs' own resolved layout/SPIR-V -- mirrors
   // pbrDirectLitVertexInputLayout_/pbrDirectLitVertexSpirv_/

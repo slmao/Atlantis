@@ -5,6 +5,7 @@
 # and no install()/export rule is added for it (Plan 0013 Section D1a).
 add_library(atlantis_runtime_host STATIC
   src/lifecycle_state.cpp
+  src/bootstrap_config.cpp
   src/exit_reason.cpp
   src/init_error.cpp
   src/error_classification.cpp
@@ -13,6 +14,7 @@ add_library(atlantis_runtime_host STATIC
   src/scene_manifest.cpp
   src/scene_load.cpp
   src/material_realization.cpp
+  src/environment_realization.cpp
   src/runtime_application.cpp
 )
 add_library(Atlantis::RuntimeHost ALIAS atlantis_runtime_host)
@@ -106,6 +108,9 @@ target_compile_definitions(atlantis_runtime PRIVATE
   # call, unconditional), mirroring ATLANTIS_RUNTIME_LIT_TEXTURED_SHADER_DIR's
   # own sourcing exactly.
   ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_RUNTIME_ENVIRONMENT_ARTIFACT_PATH="${ATLANTIS_ibl_studio_ARTIFACT_PATH}"
+  ATLANTIS_RUNTIME_ENVIRONMENT_METADATA_PATH="${ATLANTIS_ibl_studio_METADATA_PATH}"
   # Plan 0024 Milestone 6: the two output-transform shader pairs' own
   # output directories -- reuse the already-exported
   # ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR/
@@ -128,5 +133,5 @@ target_compile_definitions(atlantis_runtime PRIVATE
 # way. Plan 0024 Milestone 6: output_transform_unorm_shaders/
 # output_transform_srgb_shaders added the same way.
 add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
-  pbr_direct_lit_shaders output_transform_unorm_shaders output_transform_srgb_shaders
-  ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET})
+  pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders output_transform_srgb_shaders
+  ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET} ${ATLANTIS_ibl_studio_TARGET})
