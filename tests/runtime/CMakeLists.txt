@@ -88,6 +88,11 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   # file realizes one.
   ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+  # Plan 0026 Milestone 6 (ADR-0071): material_realization_gpu_tests.cpp's
+  # own new N=6-with-sky descriptor-pool TEST_CASE needs the sky shader
+  # pair's own output directory, mirroring
+  # ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR's own sourcing exactly.
+  ATLANTIS_RUNTIME_SKY_SHADER_DIR="${ATLANTIS_sky_SHADER_OUTPUT_DIR}"
   ATLANTIS_RUNTIME_ENVIRONMENT_ARTIFACT_PATH="${ATLANTIS_ibl_studio_ARTIFACT_PATH}"
   ATLANTIS_RUNTIME_ENVIRONMENT_METADATA_PATH="${ATLANTIS_ibl_studio_METADATA_PATH}"
   # Plan 0024 Milestone 6/7 (ADR-0068 D-1/D-3/D-6): pbr_render_gpu_tests.cpp's
@@ -101,7 +106,7 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
 )
 
 add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
-  pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders output_transform_srgb_shaders
+  pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders output_transform_srgb_shaders sky_shaders
   ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET} ${ATLANTIS_ibl_studio_TARGET})
 
 # LABELS "gpu": the existing plain ctest convention Spec 0006/Spec 0010
