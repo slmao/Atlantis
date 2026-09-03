@@ -1182,10 +1182,15 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   // false (the output-transform Pipeline pair alone) disables depth
   // test/write entirely, matching that pass's own real, depth-attachment-
   // free VkRenderingInfo.
+  // Plan 0026 Milestone 1 (ADR-0071 P4): depthWriteEnabled is independent
+  // of hasDepthAttachment -- meaningful only when hasDepthAttachment ==
+  // true (the sky Pipeline's own write-off/test-on combination). depthTestEnable
+  // and depthCompareOp are unchanged by this field.
   VkPipelineDepthStencilStateCreateInfo depthStencilState{};
   depthStencilState.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
   depthStencilState.depthTestEnable = params.hasDepthAttachment ? VK_TRUE : VK_FALSE;
-  depthStencilState.depthWriteEnable = params.hasDepthAttachment ? VK_TRUE : VK_FALSE;
+  depthStencilState.depthWriteEnable =
+      (params.hasDepthAttachment && params.depthWriteEnabled) ? VK_TRUE : VK_FALSE;
   depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS;
 
   VkPipelineColorBlendAttachmentState colorBlendAttachment{};

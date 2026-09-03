@@ -295,6 +295,16 @@ struct PipelineCreateParams {
   // Confirmed against Human Review direction (chat, 2026-09-01),
   // mirroring hasCameraUniformBinding's own identical resolution.
   bool hasDepthAttachment = true;
+  // Plan 0026 Milestone 1 (ADR-0071 P4): independent of hasDepthAttachment
+  // above -- meaningful only when hasDepthAttachment == true. The sky
+  // Pipeline needs depth TESTING enabled (so opaque scene geometry drawn
+  // after it still occludes correctly) but depth WRITING disabled (so it
+  // never corrupts the depth buffer for those later draws) -- a real
+  // combination hasDepthAttachment's own all-or-nothing boolean cannot
+  // express. true (default) reproduces every existing Pipeline's current
+  // always-write-when-tested behavior exactly -- zero source change at
+  // any existing call site.
+  bool depthWriteEnabled = true;
 };
 
 struct SampledTextureUploadRegion {
