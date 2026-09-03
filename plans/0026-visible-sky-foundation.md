@@ -1,8 +1,16 @@
 # Plan: Visible Sky Foundation
 
 - **Spec:** [specs/0026-visible-sky-foundation.md](../specs/0026-visible-sky-foundation.md) (`Approved`)
-- **Status:** Draft
+- **Status:** Approved / Ready for Implementation
 - **Author:** slmao
+- **Human Review Approval (2026-09-04):** Approved by the repository
+  maintainer against [PR #121](https://github.com/slmao/Atlantis/pull/121).
+  Accepts ADR-0071's Proposed Correction (now `Accepted`), and the three
+  Plan Review items below: P1/P4's `kSkyClipDepth = 0.999999` literal and
+  `depthWriteEnabled` mechanism with sky-first as a corrected correctness
+  requirement; P2's existing-matrix ray reconstruction; Milestone 6's
+  independent `N+4` descriptor-pool `TEST_CASE`. Implementation starts
+  only after this PR merges to `main` — not before.
 
 ## Objective
 
@@ -556,6 +564,10 @@ See [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
 No deltas beyond the Verification Checklist above.
 
 ## Plan Review — Items for Human Confirmation
+
+Confirmed by the Human Review Approval recorded above (2026-09-04,
+PR #121) — kept here as the permanent record of what was reviewed, not
+rewritten to remove the questions once answered.
 
 1. P1's fixed `kSkyClipDepth = 0.999999` literal, together with P4's
    `depthWriteEnabled` field and ADR-0071's Proposed Correction requiring

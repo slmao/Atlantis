@@ -152,9 +152,11 @@ to select the `pbr_ibl` shader, no new lifecycle concept.
 
 ## Proposed Correction — 2026-09-04 (draw-order claim)
 
-**Status:** Proposed, pending Human Review. Does not rewrite the Decision
-or Consequences sections above; supersedes only the draw-order claim
-below, which does not hold.
+**Status:** Accepted. Approved by Human Review, 2026-09-04, against
+[PR #121](https://github.com/slmao/Atlantis/pull/121), alongside Plan
+0026's own approval. Does not rewrite the Decision or Consequences
+sections above; supersedes only the draw-order claim below, which does
+not hold.
 
 The Decision section's own closing sentence — "draw order between sky
 and opaque geometry does not matter for correctness once sky never writes
