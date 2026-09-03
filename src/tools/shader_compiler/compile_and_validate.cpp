@@ -33,6 +33,7 @@ using atlantis::shader_system::minimalRendererExpectedDescriptorContract;
 using atlantis::shader_system::outputTransformExpectedDescriptorContract;
 using atlantis::shader_system::pbrDirectLitExpectedDescriptorContract;
 using atlantis::shader_system::pbrIblExpectedDescriptorContract;
+using atlantis::shader_system::skyExpectedDescriptorContract;
 using atlantis::shader_system::PushConstantRange;
 using atlantis::shader_system::texturedMaterialExpectedDescriptorContract;
 using atlantis::shader_system::ReflectionMetadata;
@@ -150,6 +151,8 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     // variants share the identical descriptor contract -- one function,
     // not two.
     fullContract = outputTransformExpectedDescriptorContract();
+  } else if (expectedContract == "sky") {
+    fullContract = skyExpectedDescriptorContract();
   } else {
     std::cerr << "atlantis_shader_compiler: unknown --expected-contract value '" << expectedContract << "'\n";
     return false;
@@ -190,8 +193,10 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
 [[nodiscard]] bool validatePushConstantsForVertexStage(const ReflectionMetadata& vertexMetadata,
                                                         const std::string& expectedContract) {
   std::vector<PushConstantRange> expected;
-  if (expectedContract == "output-transform-unorm" || expectedContract == "output-transform-srgb") {
-    // expected stays empty.
+  if (expectedContract == "output-transform-unorm" || expectedContract == "output-transform-srgb" ||
+      expectedContract == "sky") {
+    // expected stays empty -- the sky's own fullscreen triangle needs no
+    // per-draw transform either (Plan 0026 Milestone 4).
   } else {
     const bool isPbr = expectedContract == "pbr-direct-lit" || expectedContract == "pbr-ibl";
     const std::uint32_t expectedSizeBytes = isPbr ? 96 : sizeof(float) * 16;

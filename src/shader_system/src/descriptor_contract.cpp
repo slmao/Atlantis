@@ -62,6 +62,14 @@ std::vector<DescriptorBinding> outputTransformExpectedDescriptorContract() {
   return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
+// Plan 0026 Milestone 4 (ADR-0071 P3): both bindings Fragment-only --
+// see this function's own header comment for the real slangc reflection
+// evidence.
+std::vector<DescriptorBinding> skyExpectedDescriptorContract() {
+  return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
+          DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+}
+
 atlantis::Result<std::monostate, ContractMismatchError> validateDescriptorContract(
     const ReflectionMetadata& metadata, const std::vector<DescriptorBinding>& expected) {
   using ResultType = atlantis::Result<std::monostate, ContractMismatchError>;

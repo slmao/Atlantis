@@ -72,6 +72,21 @@ namespace atlantis::shader_system {
 // identical shape; only their own fragment-stage math differs.
 [[nodiscard]] std::vector<DescriptorBinding> outputTransformExpectedDescriptorContract();
 
+// Plan 0026 Milestone 4 (ADR-0071 P3): the sky's own fixed, expected
+// descriptor contract -- two bindings, both Fragment-only: {set 0,
+// binding 0, UniformBuffer, Fragment} (the existing frame uniform,
+// referenced only by fragmentMain's own ray reconstruction -- vertexMain
+// touches no resource) and {set 0, binding 1, Sampler, Fragment} (the
+// environment cubemap). Confirmed, not inferred: a disposable Plan-stage
+// probe compiled with the real slangc toolchain showed the vertex
+// stage's own reflection reports both resources "used": 0 (dropped
+// before reaching ReflectionMetadata::descriptorBindings,
+// slang_json_transform.cpp's own `if (!used) continue;`), while the
+// fragment stage reports both "used": 1 -- unlike pbrIblExpectedDescriptorContract()'s
+// own binding 0, which IS Vertex+Fragment because pbr_ibl's own vertex
+// stage does read the camera uniform for position/normal transforms.
+[[nodiscard]] std::vector<DescriptorBinding> skyExpectedDescriptorContract();
+
 enum class ContractMismatchError {
   BindingCountMismatch,
   BindingNotFound,        // an expected {set, binding} pair is absent from the reflected shader
