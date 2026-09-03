@@ -204,27 +204,60 @@ or environment-change trigger is added anywhere.
     Pipeline B (`hasDepthAttachment = true`, `depthWriteEnabled` at its
     default `true`).
   - A small (e.g. 64x64) `OffscreenTarget` (`Rgba8Unorm`) plus a
-    `D32Sfloat` depth `Texture`, cleared to `depthClear = 1.0f`. One
-    `RenderGraphBuilder` pass records, in order:
-    1. Pipeline A draws a RED quad, NDC `x` in `[-1.0, 0.2]`, `z = 0.3`
-       ("red-only" region `x < -0.2`; "overlap" region `-0.2 <= x <= 0.2`).
-    2. Pipeline B draws a GREEN quad, NDC `x` in `[-0.2, 1.0]`, `z = 0.6`
-       (farther than red), over the overlap region.
-    3. Pipeline A draws a BLUE quad, NDC `x` in `[-0.2, 1.0]`, `z = 0.9`
-       (farther than green), over the same overlap region.
-  - `copyRenderTargetToBuffer()` into a readback `Buffer`; two sampled
-    pixels are asserted exactly:
-    - The red-only region (`x ≈ -0.6`) is RED — proves Pipeline A's own
-      first draw actually executed.
-    - The overlap region (`x ≈ 0.0`) is GREEN, not RED and not BLUE —
-      GREEN (not RED) proves Pipeline A's own draw did **not** write
-      depth (a real `0.3` write would have failed green's own `LESS`
-      test and left the pixel RED); GREEN (not BLUE) proves the depth
-      **test** stayed enabled for Pipeline A's own third draw (blue,
-      farther than green, must fail `LESS` against green's real,
-      written `0.6` and never overwrite it — if depth testing had also
-      been disabled, blue would have incorrectly won).
-  - Vulkan Validation Layers clean.
+    `D32Sfloat` depth `Texture`, cleared to `depthClear = 1.0f`, and a
+    readback `Buffer` — same resource shape
+    `headless_rendering_gpu_tests.cpp` already sets up. One `CommandList`,
+    one `submit()`, mirroring that file's own established headless
+    draw-then-copy sequence exactly (`headless_rendering_gpu_tests.cpp:452-478`),
+    never a second `CommandList` or a second `submit()`:
+    1. A "draw" `RenderGraphBuilder`: declares the color and depth
+       resources, one pass writing `ColorAttachmentOutput`/
+       `DepthAttachmentReadWrite`. Its execute callback issues only the
+       three discriminating draws, in order — Pipeline A draws a RED
+       quad (NDC `x` in `[-1.0, 0.2]`, `z = 0.3`; "red-only" region
+       `x < -0.2`, "overlap" region `-0.2 <= x <= 0.2`); Pipeline B draws
+       a GREEN quad (`x` in `[-0.2, 1.0]`, `z = 0.6`, farther than red)
+       over the overlap region; Pipeline A draws a BLUE quad (`x` in
+       `[-0.2, 1.0]`, `z = 0.9`, farther than green) over the same
+       overlap region — no `copyRenderTargetToBuffer()` call anywhere in
+       this callback. The color `ResourceBinding`'s own `finalState` is
+       fixed to `atlantis::rhi::ResourceState::TransferSource` (matching
+       `headless_rendering_gpu_tests.cpp:458`'s own identical headless
+       convention); compiled and executed via `render_graph::execute()`
+       against the one `CommandList` — dynamic rendering has ended by the
+       time this call returns.
+    2. A second, independent "copy" `RenderGraphBuilder` — mirroring
+       `headless_rendering_gpu_tests.cpp:461-474`'s own copyBuilder
+       exactly: one resource, one pass writing `TransferSource`, its
+       execute callback calling `cmd.copyRenderTargetToBuffer(*target,
+       *readbackBuffer)` and nothing else. Its own `ResourceBinding` sets
+       `.incomingState = atlantis::rhi::ResourceState::TransferSource`
+       (matching the draw graph's own `finalState` above). Compiled and
+       executed via `render_graph::execute()` against the **same**
+       `CommandList` as step 1 — `copyRenderTargetToBuffer()` is called
+       only from inside this second graph's own pass callback, never
+       from the draw pass's callback and never outside any
+       `RenderGraphBuilder`/`execute()` call.
+    3. `device->submit(std::move(commandList), *target)` — the one and
+       only `submit()` call — then `device->waitIdle()`. Only after both
+       succeed are the two discriminating pixels read from
+       `readbackBuffer->mappedData()` and asserted exactly:
+       - The red-only region (`x ≈ -0.6`) is RED — proves Pipeline A's
+         own first draw actually executed.
+       - The overlap region (`x ≈ 0.0`) is GREEN, not RED and not BLUE —
+         GREEN (not RED) proves Pipeline A's own draw did **not** write
+         depth (a real `0.3` write would have failed green's own `LESS`
+         test and left the pixel RED); GREEN (not BLUE) proves the depth
+         **test** stayed enabled for Pipeline A's own third draw (blue,
+         farther than green, must fail `LESS` against green's real,
+         written `0.6` and never overwrite it — if depth testing had
+         also been disabled, blue would have incorrectly won).
+  - Vulkan Validation Layers clean. Every GPU command in this test is
+    recorded by one of the two `RenderGraphBuilder`/`execute()` calls
+    above — no direct `vkCmd*`-adjacent `CommandList` call is ever issued
+    outside a compiled `RenderGraph` pass callback, matching this
+    codebase's own "no ad hoc submit, no bypass of RenderGraph"
+    architecture principle (AGENTS.md).
 
 ### Milestone 2 — Renderer integration
 
