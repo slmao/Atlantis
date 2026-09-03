@@ -61,6 +61,13 @@ struct PbrMaterialDemoFixture {
   atlantis::rhi::VertexInputLayout pbrIblVertexInputLayout;
   std::vector<std::uint32_t> pbrIblVertexSpirv;
   std::vector<std::uint32_t> pbrIblFragmentSpirv;
+  // Plan 0026 Milestone 5 (ADR-0071): the sky shader pair's own resolved
+  // layout/SPIR-V, populated only when config.environmentArtifactPath is
+  // non-empty -- mirrors pbrIblVertexInputLayout/.../pbrIblFragmentSpirv's
+  // own identical shape and gating.
+  atlantis::rhi::VertexInputLayout skyVertexInputLayout;
+  std::vector<std::uint32_t> skyVertexSpirv;
+  std::vector<std::uint32_t> skyFragmentSpirv;
   // Plan 0024 Milestone 7 (ADR-0068 D-1/D-3/D-6): this fixture's own
   // colorFormat (kPbrMaterialDemoColorFormat below) is Rgba8Unorm and
   // never changes at runtime -- unlike RuntimeApplication, no
@@ -100,6 +107,12 @@ struct PbrMaterialDemoFixture {
   std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleIndexBuffer;
   std::unique_ptr<atlantis::rhi::Sampler> outputTransformSampler;
   std::unique_ptr<atlantis::rhi::Pipeline> outputTransformPipeline;
+  // Plan 0026 Milestone 5 (ADR-0071 P5): the sky Pipeline -- a raw
+  // Pipeline, not a Material, created once at construction only when an
+  // environment is configured, mirroring outputTransformPipeline's own
+  // "created once, format/extent-independent" lifecycle exactly. Null
+  // for pbr_material_demo's own no-environment config.
+  std::unique_ptr<atlantis::rhi::Pipeline> skyPipeline;
 
   std::optional<atlantis::world::World> world;
 };

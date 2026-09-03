@@ -144,6 +144,11 @@ void printProvenanceFieldIfDifferent(const char* fieldName, const std::string& o
   config.pbrIblVertexShaderReflectionPath = ibl + "/pbr_ibl.vert.refl.json";
   config.pbrIblFragmentShaderSpirvPath = ibl + "/pbr_ibl.frag.spv";
   config.pbrIblFragmentShaderReflectionPath = ibl + "/pbr_ibl.frag.refl.json";
+  const std::string sky = ATLANTIS_IBL_DEMO_SKY_SHADER_DIR;
+  config.skyVertexShaderSpirvPath = sky + "/sky.vert.spv";
+  config.skyVertexShaderReflectionPath = sky + "/sky.vert.refl.json";
+  config.skyFragmentShaderSpirvPath = sky + "/sky.frag.spv";
+  config.skyFragmentShaderReflectionPath = sky + "/sky.frag.refl.json";
   const std::string output = ATLANTIS_IBL_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR;
   config.outputTransformUnormVertexShaderSpirvPath = output + "/output_transform_unorm.vert.spv";
   config.outputTransformUnormVertexShaderReflectionPath = output + "/output_transform_unorm.vert.refl.json";
