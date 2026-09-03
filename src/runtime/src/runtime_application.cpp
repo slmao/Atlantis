@@ -364,6 +364,29 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
     pbrIblVertexSpirv_ = std::move(pbrIblVertexSpirvOpt.value());
     pbrIblFragmentSpirv_ = std::move(pbrIblFragmentSpirvOpt.value());
     pbrIblVertexInputLayout_ = std::move(pbrIblLayoutOpt.value());
+
+    // Plan 0026 Milestone 3 (ADR-0071): the sky shader pair -- same
+    // hasEnvironment gate, same shape as the pbrIbl load immediately
+    // above. Its own vertex layout is resolved via the existing
+    // outputTransformVertexLayout() (P1's reused fullscreen schema), not
+    // a new vertex-layout function.
+    auto skyVertexSpirvOpt = loadSpirvFile(config.skyVertexShaderSpirvPath);
+    auto skyFragmentSpirvOpt = loadSpirvFile(config.skyFragmentShaderSpirvPath);
+    auto skyVertexReflectionResult = loadReflectionMetadata(config.skyVertexShaderReflectionPath);
+    if (!skyVertexSpirvOpt.has_value() || !skyFragmentSpirvOpt.has_value() || skyVertexReflectionResult.isErr()) {
+      ATLANTIS_LOG_ERROR("Failed to load the configured sky shader pair");
+      lifecycle_.markFailed();
+      return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+    }
+    auto skyLayoutOpt = outputTransformVertexLayout(skyVertexReflectionResult.value());
+    if (!skyLayoutOpt.has_value()) {
+      ATLANTIS_LOG_ERROR("sky reflected vertex inputs do not match the fullscreen-triangle schema");
+      lifecycle_.markFailed();
+      return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+    }
+    skyVertexSpirv_ = std::move(skyVertexSpirvOpt.value());
+    skyFragmentSpirv_ = std::move(skyFragmentSpirvOpt.value());
+    skyVertexInputLayout_ = std::move(skyLayoutOpt.value());
   }
 
   // Step 2f (Plan 0024 Milestone 6, ADR-0068 D-6): the output-transform
@@ -529,6 +552,30 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
     return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::FallbackMaterialCreateFailed);
   }
   fallbackMaterial_ = std::make_unique<atlantis::renderer::Material>(std::move(fallbackMaterialResult.value()));
+
+  // Step 4d (Plan 0026 Milestone 3, ADR-0071 P3/P5): the sky Pipeline --
+  // created once, here, only when an environment is configured, mirroring
+  // fallbackMaterial_'s own "no real Format/extent dependency, created at
+  // startup" reasoning immediately above. A raw Device::createPipeline()
+  // call, never a Material: the sky has no push constant and no
+  // per-DrawItem mesh.
+  if (hasEnvironment) {
+    auto skyPipelineResult = device_->createPipeline(
+        {.vertexShader = {.spirvWords = skyVertexSpirv_.data(), .wordCount = skyVertexSpirv_.size()},
+         .fragmentShader = {.spirvWords = skyFragmentSpirv_.data(), .wordCount = skyFragmentSpirv_.size()},
+         .vertexInputLayout = skyVertexInputLayout_,
+         .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
+         .depthFormat = DepthFormat::D32Sfloat,
+         .sampledTextureBindingCount = 1,
+         .hasDepthAttachment = true,
+         .depthWriteEnabled = false});
+    if (skyPipelineResult.isErr()) {
+      ATLANTIS_LOG_ERROR("createPipeline() (sky) failed");
+      lifecycle_.markFailed();
+      return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::SkyPipelineCreateFailed);
+    }
+    skyPipeline_ = std::move(skyPipelineResult.value());
+  }
 
   // No hdrColorTarget_/outputTransform*Pipeline_ construction step
   // here -- Plan 0013 Section D6/Spec 0013's own Bootstrap Sequencing
@@ -1129,7 +1176,13 @@ void RuntimeApplication::runFrame() {
   renderer_.drawFrame(*commandList, *target, *depthTexture_, *cameraBuffer_, drawItems,
                        atlantis::rhi::ResourceState::PresentSource, *hdrColorTarget_, *fullscreenTriangleVertexBuffer_,
                        *fullscreenTriangleIndexBuffer_, *effectiveOutputTransformPipeline, *outputTransformSampler_,
-                       environmentLightingView.has_value() ? &*environmentLightingView : nullptr);
+                       environmentLightingView.has_value() ? &*environmentLightingView : nullptr,
+                       // Plan 0026 Milestone 3: already nullptr whenever !hasEnvironment
+                       // (skyPipeline_ is only ever constructed inside that same
+                       // condition, initializeSteps() Step 4d) -- the exact same
+                       // "same condition throughout the RuntimeApplication lifetime"
+                       // invariant environmentLightingView above already relies on.
+                       skyPipeline_.get());
 
   auto submitResult = device_->submit(std::move(commandList), *target);
   if (submitResult.isErr()) {
@@ -1242,6 +1295,7 @@ RuntimeExitReason RuntimeApplication::shutdown() {
   fullscreenTriangleIndexBuffer_.reset();
   fullscreenTriangleVertexBuffer_.reset();
   fallbackMaterial_.reset();
+  skyPipeline_.reset();
   materialResourceMap_.clear();
   samplerResourceMap_.clear();
   sampledTextureResourceMap_.clear();

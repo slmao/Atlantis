@@ -64,6 +64,14 @@ struct BootstrapConfig {
   std::string pbrIblVertexShaderReflectionPath;
   std::string pbrIblFragmentShaderSpirvPath;
   std::string pbrIblFragmentShaderReflectionPath;
+  // Plan 0026 Milestone 3 (ADR-0071): the sky shader pair -- mirrors
+  // pbrIblVertexShaderSpirvPath/.../pbrIblFragmentShaderReflectionPath's
+  // own four-field shape and "required only when environmentArtifactPath
+  // is non-empty" sourcing exactly.
+  std::string skyVertexShaderSpirvPath;
+  std::string skyVertexShaderReflectionPath;
+  std::string skyFragmentShaderSpirvPath;
+  std::string skyFragmentShaderReflectionPath;
   // Plan 0024 Milestone 6 (ADR-0068 D-6): the two output-transform
   // shader pairs -- mirrors pbrDirectLitVertexShaderSpirvPath/
   // .../pbrDirectLitFragmentShaderReflectionPath's own sourcing exactly.
