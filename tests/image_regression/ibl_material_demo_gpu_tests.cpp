@@ -1,4 +1,5 @@
 #include "fixture/ibl_material_demo_fixture.h"
+#include "support/golden_validity.h"
 
 #include <atlantis/renderer/material.h>
 #include <atlantis/runtime/bootstrap_config.h>
@@ -8,6 +9,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
@@ -96,4 +98,25 @@ TEST_CASE("IBL material demo renders four environment-lit PBR spheres without di
   REQUIRE(second.isOk());
   CHECK(second.value().rgba8 == frame.rgba8);
   CHECK(fixture.environmentUploadCount == 1);
+}
+
+TEST_CASE("Full capture-compare cycle against the committed IBL material demo golden passes",
+          "[image_regression][gpu][ibl][golden]") {
+  auto fixtureResult = atlantis::image_regression::setUpIblMaterialDemoFixture(buildIblConfig());
+  REQUIRE(fixtureResult.isOk());
+  auto rendered = atlantis::image_regression::renderIblMaterialDemoFrame(fixtureResult.value());
+  REQUIRE(rendered.isOk());
+
+  const std::filesystem::path goldens = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  const std::string stem = "ibl_material_demo/ibl_material_demo_512x512_rgba8unorm";
+  auto golden = atlantis::image_regression::loadAndValidateGolden(goldens / (stem + ".png"),
+                                                                  goldens / (stem + ".sidecar.txt"));
+  REQUIRE(golden.isOk());
+  const auto report = atlantis::image_regression::compareBuffers(rendered.value(), golden.value().pixels);
+  if (!report.passed) {
+    static_cast<void>(atlantis::image_regression::writeFailureArtifacts(
+        ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR, "ibl_material_demo_512x512_rgba8unorm", rendered.value(),
+        golden.value().pixels));
+  }
+  REQUIRE(report.passed);
 }
