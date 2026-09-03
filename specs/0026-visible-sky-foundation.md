@@ -1,11 +1,17 @@
 # Spec: Visible Sky Foundation
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-09-03
 - **Related Plan(s):** None yet — drafted after this Spec and ADR-0071 are
   approved.
-- **Related ADR(s):** [ADR-0071](../adr/0071-visible-sky-background-rendering-integration.md) (`Proposed`)
+- **Related ADR(s):** [ADR-0071](../adr/0071-visible-sky-background-rendering-integration.md) (`Accepted`)
+- **Human Review Approval (2026-09-04):** Approved by the repository
+  maintainer against [PR #120](https://github.com/slmao/Atlantis/pull/120).
+  Accepts this Spec's design and ADR-0071 as written, and accepts the four
+  items in Risks & Open Questions as deferred to Plan/Implementation, not
+  as blockers. This approval authorizes drafting Plan 0026, not
+  implementation.
 
 ## Summary
 
@@ -217,3 +223,16 @@ and any exposure/bloom/color-grading work layered on top of what is
 visible. Shadows, glTF import, and multi-instance/complex example scenes
 remain later, separately scoped work per the current near-term roadmap
 direction.
+
+## Human Review Approval — 2026-09-04
+
+Approved by the repository maintainer against
+[PR #120](https://github.com/slmao/Atlantis/pull/120), accepting this
+Spec and [ADR-0071](../adr/0071-visible-sky-background-rendering-integration.md)
+(now `Accepted`) as written. The four items in Risks & Open Questions —
+the sky-depth literal/ray-reconstruction formula, `depthWriteEnabled`'s
+Validation Layers confirmation, whether the sky Pipeline needs a
+resize/rebuild trigger, and the expected `ibl_material_demo` golden
+re-capture — are accepted as deferred to Plan/Implementation, not as
+blockers to this approval. This authorizes drafting Plan 0026, not
+implementation.

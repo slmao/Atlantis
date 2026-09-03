@@ -437,7 +437,7 @@ image-based lighting — diffuse SH irradiance, prefiltered specular
 reflection, and a DFG lookup for `PbrDirectLit` — merged via
 [PR #119](https://github.com/slmao/Atlantis/pull/119). Shadows, normal
 mapping/tangent-space input, physical camera/exposure, and post-processing
-remain unimplemented. The next drafted milestone is
+remain unimplemented. The next approved milestone is
 [Spec 0026](specs/0026-visible-sky-foundation.md), a visible sky background
 for scenes with an environment configured.
 

@@ -584,7 +584,7 @@ public `include/` — it carries no cross-module contract, unlike
 [PR #115](https://github.com/slmao/Atlantis/pull/115)), and Spec 0025 added
 image-based lighting (merged via
 [PR #119](https://github.com/slmao/Atlantis/pull/119)). Shadows and normal
-mapping/tangent-space input remain unimplemented; the draft
+mapping/tangent-space input remain unimplemented; the approved
 [Spec 0026](../specs/0026-visible-sky-foundation.md) proposes a visible sky
 background reusing the same HDR intermediate and environment asset.
 See

@@ -1,9 +1,13 @@
 # ADR 0071: Visible Sky Background Rendering Integration
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-03
-- **Deciders:** slmao — Human Review pending
-- **Related Spec:** [specs/0026-visible-sky-foundation.md](../specs/0026-visible-sky-foundation.md) (`Draft`)
+- **Deciders:** slmao — Human Review, approved 2026-09-04
+- **Related Spec:** [specs/0026-visible-sky-foundation.md](../specs/0026-visible-sky-foundation.md) (`Approved`)
+- **Acceptance Record (2026-09-04):** Accepted by Human Review as part of
+  Spec 0026's approval against [PR #120](https://github.com/slmao/Atlantis/pull/120).
+  Does not change this ADR's own Decision, Consequences, or Alternatives
+  Considered above.
 
 ## Context
 
