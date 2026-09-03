@@ -35,12 +35,18 @@ literal in the shader, mirroring ADR-0068 D-5's own "one literal,
 hand-verifiable" convention). With `w = 1.0`, NDC depth equals
 `kSkyClipDepth` exactly — strictly less than the pass's own `depthClear
 = 1.0f` (`renderer.cpp`), so the sky's own depth test
-(`VK_COMPARE_OP_LESS`, unchanged, `vulkan_device.cpp:1189`) passes on
-every pixel the first time it draws, regardless of draw order relative
-to opaque `DrawItem`s, because `depthWriteEnabled = false` for the sky
-Pipeline never advances the depth buffer past its `1.0f` clear (P4).
-`D32Sfloat`'s float32 precision resolves `0.999999` from `1.0`
-comfortably (~1e-6 separation, far above float32 epsilon at that
+(`VK_COMPARE_OP_LESS`, unchanged, `vulkan_device.cpp:1189`) passes
+against the `1.0f` clear the first time the sky draws. **Per
+[ADR-0071's Proposed Correction](../adr/0071-visible-sky-background-rendering-integration.md#proposed-correction--2026-09-04-draw-order-claim),
+this is a correctness requirement, not a convenience: the sky must draw
+strictly before every `DrawItem` (P5).** If any opaque `DrawItem` drew
+first and left a real depth value strictly between `kSkyClipDepth` and
+`1.0f` at a covered pixel, the sky's own `LESS` test would still pass
+there and incorrectly overwrite that geometry's color —
+`depthWriteEnabled = false` (P4) only stops the sky from corrupting the
+depth buffer for subsequent draws, it does not make draw order
+irrelevant. `D32Sfloat`'s float32 precision resolves `0.999999` from
+`1.0` comfortably (~1e-6 separation, far above float32 epsilon at that
 magnitude).
 
 ### P2 — Ray reconstruction: rotation-only, using the existing view/projection matrices directly
@@ -88,17 +94,31 @@ convention. `input.uv = input.clipPosition * 0.5 + 0.5` mirrors
   scene content), matching `outputTransformExpectedDescriptorContract()`'s
   own empty-push-constant shape.
 - `skyExpectedDescriptorContract()` (new, `descriptor_contract.h/.cpp`)
-  declares this shape. Whether the compiled shader's own Slang reflection
-  reports binding 0 as a single Fragment-stage entry (matching P2's
-  fragment-only usage) or, like `pbrIblExpectedDescriptorContract()`,
-  two entries (Vertex + Fragment, if Slang's own codegen reports
-  declaration-level visibility regardless of per-stage read usage) is
-  confirmed against the real compiled shader's own reflection JSON at
-  Implementation time (Milestone 4) — a mechanical compiler-output fact,
-  not a design ambiguity; `skyExpectedDescriptorContract()`'s own
-  binding-0 entry count is written to match whatever that real reflection
-  reports, exactly like every other `*ExpectedDescriptorContract()`
-  function already does.
+  is fixed to exactly:
+
+```cpp
+std::vector<DescriptorBinding> skyExpectedDescriptorContract() {
+  return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
+          DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+}
+```
+
+  Both bindings are Fragment-only — no Vertex-stage entry for either.
+  This is confirmed, not inferred: a disposable Plan-stage probe shader
+  (P2's exact declarations, discarded, never committed) was compiled with
+  the real `slangc` toolchain (`C:/VulkanSDK/1.4.357.0/Bin/slangc.exe`),
+  once per stage with `-reflection-json`. The vertex-stage reflection's
+  own `entryPoints[0].bindings[]` lists both `camera` (index 0) and
+  `environmentSampler` (index 1) with `"used": 0` — `slang_json_transform.cpp:192-194`
+  (`if (!used) continue;`) drops any `"used": 0` entry before it ever
+  reaches `ReflectionMetadata::descriptorBindings`, so the vertex stage's
+  own transformed metadata has zero descriptor bindings. The fragment-stage
+  reflection lists both with `"used": 1`, producing exactly the two
+  Fragment-stage entries above. `validateDescriptorContractForStage()`'s
+  own per-stage filter (`compile_and_validate.cpp:157-159`) then compares
+  each stage against only the entries whose `.stage` matches — an empty
+  scoped list for Vertex (matching the shader's own empty vertex-stage
+  metadata) and both entries for Fragment.
 
 ### P4 — `depthWriteEnabled`: the exact additive `PipelineCreateParams` field and its Vulkan mapping
 
@@ -133,10 +153,10 @@ at binding 1, `drawIndexed(3)` — inserted immediately before the existing
 `for (const DrawItem& item : drawItems)` loop, only when both
 `skyPipeline` and `environmentLighting` are non-null (`ATLANTIS_CHECK_MSG`
 otherwise, mirroring the existing `MaterialEnvironmentBinding::Ibl`
-guard). Draw order relative to `DrawItem`s does not affect correctness
-(P1's own reasoning — depth write is off), but sky-first keeps the
-existing `DrawItem` loop's own code completely untouched, added to, not
-interleaved with.
+guard). **Per ADR-0071's Proposed Correction, this ordering is a
+correctness requirement, not an implementation convenience** (P1) — the
+sky draw call must precede the `DrawItem` loop unconditionally, every
+frame, with no code path that could reorder them.
 
 The sky Pipeline is created exactly once — alongside `fallbackMaterial_`
 (`RuntimeApplication::initializeSteps()` Step 4c, `runtime_application.cpp:504-531`;
@@ -164,16 +184,47 @@ or environment-change trigger is added anywhere.
   existing call site — no behavior change (mirrors
   `hasCameraUniformBinding`/`hasDepthAttachment`'s own Plan 0024
   precedent test shape, `tests/rhi/types_tests.cpp`).
-- Real-GPU test (new `TEST_CASE` in
-  `tests/vulkan_backend/hdr_color_target_capability_tests.cpp` or a new
-  sibling file — final placement decided at Implementation, matching
-  this directory's own existing per-concern file granularity):
-  `depthWriteEnabled = false` with `hasDepthAttachment = true` disables
-  writes but keeps testing, confirmed via two draws (one at a nearer
-  depth after a `depthWriteEnabled = false` draw at a farther depth
-  covering the same pixel — the nearer draw's own color must survive a
-  third, `depthWriteEnabled = true` draw at a farther depth attempting to
-  overwrite it), with Vulkan Validation Layers clean.
+- Real-GPU test, fixed to a new file,
+  `tests/vulkan_backend/pipeline_depth_write_gpu_tests.cpp` (registered in
+  `tests/vulkan_backend/CMakeLists.txt`'s `atlantis_vulkan_backend_gpu_tests`
+  target, alongside `descriptor_pool_growth_gpu_tests.cpp`) — a real,
+  discriminating three-draw sequence, not a mere presence check:
+  - Reuses the existing, already-compiled `minimal_mesh` shader pair
+    unchanged (`shaders/minimal_mesh.vert.spv`/`.frag.spv`, relative-path
+    convention already established by `descriptor_pool_growth_gpu_tests.cpp`)
+    with an identity camera (`view = projection = kIdentityMatrix`) and
+    identity `objectToWorld` push constant — the same identity-matrix
+    convention `descriptor_pool_growth_gpu_tests.cpp:139`/
+    `minimal_renderer_gpu_tests.cpp:404-407` already establish — so
+    `output.position = float4(input.position, 1.0)` directly: vertex `z`
+    is the NDC depth with no other transform to account for. No new
+    shader is introduced.
+  - Two `Pipeline`s from the same shader: Pipeline A
+    (`hasDepthAttachment = true`, `depthWriteEnabled = false`) and
+    Pipeline B (`hasDepthAttachment = true`, `depthWriteEnabled` at its
+    default `true`).
+  - A small (e.g. 64x64) `OffscreenTarget` (`Rgba8Unorm`) plus a
+    `D32Sfloat` depth `Texture`, cleared to `depthClear = 1.0f`. One
+    `RenderGraphBuilder` pass records, in order:
+    1. Pipeline A draws a RED quad, NDC `x` in `[-1.0, 0.2]`, `z = 0.3`
+       ("red-only" region `x < -0.2`; "overlap" region `-0.2 <= x <= 0.2`).
+    2. Pipeline B draws a GREEN quad, NDC `x` in `[-0.2, 1.0]`, `z = 0.6`
+       (farther than red), over the overlap region.
+    3. Pipeline A draws a BLUE quad, NDC `x` in `[-0.2, 1.0]`, `z = 0.9`
+       (farther than green), over the same overlap region.
+  - `copyRenderTargetToBuffer()` into a readback `Buffer`; two sampled
+    pixels are asserted exactly:
+    - The red-only region (`x ≈ -0.6`) is RED — proves Pipeline A's own
+      first draw actually executed.
+    - The overlap region (`x ≈ 0.0`) is GREEN, not RED and not BLUE —
+      GREEN (not RED) proves Pipeline A's own draw did **not** write
+      depth (a real `0.3` write would have failed green's own `LESS`
+      test and left the pixel RED); GREEN (not BLUE) proves the depth
+      **test** stayed enabled for Pipeline A's own third draw (blue,
+      farther than green, must fail `LESS` against green's real,
+      written `0.6` and never overwrite it — if depth testing had also
+      been disabled, blue would have incorrectly won).
+  - Vulkan Validation Layers clean.
 
 ### Milestone 2 — Renderer integration
 
@@ -373,8 +424,8 @@ or environment-change trigger is added anywhere.
   runtime_application.cpp}`, `src/runtime/main.cpp`,
   `src/runtime/CMakeLists.txt`.
 - Tests: `tests/rhi/types_tests.cpp`,
-  `tests/vulkan_backend/hdr_color_target_capability_tests.cpp` (or a new
-  sibling file, decided at Implementation),
+  `tests/vulkan_backend/pipeline_depth_write_gpu_tests.cpp` (new),
+  `tests/vulkan_backend/CMakeLists.txt`,
   `tests/renderer/renderer_ownership_tests.cpp`,
   `tests/shader_system/sky_reflection_tests.cpp` (new),
   `tests/shader_system/CMakeLists.txt`,
@@ -422,13 +473,15 @@ Maps to Spec 0026's own Testing & Verification Plan:
 - [ ] GPU-independent: `depthWriteEnabled`'s default reproduces existing
   Pipeline behavior (`tests/rhi/types_tests.cpp`); sky's own descriptor
   contract reflection-verified (`tests/shader_system/sky_reflection_tests.cpp`).
-- [ ] GPU: sky visible with no `DrawItem`s present; sky fully occluded
-  behind an opaque `DrawItem` filling the frame (Milestone 1's own
-  `depthWriteEnabled` test, plus a Renderer-level equivalent); sky
-  orientation changes under camera rotation, unchanged under pure camera
-  translation; no environment configured draws the existing flat
-  background byte-identical to today (Milestone 7's seven-golden proof);
-  Debug and Release, Vulkan Validation Layers clean.
+- [ ] GPU: `pipeline_depth_write_gpu_tests.cpp`'s three-draw discriminator
+  confirms `depthWriteEnabled = false` disables writes while keeping the
+  depth test enabled (Milestone 1); sky visible with no `DrawItem`s
+  present; sky fully occluded behind an opaque `DrawItem` filling the
+  frame, confirming sky-first ordering is enforced (Renderer-level test,
+  Milestone 2); sky orientation changes under camera rotation, unchanged
+  under pure camera translation; no environment configured draws the
+  existing flat background byte-identical to today (Milestone 7's
+  seven-golden proof); Debug and Release, Vulkan Validation Layers clean.
 - [ ] Image regression: all seven no-environment goldens byte-identical
   (existing, unmodified capture-compare tests); `ibl_material_demo`'s
   golden re-captured on a clean commit, human-reviewed, with an updated
@@ -471,11 +524,13 @@ No deltas beyond the Verification Checklist above.
 
 ## Plan Review — Items for Human Confirmation
 
-1. P1's fixed `kSkyClipDepth = 0.999999` literal and P4's
-   `depthWriteEnabled`-only mechanism (no `depthCompareOp` change) as the
-   sole occlusion mechanism — the Alternatives Considered in ADR-0071
-   already reject a compare-op override; this Plan does not reopen that,
-   only fixes the literal.
+1. P1's fixed `kSkyClipDepth = 0.999999` literal, together with P4's
+   `depthWriteEnabled` field and ADR-0071's Proposed Correction requiring
+   sky to draw strictly before every `DrawItem` — the Alternatives
+   Considered in ADR-0071 already reject a `depthCompareOp` override in
+   favor of this write-disable-plus-fixed-ordering mechanism; this Plan
+   does not reopen that choice, only fixes the literal and the corrected
+   ordering requirement.
 2. P2's reuse of the existing view/projection matrices' own diagonal/
    rotation terms, with zero new camera-buffer field — confirms ADR-0071's
    own "shader-only math" decision is achievable with the current 464-byte
@@ -484,9 +539,3 @@ No deltas beyond the Verification Checklist above.
    as a synthetic, sibling test rather than mutating the existing `N+2`/
    `N+3` no-environment test — confirms this does not need to become one
    parameterized test instead.
-4. Milestone 1's exact GPU test file placement (existing
-   `hdr_color_target_capability_tests.cpp` vs. a new sibling file) is left
-   open for Implementation to decide by the same-concern-grouping
-   convention already used elsewhere in `tests/vulkan_backend/` — flagged
-   here rather than picked unilaterally, since it is a file-organization
-   choice with no functional effect either way.
