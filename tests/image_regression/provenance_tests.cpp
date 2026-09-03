@@ -92,11 +92,30 @@ TEST_CASE("parseGoldenProvenance: an unknown schema_version is rejected", "[imag
   std::string text = wellFormedGoldenSidecar();
   const std::size_t pos = text.find("schema_version: 1\n");
   REQUIRE(pos != std::string::npos);
-  text.replace(pos, std::string("schema_version: 1\n").size(), "schema_version: 2\n");
+  text.replace(pos, std::string("schema_version: 1\n").size(), "schema_version: 3\n");
 
   const auto result = parseGoldenProvenance(text);
   REQUIRE(result.isErr());
   REQUIRE(result.error() == ProvenanceParseError::UnknownSchemaVersion);
+}
+
+TEST_CASE("environment-backed golden provenance schema v2 round-trips its required capture fields",
+          "[image_regression][provenance][ibl]") {
+  auto parsedV1 = parseGoldenProvenance(wellFormedGoldenSidecar());
+  REQUIRE(parsedV1.isOk());
+  auto provenance = parsedV1.value();
+  provenance.environmentSourceSha256 = "source-sha";
+  provenance.environmentArtifactSha256 = "artifact-sha";
+  provenance.environmentCookerSettings = "schema=1,face=256,mips=9,dfg=128,samples=1024";
+  provenance.goldenUpdateReason = "initial Spec 0025 IBL baseline";
+  const std::string serialized = serializeGoldenProvenance(provenance);
+  CHECK(serialized.starts_with("schema_version: 2\n"));
+  auto reparsed = parseGoldenProvenance(serialized);
+  REQUIRE(reparsed.isOk());
+  CHECK(reparsed.value().environmentSourceSha256 == "source-sha");
+  CHECK(reparsed.value().environmentArtifactSha256 == "artifact-sha");
+  CHECK(reparsed.value().environmentCookerSettings == provenance.environmentCookerSettings);
+  CHECK(reparsed.value().goldenUpdateReason == provenance.goldenUpdateReason);
 }
 
 TEST_CASE("parseGoldenProvenance: a malformed numeric extent field is rejected", "[image_regression][provenance]") {

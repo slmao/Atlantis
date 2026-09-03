@@ -23,6 +23,13 @@ constexpr std::array<const char*, 12> kGoldenFieldNamesAfterSchema = {
     "format",
 };
 
+constexpr std::array<const char*, 4> kEnvironmentCaptureFieldNames = {
+    "environment_source_sha256",
+    "environment_artifact_sha256",
+    "environment_cooker_settings",
+    "golden_update_reason",
+};
+
 constexpr std::array<const char*, 7> kEnvironmentFieldNames = {
     "gpu_vendor",
     "gpu_model",
@@ -104,13 +111,19 @@ constexpr std::array<const char*, 5> kKnownFormatNames = {
 
 Result<Provenance, ProvenanceParseError> parseGoldenProvenance(const std::string& sidecarText) {
   const std::vector<std::string> lines = splitLines(sidecarText);
-  if (lines.size() != 1 + kGoldenFieldNamesAfterSchema.size()) {
+  if (lines.empty()) {
     return Result<Provenance, ProvenanceParseError>::Err(ProvenanceParseError::WrongLineCount);
   }
 
   std::string schemaValue;
-  if (!matchesField(lines[0], "schema_version", schemaValue) || schemaValue != "1") {
+  if (!matchesField(lines[0], "schema_version", schemaValue) || (schemaValue != "1" && schemaValue != "2")) {
     return Result<Provenance, ProvenanceParseError>::Err(ProvenanceParseError::UnknownSchemaVersion);
+  }
+  const bool hasEnvironmentCapture = schemaValue == "2";
+  const std::size_t expectedLineCount =
+      1 + kGoldenFieldNamesAfterSchema.size() + (hasEnvironmentCapture ? kEnvironmentCaptureFieldNames.size() : 0);
+  if (lines.size() != expectedLineCount) {
+    return Result<Provenance, ProvenanceParseError>::Err(ProvenanceParseError::WrongLineCount);
   }
 
   std::array<std::string, kGoldenFieldNamesAfterSchema.size()> values;
@@ -143,12 +156,30 @@ Result<Provenance, ProvenanceParseError> parseGoldenProvenance(const std::string
     return Result<Provenance, ProvenanceParseError>::Err(ProvenanceParseError::MalformedValue);
   }
 
+  if (hasEnvironmentCapture) {
+    std::array<std::string, kEnvironmentCaptureFieldNames.size()> environmentValues;
+    for (std::size_t i = 0; i < kEnvironmentCaptureFieldNames.size(); ++i) {
+      if (!matchesField(lines[1 + kGoldenFieldNamesAfterSchema.size() + i], kEnvironmentCaptureFieldNames[i],
+                        environmentValues[i])) {
+        return Result<Provenance, ProvenanceParseError>::Err(ProvenanceParseError::FieldNameMismatch);
+      }
+      if (environmentValues[i].empty()) {
+        return Result<Provenance, ProvenanceParseError>::Err(ProvenanceParseError::MalformedValue);
+      }
+    }
+    provenance.environmentSourceSha256 = environmentValues[0];
+    provenance.environmentArtifactSha256 = environmentValues[1];
+    provenance.environmentCookerSettings = environmentValues[2];
+    provenance.goldenUpdateReason = environmentValues[3];
+  }
+
   return Result<Provenance, ProvenanceParseError>::Ok(std::move(provenance));
 }
 
 std::string serializeGoldenProvenance(const Provenance& provenance) {
   std::ostringstream out;
-  out << "schema_version: 1\n";
+  const bool hasEnvironmentCapture = !provenance.environmentSourceSha256.empty();
+  out << "schema_version: " << (hasEnvironmentCapture ? 2 : 1) << "\n";
   out << "capture_date: " << provenance.captureDate << "\n";
   out << "source_revision: " << provenance.sourceRevision << "\n";
   out << "gpu_vendor: " << provenance.gpuVendor << "\n";
@@ -161,6 +192,12 @@ std::string serializeGoldenProvenance(const Provenance& provenance) {
   out << "extent_width: " << provenance.extentWidth << "\n";
   out << "extent_height: " << provenance.extentHeight << "\n";
   out << "format: " << provenance.format << "\n";
+  if (hasEnvironmentCapture) {
+    out << "environment_source_sha256: " << provenance.environmentSourceSha256 << "\n";
+    out << "environment_artifact_sha256: " << provenance.environmentArtifactSha256 << "\n";
+    out << "environment_cooker_settings: " << provenance.environmentCookerSettings << "\n";
+    out << "golden_update_reason: " << provenance.goldenUpdateReason << "\n";
+  }
   return out.str();
 }
 

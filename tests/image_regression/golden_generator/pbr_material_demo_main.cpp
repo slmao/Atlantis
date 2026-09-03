@@ -292,6 +292,12 @@ int main(int argc, char** argv) {
   provenance.extentWidth = kDemoExtent;
   provenance.extentHeight = kDemoExtent;
   provenance.format = "Rgba8Unorm";
+#ifdef ATLANTIS_IBL_GOLDEN_GENERATOR
+  provenance.environmentSourceSha256 = ATLANTIS_IBL_DEMO_SOURCE_SHA256;
+  provenance.environmentArtifactSha256 = ATLANTIS_IBL_DEMO_ARTIFACT_SHA256;
+  provenance.environmentCookerSettings = "schema=1,face=256,mips=9,dfg=128,samples=1024";
+  provenance.goldenUpdateReason = "initial Spec 0025 IBL baseline";
+#endif
 
   const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
   const std::filesystem::path pngPath = goldensDir / (goldenName + ".png");

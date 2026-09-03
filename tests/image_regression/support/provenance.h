@@ -22,6 +22,12 @@ struct Provenance {
   std::uint32_t extentWidth = 0;
   std::uint32_t extentHeight = 0;
   std::string format;  // matches an atlantis::rhi::Format enumerator name
+  // Schema v2, used only by environment-backed captures. All four are empty
+  // for schema-v1 legacy goldens and all four are populated together for v2.
+  std::string environmentSourceSha256;
+  std::string environmentArtifactSha256;
+  std::string environmentCookerSettings;
+  std::string goldenUpdateReason;
 };
 
 // The narrower schema tests/image_regression/current_environment.sidecar.txt
