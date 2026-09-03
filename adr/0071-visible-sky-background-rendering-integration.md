@@ -149,3 +149,34 @@ to select the `pbr_ibl` shader, no new lifecycle concept.
   `Transform`, and no relationship to `World`, matching Spec 0025's own
   "environment is frame context, not material identity" precedent
   (ADR-0070).
+
+## Proposed Correction — 2026-09-04 (draw-order claim)
+
+**Status:** Accepted. Approved by Human Review, 2026-09-04, against
+[PR #121](https://github.com/slmao/Atlantis/pull/121), alongside Plan
+0026's own approval. Does not rewrite the Decision or Consequences
+sections above; supersedes only the draw-order claim below, which does
+not hold.
+
+The Decision section's own closing sentence — "draw order between sky
+and opaque geometry does not matter for correctness once sky never writes
+depth" — is incorrect and must not be relied upon. If an opaque `DrawItem`
+draws **before** the sky (writing a real depth strictly between
+`kSkyClipDepth` and the `1.0f` clear at its own covered pixels), the sky's
+own depth test (`VK_COMPARE_OP_LESS`, comparing `kSkyClipDepth` against
+that already-written, larger depth value) still **passes** — `kSkyClipDepth
+< depthAlreadyWritten` — and the sky overwrites that geometry's own color,
+`depthWriteEnabled = false` notwithstanding (it protects only the depth
+buffer, never the color attachment). `depthWriteEnabled = false` alone
+does not make draw order irrelevant; it only prevents the sky from
+corrupting the depth buffer for whatever draws after it.
+
+**Corrected requirement: the sky must draw strictly before every
+`DrawItem`, every frame, with no exception.** This does not change Spec
+0026's own already-approved sky-first design (Proposed Design: "sky
+draws first, inside the existing 'draw' pass... before every DrawItem") —
+it corrects only this ADR's own, separate claim that the ordering was
+merely a convenience rather than a correctness requirement. `Renderer::
+drawFrame()`'s own "draw" pass execute lambda must therefore issue the
+sky draw call before entering its `for (const DrawItem& item : drawItems)`
+loop unconditionally, not as an implementation detail free to move.
