@@ -581,10 +581,12 @@ exhaustive, C4062-guarded switch mirroring `selectShaderPair()`'s own.
 public `include/` — it carries no cross-module contract, unlike
 `CameraWorldPositionData`. Spec 0024 subsequently added the shared
 `Rgba16Float` HDR intermediate and output-transform pass (merged via
-[PR #115](https://github.com/slmao/Atlantis/pull/115)). Image-based lighting,
-shadows, and normal mapping/tangent-space input remain unimplemented; the
-draft [Spec 0025](../specs/0025-image-based-lighting-foundation.md) defines the
-next IBL foundation.
+[PR #115](https://github.com/slmao/Atlantis/pull/115)), and Spec 0025 added
+image-based lighting (merged via
+[PR #119](https://github.com/slmao/Atlantis/pull/119)). Shadows and normal
+mapping/tangent-space input remain unimplemented; the draft
+[Spec 0026](../specs/0026-visible-sky-foundation.md) proposes a visible sky
+background reusing the same HDR intermediate and environment asset.
 See
 [docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md)
 for the full public/private boundary statement.

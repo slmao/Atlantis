@@ -1550,11 +1550,12 @@ milestone being listed does not authorize starting it — see Section 1.
   own "Post-Merge Status Update" for the full record.
 - **Subsequent status:** Spec 0024 implemented the HDR intermediate and shared
   output-transfer pass via [PR #115](https://github.com/slmao/Atlantis/pull/115).
-  Image-based lighting, shadows, and normal mapping/tangent-space input remain
-  unimplemented; approved [Spec 0025](../specs/0025-image-based-lighting-foundation.md)
-  begins the IBL foundation, with its [approved Plan](../plans/0025-image-based-lighting-foundation.md)
-  ready for implementation after [PR #118](https://github.com/slmao/Atlantis/pull/118)
-  merges. Physical camera/exposure and post-processing
+  Spec 0025 then implemented image-based lighting via
+  [PR #119](https://github.com/slmao/Atlantis/pull/119). Shadows and normal
+  mapping/tangent-space input remain unimplemented; draft
+  [Spec 0026](../specs/0026-visible-sky-foundation.md) proposes a visible sky
+  background reusing Spec 0025's environment asset and Spec 0024's HDR/
+  output-transform pipeline. Physical camera/exposure and post-processing
   beyond the fixed output transform remain deferred; Android/iOS/Linux
   implementation and any Editor/Client-facing API remain out of scope.
 
