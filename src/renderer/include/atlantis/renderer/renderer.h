@@ -4,6 +4,7 @@
 
 #include <atlantis/render_graph/render_graph_builder.h>
 #include <atlantis/renderer/draw_item.h>
+#include <atlantis/renderer/environment_lighting.h>
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/command_list.h>
 #include <atlantis/rhi/hdr_color_target.h>
@@ -63,13 +64,17 @@ class Renderer {
   // Still exactly one CommandList, one RenderGraphBuilder::compile()/
   // render_graph::execute() call pair -- Renderer still never calls
   // Device::submit()/Presentation::present() itself.
+  // environmentLighting is a nullable, frame-scoped borrowed view.
+  // MaterialEnvironmentBinding::None never reads it; Ibl requires it
+  // and binds the cubemap/LUT at slots 2/3.
   void drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& colorTarget,
                  atlantis::rhi::Texture& depthTarget, atlantis::rhi::Buffer& cameraUniformBuffer,
                  std::span<const DrawItem> drawItems, atlantis::rhi::ResourceState finalColorState,
                  atlantis::rhi::HdrColorTarget& hdrColorTarget,
                  atlantis::rhi::Buffer& fullscreenTriangleVertexBuffer,
                  atlantis::rhi::Buffer& fullscreenTriangleIndexBuffer,
-                 atlantis::rhi::Pipeline& outputTransformPipeline, atlantis::rhi::Sampler& outputTransformSampler);
+                 atlantis::rhi::Pipeline& outputTransformPipeline, atlantis::rhi::Sampler& outputTransformSampler,
+                 const EnvironmentLighting* environmentLighting = nullptr);
 };
 
 }  // namespace atlantis::renderer

@@ -19,6 +19,8 @@ namespace atlantis::renderer {
 // new DrawItem field) to decide which payload to build and push.
 enum class MaterialPushConstantLayout { ObjectToWorldOnly, PbrDirectLit };
 
+enum class MaterialEnvironmentBinding { None, Ibl };
+
 // Owns exactly one Pipeline (ADR-0022). Move-only, single-owner.
 // Constructed once; the caller's own resize/format-change contract
 // (Plan 0007 Section 13) is responsible for destroying and recreating a
@@ -46,13 +48,17 @@ enum class MaterialPushConstantLayout { ObjectToWorldOnly, PbrDirectLit };
 // const-qualified member, which would silently delete this class's own
 // existing `= default` move-constructor/move-assignment operator (the
 // real defect Spec 0023 D9's own Accepted Correction closed).
+// MaterialEnvironmentBinding (Spec 0025/P3) is likewise immutable by
+// encapsulation. None is the compatibility default; Ibl requires the
+// caller to supply EnvironmentLighting to every drawFrame() use.
 class Material {
  public:
   explicit Material(std::unique_ptr<atlantis::rhi::Pipeline> pipeline, MaterialPushConstantLayout pushConstantLayout,
                      const atlantis::rhi::SampledTexture* sampledTexture = nullptr,
                      const atlantis::rhi::Sampler* sampler = nullptr,
                      std::array<float, 4> baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f}, float metallicFactor = 1.0f,
-                     float roughnessFactor = 1.0f) noexcept;
+                     float roughnessFactor = 1.0f,
+                     MaterialEnvironmentBinding environmentBinding = MaterialEnvironmentBinding::None) noexcept;
   ~Material() = default;
 
   Material(const Material&) = delete;
@@ -67,6 +73,7 @@ class Material {
   [[nodiscard]] const std::array<float, 4>& baseColorFactor() const noexcept { return baseColorFactor_; }
   [[nodiscard]] float metallicFactor() const noexcept { return metallicFactor_; }
   [[nodiscard]] float roughnessFactor() const noexcept { return roughnessFactor_; }
+  [[nodiscard]] MaterialEnvironmentBinding environmentBinding() const noexcept { return environmentBinding_; }
 
  private:
   std::unique_ptr<atlantis::rhi::Pipeline> pipeline_;
@@ -76,6 +83,7 @@ class Material {
   std::array<float, 4> baseColorFactor_{1.0f, 1.0f, 1.0f, 1.0f};
   float metallicFactor_ = 1.0f;
   float roughnessFactor_ = 1.0f;
+  MaterialEnvironmentBinding environmentBinding_ = MaterialEnvironmentBinding::None;
 };
 
 enum class CreateMaterialError {
@@ -96,11 +104,14 @@ enum class CreateMaterialError {
 // exactly as today. material_realization.cpp's own kind-dispatched call
 // sites pass pushConstantLayout explicitly, never relying on this
 // default, per Spec 0023 D9's own Accepted Correction.
+// environmentBinding is the final trailing compatibility parameter and
+// defaults to None.
 [[nodiscard]] atlantis::Result<Material, CreateMaterialError> createMaterial(
     atlantis::rhi::Device& device, const atlantis::rhi::PipelineCreateParams& params,
     const atlantis::rhi::SampledTexture* sampledTexture = nullptr, const atlantis::rhi::Sampler* sampler = nullptr,
     MaterialPushConstantLayout pushConstantLayout = MaterialPushConstantLayout::ObjectToWorldOnly,
     std::array<float, 4> baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f}, float metallicFactor = 1.0f,
-    float roughnessFactor = 1.0f);
+    float roughnessFactor = 1.0f,
+    MaterialEnvironmentBinding environmentBinding = MaterialEnvironmentBinding::None);
 
 }  // namespace atlantis::renderer

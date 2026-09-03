@@ -25,7 +25,8 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
                           atlantis::rhi::Buffer& fullscreenTriangleVertexBuffer,
                           atlantis::rhi::Buffer& fullscreenTriangleIndexBuffer,
                           atlantis::rhi::Pipeline& outputTransformPipeline,
-                          atlantis::rhi::Sampler& outputTransformSampler) {
+                          atlantis::rhi::Sampler& outputTransformSampler,
+                          const EnvironmentLighting* environmentLighting) {
   atlantis::render_graph::RenderGraphBuilder builder;
   // Plan 0024 Milestone 5 (ADR-0068 D-1/D-3): the existing single "draw"
   // pass now writes hdrResource (the scene-referred linear HDR
@@ -44,7 +45,8 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
   const auto drawPass = builder.declarePass("draw");
   builder.writes(drawPass, hdrResource, atlantis::rhi::ResourceState::ColorAttachmentOutput);
   builder.writes(drawPass, depthResource, atlantis::rhi::ResourceState::DepthAttachmentReadWrite);
-  builder.setExecute(drawPass, [&commandList, &cameraUniformBuffer, drawItems](atlantis::rhi::CommandList& cmd) {
+  builder.setExecute(drawPass, [&commandList, &cameraUniformBuffer, drawItems,
+                                environmentLighting](atlantis::rhi::CommandList& cmd) {
     for (const DrawItem& item : drawItems) {
       cmd.bindPipeline(item.material->pipeline());
       cmd.bindVertexBuffer(item.mesh->vertexBuffer());
@@ -56,6 +58,19 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
       // exactly as before this Spec.
       if (item.material->sampledTexture() != nullptr) {
         cmd.bindTexture(1, *item.material->sampledTexture(), *item.material->sampler());
+      }
+      switch (item.material->environmentBinding()) {
+        case MaterialEnvironmentBinding::None:
+          break;
+        case MaterialEnvironmentBinding::Ibl:
+          if (environmentLighting == nullptr) {
+            ATLANTIS_CHECK_MSG(false, "an IBL Material requires frame-scoped EnvironmentLighting");
+          } else {
+            cmd.bindTexture(2, environmentLighting->prefilteredEnvironment,
+                            environmentLighting->environmentSampler);
+            cmd.bindTexture(3, environmentLighting->dfgLut, environmentLighting->dfgSampler);
+          }
+          break;
       }
       // Plan 0023 Milestone 5 (Spec 0023 D9's own Accepted Correction):
       // an exhaustive switch, no default: label -- this repository's own
