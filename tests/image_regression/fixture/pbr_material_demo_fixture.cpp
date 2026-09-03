@@ -1,12 +1,14 @@
 #include "pbr_material_demo_fixture.h"
 
 #include <atlantis/asset_system/mesh_artifact.h>
+#include <atlantis/asset_system/load_environment.h>
 #include <atlantis/render_graph/execution.h>
 #include <atlantis/render_graph/render_graph_builder.h>
 #include <atlantis/renderer/draw_item.h>
 #include <atlantis/renderer/renderer.h>
 #include <atlantis/rhi/command_list.h>
 #include <atlantis/runtime/material_realization.h>
+#include <atlantis/runtime/environment_realization.h>
 #include <atlantis/runtime/scene_extraction.h>
 #include <atlantis/runtime/scene_load.h>
 #include <atlantis/shader_system/reflection_loader.h>
@@ -14,9 +16,11 @@
 #include <atlantis/vulkan_backend/vulkan_backend.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstring>
 #include <fstream>
+#include <span>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -168,6 +172,23 @@ atlantis::Result<PbrMaterialDemoFixture, PbrMaterialDemoSetupError> setUpPbrMate
   const auto pbrVertexInputLayout = pbrDirectLitVertexLayout(pbrVertexReflectionResult.value());
   if (!pbrVertexInputLayout.has_value()) return ResultT::Err(PbrMaterialDemoSetupError::ShaderLoadFailed);
 
+  std::optional<std::vector<std::uint32_t>> pbrIblVertexSpirv;
+  std::optional<std::vector<std::uint32_t>> pbrIblFragmentSpirv;
+  std::optional<VertexInputLayout> pbrIblVertexInputLayout;
+  if (!config.environmentArtifactPath.empty()) {
+    if (atlantis::runtime::validateEnvironmentBootstrapConfig(config).isErr()) {
+      return ResultT::Err(PbrMaterialDemoSetupError::ShaderLoadFailed);
+    }
+    pbrIblVertexSpirv = loadSpirvFile(config.pbrIblVertexShaderSpirvPath.c_str());
+    pbrIblFragmentSpirv = loadSpirvFile(config.pbrIblFragmentShaderSpirvPath.c_str());
+    auto pbrIblReflection = loadReflectionMetadata(config.pbrIblVertexShaderReflectionPath.c_str());
+    if (!pbrIblVertexSpirv.has_value() || !pbrIblFragmentSpirv.has_value() || pbrIblReflection.isErr()) {
+      return ResultT::Err(PbrMaterialDemoSetupError::ShaderLoadFailed);
+    }
+    pbrIblVertexInputLayout = pbrDirectLitVertexLayout(pbrIblReflection.value());
+    if (!pbrIblVertexInputLayout.has_value()) return ResultT::Err(PbrMaterialDemoSetupError::ShaderLoadFailed);
+  }
+
   // Plan 0024 Milestone 7: the output-transform-unorm shader pair --
   // this fixture's own colorFormat is fixed Rgba8Unorm, so only this
   // one variant is ever loaded.
@@ -198,6 +219,11 @@ atlantis::Result<PbrMaterialDemoFixture, PbrMaterialDemoSetupError> setUpPbrMate
   fixture.pbrDirectLitVertexInputLayout = *pbrVertexInputLayout;
   fixture.pbrDirectLitVertexSpirv = std::move(*pbrVertexSpirv);
   fixture.pbrDirectLitFragmentSpirv = std::move(*pbrFragmentSpirv);
+  if (pbrIblVertexSpirv.has_value()) {
+    fixture.pbrIblVertexInputLayout = std::move(*pbrIblVertexInputLayout);
+    fixture.pbrIblVertexSpirv = std::move(*pbrIblVertexSpirv);
+    fixture.pbrIblFragmentSpirv = std::move(*pbrIblFragmentSpirv);
+  }
   fixture.outputTransformUnormVertexInputLayout = *outputTransformVertexInputLayout;
   fixture.outputTransformUnormVertexSpirv = std::move(*outputTransformVertexSpirv);
   fixture.outputTransformUnormFragmentSpirv = std::move(*outputTransformFragmentSpirv);
@@ -211,6 +237,12 @@ atlantis::Result<PbrMaterialDemoFixture, PbrMaterialDemoSetupError> setUpPbrMate
   fixture.meshResourceMap = std::move(outcome.meshResourceMap);
   fixture.materialDataMap = std::move(outcome.materialDataMap);
   fixture.textureDataMap = std::move(outcome.textureDataMap);
+  if (!config.environmentArtifactPath.empty()) {
+    auto environmentResult = atlantis::asset_system::loadEnvironmentAsset(config.environmentArtifactPath,
+                                                                           config.environmentMetadataPath);
+    if (environmentResult.isErr()) return ResultT::Err(PbrMaterialDemoSetupError::SceneLoadFailed);
+    fixture.environmentData.emplace(std::move(environmentResult.value()));
+  }
 
   // Plan 0023 Milestone 2/8: this fixture's own independent 320-byte
   // Camera/Lighting/CameraWorldPosition buffer -- 32 floats (view+
@@ -220,7 +252,7 @@ atlantis::Result<PbrMaterialDemoFixture, PbrMaterialDemoSetupError> setUpPbrMate
   // 304-byte one).
   auto cameraBufferResult = fixture.device->createBuffer(
       {.purpose = BufferPurpose::Uniform,
-       .sizeBytes = sizeof(float) * 32 + sizeof(FrameLightingData) + sizeof(CameraWorldPositionData)});
+       .sizeBytes = 464});
   if (cameraBufferResult.isErr()) return ResultT::Err(PbrMaterialDemoSetupError::ResourceCreationFailed);
   fixture.cameraBuffer = std::move(cameraBufferResult.value());
 
@@ -340,6 +372,13 @@ atlantis::Result<PixelBuffer, PbrMaterialDemoRenderError> renderPbrMaterialDemoF
   // write exactly (byte offset 304 / float offset 76 = 32 + 44).
   auto* cameraWorldPositionData = reinterpret_cast<CameraWorldPositionData*>(cameraData + 32 + 44);
   *cameraWorldPositionData = extractCameraWorldPosition(cameraWorldMatrixResult.value());
+  const std::array<float, 36>* irradianceShSource = nullptr;
+  if (fixture.environmentData.has_value()) {
+    irradianceShSource = &fixture.environmentData->irradianceSh;
+  } else if (fixture.environmentLightingResources.has_value()) {
+    irradianceShSource = &fixture.environmentLightingResources->irradianceSh;
+  }
+  atlantis::runtime::writeEnvironmentIrradianceSh(std::span<float, 36>(cameraData + 80, 36), irradianceShSource);
 
   std::vector<atlantis::asset_system::AssetId> referencedMaterialIds;
   for (const auto& id : fixture.world->renderableEntities()) {
@@ -362,13 +401,24 @@ atlantis::Result<PixelBuffer, PbrMaterialDemoRenderError> renderPbrMaterialDemoF
   if (commandListResult.isErr()) return ResultT::Err(PbrMaterialDemoRenderError::CommandListCreationFailed);
   std::unique_ptr<rhi::CommandList> commandList = std::move(commandListResult.value());
 
+  std::optional<atlantis::runtime::EnvironmentLightingCandidate> environmentCandidate;
+  if (fixture.environmentData.has_value() && !fixture.environmentLightingResources.has_value()) {
+    auto result = atlantis::runtime::realizeEnvironmentCandidate(*fixture.device, *fixture.environmentData);
+    if (result.isErr()) return ResultT::Err(PbrMaterialDemoRenderError::CommandListCreationFailed);
+    environmentCandidate.emplace(std::move(result.value()));
+    atlantis::runtime::recordEnvironmentUploads(*commandList, *environmentCandidate);
+  }
+  const bool environmentEnabled = fixture.environmentData.has_value() || fixture.environmentLightingResources.has_value();
+
   std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
       realizePendingMaterials(*fixture.device, *commandList, fixture.unlitTexturedVertexInputLayout,
                                fixture.unlitTexturedVertexSpirv, fixture.unlitTexturedFragmentSpirv,
                                fixture.litTexturedVertexInputLayout,
                                fixture.litTexturedVertexSpirv, fixture.litTexturedFragmentSpirv,
                                fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
-                               fixture.pbrDirectLitFragmentSpirv, pendingMaterialIds,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
+                               fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv, environmentEnabled,
+                               pendingMaterialIds,
                                fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);
 
   std::vector<atlantis::asset_system::AssetId> knownMaterialIds = alreadyRealizedMaterialIds;
@@ -421,10 +471,17 @@ atlantis::Result<PixelBuffer, PbrMaterialDemoRenderError> renderPbrMaterialDemoF
   }
 
   Renderer renderer;
+  std::optional<atlantis::renderer::EnvironmentLighting> environmentLightingView;
+  if (environmentCandidate.has_value()) {
+    environmentLightingView.emplace(environmentCandidate->resources.borrowedView());
+  } else if (fixture.environmentLightingResources.has_value()) {
+    environmentLightingView.emplace(fixture.environmentLightingResources->borrowedView());
+  }
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, drawItems,
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
-                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler);
+                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler,
+                      environmentLightingView.has_value() ? &*environmentLightingView : nullptr);
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");
@@ -452,6 +509,11 @@ atlantis::Result<PixelBuffer, PbrMaterialDemoRenderError> renderPbrMaterialDemoF
     }
     fixture.samplerResourceMap.emplace(assetId, std::move(candidate.sampler));
     fixture.materialResourceMap.emplace(assetId, std::move(candidate.material));
+  }
+  if (environmentCandidate.has_value()) {
+    fixture.environmentLightingResources.emplace(std::move(environmentCandidate->resources));
+    fixture.environmentData.reset();
+    ++fixture.environmentUploadCount;
   }
 
   PixelBuffer result;
