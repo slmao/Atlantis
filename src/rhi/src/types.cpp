@@ -19,11 +19,18 @@ bool operator==(const TextureCreateParams& lhs, const TextureCreateParams& rhs) 
 }
 
 bool operator==(const SampledTextureCreateParams& lhs, const SampledTextureCreateParams& rhs) {
-  return lhs.extent == rhs.extent && lhs.format == rhs.format;
+  return lhs.extent == rhs.extent && lhs.format == rhs.format && lhs.dimension == rhs.dimension &&
+         lhs.mipLevelCount == rhs.mipLevelCount;
 }
 
 bool operator==(const SamplerCreateParams& lhs, const SamplerCreateParams& rhs) {
-  return lhs.filter == rhs.filter && lhs.addressMode == rhs.addressMode;
+  return lhs.filter == rhs.filter && lhs.addressMode == rhs.addressMode && lhs.mipFilter == rhs.mipFilter &&
+         lhs.minLod == rhs.minLod && lhs.maxLod == rhs.maxLod;
+}
+
+bool operator==(const SampledTextureUploadRegion& lhs, const SampledTextureUploadRegion& rhs) {
+  return lhs.bufferOffsetBytes == rhs.bufferOffsetBytes && lhs.mipLevel == rhs.mipLevel &&
+         lhs.arrayLayer == rhs.arrayLayer && lhs.extent == rhs.extent;
 }
 
 bool operator==(const OffscreenTargetCreateParams& lhs, const OffscreenTargetCreateParams& rhs) {

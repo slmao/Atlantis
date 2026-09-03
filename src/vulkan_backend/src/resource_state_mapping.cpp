@@ -120,7 +120,7 @@ using atlantis::rhi::ResourceState;
 // fragment-shader sampling. Destination stage is fragment-shader-only --
 // this Spec's fixed, single-purpose combined-image-sampler binding is
 // VK_SHADER_STAGE_FRAGMENT_BIT only (PipelineCreateParams::
-// hasSampledTextureBinding's own descriptor-set-layout binding, Spec 0016).
+// sampledTextureBindingCount's own descriptor-set-layout range, Spec 0025).
 [[nodiscard]] ImageBarrierPlan transferDestinationToShaderRead() {
   return ImageBarrierPlan{
       .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,

@@ -230,7 +230,7 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
        .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = pushConstantSizeBytesFor(materialData.kind),
-       .hasSampledTextureBinding = true},
+       .sampledTextureBindingCount = 1},
       sampledTexturePtr, candidate.sampler.get(), pushConstantLayoutFor(materialData.kind),
       {materialData.baseColorFactor[0], materialData.baseColorFactor[1], materialData.baseColorFactor[2],
        materialData.baseColorFactor[3]},

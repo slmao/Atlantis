@@ -112,12 +112,23 @@ enum class BufferPurpose {
 enum class SampledTextureFormat {
   Rgba8Unorm,  // linear
   Rgba8Srgb,
+  Rgba16Float,
+  Rg16Float,
 };
 
-// Spec 0016/ADR-0055: minimal Sampler filter contract -- no separate
-// mip filter, since every SampledTexture has exactly one mip level
-// this round.
+enum class SampledTextureDimension {
+  Texture2D,
+  TextureCube,
+};
+
+// Minification/magnification filter. MipFilter below independently
+// selects filtering between mip levels (Spec 0025/P2).
 enum class Filter {
+  Nearest,
+  Linear,
+};
+
+enum class MipFilter {
   Nearest,
   Linear,
 };
@@ -143,13 +154,13 @@ struct TextureCreateParams {
 
 [[nodiscard]] bool operator==(const TextureCreateParams& lhs, const TextureCreateParams& rhs);
 
-// Spec 0016/ADR-0055: no mip-count field -- every SampledTexture this
-// round has exactly one mip level (Human Review item 12); exposing an
-// unused knob is deliberately avoided, matching DepthFormat's own
-// precedent above.
+// Spec 0025/P2 widens the original single-mip 2D contract while the
+// defaults preserve that exact behavior.
 struct SampledTextureCreateParams {
   Extent2D extent;
   SampledTextureFormat format = SampledTextureFormat::Rgba8Unorm;
+  SampledTextureDimension dimension = SampledTextureDimension::Texture2D;
+  std::uint32_t mipLevelCount = 1;
 };
 
 [[nodiscard]] bool operator==(const SampledTextureCreateParams& lhs, const SampledTextureCreateParams& rhs);
@@ -157,6 +168,9 @@ struct SampledTextureCreateParams {
 struct SamplerCreateParams {
   Filter filter = Filter::Nearest;
   AddressMode addressMode = AddressMode::ClampToEdge;
+  MipFilter mipFilter = MipFilter::Nearest;
+  float minLod = 0.0F;
+  float maxLod = 0.0F;
 };
 
 [[nodiscard]] bool operator==(const SamplerCreateParams& lhs, const SamplerCreateParams& rhs);
@@ -236,13 +250,11 @@ struct PipelineCreateParams {
   DepthFormat depthFormat = DepthFormat::D32Sfloat;
   std::size_t pushConstantSizeBytes = 0;          // this round: sizeof(float) * 16 (one 4x4 matrix)
   // Spec 0016/ADR-0056: caller-derived from the shader's own real
-  // ReflectionMetadata (whether it declares a combined-image-sampler
-  // binding) -- the same "caller derives from reflection, passes plain
-  // data" pattern vertexInputLayout above already uses. false (default)
-  // reproduces today's exact one-binding descriptor-set-layout/pool
-  // behavior unconditionally -- zero source change at any existing
-  // call site.
-  bool hasSampledTextureBinding = false;
+  // ReflectionMetadata (how many contiguous combined-image-sampler
+  // bindings it declares) -- the same "caller derives from reflection,
+  // passes plain data" pattern vertexInputLayout above already uses.
+  // The closed values for this Plan are 0, 1, and 3.
+  std::uint32_t sampledTextureBindingCount = 0;
   // Plan 0024 Milestone 6: discovered during Implementation, not
   // anticipated by the Plan's own file list -- every existing Pipeline
   // this Device creates has always had an unconditional
@@ -256,8 +268,8 @@ struct PipelineCreateParams {
   // SPIR-V, not a hypothetical one. true (default) reproduces today's
   // exact layout unconditionally -- zero source change at any existing
   // call site; when false, no uniform-buffer binding is created at
-  // all, and hasSampledTextureBinding's own binding (when also true)
-  // moves from index 1 down to index 0 -- the exact, and only, shape
+  // all, and the sampled-texture range (when non-empty) moves from
+  // index 1 down to index 0 -- the exact, and only, shape
   // the output-transform contract needs. Confirmed against Human
   // Review direction (chat, 2026-09-01) before this field was added:
   // widen createPipeline()'s own contract now, as a disclosed,
@@ -285,6 +297,15 @@ struct PipelineCreateParams {
   bool hasDepthAttachment = true;
 };
 
+struct SampledTextureUploadRegion {
+  std::size_t bufferOffsetBytes = 0;
+  std::uint32_t mipLevel = 0;
+  std::uint32_t arrayLayer = 0;
+  Extent2D extent;
+};
+
+[[nodiscard]] bool operator==(const SampledTextureUploadRegion& lhs, const SampledTextureUploadRegion& rhs);
+
 // Why three distinct *CreateError enums below, not one shared
 // ResourceCreateError: mirrors this codebase's existing precedent
 // (CommandListCreateError distinct from SubmitError, Spec 0006) -- each
@@ -303,10 +324,11 @@ enum class TextureCreateError {
   ImageViewCreationFailed,
 };
 
-// Spec 0016/ADR-0055: mirrors TextureCreateError exactly -- a
-// SampledTexture's own color image creation is structurally identical
-// (image + memory + view).
+// Missing format/image capabilities are runtime facts discovered from
+// the physical device, never programmer errors (Spec 0025/P2).
 enum class SampledTextureCreateError {
+  FormatFeaturesUnsupported,
+  ImageFormatUnsupported,
   AllocationFailed,
   ImageCreationFailed,
   ImageViewCreationFailed,

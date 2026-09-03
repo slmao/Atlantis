@@ -16,7 +16,7 @@ std::vector<DescriptorBinding> minimalRendererExpectedDescriptorContract() {
 
 // Hand-kept in sync with vulkan_backend/src/vulkan_device.cpp's own
 // createPipeline() conditional second binding (Spec 0016/D5,
-// PipelineCreateParams::hasSampledTextureBinding): binding 0 is the same
+// PipelineCreateParams::sampledTextureBindingCount): binding 0 is the same
 // camera-uniform binding every contract in this codebase uses; binding 1
 // is the combined image sampler, fragment stage (ADR-0056 Decision 9).
 std::vector<DescriptorBinding> texturedMaterialExpectedDescriptorContract() {

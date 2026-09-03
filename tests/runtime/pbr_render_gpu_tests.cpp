@@ -348,7 +348,7 @@ struct PbrTestRig {
                            .wordCount = outputTransformFragmentSpirv->size()},
        .vertexInputLayout = *outputTransformVertexInputLayout,
        .colorFormat = finalFormat,
-       .hasSampledTextureBinding = true,
+       .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
   if (outputTransformPipelineResult.isErr()) return std::nullopt;
@@ -414,7 +414,7 @@ TEST_CASE("PbrDirectLit parameter transmission: two draws differing only in meta
          .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
          .depthFormat = DepthFormat::D32Sfloat,
          .pushConstantSizeBytes = 96,
-         .hasSampledTextureBinding = true},
+         .sampledTextureBindingCount = 1},
         rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
         std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, metallicFactor, roughnessFactor);
     if (materialResult.isErr()) return std::nullopt;
@@ -502,7 +502,7 @@ TEST_CASE("A mixed UnlitTextured+LitTextured+PbrDirectLit scene renders all thre
        .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = sizeof(float) * 16,
-       .hasSampledTextureBinding = true},
+       .sampledTextureBindingCount = 1},
       rig.texture.get(), rig.sampler.get());
   REQUIRE(unlitMaterialResult.isOk());
 
@@ -514,7 +514,7 @@ TEST_CASE("A mixed UnlitTextured+LitTextured+PbrDirectLit scene renders all thre
        .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = sizeof(float) * 16,
-       .hasSampledTextureBinding = true},
+       .sampledTextureBindingCount = 1},
       rig.texture.get(), rig.sampler.get());
   REQUIRE(litMaterialResult.isOk());
 
@@ -526,7 +526,7 @@ TEST_CASE("A mixed UnlitTextured+LitTextured+PbrDirectLit scene renders all thre
        .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = 96,
-       .hasSampledTextureBinding = true},
+       .sampledTextureBindingCount = 1},
       rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
       std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 0.3f);
   REQUIRE(pbrMaterialResult.isOk());
@@ -622,7 +622,7 @@ TEST_CASE("Above-1.0 PBR radiance survives the HDR intermediate and follows Rein
        .colorFormat = HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = 96,
-       .hasSampledTextureBinding = true},
+       .sampledTextureBindingCount = 1},
       rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
       std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.5f);
   REQUIRE(materialResult.isOk());
@@ -690,7 +690,7 @@ TEST_CASE("PbrDirectLit reflects a runtime Light intensity change on the next fr
        .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = 96,
-       .hasSampledTextureBinding = true},
+       .sampledTextureBindingCount = 1},
       rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
       std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.5f);
   REQUIRE(materialResult.isOk());

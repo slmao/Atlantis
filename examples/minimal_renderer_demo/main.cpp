@@ -601,7 +601,7 @@ int main() {
                                      .wordCount = outputTransformFragmentSpirvForFormat->size()},
                  .vertexInputLayout = *outputTransformVertexInputLayoutForFormat,
                  .colorFormat = currentFormat,
-                 .hasSampledTextureBinding = true,
+                 .sampledTextureBindingCount = 1,
                  .hasCameraUniformBinding = false,
                  .hasDepthAttachment = false});
             if (newMaterialResult.isErr() || newOutputTransformPipelineResult.isErr()) {

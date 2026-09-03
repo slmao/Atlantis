@@ -663,7 +663,7 @@ void RuntimeApplication::runFrame() {
                              .wordCount = outputTransformFragmentSpirvRef.size()},
          .vertexInputLayout = outputTransformVertexLayoutRef,
          .colorFormat = currentFormat,
-         .hasSampledTextureBinding = true,
+         .sampledTextureBindingCount = 1,
          .hasCameraUniformBinding = false,
          .hasDepthAttachment = false});
     if (outputTransformPipelineResult.isErr()) {

@@ -277,7 +277,7 @@ atlantis::Result<LightingDemoFixture, LightingDemoSetupError> setUpLightingDemoF
                            .wordCount = fixture.outputTransformUnormFragmentSpirv.size()},
        .vertexInputLayout = fixture.outputTransformUnormVertexInputLayout,
        .colorFormat = kLightingDemoColorFormat,
-       .hasSampledTextureBinding = true,
+       .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
   if (outputTransformPipelineResult.isErr()) return ResultT::Err(LightingDemoSetupError::ResourceCreationFailed);

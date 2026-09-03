@@ -20,7 +20,8 @@ namespace atlantis::vulkan_backend::detail {
 class VulkanSampler final : public atlantis::rhi::Sampler {
  public:
   VulkanSampler(VkDevice device, VkSampler sampler, atlantis::rhi::Filter filter,
-                atlantis::rhi::AddressMode addressMode);
+                atlantis::rhi::AddressMode addressMode, atlantis::rhi::MipFilter mipFilter, float minLod,
+                float maxLod);
   ~VulkanSampler() override;
 
   VulkanSampler(const VulkanSampler&) = delete;
@@ -30,6 +31,9 @@ class VulkanSampler final : public atlantis::rhi::Sampler {
 
   [[nodiscard]] atlantis::rhi::Filter filter() const override { return filter_; }
   [[nodiscard]] atlantis::rhi::AddressMode addressMode() const override { return addressMode_; }
+  [[nodiscard]] atlantis::rhi::MipFilter mipFilter() const override { return mipFilter_; }
+  [[nodiscard]] float minLod() const override { return minLod_; }
+  [[nodiscard]] float maxLod() const override { return maxLod_; }
 
   // Exists solely for VulkanCommandList's bindTexture() body -- never
   // reached from RHI's public surface.
@@ -40,6 +44,9 @@ class VulkanSampler final : public atlantis::rhi::Sampler {
   VkSampler sampler_;
   atlantis::rhi::Filter filter_;
   atlantis::rhi::AddressMode addressMode_;
+  atlantis::rhi::MipFilter mipFilter_;
+  float minLod_;
+  float maxLod_;
 };
 
 }  // namespace atlantis::vulkan_backend::detail

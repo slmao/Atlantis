@@ -166,6 +166,7 @@ TEST_CASE("Renderer::drawFrame() records a full bind/draw sequence per DrawItem 
   // (BindHdrTexture, not BindTexture) -- see the two Material-textured/
   // untextured test cases below for that overload's own coverage.
   REQUIRE(commandList.boundHdrTextures.size() == 1);
+  REQUIRE(commandList.boundHdrTextures[0].binding == 0);
   REQUIRE(commandList.boundHdrTextures[0].texture == &hdrColorTarget);
   REQUIRE(commandList.boundHdrTextures[0].sampler == &outputTransformSampler);
 }
@@ -324,9 +325,11 @@ TEST_CASE("Renderer::drawFrame() with a textured Material records bindTexture im
   // ...) call is recorded separately (boundHdrTextures), so this count
   // is unaffected.
   REQUIRE(commandList.boundTextures.size() == 2);
+  REQUIRE(commandList.boundTextures[0].binding == 1);
   REQUIRE(commandList.boundTextures[0].texture == &fakeTexture);
   REQUIRE(commandList.boundTextures[0].sampler == &fakeSampler);
   REQUIRE(commandList.boundTextures[1].texture == &fakeTexture);
+  REQUIRE(commandList.boundTextures[1].binding == 1);
   REQUIRE(commandList.boundTextures[1].sampler == &fakeSampler);
 
   // Positioned immediately after bindUniformBuffer, for each DrawItem.

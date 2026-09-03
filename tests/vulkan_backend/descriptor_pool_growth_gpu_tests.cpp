@@ -140,7 +140,7 @@ constexpr std::array<float, 16> kIdentityMatrix = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0,
 
 // Loads the real, current fallback (minimal_mesh) vertex layout once --
 // every TEST_CASE below reuses this same shader pair, varying only
-// hasSampledTextureBinding, per this file's own header comment.
+// sampledTextureBindingCount, per this file's own header comment.
 struct MinimalMeshFixture {
   std::vector<std::uint32_t> vertexSpirv;
   std::vector<std::uint32_t> fragmentSpirv;
@@ -189,7 +189,9 @@ TEST_CASE(
   pipelines.reserve(kTotalCapacity);
 
   // Phase 1: drive the pool set all the way to its own real, approved
-  // hard ceiling.
+  // hard ceiling with the maximum closed sampled binding count. If a
+  // pool still allocated only maxSets sampler descriptors, it would
+  // exhaust after roughly one third as many Pipelines.
   for (unsigned i = 0; i < kTotalCapacity; ++i) {
     auto result = device->createPipeline(
         {.vertexShader = {.spirvWords = fixture->vertexSpirv.data(), .wordCount = fixture->vertexSpirv.size()},
@@ -198,7 +200,8 @@ TEST_CASE(
          .vertexInputLayout = fixture->vertexInputLayout,
          .colorFormat = Format::Rgba8Unorm,
          .depthFormat = DepthFormat::D32Sfloat,
-         .pushConstantSizeBytes = sizeof(float) * 16});
+         .pushConstantSizeBytes = sizeof(float) * 16,
+         .sampledTextureBindingCount = 3});
     REQUIRE(result.isOk());
     pipelines.push_back(std::move(result.value()));
   }
@@ -214,7 +217,8 @@ TEST_CASE(
          .vertexInputLayout = fixture->vertexInputLayout,
          .colorFormat = Format::Rgba8Unorm,
          .depthFormat = DepthFormat::D32Sfloat,
-         .pushConstantSizeBytes = sizeof(float) * 16});
+         .pushConstantSizeBytes = sizeof(float) * 16,
+         .sampledTextureBindingCount = 3});
     REQUIRE(overflowResult.isErr());
     CHECK(overflowResult.error() == PipelineCreateError::DescriptorSetAllocationFailed);
   }
@@ -248,7 +252,8 @@ TEST_CASE(
          .vertexInputLayout = fixture->vertexInputLayout,
          .colorFormat = Format::Rgba8Unorm,
          .depthFormat = DepthFormat::D32Sfloat,
-         .pushConstantSizeBytes = sizeof(float) * 16});
+         .pushConstantSizeBytes = sizeof(float) * 16,
+         .sampledTextureBindingCount = 3});
     REQUIRE(result.isOk());
     pipelines.push_back(std::move(result.value()));
   }
@@ -270,7 +275,7 @@ TEST_CASE("Mixed uniform-only and textured allocation crosses a growth boundary 
   const auto fixture = loadMinimalMeshFixture();
   REQUIRE(fixture.has_value());
 
-  // Alternate hasSampledTextureBinding = false/true -- reusing the
+  // Alternate sampledTextureBindingCount = 0/1 -- reusing the
   // existing minimal_mesh shader pair for both (its own fragment shader
   // never references binding 1, so declaring it unused in the layout is
   // legal Vulkan usage; Validation-Layers-clean below confirms this
@@ -287,7 +292,7 @@ TEST_CASE("Mixed uniform-only and textured allocation crosses a growth boundary 
          .colorFormat = Format::Rgba8Unorm,
          .depthFormat = DepthFormat::D32Sfloat,
          .pushConstantSizeBytes = sizeof(float) * 16,
-         .hasSampledTextureBinding = textured});
+         .sampledTextureBindingCount = textured ? 1U : 0U});
     REQUIRE(result.isOk());
     pipelines.push_back(std::move(result.value()));
   }
@@ -482,7 +487,7 @@ TEST_CASE("A Pipeline created before a growth event remains valid and genuinely 
                            .wordCount = outputTransformFragmentSpirv->size()},
        .vertexInputLayout = *outputTransformVertexInputLayout,
        .colorFormat = kColorFormat,
-       .hasSampledTextureBinding = true,
+       .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
   REQUIRE(outputTransformPipelineResult.isOk());

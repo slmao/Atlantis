@@ -280,7 +280,7 @@ atlantis::Result<PbrMaterialDemoFixture, PbrMaterialDemoSetupError> setUpPbrMate
                            .wordCount = fixture.outputTransformUnormFragmentSpirv.size()},
        .vertexInputLayout = fixture.outputTransformUnormVertexInputLayout,
        .colorFormat = kPbrMaterialDemoColorFormat,
-       .hasSampledTextureBinding = true,
+       .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
   if (outputTransformPipelineResult.isErr()) return ResultT::Err(PbrMaterialDemoSetupError::ResourceCreationFailed);

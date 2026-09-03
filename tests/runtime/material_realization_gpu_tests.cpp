@@ -766,7 +766,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+3 and succeeds agai
          .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
          .depthFormat = atlantis::rhi::DepthFormat::D32Sfloat,
          .pushConstantSizeBytes = sizeof(float) * 16,
-         .hasSampledTextureBinding = true});
+         .sampledTextureBindingCount = 1});
     REQUIRE(materialPipelineResult.isOk());
     materialPipelines.push_back(std::move(materialPipelineResult.value()));
   }
@@ -788,7 +788,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+3 and succeeds agai
          .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
          .vertexInputLayout = *layout,
          .colorFormat = finalFormat,
-         .hasSampledTextureBinding = true,
+         .sampledTextureBindingCount = 1,
          .hasCameraUniformBinding = false,
          .hasDepthAttachment = false});
     REQUIRE(result.isOk());

@@ -22,7 +22,7 @@ namespace atlantis::shader_system {
 // UniformBuffer, Vertex} (the same camera-uniform binding every shader
 // contract in this codebase already uses) plus {set 0, binding 1,
 // Sampler, Fragment} (the combined image sampler,
-// PipelineCreateParams::hasSampledTextureBinding's own descriptor-set-
+// PipelineCreateParams::sampledTextureBindingCount's own descriptor-set-
 // layout binding). Additive alongside minimalRendererExpectedDescriptorContract()
 // above, which is untouched -- an untextured Material's shaders continue
 // validating against that one, unaffected by this new contract's

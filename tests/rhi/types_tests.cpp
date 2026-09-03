@@ -11,11 +11,14 @@ using atlantis::rhi::ClearColorValue;
 using atlantis::rhi::Extent2D;
 using atlantis::rhi::Filter;
 using atlantis::rhi::Format;
+using atlantis::rhi::MipFilter;
 using atlantis::rhi::OffscreenTargetCreateParams;
 using atlantis::rhi::PresentationError;
 using atlantis::rhi::ResourceState;
 using atlantis::rhi::SampledTextureCreateParams;
+using atlantis::rhi::SampledTextureDimension;
 using atlantis::rhi::SampledTextureFormat;
+using atlantis::rhi::SampledTextureUploadRegion;
 using atlantis::rhi::SamplerCreateParams;
 using atlantis::rhi::SwapchainMetadata;
 
@@ -130,6 +133,8 @@ TEST_CASE("SampledTextureCreateParams defaults to a real, usable format", "[rhi]
   const SampledTextureCreateParams params;
   REQUIRE(params.extent.isZero());
   REQUIRE(params.format == SampledTextureFormat::Rgba8Unorm);
+  REQUIRE(params.dimension == SampledTextureDimension::Texture2D);
+  REQUIRE(params.mipLevelCount == 1);
 }
 
 TEST_CASE("SampledTextureCreateParams equality and inequality", "[rhi][sampled_texture_create_params]") {
@@ -139,12 +144,43 @@ TEST_CASE("SampledTextureCreateParams equality and inequality", "[rhi][sampled_t
                 SampledTextureCreateParams{Extent2D{32, 32}, SampledTextureFormat::Rgba8Unorm});
   REQUIRE_FALSE(SampledTextureCreateParams{Extent2D{64, 64}, SampledTextureFormat::Rgba8Unorm} ==
                 SampledTextureCreateParams{Extent2D{64, 64}, SampledTextureFormat::Rgba8Srgb});
+  REQUIRE_FALSE(SampledTextureCreateParams{.extent = {64, 64},
+                                           .format = SampledTextureFormat::Rgba16Float,
+                                           .dimension = SampledTextureDimension::TextureCube,
+                                           .mipLevelCount = 7} ==
+                SampledTextureCreateParams{.extent = {64, 64},
+                                           .format = SampledTextureFormat::Rg16Float,
+                                           .dimension = SampledTextureDimension::TextureCube,
+                                           .mipLevelCount = 7});
+  REQUIRE_FALSE(SampledTextureCreateParams{.extent = {64, 64},
+                                           .dimension = SampledTextureDimension::TextureCube,
+                                           .mipLevelCount = 7} ==
+                SampledTextureCreateParams{.extent = {64, 64}, .mipLevelCount = 7});
+  REQUIRE_FALSE(SampledTextureCreateParams{.extent = {64, 64},
+                                           .dimension = SampledTextureDimension::TextureCube,
+                                           .mipLevelCount = 7} ==
+                SampledTextureCreateParams{.extent = {64, 64},
+                                           .dimension = SampledTextureDimension::TextureCube,
+                                           .mipLevelCount = 6});
+}
+
+TEST_CASE("SampledTextureUploadRegion equality includes every subresource field",
+          "[rhi][sampled_texture_upload_region]") {
+  const SampledTextureUploadRegion region{.bufferOffsetBytes = 128, .mipLevel = 2, .arrayLayer = 4, .extent = {8, 8}};
+  REQUIRE(region == region);
+  REQUIRE_FALSE(region == SampledTextureUploadRegion{.bufferOffsetBytes = 64, .mipLevel = 2, .arrayLayer = 4, .extent = {8, 8}});
+  REQUIRE_FALSE(region == SampledTextureUploadRegion{.bufferOffsetBytes = 128, .mipLevel = 1, .arrayLayer = 4, .extent = {8, 8}});
+  REQUIRE_FALSE(region == SampledTextureUploadRegion{.bufferOffsetBytes = 128, .mipLevel = 2, .arrayLayer = 3, .extent = {8, 8}});
+  REQUIRE_FALSE(region == SampledTextureUploadRegion{.bufferOffsetBytes = 128, .mipLevel = 2, .arrayLayer = 4, .extent = {4, 8}});
 }
 
 TEST_CASE("SamplerCreateParams defaults to a real, usable filter and address mode", "[rhi][sampler_create_params]") {
   const SamplerCreateParams params;
   REQUIRE(params.filter == Filter::Nearest);
   REQUIRE(params.addressMode == AddressMode::ClampToEdge);
+  REQUIRE(params.mipFilter == MipFilter::Nearest);
+  REQUIRE(params.minLod == 0.0F);
+  REQUIRE(params.maxLod == 0.0F);
 }
 
 TEST_CASE("SamplerCreateParams equality and inequality", "[rhi][sampler_create_params]") {
@@ -154,4 +190,10 @@ TEST_CASE("SamplerCreateParams equality and inequality", "[rhi][sampler_create_p
                 SamplerCreateParams{Filter::Nearest, AddressMode::Repeat});
   REQUIRE_FALSE(SamplerCreateParams{Filter::Linear, AddressMode::Repeat} ==
                 SamplerCreateParams{Filter::Linear, AddressMode::ClampToEdge});
+  REQUIRE_FALSE(SamplerCreateParams{.filter = Filter::Linear, .mipFilter = MipFilter::Linear} ==
+                SamplerCreateParams{.filter = Filter::Linear, .mipFilter = MipFilter::Nearest});
+  REQUIRE_FALSE(SamplerCreateParams{.filter = Filter::Linear, .minLod = 1.0F, .maxLod = 4.0F} ==
+                SamplerCreateParams{.filter = Filter::Linear, .minLod = 0.0F, .maxLod = 4.0F});
+  REQUIRE_FALSE(SamplerCreateParams{.filter = Filter::Linear, .minLod = 1.0F, .maxLod = 4.0F} ==
+                SamplerCreateParams{.filter = Filter::Linear, .minLod = 1.0F, .maxLod = 3.0F});
 }

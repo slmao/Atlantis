@@ -55,7 +55,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
       // the existing one-binding descriptor set layout path is exercised
       // exactly as before this Spec.
       if (item.material->sampledTexture() != nullptr) {
-        cmd.bindTexture(*item.material->sampledTexture(), *item.material->sampler());
+        cmd.bindTexture(1, *item.material->sampledTexture(), *item.material->sampler());
       }
       // Plan 0023 Milestone 5 (Spec 0023 D9's own Accepted Correction):
       // an exhaustive switch, no default: label -- this repository's own
@@ -92,7 +92,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
     cmd.bindPipeline(outputTransformPipeline);
     cmd.bindVertexBuffer(fullscreenTriangleVertexBuffer);
     cmd.bindIndexBuffer(fullscreenTriangleIndexBuffer);
-    cmd.bindTexture(hdrColorTarget, outputTransformSampler);
+    cmd.bindTexture(0, hdrColorTarget, outputTransformSampler);
     cmd.drawIndexed(3);
   });
 

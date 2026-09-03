@@ -4,6 +4,8 @@
 
 #include <atlantis/rhi/command_list.h>
 
+#include <array>
+
 // Concrete Vulkan implementation of atlantis::rhi::CommandList
 // (ADR-0020). See vulkan_device.cpp for where this is constructed
 // (VulkanDevice::createCommandList()).
@@ -67,11 +69,14 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   // own .cpp body comment for why that order is safe. const&, matching
   // CommandList's own interface declaration -- see that header's own
   // comment for why (only const-qualified accessors are ever read here).
-  void bindTexture(const atlantis::rhi::SampledTexture& texture, const atlantis::rhi::Sampler& sampler) override;
+  void bindTexture(std::uint32_t binding, const atlantis::rhi::SampledTexture& texture,
+                   const atlantis::rhi::Sampler& sampler) override;
   void pushConstant(const void* data, std::size_t sizeBytes) override;
   void drawIndexed(std::uint32_t indexCount) override;
   void copyRenderTargetToBuffer(atlantis::rhi::RenderTarget& source, atlantis::rhi::Buffer& destination) override;
   void copyBufferToTexture(atlantis::rhi::Buffer& source, atlantis::rhi::SampledTexture& destination) override;
+  void copyBufferToTexture(atlantis::rhi::Buffer& source, atlantis::rhi::SampledTexture& destination,
+                           std::span<const atlantis::rhi::SampledTextureUploadRegion> regions) override;
 
   // Plan 0024 Milestone 2 (ADR-0068 D-1/D-3): three new/overloaded
   // methods for HdrColorTarget -- a fourth transitionResource()
@@ -85,7 +90,8 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
                            atlantis::rhi::ResourceState after) override;
   void beginRendering(atlantis::rhi::HdrColorTarget& color, atlantis::rhi::Texture* depth,
                        atlantis::rhi::ClearColorValue colorClear, float depthClear) override;
-  void bindTexture(const atlantis::rhi::HdrColorTarget& texture, const atlantis::rhi::Sampler& sampler) override;
+  void bindTexture(std::uint32_t binding, const atlantis::rhi::HdrColorTarget& texture,
+                   const atlantis::rhi::Sampler& sampler) override;
 
   // Exists solely for VulkanDevice::submit() (vkEndCommandBuffer,
   // vkQueueSubmit) -- never reached from RHI's public surface.
@@ -105,6 +111,8 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   // bindUniformBuffer()/pushConstant() before any bindPipeline().
   VkPipelineLayout boundPipelineLayout_ = VK_NULL_HANDLE;
   VkDescriptorSet boundDescriptorSet_ = VK_NULL_HANDLE;
+  std::uint32_t boundSampledTextureFirstBinding_ = 0;
+  std::uint32_t boundSampledTextureBindingCount_ = 0;
 
   // Implementation-forced addition, discovered by Plan 0007 Section 15's
   // own multi-DrawItem GPU test: Vulkan invalidates a command buffer if
@@ -137,9 +145,12 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   // SampledTexture/Sampler pair). Pointer identity only, matching the
   // buffer memo's own VkBuffer-handle-identity comparison; neither
   // pointer is ever dereferenced through this member.
-  VkDescriptorSet lastUpdatedTextureDescriptorSet_ = VK_NULL_HANDLE;
-  const VulkanSampledTexture* lastUpdatedSampledTexture_ = nullptr;
-  const VulkanSampler* lastUpdatedSampler_ = nullptr;
+  struct TextureDescriptorMemo {
+    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    const VulkanSampledTexture* texture = nullptr;
+    const VulkanSampler* sampler = nullptr;
+  };
+  std::array<TextureDescriptorMemo, 4> textureDescriptorMemos_{};
 };
 
 }  // namespace atlantis::vulkan_backend::detail

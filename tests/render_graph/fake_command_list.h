@@ -60,12 +60,14 @@ struct RecordedCopyBufferToTexture {
 };
 
 struct RecordedBindTexture {
+  std::uint32_t binding;
   const atlantis::rhi::SampledTexture* texture;
   const atlantis::rhi::Sampler* sampler;
 };
 
 // Plan 0024 Milestone 2.
 struct RecordedHdrBindTexture {
+  std::uint32_t binding;
   const atlantis::rhi::HdrColorTarget* texture;
   const atlantis::rhi::Sampler* sampler;
 };
@@ -110,6 +112,10 @@ class FakeSampledTexture final : public atlantis::rhi::SampledTexture {
   [[nodiscard]] atlantis::rhi::SampledTextureFormat format() const override {
     return atlantis::rhi::SampledTextureFormat::Rgba8Unorm;
   }
+  [[nodiscard]] atlantis::rhi::SampledTextureDimension dimension() const override {
+    return atlantis::rhi::SampledTextureDimension::Texture2D;
+  }
+  [[nodiscard]] std::uint32_t mipLevelCount() const override { return 1; }
   [[nodiscard]] std::string_view label() const { return label_; }
 
  private:
@@ -142,6 +148,9 @@ class FakeSampler final : public atlantis::rhi::Sampler {
   [[nodiscard]] atlantis::rhi::AddressMode addressMode() const override {
     return atlantis::rhi::AddressMode::ClampToEdge;
   }
+  [[nodiscard]] atlantis::rhi::MipFilter mipFilter() const override { return atlantis::rhi::MipFilter::Nearest; }
+  [[nodiscard]] float minLod() const override { return 0.0F; }
+  [[nodiscard]] float maxLod() const override { return 0.0F; }
   [[nodiscard]] std::string_view label() const { return label_; }
 
  private:
@@ -269,14 +278,16 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
     events.push_back(EventKind::BindUniformBuffer);
   }
 
-  void bindTexture(const atlantis::rhi::SampledTexture& texture, const atlantis::rhi::Sampler& sampler) override {
-    boundTextures.push_back(RecordedBindTexture{&texture, &sampler});
+  void bindTexture(std::uint32_t binding, const atlantis::rhi::SampledTexture& texture,
+                   const atlantis::rhi::Sampler& sampler) override {
+    boundTextures.push_back(RecordedBindTexture{binding, &texture, &sampler});
     events.push_back(EventKind::BindTexture);
   }
 
   // Plan 0024 Milestone 2.
-  void bindTexture(const atlantis::rhi::HdrColorTarget& texture, const atlantis::rhi::Sampler& sampler) override {
-    boundHdrTextures.push_back(RecordedHdrBindTexture{&texture, &sampler});
+  void bindTexture(std::uint32_t binding, const atlantis::rhi::HdrColorTarget& texture,
+                   const atlantis::rhi::Sampler& sampler) override {
+    boundHdrTextures.push_back(RecordedHdrBindTexture{binding, &texture, &sampler});
     events.push_back(EventKind::BindHdrTexture);
   }
 
@@ -305,6 +316,13 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
   // resource, no copy actually performed.
   void copyBufferToTexture(atlantis::rhi::Buffer& source, atlantis::rhi::SampledTexture& destination) override {
     copiesBufferToTexture.push_back(RecordedCopyBufferToTexture{&source, &destination});
+    events.push_back(EventKind::CopyBufferToTexture);
+  }
+
+  void copyBufferToTexture(atlantis::rhi::Buffer& source, atlantis::rhi::SampledTexture& destination,
+                           std::span<const atlantis::rhi::SampledTextureUploadRegion> regions) override {
+    copiesBufferToTexture.push_back(RecordedCopyBufferToTexture{&source, &destination});
+    copyBufferToTextureRegions.emplace_back(regions.begin(), regions.end());
     events.push_back(EventKind::CopyBufferToTexture);
   }
 
@@ -347,6 +365,7 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
   std::vector<std::uint32_t> drawIndexedCounts;
   std::vector<RecordedCopyToBuffer> copiesToBuffer;
   std::vector<RecordedCopyBufferToTexture> copiesBufferToTexture;
+  std::vector<std::vector<atlantis::rhi::SampledTextureUploadRegion>> copyBufferToTextureRegions;
   std::vector<EventKind> events;  // interleaved order across all recorded calls
 };
 

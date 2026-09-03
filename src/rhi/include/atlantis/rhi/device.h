@@ -79,10 +79,12 @@ class Device {
   [[nodiscard]] virtual atlantis::Result<std::unique_ptr<OffscreenTarget>, OffscreenTargetCreateError>
   createOffscreenTarget(const OffscreenTargetCreateParams& params) = 0;
 
-  // Spec 0016/ADR-0055: stateless factory calls, matching
+  // Spec 0016/ADR-0055 and Spec 0025/P2: stateless factory calls, matching
   // createBuffer()/createTexture() exactly -- Device does not retain a
   // reference (ADR-0003). SampledTexture/Sampler are each move-only,
   // single-owner; the caller owns the returned object exclusively.
+  // Unsupported physical-device format/image capabilities are explicit
+  // SampledTextureCreateError results.
   [[nodiscard]] virtual atlantis::Result<std::unique_ptr<SampledTexture>, SampledTextureCreateError>
   createSampledTexture(const SampledTextureCreateParams& params) = 0;
 

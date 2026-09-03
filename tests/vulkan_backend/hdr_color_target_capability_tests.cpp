@@ -1,4 +1,6 @@
 #include "hdr_color_target_capability.h"
+#include "vulkan_pipeline.h"
+#include "vulkan_sampled_texture.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -9,6 +11,10 @@
 // own identical "private header, pure function" test shape.
 
 using atlantis::vulkan_backend::detail::hasRequiredHdrColorTargetFeatures;
+using atlantis::vulkan_backend::detail::hasRequiredSampledTextureFeatures;
+using atlantis::vulkan_backend::detail::isSampledTextureBindingInRange;
+using atlantis::vulkan_backend::detail::isValidSampledTextureCreateParams;
+using atlantis::vulkan_backend::detail::isValidSampledTextureUploadRegion;
 
 TEST_CASE("hasRequiredHdrColorTargetFeatures: both required bits present returns true",
           "[vulkan_backend][hdr_color_target_capability]") {
@@ -58,4 +64,73 @@ TEST_CASE("hasRequiredHdrColorTargetFeatures: unused-by-design bits alone do not
                                                  VK_FORMAT_FEATURE_TRANSFER_DST_BIT |
                                                  VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT |
                                                  VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT));
+}
+
+TEST_CASE("hasRequiredSampledTextureFeatures requires sampling, linear filtering, and transfer destination",
+          "[vulkan_backend][sampled_texture_capability]") {
+  constexpr VkFormatFeatureFlags kRequired = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                                              VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
+                                              VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+  CHECK(hasRequiredSampledTextureFeatures(kRequired));
+  CHECK(hasRequiredSampledTextureFeatures(kRequired | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT));
+  CHECK_FALSE(hasRequiredSampledTextureFeatures(kRequired & ~VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT));
+  CHECK_FALSE(hasRequiredSampledTextureFeatures(kRequired & ~VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT));
+  CHECK_FALSE(hasRequiredSampledTextureFeatures(kRequired & ~VK_FORMAT_FEATURE_TRANSFER_DST_BIT));
+  CHECK_FALSE(hasRequiredSampledTextureFeatures(0));
+}
+
+TEST_CASE("sampled texture create-parameter validation covers 2D and cube mip preconditions",
+          "[vulkan_backend][sampled_texture_validation]") {
+  using atlantis::rhi::SampledTextureCreateParams;
+  using atlantis::rhi::SampledTextureDimension;
+  CHECK(isValidSampledTextureCreateParams({.extent = {8, 4}}));
+  CHECK(isValidSampledTextureCreateParams(
+      {.extent = {8, 8}, .dimension = SampledTextureDimension::TextureCube, .mipLevelCount = 4}));
+  CHECK_FALSE(isValidSampledTextureCreateParams({.extent = {0, 8}}));
+  CHECK_FALSE(isValidSampledTextureCreateParams({.extent = {8, 8}, .mipLevelCount = 0}));
+  CHECK_FALSE(isValidSampledTextureCreateParams(
+      {.extent = {8, 4}, .dimension = SampledTextureDimension::TextureCube}));
+  CHECK_FALSE(isValidSampledTextureCreateParams({.extent = {8, 8}, .mipLevelCount = 5}));
+}
+
+TEST_CASE("sampled texture upload-region validation checks mip, layer, extent, alignment, and source bounds",
+          "[vulkan_backend][sampled_texture_validation]") {
+  using atlantis::rhi::SampledTextureDimension;
+  using atlantis::rhi::SampledTextureFormat;
+  using atlantis::rhi::SampledTextureUploadRegion;
+  constexpr auto valid = SampledTextureUploadRegion{.bufferOffsetBytes = 64,
+                                                     .mipLevel = 1,
+                                                     .arrayLayer = 5,
+                                                     .extent = {4, 4}};
+  CHECK(isValidSampledTextureUploadRegion({8, 8}, SampledTextureFormat::Rgba16Float,
+                                          SampledTextureDimension::TextureCube, 4, 192, valid));
+  CHECK_FALSE(isValidSampledTextureUploadRegion(
+      {8, 8}, SampledTextureFormat::Rgba16Float, SampledTextureDimension::TextureCube, 4, 192,
+      SampledTextureUploadRegion{.bufferOffsetBytes = 64, .mipLevel = 4, .arrayLayer = 5, .extent = {1, 1}}));
+  CHECK_FALSE(isValidSampledTextureUploadRegion(
+      {8, 8}, SampledTextureFormat::Rgba16Float, SampledTextureDimension::TextureCube, 4, 192,
+      SampledTextureUploadRegion{.bufferOffsetBytes = 64, .mipLevel = 1, .arrayLayer = 6, .extent = {4, 4}}));
+  CHECK_FALSE(isValidSampledTextureUploadRegion(
+      {8, 8}, SampledTextureFormat::Rgba16Float, SampledTextureDimension::TextureCube, 4, 192,
+      SampledTextureUploadRegion{.bufferOffsetBytes = 64, .mipLevel = 1, .arrayLayer = 5, .extent = {5, 4}}));
+  CHECK_FALSE(isValidSampledTextureUploadRegion(
+      {8, 8}, SampledTextureFormat::Rgba16Float, SampledTextureDimension::TextureCube, 4, 192,
+      SampledTextureUploadRegion{.bufferOffsetBytes = 65, .mipLevel = 1, .arrayLayer = 5, .extent = {4, 4}}));
+  CHECK_FALSE(isValidSampledTextureUploadRegion(
+      {8, 8}, SampledTextureFormat::Rgba16Float, SampledTextureDimension::TextureCube, 4, 191, valid));
+  CHECK_FALSE(isValidSampledTextureUploadRegion(
+      {8, 8}, SampledTextureFormat::Rg16Float, SampledTextureDimension::Texture2D, 1, 64,
+      SampledTextureUploadRegion{.bufferOffsetBytes = 0, .mipLevel = 0, .arrayLayer = 1, .extent = {4, 4}}));
+}
+
+TEST_CASE("sampled texture binding validation accepts only the bound Pipeline's contiguous range",
+          "[vulkan_backend][sampled_texture_validation]") {
+  CHECK_FALSE(isSampledTextureBindingInRange(0, 0, 0));
+  CHECK(isSampledTextureBindingInRange(0, 1, 0));
+  CHECK_FALSE(isSampledTextureBindingInRange(0, 1, 1));
+  CHECK_FALSE(isSampledTextureBindingInRange(1, 3, 0));
+  CHECK(isSampledTextureBindingInRange(1, 3, 1));
+  CHECK(isSampledTextureBindingInRange(1, 3, 2));
+  CHECK(isSampledTextureBindingInRange(1, 3, 3));
+  CHECK_FALSE(isSampledTextureBindingInRange(1, 3, 4));
 }

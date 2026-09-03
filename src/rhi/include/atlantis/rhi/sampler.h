@@ -20,6 +20,9 @@ class Sampler {
 
   [[nodiscard]] virtual Filter filter() const = 0;
   [[nodiscard]] virtual AddressMode addressMode() const = 0;
+  [[nodiscard]] virtual MipFilter mipFilter() const = 0;
+  [[nodiscard]] virtual float minLod() const = 0;
+  [[nodiscard]] virtual float maxLod() const = 0;
 };
 
 }  // namespace atlantis::rhi
