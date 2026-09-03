@@ -22,6 +22,12 @@ add_executable(atlantis_asset_system_tests
   texture_artifact_tests.cpp
   cook_texture_tests.cpp
   load_texture_tests.cpp
+  environment_metadata_tests.cpp
+  environment_artifact_tests.cpp
+  load_environment_tests.cpp
+  environment_processing_tests.cpp
+  cook_environment_tests.cpp
+  environment_asset_cmake_declaration_tests.cpp
   texture_fixture_source_identity_tests.cpp
   material_source_tests.cpp
   material_artifact_tests.cpp
@@ -36,6 +42,10 @@ target_link_libraries(atlantis_asset_system_tests
     Atlantis::AssetSystem
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
+)
+
+target_include_directories(atlantis_asset_system_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/src/asset_system/src
 )
 
 # Plan 0012 V9: an absolute, configure-time path to scan for forbidden
@@ -78,6 +88,12 @@ target_compile_definitions(atlantis_asset_system_tests PRIVATE
 )
 add_dependencies(atlantis_asset_system_tests
   ${ATLANTIS_textured_quad_left_TARGET} ${ATLANTIS_textured_quad_right_TARGET})
+
+target_compile_definitions(atlantis_asset_system_tests PRIVATE
+  ATLANTIS_ibl_studio_ARTIFACT_PATH="${ATLANTIS_ibl_studio_ARTIFACT_PATH}"
+  ATLANTIS_ibl_studio_METADATA_PATH="${ATLANTIS_ibl_studio_METADATA_PATH}"
+)
+add_dependencies(atlantis_asset_system_tests ${ATLANTIS_ibl_studio_TARGET})
 
 # Plan 0018 Milestone 5: exercises atlantis_add_material_asset() end to
 # end through the real build system -- --kind=material cooking and its

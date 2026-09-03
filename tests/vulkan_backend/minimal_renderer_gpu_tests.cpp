@@ -386,7 +386,7 @@ TEST_CASE("Renderer::drawFrame() draws a real, multi-item frame through a real a
                            .wordCount = outputTransformFragmentSpirv->size()},
        .vertexInputLayout = *outputTransformVertexInputLayout,
        .colorFormat = target->format(),
-       .hasSampledTextureBinding = true,
+       .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
   REQUIRE(outputTransformPipelineResult.isOk());

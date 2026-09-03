@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <vulkan/vulkan_core.h>
 
 #include <atlantis/rhi/pipeline.h>
@@ -12,6 +14,10 @@
 // type participates in.
 namespace atlantis::vulkan_backend::detail {
 
+[[nodiscard]] bool isSampledTextureBindingInRange(std::uint32_t firstBinding,
+                                                   std::uint32_t bindingCount,
+                                                   std::uint32_t binding) noexcept;
+
 // Exclusively owns its VkPipeline, VkPipelineLayout, VkDescriptorSetLayout,
 // and the one VkDescriptorSet allocated for it from VulkanDevice's
 // Device-level VkDescriptorPool (freed here, at this object's own
@@ -23,7 +29,8 @@ class VulkanPipeline final : public atlantis::rhi::Pipeline {
  public:
   VulkanPipeline(VkDevice device, VkDescriptorPool descriptorPool, VkPipeline pipeline,
                  VkPipelineLayout pipelineLayout, VkDescriptorSetLayout descriptorSetLayout,
-                 VkDescriptorSet descriptorSet);
+                 VkDescriptorSet descriptorSet, std::uint32_t sampledTextureFirstBinding,
+                 std::uint32_t sampledTextureBindingCount);
   ~VulkanPipeline() override;
 
   VulkanPipeline(const VulkanPipeline&) = delete;
@@ -36,6 +43,8 @@ class VulkanPipeline final : public atlantis::rhi::Pipeline {
   [[nodiscard]] VkPipeline vkPipeline() const noexcept { return pipeline_; }
   [[nodiscard]] VkPipelineLayout pipelineLayout() const noexcept { return pipelineLayout_; }
   [[nodiscard]] VkDescriptorSet descriptorSet() const noexcept { return descriptorSet_; }
+  [[nodiscard]] std::uint32_t sampledTextureFirstBinding() const noexcept { return sampledTextureFirstBinding_; }
+  [[nodiscard]] std::uint32_t sampledTextureBindingCount() const noexcept { return sampledTextureBindingCount_; }
 
  private:
   VkDevice device_;                  // non-owning; must outlive this object (caller-enforced)
@@ -44,6 +53,8 @@ class VulkanPipeline final : public atlantis::rhi::Pipeline {
   VkPipelineLayout pipelineLayout_;
   VkDescriptorSetLayout descriptorSetLayout_;
   VkDescriptorSet descriptorSet_;
+  std::uint32_t sampledTextureFirstBinding_;
+  std::uint32_t sampledTextureBindingCount_;
 };
 
 }  // namespace atlantis::vulkan_backend::detail

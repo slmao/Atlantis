@@ -22,7 +22,7 @@ namespace atlantis::shader_system {
 // UniformBuffer, Vertex} (the same camera-uniform binding every shader
 // contract in this codebase already uses) plus {set 0, binding 1,
 // Sampler, Fragment} (the combined image sampler,
-// PipelineCreateParams::hasSampledTextureBinding's own descriptor-set-
+// PipelineCreateParams::sampledTextureBindingCount's own descriptor-set-
 // layout binding). Additive alongside minimalRendererExpectedDescriptorContract()
 // above, which is untouched -- an untextured Material's shaders continue
 // validating against that one, unaffected by this new contract's
@@ -55,6 +55,11 @@ namespace atlantis::shader_system {
 // independently callable, matching this header's own existing
 // per-kind pattern.
 [[nodiscard]] std::vector<DescriptorBinding> pbrDirectLitExpectedDescriptorContract();
+
+// Spec 0025/P3: the IBL variant retains the uniform/base-color bindings
+// and adds contiguous fragment samplers for the prefiltered cubemap and
+// DFG LUT at bindings 2 and 3.
+[[nodiscard]] std::vector<DescriptorBinding> pbrIblExpectedDescriptorContract();
 
 // Plan 0024 Milestone 3 (ADR-0068 D-10): the fixed, expected descriptor
 // contract BOTH output-transform shader pairs (output-transform-unorm

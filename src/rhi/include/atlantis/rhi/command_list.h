@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/hdr_color_target.h>
@@ -99,13 +100,15 @@ class CommandList {
   // row-major, no padding -- matching copyRenderTargetToBuffer()'s own
   // bufferRowLength = 0 convention (ADR-0040).
   virtual void copyBufferToTexture(Buffer& source, SampledTexture& destination) = 0;
+  virtual void copyBufferToTexture(Buffer& source, SampledTexture& destination,
+                                   std::span<const SampledTextureUploadRegion> regions) = 0;
 
   // texture must be in ResourceState::ShaderRead when this is recorded
   // -- caller precondition, matching bindUniformBuffer()'s own
   // BufferPurpose precondition. Binds a combined image sampler at set
-  // 0, binding 1, fragment stage (ADR-0056 Decision 9) -- the currently
-  // bound Pipeline must have been created with
-  // PipelineCreateParams::hasSampledTextureBinding = true.
+  // 0 at the explicit binding, fragment stage. The binding must fall
+  // inside the currently bound Pipeline's declared contiguous sampled-
+  // texture range (Spec 0025/P2).
   //
   // const&, unlike transitionResource(SampledTexture&, ...)/
   // copyBufferToTexture() above -- this call only reads the bound
@@ -114,9 +117,9 @@ class CommandList {
   // otherwise mutate either resource. const is also what Material's own
   // borrowed sampledTexture()/sampler() accessors return (Spec 0016/D3),
   // so this is the only signature Renderer's own
-  // cmd.bindTexture(*item.material->sampledTexture(), ...) call can pass
+  // cmd.bindTexture(binding, *item.material->sampledTexture(), ...) call can pass
   // without an unsafe const_cast.
-  virtual void bindTexture(const SampledTexture& texture, const Sampler& sampler) = 0;
+  virtual void bindTexture(std::uint32_t binding, const SampledTexture& texture, const Sampler& sampler) = 0;
 
   // Plan 0024 Milestone 2 (ADR-0068 D-1/D-3): a fourth
   // transitionResource() overload, alongside the RenderTarget/depth-
@@ -139,7 +142,7 @@ class CommandList {
   // pass to sample the HdrColorTarget -- same precondition as the
   // SampledTexture overload above (texture must be in
   // ResourceState::ShaderRead when this is recorded).
-  virtual void bindTexture(const HdrColorTarget& texture, const Sampler& sampler) = 0;
+  virtual void bindTexture(std::uint32_t binding, const HdrColorTarget& texture, const Sampler& sampler) = 0;
 };
 
 }  // namespace atlantis::rhi

@@ -238,7 +238,7 @@ Result<TexturedQuadFixture, TexturedQuadSetupError> setUpTexturedQuadFixture(con
        .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = sizeof(float) * 16,
-       .hasSampledTextureBinding = true},
+       .sampledTextureBindingCount = 1},
       fixture.sampledTextureUnorm.get(), fixture.sampler.get());
   if (materialUnormResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);
   fixture.materialUnorm = std::move(materialUnormResult.value());
@@ -254,7 +254,7 @@ Result<TexturedQuadFixture, TexturedQuadSetupError> setUpTexturedQuadFixture(con
        .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = sizeof(float) * 16,
-       .hasSampledTextureBinding = true},
+       .sampledTextureBindingCount = 1},
       fixture.sampledTextureSrgb.get(), fixture.sampler.get());
   if (materialSrgbResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);
   fixture.materialSrgb = std::move(materialSrgbResult.value());
@@ -337,7 +337,7 @@ Result<TexturedQuadFixture, TexturedQuadSetupError> setUpTexturedQuadFixture(con
                            .wordCount = outputTransformFragmentSpirv->size()},
        .vertexInputLayout = *outputTransformVertexInputLayout,
        .colorFormat = kTexturedQuadColorFormat,
-       .hasSampledTextureBinding = true,
+       .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
   if (outputTransformPipelineResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);

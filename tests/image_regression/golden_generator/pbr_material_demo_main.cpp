@@ -2,6 +2,7 @@
 #include <atlantis/runtime/bootstrap_config.h>
 
 #include "../fixture/pbr_material_demo_fixture.h"
+#include "../fixture/ibl_material_demo_fixture.h"
 #include "../support/pixel_diff.h"
 #include "../support/png_codec.h"
 #include "../support/provenance.h"
@@ -29,13 +30,38 @@ namespace {
 using atlantis::image_regression::encodePng;
 using atlantis::image_regression::parseEnvironmentProvenance;
 using atlantis::image_regression::parseGoldenProvenance;
-using atlantis::image_regression::PbrMaterialDemoFixture;
 using atlantis::image_regression::PixelBuffer;
 using atlantis::image_regression::Provenance;
-using atlantis::image_regression::renderPbrMaterialDemoFrame;
 using atlantis::image_regression::serializeGoldenProvenance;
-using atlantis::image_regression::setUpPbrMaterialDemoFixture;
 using atlantis::runtime::BootstrapConfig;
+
+#ifdef ATLANTIS_IBL_GOLDEN_GENERATOR
+using DemoFixture = atlantis::image_regression::IblMaterialDemoFixture;
+inline constexpr std::uint32_t kDemoExtent = atlantis::image_regression::kIblMaterialDemoExtentPixels;
+inline constexpr const char* kGeneratorName = "atlantis_image_regression_ibl_material_demo_golden_generator";
+inline constexpr const char* kGeneratorExample = "ibl_material_demo/ibl_material_demo_512x512_rgba8unorm";
+#else
+using DemoFixture = atlantis::image_regression::PbrMaterialDemoFixture;
+inline constexpr std::uint32_t kDemoExtent = atlantis::image_regression::kPbrMaterialDemoExtentPixels;
+inline constexpr const char* kGeneratorName = "atlantis_image_regression_pbr_material_demo_golden_generator";
+inline constexpr const char* kGeneratorExample = "pbr_material_demo/pbr_material_demo_512x512_rgba8unorm";
+#endif
+
+[[nodiscard]] auto setUpDemoFixture(const BootstrapConfig& config) {
+#ifdef ATLANTIS_IBL_GOLDEN_GENERATOR
+  return atlantis::image_regression::setUpIblMaterialDemoFixture(config);
+#else
+  return atlantis::image_regression::setUpPbrMaterialDemoFixture(config);
+#endif
+}
+
+[[nodiscard]] auto renderDemoFrame(DemoFixture& fixture) {
+#ifdef ATLANTIS_IBL_GOLDEN_GENERATOR
+  return atlantis::image_regression::renderIblMaterialDemoFrame(fixture);
+#else
+  return atlantis::image_regression::renderPbrMaterialDemoFrame(fixture);
+#endif
+}
 
 struct GitCommandResult {
   int exitCode = 0;
@@ -94,6 +120,38 @@ void printProvenanceFieldIfDifferent(const char* fieldName, const std::string& o
 // compile definition, never a CLI argument.
 [[nodiscard]] BootstrapConfig buildConfig() {
   BootstrapConfig config;
+#ifdef ATLANTIS_IBL_GOLDEN_GENERATOR
+  config.sceneArtifactPath = ATLANTIS_ibl_material_demo_scene_ARTIFACT_PATH;
+  config.sceneMetadataPath = ATLANTIS_ibl_material_demo_scene_METADATA_PATH;
+  config.sceneDependencyManifestPath = ATLANTIS_ibl_material_demo_scene_MANIFEST_PATH;
+  const std::string unlit = ATLANTIS_IBL_DEMO_UNLIT_TEXTURED_SHADER_DIR;
+  config.unlitTexturedVertexShaderSpirvPath = unlit + "/textured_quad.vert.spv";
+  config.unlitTexturedVertexShaderReflectionPath = unlit + "/textured_quad.vert.refl.json";
+  config.unlitTexturedFragmentShaderSpirvPath = unlit + "/textured_quad.frag.spv";
+  config.unlitTexturedFragmentShaderReflectionPath = unlit + "/textured_quad.frag.refl.json";
+  const std::string lit = ATLANTIS_IBL_DEMO_LIT_TEXTURED_SHADER_DIR;
+  config.litTexturedVertexShaderSpirvPath = lit + "/lit_textured.vert.spv";
+  config.litTexturedVertexShaderReflectionPath = lit + "/lit_textured.vert.refl.json";
+  config.litTexturedFragmentShaderSpirvPath = lit + "/lit_textured.frag.spv";
+  config.litTexturedFragmentShaderReflectionPath = lit + "/lit_textured.frag.refl.json";
+  const std::string direct = ATLANTIS_IBL_DEMO_PBR_DIRECT_LIT_SHADER_DIR;
+  config.pbrDirectLitVertexShaderSpirvPath = direct + "/pbr_direct_lit.vert.spv";
+  config.pbrDirectLitVertexShaderReflectionPath = direct + "/pbr_direct_lit.vert.refl.json";
+  config.pbrDirectLitFragmentShaderSpirvPath = direct + "/pbr_direct_lit.frag.spv";
+  config.pbrDirectLitFragmentShaderReflectionPath = direct + "/pbr_direct_lit.frag.refl.json";
+  const std::string ibl = ATLANTIS_IBL_DEMO_PBR_IBL_SHADER_DIR;
+  config.pbrIblVertexShaderSpirvPath = ibl + "/pbr_ibl.vert.spv";
+  config.pbrIblVertexShaderReflectionPath = ibl + "/pbr_ibl.vert.refl.json";
+  config.pbrIblFragmentShaderSpirvPath = ibl + "/pbr_ibl.frag.spv";
+  config.pbrIblFragmentShaderReflectionPath = ibl + "/pbr_ibl.frag.refl.json";
+  const std::string output = ATLANTIS_IBL_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR;
+  config.outputTransformUnormVertexShaderSpirvPath = output + "/output_transform_unorm.vert.spv";
+  config.outputTransformUnormVertexShaderReflectionPath = output + "/output_transform_unorm.vert.refl.json";
+  config.outputTransformUnormFragmentShaderSpirvPath = output + "/output_transform_unorm.frag.spv";
+  config.outputTransformUnormFragmentShaderReflectionPath = output + "/output_transform_unorm.frag.refl.json";
+  config.environmentArtifactPath = ATLANTIS_IBL_DEMO_ENVIRONMENT_ARTIFACT_PATH;
+  config.environmentMetadataPath = ATLANTIS_IBL_DEMO_ENVIRONMENT_METADATA_PATH;
+#else
   config.sceneArtifactPath = ATLANTIS_pbr_material_demo_scene_ARTIFACT_PATH;
   config.sceneMetadataPath = ATLANTIS_pbr_material_demo_scene_METADATA_PATH;
   config.sceneDependencyManifestPath = ATLANTIS_pbr_material_demo_scene_MANIFEST_PATH;
@@ -133,6 +191,7 @@ void printProvenanceFieldIfDifferent(const char* fieldName, const std::string& o
   config.outputTransformUnormFragmentShaderReflectionPath =
       std::string(ATLANTIS_PBR_MATERIAL_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR) +
       "/output_transform_unorm.frag.refl.json";
+#endif
   return config;
 }
 
@@ -142,10 +201,8 @@ int main(int argc, char** argv) {
   atlantis::log::setMinLevel(atlantis::LogLevel::Info);
 
   if (argc != 2) {
-    ATLANTIS_LOG_ERROR("usage: atlantis_image_regression_pbr_material_demo_golden_generator <golden-name>");
-    ATLANTIS_LOG_ERROR(
-        "  e.g.: atlantis_image_regression_pbr_material_demo_golden_generator "
-        "pbr_material_demo/pbr_material_demo_512x512_rgba8unorm");
+    ATLANTIS_LOG_ERROR("usage: {} <golden-name>", kGeneratorName);
+    ATLANTIS_LOG_ERROR("  e.g.: {} {}", kGeneratorName, kGeneratorExample);
     return 2;
   }
   const std::string goldenName = argv[1];
@@ -203,17 +260,17 @@ int main(int argc, char** argv) {
   }
   const auto& environmentProvenance = environmentProvenanceResult.value();
 
-  auto fixtureResult = setUpPbrMaterialDemoFixture(buildConfig());
+  auto fixtureResult = setUpDemoFixture(buildConfig());
   if (fixtureResult.isErr()) {
-    ATLANTIS_LOG_ERROR("setUpPbrMaterialDemoFixture() failed");
+    ATLANTIS_LOG_ERROR("setUpDemoFixture() failed");
     return 1;
   }
-  PbrMaterialDemoFixture fixture = std::move(fixtureResult.value());
+  DemoFixture fixture = std::move(fixtureResult.value());
 
-  auto renderResult = renderPbrMaterialDemoFrame(fixture);
+  auto renderResult = renderDemoFrame(fixture);
   const auto finalWaitResult = fixture.device->waitIdle();
   if (renderResult.isErr()) {
-    ATLANTIS_LOG_ERROR("renderPbrMaterialDemoFrame() failed");
+    ATLANTIS_LOG_ERROR("renderDemoFrame() failed");
     return 1;
   }
   if (finalWaitResult.isErr()) {
@@ -232,9 +289,15 @@ int main(int argc, char** argv) {
   provenance.vulkanLoaderApiVersion = environmentProvenance.vulkanLoaderApiVersion;
   provenance.vulkanRequestedInstanceApiVersion = environmentProvenance.vulkanRequestedInstanceApiVersion;
   provenance.vulkanPhysicalDeviceApiVersion = environmentProvenance.vulkanPhysicalDeviceApiVersion;
-  provenance.extentWidth = atlantis::image_regression::kPbrMaterialDemoExtentPixels;
-  provenance.extentHeight = atlantis::image_regression::kPbrMaterialDemoExtentPixels;
+  provenance.extentWidth = kDemoExtent;
+  provenance.extentHeight = kDemoExtent;
   provenance.format = "Rgba8Unorm";
+#ifdef ATLANTIS_IBL_GOLDEN_GENERATOR
+  provenance.environmentSourceSha256 = ATLANTIS_IBL_DEMO_SOURCE_SHA256;
+  provenance.environmentArtifactSha256 = ATLANTIS_IBL_DEMO_ARTIFACT_SHA256;
+  provenance.environmentCookerSettings = "schema=1,face=256,mips=9,dfg=128,samples=1024";
+  provenance.goldenUpdateReason = "initial Spec 0025 IBL baseline";
+#endif
 
   const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
   const std::filesystem::path pngPath = goldensDir / (goldenName + ".png");

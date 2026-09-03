@@ -286,7 +286,7 @@ atlantis::Result<MaterialDemoFixture, MaterialDemoSetupError> setUpMaterialDemoF
                            .wordCount = fixture.outputTransformUnormFragmentSpirv.size()},
        .vertexInputLayout = fixture.outputTransformUnormVertexInputLayout,
        .colorFormat = kMaterialDemoColorFormat,
-       .hasSampledTextureBinding = true,
+       .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
   if (outputTransformPipelineResult.isErr()) return ResultT::Err(MaterialDemoSetupError::ResourceCreationFailed);

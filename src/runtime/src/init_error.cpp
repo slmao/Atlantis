@@ -32,6 +32,10 @@ const char* toString(RuntimeInitError error) noexcept {
       return "SceneDependencyLoadFailed";
     case RuntimeInitError::PbrBaseColorTextureNotSrgb:
       return "PbrBaseColorTextureNotSrgb";
+    case RuntimeInitError::EnvironmentConfigInvalid:
+      return "EnvironmentConfigInvalid";
+    case RuntimeInitError::EnvironmentLoadFailed:
+      return "EnvironmentLoadFailed";
     case RuntimeInitError::HdrColorTargetCreateFailed:
       return "HdrColorTargetCreateFailed";
     case RuntimeInitError::FullscreenTriangleVertexBufferCreateFailed:

@@ -46,6 +46,11 @@ enum class RuntimeInitError {
   // own kind and its resolved texture's own real colorSpace. Never an
   // Asset System type -- Milestone 1's own scope stays untouched.
   PbrBaseColorTextureNotSrgb,
+  // Plan 0025/M7: optional environment configuration and CPU load are
+  // initialization failures. GPU realization is deliberately deferred to
+  // the first drawable frame and uses the lifecycle failure path instead.
+  EnvironmentConfigInvalid,
+  EnvironmentLoadFailed,
   // Plan 0024 Milestone 6 (ADR-0068 D-1/D-3/D-6): one new, distinct
   // enumerator per new resource kind created once at startup,
   // mirroring CameraBufferCreateFailed's own precedent exactly --

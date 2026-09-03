@@ -281,6 +281,20 @@ set(ATLANTIS_pbr_material_demo_scene_METADATA_PATH "${ATLANTIS_pbr_material_demo
 set(ATLANTIS_pbr_material_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_material_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_material_demo_scene_TARGET "${ATLANTIS_pbr_material_demo_scene_TARGET}" PARENT_SCOPE)
 
+# Plan 0025/M9: the same four PBR material corners under environment-only
+# lighting. No Light node is present by construction.
+atlantis_add_scene_asset(
+  NAME ibl_material_demo_scene
+  SOURCE scenes/ibl_material_demo.scene.txt
+  MESH_DEPENDENCIES pbr_sphere
+  MATERIAL_DEPENDENCIES pbr_dielectric_rough pbr_dielectric_smooth pbr_metallic_rough pbr_metallic_smooth
+  TEXTURE_DEPENDENCIES textured_quad_srgb
+)
+set(ATLANTIS_ibl_material_demo_scene_ARTIFACT_PATH "${ATLANTIS_ibl_material_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_ibl_material_demo_scene_METADATA_PATH "${ATLANTIS_ibl_material_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_ibl_material_demo_scene_MANIFEST_PATH "${ATLANTIS_ibl_material_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_ibl_material_demo_scene_TARGET "${ATLANTIS_ibl_material_demo_scene_TARGET}" PARENT_SCOPE)
+
 # Plan 0024 Milestone 10: a focused HDR roll-off baseline. One existing
 # rough-dielectric PBR sphere is lit by one deliberately over-range
 # Directional light; the scene is verification-only and is not wired
@@ -296,3 +310,13 @@ set(ATLANTIS_hdr_roll_off_demo_scene_ARTIFACT_PATH "${ATLANTIS_hdr_roll_off_demo
 set(ATLANTIS_hdr_roll_off_demo_scene_METADATA_PATH "${ATLANTIS_hdr_roll_off_demo_scene_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_hdr_roll_off_demo_scene_MANIFEST_PATH "${ATLANTIS_hdr_roll_off_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
 set(ATLANTIS_hdr_roll_off_demo_scene_TARGET "${ATLANTIS_hdr_roll_off_demo_scene_TARGET}" PARENT_SCOPE)
+
+# Plan 0025 Milestone 2: repository-authored linear HDR studio environment.
+atlantis_add_environment_asset(
+  NAME ibl_studio
+  SOURCE environments/ibl_studio_source.hdr
+)
+set(ATLANTIS_ibl_studio_ARTIFACT_PATH "${ATLANTIS_ibl_studio_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_ibl_studio_METADATA_PATH "${ATLANTIS_ibl_studio_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_ibl_studio_TARGET "${ATLANTIS_ibl_studio_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_ibl_studio_LOGICAL_PATH "${ATLANTIS_ibl_studio_LOGICAL_PATH}" PARENT_SCOPE)

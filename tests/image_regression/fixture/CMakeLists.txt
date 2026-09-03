@@ -6,6 +6,7 @@ add_library(atlantis_image_regression_fixture STATIC
   material_demo_fixture.cpp
   lighting_demo_fixture.cpp
   pbr_material_demo_fixture.cpp
+  ibl_material_demo_fixture.cpp
   hdr_roll_off_demo_fixture.cpp
 )
 

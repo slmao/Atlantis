@@ -63,6 +63,15 @@ struct TempDirGuard {
   return std::system(wrapped.c_str());
 }
 
+[[nodiscard]] int runEnvironmentCooker(const std::string& cookerExecutable, const std::string& sourcePath,
+                                        const std::string& assetRoot, const std::string& outputDir) {
+  const fs::path stampPath = fs::path(outputDir) / "studio.stamp";
+  const std::string command = quoted(cookerExecutable) + " --kind=environment --source=" + quoted(sourcePath) +
+                              " --asset-root=" + quoted(assetRoot) + " --output-dir=" + quoted(outputDir) +
+                              " --stamp=" + quoted(stampPath.string());
+  return std::system(("\"" + command + "\"").c_str());
+}
+
 [[nodiscard]] std::vector<char> readFileBytes(const fs::path& path) {
   std::ifstream in(path, std::ios::binary);
   REQUIRE(in.is_open());
@@ -114,4 +123,20 @@ TEST_CASE("The real atlantis_asset_cooker executable produces byte-identical out
 
   CHECK(readFileBytes(artifactA) == readFileBytes(artifactB));
   CHECK(readFileBytes(metadataA) == readFileBytes(metadataB));
+}
+
+TEST_CASE("The real environment cooker produces byte-identical artifact and metadata across two processes",
+          "[asset_cooker][environment][tool]") {
+  TempDirGuard dir("environment_determinism");
+  const fs::path outputDirA = dir.path / "out_a";
+  const fs::path outputDirB = dir.path / "out_b";
+  REQUIRE(runEnvironmentCooker(ATLANTIS_ASSET_COOKER_EXECUTABLE, ATLANTIS_IBL_STUDIO_SOURCE_PATH,
+                               ATLANTIS_ASSET_ROOT, outputDirA.string()) == 0);
+  REQUIRE(runEnvironmentCooker(ATLANTIS_ASSET_COOKER_EXECUTABLE, ATLANTIS_IBL_STUDIO_SOURCE_PATH,
+                               ATLANTIS_ASSET_ROOT, outputDirB.string()) == 0);
+  REQUIRE(fs::exists(outputDirA / "studio.aenv"));
+  REQUIRE(fs::exists(outputDirB / "studio.aenv"));
+  CHECK(readFileBytes(outputDirA / "studio.aenv") == readFileBytes(outputDirB / "studio.aenv"));
+  CHECK(readFileBytes(outputDirA / "studio.aenv.meta.txt") ==
+        readFileBytes(outputDirB / "studio.aenv.meta.txt"));
 }

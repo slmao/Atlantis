@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atlantis/asset_system/asset_id.h>
+#include <atlantis/asset_system/environment_types.h>
 #include <atlantis/asset_system/material_types.h>
 #include <atlantis/asset_system/texture_types.h>
 #include <atlantis/renderer/material.h>
@@ -16,6 +17,7 @@
 #include <atlantis/rhi/texture.h>
 #include <atlantis/rhi/types.h>
 #include <atlantis/runtime/bootstrap_config.h>
+#include <atlantis/runtime/environment_realization.h>
 #include <atlantis/world/world.h>
 
 #include "../support/pixel_diff.h"
@@ -56,6 +58,9 @@ struct PbrMaterialDemoFixture {
   atlantis::rhi::VertexInputLayout pbrDirectLitVertexInputLayout;
   std::vector<std::uint32_t> pbrDirectLitVertexSpirv;
   std::vector<std::uint32_t> pbrDirectLitFragmentSpirv;
+  atlantis::rhi::VertexInputLayout pbrIblVertexInputLayout;
+  std::vector<std::uint32_t> pbrIblVertexSpirv;
+  std::vector<std::uint32_t> pbrIblFragmentSpirv;
   // Plan 0024 Milestone 7 (ADR-0068 D-1/D-3/D-6): this fixture's own
   // colorFormat (kPbrMaterialDemoColorFormat below) is Rgba8Unorm and
   // never changes at runtime -- unlike RuntimeApplication, no
@@ -70,8 +75,11 @@ struct PbrMaterialDemoFixture {
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap;
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> materialDataMap;
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap;
+  std::optional<atlantis::asset_system::EnvironmentAssetData> environmentData;
 
   // Phase 2 (GPU) outputs, grown incrementally by renderPbrMaterialDemoFrame().
+  std::optional<atlantis::runtime::EnvironmentLightingResources> environmentLightingResources;
+  std::size_t environmentUploadCount = 0;
   std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>>
       sampledTextureResourceMap;
   std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::Sampler>> samplerResourceMap;

@@ -84,10 +84,10 @@ struct FieldLayout {
 // golden JSON. Every path is double-quoted; std::system() dispatches
 // through cmd.exe on Windows, which requires the quoting below to
 // parse correctly when any path contains a space.
-[[nodiscard]] bool runSlangcReflectionJson(const std::string& entryName, const std::string& stage,
+[[nodiscard]] bool runSlangcReflectionJson(const fs::path& sourcePath, const std::string& entryName, const std::string& stage,
                                             const fs::path& outputJsonPath, const fs::path& outputSpirvPath) {
   const std::string innerCommand = "\"" + std::string(ATLANTIS_SLANGC_EXECUTABLE) + "\" \"" +
-                                    std::string(ATLANTIS_PBR_DIRECT_LIT_SLANG_SOURCE) + "\" -entry " + entryName +
+                                    sourcePath.string() + "\" -entry " + entryName +
                                     " -stage " + stage + " -target spirv -reflection-json \"" +
                                     outputJsonPath.string() + "\" -o \"" + outputSpirvPath.string() + "\"";
   // std::system() dispatches through `cmd.exe /c <command>` on Windows;
@@ -147,7 +147,7 @@ TEST_CASE("Camera/Lighting/CameraWorldPosition buffer: a real, freshly-generated
   const fs::path jsonPath = outputDir / "pbr_direct_lit_vert_raw_refl.json";
   const fs::path spirvPath = outputDir / "pbr_direct_lit_vert_raw.spv";
 
-  REQUIRE(runSlangcReflectionJson("vertexMain", "vertex", jsonPath, spirvPath));
+  REQUIRE(runSlangcReflectionJson(ATLANTIS_PBR_DIRECT_LIT_SLANG_SOURCE, "vertexMain", "vertex", jsonPath, spirvPath));
   const auto jsonText = readWholeFile(jsonPath);
   REQUIRE(jsonText.has_value());
 
@@ -164,6 +164,26 @@ TEST_CASE("Camera/Lighting/CameraWorldPosition buffer: a real, freshly-generated
   // offset + size, never assumed equal to the C++ side's own sizeof
   // without this real cross-check.
   CHECK(pad2->offset + pad2->size == kExpectedTotalSize);
+
+  fs::remove_all(outputDir, ec);
+}
+
+TEST_CASE("pbr_ibl CameraUniform appends nine float4 SH coefficients at offset 320 for a 464-byte block",
+          "[shader_system][runtime][pbr_ibl][reflection]") {
+  const fs::path outputDir = fs::temp_directory_path() / "atlantis_pbr_ibl_reflection_cross_check_tests";
+  std::error_code ec;
+  fs::create_directories(outputDir, ec);
+  const fs::path jsonPath = outputDir / "pbr_ibl_vert_raw_refl.json";
+  const fs::path spirvPath = outputDir / "pbr_ibl_vert_raw.spv";
+
+  REQUIRE(runSlangcReflectionJson(ATLANTIS_PBR_IBL_SLANG_SOURCE, "vertexMain", "vertex", jsonPath, spirvPath));
+  const auto jsonText = readWholeFile(jsonPath);
+  REQUIRE(jsonText.has_value());
+  const auto irradianceSh = findFieldLayout(*jsonText, "irradianceSh");
+  REQUIRE(irradianceSh.has_value());
+  CHECK(irradianceSh->offset == 320);
+  CHECK(irradianceSh->size == 9 * 4 * 4);
+  CHECK(irradianceSh->offset + irradianceSh->size == 464);
 
   fs::remove_all(outputDir, ec);
 }

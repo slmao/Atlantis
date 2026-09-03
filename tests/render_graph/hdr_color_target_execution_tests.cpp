@@ -224,7 +224,7 @@ TEST_CASE("execute() runs a real two-pass HDR graph: geometry pass writes hdrCol
   builder.setExecute(outputTransform, [&](atlantis::rhi::CommandList& cmd) {
     outputTransformRan = true;
     hdrTransitionsWhenOutputTransformRan = commandList.hdrColorTargetTransitions.size();
-    cmd.bindTexture(fakeHdr, fakeSampler);
+    cmd.bindTexture(0, fakeHdr, fakeSampler);
   });
 
   const auto compiled = builder.compile();
@@ -280,6 +280,7 @@ TEST_CASE("execute() runs a real two-pass HDR graph: geometry pass writes hdrCol
   // Sampler&) call, recorded via the HdrColorTarget-shaped overload,
   // never the SampledTexture-shaped one.
   REQUIRE(commandList.boundHdrTextures.size() == 1);
+  REQUIRE(commandList.boundHdrTextures[0].binding == 0);
   REQUIRE(commandList.boundHdrTextures[0].texture == &fakeHdr);
   REQUIRE(commandList.boundHdrTextures[0].sampler == &fakeSampler);
   REQUIRE(commandList.boundTextures.empty());

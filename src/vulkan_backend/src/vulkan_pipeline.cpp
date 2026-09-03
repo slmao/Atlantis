@@ -4,15 +4,23 @@
 
 namespace atlantis::vulkan_backend::detail {
 
+bool isSampledTextureBindingInRange(std::uint32_t firstBinding, std::uint32_t bindingCount,
+                                    std::uint32_t binding) noexcept {
+  return binding >= firstBinding && binding - firstBinding < bindingCount;
+}
+
 VulkanPipeline::VulkanPipeline(VkDevice device, VkDescriptorPool descriptorPool, VkPipeline pipeline,
                                 VkPipelineLayout pipelineLayout, VkDescriptorSetLayout descriptorSetLayout,
-                                VkDescriptorSet descriptorSet)
+                                VkDescriptorSet descriptorSet, std::uint32_t sampledTextureFirstBinding,
+                                std::uint32_t sampledTextureBindingCount)
     : device_(device),
       descriptorPool_(descriptorPool),
       pipeline_(pipeline),
       pipelineLayout_(pipelineLayout),
       descriptorSetLayout_(descriptorSetLayout),
-      descriptorSet_(descriptorSet) {}
+      descriptorSet_(descriptorSet),
+      sampledTextureFirstBinding_(sampledTextureFirstBinding),
+      sampledTextureBindingCount_(sampledTextureBindingCount) {}
 
 VulkanPipeline::~VulkanPipeline() {
   // Destruction order (Plan 0007 Section 10): vkDestroyPipeline ->

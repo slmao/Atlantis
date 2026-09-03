@@ -113,7 +113,9 @@ void VulkanCommandList::transitionResource(atlantis::rhi::SampledTexture& target
       .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
       .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
       .image = vulkanTexture.image(),
-      .subresourceRange = fullColorResourceRange(),
+      .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, vulkanTexture.mipLevelCount(), 0,
+                           vulkanTexture.dimension() == atlantis::rhi::SampledTextureDimension::TextureCube ? 6U
+                                                                                                            : 1U},
   };
 
   vkCmdPipelineBarrier(commandBuffer_, plan.srcStage, plan.dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
@@ -293,6 +295,8 @@ void VulkanCommandList::bindPipeline(atlantis::rhi::Pipeline& pipeline) {
   vkCmdBindPipeline(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkanPipeline.vkPipeline());
   boundPipelineLayout_ = vulkanPipeline.pipelineLayout();
   boundDescriptorSet_ = vulkanPipeline.descriptorSet();
+  boundSampledTextureFirstBinding_ = vulkanPipeline.sampledTextureFirstBinding();
+  boundSampledTextureBindingCount_ = vulkanPipeline.sampledTextureBindingCount();
 }
 
 void VulkanCommandList::bindVertexBuffer(atlantis::rhi::Buffer& buffer) {
@@ -346,9 +350,12 @@ void VulkanCommandList::bindUniformBuffer(atlantis::rhi::Buffer& buffer) {
                            &boundDescriptorSet_, 0, nullptr);
 }
 
-void VulkanCommandList::bindTexture(const atlantis::rhi::SampledTexture& texture,
+void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::SampledTexture& texture,
                                      const atlantis::rhi::Sampler& sampler) {
   ATLANTIS_CHECK(boundDescriptorSet_ != VK_NULL_HANDLE);
+  ATLANTIS_CHECK(isSampledTextureBindingInRange(boundSampledTextureFirstBinding_,
+                                                boundSampledTextureBindingCount_, binding));
+  ATLANTIS_CHECK(binding < textureDescriptorMemos_.size());
   const auto& vulkanTexture = static_cast<const VulkanSampledTexture&>(texture);
   const auto& vulkanSampler = static_cast<const VulkanSampler&>(sampler);
 
@@ -369,20 +376,20 @@ void VulkanCommandList::bindTexture(const atlantis::rhi::SampledTexture& texture
   // VkDescriptorImageInfo contents, so the redundant vkUpdateDescriptorSets
   // call (and only that call) is skipped when this exact
   // (descriptor set, SampledTexture, Sampler) triple repeats.
-  if (boundDescriptorSet_ != lastUpdatedTextureDescriptorSet_ || &vulkanTexture != lastUpdatedSampledTexture_ ||
-      &vulkanSampler != lastUpdatedSampler_) {
+  TextureDescriptorMemo& memo = textureDescriptorMemos_[binding];
+  if (boundDescriptorSet_ != memo.descriptorSet || &vulkanTexture != memo.texture || &vulkanSampler != memo.sampler) {
     VkWriteDescriptorSet write{};
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     write.dstSet = boundDescriptorSet_;
-    write.dstBinding = 1;
+    write.dstBinding = binding;
     write.descriptorCount = 1;
     write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     write.pImageInfo = &imageInfo;
 
     vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
-    lastUpdatedTextureDescriptorSet_ = boundDescriptorSet_;
-    lastUpdatedSampledTexture_ = &vulkanTexture;
-    lastUpdatedSampler_ = &vulkanSampler;
+    memo.descriptorSet = boundDescriptorSet_;
+    memo.texture = &vulkanTexture;
+    memo.sampler = &vulkanSampler;
   }
 
   // Renderer calls this immediately after bindUniformBuffer() (Spec
@@ -404,9 +411,11 @@ void VulkanCommandList::bindTexture(const atlantis::rhi::SampledTexture& texture
 // dstBinding = 0, not 1 -- the output-transform descriptor contract's
 // own sole binding (no uniform buffer at binding 0, unlike every
 // MaterialKind contract), matching outputTransformExpectedDescriptorContract().
-void VulkanCommandList::bindTexture(const atlantis::rhi::HdrColorTarget& texture,
+void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::HdrColorTarget& texture,
                                      const atlantis::rhi::Sampler& sampler) {
   ATLANTIS_CHECK(boundDescriptorSet_ != VK_NULL_HANDLE);
+  ATLANTIS_CHECK(isSampledTextureBindingInRange(boundSampledTextureFirstBinding_,
+                                                boundSampledTextureBindingCount_, binding));
   const auto& vulkanHdrColorTarget = static_cast<const VulkanHdrColorTarget&>(texture);
   const auto& vulkanSampler = static_cast<const VulkanSampler&>(sampler);
 
@@ -422,7 +431,7 @@ void VulkanCommandList::bindTexture(const atlantis::rhi::HdrColorTarget& texture
   VkWriteDescriptorSet write{};
   write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   write.dstSet = boundDescriptorSet_;
-  write.dstBinding = 0;
+  write.dstBinding = binding;
   write.descriptorCount = 1;
   write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   write.pImageInfo = &imageInfo;
@@ -479,27 +488,42 @@ void VulkanCommandList::copyRenderTargetToBuffer(atlantis::rhi::RenderTarget& so
 }
 
 void VulkanCommandList::copyBufferToTexture(atlantis::rhi::Buffer& source, atlantis::rhi::SampledTexture& destination) {
+  const atlantis::rhi::SampledTextureUploadRegion region{.extent = destination.extent()};
+  copyBufferToTexture(source, destination, std::span<const atlantis::rhi::SampledTextureUploadRegion>(&region, 1));
+}
+
+void VulkanCommandList::copyBufferToTexture(
+    atlantis::rhi::Buffer& source, atlantis::rhi::SampledTexture& destination,
+    std::span<const atlantis::rhi::SampledTextureUploadRegion> regions) {
   ATLANTIS_CHECK(source.purpose() == atlantis::rhi::BufferPurpose::Staging);
   // Only one concrete Buffer implementation exists in Phase 1 (ADR-0001) --
   // no dynamic_cast needed, matching copyRenderTargetToBuffer()'s own note
   // on destination there.
   auto& vulkanBuffer = static_cast<VulkanBuffer&>(source);
   auto& vulkanTexture = static_cast<VulkanSampledTexture&>(destination);
-  const atlantis::rhi::Extent2D destExtent = destination.extent();
-
-  VkBufferImageCopy region{};
-  region.bufferOffset = 0;
-  region.bufferRowLength = 0;    // 0 = tightly packed (ADR-0040 precedent)
-  region.bufferImageHeight = 0;  // 0 = tightly packed (ADR-0040 precedent)
-  region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-  region.imageOffset = {0, 0, 0};
-  region.imageExtent = {destExtent.width, destExtent.height, 1};
+  ATLANTIS_CHECK(!regions.empty());
+  std::vector<VkBufferImageCopy> vkRegions;
+  vkRegions.reserve(regions.size());
+  for (const atlantis::rhi::SampledTextureUploadRegion& sourceRegion : regions) {
+    ATLANTIS_CHECK(isValidSampledTextureUploadRegion(destination.extent(), destination.format(),
+                                                     destination.dimension(), destination.mipLevelCount(),
+                                                     source.sizeBytes(), sourceRegion));
+    VkBufferImageCopy region{};
+    region.bufferOffset = sourceRegion.bufferOffsetBytes;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, sourceRegion.mipLevel, sourceRegion.arrayLayer, 1};
+    region.imageOffset = {0, 0, 0};
+    region.imageExtent = {sourceRegion.extent.width, sourceRegion.extent.height, 1};
+    vkRegions.push_back(region);
+  }
   // Precondition, enforced by buildTextureUploadPass() (Spec 0016 D4), not
   // re-checked here: destination must already be in
   // VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL (ResourceState::TransferDestination)
   // when this is called.
   vkCmdCopyBufferToImage(commandBuffer_, vulkanBuffer.vkBuffer(), vulkanTexture.image(),
-                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<std::uint32_t>(vkRegions.size()),
+                          vkRegions.data());
 }
 
 }  // namespace atlantis::vulkan_backend::detail

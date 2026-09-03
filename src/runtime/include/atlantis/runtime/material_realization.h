@@ -131,7 +131,11 @@ struct RealizedMaterialCandidate {
     const std::vector<std::uint32_t>& litTexturedFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& pbrDirectLitVertexInputLayout,
     const std::vector<std::uint32_t>& pbrDirectLitVertexSpirv,
-    const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv, atlantis::asset_system::AssetId materialAssetId,
+    const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrIblVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrIblVertexSpirv,
+    const std::vector<std::uint32_t>& pbrIblFragmentSpirv, bool environmentEnabled,
+    atlantis::asset_system::AssetId materialAssetId,
     const atlantis::asset_system::MaterialAssetData& materialData,
     const atlantis::asset_system::TextureAssetData& textureData,
     const std::unordered_map<atlantis::asset_system::AssetId, const atlantis::rhi::SampledTexture*>&
@@ -186,6 +190,9 @@ struct RealizedMaterialCandidate {
     const atlantis::rhi::VertexInputLayout& pbrDirectLitVertexInputLayout,
     const std::vector<std::uint32_t>& pbrDirectLitVertexSpirv,
     const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrIblVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrIblVertexSpirv,
+    const std::vector<std::uint32_t>& pbrIblFragmentSpirv, bool environmentEnabled,
     const std::vector<atlantis::asset_system::AssetId>& pendingIds,
     const std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>>&
         sampledTextureResourceMap,
@@ -193,6 +200,36 @@ struct RealizedMaterialCandidate {
         materialDataMap,
     const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData>&
         textureDataMap);
+
+// Compatibility overload for every no-environment composition root. It keeps
+// the pre-Spec-0025 call shape and selects pbr_direct_lit exactly.
+[[nodiscard]] inline std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate>
+realizePendingMaterials(
+    atlantis::rhi::Device& device, atlantis::rhi::CommandList& commandList,
+    const atlantis::rhi::VertexInputLayout& unlitTexturedVertexInputLayout,
+    const std::vector<std::uint32_t>& unlitTexturedVertexSpirv,
+    const std::vector<std::uint32_t>& unlitTexturedFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& litTexturedVertexInputLayout,
+    const std::vector<std::uint32_t>& litTexturedVertexSpirv,
+    const std::vector<std::uint32_t>& litTexturedFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrDirectLitVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrDirectLitVertexSpirv,
+    const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv,
+    const std::vector<atlantis::asset_system::AssetId>& pendingIds,
+    const std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>>&
+        sampledTextureResourceMap,
+    const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData>&
+        materialDataMap,
+    const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData>&
+        textureDataMap) {
+  return realizePendingMaterials(
+      device, commandList, unlitTexturedVertexInputLayout, unlitTexturedVertexSpirv,
+      unlitTexturedFragmentSpirv, litTexturedVertexInputLayout, litTexturedVertexSpirv,
+      litTexturedFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,
+      pbrDirectLitFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,
+      pbrDirectLitFragmentSpirv, false, pendingIds, sampledTextureResourceMap, materialDataMap,
+      textureDataMap);
+}
 
 // Plan 0024 Milestone 6 (correction, ADR-0068 D-4, discovered during
 // Implementation -- Human Review direction, chat, 2026-09-01): every

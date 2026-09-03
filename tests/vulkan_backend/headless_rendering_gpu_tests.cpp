@@ -433,7 +433,7 @@ TEST_CASE("One full render-and-readback cycle exercises all five corrected call 
                            .wordCount = outputTransformFragmentSpirv->size()},
        .vertexInputLayout = *outputTransformVertexInputLayout,
        .colorFormat = kColorFormat,
-       .hasSampledTextureBinding = true,
+       .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
   REQUIRE(outputTransformPipelineResult.isOk());

@@ -6,6 +6,7 @@
 #include <atlantis/render_graph/render_graph_builder.h>
 #include <atlantis/rhi/types.h>
 
+#include <array>
 #include <string>
 #include <utility>
 #include <vector>
@@ -56,6 +57,25 @@ class ScopedFailureHandler {
 };
 
 }  // namespace
+
+TEST_CASE("CommandList sampled-texture upload regions preserve ordered subresource data in the mock",
+          "[render_graph][execution][sampled_texture]") {
+  atlantis::render_graph::test::FakeBuffer staging(atlantis::rhi::BufferPurpose::Staging, 512);
+  FakeSampledTexture texture("cube-mips");
+  FakeCommandList commandList;
+  const std::array regions{
+      atlantis::rhi::SampledTextureUploadRegion{.bufferOffsetBytes = 0, .mipLevel = 0, .arrayLayer = 0, .extent = {8, 8}},
+      atlantis::rhi::SampledTextureUploadRegion{.bufferOffsetBytes = 256, .mipLevel = 1, .arrayLayer = 5, .extent = {4, 4}},
+  };
+
+  commandList.copyBufferToTexture(staging, texture, regions);
+
+  REQUIRE(commandList.copiesBufferToTexture.size() == 1);
+  REQUIRE(commandList.copiesBufferToTexture[0].source == &staging);
+  REQUIRE(commandList.copiesBufferToTexture[0].destination == &texture);
+  REQUIRE(commandList.copyBufferToTextureRegions.size() == 1);
+  REQUIRE(commandList.copyBufferToTextureRegions[0] == std::vector(regions.begin(), regions.end()));
+}
 
 TEST_CASE("execute() records Undefined->TransferDestination, then the pass callback, then "
           "TransferDestination->ShaderRead",

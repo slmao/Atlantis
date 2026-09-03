@@ -2,10 +2,13 @@
 #include <atlantis/renderer/material.h>
 #include <atlantis/renderer/mesh.h>
 #include <atlantis/renderer/renderer.h>
+#include <atlantis/assert.h>
 
 #include <array>
 #include <memory>
+#include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
@@ -35,9 +38,25 @@ using atlantis::render_graph::test::FakeSampledTexture;
 using atlantis::render_graph::test::FakeSampler;
 using atlantis::render_graph::test::FakeTexture;
 using atlantis::renderer::DrawItem;
+using atlantis::renderer::EnvironmentLighting;
 using atlantis::renderer::Material;
+using atlantis::renderer::MaterialEnvironmentBinding;
 using atlantis::renderer::Mesh;
 using atlantis::renderer::Renderer;
+
+class ScopedFailureHandler {
+ public:
+  explicit ScopedFailureHandler(std::vector<std::string>& failures)
+      : previous_(atlantis::assertions::setFailureHandler(
+            [&failures](const atlantis::AssertFailureInfo& info) { failures.emplace_back(info.message); })) {}
+  ~ScopedFailureHandler() { atlantis::assertions::setFailureHandler(std::move(previous_)); }
+
+  ScopedFailureHandler(const ScopedFailureHandler&) = delete;
+  ScopedFailureHandler& operator=(const ScopedFailureHandler&) = delete;
+
+ private:
+  atlantis::AssertFailureHandler previous_;
+};
 
 }  // namespace
 
@@ -46,6 +65,9 @@ TEST_CASE("Material's sampledTexture()/sampler() are non-owning raw pointer type
                                  const atlantis::rhi::SampledTexture*>);
   STATIC_REQUIRE(
       std::is_same_v<decltype(std::declval<const Material&>().sampler()), const atlantis::rhi::Sampler*>);
+  Material material(std::make_unique<FakePipeline>(),
+                    atlantis::renderer::MaterialPushConstantLayout::ObjectToWorldOnly);
+  CHECK(material.environmentBinding() == MaterialEnvironmentBinding::None);
 }
 
 TEST_CASE("Mesh is movable, not copyable", "[renderer][ownership]") {
@@ -166,6 +188,7 @@ TEST_CASE("Renderer::drawFrame() records a full bind/draw sequence per DrawItem 
   // (BindHdrTexture, not BindTexture) -- see the two Material-textured/
   // untextured test cases below for that overload's own coverage.
   REQUIRE(commandList.boundHdrTextures.size() == 1);
+  REQUIRE(commandList.boundHdrTextures[0].binding == 0);
   REQUIRE(commandList.boundHdrTextures[0].texture == &hdrColorTarget);
   REQUIRE(commandList.boundHdrTextures[0].sampler == &outputTransformSampler);
 }
@@ -324,9 +347,11 @@ TEST_CASE("Renderer::drawFrame() with a textured Material records bindTexture im
   // ...) call is recorded separately (boundHdrTextures), so this count
   // is unaffected.
   REQUIRE(commandList.boundTextures.size() == 2);
+  REQUIRE(commandList.boundTextures[0].binding == 1);
   REQUIRE(commandList.boundTextures[0].texture == &fakeTexture);
   REQUIRE(commandList.boundTextures[0].sampler == &fakeSampler);
   REQUIRE(commandList.boundTextures[1].texture == &fakeTexture);
+  REQUIRE(commandList.boundTextures[1].binding == 1);
   REQUIRE(commandList.boundTextures[1].sampler == &fakeSampler);
 
   // Positioned immediately after bindUniformBuffer, for each DrawItem.
@@ -339,4 +364,61 @@ TEST_CASE("Renderer::drawFrame() with a textured Material records bindTexture im
     }
   }
   REQUIRE(foundPairs == 2);
+}
+
+TEST_CASE("Renderer binds base color, environment cube, and DFG LUT at explicit slots for an IBL Material",
+          "[renderer][ownership][pbr_ibl]") {
+  Mesh mesh(std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Vertex, 0),
+            std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Index, 0), 3);
+  FakeSampledTexture baseColor("base-color");
+  FakeSampledTexture environment("environment");
+  FakeSampledTexture dfgLut("dfg-lut");
+  FakeSampler baseColorSampler("base-color-sampler");
+  FakeSampler environmentSampler("environment-sampler");
+  FakeSampler dfgSampler("dfg-sampler");
+  Material material(std::make_unique<FakePipeline>(),
+                    atlantis::renderer::MaterialPushConstantLayout::PbrDirectLit, &baseColor,
+                    &baseColorSampler, {1.0F, 1.0F, 1.0F, 1.0F}, 0.0F, 0.5F,
+                    MaterialEnvironmentBinding::Ibl);
+  CHECK(material.environmentBinding() == MaterialEnvironmentBinding::Ibl);
+
+  DrawItem item{.mesh = &mesh,
+                .material = &material,
+                .objectToWorld = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
+  FakeRenderTarget colorTarget("color");
+  FakeTexture depthTarget("depth");
+  FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 464);
+  FakeHdrColorTarget hdrColorTarget("hdr");
+  FakeBuffer fullscreenVertexBuffer(atlantis::rhi::BufferPurpose::Vertex, 0);
+  FakeBuffer fullscreenIndexBuffer(atlantis::rhi::BufferPurpose::Index, 0);
+  FakePipeline outputTransformPipeline;
+  FakeSampler outputTransformSampler("output-transform");
+  const EnvironmentLighting lighting{environment, environmentSampler, dfgLut, dfgSampler};
+
+  FakeCommandList commandList;
+  Renderer renderer;
+  renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, std::span<const DrawItem>(&item, 1),
+                     atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
+                     fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, &lighting);
+
+  REQUIRE(commandList.boundTextures.size() == 3);
+  CHECK(commandList.boundTextures[0].binding == 1);
+  CHECK(commandList.boundTextures[0].texture == &baseColor);
+  CHECK(commandList.boundTextures[1].binding == 2);
+  CHECK(commandList.boundTextures[1].texture == &environment);
+  CHECK(commandList.boundTextures[1].sampler == &environmentSampler);
+  CHECK(commandList.boundTextures[2].binding == 3);
+  CHECK(commandList.boundTextures[2].texture == &dfgLut);
+  CHECK(commandList.boundTextures[2].sampler == &dfgSampler);
+
+  std::vector<std::string> failures;
+  ScopedFailureHandler failureHandler(failures);
+  FakeCommandList missingLightingCommandList;
+  renderer.drawFrame(missingLightingCommandList, colorTarget, depthTarget, cameraBuffer,
+                     std::span<const DrawItem>(&item, 1), atlantis::rhi::ResourceState::PresentSource,
+                     hdrColorTarget, fullscreenVertexBuffer, fullscreenIndexBuffer,
+                     outputTransformPipeline, outputTransformSampler);
+  REQUIRE(failures.size() == 1);
+  CHECK(failures[0].find("IBL Material") != std::string::npos);
+  CHECK(missingLightingCommandList.boundTextures.size() == 1);
 }

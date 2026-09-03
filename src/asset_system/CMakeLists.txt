@@ -21,6 +21,11 @@ add_library(atlantis_asset_system STATIC
   src/texture_artifact.cpp
   src/cook_texture.cpp
   src/load_texture.cpp
+  src/environment_metadata.cpp
+  src/environment_artifact.cpp
+  src/load_environment.cpp
+  src/environment_processing.cpp
+  src/cook_environment.cpp
   src/material_source.cpp
   src/material_artifact.cpp
   src/material_metadata.cpp
@@ -293,6 +298,40 @@ function(atlantis_add_texture_asset)
   # to record a texture's manifest line, the same way
   # atlantis_add_scene_asset()'s existing MESH_DEPENDENCIES already uses
   # atlantis_add_static_mesh_asset()'s own _LOGICAL_PATH.
+  set(ATLANTIS_${ARG_NAME}_LOGICAL_PATH "${ARG_SOURCE}" PARENT_SCOPE)
+endfunction()
+
+# Plan 0025 Milestone 2: declares one offline-cooked HDR environment.
+# NAME owns build-output naming; SOURCE remains the normalized logical-path
+# identity, matching the corrected ADR-0044 contract.
+function(atlantis_add_environment_asset)
+  set(options "")
+  set(oneValueArgs NAME SOURCE)
+  set(multiValueArgs "")
+  cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+  set(asset_root "${CMAKE_SOURCE_DIR}/assets")
+  set(source_path "${asset_root}/${ARG_SOURCE}")
+  set(output_dir "${CMAKE_BINARY_DIR}/assets")
+  set(artifact_path "${output_dir}/${ARG_NAME}.aenv")
+  set(metadata_path "${output_dir}/${ARG_NAME}.aenv.meta.txt")
+  set(stamp "${output_dir}/${ARG_NAME}.stamp")
+
+  add_custom_command(
+    OUTPUT "${stamp}"
+    BYPRODUCTS "${artifact_path}" "${metadata_path}"
+    COMMAND atlantis_asset_cooker
+      --kind=environment --source=${source_path} --asset-root=${asset_root}
+      --output-dir=${output_dir} --stamp=${stamp}
+    DEPENDS ${source_path} atlantis_asset_cooker
+    COMMENT "Cooking environment asset: ${ARG_NAME} (${ARG_SOURCE})"
+    VERBATIM
+  )
+  add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
+  set_property(GLOBAL APPEND PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS "${ARG_SOURCE}")
+  set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
+  set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
+  set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_LOGICAL_PATH "${ARG_SOURCE}" PARENT_SCOPE)
 endfunction()
 

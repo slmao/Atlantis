@@ -16,7 +16,7 @@ std::vector<DescriptorBinding> minimalRendererExpectedDescriptorContract() {
 
 // Hand-kept in sync with vulkan_backend/src/vulkan_device.cpp's own
 // createPipeline() conditional second binding (Spec 0016/D5,
-// PipelineCreateParams::hasSampledTextureBinding): binding 0 is the same
+// PipelineCreateParams::sampledTextureBindingCount): binding 0 is the same
 // camera-uniform binding every contract in this codebase uses; binding 1
 // is the combined image sampler, fragment stage (ADR-0056 Decision 9).
 std::vector<DescriptorBinding> texturedMaterialExpectedDescriptorContract() {
@@ -46,6 +46,14 @@ std::vector<DescriptorBinding> pbrDirectLitExpectedDescriptorContract() {
   return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
           DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+}
+
+std::vector<DescriptorBinding> pbrIblExpectedDescriptorContract() {
+  return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
+          DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
+          DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          DescriptorBinding{.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
 // Plan 0024 Milestone 3 (ADR-0068 D-10): a genuinely smaller contract

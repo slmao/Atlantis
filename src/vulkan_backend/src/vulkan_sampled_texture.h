@@ -12,6 +12,13 @@
 // full allocation sequence.
 namespace atlantis::vulkan_backend::detail {
 
+[[nodiscard]] bool isValidSampledTextureCreateParams(
+    const atlantis::rhi::SampledTextureCreateParams& params) noexcept;
+[[nodiscard]] bool isValidSampledTextureUploadRegion(
+    atlantis::rhi::Extent2D textureExtent, atlantis::rhi::SampledTextureFormat format,
+    atlantis::rhi::SampledTextureDimension dimension, std::uint32_t mipLevelCount,
+    std::size_t sourceSizeBytes, const atlantis::rhi::SampledTextureUploadRegion& region) noexcept;
+
 // Exclusively owns its VkImage, its own individual VkDeviceMemory
 // allocation (device-local, manual -- no VMA, matching every other RHI
 // resource's own established pattern, ADR-0015), and its
@@ -27,7 +34,8 @@ namespace atlantis::vulkan_backend::detail {
 class VulkanSampledTexture final : public atlantis::rhi::SampledTexture {
  public:
   VulkanSampledTexture(VkDevice device, VkImage image, VkDeviceMemory memory, VkImageView imageView,
-                        atlantis::rhi::Extent2D extent, atlantis::rhi::SampledTextureFormat format);
+                        atlantis::rhi::Extent2D extent, atlantis::rhi::SampledTextureFormat format,
+                        atlantis::rhi::SampledTextureDimension dimension, std::uint32_t mipLevelCount);
   ~VulkanSampledTexture() override;
 
   VulkanSampledTexture(const VulkanSampledTexture&) = delete;
@@ -37,6 +45,8 @@ class VulkanSampledTexture final : public atlantis::rhi::SampledTexture {
 
   [[nodiscard]] atlantis::rhi::Extent2D extent() const override { return extent_; }
   [[nodiscard]] atlantis::rhi::SampledTextureFormat format() const override { return format_; }
+  [[nodiscard]] atlantis::rhi::SampledTextureDimension dimension() const override { return dimension_; }
+  [[nodiscard]] std::uint32_t mipLevelCount() const override { return mipLevelCount_; }
 
   // Exist solely for VulkanCommandList's copyBufferToTexture()/
   // transitionResource()/bindTexture() bodies -- never reached from
@@ -51,6 +61,8 @@ class VulkanSampledTexture final : public atlantis::rhi::SampledTexture {
   VkImageView imageView_;
   atlantis::rhi::Extent2D extent_;
   atlantis::rhi::SampledTextureFormat format_;
+  atlantis::rhi::SampledTextureDimension dimension_;
+  std::uint32_t mipLevelCount_;
 };
 
 }  // namespace atlantis::vulkan_backend::detail
