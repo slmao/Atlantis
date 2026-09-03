@@ -12,6 +12,7 @@ using atlantis::shader_system::DescriptorBinding;
 using atlantis::shader_system::DescriptorType;
 using atlantis::shader_system::litTexturedExpectedDescriptorContract;
 using atlantis::shader_system::minimalRendererExpectedDescriptorContract;
+using atlantis::shader_system::pbrIblExpectedDescriptorContract;
 using atlantis::shader_system::ReflectionMetadata;
 using atlantis::shader_system::ShaderStage;
 using atlantis::shader_system::texturedMaterialExpectedDescriptorContract;
@@ -100,6 +101,40 @@ TEST_CASE("validateDescriptorContract() rejects a UniformBuffer where the textur
   const auto result = validateDescriptorContract(metadata, texturedMaterialExpectedDescriptorContract());
   REQUIRE(result.isErr());
   REQUIRE(result.error() == ContractMismatchError::DescriptorTypeMismatch);
+}
+
+TEST_CASE("pbrIblExpectedDescriptorContract declares uniform visibility and three contiguous fragment samplers",
+          "[shader_system][descriptor_contract][pbr_ibl]") {
+  const std::vector<DescriptorBinding> expected = {
+      {.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
+      {.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+  };
+  CHECK(pbrIblExpectedDescriptorContract() == expected);
+}
+
+TEST_CASE("pbr IBL fragment contract rejects a missing or mistyped environment binding",
+          "[shader_system][descriptor_contract][pbr_ibl]") {
+  const std::vector<DescriptorBinding> fragmentExpected = {
+      {.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+  };
+  ReflectionMetadata missing{};
+  missing.descriptorBindings.assign(fragmentExpected.begin(), fragmentExpected.end() - 1);
+  const auto missingResult = validateDescriptorContract(missing, fragmentExpected);
+  REQUIRE(missingResult.isErr());
+  CHECK(missingResult.error() == ContractMismatchError::BindingCountMismatch);
+
+  ReflectionMetadata mistyped{};
+  mistyped.descriptorBindings = fragmentExpected;
+  mistyped.descriptorBindings[2].type = DescriptorType::UniformBuffer;
+  const auto mistypedResult = validateDescriptorContract(mistyped, fragmentExpected);
+  REQUIRE(mistypedResult.isErr());
+  CHECK(mistypedResult.error() == ContractMismatchError::DescriptorTypeMismatch);
 }
 
 // Plan 0019 Section P13: litTexturedExpectedDescriptorContract()'s own

@@ -56,6 +56,11 @@ namespace atlantis::shader_system {
 // per-kind pattern.
 [[nodiscard]] std::vector<DescriptorBinding> pbrDirectLitExpectedDescriptorContract();
 
+// Spec 0025/P3: the IBL variant retains the uniform/base-color bindings
+// and adds contiguous fragment samplers for the prefiltered cubemap and
+// DFG LUT at bindings 2 and 3.
+[[nodiscard]] std::vector<DescriptorBinding> pbrIblExpectedDescriptorContract();
+
 // Plan 0024 Milestone 3 (ADR-0068 D-10): the fixed, expected descriptor
 // contract BOTH output-transform shader pairs (output-transform-unorm
 // and output-transform-srgb) must match -- exactly one binding, {set 0,

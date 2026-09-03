@@ -214,19 +214,20 @@ atlantis::Result<ReflectionMetadata, TransformError> transformSlangReflectionJso
           // distinguishing shape is one level deeper, in the module
           // parameter's own type object -- empirically confirmed against
           // a real slangc compile (see this file's own top comment):
-          // type.kind == "resource", type.baseShape == "texture2D", and
+          // type.kind == "resource", type.baseShape == "texture2D" or
+          // "textureCube", and
           // type.combined == true (a JSON boolean) confirms *combined*
           // image+sampler, never a separate Texture2D + SamplerState pair.
           const auto baseShape = readStringField(*moduleType, "baseShape");
           const JsonValue* combinedField = moduleType->find("combined");
           const bool isCombined = combinedField != nullptr && isTruthy(*combinedField);
-          if (baseShape.has_value() && *baseShape == "texture2D" && isCombined) {
+          if (baseShape.has_value() && (*baseShape == "texture2D" || *baseShape == "textureCube") && isCombined) {
             metadata.descriptorBindings.push_back(
                 DescriptorBinding{.set = space.value_or(0), .binding = *index, .type = DescriptorType::Sampler, .stage = stage});
           } else {
             // A resource binding shape this module does not model (e.g.
-            // a separate, non-combined SamplerState/Texture2D pair, or a
-            // 3D/cubemap texture) -- still an explicit, named structural
+            // a separate, non-combined SamplerState/Texture pair, or a
+            // 3D texture) -- still an explicit, named structural
             // error, never silently skipped, matching the constantBuffer
             // branch's own "genuinely new shape, not silently mis-typed"
             // precedent.
@@ -276,7 +277,7 @@ atlantis::Result<ReflectionMetadata, TransformError> transformSlangReflectionJso
       // Section 3's general "unknown fields are ignored" rule extended to
       // unknown binding kinds. This is narrower than it was before Spec
       // 0016/D6: descriptorTableSlot itself now recognizes two distinct
-      // module-type shapes (constantBuffer, resource+texture2D+combined)
+      // module-type shapes (constantBuffer, resource+texture2D/textureCube+combined)
       // instead of one, and any *other* resource shape within a
       // descriptorTableSlot (a non-combined sampler, a non-2D texture, a
       // storage buffer, etc.) is an explicit, named UnexpectedStructure

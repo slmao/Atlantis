@@ -32,6 +32,7 @@ using atlantis::shader_system::litTexturedExpectedDescriptorContract;
 using atlantis::shader_system::minimalRendererExpectedDescriptorContract;
 using atlantis::shader_system::outputTransformExpectedDescriptorContract;
 using atlantis::shader_system::pbrDirectLitExpectedDescriptorContract;
+using atlantis::shader_system::pbrIblExpectedDescriptorContract;
 using atlantis::shader_system::PushConstantRange;
 using atlantis::shader_system::texturedMaterialExpectedDescriptorContract;
 using atlantis::shader_system::ReflectionMetadata;
@@ -142,6 +143,8 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     fullContract = litTexturedExpectedDescriptorContract();
   } else if (expectedContract == "pbr-direct-lit") {
     fullContract = pbrDirectLitExpectedDescriptorContract();
+  } else if (expectedContract == "pbr-ibl") {
+    fullContract = pbrIblExpectedDescriptorContract();
   } else if (expectedContract == "output-transform-unorm" || expectedContract == "output-transform-srgb") {
     // Plan 0024 Milestone 3 (ADR-0068 D-10): both output-transform
     // variants share the identical descriptor contract -- one function,
@@ -175,7 +178,7 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
 // deliberately only runs against the vertex stage's own metadata; a
 // stray PushConstantRange on the fragment stage's own metadata is
 // expected, harmless, and not validated here.
-// Plan 0023 Milestone 3: contract-aware -- pbr-direct-lit expects a
+// Plan 0023 Milestone 3 and Plan 0025 Milestone 5: both PBR variants expect a
 // 96-byte block (PbrPushConstants, ADR-0067 D-3) here; the other three
 // contracts (minimal-renderer/textured-material/lit-textured) keep the
 // existing 64-byte (ObjectToWorldOnly) expectation, unchanged.
@@ -190,7 +193,8 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
   if (expectedContract == "output-transform-unorm" || expectedContract == "output-transform-srgb") {
     // expected stays empty.
   } else {
-    const std::uint32_t expectedSizeBytes = expectedContract == "pbr-direct-lit" ? 96 : sizeof(float) * 16;
+    const bool isPbr = expectedContract == "pbr-direct-lit" || expectedContract == "pbr-ibl";
+    const std::uint32_t expectedSizeBytes = isPbr ? 96 : sizeof(float) * 16;
     expected = {PushConstantRange{.offsetBytes = 0, .sizeBytes = expectedSizeBytes, .stage = ShaderStage::Vertex}};
   }
   if (vertexMetadata.pushConstantRanges != expected) {
@@ -203,7 +207,7 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
 }
 
 // Plan 0023 Milestone 3 (ADR-0067 D-4): a second, new check, run only
-// for pbr-direct-lit -- unlike UnlitTextured/LitTextured (where a
+// for both PBR variants -- unlike UnlitTextured/LitTextured (where a
 // fragment-stage pushConstantBuffer reflection entry is the already-
 // documented "stray, harmless, unread" case, see
 // validateDescriptorContractForStage()'s own header comment above),
@@ -215,7 +219,7 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
       PushConstantRange{.offsetBytes = 0, .sizeBytes = 96, .stage = ShaderStage::Fragment}};
   if (fragmentMetadata.pushConstantRanges != expected) {
     std::cerr << "atlantis_shader_compiler: fragment stage push-constant layout does not match the fixed "
-                 "pbr-direct-lit expectation (offset 0, size 96, fragment stage)\n";
+                 "PBR expectation (offset 0, size 96, fragment stage)\n";
     return false;
   }
   return true;
@@ -357,7 +361,7 @@ int compileAndValidate(const CompileAndValidateRequest& request) {
       validatePushConstantsForVertexStage(vertexResult->metadata, request.expectedContract) &&
       validateUniqueVertexInputLocations(vertexResult->metadata) &&
       validateCrossStageInterface(vertexResult->metadata, fragmentResult->metadata);
-  if (validationOk && request.expectedContract == "pbr-direct-lit") {
+  if (validationOk && (request.expectedContract == "pbr-direct-lit" || request.expectedContract == "pbr-ibl")) {
     validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata);
   }
   if (!validationOk) {

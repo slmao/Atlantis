@@ -32,8 +32,9 @@ target_compile_definitions(atlantis_runtime_tests PRIVATE
   ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_SLANGC_EXECUTABLE="${ATLANTIS_SLANGC_EXECUTABLE}"
   ATLANTIS_PBR_DIRECT_LIT_SLANG_SOURCE="${CMAKE_SOURCE_DIR}/shaders/pbr_direct_lit/pbr_direct_lit.slang"
+  ATLANTIS_PBR_IBL_SLANG_SOURCE="${CMAKE_SOURCE_DIR}/shaders/pbr_ibl/pbr_ibl.slang"
 )
-add_dependencies(atlantis_runtime_tests pbr_direct_lit_shaders)
+add_dependencies(atlantis_runtime_tests pbr_direct_lit_shaders pbr_ibl_shaders)
 
 catch_discover_tests(atlantis_runtime_tests DISCOVERY_MODE PRE_TEST)
 

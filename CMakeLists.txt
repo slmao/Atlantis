@@ -99,10 +99,13 @@ add_subdirectory(shaders/lit_textured)
 # immediately after shaders/lit_textured and before src/runtime, for
 # the same add_dependencies()-ordering reason documented below.
 add_subdirectory(shaders/pbr_direct_lit)
+# Plan 0025 Milestone 5: opt-in IBL sibling for PbrDirectLit. The
+# existing shader above remains the no-environment path unchanged.
+add_subdirectory(shaders/pbr_ibl)
 # Plan 0024 Milestone 4 (ADR-0068 D-6/D-10): the two output-transform
 # shader pairs -- unconditional here, matching every other production
 # shader pair's own identical placement/reasoning; declared immediately
-# after shaders/pbr_direct_lit and before src/runtime, for the same
+# after the PBR shader variants and before src/runtime, for the same
 # add_dependencies()-ordering reason documented below (wired into
 # atlantis_runtime's own add_dependencies() in Plan 0024 Milestone 6).
 add_subdirectory(shaders/output_transform_unorm)
@@ -111,7 +114,8 @@ add_subdirectory(shaders/output_transform_srgb)
 # add_subdirectory(shaders/minimal_renderer), (Plan 0018 Section P10)
 # add_subdirectory(shaders/textured_quad), (Plan 0019 Section P11)
 # add_subdirectory(shaders/lit_textured), (Plan 0023 Milestone 4)
-# add_subdirectory(shaders/pbr_direct_lit), and (Plan 0024 Milestone 4)
+# add_subdirectory(shaders/pbr_direct_lit), (Plan 0025 Milestone 5)
+# add_subdirectory(shaders/pbr_ibl), and (Plan 0024 Milestone 4)
 # add_subdirectory(shaders/output_transform_unorm)/
 # add_subdirectory(shaders/output_transform_srgb) above -- atlantis_runtime
 # add_dependencies() on minimal_mesh_shaders, textured_quad_shaders,

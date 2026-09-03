@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 using atlantis::shader_system::DescriptorType;
+using atlantis::shader_system::DescriptorBinding;
 using atlantis::shader_system::ShaderStage;
 using atlantis::shader_system::transformSlangReflectionJson;
 using atlantis::shader_system::TransformError;
@@ -213,6 +214,27 @@ TEST_CASE("transformSlangReflectionJson() rejects a non-combined resource bindin
   const auto result = transformSlangReflectionJson(path, "fragmentMain", ShaderStage::Fragment, "test-provenance");
   REQUIRE(result.isErr());
   REQUIRE(result.error() == TransformError::UnexpectedStructure);
+  std::filesystem::remove(path);
+}
+
+TEST_CASE("transformSlangReflectionJson() parses a combined cubemap sampler binding",
+          "[shader_system][slang_json_transform][pbr_ibl]") {
+  const auto path = writeTempFixture("combined_cube_sampler", R"({
+    "parameters": [{
+      "name": "environmentSampler",
+      "binding": {"kind": "descriptorTableSlot", "index": 2},
+      "type": {"kind": "resource", "baseShape": "textureCube", "combined": true}
+    }],
+    "entryPoints": [{
+      "name": "fragmentMain", "stage": "fragment",
+      "bindings": [{"name": "environmentSampler", "binding": {"kind": "descriptorTableSlot", "index": 2, "used": 1}}]
+    }]
+  })");
+  const auto result = transformSlangReflectionJson(path, "fragmentMain", ShaderStage::Fragment, "test-provenance");
+  REQUIRE(result.isOk());
+  REQUIRE(result.value().descriptorBindings.size() == 1);
+  CHECK((result.value().descriptorBindings[0] ==
+         DescriptorBinding{.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}));
   std::filesystem::remove(path);
 }
 

@@ -4,6 +4,7 @@ add_executable(atlantis_shader_system_tests
   slang_json_transform_tests.cpp
   descriptor_contract_tests.cpp
   output_transform_reflection_cross_check_tests.cpp
+  pbr_ibl_reflection_tests.cpp
   command_line_tests.cpp
   version_provenance_tests.cpp
 )
@@ -20,6 +21,7 @@ target_compile_definitions(atlantis_shader_system_tests
     ATLANTIS_SHADER_SYSTEM_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
     ATLANTIS_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
     ATLANTIS_OUTPUT_TRANSFORM_SRGB_SHADER_DIR="${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
 )
 
 # Plan 0024 Milestone 8: cross-check both output-transform variants'
@@ -29,6 +31,7 @@ target_compile_definitions(atlantis_shader_system_tests
 add_dependencies(atlantis_shader_system_tests
   output_transform_unorm_shaders
   output_transform_srgb_shaders
+  pbr_ibl_shaders
 )
 
 target_link_libraries(atlantis_shader_system_tests
