@@ -1,9 +1,13 @@
 # ADR 0072: Directional Shadow Map Resource, Pass, and PBR Shader Integration
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-05
-- **Deciders:** slmao — Human Review pending
-- **Related Spec:** [specs/0027-directional-shadow-foundation.md](../specs/0027-directional-shadow-foundation.md) (`Draft`)
+- **Deciders:** slmao — Human Review, approved 2026-09-05
+- **Related Spec:** [specs/0027-directional-shadow-foundation.md](../specs/0027-directional-shadow-foundation.md) (`Approved`)
+- **Acceptance Record (2026-09-05):** Accepted by Human Review as part of
+  Spec 0027's approval against [PR #123](https://github.com/slmao/Atlantis/pull/123)
+  (commit `75a72d2`). Does not change this ADR's own Decision,
+  Consequences, or Alternatives Considered above.
 
 ## Context
 

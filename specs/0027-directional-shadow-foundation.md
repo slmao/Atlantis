@@ -1,11 +1,25 @@
 # Spec: Directional Shadow Foundation
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-09-05
-- **Related Plan(s):** None yet — drafted after this Spec and ADR-0072 are
-  approved.
-- **Related ADR(s):** [ADR-0072](../adr/0072-directional-shadow-map-resource-pass-and-pbr-integration.md) (`Proposed`)
+- **Related Plan(s):** None yet — drafted next, per this approval.
+- **Related ADR(s):** [ADR-0072](../adr/0072-directional-shadow-map-resource-pass-and-pbr-integration.md) (`Accepted`)
+- **Human Review Approval (2026-09-05):** Approved by the repository
+  maintainer against [PR #123](https://github.com/slmao/Atlantis/pull/123)
+  (commit `75a72d2`). Accepts this Spec's design and ADR-0072 as written,
+  including the separate `shadowCasterDrawItems` contract, unconditional
+  shadow-map/Pipeline creation, the every-frame clear rule, the
+  `pbr_direct_lit`/`pbr_ibl` shared-buffer + `shadow_cast` independent-
+  buffer light-space scheme, the three-part descriptor-capacity
+  extension, and the existing-call-site migration. Accepts every item in
+  Risks & Open Questions and For Human Confirmation as deferred to
+  Plan/Implementation, not as blockers — the fixed orthographic volume's
+  concrete numbers, the shadow bias literal, and exact test sample
+  points/thresholds remain Plan-stage values, subject to their own
+  review. This approval authorizes drafting Plan 0027, not
+  implementation; implementation still requires its own Plan and a
+  separate Spec+Plan Human Review before coding begins.
 
 ## Summary
 
