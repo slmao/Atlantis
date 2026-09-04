@@ -52,8 +52,10 @@ shadowed lights, or soft-shadow filtering.
 - Soft shadows, PCF, PCSS, or any filtered/multi-tap sampling; no
   hardware depth-compare sampler.
 - Shadow atlases, per-entity shadow-casting opt-out, or any new
-  World/Scene schema field — every opaque entity already passed to
-  `Renderer::drawFrame()` is both caster and receiver.
+  World/Scene schema field — every real, `World`-driven scene entity is
+  both caster and receiver by construction (it is simply included in
+  both `DrawItem` lists `Renderer::drawFrame()` receives), not through a
+  new per-entity flag.
 - Shadowing IBL, the sky, or any `MaterialKind` other than
   `PbrDirectLit`/PBR-IBL.
 - Fixing the pre-existing, independent `bindUniformBuffer()` descriptor-
@@ -71,10 +73,18 @@ shadowed lights, or soft-shadow filtering.
   a fixed resolution, independent of window/final-target extent — never
   resized on window resize.
 - A new RenderGraph "shadow" pass, executed before the existing "draw"
-  pass, renders every opaque `DrawItem` already passed to
-  `Renderer::drawFrame()` into the shadow map from the directional
-  light's own point of view, using one shared, depth-only Pipeline (no
-  per-`DrawItem` material dispatch — position and object-to-world only).
+  pass, renders the `DrawItem`s in a new, separate, caller-supplied
+  `shadowCasterDrawItems` parameter into the shadow map from the
+  directional light's own point of view, using one shared, depth-only
+  Pipeline (no per-`DrawItem` material dispatch — position and
+  object-to-world only). This list is independent from the existing
+  `drawItems` parameter — `Renderer` neither derives one from the other
+  nor filters either by inspecting `Mesh` layout (ADR-0072 D-3); the
+  caller decides what each list contains.
+- The shadow pass executes every frame unconditionally, clearing the
+  shadow map to maximum depth before any (possibly zero) draws — an
+  empty `shadowCasterDrawItems` and the very first frame are both just
+  "the clear runs, nothing is drawn," not special cases (ADR-0072 D-4).
 - The light-space view/projection matrix is derived from the one
   directional light's own direction and a fixed, Runtime-configured
   orthographic volume (center, half-extent, near/far) — never fit to
@@ -89,7 +99,9 @@ shadowed lights, or soft-shadow filtering.
 - No directional light configured (`directionalLightCount == 0`) means
   the shadow term is never read (the existing light-count loop already
   gates it) — behavior is identical to today, byte-for-byte, for any
-  scene with no directional light.
+  scene with no directional light. Runtime signals this to `Renderer` by
+  passing an empty `shadowCasterDrawItems` span; `Renderer` performs no
+  light-count inspection of its own (ADR-0072 D-3).
 
 ### Non-functional
 
@@ -118,10 +130,14 @@ shadowed lights, or soft-shadow filtering.
 World's own directional light direction
   -> fixed orthographic volume (Runtime constants)
   -> light-space view/projection: appended to the existing camera uniform
-     (read by pbr_direct_lit/pbr_ibl) AND written to a second, dedicated
-     buffer (read by the shadow Pipeline only — ADR-0072 D-6)
-  -> new "shadow" RenderGraph pass: every opaque, standard-layout DrawItem,
-     one shared depth-only Pipeline, writes the new ShadowMap
+     (read by pbr_direct_lit/pbr_ibl) AND written to a second, independent
+     buffer (read by the shadow Pipeline only, chosen to avoid coupling
+     shadow_cast.slang to the unrelated camera/point-light/SH layout —
+     ADR-0072 D-6)
+  -> new "shadow" RenderGraph pass, executed unconditionally every frame:
+     clears the ShadowMap, then draws the DrawItems in the separate
+     shadowCasterDrawItems parameter (possibly empty) with one shared
+     depth-only Pipeline
   -> existing "draw" pass: PbrDirectLit/PBR-IBL sample the ShadowMap once,
      inside their own existing directional-light loop only
   -> existing Spec 0024 HDR intermediate / output-transform pass (unchanged)
@@ -129,32 +145,41 @@ World's own directional light direction
 
 See [ADR-0072](../adr/0072-directional-shadow-map-resource-pass-and-pbr-integration.md)
 for the exact mechanism: the `ShadowMap` resource type, its dedicated
-`Sampler`, and its RenderGraph/`CommandList` integration (D-1, D-4), the
-new `PipelineCreateParams::hasColorAttachment` field for the depth-only
-shadow Pipeline (D-2), the shadow Pipeline's own scope to standard
-44-byte-stride `DrawItem`s and the precise, narrow A-B-A claim (D-3), the
-manual (non-hardware) depth-compare formula and its fixed bias/
-out-of-bounds rule (D-5), why the light-space data needs two buffers
-rather than one and the identity-matrix no-light sentinel (D-6), and the
-exact, disclosed content, descriptor-capacity, and call-site-migration
-consequences of the change to `pbr_direct_lit.slang`/`pbr_ibl.slang`
-(D-7).
+`Sampler`, and its RenderGraph/`CommandList` integration, including the
+unconditional-execution/clear rule that makes an empty caster list and
+the first-use frame the same case (D-1, D-4), the new
+`PipelineCreateParams::hasColorAttachment` field for the depth-only
+shadow Pipeline (D-2), the explicit `shadowCasterDrawItems` contract —
+distinct from `drawItems`, caller-curated for mesh-layout compatibility,
+empty as the sole no-directional-light signal — and the precise, narrow
+A-B-A claim (D-3), the manual (non-hardware) depth-compare formula and
+its fixed bias/out-of-bounds rule (D-5), why `pbr_direct_lit`/`pbr_ibl`
+extend their existing buffer while `shadow_cast` gets its own
+independent one, and the identity-matrix no-light sentinel (D-6), and
+the exact, disclosed content, descriptor-capacity, and
+call-site-migration consequences of the change to
+`pbr_direct_lit.slang`/`pbr_ibl.slang` (D-7).
 
-`Renderer::drawFrame()` gains new, caller-owned, borrowed parameters for
-the shadow map, its sampler, the shadow-casting Pipeline, and the
-dedicated light-space uniform buffer — mirroring `hdrColorTarget`'s/
-`skyPipeline`'s own existing caller-owned-resource pattern (ADR-0022's
-stateless-orchestrator constraint, unchanged). Runtime creates the
-shadow map, its sampler, and the shadow Pipeline once at startup,
-unconditionally (not gated on whether a scene happens to have a
-directional light — mirroring the sky Pipeline's own "created once when
-environment configured" precedent is deliberately *not* followed here,
-since a directional light can be added/removed at the World level
-without a BootstrapConfig-level signal the way an environment asset is;
-see Risks & Open Questions item 1). Every existing call site that
-constructs a `PbrDirectLit`/PBR-IBL Material must also supply a real
-`ShadowMap`/`Sampler` pair, since both shaders' new binding is
-unconditional at Pipeline-creation time (ADR-0072 D-7) — see Testing &
+`Renderer::drawFrame()` gains new, caller-owned, borrowed parameters:
+the shadow map, its sampler, the shadow-casting Pipeline, the dedicated
+light-space uniform buffer, and the separate `shadowCasterDrawItems`
+`DrawItem` list — mirroring `hdrColorTarget`'s/`skyPipeline`'s own
+existing caller-owned-resource pattern (ADR-0022's stateless-orchestrator
+constraint, unchanged; `Renderer` reads neither `World` nor uniform
+buffer contents, and decides nothing about caster eligibility itself —
+ADR-0072 D-3). Runtime creates the shadow map, its sampler, and the
+shadow Pipeline once at startup, unconditionally (not gated on whether a
+scene happens to have a directional light — mirroring the sky Pipeline's
+own "created once when environment configured" precedent is deliberately
+*not* followed here, since a directional light can be added/removed at
+the World level without a BootstrapConfig-level signal the way an
+environment asset is; see Risks & Open Questions item 1). Runtime passes
+`shadowCasterDrawItems = drawItems` whenever `directionalLightCount == 1`
+(every real, `World`-driven mesh already qualifies — Context) and an
+empty span whenever it is 0; no other signal is needed. Every existing
+call site that constructs a `PbrDirectLit`/PBR-IBL Material must also
+supply a real `ShadowMap`/`Sampler` pair, since both shaders' new binding
+is unconditional at Pipeline-creation time (ADR-0072 D-7) — see Testing &
 Verification Plan and Risks & Open Questions item 6.
 
 ## Architectural Impact
@@ -174,9 +199,10 @@ records:
   `VulkanCommandList` texture-descriptor cache array) and a real
   migration of every existing call site that constructs a
   `PbrDirectLit`/PBR-IBL Material.
-- A new `Renderer::drawFrame()` public-API change (four more
+- A new `Renderer::drawFrame()` public-API change (five more
   caller-owned parameters: shadow map, its sampler, the shadow Pipeline,
-  the dedicated light-space uniform buffer).
+  the dedicated light-space uniform buffer, and the separate
+  `shadowCasterDrawItems` `DrawItem` list).
 
 No new module, dependency, or threading model. No `World`/`Scene` schema
 change. No Sampler RHI capability is added.
@@ -208,14 +234,21 @@ change. No Sampler RHI capability is added.
   this codebase's own established real-`slangc`-reflection convention
   (never a stale, committed golden JSON).
 - Real-GPU tests: a simple occluder between the light and a receiving
-  plane produces a measurably darker sample directly behind it than an
-  unoccluded control sample (a real, predicted-direction check, not
-  "the image changed" — mirroring Spec 0026's own established
-  discriminator style); moving the occluder or the light direction moves
-  the shadow's own footprint predictably; a scene with no directional
-  light renders byte-identical to today; a fragment outside the fixed
-  shadow volume is confirmed lit, not shadowed; Debug and Release with
-  Vulkan Validation Layers clean.
+  plane, with `directionalLightCount = 1` and the occluder present in
+  `shadowCasterDrawItems`, produces a measurably darker sample directly
+  behind it than the identical scene with an empty
+  `shadowCasterDrawItems` (a real, predicted-direction check under
+  genuinely nonzero light, not "the image changed" — mirroring Spec
+  0026's own established discriminator style, and never toggling
+  `directionalLightCount` itself to fabricate the comparison); moving the
+  occluder or the light direction moves the shadow's own footprint
+  predictably; a scene with an empty `shadowCasterDrawItems` (the
+  no-directional-light signal) renders byte-identical to today; a
+  fragment outside the fixed shadow volume is confirmed lit, not
+  shadowed; the shadow pass's own clear-then-draw behavior is confirmed
+  identical on the very first frame and on any frame with an empty
+  caster list (ADR-0072 D-4); Debug and Release with Vulkan Validation
+  Layers clean.
 - Image regression: `minimal_cube`, `world_scene`, `textured_quad`,
   `material_demo`, `lighting_demo` remain byte-identical (neither shader
   they use is touched). `ibl_material_demo` **must** remain byte-identical
@@ -227,11 +260,17 @@ change. No Sampler RHI capability is added.
   result needs no action; a human-reviewed re-capture (ADR-0042) is
   requested only for a golden that actually shows a difference — never
   presumed in advance for either. A new real-GPU test (not an image-
-  regression golden) renders one scene with both an environment and a
-  directional-light occluder configured, and confirms the shadowed
-  region's own IBL/ambient contribution is unchanged between shadowed and
-  an otherwise-identical unshadowed render — the explicit, discriminating
-  proof that shadows affect only the directional term (ADR-0072 D-7).
+  regression golden) renders the same environment-plus-occluder scene
+  three ways — shadowed (`directionalLightCount = 1`, real occluder in
+  `shadowCasterDrawItems`), an unshadowed control (identical, but an
+  empty `shadowCasterDrawItems`), and a light-off IBL/ambient reference
+  (`directionalLightCount = 0`) — and checks two things at the same
+  receiver sample point: the shadowed render is measurably darker than
+  the unshadowed control under the same nonzero light (proving the
+  shadow path genuinely executes and takes effect), and the shadowed
+  render closely matches the light-off reference (proving the shadow
+  factor leaves IBL/ambient untouched, without needing to disable the
+  light to produce the comparison itself) (ADR-0072 D-7).
 - Descriptor capacity: three separate, independent widenings, each
   re-verified — the closed `sampledTextureBindingCount` check (`{0,1,3}`
   → `{0,1,2,3,4}`), the descriptor pool's own combined-image-sampler
@@ -262,7 +301,10 @@ change. No Sampler RHI capability is added.
    Runtime-config-level signal — the Proposed Design creates the shadow
    map/Pipeline unconditionally, always. Confirm this is acceptable
    (a small, fixed, always-present cost) rather than inventing a new
-   BootstrapConfig-level "shadows enabled" flag.
+   BootstrapConfig-level "shadows enabled" flag. This is a *resource
+   creation* question, distinct from and unaffected by the per-frame
+   caster-list emptiness question, which this revision already resolves
+   (ADR-0072 D-3/D-4 — see For Human Confirmation item 6).
 2. **Fixed orthographic volume's own concrete numbers** (resolution,
    center, half-extent, near/far) are Plan-stage values, not fixed by
    this Spec — they must be measured/derived against the real demo
@@ -311,15 +353,20 @@ Each item below is this revision's own single recommended design for a
 point the prior draft left underspecified or wrong; none is left open
 for the Implementation phase to decide. Confirm or redirect each:
 
-1. **Light-space data scheme:** two buffers — `pbr_direct_lit`/`pbr_ibl`
-   extend their existing binding-0 camera buffer (592 bytes total,
-   `pbr_direct_lit` gains 144 bytes of explicit padding to align its tail
-   with `pbr_ibl`'s); `shadow_cast` gets its own, separate, dedicated
-   128-byte buffer — because `bindUniformBuffer()` allows only one buffer
-   per Pipeline. No-light sentinel is the identity matrix (not zero).
-   The shadow-map `Sampler` is Runtime-owned, created once at startup,
-   borrowed into `Renderer::drawFrame()` alongside the shadow map itself.
-   (ADR-0072 D-6)
+1. **Light-space data scheme:** `pbr_direct_lit`/`pbr_ibl` extend their
+   existing binding-0 camera buffer (592 bytes total, `pbr_direct_lit`
+   gains 144 bytes of explicit padding to align its tail with
+   `pbr_ibl`'s) — the only route available to them, since they already
+   occupy their own Pipeline's one uniform binding. `shadow_cast` gets
+   its own, separate, independent 128-byte buffer — a *choice*, made to
+   avoid coupling a minimal depth-only shader to a layout shaped by
+   unrelated point-light/SH concerns, not something the RHI forces
+   (sharing the existing buffer across Pipelines is technically legal
+   today; it is rejected only for the coupling cost). No-light sentinel
+   is the identity matrix (not zero). The shadow-map `Sampler` is
+   Runtime-owned, created once at startup, borrowed into
+   `Renderer::drawFrame()` alongside the shadow map itself. (ADR-0072
+   D-6)
 2. **Descriptor extension:** widen all three real, independent RHI
    limits together — the closed `sampledTextureBindingCount` set, the
    descriptor pool's per-set sampler sizing, and
@@ -346,9 +393,29 @@ for the Implementation phase to decide. Confirm or redirect each:
 5. **Golden strategy:** `ibl_material_demo` is a hard, asserted
    byte-identity requirement. `pbr_material_demo`/`hdr_roll_off_demo`
    follow compare-first — re-capture requested only if an actual
-   difference is observed, never presumed. A new discriminating real-GPU
-   test proves IBL/ambient contributions are unaffected by shadowing.
-   (ADR-0072 D-7)
+   difference is observed, never presumed. A new, three-render
+   discriminating real-GPU test (shadowed vs. an unshadowed control at
+   the same nonzero light, vs. a light-off IBL/ambient reference) proves
+   both that the shadow path genuinely executes and takes effect under
+   real light, and that IBL/ambient contributions are unaffected by it —
+   without ever toggling `directionalLightCount` to fabricate either
+   comparison. (ADR-0072 D-7)
+6. **Shadow-caster contract:** `Renderer::drawFrame()` takes a new,
+   separate `shadowCasterDrawItems` parameter, distinct from `drawItems`
+   — never auto-derived or auto-filtered by `Renderer`, which reads
+   neither `World` nor `Mesh` internals (ADR-0022's stateless-orchestrator
+   contract). The caller is responsible for mesh-layout compatibility
+   (only standard 44-byte-stride entities go in this list) and for the
+   no-directional-light signal (an empty list — no separate boolean
+   parameter). Runtime passes `shadowCasterDrawItems = drawItems` when a
+   directional light is configured, empty otherwise. (ADR-0072 D-3)
+7. **ShadowMap clear/transition/binding validity:** the shadow pass
+   executes every frame unconditionally — clear-to-maximum-depth, then
+   zero or more draws — so an empty caster list, the first-ever frame,
+   and a populated caster list are all handled by the same RenderGraph
+   mechanism, with no special-casing. This guarantees the shadow map is
+   always validly initialized and transitioned by the time "draw" samples
+   it. (ADR-0072 D-4)
 
 ## Out of Scope / Future Work
 

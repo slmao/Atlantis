@@ -81,6 +81,16 @@ this repository's own `pipeline_depth_write_gpu_tests.cpp` and
 `sky_background_gpu_tests.cpp`, each with their own, different, smaller
 vertex stride) is not guaranteed to match it.
 
+`Renderer::drawFrame()`'s own contract (ADR-0022) is that of a stateless
+orchestrator: it does not read `World`, does not parse or interpret the
+contents of any uniform buffer it is handed, and does not introspect a
+`Mesh`'s own vertex layout to decide what is safe to draw — every such
+decision is made by the caller and communicated through explicit
+parameters. Any "skip the shadow pass's own draws this frame" or "this
+`DrawItem` is unsafe for the shadow Pipeline" decision must therefore be
+signaled by the caller, not derived by `Renderer` itself from `World` or
+buffer state — this shapes D-3 and D-4 below.
+
 ## Decision
 
 ### D-1. A new, single-purpose RHI resource type — `ShadowMap`
@@ -166,22 +176,41 @@ One `ObjectToWorldOnly`-shaped push constant, matching
 uniform buffer (D-6); no sampled-texture binding
 (`sampledTextureBindingCount = 0`, an already-legal value).
 
-**Scope: only `DrawItem`s whose `Mesh` matches the standard 44-byte
-asset-cooked vertex layout participate in the shadow pass.** Every
-`DrawItem` a real, `World`-driven scene produces satisfies this (Context)
-— Runtime's own shadow-casting loop needs no new filtering logic for its
-own real usage. This is **not** a safe default for every conceivable
-caller of `Renderer::drawFrame()`: a caller supplying a `DrawItem` whose
-`Mesh` was built with a different vertex layout (as this repository's
-own `pipeline_depth_write_gpu_tests.cpp`/`sky_background_gpu_tests.cpp`
-already do, for unrelated reasons) must not include that `DrawItem` in
-whatever list `Renderer::drawFrame()`'s own shadow pass draws, or the
-shadow Pipeline's fixed position-attribute offset would read the wrong
-bytes. Plan 0027 must state, precisely, whether the shadow pass reuses
-the exact same `drawItems` span already passed for the main draw (this
-Spec's own stated intent) or a caller-filtered subset, and update every
-non-Runtime caller (Plan 0027's own file list — see the Spec's Testing &
-Verification Plan) accordingly; it is not assumed compatible by default.
+**A single, explicit shadow-caster list — decided here, not left to
+Plan.** `Renderer::drawFrame()` gains a new parameter,
+`shadowCasterDrawItems` (the same span shape as the existing
+`drawItems`), **distinct from it.** The shadow pass draws exactly, and
+only, the `DrawItem`s in this list; `Renderer` never derives it from
+`drawItems` automatically and never filters `drawItems` internally by
+inspecting `Mesh` layout (Context — `Renderer` introspects neither
+`World` nor `Mesh` internals). This resolves, now, the one question the
+prior draft deferred to Plan — whether the shadow pass reuses `drawItems`
+or a caller-curated subset: it is always the latter, via one explicit,
+independent parameter.
+
+This places exactly two responsibilities on the caller, precisely
+because `Renderer` performs neither itself:
+
+1. **Mesh-layout compatibility.** Only include a `DrawItem` in
+   `shadowCasterDrawItems` if its `Mesh` matches the shadow Pipeline's
+   fixed 44-byte asset-cooked layout (Context). Every entity a real,
+   `World`-driven scene produces qualifies, so Runtime's own real usage
+   passes `shadowCasterDrawItems = drawItems` unchanged whenever a
+   directional light is configured — no filtering logic needed on that
+   path. A caller supplying a `DrawItem` built from a different layout
+   (as this repository's own `pipeline_depth_write_gpu_tests.cpp`/
+   `sky_background_gpu_tests.cpp` already do, for unrelated reasons)
+   simply omits it from `shadowCasterDrawItems` while still including it
+   in `drawItems` for ordinary drawing — the two lists are independent;
+   omission from one has no effect on the other.
+2. **The no-directional-light / skip signal.** An **empty**
+   `shadowCasterDrawItems` span is the entire signal. Runtime, which
+   already knows `directionalLightCount` from World extraction, passes
+   an empty span whenever it is 0 — `Renderer` needs no separate boolean
+   parameter and performs no light-count inspection of its own. See D-4
+   for what the shadow pass still does, unconditionally, when that list
+   is empty — an empty list and a "first use" frame are handled by the
+   identical mechanism, not two special cases.
 
 **The precise A-B-A claim:** the shadow pass binds exactly one Pipeline
 — `shadow_cast`'s own — for its entire duration, whether that bind call
@@ -217,6 +246,25 @@ ADR-0068 D-3 already made when it widened Guard 0/1 from three kinds to
 four for `HdrColorTarget` — not a new precedent, the second instance of
 an established one.
 
+**Unconditional execution — the empty-caster and first-use cases are the
+same case, not two.** The shadow pass records every frame, regardless of
+`shadowCasterDrawItems`'s own length or `directionalLightCount` —
+`Renderer` has no notion of either as a reason to skip the pass itself
+(D-3). `beginRendering(ShadowMap&, ClearDepthValue{1.0})` (maximum depth
+— "nothing occludes") always runs first; zero or more draws from the
+(possibly empty) caster list follow. RenderGraph's own existing
+transition machinery — already established for `HdrColorTarget` (this
+D-4's own opening paragraph) — carries `ShadowMap` from its prior state
+(`UNDEFINED` on the very first frame, `ShaderRead` on every later one)
+into `DepthAttachmentReadWrite` before the clear, then into `ShaderRead`
+afterward for "draw" to sample; nothing distinguishes frame one from any
+other frame, or an empty caster list from a populated one — both are
+just "the clear runs, then zero draws happen." This is what keeps
+`bindTexture(binding, const ShadowMap&, const Sampler&)` always valid in
+"draw": the image is clear-initialized and correctly transitioned every
+single frame, whether or not an occluder was actually drawn into it that
+frame.
+
 ### D-5. Sampling — plain `Sampler2D`, manual comparison, no hardware compare sampler
 
 `SamplerCreateParams` is not widened. The shadow map is sampled with the
@@ -242,7 +290,7 @@ always treated as fully lit (`shadowFactor = 1.0`) — never "always
 shadowed," which would visibly break every surface outside the fixed
 coverage volume.
 
-### D-6. Light-space matrix — two buffers, not one: the existing camera uniform's own single-binding-0 limit forces this
+### D-6. Light-space matrix — the existing camera buffer for `pbr_direct_lit`/`pbr_ibl`; a second, independent buffer for `shadow_cast`, chosen to avoid shader-layout coupling
 
 The directional light's own `direction` (already extracted into
 `FrameLightingData.directionalLights[0]`) drives a fixed-size
@@ -251,16 +299,17 @@ constants (Plan-stage values), **not** dynamically fit to scene/camera
 bounds each frame (the first step toward cascaded shadow maps,
 explicitly out of scope).
 
-Because `bindUniformBuffer()` supports exactly one uniform buffer, at
-binding 0, per Pipeline (Context), and `pbr_direct_lit.slang`/
-`pbr_ibl.slang` already occupy their own binding 0 with the existing
-camera/lighting buffer, the light-space `view`/`projection` pair (128
-bytes) can only reach their fragment stage by being appended to that
-same buffer — mirroring Spec 0025 P3's own "SH coefficients appended
-after the existing region, shaders only declare/read their own current
-prefix" precedent. **This is not optional for these two shaders; it is
-the only way the existing single-uniform-binding contract lets new data
-reach them.**
+`pbr_direct_lit.slang`/`pbr_ibl.slang` already read their own
+camera/lighting data from a buffer bound at their own Pipeline's binding
+0 (`bindUniformBuffer()` binds exactly one buffer per Pipeline, Context)
+— appending the light-space `view`/`projection` pair (128 bytes) to the
+tail of that same buffer is the only way these two shaders gain the new
+data without a second binding on their own Pipeline. For them
+specifically this is not a design choice: they already occupy binding 0
+with data they still need, so the tail is the only route the existing
+single-uniform-binding contract offers, mirroring Spec 0025 P3's own "SH
+coefficients appended after the existing region, shaders only
+declare/read their own current prefix" precedent.
 
 `pbr_ibl.slang` already declares fields through byte 464 (its own SH
 tail) — the light-space pair appends directly after, at 464, for 592
@@ -275,19 +324,36 @@ used for `_pad0`/`_pad1`/`_pad2`) before its own light-space fields —
 one further real, disclosed content addition to that shader, on top of
 D-7's own shadow-sampling logic.
 
-`shadow_cast.slang` is a **different Pipeline** with its own,
-independent binding 0 — it is under no obligation to match the growing
-shared camera-buffer layout at all, and forcing a minimal, depth-only
-shader to declare 456 bytes of fields it does not use (camera
-matrices, point lights, SH) purely to reach its own two matrices would
-be real, needless coupling. It instead gets a second, small (128-byte),
-dedicated Buffer — `view`/`projection` only — created once at Runtime
-startup alongside the main camera buffer, written with the identical
-light-space values every frame the main buffer's own tail is written
-with. This is a small, deliberate, disclosed duplication of the same 128
-bytes into two buffers, not two different derivations of it — chosen
-over widening `bindUniformBuffer()` to accept a second binding (a larger,
-separate RHI change this ADR does not make).
+`shadow_cast.slang` is a **different Pipeline**, with its own,
+independent binding 0 — and here there genuinely is a choice, not a
+forced outcome. Nothing in `bindUniformBuffer()`'s own one-buffer-
+*per-Pipeline* limit prevents binding the *same* 592-byte buffer object
+to `shadow_cast`'s own binding 0 as well — a `Buffer` resource can be
+bound to more than one Pipeline's own descriptor set; the limit is one
+buffer per Pipeline, not one consumer per buffer. The two real options:
+
+- **(Rejected) Share the existing 592-byte camera/lighting buffer.**
+  `shadow_cast.slang` would need to declare the full leading 464 bytes
+  (camera matrices, point lights, SH) as unused padding purely to reach
+  its own two matrices at the tail — real, avoidable coupling between a
+  minimal, depth-only shader and a layout shaped entirely by unrelated
+  `pbr_direct_lit`/`pbr_ibl` concerns it has nothing to do with. Saves
+  exactly one small `Buffer` object, at the cost of that coupling.
+- **(Recommended) A second, small (128-byte), independent Buffer** —
+  `view`/`projection` only — created once at Runtime startup alongside
+  the main camera buffer, written with the identical light-space values
+  every frame the main buffer's own tail is written with.
+
+The second option is the recommended design: a second small `Buffer` is
+a negligible resource cost next to the real, layout-level coupling a
+future change to `pbr_direct_lit`/`pbr_ibl`'s own point-light or SH
+region would otherwise create for an unrelated depth-only shader. This
+is a deliberate choice made for shader-layout hygiene, not a consequence
+the RHI imposes — no `CommandList`/`Device` capability is added or
+widened by either option, and both work, unmodified, against today's
+RHI; widening `bindUniformBuffer()` to accept a second binding (a
+larger, separate RHI change) is not needed by either and remains
+rejected (Alternatives Considered).
 
 **No-directional-light behavior:** when `directionalLightCount == 0`,
 neither buffer's own light-space region is ever read by `pbr_direct_lit`/
@@ -392,17 +458,46 @@ requested only for a golden that actually shows a difference — never
 presumptively, for a scene whose own geometry has not been shown to
 self-shadow.
 
-**Discriminating verification that shadows do not affect IBL/sky:** a
-new real-GPU test (mirroring Spec 0026's own `sky_background_gpu_tests.cpp`
-discriminator style, not merely "the image changed") must render one
-scene with both an environment configured and a directional light with
-a real occluder, and confirm the shadowed region's own IBL contribution
-(sampled with the directional light's own contribution independently
-suppressed, e.g. by comparing against the identical scene with
-`directionalLightCount` forced to 0) is unchanged between shadowed and
-unshadowed renders of the same point — proving the shadow factor
-multiplies only the directional term, not the ambient/reflection terms
-that sit outside the modified loop.
+**Discriminating verification that shadows do not affect IBL/sky — three
+renders of one scene, never toggling `directionalLightCount` to bypass
+the shadow path itself:**
+
+- **R1 (shadowed):** environment configured, `directionalLightCount = 1`,
+  a real occluder included in `shadowCasterDrawItems` (D-3) — the shadow
+  path genuinely executes; the shadow factor is ≈0 at a chosen receiver
+  sample point `P` the occluder blocks from the light.
+- **R2 (unshadowed control, same nonzero light):** identical scene,
+  camera, light, environment, and geometry — the occluder is still drawn
+  as an ordinary `DrawItem` (every camera-visible pixel stays
+  geometrically identical to R1) — but `shadowCasterDrawItems` is empty
+  (D-3/D-4's own clear-to-far rule applies), so the shadow factor is ≈1
+  everywhere, including at `P`. `directionalLightCount` stays 1 in both
+  R1 and R2 — the light is never turned off to produce this comparison.
+- **R3 (light off, IBL/ambient reference):** identical scene, camera,
+  environment, and geometry, `directionalLightCount = 0` — the direct
+  term is structurally absent (the existing light-count loop gates it),
+  leaving only IBL/ambient at every pixel, including `P`.
+
+Two real, predicted-direction comparisons (never "the image changed"
+alone):
+
+1. **Positive control — shadows take effect under real, nonzero direct
+   light:** `R1[P]` is measurably darker than `R2[P]`. The only
+   difference between these two renders is whether a real occluder's
+   depth reached the shadow map, proving the shadow factor genuinely
+   attenuates the direct term while the light is genuinely on.
+2. **IBL isolation:** `R1[P]` closely matches `R3[P]`. At `P`, R1's own
+   direct term is driven to (near) zero by the shadow factor, leaving
+   only IBL/ambient — which should match R3's own light-off render of
+   the identical point almost exactly. A bug that let the shadow factor
+   leak into the IBL/specular-IBL terms (outside the modified loop, this
+   D-7's own opening paragraph) would make `R1[P]` measurably darker than
+   `R3[P]`, not merely close to it — this catches exactly that failure
+   mode without needing to isolate the IBL term analytically.
+
+Exact sample point(s), scene geometry, and pass/fail thresholds are
+Plan-stage values (mirroring `kShadowBias`'s own precedent, D-5) — this
+ADR fixes the three-render, two-comparison mechanism, not the numbers.
 
 Non-PBR goldens (`minimal_cube`, `world_scene`, `textured_quad`,
 `material_demo`, `lighting_demo`) are untouched — neither shader they use
@@ -454,6 +549,11 @@ ADR.
 - One more new production shader pair (`shadow_cast`), on top of the two
   modified existing ones, and a second, small, duplicated light-space
   buffer (D-6).
+- `Renderer::drawFrame()` gains a fifth new, caller-owned parameter
+  (`shadowCasterDrawItems`, D-3) beyond the shadow map, its sampler, the
+  shadow Pipeline, and the dedicated light-space buffer — every caller
+  must now pass two related-but-independent `DrawItem` spans instead of
+  one.
 
 ## Alternatives Considered
 
@@ -490,3 +590,12 @@ ADR.
   tracked separately as independent follow-up work, unrelated to this
   ADR's own main "draw" pass, which carries the same, pre-existing,
   unrelated risk today, unaffected by this change either way.
+- **Have `Renderer` derive the shadow-caster list from `drawItems`
+  itself** (e.g. by inspecting each `Mesh`'s own vertex stride and
+  silently excluding mismatches), instead of requiring an explicit,
+  caller-supplied `shadowCasterDrawItems` (D-3). Rejected — this would
+  require `Renderer` to introspect `Mesh` internals to make a drawing
+  decision on its own, which ADR-0022's own stateless-orchestrator
+  contract does not permit (Context); an explicit, caller-owned second
+  list keeps `Renderer` ignorant of `Mesh` layout details, at the cost
+  of one more parameter every caller must pass.
