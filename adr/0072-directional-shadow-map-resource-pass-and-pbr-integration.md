@@ -37,20 +37,49 @@ shadow factor without touching anything else.
 (`compareEnable`/`compareOp`) — Vulkan's own hardware depth-compare
 sampling is not modeled anywhere in this RHI today.
 
-Plan 0025 P2 already fixed descriptor-pool sizing at `3 * maxSets`
-combined-image-sampler descriptors per set — sized for `pbr_ibl`'s own
-three-sampler worst case (base color, prefiltered cubemap, DFG LUT). A
-fourth sampler (the shadow map) on the same Pipeline exceeds that
-budget.
+`bindUniformBuffer()` (`vulkan_command_list.cpp:316-350`) hardcodes
+`write.dstBinding = 0` unconditionally — this RHI has no mechanism for a
+*second* uniform buffer on any Pipeline today, at any binding. Any new
+uniform data a Pipeline needs must live inside the one buffer already
+bound at binding 0, or in a wholly separate Pipeline's own, independent
+binding 0.
+
+Three separate, real, hardcoded limits gate how many sampled-texture
+bindings a Pipeline may declare, found by reading the actual code, not
+assumed:
+
+- `Device::createPipeline()` asserts
+  `ATLANTIS_CHECK(sampledTextureBindingCount == 0 || == 1 || == 3)`
+  (`vulkan_device.cpp:992-993`) — a closed set that does not include 2
+  or 4.
+- `createDescriptorPoolOfSize()` sizes `COMBINED_IMAGE_SAMPLER`
+  descriptors at `3U * maxSets` (`vulkan_device.cpp:435`), derived from
+  `pbr_ibl`'s own three-sampler worst case (Plan 0025 P2).
+- `VulkanCommandList::textureDescriptorMemos_` is a fixed
+  `std::array<TextureDescriptorMemo, 4>` (`vulkan_command_list.h:153`);
+  `bindTexture()` itself asserts `binding < textureDescriptorMemos_.size()`
+  (`vulkan_command_list.cpp:358`) — binding index 4 is out of bounds
+  against this array today.
 
 A real, disclosed, independent, pre-existing bug already exists in
-`VulkanCommandList::bindUniformBuffer()`'s own redundant-write skip
-(`vulkan_command_list.cpp:328`): revisiting a Pipeline's own descriptor
-set after a *different* Pipeline's set was bound in between, within one
-`CommandList` recording, re-triggers a real Validation Layers error
-(flagged during Plan 0026's own implementation, not fixed there). This
-ADR's own design must state plainly whether it depends on that bug being
-fixed first.
+`bindUniformBuffer()`'s own redundant-write skip: revisiting a
+Pipeline's own descriptor set after a *different* Pipeline's set was
+bound in between, within one `CommandList` recording, re-triggers a
+real Validation Layers error (flagged during Plan 0026's own
+implementation, not fixed there). This ADR's own design must state
+precisely which call sequences it does and does not depend on being
+free of that pattern — not a blanket "not a dependency" claim.
+
+Every mesh a real, asset-cooked scene entity uses shares one fixed
+44-byte vertex stride (`kMeshArtifactVertexStrideBytes`,
+position/color/uv/normal) — confirmed by `scene_extraction.cpp`'s own
+`DrawItem` construction, which resolves every `Mesh` from
+`meshResourceMap_`, itself populated only from cooked mesh assets. This
+is **not** a universal property of every `Mesh` the public `createMesh()`
+API can produce — a caller-constructed synthetic `Mesh` (already used by
+this repository's own `pipeline_depth_write_gpu_tests.cpp` and
+`sky_background_gpu_tests.cpp`, each with their own, different, smaller
+vertex stride) is not guaranteed to match it.
 
 ## Decision
 
@@ -60,16 +89,42 @@ Mirrors `HdrColorTarget`'s own exact shape (ADR-0068 D-1): a new type,
 inheriting neither `Texture` nor `SampledTexture`, owning one GPU image
 created with both `VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT` and
 `VK_IMAGE_USAGE_SAMPLED_BIT`, `DepthFormat::D32Sfloat` (the RHI's only
-existing depth format — Vulkan's own mandatory-format-support table
-guarantees this combination on `D32_SFLOAT`, optimal tiling, on every
-Vulkan-conformant device; no new capability check class beyond
-ADR-0068 D-2's own established pattern). `Device::createShadowMap(ShadowMapCreateParams)`
-mirrors `createHdrColorTarget()`'s own two-outcome `Result` shape.
+existing depth format). `Device::createShadowMap(ShadowMapCreateParams)`
+mirrors `createHdrColorTarget()`'s own two-outcome `Result` shape,
+`ShadowMapCreateError::FormatFeaturesUnsupported` checked first
+(ADR-0068 D-2's own established pattern, not a new mechanism).
+
+**Corrected capability claim:** the Vulkan spec's own mandatory
+format-support rules do not guarantee this exact combination on every
+conformant device. Reading (sampling) a depth image is guaranteed only
+for `D16_UNORM` and `D32_SFLOAT` — `D32_SFLOAT` is one of exactly two
+formats required to support `VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT` for
+this purpose. `VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT`, however,
+is guaranteed only collectively: the spec requires *at least one* of
+`D32_SFLOAT`/`X8_D24_UNORM_PACK32` to support it — not `D32_SFLOAT`
+specifically. A conformant device could in principle satisfy that
+collective requirement using only `X8_D24_UNORM_PACK32`, leaving
+`D32_SFLOAT` without attachment support. Unlike ADR-0068 D-2's own
+`HdrColorTarget` case (where a real `vulkaninfo` run against this
+repository's own target GPU independently confirmed both required bits),
+this combination is not unconditionally spec-guaranteed — the real
+runtime `vkGetPhysicalDeviceFormatProperties()` check (already the
+mechanism, not new) is a genuine correctness requirement here, not
+defensive redundancy.
+
 Fixed resolution (`extent`), never resized on window resize (a shadow
 map's own resolution is independent of the final presentable target's
 extent — a real, disclosed difference from `HdrColorTarget`/depth
 `Texture`, which both resize with the window). Caller-owned,
-`std::unique_ptr<ShadowMap>`, created once at Runtime startup.
+`std::unique_ptr<ShadowMap>`, created once at Runtime startup,
+unconditionally (Risks & Open Questions item 1 in the Spec).
+
+A dedicated `Sampler` for reading it (`Filter::Nearest`,
+`AddressMode::ClampToEdge`, matching the output-transform sampler's own
+1:1-mapping convention — D-5) is created once at the same point,
+caller-owned by Runtime, borrowed into `Renderer::drawFrame()` exactly
+like `outputTransformSampler`/`environmentSampler` already are — no new
+ownership model.
 
 ### D-2. `PipelineCreateParams::hasColorAttachment` — a depth-only Pipeline
 
@@ -83,33 +138,66 @@ case, mirroring how `depthAttachmentFormat` is already ignored when
 `hasDepthAttachment == false`. The shadow Pipeline sets
 `hasColorAttachment = false`, `hasDepthAttachment = true`.
 
-### D-3. One shadow-casting Pipeline, reusing every DrawItem's own Mesh
+### D-3. One shadow-casting Pipeline; scope, Mesh-layout compatibility, and the precise A-B-A claim
 
-A single, new `shaders/shadow_cast/shadow_cast.slang` pair — a
-minimal vertex shader (`output.position = mul(lightViewProjection,
+A single, new `shaders/shadow_cast/shadow_cast.slang` pair — a minimal
+vertex shader (`output.position = mul(lightViewProjection,
 mul(objectToWorld, float4(position, 1.0)))`, reading only the position
 attribute from the shared 44-byte mesh vertex stride, mirroring
 `minimalMeshVertexLayout()`'s own single-attribute-from-shared-stride
-convention) and a trivial, empty fragment shader (Vulkan's own pipeline
-creation requires a fragment stage even for depth-only output; this one
-does no work). One `ObjectToWorldOnly`-shaped push constant, matching
-`fallbackMaterial_`'s own shape. Binding 0 is the light-space uniform
-(D-6); no sampled-texture binding.
+convention) and a trivial, empty fragment shader.
 
-**Every opaque `DrawItem` already passed to `Renderer::drawFrame()` is
-both shadow-caster and shadow-receiver — no new per-entity "casts
-shadow" flag.** This means the shadow pass draws with **one** Pipeline
-for every `DrawItem`, never switching Pipelines mid-pass — directly
-relevant to the pre-existing `bindUniformBuffer()` constraint (Context):
-a single-Pipeline draw loop only ever rebinds the *same* descriptor set
-consecutively, which `bindUniformBuffer()`'s own existing skip already
-handles correctly (proven safe by every existing multi-`DrawItem`-same-
-Material scene already in production). **This design does not depend on
-that bug being fixed, and does not fix it** — it simply never exercises
-the A-B-A pattern that triggers it, by construction (one Pipeline, one
-descriptor set, the whole pass). A future extension needing more than
-one shadow-casting Pipeline (e.g., per-vertex-layout variants) would
-need to re-examine this.
+**Corrected fragment-shader claim:** Vulkan itself does not require a
+fragment shader stage for a depth-only pipeline — a complete graphics
+pipeline needs only its pre-rasterization state (vertex/tessellation/
+geometry stage); the fragment stage is genuinely optional for
+depth/stencil-only output. This repository's own `Device::createPipeline()`
+is what currently requires one: it unconditionally creates a fragment
+shader module from `PipelineCreateParams::fragmentShader`
+(`vulkan_device.cpp`, `createShaderModule(params.fragmentShader, ...)`
+called with no conditional skip) — an existing constraint of this RHI's
+own implementation, not of Vulkan. A trivial, empty fragment shader is
+the minimal-impact choice given that *existing* constraint; widening
+`createPipeline()` to make the fragment stage itself optional is a
+separate, larger RHI change this ADR does not make.
+
+One `ObjectToWorldOnly`-shaped push constant, matching
+`fallbackMaterial_`'s own shape. Binding 0 is the dedicated light-space
+uniform buffer (D-6); no sampled-texture binding
+(`sampledTextureBindingCount = 0`, an already-legal value).
+
+**Scope: only `DrawItem`s whose `Mesh` matches the standard 44-byte
+asset-cooked vertex layout participate in the shadow pass.** Every
+`DrawItem` a real, `World`-driven scene produces satisfies this (Context)
+— Runtime's own shadow-casting loop needs no new filtering logic for its
+own real usage. This is **not** a safe default for every conceivable
+caller of `Renderer::drawFrame()`: a caller supplying a `DrawItem` whose
+`Mesh` was built with a different vertex layout (as this repository's
+own `pipeline_depth_write_gpu_tests.cpp`/`sky_background_gpu_tests.cpp`
+already do, for unrelated reasons) must not include that `DrawItem` in
+whatever list `Renderer::drawFrame()`'s own shadow pass draws, or the
+shadow Pipeline's fixed position-attribute offset would read the wrong
+bytes. Plan 0027 must state, precisely, whether the shadow pass reuses
+the exact same `drawItems` span already passed for the main draw (this
+Spec's own stated intent) or a caller-filtered subset, and update every
+non-Runtime caller (Plan 0027's own file list — see the Spec's Testing &
+Verification Plan) accordingly; it is not assumed compatible by default.
+
+**The precise A-B-A claim:** the shadow pass binds exactly one Pipeline
+— `shadow_cast`'s own — for its entire duration, whether that bind call
+is issued once before its own `DrawItem` loop or redundantly inside it
+every iteration; either way, `bindUniformBuffer()`'s own existing
+consecutive-same-set skip already handles it correctly (the same
+pattern every existing multi-`DrawItem`-same-Material scene in
+production already exercises safely). **This claim is scoped to the
+shadow pass's own internal call sequence only.** It says nothing about,
+and does not change, the pre-existing A-B-A risk already latent in the
+*separate* main "draw" pass's own per-`DrawItem` Material/Pipeline
+dispatch loop (which can, independent of shadows, revisit an earlier
+Pipeline's descriptor set after a different one, if a real scene happens
+to interleave materials that way) — that risk is neither introduced,
+worsened, nor fixed by this ADR; it remains exactly what it was,
+tracked separately.
 
 ### D-4. RenderGraph — a third pass, before "draw"; the same *kind* of widening ADR-0068 D-3 already made
 
@@ -131,11 +219,9 @@ an established one.
 
 ### D-5. Sampling — plain `Sampler2D`, manual comparison, no hardware compare sampler
 
-`SamplerCreateParams` is not widened. The shadow map is sampled with an
-ordinary `Sampler2D` (`Filter::Nearest`, `AddressMode::ClampToEdge`,
-mirroring the output-transform sampler's own 1:1-mapping convention);
-the shader reads the stored depth and compares it against the fragment's
-own light-space depth directly:
+`SamplerCreateParams` is not widened. The shadow map is sampled with the
+dedicated `Sampler` from D-1; the shader reads the stored depth and
+compares it against the fragment's own light-space depth directly:
 
 ```
 shadowCoord = lightViewProjection * float4(worldPosition, 1.0)   // clip space
@@ -156,56 +242,168 @@ always treated as fully lit (`shadowFactor = 1.0`) — never "always
 shadowed," which would visibly break every surface outside the fixed
 coverage volume.
 
-### D-6. Light-space matrix — a fixed orthographic volume, appended to the existing camera uniform
+### D-6. Light-space matrix — two buffers, not one: the existing camera uniform's own single-binding-0 limit forces this
 
 The directional light's own `direction` (already extracted into
 `FrameLightingData.directionalLights[0]`) drives a fixed-size
 orthographic projection — center, half-extent, near/far are Runtime
 constants (Plan-stage values), **not** dynamically fit to scene/camera
-bounds each frame (that is the first step toward cascaded shadow maps,
-explicitly out of scope). The resulting `view`/`projection` pair (128
-bytes) is appended to the existing per-frame camera uniform buffer
-(464 → 592 bytes), mirroring Spec 0025 P3's own "SH coefficients
-appended after the existing region, shaders only declare/read their own
-current prefix" precedent exactly. When no directional light exists
-(`directionalLightCount == 0`), this tail region's content is never read
-by any shader (the shadow lookup lives inside the same `for (i <
-directionalLightCount)` loop the shadow factor multiplies into) — Runtime
-still writes a deterministic value there every frame (never
-uninitialized memory), matching `writeEnvironmentIrradianceSh()`'s own
-"null source produces the no-environment all-zero contribution"
-precedent.
+bounds each frame (the first step toward cascaded shadow maps,
+explicitly out of scope).
 
-### D-7. `pbr_direct_lit.slang`/`pbr_ibl.slang` — a real, disclosed content change to both existing shaders
+Because `bindUniformBuffer()` supports exactly one uniform buffer, at
+binding 0, per Pipeline (Context), and `pbr_direct_lit.slang`/
+`pbr_ibl.slang` already occupy their own binding 0 with the existing
+camera/lighting buffer, the light-space `view`/`projection` pair (128
+bytes) can only reach their fragment stage by being appended to that
+same buffer — mirroring Spec 0025 P3's own "SH coefficients appended
+after the existing region, shaders only declare/read their own current
+prefix" precedent. **This is not optional for these two shaders; it is
+the only way the existing single-uniform-binding contract lets new data
+reach them.**
+
+`pbr_ibl.slang` already declares fields through byte 464 (its own SH
+tail) — the light-space pair appends directly after, at 464, for 592
+bytes total. `pbr_direct_lit.slang` today declares fields only through
+byte 320 (`cameraWorldPosition`/`_pad2`) — it never reaches the SH
+region at all. To keep the light-space pair at the **same 464-byte
+offset in both shaders** (a single, consistent layout, not two
+diverging ones), `pbr_direct_lit.slang` must also declare the
+intervening 144 bytes as explicit, named, unused padding (matching this
+codebase's own "explicit padding, never implicit" discipline already
+used for `_pad0`/`_pad1`/`_pad2`) before its own light-space fields —
+one further real, disclosed content addition to that shader, on top of
+D-7's own shadow-sampling logic.
+
+`shadow_cast.slang` is a **different Pipeline** with its own,
+independent binding 0 — it is under no obligation to match the growing
+shared camera-buffer layout at all, and forcing a minimal, depth-only
+shader to declare 456 bytes of fields it does not use (camera
+matrices, point lights, SH) purely to reach its own two matrices would
+be real, needless coupling. It instead gets a second, small (128-byte),
+dedicated Buffer — `view`/`projection` only — created once at Runtime
+startup alongside the main camera buffer, written with the identical
+light-space values every frame the main buffer's own tail is written
+with. This is a small, deliberate, disclosed duplication of the same 128
+bytes into two buffers, not two different derivations of it — chosen
+over widening `bindUniformBuffer()` to accept a second binding (a larger,
+separate RHI change this ADR does not make).
+
+**No-directional-light behavior:** when `directionalLightCount == 0`,
+neither buffer's own light-space region is ever read by `pbr_direct_lit`/
+`pbr_ibl` (D-7's own gating), and the shadow pass itself does not draw
+any occluders that frame (D-7). Runtime still writes a deterministic
+value to both buffers every frame — **the identity matrix, not zero.**
+A zero-valued 4x4 "projection" matrix is singular (non-invertible) and
+can produce `NaN`/`Inf` in vertex output even where the *result* is
+never sampled downstream; identity keeps the vertex math well-defined
+in the (currently unreachable, but not asserted-impossible) case
+anything ever executes against it. This corrects
+`writeEnvironmentIrradianceSh()`'s own all-zero precedent, which is safe
+for irradiance coefficients (zero contribution is mathematically benign)
+but not for a projection matrix (zero is degenerate).
+
+### D-7. `pbr_direct_lit.slang`/`pbr_ibl.slang` — the real, disclosed content, descriptor, capacity, compatibility, and golden consequences
 
 Both shaders gain one new binding (the shadow map sampler, at the next
-free slot — binding 2 for `pbr_direct_lit` today at binding 1 only;
-binding 4 for `pbr_ibl`, today at bindings 1–3) and the shadow-factor
-multiply inside their own existing directional-light loop (D-5). This
-is the same class of disclosed shader-content change ADR-0068 D-7
-already made to `lit_textured.slang`/`pbr_direct_lit.slang` (removing
-their final clamp) — **the first Spec since ADR-0068 unable to claim
-"zero further `.slang` file modified" for these two files.** Both
-shaders' own descriptor contract functions
-(`pbrDirectLitExpectedDescriptorContract()`/
+free slot — binding 2 for `pbr_direct_lit`, today at binding 1 only;
+binding 4 for `pbr_ibl`, today at bindings 1–3), D-6's own light-space
+tail, and D-5's shadow-factor multiply inside their own existing
+directional-light loop. This is the same class of disclosed
+shader-content change ADR-0068 D-7 already made to
+`lit_textured.slang`/`pbr_direct_lit.slang` (removing their final clamp)
+— the first Spec since ADR-0068 unable to claim "zero further `.slang`
+file modified" for these two files. Both shaders' own descriptor
+contract functions (`pbrDirectLitExpectedDescriptorContract()`/
 `pbrIblExpectedDescriptorContract()`) gain the new binding entry;
 `sampledTextureBindingCount` moves from 1→2 (`pbr_direct_lit`) and
 3→4 (`pbr_ibl`).
 
-**Descriptor-pool consequence:** Plan 0025 P2's own `3 * maxSets`
-combined-image-sampler sizing was derived from `pbr_ibl`'s own
-three-sampler worst case; a fourth sampler on that same Pipeline exceeds
-it. Plan 0027 must re-derive this to `4 * maxSets` and re-run the N=6
-descriptor-pool stress proof (Spec 0021/ADR-0064's own established
-proof style, already re-run twice — Plan 0025, Plan 0026) against the
-real, new worst case.
+**Full descriptor-extension disclosure (three separate, real limits,
+all requiring a widening — Context):**
 
-**Golden consequence:** every existing golden built on `PbrDirectLit`
-or `pbr_ibl` (`pbr_material_demo`, `hdr_roll_off_demo`,
-`ibl_material_demo`) needs a human-reviewed re-capture — the shader
-itself changes for all of them, matching ADR-0068 D-6's own disclosed
-"introducing a real transform where none existed before shifts byte
-values for every existing golden, not only affected content" precedent.
+1. `Device::createPipeline()`'s own closed
+   `sampledTextureBindingCount` check widens from `{0, 1, 3}` to
+   `{0, 1, 2, 3, 4}` — `2` (`pbr_direct_lit` + shadow) and `4`
+   (`pbr_ibl` + shadow) are the two new legal values this ADR needs;
+   `3` remains legal (harmless to keep, even though no current consumer
+   uses it after this change) rather than narrowed, avoiding an
+   unrelated, unreviewed removal.
+2. `createDescriptorPoolOfSize()`'s own `COMBINED_IMAGE_SAMPLER` sizing
+   widens from `3U * maxSets` to `4U * maxSets` — the real, new
+   per-set sampler worst case (`pbr_ibl` + shadow).
+3. `VulkanCommandList::textureDescriptorMemos_` widens from
+   `std::array<TextureDescriptorMemo, 4>` to
+   `std::array<TextureDescriptorMemo, 5>` — without this, `bindTexture()`
+   binding index 4 (`pbr_ibl`'s own new shadow slot) fails its own
+   `ATLANTIS_CHECK(binding < textureDescriptorMemos_.size())` outright.
+   This is an internal `VulkanCommandList` capacity bump, not a public
+   API change.
+
+**Descriptor-set-count consequence (distinct from the sampler-per-set
+budget above):** the shadow Pipeline (D-1/D-3) is one more fixed,
+never-rebuilt Pipeline, created once and always present, on top of
+Plan 0026's own `fallbackMaterial_`/output-transform/sky set. Plan
+0026's own re-derived formula (`N+3` steady state, `N+4` peak, N=6
+stress-proven) becomes `N+4` steady state (`N` materials + fallback +
+output-transform + sky + shadow_cast) / `N+5` peak — Plan 0027 must
+re-run the same N=6 stress proof against this real, new count, on top of
+the sampler-budget re-derivation above.
+
+**Compatibility path — a real, disclosed migration, not assumed
+automatic:** because both shaders' own new sampled-texture binding is
+declared unconditionally at Pipeline-creation time (not toggled per
+draw), **every existing call site that creates a `PbrDirectLit`/PBR-IBL
+Material must also supply a real, valid `ShadowMap` and its `Sampler`
+— a Material whose Pipeline declares a combined-image-sampler binding
+that is never written before a draw is a real Vulkan correctness
+violation, not a graceful no-op.** This is not limited to Runtime's own
+main path. Plan 0027 must audit and update every one of: Runtime
+(`runtime_application.cpp`), `pbr_material_demo_fixture.cpp`/
+`ibl_material_demo_fixture.h` (via the shared fixture), the golden
+generator (`golden_generator/pbr_material_demo_main.cpp`), and every
+GPU test that constructs a `PbrDirectLit`/PBR-IBL `Material` directly
+(`tests/runtime/pbr_render_gpu_tests.cpp`,
+`tests/runtime/material_realization_gpu_tests.cpp`,
+`tests/runtime/material_ibl_selection_gpu_tests.cpp`) — even where no
+actual occluder-casting behavior is being tested, each needs a real
+(even if trivially empty) `ShadowMap`/`Sampler` pair to remain valid.
+This is a real, sizable, disclosed cost of modifying the two existing
+shaders in place (see Alternatives Considered for the rejected
+per-variant alternative and why this ADR still prefers the in-place
+change).
+
+**Corrected golden strategy — compare first, never presume:** the
+shadow term only executes inside the existing `directionalLightCount`
+loop; a scene with no directional light never reaches it, and its own
+rendered pixels are provably unaffected by this shader change,
+regardless of the new binding's mere presence in the descriptor layout.
+`ibl_material_demo` has no directional light by its own existing design
+("renders four environment-lit PBR spheres without direct lights",
+Spec 0025) — **its golden must remain byte-identical; it is not a
+re-capture candidate.** `pbr_material_demo`/`hdr_roll_off_demo` do have
+a directional light, but whether their own existing geometry happens to
+cast a self-shadow the shader can detect is a real, scene-geometry
+question this ADR does not assume an answer to. Plan 0027's own process
+is: implement, then run every existing capture-compare test unmodified;
+any golden that comes back byte-identical is confirmed unaffected and
+needs no further action; a human-reviewed re-capture (ADR-0042) is
+requested only for a golden that actually shows a difference — never
+presumptively, for a scene whose own geometry has not been shown to
+self-shadow.
+
+**Discriminating verification that shadows do not affect IBL/sky:** a
+new real-GPU test (mirroring Spec 0026's own `sky_background_gpu_tests.cpp`
+discriminator style, not merely "the image changed") must render one
+scene with both an environment configured and a directional light with
+a real occluder, and confirm the shadowed region's own IBL contribution
+(sampled with the directional light's own contribution independently
+suppressed, e.g. by comparing against the identical scene with
+`directionalLightCount` forced to 0) is unchanged between shadowed and
+unshadowed renders of the same point — proving the shadow factor
+multiplies only the directional term, not the ambient/reflection terms
+that sit outside the modified loop.
+
 Non-PBR goldens (`minimal_cube`, `world_scene`, `textured_quad`,
 `material_demo`, `lighting_demo`) are untouched — neither shader they use
 (`minimal_mesh`, `textured_quad`, `lit_textured`) is modified by this
@@ -218,63 +416,77 @@ ADR.
 - Shadow-map write/sample duality is available through a backend-neutral
   RHI contract, matching `HdrColorTarget`'s own established pattern —
   not a new kind of resource-ownership problem for this codebase.
-- One shadow-casting Pipeline, reused for every `DrawItem`, sidesteps the
-  known `bindUniformBuffer()` A-B-A constraint by construction, without
-  fixing or depending on a fix for it.
+- The shadow pass's own single-Pipeline draw loop is provably free of
+  the pre-existing `bindUniformBuffer()` A-B-A pattern, without fixing
+  or depending on a fix for it, scoped precisely to that pass's own call
+  sequence (D-3).
 - No new Sampler capability, no PCF/cascade infrastructure — the closed,
   minimal slice the Spec asks for.
 - Shadows are structurally confined to the one directional light's own
   direct term; IBL diffuse/specular and the sky pass are provably
-  untouched (they live outside the modified loop and outside the
-  modified shaders entirely).
+  untouched (outside the modified loop and outside the modified shaders
+  entirely) — and this is verified by a real discriminating test (D-7),
+  not asserted alone.
+- `ibl_material_demo`'s golden is confirmed unaffected by construction
+  (no directional light) — not swept into a blanket re-capture.
 
 ### Negative / Trade-offs
 
 - A real, disclosed public RHI surface: one new resource type
   (`ShadowMap`), one new `PipelineCreateParams` field
   (`hasColorAttachment`), three new/overloaded `CommandList` methods, one
-  new `ResourceBinding` field, one new `Device` factory method.
-- A real, disclosed content change to two already-`Approved`,
-  already-shipped shaders (`pbr_direct_lit.slang`, `pbr_ibl.slang`) —
-  every existing PBR-family golden needs re-capture.
-- Descriptor-pool sampler-per-set provisioning must grow from `3 *
-  maxSets` to `4 * maxSets` (Plan 0025 P2), re-derived and re-proven at
-  Plan 0027 time.
+  new `ResourceBinding` field, one new `Device` factory method, and three
+  separate internal capacity widenings (the closed sampled-binding-count
+  set, descriptor-pool sampler sizing, `textureDescriptorMemos_`).
+- A real, disclosed content change to two already-shipped shaders
+  (`pbr_direct_lit.slang`, `pbr_ibl.slang`), including an explicit
+  144-byte padding declaration in `pbr_direct_lit.slang` purely to keep
+  a consistent tail offset with `pbr_ibl.slang`.
+- A real, sizable migration: every existing call site creating a
+  `PbrDirectLit`/PBR-IBL Material — Runtime, three fixture/generator
+  files, three GPU test files — must be updated to supply a real
+  `ShadowMap`/`Sampler`, whether or not it exercises actual shadowing.
+- Descriptor-set-count re-derivation (`N+4`/`N+5`, on top of the
+  sampler-per-set budget change) and its own N=6 stress re-proof.
 - A fixed, non-scene-fitted orthographic shadow volume is a real quality
   ceiling (coverage is a Runtime constant, not adaptive) — acceptable
   for a first slice, explicitly not cascaded/adaptive.
 - One more new production shader pair (`shadow_cast`), on top of the two
-  modified existing ones.
+  modified existing ones, and a second, small, duplicated light-space
+  buffer (D-6).
 
 ## Alternatives Considered
 
 - **Widen `Texture`/`SampledTexture` instead of a new `ShadowMap` type.**
   Rejected for the identical reason ADR-0068 rejected widening
   `RenderTarget`/`SampledTexture` for `HdrColorTarget`: it conflates two
-  purpose-built contracts (`Texture` is depth-attachment-only by its own
-  stated contract; `SampledTexture` is upload-only, never a render
-  target) rather than keeping both intact.
+  purpose-built contracts rather than keeping both intact.
 - **Hardware depth-compare sampling (`VkSamplerCreateInfo::compareEnable`).**
   Rejected for this minimal slice — a real new RHI `Sampler` capability
-  for a benefit (built-in single-tap PCF-lite filtering) this ADR's own
-  "no soft-shadow system" scope does not need; a manual compare in the
-  shader is exactly as correct for a single hard-edged tap.
+  for a benefit this ADR's own "no soft-shadow system" scope does not
+  need; a manual compare in the shader is exactly as correct for a
+  single hard-edged tap.
 - **Dynamic, camera-frustum-fitted shadow volume (the first CSM step).**
-  Rejected — explicitly out of scope (Spec 0027's own Non-Goals); a
-  fixed volume is the smallest slice that produces a real, verifiable
-  shadow.
-- **A separate shadow-enabled shader variant (mirroring `pbr_ibl.slang`'s
-  own split from `pbr_direct_lit.slang`), leaving the existing two
+  Rejected — explicitly out of scope; a fixed volume is the smallest
+  slice that produces a real, verifiable shadow.
+- **A separate shadow-enabled shader variant, leaving the existing two
   shaders byte-for-byte untouched.** Rejected — the combinatorial
   variant count (direct/direct+shadow/ibl/ibl+shadow) is a real
-  complexity/maintenance cost this minimal slice does not need, since
-  the shadow term is already structurally gated by the existing
-  `directionalLightCount` loop and costs nothing when that count is
-  zero; the two existing shaders' own real, disclosed modification
-  (D-7) is the smaller change.
+  complexity cost; the two existing shaders' own real, disclosed, and
+  now fully-itemized modification (D-6/D-7) — including its own real
+  migration cost across every existing call site — is judged the smaller
+  overall change, but this trade-off is named explicitly for Human
+  Review to weigh, not decided unilaterally as obviously correct.
+- **A second `bindUniformBuffer()` binding, instead of appending to the
+  existing buffer plus a second, duplicated buffer for `shadow_cast`.**
+  Rejected — widening `CommandList`'s own uniform-binding contract to
+  support more than one buffer per Pipeline is a larger, separate RHI
+  change with its own caller-migration cost, for a benefit (avoiding one
+  small, disclosed 128-byte duplication) this minimal slice does not
+  need.
 - **Fixing `bindUniformBuffer()`'s own A-B-A constraint as part of this
-  ADR**, since shadows are the first feature to introduce a genuinely
-  new multi-pass-per-frame Pipeline pattern. Rejected — out of this
-  ADR's own scope per explicit direction; D-3's single-Pipeline shadow
-  pass does not need it, and fixing it is flagged separately (not here)
-  as independent follow-up work.
+  ADR.** Rejected — out of scope per explicit direction; D-3's
+  single-Pipeline shadow pass does not need it, and fixing it is
+  tracked separately as independent follow-up work, unrelated to this
+  ADR's own main "draw" pass, which carries the same, pre-existing,
+  unrelated risk today, unaffected by this change either way.
