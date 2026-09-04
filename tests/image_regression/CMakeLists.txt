@@ -48,6 +48,7 @@ add_executable(atlantis_image_regression_gpu_tests
   pbr_material_demo_gpu_tests.cpp
   hdr_roll_off_demo_gpu_tests.cpp
   ibl_material_demo_gpu_tests.cpp
+  sky_background_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_image_regression_gpu_tests
