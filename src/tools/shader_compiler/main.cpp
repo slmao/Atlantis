@@ -66,7 +66,7 @@ int main(int argc, char** argv) {
     std::cerr << "usage: atlantis_shader_compiler --slangc-path=<path> --spirv-val-path=<path> --source=<path> "
                  "--vertex-entry=<name> --fragment-entry=<name> --output-dir=<dir> "
                  "--expected-contract=<minimal-renderer|textured-material|lit-textured|pbr-direct-lit|pbr-ibl|"
-                 "output-transform-unorm|output-transform-srgb> "
+                 "output-transform-unorm|output-transform-srgb|sky> "
                  "--stamp=<path>\n";
     return 1;
   }

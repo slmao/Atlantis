@@ -64,6 +64,7 @@ add_executable(atlantis_vulkan_backend_gpu_tests
   headless_rendering_gpu_tests.cpp
   texture_upload_gpu_tests.cpp
   descriptor_pool_growth_gpu_tests.cpp
+  pipeline_depth_write_gpu_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_gpu_tests

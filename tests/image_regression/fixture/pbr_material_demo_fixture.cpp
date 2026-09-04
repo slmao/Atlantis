@@ -175,6 +175,9 @@ atlantis::Result<PbrMaterialDemoFixture, PbrMaterialDemoSetupError> setUpPbrMate
   std::optional<std::vector<std::uint32_t>> pbrIblVertexSpirv;
   std::optional<std::vector<std::uint32_t>> pbrIblFragmentSpirv;
   std::optional<VertexInputLayout> pbrIblVertexInputLayout;
+  std::optional<std::vector<std::uint32_t>> skyVertexSpirv;
+  std::optional<std::vector<std::uint32_t>> skyFragmentSpirv;
+  std::optional<VertexInputLayout> skyVertexInputLayout;
   if (!config.environmentArtifactPath.empty()) {
     if (atlantis::runtime::validateEnvironmentBootstrapConfig(config).isErr()) {
       return ResultT::Err(PbrMaterialDemoSetupError::ShaderLoadFailed);
@@ -187,6 +190,19 @@ atlantis::Result<PbrMaterialDemoFixture, PbrMaterialDemoSetupError> setUpPbrMate
     }
     pbrIblVertexInputLayout = pbrDirectLitVertexLayout(pbrIblReflection.value());
     if (!pbrIblVertexInputLayout.has_value()) return ResultT::Err(PbrMaterialDemoSetupError::ShaderLoadFailed);
+
+    // Plan 0026 Milestone 5 (ADR-0071): the sky shader pair -- same gate,
+    // same shape as the pbrIbl load immediately above. Its own vertex
+    // layout is resolved via the existing outputTransformVertexLayout()
+    // (P1's reused fullscreen schema), not a new vertex-layout function.
+    skyVertexSpirv = loadSpirvFile(config.skyVertexShaderSpirvPath.c_str());
+    skyFragmentSpirv = loadSpirvFile(config.skyFragmentShaderSpirvPath.c_str());
+    auto skyReflection = loadReflectionMetadata(config.skyVertexShaderReflectionPath.c_str());
+    if (!skyVertexSpirv.has_value() || !skyFragmentSpirv.has_value() || skyReflection.isErr()) {
+      return ResultT::Err(PbrMaterialDemoSetupError::ShaderLoadFailed);
+    }
+    skyVertexInputLayout = outputTransformVertexLayout(skyReflection.value());
+    if (!skyVertexInputLayout.has_value()) return ResultT::Err(PbrMaterialDemoSetupError::ShaderLoadFailed);
   }
 
   // Plan 0024 Milestone 7: the output-transform-unorm shader pair --
@@ -223,6 +239,11 @@ atlantis::Result<PbrMaterialDemoFixture, PbrMaterialDemoSetupError> setUpPbrMate
     fixture.pbrIblVertexInputLayout = std::move(*pbrIblVertexInputLayout);
     fixture.pbrIblVertexSpirv = std::move(*pbrIblVertexSpirv);
     fixture.pbrIblFragmentSpirv = std::move(*pbrIblFragmentSpirv);
+  }
+  if (skyVertexSpirv.has_value()) {
+    fixture.skyVertexInputLayout = std::move(*skyVertexInputLayout);
+    fixture.skyVertexSpirv = std::move(*skyVertexSpirv);
+    fixture.skyFragmentSpirv = std::move(*skyFragmentSpirv);
   }
   fixture.outputTransformUnormVertexInputLayout = *outputTransformVertexInputLayout;
   fixture.outputTransformUnormVertexSpirv = std::move(*outputTransformVertexSpirv);
@@ -317,6 +338,26 @@ atlantis::Result<PbrMaterialDemoFixture, PbrMaterialDemoSetupError> setUpPbrMate
        .hasDepthAttachment = false});
   if (outputTransformPipelineResult.isErr()) return ResultT::Err(PbrMaterialDemoSetupError::ResourceCreationFailed);
   fixture.outputTransformPipeline = std::move(outputTransformPipelineResult.value());
+
+  // Plan 0026 Milestone 5 (ADR-0071 P3/P5): the sky Pipeline -- created
+  // once, here, only when an environment is configured, mirroring
+  // outputTransformPipeline's own "no real Format/extent dependency"
+  // reasoning immediately above (sky targets the fixed
+  // HdrFormat::Rgba16Float, unlike outputTransformPipeline).
+  if (skyVertexSpirv.has_value()) {
+    auto skyPipelineResult = fixture.device->createPipeline(
+        {.vertexShader = {.spirvWords = fixture.skyVertexSpirv.data(), .wordCount = fixture.skyVertexSpirv.size()},
+         .fragmentShader = {.spirvWords = fixture.skyFragmentSpirv.data(),
+                             .wordCount = fixture.skyFragmentSpirv.size()},
+         .vertexInputLayout = fixture.skyVertexInputLayout,
+         .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
+         .depthFormat = DepthFormat::D32Sfloat,
+         .sampledTextureBindingCount = 1,
+         .hasDepthAttachment = true,
+         .depthWriteEnabled = false});
+    if (skyPipelineResult.isErr()) return ResultT::Err(PbrMaterialDemoSetupError::ResourceCreationFailed);
+    fixture.skyPipeline = std::move(skyPipelineResult.value());
+  }
 
   return ResultT::Ok(std::move(fixture));
 }
@@ -481,7 +522,8 @@ atlantis::Result<PixelBuffer, PbrMaterialDemoRenderError> renderPbrMaterialDemoF
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
                       *fixture.outputTransformPipeline, *fixture.outputTransformSampler,
-                      environmentLightingView.has_value() ? &*environmentLightingView : nullptr);
+                      environmentLightingView.has_value() ? &*environmentLightingView : nullptr,
+                      fixture.skyPipeline.get());
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");

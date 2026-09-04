@@ -4,6 +4,7 @@
 #include <atlantis/renderer/renderer.h>
 #include <atlantis/assert.h>
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <string>
@@ -421,4 +422,106 @@ TEST_CASE("Renderer binds base color, environment cube, and DFG LUT at explicit 
   REQUIRE(failures.size() == 1);
   CHECK(failures[0].find("IBL Material") != std::string::npos);
   CHECK(missingLightingCommandList.boundTextures.size() == 1);
+}
+
+TEST_CASE("Renderer draws the sky, bound at slot 1, strictly before every DrawItem when skyPipeline and "
+          "environmentLighting are both non-null (Plan 0026 Milestone 2, ADR-0071)",
+          "[renderer][ownership][sky]") {
+  atlantis::renderer::Mesh mesh(std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Vertex, 0),
+                                 std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Index, 0), 3);
+  atlantis::renderer::Material material(std::make_unique<FakePipeline>(),
+                                         atlantis::renderer::MaterialPushConstantLayout::ObjectToWorldOnly);
+  DrawItem item{.mesh = &mesh,
+                .material = &material,
+                .objectToWorld = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
+  const std::vector<DrawItem> drawItems{item};
+
+  FakeRenderTarget colorTarget("color");
+  FakeTexture depthTarget("depth");
+  FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 464);
+  FakeHdrColorTarget hdrColorTarget("hdr");
+  FakeBuffer fullscreenVertexBuffer(atlantis::rhi::BufferPurpose::Vertex, 0);
+  FakeBuffer fullscreenIndexBuffer(atlantis::rhi::BufferPurpose::Index, 0);
+  FakePipeline outputTransformPipeline;
+  FakeSampler outputTransformSampler("output-transform");
+  FakePipeline skyPipeline;
+  FakeSampledTexture environment("environment");
+  FakeSampledTexture dfgLut("dfg-lut");
+  FakeSampler environmentSampler("environment-sampler");
+  FakeSampler dfgSampler("dfg-sampler");
+  const EnvironmentLighting lighting{environment, environmentSampler, dfgLut, dfgSampler};
+
+  FakeCommandList commandList;
+  Renderer renderer;
+  renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
+                      atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, &lighting,
+                      &skyPipeline);
+
+  // Three Pipelines bound in order: sky, the one DrawItem, then the
+  // output-transform pass -- sky strictly first.
+  REQUIRE(commandList.boundPipelines.size() == 3);
+  CHECK(commandList.boundPipelines[0] == &skyPipeline);
+  CHECK(commandList.drawIndexedCounts.size() == 3);
+  CHECK(commandList.drawIndexedCounts[0] == 3);  // the sky's own fullscreen triangle
+
+  // The sky's own cubemap bind -- the SampledTexture-shaped bindTexture()
+  // overload, binding 1, distinct from the output-transform pass's own
+  // BindHdrTexture event.
+  REQUIRE(commandList.boundTextures.size() == 1);
+  CHECK(commandList.boundTextures[0].binding == 1);
+  CHECK(commandList.boundTextures[0].texture == &environment);
+  CHECK(commandList.boundTextures[0].sampler == &environmentSampler);
+
+  // The sky's own full bind/draw sequence (BindPipeline, BindVertexBuffer,
+  // BindIndexBuffer, BindUniformBuffer, BindTexture, DrawIndexed) precedes
+  // every event the one DrawItem's own draw records.
+  const auto skyDrawEventIndex =
+      std::find(commandList.events.begin(), commandList.events.end(), FakeCommandList::EventKind::DrawIndexed) -
+      commandList.events.begin();
+  const auto firstBindPipelineAfterSky =
+      std::find(commandList.events.begin() + skyDrawEventIndex + 1, commandList.events.end(),
+                FakeCommandList::EventKind::BindPipeline);
+  REQUIRE(firstBindPipelineAfterSky != commandList.events.end());
+  CHECK(commandList.boundPipelines[1] != &skyPipeline);
+}
+
+TEST_CASE("A non-null skyPipeline with a null environmentLighting fires the programmer-error guard and draws no "
+          "sky (Plan 0026 Milestone 2, ADR-0071)",
+          "[renderer][ownership][sky]") {
+  atlantis::renderer::Mesh mesh(std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Vertex, 0),
+                                 std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Index, 0), 3);
+  atlantis::renderer::Material material(std::make_unique<FakePipeline>(),
+                                         atlantis::renderer::MaterialPushConstantLayout::ObjectToWorldOnly);
+  DrawItem item{.mesh = &mesh,
+                .material = &material,
+                .objectToWorld = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
+  const std::vector<DrawItem> drawItems{item};
+
+  FakeRenderTarget colorTarget("color");
+  FakeTexture depthTarget("depth");
+  FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 464);
+  FakeHdrColorTarget hdrColorTarget("hdr");
+  FakeBuffer fullscreenVertexBuffer(atlantis::rhi::BufferPurpose::Vertex, 0);
+  FakeBuffer fullscreenIndexBuffer(atlantis::rhi::BufferPurpose::Index, 0);
+  FakePipeline outputTransformPipeline;
+  FakeSampler outputTransformSampler("output-transform");
+  FakePipeline skyPipeline;
+
+  std::vector<std::string> failures;
+  ScopedFailureHandler failureHandler(failures);
+  FakeCommandList commandList;
+  Renderer renderer;
+  renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
+                      atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler,
+                      /*environmentLighting=*/nullptr, &skyPipeline);
+
+  REQUIRE(failures.size() == 1);
+  CHECK(failures[0].find("skyPipeline") != std::string::npos);
+  // Only the one DrawItem's own Pipeline plus the output-transform
+  // Pipeline are bound -- the sky never binds or draws.
+  REQUIRE(commandList.boundPipelines.size() == 2);
+  CHECK(commandList.boundPipelines[0] != &skyPipeline);
+  CHECK(commandList.boundPipelines[1] != &skyPipeline);
 }

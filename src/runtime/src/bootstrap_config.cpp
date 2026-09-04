@@ -14,6 +14,13 @@ atlantis::Result<std::monostate, RuntimeInitError> validateEnvironmentBootstrapC
        config.pbrIblFragmentShaderSpirvPath.empty() || config.pbrIblFragmentShaderReflectionPath.empty())) {
     return ResultT::Err(RuntimeInitError::EnvironmentConfigInvalid);
   }
+  // Plan 0026 Milestone 3 (ADR-0071): the sky shader pair is required in
+  // exactly the same case, mirroring the pbrIbl check above.
+  if (hasEnvironment &&
+      (config.skyVertexShaderSpirvPath.empty() || config.skyVertexShaderReflectionPath.empty() ||
+       config.skyFragmentShaderSpirvPath.empty() || config.skyFragmentShaderReflectionPath.empty())) {
+    return ResultT::Err(RuntimeInitError::EnvironmentConfigInvalid);
+  }
   return ResultT::Ok(std::monostate{});
 }
 

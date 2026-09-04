@@ -69,6 +69,13 @@ enum class RuntimeInitError {
   // is now created once at startup rather than deferred to the first
   // frame -- mirrors CameraBufferCreateFailed's own precedent exactly.
   FallbackMaterialCreateFailed,
+  // Plan 0026 Milestone 3 (ADR-0071): the sky Pipeline is likewise
+  // created once at startup, only when an environment is configured --
+  // no dependency on a real, negotiated Format or extent, mirroring
+  // FallbackMaterialCreateFailed's own precedent exactly. Shader-load
+  // failure for the sky shader pair reuses the existing, generic
+  // ShaderLoadFailed above, matching every other built-in shader pair.
+  SkyPipelineCreateFailed,
 };
 
 // For logging only -- not part of any Result/error contract.

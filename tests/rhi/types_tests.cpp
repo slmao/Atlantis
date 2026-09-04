@@ -13,6 +13,7 @@ using atlantis::rhi::Filter;
 using atlantis::rhi::Format;
 using atlantis::rhi::MipFilter;
 using atlantis::rhi::OffscreenTargetCreateParams;
+using atlantis::rhi::PipelineCreateParams;
 using atlantis::rhi::PresentationError;
 using atlantis::rhi::ResourceState;
 using atlantis::rhi::SampledTextureCreateParams;
@@ -196,4 +197,19 @@ TEST_CASE("SamplerCreateParams equality and inequality", "[rhi][sampler_create_p
                 SamplerCreateParams{.filter = Filter::Linear, .minLod = 0.0F, .maxLod = 4.0F});
   REQUIRE_FALSE(SamplerCreateParams{.filter = Filter::Linear, .minLod = 1.0F, .maxLod = 4.0F} ==
                 SamplerCreateParams{.filter = Filter::Linear, .minLod = 1.0F, .maxLod = 3.0F});
+}
+
+// Plan 0026 Milestone 1 (ADR-0071 P4): PipelineCreateParams has no
+// operator== (its ShaderStageBytecode members hold non-owning SPIR-V
+// pointers, not comparable by value) -- this is a direct default-value
+// check, not an equality-based one like the SamplerCreateParams tests
+// above. depthWriteEnabled's own default (true) must reproduce every
+// existing Pipeline's current always-write-when-tested behavior
+// unconditionally, matching hasCameraUniformBinding/hasDepthAttachment's
+// own established true-by-default convention.
+TEST_CASE("PipelineCreateParams::depthWriteEnabled defaults to true, reproducing existing Pipeline behavior",
+          "[rhi][pipeline_create_params]") {
+  const PipelineCreateParams params{};
+  REQUIRE(params.depthWriteEnabled);
+  REQUIRE(params.hasDepthAttachment);
 }

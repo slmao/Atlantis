@@ -176,6 +176,17 @@ class RuntimeApplication {
   // already-available shader pair to construct.
   std::unique_ptr<atlantis::renderer::Material> fallbackMaterial_;
 
+  // Plan 0026 Milestone 3 (ADR-0071 P5): the visible sky background's own
+  // Pipeline -- a raw Pipeline, not a Material (no push constant, no
+  // per-DrawItem mesh). Created once at startup, alongside
+  // fallbackMaterial_ immediately above, only when BootstrapConfig names
+  // an environment: it has no dependency on the negotiated final-target
+  // Format (unlike outputTransformUnormPipeline_/...SrgbPipeline_ below)
+  // and no dependency on extent, so it is never rebuilt on resize or
+  // format change -- the exact same "created once, never rebuilt"
+  // lifecycle fallbackMaterial_ itself now has (ADR-0068 D-4).
+  std::unique_ptr<atlantis::rhi::Pipeline> skyPipeline_;
+
   // Plan 0024 Milestone 6 (ADR-0068 D-1/D-3/D-6): the output-transform
   // pass's own fixed, never-scene-content geometry -- created once at
   // startup, alongside cameraBuffer_'s own existing startup sequence,
@@ -253,6 +264,14 @@ class RuntimeApplication {
   atlantis::rhi::VertexInputLayout pbrIblVertexInputLayout_;
   std::vector<std::uint32_t> pbrIblVertexSpirv_;
   std::vector<std::uint32_t> pbrIblFragmentSpirv_;
+  // Plan 0026 Milestone 3 (ADR-0071): the sky shader pair's own resolved
+  // vertex layout/SPIR-V -- loaded conditionally, alongside pbrIblVertexSpirv_/
+  // ...FragmentSpirv_ above (same hasEnvironment gate). skyVertexInputLayout_
+  // is resolved via the existing outputTransformVertexLayout() function
+  // (P1's reused fullscreen schema) -- no new vertex-layout function.
+  atlantis::rhi::VertexInputLayout skyVertexInputLayout_;
+  std::vector<std::uint32_t> skyVertexSpirv_;
+  std::vector<std::uint32_t> skyFragmentSpirv_;
   // Plan 0024 Milestone 6 (ADR-0068 D-6): the two output-transform
   // shader pairs' own resolved layout/SPIR-V -- mirrors
   // pbrDirectLitVertexInputLayout_/pbrDirectLitVertexSpirv_/

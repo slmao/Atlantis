@@ -234,6 +234,10 @@ target_compile_definitions(atlantis_image_regression_ibl_material_demo_golden_ge
   ATLANTIS_IBL_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_IBL_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_IBL_DEMO_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+  # Plan 0026 Milestone 7 (ADR-0071): the sky shader pair's own output
+  # directory, mirroring ATLANTIS_IBL_DEMO_PBR_IBL_SHADER_DIR's own
+  # identical need.
+  ATLANTIS_IBL_DEMO_SKY_SHADER_DIR="${ATLANTIS_sky_SHADER_OUTPUT_DIR}"
   ATLANTIS_IBL_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
   ATLANTIS_IBL_DEMO_ENVIRONMENT_ARTIFACT_PATH="${ATLANTIS_ibl_studio_ARTIFACT_PATH}"
   ATLANTIS_IBL_DEMO_ENVIRONMENT_METADATA_PATH="${ATLANTIS_ibl_studio_METADATA_PATH}"
@@ -241,7 +245,7 @@ target_compile_definitions(atlantis_image_regression_ibl_material_demo_golden_ge
   ATLANTIS_IBL_DEMO_ARTIFACT_SHA256="bd0c9f75c5e26418f7de6f9165675fb54a5a045cdbb3265aae05ba18be4a1f83"
 )
 add_dependencies(atlantis_image_regression_ibl_material_demo_golden_generator textured_quad_shaders
-  lit_textured_shaders pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders
+  lit_textured_shaders pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders sky_shaders
   ${ATLANTIS_ibl_material_demo_scene_TARGET} ${ATLANTIS_ibl_studio_TARGET})
 
 # Plan 0024 Milestone 10: a seventh standalone generator for the

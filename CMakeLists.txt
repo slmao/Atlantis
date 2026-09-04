@@ -110,14 +110,21 @@ add_subdirectory(shaders/pbr_ibl)
 # atlantis_runtime's own add_dependencies() in Plan 0024 Milestone 6).
 add_subdirectory(shaders/output_transform_unorm)
 add_subdirectory(shaders/output_transform_srgb)
+# Plan 0026 Milestone 4 (ADR-0071): the visible sky background shader --
+# unconditional here, matching every other production shader pair's own
+# identical placement/reasoning; declared immediately after the
+# output-transform variants and before src/runtime, for the same
+# add_dependencies()-ordering reason documented below.
+add_subdirectory(shaders/sky)
 # Plan 0013 Section D1: must come after add_subdirectory(assets),
 # add_subdirectory(shaders/minimal_renderer), (Plan 0018 Section P10)
 # add_subdirectory(shaders/textured_quad), (Plan 0019 Section P11)
 # add_subdirectory(shaders/lit_textured), (Plan 0023 Milestone 4)
 # add_subdirectory(shaders/pbr_direct_lit), (Plan 0025 Milestone 5)
-# add_subdirectory(shaders/pbr_ibl), and (Plan 0024 Milestone 4)
+# add_subdirectory(shaders/pbr_ibl), (Plan 0024 Milestone 4)
 # add_subdirectory(shaders/output_transform_unorm)/
-# add_subdirectory(shaders/output_transform_srgb) above -- atlantis_runtime
+# add_subdirectory(shaders/output_transform_srgb), and (Plan 0026 Milestone 4)
+# add_subdirectory(shaders/sky) above -- atlantis_runtime
 # add_dependencies() on minimal_mesh_shaders, textured_quad_shaders,
 # lit_textured_shaders, and ${ATLANTIS_minimal_cube_TARGET}, all
 # declared by those calls, and CMake's add_dependencies() requires the

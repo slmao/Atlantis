@@ -67,6 +67,20 @@ class Renderer {
   // environmentLighting is a nullable, frame-scoped borrowed view.
   // MaterialEnvironmentBinding::None never reads it; Ibl requires it
   // and binds the cubemap/LUT at slots 2/3.
+  //
+  // Plan 0026 Milestone 2 (ADR-0071): skyPipeline is a nullable, caller-
+  // owned borrowed Pipeline. When non-null, it must be paired with a
+  // non-null environmentLighting (ATLANTIS_CHECK_MSG otherwise) -- the
+  // sky reuses environmentLighting's own prefilteredEnvironment/
+  // environmentSampler and the existing fullscreenTriangleVertexBuffer/
+  // ...IndexBuffer above, needing no further caller-owned resource.
+  // Per ADR-0071's own Proposed Correction, the sky draw is issued
+  // strictly before every DrawItem, every frame -- a correctness
+  // requirement (an opaque DrawItem drawn first could leave a real depth
+  // value the sky's own fixed depth would incorrectly pass against, sky
+  // Pipeline's own depthWriteEnabled = false notwithstanding), not an
+  // implementation convenience. nullptr (default) draws no sky at all --
+  // every existing caller/scene without an environment is unaffected.
   void drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& colorTarget,
                  atlantis::rhi::Texture& depthTarget, atlantis::rhi::Buffer& cameraUniformBuffer,
                  std::span<const DrawItem> drawItems, atlantis::rhi::ResourceState finalColorState,
@@ -74,7 +88,8 @@ class Renderer {
                  atlantis::rhi::Buffer& fullscreenTriangleVertexBuffer,
                  atlantis::rhi::Buffer& fullscreenTriangleIndexBuffer,
                  atlantis::rhi::Pipeline& outputTransformPipeline, atlantis::rhi::Sampler& outputTransformSampler,
-                 const EnvironmentLighting* environmentLighting = nullptr);
+                 const EnvironmentLighting* environmentLighting = nullptr,
+                 atlantis::rhi::Pipeline* skyPipeline = nullptr);
 };
 
 }  // namespace atlantis::renderer

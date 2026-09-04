@@ -694,6 +694,12 @@ TEST_CASE("loadAndInstantiateScene: a PbrDirectLit material whose own resolved b
 // see material_realization_gpu_tests.cpp's own new N=6 TEST_CASE
 // (Milestone 8) for the real re-confirmation of D-4's own N+2/N+3
 // formula against this exact growable pool mechanism.
+// Plan 0026 Milestone 6: this TEST_CASE models the NO-ENVIRONMENT case --
+// no sky Pipeline is ever created in this scenario, so its own N+2/N+3
+// derivation remains exactly correct as written. See the sibling
+// "N=6 HDR pipeline descriptor-set peak is exactly N+4 with an
+// environment/sky Pipeline present" TEST_CASE below for the
+// environment-enabled re-derivation.
 TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+3 and succeeds against the real 60-set ceiling",
           "[runtime][gpu][material_realization][descriptor_pool_growth][hdr]") {
   using atlantis::vulkan_backend::detail::kDescriptorPoolMaxSetsByGeneration;
@@ -808,6 +814,156 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+3 and succeeds agai
       ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR, "output_transform_srgb", Format::Rgba8Srgb);
   REQUIRE(transientOutputTransformPipeline != nullptr);
   REQUIRE(1 + materialPipelines.size() + 2 == kExpectedPeakSetCount);
+  REQUIRE(device->waitIdle().isOk());
+}
+
+// Plan 0026 Milestone 6 (ADR-0071): re-derives the same N=6 scenario with
+// one more fixed, never-rebuilt synthetic Pipeline standing in for the
+// sky Pipeline (created once at startup alongside fallbackMaterial_,
+// runtime_application.cpp Step 4d -- never participates in format-change
+// rebuild, exactly like fallbackMaterial_ itself) -- proving the real,
+// environment-enabled steady-state/peak formula against the same real
+// 60-set ceiling.
+TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4 with an environment/sky Pipeline present",
+          "[runtime][gpu][material_realization][descriptor_pool_growth][hdr][sky]") {
+  using atlantis::vulkan_backend::detail::kDescriptorPoolMaxSetsByGeneration;
+
+  constexpr std::size_t kMaterialPipelineCount = 6;
+  constexpr std::size_t kFallbackPipelineCount = 1;
+  constexpr std::size_t kSkyPipelineCount = 1;
+  constexpr std::size_t kSteadyOutputTransformPipelineCount = 1;
+  constexpr std::size_t kTransientOutputTransformPipelineCount = 1;
+  constexpr std::size_t kExpectedSteadySetCount =
+      kMaterialPipelineCount + kFallbackPipelineCount + kSkyPipelineCount + kSteadyOutputTransformPipelineCount;
+  constexpr std::size_t kExpectedPeakSetCount = kExpectedSteadySetCount + kTransientOutputTransformPipelineCount;
+  static_assert(kExpectedSteadySetCount == 9);  // N + 3
+  static_assert(kExpectedPeakSetCount == 10);   // N + 4
+
+  const std::size_t totalDescriptorSetCapacity =
+      std::accumulate(kDescriptorPoolMaxSetsByGeneration.begin(), kDescriptorPoolMaxSetsByGeneration.end(),
+                      std::size_t{0});
+  REQUIRE(totalDescriptorSetCapacity == 60);
+  REQUIRE(kExpectedPeakSetCount < totalDescriptorSetCapacity);
+
+  auto deviceResult = atlantis::vulkan_backend::createDevice(
+      {.applicationName = "Atlantis N=6 HDR+Sky Descriptor Pool GPU Test", .enableValidationLayers = true});
+  REQUIRE(deviceResult.isOk());
+  std::unique_ptr<atlantis::rhi::Device> device = std::move(deviceResult.value());
+
+  const auto fallbackVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.spv");
+  const auto fallbackFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.frag.spv");
+  auto fallbackReflection =
+      loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.refl.json");
+  REQUIRE(fallbackVertexSpirv.has_value());
+  REQUIRE(fallbackFragmentSpirv.has_value());
+  REQUIRE(fallbackReflection.isOk());
+  const auto fallbackLayout = fallbackVertexLayout(fallbackReflection.value());
+  REQUIRE(fallbackLayout.has_value());
+
+  auto fallbackPipelineResult = device->createPipeline(
+      {.vertexShader = {.spirvWords = fallbackVertexSpirv->data(), .wordCount = fallbackVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = fallbackFragmentSpirv->data(), .wordCount = fallbackFragmentSpirv->size()},
+       .vertexInputLayout = *fallbackLayout,
+       .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
+       .depthFormat = atlantis::rhi::DepthFormat::D32Sfloat,
+       .pushConstantSizeBytes = sizeof(float) * 16});
+  REQUIRE(fallbackPipelineResult.isOk());
+  std::unique_ptr<atlantis::rhi::Pipeline> fallbackPipeline = std::move(fallbackPipelineResult.value());
+  REQUIRE(fallbackPipeline != nullptr);
+
+  const auto materialVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv");
+  const auto materialFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.frag.spv");
+  auto materialReflection = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) +
+                                                    "/textured_quad.vert.refl.json");
+  REQUIRE(materialVertexSpirv.has_value());
+  REQUIRE(materialFragmentSpirv.has_value());
+  REQUIRE(materialReflection.isOk());
+  const auto materialLayout = unlitTexturedVertexLayout(materialReflection.value());
+  REQUIRE(materialLayout.has_value());
+
+  std::vector<std::unique_ptr<atlantis::rhi::Pipeline>> materialPipelines;
+  materialPipelines.reserve(kMaterialPipelineCount);
+  for (std::size_t i = 0; i < kMaterialPipelineCount; ++i) {
+    auto materialPipelineResult = device->createPipeline(
+        {.vertexShader = {.spirvWords = materialVertexSpirv->data(), .wordCount = materialVertexSpirv->size()},
+         .fragmentShader = {.spirvWords = materialFragmentSpirv->data(),
+                             .wordCount = materialFragmentSpirv->size()},
+         .vertexInputLayout = *materialLayout,
+         .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
+         .depthFormat = atlantis::rhi::DepthFormat::D32Sfloat,
+         .pushConstantSizeBytes = sizeof(float) * 16,
+         .sampledTextureBindingCount = 1});
+    REQUIRE(materialPipelineResult.isOk());
+    materialPipelines.push_back(std::move(materialPipelineResult.value()));
+  }
+  REQUIRE(materialPipelines.size() == kMaterialPipelineCount);
+
+  // The sky Pipeline (ADR-0071 P3): sampledTextureBindingCount = 1 (the
+  // environment cubemap), depthWriteEnabled = false -- its own real
+  // shape, reusing the fixed fullscreen-triangle vertex schema like the
+  // output-transform Pipelines below.
+  const auto skyVertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.vert.spv");
+  const auto skyFragmentSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.frag.spv");
+  auto skyReflection = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.vert.refl.json");
+  REQUIRE(skyVertexSpirv.has_value());
+  REQUIRE(skyFragmentSpirv.has_value());
+  REQUIRE(skyReflection.isOk());
+  const auto skyLayout = outputTransformVertexLayout(skyReflection.value());
+  REQUIRE(skyLayout.has_value());
+
+  auto skyPipelineResult = device->createPipeline(
+      {.vertexShader = {.spirvWords = skyVertexSpirv->data(), .wordCount = skyVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = skyFragmentSpirv->data(), .wordCount = skyFragmentSpirv->size()},
+       .vertexInputLayout = *skyLayout,
+       .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
+       .depthFormat = atlantis::rhi::DepthFormat::D32Sfloat,
+       .sampledTextureBindingCount = 1,
+       .hasDepthAttachment = true,
+       .depthWriteEnabled = false});
+  REQUIRE(skyPipelineResult.isOk());
+  std::unique_ptr<atlantis::rhi::Pipeline> skyPipeline = std::move(skyPipelineResult.value());
+  REQUIRE(skyPipeline != nullptr);
+
+  const auto makeOutputTransformPipeline = [&](const char* shaderDirectory, const char* shaderName,
+                                                Format finalFormat) -> std::unique_ptr<atlantis::rhi::Pipeline> {
+    const std::string shaderPrefix = std::string(shaderDirectory) + "/" + shaderName;
+    const auto vertexSpirv = loadSpirvFile(shaderPrefix + ".vert.spv");
+    const auto fragmentSpirv = loadSpirvFile(shaderPrefix + ".frag.spv");
+    auto reflection = loadReflectionMetadata(shaderPrefix + ".vert.refl.json");
+    REQUIRE(vertexSpirv.has_value());
+    REQUIRE(fragmentSpirv.has_value());
+    REQUIRE(reflection.isOk());
+    const auto layout = outputTransformVertexLayout(reflection.value());
+    REQUIRE(layout.has_value());
+    auto result = device->createPipeline(
+        {.vertexShader = {.spirvWords = vertexSpirv->data(), .wordCount = vertexSpirv->size()},
+         .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
+         .vertexInputLayout = *layout,
+         .colorFormat = finalFormat,
+         .sampledTextureBindingCount = 1,
+         .hasCameraUniformBinding = false,
+         .hasDepthAttachment = false});
+    REQUIRE(result.isOk());
+    return std::move(result.value());
+  };
+
+  std::unique_ptr<atlantis::rhi::Pipeline> steadyOutputTransformPipeline = makeOutputTransformPipeline(
+      ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_UNORM_SHADER_DIR, "output_transform_unorm", Format::Rgba8Unorm);
+  REQUIRE(steadyOutputTransformPipeline != nullptr);
+  REQUIRE(1 + materialPipelines.size() + 1 + 1 == kExpectedSteadySetCount);
+
+  // The second output-transform Pipeline is the prepared-but-not-yet-
+  // swapped format-change candidate -- the sky Pipeline above is never
+  // rebuilt by this event (P5), so only the output-transform old/new
+  // pair coexists, producing the real N+4 peak.
+  std::unique_ptr<atlantis::rhi::Pipeline> transientOutputTransformPipeline = makeOutputTransformPipeline(
+      ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR, "output_transform_srgb", Format::Rgba8Srgb);
+  REQUIRE(transientOutputTransformPipeline != nullptr);
+  REQUIRE(1 + materialPipelines.size() + 1 + 2 == kExpectedPeakSetCount);
   REQUIRE(device->waitIdle().isOk());
 }
 

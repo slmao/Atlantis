@@ -50,6 +50,8 @@ const char* toString(RuntimeInitError error) noexcept {
       return "OutputTransformSrgbPipelineCreateFailed";
     case RuntimeInitError::FallbackMaterialCreateFailed:
       return "FallbackMaterialCreateFailed";
+    case RuntimeInitError::SkyPipelineCreateFailed:
+      return "SkyPipelineCreateFailed";
   }
   // Reached only if a future RuntimeInitError value is added without a
   // corresponding case above -- see exit_reason.cpp's identical comment
