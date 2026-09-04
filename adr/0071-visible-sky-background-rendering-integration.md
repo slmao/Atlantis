@@ -183,10 +183,13 @@ loop unconditionally, not as an implementation detail free to move.
 
 ## Proposed Correction — 2026-09-04 (`skyPipeline` constness)
 
-**Status:** Proposed, pending Human Review. Does not rewrite the Decision
-section above; supersedes only the literal type
-`const atlantis::rhi::Pipeline* skyPipeline` written there, which does
-not compile against this codebase's own existing `CommandList` contract.
+**Status:** Accepted. Approved by Human Review, 2026-09-04, against
+[PR #122](https://github.com/slmao/Atlantis/pull/122) (pending merge).
+Does not rewrite the Decision section above; supersedes only the literal
+type `const atlantis::rhi::Pipeline* skyPipeline` written there, which
+does not compile against this codebase's own existing `CommandList`
+contract. The existing `CommandList::bindPipeline()` RHI contract itself
+is confirmed unchanged by this correction.
 
 `atlantis::rhi::CommandList::bindPipeline(Pipeline& pipeline)`
 (`src/rhi/include/atlantis/rhi/command_list.h`) already takes a non-const

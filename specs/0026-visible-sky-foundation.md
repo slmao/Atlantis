@@ -236,3 +236,25 @@ resize/rebuild trigger, and the expected `ibl_material_demo` golden
 re-capture — are accepted as deferred to Plan/Implementation, not as
 blockers to this approval. This authorizes drafting Plan 0026, not
 implementation.
+
+## Accepted Correction — 2026-09-04 (`skyPipeline` constness)
+
+**Status:** Accepted by Human Review against
+[PR #122](https://github.com/slmao/Atlantis/pull/122) (pending merge).
+Does not change this Spec's top-level `Approved` status or rewrite the
+original approved text above. It supersedes only the literal type in the
+Proposed Design's own sentence, "`const atlantis::rhi::Pipeline*
+skyPipeline = nullptr`", and accepts
+[ADR-0071's matching Proposed Correction](../adr/0071-visible-sky-background-rendering-integration.md#proposed-correction--2026-09-04-skypipeline-constness)
+(now `Accepted`) below it.
+
+**Corrected type:** `atlantis::rhi::Pipeline* skyPipeline = nullptr`, not
+`const atlantis::rhi::Pipeline*` — `CommandList::bindPipeline()` requires
+a non-const reference (an existing, unrelated RHI contract, unchanged by
+this correction), matching `outputTransformPipeline`'s own existing
+non-const parameter on this same function for the identical reason. No
+`const_cast` is introduced and `CommandList`'s own contract is not
+widened.
+
+This correction introduces no new module, dependency, or implementation
+authorization beyond what this Spec already grants.

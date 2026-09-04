@@ -584,3 +584,25 @@ rewritten to remove the questions once answered.
    as a synthetic, sibling test rather than mutating the existing `N+2`/
    `N+3` no-environment test — confirms this does not need to become one
    parameterized test instead.
+
+## Accepted Correction — 2026-09-04 (`skyPipeline` constness)
+
+**Status:** Accepted by Human Review against
+[PR #122](https://github.com/slmao/Atlantis/pull/122) (pending merge).
+Does not change this Plan's top-level `Approved / Ready for Implementation`
+status or rewrite the original approved text above. It supersedes every
+literal `const atlantis::rhi::Pipeline* skyPipeline` in Milestone 2 and
+Files/Modules Touched above, and accepts
+[ADR-0071's matching Proposed Correction](../adr/0071-visible-sky-background-rendering-integration.md#proposed-correction--2026-09-04-skypipeline-constness)
+(now `Accepted`) below it.
+
+**Corrected type:** `atlantis::rhi::Pipeline* skyPipeline = nullptr`, not
+`const atlantis::rhi::Pipeline*` — `CommandList::bindPipeline()` requires
+a non-const reference (an existing, unrelated RHI contract, unchanged by
+this correction), matching `outputTransformPipeline`'s own existing
+non-const parameter on this same function for the identical reason. No
+`const_cast` is introduced and `CommandList`'s own contract is not
+widened or touched. This is already how `feature/0026-visible-sky-foundation`
+implements it (`src/renderer/include/atlantis/renderer/renderer.h`,
+`src/renderer/src/renderer.cpp`); this correction brings the Plan's own
+text in line with the accepted implementation, not the reverse.
