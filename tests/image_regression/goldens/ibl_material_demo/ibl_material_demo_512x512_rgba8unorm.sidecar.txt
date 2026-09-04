@@ -1,6 +1,6 @@
 schema_version: 2
-capture_date: 2026-09-03T01:22:31Z
-source_revision: 86744dde7e45db5877d8185b936ba625884eaa06
+capture_date: 2026-09-04T00:37:20Z
+source_revision: 4bf2ac5a35ead18214703010f681701932b2d24c
 gpu_vendor: Intel
 gpu_model: Intel(R) Arc(TM) B370 GPU
 driver_version: 101.8509
@@ -14,4 +14,4 @@ format: Rgba8Unorm
 environment_source_sha256: a5d9b1a50102f8f2761a61be0574b5036277a8da61268c922d3f82ebe839e4e4
 environment_artifact_sha256: bd0c9f75c5e26418f7de6f9165675fb54a5a045cdbb3265aae05ba18be4a1f83
 environment_cooker_settings: schema=1,face=256,mips=9,dfg=128,samples=1024
-golden_update_reason: initial Spec 0025 IBL baseline
+golden_update_reason: visible sky background added, Spec 0026
