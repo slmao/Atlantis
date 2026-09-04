@@ -180,3 +180,50 @@ merely a convenience rather than a correctness requirement. `Renderer::
 drawFrame()`'s own "draw" pass execute lambda must therefore issue the
 sky draw call before entering its `for (const DrawItem& item : drawItems)`
 loop unconditionally, not as an implementation detail free to move.
+
+## Proposed Correction — 2026-09-04 (`skyPipeline` constness)
+
+**Status:** Proposed, pending Human Review. Does not rewrite the Decision
+section above; supersedes only the literal type
+`const atlantis::rhi::Pipeline* skyPipeline` written there, which does
+not compile against this codebase's own existing `CommandList` contract.
+
+`atlantis::rhi::CommandList::bindPipeline(Pipeline& pipeline)`
+(`src/rhi/include/atlantis/rhi/command_list.h`) already takes a non-const
+reference — an existing, unrelated-to-this-ADR contract, unchanged by
+Spec 0026/Plan 0026/this ADR. `Renderer::drawFrame()`'s own draw-pass
+execute lambda must call `cmd.bindPipeline(*skyPipeline)` to draw the
+sky at all (Decision, D-3/D-5 material above), so `skyPipeline` cannot
+be a pointer to `const Pipeline` — passing a `const Pipeline*`'s pointee
+to `bindPipeline()`'s non-const-reference parameter does not compile.
+
+**Corrected type: `atlantis::rhi::Pipeline* skyPipeline = nullptr`,
+not `const atlantis::rhi::Pipeline*`.** This matches, not widens,
+`Renderer::drawFrame()`'s own existing convention: `outputTransformPipeline`
+is already a plain, non-const `Pipeline&` parameter for the identical
+reason (ADR-0068 D-3) — every `Pipeline` this function ever binds is
+already passed non-const; `skyPipeline` is not a new asymmetry, it is
+brought in line with the pattern already established for every other
+Pipeline this function touches. No `const_cast` is introduced anywhere,
+and `CommandList::bindPipeline()`'s own signature is not touched or
+widened — this correction is scoped entirely to `Renderer::drawFrame()`'s
+own parameter type, not to RHI's `CommandList` contract.
+
+**Consequence:** callers passing `fixture.skyPipeline.get()`/
+`skyPipeline_.get()` (both already plain `std::unique_ptr<Pipeline>`
+members, never `const`) need no change of their own — only the parameter
+type in `renderer.h`/`renderer.cpp` differs from the Decision's own
+literal text above.
+
+### Alternatives Considered
+
+- **`const_cast` at each call site, keeping `skyPipeline` as
+  `const Pipeline*`.** Rejected — hides a real type mismatch behind an
+  unsafe cast never used elsewhere in this codebase for this purpose,
+  and gives `skyPipeline` a `const`-correctness guarantee (read-only)
+  that `bindPipeline()`'s own mutation of Vulkan-side bound-pipeline
+  state does not actually hold.
+- **Widen `CommandList::bindPipeline()` to accept `const Pipeline&`.**
+  Rejected — a real RHI contract change affecting every existing caller
+  and Vulkan Backend implementation, out of scope for this narrow
+  parameter-type correction and not something Plan 0026 authorizes.

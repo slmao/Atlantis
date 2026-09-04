@@ -169,17 +169,31 @@ TEST_CASE("PipelineCreateParams::depthWriteEnabled disables depth writes while k
   std::unique_ptr<atlantis::rhi::Pipeline> pipelineB = std::move(pipelineBResult.value());
 
   // A second write-off Pipeline instance, identical PipelineCreateParams
-  // to pipelineA, for the blue draw. VulkanCommandList::bindUniformBuffer()'s
-  // own redundant-write skip (vulkan_command_list.cpp:328) only covers
-  // immediately-consecutive rebinds of the SAME descriptor set -- revisiting
-  // pipelineA's own set for a third draw, after pipelineB's own distinct
-  // set was bound in between, would call vkUpdateDescriptorSets() on a
-  // set already bound via vkCmdBindDescriptorSets earlier in this same
-  // recording, a real Validation Layers error (no UPDATE_AFTER_BIND
-  // pool). A distinct Pipeline/descriptor-set per draw sidesteps this
-  // purely mechanical, per-command-buffer constraint -- it does not
-  // change what this test exercises, since pipelineA2 shares pipelineA's
-  // own exact depthWriteEnabled = false configuration.
+  // to pipelineA, for the blue draw. This exists ONLY to sidestep a real,
+  // pre-existing, independent constraint of
+  // VulkanCommandList::bindUniformBuffer() -- it is a TEST-side
+  // workaround, not a fix, and this Plan 0026 PR does not fix the
+  // underlying issue (out of scope; disclosed here so it is not mistaken
+  // for "resolved").
+  //
+  // The underlying issue: bindUniformBuffer()'s own redundant-write skip
+  // (vulkan_command_list.cpp:328, `if (boundDescriptorSet_ !=
+  // lastUpdatedDescriptorSet_ || vkBuffer != lastUpdatedUniformBuffer_)`)
+  // only covers immediately-consecutive rebinds of the SAME descriptor
+  // set. Revisiting pipelineA's own set for a third draw, after
+  // pipelineB's own distinct set was bound in between, would call
+  // vkUpdateDescriptorSets() on a set already bound via
+  // vkCmdBindDescriptorSets() earlier in this same recording -- a real
+  // Validation Layers error (no UPDATE_AFTER_BIND pool), reproduced and
+  // confirmed during this Plan's own implementation before this
+  // workaround was added. This is a general constraint of
+  // bindUniformBuffer() itself (any A-B-A Pipeline sequence sharing one
+  // CommandList would hit it, not something specific to depthWriteEnabled
+  // or this test), pre-existing and independent of Plan 0026/ADR-0071.
+  //
+  // A distinct Pipeline/descriptor-set per draw sidesteps it without
+  // changing what this TEST_CASE exercises, since pipelineA2 shares
+  // pipelineA's own exact depthWriteEnabled = false configuration.
   auto pipelineA2Result = device->createPipeline(
       {.vertexShader = {.spirvWords = vertexSpirv->data(), .wordCount = vertexSpirv->size()},
        .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
