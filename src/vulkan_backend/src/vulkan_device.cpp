@@ -423,18 +423,19 @@ class DescriptorPoolGuard {
 // optional) so vkFreeDescriptorSets (VulkanPipeline's destructor) is
 // valid usage; both descriptor types are always sized equal to maxSets
 // itself (Spec 0021 D4/P8's own derivation: every real descriptor set
-// consumes at most one UNIFORM_BUFFER descriptor and at most three
-// COMBINED_IMAGE_SAMPLER descriptors, so the latter receives three
-// descriptors per set (Spec 0025/P2). Returns
-// VK_NULL_HANDLE on vkCreateDescriptorPool failure -- this function
-// itself makes no judgment about how a caller should map that; each
-// call site below does.
+// consumes at most one UNIFORM_BUFFER descriptor and, as of Plan 0027
+// Milestone 6 (ADR-0072 D-7), at most four COMBINED_IMAGE_SAMPLER
+// descriptors (pbr_ibl's own new shadow-map slot, binding 4) -- was
+// three (Spec 0025/P2) before this Plan. Returns VK_NULL_HANDLE on
+// vkCreateDescriptorPool failure -- this function itself makes no
+// judgment about how a caller should map that; each call site below
+// does.
 [[nodiscard]] VkDescriptorPool createDescriptorPoolOfSize(VkDevice device, std::uint32_t maxSets) {
   VkDescriptorPoolSize poolSizes[2]{};
   poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
   poolSizes[0].descriptorCount = maxSets;
   poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  poolSizes[1].descriptorCount = 3U * maxSets;
+  poolSizes[1].descriptorCount = 4U * maxSets;
 
   VkDescriptorPoolCreateInfo createInfo{};
   createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -991,8 +992,14 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Pipeline>, atlantis::rhi::Pipeli
 VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) {
   using ResultT = atlantis::Result<std::unique_ptr<atlantis::rhi::Pipeline>, atlantis::rhi::PipelineCreateError>;
 
+  // Plan 0027 Milestone 6 (ADR-0072 D-7): widened from {0, 1, 3} to
+  // include 2 (pbr_direct_lit + shadow-map sampler) and 4 (pbr_ibl +
+  // shadow-map sampler) -- 3 stays legal, harmless to keep even though
+  // no current consumer uses it after this Plan, avoiding an unrelated,
+  // unreviewed removal.
   ATLANTIS_CHECK(params.sampledTextureBindingCount == 0 || params.sampledTextureBindingCount == 1 ||
-                 params.sampledTextureBindingCount == 3);
+                 params.sampledTextureBindingCount == 2 || params.sampledTextureBindingCount == 3 ||
+                 params.sampledTextureBindingCount == 4);
 
   auto createShaderModule = [this](const atlantis::rhi::ShaderStageBytecode& bytecode,
                                     VkShaderModule& outModule) -> VkResult {

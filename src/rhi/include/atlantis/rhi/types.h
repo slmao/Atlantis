@@ -265,7 +265,9 @@ struct PipelineCreateParams {
   // ReflectionMetadata (how many contiguous combined-image-sampler
   // bindings it declares) -- the same "caller derives from reflection,
   // passes plain data" pattern vertexInputLayout above already uses.
-  // The closed values for this Plan are 0, 1, and 3.
+  // The closed values are 0, 1, 2, 3, and 4 (Plan 0027 Milestone 6,
+  // ADR-0072 D-7, widened from {0, 1, 3} to add 2/4 for the new
+  // shadow-map sampler binding on pbr_direct_lit/pbr_ibl).
   std::uint32_t sampledTextureBindingCount = 0;
   // Plan 0024 Milestone 6: discovered during Implementation, not
   // anticipated by the Plan's own file list -- every existing Pipeline

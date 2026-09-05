@@ -170,7 +170,11 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
     const VulkanShadowMap* shadowMap = nullptr;
     const VulkanSampler* sampler = nullptr;
   };
-  std::array<TextureDescriptorMemo, 4> textureDescriptorMemos_{};
+  // Plan 0027 Milestone 6 (ADR-0072 D-7): widened from 4 to 5 --
+  // pbr_ibl's own new shadow-map slot is binding 4, which fails
+  // ATLANTIS_CHECK(binding < textureDescriptorMemos_.size()) in
+  // bindTexture() at the old size.
+  std::array<TextureDescriptorMemo, 5> textureDescriptorMemos_{};
 };
 
 }  // namespace atlantis::vulkan_backend::detail
