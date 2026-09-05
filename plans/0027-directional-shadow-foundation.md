@@ -1224,3 +1224,48 @@ rewritten to remove the questions once answered.
    in one atomic commit touching all 25 call sites and every remaining
    CMake target in P9(f)) — confirm this sequencing is the preferred
    shape for reviewable, always-buildable commits.
+
+## Proposed Correction — `drawFrame()` default arguments
+
+**Status: proposed, pending Human Review — not yet Approved.** Recorded
+here per this Plan's own Non-negotiable rule ("any deviation found
+necessary during Implementation is called out explicitly, not silently
+applied") rather than silently adjusting the signature this Plan's own
+P6 text specifies.
+
+**What P6 specifies:** `environmentLighting`/`skyPipeline` keep their
+existing `= nullptr` defaults, and the five new shadow parameters
+(`shadowMap`, `shadowMapSampler`, `shadowCastPipeline`,
+`shadowLightSpaceBuffer`, `shadowCasterDrawItems`) are appended after
+them, all required (no default).
+
+**What Implementation found:** this is not expressible in C++ — once a
+parameter has a default argument, every parameter after it must also
+have one (`[dcl.fct.default]`). Appending five non-default parameters
+after `skyPipeline`'s own `= nullptr` default is a compile error, not an
+implementation choice.
+
+**Proposed resolution:** drop the `= nullptr` default from both
+`environmentLighting` and `skyPipeline`. Both keep their exact existing
+nullable pointer types and their exact existing nullptr-means-"none"
+meaning — this is a purely mechanical signature change, not a design
+change. Every one of the 25 call sites already needs updating for the
+five new trailing parameters in this same commit regardless, so no call
+site pays an additional cost from also writing `nullptr, nullptr`
+explicitly where it previously relied on the default.
+
+**Alternatives not taken, for the record:** (a) reordering parameters so
+the five new ones precede `environmentLighting`/`skyPipeline` — rejected
+as a larger, less-reviewable diff to every call site's own argument
+order, and it would separate the sky-pipeline-adjacent shadow
+parameters from their own natural "immediately after skyPipeline"
+narrative position in P6's own text; (b) a params-struct — rejected as
+a larger API-shape change than this Plan's own scope calls for, not
+something to introduce as a side effect of a default-argument
+mechanics problem.
+
+**This section records what Implementation actually did, pending
+Human Review confirmation — it is not a self-approval.** The
+corresponding commit's own message discloses the same correction. If
+redirected, the fix is a small, mechanical follow-up (either signature
+order or a params struct), not a further architectural change.
