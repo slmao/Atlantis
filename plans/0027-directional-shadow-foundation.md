@@ -1264,15 +1264,16 @@ a larger API-shape change than this Plan's own scope calls for, not
 something to introduce as a side effect of a default-argument
 mechanics problem.
 
-**This section records what Implementation actually did, pending
-Human Review confirmation — it is not a self-approval.** The
-corresponding commit's own message discloses the same correction. If
-redirected, the fix is a small, mechanical follow-up (either signature
-order or a params struct), not a further architectural change.
+This section recorded what Implementation actually did, at the time
+not yet confirmed by Human Review. The corresponding commit's own
+message discloses the same correction. That confirmation is now
+recorded below.
 
-**Human Review approval:** approved as proposed above. Scope of the
-approval: (1) remove the `= nullptr` default from `environmentLighting`
-and `skyPipeline`; (2) both parameters keep their existing pointer types
-and existing nullptr-means-"none" semantics, unchanged; (3) `drawFrame()`'s
-current parameter order is unchanged. No other part of the signature is
-affected by this approval.
+### Human Review approval — 2026-09-06
+
+Approved as proposed above. Scope: (1) remove the `= nullptr` default
+from `environmentLighting` and `skyPipeline`; (2) both parameters keep
+their existing pointer types and existing nullptr-means-"none"
+semantics, unchanged; (3) `drawFrame()`'s current parameter order is
+unchanged. No other part of the signature is affected by this
+approval.
