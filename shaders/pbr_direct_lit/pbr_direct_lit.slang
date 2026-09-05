@@ -54,6 +54,19 @@ struct CameraUniform {
     // _pad convention -- not compiler-implicit.
     float3 cameraWorldPosition;
     float _pad2;
+    // Plan 0027 Milestone 5 (ADR-0072 D-6): this shader stops at byte
+    // 320 -- pbr_ibl.slang's own irradianceSh[9] reaches byte 464
+    // instead. This explicit, named 144-byte pad (matching this
+    // codebase's own "explicit padding, never implicit" discipline)
+    // keeps the light-space tail below at the identical 464-byte offset
+    // in both shaders, rather than two diverging ones.
+    float4 _shadowPad[9];
+    // The one directional light's own light-space view/projection pair
+    // -- identity when directionalLightCount == 0 (Runtime's own
+    // sentinel, never read in that case since the loop below never
+    // executes).
+    float4x4 lightSpaceView;
+    float4x4 lightSpaceProjection;
 };
 
 [[vk::binding(0, 0)]]
@@ -79,6 +92,11 @@ struct VertexInput {
 [[vk::binding(1, 0)]]
 Sampler2D baseColorSampler;
 
+// Plan 0027 Milestone 5 (ADR-0072 D-5/D-7): the shadow map, at the next
+// free binding after the one existing sampler.
+[[vk::binding(2, 0)]]
+Sampler2D shadowMapSampler;
+
 // Spec 0019 D6's own precedent, reused verbatim for the point-light
 // distance floor. ADR-0067 D-1/D-2's own new constants for the BRDF
 // itself.
@@ -86,6 +104,29 @@ static const float kPointLightDistanceEpsilon = 1e-4;
 static const float kPi = 3.14159265358979323846;
 static const float kMinAlpha = 1e-3;
 static const float kMinDot = 1e-4;
+// Plan 0027 P4: a reasoned, not yet empirically-tuned, starting value --
+// see Plan 0027's own P4 derivation.
+static const float kShadowBias = 0.0015;
+
+// Plan 0027 Milestone 5 (ADR-0072 D-5): a manual, non-hardware depth
+// compare against the shadow map -- a fragment outside the shadow
+// map's own fixed coverage volume is always treated as fully lit
+// (never "always shadowed," which would visibly break every surface
+// outside the fixed volume). Multiplies only the directional-light
+// loop's own accumulated contribution below -- point lights are
+// untouched (this shader has no IBL term at all).
+float computeShadowFactor(float3 worldPosition) {
+    float4 shadowClip = mul(camera.lightSpaceProjection, mul(camera.lightSpaceView, float4(worldPosition, 1.0)));
+    float3 shadowNdc = shadowClip.xyz / shadowClip.w;
+    float2 shadowUv = shadowNdc.xy * 0.5 + 0.5;
+    bool inBounds = all(shadowUv >= float2(0.0, 0.0)) && all(shadowUv <= float2(1.0, 1.0)) &&
+                     shadowNdc.z >= 0.0 && shadowNdc.z <= 1.0;
+    if (!inBounds) {
+        return 1.0;
+    }
+    float storedDepth = shadowMapSampler.Sample(shadowUv).r;
+    return (shadowNdc.z - kShadowBias) <= storedDepth ? 1.0 : 0.0;
+}
 
 [shader("vertex")]
 Varying vertexMain(VertexInput input) {
@@ -148,7 +189,11 @@ float4 fragmentMain(Varying input) : SV_Target {
             float3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, kMinDot);
             float3 kD = (float3(1.0, 1.0, 1.0) - F) * (1.0 - metallic);
 
-            accumulated += (kD * diffuseColor / kPi + specular) * radiance * NdotL;
+            // Plan 0027 Milestone 5 (ADR-0072 D-5): multiplies only this
+            // loop's own accumulated contribution -- the point-light
+            // loop below is untouched.
+            float shadowFactor = computeShadowFactor(input.worldPosition);
+            accumulated += shadowFactor * (kD * diffuseColor / kPi + specular) * radiance * NdotL;
         }
     }
 

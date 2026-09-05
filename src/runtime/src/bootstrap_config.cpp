@@ -24,4 +24,13 @@ atlantis::Result<std::monostate, RuntimeInitError> validateEnvironmentBootstrapC
   return ResultT::Ok(std::monostate{});
 }
 
+atlantis::Result<std::monostate, RuntimeInitError> validateShadowBootstrapConfig(const BootstrapConfig& config) {
+  using ResultT = atlantis::Result<std::monostate, RuntimeInitError>;
+  if (config.shadowCastVertexShaderSpirvPath.empty() || config.shadowCastVertexShaderReflectionPath.empty() ||
+      config.shadowCastFragmentShaderSpirvPath.empty() || config.shadowCastFragmentShaderReflectionPath.empty()) {
+    return ResultT::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  return ResultT::Ok(std::monostate{});
+}
+
 }  // namespace atlantis::runtime

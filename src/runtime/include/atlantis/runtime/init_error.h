@@ -76,6 +76,16 @@ enum class RuntimeInitError {
   // failure for the sky shader pair reuses the existing, generic
   // ShaderLoadFailed above, matching every other built-in shader pair.
   SkyPipelineCreateFailed,
+  // Plan 0027 Milestone 8 (ADR-0072 D-1): the directional shadow map's own
+  // ShadowMap/Sampler/Pipeline/Buffer, created once at startup,
+  // unconditionally -- mirrors SkyPipelineCreateFailed's own precedent,
+  // one new, distinct enumerator per new resource kind. Shader-load
+  // failure for the shadow-casting shader pair reuses the existing
+  // ShaderLoadFailed above, matching every other built-in shader pair.
+  ShadowMapCreateFailed,
+  ShadowSamplerCreateFailed,
+  ShadowCastPipelineCreateFailed,
+  ShadowLightSpaceBufferCreateFailed,
 };
 
 // For logging only -- not part of any Result/error contract.

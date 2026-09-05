@@ -147,6 +147,19 @@ struct Vertex {
   return result.value();
 }
 
+// Plan 0027 Milestone 9 (ADR-0072 D-3): shadow_cast.slang's own real,
+// position-only VertexInput -- against this file's own shared Vertex
+// struct above, mirrors runtime_application.cpp's own identical
+// shadowCastVertexLayout().
+[[nodiscard]] std::optional<VertexInputLayout> shadowCastVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 // Plan 0024 Milestone 6/7: the output-transform pass's own fixed vertex
 // schema -- NOT sourced from the mesh Vertex struct above, mirrors
 // runtime_application.cpp's own identical outputTransformVertexLayout().
@@ -465,6 +478,123 @@ int main() {
   }
   std::unique_ptr<rhi::Sampler> outputTransformSampler = std::move(outputTransformSamplerResult.value());
 
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): a minimal, always-possible
+  // real ShadowMap/Sampler/Pipeline/Buffer -- created once, here,
+  // alongside outputTransformSampler above (no real Format/extent
+  // dependency). This demo's own shadowCasterDrawItems stays empty; it
+  // never configures a real occluder.
+  auto shadowMapResult = device->createShadowMap({.extent = {1024, 1024}});
+  if (shadowMapResult.isErr()) {
+    ATLANTIS_LOG_ERROR("createShadowMap() failed");
+    outputTransformSampler.reset();
+    fullscreenTriangleIndexBuffer.reset();
+    fullscreenTriangleVertexBuffer.reset();
+    cameraBuffer.reset();
+    mesh.reset();
+    device.reset();
+    platform::shutdown();
+    static_cast<void>(platform::processEvents());
+    return EXIT_FAILURE;
+  }
+  std::unique_ptr<rhi::ShadowMap> shadowMap = std::move(shadowMapResult.value());
+
+  auto shadowMapSamplerResult =
+      device->createSampler({.filter = atlantis::rhi::Filter::Nearest, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+  if (shadowMapSamplerResult.isErr()) {
+    ATLANTIS_LOG_ERROR("createSampler() (shadow map) failed");
+    shadowMap.reset();
+    outputTransformSampler.reset();
+    fullscreenTriangleIndexBuffer.reset();
+    fullscreenTriangleVertexBuffer.reset();
+    cameraBuffer.reset();
+    mesh.reset();
+    device.reset();
+    platform::shutdown();
+    static_cast<void>(platform::processEvents());
+    return EXIT_FAILURE;
+  }
+  std::unique_ptr<rhi::Sampler> shadowMapSampler = std::move(shadowMapSamplerResult.value());
+
+  const auto shadowCastVertexSpirv = loadSpirvFile("shaders/shadow_cast.vert.spv");
+  const auto shadowCastFragmentSpirv = loadSpirvFile("shaders/shadow_cast.frag.spv");
+  auto shadowCastVertexReflectionResult = loadReflectionMetadata("shaders/shadow_cast.vert.refl.json");
+  if (!shadowCastVertexSpirv.has_value() || !shadowCastFragmentSpirv.has_value() ||
+      shadowCastVertexReflectionResult.isErr()) {
+    ATLANTIS_LOG_ERROR("Failed to load the shadow_cast shader pair");
+    shadowMapSampler.reset();
+    shadowMap.reset();
+    outputTransformSampler.reset();
+    fullscreenTriangleIndexBuffer.reset();
+    fullscreenTriangleVertexBuffer.reset();
+    cameraBuffer.reset();
+    mesh.reset();
+    device.reset();
+    platform::shutdown();
+    static_cast<void>(platform::processEvents());
+    return EXIT_FAILURE;
+  }
+  const auto shadowCastVertexInputLayout = shadowCastVertexLayout(shadowCastVertexReflectionResult.value());
+  if (!shadowCastVertexInputLayout.has_value()) {
+    ATLANTIS_LOG_ERROR("shadowCastVertexLayout(): reflected vertex-input attributes do not match the Vertex schema");
+    shadowMapSampler.reset();
+    shadowMap.reset();
+    outputTransformSampler.reset();
+    fullscreenTriangleIndexBuffer.reset();
+    fullscreenTriangleVertexBuffer.reset();
+    cameraBuffer.reset();
+    mesh.reset();
+    device.reset();
+    platform::shutdown();
+    static_cast<void>(platform::processEvents());
+    return EXIT_FAILURE;
+  }
+
+  auto shadowCastPipelineResult = device->createPipeline(
+      {.vertexShader = {.spirvWords = shadowCastVertexSpirv->data(), .wordCount = shadowCastVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = shadowCastFragmentSpirv->data(),
+                           .wordCount = shadowCastFragmentSpirv->size()},
+       .vertexInputLayout = *shadowCastVertexInputLayout,
+       .depthFormat = DepthFormat::D32Sfloat,
+       .pushConstantSizeBytes = sizeof(float) * 16,
+       .sampledTextureBindingCount = 0,
+       .hasCameraUniformBinding = true,
+       .hasDepthAttachment = true,
+       .depthWriteEnabled = true,
+       .hasColorAttachment = false});
+  if (shadowCastPipelineResult.isErr()) {
+    ATLANTIS_LOG_ERROR("createPipeline() (shadow-cast) failed");
+    shadowMapSampler.reset();
+    shadowMap.reset();
+    outputTransformSampler.reset();
+    fullscreenTriangleIndexBuffer.reset();
+    fullscreenTriangleVertexBuffer.reset();
+    cameraBuffer.reset();
+    mesh.reset();
+    device.reset();
+    platform::shutdown();
+    static_cast<void>(platform::processEvents());
+    return EXIT_FAILURE;
+  }
+  std::unique_ptr<rhi::Pipeline> shadowCastPipeline = std::move(shadowCastPipelineResult.value());
+
+  auto shadowLightSpaceBufferResult = device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 128});
+  if (shadowLightSpaceBufferResult.isErr()) {
+    ATLANTIS_LOG_ERROR("createBuffer() (shadow light-space uniform) failed");
+    shadowCastPipeline.reset();
+    shadowMapSampler.reset();
+    shadowMap.reset();
+    outputTransformSampler.reset();
+    fullscreenTriangleIndexBuffer.reset();
+    fullscreenTriangleVertexBuffer.reset();
+    cameraBuffer.reset();
+    mesh.reset();
+    device.reset();
+    platform::shutdown();
+    static_cast<void>(platform::processEvents());
+    return EXIT_FAILURE;
+  }
+  std::unique_ptr<rhi::Buffer> shadowLightSpaceBuffer = std::move(shadowLightSpaceBufferResult.value());
+
   std::unique_ptr<rhi::Presentation> presentation;
   std::optional<Material> material;
   std::unique_ptr<rhi::Texture> depthTexture;
@@ -703,7 +833,8 @@ int main() {
             renderer.drawFrame(*commandList, *target, *depthTexture, *cameraBuffer, drawItems,
                                 atlantis::rhi::ResourceState::PresentSource, *hdrColorTarget,
                                 *fullscreenTriangleVertexBuffer, *fullscreenTriangleIndexBuffer,
-                                *effectiveOutputTransformPipeline, *outputTransformSampler);
+                                *effectiveOutputTransformPipeline, *outputTransformSampler, nullptr, nullptr,
+                                *shadowMap, *shadowMapSampler, *shadowCastPipeline, *shadowLightSpaceBuffer, {});
 
             auto submitResult = device->submit(std::move(commandList), *target);
             if (submitResult.isErr()) {
@@ -754,6 +885,10 @@ int main() {
       hdrColorTarget.reset();
       depthTexture.reset();
       outputTransformSampler.reset();
+      shadowLightSpaceBuffer.reset();
+      shadowCastPipeline.reset();
+      shadowMapSampler.reset();
+      shadowMap.reset();
       fullscreenTriangleIndexBuffer.reset();
       fullscreenTriangleVertexBuffer.reset();
       cameraBuffer.reset();

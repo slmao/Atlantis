@@ -33,6 +33,7 @@ using atlantis::shader_system::minimalRendererExpectedDescriptorContract;
 using atlantis::shader_system::outputTransformExpectedDescriptorContract;
 using atlantis::shader_system::pbrDirectLitExpectedDescriptorContract;
 using atlantis::shader_system::pbrIblExpectedDescriptorContract;
+using atlantis::shader_system::shadowCastExpectedDescriptorContract;
 using atlantis::shader_system::skyExpectedDescriptorContract;
 using atlantis::shader_system::PushConstantRange;
 using atlantis::shader_system::texturedMaterialExpectedDescriptorContract;
@@ -153,6 +154,8 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     fullContract = outputTransformExpectedDescriptorContract();
   } else if (expectedContract == "sky") {
     fullContract = skyExpectedDescriptorContract();
+  } else if (expectedContract == "shadow-cast") {
+    fullContract = shadowCastExpectedDescriptorContract();
   } else {
     std::cerr << "atlantis_shader_compiler: unknown --expected-contract value '" << expectedContract << "'\n";
     return false;

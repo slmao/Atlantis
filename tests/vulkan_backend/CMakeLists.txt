@@ -19,6 +19,7 @@ add_executable(atlantis_vulkan_backend_tests
   vulkan_memory_tests.cpp
   descriptor_pool_growth_tests.cpp
   hdr_color_target_capability_tests.cpp
+  shadow_map_capability_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_tests
@@ -65,6 +66,7 @@ add_executable(atlantis_vulkan_backend_gpu_tests
   texture_upload_gpu_tests.cpp
   descriptor_pool_growth_gpu_tests.cpp
   pipeline_depth_write_gpu_tests.cpp
+  shadow_map_render_gpu_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_gpu_tests
@@ -111,8 +113,13 @@ catch_discover_tests(atlantis_vulkan_backend_gpu_tests
 # descriptor_pool_growth_gpu_tests.cpp use a fixed Rgba8Unorm
 # OffscreenTarget (unorm only), but both are copied here unconditionally
 # since all three share this one executable/copy step.
+# Plan 0027 Milestone 2 (ADR-0072 D-2/D-4): shadow_map_render_gpu_tests.cpp's
+# own real depth-only-write / color-read round trip needs shadow_cast's
+# own compiled shader pair (the write half) and textured_quad's own
+# (the read half, already-established elsewhere in this repo, reused
+# unchanged here) -- both copied into this same flat shaders/ folder.
 add_dependencies(atlantis_vulkan_backend_gpu_tests minimal_mesh_shaders output_transform_unorm_shaders
-  output_transform_srgb_shaders)
+  output_transform_srgb_shaders shadow_cast_shaders textured_quad_shaders)
 add_custom_command(TARGET atlantis_vulkan_backend_gpu_tests POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders"
@@ -121,6 +128,18 @@ add_custom_command(TARGET atlantis_vulkan_backend_gpu_tests POST_BUILD
       "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.vert.refl.json"
       "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.spv"
       "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.refl.json"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.vert.spv"
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.vert.refl.json"
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.frag.spv"
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.frag.refl.json"
       "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders/"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.spv"

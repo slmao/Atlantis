@@ -7,7 +7,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-TEST_CASE("pbr_ibl real reflection matches its five-entry descriptor and 96-byte push-constant contract",
+// Plan 0027 Milestone 5 (ADR-0072 D-7): now a six-entry contract (was
+// five) -- the assertions below derive entirely from
+// pbrIblExpectedDescriptorContract() itself, so the new binding-4
+// (shadow map) entry is already covered with no further edit here.
+TEST_CASE("pbr_ibl real reflection matches its six-entry descriptor and 96-byte push-constant contract",
           "[shader_system][pbr_ibl][reflection]") {
   using namespace atlantis::shader_system;
   const auto vertex = loadReflectionMetadata(std::string(ATLANTIS_PBR_IBL_SHADER_DIR) + "/pbr_ibl.vert.refl.json");

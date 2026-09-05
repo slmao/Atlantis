@@ -37,6 +37,7 @@ using atlantis::render_graph::test::FakePipeline;
 using atlantis::render_graph::test::FakeRenderTarget;
 using atlantis::render_graph::test::FakeSampledTexture;
 using atlantis::render_graph::test::FakeSampler;
+using atlantis::render_graph::test::FakeShadowMap;
 using atlantis::render_graph::test::FakeTexture;
 using atlantis::renderer::DrawItem;
 using atlantis::renderer::EnvironmentLighting;
@@ -141,20 +142,35 @@ TEST_CASE("Renderer::drawFrame() records a full bind/draw sequence per DrawItem 
   FakePipeline outputTransformPipeline;
   FakeSampler outputTransformSampler("output_transform_sampler");
 
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): a minimal FakeShadowMap/
+  // FakeSampler/FakePipeline/FakeBuffer set -- shadowCasterDrawItems
+  // stays empty; neither DrawItem here is PbrDirectLit-kind, so the
+  // shadow-map bind is never actually exercised in this TEST_CASE.
+  FakeShadowMap shadowMap("shadow_map");
+  FakeSampler shadowMapSampler("shadow_map_sampler");
+  FakePipeline shadowCastPipeline;
+  FakeBuffer shadowLightSpaceBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
+
   Renderer renderer;
   renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
-                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler);
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, nullptr, nullptr,
+                      shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
 
   // Plan 0024 Milestone 5: one more bindPipeline/bindVertexBuffer/
   // bindIndexBuffer/drawIndexed than before -- the output-transform
   // pass's own fullscreen-triangle draw, in addition to the two
   // DrawItems' own geometry-pass draws. bindUniformBuffer/pushConstant
   // counts are unchanged -- the output-transform pass calls neither.
-  REQUIRE(commandList.boundPipelines.size() == 3);
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P6): one more bindPipeline and
+  // bindUniformBuffer than that -- the "shadow" pass's own unconditional
+  // pair (outside its own empty-shadowCasterDrawItems loop), first every
+  // frame. pushConstant/drawIndexed counts are unaffected -- the shadow
+  // pass calls neither with an empty caster list.
+  REQUIRE(commandList.boundPipelines.size() == 4);
   REQUIRE(commandList.boundVertexBuffers.size() == 3);
   REQUIRE(commandList.boundIndexBuffers.size() == 3);
-  REQUIRE(commandList.boundUniformBuffers.size() == 2);
+  REQUIRE(commandList.boundUniformBuffers.size() == 3);
   REQUIRE(commandList.pushConstants.size() == 2);
   REQUIRE(commandList.drawIndexedCounts.size() == 3);
   REQUIRE(commandList.drawIndexedCounts[0] == 3);
@@ -231,15 +247,25 @@ TEST_CASE("Renderer::drawFrame() passes finalColorState through unmodified, neve
   FakePipeline outputTransformPipeline;
   FakeSampler outputTransformSampler("output_transform_sampler");
 
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): shared by both calls below,
+  // mirroring the output-transform resources' own "shared by both calls"
+  // shape immediately above.
+  FakeShadowMap shadowMap("shadow_map");
+  FakeSampler shadowMapSampler("shadow_map_sampler");
+  FakePipeline shadowCastPipeline;
+  FakeBuffer shadowLightSpaceBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
+
   FakeCommandList windowedCommandList;
   renderer.drawFrame(windowedCommandList, colorTarget, depthTarget, cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
-                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler);
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, nullptr, nullptr,
+                      shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
 
   FakeCommandList headlessCommandList;
   renderer.drawFrame(headlessCommandList, colorTarget, depthTarget, cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::TransferSource, hdrColorTarget, fullscreenVertexBuffer,
-                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler);
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, nullptr, nullptr,
+                      shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
 
   REQUIRE(windowedCommandList.events == headlessCommandList.events);
   REQUIRE(windowedCommandList.transitions.size() == headlessCommandList.transitions.size());
@@ -289,9 +315,19 @@ TEST_CASE("Renderer::drawFrame() with an untextured Material records no bindText
   FakePipeline outputTransformPipeline;
   FakeSampler outputTransformSampler("output_transform_sampler");
 
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): a minimal FakeShadowMap/
+  // FakeSampler/FakePipeline/FakeBuffer set -- shadowCasterDrawItems
+  // stays empty; the DrawItem here is not PbrDirectLit-kind, so the
+  // shadow-map bind is never actually exercised.
+  FakeShadowMap shadowMap("shadow_map");
+  FakeSampler shadowMapSampler("shadow_map_sampler");
+  FakePipeline shadowCastPipeline;
+  FakeBuffer shadowLightSpaceBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
+
   renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
-                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler);
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, nullptr, nullptr,
+                      shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
 
   // The Material's own untextured DrawItem records no SampledTexture-
   // shaped bindTexture() call -- the output-transform pass's own
@@ -339,9 +375,19 @@ TEST_CASE("Renderer::drawFrame() with a textured Material records bindTexture im
   FakePipeline outputTransformPipeline;
   FakeSampler outputTransformSampler("output_transform_sampler");
 
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): a minimal FakeShadowMap/
+  // FakeSampler/FakePipeline/FakeBuffer set -- shadowCasterDrawItems
+  // stays empty; neither DrawItem here is PbrDirectLit-kind, so the
+  // shadow-map bind is never actually exercised.
+  FakeShadowMap shadowMap("shadow_map");
+  FakeSampler shadowMapSampler("shadow_map_sampler");
+  FakePipeline shadowCastPipeline;
+  FakeBuffer shadowLightSpaceBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
+
   renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
-                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler);
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, nullptr, nullptr,
+                      shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
 
   // boundTextures counts only the SampledTexture-shaped bindTexture()
   // overload -- the output-transform pass's own bindTexture(HdrColorTarget&,
@@ -388,7 +434,9 @@ TEST_CASE("Renderer binds base color, environment cube, and DFG LUT at explicit 
                 .objectToWorld = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
   FakeRenderTarget colorTarget("color");
   FakeTexture depthTarget("depth");
-  FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 464);
+  // Plan 0027 Milestone 9 (ADR-0072 D-9/P9d): widened from 464 to 592 for
+  // the new light-space view+projection tail (P5).
+  FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 592);
   FakeHdrColorTarget hdrColorTarget("hdr");
   FakeBuffer fullscreenVertexBuffer(atlantis::rhi::BufferPurpose::Vertex, 0);
   FakeBuffer fullscreenIndexBuffer(atlantis::rhi::BufferPurpose::Index, 0);
@@ -396,11 +444,23 @@ TEST_CASE("Renderer binds base color, environment cube, and DFG LUT at explicit 
   FakeSampler outputTransformSampler("output-transform");
   const EnvironmentLighting lighting{environment, environmentSampler, dfgLut, dfgSampler};
 
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): a minimal FakeShadowMap/
+  // FakeSampler/FakePipeline/FakeBuffer set -- shadowCasterDrawItems
+  // stays empty. The shadow-map bind itself IS exercised here (the
+  // DrawItem is PbrDirectLit+Ibl), landing in boundShadowMapTextures --
+  // a separate vector from boundTextures below, so the existing
+  // assertions on boundTextures are unaffected.
+  FakeShadowMap shadowMap("shadow_map");
+  FakeSampler shadowMapSampler("shadow_map_sampler");
+  FakePipeline shadowCastPipeline;
+  FakeBuffer shadowLightSpaceBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
+
   FakeCommandList commandList;
   Renderer renderer;
   renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, std::span<const DrawItem>(&item, 1),
                      atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
-                     fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, &lighting);
+                     fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, &lighting, nullptr,
+                     shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
 
   REQUIRE(commandList.boundTextures.size() == 3);
   CHECK(commandList.boundTextures[0].binding == 1);
@@ -418,7 +478,8 @@ TEST_CASE("Renderer binds base color, environment cube, and DFG LUT at explicit 
   renderer.drawFrame(missingLightingCommandList, colorTarget, depthTarget, cameraBuffer,
                      std::span<const DrawItem>(&item, 1), atlantis::rhi::ResourceState::PresentSource,
                      hdrColorTarget, fullscreenVertexBuffer, fullscreenIndexBuffer,
-                     outputTransformPipeline, outputTransformSampler);
+                     outputTransformPipeline, outputTransformSampler, nullptr, nullptr, shadowMap, shadowMapSampler,
+                     shadowCastPipeline, shadowLightSpaceBuffer, {});
   REQUIRE(failures.size() == 1);
   CHECK(failures[0].find("IBL Material") != std::string::npos);
   CHECK(missingLightingCommandList.boundTextures.size() == 1);
@@ -438,7 +499,9 @@ TEST_CASE("Renderer draws the sky, bound at slot 1, strictly before every DrawIt
 
   FakeRenderTarget colorTarget("color");
   FakeTexture depthTarget("depth");
-  FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 464);
+  // Plan 0027 Milestone 9 (ADR-0072 D-9/P9d): widened from 464 to 592 for
+  // the new light-space view+projection tail (P5).
+  FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 592);
   FakeHdrColorTarget hdrColorTarget("hdr");
   FakeBuffer fullscreenVertexBuffer(atlantis::rhi::BufferPurpose::Vertex, 0);
   FakeBuffer fullscreenIndexBuffer(atlantis::rhi::BufferPurpose::Index, 0);
@@ -451,18 +514,31 @@ TEST_CASE("Renderer draws the sky, bound at slot 1, strictly before every DrawIt
   FakeSampler dfgSampler("dfg-sampler");
   const EnvironmentLighting lighting{environment, environmentSampler, dfgLut, dfgSampler};
 
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P6): the "shadow" pass always
+  // binds shadowCastPipeline and calls bindUniformBuffer(), even with an
+  // empty shadowCasterDrawItems -- both calls sit outside that loop
+  // (P6's own execute-callback shape). This is a real, disclosed new
+  // Pipeline bind, first every frame (the shadow pass has no color
+  // output, so it never itself calls drawIndexed).
+  FakeShadowMap shadowMap("shadow_map");
+  FakeSampler shadowMapSampler("shadow_map_sampler");
+  FakePipeline shadowCastPipeline;
+  FakeBuffer shadowLightSpaceBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
+
   FakeCommandList commandList;
   Renderer renderer;
   renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
                       fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, &lighting,
-                      &skyPipeline);
+                      &skyPipeline, shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
 
-  // Three Pipelines bound in order: sky, the one DrawItem, then the
-  // output-transform pass -- sky strictly first.
-  REQUIRE(commandList.boundPipelines.size() == 3);
-  CHECK(commandList.boundPipelines[0] == &skyPipeline);
-  CHECK(commandList.drawIndexedCounts.size() == 3);
+  // Four Pipelines bound in order: the shadow pass (always first --
+  // P7's dependency-driven compile order), sky, the one DrawItem, then
+  // the output-transform pass -- sky strictly before every DrawItem.
+  REQUIRE(commandList.boundPipelines.size() == 4);
+  CHECK(commandList.boundPipelines[0] == &shadowCastPipeline);
+  CHECK(commandList.boundPipelines[1] == &skyPipeline);
+  CHECK(commandList.drawIndexedCounts.size() == 3);  // the shadow pass itself never calls drawIndexed (empty caster list)
   CHECK(commandList.drawIndexedCounts[0] == 3);  // the sky's own fullscreen triangle
 
   // The sky's own cubemap bind -- the SampledTexture-shaped bindTexture()
@@ -483,7 +559,7 @@ TEST_CASE("Renderer draws the sky, bound at slot 1, strictly before every DrawIt
       std::find(commandList.events.begin() + skyDrawEventIndex + 1, commandList.events.end(),
                 FakeCommandList::EventKind::BindPipeline);
   REQUIRE(firstBindPipelineAfterSky != commandList.events.end());
-  CHECK(commandList.boundPipelines[1] != &skyPipeline);
+  CHECK(commandList.boundPipelines[2] != &skyPipeline);
 }
 
 TEST_CASE("A non-null skyPipeline with a null environmentLighting fires the programmer-error guard and draws no "
@@ -500,13 +576,23 @@ TEST_CASE("A non-null skyPipeline with a null environmentLighting fires the prog
 
   FakeRenderTarget colorTarget("color");
   FakeTexture depthTarget("depth");
-  FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 464);
+  // Plan 0027 Milestone 9 (ADR-0072 D-9/P9d): widened from 464 to 592 for
+  // the new light-space view+projection tail (P5).
+  FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 592);
   FakeHdrColorTarget hdrColorTarget("hdr");
   FakeBuffer fullscreenVertexBuffer(atlantis::rhi::BufferPurpose::Vertex, 0);
   FakeBuffer fullscreenIndexBuffer(atlantis::rhi::BufferPurpose::Index, 0);
   FakePipeline outputTransformPipeline;
   FakeSampler outputTransformSampler("output-transform");
   FakePipeline skyPipeline;
+
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P6): the "shadow" pass always
+  // binds shadowCastPipeline, regardless of skyPipeline/environmentLighting
+  // -- unrelated guards.
+  FakeShadowMap shadowMap("shadow_map");
+  FakeSampler shadowMapSampler("shadow_map_sampler");
+  FakePipeline shadowCastPipeline;
+  FakeBuffer shadowLightSpaceBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
 
   std::vector<std::string> failures;
   ScopedFailureHandler failureHandler(failures);
@@ -515,13 +601,138 @@ TEST_CASE("A non-null skyPipeline with a null environmentLighting fires the prog
   renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
                       fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler,
-                      /*environmentLighting=*/nullptr, &skyPipeline);
+                      /*environmentLighting=*/nullptr, &skyPipeline, shadowMap, shadowMapSampler, shadowCastPipeline,
+                      shadowLightSpaceBuffer, {});
 
   REQUIRE(failures.size() == 1);
   CHECK(failures[0].find("skyPipeline") != std::string::npos);
-  // Only the one DrawItem's own Pipeline plus the output-transform
-  // Pipeline are bound -- the sky never binds or draws.
-  REQUIRE(commandList.boundPipelines.size() == 2);
-  CHECK(commandList.boundPipelines[0] != &skyPipeline);
+  // The shadow pass's own Pipeline, the one DrawItem's own Pipeline, and
+  // the output-transform Pipeline are bound -- the sky never binds or
+  // draws.
+  REQUIRE(commandList.boundPipelines.size() == 3);
+  CHECK(commandList.boundPipelines[0] == &shadowCastPipeline);
   CHECK(commandList.boundPipelines[1] != &skyPipeline);
+  CHECK(commandList.boundPipelines[2] != &skyPipeline);
+}
+
+TEST_CASE("Renderer::drawFrame() records the \"shadow\" pass's full draw sequence strictly before \"draw\"'s own "
+          "sequence, for a non-empty shadowCasterDrawItems (Plan 0027 Milestone 9, ADR-0072 D-1/P6)",
+          "[renderer][ownership][shadow]") {
+  atlantis::renderer::Mesh casterMesh(std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Vertex, 0),
+                                       std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Index, 0), 3);
+  atlantis::renderer::Material material(std::make_unique<FakePipeline>(),
+                                         atlantis::renderer::MaterialPushConstantLayout::ObjectToWorldOnly);
+  DrawItem casterItem{.mesh = &casterMesh,
+                       .material = &material,
+                       .objectToWorld = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
+  const std::vector<DrawItem> shadowCasterDrawItems{casterItem};
+  const std::vector<DrawItem> drawItems{casterItem};
+
+  FakeRenderTarget colorTarget("color");
+  FakeTexture depthTarget("depth");
+  FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 592);
+  FakeHdrColorTarget hdrColorTarget("hdr");
+  FakeBuffer fullscreenVertexBuffer(atlantis::rhi::BufferPurpose::Vertex, 0);
+  FakeBuffer fullscreenIndexBuffer(atlantis::rhi::BufferPurpose::Index, 0);
+  FakePipeline outputTransformPipeline;
+  FakeSampler outputTransformSampler("output-transform");
+  FakeShadowMap shadowMap("shadow_map");
+  FakeSampler shadowMapSampler("shadow_map_sampler");
+  FakePipeline shadowCastPipeline;
+  FakeBuffer shadowLightSpaceBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
+
+  FakeCommandList commandList;
+  Renderer renderer;
+  renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
+                      atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, nullptr, nullptr,
+                      shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer,
+                      shadowCasterDrawItems);
+
+  // The shadow pass's own Pipeline is bound first (P7's dependency-driven
+  // compile order), and it is the only Pipeline that draws exactly
+  // casterMesh's own 3 indices before the "draw" pass's own DrawItem
+  // Pipeline is ever bound.
+  REQUIRE(commandList.boundPipelines.size() == 3);
+  CHECK(commandList.boundPipelines[0] == &shadowCastPipeline);
+  CHECK(commandList.boundPipelines[1] != &shadowCastPipeline);
+  REQUIRE(commandList.drawIndexedCounts.size() == 3);  // shadow caster, the one DrawItem, output-transform
+  CHECK(commandList.drawIndexedCounts[0] == 3);        // casterMesh's own 3 indices
+
+  const auto firstDrawIndexedIndex =
+      std::find(commandList.events.begin(), commandList.events.end(), FakeCommandList::EventKind::DrawIndexed) -
+      commandList.events.begin();
+  REQUIRE(static_cast<std::size_t>(firstDrawIndexedIndex) < commandList.events.size());
+
+  // The "draw" pass's own DrawItem Pipeline (boundPipelines[1]) is bound
+  // via the SECOND BindPipeline event in the whole timeline -- strictly
+  // after the shadow pass's own first (and only) DrawIndexed event, not
+  // merely after its first event.
+  const auto firstBindPipelineIndex =
+      std::find(commandList.events.begin(), commandList.events.end(), FakeCommandList::EventKind::BindPipeline) -
+      commandList.events.begin();
+  const auto secondBindPipelineIndex =
+      std::find(commandList.events.begin() + firstBindPipelineIndex + 1, commandList.events.end(),
+                FakeCommandList::EventKind::BindPipeline) -
+      commandList.events.begin();
+  REQUIRE(static_cast<std::size_t>(secondBindPipelineIndex) < commandList.events.size());
+  CHECK(firstDrawIndexedIndex < secondBindPipelineIndex);
+}
+
+TEST_CASE("The shadow-map bind lands at binding 2 for a plain PbrDirectLit DrawItem and binding 4 for an "
+          "environmentBinding() == Ibl one, in the same frame (Plan 0027 Milestone 9, ADR-0072 D-1/P6)",
+          "[renderer][ownership][shadow][pbr_ibl]") {
+  atlantis::renderer::Mesh mesh(std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Vertex, 0),
+                                 std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Index, 0), 3);
+  FakeSampledTexture baseColorA("base-color-a");
+  FakeSampledTexture baseColorB("base-color-b");
+  FakeSampledTexture environment("environment");
+  FakeSampledTexture dfgLut("dfg-lut");
+  FakeSampler baseColorSampler("base-color-sampler");
+  FakeSampler environmentSampler("environment-sampler");
+  FakeSampler dfgSampler("dfg-sampler");
+
+  Material plainMaterial(std::make_unique<FakePipeline>(), atlantis::renderer::MaterialPushConstantLayout::PbrDirectLit,
+                          &baseColorA, &baseColorSampler, {1.0F, 1.0F, 1.0F, 1.0F}, 0.0F, 0.5F,
+                          MaterialEnvironmentBinding::None);
+  Material iblMaterial(std::make_unique<FakePipeline>(), atlantis::renderer::MaterialPushConstantLayout::PbrDirectLit,
+                        &baseColorB, &baseColorSampler, {1.0F, 1.0F, 1.0F, 1.0F}, 0.0F, 0.5F,
+                        MaterialEnvironmentBinding::Ibl);
+
+  DrawItem plainItem{.mesh = &mesh,
+                      .material = &plainMaterial,
+                      .objectToWorld = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
+  DrawItem iblItem{.mesh = &mesh,
+                    .material = &iblMaterial,
+                    .objectToWorld = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
+  const std::vector<DrawItem> drawItems{plainItem, iblItem};
+
+  FakeRenderTarget colorTarget("color");
+  FakeTexture depthTarget("depth");
+  FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 592);
+  FakeHdrColorTarget hdrColorTarget("hdr");
+  FakeBuffer fullscreenVertexBuffer(atlantis::rhi::BufferPurpose::Vertex, 0);
+  FakeBuffer fullscreenIndexBuffer(atlantis::rhi::BufferPurpose::Index, 0);
+  FakePipeline outputTransformPipeline;
+  FakeSampler outputTransformSampler("output-transform");
+  const EnvironmentLighting lighting{environment, environmentSampler, dfgLut, dfgSampler};
+  FakeShadowMap shadowMap("shadow_map");
+  FakeSampler shadowMapSampler("shadow_map_sampler");
+  FakePipeline shadowCastPipeline;
+  FakeBuffer shadowLightSpaceBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
+
+  FakeCommandList commandList;
+  Renderer renderer;
+  renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
+                      atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, &lighting, nullptr,
+                      shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
+
+  REQUIRE(commandList.boundShadowMapTextures.size() == 2);
+  CHECK(commandList.boundShadowMapTextures[0].binding == 2);
+  CHECK(commandList.boundShadowMapTextures[0].texture == &shadowMap);
+  CHECK(commandList.boundShadowMapTextures[0].sampler == &shadowMapSampler);
+  CHECK(commandList.boundShadowMapTextures[1].binding == 4);
+  CHECK(commandList.boundShadowMapTextures[1].texture == &shadowMap);
+  CHECK(commandList.boundShadowMapTextures[1].sampler == &shadowMapSampler);
 }

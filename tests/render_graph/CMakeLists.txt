@@ -10,6 +10,7 @@ add_executable(atlantis_render_graph_tests
   headless_binding_tests.cpp
   sampled_texture_execution_tests.cpp
   hdr_color_target_execution_tests.cpp
+  shadow_map_execution_tests.cpp
 )
 
 # PRIVATE to this test target only -- needed once compile_algorithm_tests.cpp

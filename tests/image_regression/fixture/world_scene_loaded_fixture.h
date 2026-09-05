@@ -10,6 +10,7 @@
 #include <atlantis/rhi/offscreen_target.h>
 #include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/sampler.h>
+#include <atlantis/rhi/shadow_map.h>
 #include <atlantis/rhi/texture.h>
 #include <atlantis/rhi/types.h>
 #include <atlantis/world/world.h>
@@ -51,6 +52,13 @@ struct WorldSceneLoadedFixture {
   std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleIndexBuffer;
   std::unique_ptr<atlantis::rhi::Sampler> outputTransformSampler;
   std::unique_ptr<atlantis::rhi::Pipeline> outputTransformPipeline;
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): a minimal, always-possible
+  // real ShadowMap/Sampler/Pipeline/Buffer -- created once at
+  // construction, alongside outputTransformPipeline above.
+  std::unique_ptr<atlantis::rhi::ShadowMap> shadowMap;
+  std::unique_ptr<atlantis::rhi::Sampler> shadowMapSampler;
+  std::unique_ptr<atlantis::rhi::Pipeline> shadowCastPipeline;
+  std::unique_ptr<atlantis::rhi::Buffer> shadowLightSpaceBuffer;
   // std::optional, not a bare World: World is move-constructible but
   // NOT move-assignable (ADR-0049/Spec 0014) -- fromValidatedSceneData()
   // returns a World by value, so publishing it here needs emplace()'s

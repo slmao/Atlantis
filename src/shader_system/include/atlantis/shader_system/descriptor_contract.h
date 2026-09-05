@@ -54,11 +54,14 @@ namespace atlantis::shader_system {
 // keep each MaterialKind's own contract independently named and
 // independently callable, matching this header's own existing
 // per-kind pattern.
+// Plan 0027 Milestone 5 (ADR-0072 D-7): gains a second fragment sampler
+// at binding 2 (the shadow map).
 [[nodiscard]] std::vector<DescriptorBinding> pbrDirectLitExpectedDescriptorContract();
 
 // Spec 0025/P3: the IBL variant retains the uniform/base-color bindings
 // and adds contiguous fragment samplers for the prefiltered cubemap and
-// DFG LUT at bindings 2 and 3.
+// DFG LUT at bindings 2 and 3. Plan 0027 Milestone 5 (ADR-0072 D-7):
+// gains a fourth fragment sampler at binding 4 (the shadow map).
 [[nodiscard]] std::vector<DescriptorBinding> pbrIblExpectedDescriptorContract();
 
 // Plan 0024 Milestone 3 (ADR-0068 D-10): the fixed, expected descriptor
@@ -86,6 +89,18 @@ namespace atlantis::shader_system {
 // own binding 0, which IS Vertex+Fragment because pbr_ibl's own vertex
 // stage does read the camera uniform for position/normal transforms.
 [[nodiscard]] std::vector<DescriptorBinding> skyExpectedDescriptorContract();
+
+// Plan 0027 Milestone 4 (ADR-0072 D-3): shadow_cast's own fixed, expected
+// descriptor contract -- one binding, Vertex-only: {set 0, binding 0,
+// UniformBuffer, Vertex} (the dedicated light-space buffer, referenced
+// only by vertexMain -- fragmentMain is void, no bindings at all).
+// Confirmed, not inferred: a disposable probe compiled with the real
+// slangc toolchain during this Plan's own drafting showed the vertex
+// stage's own reflection reports lightSpace "used": 1, while the
+// fragment stage reports it "used": 0 (dropped before reaching
+// ReflectionMetadata::descriptorBindings) and has no result/color output
+// at all.
+[[nodiscard]] std::vector<DescriptorBinding> shadowCastExpectedDescriptorContract();
 
 enum class ContractMismatchError {
   BindingCountMismatch,

@@ -103,7 +103,9 @@ TEST_CASE("validateDescriptorContract() rejects a UniformBuffer where the textur
   REQUIRE(result.error() == ContractMismatchError::DescriptorTypeMismatch);
 }
 
-TEST_CASE("pbrIblExpectedDescriptorContract declares uniform visibility and three contiguous fragment samplers",
+// Plan 0027 Milestone 5 (ADR-0072 D-7): a fourth contiguous fragment
+// sampler at binding 4 (the shadow map) -- was three.
+TEST_CASE("pbrIblExpectedDescriptorContract declares uniform visibility and four contiguous fragment samplers",
           "[shader_system][descriptor_contract][pbr_ibl]") {
   const std::vector<DescriptorBinding> expected = {
       {.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
@@ -111,6 +113,7 @@ TEST_CASE("pbrIblExpectedDescriptorContract declares uniform visibility and thre
       {.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
       {.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
       {.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
   };
   CHECK(pbrIblExpectedDescriptorContract() == expected);
 }

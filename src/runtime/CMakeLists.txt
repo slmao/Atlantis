@@ -115,6 +115,12 @@ target_compile_definitions(atlantis_runtime PRIVATE
   # call, unconditional), mirroring ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR's
   # own sourcing exactly.
   ATLANTIS_RUNTIME_SKY_SHADER_DIR="${ATLANTIS_sky_SHADER_OUTPUT_DIR}"
+  # Plan 0027 Milestone 8 (ADR-0072 D-1): the shadow-casting shader
+  # pair's own output directory -- reuses the already-exported
+  # ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR (shaders/shadow_cast/CMakeLists.txt's
+  # own atlantis_add_slang_shader_pair() call, unconditional), mirroring
+  # ATLANTIS_RUNTIME_SKY_SHADER_DIR's own sourcing exactly.
+  ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
   ATLANTIS_RUNTIME_ENVIRONMENT_ARTIFACT_PATH="${ATLANTIS_ibl_studio_ARTIFACT_PATH}"
   ATLANTIS_RUNTIME_ENVIRONMENT_METADATA_PATH="${ATLANTIS_ibl_studio_METADATA_PATH}"
   # Plan 0024 Milestone 6: the two output-transform shader pairs' own
@@ -140,4 +146,5 @@ target_compile_definitions(atlantis_runtime PRIVATE
 # output_transform_srgb_shaders added the same way.
 add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
   pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders output_transform_srgb_shaders sky_shaders
+  shadow_cast_shaders
   ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET} ${ATLANTIS_ibl_studio_TARGET})

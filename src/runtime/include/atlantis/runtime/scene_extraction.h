@@ -252,6 +252,21 @@ inline constexpr float kMinDot = 1e-4f;
 [[nodiscard]] atlantis::Result<CameraMatrices, SceneExtractionError> extractCameraMatrices(
     const Mat4& cameraWorldMatrix, float fovYRadians, float nearZ, float farZ, float aspect);
 
+// Plan 0027 (ADR-0072 D-1/P4/P11): the one directional light's own fixed
+// light-space view/projection -- Runtime's runFrame() and the shadow
+// discriminator tests both call this, never a separately maintained
+// copy. `direction` is the light's own travel direction (unit-length,
+// already normalized by extractFrameLightingData()). Unlike
+// extractCameraMatrices() above, this never fails: a direction
+// (near-)parallel to world-up is an ordinary "sun overhead" case, not a
+// scene-authoring mistake, so the up-vector falls back to (0,0,1)
+// instead of erroring -- reusing the exact same cross-product-length
+// test and kDegenerateLengthEpsilon threshold extractCameraMatrices()
+// already established, just with a different response to degeneracy.
+// P4's own fixed orthographic volume (center (0,0,0), half-extent 8.0,
+// near 0.1, far 30.0) is applied uniformly, never scene-fitted.
+[[nodiscard]] CameraMatrices computeShadowLightSpaceMatrices(const Vec3& direction);
+
 // Plan 0023 Milestone 2 (ADR-0062's own Accepted Amendment): a small,
 // separate function -- never a widening of extractCameraMatrices()'s
 // own return type, which stays exactly CameraMatrices, unchanged. Reads

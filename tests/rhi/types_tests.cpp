@@ -8,6 +8,7 @@
 using atlantis::rhi::AddressMode;
 using atlantis::rhi::BufferPurpose;
 using atlantis::rhi::ClearColorValue;
+using atlantis::rhi::DepthFormat;
 using atlantis::rhi::Extent2D;
 using atlantis::rhi::Filter;
 using atlantis::rhi::Format;
@@ -21,6 +22,7 @@ using atlantis::rhi::SampledTextureDimension;
 using atlantis::rhi::SampledTextureFormat;
 using atlantis::rhi::SampledTextureUploadRegion;
 using atlantis::rhi::SamplerCreateParams;
+using atlantis::rhi::ShadowMapCreateParams;
 using atlantis::rhi::SwapchainMetadata;
 
 TEST_CASE("Extent2D defaults to zero", "[rhi][extent2d]") {
@@ -212,4 +214,26 @@ TEST_CASE("PipelineCreateParams::depthWriteEnabled defaults to true, reproducing
   const PipelineCreateParams params{};
   REQUIRE(params.depthWriteEnabled);
   REQUIRE(params.hasDepthAttachment);
+}
+
+// Plan 0027 Milestone 1 (ADR-0072 D-2): hasColorAttachment's own default
+// (true) must reproduce every existing Pipeline's current
+// one-color-attachment behavior unconditionally -- zero source change at
+// any existing call site, matching depthWriteEnabled's own established
+// true-by-default convention above.
+TEST_CASE("PipelineCreateParams::hasColorAttachment defaults to true, reproducing existing Pipeline behavior",
+          "[rhi][pipeline_create_params]") {
+  const PipelineCreateParams params{};
+  REQUIRE(params.hasColorAttachment);
+}
+
+// Plan 0027 Milestone 1 (ADR-0072 D-1): mirrors SampledTextureCreateParams's
+// own equality-test shape -- ShadowMapCreateParams is structurally
+// identical to TextureCreateParams (Extent2D + DepthFormat), and
+// DepthFormat has exactly one real value, so only extent varies here.
+TEST_CASE("ShadowMapCreateParams equality and inequality", "[rhi][shadow_map_create_params]") {
+  REQUIRE(ShadowMapCreateParams{Extent2D{1024, 1024}, DepthFormat::D32Sfloat} ==
+          ShadowMapCreateParams{Extent2D{1024, 1024}, DepthFormat::D32Sfloat});
+  REQUIRE_FALSE(ShadowMapCreateParams{Extent2D{1024, 1024}, DepthFormat::D32Sfloat} ==
+                ShadowMapCreateParams{Extent2D{512, 512}, DepthFormat::D32Sfloat});
 }

@@ -199,6 +199,18 @@ struct HdrColorTargetCreateParams {
 
 [[nodiscard]] bool operator==(const HdrColorTargetCreateParams& lhs, const HdrColorTargetCreateParams& rhs);
 
+// Plan 0027 Milestone 1 (ADR-0072 D-1): creation-time parameters for the
+// new ShadowMap resource -- a depth image usable both as a depth
+// attachment (the shadow-casting pass writes it) and as a sampled
+// texture (the main draw pass reads it), mirroring HdrColorTargetCreateParams's
+// own shape. format defaults to the RHI's only DepthFormat value.
+struct ShadowMapCreateParams {
+  Extent2D extent;
+  DepthFormat format = DepthFormat::D32Sfloat;
+};
+
+[[nodiscard]] bool operator==(const ShadowMapCreateParams& lhs, const ShadowMapCreateParams& rhs);
+
 struct VertexAttribute {
   std::uint32_t location = 0;
   std::uint32_t offsetBytes = 0;
@@ -253,7 +265,9 @@ struct PipelineCreateParams {
   // ReflectionMetadata (how many contiguous combined-image-sampler
   // bindings it declares) -- the same "caller derives from reflection,
   // passes plain data" pattern vertexInputLayout above already uses.
-  // The closed values for this Plan are 0, 1, and 3.
+  // The closed values are 0, 1, 2, 3, and 4 (Plan 0027 Milestone 6,
+  // ADR-0072 D-7, widened from {0, 1, 3} to add 2/4 for the new
+  // shadow-map sampler binding on pbr_direct_lit/pbr_ibl).
   std::uint32_t sampledTextureBindingCount = 0;
   // Plan 0024 Milestone 6: discovered during Implementation, not
   // anticipated by the Plan's own file list -- every existing Pipeline
@@ -305,6 +319,15 @@ struct PipelineCreateParams {
   // always-write-when-tested behavior exactly -- zero source change at
   // any existing call site.
   bool depthWriteEnabled = true;
+  // Plan 0027 Milestone 1 (ADR-0072 D-2): independent of hasDepthAttachment
+  // above -- the shadow-casting Pipeline needs a depth attachment but no
+  // color attachment at all, a combination hasDepthAttachment's own
+  // all-or-nothing boolean cannot express (it only ever governed the
+  // depth side). true (default) reproduces every existing Pipeline's
+  // current one-color-attachment behavior exactly -- zero source change
+  // at any existing call site; when false, no color attachment is
+  // declared and colorFormat is ignored.
+  bool hasColorAttachment = true;
 };
 
 struct SampledTextureUploadRegion {
@@ -365,6 +388,18 @@ enum class HdrColorTargetCreateError {
   // VkFormat lack a required bit -- a real runtime fact, discovered at
   // creation time, never a programmer error (never ATLANTIS_CHECK).
   // Checked, and returned, before any VkResult-producing Vulkan call.
+  FormatFeaturesUnsupported,
+  AllocationFailed,
+  ImageCreationFailed,
+  ImageViewCreationFailed,
+};
+
+// Plan 0027 Milestone 1 (ADR-0072 D-1): mirrors HdrColorTargetCreateError's
+// own shape exactly -- ShadowMap needs the identical real
+// vkGetPhysicalDeviceFormatProperties() check (its own required
+// combination of depth-attachment-plus-sampled feature bits is not
+// unconditionally guaranteed for D32_SFLOAT on every conformant device).
+enum class ShadowMapCreateError {
   FormatFeaturesUnsupported,
   AllocationFailed,
   ImageCreationFailed,

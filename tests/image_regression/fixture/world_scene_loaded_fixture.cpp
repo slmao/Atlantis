@@ -96,6 +96,19 @@ static_assert(offsetof(Vertex, uv) == atlantis::asset_system::kMeshArtifactUv0Of
 static_assert(offsetof(Vertex, normal) == atlantis::asset_system::kMeshArtifactNormalOffsetBytes);
 static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrideBytes);
 
+// Plan 0027 Milestone 9 (ADR-0072 D-3): shadow_cast.slang's own real,
+// position-only VertexInput -- against this file's own shared Vertex
+// struct above, mirrors runtime_application.cpp's own identical
+// shadowCastVertexLayout().
+[[nodiscard]] std::optional<VertexInputLayout> shadowCastVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 [[nodiscard]] std::optional<VertexInputLayout> minimalMeshVertexLayout(const ReflectionMetadata& vertexMetadata) {
   const std::vector<MeshVertexAttributeSchema> schema = {
       MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
@@ -407,6 +420,61 @@ atlantis::Result<WorldSceneLoadedFixture, WorldSceneLoadedFixtureSetupError> set
   }
   fixture.outputTransformPipeline = std::move(outputTransformPipelineResult.value());
 
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): a minimal, always-possible
+  // real ShadowMap/Sampler/Pipeline/Buffer -- shadowCasterDrawItems
+  // (renderOneWorldSceneLoadedFrame()) stays empty; this fixture never
+  // configures a real occluder.
+  auto shadowMapResult = fixture.device->createShadowMap({.extent = {1024, 1024}});
+  if (shadowMapResult.isErr()) {
+    return ResultT::Err(WorldSceneLoadedFixtureSetupError::ResourceCreationFailed);
+  }
+  fixture.shadowMap = std::move(shadowMapResult.value());
+
+  auto shadowMapSamplerResult = fixture.device->createSampler(
+      {.filter = atlantis::rhi::Filter::Nearest, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+  if (shadowMapSamplerResult.isErr()) {
+    return ResultT::Err(WorldSceneLoadedFixtureSetupError::ResourceCreationFailed);
+  }
+  fixture.shadowMapSampler = std::move(shadowMapSamplerResult.value());
+
+  const auto shadowCastVertexSpirv = loadSpirvFile("shaders/shadow_cast.vert.spv");
+  const auto shadowCastFragmentSpirv = loadSpirvFile("shaders/shadow_cast.frag.spv");
+  if (!shadowCastVertexSpirv.has_value() || !shadowCastFragmentSpirv.has_value()) {
+    return ResultT::Err(WorldSceneLoadedFixtureSetupError::ShaderLoadFailed);
+  }
+  auto shadowCastVertexReflectionResult = loadReflectionMetadata("shaders/shadow_cast.vert.refl.json");
+  if (shadowCastVertexReflectionResult.isErr()) {
+    return ResultT::Err(WorldSceneLoadedFixtureSetupError::ShaderLoadFailed);
+  }
+  const auto shadowCastVertexInputLayout = shadowCastVertexLayout(shadowCastVertexReflectionResult.value());
+  if (!shadowCastVertexInputLayout.has_value()) {
+    return ResultT::Err(WorldSceneLoadedFixtureSetupError::ShaderLoadFailed);
+  }
+
+  auto shadowCastPipelineResult = fixture.device->createPipeline(
+      {.vertexShader = {.spirvWords = shadowCastVertexSpirv->data(), .wordCount = shadowCastVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = shadowCastFragmentSpirv->data(),
+                           .wordCount = shadowCastFragmentSpirv->size()},
+       .vertexInputLayout = *shadowCastVertexInputLayout,
+       .depthFormat = DepthFormat::D32Sfloat,
+       .pushConstantSizeBytes = sizeof(float) * 16,
+       .sampledTextureBindingCount = 0,
+       .hasCameraUniformBinding = true,
+       .hasDepthAttachment = true,
+       .depthWriteEnabled = true,
+       .hasColorAttachment = false});
+  if (shadowCastPipelineResult.isErr()) {
+    return ResultT::Err(WorldSceneLoadedFixtureSetupError::ResourceCreationFailed);
+  }
+  fixture.shadowCastPipeline = std::move(shadowCastPipelineResult.value());
+
+  auto shadowLightSpaceBufferResult =
+      fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 128});
+  if (shadowLightSpaceBufferResult.isErr()) {
+    return ResultT::Err(WorldSceneLoadedFixtureSetupError::ResourceCreationFailed);
+  }
+  fixture.shadowLightSpaceBuffer = std::move(shadowLightSpaceBufferResult.value());
+
   // (f)/(g) Instantiate -- infallible.
   fixture.world.emplace(atlantis::world::fromValidatedSceneData(scene));
 
@@ -477,7 +545,9 @@ atlantis::Result<PixelBuffer, WorldSceneLoadedFixtureRenderError> renderOneWorld
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, drawItems,
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
-                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler);
+                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, nullptr, nullptr,
+                      *fixture.shadowMap, *fixture.shadowMapSampler, *fixture.shadowCastPipeline,
+                      *fixture.shadowLightSpaceBuffer, {});
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");

@@ -17,7 +17,12 @@ target_link_libraries(atlantis_headless_rendering_demo
 # reuses the identical minimal_mesh shader pair, not a new one.
 # Plan 0024 Milestone 6/7 (ADR-0068 D-1/D-3/D-6): output_transform_unorm_shaders
 # added the same way -- this demo's own colorFormat is fixed Rgba8Unorm.
-add_dependencies(atlantis_headless_rendering_demo minimal_mesh_shaders output_transform_unorm_shaders)
+# Plan 0027 Milestone 9 (ADR-0072 D-1/P9f): shadow_cast_shaders added the
+# same way -- this demo's own drawFrame() call now needs a real, minimal
+# shadow-casting Pipeline too (an empty shadowCasterDrawItems, no real
+# occluder).
+add_dependencies(atlantis_headless_rendering_demo minimal_mesh_shaders output_transform_unorm_shaders
+  shadow_cast_shaders)
 add_custom_command(TARGET atlantis_headless_rendering_demo POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_headless_rendering_demo>/shaders"
@@ -32,6 +37,12 @@ add_custom_command(TARGET atlantis_headless_rendering_demo POST_BUILD
       "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.refl.json"
       "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.spv"
       "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_headless_rendering_demo>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.refl.json"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.refl.json"
       "$<TARGET_FILE_DIR:atlantis_headless_rendering_demo>/shaders/"
 )
 

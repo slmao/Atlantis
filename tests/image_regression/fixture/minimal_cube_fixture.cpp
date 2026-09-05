@@ -164,6 +164,19 @@ using Mat4 = std::array<float, 16>;
   return result;
 }
 
+// Plan 0027 Milestone 9 (ADR-0072 D-3): shadow_cast.slang's own real,
+// position-only VertexInput -- against this file's own shared Vertex
+// struct above, mirrors runtime_application.cpp's own identical
+// shadowCastVertexLayout().
+[[nodiscard]] std::optional<VertexInputLayout> shadowCastVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 // Plan 0024 Milestone 7: the output-transform pass's own fixed vertex
 // schema -- NOT sourced from the mesh Vertex struct above, mirrors
 // runtime_application.cpp's own identical outputTransformVertexLayout().
@@ -238,6 +251,54 @@ using Mat4 = std::array<float, 16>;
        .hasDepthAttachment = false});
   if (outputTransformPipelineResult.isErr()) return FixtureSetupError::ResourceCreationFailed;
   fixture.outputTransformPipeline = std::move(outputTransformPipelineResult.value());
+
+  return std::nullopt;
+}
+
+// Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): a minimal, always-possible
+// real ShadowMap/Sampler/Pipeline/Buffer -- shared by both
+// setUpMinimalCubeFixture() and setUpMinimalCubeFixtureFromAsset() below,
+// mirroring setUpOutputTransformResources()'s own factoring immediately
+// above.
+[[nodiscard]] std::optional<FixtureSetupError> setUpShadowCastResources(MinimalCubeFixture& fixture) {
+  auto shadowMapResult = fixture.device->createShadowMap({.extent = {1024, 1024}});
+  if (shadowMapResult.isErr()) return FixtureSetupError::ResourceCreationFailed;
+  fixture.shadowMap = std::move(shadowMapResult.value());
+
+  auto shadowMapSamplerResult = fixture.device->createSampler(
+      {.filter = atlantis::rhi::Filter::Nearest, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+  if (shadowMapSamplerResult.isErr()) return FixtureSetupError::ResourceCreationFailed;
+  fixture.shadowMapSampler = std::move(shadowMapSamplerResult.value());
+
+  const auto shadowCastVertexSpirv = loadSpirvFile("shaders/shadow_cast.vert.spv");
+  const auto shadowCastFragmentSpirv = loadSpirvFile("shaders/shadow_cast.frag.spv");
+  if (!shadowCastVertexSpirv.has_value() || !shadowCastFragmentSpirv.has_value()) {
+    return FixtureSetupError::ShaderLoadFailed;
+  }
+  auto shadowCastVertexReflectionResult = loadReflectionMetadata("shaders/shadow_cast.vert.refl.json");
+  if (shadowCastVertexReflectionResult.isErr()) return FixtureSetupError::ShaderLoadFailed;
+  const auto shadowCastVertexInputLayout = shadowCastVertexLayout(shadowCastVertexReflectionResult.value());
+  if (!shadowCastVertexInputLayout.has_value()) return FixtureSetupError::ShaderLoadFailed;
+
+  auto shadowCastPipelineResult = fixture.device->createPipeline(
+      {.vertexShader = {.spirvWords = shadowCastVertexSpirv->data(), .wordCount = shadowCastVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = shadowCastFragmentSpirv->data(),
+                           .wordCount = shadowCastFragmentSpirv->size()},
+       .vertexInputLayout = *shadowCastVertexInputLayout,
+       .depthFormat = DepthFormat::D32Sfloat,
+       .pushConstantSizeBytes = sizeof(float) * 16,
+       .sampledTextureBindingCount = 0,
+       .hasCameraUniformBinding = true,
+       .hasDepthAttachment = true,
+       .depthWriteEnabled = true,
+       .hasColorAttachment = false});
+  if (shadowCastPipelineResult.isErr()) return FixtureSetupError::ResourceCreationFailed;
+  fixture.shadowCastPipeline = std::move(shadowCastPipelineResult.value());
+
+  auto shadowLightSpaceBufferResult =
+      fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 128});
+  if (shadowLightSpaceBufferResult.isErr()) return FixtureSetupError::ResourceCreationFailed;
+  fixture.shadowLightSpaceBuffer = std::move(shadowLightSpaceBufferResult.value());
 
   return std::nullopt;
 }
@@ -328,6 +389,10 @@ Result<MinimalCubeFixture, FixtureSetupError> setUpMinimalCubeFixture() {
     return Result<MinimalCubeFixture, FixtureSetupError>::Err(*outputTransformError);
   }
 
+  if (const auto shadowCastError = setUpShadowCastResources(fixture); shadowCastError.has_value()) {
+    return Result<MinimalCubeFixture, FixtureSetupError>::Err(*shadowCastError);
+  }
+
   return Result<MinimalCubeFixture, FixtureSetupError>::Ok(std::move(fixture));
 }
 
@@ -364,7 +429,9 @@ Result<PixelBuffer, FixtureRenderError> renderOneFrame(MinimalCubeFixture& fixtu
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, drawItems,
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
-                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler);
+                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, nullptr, nullptr,
+                      *fixture.shadowMap, *fixture.shadowMapSampler, *fixture.shadowCastPipeline,
+                      *fixture.shadowLightSpaceBuffer, {});
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");
@@ -503,6 +570,10 @@ Result<MinimalCubeFixture, FixtureSetupError> setUpMinimalCubeFixtureFromAsset(c
   if (const auto outputTransformError = setUpOutputTransformResources(fixture, extent);
       outputTransformError.has_value()) {
     return Result<MinimalCubeFixture, FixtureSetupError>::Err(*outputTransformError);
+  }
+
+  if (const auto shadowCastError = setUpShadowCastResources(fixture); shadowCastError.has_value()) {
+    return Result<MinimalCubeFixture, FixtureSetupError>::Err(*shadowCastError);
   }
 
   return Result<MinimalCubeFixture, FixtureSetupError>::Ok(std::move(fixture));

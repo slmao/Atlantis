@@ -52,6 +52,14 @@ const char* toString(RuntimeInitError error) noexcept {
       return "FallbackMaterialCreateFailed";
     case RuntimeInitError::SkyPipelineCreateFailed:
       return "SkyPipelineCreateFailed";
+    case RuntimeInitError::ShadowMapCreateFailed:
+      return "ShadowMapCreateFailed";
+    case RuntimeInitError::ShadowSamplerCreateFailed:
+      return "ShadowSamplerCreateFailed";
+    case RuntimeInitError::ShadowCastPipelineCreateFailed:
+      return "ShadowCastPipelineCreateFailed";
+    case RuntimeInitError::ShadowLightSpaceBufferCreateFailed:
+      return "ShadowLightSpaceBufferCreateFailed";
   }
   // Reached only if a future RuntimeInitError value is added without a
   // corresponding case above -- see exit_reason.cpp's identical comment

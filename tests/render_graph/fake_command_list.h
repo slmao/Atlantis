@@ -13,6 +13,7 @@
 #include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/sampled_texture.h>
 #include <atlantis/rhi/sampler.h>
+#include <atlantis/rhi/shadow_map.h>
 
 // Test-only rhi::CommandList implementation (Plan 0006 Section 13) that
 // records which calls it received -- state, target identity, and order --
@@ -44,6 +45,13 @@ struct RecordedHdrColorTargetTransition {
   atlantis::rhi::ResourceState after;
 };
 
+// Plan 0027 Milestone 2 (ADR-0072 D-4).
+struct RecordedShadowMapTransition {
+  const atlantis::rhi::ShadowMap* target;
+  atlantis::rhi::ResourceState before;
+  atlantis::rhi::ResourceState after;
+};
+
 struct RecordedClear {
   const atlantis::rhi::RenderTarget* target;
   atlantis::rhi::ClearColorValue color;
@@ -69,6 +77,13 @@ struct RecordedBindTexture {
 struct RecordedHdrBindTexture {
   std::uint32_t binding;
   const atlantis::rhi::HdrColorTarget* texture;
+  const atlantis::rhi::Sampler* sampler;
+};
+
+// Plan 0027 Milestone 2 (ADR-0072 D-4).
+struct RecordedShadowMapBindTexture {
+  std::uint32_t binding;
+  const atlantis::rhi::ShadowMap* texture;
   const atlantis::rhi::Sampler* sampler;
 };
 
@@ -131,6 +146,21 @@ class FakeHdrColorTarget final : public atlantis::rhi::HdrColorTarget {
 
   [[nodiscard]] atlantis::rhi::Extent2D extent() const override { return atlantis::rhi::Extent2D{1, 1}; }
   [[nodiscard]] atlantis::rhi::HdrFormat format() const override { return atlantis::rhi::HdrFormat::Rgba16Float; }
+  [[nodiscard]] std::string_view label() const { return label_; }
+
+ private:
+  std::string label_;
+};
+
+// Also usable as a bindable ShadowMap stand-in in tests -- carries no
+// real GPU resource, just an identity (label) and fixed extent/format
+// (Plan 0027 Milestone 2).
+class FakeShadowMap final : public atlantis::rhi::ShadowMap {
+ public:
+  explicit FakeShadowMap(std::string_view label) : label_(label) {}
+
+  [[nodiscard]] atlantis::rhi::Extent2D extent() const override { return atlantis::rhi::Extent2D{1, 1}; }
+  [[nodiscard]] atlantis::rhi::DepthFormat format() const override { return atlantis::rhi::DepthFormat::D32Sfloat; }
   [[nodiscard]] std::string_view label() const { return label_; }
 
  private:
@@ -201,6 +231,14 @@ struct RecordedBeginRenderingHdr {
   float depthClear;
 };
 
+// Plan 0027 Milestone 2 (ADR-0072 D-4) -- genuinely depth-only, unlike
+// RecordedBeginRendering/RecordedBeginRenderingHdr above, which both
+// always carry a color target.
+struct RecordedBeginRenderingShadowMap {
+  const atlantis::rhi::ShadowMap* depth;
+  float depthClear;
+};
+
 struct RecordedPushConstant {
   std::size_t sizeBytes;
 };
@@ -238,6 +276,13 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
     events.push_back(EventKind::HdrColorTargetTransition);
   }
 
+  // Plan 0027 Milestone 2.
+  void transitionResource(atlantis::rhi::ShadowMap& target, atlantis::rhi::ResourceState before,
+                           atlantis::rhi::ResourceState after) override {
+    shadowMapTransitions.push_back(RecordedShadowMapTransition{&target, before, after});
+    events.push_back(EventKind::ShadowMapTransition);
+  }
+
   void clearColor(atlantis::rhi::RenderTarget& target, atlantis::rhi::ClearColorValue color) override {
     clears.push_back(RecordedClear{&target, color});
     events.push_back(EventKind::Clear);
@@ -254,6 +299,12 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
                        atlantis::rhi::ClearColorValue colorClear, float depthClear) override {
     beginRenderingHdrCalls.push_back(RecordedBeginRenderingHdr{&color, depth, colorClear, depthClear});
     events.push_back(EventKind::BeginRenderingHdr);
+  }
+
+  // Plan 0027 Milestone 2 -- depth-only, no color parameter at all.
+  void beginRendering(atlantis::rhi::ShadowMap& depth, float depthClear) override {
+    beginRenderingShadowMapCalls.push_back(RecordedBeginRenderingShadowMap{&depth, depthClear});
+    events.push_back(EventKind::BeginRenderingShadowMap);
   }
 
   void endRendering() override { events.push_back(EventKind::EndRendering); }
@@ -289,6 +340,13 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
                    const atlantis::rhi::Sampler& sampler) override {
     boundHdrTextures.push_back(RecordedHdrBindTexture{binding, &texture, &sampler});
     events.push_back(EventKind::BindHdrTexture);
+  }
+
+  // Plan 0027 Milestone 2.
+  void bindTexture(std::uint32_t binding, const atlantis::rhi::ShadowMap& texture,
+                   const atlantis::rhi::Sampler& sampler) override {
+    boundShadowMapTextures.push_back(RecordedShadowMapBindTexture{binding, &texture, &sampler});
+    events.push_back(EventKind::BindShadowMapTexture);
   }
 
   void pushConstant(const void* data, std::size_t sizeBytes) override {
@@ -331,16 +389,19 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
     TextureTransition,
     SampledTextureTransition,
     HdrColorTargetTransition,  // Plan 0024 Milestone 2
+    ShadowMapTransition,       // Plan 0027 Milestone 2
     Clear,
     BeginRendering,
-    BeginRenderingHdr,  // Plan 0024 Milestone 2
+    BeginRenderingHdr,        // Plan 0024 Milestone 2
+    BeginRenderingShadowMap,  // Plan 0027 Milestone 2
     EndRendering,
     BindPipeline,
     BindVertexBuffer,
     BindIndexBuffer,
     BindUniformBuffer,
     BindTexture,
-    BindHdrTexture,  // Plan 0024 Milestone 2
+    BindHdrTexture,         // Plan 0024 Milestone 2
+    BindShadowMapTexture,   // Plan 0027 Milestone 2
     PushConstant,
     DrawIndexed,
     CopyToBuffer,
@@ -351,15 +412,18 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
   std::vector<RecordedTextureTransition> textureTransitions;
   std::vector<RecordedSampledTextureTransition> sampledTextureTransitions;
   std::vector<RecordedHdrColorTargetTransition> hdrColorTargetTransitions;  // Plan 0024 Milestone 2
+  std::vector<RecordedShadowMapTransition> shadowMapTransitions;            // Plan 0027 Milestone 2
   std::vector<RecordedClear> clears;
   std::vector<RecordedBeginRendering> beginRenderingCalls;
-  std::vector<RecordedBeginRenderingHdr> beginRenderingHdrCalls;  // Plan 0024 Milestone 2
+  std::vector<RecordedBeginRenderingHdr> beginRenderingHdrCalls;              // Plan 0024 Milestone 2
+  std::vector<RecordedBeginRenderingShadowMap> beginRenderingShadowMapCalls;  // Plan 0027 Milestone 2
   std::vector<const atlantis::rhi::Pipeline*> boundPipelines;
   std::vector<const atlantis::rhi::Buffer*> boundVertexBuffers;
   std::vector<const atlantis::rhi::Buffer*> boundIndexBuffers;
   std::vector<const atlantis::rhi::Buffer*> boundUniformBuffers;
   std::vector<RecordedBindTexture> boundTextures;
-  std::vector<RecordedHdrBindTexture> boundHdrTextures;  // Plan 0024 Milestone 2
+  std::vector<RecordedHdrBindTexture> boundHdrTextures;                // Plan 0024 Milestone 2
+  std::vector<RecordedShadowMapBindTexture> boundShadowMapTextures;    // Plan 0027 Milestone 2
   std::vector<RecordedPushConstant> pushConstants;
   std::vector<std::vector<std::byte>> pushConstantData;  // parallel to pushConstants -- the actual bytes copied
   std::vector<std::uint32_t> drawIndexedCounts;

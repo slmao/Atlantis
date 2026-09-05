@@ -149,6 +149,68 @@ atlantis::Result<CameraMatrices, SceneExtractionError> extractCameraMatrices(con
   return atlantis::Result<CameraMatrices, SceneExtractionError>::Ok(result);
 }
 
+namespace {
+
+// P4's own fixed orthographic shadow volume: center (0,0,0), half-extent
+// 8.0 world units, near 0.1, far 30.0 -- applied uniformly, never
+// scene-fitted.
+constexpr float kShadowOrthographicHalfExtent = 8.0f;
+constexpr float kShadowNearZ = 0.1f;
+constexpr float kShadowFarZ = 30.0f;
+
+}  // namespace
+
+CameraMatrices computeShadowLightSpaceMatrices(const Vec3& direction) {
+  // P11: a deliberate, disclosed new choice, not a reuse of
+  // lookAtMatrix()'s own hardcoded world-up -- fail-fast (as
+  // extractCameraMatrices() above does for a degenerate camera basis)
+  // is not appropriate here, so this falls back to a second fixed
+  // up-vector instead of erroring.
+  Vec3 up{0.0f, 1.0f, 0.0f};
+  if (length(cross(direction, up)) < kDegenerateLengthEpsilon) {
+    up = Vec3{0.0f, 0.0f, 1.0f};
+  }
+
+  // light eye = center - direction * (far - near) / 2 (center is the
+  // fixed volume's own origin, so this reduces to eye = -direction *
+  // (far - near) / 2); light forward = direction.
+  const float eyeDistance = (kShadowFarZ - kShadowNearZ) * 0.5f;
+  const Vec3 eye{-direction.x * eyeDistance, -direction.y * eyeDistance, -direction.z * eyeDistance};
+
+  const Vec3 right = cross(direction, up);
+  const float rightLen = length(right);
+  const Vec3 rightUnit = normalize(right, rightLen);
+  const Vec3 camUp = cross(rightUnit, direction);
+
+  CameraMatrices result;
+  result.view = identityMatrix();
+  result.view[0] = rightUnit.x;
+  result.view[4] = rightUnit.y;
+  result.view[8] = rightUnit.z;
+  result.view[1] = camUp.x;
+  result.view[5] = camUp.y;
+  result.view[9] = camUp.z;
+  result.view[2] = -direction.x;
+  result.view[6] = -direction.y;
+  result.view[10] = -direction.z;
+  result.view[12] = -dot(rightUnit, eye);
+  result.view[13] = -dot(camUp, eye);
+  result.view[14] = dot(direction, eye);
+
+  // Vulkan clip-space convention: right-handed, depth range [0, 1], Y
+  // flipped -- mirrors perspectiveMatrix()'s own identical convention,
+  // applied to a fixed, symmetric orthographic volume instead of a
+  // perspective frustum.
+  result.projection = Mat4{};
+  result.projection[0] = 1.0f / kShadowOrthographicHalfExtent;
+  result.projection[5] = -1.0f / kShadowOrthographicHalfExtent;
+  result.projection[10] = -1.0f / (kShadowFarZ - kShadowNearZ);
+  result.projection[14] = -kShadowNearZ / (kShadowFarZ - kShadowNearZ);
+  result.projection[15] = 1.0f;
+
+  return result;
+}
+
 CameraWorldPositionData extractCameraWorldPosition(const Mat4& cameraWorldMatrix) {
   // Mirrors extractCameraMatrices()'s own `eye` derivation above (column
   // 3 / indices 12,13,14) -- deliberately independent, not shared

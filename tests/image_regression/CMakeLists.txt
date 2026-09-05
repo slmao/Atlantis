@@ -49,6 +49,7 @@ add_executable(atlantis_image_regression_gpu_tests
   hdr_roll_off_demo_gpu_tests.cpp
   ibl_material_demo_gpu_tests.cpp
   sky_background_gpu_tests.cpp
+  shadow_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_image_regression_gpu_tests
@@ -172,6 +173,23 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_IBL_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
   ATLANTIS_IBL_DEMO_ENVIRONMENT_ARTIFACT_PATH="${ATLANTIS_ibl_studio_ARTIFACT_PATH}"
   ATLANTIS_IBL_DEMO_ENVIRONMENT_METADATA_PATH="${ATLANTIS_ibl_studio_METADATA_PATH}"
+  # Plan 0027 Milestone 9 (ADR-0072 D-1/P9f): the shadow-casting shader
+  # pair's own output directory -- one macro per fixture-config reusing
+  # pbr_material_demo_fixture.cpp/material_demo_fixture.cpp/
+  # lighting_demo_fixture.cpp, mirroring each config's own
+  # ..._PBR_DIRECT_LIT_SHADER_DIR sourcing exactly.
+  ATLANTIS_MATERIAL_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+  ATLANTIS_LIGHTING_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIAL_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+  ATLANTIS_HDR_ROLL_OFF_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+  ATLANTIS_IBL_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+  # Plan 0027 Milestone 10 (ADR-0072 D-1): shadow_gpu_tests.cpp's own
+  # Group A rig -- a real Device, its own hand-built scene, and the real
+  # pbr_direct_lit/output_transform_unorm/shadow_cast shader pairs,
+  # mirroring every sibling macro's own sourcing exactly.
+  ATLANTIS_SHADOW_TEST_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  ATLANTIS_SHADOW_TEST_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  ATLANTIS_SHADOW_TEST_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
 )
 
 # Plan 0012 Step 6: the asset-sourced GPU test case needs
@@ -197,7 +215,7 @@ add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TAR
 # which directory ctest (or a human) happens to invoke this executable
 # from.
 add_dependencies(atlantis_image_regression_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
-  pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders sky_shaders)
+  pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders sky_shaders shadow_cast_shaders)
 add_custom_command(TARGET atlantis_image_regression_gpu_tests POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_image_regression_gpu_tests>/shaders"
@@ -224,5 +242,16 @@ add_custom_command(TARGET atlantis_image_regression_gpu_tests POST_BUILD
       "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.refl.json"
       "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.spv"
       "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_gpu_tests>/shaders/"
+  # Plan 0027 Milestone 9 (ADR-0072 D-1/P9f): the shadow-casting shader
+  # pair -- needed by minimal_cube_fixture.cpp/world_scene_fixture.cpp/
+  # world_scene_loaded_fixture.cpp/textured_quad_fixture.cpp, which all
+  # follow this same WORKING_DIRECTORY-relative convention, mirroring
+  # the copy commands above exactly.
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.refl.json"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.refl.json"
       "$<TARGET_FILE_DIR:atlantis_image_regression_gpu_tests>/shaders/"
 )

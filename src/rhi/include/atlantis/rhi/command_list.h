@@ -10,6 +10,7 @@
 #include <atlantis/rhi/render_target.h>
 #include <atlantis/rhi/sampled_texture.h>
 #include <atlantis/rhi/sampler.h>
+#include <atlantis/rhi/shadow_map.h>
 #include <atlantis/rhi/texture.h>
 #include <atlantis/rhi/types.h>
 
@@ -143,6 +144,28 @@ class CommandList {
   // SampledTexture overload above (texture must be in
   // ResourceState::ShaderRead when this is recorded).
   virtual void bindTexture(std::uint32_t binding, const HdrColorTarget& texture, const Sampler& sampler) = 0;
+
+  // Plan 0027 Milestone 2 (ADR-0072 D-4): a fifth transitionResource()
+  // overload, alongside RenderTarget/depth-Texture/SampledTexture/
+  // HdrColorTarget above -- same shape, new target type. Used by
+  // render_graph::execute() for the ShadowMap's own Undefined ->
+  // DepthAttachmentReadWrite (shadow-casting pass) -> ShaderRead (main
+  // draw pass) sequence.
+  virtual void transitionResource(ShadowMap& target, ResourceState before, ResourceState after) = 0;
+
+  // A third beginRendering() overload -- a genuinely depth-only scope,
+  // unlike the two above (both always attach a color image): no color
+  // parameter at all, matching the shadow-casting Pipeline's own
+  // hasColorAttachment == false shape (ADR-0072 D-2/D-3). Called only by
+  // render_graph::execute(), same convention as the other overloads.
+  virtual void beginRendering(ShadowMap& depth, float depthClear) = 0;
+
+  // A third bindTexture() overload, used only by the main draw pass to
+  // sample the ShadowMap while shading PbrDirectLit/pbr_ibl surfaces --
+  // same precondition as the SampledTexture/HdrColorTarget overloads
+  // above (the ShadowMap must be in ResourceState::ShaderRead when this
+  // is recorded).
+  virtual void bindTexture(std::uint32_t binding, const ShadowMap& texture, const Sampler& sampler) = 0;
 };
 
 }  // namespace atlantis::rhi

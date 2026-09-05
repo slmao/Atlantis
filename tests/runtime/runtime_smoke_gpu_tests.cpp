@@ -76,8 +76,12 @@ namespace atlantis::runtime {
 constexpr std::size_t kLightingByteOffset = 2 * 16 * sizeof(float);  // 2 matrices, 16 floats each
 static_assert(kLightingByteOffset == 128);
 static_assert(kLightingByteOffset == sizeof(float) * 32, "must match runtime_application.cpp's own real offset");
-static_assert(kLightingByteOffset + sizeof(FrameLightingData) == 304,
-              "must match cameraBuffer_'s own real, constructed size");
+// Plan 0027 Milestone 9 fix: 304 is FrameLightingData's own end offset,
+// not cameraBuffer_'s own total size any more -- the buffer grew to 592
+// bytes (the light-space tail, ADR-0072 D-1/P5), unaffected here since
+// CameraMatrices/FrameLightingData/CameraWorldPositionData themselves
+// stay byte-for-byte unmodified.
+static_assert(kLightingByteOffset + sizeof(FrameLightingData) == 304);
 
 // Plan 0023 Milestone 2 (ADR-0062's own Accepted Amendment): independently
 // pins the new tail region's own real byte offset -- derived here from
@@ -87,8 +91,10 @@ static_assert(kLightingByteOffset + sizeof(FrameLightingData) == 304,
 // real drift between the two fails to *compile* here.
 constexpr std::size_t kCameraWorldPositionByteOffset = kLightingByteOffset + sizeof(FrameLightingData);
 static_assert(kCameraWorldPositionByteOffset == 304);
-static_assert(kCameraWorldPositionByteOffset + sizeof(CameraWorldPositionData) == 320,
-              "must match cameraBuffer_'s own real, constructed size");
+// Plan 0027 Milestone 9 fix: 320 is CameraWorldPositionData's own end
+// offset, not cameraBuffer_'s own total size any more -- see the
+// identical note on kLightingByteOffset's own static_assert above.
+static_assert(kCameraWorldPositionByteOffset + sizeof(CameraWorldPositionData) == 320);
 
 struct RuntimeSmokeTestAccess {
   static std::size_t renderableEntityCount(const RuntimeApplication& app) {
@@ -170,6 +176,18 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
       std::string(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR) + "/output_transform_srgb.frag.spv";
   config.outputTransformSrgbFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR) + "/output_transform_srgb.frag.refl.json";
+  // Plan 0027 Milestone 8 (ADR-0072 D-1): the shadow-casting shader pair
+  // -- unconditionally required (mirrors main.cpp's own identical
+  // population), regardless of this test's own no-environment
+  // configuration above.
+  config.shadowCastVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.vert.spv";
+  config.shadowCastVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.vert.refl.json";
+  config.shadowCastFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.spv";
+  config.shadowCastFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.refl.json";
   config.enableValidationLayers = true;
 
   auto appResult = createRuntimeApplication(config);

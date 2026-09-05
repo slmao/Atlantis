@@ -156,6 +156,26 @@ TEST_CASE("planTransition maps ColorAttachmentOutput -> ShaderRead to a color-ou
   REQUIRE(failures.empty());
 }
 
+TEST_CASE("planTransition maps DepthAttachmentReadWrite -> ShaderRead to a depth-output-to-fragment-read barrier",
+          "[vulkan_backend][resource_state_mapping]") {
+  // Plan 0027 Milestone 2 (ADR-0072 D-4): the main draw pass's own read
+  // of the ShadowMap the shadow-casting pass just wrote -- discovered
+  // missing from this table during Implementation, the same "found
+  // missing, disclosed, added" pattern the ColorAttachmentOutput ->
+  // ShaderRead entry above already establishes.
+  std::vector<RecordedFailure> failures;
+  ScopedFailureHandler handler(failures);
+
+  const auto plan = planTransition(ResourceState::DepthAttachmentReadWrite, ResourceState::ShaderRead);
+  REQUIRE(plan.oldLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+  REQUIRE(plan.newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  REQUIRE(plan.srcAccessMask == VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+  REQUIRE(plan.dstAccessMask == VK_ACCESS_SHADER_READ_BIT);
+  REQUIRE(plan.srcStage == (VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT));
+  REQUIRE(plan.dstStage == VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+  REQUIRE(failures.empty());
+}
+
 TEST_CASE("planTransition still asserts on a plausible-sounding but unlisted SampledTexture-adjacent pair",
           "[vulkan_backend][resource_state_mapping]") {
   // Spec 0016 adds exactly the two new entries above, and Plan 0024

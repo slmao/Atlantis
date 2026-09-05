@@ -21,6 +21,7 @@
 #include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/sampled_texture.h>
 #include <atlantis/rhi/sampler.h>
+#include <atlantis/rhi/shadow_map.h>
 #include <atlantis/rhi/types.h>
 #include <atlantis/runtime/scene_extraction.h>
 #include <atlantis/shader_system/reflection_loader.h>
@@ -137,6 +138,19 @@ constexpr std::array<float, 16> kIdentityMatrix = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0,
   return result.value();
 }
 
+// Plan 0027 Milestone 9 (ADR-0072 D-3): shadow_cast.slang's own real,
+// position-only VertexInput -- mirrors runtime_application.cpp's own
+// identical shadowCastVertexLayout(), against this file's own Vertex
+// struct above (position/uv/normal), not the mesh-artifact's 44-byte one.
+[[nodiscard]] std::optional<VertexInputLayout> shadowCastVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 // Plan 0024 Milestone 6/7: the output-transform pass's own fixed vertex
 // schema -- NOT sourced from the mesh Vertex struct above, mirrors
 // runtime_application.cpp's own identical outputTransformVertexLayout().
@@ -149,11 +163,15 @@ constexpr std::array<float, 16> kIdentityMatrix = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0,
   return result.value();
 }
 
-// The full 320-byte Camera/Lighting/CameraWorldPosition buffer (Plan
-// 0023 Milestone 2), built directly -- mirrors runtime_application.cpp's
-// own real per-frame write sites exactly (view/projection at floats
-// 0-31, FrameLightingData at byte offset 128, CameraWorldPositionData
-// at byte offset 304), never a second, independent layout.
+// The Camera/Lighting/CameraWorldPosition/light-space region (Plan 0023
+// Milestone 2, widened by Plan 0027 Milestone 9), built directly --
+// mirrors runtime_application.cpp's own real per-frame write sites
+// exactly (view/projection at floats 0-31, FrameLightingData at byte
+// offset 128, CameraWorldPositionData at byte offset 304), never a
+// second, independent layout. CameraMatrices/FrameLightingData/
+// CameraWorldPositionData themselves stay byte-for-byte unmodified;
+// bytes 320-464 (the _shadowPad tail) are left untouched, matching
+// Runtime's own runFrame() which never writes them either.
 void writeCameraBuffer(atlantis::rhi::Buffer& buffer, const std::array<float, 16>& view,
                         const std::array<float, 16>& projection, const FrameLightingData& lighting,
                         const CameraWorldPositionData& cameraWorldPosition) {
@@ -163,6 +181,16 @@ void writeCameraBuffer(atlantis::rhi::Buffer& buffer, const std::array<float, 16
   std::memcpy(data + sizeof(float) * 32, &lighting, sizeof(FrameLightingData));
   std::memcpy(data + sizeof(float) * 32 + sizeof(FrameLightingData), &cameraWorldPosition,
               sizeof(CameraWorldPositionData));
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P5): the no-directional-light
+  // sentinel (identity view+projection at the fixed 464-byte tail
+  // offset) is written unconditionally here too, exactly like
+  // Runtime's own runFrame() -- none of this file's own TEST_CASEs
+  // configure a real shadow-casting occluder, so the shadow map is
+  // always cleared to its own maximum depth (1.0) and computeShadowFactor()
+  // must therefore always evaluate to "fully lit," matching every one
+  // of this file's existing, unmodified pixel expectations.
+  std::memcpy(data + 464, kIdentityMatrix.data(), sizeof(float) * 16);
+  std::memcpy(data + 464 + sizeof(float) * 16, kIdentityMatrix.data(), sizeof(float) * 16);
 }
 
 [[nodiscard]] FrameLightingData oneDirectionalLight(float intensity) {
@@ -354,6 +382,52 @@ struct PbrTestRig {
   if (outputTransformPipelineResult.isErr()) return std::nullopt;
   std::unique_ptr<Pipeline> outputTransformPipeline = std::move(outputTransformPipelineResult.value());
 
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): a minimal, always-possible
+  // real ShadowMap/Sampler/Pipeline/Buffer -- shadowCasterDrawItems
+  // stays empty (none of this file's TEST_CASEs configure a real
+  // occluder), so the shadow map is always cleared to its own maximum
+  // depth (1.0) and never darkens any of this file's existing pixel
+  // expectations (see writeCameraBuffer()'s own light-space sentinel
+  // write above).
+  auto shadowMapResult = device.createShadowMap({.extent = {1024, 1024}});
+  if (shadowMapResult.isErr()) return std::nullopt;
+  std::unique_ptr<atlantis::rhi::ShadowMap> shadowMap = std::move(shadowMapResult.value());
+
+  auto shadowMapSamplerResult =
+      device.createSampler({.filter = Filter::Nearest, .addressMode = AddressMode::ClampToEdge});
+  if (shadowMapSamplerResult.isErr()) return std::nullopt;
+  std::unique_ptr<atlantis::rhi::Sampler> shadowMapSampler = std::move(shadowMapSamplerResult.value());
+
+  const auto shadowCastVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.vert.spv");
+  const auto shadowCastFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.spv");
+  if (!shadowCastVertexSpirv.has_value() || !shadowCastFragmentSpirv.has_value()) return std::nullopt;
+  auto shadowCastVertexReflectionResult =
+      loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.vert.refl.json");
+  if (shadowCastVertexReflectionResult.isErr()) return std::nullopt;
+  const auto shadowCastVertexInputLayout = shadowCastVertexLayout(shadowCastVertexReflectionResult.value());
+  if (!shadowCastVertexInputLayout.has_value()) return std::nullopt;
+
+  auto shadowCastPipelineResult = device.createPipeline(
+      {.vertexShader = {.spirvWords = shadowCastVertexSpirv->data(), .wordCount = shadowCastVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = shadowCastFragmentSpirv->data(),
+                           .wordCount = shadowCastFragmentSpirv->size()},
+       .vertexInputLayout = *shadowCastVertexInputLayout,
+       .depthFormat = DepthFormat::D32Sfloat,
+       .pushConstantSizeBytes = sizeof(float) * 16,
+       .sampledTextureBindingCount = 0,
+       .hasCameraUniformBinding = true,
+       .hasDepthAttachment = true,
+       .depthWriteEnabled = true,
+       .hasColorAttachment = false});
+  if (shadowCastPipelineResult.isErr()) return std::nullopt;
+  std::unique_ptr<Pipeline> shadowCastPipeline = std::move(shadowCastPipelineResult.value());
+
+  auto shadowLightSpaceBufferResult = device.createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 128});
+  if (shadowLightSpaceBufferResult.isErr()) return std::nullopt;
+  std::unique_ptr<atlantis::rhi::Buffer> shadowLightSpaceBuffer = std::move(shadowLightSpaceBufferResult.value());
+
   auto commandListResult = device.createCommandList();
   if (commandListResult.isErr()) return std::nullopt;
   std::unique_ptr<CommandList> commandList = std::move(commandListResult.value());
@@ -361,7 +435,8 @@ struct PbrTestRig {
   Renderer renderer;
   renderer.drawFrame(*commandList, *target, *depthTextureResult.value(), cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::TransferSource, *hdrColorTarget, *fullscreenTriangleVertexBuffer,
-                      *fullscreenTriangleIndexBuffer, *outputTransformPipeline, *outputTransformSampler);
+                      *fullscreenTriangleIndexBuffer, *outputTransformPipeline, *outputTransformSampler, nullptr,
+                      nullptr, *shadowMap, *shadowMapSampler, *shadowCastPipeline, *shadowLightSpaceBuffer, {});
 
   atlantis::render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");
@@ -397,9 +472,10 @@ TEST_CASE("PbrDirectLit parameter transmission: two draws differing only in meta
   PbrTestRig& rig = *rigOpt;
 
   auto cameraBufferResult =
-      rig.device->createBuffer({.purpose = BufferPurpose::Uniform,
-                                 .sizeBytes = sizeof(float) * 32 + sizeof(FrameLightingData) +
-                                              sizeof(CameraWorldPositionData)});
+      // Plan 0027 Milestone 9 (ADR-0072 D-9/P9d): widened from 320 to the new 592-byte PBR camera-buffer
+      // tail (light-space view+projection, P5) -- CameraMatrices/FrameLightingData/CameraWorldPositionData
+      // themselves stay byte-for-byte unmodified (writeCameraBuffer()'s own offsets below are untouched).
+      rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
   REQUIRE(cameraBufferResult.isOk());
   std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer = std::move(cameraBufferResult.value());
   const FrameLightingData lighting = oneDirectionalLight(2.0f);
@@ -414,7 +490,7 @@ TEST_CASE("PbrDirectLit parameter transmission: two draws differing only in meta
          .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
          .depthFormat = DepthFormat::D32Sfloat,
          .pushConstantSizeBytes = 96,
-         .sampledTextureBindingCount = 1},
+         .sampledTextureBindingCount = 2},
         rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
         std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, metallicFactor, roughnessFactor);
     if (materialResult.isErr()) return std::nullopt;
@@ -526,15 +602,16 @@ TEST_CASE("A mixed UnlitTextured+LitTextured+PbrDirectLit scene renders all thre
        .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = 96,
-       .sampledTextureBindingCount = 1},
+       .sampledTextureBindingCount = 2},
       rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
       std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 0.3f);
   REQUIRE(pbrMaterialResult.isOk());
 
   auto cameraBufferResult =
-      rig.device->createBuffer({.purpose = BufferPurpose::Uniform,
-                                 .sizeBytes = sizeof(float) * 32 + sizeof(FrameLightingData) +
-                                              sizeof(CameraWorldPositionData)});
+      // Plan 0027 Milestone 9 (ADR-0072 D-9/P9d): widened from 320 to the new 592-byte PBR camera-buffer
+      // tail (light-space view+projection, P5) -- CameraMatrices/FrameLightingData/CameraWorldPositionData
+      // themselves stay byte-for-byte unmodified (writeCameraBuffer()'s own offsets below are untouched).
+      rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
   REQUIRE(cameraBufferResult.isOk());
   std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer = std::move(cameraBufferResult.value());
   const FrameLightingData lighting = oneDirectionalLight(2.0f);
@@ -622,15 +699,16 @@ TEST_CASE("Above-1.0 PBR radiance survives the HDR intermediate and follows Rein
        .colorFormat = HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = 96,
-       .sampledTextureBindingCount = 1},
+       .sampledTextureBindingCount = 2},
       rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
       std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.5f);
   REQUIRE(materialResult.isOk());
 
   auto cameraBufferResult =
-      rig.device->createBuffer({.purpose = BufferPurpose::Uniform,
-                                 .sizeBytes = sizeof(float) * 32 + sizeof(FrameLightingData) +
-                                              sizeof(CameraWorldPositionData)});
+      // Plan 0027 Milestone 9 (ADR-0072 D-9/P9d): widened from 320 to the new 592-byte PBR camera-buffer
+      // tail (light-space view+projection, P5) -- CameraMatrices/FrameLightingData/CameraWorldPositionData
+      // themselves stay byte-for-byte unmodified (writeCameraBuffer()'s own offsets below are untouched).
+      rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
   REQUIRE(cameraBufferResult.isOk());
   std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer = std::move(cameraBufferResult.value());
 
@@ -690,15 +768,16 @@ TEST_CASE("PbrDirectLit reflects a runtime Light intensity change on the next fr
        .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = 96,
-       .sampledTextureBindingCount = 1},
+       .sampledTextureBindingCount = 2},
       rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
       std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.5f);
   REQUIRE(materialResult.isOk());
 
   auto cameraBufferResult =
-      rig.device->createBuffer({.purpose = BufferPurpose::Uniform,
-                                 .sizeBytes = sizeof(float) * 32 + sizeof(FrameLightingData) +
-                                              sizeof(CameraWorldPositionData)});
+      // Plan 0027 Milestone 9 (ADR-0072 D-9/P9d): widened from 320 to the new 592-byte PBR camera-buffer
+      // tail (light-space view+projection, P5) -- CameraMatrices/FrameLightingData/CameraWorldPositionData
+      // themselves stay byte-for-byte unmodified (writeCameraBuffer()'s own offsets below are untouched).
+      rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
   REQUIRE(cameraBufferResult.isOk());
   std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer = std::move(cameraBufferResult.value());
 

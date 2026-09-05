@@ -15,6 +15,7 @@
 #include <atlantis/rhi/presentation.h>
 #include <atlantis/rhi/sampled_texture.h>
 #include <atlantis/rhi/sampler.h>
+#include <atlantis/rhi/shadow_map.h>
 #include <atlantis/rhi/texture.h>
 #include <atlantis/rhi/types.h>
 #include <atlantis/runtime/bootstrap_config.h>
@@ -186,6 +187,21 @@ class RuntimeApplication {
   // format change -- the exact same "created once, never rebuilt"
   // lifecycle fallbackMaterial_ itself now has (ADR-0068 D-4).
   std::unique_ptr<atlantis::rhi::Pipeline> skyPipeline_;
+
+  // Plan 0027 Milestone 8 (ADR-0072 D-1/P1/P4): the directional shadow
+  // map's own fixed-resolution (1024x1024, P4) resources -- created once
+  // at startup, unconditionally (shadow infrastructure has no
+  // environment dependency, unlike skyPipeline_ immediately above), no
+  // dependency on a real, negotiated Format or extent, so never rebuilt
+  // on resize or format change (the same "created once, never rebuilt"
+  // lifecycle fallbackMaterial_/skyPipeline_ already have). Milestone 8
+  // only creates these; nothing yet writes shadowLightSpaceBuffer_'s own
+  // per-frame contents or calls Renderer::drawFrame()'s new parameters
+  // (Milestone 9).
+  std::unique_ptr<atlantis::rhi::ShadowMap> shadowMap_;
+  std::unique_ptr<atlantis::rhi::Sampler> shadowMapSampler_;
+  std::unique_ptr<atlantis::rhi::Pipeline> shadowCastPipeline_;
+  std::unique_ptr<atlantis::rhi::Buffer> shadowLightSpaceBuffer_;
 
   // Plan 0024 Milestone 6 (ADR-0068 D-1/D-3/D-6): the output-transform
   // pass's own fixed, never-scene-content geometry -- created once at

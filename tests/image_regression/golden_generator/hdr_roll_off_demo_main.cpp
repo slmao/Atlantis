@@ -111,6 +111,16 @@ void printProvenanceFieldIfDifferent(const char* fieldName, const std::string& o
       std::string(ATLANTIS_HDR_ROLL_OFF_DEMO_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.spv";
   config.pbrDirectLitFragmentShaderReflectionPath =
       std::string(ATLANTIS_HDR_ROLL_OFF_DEMO_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.refl.json";
+  // Plan 0027 Milestone 9 (ADR-0072 D-1): the shadow-casting shader pair
+  // -- unconditionally required (BootstrapConfig, Milestone 8).
+  config.shadowCastVertexShaderSpirvPath =
+      std::string(ATLANTIS_HDR_ROLL_OFF_DEMO_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.vert.spv";
+  config.shadowCastVertexShaderReflectionPath =
+      std::string(ATLANTIS_HDR_ROLL_OFF_DEMO_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.vert.refl.json";
+  config.shadowCastFragmentShaderSpirvPath =
+      std::string(ATLANTIS_HDR_ROLL_OFF_DEMO_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.spv";
+  config.shadowCastFragmentShaderReflectionPath =
+      std::string(ATLANTIS_HDR_ROLL_OFF_DEMO_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.refl.json";
   config.outputTransformUnormVertexShaderSpirvPath =
       std::string(ATLANTIS_HDR_ROLL_OFF_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR) +
       "/output_transform_unorm.vert.spv";

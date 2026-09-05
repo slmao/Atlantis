@@ -116,6 +116,13 @@ add_subdirectory(shaders/output_transform_srgb)
 # output-transform variants and before src/runtime, for the same
 # add_dependencies()-ordering reason documented below.
 add_subdirectory(shaders/sky)
+# Plan 0027 Milestone 4 (ADR-0072 D-3): the shadow-casting shader --
+# unconditional here, matching every other production shader pair's own
+# identical placement/reasoning (the shadow-casting Pipeline is created
+# unconditionally at Runtime startup, ADR-0072 D-1); declared
+# immediately after sky and before src/runtime, for the same
+# add_dependencies()-ordering reason documented below.
+add_subdirectory(shaders/shadow_cast)
 # Plan 0013 Section D1: must come after add_subdirectory(assets),
 # add_subdirectory(shaders/minimal_renderer), (Plan 0018 Section P10)
 # add_subdirectory(shaders/textured_quad), (Plan 0019 Section P11)
@@ -123,8 +130,9 @@ add_subdirectory(shaders/sky)
 # add_subdirectory(shaders/pbr_direct_lit), (Plan 0025 Milestone 5)
 # add_subdirectory(shaders/pbr_ibl), (Plan 0024 Milestone 4)
 # add_subdirectory(shaders/output_transform_unorm)/
-# add_subdirectory(shaders/output_transform_srgb), and (Plan 0026 Milestone 4)
-# add_subdirectory(shaders/sky) above -- atlantis_runtime
+# add_subdirectory(shaders/output_transform_srgb), (Plan 0026 Milestone 4)
+# add_subdirectory(shaders/sky), and (Plan 0027 Milestone 4)
+# add_subdirectory(shaders/shadow_cast) above -- atlantis_runtime
 # add_dependencies() on minimal_mesh_shaders, textured_quad_shaders,
 # lit_textured_shaders, and ${ATLANTIS_minimal_cube_TARGET}, all
 # declared by those calls, and CMake's add_dependencies() requires the

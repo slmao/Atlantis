@@ -18,6 +18,7 @@
 #include "dynamic_rendering.h"
 #include "dynamic_rendering_entry_points.h"
 #include "hdr_color_target_capability.h"
+#include "shadow_map_capability.h"
 #include "validation.h"
 #include "vulkan_buffer.h"
 #include "vulkan_command_list.h"
@@ -31,6 +32,7 @@
 #include "vulkan_result.h"
 #include "vulkan_sampled_texture.h"
 #include "vulkan_sampler.h"
+#include "vulkan_shadow_map.h"
 #include "vulkan_submission_signal.h"
 #include "vulkan_texture.h"
 #include "wsi/win32_surface.h"
@@ -421,18 +423,19 @@ class DescriptorPoolGuard {
 // optional) so vkFreeDescriptorSets (VulkanPipeline's destructor) is
 // valid usage; both descriptor types are always sized equal to maxSets
 // itself (Spec 0021 D4/P8's own derivation: every real descriptor set
-// consumes at most one UNIFORM_BUFFER descriptor and at most three
-// COMBINED_IMAGE_SAMPLER descriptors, so the latter receives three
-// descriptors per set (Spec 0025/P2). Returns
-// VK_NULL_HANDLE on vkCreateDescriptorPool failure -- this function
-// itself makes no judgment about how a caller should map that; each
-// call site below does.
+// consumes at most one UNIFORM_BUFFER descriptor and, as of Plan 0027
+// Milestone 6 (ADR-0072 D-7), at most four COMBINED_IMAGE_SAMPLER
+// descriptors (pbr_ibl's own new shadow-map slot, binding 4) -- was
+// three (Spec 0025/P2) before this Plan. Returns VK_NULL_HANDLE on
+// vkCreateDescriptorPool failure -- this function itself makes no
+// judgment about how a caller should map that; each call site below
+// does.
 [[nodiscard]] VkDescriptorPool createDescriptorPoolOfSize(VkDevice device, std::uint32_t maxSets) {
   VkDescriptorPoolSize poolSizes[2]{};
   poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
   poolSizes[0].descriptorCount = maxSets;
   poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  poolSizes[1].descriptorCount = 3U * maxSets;
+  poolSizes[1].descriptorCount = 4U * maxSets;
 
   VkDescriptorPoolCreateInfo createInfo{};
   createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -989,8 +992,14 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Pipeline>, atlantis::rhi::Pipeli
 VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) {
   using ResultT = atlantis::Result<std::unique_ptr<atlantis::rhi::Pipeline>, atlantis::rhi::PipelineCreateError>;
 
+  // Plan 0027 Milestone 6 (ADR-0072 D-7): widened from {0, 1, 3} to
+  // include 2 (pbr_direct_lit + shadow-map sampler) and 4 (pbr_ibl +
+  // shadow-map sampler) -- 3 stays legal, harmless to keep even though
+  // no current consumer uses it after this Plan, avoiding an unrelated,
+  // unreviewed removal.
   ATLANTIS_CHECK(params.sampledTextureBindingCount == 0 || params.sampledTextureBindingCount == 1 ||
-                 params.sampledTextureBindingCount == 3);
+                 params.sampledTextureBindingCount == 2 || params.sampledTextureBindingCount == 3 ||
+                 params.sampledTextureBindingCount == 4);
 
   auto createShaderModule = [this](const atlantis::rhi::ShaderStageBytecode& bytecode,
                                     VkShaderModule& outModule) -> VkResult {
@@ -1200,8 +1209,13 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
 
   VkPipelineColorBlendStateCreateInfo colorBlendState{};
   colorBlendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-  colorBlendState.attachmentCount = 1;
-  colorBlendState.pAttachments = &colorBlendAttachment;
+  // Plan 0027 Milestone 1 (ADR-0072 D-2): must agree with
+  // VkPipelineRenderingCreateInfo::colorAttachmentCount below -- Vulkan
+  // requires the two counts to match. colorBlendAttachment itself is
+  // still constructed unconditionally above; it is simply unused when
+  // hasColorAttachment == false.
+  colorBlendState.attachmentCount = params.hasColorAttachment ? 1 : 0;
+  colorBlendState.pAttachments = params.hasColorAttachment ? &colorBlendAttachment : nullptr;
 
   const VkDynamicState dynamicStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
   VkPipelineDynamicStateCreateInfo dynamicState{};
@@ -1215,8 +1229,15 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   // actually held, by ordinary overload resolution. Every geometry
   // Pipeline now holds HdrFormat::Rgba16Float here; the output-
   // transform Pipeline pair alone holds a real Format.
-  const VkFormat colorFormat =
-      std::visit([](auto format) { return toVkFormat(format); }, params.colorFormat);
+  // Plan 0027 Milestone 1 (ADR-0072 D-2): the visit is skipped entirely
+  // when hasColorAttachment == false (the shadow-casting Pipeline) --
+  // params.colorFormat is left at its own default (Format::Unknown) in
+  // that case, and this avoids any dependency on what toVkFormat(Format::Unknown)
+  // does, since it is never reached.
+  VkFormat colorFormat = VK_FORMAT_UNDEFINED;
+  if (params.hasColorAttachment) {
+    colorFormat = std::visit([](auto format) { return toVkFormat(format); }, params.colorFormat);
+  }
   // Plan 0024 Milestone 6 (see hasDepthAttachment's own comment,
   // types.h): VK_FORMAT_UNDEFINED when this Pipeline has no depth
   // attachment at all -- matching the real, depth-attachment-free
@@ -1227,8 +1248,11 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
 
   VkPipelineRenderingCreateInfo renderingCreateInfo{};
   renderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-  renderingCreateInfo.colorAttachmentCount = 1;
-  renderingCreateInfo.pColorAttachmentFormats = &colorFormat;
+  // Plan 0027 Milestone 1 (ADR-0072 D-2): zero color attachments for the
+  // shadow-casting Pipeline -- a real depth-only path, not a hypothetical
+  // one; every existing Pipeline still declares exactly one.
+  renderingCreateInfo.colorAttachmentCount = params.hasColorAttachment ? 1 : 0;
+  renderingCreateInfo.pColorAttachmentFormats = params.hasColorAttachment ? &colorFormat : nullptr;
   renderingCreateInfo.depthAttachmentFormat = depthFormat;
 
   VkGraphicsPipelineCreateInfo pipelineCreateInfo{};
@@ -1538,6 +1562,96 @@ VulkanDevice::createHdrColorTarget(const atlantis::rhi::HdrColorTargetCreatePara
 
   return ResultT::Ok(
       std::make_unique<VulkanHdrColorTarget>(device_, image, memory, imageView, params.extent, params.format));
+}
+
+// Plan 0027 Milestone 1 (ADR-0072 D-1): mirrors createHdrColorTarget()
+// above exactly, with three differences -- usage
+// VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+// (not COLOR_ATTACHMENT_BIT | SAMPLED_BIT), VK_IMAGE_ASPECT_DEPTH_BIT (not
+// ASPECT_COLOR_BIT) for the view, and hasRequiredShadowMapFeatures() (not
+// hasRequiredHdrColorTargetFeatures()) for the capability check. The
+// real vkGetPhysicalDeviceFormatProperties() check runs first, before
+// any VkResult-producing Vulkan call -- a missing capability is a real
+// runtime fact, not a programmer error, so it is a real Result::Err
+// (FormatFeaturesUnsupported), never ATLANTIS_CHECK.
+atlantis::Result<std::unique_ptr<atlantis::rhi::ShadowMap>, atlantis::rhi::ShadowMapCreateError>
+VulkanDevice::createShadowMap(const atlantis::rhi::ShadowMapCreateParams& params) {
+  using ResultT = atlantis::Result<std::unique_ptr<atlantis::rhi::ShadowMap>, atlantis::rhi::ShadowMapCreateError>;
+
+  const VkFormat vkFormat = toVkFormat(params.format);
+
+  VkFormatProperties formatProperties{};
+  vkGetPhysicalDeviceFormatProperties(physicalDevice_, vkFormat, &formatProperties);
+  if (!hasRequiredShadowMapFeatures(formatProperties.optimalTilingFeatures)) {
+    return ResultT::Err(atlantis::rhi::ShadowMapCreateError::FormatFeaturesUnsupported);
+  }
+
+  VkImageCreateInfo imageCreateInfo{};
+  imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
+  imageCreateInfo.format = vkFormat;
+  imageCreateInfo.extent = VkExtent3D{params.extent.width, params.extent.height, 1};
+  imageCreateInfo.mipLevels = 1;
+  imageCreateInfo.arrayLayers = 1;
+  imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+  // Depth attachment for the shadow-casting pass, sampled for the main
+  // draw pass -- both required (ADR-0072 D-1).
+  imageCreateInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+  VkImage image = VK_NULL_HANDLE;
+  const VkResult createResult = vkCreateImage(device_, &imageCreateInfo, nullptr, &image);
+  if (createResult != VK_SUCCESS) {
+    return ResultT::Err(toShadowMapCreateError(createResult));
+  }
+
+  VkMemoryRequirements requirements{};
+  vkGetImageMemoryRequirements(device_, image, &requirements);
+
+  const std::optional<std::uint32_t> memoryTypeIndex = selectMemoryTypeIndexForDevice(
+      physicalDevice_, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if (!memoryTypeIndex.has_value()) {
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(atlantis::rhi::ShadowMapCreateError::AllocationFailed);
+  }
+
+  VkMemoryAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = requirements.size;
+  allocInfo.memoryTypeIndex = *memoryTypeIndex;
+
+  VkDeviceMemory memory = VK_NULL_HANDLE;
+  const VkResult allocResult = vkAllocateMemory(device_, &allocInfo, nullptr, &memory);
+  if (allocResult != VK_SUCCESS) {
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(atlantis::rhi::ShadowMapCreateError::AllocationFailed);
+  }
+
+  const VkResult bindResult = vkBindImageMemory(device_, image, memory, 0);
+  if (bindResult != VK_SUCCESS) {
+    vkFreeMemory(device_, memory, nullptr);
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(toShadowMapCreateError(bindResult));
+  }
+
+  VkImageViewCreateInfo viewCreateInfo{};
+  viewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  viewCreateInfo.image = image;
+  viewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  viewCreateInfo.format = vkFormat;
+  viewCreateInfo.subresourceRange = VkImageSubresourceRange{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+
+  VkImageView imageView = VK_NULL_HANDLE;
+  const VkResult viewResult = vkCreateImageView(device_, &viewCreateInfo, nullptr, &imageView);
+  if (viewResult != VK_SUCCESS) {
+    vkFreeMemory(device_, memory, nullptr);
+    vkDestroyImage(device_, image, nullptr);
+    return ResultT::Err(atlantis::rhi::ShadowMapCreateError::ImageViewCreationFailed);
+  }
+
+  return ResultT::Ok(std::make_unique<VulkanShadowMap>(device_, image, memory, imageView, params.extent, params.format));
 }
 
 atlantis::Result<std::unique_ptr<atlantis::rhi::Sampler>, atlantis::rhi::SamplerCreateError>

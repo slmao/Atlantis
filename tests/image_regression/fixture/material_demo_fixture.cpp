@@ -119,6 +119,19 @@ static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrid
   return result.value();
 }
 
+// Plan 0027 Milestone 9 (ADR-0072 D-3): shadow_cast.slang's own real,
+// position-only VertexInput -- against this file's own shared Vertex
+// struct above, mirrors runtime_application.cpp's own identical
+// shadowCastVertexLayout().
+[[nodiscard]] std::optional<VertexInputLayout> shadowCastVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 // Plan 0024 Milestone 7: the output-transform pass's own fixed vertex
 // schema -- NOT sourced from the mesh Vertex struct above, mirrors
 // runtime_application.cpp's own identical outputTransformVertexLayout().
@@ -190,6 +203,18 @@ atlantis::Result<MaterialDemoFixture, MaterialDemoSetupError> setUpMaterialDemoF
       outputTransformVertexLayout(outputTransformVertexReflectionResult.value());
   if (!outputTransformVertexInputLayout.has_value()) return ResultT::Err(MaterialDemoSetupError::ShaderLoadFailed);
 
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): the shadow-casting shader
+  // pair, loaded the same way as pbrDirectLit* above.
+  auto shadowCastVertexSpirv = loadSpirvFile(config.shadowCastVertexShaderSpirvPath.c_str());
+  auto shadowCastFragmentSpirv = loadSpirvFile(config.shadowCastFragmentShaderSpirvPath.c_str());
+  if (!shadowCastVertexSpirv.has_value() || !shadowCastFragmentSpirv.has_value()) {
+    return ResultT::Err(MaterialDemoSetupError::ShaderLoadFailed);
+  }
+  auto shadowCastVertexReflectionResult = loadReflectionMetadata(config.shadowCastVertexShaderReflectionPath.c_str());
+  if (shadowCastVertexReflectionResult.isErr()) return ResultT::Err(MaterialDemoSetupError::ShaderLoadFailed);
+  const auto shadowCastVertexInputLayout = shadowCastVertexLayout(shadowCastVertexReflectionResult.value());
+  if (!shadowCastVertexInputLayout.has_value()) return ResultT::Err(MaterialDemoSetupError::ShaderLoadFailed);
+
   auto deviceResult = atlantis::vulkan_backend::createDevice(
       {.applicationName = "Atlantis Image Regression Fixture (Material Demo)", .enableValidationLayers = true});
   if (deviceResult.isErr()) return ResultT::Err(MaterialDemoSetupError::DeviceCreationFailed);
@@ -208,6 +233,9 @@ atlantis::Result<MaterialDemoFixture, MaterialDemoSetupError> setUpMaterialDemoF
   fixture.outputTransformUnormVertexInputLayout = *outputTransformVertexInputLayout;
   fixture.outputTransformUnormVertexSpirv = std::move(*outputTransformVertexSpirv);
   fixture.outputTransformUnormFragmentSpirv = std::move(*outputTransformFragmentSpirv);
+  fixture.shadowCastVertexInputLayout = *shadowCastVertexInputLayout;
+  fixture.shadowCastVertexSpirv = std::move(*shadowCastVertexSpirv);
+  fixture.shadowCastFragmentSpirv = std::move(*shadowCastFragmentSpirv);
 
   // Phase 1: the real, Runtime-private CPU load/instantiate pipeline --
   // never duplicated here. loadAndInstantiateScene()'s own vertexInputLayout
@@ -291,6 +319,40 @@ atlantis::Result<MaterialDemoFixture, MaterialDemoSetupError> setUpMaterialDemoF
        .hasDepthAttachment = false});
   if (outputTransformPipelineResult.isErr()) return ResultT::Err(MaterialDemoSetupError::ResourceCreationFailed);
   fixture.outputTransformPipeline = std::move(outputTransformPipelineResult.value());
+
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): a minimal, always-possible
+  // real ShadowMap/Sampler/Pipeline/Buffer -- shadowCasterDrawItems
+  // (renderMaterialDemoFrame()) stays empty; this fixture never
+  // configures a real occluder.
+  auto shadowMapResult = fixture.device->createShadowMap({.extent = {1024, 1024}});
+  if (shadowMapResult.isErr()) return ResultT::Err(MaterialDemoSetupError::ResourceCreationFailed);
+  fixture.shadowMap = std::move(shadowMapResult.value());
+
+  auto shadowMapSamplerResult = fixture.device->createSampler(
+      {.filter = atlantis::rhi::Filter::Nearest, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+  if (shadowMapSamplerResult.isErr()) return ResultT::Err(MaterialDemoSetupError::ResourceCreationFailed);
+  fixture.shadowMapSampler = std::move(shadowMapSamplerResult.value());
+
+  auto shadowCastPipelineResult = fixture.device->createPipeline(
+      {.vertexShader = {.spirvWords = fixture.shadowCastVertexSpirv.data(),
+                         .wordCount = fixture.shadowCastVertexSpirv.size()},
+       .fragmentShader = {.spirvWords = fixture.shadowCastFragmentSpirv.data(),
+                           .wordCount = fixture.shadowCastFragmentSpirv.size()},
+       .vertexInputLayout = fixture.shadowCastVertexInputLayout,
+       .depthFormat = DepthFormat::D32Sfloat,
+       .pushConstantSizeBytes = sizeof(float) * 16,
+       .sampledTextureBindingCount = 0,
+       .hasCameraUniformBinding = true,
+       .hasDepthAttachment = true,
+       .depthWriteEnabled = true,
+       .hasColorAttachment = false});
+  if (shadowCastPipelineResult.isErr()) return ResultT::Err(MaterialDemoSetupError::ResourceCreationFailed);
+  fixture.shadowCastPipeline = std::move(shadowCastPipelineResult.value());
+
+  auto shadowLightSpaceBufferResult =
+      fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 128});
+  if (shadowLightSpaceBufferResult.isErr()) return ResultT::Err(MaterialDemoSetupError::ResourceCreationFailed);
+  fixture.shadowLightSpaceBuffer = std::move(shadowLightSpaceBufferResult.value());
 
   return ResultT::Ok(std::move(fixture));
 }
@@ -403,7 +465,9 @@ atlantis::Result<PixelBuffer, MaterialDemoRenderError> renderMaterialDemoFrame(M
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, drawItems,
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
-                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler);
+                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, nullptr, nullptr,
+                      *fixture.shadowMap, *fixture.shadowMapSampler, *fixture.shadowCastPipeline,
+                      *fixture.shadowLightSpaceBuffer, {});
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");

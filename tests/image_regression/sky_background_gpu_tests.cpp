@@ -101,6 +101,11 @@ atlantis::runtime::BootstrapConfig buildIblConfig() {
   config.skyVertexShaderReflectionPath = sky + "/sky.vert.refl.json";
   config.skyFragmentShaderSpirvPath = sky + "/sky.frag.spv";
   config.skyFragmentShaderReflectionPath = sky + "/sky.frag.refl.json";
+  const std::string shadowCast = ATLANTIS_IBL_DEMO_SHADOW_CAST_SHADER_DIR;
+  config.shadowCastVertexShaderSpirvPath = shadowCast + "/shadow_cast.vert.spv";
+  config.shadowCastVertexShaderReflectionPath = shadowCast + "/shadow_cast.vert.refl.json";
+  config.shadowCastFragmentShaderSpirvPath = shadowCast + "/shadow_cast.frag.spv";
+  config.shadowCastFragmentShaderReflectionPath = shadowCast + "/shadow_cast.frag.refl.json";
   const std::string output = ATLANTIS_IBL_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR;
   config.outputTransformUnormVertexShaderSpirvPath = output + "/output_transform_unorm.vert.spv";
   config.outputTransformUnormVertexShaderReflectionPath = output + "/output_transform_unorm.vert.refl.json";
@@ -264,7 +269,8 @@ PixelBuffer renderOnce(IblMaterialDemoFixture& fixture, std::span<const DrawItem
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
                       *fixture.outputTransformPipeline, *fixture.outputTransformSampler, &lightingView,
-                      skyOn ? fixture.skyPipeline.get() : nullptr);
+                      skyOn ? fixture.skyPipeline.get() : nullptr, *fixture.shadowMap, *fixture.shadowMapSampler,
+                      *fixture.shadowCastPipeline, *fixture.shadowLightSpaceBuffer, {});
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");

@@ -152,6 +152,9 @@ class VulkanDevice final : public atlantis::rhi::Device {
                                   atlantis::rhi::HdrColorTargetCreateError>
   createHdrColorTarget(const atlantis::rhi::HdrColorTargetCreateParams& params) override;
 
+  [[nodiscard]] atlantis::Result<std::unique_ptr<atlantis::rhi::ShadowMap>, atlantis::rhi::ShadowMapCreateError>
+  createShadowMap(const atlantis::rhi::ShadowMapCreateParams& params) override;
+
   [[nodiscard]] VkInstance instance() const noexcept { return instance_; }
   [[nodiscard]] VkPhysicalDevice physicalDevice() const noexcept { return physicalDevice_; }
   [[nodiscard]] VkDevice device() const noexcept { return device_; }

@@ -111,6 +111,16 @@ static_assert(kLightingByteOffset + sizeof(atlantis::runtime::FrameLightingData)
       std::string(ATLANTIS_LIGHTING_DEMO_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.spv";
   config.pbrDirectLitFragmentShaderReflectionPath =
       std::string(ATLANTIS_LIGHTING_DEMO_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.refl.json";
+  // Plan 0027 Milestone 9 (ADR-0072 D-1): the shadow-casting shader pair
+  // -- unconditionally required (BootstrapConfig, Milestone 8).
+  config.shadowCastVertexShaderSpirvPath =
+      std::string(ATLANTIS_LIGHTING_DEMO_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.vert.spv";
+  config.shadowCastVertexShaderReflectionPath =
+      std::string(ATLANTIS_LIGHTING_DEMO_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.vert.refl.json";
+  config.shadowCastFragmentShaderSpirvPath =
+      std::string(ATLANTIS_LIGHTING_DEMO_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.spv";
+  config.shadowCastFragmentShaderReflectionPath =
+      std::string(ATLANTIS_LIGHTING_DEMO_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.refl.json";
   config.outputTransformUnormVertexShaderSpirvPath =
       std::string(ATLANTIS_LIGHTING_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR) + "/output_transform_unorm.vert.spv";
   config.outputTransformUnormVertexShaderReflectionPath =

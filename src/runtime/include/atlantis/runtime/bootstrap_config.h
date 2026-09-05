@@ -72,6 +72,15 @@ struct BootstrapConfig {
   std::string skyVertexShaderReflectionPath;
   std::string skyFragmentShaderSpirvPath;
   std::string skyFragmentShaderReflectionPath;
+  // Plan 0027 Milestone 8 (ADR-0072 D-1/P1): the shadow-casting shader
+  // pair -- unconditionally required, unlike pbrIblVertexShaderSpirvPath/
+  // skyVertexShaderSpirvPath above (shadow infrastructure has no
+  // environment dependency, P1). Mirrors pbrDirectLitVertexShaderSpirvPath's
+  // own four-field shape.
+  std::string shadowCastVertexShaderSpirvPath;
+  std::string shadowCastVertexShaderReflectionPath;
+  std::string shadowCastFragmentShaderSpirvPath;
+  std::string shadowCastFragmentShaderReflectionPath;
   // Plan 0024 Milestone 6 (ADR-0068 D-6): the two output-transform
   // shader pairs -- mirrors pbrDirectLitVertexShaderSpirvPath/
   // .../pbrDirectLitFragmentShaderReflectionPath's own sourcing exactly.
@@ -88,6 +97,15 @@ struct BootstrapConfig {
 
 // GPU/window-independent validation for the optional environment portion.
 [[nodiscard]] atlantis::Result<std::monostate, RuntimeInitError> validateEnvironmentBootstrapConfig(
+    const BootstrapConfig& config);
+
+// Plan 0027 Milestone 8: GPU/window-independent validation for the
+// unconditionally-required shadow-casting shader pair -- always checked,
+// unlike validateEnvironmentBootstrapConfig() above (which only applies
+// when an environment is configured). Reuses RuntimeInitError::ShaderLoadFailed,
+// the same enumerator every other built-in shader pair's load failure
+// already maps to (see init_error.h).
+[[nodiscard]] atlantis::Result<std::monostate, RuntimeInitError> validateShadowBootstrapConfig(
     const BootstrapConfig& config);
 
 }  // namespace atlantis::runtime

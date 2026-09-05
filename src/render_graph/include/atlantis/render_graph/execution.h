@@ -8,21 +8,23 @@
 #include <atlantis/rhi/hdr_color_target.h>
 #include <atlantis/rhi/render_target.h>
 #include <atlantis/rhi/sampled_texture.h>
+#include <atlantis/rhi/shadow_map.h>
 #include <atlantis/rhi/texture.h>
 
 namespace atlantis::render_graph {
 
 // Binds one compiled-local resource to a live RHI RenderTarget, depth
-// Texture, SampledTexture, or HdrColorTarget for exactly one execute()
-// call -- frame-scoped, not persisted on the builder or CompiledGraph
-// (ADR-0021). Exactly one of target/depthTexture/sampledTexture/
-// hdrColorTarget must be non-null (Guard 0, below) -- a malformed
-// binding with zero or more than one set is a programmer error, not a
-// silently accepted ambiguous case. target/depthTexture/sampledTexture/
-// hdrColorTarget must outlive the execute() call; execute() does not
-// take ownership of any of them. colorClear is used only when target
-// or hdrColorTarget != nullptr; depthClear only when depthTexture !=
-// nullptr (Spec 0007/ADR-0026).
+// Texture, SampledTexture, HdrColorTarget, or ShadowMap for exactly one
+// execute() call -- frame-scoped, not persisted on the builder or
+// CompiledGraph (ADR-0021). Exactly one of target/depthTexture/
+// sampledTexture/hdrColorTarget/shadowMap must be non-null (Guard 0,
+// below) -- a malformed binding with zero or more than one set is a
+// programmer error, not a silently accepted ambiguous case.
+// target/depthTexture/sampledTexture/hdrColorTarget/shadowMap must
+// outlive the execute() call; execute() does not take ownership of any
+// of them. colorClear is used only when target or hdrColorTarget !=
+// nullptr; depthClear when depthTexture != nullptr or shadowMap !=
+// nullptr (Spec 0007/ADR-0026; ADR-0072 D-4 for shadowMap).
 //
 // hdrColorTarget (Plan 0024 Milestone 2/ADR-0068 D-1/D-3): the scene-
 // referred linear HDR color intermediate -- written ColorAttachmentOutput
@@ -66,6 +68,15 @@ namespace atlantis::render_graph {
 // "correct" for its own purpose -- every such binding construction site
 // in this codebase supplies an explicit finalState as a matter of caller
 // discipline, not because the language forces it syntactically.
+// shadowMap (Plan 0027 Milestone 3/ADR-0072 D-4): the one genuinely
+// depth-only kind here -- written DepthAttachmentReadWrite by the
+// shadow-casting pass (no color attachment at all for that pass, unlike
+// every other draw pass in this codebase), read ShaderRead by the main
+// draw pass, both within the same execute() call. depthClear is reused
+// for it exactly as it already is for depthTexture (the shadow-casting
+// pass's own clear-to-max-depth, every frame unconditionally). Guard 2
+// does not apply to it, for the same reason it does not apply to
+// hdrColorTarget -- a ShadowMap is not a RenderTarget.
 struct ResourceBinding {
   CompiledResourceId resource;
   atlantis::rhi::RenderTarget* target = nullptr;
@@ -74,6 +85,7 @@ struct ResourceBinding {
   float depthClear = 1.0f;
   atlantis::rhi::SampledTexture* sampledTexture = nullptr;
   atlantis::rhi::HdrColorTarget* hdrColorTarget = nullptr;
+  atlantis::rhi::ShadowMap* shadowMap = nullptr;
   atlantis::rhi::ResourceState incomingState = atlantis::rhi::ResourceState::Undefined;
   std::optional<atlantis::rhi::ResourceState> finalState;
 };
@@ -97,18 +109,20 @@ struct ResourceBinding {
 // -- the same mechanism, not a new one) for every bound RenderTarget,
 // SampledTexture, or HdrColorTarget that was actually touched by at
 // least one usage and whose finalState is not std::nullopt -- never for
-// a depthTexture entry (never presented, never read back this round),
-// and never when finalState is std::nullopt. Records only -- never calls
+// a depthTexture or shadowMap entry (neither is ever presented or read
+// back this round -- ADR-0072 D-4's own "fully consumed within this
+// same frame" shape), and never when finalState is std::nullopt. Records only -- never calls
 // Device::submit() or Presentation::present() (ADR-0021).
 //
 // Guards, all guaranteed-detectable programmer errors
 // (ATLANTIS_CHECK_MSG), not Result-typed:
 // - Guard 0 (Spec 0007; widened to three kinds by Spec 0016, four by
-//   Plan 0024 Milestone 2): every ResourceBinding entry has exactly one
-//   of target/depthTexture/sampledTexture/hdrColorTarget non-null, and
-//   bindings contains no two entries for the same CompiledResourceId.
-//   This is the real mechanism that rejects both zero-resource and
-//   multi-resource ambiguity for every one of the four kinds uniformly.
+//   Plan 0024 Milestone 2, five by Plan 0027 Milestone 3): every
+//   ResourceBinding entry has exactly one of target/depthTexture/
+//   sampledTexture/hdrColorTarget/shadowMap non-null, and bindings
+//   contains no two entries for the same CompiledResourceId. This is
+//   the real mechanism that rejects both zero-resource and multi-resource
+//   ambiguity for every one of the five kinds uniformly.
 // - Guard 1 (unchanged in principle, scope generalized to depthTexture/
 //   sampledTexture/hdrColorTarget entries too): every ResourceState-
 //   tagged usage in graph must have a matching entry in bindings.

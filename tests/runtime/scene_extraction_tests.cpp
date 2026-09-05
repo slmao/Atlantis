@@ -13,10 +13,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+using atlantis::runtime::CameraMatrices;
 using atlantis::runtime::CameraWorldPositionData;
 using atlantis::runtime::checkConformalTransform;
 using atlantis::runtime::computeLambertianDiffuse;
 using atlantis::runtime::computePbrDirectLighting;
+using atlantis::runtime::computeShadowLightSpaceMatrices;
 using atlantis::runtime::extractCameraMatrices;
 using atlantis::runtime::extractCameraWorldPosition;
 using atlantis::runtime::extractFrameLightingData;
@@ -153,6 +155,105 @@ TEST_CASE("extractCameraMatrices(): a forward parallel to world-up returns Err(D
   const auto result = extractCameraMatrices(degenerateCameraWorld, 1.0f, 0.1f, 100.0f, 1.0f);
   REQUIRE(result.isErr());
   REQUIRE(result.error() == SceneExtractionError::DegenerateCameraBasis);
+}
+
+// computeShadowLightSpaceMatrices() (Plan 0027, ADR-0072 D-1/P4/P11):
+// the one production implementation Runtime's own runFrame() and the
+// real-GPU shadow discriminator tests (shadow_gpu_tests.cpp) both call
+// -- covered directly here so a regression is caught GPU-independently,
+// not only via a real-GPU pixel mismatch.
+//
+// computeShadowLightSpaceMatrices()'s own view matrix stores its basis
+// vectors as ROWS (right at indices 0/4/8, up at 1/5/9, -direction at
+// 2/6/10 -- the standard lookAt-style world-to-view rotation, matching
+// lookAtMatrix()'s own identical layout in this same file), NOT as the
+// COLUMNS col()/requireOrthonormalProperBasis() above extract (that
+// helper only checks generic orthonormality/properness, which holds
+// regardless of the row/column distinction for a square orthogonal
+// matrix -- it is not a semantic right/up/forward accessor). row3()
+// below reads the actual semantic basis vectors.
+namespace {
+[[nodiscard]] V3 row3(const Mat4& m, int r) {
+  return {m[static_cast<std::size_t>(r)], m[static_cast<std::size_t>(r) + 4], m[static_cast<std::size_t>(r) + 8]};
+}
+
+// normalize(-0.3,-1.0,-0.2) computed at full float precision -- P10's
+// own hand-derived decimal values (-0.28224,-0.94046,-0.18816) are
+// truncated to 5 places, close enough for P10's own pixel/luminance
+// checks but not tight enough for this file's own kEpsilon = 1e-4
+// orthonormality check.
+[[nodiscard]] Vec3 p10CheckOneDirection() {
+  constexpr float x = -0.3f, y = -1.0f, z = -0.2f;
+  const float len = std::sqrt(x * x + y * y + z * z);
+  return {x / len, y / len, z / len};
+}
+}  // namespace
+
+TEST_CASE("computeShadowLightSpaceMatrices(): a normal, non-degenerate direction produces an orthonormal proper "
+          "view basis whose forward row is -direction",
+          "[runtime][scene_extraction][shadow]") {
+  const Vec3 direction = p10CheckOneDirection();
+  const CameraMatrices result = computeShadowLightSpaceMatrices(direction);
+  requireOrthonormalProperBasis(result.view);
+
+  const V3 forwardRow = row3(result.view, 2);
+  REQUIRE(std::abs(forwardRow.x - (-direction.x)) < kEpsilon);
+  REQUIRE(std::abs(forwardRow.y - (-direction.y)) < kEpsilon);
+  REQUIRE(std::abs(forwardRow.z - (-direction.z)) < kEpsilon);
+}
+
+// P11: unlike extractCameraMatrices()'s own fail-fast DegenerateCameraBasis
+// for a forward parallel to world-up, a directional light pointing
+// straight down is an ordinary "sun overhead" case -- this must never
+// fail, and must fall back to a second fixed up-vector (0,0,1) instead,
+// still producing a valid orthonormal proper basis.
+TEST_CASE("computeShadowLightSpaceMatrices(): a direction parallel to world-up falls back to a second up-vector "
+          "instead of failing",
+          "[runtime][scene_extraction][shadow]") {
+  const Vec3 straightDown{0.0f, -1.0f, 0.0f};
+  const CameraMatrices result = computeShadowLightSpaceMatrices(straightDown);
+  requireOrthonormalProperBasis(result.view);
+
+  const V3 forwardRow = row3(result.view, 2);
+  REQUIRE(std::abs(forwardRow.x - 0.0f) < kEpsilon);
+  REQUIRE(std::abs(forwardRow.y - 1.0f) < kEpsilon);
+  REQUIRE(std::abs(forwardRow.z - 0.0f) < kEpsilon);
+}
+
+// P4's own fixed orthographic shadow volume (center (0,0,0), half-extent
+// 8.0, near 0.1, far 30.0) -- independent of direction, so this checks
+// the projection matrix's exact values against P4's own hand-derived
+// formula, using an arbitrary non-degenerate direction.
+TEST_CASE("computeShadowLightSpaceMatrices(): the projection matrix matches P4's fixed orthographic volume exactly",
+          "[runtime][scene_extraction][shadow]") {
+  const CameraMatrices result = computeShadowLightSpaceMatrices(p10CheckOneDirection());
+  const Mat4& projection = result.projection;
+
+  REQUIRE(std::abs(projection[0] - (1.0f / 8.0f)) < kEpsilon);
+  REQUIRE(std::abs(projection[5] - (-1.0f / 8.0f)) < kEpsilon);
+  REQUIRE(std::abs(projection[10] - (-1.0f / 29.9f)) < kEpsilon);
+  REQUIRE(std::abs(projection[14] - (-0.1f / 29.9f)) < kEpsilon);
+  REQUIRE(std::abs(projection[15] - 1.0f) < kEpsilon);
+}
+
+// P10's own hand-computed key output values for its own fixed check-1
+// direction, re-checked directly against the production implementation:
+// right_L ~ (0.5547, 0, -0.8320), camUp_L ~ (-0.7824, 0.3392, -0.5217).
+TEST_CASE("computeShadowLightSpaceMatrices(): matches P10's own hand-computed right_L/camUp_L for its fixed check-1 "
+          "direction",
+          "[runtime][scene_extraction][shadow]") {
+  const CameraMatrices result = computeShadowLightSpaceMatrices(p10CheckOneDirection());
+
+  const V3 rightL = row3(result.view, 0);
+  const V3 camUpL = row3(result.view, 1);
+
+  constexpr float kP10Epsilon = 1e-3f;  // P10's own values are given to 4 decimal places
+  REQUIRE(std::abs(rightL.x - 0.5547f) < kP10Epsilon);
+  REQUIRE(std::abs(rightL.y - 0.0f) < kP10Epsilon);
+  REQUIRE(std::abs(rightL.z - (-0.8320f)) < kP10Epsilon);
+  REQUIRE(std::abs(camUpL.x - (-0.7824f)) < kP10Epsilon);
+  REQUIRE(std::abs(camUpL.y - 0.3392f) < kP10Epsilon);
+  REQUIRE(std::abs(camUpL.z - (-0.5217f)) < kP10Epsilon);
 }
 
 // resolveMeshAsset()

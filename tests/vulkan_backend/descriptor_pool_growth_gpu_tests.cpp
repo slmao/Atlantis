@@ -118,6 +118,19 @@ struct Vertex {
   return result.value();
 }
 
+// Plan 0027 Milestone 9 (ADR-0072 D-3): shadow_cast.slang's own real,
+// position-only VertexInput -- against this file's own shared Vertex
+// struct above, mirrors runtime_application.cpp's own identical
+// shadowCastVertexLayout().
+[[nodiscard]] std::optional<VertexInputLayout> shadowCastVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 // Plan 0024 Milestone 6/7: the output-transform pass's own fixed vertex
 // schema -- NOT sourced from the mesh Vertex struct above, mirrors
 // runtime_application.cpp's own identical outputTransformVertexLayout().
@@ -493,6 +506,46 @@ TEST_CASE("A Pipeline created before a growth event remains valid and genuinely 
   REQUIRE(outputTransformPipelineResult.isOk());
   std::unique_ptr<atlantis::rhi::Pipeline> outputTransformPipeline = std::move(outputTransformPipelineResult.value());
 
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): a minimal, always-possible
+  // real ShadowMap/Sampler/Pipeline/Buffer -- shadowCasterDrawItems
+  // stays empty; this test never configures a real occluder.
+  auto shadowMapResult = device->createShadowMap({.extent = {1024, 1024}});
+  REQUIRE(shadowMapResult.isOk());
+  std::unique_ptr<atlantis::rhi::ShadowMap> shadowMap = std::move(shadowMapResult.value());
+
+  auto shadowMapSamplerResult =
+      device->createSampler({.filter = atlantis::rhi::Filter::Nearest, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+  REQUIRE(shadowMapSamplerResult.isOk());
+  std::unique_ptr<atlantis::rhi::Sampler> shadowMapSampler = std::move(shadowMapSamplerResult.value());
+
+  const auto shadowCastVertexSpirv = loadSpirvFile("shaders/shadow_cast.vert.spv");
+  const auto shadowCastFragmentSpirv = loadSpirvFile("shaders/shadow_cast.frag.spv");
+  REQUIRE(shadowCastVertexSpirv.has_value());
+  REQUIRE(shadowCastFragmentSpirv.has_value());
+  const auto shadowCastVertexReflection = loadReflectionMetadata("shaders/shadow_cast.vert.refl.json");
+  REQUIRE(shadowCastVertexReflection.isOk());
+  const auto shadowCastVertexInputLayout = shadowCastVertexLayout(shadowCastVertexReflection.value());
+  REQUIRE(shadowCastVertexInputLayout.has_value());
+
+  auto shadowCastPipelineResult = device->createPipeline(
+      {.vertexShader = {.spirvWords = shadowCastVertexSpirv->data(), .wordCount = shadowCastVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = shadowCastFragmentSpirv->data(),
+                           .wordCount = shadowCastFragmentSpirv->size()},
+       .vertexInputLayout = *shadowCastVertexInputLayout,
+       .depthFormat = DepthFormat::D32Sfloat,
+       .pushConstantSizeBytes = sizeof(float) * 16,
+       .sampledTextureBindingCount = 0,
+       .hasCameraUniformBinding = true,
+       .hasDepthAttachment = true,
+       .depthWriteEnabled = true,
+       .hasColorAttachment = false});
+  REQUIRE(shadowCastPipelineResult.isOk());
+  std::unique_ptr<atlantis::rhi::Pipeline> shadowCastPipeline = std::move(shadowCastPipelineResult.value());
+
+  auto shadowLightSpaceBufferResult = device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 128});
+  REQUIRE(shadowLightSpaceBufferResult.isOk());
+  std::unique_ptr<atlantis::rhi::Buffer> shadowLightSpaceBuffer = std::move(shadowLightSpaceBufferResult.value());
+
   DrawItem item;
   item.mesh = &mesh;
   item.material = &material;
@@ -506,7 +559,8 @@ TEST_CASE("A Pipeline created before a growth event remains valid and genuinely 
   Renderer renderer;
   renderer.drawFrame(*commandList, *target, *depthTexture, *cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::TransferSource, *hdrColorTarget, *fullscreenTriangleVertexBuffer,
-                      *fullscreenTriangleIndexBuffer, *outputTransformPipeline, *outputTransformSampler);
+                      *fullscreenTriangleIndexBuffer, *outputTransformPipeline, *outputTransformSampler, nullptr,
+                      nullptr, *shadowMap, *shadowMapSampler, *shadowCastPipeline, *shadowLightSpaceBuffer, {});
 
   auto submitResult = device->submit(std::move(commandList), *target);
   REQUIRE(submitResult.isOk());

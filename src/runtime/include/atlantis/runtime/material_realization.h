@@ -264,4 +264,17 @@ realizePendingMaterials(
 // fixture calls this once).
 [[nodiscard]] bool isSrgbFormat(atlantis::rhi::Format format);
 
+// Plan 0027 Milestone 9 (ADR-0072 D-7): the one place that decides a
+// geometry Pipeline's own sampledTextureBindingCount for a given
+// MaterialKind -- mirrors isSrgbFormat()'s own "closed switch, exposed
+// for direct GPU-independent testing" shape exactly. UnlitTextured/
+// LitTextured are always 1 (their own single material-texture binding;
+// unlit_textured.slang/lit_textured.slang were never modified to declare
+// a shadow-map binding). PbrDirectLit is 2 without an environment
+// (base-color@1, shadow-map@2) or 4 with one (base-color@1, environment
+// cubemap@2, DFG LUT@3, shadow-map@4) -- pbr_direct_lit.slang/pbr_ibl.slang
+// both declare exactly that many bindings (Milestone 5).
+[[nodiscard]] std::uint32_t sampledTextureBindingCountFor(atlantis::asset_system::MaterialKind kind,
+                                                           bool environmentEnabled);
+
 }  // namespace atlantis::runtime
