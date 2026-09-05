@@ -631,9 +631,13 @@ with the real 44-byte `Vertex{position,color,uv,normal}` layout:
   supplies this, mirroring `pbr_render_gpu_tests.cpp`'s `rig.texture`/
   `rig.sampler`).
 - Occluder: `1×1×1` cube centered at `(0, 1.5, 0)`, same Material.
-- A second, small `2×2` quad centered at `(0, 0, -9.5)`, same Material —
-  the out-of-bounds probe (`|-9.5| > 8`, outside P4's fixed volume on
-  every axis it matters).
+- A second, small `2×2` quad centered at `(7.765, 0, -11.647)`, same
+  Material — the out-of-bounds probe. This point is deliberately chosen
+  as `origin + right_L · 14`, where `right_L` is the light view's own
+  right-axis basis vector (derived below) — not a world-space `|x|`/`|z|`
+  comparison against the `8` half-extent, which does **not** correctly
+  predict light-space membership for a rotated light frame (see the
+  correction note after check 4).
 - Camera: eye `(0, 6, 10)`, forward `= normalize((0,0,0)-eye)`, world-up
   `(0,1,0)`, `kFovYRadians = 60°`, aspect `1.0`, `kNearZ = 0.1`,
   `kFarZ = 100.0` (`sky_background_gpu_tests.cpp`'s own constants).
@@ -649,17 +653,41 @@ with the real 44-byte `Vertex{position,color,uv,normal}` layout:
 light direction below — this is the one fixed method, not a per-case
 guess):** for an occluder center at world `(cx, cy, cz)` and a unit
 light direction `d`, the ground-plane (`y=0`) shadow-footprint center is
-`t = -cy / d.y`, `footprint = (cx + t·d.x, 0, cz + t·d.z)`. Pixel
-projection uses the camera above: `viewX = dot(p-eye, right)`,
-`viewY = dot(p-eye, camUp)`, `viewZ = -dot(p-eye, forward)`,
-`clipX = f·viewX`, `clipY = -f·viewY` (`f = 1/tan(30°) = 1.732051`),
-`clipW = -viewZ`, `pixel = round((clip/clipW + 1)/2 · 512)`. This
-exact formula, not a re-derivation, is what Implementation must
-literally execute (in the test's own setup code or by hand once, cross-
-checked against it) — an integer-rounding difference of a pixel or two
-against this Plan's own hand-computed values below is expected and is
-**not** a value change requiring stop-and-ask; a different formula, a
-different scene position, or a different light direction is.
+`t = -cy / d.y`, `footprint = (cx + t·d.x, 0, cz + t·d.z)`. Camera pixel
+projection: `viewX = dot(p-eye, right)`, `viewY = dot(p-eye, camUp)`,
+`viewZ = -dot(p-eye, forward)`, `clipX = f·viewX`, `clipY = -f·viewY`
+(`f = 1/tan(30°) = 1.732051`), `clipW = -viewZ`,
+`pixel = round((clip/clipW + 1)/2 · 512)`.
+
+**Light-space/shadow-NDC formula (P5's own fixed derivation, applied
+here) — this is the method check 4 actually requires, not the camera
+formula above:** light eye `= center - d·(far-near)/2 = -d·14.95`; light
+forward `= d`; light `right_L = normalize(cross(d, worldUp))`, light
+`camUp_L = cross(right_L, d)` (P11's own up-vector rule applies
+identically here — irrelevant for this `d`, since `|cross(d,(0,1,0))| ≈
+0.339`, far above the `1e-6` degeneracy threshold). For a world point
+`p`: `lightViewX = dot(p - lightEye, right_L)`,
+`lightViewY = dot(p - lightEye, camUp_L)`,
+`lightForwardDist = dot(p - lightEye, d)`; shadow NDC
+`= (lightViewX/8, -lightViewY/8, (lightForwardDist-0.1)/29.9)` (D-5's own
+`[0,1]`-depth, `[-1,1]`-XY convention). In-bounds requires all three
+components inside `[-1,1]`/`[-1,1]`/`[0,1]` respectively (D-5's
+`inBounds` expression) — a check on this transform, never on raw world
+`x`/`z` against `8`, which is what check 4 below fixes.
+
+For this scene's `d ≈ (-0.28224,-0.94046,-0.18816)`: `lightEye ≈
+(4.220, 14.062, 2.814)`, `right_L ≈ (0.5547, 0, -0.8320)`,
+`camUp_L ≈ (-0.7824, 0.3392, -0.5217)` (hand-computed this Plan; a
+degenerate-basis or arithmetic error here would itself be a Non-negotiable-rule
+stop-and-ask item, not something Implementation silently re-derives
+differently).
+
+Both formulas above, not a re-derivation, are what Implementation must
+literally execute — an integer-rounding difference of a pixel or two, or
+a shadow-NDC difference in the fourth decimal place, against this Plan's
+own hand-computed values below is expected and is **not** a value
+change requiring stop-and-ask; a different formula, a different scene
+position, or a different light direction is.
 
 Checks:
 
@@ -693,13 +721,34 @@ Checks:
    footprint by the identical `+0.45` in `x` (a real, checkable
    coincidence of this Plan's own chosen numbers, not an error).
    `luminance(P'') == 0`.
-4. **Out-of-bounds.** The `(0,0,-9.5)` quad's own center projects to
-   pixel **(256, 147)** under the ORIGINAL camera/light (check 1's
-   configuration, occluder back at `(0,1.5,0)`). It lies outside P4's
-   `±8` volume on every axis that matters (`|-9.5| > 8`); D-5's
-   out-of-bounds-is-lit rule requires `luminance(this point) > 30`
-   (the same conservative floor as check 1) regardless of any
-   occluder's position.
+4. **Out-of-bounds — via the shadow-NDC transform, not world `x`/`z`.**
+   Probe quad center `(7.765, 0, -11.647) = origin + right_L·14`. By
+   construction (`right_L` is unit-length and orthogonal to both `d` and
+   `camUp_L`): `lightViewX ≈ 14.0`, `lightViewY ≈ 0.0`,
+   `lightForwardDist ≈ 14.95` (identical to the origin's own forward
+   distance, since moving purely along `right_L` doesn't change depth).
+   Shadow NDC `≈ (14.0/8, -0.0/8, (14.95-0.1)/29.9) = (1.75, 0.00, 0.497)`.
+   **`shadowNdc.x = 1.75` is the out-of-bounds component** — `0.75`
+   beyond the valid `[-1,1]` range (75% of the valid half-width; `6`
+   world units beyond the light-space `±8` boundary along `right_L`).
+   `shadowNdc.y` and `shadowNdc.z` both land safely inside their own
+   valid ranges (`0.00` and `0.497`), so this probe isolates exactly one
+   failing axis, not an accidental multi-axis coincidence. Camera pixel
+   (same camera as every other check): eye-to-point `(7.765,-6,-21.647)`,
+   `viewX=7.765`, `viewY≈5.992`, `viewZ≈-21.650`, `clipX≈13.449`,
+   `clipY≈-10.379`, `clipW≈21.650`, `ndc≈(0.6213,-0.4794)` → pixel
+   **(415, 133)**. D-5's out-of-bounds-is-lit rule requires
+   `luminance(pixel(415,133)) > 30` (the same conservative floor as
+   check 1) under check 1's light/occluder configuration, regardless of
+   the occluder never actually reaching this point geometrically either.
+
+   **Correction note, kept for the record:** an earlier draft of this
+   check used world point `(0,0,-9.5)` and compared `|{-9.5}| > 8`
+   directly. Transformed through the formula above, that point's own
+   `shadowNdc.x ≈ 0.988` — inside `[-1,1]`, i.e. **not actually
+   out-of-bounds** (a rotated light frame does not align with world
+   axes, so a world-space magnitude comparison against the half-extent
+   is not a valid membership test). That point is not used by this Plan.
 5. **First-use vs. reused `ShadowMap` (the actual comparison).** Two
    renders, identical nonzero light (check 1's configuration) and
    identical geometry, both with `shadowCasterDrawItems` empty: (i) the
@@ -709,6 +758,24 @@ Checks:
    (mirroring `sky_background_gpu_tests.cpp`'s own helper) `==` the
    buffer's own size.
 6. Vulkan Validation Layers clean throughout.
+
+**Re-verification of P, Q, P′, P″ against the same shadow-NDC
+transform (checks 1-3 above), prompted by finding check 4's own
+original error — no error found, none of these change:**
+`P ≈ (-0.450,0,-0.300)` → `shadowNdc ≈ (0.00003, -0.0063, 0.503)` — safely
+inside on all three axes (its `x` is ≈0 by construction: it lies on the
+light ray through the occluder center, which sits directly above the
+origin the light aims at, and `right_L·d = 0` always, so every point on
+that ray shares the origin's own `lightViewX = 0`). `Q = (3,0,3)` →
+`shadowNdc ≈ (-0.104, 0.489, 0.449)` — safely inside (stronger than it
+needs to be: it doesn't even rely on D-5's out-of-bounds-is-lit escape
+hatch). `P′ ≈ (0.550,0,-0.300)` → `shadowNdc ≈ (0.069, 0.034, 0.493)` —
+safely inside. `P″ ≈ (0.450,0,-0.300)` (check 3's mirrored-light-direction
+case) is not separately recomputed — the whole check-3 configuration
+(light direction mirrored in `x`, occluder and volume both already
+symmetric in `x`) is the exact mirror image of check 1's, so `P″`'s own
+shadow-NDC membership mirrors `P`'s by the same symmetry, with no new
+arithmetic needed.
 
 **Group B — R1/R2/R3 IBL isolation (needs environment; reuses
 `IblMaterialDemoFixture`).** Identical geometry, camera, and light as
@@ -1097,13 +1164,20 @@ No deltas beyond the Verification Checklist above.
    0.0015`; the `1e-6f` up-vector degeneracy threshold) and **P10's own
    fixed scene positions, camera/light parameters, pixel coordinates,
    and luminance thresholds** (occluder/quad/camera/light values; pixels
-   `(239,250)`, `(402,331)`, `(276,250)`, `(256,147)`; thresholds `> 30`,
-   `> 15`, `<= 5`) — approved as written, including which thresholds are
-   exact structural predictions (`luminance == 0`, from `pbr_direct_lit.slang:124`'s
-   confirmed "no ambient term") versus disclosed conservative floors
-   (`> 30`, `> 15`, `<= 5`, not hand-derived through the full BRDF/
-   tonemap/sRGB pipeline). Per the Non-negotiable rule, any change during
-   Implementation (beyond the stated integer-rounding carve-out) requires
+   `(239,250)`, `(402,331)`, `(276,250)` (used twice — checks 2 and 3),
+   `(415,133)`; thresholds `> 30`, `> 15`, `<= 5`) — approved as written,
+   including which thresholds are exact structural predictions
+   (`luminance == 0`, from `pbr_direct_lit.slang:124`'s confirmed "no
+   ambient term") versus disclosed conservative floors (`> 30`, `> 15`,
+   `<= 5`, not hand-derived through the full BRDF/tonemap/sRGB
+   pipeline), and **including check 4's out-of-bounds probe, which must
+   be verified through the fixed light-space/shadow-NDC transform
+   (`shadowNdc.x = 1.75`, `0.75` beyond the `[-1,1]` bound), never
+   through a world-space `x`/`z` magnitude comparison against the `8`
+   half-extent** — a prior draft's own `(0,0,-9.5)` point, checked this
+   way, turned out to be in-bounds (`shadowNdc.x ≈ 0.988`), not out.
+   Per the Non-negotiable rule, any change during Implementation (beyond
+   the stated integer-rounding carve-out) requires
    stopping and requesting confirmation.
 2. **P6's shadow-map binding-index dispatch** via
    `Material::environmentBinding()` (binding 2 / 4) rather than a new
