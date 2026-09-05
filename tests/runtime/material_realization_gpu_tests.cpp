@@ -161,6 +161,20 @@ struct Vertex {
   return result.value();
 }
 
+// Plan 0027 Milestone 7 (ADR-0072 D-3): shadow_cast.slang's own real,
+// position-only VertexInput -- against the same shared 44-byte Vertex
+// struct above (real asset-mesh stride), not outputTransformVertexLayout()'s
+// own smaller fullscreen-triangle schema (sky's own reused geometry,
+// unrelated to shadow_cast).
+[[nodiscard]] std::optional<VertexInputLayout> shadowCastVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 [[nodiscard]] std::optional<VertexInputLayout> outputTransformVertexLayout(const ReflectionMetadata& vertexMetadata) {
   const std::vector<MeshVertexAttributeSchema> schema = {
       MeshVertexAttributeSchema{.location = 0, .offsetBytes = 0},
@@ -962,6 +976,158 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4 with an environme
   // pair coexists, producing the real N+4 peak.
   std::unique_ptr<atlantis::rhi::Pipeline> transientOutputTransformPipeline = makeOutputTransformPipeline(
       ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR, "output_transform_srgb", Format::Rgba8Srgb);
+  REQUIRE(transientOutputTransformPipeline != nullptr);
+  REQUIRE(1 + materialPipelines.size() + 1 + 2 == kExpectedPeakSetCount);
+  REQUIRE(device->waitIdle().isOk());
+}
+
+// Plan 0027 Milestone 7 (ADR-0072 D-7): one more fixed, never-rebuilt
+// Pipeline, always present -- the shadow-casting Pipeline (created once
+// at Runtime startup, unconditionally, ADR-0072 D-1). Mirrors the
+// N+4-with-sky TEST_CASE above exactly, with one new
+// kShadowCastPipelineCount term added to both sums.
+TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4/N+5 with a shadow-cast Pipeline present",
+          "[runtime][gpu][material_realization][descriptor_pool_growth][hdr][shadow_map]") {
+  using atlantis::vulkan_backend::detail::kDescriptorPoolMaxSetsByGeneration;
+
+  constexpr std::size_t kMaterialPipelineCount = 6;
+  constexpr std::size_t kFallbackPipelineCount = 1;
+  constexpr std::size_t kShadowCastPipelineCount = 1;
+  constexpr std::size_t kSteadyOutputTransformPipelineCount = 1;
+  constexpr std::size_t kTransientOutputTransformPipelineCount = 1;
+  constexpr std::size_t kExpectedSteadySetCount = kMaterialPipelineCount + kFallbackPipelineCount +
+                                                   kShadowCastPipelineCount + kSteadyOutputTransformPipelineCount;
+  constexpr std::size_t kExpectedPeakSetCount = kExpectedSteadySetCount + kTransientOutputTransformPipelineCount;
+  static_assert(kExpectedSteadySetCount == 9);  // N + 3 (this Pipeline set alone, no sky)
+  static_assert(kExpectedPeakSetCount == 10);   // N + 4
+
+  const std::size_t totalDescriptorSetCapacity = std::accumulate(
+      kDescriptorPoolMaxSetsByGeneration.begin(), kDescriptorPoolMaxSetsByGeneration.end(), std::size_t{0});
+  REQUIRE(totalDescriptorSetCapacity == 60);
+  REQUIRE(kExpectedPeakSetCount < totalDescriptorSetCapacity);
+
+  auto deviceResult = atlantis::vulkan_backend::createDevice(
+      {.applicationName = "Atlantis N=6 HDR+ShadowCast Descriptor Pool GPU Test", .enableValidationLayers = true});
+  REQUIRE(deviceResult.isOk());
+  std::unique_ptr<atlantis::rhi::Device> device = std::move(deviceResult.value());
+
+  const auto fallbackVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.spv");
+  const auto fallbackFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.frag.spv");
+  auto fallbackReflection =
+      loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.refl.json");
+  REQUIRE(fallbackVertexSpirv.has_value());
+  REQUIRE(fallbackFragmentSpirv.has_value());
+  REQUIRE(fallbackReflection.isOk());
+  const auto fallbackLayout = fallbackVertexLayout(fallbackReflection.value());
+  REQUIRE(fallbackLayout.has_value());
+
+  auto fallbackPipelineResult = device->createPipeline(
+      {.vertexShader = {.spirvWords = fallbackVertexSpirv->data(), .wordCount = fallbackVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = fallbackFragmentSpirv->data(), .wordCount = fallbackFragmentSpirv->size()},
+       .vertexInputLayout = *fallbackLayout,
+       .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
+       .depthFormat = atlantis::rhi::DepthFormat::D32Sfloat,
+       .pushConstantSizeBytes = sizeof(float) * 16});
+  REQUIRE(fallbackPipelineResult.isOk());
+  std::unique_ptr<atlantis::rhi::Pipeline> fallbackPipeline = std::move(fallbackPipelineResult.value());
+  REQUIRE(fallbackPipeline != nullptr);
+
+  const auto materialVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv");
+  const auto materialFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.frag.spv");
+  auto materialReflection = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) +
+                                                    "/textured_quad.vert.refl.json");
+  REQUIRE(materialVertexSpirv.has_value());
+  REQUIRE(materialFragmentSpirv.has_value());
+  REQUIRE(materialReflection.isOk());
+  const auto materialLayout = unlitTexturedVertexLayout(materialReflection.value());
+  REQUIRE(materialLayout.has_value());
+
+  std::vector<std::unique_ptr<atlantis::rhi::Pipeline>> materialPipelines;
+  materialPipelines.reserve(kMaterialPipelineCount);
+  for (std::size_t i = 0; i < kMaterialPipelineCount; ++i) {
+    auto materialPipelineResult = device->createPipeline(
+        {.vertexShader = {.spirvWords = materialVertexSpirv->data(), .wordCount = materialVertexSpirv->size()},
+         .fragmentShader = {.spirvWords = materialFragmentSpirv->data(),
+                             .wordCount = materialFragmentSpirv->size()},
+         .vertexInputLayout = *materialLayout,
+         .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
+         .depthFormat = atlantis::rhi::DepthFormat::D32Sfloat,
+         .pushConstantSizeBytes = sizeof(float) * 16,
+         .sampledTextureBindingCount = 1});
+    REQUIRE(materialPipelineResult.isOk());
+    materialPipelines.push_back(std::move(materialPipelineResult.value()));
+  }
+  REQUIRE(materialPipelines.size() == kMaterialPipelineCount);
+
+  // The shadow-casting Pipeline (ADR-0072 D-1/D-3): depth-only
+  // (hasColorAttachment = false), no sampled-texture binding at all
+  // (sampledTextureBindingCount = 0) -- its own real shape.
+  const auto shadowCastVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.vert.spv");
+  const auto shadowCastFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.spv");
+  auto shadowCastReflection = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) +
+                                                      "/shadow_cast.vert.refl.json");
+  REQUIRE(shadowCastVertexSpirv.has_value());
+  REQUIRE(shadowCastFragmentSpirv.has_value());
+  REQUIRE(shadowCastReflection.isOk());
+  const auto shadowCastLayout = shadowCastVertexLayout(shadowCastReflection.value());
+  REQUIRE(shadowCastLayout.has_value());
+
+  auto shadowCastPipelineResult = device->createPipeline(
+      {.vertexShader = {.spirvWords = shadowCastVertexSpirv->data(), .wordCount = shadowCastVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = shadowCastFragmentSpirv->data(),
+                           .wordCount = shadowCastFragmentSpirv->size()},
+       .vertexInputLayout = *shadowCastLayout,
+       .depthFormat = atlantis::rhi::DepthFormat::D32Sfloat,
+       .pushConstantSizeBytes = sizeof(float) * 16,
+       .sampledTextureBindingCount = 0,
+       .hasDepthAttachment = true,
+       .depthWriteEnabled = true,
+       .hasColorAttachment = false});
+  REQUIRE(shadowCastPipelineResult.isOk());
+  std::unique_ptr<atlantis::rhi::Pipeline> shadowCastPipeline = std::move(shadowCastPipelineResult.value());
+  REQUIRE(shadowCastPipeline != nullptr);
+
+  const auto makeOutputTransformPipelineForShadowCastTest =
+      [&](const char* shaderDirectory, const char* shaderName, Format finalFormat) -> std::unique_ptr<atlantis::rhi::Pipeline> {
+    const std::string shaderPrefix = std::string(shaderDirectory) + "/" + shaderName;
+    const auto vertexSpirv = loadSpirvFile(shaderPrefix + ".vert.spv");
+    const auto fragmentSpirv = loadSpirvFile(shaderPrefix + ".frag.spv");
+    auto reflection = loadReflectionMetadata(shaderPrefix + ".vert.refl.json");
+    REQUIRE(vertexSpirv.has_value());
+    REQUIRE(fragmentSpirv.has_value());
+    REQUIRE(reflection.isOk());
+    const auto layout = outputTransformVertexLayout(reflection.value());
+    REQUIRE(layout.has_value());
+    auto result = device->createPipeline(
+        {.vertexShader = {.spirvWords = vertexSpirv->data(), .wordCount = vertexSpirv->size()},
+         .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
+         .vertexInputLayout = *layout,
+         .colorFormat = finalFormat,
+         .sampledTextureBindingCount = 1,
+         .hasCameraUniformBinding = false,
+         .hasDepthAttachment = false});
+    REQUIRE(result.isOk());
+    return std::move(result.value());
+  };
+
+  std::unique_ptr<atlantis::rhi::Pipeline> steadyOutputTransformPipeline = makeOutputTransformPipelineForShadowCastTest(
+      ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_UNORM_SHADER_DIR, "output_transform_unorm", Format::Rgba8Unorm);
+  REQUIRE(steadyOutputTransformPipeline != nullptr);
+  REQUIRE(1 + materialPipelines.size() + 1 + 1 == kExpectedSteadySetCount);
+
+  // The second output-transform Pipeline is the prepared-but-not-yet-
+  // swapped format-change candidate -- the shadow-casting Pipeline
+  // above is never rebuilt by this event, so only the output-transform
+  // old/new pair coexists, producing the real N+4 peak.
+  std::unique_ptr<atlantis::rhi::Pipeline> transientOutputTransformPipeline =
+      makeOutputTransformPipelineForShadowCastTest(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR,
+                                                    "output_transform_srgb", Format::Rgba8Srgb);
   REQUIRE(transientOutputTransformPipeline != nullptr);
   REQUIRE(1 + materialPipelines.size() + 1 + 2 == kExpectedPeakSetCount);
   REQUIRE(device->waitIdle().isOk());
