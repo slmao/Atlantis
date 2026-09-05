@@ -92,6 +92,14 @@ enum class VulkanFailureCategory {
 // own capability check, before any of these Vulkan calls run.
 [[nodiscard]] atlantis::rhi::HdrColorTargetCreateError toHdrColorTargetCreateError(VkResult result);
 
+// vkCreateImage/vkAllocateMemory/vkBindImageMemory/vkCreateImageView --
+// Device::createShadowMap()'s own Vulkan calls (Plan 0027 Milestone 1),
+// mirroring toHdrColorTargetCreateError() exactly. FormatFeaturesUnsupported
+// is never returned from this function -- it is returned directly from
+// createShadowMap()'s own capability check, before any of these Vulkan
+// calls run.
+[[nodiscard]] atlantis::rhi::ShadowMapCreateError toShadowMapCreateError(VkResult result);
+
 // vkAllocateDescriptorSets, inside VulkanDevice's own descriptor-pool
 // allocation scan (Spec 0021/ADR-0064): true only for the two VkResult
 // values that mean "this pool's own capacity is exhausted, a

@@ -41,6 +41,10 @@ bool operator==(const HdrColorTargetCreateParams& lhs, const HdrColorTargetCreat
   return lhs.extent == rhs.extent && lhs.format == rhs.format;
 }
 
+bool operator==(const ShadowMapCreateParams& lhs, const ShadowMapCreateParams& rhs) {
+  return lhs.extent == rhs.extent && lhs.format == rhs.format;
+}
+
 bool operator==(const VertexAttribute& lhs, const VertexAttribute& rhs) {
   return lhs.location == rhs.location && lhs.offsetBytes == rhs.offsetBytes && lhs.format == rhs.format;
 }

@@ -19,6 +19,7 @@ add_executable(atlantis_vulkan_backend_tests
   vulkan_memory_tests.cpp
   descriptor_pool_growth_tests.cpp
   hdr_color_target_capability_tests.cpp
+  shadow_map_capability_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_tests
@@ -65,6 +66,7 @@ add_executable(atlantis_vulkan_backend_gpu_tests
   texture_upload_gpu_tests.cpp
   descriptor_pool_growth_gpu_tests.cpp
   pipeline_depth_write_gpu_tests.cpp
+  shadow_map_render_gpu_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_gpu_tests

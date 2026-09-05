@@ -11,6 +11,7 @@
 #include <atlantis/rhi/render_target.h>
 #include <atlantis/rhi/sampled_texture.h>
 #include <atlantis/rhi/sampler.h>
+#include <atlantis/rhi/shadow_map.h>
 #include <atlantis/rhi/submission_signal.h>
 #include <atlantis/rhi/texture.h>
 #include <atlantis/rhi/types.h>
@@ -99,6 +100,14 @@ class Device {
   // enumerator's own comment.
   [[nodiscard]] virtual atlantis::Result<std::unique_ptr<HdrColorTarget>, HdrColorTargetCreateError>
   createHdrColorTarget(const HdrColorTargetCreateParams& params) = 0;
+
+  // Plan 0027 Milestone 1 (ADR-0072 D-1): stateless factory call,
+  // matching createHdrColorTarget() exactly -- Device does not retain a
+  // reference (ADR-0003). A missing device capability is a real
+  // Result::Err (ShadowMapCreateError::FormatFeaturesUnsupported), never
+  // an ATLANTIS_CHECK.
+  [[nodiscard]] virtual atlantis::Result<std::unique_ptr<ShadowMap>, ShadowMapCreateError> createShadowMap(
+      const ShadowMapCreateParams& params) = 0;
 };
 
 }  // namespace atlantis::rhi
