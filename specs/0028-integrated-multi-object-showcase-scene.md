@@ -30,11 +30,14 @@ correctly, and leaves "does the engine already support drawing many
 objects that reuse assets" unverified by any existing test.
 
 Separately, `atlantis_runtime` — the actual product binary — currently
-defaults to `world_scene` (5 untextured cubes, no material, no light)
-with an environment configured but no scene content that uses it.
-Running the real binary today does not show PBR, IBL, sky, a
-directional light, or shadows at all, even though all four are
-implemented.
+defaults to `world_scene` (5 untextured cubes, no material, no light).
+Its own CMake configuration already loads the `ibl_studio` environment
+and compiles the sky shader pair unconditionally
+(`src/runtime/CMakeLists.txt`), so the sky background is already
+visible today. What running the real binary does not show is PBR
+material rendering with IBL, a directional light, or a visible
+shadow — none of `world_scene`'s 5 cubes carries a Material, and the
+scene has no light node at all.
 
 ## Goals
 
@@ -60,7 +63,10 @@ implemented.
 - Bindless resources.
 - Cascaded shadow maps or soft shadows (Spec 0027's single fixed
   orthographic shadow volume and hard-edge sampling are unchanged).
-- Animation or any runtime scene mutation.
+- Animation or any runtime scene mutation as a feature of this scene
+  itself. (The windowed smoke test's own pre-existing dynamic
+  point-light exercise, FR7, is a preserved test mechanism, not a
+  scene feature this Spec adds.)
 - An editor or any scene-authoring UI.
 - A general scene-selection system (command-line/config-driven scene
   switching for `atlantis_runtime`). This Spec fixes one default scene
@@ -113,20 +119,34 @@ implemented.
   non-degenerate footprint, checked the same way Spec 0027's own P10
   Group A did (a shadowed reference pixel vs. a lit reference pixel),
   with new coordinates for this scene/camera.
-- **FR7 (Lifecycle).** Static scene: no runtime mutation, no animation.
-  Loaded once via the existing `loadAndInstantiateScene()`; transforms
-  are unchanged frame to frame, matching every existing fixture.
+- **FR7 (Lifecycle).** The scene asset and the golden fixture are
+  static during golden capture: no animation, no runtime mutation.
+  `integrated_showcase_demo.scene.txt` is loaded once via the existing
+  `loadAndInstantiateScene()`, and its entities' transforms are
+  unchanged frame to frame, matching every existing golden fixture.
+  This does not extend to the windowed smoke lifecycle (FR8): its own
+  existing second half already exercises `World`'s dynamic-update path
+  (creating and moving a point light entity at runtime, Spec 0022 M3).
+  That existing coverage is preserved, not removed, and is adapted to
+  this scene's own pre-existing directional light — the dynamically
+  added point light coexists with it; `pointLightCount` assertions
+  concern the added light, `directionalLightCount` assertions concern
+  the scene's own light (see Proposed Design).
 - **FR8 (Default scene + windowed verification, one lifecycle).**
   `atlantis_runtime`'s own CMake-injected scene/environment paths
   (`src/runtime/CMakeLists.txt`) point at `integrated_showcase_demo`
   instead of `world_scene` — running the product binary shows this
-  scene directly. No new executable, no new windowed `TEST_CASE`: the
-  one existing windowed smoke lifecycle in
-  `runtime_smoke_gpu_tests.cpp` already reuses the same
-  `ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH`-family macros `main.cpp`
-  does, so it picks up the new scene once those macros' values change;
-  its own `BootstrapConfig` population and its own existing assertions
-  are updated to match (see Proposed Design). A second windowed
+  scene directly. `tests/runtime/CMakeLists.txt` defines the identically-
+  named scene macros a second time, independently, for the separate
+  `atlantis_runtime_gpu_tests` target that builds
+  `runtime_smoke_gpu_tests.cpp` — changing `src/runtime/CMakeLists.txt`
+  alone does not affect it; both files' macro values (and each file's
+  own `add_dependencies()` target list) switch together (see Proposed
+  Design). No new executable, no new windowed `TEST_CASE`: the one
+  existing windowed smoke lifecycle in `runtime_smoke_gpu_tests.cpp`
+  is updated in place — its own `BootstrapConfig` population and its
+  own existing assertions are updated to match (see Proposed Design).
+  A second windowed
   `TEST_CASE` is deliberately not added: this repository's own
   `runtime_smoke_gpu_tests.cpp` already discloses that two independent
   windowed `RuntimeApplication` lifecycles in one process are
@@ -188,25 +208,30 @@ implemented.
   `DrawItem`, confirming material-sharing across `DrawItem`s is an
   established pattern here, not a new one.
 - `tests/image_regression/fixture/pbr_material_demo_fixture.{h,cpp}`
-  already composes PBR + IBL + sky + shadow resources end to end
-  through the same `atlantis_runtime_host` calls Runtime itself uses
+  already composes PBR + IBL + sky resources, and creates shadow-
+  *compatible* resources, end to end through the same
+  `atlantis_runtime_host` calls Runtime itself uses
   (`loadAndInstantiateScene`, `realizePendingMaterials`,
-  `extractCameraMatrices`, `extractFrameLightingData`, ...). The new
-  fixture for this Spec's scene is a data variation of this same
-  fixture, not a new composition.
+  `extractCameraMatrices`, `extractFrameLightingData`, ...). It never
+  writes a real shadow, though — see "New fixture's real shadow path"
+  below for exactly what the new fixture must do differently.
 - `assets/CMakeLists.txt` already cooks meshes and scenes through a
   data-only macro (`NAME`/`SOURCE`/`MESH_DEPENDENCIES` per asset,
   `atlantis_static_mesh_source_version: 3` /
   `atlantis_scene_source_version: 3` plain-text formats). Adding one
   mesh and one scene is a data addition through this existing macro,
   not a new tool or schema version.
-- `src/runtime/CMakeLists.txt` already selects `world_scene`/`ibl_studio`
-  as `atlantis_runtime`'s scene/environment purely through
+- `src/runtime/CMakeLists.txt` selects `world_scene`/`ibl_studio` as
+  `atlantis_runtime`'s own scene/environment purely through its own
   `target_compile_definitions()` macro values
-  (`ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH`, etc.), consumed identically
-  by `main.cpp`. Changing those three macro values to
-  `integrated_showcase_demo`'s own cooked paths is a build-config data
-  change, not new code.
+  (`ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH`, etc.). `tests/runtime/CMakeLists.txt`
+  defines the identically-named macros a second time, independently,
+  in its own separate `target_compile_definitions()` call for the
+  `atlantis_runtime_gpu_tests` target — confirmed in both files, both
+  currently set to `ATLANTIS_world_scene_*`. Changing one file's macro
+  values has no effect on the other; both switch to
+  `integrated_showcase_demo`'s own cooked paths, a build-config data
+  change in each, not new code.
 - `runtime_application.h` already declares `friend struct
   RuntimeSmokeTestAccess;` (a test-only accessor, zero production
   behavior) for exactly this purpose. New accessor methods on that
@@ -235,31 +260,43 @@ own material count fixed at exactly 4 (FR2) while giving two
 independent, visible proofs of material-sharing (5th sphere + its
 matching sphere; ground + its matching sphere).
 
-**Default-scene switch (FR8):** in `src/runtime/CMakeLists.txt`,
+**Default-scene switch (FR8), both target definitions:** in
+`src/runtime/CMakeLists.txt` (target `atlantis_runtime`) *and*
+`tests/runtime/CMakeLists.txt` (target `atlantis_runtime_gpu_tests`,
+which builds `runtime_smoke_gpu_tests.cpp`) — two independent
+`target_compile_definitions()` calls —
 `ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH`/`_METADATA_PATH`/`_MANIFEST_PATH`
 switch from `ATLANTIS_world_scene_*` to
-`ATLANTIS_integrated_showcase_demo_*`, and the corresponding
-`add_dependencies()` target switches the same way.
+`ATLANTIS_integrated_showcase_demo_*`, and each file's own
+`add_dependencies()` target list switches the same way. Missing either
+file leaves that target still pointed at `world_scene`.
 `ATLANTIS_RUNTIME_ENVIRONMENT_ARTIFACT_PATH`/`_METADATA_PATH` already
-point at `ibl_studio` and need no change. `world_scene`'s own cooked
-asset, its own `world_scene_fixture`, and its own golden are untouched
-by this switch and keep passing independently — this only changes
-which scene `atlantis_runtime` itself compiles in.
+point at `ibl_studio` in both files and need no change. `world_scene`'s
+own cooked asset, its own `world_scene_fixture`, and its own golden
+are untouched by this switch and keep passing independently — this
+only changes which scene each of these two targets compiles in.
 
 **Existing windowed smoke lifecycle, updated (FR8):** the one
 `TEST_CASE` in `runtime_smoke_gpu_tests.cpp`
 (`"Runtime constructs a window and completes real windowed
-acquire/draw/submit/present frames"`) already builds its
-`BootstrapConfig` from the same `ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH`
-macro `main.cpp` uses, so it automatically picks up
-`integrated_showcase_demo` once the CMake switch above lands. Two
-things in this same file still need updating to match:
+acquire/draw/submit/present frames"`) reads its own
+`ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH`-family macros from
+`tests/runtime/CMakeLists.txt`'s own, separate
+`target_compile_definitions()` call — it does not read
+`src/runtime/CMakeLists.txt`'s copy, and picks up
+`integrated_showcase_demo` only once *that* file's own macro values
+switch too (the CMake fix above). Three things in this same test file
+still need updating to match:
 
-- Its `BootstrapConfig` population currently omits
-  `environmentArtifactPath`/`environmentMetadataPath` and the
+- Its `BootstrapConfig` C++ population currently never sets
+  `environmentArtifactPath`/`environmentMetadataPath` or the
   PBR-IBL/sky shader path fields (it predates this file exercising an
-  environment at all). These fields are added, mirroring `main.cpp`'s
-  own population 1:1 — required for this scene's own sky/IBL (FR2).
+  environment at all) — even though
+  `ATLANTIS_RUNTIME_ENVIRONMENT_ARTIFACT_PATH`/sky-shader macros are
+  already defined for this same `atlantis_runtime_gpu_tests` target
+  (used by other tests in this file). These fields are added to this
+  one `TEST_CASE`'s config, mirroring `main.cpp`'s own population 1:1
+  — required for this scene's own sky/IBL (FR2); no new CMake macro.
 - Its own existing assertions, hardcoded against `world_scene`'s
   known-zero-light, 5-renderable shape, are updated to match the new
   scene's fixed shape: `renderableEntityCount(app) == 5` becomes `== 6`;
@@ -269,6 +306,13 @@ things in this same file still need updating to match:
   post-dynamic-light-add `afterLightAdded.directionalLightCount == 0`
   becomes `== 1` for the same reason. `pointLightCount` assertions are
   unaffected (this scene has no point light of its own).
+- Its own existing dynamic point-light exercise (creating a point
+  light entity via `World::createEntity()`/`setLight()`, then moving
+  it via `setLocalTransform()`, Spec 0022 M3) is preserved unchanged —
+  not removed, not treated as a lifecycle violation (FR7). It now runs
+  against a `World` that already has one directional light; only the
+  `pointLightCount`/`pointLights[0]` assertions concern the light this
+  exercise itself adds.
 
 Two new `RuntimeSmokeTestAccess` accessor methods are added in this
 same test file (not in `runtime_application.h`/`.cpp` — the existing
@@ -277,19 +321,55 @@ itself gains no new state): one reading `meshResourceMap_.size()`, one
 reading `materialResourceMap_.size()`, asserted as `== 2`/`== 4` (FR3)
 alongside the existing `renderableEntityCount(app) == 6` check.
 
+**New fixture's real shadow path (not a mirror of
+`pbr_material_demo_fixture`):** that fixture creates shadow-*compatible*
+resources (`ShadowMap`, `Sampler`, shadow `Pipeline`,
+`shadowLightSpaceBuffer`) but never casts a real shadow — it writes a
+fixed identity matrix into the light-space tail (`kIdentityMatrix`,
+its own P11 no-light sentinel) instead of calling
+`computeShadowLightSpaceMatrices()`, and passes an empty
+`shadowCasterDrawItems` span to `drawFrame()`, by design, since it
+never configures a directional light. This scene does (FR2), so its
+own fixture must differ in exactly these ways:
+
+- Call the existing, shared production function
+  `atlantis::runtime::computeShadowLightSpaceMatrices()`
+  (`scene_extraction.h`, Spec 0027) with this scene's own directional
+  light direction — the same function `RuntimeApplication::runFrame()`
+  and the shadow discriminator tests already call. Never re-derive or
+  duplicate that math.
+- Write the resulting view/projection into both the camera buffer's
+  own light-space tail and the dedicated `shadowLightSpaceBuffer`,
+  matching `RuntimeApplication::runFrame()`'s own real, dual-write
+  behavior (Spec 0027 P5) — not the identity sentinel.
+- Build a real, non-empty `shadowCasterDrawItems` span from this
+  scene's own compatible `DrawItem`s (all 6), matching
+  `RuntimeApplication::runFrame()`'s own unconditional
+  "`shadowCasterDrawItems` is `drawItems` itself whenever a
+  directional light is configured" contract (Spec 0027 P6).
+- Render through the existing, unmodified `Renderer::drawFrame()` path
+  with these real inputs; FR6's occlusion check confirms an actual,
+  visible shadow footprint on the ground in the captured image.
+
+No engine-module change (`scene_extraction.cpp`, `Renderer`,
+RenderGraph, Vulkan Backend all unchanged) — the fixture only calls
+the already-public `computeShadowLightSpaceMatrices()`.
+
 **New test surface (all data/composition, no engine-module `src/`
 change):**
 
 - `tests/image_regression/fixture/integrated_showcase_demo_fixture.{h,cpp}`
-  — mirrors `pbr_material_demo_fixture.{h,cpp}` exactly, pointed at the
-  new scene/environment, and exposes its own built `drawItems.size()`
+  — reuses `pbr_material_demo_fixture.{h,cpp}`'s own resource-creation
+  shape but replaces its identity-sentinel/empty-shadow-caster path
+  with the real one above; exposes its own built `drawItems.size()`
   for FR4's `== 6` assertion.
 - `tests/image_regression/golden_generator/integrated_showcase_demo_main.cpp`
   and `tests/image_regression/integrated_showcase_demo_gpu_tests.cpp` —
   mirror the existing per-demo pair; the golden lands at
   `tests/image_regression/goldens/integrated_showcase_demo/`.
 - New CMake entries in `assets/CMakeLists.txt` (mesh + scene cook),
-  `src/runtime/CMakeLists.txt` (default-scene switch, above), and the
+  `src/runtime/CMakeLists.txt` *and* `tests/runtime/CMakeLists.txt`
+  (default-scene switch, both files, above), and the
   corresponding `tests/image_regression/fixture/CMakeLists.txt` /
   `tests/image_regression/golden_generator/CMakeLists.txt` wiring,
   following the exact existing per-demo pattern.
@@ -298,10 +378,12 @@ No changes to any RHI, RenderGraph, Renderer, Shader System, Asset
 System, World, or Vulkan Backend source. No changes to
 `runtime_application.h`/`.cpp` (its existing private members and
 existing test-only friend declaration already cover every new
-accessor this Spec's tests need). The only `src/` change is the
-`src/runtime/CMakeLists.txt` macro-value swap above — build
-configuration selecting which already-cooked scene/environment this
-one executable compiles in, not new logic.
+accessor this Spec's tests need). The only `src/` changes are the two
+independent `src/runtime/CMakeLists.txt` / `tests/runtime/CMakeLists.txt`
+macro-value swaps above — build configuration selecting which
+already-cooked scene/environment each of these two targets compiles
+in, not new logic. `tests/runtime/runtime_smoke_gpu_tests.cpp` (a test
+file, not an engine module) is modified in place, not added to.
 
 ## Architectural Impact
 
@@ -318,16 +400,17 @@ abstraction contract:
    no new asset format, version, or tool.
 3. The new fixture/golden_generator/gpu_tests trio reuses existing,
    already-Approved mechanisms (`atlantis_runtime_host`'s public
-   composition functions) with new data, not new code paths. The
-   windowed verification path is the existing, unchanged smoke
-   `TEST_CASE` mechanism, given new config values and updated
-   assertions — not a new mechanism, and not a new file.
-4. `atlantis_runtime`'s default-scene switch is a product-content/
-   build-configuration change (which already-cooked scene/environment
-   paths this one executable's CMake target compiles in) — it changes
-   no public API, no module boundary, and no dependency.
-   `RuntimeApplication`'s own public surface and `BootstrapConfig`'s
-   own field set are unchanged.
+   composition functions, including `computeShadowLightSpaceMatrices()`)
+   with new data, not new code paths. The windowed verification path
+   is the existing, unchanged smoke `TEST_CASE` mechanism (one file,
+   modified in place), given new config values and updated assertions
+   — not a new mechanism, and not a new file.
+4. `atlantis_runtime`'s and `atlantis_runtime_gpu_tests`'s default-scene
+   switch is a product-content/build-configuration change (which
+   already-cooked scene/environment paths each of these two CMake
+   targets compiles in) — it changes no public API, no module
+   boundary, and no dependency. `RuntimeApplication`'s own public
+   surface and `BootstrapConfig`'s own field set are unchanged.
 5. No RHI/RenderGraph/Renderer signature changes; no new `Vk*`
    exposure; no new dependency edge between top-level modules.
 
@@ -361,12 +444,16 @@ abstraction contract:
   maintainer, then locked as a byte-compare test — ADR-0042's existing
   two-phase process, unchanged. The new fixture's own GPU test also
   asserts `drawItems.size() == 6` directly (FR4).
-- Existing windowed smoke `TEST_CASE`, updated (not duplicated): real
-  window, several frames, crash-free, zero Vulkan Validation Layer
-  output; `renderableEntityCount(app) == 6`; new
+- Existing windowed smoke `TEST_CASE`, updated (not duplicated) after
+  both `src/runtime/CMakeLists.txt` and `tests/runtime/CMakeLists.txt`
+  switch their own scene macros (Proposed Design): real window,
+  several frames, crash-free, zero Vulkan Validation Layer output;
+  `renderableEntityCount(app) == 6`; new
   `meshResourceMapSize(app) == 2` / `materialResourceMapSize(app) == 4`
   (FR3); `directionalLightCount` assertions updated to `== 1` at both
-  existing check points (Proposed Design).
+  existing check points; its own pre-existing dynamic point-light
+  creation/movement checks (Spec 0022 M3) preserved unchanged and
+  re-verified alongside the scene's own directional light (FR7).
 - `world_scene`'s own fixture/gpu_tests/golden re-verified byte-
   identical and passing, unchanged — proving the default-scene switch
   does not disturb `world_scene`'s own independent verification.
