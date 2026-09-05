@@ -50,18 +50,19 @@ using atlantis::rhi::ResourceState;
 void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bindings,
              atlantis::rhi::CommandList& commandList) {
   // Guard 0 (Spec 0007; widened to three kinds by Spec 0016, four by
-  // Plan 0024 Milestone 2): every entry binds exactly one of
-  // target/depthTexture/sampledTexture/hdrColorTarget, and no two
-  // entries bind the same resource. This is the real mechanism that
-  // rejects both zero-resource and multi-resource ambiguity uniformly
-  // for all four kinds.
+  // Plan 0024 Milestone 2, five by Plan 0027 Milestone 3): every entry
+  // binds exactly one of target/depthTexture/sampledTexture/
+  // hdrColorTarget/shadowMap, and no two entries bind the same resource.
+  // This is the real mechanism that rejects both zero-resource and
+  // multi-resource ambiguity uniformly for all five kinds.
   std::unordered_set<std::size_t> seenBindingResources;
   for (const ResourceBinding& binding : bindings) {
     const int boundCount = (binding.target != nullptr) + (binding.depthTexture != nullptr) +
-                            (binding.sampledTexture != nullptr) + (binding.hdrColorTarget != nullptr);
+                            (binding.sampledTexture != nullptr) + (binding.hdrColorTarget != nullptr) +
+                            (binding.shadowMap != nullptr);
     ATLANTIS_CHECK_MSG(
         boundCount == 1,
-        "ResourceBinding must bind exactly one of target/depthTexture/sampledTexture/hdrColorTarget");
+        "ResourceBinding must bind exactly one of target/depthTexture/sampledTexture/hdrColorTarget/shadowMap");
     const auto [it, inserted] = seenBindingResources.insert(binding.resource.index());
     (void)it;
     ATLANTIS_CHECK_MSG(inserted, "ResourceBinding must not bind the same resource twice");
@@ -122,6 +123,7 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
       atlantis::rhi::Texture* depthPtr = binding->depthTexture;
       atlantis::rhi::SampledTexture* sampledTexturePtr = binding->sampledTexture;
       atlantis::rhi::HdrColorTarget* hdrColorTargetPtr = binding->hdrColorTarget;
+      atlantis::rhi::ShadowMap* shadowMapPtr = binding->shadowMap;
 
       const std::size_t key = usage.resource.index();
       const ResourceState previous = currentState.count(key) ? currentState[key] : binding->incomingState;
@@ -132,8 +134,14 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
           commandList.transitionResource(*depthPtr, previous, *usage.state);
         } else if (sampledTexturePtr != nullptr) {
           commandList.transitionResource(*sampledTexturePtr, previous, *usage.state);
-        } else {
+        } else if (hdrColorTargetPtr != nullptr) {
           commandList.transitionResource(*hdrColorTargetPtr, previous, *usage.state);
+        } else {
+          // Plan 0027 Milestone 3 (ADR-0072 D-4): Guard 0 above already
+          // guarantees exactly one of the five kinds is set -- shadowMapPtr
+          // is the only remaining possibility once the first four have
+          // been ruled out.
+          commandList.transitionResource(*shadowMapPtr, previous, *usage.state);
         }
         currentState[key] = *usage.state;
       }
@@ -144,26 +152,41 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
     const PassExecuteFn& executeFn = graph.passExecuteFn(pass);
 
     if (drawPass) {
+      // Plan 0027 Milestone 3 (ADR-0072 D-4): a pass whose only
+      // DepthAttachmentReadWrite usage is bound via shadowMap (not
+      // depthTexture) is genuinely depth-only -- it has no
+      // ColorAttachmentOutput usage at all (the shadow-casting Pipeline's
+      // own hasColorAttachment == false shape), so colorBinding is
+      // always nullptr for it. This is the real gap the prior
+      // canBeginRendering expression could not express: it required
+      // colorBinding != nullptr unconditionally, silently skipping any
+      // pass with no color attachment whatsoever.
+      const bool depthOnly = depthUsagePresent && depthBinding != nullptr && depthBinding->shadowMap != nullptr;
       // UB-safe check-then-skip, mirroring the binding-not-found handling
       // above: Guard 1 already reported a missing binding, but under a
       // non-terminating handler (test) execution continues past that
       // check -- colorBinding/depthBinding must never be dereferenced
       // here without first confirming they were actually found.
-      const bool canBeginRendering = colorBinding != nullptr && (!depthUsagePresent || depthBinding != nullptr);
+      const bool canBeginRendering =
+          depthOnly ? true : (colorBinding != nullptr && (!depthUsagePresent || depthBinding != nullptr));
       if (canBeginRendering) {
-        // Plan 0024 Milestone 2: the pass writing ColorAttachmentOutput
-        // may be bound via either the target field (existing draw pass,
-        // a real RenderTarget) or the hdrColorTarget field (the new
-        // geometry pass writing into the HDR intermediate) -- Guard 0
-        // already guarantees colorBinding has exactly one of the two
-        // set, so exactly one of these two branches ever fires.
-        atlantis::rhi::Texture* depthPtr = depthUsagePresent ? depthBinding->depthTexture : nullptr;
-        const float depthClearValue = depthUsagePresent ? depthBinding->depthClear : 1.0f;
-        if (colorBinding->target != nullptr) {
-          commandList.beginRendering(*colorBinding->target, depthPtr, colorBinding->colorClear, depthClearValue);
+        if (depthOnly) {
+          commandList.beginRendering(*depthBinding->shadowMap, depthBinding->depthClear);
         } else {
-          commandList.beginRendering(*colorBinding->hdrColorTarget, depthPtr, colorBinding->colorClear,
-                                      depthClearValue);
+          // Plan 0024 Milestone 2: the pass writing ColorAttachmentOutput
+          // may be bound via either the target field (existing draw pass,
+          // a real RenderTarget) or the hdrColorTarget field (the new
+          // geometry pass writing into the HDR intermediate) -- Guard 0
+          // already guarantees colorBinding has exactly one of the two
+          // set, so exactly one of these two branches ever fires.
+          atlantis::rhi::Texture* depthPtr = depthUsagePresent ? depthBinding->depthTexture : nullptr;
+          const float depthClearValue = depthUsagePresent ? depthBinding->depthClear : 1.0f;
+          if (colorBinding->target != nullptr) {
+            commandList.beginRendering(*colorBinding->target, depthPtr, colorBinding->colorClear, depthClearValue);
+          } else {
+            commandList.beginRendering(*colorBinding->hdrColorTarget, depthPtr, colorBinding->colorClear,
+                                        depthClearValue);
+          }
         }
         if (executeFn) {
           executeFn(commandList);
