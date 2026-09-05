@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 
 namespace atlantis::runtime {
@@ -239,12 +240,7 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
        .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = pushConstantSizeBytesFor(materialData.kind),
-       // Plan 0027 Milestone 9 (ADR-0072 D-7): widened by one binding for
-       // the new shadow-map sampler every PbrDirectLit-kind Pipeline now
-       // declares (binding 2 without an environment, binding 4 with
-       // one) -- non-PBR kinds are unaffected.
-       .sampledTextureBindingCount =
-           materialData.kind == atlantis::asset_system::MaterialKind::PbrDirectLit && environmentEnabled ? 4U : 2U},
+       .sampledTextureBindingCount = sampledTextureBindingCountFor(materialData.kind, environmentEnabled)},
       sampledTexturePtr, candidate.sampler.get(), pushConstantLayoutFor(materialData.kind),
       {materialData.baseColorFactor[0], materialData.baseColorFactor[1], materialData.baseColorFactor[2],
        materialData.baseColorFactor[3]},
@@ -370,6 +366,19 @@ bool isSrgbFormat(atlantis::rhi::Format format) {
   }
   ATLANTIS_CHECK_MSG(false, "isSrgbFormat(): unreachable -- Format's own closed switch above is exhaustive");
   return false;  // never reached
+}
+
+std::uint32_t sampledTextureBindingCountFor(atlantis::asset_system::MaterialKind kind, bool environmentEnabled) {
+  switch (kind) {
+    case atlantis::asset_system::MaterialKind::UnlitTextured:
+    case atlantis::asset_system::MaterialKind::LitTextured:
+      return 1U;
+    case atlantis::asset_system::MaterialKind::PbrDirectLit:
+      return environmentEnabled ? 4U : 2U;
+  }
+  ATLANTIS_CHECK_MSG(
+      false, "sampledTextureBindingCountFor(): unreachable -- MaterialKind's own closed switch above is exhaustive");
+  return 1U;  // never reached
 }
 
 // Plan 0024 Milestone 6 (correction, ADR-0068 D-4): rebuildMaterialsForFormatChange()

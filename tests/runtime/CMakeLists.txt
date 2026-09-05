@@ -12,6 +12,7 @@ add_executable(atlantis_runtime_tests
   scene_manifest_tests.cpp
   scene_load_tests.cpp
   pbr_reflection_cross_check_tests.cpp
+  material_realization_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_tests
