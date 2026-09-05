@@ -70,6 +70,13 @@ std::vector<DescriptorBinding> skyExpectedDescriptorContract() {
           DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
+// Plan 0027 Milestone 4 (ADR-0072 D-3): one binding, Vertex-only -- see
+// this function's own header comment for the real slangc reflection
+// evidence.
+std::vector<DescriptorBinding> shadowCastExpectedDescriptorContract() {
+  return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex}};
+}
+
 atlantis::Result<std::monostate, ContractMismatchError> validateDescriptorContract(
     const ReflectionMetadata& metadata, const std::vector<DescriptorBinding>& expected) {
   using ResultType = atlantis::Result<std::monostate, ContractMismatchError>;

@@ -87,6 +87,18 @@ namespace atlantis::shader_system {
 // stage does read the camera uniform for position/normal transforms.
 [[nodiscard]] std::vector<DescriptorBinding> skyExpectedDescriptorContract();
 
+// Plan 0027 Milestone 4 (ADR-0072 D-3): shadow_cast's own fixed, expected
+// descriptor contract -- one binding, Vertex-only: {set 0, binding 0,
+// UniformBuffer, Vertex} (the dedicated light-space buffer, referenced
+// only by vertexMain -- fragmentMain is void, no bindings at all).
+// Confirmed, not inferred: a disposable probe compiled with the real
+// slangc toolchain during this Plan's own drafting showed the vertex
+// stage's own reflection reports lightSpace "used": 1, while the
+// fragment stage reports it "used": 0 (dropped before reaching
+// ReflectionMetadata::descriptorBindings) and has no result/color output
+// at all.
+[[nodiscard]] std::vector<DescriptorBinding> shadowCastExpectedDescriptorContract();
+
 enum class ContractMismatchError {
   BindingCountMismatch,
   BindingNotFound,        // an expected {set, binding} pair is absent from the reflected shader

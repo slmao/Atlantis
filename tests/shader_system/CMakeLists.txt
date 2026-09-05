@@ -6,6 +6,7 @@ add_executable(atlantis_shader_system_tests
   output_transform_reflection_cross_check_tests.cpp
   pbr_ibl_reflection_tests.cpp
   sky_reflection_tests.cpp
+  shadow_cast_reflection_tests.cpp
   command_line_tests.cpp
   version_provenance_tests.cpp
 )
@@ -24,6 +25,7 @@ target_compile_definitions(atlantis_shader_system_tests
     ATLANTIS_OUTPUT_TRANSFORM_SRGB_SHADER_DIR="${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}"
     ATLANTIS_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
     ATLANTIS_SKY_SHADER_DIR="${ATLANTIS_sky_SHADER_OUTPUT_DIR}"
+    ATLANTIS_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
 )
 
 # Plan 0024 Milestone 8: cross-check both output-transform variants'
@@ -35,6 +37,7 @@ add_dependencies(atlantis_shader_system_tests
   output_transform_srgb_shaders
   pbr_ibl_shaders
   sky_shaders
+  shadow_cast_shaders
 )
 
 target_link_libraries(atlantis_shader_system_tests
