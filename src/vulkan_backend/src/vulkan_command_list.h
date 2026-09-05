@@ -14,6 +14,7 @@ namespace atlantis::vulkan_backend::detail {
 class VulkanSampledTexture;
 class VulkanSampler;
 class VulkanHdrColorTarget;
+class VulkanShadowMap;
 
 // Owns its VkCommandBuffer's allocation from device/commandPool (frees it
 // in its destructor via vkFreeCommandBuffers) but does not own device or
@@ -93,6 +94,19 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   void bindTexture(std::uint32_t binding, const atlantis::rhi::HdrColorTarget& texture,
                    const atlantis::rhi::Sampler& sampler) override;
 
+  // Plan 0027 Milestone 2 (ADR-0072 D-4): three new/overloaded methods
+  // for ShadowMap -- a fifth transitionResource() overload, a genuinely
+  // depth-only beginRendering() overload (no color attachment at all,
+  // unlike every overload above), and a third bindTexture() overload
+  // (memoized like the SampledTexture one -- the shadow-map binding is
+  // re-issued once per PbrDirectLit/pbr_ibl DrawItem, not once per
+  // frame like the HdrColorTarget overload above).
+  void transitionResource(atlantis::rhi::ShadowMap& target, atlantis::rhi::ResourceState before,
+                           atlantis::rhi::ResourceState after) override;
+  void beginRendering(atlantis::rhi::ShadowMap& depth, float depthClear) override;
+  void bindTexture(std::uint32_t binding, const atlantis::rhi::ShadowMap& texture,
+                   const atlantis::rhi::Sampler& sampler) override;
+
   // Exists solely for VulkanDevice::submit() (vkEndCommandBuffer,
   // vkQueueSubmit) -- never reached from RHI's public surface.
   [[nodiscard]] VkCommandBuffer commandBuffer() const noexcept { return commandBuffer_; }
@@ -148,6 +162,12 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   struct TextureDescriptorMemo {
     VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
     const VulkanSampledTexture* texture = nullptr;
+    // Plan 0027 Milestone 2 (ADR-0072 D-4/D-7): a binding index is always
+    // exclusively one resource kind for any given Pipeline's own
+    // descriptor layout (the shadow-map slot never coincides with a
+    // SampledTexture binding), so this parallel field shares the same
+    // per-binding memo slot rather than needing a second array.
+    const VulkanShadowMap* shadowMap = nullptr;
     const VulkanSampler* sampler = nullptr;
   };
   std::array<TextureDescriptorMemo, 4> textureDescriptorMemos_{};

@@ -10,6 +10,7 @@
 #include "vulkan_render_target_access.h"
 #include "vulkan_sampled_texture.h"
 #include "vulkan_sampler.h"
+#include "vulkan_shadow_map.h"
 #include "vulkan_texture.h"
 
 namespace atlantis::vulkan_backend::detail {
@@ -145,6 +146,30 @@ void VulkanCommandList::transitionResource(atlantis::rhi::HdrColorTarget& target
   vkCmdPipelineBarrier(commandBuffer_, plan.srcStage, plan.dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
 }
 
+// Plan 0027 Milestone 2 (ADR-0072 D-4): mirrors transitionResource(Texture&, ...)
+// above -- fullDepthResourceRange(), not fullColorResourceRange() (ShadowMap
+// is a depth image, like Texture, unlike HdrColorTarget).
+void VulkanCommandList::transitionResource(atlantis::rhi::ShadowMap& target, atlantis::rhi::ResourceState before,
+                                            atlantis::rhi::ResourceState after) {
+  auto& vulkanShadowMap = static_cast<VulkanShadowMap&>(target);
+  const ImageBarrierPlan plan = planTransition(before, after);
+
+  const VkImageMemoryBarrier barrier{
+      .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+      .pNext = nullptr,
+      .srcAccessMask = plan.srcAccessMask,
+      .dstAccessMask = plan.dstAccessMask,
+      .oldLayout = plan.oldLayout,
+      .newLayout = plan.newLayout,
+      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+      .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+      .image = vulkanShadowMap.image(),
+      .subresourceRange = fullDepthResourceRange(),
+  };
+
+  vkCmdPipelineBarrier(commandBuffer_, plan.srcStage, plan.dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+}
+
 void VulkanCommandList::clearColor(atlantis::rhi::RenderTarget& target, atlantis::rhi::ClearColorValue color) {
   // Pointer-form, exception-free -- same rationale as transitionResource()
   // above. Fixed here too even though this spec's own headless path never
@@ -273,6 +298,55 @@ void VulkanCommandList::beginRendering(atlantis::rhi::HdrColorTarget& color, atl
 
   // See beginRendering(RenderTarget&, ...)'s own identical comment
   // above for why this viewport/scissor set is required here.
+  const VkViewport viewport{
+      .x = 0.0f,
+      .y = 0.0f,
+      .width = static_cast<float>(extent.width),
+      .height = static_cast<float>(extent.height),
+      .minDepth = 0.0f,
+      .maxDepth = 1.0f,
+  };
+  vkCmdSetViewport(commandBuffer_, 0, 1, &viewport);
+  vkCmdSetScissor(commandBuffer_, 0, 1, &renderingInfo.renderArea);
+}
+
+// Plan 0027 Milestone 2 (ADR-0072 D-2/D-4): a genuinely new depth-only
+// scope, not a parameterization of either beginRendering() overload
+// above -- both of those unconditionally attach a color image and
+// hard-code colorAttachmentCount = 1. Modeled on their own structure
+// with the color portion omitted entirely, matching the shadow-casting
+// Pipeline's own hasColorAttachment == false shape.
+void VulkanCommandList::beginRendering(atlantis::rhi::ShadowMap& depth, float depthClear) {
+  auto& vulkanShadowMap = static_cast<VulkanShadowMap&>(depth);
+
+  VkRenderingAttachmentInfo depthAttachment{};
+  depthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+  depthAttachment.imageView = vulkanShadowMap.imageView();
+  // See beginRendering(RenderTarget&, ...)'s own identical comment on
+  // depthAttachment.imageLayout -- this attachment's own
+  // transitionResource() call already brought the image to this exact
+  // layout, so this must name the same one.
+  depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+  depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  depthAttachment.clearValue.depthStencil = VkClearDepthStencilValue{depthClear, 0};
+
+  const atlantis::rhi::Extent2D extent = depth.extent();
+  VkRenderingInfo renderingInfo{};
+  renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+  renderingInfo.renderArea = VkRect2D{{0, 0}, {extent.width, extent.height}};
+  renderingInfo.layerCount = 1;
+  renderingInfo.colorAttachmentCount = 0;
+  renderingInfo.pColorAttachments = nullptr;
+  renderingInfo.pDepthAttachment = &depthAttachment;
+
+  ATLANTIS_CHECK(cmdBeginRendering_ != nullptr);
+  cmdBeginRendering_(commandBuffer_, &renderingInfo);
+
+  // See beginRendering(RenderTarget&, ...)'s own identical comment above
+  // for why this viewport/scissor set is required here -- sized to the
+  // ShadowMap's own extent, independent of the frame's final-target
+  // extent (ADR-0072 D-1).
   const VkViewport viewport{
       .x = 0.0f,
       .y = 0.0f,
@@ -437,6 +511,59 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
   write.pImageInfo = &imageInfo;
 
   vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+  vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipelineLayout_, 0, 1,
+                           &boundDescriptorSet_, 0, nullptr);
+}
+
+// Plan 0027 Milestone 2 (ADR-0072 D-4/D-7): memoized, like
+// bindTexture(SampledTexture&, ...) above -- not like
+// bindTexture(HdrColorTarget&, ...) just above, which is unconditional
+// (drawn once per frame). The shadow-map binding is re-issued once per
+// PbrDirectLit/pbr_ibl DrawItem, the same repeated-per-draw pattern the
+// base-color sampler already has.
+void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::ShadowMap& texture,
+                                     const atlantis::rhi::Sampler& sampler) {
+  ATLANTIS_CHECK(boundDescriptorSet_ != VK_NULL_HANDLE);
+  ATLANTIS_CHECK(isSampledTextureBindingInRange(boundSampledTextureFirstBinding_,
+                                                boundSampledTextureBindingCount_, binding));
+  ATLANTIS_CHECK(binding < textureDescriptorMemos_.size());
+  const auto& vulkanShadowMap = static_cast<const VulkanShadowMap&>(texture);
+  const auto& vulkanSampler = static_cast<const VulkanSampler&>(sampler);
+
+  VkDescriptorImageInfo imageInfo{};
+  imageInfo.sampler = vulkanSampler.sampler();
+  imageInfo.imageView = vulkanShadowMap.imageView();
+  // Precondition, enforced by render_graph::execute()'s own algorithm,
+  // not re-checked here: texture must already be in
+  // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL (ResourceState::ShaderRead)
+  // when this is called.
+  imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+  // Same redundant-write memo as bindTexture(SampledTexture&, ...)
+  // above, and for the same reason -- a PbrDirectLit/pbr_ibl Material
+  // shared by multiple DrawItems in one frame calls this again for
+  // every item, each with byte-identical VkDescriptorImageInfo contents
+  // (the one shared ShadowMap/Sampler pair for the whole frame).
+  TextureDescriptorMemo& memo = textureDescriptorMemos_[binding];
+  if (boundDescriptorSet_ != memo.descriptorSet || &vulkanShadowMap != memo.shadowMap ||
+      &vulkanSampler != memo.sampler) {
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = boundDescriptorSet_;
+    write.dstBinding = binding;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &imageInfo;
+
+    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    memo.descriptorSet = boundDescriptorSet_;
+    memo.shadowMap = &vulkanShadowMap;
+    memo.sampler = &vulkanSampler;
+  }
+
+  // See bindTexture(SampledTexture&, ...)'s own identical comment above
+  // for why this re-issue is required, not merely redundant with
+  // bindUniformBuffer()'s own earlier call.
   vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipelineLayout_, 0, 1,
                            &boundDescriptorSet_, 0, nullptr);
 }

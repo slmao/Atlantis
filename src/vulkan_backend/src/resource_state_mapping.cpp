@@ -153,6 +153,28 @@ using atlantis::rhi::ResourceState;
   };
 }
 
+// Plan 0027 Milestone 2 (ADR-0072 D-4): the main draw pass's own read of
+// the ShadowMap the shadow-casting pass just wrote -- discovered during
+// Implementation (not explicitly listed by the Plan's own text), the
+// same "found missing from this table during real work" pattern
+// colorAttachmentOutputToShaderRead() above already discloses. Source
+// layout/access mirror undefinedToDepthAttachmentReadWrite()'s own
+// destination exactly (the same depth/stencil-attachment-optimal layout,
+// both fragment-test stages, since either could be the last to write);
+// destination layout/access/stage mirror colorAttachmentOutputToShaderRead()'s
+// own destination exactly (the same "about to be sampled in the
+// fragment shader" ending point).
+[[nodiscard]] ImageBarrierPlan depthAttachmentReadWriteToShaderRead() {
+  return ImageBarrierPlan{
+      .oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+      .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      .srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+      .srcStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+      .dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+  };
+}
+
 }  // namespace
 
 ImageBarrierPlan planTransition(ResourceState before, ResourceState after) {
@@ -187,6 +209,9 @@ ImageBarrierPlan planTransition(ResourceState before, ResourceState after) {
   }
   if (before == ResourceState::ColorAttachmentOutput && after == ResourceState::ShaderRead) {
     return colorAttachmentOutputToShaderRead();
+  }
+  if (before == ResourceState::DepthAttachmentReadWrite && after == ResourceState::ShaderRead) {
+    return depthAttachmentReadWriteToShaderRead();
   }
 
   ATLANTIS_CHECK_MSG(false, "planTransition() called with a (before, after) pair this round does not define");
