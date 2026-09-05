@@ -129,7 +129,8 @@ TEST_CASE("PbrPushConstants: real Slang reflection (both stages, ATLANTIS's own 
 
 TEST_CASE("Camera/Lighting/CameraWorldPosition buffer: a real, freshly-generated slangc reflection of "
           "pbr_direct_lit.slang's own CameraUniform struct reports cameraWorldPosition/_pad2 at exactly the "
-          "offsets Milestone 2's own C++ layout expects, totalling 320 bytes",
+          "offsets Milestone 2's own C++ layout expects (320 bytes through _pad2; Plan 0027 Milestone 5 appends "
+          "a 144-byte explicit pad plus the 128-byte light-space tail after it, checked separately below)",
           "[shader_system][runtime][pbr][reflection]") {
   // Independently re-derives the 320-byte total from first principles
   // (never trusting Milestone 2's own literal) -- matching
@@ -184,6 +185,72 @@ TEST_CASE("pbr_ibl CameraUniform appends nine float4 SH coefficients at offset 3
   CHECK(irradianceSh->offset == 320);
   CHECK(irradianceSh->size == 9 * 4 * 4);
   CHECK(irradianceSh->offset + irradianceSh->size == 464);
+
+  fs::remove_all(outputDir, ec);
+}
+
+// Plan 0027 Milestone 5 (ADR-0072 D-6): both shaders' own light-space
+// pair lands at the identical 464-byte offset -- pbr_direct_lit.slang
+// reaches it via an explicit 144-byte pad (checked here for the first
+// time; pbr_ibl.slang already reaches it naturally via irradianceSh,
+// confirmed by the TEST_CASE above). Real, freshly-generated reflection
+// for both shaders, never a stale golden.
+TEST_CASE("pbr_direct_lit CameraUniform: an explicit 144-byte pad plus the 128-byte light-space pair reach the "
+          "same 464-byte offset pbr_ibl's own irradianceSh tail uses, totalling 592 bytes",
+          "[shader_system][runtime][pbr][reflection]") {
+  const fs::path outputDir = fs::temp_directory_path() / "atlantis_pbr_direct_lit_shadow_reflection_cross_check_tests";
+  std::error_code ec;
+  fs::create_directories(outputDir, ec);
+  const fs::path jsonPath = outputDir / "pbr_direct_lit_vert_raw_refl.json";
+  const fs::path spirvPath = outputDir / "pbr_direct_lit_vert_raw.spv";
+
+  REQUIRE(runSlangcReflectionJson(ATLANTIS_PBR_DIRECT_LIT_SLANG_SOURCE, "vertexMain", "vertex", jsonPath, spirvPath));
+  const auto jsonText = readWholeFile(jsonPath);
+  REQUIRE(jsonText.has_value());
+
+  const auto shadowPad = findFieldLayout(*jsonText, "_shadowPad");
+  REQUIRE(shadowPad.has_value());
+  CHECK(shadowPad->offset == 320);
+  CHECK(shadowPad->size == 9 * 4 * 4);  // float4[9], matching pbr_ibl's own irradianceSh size exactly
+  CHECK(shadowPad->offset + shadowPad->size == 464);
+
+  const auto lightSpaceView = findFieldLayout(*jsonText, "lightSpaceView");
+  REQUIRE(lightSpaceView.has_value());
+  CHECK(lightSpaceView->offset == 464);
+  CHECK(lightSpaceView->size == 64);
+
+  const auto lightSpaceProjection = findFieldLayout(*jsonText, "lightSpaceProjection");
+  REQUIRE(lightSpaceProjection.has_value());
+  CHECK(lightSpaceProjection->offset == 528);
+  CHECK(lightSpaceProjection->size == 64);
+  CHECK(lightSpaceProjection->offset + lightSpaceProjection->size == 592);
+
+  fs::remove_all(outputDir, ec);
+}
+
+TEST_CASE("pbr_ibl CameraUniform: the light-space pair follows irradianceSh at offset 464, totalling 592 bytes -- "
+          "the identical tail offset pbr_direct_lit's own explicit pad reaches",
+          "[shader_system][runtime][pbr_ibl][reflection]") {
+  const fs::path outputDir = fs::temp_directory_path() / "atlantis_pbr_ibl_shadow_reflection_cross_check_tests";
+  std::error_code ec;
+  fs::create_directories(outputDir, ec);
+  const fs::path jsonPath = outputDir / "pbr_ibl_vert_raw_refl.json";
+  const fs::path spirvPath = outputDir / "pbr_ibl_vert_raw.spv";
+
+  REQUIRE(runSlangcReflectionJson(ATLANTIS_PBR_IBL_SLANG_SOURCE, "vertexMain", "vertex", jsonPath, spirvPath));
+  const auto jsonText = readWholeFile(jsonPath);
+  REQUIRE(jsonText.has_value());
+
+  const auto lightSpaceView = findFieldLayout(*jsonText, "lightSpaceView");
+  REQUIRE(lightSpaceView.has_value());
+  CHECK(lightSpaceView->offset == 464);
+  CHECK(lightSpaceView->size == 64);
+
+  const auto lightSpaceProjection = findFieldLayout(*jsonText, "lightSpaceProjection");
+  REQUIRE(lightSpaceProjection.has_value());
+  CHECK(lightSpaceProjection->offset == 528);
+  CHECK(lightSpaceProjection->size == 64);
+  CHECK(lightSpaceProjection->offset + lightSpaceProjection->size == 592);
 
   fs::remove_all(outputDir, ec);
 }
