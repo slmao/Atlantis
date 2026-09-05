@@ -1,8 +1,25 @@
 # Plan: Directional Shadow Foundation
 
 - **Spec:** [specs/0027-directional-shadow-foundation.md](../specs/0027-directional-shadow-foundation.md) (`Approved`)
-- **Status:** Draft
+- **Status:** Approved / Ready for Implementation
 - **Author:** slmao
+- **Human Review Approval (2026-09-05):** Approved by the repository
+  maintainer against [PR #124](https://github.com/slmao/Atlantis/pull/124)
+  (commit `d3dce50`), as a joint Spec 0027 + Plan 0027 Human Review.
+  Accepts all five Plan Review items as written: P4/P10/P11's fixed
+  numeric values, pixel coordinates, and thresholds (no silent
+  adjustment during Implementation — a real-GPU result requiring a
+  change stops for human confirmation first); P6's shadow-binding-index
+  dispatch via `Material::environmentBinding()`; P9's exhaustive
+  call-site, camera-buffer, and CMake migration tables; P10's hand-built
+  GPU test scene, with no-directional-light byte compatibility proven by
+  the existing `ibl_material_demo` golden rather than retested; and
+  Milestone 8/9's buildable, atomic-commit split. **Implementation
+  starts only after this PR merges to `main` — not before**, and must
+  follow the approved milestones, numeric values, and verification
+  matrix exactly; any deviation found necessary during Implementation is
+  called out explicitly, not silently applied (per this Plan's own
+  Non-negotiable rule and AGENTS.md).
 
 ## Objective
 
@@ -1158,6 +1175,10 @@ See [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
 No deltas beyond the Verification Checklist above.
 
 ## Plan Review — Items for Human Confirmation
+
+Confirmed by the Human Review Approval recorded above (2026-09-05,
+PR #124) — kept here as the permanent record of what was reviewed, not
+rewritten to remove the questions once answered.
 
 1. **P4/P11's concrete numeric values** (1024×1024 resolution; center
    `(0,0,0)`, half-extent `8.0`, near `0.1`, far `30.0`; `kShadowBias =
