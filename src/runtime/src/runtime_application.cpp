@@ -230,82 +230,6 @@ static_assert(
   return result.value();
 }
 
-// Plan 0027 Milestone 9 (ADR-0072 D-1/P4): the fixed orthographic
-// shadow volume -- center (0,0,0), half-extent 8.0 world units, near
-// 0.1, far 30.0 -- applied uniformly, never scene-fitted (P4's own
-// Non-negotiable rule).
-constexpr float kShadowHalfExtent = 8.0f;
-constexpr float kShadowNearZ = 0.1f;
-constexpr float kShadowFarZ = 30.0f;
-// Same test and threshold extractCameraMatrices() (scene_extraction.cpp)
-// already uses for its own near-parallel-forward/up check (P11).
-constexpr float kUpDegenerateLengthEpsilon = 1e-6f;
-
-[[nodiscard]] Vec3 shadowCross(const Vec3& a, const Vec3& b) {
-  return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
-}
-
-[[nodiscard]] float shadowLength(const Vec3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }
-
-[[nodiscard]] float shadowDot(const Vec3& a, const Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-
-// Plan 0027 P11: a deliberate, disclosed new choice, not a reuse of
-// lookAtMatrix()'s own hardcoded world-up (scene_extraction.cpp) --
-// fail-fast is not appropriate here (a directional light pointing
-// straight down is an ordinary "sun overhead" case, not a scene-
-// authoring mistake), so this falls back to a second fixed up-vector
-// instead of erroring. `direction` is the light's own travel direction
-// (unit-length, already normalized by extractFrameLightingData()) --
-// P10's own real, `rg`-confirmed formula: light eye = center -
-// direction * (far - near) / 2 (center is the fixed volume's own
-// origin, so this reduces to eye = -direction * (far - near) / 2);
-// light forward = direction. Mirrors lookAtMatrix()'s own
-// right/up/forward column layout exactly, just parameterized by a
-// caller-selected up instead of a hardcoded one.
-[[nodiscard]] Mat4 shadowLightSpaceViewMatrix(const Vec3& direction) {
-  Vec3 up{0.0f, 1.0f, 0.0f};
-  if (shadowLength(shadowCross(direction, up)) < kUpDegenerateLengthEpsilon) {
-    up = Vec3{0.0f, 0.0f, 1.0f};
-  }
-  const float eyeDistance = (kShadowFarZ - kShadowNearZ) * 0.5f;
-  const Vec3 eye{-direction.x * eyeDistance, -direction.y * eyeDistance, -direction.z * eyeDistance};
-
-  const Vec3 right = shadowCross(direction, up);
-  const float rightLen = shadowLength(right);
-  const Vec3 rightUnit{right.x / rightLen, right.y / rightLen, right.z / rightLen};
-  const Vec3 camUp = shadowCross(rightUnit, direction);
-
-  Mat4 result = identityMatrix();
-  result[0] = rightUnit.x;
-  result[4] = rightUnit.y;
-  result[8] = rightUnit.z;
-  result[1] = camUp.x;
-  result[5] = camUp.y;
-  result[9] = camUp.z;
-  result[2] = -direction.x;
-  result[6] = -direction.y;
-  result[10] = -direction.z;
-  result[12] = -shadowDot(rightUnit, eye);
-  result[13] = -shadowDot(camUp, eye);
-  result[14] = shadowDot(direction, eye);
-  return result;
-}
-
-// Vulkan clip-space convention: right-handed, depth range [0, 1], Y
-// flipped -- mirrors perspectiveMatrix()'s own identical convention
-// (scene_extraction.cpp), applied to a fixed, symmetric orthographic
-// volume instead of a perspective frustum (this codebase's first
-// orthographic projection; no existing function to widen or reuse).
-[[nodiscard]] Mat4 shadowOrthographicMatrix() {
-  Mat4 result{};
-  result[0] = 1.0f / kShadowHalfExtent;
-  result[5] = -1.0f / kShadowHalfExtent;
-  result[10] = -1.0f / (kShadowFarZ - kShadowNearZ);
-  result[14] = -kShadowNearZ / (kShadowFarZ - kShadowNearZ);
-  result[15] = 1.0f;
-  return result;
-}
-
 }  // namespace
 
 RuntimeApplication::RuntimeApplication(PlatformSession&& session) noexcept
@@ -1158,23 +1082,29 @@ void RuntimeApplication::runFrame() {
   }
   writeEnvironmentIrradianceSh(std::span<float, 36>(irradianceSh, 36), irradianceShSource);
 
-  // Plan 0027 Milestone 9 (ADR-0072 D-1/P5): the light-space view/
-  // projection pair -- written unconditionally, every frame, into BOTH
-  // the main camera buffer's own 464-byte tail offset (float index 116)
-  // and shadowLightSpaceBuffer_'s own independent 128-byte buffer,
-  // identical values in both. Identity (P11's own no-directional-light
-  // sentinel -- a zero 4x4 "projection" would be singular) when no
-  // directional light is configured this frame; shadowCasterDrawItems
-  // (below, at the drawFrame() call site) is then also empty, so
-  // neither value is ever actually read by computeShadowFactor()
-  // (pbr_direct_lit.slang/pbr_ibl.slang) in that case.
+  // Plan 0027 Milestone 9 fix (ADR-0072 D-1/P5): the light-space view/
+  // projection pair -- computed by scene_extraction.cpp's own
+  // computeShadowLightSpaceMatrices() (P4/P11), the same production
+  // implementation the shadow discriminator tests call, never a
+  // separately maintained copy -- written unconditionally, every frame,
+  // into BOTH the main camera buffer's own 464-byte tail offset (float
+  // index 116) and shadowLightSpaceBuffer_'s own independent 128-byte
+  // buffer, identical values in both. Identity (P11's own
+  // no-directional-light sentinel -- a zero 4x4 "projection" would be
+  // singular) when no directional light is configured this frame;
+  // shadowCasterDrawItems (below, at the drawFrame() call site) is then
+  // also empty, so neither value is ever actually read by
+  // computeShadowFactor() (pbr_direct_lit.slang/pbr_ibl.slang) in that
+  // case.
   const bool hasDirectionalLight = lightingResult.value().directionalLightCount > 0;
   Mat4 lightSpaceView = identityMatrix();
   Mat4 lightSpaceProjection = identityMatrix();
   if (hasDirectionalLight) {
     const auto& gpuDirection = lightingResult.value().directionalLights[0].direction;
-    lightSpaceView = shadowLightSpaceViewMatrix(Vec3{gpuDirection[0], gpuDirection[1], gpuDirection[2]});
-    lightSpaceProjection = shadowOrthographicMatrix();
+    const CameraMatrices lightSpaceMatrices =
+        computeShadowLightSpaceMatrices(Vec3{gpuDirection[0], gpuDirection[1], gpuDirection[2]});
+    lightSpaceView = lightSpaceMatrices.view;
+    lightSpaceProjection = lightSpaceMatrices.projection;
   }
   float* lightSpaceTail = cameraData + 116;  // byte offset 464 / sizeof(float)
   std::memcpy(lightSpaceTail, lightSpaceView.data(), sizeof(float) * 16);

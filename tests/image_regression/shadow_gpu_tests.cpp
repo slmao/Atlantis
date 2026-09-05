@@ -76,7 +76,9 @@ using atlantis::rhi::SampledTextureCreateParams;
 using atlantis::rhi::SampledTextureFormat;
 using atlantis::rhi::SamplerCreateParams;
 using atlantis::rhi::VertexInputLayout;
+using atlantis::runtime::CameraMatrices;
 using atlantis::runtime::CameraWorldPositionData;
+using atlantis::runtime::computeShadowLightSpaceMatrices;
 using atlantis::runtime::FrameLightingData;
 using atlantis::runtime::Mat4;
 using atlantis::runtime::Vec3;
@@ -172,64 +174,6 @@ static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrid
   result[10] = farZ / (nearZ - farZ);
   result[11] = -1.0f;
   result[14] = (nearZ * farZ) / (nearZ - farZ);
-  return result;
-}
-
-// Plan 0027 Milestone 9/P4/P11: duplicated -- not shared -- from
-// runtime_application.cpp's own identical, private
-// shadowLightSpaceViewMatrix()/shadowOrthographicMatrix() functions. This
-// test file must compute the exact same light-space transform Runtime
-// itself would, since it drives shadowLightSpaceBuffer/the camera
-// buffer's own tail directly, never through runFrame().
-constexpr float kShadowHalfExtent = 8.0f;
-constexpr float kShadowNearZ = 0.1f;
-constexpr float kShadowFarZ = 30.0f;
-constexpr float kUpDegenerateLengthEpsilon = 1e-6f;
-
-[[nodiscard]] Vec3 shadowCross(const Vec3& a, const Vec3& b) {
-  return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
-}
-
-[[nodiscard]] float shadowLength(const Vec3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }
-
-[[nodiscard]] float shadowDot(const Vec3& a, const Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-
-[[nodiscard]] Mat4 shadowLightSpaceViewMatrix(const Vec3& direction) {
-  Vec3 up{0.0f, 1.0f, 0.0f};
-  if (shadowLength(shadowCross(direction, up)) < kUpDegenerateLengthEpsilon) {
-    up = Vec3{0.0f, 0.0f, 1.0f};
-  }
-  const float eyeDistance = (kShadowFarZ - kShadowNearZ) * 0.5f;
-  const Vec3 eye{-direction.x * eyeDistance, -direction.y * eyeDistance, -direction.z * eyeDistance};
-
-  const Vec3 right = shadowCross(direction, up);
-  const float rightLen = shadowLength(right);
-  const Vec3 rightUnit{right.x / rightLen, right.y / rightLen, right.z / rightLen};
-  const Vec3 camUp = shadowCross(rightUnit, direction);
-
-  Mat4 result = identityMatrix();
-  result[0] = rightUnit.x;
-  result[4] = rightUnit.y;
-  result[8] = rightUnit.z;
-  result[1] = camUp.x;
-  result[5] = camUp.y;
-  result[9] = camUp.z;
-  result[2] = -direction.x;
-  result[6] = -direction.y;
-  result[10] = -direction.z;
-  result[12] = -shadowDot(rightUnit, eye);
-  result[13] = -shadowDot(camUp, eye);
-  result[14] = shadowDot(direction, eye);
-  return result;
-}
-
-[[nodiscard]] Mat4 shadowOrthographicMatrix() {
-  Mat4 result{};
-  result[0] = 1.0f / kShadowHalfExtent;
-  result[5] = -1.0f / kShadowHalfExtent;
-  result[10] = -1.0f / (kShadowFarZ - kShadowNearZ);
-  result[14] = -kShadowNearZ / (kShadowFarZ - kShadowNearZ);
-  result[15] = 1.0f;
   return result;
 }
 
@@ -571,8 +515,9 @@ void writeDirectionalLight(ShadowTestRig& rig, const Vec3& direction) {
   auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
   *lightingData = lighting;
 
-  const Mat4 lightSpaceView = shadowLightSpaceViewMatrix(direction);
-  const Mat4 lightSpaceProjection = shadowOrthographicMatrix();
+  const CameraMatrices lightSpaceMatrices = computeShadowLightSpaceMatrices(direction);
+  const Mat4& lightSpaceView = lightSpaceMatrices.view;
+  const Mat4& lightSpaceProjection = lightSpaceMatrices.projection;
   float* lightSpaceTail = cameraData + 116;  // byte offset 464 / sizeof(float)
   std::memcpy(lightSpaceTail, lightSpaceView.data(), sizeof(float) * 16);
   std::memcpy(lightSpaceTail + 16, lightSpaceProjection.data(), sizeof(float) * 16);
@@ -946,8 +891,9 @@ TEST_CASE("Directional shadow leaves the IBL/ambient term untouched: shadowed vs
       auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
       *lightingData = lighting;
 
-      const Mat4 lightSpaceView = shadowLightSpaceViewMatrix(direction);
-      const Mat4 lightSpaceProjection = shadowOrthographicMatrix();
+      const CameraMatrices lightSpaceMatrices = computeShadowLightSpaceMatrices(direction);
+      const Mat4& lightSpaceView = lightSpaceMatrices.view;
+      const Mat4& lightSpaceProjection = lightSpaceMatrices.projection;
       float* lightSpaceTail = cameraData + 116;
       std::memcpy(lightSpaceTail, lightSpaceView.data(), sizeof(float) * 16);
       std::memcpy(lightSpaceTail + 16, lightSpaceProjection.data(), sizeof(float) * 16);
