@@ -199,6 +199,20 @@ static_assert(
   return result.value();
 }
 
+// Plan 0027 Milestone 8 (ADR-0072 D-3): shadow_cast.slang's own real,
+// position-only VertexInput -- against the same shared 44-byte Vertex
+// struct above (real asset-mesh stride), not outputTransformVertexLayout()'s
+// own smaller fullscreen-triangle schema (sky's own reused geometry,
+// unrelated to shadow_cast).
+[[nodiscard]] std::optional<VertexInputLayout> shadowCastVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 // Plan 0024 Milestone 4/6: the output-transform pass's own vertex
 // schema -- NOT sourced from the mesh Vertex struct above at all (this
 // is the fixed, never-scene-content fullscreen triangle, Milestone 4),
@@ -235,6 +249,15 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
     ATLANTIS_LOG_ERROR("Invalid optional environment bootstrap configuration");
     lifecycle_.markFailed();
     return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::EnvironmentConfigInvalid);
+  }
+  // Plan 0027 Milestone 8 (ADR-0072 D-1/P1): unconditionally checked,
+  // unlike validateEnvironmentBootstrapConfig() above -- shadow
+  // infrastructure has no environment dependency.
+  auto shadowConfigResult = validateShadowBootstrapConfig(config);
+  if (shadowConfigResult.isErr()) {
+    ATLANTIS_LOG_ERROR("Invalid shadow-casting shader bootstrap configuration");
+    lifecycle_.markFailed();
+    return shadowConfigResult;
   }
 
   // Step 2: shader load (SPIR-V + reflection JSON) and VertexInputLayout resolution.
@@ -449,6 +472,36 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   outputTransformSrgbFragmentSpirv_ = std::move(outputTransformSrgbFragmentSpirvOpt.value());
   outputTransformSrgbVertexInputLayout_ = std::move(outputTransformSrgbLayoutOpt.value());
 
+  // Step 2g (Plan 0027 Milestone 8, ADR-0072 D-1/P1): the shadow-casting
+  // shader pair -- unconditional (unlike the pbrIbl/sky pair above),
+  // same shape as step 2d. Not retained as a member (unlike every other
+  // shader pair above): shadowCastPipeline_ is built once, immediately
+  // below in this same function, and never rebuilt, so these local
+  // SPIR-V/layout values need no lifetime beyond this call.
+  auto shadowCastVertexSpirvOpt = loadSpirvFile(config.shadowCastVertexShaderSpirvPath);
+  auto shadowCastFragmentSpirvOpt = loadSpirvFile(config.shadowCastFragmentShaderSpirvPath);
+  if (!shadowCastVertexSpirvOpt.has_value() || !shadowCastFragmentSpirvOpt.has_value()) {
+    ATLANTIS_LOG_ERROR("Failed to load shader SPIR-V from {} / {}", config.shadowCastVertexShaderSpirvPath,
+                        config.shadowCastFragmentShaderSpirvPath);
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  auto shadowCastVertexReflectionResult = loadReflectionMetadata(config.shadowCastVertexShaderReflectionPath);
+  if (shadowCastVertexReflectionResult.isErr()) {
+    ATLANTIS_LOG_ERROR("loadReflectionMetadata() failed for {}", config.shadowCastVertexShaderReflectionPath);
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  auto shadowCastLayoutOpt = shadowCastVertexLayout(shadowCastVertexReflectionResult.value());
+  if (!shadowCastLayoutOpt.has_value()) {
+    ATLANTIS_LOG_ERROR("shadowCastVertexLayout(): reflected vertex-input attributes do not match the Vertex schema");
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  const std::vector<std::uint32_t> shadowCastVertexSpirv = std::move(shadowCastVertexSpirvOpt.value());
+  const std::vector<std::uint32_t> shadowCastFragmentSpirv = std::move(shadowCastFragmentSpirvOpt.value());
+  const VertexInputLayout shadowCastVertexInputLayout = std::move(shadowCastLayoutOpt.value());
+
   // Step 3: Device.
   auto deviceResult = atlantis::vulkan_backend::createDevice(
       {.applicationName = config.applicationName, .enableValidationLayers = config.enableValidationLayers});
@@ -576,6 +629,61 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
     }
     skyPipeline_ = std::move(skyPipelineResult.value());
   }
+
+  // Step 4e (Plan 0027 Milestone 8, ADR-0072 D-1/P1/P4): the directional
+  // shadow map's own resources -- created once, here, unconditionally
+  // (unlike skyPipeline_ immediately above, which is gated on
+  // hasEnvironment), mirroring skyPipeline_'s own "no real Format/extent
+  // dependency, created at startup" reasoning. No drawFrame() parameter
+  // is touched yet (Milestone 9) -- these four resources are only
+  // constructed and destroyed by this Milestone.
+  auto shadowMapResult = device_->createShadowMap({.extent = {.width = 1024, .height = 1024}});
+  if (shadowMapResult.isErr()) {
+    ATLANTIS_LOG_ERROR("createShadowMap() failed");
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShadowMapCreateFailed);
+  }
+  shadowMap_ = std::move(shadowMapResult.value());
+
+  auto shadowMapSamplerResult =
+      device_->createSampler({.filter = atlantis::rhi::Filter::Nearest, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+  if (shadowMapSamplerResult.isErr()) {
+    ATLANTIS_LOG_ERROR("createSampler() (shadow map) failed");
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShadowSamplerCreateFailed);
+  }
+  shadowMapSampler_ = std::move(shadowMapSamplerResult.value());
+
+  auto shadowCastPipelineResult = device_->createPipeline(
+      {.vertexShader = {.spirvWords = shadowCastVertexSpirv.data(), .wordCount = shadowCastVertexSpirv.size()},
+       .fragmentShader = {.spirvWords = shadowCastFragmentSpirv.data(), .wordCount = shadowCastFragmentSpirv.size()},
+       .vertexInputLayout = shadowCastVertexInputLayout,
+       .depthFormat = DepthFormat::D32Sfloat,
+       .pushConstantSizeBytes = sizeof(float) * 16,
+       .sampledTextureBindingCount = 0,
+       .hasCameraUniformBinding = true,
+       .hasDepthAttachment = true,
+       .depthWriteEnabled = true,
+       .hasColorAttachment = false});
+  if (shadowCastPipelineResult.isErr()) {
+    ATLANTIS_LOG_ERROR("createPipeline() (shadow-cast) failed");
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShadowCastPipelineCreateFailed);
+  }
+  shadowCastPipeline_ = std::move(shadowCastPipelineResult.value());
+
+  // The shadow-casting pass's own dedicated light-space uniform Buffer
+  // (P5): 128 bytes (view + projection only) -- deliberately NOT the
+  // main cameraBuffer_ above (shadow_cast.slang never reads the
+  // camera/lighting fields cameraBuffer_ otherwise carries).
+  auto shadowLightSpaceBufferResult = device_->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 128});
+  if (shadowLightSpaceBufferResult.isErr()) {
+    ATLANTIS_LOG_ERROR("createBuffer() (shadow light-space uniform) failed");
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(
+        RuntimeInitError::ShadowLightSpaceBufferCreateFailed);
+  }
+  shadowLightSpaceBuffer_ = std::move(shadowLightSpaceBufferResult.value());
 
   // No hdrColorTarget_/outputTransform*Pipeline_ construction step
   // here -- Plan 0013 Section D6/Spec 0013's own Bootstrap Sequencing
@@ -1295,6 +1403,10 @@ RuntimeExitReason RuntimeApplication::shutdown() {
   fullscreenTriangleIndexBuffer_.reset();
   fullscreenTriangleVertexBuffer_.reset();
   fallbackMaterial_.reset();
+  shadowLightSpaceBuffer_.reset();
+  shadowCastPipeline_.reset();
+  shadowMapSampler_.reset();
+  shadowMap_.reset();
   skyPipeline_.reset();
   materialResourceMap_.clear();
   samplerResourceMap_.clear();

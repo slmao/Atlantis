@@ -170,6 +170,18 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
       std::string(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR) + "/output_transform_srgb.frag.spv";
   config.outputTransformSrgbFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR) + "/output_transform_srgb.frag.refl.json";
+  // Plan 0027 Milestone 8 (ADR-0072 D-1): the shadow-casting shader pair
+  // -- unconditionally required (mirrors main.cpp's own identical
+  // population), regardless of this test's own no-environment
+  // configuration above.
+  config.shadowCastVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.vert.spv";
+  config.shadowCastVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.vert.refl.json";
+  config.shadowCastFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.spv";
+  config.shadowCastFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.refl.json";
   config.enableValidationLayers = true;
 
   auto appResult = createRuntimeApplication(config);
