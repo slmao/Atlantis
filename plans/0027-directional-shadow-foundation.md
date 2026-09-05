@@ -16,13 +16,22 @@ untouched.
 
 ## Non-negotiable rule for Implementation
 
-**Every numeric value fixed in P4/P11 below (resolution, orthographic
-volume, `kShadowBias`, the up-vector degeneracy threshold, and every
-test sample point/threshold in P10) is approved as written.** If a real
-GPU capture during Implementation shows any of them needs to change,
-**stop and request human confirmation before changing it** — never
-adjust silently and continue. This applies even to a change that looks
-purely cosmetic (e.g. a one-pixel sample-point shift).
+**Every numeric value fixed in P4/P10/P11 below (resolution, orthographic
+volume, `kShadowBias`, the up-vector degeneracy threshold, every world-
+space sample point, and every luminance threshold in P10) is approved as
+written.** If a real GPU capture during Implementation shows any of them
+needs to change, **stop and request human confirmation before changing
+it** — never adjust silently and continue.
+
+**Carve-out, stated precisely so it is not read as an escape hatch:**
+mechanically re-executing P10's own fixed shadow-footprint/pixel-projection
+formula against its own fixed inputs (scene positions, camera, light
+directions) and getting an integer pixel that differs from this Plan's
+own hand-computed value by a point or two (floating-point rounding only)
+is not a value change — it is finishing the same computation this Plan
+already specifies. Changing the formula itself, the world-space points,
+the camera/light parameters, or a threshold's underlying rationale is a
+value change and requires stopping.
 
 ## Plan-Stage Decisions
 
@@ -543,75 +552,187 @@ and is unaffected.
 
 Every non-Runtime, non-`pbr_material_demo_fixture` file above needs only
 a **minimal, always-possible** `ShadowMap`/`Sampler`/`Pipeline`/`Buffer`
-(real for GPU-backed tests, `FakeShadowMap` — new, mirroring
+(real for GPU-backed tests — see P9(f) for exactly where each one's own
+`shadow_cast.slang` SPIR-V comes from; `FakeShadowMap` — new, mirroring
 `FakeHdrColorTarget` — for `renderer_ownership_tests.cpp`'s pure-unit
 doubles) — `shadowCasterDrawItems` stays empty; none of these need a
 real occluder. **Zero behavioral change**, confirmed by each file's own
 existing tests/golden continuing to pass unmodified.
 
-### P10 — Real-GPU discriminating verification
+**(f) Shader-artifact provenance for every real-GPU/example target
+needing a real `shadow_cast` Pipeline — every `add_dependencies`/
+compile-definition/copy site, confirmed by direct `rg` reading of every
+CMakeLists.txt this touches, not sampled.** Two existing conventions in
+this codebase, and every consumer of each:
+
+**Convention 1 — compile-definition (`ATLANTIS_<PREFIX>_..._SHADER_DIR`
+pointing at the build-tree `${ATLANTIS_<name>_SHADER_OUTPUT_DIR}`
+absolute path, no file copy).** Add
+`ATLANTIS_<PREFIX>_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"`
+and `shadow_cast_shaders` to `add_dependencies(...)`, mirroring exactly
+how `..._PBR_DIRECT_LIT_SHADER_DIR`/`pbr_direct_lit_shaders` is already
+wired for each target below:
+
+| CMakeLists.txt | Target(s) | New macro prefix |
+|---|---|---|
+| `src/runtime/CMakeLists.txt` | `atlantis_runtime` | `ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR` |
+| `tests/runtime/CMakeLists.txt` | `atlantis_runtime_gpu_tests` | `ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR` |
+| `tests/shader_system/CMakeLists.txt` | `atlantis_shader_system_tests` | `ATLANTIS_SHADOW_CAST_SHADER_DIR` |
+| `tests/image_regression/CMakeLists.txt` | `atlantis_image_regression_gpu_tests` | `ATLANTIS_MATERIAL_DEMO_SHADOW_CAST_SHADER_DIR`, `ATLANTIS_LIGHTING_DEMO_SHADOW_CAST_SHADER_DIR`, `ATLANTIS_PBR_MATERIAL_DEMO_SHADOW_CAST_SHADER_DIR`, `ATLANTIS_HDR_ROLL_OFF_DEMO_SHADOW_CAST_SHADER_DIR`, `ATLANTIS_IBL_DEMO_SHADOW_CAST_SHADER_DIR` (5 — one per fixture-config reusing `pbr_material_demo_fixture.cpp`/`material_demo_fixture.cpp`/`lighting_demo_fixture.cpp`) |
+| `tests/image_regression/golden_generator/CMakeLists.txt` | `atlantis_image_regression_material_demo_golden_generator` | `ATLANTIS_MATERIAL_DEMO_SHADOW_CAST_SHADER_DIR` |
+| (same file) | `atlantis_image_regression_lighting_demo_golden_generator` | `ATLANTIS_LIGHTING_DEMO_SHADOW_CAST_SHADER_DIR` |
+| (same file) | `atlantis_image_regression_pbr_material_demo_golden_generator` | `ATLANTIS_PBR_MATERIAL_DEMO_SHADOW_CAST_SHADER_DIR` |
+| (same file) | `atlantis_image_regression_ibl_material_demo_golden_generator` | `ATLANTIS_IBL_DEMO_SHADOW_CAST_SHADER_DIR` |
+| (same file) | `atlantis_image_regression_hdr_roll_off_demo_golden_generator` | `ATLANTIS_HDR_ROLL_OFF_DEMO_SHADOW_CAST_SHADER_DIR` |
+
+**Convention 2 — plain relative path (`shaders/shadow_cast.{vert,frag}.spv`,
+`WORKING_DIRECTORY`-resolved, copied via `POST_BUILD`
+`copy_if_different`).** Add `shadow_cast_shaders` to the target's
+existing `add_dependencies(...)` and one new `copy_if_different` command
+(the same four files: `.vert.spv`, `.vert.refl.json`, `.frag.spv`,
+`.frag.refl.json`) to its existing `POST_BUILD` block:
+
+| CMakeLists.txt | Target(s) | Covers (via this Plan's own call-site table) |
+|---|---|---|
+| `tests/vulkan_backend/CMakeLists.txt` | `atlantis_vulkan_backend_gpu_tests` | `descriptor_pool_growth`, `headless_rendering`, `minimal_renderer` GPU tests (shared executable, one copy block) |
+| `examples/headless_rendering_demo/CMakeLists.txt` | `atlantis_headless_rendering_demo` | its own `main.cpp` |
+| `examples/minimal_renderer_demo/CMakeLists.txt` | `atlantis_minimal_renderer_demo` | its own `main.cpp` |
+| `tests/image_regression/CMakeLists.txt` | `atlantis_image_regression_gpu_tests` (same target as Convention 1's row above — needs **both**) | `minimal_cube`, `textured_quad`, `world_scene`, `world_scene_loaded` fixtures (shared executable, one copy block) |
+| `tests/image_regression/golden_generator/CMakeLists.txt` | `atlantis_image_regression_golden_generator` (bare `main.cpp`, minimal_cube) | its own capture |
+| (same file) | `atlantis_image_regression_world_scene_golden_generator` | its own capture |
+| (same file) | `atlantis_image_regression_textured_quad_golden_generator` | its own capture |
+
+`tests/renderer/CMakeLists.txt` needs **no** shader wiring at all
+(confirmed — `renderer_ownership_tests.cpp` links no shader macro or
+`add_dependencies` today; its `FakeShadowMap` is a pure C++ double, no
+real Vulkan device involved).
+`tests/vulkan_backend/pipeline_depth_write_gpu_tests.cpp` (same
+executable as the three Convention-2 vulkan_backend tests above) needs
+no new wiring of its own — confirmed unaffected (P9(e)) — Milestone 2's
+own new `shadow_map_render_gpu_tests.cpp` test reuses the
+already-copied `minimal_mesh`/`textured_quad` pairs, not `shadow_cast`.
+
+### P10 — Real-GPU discriminating verification: exact points, projection, thresholds
 
 **New file:** `tests/image_regression/shadow_gpu_tests.cpp` (mirrors
-`sky_background_gpu_tests.cpp`'s placement/style).
+`sky_background_gpu_tests.cpp`'s placement/style). No-directional-light
+byte compatibility is **not** retested here — it is already a hard,
+golden-backed requirement on `ibl_material_demo` (Milestone 10's own
+golden-strategy bullet); this file tests shadow mechanics only:
+occlusion, movement, out-of-bounds, first-use-vs-reused, and R1/R2/R3
+IBL isolation.
 
-**Group A — occlusion, movement, out-of-bounds, first-use, no-light
-compatibility (no environment needed).** Hand-built via `createMesh()`
-with the real 44-byte `Vertex{position,color,uv,normal}` layout (needed
-for real `PbrDirectLit` shading, unlike `sky_background_gpu_tests.cpp`'s
-own smaller local `Vertex`):
+**Fixed scene (Group A, no environment).** Hand-built via `createMesh()`
+with the real 44-byte `Vertex{position,color,uv,normal}` layout:
 
-- A `12×12`-unit ground quad (`x,z ∈ [-6,6]`, `y=0`, normal `+Y`).
-- A `1×1×1` occluder cube at `(0, 1.5, 0)`.
-- Both a real `PbrDirectLit` Material (small solid-color
-  `SampledTexture`+`Sampler`, mirroring `pbr_render_gpu_tests.cpp`'s
-  `rig.texture`/`rig.sampler`).
-- Camera: eye `≈ (0, 6, 10)` toward the origin, `kFovYRadians`/`kNearZ`/`kFarZ`.
-- Directional light: normalized `(-0.3, -1.0, -0.2)`, written directly
-  into the camera buffer's `directionalLights[0]` (offset 144) plus
-  `directionalLightCount = 1` (offset 128).
+- Ground quad: `x,z ∈ [-6,6]`, `y=0`, normal `+Y`, `PbrDirectLit`
+  Material, `baseColorFactor = (0.8,0.8,0.8,1)`, `metallicFactor = 0.0`,
+  `roughnessFactor = 0.8` (a small solid-color `SampledTexture`+`Sampler`
+  supplies this, mirroring `pbr_render_gpu_tests.cpp`'s `rig.texture`/
+  `rig.sampler`).
+- Occluder: `1×1×1` cube centered at `(0, 1.5, 0)`, same Material.
+- A second, small `2×2` quad centered at `(0, 0, -9.5)`, same Material —
+  the out-of-bounds probe (`|-9.5| > 8`, outside P4's fixed volume on
+  every axis it matters).
+- Camera: eye `(0, 6, 10)`, forward `= normalize((0,0,0)-eye)`, world-up
+  `(0,1,0)`, `kFovYRadians = 60°`, aspect `1.0`, `kNearZ = 0.1`,
+  `kFarZ = 100.0` (`sky_background_gpu_tests.cpp`'s own constants).
+  Written via `lookAtMatrixFromForward`/`perspectiveMatrixDirect` (same
+  functions that file already establishes).
+- Directional light: `direction = normalize(-0.3, -1.0, -0.2)`
+  `≈ (-0.28224, -0.94046, -0.18816)`, `color = (1,1,1)`,
+  `intensity = 3.0`, written directly into the camera buffer's
+  `directionalLights[0]` (offset 144) plus `directionalLightCount = 1`
+  (offset 128).
 
-Checks (sample points/thresholds are derived from this geometry, not
-measured — see the Non-negotiable rule above):
+**Shadow-footprint formula (exact, reused for every occluder position/
+light direction below — this is the one fixed method, not a per-case
+guess):** for an occluder center at world `(cx, cy, cz)` and a unit
+light direction `d`, the ground-plane (`y=0`) shadow-footprint center is
+`t = -cy / d.y`, `footprint = (cx + t·d.x, 0, cz + t·d.z)`. Pixel
+projection uses the camera above: `viewX = dot(p-eye, right)`,
+`viewY = dot(p-eye, camUp)`, `viewZ = -dot(p-eye, forward)`,
+`clipX = f·viewX`, `clipY = -f·viewY` (`f = 1/tan(30°) = 1.732051`),
+`clipW = -viewZ`, `pixel = round((clip/clipW + 1)/2 · 512)`. This
+exact formula, not a re-derivation, is what Implementation must
+literally execute (in the test's own setup code or by hand once, cross-
+checked against it) — an integer-rounding difference of a pixel or two
+against this Plan's own hand-computed values below is expected and is
+**not** a value change requiring stop-and-ask; a different formula, a
+different scene position, or a different light direction is.
 
-1. **Occlusion:** the ground point at the occluder's analytically-predicted
-   shadow footprint renders measurably darker than an unshadowed ground
-   point at the same camera distance, with the occluder present in
-   `shadowCasterDrawItems`.
-2. **Movement:** translating the occluder or changing the light
-   direction moves the darkened footprint to the newly-predicted
-   location.
-3. **Out-of-bounds:** a ground point outside the fixed `±8` coverage
-   volume renders lit, never shadowed.
-4. **First-use vs. later-empty-caster (the actual comparison, not a
-   restated claim):** two renders, **identical** nonzero directional
-   light and **identical** geometry throughout, both with an **empty**
-   `shadowCasterDrawItems` — (i) the very first frame ever rendered
-   against a freshly-created `ShadowMap`, (ii) a later frame using that
-   same `ShadowMap` after at least one prior frame already rendered
-   through it. These two must be byte-identical — proving the
-   unconditional per-frame clear (P7) makes a brand-new `ShadowMap` and
-   an already-used one behave identically, not merely asserting it.
-5. **No-directional-light byte compatibility — an independent test, not
-   folded into #4:** a scene with `directionalLightCount = 0` (light
-   genuinely off, not merely an empty caster list under a nonzero light)
-   renders byte-identical to the same scene rendered before this Plan's
-   own shader change existed (i.e., matches this file's own committed
-   reference capture) — confirming the shadow term is structurally
-   unreachable, independent of any caster-list mechanics.
+Checks:
+
+1. **Occlusion.** Occluder at `(0,1.5,0)` → `t = 1.5951`, footprint
+   `P ≈ (-0.450, 0, -0.300)` → pixel **(239, 250)**. Reference point
+   `Q = (3.0, 0, 3.0)` (well outside the footprint, same ground plane)
+   → pixel **(402, 331)**. With the occluder present in
+   `shadowCasterDrawItems`: `luminance(P) == 0` **exactly** —
+   `pbr_direct_lit.slang:124`'s own "no ambient term" comment, confirmed
+   in the current shader source, means a fully-shadowed point's
+   `accumulated` stays at exactly `(0,0,0)` through HDR/tonemap/sRGB
+   (zero is a fixed point of both). `luminance(Q) > 30` (RGB8 sum,
+   `0-765` range) — a conservative, disclosed floor: this Plan does not
+   hand-derive the exact tonemapped/sRGB-encoded value of an 80%-albedo
+   Lambertian-dominant surface under `NdotL = 0.940`, but any
+   non-degenerate result clears `30` by a wide margin.
+2. **Movement — occluder translation.** Move the occluder to
+   `(1.0, 1.5, 0.0)`; by the formula above (`t` depends only on `cy`,
+   unchanged), the new footprint is the old one shifted by the same
+   `(+1, 0)` world-space delta: `P' ≈ (0.550, 0, -0.300)` → pixel
+   **(276, 250)**. Check: `luminance(P') == 0` (now shadowed);
+   `luminance` at the **old** `P ≈ (-0.450,0,-0.300)` / pixel `(239,250)`
+   is now `> 30` (no longer shadowed).
+3. **Movement — light-direction change.** Restore the occluder to
+   `(0,1.5,0)`; change light direction to
+   `normalize(0.3, -1.0, -0.2) ≈ (0.28224, -0.94046, -0.18816)` (mirrored
+   in `x`). Recompute the footprint with the **same formula** and this
+   new `d`: `t = 1.5951` (unchanged, `|d.y|` unchanged),
+   `P'' ≈ (0.450, 0, -0.300)` → pixel **(276, 250)** — the same
+   destination pixel as check 2's `P'`, since both moves shift the
+   footprint by the identical `+0.45` in `x` (a real, checkable
+   coincidence of this Plan's own chosen numbers, not an error).
+   `luminance(P'') == 0`.
+4. **Out-of-bounds.** The `(0,0,-9.5)` quad's own center projects to
+   pixel **(256, 147)** under the ORIGINAL camera/light (check 1's
+   configuration, occluder back at `(0,1.5,0)`). It lies outside P4's
+   `±8` volume on every axis that matters (`|-9.5| > 8`); D-5's
+   out-of-bounds-is-lit rule requires `luminance(this point) > 30`
+   (the same conservative floor as check 1) regardless of any
+   occluder's position.
+5. **First-use vs. reused `ShadowMap` (the actual comparison).** Two
+   renders, identical nonzero light (check 1's configuration) and
+   identical geometry, both with `shadowCasterDrawItems` empty: (i) the
+   very first frame against a freshly-created `ShadowMap`, (ii) a later
+   frame reusing that same `ShadowMap` after ≥1 prior frame rendered
+   through it. Byte-identical full-frame comparison — `firstDifferingByte()`
+   (mirroring `sky_background_gpu_tests.cpp`'s own helper) `==` the
+   buffer's own size.
 6. Vulkan Validation Layers clean throughout.
 
 **Group B — R1/R2/R3 IBL isolation (needs environment; reuses
-`IblMaterialDemoFixture`).** Same geometry as Group A:
+`IblMaterialDemoFixture`).** Identical geometry, camera, and light as
+Group A's check 1 (occluder at `(0,1.5,0)`, sample point `P` at pixel
+`(239,250)`):
 
-- **R1 (shadowed):** real occluder in `shadowCasterDrawItems`,
+- **R1 (shadowed):** occluder present in `shadowCasterDrawItems`,
   `directionalLightCount = 1`.
 - **R2 (unshadowed control, same nonzero light):** identical scene,
   `shadowCasterDrawItems` empty, `directionalLightCount` still `1`.
 - **R3 (light-off IBL/ambient reference):** identical scene,
   `directionalLightCount = 0`.
-- Check 1 (positive control): `R1[P] < R2[P]` by a real margin at
-  shadowed sample point `P`.
-- Check 2 (IBL isolation): `R1[P] ≈ R3[P]` within a small tolerance.
+- **Check 1 (positive control):** `luminance(R2[P]) - luminance(R1[P]) > 15`
+  — a conservative, disclosed floor (same rationale as check 1 above:
+  the exact IBL+direct BRDF+tonemap output is not hand-derived here,
+  but a real, nonzero directional contribution at `NdotL = 0.940` should
+  clear a margin this small easily).
+- **Check 2 (IBL isolation):** `|luminance(R1[P]) - luminance(R3[P])| <= 5`
+  — `P` is chosen well inside the shadow's own interior (not near an
+  edge — the occluder's `1×1` footprint at this light angle projects to
+  roughly a `1×1`-unit ground region centered on `P`, comfortably larger
+  than any bias-affected boundary sliver), so R1 and R3 should differ
+  only by quantization/floating-point noise if the shadow factor
+  correctly leaves the IBL/ambient term untouched.
 
 ### P11 — Light-space up-vector: real convention checked, a deliberate new choice, not a reuse
 
@@ -716,12 +837,17 @@ every one of the 25 call sites at once (Milestone 9), then verification
 - `tests/shader_system/shadow_cast_reflection_tests.cpp` (new, mirrors
   `sky_reflection_tests.cpp`) — a real, freshly-compiled reflection
   check confirming the contract this Plan already verified via probe.
-- CMake files that reference `sky`'s own shader-output-dir convention
-  and need a parallel `shadow_cast` entry (confirmed by `rg`, not
-  guessed): `src/runtime/CMakeLists.txt`,
-  `tests/image_regression/CMakeLists.txt`,
-  `tests/image_regression/golden_generator/CMakeLists.txt`,
-  `tests/runtime/CMakeLists.txt`, `tests/shader_system/CMakeLists.txt`.
+  `tests/shader_system/CMakeLists.txt` gains this test's own
+  `ATLANTIS_SHADOW_CAST_SHADER_DIR`/`shadow_cast_shaders` wiring now
+  (P9(f)) — this one target's wiring is not tied to the atomic
+  `drawFrame()` commit, since this test never calls `drawFrame()`.
+- This Milestone creates the `shadow_cast_shaders` CMake target itself
+  (`shaders/shadow_cast/CMakeLists.txt` + root `add_subdirectory`) —
+  every *other* target's own dependency on it (every row in P9(f)'s two
+  tables besides `atlantis_shader_system_tests` above) is wired in
+  Milestone 9, landing together with the C++ code that actually reads
+  the resulting shader path, not as a disconnected CMake-only change
+  here.
 
 ### Milestone 5 — Light-space buffers, shader content, descriptor extension
 
@@ -798,10 +924,17 @@ committed.
   `setUpPbrMaterialDemoFixture()`; every other file in the table gets
   its own minimal, always-possible resource set (real for GPU tests, a
   new `FakeShadowMap` — mirroring `FakeHdrColorTarget` — for
-  `renderer_ownership_tests.cpp`'s 9 call sites).
+  `renderer_ownership_tests.cpp`'s 9 call sites) — **every real (not
+  `FakeShadowMap`) resource set's own `shadow_cast.slang` SPIR-V comes
+  from exactly the CMake wiring P9(f) specifies for that file's own
+  executable**, landed in this same commit: every row of P9(f)'s two
+  tables except `atlantis_shader_system_tests` (already wired in
+  Milestone 4).
 - `golden_generator/pbr_material_demo_main.cpp`'s `buildConfig()` gains
   the unconditional shadow-shader-path block in both its
-  `ATLANTIS_IBL_GOLDEN_GENERATOR` and non-IBL branches.
+  `ATLANTIS_IBL_GOLDEN_GENERATOR` and non-IBL branches, reading the
+  `ATLANTIS_{PBR_MATERIAL_DEMO,HDR_ROLL_OFF_DEMO,IBL_DEMO}_SHADOW_CAST_SHADER_DIR`
+  macros P9(f) adds to their own three golden-generator executables.
 - `renderer_ownership_tests.cpp`: every existing `TEST_CASE` updated to
   compile (existing assertions otherwise unchanged); one new `TEST_CASE`
   asserts the "shadow" pass's draw sequence records strictly before
@@ -813,17 +946,18 @@ committed.
 
 ### Milestone 10 — Verification and golden strategy
 
-- P10 Group A (occlusion, movement, out-of-bounds, first-use-vs-later-
-  empty-caster, no-light byte compatibility as its own independent
-  check) and Group B (R1/R2/R3 IBL isolation), in
+- P10 Group A (occlusion, movement ×2, out-of-bounds, first-use-vs-reused)
+  and Group B (R1/R2/R3 IBL isolation), in
   `tests/image_regression/shadow_gpu_tests.cpp`.
 - Golden strategy: `minimal_cube`, `world_scene`, `textured_quad`,
   `material_demo`, `lighting_demo` — existing, unmodified tests confirm
   byte-identical. `ibl_material_demo` — hard requirement, a real
   pixel-identity check against the existing committed golden, asserted
-  directly. `pbr_material_demo`/`hdr_roll_off_demo` — run existing tests
-  first; re-capture (ADR-0042) requested only if an actual difference
-  appears, never presumed.
+  directly; **this is also the no-directional-light byte-compatibility
+  proof** (this scene has none, by design) — `shadow_gpu_tests.cpp`
+  itself does not retest it. `pbr_material_demo`/`hdr_roll_off_demo` —
+  run existing tests first; re-capture (ADR-0042) requested only if an
+  actual difference appears, never presumed.
 - Full `ctest -LE gpu`, `ctest -L gpu`, Debug and Release; a fresh
   `ATLANTIS_BUILD_TESTS=OFF` build; Vulkan Validation Layers clean.
 
@@ -864,6 +998,15 @@ committed.
   only, no assertion change): `tests/image_regression/fixture/{lighting_demo,material_demo,minimal_cube,textured_quad,world_scene,world_scene_loaded}_fixture.cpp`,
   `tests/vulkan_backend/{descriptor_pool_growth,headless_rendering,minimal_renderer}_gpu_tests.cpp`,
   `examples/{headless_rendering_demo,minimal_renderer_demo}/main.cpp`.
+- CMake (every target in P9(f)'s two tables, cross-checked against the
+  files above — none omitted): `examples/headless_rendering_demo/CMakeLists.txt`,
+  `examples/minimal_renderer_demo/CMakeLists.txt`, plus the six
+  CMakeLists.txt files already listed above (`tests/vulkan_backend/`,
+  `tests/runtime/`, `tests/shader_system/`, `tests/image_regression/`,
+  `tests/image_regression/golden_generator/`, `src/runtime/`) — each
+  gains exactly the `shadow_cast_shaders` dependency plus either the
+  compile-definitions or the `copy_if_different` command P9(f) specifies
+  for it, no more and no less.
 - Documentation: this Plan; `specs/README.md` status pointer, updated at
   PR time.
 
@@ -901,15 +1044,20 @@ change together — never split across commits.
   `copyRenderTargetToBuffer()` path (Milestone 2); `shadow_cast_reflection_tests.cpp`/
   extended `pbr_direct_lit`/`pbr_ibl` reflection tests confirm the real,
   compiled contract and tail offset (Milestone 4/5); `shadow_gpu_tests.cpp`
-  Group A confirms occlusion, movement, out-of-bounds-is-lit, first-use-
-  vs-later-empty-caster equivalence, and no-light byte compatibility as
-  an independent check (Milestone 10); Group B confirms the positive
-  control and IBL isolation; Debug and Release, Vulkan Validation Layers
-  clean.
+  Group A confirms occlusion, both movement cases, out-of-bounds-is-lit,
+  and first-use-vs-reused-`ShadowMap` equivalence against P10's own
+  fixed pixel coordinates and thresholds (Milestone 10); Group B
+  confirms the positive control and IBL isolation; Debug and Release,
+  Vulkan Validation Layers clean.
 - [ ] Image regression: five non-PBR goldens byte-identical;
-  `ibl_material_demo` asserted byte-identical (hard requirement);
+  `ibl_material_demo` asserted byte-identical (hard requirement — also
+  this Plan's sole no-directional-light byte-compatibility proof);
   `pbr_material_demo`/`hdr_roll_off_demo` compared first, re-capture
   requested only if an actual difference appears.
+- [ ] CMake: every target in P9(f)'s two tables links `shadow_cast_shaders`
+  (`add_dependencies`) and resolves its own compiled SPIR-V/reflection
+  JSON (compile-definition or `copy_if_different`, per convention) —
+  cross-checked against Files/Modules Touched below, not just declared.
 - [ ] Descriptor pool: the new `N+4`/`N+5`-with-shadow `TEST_CASE`
   (Milestone 7) confirms against the real 60-set ceiling.
 - [ ] Full `ctest -LE gpu` and `ctest -L gpu`, Debug and Release.
@@ -946,25 +1094,38 @@ No deltas beyond the Verification Checklist above.
 
 1. **P4/P11's concrete numeric values** (1024×1024 resolution; center
    `(0,0,0)`, half-extent `8.0`, near `0.1`, far `30.0`; `kShadowBias =
-   0.0015`; the `1e-6f` up-vector degeneracy threshold reused from
-   `extractCameraMatrices()`) — approved as the Implementation starting
-   point. Per this Plan's own Non-negotiable rule, any change during
-   Implementation requires stopping and requesting confirmation, never
-   a silent adjustment.
+   0.0015`; the `1e-6f` up-vector degeneracy threshold) and **P10's own
+   fixed scene positions, camera/light parameters, pixel coordinates,
+   and luminance thresholds** (occluder/quad/camera/light values; pixels
+   `(239,250)`, `(402,331)`, `(276,250)`, `(256,147)`; thresholds `> 30`,
+   `> 15`, `<= 5`) — approved as written, including which thresholds are
+   exact structural predictions (`luminance == 0`, from `pbr_direct_lit.slang:124`'s
+   confirmed "no ambient term") versus disclosed conservative floors
+   (`> 30`, `> 15`, `<= 5`, not hand-derived through the full BRDF/
+   tonemap/sRGB pipeline). Per the Non-negotiable rule, any change during
+   Implementation (beyond the stated integer-rounding carve-out) requires
+   stopping and requesting confirmation.
 2. **P6's shadow-map binding-index dispatch** via
    `Material::environmentBinding()` (binding 2 / 4) rather than a new
    `MaterialKind` — confirm this is the correct, minimal insertion
    point.
 3. **P9's exhaustive migration tables** (P9(d)'s 5-file buffer-size
-   table, P9(e)'s 16-file/25-call-site `drawFrame()` table) — confirmed
-   complete by direct `rg` search of the whole repository this pass, not
-   sampled. Confirm no additional caller is expected to exist outside
-   this list (e.g., in a private branch not visible to this research).
-4. **P10's new test scene** (hand-built ground quad + occluder cube via
-   `createMesh()`, not a new `.scene.txt` asset) — confirm this is
-   preferred over exercising the full asset-loading path.
-5. **Milestone 8/9's split** (Runtime's own new resources land
+   table, P9(e)'s 16-file/25-call-site `drawFrame()` table, P9(f)'s
+   two-convention CMake table covering every one of those files' own
+   `shadow_cast.slang` artifact provenance) — confirmed complete by
+   direct `rg` search of the whole repository this pass, including every
+   CMakeLists.txt that references `sky`'s or `pbr_ibl`'s own
+   shader-output-dir convention. Confirm no additional caller or build
+   target is expected to exist outside this list.
+4. **P10's new test scene** (hand-built ground quad + occluder cube +
+   out-of-bounds quad via `createMesh()`, not a new `.scene.txt` asset;
+   no-directional-light byte compatibility is proven by the existing
+   `ibl_material_demo` golden alone, not retested in the new file) —
+   confirm this scope is preferred over exercising the full
+   asset-loading path or duplicating the no-light proof.
+5. **Milestone 8/9's split** (Runtime's own new resources, including
+   their own CMake wiring for the one target that needs it early, land
    standalone and buildable before the `drawFrame()` signature changes
-   in one atomic commit touching all 25 call sites) — confirm this
-   sequencing, rather than a single combined milestone, is the preferred
+   in one atomic commit touching all 25 call sites and every remaining
+   CMake target in P9(f)) — confirm this sequencing is the preferred
    shape for reviewable, always-buildable commits.
