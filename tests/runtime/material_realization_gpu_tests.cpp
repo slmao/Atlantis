@@ -981,25 +981,32 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4 with an environme
   REQUIRE(device->waitIdle().isOk());
 }
 
-// Plan 0027 Milestone 7 (ADR-0072 D-7): one more fixed, never-rebuilt
-// Pipeline, always present -- the shadow-casting Pipeline (created once
-// at Runtime startup, unconditionally, ADR-0072 D-1). Mirrors the
-// N+4-with-sky TEST_CASE above exactly, with one new
-// kShadowCastPipelineCount term added to both sums.
-TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4/N+5 with a shadow-cast Pipeline present",
-          "[runtime][gpu][material_realization][descriptor_pool_growth][hdr][shadow_map]") {
+// Plan 0027 Milestone 7 (ADR-0072 D-7): two more fixed, never-rebuilt
+// Pipelines, both always present -- the sky Pipeline (environment
+// configured) AND the shadow-casting Pipeline (unconditional, ADR-0072
+// D-1). Mirrors the N+4-with-sky TEST_CASE above, with both
+// kSkyPipelineCount and kShadowCastPipelineCount terms added to the
+// sums -- this is the real N+4/N+5 combination Runtime actually reaches
+// once both an environment and shadow infrastructure exist together,
+// not shadow-cast alone (which would only reach N+3/N+4, already
+// covered by the no-sky case above).
+TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4/N+5 with both a sky and a shadow-cast Pipeline "
+          "present",
+          "[runtime][gpu][material_realization][descriptor_pool_growth][hdr][sky][shadow_map]") {
   using atlantis::vulkan_backend::detail::kDescriptorPoolMaxSetsByGeneration;
 
   constexpr std::size_t kMaterialPipelineCount = 6;
   constexpr std::size_t kFallbackPipelineCount = 1;
+  constexpr std::size_t kSkyPipelineCount = 1;
   constexpr std::size_t kShadowCastPipelineCount = 1;
   constexpr std::size_t kSteadyOutputTransformPipelineCount = 1;
   constexpr std::size_t kTransientOutputTransformPipelineCount = 1;
   constexpr std::size_t kExpectedSteadySetCount = kMaterialPipelineCount + kFallbackPipelineCount +
-                                                   kShadowCastPipelineCount + kSteadyOutputTransformPipelineCount;
+                                                   kSkyPipelineCount + kShadowCastPipelineCount +
+                                                   kSteadyOutputTransformPipelineCount;
   constexpr std::size_t kExpectedPeakSetCount = kExpectedSteadySetCount + kTransientOutputTransformPipelineCount;
-  static_assert(kExpectedSteadySetCount == 9);  // N + 3 (this Pipeline set alone, no sky)
-  static_assert(kExpectedPeakSetCount == 10);   // N + 4
+  static_assert(kExpectedSteadySetCount == 10);  // N + 4
+  static_assert(kExpectedPeakSetCount == 11);    // N + 5
 
   const std::size_t totalDescriptorSetCapacity = std::accumulate(
       kDescriptorPoolMaxSetsByGeneration.begin(), kDescriptorPoolMaxSetsByGeneration.end(), std::size_t{0});
@@ -1007,7 +1014,8 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4/N+5 with a shadow
   REQUIRE(kExpectedPeakSetCount < totalDescriptorSetCapacity);
 
   auto deviceResult = atlantis::vulkan_backend::createDevice(
-      {.applicationName = "Atlantis N=6 HDR+ShadowCast Descriptor Pool GPU Test", .enableValidationLayers = true});
+      {.applicationName = "Atlantis N=6 HDR+Sky+ShadowCast Descriptor Pool GPU Test",
+       .enableValidationLayers = true});
   REQUIRE(deviceResult.isOk());
   std::unique_ptr<atlantis::rhi::Device> device = std::move(deviceResult.value());
 
@@ -1063,6 +1071,30 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4/N+5 with a shadow
   }
   REQUIRE(materialPipelines.size() == kMaterialPipelineCount);
 
+  // The sky Pipeline (ADR-0071 P3) -- same real shape as the N+4-with-sky
+  // TEST_CASE above.
+  const auto skyVertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.vert.spv");
+  const auto skyFragmentSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.frag.spv");
+  auto skyReflection = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.vert.refl.json");
+  REQUIRE(skyVertexSpirv.has_value());
+  REQUIRE(skyFragmentSpirv.has_value());
+  REQUIRE(skyReflection.isOk());
+  const auto skyLayout = outputTransformVertexLayout(skyReflection.value());
+  REQUIRE(skyLayout.has_value());
+
+  auto skyPipelineResult = device->createPipeline(
+      {.vertexShader = {.spirvWords = skyVertexSpirv->data(), .wordCount = skyVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = skyFragmentSpirv->data(), .wordCount = skyFragmentSpirv->size()},
+       .vertexInputLayout = *skyLayout,
+       .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
+       .depthFormat = atlantis::rhi::DepthFormat::D32Sfloat,
+       .sampledTextureBindingCount = 1,
+       .hasDepthAttachment = true,
+       .depthWriteEnabled = false});
+  REQUIRE(skyPipelineResult.isOk());
+  std::unique_ptr<atlantis::rhi::Pipeline> skyPipeline = std::move(skyPipelineResult.value());
+  REQUIRE(skyPipeline != nullptr);
+
   // The shadow-casting Pipeline (ADR-0072 D-1/D-3): depth-only
   // (hasColorAttachment = false), no sampled-texture binding at all
   // (sampledTextureBindingCount = 0) -- its own real shape.
@@ -1086,6 +1118,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4/N+5 with a shadow
        .depthFormat = atlantis::rhi::DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = sizeof(float) * 16,
        .sampledTextureBindingCount = 0,
+       .hasCameraUniformBinding = true,
        .hasDepthAttachment = true,
        .depthWriteEnabled = true,
        .hasColorAttachment = false});
@@ -1119,17 +1152,18 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4/N+5 with a shadow
   std::unique_ptr<atlantis::rhi::Pipeline> steadyOutputTransformPipeline = makeOutputTransformPipelineForShadowCastTest(
       ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_UNORM_SHADER_DIR, "output_transform_unorm", Format::Rgba8Unorm);
   REQUIRE(steadyOutputTransformPipeline != nullptr);
-  REQUIRE(1 + materialPipelines.size() + 1 + 1 == kExpectedSteadySetCount);
+  REQUIRE(1 + materialPipelines.size() + 1 + 1 + 1 == kExpectedSteadySetCount);
 
   // The second output-transform Pipeline is the prepared-but-not-yet-
-  // swapped format-change candidate -- the shadow-casting Pipeline
-  // above is never rebuilt by this event, so only the output-transform
-  // old/new pair coexists, producing the real N+4 peak.
+  // swapped format-change candidate -- neither the sky nor the
+  // shadow-casting Pipeline above is ever rebuilt by this event, so
+  // only the output-transform old/new pair coexists, producing the
+  // real N+5 peak.
   std::unique_ptr<atlantis::rhi::Pipeline> transientOutputTransformPipeline =
       makeOutputTransformPipelineForShadowCastTest(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR,
                                                     "output_transform_srgb", Format::Rgba8Srgb);
   REQUIRE(transientOutputTransformPipeline != nullptr);
-  REQUIRE(1 + materialPipelines.size() + 1 + 2 == kExpectedPeakSetCount);
+  REQUIRE(1 + materialPipelines.size() + 1 + 1 + 2 == kExpectedPeakSetCount);
   REQUIRE(device->waitIdle().isOk());
 }
 
