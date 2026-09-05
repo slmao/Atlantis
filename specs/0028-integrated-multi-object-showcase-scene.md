@@ -1,10 +1,30 @@
 # Spec: Integrated Multi-Object Showcase Scene
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-09-06
-- **Related Plan(s):** None yet — Plan follows once this Spec is Approved.
+- **Related Plan(s):** None yet — Plan 0028 drafting starts only once
+  [PR #126](https://github.com/slmao/Atlantis/pull/126) merges to
+  `main`.
 - **Related ADR(s):** None — see Architectural Impact.
+- **Human Review Approval (2026-09-06):** Approved by the repository
+  maintainer against [PR #126](https://github.com/slmao/Atlantis/pull/126).
+  Accepts this Spec's design as written, including: making
+  `integrated_showcase_demo` `atlantis_runtime`'s own default scene;
+  the fixed totals of 6 renderable entities, 2 GPU Mesh resources, and
+  4 GPU Material resources; that `src/runtime/CMakeLists.txt` and
+  `tests/runtime/CMakeLists.txt` each independently switch their own
+  scene macros and `add_dependencies()` targets (switching one alone
+  is not sufficient); reusing the one existing windowed smoke
+  lifecycle rather than adding a second, with its own pre-existing
+  dynamic point-light test preserved; the new fixture calling the
+  production `computeShadowLightSpaceMatrices()`, writing real
+  light-space data, and building a non-empty `shadowCasterDrawItems`
+  span (not mirroring `pbr_material_demo_fixture`'s no-shadow path);
+  exactly one new, independent golden; no new descriptor-peak test;
+  and no new ADR. **This approval authorizes drafting Plan 0028 only
+  once PR #126 merges to `main` — it does not authorize starting
+  Implementation.**
 
 ## Summary
 
@@ -481,7 +501,8 @@ sphere reusing one material + ground reusing a second material,
 6 renderables / 2 meshes / 4 materials total), and golden scope (one
 golden, light + shadow + sky + IBL simultaneously active — no separate
 no-light variant, already covered by `ibl_material_demo`'s existing
-golden). No open design items remain; awaiting Human Review.
+golden). No open design items remain; approved by Human Review — see
+the header block above.
 
 ## Out of Scope / Future Work
 
