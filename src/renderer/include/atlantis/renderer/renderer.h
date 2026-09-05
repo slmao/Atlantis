@@ -11,6 +11,7 @@
 #include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/render_target.h>
 #include <atlantis/rhi/sampler.h>
+#include <atlantis/rhi/shadow_map.h>
 #include <atlantis/rhi/texture.h>
 
 namespace atlantis::renderer {
@@ -79,8 +80,33 @@ class Renderer {
   // requirement (an opaque DrawItem drawn first could leave a real depth
   // value the sky's own fixed depth would incorrectly pass against, sky
   // Pipeline's own depthWriteEnabled = false notwithstanding), not an
-  // implementation convenience. nullptr (default) draws no sky at all --
-  // every existing caller/scene without an environment is unaffected.
+  // implementation convenience. nullptr draws no sky at all -- every
+  // existing caller/scene without an environment is unaffected.
+  //
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P6): five new, all-borrowed,
+  // required parameters appended after skyPipeline -- shadow
+  // infrastructure is unconditionally created (Milestone 8), unlike
+  // skyPipeline's own nullable shape, so none of these five are
+  // pointers or carry a null case. shadowCasterDrawItems is
+  // independent from drawItems above -- Renderer never derives one from
+  // the other and never inspects Mesh layout; Runtime passes
+  // shadowCasterDrawItems = drawItems when a directional light is
+  // configured, an empty span otherwise. A new RenderGraph "shadow"
+  // pass, compiled first, writes shadowMap; "draw" also reads it. The
+  // shadow-map binding index (2 or 4) is decided by each PbrDirectLit
+  // DrawItem's own Material::environmentBinding(), never a new
+  // MaterialKind.
+  //
+  // Discovered during Implementation: appending five required
+  // (non-default) parameters after environmentLighting/skyPipeline
+  // above is not expressible while those two keep their own `= nullptr`
+  // default (C++ forbids a non-default parameter after a defaulted
+  // one). Both defaults are therefore dropped here -- environmentLighting/
+  // skyPipeline remain the exact same nullable pointer types with the
+  // exact same nullptr-means-"none" meaning, now simply always passed
+  // explicitly. Every call site in the repository is updated in this
+  // same commit (P9(e)); this is a mechanical, disclosed, zero-behavior
+  // signature correction, not a design change.
   void drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& colorTarget,
                  atlantis::rhi::Texture& depthTarget, atlantis::rhi::Buffer& cameraUniformBuffer,
                  std::span<const DrawItem> drawItems, atlantis::rhi::ResourceState finalColorState,
@@ -88,8 +114,10 @@ class Renderer {
                  atlantis::rhi::Buffer& fullscreenTriangleVertexBuffer,
                  atlantis::rhi::Buffer& fullscreenTriangleIndexBuffer,
                  atlantis::rhi::Pipeline& outputTransformPipeline, atlantis::rhi::Sampler& outputTransformSampler,
-                 const EnvironmentLighting* environmentLighting = nullptr,
-                 atlantis::rhi::Pipeline* skyPipeline = nullptr);
+                 const EnvironmentLighting* environmentLighting, atlantis::rhi::Pipeline* skyPipeline,
+                 atlantis::rhi::ShadowMap& shadowMap, atlantis::rhi::Sampler& shadowMapSampler,
+                 atlantis::rhi::Pipeline& shadowCastPipeline, atlantis::rhi::Buffer& shadowLightSpaceBuffer,
+                 std::span<const DrawItem> shadowCasterDrawItems);
 };
 
 }  // namespace atlantis::renderer

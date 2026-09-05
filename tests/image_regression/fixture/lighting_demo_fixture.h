@@ -13,6 +13,7 @@
 #include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/sampled_texture.h>
 #include <atlantis/rhi/sampler.h>
+#include <atlantis/rhi/shadow_map.h>
 #include <atlantis/rhi/texture.h>
 #include <atlantis/rhi/types.h>
 #include <atlantis/runtime/bootstrap_config.h>
@@ -70,6 +71,13 @@ struct LightingDemoFixture {
   atlantis::rhi::VertexInputLayout outputTransformUnormVertexInputLayout;
   std::vector<std::uint32_t> outputTransformUnormVertexSpirv;
   std::vector<std::uint32_t> outputTransformUnormFragmentSpirv;
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): the shadow-casting shader
+  // pair's own resolved layout/SPIR-V, mirroring
+  // outputTransformUnormVertexInputLayout/.../...FragmentSpirv's own
+  // role exactly.
+  atlantis::rhi::VertexInputLayout shadowCastVertexInputLayout;
+  std::vector<std::uint32_t> shadowCastVertexSpirv;
+  std::vector<std::uint32_t> shadowCastFragmentSpirv;
 
   // Phase 1 (CPU) outputs, published once by setUpLightingDemoFixture()
   // and never mutated afterward.
@@ -96,6 +104,13 @@ struct LightingDemoFixture {
   std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleIndexBuffer;
   std::unique_ptr<atlantis::rhi::Sampler> outputTransformSampler;
   std::unique_ptr<atlantis::rhi::Pipeline> outputTransformPipeline;
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): a minimal, always-possible
+  // real ShadowMap/Sampler/Pipeline/Buffer -- created once at
+  // construction, alongside outputTransformPipeline above.
+  std::unique_ptr<atlantis::rhi::ShadowMap> shadowMap;
+  std::unique_ptr<atlantis::rhi::Sampler> shadowMapSampler;
+  std::unique_ptr<atlantis::rhi::Pipeline> shadowCastPipeline;
+  std::unique_ptr<atlantis::rhi::Buffer> shadowLightSpaceBuffer;
 
   std::optional<atlantis::world::World> world;
 };

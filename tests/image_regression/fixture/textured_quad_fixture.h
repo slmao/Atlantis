@@ -10,6 +10,7 @@
 #include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/sampled_texture.h>
 #include <atlantis/rhi/sampler.h>
+#include <atlantis/rhi/shadow_map.h>
 #include <atlantis/rhi/texture.h>
 #include <atlantis/rhi/types.h>
 
@@ -60,6 +61,15 @@ struct TexturedQuadFixture {
   std::unique_ptr<atlantis::rhi::Buffer> fullscreenTriangleIndexBuffer;
   std::unique_ptr<atlantis::rhi::Sampler> outputTransformSampler;
   std::unique_ptr<atlantis::rhi::Pipeline> outputTransformPipeline;
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): a minimal, always-possible
+  // real ShadowMap/Sampler/Pipeline/Buffer -- created once at
+  // construction, alongside outputTransformPipeline above. Shared by
+  // both renderTexturedQuadFrame() and renderTexturedQuadBaselineFrame()
+  // below.
+  std::unique_ptr<atlantis::rhi::ShadowMap> shadowMap;
+  std::unique_ptr<atlantis::rhi::Sampler> shadowMapSampler;
+  std::unique_ptr<atlantis::rhi::Pipeline> shadowCastPipeline;
+  std::unique_ptr<atlantis::rhi::Buffer> shadowLightSpaceBuffer;
 
   // Decoded once at setup time (atlantis::asset_system::loadTextureAsset()'s
   // own CPU-side result, Milestone 6), kept here so every

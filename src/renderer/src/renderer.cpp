@@ -1,6 +1,7 @@
 #include <atlantis/renderer/renderer.h>
 
 #include <algorithm>
+#include <cstdint>
 
 #include <atlantis/assert.h>
 #include <atlantis/render_graph/execution.h>
@@ -26,8 +27,10 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
                           atlantis::rhi::Buffer& fullscreenTriangleIndexBuffer,
                           atlantis::rhi::Pipeline& outputTransformPipeline,
                           atlantis::rhi::Sampler& outputTransformSampler,
-                          const EnvironmentLighting* environmentLighting,
-                          atlantis::rhi::Pipeline* skyPipeline) {
+                          const EnvironmentLighting* environmentLighting, atlantis::rhi::Pipeline* skyPipeline,
+                          atlantis::rhi::ShadowMap& shadowMap, atlantis::rhi::Sampler& shadowMapSampler,
+                          atlantis::rhi::Pipeline& shadowCastPipeline, atlantis::rhi::Buffer& shadowLightSpaceBuffer,
+                          std::span<const DrawItem> shadowCasterDrawItems) {
   atlantis::render_graph::RenderGraphBuilder builder;
   // Plan 0024 Milestone 5 (ADR-0068 D-1/D-3): the existing single "draw"
   // pass now writes hdrResource (the scene-referred linear HDR
@@ -35,20 +38,42 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
   // its own DrawItem loop below is otherwise byte-for-byte unchanged. A
   // new "output_transform" pass reads hdrResource (ShaderRead) and
   // writes finalColorResource -- the caller's real, final colorTarget.
-  // Both passes are declared, compiled, and executed by this same,
-  // single builder/compile()/execute() call -- no second CommandList,
-  // no ad hoc submit; Renderer still never calls Device::submit()/
-  // Presentation::present() itself.
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P6): a new "shadow" pass writes
+  // shadowMapResource; "draw" also reads it (ShaderRead) -- the same
+  // write-then-read pattern hdrResource already proves. compile()'s own
+  // dependency-driven topological sort (not declaration order) is what
+  // structurally guarantees "shadow" executes before "draw" here, the
+  // same mechanism that already orders "draw" before "output_transform"
+  // below. Every pass is still declared, compiled, and executed by this
+  // same, single builder/compile()/execute() call -- no second
+  // CommandList, no ad hoc submit; Renderer still never calls
+  // Device::submit()/Presentation::present() itself.
   const auto hdrResource = builder.declareResource("hdr_color");
   const auto depthResource = builder.declareResource("depth");
   const auto finalColorResource = builder.declareResource("final_color");
+  const auto shadowMapResource = builder.declareResource("shadow_map");
+
+  const auto shadowPass = builder.declarePass("shadow");
+  builder.writes(shadowPass, shadowMapResource, atlantis::rhi::ResourceState::DepthAttachmentReadWrite);
+  builder.setExecute(shadowPass, [&commandList, &shadowCastPipeline, &shadowLightSpaceBuffer,
+                                  shadowCasterDrawItems](atlantis::rhi::CommandList& cmd) {
+    cmd.bindPipeline(shadowCastPipeline);
+    cmd.bindUniformBuffer(shadowLightSpaceBuffer);
+    for (const DrawItem& item : shadowCasterDrawItems) {
+      cmd.bindVertexBuffer(item.mesh->vertexBuffer());
+      cmd.bindIndexBuffer(item.mesh->indexBuffer());
+      cmd.pushConstant(item.objectToWorld.data(), item.objectToWorld.size() * sizeof(float));
+      cmd.drawIndexed(item.mesh->indexCount());
+    }
+  });
 
   const auto drawPass = builder.declarePass("draw");
   builder.writes(drawPass, hdrResource, atlantis::rhi::ResourceState::ColorAttachmentOutput);
   builder.writes(drawPass, depthResource, atlantis::rhi::ResourceState::DepthAttachmentReadWrite);
+  builder.reads(drawPass, shadowMapResource, atlantis::rhi::ResourceState::ShaderRead);
   builder.setExecute(drawPass, [&commandList, &cameraUniformBuffer, drawItems, environmentLighting, skyPipeline,
-                                &fullscreenTriangleVertexBuffer,
-                                &fullscreenTriangleIndexBuffer](atlantis::rhi::CommandList& cmd) {
+                                &fullscreenTriangleVertexBuffer, &fullscreenTriangleIndexBuffer, &shadowMap,
+                                &shadowMapSampler](atlantis::rhi::CommandList& cmd) {
     // Plan 0026 Milestone 2 (ADR-0071 P5, Proposed Correction): the sky
     // draws strictly before every DrawItem below -- a correctness
     // requirement, not merely a convenience (see this function's own
@@ -94,6 +119,17 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
           }
           break;
       }
+      // Plan 0027 Milestone 9 (ADR-0072 D-1/P6): the shadow-map binding
+      // index is decided by this Material's own environmentBinding()
+      // above, never a new MaterialKind -- pbr_direct_lit/pbr_ibl share
+      // one MaterialPushConstantLayout::PbrDirectLit value and are
+      // distinguished only by environmentBinding() (None vs Ibl), which
+      // already drove the texture(2)/texture(3) binds immediately above.
+      if (item.material->pushConstantLayout() == MaterialPushConstantLayout::PbrDirectLit) {
+        const std::uint32_t shadowBinding =
+            item.material->environmentBinding() == MaterialEnvironmentBinding::Ibl ? 4U : 2U;
+        cmd.bindTexture(shadowBinding, shadowMap, shadowMapSampler);
+      }
       // Plan 0023 Milestone 5 (Spec 0023 D9's own Accepted Correction):
       // an exhaustive switch, no default: label -- this repository's own
       // /w14062 /WX already makes a missed MaterialPushConstantLayout
@@ -134,8 +170,13 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
   });
 
   auto compileResult = builder.compile();
-  ATLANTIS_CHECK_MSG(compileResult.isOk(), "Renderer's fixed two-pass graph never fails to compile");
+  ATLANTIS_CHECK_MSG(compileResult.isOk(), "Renderer's fixed three-pass graph never fails to compile");
 
+  // Plan 0027 Milestone 9 (ADR-0072 D-4): 1.0f (max depth) is what makes
+  // an empty shadowCasterDrawItems list and the first frame identical --
+  // both leave the shadow map at its cleared, maximum-depth value, which
+  // computeShadowFactor() (pbr_direct_lit.slang/pbr_ibl.slang) always
+  // reads as "not occluded."
   const std::vector<atlantis::render_graph::ResourceBinding> bindings{
       {.resource = compileResult.value().resourceAt(0),
        .colorClear = kBackgroundClearColor,
@@ -145,6 +186,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
        .target = &colorTarget,
        .colorClear = kBackgroundClearColor,
        .finalState = finalColorState},
+      {.resource = compileResult.value().resourceAt(3), .depthClear = 1.0f, .shadowMap = &shadowMap},
   };
   atlantis::render_graph::execute(compileResult.value(), bindings, commandList);
 }

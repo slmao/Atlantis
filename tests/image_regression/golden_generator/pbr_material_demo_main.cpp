@@ -156,6 +156,13 @@ void printProvenanceFieldIfDifferent(const char* fieldName, const std::string& o
   config.outputTransformUnormFragmentShaderReflectionPath = output + "/output_transform_unorm.frag.refl.json";
   config.environmentArtifactPath = ATLANTIS_IBL_DEMO_ENVIRONMENT_ARTIFACT_PATH;
   config.environmentMetadataPath = ATLANTIS_IBL_DEMO_ENVIRONMENT_METADATA_PATH;
+  // Plan 0027 Milestone 9 (ADR-0072 D-1): the shadow-casting shader pair
+  // -- unconditionally required (BootstrapConfig, Milestone 8).
+  const std::string shadowCast = ATLANTIS_IBL_DEMO_SHADOW_CAST_SHADER_DIR;
+  config.shadowCastVertexShaderSpirvPath = shadowCast + "/shadow_cast.vert.spv";
+  config.shadowCastVertexShaderReflectionPath = shadowCast + "/shadow_cast.vert.refl.json";
+  config.shadowCastFragmentShaderSpirvPath = shadowCast + "/shadow_cast.frag.spv";
+  config.shadowCastFragmentShaderReflectionPath = shadowCast + "/shadow_cast.frag.refl.json";
 #else
   config.sceneArtifactPath = ATLANTIS_pbr_material_demo_scene_ARTIFACT_PATH;
   config.sceneMetadataPath = ATLANTIS_pbr_material_demo_scene_METADATA_PATH;
@@ -196,6 +203,16 @@ void printProvenanceFieldIfDifferent(const char* fieldName, const std::string& o
   config.outputTransformUnormFragmentShaderReflectionPath =
       std::string(ATLANTIS_PBR_MATERIAL_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR) +
       "/output_transform_unorm.frag.refl.json";
+  // Plan 0027 Milestone 9 (ADR-0072 D-1): the shadow-casting shader pair
+  // -- unconditionally required (BootstrapConfig, Milestone 8).
+  config.shadowCastVertexShaderSpirvPath =
+      std::string(ATLANTIS_PBR_MATERIAL_DEMO_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.vert.spv";
+  config.shadowCastVertexShaderReflectionPath =
+      std::string(ATLANTIS_PBR_MATERIAL_DEMO_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.vert.refl.json";
+  config.shadowCastFragmentShaderSpirvPath =
+      std::string(ATLANTIS_PBR_MATERIAL_DEMO_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.spv";
+  config.shadowCastFragmentShaderReflectionPath =
+      std::string(ATLANTIS_PBR_MATERIAL_DEMO_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.refl.json";
 #endif
   return config;
 }

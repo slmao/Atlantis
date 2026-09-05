@@ -92,6 +92,12 @@ static_assert(offsetof(Vertex, uv) == atlantis::asset_system::kMeshArtifactUv0Of
 static_assert(offsetof(Vertex, normal) == atlantis::asset_system::kMeshArtifactNormalOffsetBytes);
 static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrideBytes);
 
+// Plan 0027 Milestone 9 (ADR-0072 D-1/P5): the no-directional-light
+// light-space sentinel -- this fixture never configures a real
+// shadow-casting occluder, matching pbr_render_gpu_tests.cpp's own
+// identical reasoning.
+constexpr float kIdentityMatrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+
 [[nodiscard]] std::optional<VertexInputLayout> unlitTexturedVertexLayout(const ReflectionMetadata& vertexMetadata) {
   const std::vector<MeshVertexAttributeSchema> schema = {
       MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
@@ -118,6 +124,19 @@ static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrid
       MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
       MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
       MeshVertexAttributeSchema{.location = 2, .offsetBytes = offsetof(Vertex, normal)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
+// Plan 0027 Milestone 9 (ADR-0072 D-3): shadow_cast.slang's own real,
+// position-only VertexInput -- against this file's own shared Vertex
+// struct above, mirrors runtime_application.cpp's own identical
+// shadowCastVertexLayout().
+[[nodiscard]] std::optional<VertexInputLayout> shadowCastVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
   };
   auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
   if (result.isErr()) return std::nullopt;
@@ -171,6 +190,18 @@ atlantis::Result<PbrMaterialDemoFixture, PbrMaterialDemoSetupError> setUpPbrMate
   if (pbrVertexReflectionResult.isErr()) return ResultT::Err(PbrMaterialDemoSetupError::ShaderLoadFailed);
   const auto pbrVertexInputLayout = pbrDirectLitVertexLayout(pbrVertexReflectionResult.value());
   if (!pbrVertexInputLayout.has_value()) return ResultT::Err(PbrMaterialDemoSetupError::ShaderLoadFailed);
+
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): the shadow-casting shader
+  // pair -- unconditional, unlike pbrIbl/sky below.
+  auto shadowCastVertexSpirv = loadSpirvFile(config.shadowCastVertexShaderSpirvPath.c_str());
+  auto shadowCastFragmentSpirv = loadSpirvFile(config.shadowCastFragmentShaderSpirvPath.c_str());
+  if (!shadowCastVertexSpirv.has_value() || !shadowCastFragmentSpirv.has_value()) {
+    return ResultT::Err(PbrMaterialDemoSetupError::ShaderLoadFailed);
+  }
+  auto shadowCastVertexReflectionResult = loadReflectionMetadata(config.shadowCastVertexShaderReflectionPath.c_str());
+  if (shadowCastVertexReflectionResult.isErr()) return ResultT::Err(PbrMaterialDemoSetupError::ShaderLoadFailed);
+  const auto shadowCastVertexInputLayout = shadowCastVertexLayout(shadowCastVertexReflectionResult.value());
+  if (!shadowCastVertexInputLayout.has_value()) return ResultT::Err(PbrMaterialDemoSetupError::ShaderLoadFailed);
 
   std::optional<std::vector<std::uint32_t>> pbrIblVertexSpirv;
   std::optional<std::vector<std::uint32_t>> pbrIblFragmentSpirv;
@@ -235,6 +266,9 @@ atlantis::Result<PbrMaterialDemoFixture, PbrMaterialDemoSetupError> setUpPbrMate
   fixture.pbrDirectLitVertexInputLayout = *pbrVertexInputLayout;
   fixture.pbrDirectLitVertexSpirv = std::move(*pbrVertexSpirv);
   fixture.pbrDirectLitFragmentSpirv = std::move(*pbrFragmentSpirv);
+  fixture.shadowCastVertexInputLayout = *shadowCastVertexInputLayout;
+  fixture.shadowCastVertexSpirv = std::move(*shadowCastVertexSpirv);
+  fixture.shadowCastFragmentSpirv = std::move(*shadowCastFragmentSpirv);
   if (pbrIblVertexSpirv.has_value()) {
     fixture.pbrIblVertexInputLayout = std::move(*pbrIblVertexInputLayout);
     fixture.pbrIblVertexSpirv = std::move(*pbrIblVertexSpirv);
@@ -270,10 +304,12 @@ atlantis::Result<PbrMaterialDemoFixture, PbrMaterialDemoSetupError> setUpPbrMate
   // projection) + FrameLightingData (176 bytes) + CameraWorldPositionData
   // (16 bytes), matching runtime_application.cpp's own real, current
   // sizing exactly (never LightingDemoFixture's own pre-Milestone-2
-  // 304-byte one).
+  // 304-byte one). Plan 0027 Milestone 9 (ADR-0072 D-9/P9d): widened
+  // from 464 to 592 for the new light-space view+projection tail (P5) --
+  // every byte below 464 stays unmodified.
   auto cameraBufferResult = fixture.device->createBuffer(
       {.purpose = BufferPurpose::Uniform,
-       .sizeBytes = 464});
+       .sizeBytes = 592});
   if (cameraBufferResult.isErr()) return ResultT::Err(PbrMaterialDemoSetupError::ResourceCreationFailed);
   fixture.cameraBuffer = std::move(cameraBufferResult.value());
 
@@ -359,6 +395,42 @@ atlantis::Result<PbrMaterialDemoFixture, PbrMaterialDemoSetupError> setUpPbrMate
     fixture.skyPipeline = std::move(skyPipelineResult.value());
   }
 
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): the directional shadow
+  // map's own resources -- created once, here, unconditionally (unlike
+  // skyPipeline immediately above), mirroring
+  // runtime_application.cpp's own identical Milestone 8 creation
+  // sequence. shadowCasterDrawItems (renderPbrMaterialDemoFrame()) stays
+  // empty; this fixture never configures a real occluder.
+  auto shadowMapResult = fixture.device->createShadowMap({.extent = {1024, 1024}});
+  if (shadowMapResult.isErr()) return ResultT::Err(PbrMaterialDemoSetupError::ResourceCreationFailed);
+  fixture.shadowMap = std::move(shadowMapResult.value());
+
+  auto shadowMapSamplerResult = fixture.device->createSampler(
+      {.filter = atlantis::rhi::Filter::Nearest, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+  if (shadowMapSamplerResult.isErr()) return ResultT::Err(PbrMaterialDemoSetupError::ResourceCreationFailed);
+  fixture.shadowMapSampler = std::move(shadowMapSamplerResult.value());
+
+  auto shadowCastPipelineResult = fixture.device->createPipeline(
+      {.vertexShader = {.spirvWords = fixture.shadowCastVertexSpirv.data(),
+                         .wordCount = fixture.shadowCastVertexSpirv.size()},
+       .fragmentShader = {.spirvWords = fixture.shadowCastFragmentSpirv.data(),
+                           .wordCount = fixture.shadowCastFragmentSpirv.size()},
+       .vertexInputLayout = fixture.shadowCastVertexInputLayout,
+       .depthFormat = DepthFormat::D32Sfloat,
+       .pushConstantSizeBytes = sizeof(float) * 16,
+       .sampledTextureBindingCount = 0,
+       .hasCameraUniformBinding = true,
+       .hasDepthAttachment = true,
+       .depthWriteEnabled = true,
+       .hasColorAttachment = false});
+  if (shadowCastPipelineResult.isErr()) return ResultT::Err(PbrMaterialDemoSetupError::ResourceCreationFailed);
+  fixture.shadowCastPipeline = std::move(shadowCastPipelineResult.value());
+
+  auto shadowLightSpaceBufferResult =
+      fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 128});
+  if (shadowLightSpaceBufferResult.isErr()) return ResultT::Err(PbrMaterialDemoSetupError::ResourceCreationFailed);
+  fixture.shadowLightSpaceBuffer = std::move(shadowLightSpaceBufferResult.value());
+
   return ResultT::Ok(std::move(fixture));
 }
 
@@ -420,6 +492,13 @@ atlantis::Result<PixelBuffer, PbrMaterialDemoRenderError> renderPbrMaterialDemoF
     irradianceShSource = &fixture.environmentLightingResources->irradianceSh;
   }
   atlantis::runtime::writeEnvironmentIrradianceSh(std::span<float, 36>(cameraData + 80, 36), irradianceShSource);
+
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P5): the light-space view/
+  // projection tail (byte offset 464, float index 116) -- identity
+  // sentinel, written unconditionally, matching runtime_application.cpp's
+  // own identical write.
+  std::memcpy(cameraData + 116, kIdentityMatrix, sizeof(float) * 16);
+  std::memcpy(cameraData + 116 + 16, kIdentityMatrix, sizeof(float) * 16);
 
   std::vector<atlantis::asset_system::AssetId> referencedMaterialIds;
   for (const auto& id : fixture.world->renderableEntities()) {
@@ -523,7 +602,8 @@ atlantis::Result<PixelBuffer, PbrMaterialDemoRenderError> renderPbrMaterialDemoF
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
                       *fixture.outputTransformPipeline, *fixture.outputTransformSampler,
                       environmentLightingView.has_value() ? &*environmentLightingView : nullptr,
-                      fixture.skyPipeline.get());
+                      fixture.skyPipeline.get(), *fixture.shadowMap, *fixture.shadowMapSampler,
+                      *fixture.shadowCastPipeline, *fixture.shadowLightSpaceBuffer, {});
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");

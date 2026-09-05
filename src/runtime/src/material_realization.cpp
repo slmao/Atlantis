@@ -239,8 +239,12 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
        .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = pushConstantSizeBytesFor(materialData.kind),
+       // Plan 0027 Milestone 9 (ADR-0072 D-7): widened by one binding for
+       // the new shadow-map sampler every PbrDirectLit-kind Pipeline now
+       // declares (binding 2 without an environment, binding 4 with
+       // one) -- non-PBR kinds are unaffected.
        .sampledTextureBindingCount =
-           materialData.kind == atlantis::asset_system::MaterialKind::PbrDirectLit && environmentEnabled ? 3U : 1U},
+           materialData.kind == atlantis::asset_system::MaterialKind::PbrDirectLit && environmentEnabled ? 4U : 2U},
       sampledTexturePtr, candidate.sampler.get(), pushConstantLayoutFor(materialData.kind),
       {materialData.baseColorFactor[0], materialData.baseColorFactor[1], materialData.baseColorFactor[2],
        materialData.baseColorFactor[3]},

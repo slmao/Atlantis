@@ -22,7 +22,8 @@ target_compile_definitions(atlantis_image_regression_golden_generator PRIVATE
 # minimal_mesh shader pair. Shader loading (unlike the two paths above)
 # keeps this repository's existing, already-established
 # WORKING_DIRECTORY + relative-path convention unchanged.
-add_dependencies(atlantis_image_regression_golden_generator minimal_mesh_shaders output_transform_unorm_shaders)
+add_dependencies(atlantis_image_regression_golden_generator minimal_mesh_shaders output_transform_unorm_shaders
+  shadow_cast_shaders)
 add_custom_command(TARGET atlantis_image_regression_golden_generator POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_image_regression_golden_generator>/shaders"
@@ -37,6 +38,12 @@ add_custom_command(TARGET atlantis_image_regression_golden_generator POST_BUILD
       "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.refl.json"
       "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.spv"
       "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_golden_generator>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.refl.json"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.refl.json"
       "$<TARGET_FILE_DIR:atlantis_image_regression_golden_generator>/shaders/"
 )
 
@@ -60,7 +67,7 @@ target_compile_definitions(atlantis_image_regression_world_scene_golden_generato
 )
 
 add_dependencies(atlantis_image_regression_world_scene_golden_generator minimal_mesh_shaders output_transform_unorm_shaders
-  ${ATLANTIS_minimal_cube_TARGET})
+  shadow_cast_shaders ${ATLANTIS_minimal_cube_TARGET})
 add_custom_command(TARGET atlantis_image_regression_world_scene_golden_generator POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_image_regression_world_scene_golden_generator>/shaders"
@@ -75,6 +82,12 @@ add_custom_command(TARGET atlantis_image_regression_world_scene_golden_generator
       "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.refl.json"
       "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.spv"
       "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_world_scene_golden_generator>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.refl.json"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.refl.json"
       "$<TARGET_FILE_DIR:atlantis_image_regression_world_scene_golden_generator>/shaders/"
 )
 
@@ -106,7 +119,7 @@ target_compile_definitions(atlantis_image_regression_textured_quad_golden_genera
 )
 
 add_dependencies(atlantis_image_regression_textured_quad_golden_generator textured_quad_shaders
-  output_transform_unorm_shaders
+  output_transform_unorm_shaders shadow_cast_shaders
   ${ATLANTIS_textured_quad_unorm_TARGET} ${ATLANTIS_textured_quad_srgb_TARGET}
   ${ATLANTIS_textured_quad_left_TARGET} ${ATLANTIS_textured_quad_right_TARGET})
 add_custom_command(TARGET atlantis_image_regression_textured_quad_golden_generator POST_BUILD
@@ -123,6 +136,12 @@ add_custom_command(TARGET atlantis_image_regression_textured_quad_golden_generat
       "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.refl.json"
       "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.spv"
       "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_textured_quad_golden_generator>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.refl.json"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.refl.json"
       "$<TARGET_FILE_DIR:atlantis_image_regression_textured_quad_golden_generator>/shaders/"
 )
 
@@ -156,10 +175,14 @@ target_compile_definitions(atlantis_image_regression_material_demo_golden_genera
   # own identical comment on the gpu_tests target.
   ATLANTIS_MATERIAL_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_MATERIAL_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  # Plan 0027 Milestone 9 (ADR-0072 D-1/P9f): see
+  # tests/image_regression/CMakeLists.txt's own identical comment on the
+  # gpu_tests target.
+  ATLANTIS_MATERIAL_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
 )
 
 add_dependencies(atlantis_image_regression_material_demo_golden_generator textured_quad_shaders lit_textured_shaders
-  pbr_direct_lit_shaders output_transform_unorm_shaders ${ATLANTIS_material_demo_scene_TARGET})
+  pbr_direct_lit_shaders output_transform_unorm_shaders shadow_cast_shaders ${ATLANTIS_material_demo_scene_TARGET})
 
 # Plan 0019 Section P10/Milestone 10b: a fifth, standalone golden-
 # generator executable for the lighting_demo fixture -- same reused
@@ -186,10 +209,11 @@ target_compile_definitions(atlantis_image_regression_lighting_demo_golden_genera
   # own identical comment on the gpu_tests target.
   ATLANTIS_LIGHTING_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_LIGHTING_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  ATLANTIS_LIGHTING_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
 )
 
 add_dependencies(atlantis_image_regression_lighting_demo_golden_generator textured_quad_shaders lit_textured_shaders
-  pbr_direct_lit_shaders output_transform_unorm_shaders ${ATLANTIS_lighting_demo_scene_TARGET})
+  pbr_direct_lit_shaders output_transform_unorm_shaders shadow_cast_shaders ${ATLANTIS_lighting_demo_scene_TARGET})
 
 # Plan 0023 Milestone 8: a sixth, standalone golden-generator executable
 # for the pbr_material_demo fixture -- same reused git/provenance/PNG
@@ -213,10 +237,12 @@ target_compile_definitions(atlantis_image_regression_pbr_material_demo_golden_ge
   ATLANTIS_PBR_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_PBR_MATERIAL_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_PBR_MATERIAL_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIAL_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
 )
 
 add_dependencies(atlantis_image_regression_pbr_material_demo_golden_generator textured_quad_shaders
-  lit_textured_shaders pbr_direct_lit_shaders output_transform_unorm_shaders ${ATLANTIS_pbr_material_demo_scene_TARGET})
+  lit_textured_shaders pbr_direct_lit_shaders output_transform_unorm_shaders shadow_cast_shaders
+  ${ATLANTIS_pbr_material_demo_scene_TARGET})
 
 # Plan 0025/M9: a separate executable reusing the PBR generator's guarded
 # capture/provenance implementation while selecting the IBL fixture/config.
@@ -241,12 +267,13 @@ target_compile_definitions(atlantis_image_regression_ibl_material_demo_golden_ge
   ATLANTIS_IBL_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
   ATLANTIS_IBL_DEMO_ENVIRONMENT_ARTIFACT_PATH="${ATLANTIS_ibl_studio_ARTIFACT_PATH}"
   ATLANTIS_IBL_DEMO_ENVIRONMENT_METADATA_PATH="${ATLANTIS_ibl_studio_METADATA_PATH}"
+  ATLANTIS_IBL_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
   ATLANTIS_IBL_DEMO_SOURCE_SHA256="a5d9b1a50102f8f2761a61be0574b5036277a8da61268c922d3f82ebe839e4e4"
   ATLANTIS_IBL_DEMO_ARTIFACT_SHA256="bd0c9f75c5e26418f7de6f9165675fb54a5a045cdbb3265aae05ba18be4a1f83"
 )
 add_dependencies(atlantis_image_regression_ibl_material_demo_golden_generator textured_quad_shaders
   lit_textured_shaders pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders sky_shaders
-  ${ATLANTIS_ibl_material_demo_scene_TARGET} ${ATLANTIS_ibl_studio_TARGET})
+  shadow_cast_shaders ${ATLANTIS_ibl_material_demo_scene_TARGET} ${ATLANTIS_ibl_studio_TARGET})
 
 # Plan 0024 Milestone 10: a seventh standalone generator for the
 # focused HDR roll-off baseline, using the same fixture/render path as
@@ -270,10 +297,11 @@ target_compile_definitions(atlantis_image_regression_hdr_roll_off_demo_golden_ge
   ATLANTIS_HDR_ROLL_OFF_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_HDR_ROLL_OFF_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_HDR_ROLL_OFF_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  ATLANTIS_HDR_ROLL_OFF_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
 )
 
 add_dependencies(atlantis_image_regression_hdr_roll_off_demo_golden_generator textured_quad_shaders
-  lit_textured_shaders pbr_direct_lit_shaders output_transform_unorm_shaders
+  lit_textured_shaders pbr_direct_lit_shaders output_transform_unorm_shaders shadow_cast_shaders
   ${ATLANTIS_hdr_roll_off_demo_scene_TARGET})
 
 # Deliberately no catch_discover_tests()/LABELS "gpu"/add_test() call in

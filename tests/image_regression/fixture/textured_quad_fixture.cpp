@@ -103,6 +103,22 @@ static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrid
   return result.value();
 }
 
+// Plan 0027 Milestone 9 (ADR-0072 D-3): shadow_cast.slang's own real,
+// position-only VertexInput -- against this file's own shared Vertex
+// struct above, mirrors runtime_application.cpp's own identical
+// shadowCastVertexLayout(). This fixture's own shadowCastPipeline is
+// never actually used to draw (shadowCasterDrawItems stays empty), so
+// unlike texturedQuadVertexLayout() above, a fixed sizeof(Vertex)
+// stride is sufficient here.
+[[nodiscard]] std::optional<VertexInputLayout> shadowCastVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 // Plan 0024 Milestone 7: the output-transform pass's own fixed vertex
 // schema -- NOT sourced from the mesh Vertex struct above, mirrors
 // runtime_application.cpp's own identical outputTransformVertexLayout().
@@ -343,6 +359,49 @@ Result<TexturedQuadFixture, TexturedQuadSetupError> setUpTexturedQuadFixture(con
   if (outputTransformPipelineResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);
   fixture.outputTransformPipeline = std::move(outputTransformPipelineResult.value());
 
+  // Plan 0027 Milestone 9 (ADR-0072 D-1/P9e): a minimal, always-possible
+  // real ShadowMap/Sampler/Pipeline/Buffer -- shadowCasterDrawItems
+  // (renderTexturedQuadFrame()/renderTexturedQuadBaselineFrame()) stays
+  // empty; this fixture never configures a real occluder.
+  auto shadowMapResult = fixture.device->createShadowMap({.extent = {1024, 1024}});
+  if (shadowMapResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);
+  fixture.shadowMap = std::move(shadowMapResult.value());
+
+  auto shadowMapSamplerResult = fixture.device->createSampler(
+      {.filter = atlantis::rhi::Filter::Nearest, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+  if (shadowMapSamplerResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);
+  fixture.shadowMapSampler = std::move(shadowMapSamplerResult.value());
+
+  const auto shadowCastVertexSpirv = loadSpirvFile("shaders/shadow_cast.vert.spv");
+  const auto shadowCastFragmentSpirv = loadSpirvFile("shaders/shadow_cast.frag.spv");
+  if (!shadowCastVertexSpirv.has_value() || !shadowCastFragmentSpirv.has_value()) {
+    return ResultT::Err(TexturedQuadSetupError::ShaderLoadFailed);
+  }
+  auto shadowCastVertexReflectionResult = loadReflectionMetadata("shaders/shadow_cast.vert.refl.json");
+  if (shadowCastVertexReflectionResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ShaderLoadFailed);
+  const auto shadowCastVertexInputLayout = shadowCastVertexLayout(shadowCastVertexReflectionResult.value());
+  if (!shadowCastVertexInputLayout.has_value()) return ResultT::Err(TexturedQuadSetupError::ShaderLoadFailed);
+
+  auto shadowCastPipelineResult = fixture.device->createPipeline(
+      {.vertexShader = {.spirvWords = shadowCastVertexSpirv->data(), .wordCount = shadowCastVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = shadowCastFragmentSpirv->data(),
+                           .wordCount = shadowCastFragmentSpirv->size()},
+       .vertexInputLayout = *shadowCastVertexInputLayout,
+       .depthFormat = DepthFormat::D32Sfloat,
+       .pushConstantSizeBytes = sizeof(float) * 16,
+       .sampledTextureBindingCount = 0,
+       .hasCameraUniformBinding = true,
+       .hasDepthAttachment = true,
+       .depthWriteEnabled = true,
+       .hasColorAttachment = false});
+  if (shadowCastPipelineResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);
+  fixture.shadowCastPipeline = std::move(shadowCastPipelineResult.value());
+
+  auto shadowLightSpaceBufferResult =
+      fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 128});
+  if (shadowLightSpaceBufferResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);
+  fixture.shadowLightSpaceBuffer = std::move(shadowLightSpaceBufferResult.value());
+
   return ResultT::Ok(std::move(fixture));
 }
 
@@ -421,7 +480,9 @@ Result<PixelBuffer, TexturedQuadRenderError> renderTexturedQuadFrame(TexturedQua
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, drawItems,
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
-                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler);
+                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, nullptr, nullptr,
+                      *fixture.shadowMap, *fixture.shadowMapSampler, *fixture.shadowCastPipeline,
+                      *fixture.shadowLightSpaceBuffer, {});
 
   // Step 4: readback graph, recorded into the SAME commandList,
   // immediately after the draw above -- matches minimal_cube_fixture.cpp's
@@ -507,7 +568,9 @@ Result<PixelBuffer, TexturedQuadRenderError> renderTexturedQuadBaselineFrame(Tex
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, noDrawItems,
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
-                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler);
+                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, nullptr, nullptr,
+                      *fixture.shadowMap, *fixture.shadowMapSampler, *fixture.shadowCastPipeline,
+                      *fixture.shadowLightSpaceBuffer, {});
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");

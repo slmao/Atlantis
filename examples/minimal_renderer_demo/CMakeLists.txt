@@ -25,8 +25,12 @@ target_link_libraries(atlantis_minimal_renderer_demo
 # shader pairs added the same way -- this demo presents to a real
 # swapchain (unlike the fixed-format fixtures/headless demo), so it
 # needs both variants available.
+# Plan 0027 Milestone 9 (ADR-0072 D-1/P9f): shadow_cast_shaders added the
+# same way -- this demo's own drawFrame() call now needs a real, minimal
+# shadow-casting Pipeline too (an empty shadowCasterDrawItems, no real
+# occluder).
 add_dependencies(atlantis_minimal_renderer_demo minimal_mesh_shaders output_transform_unorm_shaders
-  output_transform_srgb_shaders)
+  output_transform_srgb_shaders shadow_cast_shaders)
 add_custom_command(TARGET atlantis_minimal_renderer_demo POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_minimal_renderer_demo>/shaders"
@@ -47,6 +51,12 @@ add_custom_command(TARGET atlantis_minimal_renderer_demo POST_BUILD
       "${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}/output_transform_srgb.vert.refl.json"
       "${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}/output_transform_srgb.frag.spv"
       "${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}/output_transform_srgb.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_minimal_renderer_demo>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.refl.json"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.refl.json"
       "$<TARGET_FILE_DIR:atlantis_minimal_renderer_demo>/shaders/"
 )
 
