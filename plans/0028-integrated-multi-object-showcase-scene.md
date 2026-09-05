@@ -7,19 +7,25 @@
 ## Non-negotiable rule for Implementation
 
 **Every numeric value fixed in this Plan (node positions/rotations, the
-ground mesh's vertices/indices, the light direction, the camera
-transform, every world-space sample point, and every pixel/luminance
-threshold in "Shadow/Lit Reference Derivation" below) is approved as
+ground mesh's vertices/indices, the light direction's own analytic
+target, the camera transform, every world-space sample point, and the
+`rgbSum` threshold in "Shadow Derivation" below) is approved as
 written.** If a real GPU capture during Implementation shows any of
 them needs to change, **stop and request human confirmation before
-changing it** — never adjust silently and continue.
+changing it** — never adjust silently and continue. This applies in
+full to the `rgbSum` threshold: it is a conservative Plan-stage value,
+not yet measured against this scene's own real GPU output (see
+"Shadow Derivation" for why) — if the real capture shows it does not
+hold, that is exactly the case this rule requires stopping for, not a
+value Implementation may quietly retune.
 
 **Carve-out, stated precisely so it is not read as an escape hatch:**
 mechanically re-executing this Plan's own fixed camera-projection
 formula against its own fixed inputs (the scene positions, camera,
-and light direction below) and getting an integer pixel that differs
-from this Plan's own hand-computed value by a point or two (floating-
-point rounding only) is not a value change — it is finishing the same
+and light direction below), in the same float32 operation order
+production code uses, and getting an integer pixel that differs from
+this Plan's own computed value by a point or two (floating-point
+rounding only) is not a value change — it is finishing the same
 computation this Plan already specifies. Changing the formula itself,
 the world-space points, the camera/light parameters, or a threshold's
 underlying rationale is a value change and requires stopping.
@@ -135,22 +141,38 @@ distinct Material assets** (`pbr_dielectric_rough` ×2,
 `pbr_metallic_smooth` ×2).
 
 **Directional light (node 7):** direction is derived, not authored
-directly — the scene format only stores `rotation`; Runtime computes
-`direction = normalize(-column2)` of the light's own world matrix
-(`src/runtime/src/scene_extraction.cpp:282-289`), i.e. `R·(0,0,-1)`.
-Chosen so the resulting `direction` is an exact, hand-verifiable unit
-vector, not an approximation:
+directly — the scene format only stores a decimal `rotation`; Runtime
+parses that decimal into a `float`, computes `Rx`/`Ry` via
+`std::sin`/`std::cos` on it, and takes
+`direction = normalize(-column2)` of the resulting world matrix
+(`src/runtime/src/scene_extraction.cpp:282-289`), i.e.
+`normalize(R·(0,0,-1))`. A decimal Euler literal, run through
+float-precision trigonometry and normalization, only **approximates**
+a chosen target direction — it is not exact bit-for-bit. `rotation`
+below is chosen so the **analytic target** (infinite-precision math)
+is a clean unit vector, and is then independently confirmed to survive
+real float32 rounding by mechanical recomputation (below):
 
 - `rotation = (-0.6435011, 2.4980915, 0.0)` (pitch `= -arcsin(0.6)`,
-  yaw `= π - arcsin(0.6)`, roll `= 0`).
-- Derivation: `Rx(pitch)·(0,0,-1) = (0, sin(pitch), -cos(pitch)) =
-  (0, -0.6, -0.8)` (`sin(-arcsin(0.6)) = -0.6`; `cos(arcsin(0.6)) =
-  0.8` regardless of sign). `Ry(yaw)` applied to `(x,y,z)` is `(x
-  cosθ + z sinθ, y, -x sinθ + z cosθ)`; with `θ = π - arcsin(0.6)`,
-  `sinθ = 0.6`, `cosθ = -0.8`: `x' = 0·(-0.8) + (-0.8)·0.6 = -0.48`,
-  `y' = -0.6`, `z' = -0·0.6 + (-0.8)·(-0.8) = 0.64`.
-- **`direction = (-0.48, -0.6, 0.64)`** — exact unit length
-  (`0.48² + 0.6² + 0.64² = 0.2304 + 0.36 + 0.4096 = 1.0`).
+  yaw `= π - arcsin(0.6)`, roll `= 0`, each written to 7 significant
+  digits).
+- Analytic derivation (infinite precision): `Rx(pitch)·(0,0,-1) = (0,
+  sin(pitch), -cos(pitch)) = (0, -0.6, -0.8)` (`sin(-arcsin(0.6)) =
+  -0.6`; `cos(arcsin(0.6)) = 0.8` regardless of sign). `Ry(yaw)`
+  applied to `(x,y,z)` is `(x cosθ + z sinθ, y, -x sinθ + z cosθ)`;
+  with `θ = π - arcsin(0.6)`, `sinθ = 0.6`, `cosθ = -0.8`: `x' =
+  0·(-0.8) + (-0.8)·0.6 = -0.48`, `y' = -0.6`, `z' = -0·0.6 +
+  (-0.8)·(-0.8) = 0.64`.
+- **Analytic target: `direction = (-0.48, -0.6, 0.64)`**, unit length
+  by construction (`0.48² + 0.6² + 0.64² = 1.0`).
+- **Float32 mechanical recomputation** (`rotationX`/`rotationY` exactly
+  as implemented, `src/world/src/world.cpp:77-95`, `float` throughout,
+  matching production's own operation order): parsing the two literals
+  above as `float` and running the identical `Ry(yaw)·Rx(pitch)`
+  composition gives `direction ≈ (-0.48000008, -0.6, 0.64)` — the
+  target to 7 significant digits, deviating only in the last
+  representable bit of the `x` component (`≈9×10⁻⁸`). Confirmed to
+  round to the same shadow pixel — see "Shadow Derivation" below.
 - `color = (1.0, 1.0, 1.0)`, `intensity = 3.0` (reuses
   `shadow_gpu_tests.cpp`'s own already-validated Group A/B light
   intensity, not a new untested value).
@@ -163,11 +185,15 @@ vector, not an approximation:
 `(0, 1, 0)` (sphere-center height). `rotation = (-0.4636476, 0.0,
 0.0)` (`pitch = -arctan(0.5)`), `camera_fov_y = 1.0472` (60°,
 matching `pbr_material_demo`/`shadow_gpu_tests.cpp` Group A's own
-convention), `camera_near_z = 0.1`, `camera_far_z = 100.0`. Derivation:
+convention), `camera_near_z = 0.1`, `camera_far_z = 100.0`. Same
+analytic-target-vs.-runtime-float distinction as the light direction
+above applies here too — this `rotation` decimal only approximates its
+own target under real float32 trigonometry (confirmed negligible by
+the same mechanical recomputation, below). Analytic derivation:
 `Rx(-arctan(0.5))·(0,0,-1) = (0, sin(pitch), -cos(pitch))`; a
 `1:2:√5` right triangle gives `sin(pitch) = -1/√5 = -0.4472136`,
-`cos(pitch) = 2/√5 = 0.8944272` — **`forward = (0, -0.4472136,
--0.8944272)`**, i.e. `eye + t·forward` reaches `y=0` (ground level) at
+`cos(pitch) = 2/√5 = 0.8944272` — analytic target `forward = (0,
+-0.4472136, -0.8944272)`, i.e. `eye + t·forward` reaches `y=0` (ground level) at
 `t = 6/0.4472136 = 13.42`, `z = 10 - 13.42·0.8944272 = -2.0`, safely
 inside the ground's own `z ∈ [-5,5]` extent and near the object
 cluster — confirming the chosen angle actually frames the scene, the
@@ -213,7 +239,7 @@ any `ATLANTIS_BUILD_TESTS` guard), matching `pbr_sphere`'s/
 `pbr_material_demo_scene`'s own placement — `atlantis_runtime` (M2)
 depends on the scene regardless of whether tests are built.
 
-### Shadow/Lit-Reference Derivation (FR6)
+### Shadow Derivation (FR6)
 
 Reuses Spec 0027 P10's own two fixed formulas verbatim (no
 re-derivation of the formulas themselves):
@@ -231,13 +257,17 @@ re-derivation of the formulas themselves):
   `aspect=1`), `clipW = -viewZ`, `pixel = round((clip/clipW+1)/2 ·
   512)`.
 
-Camera basis for `eye=(0,6,10)`, `forward=(0,-0.4472136,-0.8944272)`:
-`right = cross(forward,(0,1,0)) = (0.8944272,0,0) → (1,0,0)` (exact —
-`forward.x=0`); `up = cross(right,forward) = (0, 0.8944272,
--0.4472136)` (exact, unit already).
+Camera basis for the analytic-target `eye=(0,6,10)`,
+`forward=(0,-0.4472136,-0.8944272)`: `right =
+cross(forward,(0,1,0)) = (0.8944272,0,0) → (1,0,0)` (analytically,
+since `forward.x=0`); `up = cross(right,forward) = (0, 0.8944272,
+-0.4472136)` (analytically unit already). The float32 mechanical
+recomputation below confirms these hold closely enough for the same
+pixel result.
 
-**Shadowed point:** footprint of Sphere A (`(-1.3,1,1.3)`, treated as
-a point occluder, matching Plan 0027 P10's own convention) under
+**Sampled world point (one point, used by both renders below):**
+footprint of Sphere A (`(-1.3,1,1.3)`, treated as a point occluder,
+matching Plan 0027 P10's own convention) under the analytic target
 `d=(-0.48,-0.6,0.64)`: `t = -1/-0.6 = 1.66667`, `footprint = (-1.3 +
 1.66667·(-0.48), 0, 1.3 + 1.66667·0.64) = (-2.1, 0, 2.3667)`.
 
@@ -256,39 +286,89 @@ drafting, gave `t*≈0.89` with a closest-approach distance of `≈0.6`,
 well inside the sphere's own radius `1.0` — self-occluded, and is why
 the light's `z`-component is `+0.64`, not `-0.64`.)
 
-Pixel projection: `P-eye=(-2.1,-6,-7.6333)`; `viewX=-2.1`,
-`viewY=dot(P-eq,up)≈-1.9528`, `viewZ=-dot(P-eq,forward)≈-9.5107`;
+Analytic pixel projection: `P-eye=(-2.1,-6,-7.6333)`; `viewX=-2.1`,
+`viewY=dot(P-eye,up)≈-1.9528`, `viewZ=-dot(P-eye,forward)≈-9.5107`;
 `clipX≈-3.6373`, `clipY≈3.3824`, `clipW≈9.5107`; `ndc≈(-0.3825,
 0.3556)` → **pixel (158, 347)**.
 
-**Lit reference point:** `Q = (3.5, 0, 3.5)` — clear of all 5 spheres'
-own footprints (`A(-2.1,2.367)`, `B(0.5,2.367)`, `C(-2.1,-0.233)`,
-`D(0.5,-0.233)`, `E(-0.8,-2.133)`, all computed by the same formula,
-none within `2` world units of `Q`) and of the spheres themselves.
-`Q-eye=(3.5,-6,-6.5)`; `viewX=3.5`, `viewY≈-2.4597`, `viewZ≈-8.4971`;
-`clipX≈6.0622`, `clipY≈4.2603`, `clipW≈8.4971`; `ndc≈(0.7136,
-0.5014)` → **pixel (439, 384)**.
+**Float32 mechanical recomputation (production operation order, run
+as a temporary, uncommitted probe during this Plan's own drafting —
+not part of any committed file):** parsed the scene's own decimal
+`rotation` literals as `float`, built `Ry(yaw)·Rx(pitch)` via
+`rotationX()`/`rotationY()` exactly as implemented
+(`src/world/src/world.cpp:77-95`), and re-ran the identical
+footprint/projection formulas above in `float32` throughout:
 
-**Threshold.** This scene has an environment configured, so every
+- `direction ≈ (-0.48000008, -0.6, 0.64)` (target `(-0.48,-0.6,0.64)`,
+  deviation `≈9×10⁻⁸` in `x`, none in `y`/`z`).
+- `footprint ≈ (-2.1000001, 0, 2.3666667)` (target `(-2.1, 0,
+  2.3667)`).
+- camera `forward ≈ (0, -0.44721362, -0.89442724)` (target `(0,
+  -0.4472136, -0.8944272)`).
+- **resulting pixel: `(158, 347)`** — identical to the analytic value
+  above. Per this Plan's own carve-out, this confirms the analytic
+  pixel, it does not change it.
+
+**R1/R2 same-pixel differential (not a two-point comparison).** A
+two-*point* check (a "shadowed" pixel vs. a separate "lit reference"
+pixel elsewhere) would mix in the ground's own checker-texture
+variation and view-angle/IBL differences between the two points,
+neither of which is the shadow's own effect. Instead, both renders
+below sample the **same** pixel `(158, 347)`, with **every input
+identical except the shadow-caster list** — eliminating texture,
+camera, and IBL as possible explanations for any difference found:
+
+1. **Warm-up render (not asserted).** Call the fixture's render
+   function once, with its own default (real, 6-item) caster list,
+   and discard the result. Environment/material realization happens
+   lazily on first use (`environmentUploadCount`'s own established
+   pattern) — this warm-up ensures R1 and R2 below both render against
+   already-realized, steady-state resources, differing only in
+   caster-list content, not in first-use-vs-reused resource state.
+2. **R1.** Render again: same scene, camera, and directional light;
+   `shadowCasterDrawItems` = all 6 `DrawItem`s (the real, production
+   contract — `shadowCasterDrawItems` is `drawItems` itself whenever a
+   directional light is configured, Spec 0027 P6). This is the
+   fixture's own default rendering path — the same one the golden
+   generator and the committed golden always use (below).
+3. **R2.** Render again, identical to R1 in every other input;
+   `shadowCasterDrawItems` = an empty span.
+4. **Assert:** `rgbSum(pixelAt(R2, 158, 347)) - rgbSum(pixelAt(R1,
+   158, 347)) > 15`.
+
+**Threshold — a conservative, not-yet-measured Plan value, disclosed
+precisely.** This scene has an environment configured, so every
 `PbrDirectLit` material is realized against `pbr_ibl.slang`, not
 `pbr_direct_lit.slang` (`selectShaderPair()`,
 `src/runtime/src/material_realization.cpp:101-126`: `environmentEnabled
 == true` selects the IBL shader pair unconditionally for
-`PbrDirectLit`) — unlike Spec 0027 P10 Group A's own no-environment
-rig, a shadowed pixel here is **not** exactly zero; it still receives
-an IBL ambient term. This is exactly `shadow_gpu_tests.cpp`'s own
-Group B situation (same `pbr_ibl.slang` path, same reason), whose own
-proven floor this Plan reuses rather than inventing a new one:
+`PbrDirectLit`) — so a shadowed render here is **not** exactly zero at
+this pixel; it still receives an IBL ambient term. This scene is
+**not** an identical material/lighting situation to
+`shadow_gpu_tests.cpp`'s own Group B, only a structurally analogous
+one: Group B's rig uses one uniform, flat-gray solid-color material
+(`baseColorFactor=(0.8,0.8,0.8,1)`) on both its ground and occluder,
+while this scene's ground (`pbr_dielectric_rough`) uses a real sRGB
+checker texture at `roughness=0.9`. `> 15` is
+`shadow_gpu_tests.cpp:979`'s own already-validated `R2-R1` floor,
+carried over as a conservative Plan-stage starting point precisely
+because it was measured on real GPU hardware in a comparable
+configuration — it has **not** been measured against this scene's own
+real texture/geometry, and the Non-negotiable rule above applies to it
+in full: if Implementation's real GPU capture shows it does not hold,
+stop and request Human Review before changing it, never retune it
+silently.
 
-```
-luminance(pixel(439,384)) - luminance(pixel(158,347)) > 15
-```
-
-(RGB8 sum, `0-765` range — `luminance()`/`pixelAt()` already exist in
-`tests/image_regression/support/pixel_diff.h`, reused unchanged;
-`15` is `shadow_gpu_tests.cpp:979`'s own already-validated `R2-R1`
-floor for this identical shader/lighting situation, not a new,
-unvalidated number.)
+`pixelAt()`/`rgbSum()` are new, small, file-local helpers the new GPU
+test defines itself, mirroring `shadow_gpu_tests.cpp:605-612`'s own
+identical shape exactly (`tests/image_regression/support/pixel_diff.h`
+provides only `PixelBuffer` and `compareBuffers()`/
+`computeDiffVisualization()` — no per-pixel accessor, no channel-sum
+helper; `shadow_gpu_tests.cpp` doesn't get one from there either, it
+defines its own two file-local functions). Named `rgbSum`, not
+`luminance` — it is a plain sum of three raw RGB8 channel values
+(`0-765` range), not a photometric luminance (no channel weighting, no
+gamma handling). `pixel_diff.h` itself is not modified.
 
 ## Milestones / Task Breakdown
 
@@ -337,7 +417,7 @@ unvalidated number.)
    — same struct/function shape as `PbrMaterialDemoFixture`/
    `setUpPbrMaterialDemoFixture()`/`renderPbrMaterialDemoFrame()`
    (`tests/image_regression/fixture/pbr_material_demo_fixture.{h,cpp}`),
-   pointed at `integrated_showcase_demo`'s own cooked paths, with two
+   pointed at `integrated_showcase_demo`'s own cooked paths, with three
    real differences from that fixture:
    - Replace the identity light-space sentinel
      (`pbr_material_demo_fixture.cpp:99,500-501`) with a real call to
@@ -349,12 +429,15 @@ unvalidated number.)
      (`cameraData + 116`) and the dedicated `shadowLightSpaceBuffer`
      — the exact dual-write `shadow_gpu_tests.cpp:894-902` already
      performs against the same two destinations.
-   - Replace the empty `shadowCasterDrawItems` argument
-     (`pbr_material_demo_fixture.cpp:606`, trailing `{}`) with the
-     frame's own `drawItems` span whenever a directional light is
-     present — mirroring `RuntimeApplication::runFrame()`'s own
-     unconditional "`shadowCasterDrawItems` is `drawItems` itself"
-     contract (Spec 0027 P6).
+   - The render function gains one defaulted parameter,
+     `bool includeShadowCasters = true`: `shadowCasterDrawItems` passed
+     to `drawFrame()` is the frame's own `drawItems` span when `true`
+     (mirroring `RuntimeApplication::runFrame()`'s own unconditional
+     "`shadowCasterDrawItems` is `drawItems` itself" contract, Spec
+     0027 P6 — this is the fixture's real, default, always-used-by-the-
+     golden path, replacing `pbr_material_demo_fixture.cpp:606`'s own
+     trailing `{}`) or an empty span when `false` (Milestone 4's own
+     R2 render, below — never used by the golden generator).
    - Add one field, e.g. `std::size_t lastDrawItemCount = 0;`, set to
      `drawItems.size()` right after that vector is built, for FR4's
      direct assertion (no engine-module change — a fixture-local
@@ -366,15 +449,23 @@ unvalidated number.)
    `ibl_material_demo_fixture.cpp` entries).
 4. **Golden generator + GPU test (candidate stage — no golden
    committed yet).** `tests/image_regression/golden_generator/integrated_showcase_demo_main.cpp`
-   and `tests/image_regression/integrated_showcase_demo_gpu_tests.cpp`,
+   (always calls the fixture's render function with its own default,
+   `includeShadowCasters=true`, real-caster path — never the R2
+   variant) and `tests/image_regression/integrated_showcase_demo_gpu_tests.cpp`,
    mirroring the existing per-demo pair's own shape (e.g.
    `pbr_material_demo_main.cpp`/`pbr_material_demo_gpu_tests.cpp`).
-   The GPU test asserts, against this fixture, without yet requiring a
-   committed golden: `renderableEntityCount`-equivalent `== 6` (via
+   The GPU test defines its own file-local `pixelAt()`/`rgbSum()`
+   helpers (mirroring `shadow_gpu_tests.cpp:605-612`) and asserts,
+   against this fixture, without yet requiring a committed golden:
+   `renderableEntityCount`-equivalent `== 6` (via
    `fixture.world->renderableEntities().size()`),
    `meshResourceMap.size() == 2`, `materialResourceMap.size() == 4`,
-   `lastDrawItemCount == 6`, and the shadow/lit-reference luminance
-   check above. Wiring, mirroring lines 143-145/162-164/206-207 of
+   `lastDrawItemCount == 6`, and the R1/R2 same-pixel `rgbSum`
+   differential above (one warm-up render, then R1 with
+   `includeShadowCasters=true`, then R2 with `includeShadowCasters=false`,
+   both against the fixture's own already-loaded scene/camera/light —
+   no separate lit-reference point, no second golden). Wiring,
+   mirroring lines 143-145/162-164/206-207 of
    `tests/image_regression/CMakeLists.txt` and lines 233-245/256-276
    of `tests/image_regression/golden_generator/CMakeLists.txt`: new
    source file in each directory's target, new
@@ -450,8 +541,9 @@ outputs or code the previous one adds:
       `renderableEntities().size() == 6`, `lastDrawItemCount == 6` —
       asserted directly (Milestone 4's GPU test; Milestone 2's
       windowed smoke test for the first three).
-- [ ] Shadow/lit-reference pixel check: `luminance(439,384) -
-      luminance(158,347) > 15` (Milestone 4's GPU test).
+- [ ] Shadow R1/R2 same-pixel differential: `rgbSum(pixelAt(R2,
+      158,347)) - rgbSum(pixelAt(R1, 158,347)) > 15`, R1/R2 identical
+      except `shadowCasterDrawItems` (Milestone 4's GPU test).
 - [ ] Windowed smoke `TEST_CASE` (the one, unchanged lifecycle):
       `renderableEntityCount == 6`; `directionalLightCount == 1` at
       both existing check points; the existing dynamic point-light
@@ -462,11 +554,19 @@ outputs or code the previous one adds:
 - [ ] New golden: candidate generated (Milestone 4), human-reviewed
       and committed (Milestone 5) per ADR-0042's two-phase process —
       never auto-accepted.
-- [ ] All 8 existing goldens (`minimal_cube`, `world_scene`,
-      `world_scene_loaded`, `textured_quad`, `material_demo`,
-      `lighting_demo`, `sky_background`, `ibl_material_demo`,
-      `pbr_material_demo`, `hdr_roll_off_demo`) re-verified byte-
-      identical — no recapture.
+- [ ] All 8 existing committed goldens (`minimal_cube`, `world_scene`,
+      `textured_quad`, `material_demo`, `lighting_demo`,
+      `ibl_material_demo`, `pbr_material_demo`, `hdr_roll_off_demo` —
+      confirmed against `tests/image_regression/goldens/`'s own 8
+      subdirectories) re-verified byte-identical — no recapture.
+      `world_scene_loaded_gpu_tests.cpp` re-run and passing (it reuses
+      `world_scene`'s own committed golden directly,
+      `kWorldSceneGoldenName = "world_scene/world_scene_512x512_rgba8unorm"`
+      — not a 9th golden). `sky_background_gpu_tests.cpp` re-run and
+      passing (a discriminative `firstDifferingByte()`
+      with/without-sky pixel comparison between two live renders, not
+      a committed-golden comparison — confirmed no
+      `loadAndValidateGolden()` call exists in that file).
 - [ ] No new descriptor-peak test: the existing `"N=6 HDR pipeline
       descriptor-set peak is exactly N+4/N+5 with both a sky and a
       shadow-cast Pipeline present"` test
