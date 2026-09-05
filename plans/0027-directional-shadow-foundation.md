@@ -1227,7 +1227,7 @@ rewritten to remove the questions once answered.
 
 ## Proposed Correction — `drawFrame()` default arguments
 
-**Status: proposed, pending Human Review — not yet Approved.** Recorded
+**Status: Human Review Approved.** Recorded
 here per this Plan's own Non-negotiable rule ("any deviation found
 necessary during Implementation is called out explicitly, not silently
 applied") rather than silently adjusting the signature this Plan's own
@@ -1269,3 +1269,10 @@ Human Review confirmation — it is not a self-approval.** The
 corresponding commit's own message discloses the same correction. If
 redirected, the fix is a small, mechanical follow-up (either signature
 order or a params struct), not a further architectural change.
+
+**Human Review approval:** approved as proposed above. Scope of the
+approval: (1) remove the `= nullptr` default from `environmentLighting`
+and `skyPipeline`; (2) both parameters keep their existing pointer types
+and existing nullptr-means-"none" semantics, unchanged; (3) `drawFrame()`'s
+current parameter order is unchanged. No other part of the signature is
+affected by this approval.
