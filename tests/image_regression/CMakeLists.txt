@@ -49,6 +49,7 @@ add_executable(atlantis_image_regression_gpu_tests
   hdr_roll_off_demo_gpu_tests.cpp
   ibl_material_demo_gpu_tests.cpp
   sky_background_gpu_tests.cpp
+  shadow_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_image_regression_gpu_tests
@@ -182,6 +183,13 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_PBR_MATERIAL_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
   ATLANTIS_HDR_ROLL_OFF_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
   ATLANTIS_IBL_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+  # Plan 0027 Milestone 10 (ADR-0072 D-1): shadow_gpu_tests.cpp's own
+  # Group A rig -- a real Device, its own hand-built scene, and the real
+  # pbr_direct_lit/output_transform_unorm/shadow_cast shader pairs,
+  # mirroring every sibling macro's own sourcing exactly.
+  ATLANTIS_SHADOW_TEST_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  ATLANTIS_SHADOW_TEST_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  ATLANTIS_SHADOW_TEST_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
 )
 
 # Plan 0012 Step 6: the asset-sourced GPU test case needs
