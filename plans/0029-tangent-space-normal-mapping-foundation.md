@@ -1275,3 +1275,118 @@ revert — no golden survives independently of the feature it proves.
 
 See [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
 No delta beyond the Verification Checklist above.
+
+## Proposed Plan Correction — 2026-09-06 (tangent-generation algorithm omits a geometric-degenerate-triangle check)
+
+**Status:** Proposed. Pending Human Review. Does not rewrite this
+Plan's own header (its existing Human Review Approval record above is
+preserved verbatim as historical record — it approved this Plan
+against the `48/425`/sign-split figures that this correction now
+supersedes), Milestones, schema/migration tables, or Verification
+Checklist above. **Implementation of this Plan is blocked pending
+Human Review of this correction**, alongside the matching, separately-
+and-individually-filed corrections to
+[Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md#proposed-correction--2026-09-06-tangent-generation-algorithm-omits-a-geometric-degenerate-triangle-check)
+and [ADR-0073](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#proposed-correction--2026-09-06-tangent-generation-algorithm-omits-a-geometric-degenerate-triangle-check)
+— none of the three implies approval of the other two; each needs its
+own named Human Review record, matching this Plan's own already-
+established "no implied approval" governance discipline (see
+"Corrections this Plan depends on" above).
+
+**Finding.** A fresh, from-scratch re-audit during the start of
+Milestone 1's own Implementation (before any source file was touched —
+`feature/0029-tangent-space-normal-mapping-foundation` carries zero
+source commits) found that both this Plan's own `48/425` figure and
+ADR-0073's first Accepted Correction it was built on share one root
+cause: the already-Accepted `h_face` algorithm checks a triangle for
+*UV*-space degeneracy only, never *geometric* (real 3D area)
+degeneracy. `pbr_sphere.mesh.txt`'s own uniform quad-grid pole
+triangulation produces 48 triangles (24 per pole) whose two duplicate
+pole-point vertices coincide, or nearly coincide, in 3D position while
+remaining UV-non-degenerate — every one of the 96 conflicting vertices
+this Plan's own Pre-draft audit (and ADR-0073's original audit) found
+traces to one of these 48 triangles, none to a genuine chirality
+disagreement between two valid triangles. See
+[ADR-0073's own Proposed Correction — 2026-09-06](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#proposed-correction--2026-09-06-tangent-generation-algorithm-omits-a-geometric-degenerate-triangle-check)
+for the full algorithm derivation, the `area2`/`edgeScale`/
+`geometricRatio` diagnostic, and the complete five-mesh audit table.
+
+**Corrected conclusion — `pbr_sphere.mesh.txt` needs no migration:**
+with the geometric-degeneracy check added (checked before the existing
+UV-degeneracy check; a geometrically-degenerate triangle contributes no
+`T_face`/`B_face`/`h_face`, exactly like a UV-degenerate one; no new
+`CookError`), `pbr_sphere`'s own real, corrected audit is **48
+geometric-degenerate triangles, 0 UV-degenerate, 0 handedness
+conflicts, out of 768**, with vertices 24 and 400 landing on the
+already-Accepted deterministic fallback path (item 4a) instead of a
+real UV/geometric contribution. `pbr_sphere` stays **425 vertices, 768
+triangles, 2304 indices** — byte-for-byte unchanged from `main` today.
+
+**This removes, in full, once accepted:**
+
+- P4's own `425→473` sign-split migration method, its simulated
+  result table, its audit command, and its acceptance gate — all
+  superseded; no vertex split of any kind is needed.
+- The Pre-draft verification's own "Existing mesh sources needing a
+  real audit re-run" table's `pbr_sphere` row (`48/425` conflicts,
+  "Sign-split migration required") — superseded by the row in ADR-
+  0073's own Proposed Correction (48 geometric-degenerate, 0 UV-
+  degenerate, 0 conflicts, no action).
+- Every `425→473`-based reference elsewhere in this Plan (Milestone 1's
+  own acceptance gate, currently "`0/473` conflicts"; P17's own
+  vertex-200-unaffected note's "only ring 0... and ring 1... change"
+  framing; the Files/Modules Touched table's "`pbr_sphere.mesh.txt` —
+  Milestone 1 (sign-split migration...)" row; the Rollback Plan's own
+  "`pbr_sphere.mesh.txt`'s own migrated content are removed by the same
+  revert" clause) — each becomes stale prose once this correction is
+  accepted, to be mechanically updated (not re-decided) as part of
+  accepting this correction, never silently left inconsistent.
+- The characterization of `pbr_sphere` as "the only mesh requiring a
+  source edit" anywhere in this Plan — under the corrected algorithm,
+  **no** committed mesh requires a source edit; `minimal_cube` remains
+  resolved entirely by the existing, unchanged cook-time fallback.
+
+**Unaffected by this correction:** P1–P3's own tangent-generation
+module shape and fixed epsilons (the UV-degeneracy epsilon, the
+orthogonalization epsilon, the handedness zero-tie-break, and the
+fallback-axis rule are all unchanged — this correction adds one new,
+prior check, it does not alter any existing one); P5–P19's own
+material/descriptor/shader/Runtime/demo contracts (none depend on
+`pbr_sphere`'s own vertex count); the 7-Milestone structure and its own
+ordering/independence guarantees; the fixed demo scene/camera/light/
+threshold values; the two-phase golden gate; the byte-identical
+requirement on all 9 existing goldens (unaffected either way, since
+`pbr_sphere`'s own decoded position/normal/UV values are unchanged
+under both the corrected and the superseded algorithm — only the
+*tangent* the cooker derives, and now the vertex/index count, differ).
+
+**Required verification, added to Milestone 1's own scope once this
+correction is accepted (supplementing, not replacing, the existing
+Verification Checklist item for tangent-generation unit tests):**
+
+- A triangle with an exactly-zero-length edge, or a real `area2` of
+  exactly `0.0`, is excluded from contributing.
+- A triangle whose `area2` is nonzero but whose `geometricRatio` falls
+  below `1e-12` is excluded identically.
+- Geometric-degeneracy classification is invariant under uniform
+  scaling of a triangle's own vertex positions.
+- A triangle that is geometrically degenerate but UV-non-degenerate
+  produces no handedness contribution at all.
+- `pbr_sphere`'s own real, corrected audit reports exactly `48`
+  geometric-degenerate triangles, `0` UV-degenerate, `0` handedness
+  conflicts.
+- `pbr_sphere` vertices 24 and 400 land on the deterministic fallback
+  path, confirmed by re-audit.
+- Two genuinely valid, non-degenerate triangles with real, opposite
+  `h_face` signs at a shared vertex still trigger
+  `CookError::TangentHandednessConflict`.
+
+**Governance record — no implied approval.** This Plan Correction, the
+Spec 0029 correction, and the ADR-0073 correction were filed together
+in one pass but require three separate, individually-named Human
+Review approvals — approving any one (including this Plan Correction
+itself) does not, by itself, approve the other two. Implementation
+remains blocked on all three until each is separately recorded as
+approved.
+
+**Deciders:** Pending Human Review — not yet approved.

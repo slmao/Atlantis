@@ -459,3 +459,199 @@ conflicts at the south pole or any other ring, and the corrected,
 mechanically-simpler sign-split migration method (one new vertex per
 conflicting vertex, `425→473` vertices, `768` triangles/`2304` indices
 unchanged, re-audited to `0` conflicts).
+
+## Proposed Correction — 2026-09-06 (tangent-generation algorithm omits a geometric-degenerate-triangle check)
+
+**Status:** Proposed. Pending Human Review. Does not rewrite the
+Decision, Consequences, or Alternatives sections above, nor the
+"Accepted Correction — 2026-09-06 (`pbr_sphere` handedness-conflict
+count and location)" section immediately above — that section's own
+`48/425` finding is preserved verbatim as historical record, not
+deleted, even though this correction supersedes it. Supersedes: the
+`48/425 (11.3%)`, north-pole-ring-0-plus-adjacent-ring-1 figure from
+the section directly above; the original Decision-context table's own
+`pbr_sphere` row (`96/425 (22.6%)`, "concentrated at the pole rings,"
+framed as "a genuine chirality disagreement... not a zero-area
+triangle"); and Decision item 9's own `pbr_sphere` migration
+requirement ("must be re-authored to eliminate the... handedness
+conflicts before this ADR's own cooker change lands"). None of these
+three prior figures/framings survive this correction — see the
+derivation below. Implementation of Plan 0029 stays **blocked pending
+Human Review** of this correction, alongside the matching corrections
+to [Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md)
+and [Plan 0029](../plans/0029-tangent-space-normal-mapping-foundation.md)
+filed in the same pass. This ADR's own top-level `Status: Accepted`
+(unchanged since this ADR's own original acceptance) is unaffected.
+
+**Root cause.** Both this ADR's original audit (`96/425`) and its own
+first Accepted Correction (`48/425`) applied the identical, already-
+Accepted `h_face` formula but never checked whether a triangle is
+*geometrically* degenerate — zero or near-zero real 3D area — before
+computing `h_face` from it. `pbr_sphere.mesh.txt` triangulates every
+latitude band, poles included, as a uniform quad grid split into two
+triangles per quad, rather than a triangle fan at the poles. At each
+pole, one of the two triangles per quad is a real wedge (non-degenerate:
+two ring vertices plus the pole point); the other closes the quad by
+connecting two *different per-longitude copies of the same pole point*
+(e.g. triangle `(0, 26, 1)`: vertices 0 and 1 are both authored at
+position `(0, 1, 0)`, differing only in UV `u`). That second triangle
+has a real 3D area of zero (or, at the south pole, a value within
+floating-point noise of zero — see below) — but its UV-space
+determinant is **not** small (`|det| ≈ 2.6×10⁻³`, since the pole's UV
+is stretched into a full texture-space edge), so this ADR's own
+existing UV-only degeneracy check (`|det| < 1e-12`) never flags it.
+`T_face` computed from such a triangle is either the exact zero vector
+or a vector dominated by float rounding noise; the handedness sign
+function's own `|dot| < 1e-9` tie-break (item 3) then arbitrarily
+assigns it `h_face = +1.0`, which "conflicts" against the real wedge
+triangle's own genuine, well-defined `h_face` at the same vertex — a
+false conflict between one real contribution and one meaningless,
+degenerate one, never a true chirality disagreement between two valid
+triangles.
+
+**Re-audit, temporary and uncommitted, run against the current, real,
+unmodified `pbr_sphere.mesh.txt`:**
+
+- The existing, already-Accepted algorithm (raw `h_face`, UV-
+  degeneracy check only) re-confirms exactly **96/425 (22.6%)**
+  conflicting vertices, at rings 0, 1, 15, and 16 (24 each, vertex-
+  index-order numbering — both poles and their one adjacent ring
+  each), reproducing this ADR's own original, pre-correction figure,
+  not its first Accepted Correction's `48/425`.
+- Two new per-triangle diagnostics were added: `area2 = length(cross(e1,
+  e2))` and `edgeScale = max(length(e1), length(e2), length(e2 - e1))`,
+  `geometricRatio = area2 / edgeScale²`. Of `pbr_sphere`'s 768
+  triangles, exactly **48** are geometrically degenerate by this
+  measure — the pole-closing triangles above, none of them flagged by
+  the UV-only check. At the **north pole** (rings 0/1, 24 triangles):
+  the two vertices each closing triangle connects are authored as
+  bit-identical duplicate positions (e.g. both exactly `(0, 1, 0)`),
+  so `area2` computes to **exactly `0.0`**. At the **south pole**
+  (rings 15/16, 24 triangles): the duplicate pole positions carry tiny
+  floating-point noise in their `x`/`z` components (e.g.
+  `1.2246468e-16` vs. `-2.9995196e-32`, both nominally `(0, -1, 0)`),
+  so `area2` is not bit-exact zero but is still vanishingly small — the
+  largest `geometricRatio` among these 24 is **≈1.8275×10⁻¹⁶**, twenty
+  orders of magnitude below any plausible threshold.
+- Every one of the 720 remaining (non-geometrically-degenerate)
+  triangles has `geometricRatio ≥ 0.2276` (the smallest observed value)
+  — five-plus orders of magnitude above the `1e-16`-scale group above,
+  confirming a clean, well-separated gap between "degenerate sliver"
+  and "real triangle," exactly the same kind of separation this ADR's
+  own existing UV-degeneracy epsilon (item 3) already relies on for its
+  own threshold choice.
+- **All 96 conflicting vertices found by the existing algorithm are
+  attributable to one of these 48 geometrically-degenerate triangles**
+  (confirmed by direct cross-reference, not assumed) — none is a
+  disagreement between two valid, non-degenerate triangles. Once the
+  48 degenerate triangles are excluded from contributing `T_face`/
+  `B_face`/`h_face` at all, the real, corrected conflict count for
+  `pbr_sphere` is **`0/425`** — not `48` and not `96`.
+- `ground_plane.mesh.txt`, `textured_quad_left.mesh.txt`,
+  `textured_quad_right.mesh.txt`, and `minimal_cube.mesh.txt` are
+  unaffected: zero geometrically-degenerate triangles in any of the
+  first three (all-clean, matching this ADR's own original audit
+  exactly); `minimal_cube`'s existing 12/12 UV-degenerate result is
+  unaffected in kind (its own triangles are UV-degenerate, not
+  geometrically degenerate — the new check adds nothing there).
+
+**Corrected algorithm (Decision item 4, as amended by this proposed
+correction):**
+
+1. For each triangle, check **geometric** degeneracy *before* UV
+   degeneracy: compute `e1 = pos(v1) - pos(v0)`, `e2 = pos(v2) -
+   pos(v0)`, `e3 = pos(v2) - pos(v1)`, `edgeScale = max(length(e1),
+   length(e2), length(e3))`, `area2 = length(cross(e1, e2))`.
+2. If `edgeScale == 0` (all three vertices coincide — not observed in
+   any of the 5 currently-committed meshes, a defensive case), the
+   triangle is geometrically degenerate.
+3. Otherwise, if `geometricRatio = area2 / edgeScale² < 1e-12`, the
+   triangle is geometrically degenerate — this is the branch that
+   catches `pbr_sphere`'s own real 48 pole-closing triangles (both the
+   bit-exact-zero north-pole group and the noise-scale south-pole
+   group, `1e-12` sitting comfortably above the largest observed
+   near-zero value, `≈1.83×10⁻¹⁶`, and comfortably below the smallest
+   observed valid value, `≈0.2276`).
+4. A geometrically-degenerate triangle contributes **no** `T_face`,
+   `B_face`, or `h_face` to any of its own three vertices — identical
+   in kind to how a UV-degenerate triangle already contributes nothing
+   (item 4's existing rule), just checked first.
+5. Only a triangle that is **not** geometrically degenerate proceeds to
+   the existing, unchanged UV-degeneracy check (`|det| < 1e-12`,
+   item 3) — this check's own epsilon and formula are unaltered by
+   this correction.
+6. After excluding both geometrically- and UV-degenerate triangles, a
+   vertex with zero remaining (non-degenerate) contribution uses the
+   already-Accepted deterministic fallback tangent (item 4a) —
+   unchanged in formula, only its trigger condition now also covers a
+   vertex whose only would-be contributions were geometrically
+   degenerate (`pbr_sphere` vertices 24 and 400 — the two seam-closure
+   duplicates that, under the corrected algorithm, are referenced only
+   by pole-closing triangles now excluded as geometrically degenerate,
+   confirmed by re-audit).
+7. **No new `CookError` enumerator is introduced.** A geometrically-
+   degenerate triangle is a non-contributing triangle, exactly like a
+   UV-degenerate one — both are silently excluded from the
+   accumulator, never a per-triangle error.
+8. `CookError::TangentHandednessConflict` (item 5, unchanged) now fires
+   only when two **valid** (geometrically- and UV-non-degenerate)
+   contributions at the same vertex genuinely disagree in `h_face`
+   sign — a real chirality conflict, never an artifact of a degenerate
+   triangle's own arbitrary tie-broken sign.
+
+**Corrected existing-mesh audit (supersedes Decision item 9's own
+`pbr_sphere` migration requirement in full):**
+
+| Mesh | Triangles | Geometric-degenerate | UV-degenerate | Handedness conflicts | Fallback vertices | Action |
+|---|---|---|---|---|---|---|
+| `ground_plane.mesh.txt` | 2 | 0 | 0 | 0/4 | 0 | None |
+| `textured_quad_left.mesh.txt` | 2 | 0 | 0 | 0/4 | 0 | None |
+| `textured_quad_right.mesh.txt` | 2 | 0 | 0 | 0/4 | 0 | None |
+| `minimal_cube.mesh.txt` | 12 | 0 | 12/12 | 0/8 | 8 (all) | None — cook-time fallback (unchanged) |
+| `pbr_sphere.mesh.txt` | 768 | **48** | 0/720 | **0/425** | 2 (vertices 24, 400) | **None — no source edit, no migration** |
+
+`pbr_sphere.mesh.txt` needs **no** re-authoring, no vertex split, and
+no vertex/index count change under the corrected algorithm — it stays
+**425 vertices, 768 triangles, 2304 indices**, byte-for-byte unchanged.
+This removes Decision item 9's own `pbr_sphere` migration requirement
+entirely, and with it every downstream `425→473`/sign-split
+consequence this ADR's own first Accepted Correction (above) had
+introduced. `minimal_cube` is unaffected — its own fallback path and
+zero-source-change conclusion are unchanged in kind, only now also
+covering `pbr_sphere`'s two seam vertices for a different, geometric
+(not UV) reason.
+
+**Required verification (added to Plan 0029's own scope once this
+correction is accepted):**
+
+- A triangle with an exactly-zero-length edge, or a real `area2` of
+  exactly `0.0`, is excluded from contributing (the north-pole group).
+- A triangle whose `area2` is nonzero but whose `geometricRatio` falls
+  below `1e-12` is excluded identically (the south-pole, floating-
+  point-noise group) — the two groups are handled by the same rule,
+  not two different code paths.
+- Uniformly scaling a triangle's own three vertex positions leaves its
+  geometric-degeneracy classification unchanged (`geometricRatio` is
+  scale-invariant by construction: `area2` scales as length², `edgeScale²`
+  scales identically).
+- A triangle that is geometrically degenerate but **not** UV-degenerate
+  (`pbr_sphere`'s own real case) produces no `h_face`/`T_face`/`B_face`
+  contribution at all — confirmed distinct from a UV-degenerate
+  triangle, which this codebase's pre-existing check already excludes
+  for an unrelated reason.
+- `pbr_sphere`'s own real, corrected audit reports exactly `48`
+  geometric-degenerate triangles, `0` UV-degenerate, `0` handedness
+  conflicts, out of 768 total.
+- `pbr_sphere` vertices 24 and 400 land on the deterministic fallback
+  path (item 4a), confirmed by re-audit, not by assumption.
+- Two genuinely valid, non-degenerate triangles with real, opposite
+  `h_face` signs at a shared vertex still trigger
+  `CookError::TangentHandednessConflict` — the conflict-rejection
+  requirement itself (item 5) is unweakened; this correction only
+  removes a false-positive source, never a true-positive one.
+
+**Deciders:** Pending Human Review — not yet approved. This section
+proposes, and does not itself accept, the geometric-degeneracy check
+above, the corrected `pbr_sphere` audit (0 conflicts, no migration
+needed), and the corresponding removal of the `425→473`/sign-split
+consequence this ADR's own first Accepted Correction had introduced.

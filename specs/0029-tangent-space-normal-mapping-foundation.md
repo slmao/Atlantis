@@ -595,6 +595,60 @@ Approval recorded 2026-09-06, accepting this correction in full, as
 drafted, with no change, as part of the same review pass that approved
 the matching ADR-0073 correction and Plan 0029 itself.
 
+## Proposed Correction — 2026-09-06 (tangent-generation algorithm omits a geometric-degenerate-triangle check)
+
+**Status:** Proposed. Pending Human Review. Does not rewrite this
+Spec's own Goals, Requirements, or Decisions above, nor the "Human
+Review Correction — 2026-09-06" section immediately above — that
+section's own `48/425` finding is preserved verbatim as historical
+record, superseded but not deleted. Supersedes: the `96/425 (22.6%)`
+figure in the Existing-mesh tangent-generatability audit table and its
+own surrounding prose (FR5, Goals), and the `48/425` figure from the
+correction immediately above. This Spec's own top-level `Status:
+Approved` (unchanged since this Spec's own original approval) is
+unaffected by this correction.
+
+A temporary, uncommitted re-audit found that both this Spec's own
+original `96/425` audit figure and its first Human Review Correction's
+`48/425` figure share the same root cause: ADR-0073's own algorithm, as
+written and as first corrected, checks a triangle for *UV*-space
+degeneracy only, never for *geometric* (real 3D area) degeneracy.
+`pbr_sphere.mesh.txt` triangulates its pole rings as a uniform quad
+grid, producing 48 triangles per pole-quad pair whose two duplicate
+pole-point vertices coincide (or, at the south pole, differ only by
+floating-point noise) in 3D position while remaining non-degenerate in
+UV space — these 48 triangles are the sole cause of every one of the
+96 conflicting vertices the original audit found; none is a genuine
+chirality disagreement between two valid triangles. See
+[ADR-0073's own Proposed Correction — 2026-09-06](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#proposed-correction--2026-09-06-tangent-generation-algorithm-omits-a-geometric-degenerate-triangle-check)
+for the full algorithm derivation, the `area2`/`edgeScale`/
+`geometricRatio` diagnostic, and the complete five-mesh audit table —
+restated here only to the depth this Spec's own role (what/scope)
+requires.
+
+**Corrected conclusion: `pbr_sphere.mesh.txt` needs no source edit, no
+vertex split, and no vertex/index count change** — it stays 425
+vertices, 768 triangles, 2304 indices, with 48 geometrically-degenerate
+triangles excluded from contribution, 0 UV-degenerate triangles, 0
+handedness conflicts, and 2 vertices (24, 400) on the deterministic
+fallback path. This removes the "only mesh requiring a source edit"
+status FR5/the Existing-mesh audit table currently assign `pbr_sphere`,
+and with it the `425→473`/sign-split migration this Spec's own prior
+correction (above) depended on. `minimal_cube.mesh.txt` is unaffected
+— its own cook-time-fallback resolution and zero-source-change
+conclusion are unchanged.
+
+This changes no Goal, Requirement, or Decision text directly — it
+changes which mesh(es) FR5's "the only mesh requiring a source edit"
+clause and the Existing-mesh audit table's own `pbr_sphere` row
+describe, once accepted. [Plan 0029](../plans/0029-tangent-space-normal-mapping-foundation.md)
+implementation stays **blocked pending Human Review** of this
+correction, alongside the matching corrections to ADR-0073 (above) and
+Plan 0029 itself, filed in the same pass — none of the three implies
+approval of the other two.
+
+**Deciders:** Pending Human Review — not yet approved.
+
 ## Out of Scope / Future Work
 
 - A full MikkTSpace-equivalent tangent-generation algorithm.
