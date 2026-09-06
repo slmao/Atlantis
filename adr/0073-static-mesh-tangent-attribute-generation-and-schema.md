@@ -374,3 +374,88 @@ weighting/averaging scheme.**
   contribution, so it cannot resolve this case; re-authoring (pole
   vertex splitting) is the only option that preserves the single-layout
   invariant and produces an unambiguous tangent.
+
+## Accepted Correction — 2026-09-06 (`pbr_sphere` handedness-conflict count and location)
+
+**Status:** Accepted. Approved by Human Review, 2026-09-06, against
+[PR #130](https://github.com/slmao/Atlantis/pull/130), named
+individually (not by a blanket approval of Plan 0029 alone) alongside
+the matching correction to
+[Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md#human-review-correction--2026-09-06-pbr_sphere-handedness-conflict-count)
+and [Plan 0029](../plans/0029-tangent-space-normal-mapping-foundation.md)
+itself, in the same review pass. Does not rewrite the Decision,
+Consequences, or Alternatives sections above; supersedes only the
+specific `96/425 (22.6%)` figure and the "concentrated at the pole
+rings" framing appearing in the Context table and in Consequences/
+Alternatives, which did not hold under re-audit. This ADR's own
+top-level `Status: Accepted` (unchanged since this ADR's own original
+acceptance) is unaffected by this correction.
+
+A temporary, uncommitted probe, run strictly to this ADR's own already-
+Accepted algorithm (`h_face = sign(dot(cross(vertexNormal, T_face),
+B_face))`, raw `T_face`/`B_face`, no orthogonalization before the sign
+check — Decision item 4's own exact formula, re-read and matched
+verbatim, not an approximation), found the real conflict count is
+**48 of 425 vertices (11.3%), not 96 (22.6%)**. The earlier figure came
+from a draft-stage probe that orthogonalized `T_face` against the
+vertex normal *before* taking its sign — a different computation from
+the one this ADR's own Decision text actually specifies.
+
+**Precise location, by latitude ring** (`pbr_sphere.mesh.txt` has 17
+rings of 25 vertices each, `y` from `-1` to `1`; vertex indices 0-24
+are the north-pole ring, 25-49 the adjacent ring, confirmed by direct
+inspection):
+
+- Ring `y = 1.0` (north pole): 24 of 25 vertices conflict (indices
+  0-23; index 24, the seam-closure duplicate, does not).
+- Ring `y = 0.980785` (the ring immediately adjacent to the north
+  pole — **not** a pole ring itself): 24 of 25 vertices conflict
+  (indices 26-49; index 25, the seam-closure duplicate, does not).
+- Every other ring, **including the south pole** (`y = -1.0`): zero
+  conflicts. The two poles are not symmetric under this mesh's own
+  real triangulation — the south-pole fan's own winding produces
+  unanimous handedness at every one of its 25 vertices, confirmed by
+  direct per-triangle inspection, not assumed from north-pole symmetry.
+
+**Triangles touching a conflicting vertex:** indices 0-95 (the first 96
+of 768) — the north-polar fan and its own first adjacent band.
+`ground_plane`/`textured_quad_left`/`textured_quad_right`/`minimal_cube`
+are unaffected by this correction (none of their own audit figures
+change).
+
+**Corrected migration scope, mechanically simpler than "one copy per
+triangle wedge":** since `h_face` is binary (`±1`), each of the 48
+real conflicting vertices needs exactly **one** additional copy, not
+one per wedge — group that vertex's own contributing triangle corners
+by their own recorded `h_face` sign (two groups, by construction);
+keep the original vertex index for one sign's group, repoint the other
+group's own triangle corners to one new, identical-content (position/
+color/UV/normal copied verbatim) vertex. Simulated on a temporary,
+uncommitted in-memory copy of the real, current `pbr_sphere.mesh.txt`:
+starting from 425 vertices / 768 triangles / 2304 indices / 0
+UV-degenerate / 48 conflicts, this exact 2-way split produces **473
+vertices** (425 + 48, one new vertex per conflicting vertex) / **768
+triangles** (unchanged) / **2304 indices** (unchanged) / **0
+UV-degenerate** (unchanged) / **0 handedness conflicts** — re-audited
+with the identical, unmodified algorithm. This supersedes this ADR's
+own Decision item 9 prose ("one copy per triangle wedge... vertex/
+index count grows") with an exact, real, verified result: only the
+vertex count grows (by exactly 48), the index and triangle counts do
+not change at all.
+
+This correction changes no Decision, no epsilon, no error enumerator,
+and no consequence beyond the numbers above — the handedness-conflict
+rejection requirement itself (item 4/5), and the fact that `pbr_sphere`
+is the one mesh needing real migration while `minimal_cube` needs
+none, both stand unchanged. [Plan 0029](../plans/0029-tangent-space-normal-mapping-foundation.md)
+depends on this correction and uses its corrected figures throughout,
+not the original `96/425` estimate.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-06, accepting this correction in full, as
+drafted, with no change: the real `48/425` conflict count, its
+location at the north-pole ring and its one adjacent ring, zero
+conflicts at the south pole or any other ring, and the corrected,
+mechanically-simpler sign-split migration method (one new vertex per
+conflicting vertex, `425→473` vertices, `768` triangles/`2304` indices
+unchanged, re-audited to `0` conflicts).
