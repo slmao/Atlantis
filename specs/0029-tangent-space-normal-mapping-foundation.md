@@ -595,50 +595,60 @@ Approval recorded 2026-09-06, accepting this correction in full, as
 drafted, with no change, as part of the same review pass that approved
 the matching ADR-0073 correction and Plan 0029 itself.
 
-## Proposed Correction — 2026-09-06 (tangent-generation algorithm omits a geometric-degenerate-triangle check)
+## Human Review Approved Correction — 2026-09-06 (tangent-generation algorithm omits a geometric-degenerate-triangle check)
 
-**Status:** Proposed. Pending Human Review. Does not rewrite this
-Spec's own Goals, Requirements, or Decisions above, nor the "Human
-Review Correction — 2026-09-06" section immediately above — that
-section's own `48/425` finding is preserved verbatim as historical
-record, superseded but not deleted. This Spec's own top-level `Status:
-Approved` (unchanged since this Spec's own original approval) is
-unaffected by this correction.
+**Status:** Approved by Human Review, 2026-09-06, against
+[PR #131](https://github.com/slmao/Atlantis/pull/131), named
+individually alongside the matching corrections to
+[ADR-0073](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#accepted-correction--2026-09-06-tangent-generation-algorithm-omits-a-geometric-degenerate-triangle-check)
+and [Plan 0029](../plans/0029-tangent-space-normal-mapping-foundation.md#human-review-approved-plan-correction--2026-09-06-tangent-generation-algorithm-omits-a-geometric-degenerate-triangle-check),
+in the same review pass — not implied by a blanket approval of the
+Plan alone. Does not rewrite this Spec's own Goals, Requirements, or
+Decisions above, nor the "Human Review Correction — 2026-09-06"
+section immediately above — that section's own `48/425` finding is
+preserved verbatim as historical record, superseded but not deleted.
+This Spec's own top-level `Status: Approved` (unchanged since this
+Spec's own original approval) is unaffected by this correction.
 
-**New requirement:** the tangent-generation algorithm must check a
-triangle for geometric (real 3D area) degeneracy before checking for
-UV-space degeneracy, excluding a geometrically-degenerate triangle from
-contributing exactly like a UV-degenerate one. ADR-0073's own Proposed
-Correction is the single authoritative source for the full formula,
-threshold, root-cause derivation (including the corrected historical
-attribution — regardless of any pre-orthogonalization difference
-between earlier probes, neither checked geometric degeneracy, and
-re-auditing with ADR-0073's own current, literal algorithm still
-reproduces `96/425`, superseding the first Human Review Correction's
-own `48/425` conclusion), and the complete five-mesh audit table; see
-[ADR-0073's own Proposed Correction — 2026-09-06](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#proposed-correction--2026-09-06-tangent-generation-algorithm-omits-a-geometric-degenerate-triangle-check).
+**New requirement, approved:** the tangent-generation algorithm must
+check a triangle for geometric (real 3D area) degeneracy before
+checking for UV-space degeneracy, excluding a geometrically-degenerate
+triangle from contributing exactly like a UV-degenerate one. ADR-0073's
+own Accepted Correction is the single authoritative source for the full
+formula, threshold, root-cause derivation (including the corrected
+historical attribution — regardless of any pre-orthogonalization
+difference between earlier probes, neither checked geometric
+degeneracy, and re-auditing with ADR-0073's own current, literal
+algorithm still reproduces `96/425`, superseding the first Human Review
+Correction's own `48/425` conclusion), and the complete five-mesh audit
+table; see
+[ADR-0073's own Accepted Correction — 2026-09-06](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#accepted-correction--2026-09-06-tangent-generation-algorithm-omits-a-geometric-degenerate-triangle-check).
 
-**Corrected conclusion: `pbr_sphere.mesh.txt` needs no source edit, no
-vertex split, and no vertex/index count change** — it stays 425
-vertices, 768 triangles, 2304 indices. This removes the "only mesh
+**Corrected conclusion, approved: `pbr_sphere.mesh.txt` needs no source
+edit, no vertex split, and no vertex/index count change** — it stays
+425 vertices, 768 triangles, 2304 indices. This removes the "only mesh
 requiring a source edit" status FR5/the Existing-mesh audit table
 currently assign `pbr_sphere`, and with it the `425→473`/sign-split
-migration this Spec's own prior correction (above) depended on.
-**All 9 existing goldens stay byte-identical** either way.
+migration this Spec's own prior correction (above) depended on — that
+prior migration requirement is superseded, kept above only as
+historical record. **All 9 existing goldens stay byte-identical**
+either way.
 
-**Test requirement summary:** the geometric-degeneracy check's
+**Test requirements, approved:** the geometric-degeneracy check's
 threshold and exclusion behavior, and `pbr_sphere`'s own corrected
 `48`-geometric-degenerate/`0`-UV-degenerate/`0`-conflict/fallback-
-vertices-`24`-and-`400` result, must be verified per ADR-0073's own
-Proposed Correction (full test list there, not restated here).
+vertices-`24`-and-`400` result, per ADR-0073's own Accepted Correction
+(full test list there, not restated here).
 
 [Plan 0029](../plans/0029-tangent-space-normal-mapping-foundation.md)
-implementation stays **blocked pending Human Review** of this
-correction, alongside the matching corrections to ADR-0073 (above) and
-Plan 0029 itself, filed in the same pass — none of the three implies
-approval of the other two.
+implementation resumes only once
+[PR #131](https://github.com/slmao/Atlantis/pull/131) itself has merged
+to `main` — not before.
 
-**Deciders:** Pending Human Review — not yet approved.
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-06, accepting this correction in full, as
+drafted, with no change, as part of the same review pass that approved
+the matching ADR-0073 and Plan 0029 corrections.
 
 ## Out of Scope / Future Work
 

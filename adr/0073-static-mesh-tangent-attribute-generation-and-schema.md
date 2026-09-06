@@ -460,28 +460,33 @@ mechanically-simpler sign-split migration method (one new vertex per
 conflicting vertex, `425→473` vertices, `768` triangles/`2304` indices
 unchanged, re-audited to `0` conflicts).
 
-## Proposed Correction — 2026-09-06 (tangent-generation algorithm omits a geometric-degenerate-triangle check)
+## Accepted Correction — 2026-09-06 (tangent-generation algorithm omits a geometric-degenerate-triangle check)
 
-**Status:** Proposed. Pending Human Review. Does not rewrite the
-Decision, Consequences, or Alternatives sections above, nor the
-"Accepted Correction — 2026-09-06 (`pbr_sphere` handedness-conflict
-count and location)" section immediately above — that section's own
-`48/425` finding is preserved verbatim as historical record, not
-deleted, even though this correction supersedes it. Supersedes: the
-`48/425 (11.3%)`, north-pole-ring-0-plus-adjacent-ring-1 figure from
-the section directly above; the original Decision-context table's own
-`pbr_sphere` row (`96/425 (22.6%)`, "concentrated at the pole rings,"
-framed as "a genuine chirality disagreement... not a zero-area
-triangle"); and Decision item 9's own `pbr_sphere` migration
-requirement ("must be re-authored to eliminate the... handedness
-conflicts before this ADR's own cooker change lands"). None of these
-three prior figures/framings survive this correction — see the
-derivation below. Implementation of Plan 0029 stays **blocked pending
-Human Review** of this correction, alongside the matching corrections
-to [Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md)
-and [Plan 0029](../plans/0029-tangent-space-normal-mapping-foundation.md)
-filed in the same pass. This ADR's own top-level `Status: Accepted`
-(unchanged since this ADR's own original acceptance) is unaffected.
+**Status:** Accepted. Approved by Human Review, 2026-09-06, against
+[PR #131](https://github.com/slmao/Atlantis/pull/131), named
+individually (not by a blanket approval of Plan 0029 alone) alongside
+the matching corrections to
+[Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md#human-review-approved-correction--2026-09-06-tangent-generation-algorithm-omits-a-geometric-degenerate-triangle-check)
+and [Plan 0029](../plans/0029-tangent-space-normal-mapping-foundation.md#human-review-approved-plan-correction--2026-09-06-tangent-generation-algorithm-omits-a-geometric-degenerate-triangle-check),
+in the same review pass. Does not rewrite the Decision, Consequences,
+or Alternatives sections above, nor the "Accepted Correction —
+2026-09-06 (`pbr_sphere` handedness-conflict count and location)"
+section immediately above — that section's own `48/425` finding is
+preserved verbatim as historical record, not deleted, even though this
+correction supersedes it. Supersedes: the `48/425 (11.3%)`,
+north-pole-ring-0-plus-adjacent-ring-1 figure from the section directly
+above; the original Decision-context table's own `pbr_sphere` row
+(`96/425 (22.6%)`, "concentrated at the pole rings," framed as "a
+genuine chirality disagreement... not a zero-area triangle"); and
+Decision item 9's own `pbr_sphere` migration requirement ("must be
+re-authored to eliminate the... handedness conflicts before this ADR's
+own cooker change lands"). None of these three prior figures/framings
+survive this correction — see the derivation below, which is now the
+accepted basis for Implementation. **Implementation of Plan 0029
+resumes only once [PR #131](https://github.com/slmao/Atlantis/pull/131)
+itself has merged to `main` — not before.** This ADR's own top-level
+`Status: Accepted` (unchanged since this ADR's own original acceptance)
+is unaffected.
 
 **Root cause.** This ADR's own first Accepted Correction, immediately
 above, attributes its own `96→48` change to a specific difference
@@ -571,7 +576,7 @@ unmodified `pbr_sphere.mesh.txt`:**
   unaffected in kind (its own triangles are UV-degenerate, not
   geometrically degenerate — the new check adds nothing there).
 
-**Corrected algorithm (Decision item 4, as amended by this proposed
+**Corrected algorithm (Decision item 4, as amended by this accepted
 correction):**
 
 1. For each triangle, check **geometric** degeneracy *before* UV
@@ -637,8 +642,8 @@ zero-source-change conclusion are unchanged in kind, only now also
 covering `pbr_sphere`'s two seam vertices for a different, geometric
 (not UV) reason.
 
-**Required verification (added to Plan 0029's own scope once this
-correction is accepted):**
+**Required verification (added to Plan 0029's own scope, approved
+alongside this correction):**
 
 - A triangle with an exactly-zero-length edge, or a real `area2` of
   exactly `0.0`, is excluded from contributing (the north-pole group).
@@ -666,8 +671,14 @@ correction is accepted):**
   requirement itself (item 5) is unweakened; this correction only
   removes a false-positive source, never a true-positive one.
 
-**Deciders:** Pending Human Review — not yet approved. This section
-proposes, and does not itself accept, the geometric-degeneracy check
-above, the corrected `pbr_sphere` audit (0 conflicts, no migration
-needed), and the corresponding removal of the `425→473`/sign-split
-consequence this ADR's own first Accepted Correction had introduced.
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-06, accepting this correction in full, as
+drafted, with no change: the geometric-degeneracy check (checked before
+UV-degeneracy, `edgeScale == 0` or `geometricRatio < 1e-12`, no new
+`CookError`), the corrected `pbr_sphere` audit (`48` geometric-
+degenerate, `0` UV-degenerate, `0` handedness conflicts, fallback
+vertices `24`/`400`, `425` vertices/`768` triangles/`2304` indices, no
+source edit), the removal of the `425→473`/sign-split migration this
+ADR's own first Accepted Correction had introduced, and the Required
+verification list above, in the same review pass that approved the
+matching Spec 0029 and Plan 0029 corrections.

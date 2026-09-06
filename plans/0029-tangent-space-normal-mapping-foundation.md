@@ -1276,24 +1276,23 @@ revert — no golden survives independently of the feature it proves.
 See [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
 No delta beyond the Verification Checklist above.
 
-## Proposed Plan Correction — 2026-09-06 (tangent-generation algorithm omits a geometric-degenerate-triangle check)
+## Human Review Approved Plan Correction — 2026-09-06 (tangent-generation algorithm omits a geometric-degenerate-triangle check)
 
-**Status:** Proposed. Pending Human Review. Does not rewrite this
-Plan's own header (its existing Human Review Approval record above is
-preserved verbatim as historical record — it approved this Plan
-against the `48/425`/sign-split figures that this correction now
-supersedes), Milestones, schema/migration tables, or Verification
-Checklist above. **Implementation of this Plan is blocked pending
-Human Review of this correction**, alongside the matching, separately-
-and-individually-filed corrections to
-[Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md#proposed-correction--2026-09-06-tangent-generation-algorithm-omits-a-geometric-degenerate-triangle-check)
-and [ADR-0073](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#proposed-correction--2026-09-06-tangent-generation-algorithm-omits-a-geometric-degenerate-triangle-check)
-— none of the three implies approval of the other two; each needs its
-own named Human Review record, matching this Plan's own already-
-established "no implied approval" governance discipline (see
-"Corrections this Plan depends on" above).
+**Status:** Approved by Human Review, 2026-09-06, against
+[PR #131](https://github.com/slmao/Atlantis/pull/131), named
+individually alongside the matching corrections to
+[Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md#human-review-approved-correction--2026-09-06-tangent-generation-algorithm-omits-a-geometric-degenerate-triangle-check)
+and [ADR-0073](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#accepted-correction--2026-09-06-tangent-generation-algorithm-omits-a-geometric-degenerate-triangle-check),
+in the same review pass — not implied by a blanket approval of one
+correction alone. Does not rewrite this Plan's own header (its existing
+Human Review Approval record above is preserved verbatim as historical
+record — it approved this Plan against the `48/425`/sign-split figures
+that this correction now supersedes), Milestones, schema/migration
+tables, or Verification Checklist above. **Implementation of this Plan
+resumes only once [PR #131](https://github.com/slmao/Atlantis/pull/131)
+itself has merged to `main` — not before.**
 
-ADR-0073's own Proposed Correction is the single authoritative source
+ADR-0073's own Accepted Correction is the single authoritative source
 for the algorithm, threshold, root-cause derivation (including the
 corrected historical attribution — regardless of any pre-
 orthogonalization difference between earlier probes, neither checked
@@ -1301,10 +1300,10 @@ geometric degeneracy, and re-auditing with ADR-0073's own current,
 literal algorithm still reproduces `96/425`, superseding the first
 Accepted Correction's own `48/425` conclusion), and the complete
 five-mesh audit table; see
-[ADR-0073's own Proposed Correction — 2026-09-06](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#proposed-correction--2026-09-06-tangent-generation-algorithm-omits-a-geometric-degenerate-triangle-check).
+[ADR-0073's own Accepted Correction — 2026-09-06](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#accepted-correction--2026-09-06-tangent-generation-algorithm-omits-a-geometric-degenerate-triangle-check).
 Not restated here.
 
-**Effect on Milestone 1, once accepted:**
+**Effect on Milestone 1, approved:**
 
 - P4's own `425→473` sign-split migration method, its simulated
   result table, its audit command, and its acceptance gate are removed
@@ -1316,27 +1315,30 @@ Not restated here.
 - Every other `425→473`-based reference in this Plan (Pre-draft
   verification's own audit table, P17's own vertex-200 note, the
   Files/Modules Touched table's `pbr_sphere.mesh.txt` row, the
-  Rollback Plan's own migrated-content clause) becomes stale prose to
-  be mechanically updated — not re-decided — once this correction is
-  accepted.
+  Rollback Plan's own migrated-content clause) is now stale prose,
+  approved to be mechanically updated — not re-decided — during
+  Milestone 1's own resumed Implementation.
 - `pbr_sphere` is no longer "the only mesh requiring a source edit" —
   under the corrected algorithm, **no** committed mesh needs one;
   `minimal_cube` is unaffected.
 - New unit tests for the geometric-degeneracy check (threshold,
-  exclusion behavior, scale-invariance) are added to Milestone 1's own
-  scope, supplementing the existing tangent-generation unit-test
-  checklist item; full test list is ADR-0073's own Proposed
-  Correction, not restated here.
+  exclusion behavior, scale-invariance) are approved, added to
+  Milestone 1's own scope, supplementing the existing tangent-
+  generation unit-test checklist item; full test list is ADR-0073's
+  own Accepted Correction, not restated here.
 - P1–P3's fixed epsilons, P5–P19's other contracts, the 7-Milestone
   structure, the demo's fixed values, and the byte-identical
   requirement on all 9 existing goldens are all unaffected.
 
-**Governance record — no implied approval.** This Plan Correction, the
-Spec 0029 correction, and the ADR-0073 correction were filed together
-in one pass but require three separate, individually-named Human
-Review approvals — approving any one (including this Plan Correction
-itself) does not, by itself, approve the other two. Implementation
-remains blocked on all three until each is separately recorded as
-approved.
+**Governance record — no implied approval was relied upon.** This Plan
+Correction, the Spec 0029 correction, and the ADR-0073 correction were
+filed together in one pass but each required, and received, its own
+separate, individually-named Human Review approval — approving one did
+not, by itself, approve the other two. Implementation stays paused
+only on the remaining, external gate: a human merging
+[PR #131](https://github.com/slmao/Atlantis/pull/131) to `main`.
 
-**Deciders:** Pending Human Review — not yet approved.
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-06, accepting this correction in full, as
+drafted, with no change, as part of the same review pass that approved
+the matching Spec 0029 and ADR-0073 corrections.
