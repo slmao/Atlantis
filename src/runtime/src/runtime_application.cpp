@@ -1471,6 +1471,17 @@ void RuntimeApplication::runFrame() {
       if (candidate.newSampledTexture) {
         sampledTextureResourceMap_.emplace(candidate.textureAssetId, std::move(candidate.newSampledTexture));
       }
+      // Plan 0029 Section P15: the normal-map texture publishes into
+      // the SAME sampledTextureResourceMap_ the base-color texture
+      // already uses -- omitting this (unlike newSampledTexture above)
+      // would destroy the just-uploaded normal-map SampledTexture when
+      // realizedCandidates goes out of scope at the end of this
+      // function, leaving the just-published Material's own
+      // normalMapTexture() a dangling pointer on the very next frame.
+      if (candidate.newNormalMapTexture) {
+        sampledTextureResourceMap_.emplace(candidate.normalMapTextureAssetId,
+                                            std::move(candidate.newNormalMapTexture));
+      }
       samplerResourceMap_.emplace(assetId, std::move(candidate.sampler));
       materialResourceMap_.emplace(assetId, std::move(candidate.material));
     }
