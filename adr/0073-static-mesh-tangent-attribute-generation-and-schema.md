@@ -483,11 +483,26 @@ and [Plan 0029](../plans/0029-tangent-space-normal-mapping-foundation.md)
 filed in the same pass. This ADR's own top-level `Status: Accepted`
 (unchanged since this ADR's own original acceptance) is unaffected.
 
-**Root cause.** Both this ADR's original audit (`96/425`) and its own
-first Accepted Correction (`48/425`) applied the identical, already-
-Accepted `h_face` formula but never checked whether a triangle is
-*geometrically* degenerate — zero or near-zero real 3D area — before
-computing `h_face` from it. `pbr_sphere.mesh.txt` triangulates every
+**Root cause.** This ADR's own first Accepted Correction, immediately
+above, attributes its own `96→48` change to a specific difference
+between probes: the original audit's own draft-stage probe
+orthogonalized `T_face` against the vertex normal before taking its
+sign, while the first Accepted Correction's own probe did not,
+matching Decision item 4's literal text. That attribution is not
+disputed here — but it is not the operative cause of either figure's
+own inaccuracy. **Regardless of any pre-orthogonalization difference
+between those two earlier probes, neither checked whether a triangle
+is *geometrically* degenerate** — zero or near-zero real 3D area —
+before computing `h_face` from it. A fresh re-audit, run strictly to
+this ADR's own current, literal Decision item 4 formula verbatim (no
+pre-orthogonalization, matching the first Accepted Correction's own
+method exactly), reproduces **96/425** against the real, unmodified
+`pbr_sphere.mesh.txt` — not the first Accepted Correction's own
+`48/425`. **The first Accepted Correction's own `48/425` figure and its
+own attributed root cause are both superseded by this Proposed
+Correction**; that section's own text stays in place above as
+historical record, but is no longer a valid basis for Implementation.
+`pbr_sphere.mesh.txt` triangulates every
 latitude band, poles included, as a uniform quad grid split into two
 triangles per quad, rather than a triangle fan at the poles. At each
 pole, one of the two triangles per quad is a real wedge (non-degenerate:
@@ -534,12 +549,13 @@ unmodified `pbr_sphere.mesh.txt`:**
   largest `geometricRatio` among these 24 is **≈1.8275×10⁻¹⁶**, twenty
   orders of magnitude below any plausible threshold.
 - Every one of the 720 remaining (non-geometrically-degenerate)
-  triangles has `geometricRatio ≥ 0.2276` (the smallest observed value)
-  — five-plus orders of magnitude above the `1e-16`-scale group above,
-  confirming a clean, well-separated gap between "degenerate sliver"
-  and "real triangle," exactly the same kind of separation this ADR's
-  own existing UV-degeneracy epsilon (item 3) already relies on for its
-  own threshold choice.
+  triangles has `geometricRatio ≥ 0.2276` (the smallest observed
+  value) — the maximum degenerate `geometricRatio` (`≈1.83×10⁻¹⁶`) and
+  this minimum valid `geometricRatio` (`≈0.2276`) sit approximately
+  **15 orders of magnitude** apart, confirming a clean, well-separated
+  gap between "degenerate sliver" and "real triangle," exactly the
+  same kind of separation this ADR's own existing UV-degeneracy
+  epsilon (item 3) already relies on for its own threshold choice.
 - **All 96 conflicting vertices found by the existing algorithm are
   attributable to one of these 48 geometrically-degenerate triangles**
   (confirmed by direct cross-reference, not assumed) — none is a
