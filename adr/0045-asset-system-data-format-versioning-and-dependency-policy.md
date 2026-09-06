@@ -415,3 +415,100 @@ migration mechanism," or byte-order Decisions — this Amendment narrows
 one format-scope sentence only, for the second time. The negative/trade-off this ADR's own Decision above already
 accepted grows by exactly one more attribute's worth of authoring/
 artifact/loader logic — no new category of maintenance burden.
+
+## Proposed Amendment — 2026-09-06
+
+**Status: Proposed.** Drafted 2026-09-06 alongside
+[Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md)
+(`Draft`) and
+[ADR-0073](0073-static-mesh-tangent-attribute-generation-and-schema.md)
+(`Proposed`). **Not yet accepted by Human Review** — Spec 0029 is
+itself still `Draft`. Everything above this section — including both
+prior, already-`Accepted` amendments — remains this ADR's own
+original, unmodified `Accepted` Decision (this ADR's own top-level
+`Status: Accepted` is unchanged and unaffected by this amendment). This
+amendment does not alter, narrow, or reinterpret any of the above as
+originally written; it proposes a third narrowing of this ADR's own
+format-scope sentence (as amended 2026-08-25 and 2026-08-29), not yet
+in effect pending Human Review.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — pending Human
+Review as part of Spec 0029's own future Human Review Approval.
+
+**Related:**
+[Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md)
+(`Draft`),
+[ADR-0073](0073-static-mesh-tangent-attribute-generation-and-schema.md)
+(`Proposed`) — this Amendment and ADR-0073 cross-reference each other,
+mirroring this ADR's own existing relationship with ADR-0063: ADR-0073
+makes the actual tangent-attribute decision (schema, byte offset,
+generation algorithm, numeric contract); this Amendment records the
+corresponding, narrower proposed change to this ADR's own already-
+`Accepted` (as amended 2026-08-25 and 2026-08-29) format-scope
+sentence, so the two documents do not duplicate one another's content.
+
+### Context for this amendment
+
+This ADR's own "Accepted Amendment — 2026-08-29" section (above)
+narrowed the format scope to "a static triangle mesh with per-vertex
+position, color, UV0, and normal." Spec 0029 widens the one static
+mesh vertex layout to add a fifth, mandatory attribute, tangent — a
+real, direct narrowing of that sentence's own scope, not a compatible
+extension it already permitted, structurally mirroring both prior
+amendments' own relationship to this ADR's original Decision.
+
+**One genuine, disclosed divergence from both prior amendments' own
+pattern:** unlike UV0 and normal, tangent is never hand-authored — the
+authoring **source** format's own version marker
+(`atlantis_static_mesh_source_version`) does **not** change as part of
+this proposed narrowing (it stays at the value ADR-0063's own amendment
+already fixed); only the **runtime artifact's** own `schema_version`
+and per-vertex stride change. This breaks the "source and artifact
+versions move in lockstep" pattern both prior amendments established —
+disclosed here explicitly, not silently.
+
+### Decision
+
+This ADR's own Decision (as already amended 2026-08-25 and 2026-08-29)
+would be further amended, in effect, to read:
+
+- The runtime artifact format is scoped to this Spec's one supported
+  asset type, **as extended by Spec 0017, further extended by Spec
+  0020, and further extended by Spec 0029**: a static triangle mesh
+  with per-vertex **position, color, UV0, normal, and tangent**,
+  `std::uint16_t` indices — not "position, color, UV0, and normal"
+  alone. This remains one single, fixed, hand-rolled, dependency-free
+  format per this ADR's own unchanged "hand-rolled, dependency-free"
+  Decision above; tangent introduces no new field *kind* (four more
+  `float`s, serialized by the exact same explicit shift/mask
+  little-endian routine every existing float already uses) and no
+  third-party dependency of any kind.
+- The runtime artifact's own mandatory `schema_version` field (this
+  ADR's own unchanged Decision above) is exercised for a third real,
+  in-place format change: version 3 (position + color + UV0 + normal,
+  44 bytes/vertex) is superseded by version 4 (position + color + UV0
+  + normal + tangent, 60 bytes/vertex). Consistent with this ADR's own
+  explicit disclosure that "no migration mechanism is built now" —
+  version 4 introduces no migration reader for versions 1–3, matching
+  this format's own established single-supported-version precedent
+  exactly.
+- **Unlike both prior amendments, the authoring source format's own
+  version marker is unaffected by this change** — tangent is
+  exclusively cooker-generated (ADR-0073's own Decision), so no source
+  grammar field is added and no source version bump occurs. This is a
+  genuine, disclosed exception to this ADR's own general "this same
+  versioning rule applies identically to the authoring source format's
+  own version marker line" sentence (2026-08-29 amendment, above) —
+  that sentence's own underlying reason (a real field was added to the
+  source grammar) does not hold here, since no field is added there.
+
+### Consequences of this amendment
+
+No change to this ADR's own "no new third-party dependency," "no
+migration mechanism," or byte-order Decisions — this Amendment narrows
+one format-scope sentence only, for the third time, and records one
+genuine, disclosed divergence (no source-version bump) from the
+pattern both prior amendments established. Pending Human Review
+alongside Spec 0029 and ADR-0073; this ADR's own top-level `Status`
+remains `Accepted` regardless of this amendment's own `Proposed`
+status, exactly as both prior amendments left it.

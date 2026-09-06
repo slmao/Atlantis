@@ -500,3 +500,116 @@ the four this ADR's own 2026-08-25 drafting named — see
 [Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md)'s own
 Pre-draft verification for the full, current list and the two files
 this ADR's own list predates).
+
+## Proposed Amendment — 2026-09-06
+
+**Status: Proposed.** Drafted 2026-09-06 alongside
+[Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md)
+(`Draft`) and
+[ADR-0073](0073-static-mesh-tangent-attribute-generation-and-schema.md)
+(`Proposed`). **Not yet accepted by Human Review** — Spec 0029 is
+itself still `Draft`. Everything above this section — including the
+"Accepted Amendment — 2026-08-29" section immediately above — remains
+this ADR's own original, unmodified `Accepted` Decision (this ADR's own
+top-level `Status: Accepted` above is unchanged and unaffected by this
+amendment) — this amendment does not alter, narrow, or reinterpret any
+of it as originally written; it proposes narrowing this ADR's own "the
+one, single static mesh vertex layout is exactly position + color +
+UV0 + normal, 11 floats / 44 bytes per vertex" statement (2026-08-29
+amendment, above) a second time, not yet in effect pending Human
+Review.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — pending Human
+Review as part of Spec 0029's own future Human Review Approval.
+
+**Related:**
+[Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md)
+(`Draft`),
+[ADR-0073](0073-static-mesh-tangent-attribute-generation-and-schema.md)
+(`Proposed`) — this Amendment and ADR-0073 cross-reference each other,
+mirroring this ADR's own existing relationship with ADR-0063: ADR-0073
+makes the actual tangent-attribute decision; this Amendment records
+the corresponding, narrower proposed change to this ADR's own
+already-`Accepted` (as amended 2026-08-29) "one, single vertex layout"
+Decision, so the two documents do not duplicate one another's content.
+
+### Context for this amendment
+
+This ADR's own "Accepted Amendment — 2026-08-29" section (above)
+closed the vertex layout at "position (3 floats) + color (3 floats) +
+UV0 (2 floats) + normal (3 floats), 11 floats / 44 bytes per vertex" —
+a closed statement that, by naming exactly four attributes and a fixed
+44-byte size, implicitly fixes the vertex layout's own attribute count,
+exactly as this ADR's own original 2026-08-25 Decision text did for
+three attributes before that amendment narrowed it. Spec 0029 widens
+the one static mesh vertex layout to add a fifth, mandatory attribute,
+tangent — a real, direct narrowing of that closed statement, not a
+compatible extension it already permitted, genuinely confirmed (not
+mechanically assumed) by direct inspection of this ADR's own text:
+the same class of conflict ADR-0063 itself found and amended this ADR
+for when normal was added. Per this repository's own established
+practice (an `Accepted` ADR's original Decision text — including any
+prior, already-`Accepted` amendment to it — is never silently
+rewritten; each further scope change gets its own, separately-dated,
+clearly-labeled amendment), this section is drafted alongside Spec
+0029 and ADR-0073, mirroring the 2026-08-29 amendment's own structure
+exactly.
+
+### Decision
+
+This ADR's own Decision (as already amended 2026-08-29) would be
+further amended, in effect, to read:
+
+- **Tangent becomes a mandatory fifth attribute of the one, single
+  static mesh vertex layout — position (3 floats) + color (3 floats) +
+  UV0 (2 floats) + normal (3 floats) + tangent (4 floats: xyz direction
+  + w handedness), 15 floats / 60 bytes per vertex, replacing the
+  current 44-byte layout.** No optional/variant vertex-layout mechanism
+  is introduced — this ADR's own "No optional/variant vertex-layout
+  mechanism is introduced" sentence (Decision, above) continues to
+  hold, now covering five attributes instead of four.
+- **Runtime artifact layout:** per-vertex bytes become position xyz
+  (offset 0), color rgb (offset 12), UV0 uv (offset 24), normal xyz
+  (offset 32), tangent xyzw (offset 44) — 60 bytes total.
+  `kMeshArtifactVertexStrideBytes` becomes `60`;
+  `kMeshArtifactSchemaVersion` becomes `4`. An artifact whose header
+  declares schema version 1–3, or any stride other than 60, is
+  rejected — no migration reader, identical in kind to this ADR's own
+  original rule.
+- **Unlike this ADR's own original Decision and its 2026-08-29
+  amendment, the authoring source format's own version marker is
+  unaffected** — tangent is exclusively cooker-generated
+  (ADR-0073's own Decision), never hand-authored, so
+  `atlantis_static_mesh_source_version` does not bump and the
+  `vertex:` line's own field count does not change. This is a genuine,
+  disclosed exception to this ADR's own Decision item 1's "grammar
+  gains N trailing tokens, version bumps in lockstep" pattern —
+  mirroring the identical, disclosed divergence recorded in
+  [ADR-0045's own Proposed Amendment — 2026-09-06](0045-asset-system-data-format-versioning-and-dependency-policy.md).
+- **Value contract:** the tangent's own numeric contract (unit length,
+  orthogonality to normal, exact `±1.0` handedness) is ADR-0073's own
+  Decision, not restated here, mirroring how this ADR's own 2026-08-29
+  amendment deferred the normal-specific numeric contract to ADR-0063.
+- **Layout offset constants:** `kMeshArtifactTangentOffsetBytes = 44`
+  is added alongside the existing four offset constants (this ADR's
+  own 2026-08-29 amendment's own precedent), and every composition
+  root gains one more `static_assert` tying its own local `Vertex`
+  struct's `offsetof()` value to it — ADR-0073's own Decision item 7
+  makes this change; this Amendment records the corresponding,
+  narrower change to this ADR's own closed attribute list.
+
+### Consequences of this amendment
+
+No change to this ADR's own UV0-origin/sampling-convention Decision
+(item 5), attribute-location-convention Decision (item 6), or
+Vulkan-pipeline-level closure argument, or to the 2026-08-29
+amendment's own normal-specific content — this proposed Amendment
+narrows the vertex-layout attribute-count/byte-size sentence a second
+time only. The negative/trade-off this ADR's own Decision already
+accepted (every existing composition-root call site's local `Vertex`
+struct must widen in lockstep) recurs once more, for whatever current
+touch-point list ADR-0073's own Implementation independently
+re-enumerates. Pending Human Review alongside Spec 0029 and ADR-0073;
+this ADR's own top-level `Status` remains `Accepted` regardless of
+this amendment's own `Proposed` status, exactly as the 2026-08-29
+amendment left it.
