@@ -304,6 +304,42 @@ add_dependencies(atlantis_image_regression_hdr_roll_off_demo_golden_generator te
   lit_textured_shaders pbr_direct_lit_shaders output_transform_unorm_shaders shadow_cast_shaders
   ${ATLANTIS_hdr_roll_off_demo_scene_TARGET})
 
+# Plan 0028 Milestone 4: a standalone golden-generator executable for the
+# integrated showcase demo fixture -- same reused git/provenance/PNG
+# steps, always using the fixture's own default (real-caster) render
+# path, never the R2 no-caster comparison variant.
+add_executable(atlantis_image_regression_integrated_showcase_demo_golden_generator
+  integrated_showcase_demo_main.cpp)
+
+target_link_libraries(atlantis_image_regression_integrated_showcase_demo_golden_generator
+  PRIVATE
+    Atlantis::ImageRegressionFixture
+    Atlantis::ImageRegressionSupport
+    atlantis_compiler_warnings
+)
+
+target_compile_definitions(atlantis_image_regression_integrated_showcase_demo_golden_generator PRIVATE
+  ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+  ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
+  ATLANTIS_integrated_showcase_demo_scene_ARTIFACT_PATH="${ATLANTIS_integrated_showcase_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_integrated_showcase_demo_scene_METADATA_PATH="${ATLANTIS_integrated_showcase_demo_scene_METADATA_PATH}"
+  ATLANTIS_integrated_showcase_demo_scene_MANIFEST_PATH="${ATLANTIS_integrated_showcase_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_INTEGRATED_SHOWCASE_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+  ATLANTIS_INTEGRATED_SHOWCASE_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  ATLANTIS_INTEGRATED_SHOWCASE_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  ATLANTIS_INTEGRATED_SHOWCASE_DEMO_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_INTEGRATED_SHOWCASE_DEMO_SKY_SHADER_DIR="${ATLANTIS_sky_SHADER_OUTPUT_DIR}"
+  ATLANTIS_INTEGRATED_SHOWCASE_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  ATLANTIS_INTEGRATED_SHOWCASE_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+  ATLANTIS_INTEGRATED_SHOWCASE_DEMO_ENVIRONMENT_ARTIFACT_PATH="${ATLANTIS_ibl_studio_ARTIFACT_PATH}"
+  ATLANTIS_INTEGRATED_SHOWCASE_DEMO_ENVIRONMENT_METADATA_PATH="${ATLANTIS_ibl_studio_METADATA_PATH}"
+)
+
+add_dependencies(atlantis_image_regression_integrated_showcase_demo_golden_generator textured_quad_shaders
+  lit_textured_shaders pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders sky_shaders
+  shadow_cast_shaders ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
+  ${ATLANTIS_ibl_studio_TARGET})
+
 # Deliberately no catch_discover_tests()/LABELS "gpu"/add_test() call in
 # this file -- the concrete enforcement of "never registered with
 # CTest." Deliberately no run_... convenience custom target: this tool
