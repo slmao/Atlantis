@@ -1453,6 +1453,11 @@ RuntimeExitReason RuntimeApplication::shutdown() {
   depthTexture_.reset();
   cameraBuffer_.reset();
   meshResourceMap_.clear();
+  // Plan 0028 Human-Approved Implementation Deviation: must release after
+  // Mesh/Material resources and before Device, matching this member's own
+  // declared reverse-destruction-order intent (runtime_application.h) --
+  // shutdown()'s own explicit sequence previously omitted this line.
+  environmentLightingResources_.reset();
   presentation_.reset();
   device_.reset();
   // platformSession_ is deliberately NOT touched here -- its own
