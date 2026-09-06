@@ -603,3 +603,42 @@ ADR.
   contract does not permit (Context); an explicit, caller-owned second
   list keeps `Renderer` ignorant of `Mesh` layout details, at the cost
   of one more parameter every caller must pass.
+
+## Proposed Amendment — 2026-09-06
+
+**Status: Proposed.** Drafted alongside
+[Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md)
+(`Draft`) and
+[ADR-0074](0074-pbr-normal-map-material-descriptor-and-shader-contract.md)
+(`Proposed`). Not yet accepted — Spec 0029 is itself still `Draft`.
+Everything above remains this ADR's own original, unmodified
+`Accepted` Decision (top-level `Status: Accepted` unchanged). This
+amendment widens D-7's own three fixed capacity numbers by one more
+step, for the same reason D-7 itself widened them from `pbr_ibl`'s
+original 3-sampler shape to 4 (a new sampler binding at the next free
+slot): Spec 0029 adds a normal-map sampler at binding 3
+(`pbr_direct_lit` + normal map) or binding 5 (`pbr_ibl` + normal map).
+
+**Decision.** D-7's three real, disclosed limits are each widened by
+one:
+
+1. `Device::createPipeline()`'s own `sampledTextureBindingCount` check
+   widens from `{0, 1, 2, 3, 4}` to `{0, 1, 2, 3, 4, 5}`.
+2. `createDescriptorPoolOfSize()`'s own `COMBINED_IMAGE_SAMPLER` sizing
+   widens from `4U * maxSets` to `5U * maxSets`.
+3. `VulkanCommandList::textureDescriptorMemos_` widens from
+   `std::array<TextureDescriptorMemo, 5>` to
+   `std::array<TextureDescriptorMemo, 6>` — without this, `bindTexture()`
+   binding index 5 (`pbr_ibl` + normal map's own new slot) fails its
+   own `ATLANTIS_CHECK(binding < textureDescriptorMemos_.size())`
+   outright, exactly the failure mode D-7's own identical item 3
+   already disclosed for binding 4.
+
+No other part of D-7, or of this ADR's own Decision/Consequences/
+Alternatives above, changes. [ADR-0074](0074-pbr-normal-map-material-descriptor-and-shader-contract.md)
+carries the corresponding descriptor-contract entry counts, the new
+GPU test proving binding 5 does not hit the memo-array check above,
+and the shader/Material-side consequences; this Amendment states only
+the three numeric widenings that are, by D-7's own text, this ADR's
+authoritative source, not ADR-0064's (which owns descriptor-**set**
+count/growth, a different axis, unaffected by this amendment).

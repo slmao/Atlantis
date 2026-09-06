@@ -5,8 +5,8 @@
 - **Created:** 2026-09-06
 - **Related Plan(s):** None yet — Plan follows once this Spec is Approved.
 - **Related ADR(s):** [ADR-0073](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md)
-  (`Proposed` — cooked mesh tangent representation and existing-mesh
-  migration), [ADR-0074](../adr/0074-pbr-normal-map-material-descriptor-and-shader-contract.md)
+  (`Proposed` — cooked mesh tangent representation, cook-time fallback,
+  and existing-mesh migration), [ADR-0074](../adr/0074-pbr-normal-map-material-descriptor-and-shader-contract.md)
   (`Proposed` — material/Renderer-API/descriptor/shader contract, both
   direct-lit and IBL paths), [ADR-0045 Proposed Amendment — 2026-09-06](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
   (mesh format-scope sentence gains tangent), [ADR-0058 Proposed Amendment — 2026-09-06](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
@@ -14,7 +14,10 @@
   Decision gains tangent as a fifth attribute — a genuine conflict
   found by direct inspection, mirroring ADR-0063's own identical
   precedent for the normal attribute; ADR-0063 itself needs no
-  amendment)
+  amendment), [ADR-0072 Proposed Amendment — 2026-09-06](../adr/0072-directional-shadow-map-resource-pass-and-pbr-integration.md#proposed-amendment--2026-09-06)
+  (D-7's own 4-sampler ceiling, `4 * maxSets` pool sizing, and 5-slot
+  `textureDescriptorMemos_` array each widen by one — the real
+  authoritative source ADR-0074 builds on, not ADR-0064)
 
 ## Summary
 
@@ -28,11 +31,13 @@ directional shadow.
 
 **Compatibility is precise, not blanket:** mesh and material **source
 and artifact formats change** (new schema versions, new stride/record
-size, new fields) — every mesh gets re-cooked and two existing meshes
-need real source edits (below). What stays byte-identical is **runtime
-rendering behavior, shader selection, and descriptor-binding results
-for every material that has no normal map**, and all 9 existing
-committed goldens.
+size, new fields) — every mesh gets re-cooked, and exactly one existing
+mesh (`pbr_sphere.mesh.txt`) needs a real source edit (below); a second
+mesh (`minimal_cube.mesh.txt`) needed a real fix but not a source
+edit — a cook-time fallback resolves it with zero authored bytes
+changed. What stays byte-identical is **runtime rendering behavior,
+shader selection, and descriptor-binding results for every material
+that has no normal map**, and all 9 existing committed goldens.
 
 ## Motivation / Problem Statement
 
@@ -58,9 +63,13 @@ in `shaders/`).
   behavior, shader selection, and descriptor-binding results, and all
   9 existing goldens, stay identical; mesh/material source and
   artifact bytes do not (new schema versions).
-- A real, bounded migration of the two existing mesh sources that
-  cannot currently produce a well-defined tangent (below), preserving
-  each one's own existing rendered output.
+- A real, bounded migration of the one existing mesh source
+  (`pbr_sphere.mesh.txt`) that cannot currently produce an unambiguous
+  tangent (below), preserving its own existing rendered output. A
+  second real problem (`minimal_cube.mesh.txt`, zero non-degenerate UV
+  contribution at every vertex) is resolved entirely by a cook-time
+  fallback with zero source change (below) — it required a fix, but
+  not a migration.
 - One new, independent, Human-Review-approved golden demonstrating the
   feature with normal map + IBL + sky + directional shadow combined,
   added the same way Spec 0028's own showcase golden was (a new
@@ -105,25 +114,40 @@ in `shaders/`).
   Re-cooking the same source produces byte-identical tangent output.
   No tangent is ever hand-authored in the mesh source grammar, and no
   Runtime or shader code ever computes one.
+- **FR1a (Deterministic fallback for zero UV contribution).** A vertex
+  with zero non-degenerate contributing triangles (every adjacent
+  triangle UV-degenerate, or zero triangles reference it) gets a
+  deterministic tangent derived solely from its own already-validated
+  unit normal — the fixed Cartesian axis least parallel to that normal,
+  Gram-Schmidt-orthogonalized and normalized, with handedness fixed to
+  `+1.0` (ADR-0073 item 4a). This is not an error path: it produces a
+  valid, decode-time-conformant tangent with zero source change, and is
+  `minimal_cube.mesh.txt`'s own resolution (Existing-mesh audit below)
+  — explicitly disclosed as carrying no UV-derived directional meaning
+  for that vertex, never claimed as standard tangent quality.
 - **FR2 (Mesh artifact schema).** `kMeshArtifactSchemaVersion` becomes
   `4`; per-vertex stride becomes 60 bytes (tangent xyzw appended at
   offset 44); a new `kMeshArtifactTangentOffsetBytes = 44` constant is
   added. Schema versions 1–3 are rejected outright — no migration
   reader (ADR-0073).
-- **FR3 (Degenerate-input and handedness-conflict rejection).** A mesh
-  source whose own UV/index/normal data cannot yield a well-defined,
-  unambiguous tangent for at least one vertex fails cooking outright
-  with a distinct error, no partial artifact ever written:
-  - `CookError::DegenerateTangentBasis` — every triangle touching a
-    vertex is UV-degenerate (`|det| < 1e-12`), the vertex is
-    referenced by zero triangles, or its accumulated tangent is
-    orthogonalization-degenerate (`< 1e-6`, reusing
-    `kDegenerateLengthEpsilon`).
+- **FR3 (Handedness-conflict rejection and the one remaining
+  degenerate-basis failure).** A mesh source whose own UV/index/normal
+  data cannot yield a well-defined, unambiguous tangent for at least
+  one vertex fails cooking outright with a distinct error, no partial
+  artifact ever written — after FR1a's fallback already resolves the
+  "zero contribution" case with no error at all:
+  - `CookError::DegenerateTangentBasis` — a vertex *has* at least one
+    non-degenerate contributing triangle (so FR1a's fallback does not
+    apply), yet its accumulated tangent is still orthogonalization-
+    degenerate (`< 1e-6`, reusing `kDegenerateLengthEpsilon`) — a real
+    safety net for a pathological geometric case, not observed in any
+    of the 5 currently-committed meshes.
   - `CookError::TangentHandednessConflict` — two or more of a shared
     vertex's own contributing triangles compute opposite-sign
     handedness (a genuine tangent discontinuity that would require a
     vertex split to resolve). **Never silently averaged** — this is a
-    real, audit-proven failure mode (below), not a hypothetical one.
+    real, audit-proven failure mode (`pbr_sphere`, below), not a
+    hypothetical one.
 - **FR4 (Decode-time re-validation).** `decodeMeshArtifact()`
   independently re-validates: the tangent's own unit length (the same
   double-precision, `[0.9801, 1.0201]`-tolerance method
@@ -134,31 +158,47 @@ in `shaders/`).
   handedness decodes to exactly `+1.0` or `-1.0` (exact-equality check
   — `InvalidTangentHandedness`). Three new, distinct
   `ArtifactDecodeError` enumerators (ADR-0073).
-- **FR5 (Existing-mesh migration, audit-driven, bounded).** A real
-  probe of all 5 committed mesh sources (below) proves 3 need no
-  change and 2 need a real source edit before this feature's own
-  Implementation. Every migrated mesh keeps its existing position/
-  color/normal data and existing rendered output unchanged; only UV
-  and/or vertex-duplication topology changes to make a tangent
-  computable (ADR-0073 Decision item 9).
-- **FR6 (Material schema).** `MaterialAssetData`/
-  `DecodedMaterialArtifact`/`MaterialMetadata` each gain one optional
-  `AssetId normalMapTexture` field (`0` = none); `ParsedMaterialSource`
-  gains `std::string normalMapLogicalPath` (empty = none), mirroring
-  `textureLogicalPath`'s own identical pre-cook/post-cook type split.
-  `atlantis_material_source_version` becomes `3`: the existing 8-line
-  form remains valid unchanged (no normal map); a 9th, optional line
-  (`normal_map: <path>`) adds one. Every existing `.material.txt` file
-  needs exactly its own version-marker line changed, nothing else.
+- **FR5 (Existing-mesh migration, audit-driven, bounded to one mesh).**
+  A real probe of all 5 committed mesh sources (below) proves 3 need no
+  change, 1 (`minimal_cube.mesh.txt`) is resolved entirely by FR1a's
+  cook-time fallback with no source change, and exactly 1
+  (`pbr_sphere.mesh.txt`) needs a real source edit before this
+  feature's own Implementation. The migrated mesh keeps its existing
+  position/color/normal data and existing rendered output unchanged;
+  only vertex-duplication topology changes at its own pole regions to
+  make every vertex's tangent unambiguous (ADR-0073 Decision item 9).
+- **FR6 (Material schema, three legal grammar shapes).**
+  `MaterialAssetData`/`DecodedMaterialArtifact`/`MaterialMetadata` each
+  gain one optional `AssetId normalMapTexture` field (`0` = none);
+  `ParsedMaterialSource` gains `std::string normalMapLogicalPath`
+  (empty = none), mirroring `textureLogicalPath`'s own identical
+  pre-cook/post-cook type split. `atlantis_material_source_version`
+  becomes `3`, with exactly three legal, line-count-exact shapes: 5
+  lines (any `kind`, no normal map, unchanged from today); 8 lines
+  (adds `base_color_factor`/`metallic_factor`/`roughness_factor`, any
+  `kind`, no normal map, unchanged from today); 9 lines (the 8-line
+  form plus a trailing `normal_map: <path>` line, **`kind` must be
+  `pbr_direct_lit`** — a 9-line file naming `unlit_textured`/
+  `lit_textured` is rejected with a new, distinct
+  `MaterialSourceParseError::NormalMapNotSupportedForKind`; an empty
+  `normal_map:` value is rejected with the existing `MissingField`).
+  Every existing `.material.txt` file needs exactly its own
+  version-marker line changed, nothing else.
   `kMaterialArtifactSchemaVersion` becomes `3` (56 → 64 bytes).
   Versions 1–2 rejected outright (ADR-0074 item 1).
-- **FR7 (Normal-map color space and sampler, closed).** The normal-map
-  texture asset is cooked with the existing `TextureColorSpace::Unorm`
-  enumerator (directional data, never sRGB-decoded) — no new
-  enumerator; this is a fixed decision, not a Plan-stage question. The
-  normal map is sampled through the material's own existing sampler
-  (same `filter`/`addressMode` as base color) — no second sampler is
-  introduced (ADR-0074 item 1).
+- **FR7 (Normal-map color space, cross-validated, and shared sampler,
+  closed).** The normal-map texture asset is cooked with the existing
+  `TextureColorSpace::Unorm` enumerator (directional data, never
+  sRGB-decoded) — no new enumerator; this is a fixed decision, not a
+  Plan-stage question. Mirroring ADR-0066 item 6's own base-color
+  `Rgba8Srgb` requirement exactly, a normal map resolved to `Srgb`
+  fails scene load with a new `RuntimeInitError::PbrNormalMapTextureNotUnorm`
+  sub-code, checked at Runtime's existing Phase 1
+  scene-dependency-resolution point (ADR-0060 Decision 6) — not a
+  cook-time check (`cookMaterial()` never resolves its own texture
+  reference, ADR-0059 Decision 7). The normal map is sampled through
+  the material's own existing sampler (same `filter`/`addressMode` as
+  base color) — no second sampler is introduced (ADR-0074 item 1).
 - **FR8 (Per-material shader selection, both environment states).**
   `selectShaderPair()` gains a per-material parameter (whether the
   realizing material's own `normalMapTexture != 0`), independent of
@@ -185,35 +225,51 @@ in `shaders/`).
   handedness, never re-derived). A mirrored (negative-determinant)
   object transform still flips chirality under this convention — a
   disclosed, deferred limitation (Open Questions), not solved here.
-- **FR10 (Descriptor contract and capacity, real, disclosed change).**
-  `sampledTextureBindingCountFor()` returns `3` for `PbrDirectLit` +
-  normal map with no environment (base-color@1, shadow-map@2,
-  normal-map@3), and `5` with environment enabled (base-color@1,
-  environment@2, DFG LUT@3, shadow-map@4, normal-map@5). The
-  descriptor pool's own per-Pipeline sampler ceiling widens from 4 to
-  5 (`ATLANTIS_CHECK` allowed-set gains `5`; pool sizing becomes
-  `5 * maxSets`, up from `4 * maxSets`) — a real capacity change to
-  ADR-0064's own model, confirmed necessary only for the 5-sampler
-  IBL+normal-map combination. New descriptor contracts:
+- **FR10 (Descriptor contract and capacity — three real limits,
+  disclosed and correctly attributed).** `sampledTextureBindingCountFor()`
+  returns `3` for `PbrDirectLit` + normal map with no environment
+  (base-color@1, shadow-map@2, normal-map@3), and `5` with environment
+  enabled (base-color@1, environment@2, DFG LUT@3, shadow-map@4,
+  normal-map@5). Three separate limits, all fixed by ADR-0072 D-7 and
+  each widened by one via that ADR's own Proposed Amendment: the
+  per-Pipeline `sampledTextureBindingCount` ceiling (`ATLANTIS_CHECK`
+  allowed-set `{0..4}` → `{0..5}`), the pool's own sampler-type sizing
+  (`4 * maxSets` → `5 * maxSets`), and
+  `VulkanCommandList::textureDescriptorMemos_` (`std::array<..., 5>` →
+  `std::array<..., 6>` — without this, `bindTexture(5, ...)` fails its
+  own `ATLANTIS_CHECK(binding < textureDescriptorMemos_.size())`
+  regardless of the first two being fixed). New descriptor contracts:
   `pbrDirectLitNormalMapExpectedDescriptorContract()` (5 entries) and
   `pbrIblNormalMapExpectedDescriptorContract()` (7 entries) —
   confirmed by direct reading of `descriptor_contract.cpp`'s own
   existing 4-entry/6-entry baselines, not estimated. The existing
   descriptor-**set**-count formula (`N+4`/`N+5`) is unaffected — this
-  is a per-pool sampler-type **capacity** change, a different axis
-  (ADR-0074 item 3/4).
-- **FR11 (Renderer public-API extension, disclosed).** `Material`
-  gains a second, optional, borrowed, non-owning normal-map texture+
-  sampler pair, both-or-neither, constructor-only, mirroring
-  `sampledTexture_`/`sampler_`'s own existing contract and ownership/
-  destruction-order rules exactly. `createMaterial()` gains matching
-  trailing parameters defaulting to `nullptr` — every existing call
-  site is unaffected. `Renderer::drawFrame()` binds the normal map at
-  `environmentBinding() == Ibl ? 5U : 3U`, mirroring the shadow-map
-  binding's own existing `? 4U : 2U` conditional-index pattern
-  verbatim. `RealizedMaterialCandidate` gains a second, optional
-  `newNormalMapTexture` field, mirroring `newSampledTexture`'s own
-  dedup contract (ADR-0074 item 2).
+  is a per-pool sampler-type **capacity** change plus one
+  `CommandList`-internal array bump, a different axis (ADR-0074 item
+  3/4).
+- **FR11 (Renderer public-API extension, one pointer, no second
+  sampler).** `Material` gains exactly one new, optional, borrowed,
+  non-owning `normalMapTexture_` pointer — never a second sampler,
+  since FR7 already fixes the normal map to reuse the material's
+  existing `sampler_`. A new precondition,
+  `ATLANTIS_CHECK(normalMapTexture_ == nullptr || sampledTexture_ != nullptr)`,
+  requires the base-color pair to already be present whenever a normal
+  map is. `createMaterial()` gains the matching trailing parameter,
+  defaulting to `nullptr` — every existing call site is unaffected.
+  `Renderer::drawFrame()` binds the normal map at
+  `environmentBinding() == Ibl ? 5U : 3U`, reusing `material.sampler()`
+  — the same `VkSampler` already bound for base color — mirroring the
+  shadow-map binding's own existing `? 4U : 2U` conditional-index
+  pattern verbatim. `RealizedMaterialCandidate` gains three new,
+  explicitly-named fields (`normalMapTextureAssetId`,
+  `newNormalMapTexture`, `normalMapStagingBuffer`), mirroring the
+  existing base-color fields exactly in kind, realized into the same,
+  existing `sampledTextureResourceMap_` (no new resource-map type). A
+  failure at any point during realization is rolled back by the
+  existing, unmodified mechanism — the whole candidate is one local,
+  RAII-owned variable, destroyed on any early `Err` return before
+  anything is recorded into a RenderGraph or submitted (ADR-0074
+  Section 2/2a).
 - **FR12 (Existing behavior unaffected).** Every mesh, material,
   shader, and Pipeline that does not reference a normal map keeps its
   exact current runtime rendering behavior, shader selection, and
@@ -249,28 +305,31 @@ in `shaders/`).
 
 ## Existing-mesh tangent-generatability audit
 
-A real probe (per-triangle UV-Jacobian determinant and per-vertex
-handedness-conflict computation, run against all 5 committed
-`.mesh.txt` sources) found:
+A real, executed probe (per-triangle UV-Jacobian determinant and
+per-vertex handedness-conflict computation, run against all 5
+committed `.mesh.txt` sources) found:
 
-| Mesh | UV-degenerate triangles | Handedness conflicts | Verdict |
-|---|---|---|---|
-| `ground_plane.mesh.txt` | 0 | 0 | Clean — no change needed |
-| `textured_quad_left.mesh.txt` | 0 | 0 | Clean — no change needed |
-| `textured_quad_right.mesh.txt` | 0 | 0 | Clean — no change needed |
-| `minimal_cube.mesh.txt` | 12/12 (100%) | n/a (no tangent computable at all) | **Fails — all 8 vertices share the literal identical UV `(0,0)`; must migrate** |
-| `pbr_sphere.mesh.txt` | 0/many | 96/425 vertices (22.6%), pole rings | **Fails — must migrate** |
+| Mesh | Triangles | UV-degenerate triangles | Vertices with handedness conflict | Verdict |
+|---|---|---|---|---|
+| `ground_plane.mesh.txt` | 2 | 0/2 | 0/4 | Clean — no change needed |
+| `textured_quad_left.mesh.txt` | 2 | 0/2 | 0/4 | Clean — no change needed |
+| `textured_quad_right.mesh.txt` | 2 | 0/2 | 0/4 | Clean — no change needed |
+| `minimal_cube.mesh.txt` | 12 | **12/12 (100%)** | 0/8 | **Zero valid UV contribution at every vertex — resolved entirely by FR1a's cook-time fallback; no source change** |
+| `pbr_sphere.mesh.txt` | 768 | 0/768 | **96/425 (22.6%)**, pole rings | **Fails — must migrate (this is the only mesh requiring a source edit)** |
 
-Both failures are real, audit-confirmed data problems, not
-hypothetical edge cases; this Spec's own Goals require both resolved
-before Implementation (ADR-0073 Decision item 9):
+**Correction to this Spec's own earlier drafting:** `minimal_cube`'s UV
+is genuinely sampled today — `lighting_demo.scene.txt` places it under
+`lit_textured_quad.material.txt` (`kind: lit_textured`), and
+`lit_textured.slang` samples `input.uv` for real, confirmed by direct
+read. A UV re-unwrap would therefore have changed `lighting_demo`'s own
+golden. FR1a's fallback (derived solely from the vertex's own normal)
+avoids this entirely by leaving every byte of `minimal_cube`'s
+authored content untouched.
 
-- **`minimal_cube.mesh.txt`:** needs a real per-face UV unwrap (e.g.
-  the standard 6-face cube unwrap, each face's own 4 corners getting
-  distinct `(u,v)` in `[0,1]`) so every triangle has a non-degenerate
-  UV Jacobian. Position, color, and normal data — and this mesh's own
-  existing rendered output in every non-normal-mapped golden — are
-  unchanged; only UV values change.
+Only `pbr_sphere`'s handedness conflict is a real, audit-confirmed
+problem this Spec's own Goals require resolved before Implementation
+(ADR-0073 Decision item 9):
+
 - **`pbr_sphere.mesh.txt`:** needs further pole-vertex duplication
   (beyond whatever duplication already exists at the poles) so that no
   single vertex index is shared by triangles whose own UV winding
@@ -278,11 +337,12 @@ before Implementation (ADR-0073 Decision item 9):
   values for every already-distinct vertex are unchanged; only the
   pole regions gain additional duplicate vertices, exactly as the
   existing per-longitude pole duplication already establishes the
-  precedent for.
-- **Acceptance gate:** re-running the same audit against both migrated
-  sources must report zero UV-degenerate triangles and zero handedness
-  conflicts before ADR-0073's own Implementation is considered
-  complete.
+  precedent for. FR1a's fallback cannot resolve this case — it applies
+  only to a vertex with *zero* contributing triangles, and every
+  `pbr_sphere` pole vertex has multiple, genuinely disagreeing ones.
+- **Acceptance gate:** re-running the same audit against the migrated
+  `pbr_sphere` source must report zero handedness conflicts before
+  ADR-0073's own Implementation is considered complete.
 - If a future mesh cannot be bounded this way, Implementation must
   stop and report back for Human Review rather than introducing an
   optional vertex layout or a per-mesh Pipeline split — no such case
@@ -339,18 +399,24 @@ shader-side):**
    mechanically filed; ADR-0063 needs none.
 2. [ADR-0074](../adr/0074-pbr-normal-map-material-descriptor-and-shader-contract.md)
    — the material schema/version bump, the `Renderer` public-API
-   extension (`Material`/`createMaterial()`'s second borrowed texture
-   pair), the new per-material shader-selection axis, two new shader
-   files, and the descriptor-pool capacity widening (Asset System +
-   Shader System + Renderer + Runtime's own material realization).
+   extension (`Material`/`createMaterial()`'s one new borrowed
+   normal-map texture pointer, reusing the existing sampler), the new
+   per-material shader-selection axis, two new shader files, and the
+   descriptor-pool capacity widening. Requires a Proposed Amendment to
+   [ADR-0072](../adr/0072-directional-shadow-map-resource-pass-and-pbr-integration.md)
+   D-7 (the real, authoritative source of the sampler ceiling, pool
+   sizing, and `textureDescriptorMemos_` array this ADR widens by one)
+   — not ADR-0064, whose own descriptor-set-count/growth model this
+   ADR does not touch (Asset System + Shader System + Renderer +
+   Runtime's own material realization).
 
 Also touched, as small, additive, already-designated-extensible
 surfaces: `VertexAttributeFormat`/`VertexAttributeType` each gain one
 `Float4` value (ADR-0073); `Renderer`'s own public `Material`/
-`createMaterial()` signatures gain trailing-default parameters
-(ADR-0074); the descriptor pool's own capacity constant and one
-`ATLANTIS_CHECK` allowed-value set change from 4 to 5 (ADR-0074). No
-RenderGraph change; no new module boundary; no new dependency.
+`createMaterial()` signatures gain one trailing-default parameter each
+(ADR-0074); three `VulkanCommandList`/`VulkanDevice`-internal capacity
+limits each widen by one (ADR-0072's own Amendment). No RenderGraph
+change; no new module boundary; no new dependency.
 
 ## Alternatives Considered
 
@@ -371,42 +437,53 @@ across three documents.
   `hdr_roll_off_demo`, `integrated_showcase_demo`) must remain byte-
   identical. `world_scene_loaded` (reuses `world_scene`'s own golden)
   and `sky_background` (a live-render discriminative comparison, no
-  committed golden) must both continue passing unchanged. This holds
-  despite `minimal_cube.mesh.txt` and `pbr_sphere.mesh.txt` gaining
-  new UV/topology data — the audit above requires their existing
-  position/color/normal-driven rendered output to be unchanged, and
-  every one of these goldens uses a non-normal-mapped material, so no
-  new shader path is ever selected for them.
+  committed golden) must both continue passing unchanged. `minimal_cube.mesh.txt`
+  gains zero source bytes of any kind (FR1a's fallback reads only its
+  already-existing normal); `pbr_sphere.mesh.txt` gains new pole-region
+  vertex/index data but every already-distinct vertex's own position/
+  color/normal/UV values are unchanged — every one of these goldens
+  uses a non-normal-mapped material, so no new shader path is ever
+  selected for them.
 - **Existing-mesh migration acceptance gate:** re-run the same
-  tangent-generatability audit against the migrated `minimal_cube`/
-  `pbr_sphere` sources; zero degenerate triangles, zero handedness
-  conflicts, required before Implementation is considered complete.
+  tangent-generatability audit against the migrated `pbr_sphere`
+  source; zero handedness conflicts required before Implementation is
+  considered complete.
 - **New, independent golden:** exactly one, for this Spec's own new
   combined normal-map+IBL+shadow+sky demo scene, captured and human-
   reviewed through ADR-0042's existing two-phase candidate-generate →
   review process — never auto-accepted.
 - **GPU-independent unit tests** (new): the tangent-generation
   algorithm against hand-computable inputs (a single flat-UV triangle
-  with a known expected tangent/handedness); a constructed shared-
+  with a known expected tangent/handedness); FR1a's fallback against a
+  hand-computable zero-contribution vertex (known normal → known,
+  hand-verified fallback tangent, no error); a constructed shared-
   vertex case with deliberately opposite-sign handedness proving
   `TangentHandednessConflict` fires and no partial artifact is
-  written; each new `DegenerateTangentBasis`/`NonUnitTangent`/
-  `NonOrthogonalTangent`/`InvalidTangentHandedness` failure path; and
-  `sampledTextureBindingCountFor()`'s new `3`/`5`-result cases
-  (mirroring the existing 4-case lock-down test's own style).
+  written; the narrowed `DegenerateTangentBasis` path (a contrived
+  vertex with a valid contribution whose orthogonalization still
+  degenerates) plus `NonUnitTangent`/`NonOrthogonalTangent`/
+  `InvalidTangentHandedness`; `sampledTextureBindingCountFor()`'s new
+  `3`/`5`-result cases (mirroring the existing 4-case lock-down test's
+  own style); and the material grammar's new 9-line-form cases —
+  `NormalMapNotSupportedForKind` (9 lines, `kind: lit_textured`) and
+  `MissingField` (9 lines, empty `normal_map:` value).
 - **GPU-required tests** (new): the new fixture's own non-degenerate-
   frame proof (mirrors `pbr_material_demo_gpu_tests.cpp`'s own first
   `TEST_CASE`); a discriminative pixel check confirming the normal map
   visibly changes shading versus the same material rendered without
   one (two renders, one fixture, mirroring Spec 0028's own R1/R2
   differential methodology rather than an exact predicted RGB value);
-  and a **new, dedicated 5-sampler Pipeline/descriptor-capacity test**
-  — a real Vulkan Device creating a Pipeline with
-  `sampledTextureBindingCount == 5`, a real descriptor set with all 5
-  sampler bindings bound, and a real draw submitted under Vulkan
-  Validation Layers. This is a distinct requirement from, and is not
-  satisfied by, the existing `N+4`/`N+5` descriptor-**set**-count test
-  (ADR-0074 item 3).
+  and a **new, dedicated 5-sampler Pipeline/descriptor-capacity test
+  that specifically exercises `bindTexture(5, ...)`** — a real Vulkan
+  Device creating a Pipeline with `sampledTextureBindingCount == 5`, a
+  real descriptor set with all 5 sampler bindings bound, and a real
+  `cmd.bindTexture(5, ...)` call (the normal-map binding under
+  `pbr_ibl`) before a real draw is submitted, confirmed under Vulkan
+  Validation Layers. Actually calling `bindTexture()` at binding 5 is
+  required, not optional — it is the one call that exercises
+  `textureDescriptorMemos_`'s own widened size (ADR-0074 Section 3).
+  This is a distinct requirement from, and is not satisfied by, the
+  existing `N+4`/`N+5` descriptor-**set**-count test.
 - Full `ctest -LE gpu`/`ctest -L gpu`, Debug and Release; Vulkan
   Validation Layers clean; `git diff --check`; module/link/`Vk*`
   isolation; fresh `ATLANTIS_BUILD_TESTS=OFF` build.
@@ -423,14 +500,15 @@ across three documents.
   determinant transform); revisit only if a future scene genuinely
   needs one, as its own separate, disclosed decision — not solved
   speculatively here.
-- **Q2 (`RealizedMaterialCandidate`/staging ownership for a second
-  texture under load/error paths).** The dedup and first-realization
-  contract mirrors `newSampledTexture`'s own exactly (ADR-0074), but
-  the exact staging-buffer lifetime interaction when a normal-map
-  upload fails mid-frame is not exhaustively enumerated in this Spec —
-  **Recommendation:** confirmed at Plan time against
-  `material_realization.cpp`'s own existing error-path handling for
-  the base-color texture, mirrored verbatim rather than designed anew.
+
+**Closed, not deferred:** the second-texture staging/rollback contract
+(`RealizedMaterialCandidate`'s own `normalMapStagingBuffer` lifetime
+under a mid-frame failure) is resolved by direct inspection of the
+existing `realizeOneMaterialCandidate()`/`realizePendingMaterials()`
+mechanism (ADR-0074 Section 2a) — the same local-variable-RAII rollback
+already governing the base-color texture, extended with zero new
+machinery. This was an earlier draft's own Open Question; it is not
+one any longer.
 
 ## Out of Scope / Future Work
 

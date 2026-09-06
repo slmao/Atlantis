@@ -7,17 +7,25 @@
 - **Related ADR(s):** [ADR-0073](0073-static-mesh-tangent-attribute-generation-and-schema.md)
   (the tangent vertex attribute this ADR's shaders consume — Proposed,
   same Spec), [ADR-0066](0066-pbr-material-asset-parameter-set-and-color-space-contract.md)
-  (the existing PBR material asset schema this ADR extends),
-  [ADR-0067](0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)
+  (the existing PBR material asset schema this ADR extends, including
+  its own item 6 base-color-texture-color-space cross-validation
+  precedent this ADR mirrors for the normal map), [ADR-0067](0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)
   (the existing BRDF/push-constant contract this ADR reuses
-  unmodified), [ADR-0064](0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)
-  (the descriptor-pool growth/capacity model this ADR widens by
-  exactly one sampler slot), [ADR-0022](0022-renderer-material-ownership-and-drawitem-contract.md
-  if present, else the ADR governing `Renderer`/`Material`'s own
-  ownership contract — confirmed at Plan time; `material.h`'s own
-  comments cite "ADR-0022" for `Material`'s one-Pipeline-ownership and
-  borrowed-texture rules, reused verbatim by this ADR's own second
-  borrowed-texture pair).
+  unmodified), [ADR-0072](0072-directional-shadow-map-resource-pass-and-pbr-integration.md)
+  D-7 (the **authoritative source** of today's 4-sampler-per-Pipeline
+  ceiling, `4 * maxSets` pool sizing, and 5-slot
+  `textureDescriptorMemos_` array — this ADR's own Proposed Amendment,
+  filed alongside this ADR, widens each of those three numbers by one;
+  see that ADR's own end), [ADR-0064](0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)
+  (the descriptor-**set**-count/pool-growth/ownership model — a
+  different axis from ADR-0072 D-7's per-set sampler-**type** capacity;
+  unaffected by this ADR, needs no amendment), [ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)
+  (`Material`'s one-Pipeline-ownership and "`Renderer` never creates a
+  `Material`" rules, reused unmodified), [ADR-0056](0056-texture-upload-resource-state-and-descriptor-binding.md)
+  Decision item 8 (the actual source of `Material`'s existing
+  "optional, construction-time, borrowed — never owned —
+  `SampledTexture`/`Sampler` pair" contract this ADR extends by one
+  more borrowed texture pointer).
 
 ## Context
 
@@ -40,16 +48,27 @@ Confirmed directly against current `main`:
   (`pbr_ibl.slang`) — `selectShaderPair()`'s own scene-wide
   `environmentEnabled` flag decides which shader pair, never a
   per-material one.
-- **The descriptor pool's own sampler capacity is a hard-coded
-  ceiling**: `vulkan_device.cpp:433-438` sizes
-  `VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER` at exactly `4 * maxSets`,
-  and `vulkan_device.cpp:1000-1002` enforces
-  `sampledTextureBindingCount ∈ {0,1,2,3,4}` via `ATLANTIS_CHECK`.
-  `setLayoutBindings` itself (`vulkan_device.cpp:1059-1068`) is a
-  `std::vector`, sized dynamically from `sampledTextureBindingCount`
-  — no fixed-size array needs widening there; only the two numeric
-  literals above (the `ATLANTIS_CHECK` ceiling and the pool's own
-  `4 * maxSets` sizing) are hard-coded and must both become `5`.
+- **Three separate, real, hard-coded capacity limits — all fixed by
+  [ADR-0072](0072-directional-shadow-map-resource-pass-and-pbr-integration.md)
+  D-7, not by ADR-0064** (confirmed by direct reading of D-7's own
+  text, which names all three by number): `vulkan_device.cpp:433-438`
+  sizes `VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER` at exactly
+  `4 * maxSets`; `vulkan_device.cpp:1000-1002` enforces
+  `sampledTextureBindingCount ∈ {0,1,2,3,4}` via `ATLANTIS_CHECK`; and
+  `VulkanCommandList::textureDescriptorMemos_`
+  (`vulkan_command_list.h:177`) is `std::array<TextureDescriptorMemo, 5>`
+  — `bindTexture()` (`vulkan_command_list.cpp:432,529`) asserts
+  `ATLANTIS_CHECK(binding < textureDescriptorMemos_.size())` before
+  every use, so binding index 5 fails this check outright at the
+  current size. `setLayoutBindings` itself
+  (`vulkan_device.cpp:1059-1068`) is a `std::vector`, sized dynamically
+  from `sampledTextureBindingCount` — no fixed-size array needs
+  widening there. All three numbers must widen by one for this ADR's
+  own binding-5 (`pbr_ibl` + normal map) case; [ADR-0072's own Proposed
+  Amendment — 2026-09-06](0072-directional-shadow-map-resource-pass-and-pbr-integration.md#proposed-amendment--2026-09-06),
+  filed alongside this ADR, is the authoritative source for this
+  widening — this ADR states the consequences, not the numbers
+  themselves a second time.
 - `descriptor_contract.cpp:45-63` confirms the exact current entry
   counts: `pbrDirectLitExpectedDescriptorContract()` has **4** entries
   (camera×2 stages, base-color, shadow-map); `pbrIblExpectedDescriptorContract()`
@@ -67,8 +86,10 @@ Confirmed directly against current `main`:
   sampler pair (`sampledTexture_`/`sampler_`), checked once in the
   constructor, no setter, with an explicit ownership/destruction-order
   contract ("the caller-owning composition root ... must destroy this
-  Material before destroying either of them"). This is the exact
-  shape a second, normal-map texture+sampler pair should mirror.
+  Material before destroying either of them"). This ADR's own normal-
+  map addition (Section 2) extends this contract with one more
+  borrowed *texture* pointer only — not a second pair — since the
+  normal map is fixed to reuse this same `sampler_` (Section 1 item 5).
 - `pbr_direct_lit.slang`'s `VertexInput` has exactly 3 locations
   (position@0, uv@1, normal@2); its vertex shader transforms `normal`
   via `(float3x3)objectToWorld`, gated by `checkConformalTransform()`.
@@ -100,12 +121,40 @@ yet resolved to an `AssetId`; resolution to `AssetId` is exclusively
 `cookMaterial()`'s own job, mirroring `textureLogicalPath`'s own
 identical division of responsibility).
 
-`atlantis_material_source_version` becomes `3`: the existing 8-line
-form is unchanged and still valid (no normal map); a 9th, optional
-trailing line, `normal_map: <logical-path>`, sets
-`normalMapLogicalPath`. Every existing `.material.txt` file needs
-exactly one line changed (its own version marker, `2` → `3`) — no
-other line touched.
+`atlantis_material_source_version` becomes `3` — **three legal shapes,
+line-count-exact, matching `parseMaterialSource()`'s own existing
+"no partial subset" discipline exactly:**
+
+- **5 lines** (version, kind, texture, filter, address_mode) — every
+  `kind` value legal (unchanged from today's real behavior, confirmed
+  directly: `unlit_textured_quad.material.txt`/`lit_textured_quad.material.txt`
+  are both real, committed 5-line files). No normal map.
+- **8 lines** (the 5 above + `base_color_factor`/`metallic_factor`/
+  `roughness_factor`, fixed order) — unchanged from today's real
+  behavior (every committed `pbr_*.material.txt` file is this shape).
+  No normal map.
+- **9 lines** — the 8-line form plus a trailing `normal_map:
+  <logical-path>` line. **`kind` must be `pbr_direct_lit`** — a 9-line
+  file naming `unlit_textured`/`lit_textured` is rejected
+  deterministically with a new, distinct
+  `MaterialSourceParseError::NormalMapNotSupportedForKind` (checked in
+  `parseMaterialSource()` once both `kind`, line 1, and the presence of
+  a 9th line are known — neither `lit_textured.slang` nor
+  `unlit_textured.slang` declares a normal-map binding, so accepting
+  this combination would silently parse a field with no consumer). An
+  empty `normal_map:` value (the line present, nothing after the
+  prefix) is rejected with the existing `MaterialSourceParseError::MissingField`
+  — the same rule `texture:`'s own empty-value case already uses,
+  applied identically here (an author who wants "no normal map" omits
+  the line entirely, exactly like every other optional field in this
+  grammar).
+- The maximum line count (`kMaxLineCount` in `material_source.cpp`)
+  becomes `9`, up from `8`; a 10-or-more-line file continues to be
+  rejected with the existing `MaterialSourceParseError::TrailingContent`,
+  unchanged in kind.
+
+Every existing `.material.txt` file needs exactly one line changed
+(its own version marker, `2` → `3`) — no other line touched.
 
 `kMaterialArtifactSchemaVersion` becomes `3`; the fixed record widens
 from 56 to 64 bytes (append `normal_map_texture_asset_id`, 8 bytes, at
@@ -145,107 +194,207 @@ reference passes through):**
    one sampler, two textures. This is the recommended, minimal design
    (no per-texture sampler parameters are introduced) and is hereby
    the fixed contract, not left to Plan-stage guessing.
-6. **Color space:** the normal-map texture asset is cooked with
-   `TextureColorSpace::Unorm` (directional data, never sRGB-decoded)
-   — the existing enumerator, confirmed above; no new value.
+6. **Color space, authored and cross-validated, not merely a cooking
+   convention:** the normal-map texture asset is cooked with the
+   existing `TextureColorSpace::Unorm` enumerator (directional data,
+   never sRGB-decoded) — no new value. Mirroring
+   [ADR-0066](0066-pbr-material-asset-parameter-set-and-color-space-contract.md)
+   item 6's own base-color-texture `Rgba8Srgb` requirement exactly (a
+   `cookMaterial()`-time check is impossible — `cookMaterial()` never
+   resolves its own texture reference, per ADR-0059 Decision 7): a
+   normal map whose resolved `TextureAssetData::colorSpace` is `Srgb`
+   fails scene load with a new `RuntimeInitError` sub-code,
+   `PbrNormalMapTextureNotUnorm`, checked at the same point ADR-0066
+   item 6's own check runs — Runtime's existing Phase 1
+   scene-dependency-resolution step (`scene_load.cpp`, ADR-0060
+   Decision 6), only when `normalMapTexture != 0`. A material with no
+   normal map is completely unaffected.
 
-### 2. Renderer public API extension (disclosed explicitly, not buried)
+### 2. Renderer public API extension — one new borrowed pointer, no second sampler
 
-**`Material` gains a second, optional, borrowed, non-owning
-texture+sampler pair — `normalMapTexture_`/`normalMapSampler_` —
-mirroring `sampledTexture_`/`sampler_`'s own exact shape:**
+**`Material` gains exactly one new, optional, borrowed, non-owning
+member, `normalMapTexture_` — not a second texture+sampler pair.**
+Item 1.5 above already fixed the normal map to reuse the material's
+own existing base-color sampler; introducing a second `Sampler*`
+member would contradict that decision by implying a second, real
+sampler slot that nothing ever populates differently. The single new
+pointer's own precondition is that the *existing* base-color pair is
+present:
 
-- `Material`'s constructor gains two new trailing parameters,
-  `const atlantis::rhi::SampledTexture* normalMapTexture = nullptr`
-  and `const atlantis::rhi::Sampler* normalMapSampler = nullptr`,
+- `Material`'s constructor gains one new trailing parameter,
+  `const atlantis::rhi::SampledTexture* normalMapTexture = nullptr`,
   appended after the existing trailing parameters (every pre-existing
   call site compiles and behaves unchanged, defaulting to `nullptr`).
-  `createMaterial()` gains the identical two trailing parameters.
-- **Both-or-neither, checked once, in the constructor** — the exact
-  same invariant `sampledTexture_`/`sampler_` already enforce, applied
-  independently to this second pair (a Material may have neither
-  texture pair, only the base-color pair, or both pairs — but never
-  a normal-map texture with no sampler or vice versa).
+  `createMaterial()` gains the identical trailing parameter.
+- **New invariant, checked once, in the constructor, alongside the
+  existing both-or-neither check:**
+  `ATLANTIS_CHECK(normalMapTexture_ == nullptr || sampledTexture_ != nullptr);`
+  — a normal map may never be constructed without the base-color pair
+  also present, since both are sampled through the one, same
+  `sampler_`. This is a precondition violation (a programmer error, per
+  AGENTS.md's error-handling rules), not a recoverable `Result` error —
+  identical in kind to the existing
+  `ATLANTIS_CHECK((sampledTexture_ == nullptr) == (sampler_ == nullptr));`
+  it sits beside.
 - **Ownership/destruction-order contract, identical in kind to the
-  existing one:** the caller-owning composition root — never
-  `Material` itself — must keep any `SampledTexture`/`Sampler` passed
-  as the normal-map pair alive for at least as long as this `Material`
-  is used in any `drawFrame()` call, and must destroy this `Material`
-  before destroying either of them. No new ownership model is
-  introduced; this is the existing contract, applied twice.
-- `Material` gains one new accessor pair,
-  `normalMapTexture()`/`normalMapSampler()`, mirroring
-  `sampledTexture()`/`sampler()` exactly.
-- **`RealizedMaterialCandidate`** (`material_realization.h`'s own
-  per-material realization-result struct) gains a second, optional
-  `std::unique_ptr<atlantis::rhi::SampledTexture> newNormalMapTexture`
-  field (mirroring its own existing `newSampledTexture` field exactly
-  — `nullptr` when the normal map was already realized by an earlier
-  material and is being reused from the dedup map, non-null exactly
-  once, on first realization, matching `newSampledTexture`'s own
-  identical "populated only on first upload" contract) and its own
-  `AssetId normalMapTextureAssetId` (mirroring `textureAssetId`). The
-  **sampler is not duplicated** — item 1.5 above already established
-  one shared sampler per material, so no second sampler field is
-  needed on this struct; the same `sampler` field already used for
-  base-color is reused for the normal map too.
+  existing one, applied to this one additional pointer:** the
+  caller-owning composition root — never `Material` itself — must keep
+  the `SampledTexture` passed as `normalMapTexture` alive for at least
+  as long as this `Material` is used in any `drawFrame()` call, and
+  must destroy this `Material` before destroying it. No new ownership
+  model is introduced.
+- `Material` gains exactly one new accessor, `normalMapTexture()`,
+  mirroring `sampledTexture()`. **No `normalMapSampler()` accessor
+  exists** — there is nothing for it to return that `sampler()` does
+  not already provide.
 - **No bindless resource array, no material-graph abstraction, no
-  generic N-texture mechanism** is introduced — this is exactly two
-  named, explicit, optional texture+sampler pairs, matching this
-  codebase's own existing "one combined-image-sampler descriptor per
-  Pipeline, per binding, hand-declared" discipline throughout.
+  generic N-texture mechanism** is introduced — this is exactly one
+  named, explicit, optional texture pointer added to an existing,
+  already-reviewed borrowed-pointer contract (ADR-0056 item 8).
 
 `Renderer::drawFrame()` binds the normal map **at the same
 conditional-index pattern the shadow map already establishes**
-(`renderer.cpp:130`'s own exact shape, extended by one more line):
+(`renderer.cpp:130`'s own exact shape), reusing `material.sampler()` —
+**the same `VkSampler` handle already bound at binding 1 for base
+color** — for the normal map's own separate binding index. Binding the
+identical sampler handle to two different descriptor bindings in the
+same set is ordinary, valid Vulkan usage, not a new RHI capability:
 
 ```cpp
-if (item.material->normalMapTexture()) {
+if (item.material->normalMapTexture() != nullptr) {
   const std::uint32_t normalMapBinding =
       item.material->environmentBinding() == MaterialEnvironmentBinding::Ibl ? 5U : 3U;
-  cmd.bindTexture(normalMapBinding, *item.material->normalMapTexture(), *item.material->normalMapSampler());
+  cmd.bindTexture(normalMapBinding, *item.material->normalMapTexture(), *item.material->sampler());
 }
 ```
 
-### 3. Descriptor pool capacity — a real, disclosed capacity change
+### 2a. `RealizedMaterialCandidate` and failure rollback — closed, not deferred
 
-**The descriptor pool's own hard-coded sampler ceiling widens from 4
-to 5 per Pipeline** — the one, single change this ADR makes to
-ADR-0064's own capacity model, confirmed necessary because the IBL+
-normal-map combination needs 5 sampler bindings (base-color@1,
-environment@2, DFG LUT@3, shadow-map@4, normal-map@5), one past the
-existing ceiling:
+`RealizedMaterialCandidate` (`material_realization.h:66-73`) gains
+three new, explicitly-named fields, mirroring its own existing
+base-color-texture fields exactly in kind:
 
-- `vulkan_device.cpp:1000-1002`'s own `ATLANTIS_CHECK` widens from
-  `∈ {0,1,2,3,4}` to `∈ {0,1,2,3,4,5}`.
-- `vulkan_device.cpp:438`'s own `poolSizes[1].descriptorCount = 4U *
-  maxSets` becomes `5U * maxSets`.
-- `sampledTextureBindingCountFor()` returns: `3` for `PbrDirectLit` +
-  normal map, no environment (base-color@1, shadow-map@2, normal-
-  map@3); `5` for `PbrDirectLit` + normal map + environment
-  (base-color@1, environment@2, DFG LUT@3, shadow-map@4,
-  normal-map@5). Materials without a normal map are completely
-  unaffected (`2`/`4`, unchanged).
-- **This is a per-pool sampler-*capacity* change, not a descriptor-
-  *set-count* change** — the existing `N+4`/`N+5` steady/peak
-  **set-count** formula (`material_realization_gpu_tests.cpp`'s own
-  `N=6` test) is unaffected in its own arithmetic: one material still
-  contributes exactly one Pipeline/one descriptor set, regardless of
-  how many sampler bindings that one set declares. What changes is
-  how many *descriptors of the sampler type* the pool must reserve
-  per set (`4 * maxSets` → `5 * maxSets`), a completely different axis
-  the existing set-count test does not, and cannot, exercise.
-- **A new, real verification requirement, not a reuse of the existing
-  set-count test:** a real Vulkan Device must actually create a
-  Pipeline whose own `sampledTextureBindingCount == 5` and a real
-  descriptor set with all 5 sampler bindings bound, then submit a real
-  draw referencing it, confirmed under Vulkan Validation Layers — the
-  `N+4`/`N+5` test only proves *set-count* headroom against the pool's
-  own `maxSets` ceiling, and says nothing about whether a single
-  Pipeline's own 5-sampler descriptor-set-layout is itself valid or
-  whether the pool's own widened `5 * maxSets` sampler-type sizing is
-  sufficient — a materially different property, requiring its own
-  new test (Spec 0029's own Testing & Verification Plan).
+```cpp
+atlantis::asset_system::AssetId normalMapTextureAssetId = 0;
+std::unique_ptr<atlantis::rhi::SampledTexture> newNormalMapTexture;  // nullptr if textureAssetId is 0, or already realized
+std::optional<std::unique_ptr<atlantis::rhi::Buffer>> normalMapStagingBuffer;  // present iff newNormalMapTexture is non-null
+```
+
+No second sampler field — Section 1 item 5/Section 2 above already
+established the single shared `sampler` field covers both textures.
+
+**Realization order inside `realizeOneMaterialCandidate()`:** after the
+existing base-color texture/staging-buffer attempt and before the
+existing `device.createSampler(...)` call, attempt the normal map's
+own texture/staging-buffer creation using the identical dedup-then-
+create logic the base-color texture already uses (`effectiveSampledTextures`
+lookup by `normalMapTextureAssetId`; skip entirely, leaving
+`newNormalMapTexture` as `nullptr`, when `normalMapTextureAssetId == 0`
+— no normal map on this material). `createMaterial()`'s own call is
+extended with the new trailing `normalMapTexture` pointer (Section 2).
+
+**Failure rollback — the existing mechanism, unchanged, not a new one:**
+`realizeOneMaterialCandidate()` already builds its result inside one
+local, stack-allocated `RealizedMaterialCandidate candidate;` and
+returns `ResultT::Err(...)` immediately on any sub-step's failure
+(confirmed by direct reading, `material_realization.cpp:165-255`) —
+every already-constructed member up to that point (a real
+`unique_ptr<SampledTexture>`, a real `unique_ptr<Buffer>`, a real
+`unique_ptr<Sampler>`) is destroyed by `candidate`'s own destructor
+during the early return's stack unwind, via ordinary RAII, since
+nothing has been recorded into a RenderGraph or submitted yet. Adding
+the two new `unique_ptr`/`optional<unique_ptr>` members changes
+nothing about this mechanism — a failure at any point (base-color
+texture creation, staging buffer, **normal-map texture creation**,
+**normal-map staging buffer**, sampler, or `createMaterial()` itself)
+unwinds the same local `candidate`, destroying every resource created
+so far in this one attempt, and the caller
+(`realizePendingMaterials()`) already logs and leaves the material
+pending, retried next frame (`material_realization.cpp:324-327`),
+never touching any persistent resource map. **A candidate is never
+partially published** — `realizePendingMaterials()` only moves a
+candidate's members into the resource maps after that frame's own
+`submit()` and conditional `waitIdle()` both succeed (ADR-0060
+Decision 6, ADR-0056 item 6): `sampler`/`material` into
+`samplerResourceMap_`/`materialResourceMap_` as today, and
+**`newNormalMapTexture` into the same, existing
+`sampledTextureResourceMap_`** the base-color texture already uses,
+keyed by `normalMapTextureAssetId` — the map is already keyed by
+texture `AssetId` regardless of which material field references it, so
+no second, `normalMapTextureResourceMap_`-shaped map is needed (Section
+1 item 4's own "no new cache, no new resource-map type" holds exactly).
+A real Vulkan submission failure on a realization frame is
+handled with the same, already-existing severity every other
+`submit()` failure has, unconditionally safe by the same argument
+ADR-0060 Decision 6 already makes for the base-color texture. This
+closes Spec 0029's own prior Open Question about staging-buffer
+ownership under a mid-frame failure — it is not deferred to Plan, it
+is exactly the mechanism already in place for the base-color texture,
+extended to a second texture with zero new machinery.
+
+### 3. Descriptor pool capacity — three real, disclosed limits, all widened by one
+
+**Confirmed necessary because the IBL+normal-map combination needs 5
+sampler bindings (base-color@1, environment@2, DFG LUT@3, shadow-map@4,
+normal-map@5), one past every existing ceiling.** All three numbers
+below are fixed by
+[ADR-0072](0072-directional-shadow-map-resource-pass-and-pbr-integration.md)
+D-7, and are widened by that same ADR's own [Proposed Amendment —
+2026-09-06](0072-directional-shadow-map-resource-pass-and-pbr-integration.md#proposed-amendment--2026-09-06)
+filed alongside this ADR — restated here as consequences, not
+re-decided:
+
+1. `vulkan_device.cpp:1000-1002`'s own `ATLANTIS_CHECK` widens from
+   `∈ {0,1,2,3,4}` to `∈ {0,1,2,3,4,5}`.
+2. `vulkan_device.cpp:438`'s own `poolSizes[1].descriptorCount = 4U *
+   maxSets` becomes `5U * maxSets`.
+3. `VulkanCommandList::textureDescriptorMemos_` widens from
+   `std::array<TextureDescriptorMemo, 5>` to
+   `std::array<TextureDescriptorMemo, 6>` — without this, every call to
+   `cmd.bindTexture(5, ...)` (the `pbr_ibl` + normal-map case) fails
+   `ATLANTIS_CHECK(binding < textureDescriptorMemos_.size())`
+   unconditionally, regardless of items 1/2 above being fixed. This is
+   an internal `VulkanCommandList` capacity bump, not a public API
+   change — and it is a genuinely separate limit from items 1/2: a
+   Pipeline can be created and a descriptor set allocated successfully
+   while this one, distinct array bound still rejects the actual
+   `bindTexture()` call at binding 5.
+
+`sampledTextureBindingCountFor()` returns: `3` for `PbrDirectLit` +
+normal map, no environment (base-color@1, shadow-map@2, normal-map@3);
+`5` for `PbrDirectLit` + normal map + environment (base-color@1,
+environment@2, DFG LUT@3, shadow-map@4, normal-map@5). Materials
+without a normal map are completely unaffected (`2`/`4`, unchanged).
+
+**This is a per-pool sampler-*capacity* change (items 1/2) plus one
+`CommandList`-internal array bump (item 3), not a descriptor-*set-
+count* change** — the existing `N+4`/`N+5` steady/peak **set-count**
+formula (`material_realization_gpu_tests.cpp`'s own `N=6` test) is
+unaffected in its own arithmetic: one material still contributes
+exactly one Pipeline/one descriptor set, regardless of how many
+sampler bindings that one set declares or how large
+`textureDescriptorMemos_` is. What changes is how many *descriptors of
+the sampler type* the pool must reserve per set, and how large one
+internal per-`CommandList` bookkeeping array must be — two axes the
+existing set-count test does not, and cannot, exercise.
+
+**A new, real verification requirement, not a reuse of the existing
+set-count test, and one that must specifically exercise binding 5:** a
+real Vulkan Device must create a Pipeline whose own
+`sampledTextureBindingCount == 5`, allocate a real descriptor set, and
+actually call `cmd.bindTexture(5, ...)` (the normal-map binding under
+`pbr_ibl`) before submitting a real draw, confirmed under Vulkan
+Validation Layers. This exercises all three widened limits together —
+item 3 above is invisible to a test that only creates the Pipeline/
+descriptor set and never calls `bindTexture()` at binding 5 itself.
+The `N+4`/`N+5` test only proves *set-count* headroom against the
+pool's own `maxSets` ceiling, and says nothing about whether a single
+Pipeline's own 5-sampler descriptor-set-layout is valid, whether the
+pool's own widened `5 * maxSets` sampler-type sizing is sufficient, or
+whether `textureDescriptorMemos_` is large enough for a real
+`bindTexture(5, ...)` call — three materially different properties,
+requiring this one new test (Spec 0029's own Testing & Verification
+Plan).
 
 ### 4. New descriptor contracts (real entry counts, not estimated)
 
@@ -265,11 +414,15 @@ golden:
 
 - **`pbr_direct_lit_normal_map.slang`** — identical
   `CameraUniform`/`PushConstants`/BRDF math to `pbr_direct_lit.slang`,
-  `VertexInput` gains `[[vk::location(3)]] float4 tangent`,
-  `normalMapSampler` at `[[vk::binding(3, 0)]]`.
+  `VertexInput` gains `[[vk::location(3)]] float4 tangent`, a
+  `normalMapSampler` combined-image-sampler declared at
+  `[[vk::binding(3, 0)]]`. This is a shader-side binding *declaration*
+  only — Section 2/2a above already fixed that the actual descriptor
+  written to it at runtime is the material's own one, shared
+  `sampler_`/`sampler` handle, never a second RHI `Sampler` object.
 - **`pbr_ibl_normal_map.slang`** — identical to `pbr_ibl.slang`,
   `VertexInput` gains the same location-3 tangent, `normalMapSampler`
-  at `[[vk::binding(5, 0)]]`.
+  at `[[vk::binding(5, 0)]]`, same shared-handle note as above.
 - Both: `vertexMain()` transforms `tangent.xyz` via the **same**
   `(float3x3)objectToWorld` and the **same** `checkConformalTransform()`
   gate the existing normal transform already relies on (never a new
@@ -316,34 +469,46 @@ golden:
   scene is forced to choose between "environment" and "normal map,"
   the real reason the earlier direct-only-scoped draft could not
   demonstrate the feature in the project's own default showcase scene.
-- Every capacity number in this ADR (4→5 ceiling, `4*maxSets`→
-  `5*maxSets`, 4→5/6→7 contract entry counts) is a confirmed, exact
-  figure from current source, not an estimate.
+- Every capacity number in this ADR (three real limits widened by one
+  each — Pipeline ceiling, pool sizing, `textureDescriptorMemos_`;
+  4→5/6→7 contract entry counts) is a confirmed, exact figure from
+  current source, not an estimate, and its authoritative source (ADR-
+  0072 D-7, amended alongside this ADR) is correctly attributed rather
+  than restated as if newly decided here.
 - Two new shader files, zero edits to either existing PBR shader —
   zero risk to any currently-committed golden.
-- The Renderer API extension is a second instance of an already-
-  reviewed, already-`Accepted` pattern (one more borrowed, both-or-
-  neither, non-owning texture+sampler pair) — not a new ownership
-  model, not a new binding mechanism.
+- The Renderer API extension is exactly one new borrowed, non-owning
+  pointer added to an already-reviewed, already-`Accepted` pattern
+  (ADR-0056 item 8) — not a second sampler, not a new ownership model,
+  not a new binding mechanism.
+- The second-texture staging/rollback contract (Section 2a) is closed
+  by direct inspection of the existing, already-`Accepted`
+  `realizeOneMaterialCandidate()`/`realizePendingMaterials()` mechanism
+  — no new Open Question deferred to Plan.
 
 ### Negative / Trade-offs
 
 - A real, disclosed widening of `Renderer`'s own public `Material`/
-  `createMaterial()` API and of the descriptor pool's own capacity
-  model (ADR-0064) — both real architectural surfaces, not
+  `createMaterial()` API and of three real Vulkan-Backend capacity
+  limits (ADR-0072 D-7, amended) — real architectural surfaces, not
   cosmetic additions, and both now explicit in this ADR rather than
   implied.
 - Two new shader files (not one) and two new descriptor-contract
   functions (not one) — real, larger Implementation scope than a
   direct-only design, in exchange for the feature actually working in
   an environment-enabled scene.
-- A new, dedicated 5-sampler Pipeline/descriptor-capacity test is
-  required — the existing `N+4`/`N+5` set-count test cannot stand in
-  for it (item 3 above).
+- A new, dedicated 5-sampler Pipeline/descriptor-capacity test that
+  specifically exercises `bindTexture(5, ...)` is required — the
+  existing `N+4`/`N+5` set-count test cannot stand in for it (Section 3
+  above).
 - Per-material shader selection (not scene-wide) is a real widening of
   `selectShaderPair()`'s own dispatch contract — every call site
   currently passing only `environmentEnabled` must also thread the
   calling material's own `normalMapTexture` presence.
+- The material grammar's new 9-line form is legal only for
+  `kind: pbr_direct_lit` — a real, disclosed asymmetry in an otherwise
+  kind-agnostic grammar, needed because no other kind's shader declares
+  a normal-map binding to consume it.
 
 ## Alternatives Considered
 
@@ -374,3 +539,19 @@ golden:
   per this Spec's own explicit instruction and this codebase's own
   established, hand-declared-binding discipline throughout — two
   named, explicit texture slots is not a general mechanism.
+- **A second, independent `Sampler*` pointer on `Material` (a full
+  second texture+sampler pair), the shape this ADR's own earlier draft
+  used.** Rejected once Section 1 item 5 fixed the normal map to reuse
+  the base-color sampler: a second `Sampler*` member would let a caller
+  pass a *different* sampler for the normal map, a capability nothing
+  in this Spec's own contract needs or permits, and would leave the
+  invariant "these two must always be the same handle" unenforced by
+  the type itself rather than simply not existing as a possibility. One
+  borrowed texture pointer, reusing the existing `sampler_`, is smaller
+  and cannot drift from the fixed contract.
+- **Allowing a 9-line source file for `unlit_textured`/`lit_textured`,
+  silently ignoring the `normal_map:` line.** Rejected: a silently-
+  ignored authored field is exactly the class of defect this
+  codebase's own "distinct enumerators for distinct causes" discipline
+  exists to surface at parse time rather than leave as silent, dead
+  data an author could reasonably expect to do something.

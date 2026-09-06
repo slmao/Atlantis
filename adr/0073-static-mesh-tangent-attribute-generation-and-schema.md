@@ -42,22 +42,40 @@ Confirmed directly against current `main`:
   (`errors.h:52-67`) have no enumerator for "the cooker could not
   derive a well-defined attribute from the input geometry."
 
-**A direct computational audit of every committed mesh source**, run
+**A direct, executed computational audit of every committed mesh
+source** (re-run to produce the exact figures below, not recalled),
 against the exact accumulate-then-orthogonalize algorithm this ADR
-defines below, found real, disqualifying problems in two of the five:
+defines below, found real problems in two of the five:
 
-| Mesh | Triangles | Result |
-|---|---|---|
-| `ground_plane.mesh.txt` | 2 | Clean — 4 distinct UVs, 0 degenerate triangles, 0 handedness conflicts. |
-| `textured_quad_left.mesh.txt` | 2 | Clean — same shape as `ground_plane`. |
-| `textured_quad_right.mesh.txt` | 2 | Clean — same shape as `ground_plane`. |
-| `pbr_sphere.mesh.txt` | 768 | **96 of 425 vertices (22.6%) have a genuine tangent-handedness conflict** — two or more triangles sharing the same vertex produce opposite-sign handedness. Concentrated at the pole rings (e.g. vertex 0, position `(0,1,0)`, is one of several per-longitude pole copies whose adjacent wedge triangles disagree in handedness sign). UV area itself is never degenerate at these vertices — the conflict is a genuine chirality disagreement, not a zero-area triangle. |
-| `minimal_cube.mesh.txt` | 12 | **All 8 vertices, all 12 triangles are UV-degenerate** — every vertex's own UV is the literal same value, `(0.0, 0.0)` (confirmed by direct inspection: `grep` shows one single, repeated UV pair across all 8 lines). Every triangle's own UV-space determinant is exactly zero. No tangent can be derived for any vertex. |
+| Mesh | Triangles | UV-degenerate triangles | Vertices with handedness conflict | Result |
+|---|---|---|---|---|
+| `ground_plane.mesh.txt` | 2 | 0/2 | 0/4 | Clean. |
+| `textured_quad_left.mesh.txt` | 2 | 0/2 | 0/4 | Clean. |
+| `textured_quad_right.mesh.txt` | 2 | 0/2 | 0/4 | Clean. |
+| `pbr_sphere.mesh.txt` | 768 | 0/768 | **96/425 (22.6%)** | **Genuine tangent-handedness conflict** — two or more triangles sharing the same vertex produce opposite-sign handedness, concentrated at the pole rings (e.g. vertex 0, position `(0,1,0)`, one of several per-longitude pole copies whose adjacent wedge triangles disagree in sign). UV area is never degenerate at these vertices — this is a genuine chirality disagreement, not a zero-area triangle. Requires real mesh migration (item 9). |
+| `minimal_cube.mesh.txt` | 12 | **12/12 (100%)** | 0/8 | Every vertex's own UV is the literal same value, `(0.0, 0.0)` — every triangle's own UV-space determinant is exactly zero, so **zero** triangles contribute a valid tangent to any vertex. Handled entirely by this ADR's own fallback-tangent path (item 4a) — no cook failure, no mesh migration (item 9). |
+
+**Correction to this ADR's own earlier drafting:** `minimal_cube`'s UV
+is not inert data. `assets/scenes/lighting_demo.scene.txt` places
+`minimal_cube.mesh.txt` under `materials/lit_textured_quad.material.txt`
+(`kind: lit_textured`), and `lit_textured.slang` genuinely samples
+`input.uv` (`texturedSampler.Sample(input.uv)`, confirmed by direct
+read) to produce the `lighting_demo` golden's own real pixels. Any
+re-authoring of `minimal_cube`'s UV values would therefore change that
+golden's rendered output — confirmed by tracing the real consumer
+chain, not assumed. This is the reason item 4a's fallback path (below)
+leaves `minimal_cube`'s UV, topology, and every other byte of its
+authored content completely untouched, rather than re-unwrapping it.
 
 This audit is the reason this ADR's own Decision below makes
 **rejecting a handedness conflict, not silently averaging it, a hard
 requirement** (see item 5) — a real, currently-authored mesh
-(`pbr_sphere`) proves this is not a theoretical edge case.
+(`pbr_sphere`) proves this is not a theoretical edge case. The same
+audit is also why `minimal_cube` needs a cook-time fallback rather
+than re-authoring: it has zero handedness conflicts (there is nothing
+to disagree about when zero triangles contribute at all), so a
+deterministic, per-vertex fallback derived solely from its own already-
+validated normal is well-defined and requires no source change.
 
 ## Decision
 
@@ -128,7 +146,7 @@ weighting/averaging scheme.**
    - **Handedness-conflict check (new, mandatory, whole-mesh
      failure):** for each vertex, if any two of its own recorded
      `h_face` values disagree in sign, the whole mesh's own cook fails
-     with `CookError::TangentHandednessConflict` (item 6) — the
+     with `CookError::TangentHandednessConflict` (item 5) — the
      accumulated `T`/`B` sums for that vertex are never computed
      into a final tangent, and no partial artifact is written for any
      vertex. This is a hard, deterministic rejection, never a
@@ -141,16 +159,56 @@ weighting/averaging scheme.**
      that vertex's own single, agreed-upon `h_face` value (not
      re-derived from the orthogonalized `T`/accumulated `B` a second
      time — it is already known and already confirmed unanimous).
-5. **Whole-mesh failure, two independent causes** —
-   `CookError::DegenerateTangentBasis` (a vertex left with zero
-   non-degenerate triangle contribution: every adjacent triangle was
-   UV-degenerate, or the vertex is referenced by zero triangles, or
-   its accumulated tangent fails the orthogonalization epsilon) and
-   `CookError::TangentHandednessConflict` (item 4's own conflict
-   check) — kept as two distinct enumerators since they represent two
-   different authoring problems an implementer would fix differently
-   (re-author UVs vs. split a seam), matching this codebase's own
-   "distinct enumerators for distinct causes" discipline
+
+4a. **Deterministic fallback tangent for a vertex with zero
+    non-degenerate triangle contribution — a real, disclosed part of
+    the algorithm, not an error path.** A vertex reaches this rule
+    when every triangle referencing it was UV-degenerate (`minimal_cube`,
+    all 8 vertices), or when it is referenced by zero triangles (an
+    orphan vertex, no currently-committed mesh has one). Its own
+    already-validated unit normal `N` (ADR-0063) is the only input:
+
+    - Compute `|dot(N, X)|`, `|dot(N, Y)|`, `|dot(N, Z)|` against the
+      three fixed Cartesian basis vectors `X=(1,0,0)`, `Y=(0,1,0)`,
+      `Z=(0,0,1)`. Pick the axis with the **smallest** absolute dot
+      product (the one least parallel to `N`) — a fixed, deterministic
+      tie-break of `X` before `Y` before `Z` applies on an exact tie
+      (no currently-committed mesh's normal produces one; disclosed for
+      completeness, not left undefined).
+    - `T_raw = axis - N * dot(N, axis)`; normalize to unit length —
+      this can never be degenerate (the axis is chosen specifically to
+      not be parallel to `N`, so `|T_raw|` is bounded well away from
+      zero for every possible unit `N`; no epsilon check is needed
+      here, unlike item 3's other two cases).
+    - Handedness is fixed: `tw = +1.0`. There is no second contributor
+      to disagree with, so no handedness-conflict check applies to a
+      fallback vertex.
+    - This fallback is a mathematically valid, decode-time-conformant
+      tangent (unit length, orthogonal to `N`, `tw = ±1.0` exactly) —
+      it satisfies every check in item 6 below. It is explicitly
+      **not** claimed to carry any UV-derived directional meaning: a
+      vertex with no non-degenerate UV contribution has, by
+      construction, no UV data expressing a spatial "along the surface"
+      direction, so this fallback exists solely to produce a fixed,
+      well-defined 60-byte artifact and keep the existing, non-normal-
+      map rendering path byte-behavior-unchanged — never to claim
+      standard, UV-derived tangent quality for that vertex. A future
+      normal-mapped consumer of `minimal_cube` (none exists today) would
+      see a flat, arbitrarily-but-deterministically-oriented tangent
+      basis at every one of its 8 vertices, disclosed here, not hidden.
+5. **Whole-mesh failure, one remaining cause after item 4a** —
+   `CookError::DegenerateTangentBasis` now fires only when a vertex
+   *has* at least one non-degenerate contributing triangle (so item 4a's
+   fallback does not apply) yet its accumulated tangent still fails the
+   orthogonalization epsilon (item 3) — a real safety net for a
+   pathological geometric case, not observed in any of the 5 currently-
+   committed meshes. `CookError::TangentHandednessConflict` (item 4's
+   own conflict check) is unchanged — `pbr_sphere`'s own 96/425
+   conflicting vertices are its real, confirmed trigger. Kept as two
+   distinct enumerators since they represent two different authoring
+   problems an implementer would fix differently (a numerically
+   degenerate UV parameterization vs. splitting a seam), matching this
+   codebase's own "distinct enumerators for distinct causes" discipline
    (`errors.h`'s own header comment). Confirmed, by direct inspection
    of every existing `CookError` enumerator, that neither is expressed
    by any of them today. No partial artifact is ever written for
@@ -179,16 +237,16 @@ weighting/averaging scheme.**
    and `atlantis::shader_system::VertexAttributeType` each gain
    exactly one new value, `Float4` — the same class of additive
    change ADR-0058's own `Float2` addition already established.
-9. **Existing-mesh migration is a real, disclosed prerequisite of this
-   ADR's own Implementation, not a side effect discovered later:**
-   - `minimal_cube.mesh.txt` must be re-authored with a real,
-     non-degenerate UV mapping (e.g. a standard cube-face unwrap, one
-     UV island per face) before this ADR's own cooker change lands —
-     its current, uniform `(0,0)` UV fails item 5's own
-     `DegenerateTangentBasis` check unconditionally. Its own smooth,
-     vertex-averaged normals (ADR-0063 item 6) and its own 8-shared-
-     vertex/12-triangle/36-index topology are otherwise unaffected —
-     only the UV field per vertex changes.
+9. **Existing-mesh migration, real but bounded to exactly one mesh —
+   item 4a's fallback resolves `minimal_cube` with zero source change:**
+   - `minimal_cube.mesh.txt` needs **no** UV, topology, or any other
+     source change. Every one of its 8 vertices has zero non-degenerate
+     UV contribution, so item 4a's fallback path applies uniformly and
+     deterministically — no `CookError` of any kind, no source edit, no
+     migration. `lighting_demo`'s own real, golden-backed consumption of
+     this mesh's UV data (via `lit_textured.slang`, see Context above)
+     is completely undisturbed, since neither its UV bytes nor any other
+     authored field changes.
    - `pbr_sphere.mesh.txt` must be re-authored to eliminate the 96
      pole-ring handedness conflicts before this ADR's own cooker
      change lands — standard practice for a UV-sphere: duplicate each
@@ -203,21 +261,23 @@ weighting/averaging scheme.**
      grows. Re-authoring is verified complete by re-running this same
      audit algorithm (item 4) against the candidate mesh and confirming
      zero conflicts remain — a concrete, mechanical Implementation-time
-     acceptance gate, not a subjective judgment call.
+     acceptance gate, not a subjective judgment call. This is the
+     **only** mesh requiring any source edit.
    - `ground_plane.mesh.txt`/`textured_quad_left.mesh.txt`/
      `textured_quad_right.mesh.txt` need no UV/topology change — the
      audit already confirms them clean.
    - **Every mesh's own artifact bytes change** once re-cooked under
      schema 4 (stride 44→60) — a build-output-only effect (`.amesh`
      files are never tracked in git). Decoded position/color/UV0/
-     normal values for `ground_plane`/`textured_quad_*` are byte-for-
-     byte identical to today; `minimal_cube`'s own decoded UV values
-     change (a real, disclosed content change, not merely a format
-     change — see Spec 0029's own compatibility statement for which
-     rendered outputs this can and cannot affect); `pbr_sphere`'s own
-     decoded position/normal values for its *existing* (non-pole)
-     vertices are unchanged, while its pole-region vertex/index data
-     changes (more vertices, re-triangulated poles).
+     normal values for `ground_plane`/`textured_quad_*`/`minimal_cube`
+     are byte-for-byte identical to today (`minimal_cube`'s own UV is
+     untouched by item 4a's fallback, which reads only its normal);
+     `pbr_sphere`'s own decoded position/normal values for its
+     *existing* (non-pole) vertices are unchanged, while its
+     pole-region vertex/index data changes (more vertices,
+     re-triangulated poles). Every existing image-regression golden
+     therefore stays byte-identical (Spec 0029's own compatibility
+     statement and Testing & Verification Plan).
 
 ## Consequences
 
@@ -232,20 +292,30 @@ weighting/averaging scheme.**
   averaged tangent.
 - `ground_plane`/`textured_quad_left`/`textured_quad_right` need zero
   re-authoring — the audit proves this, not merely a design intention.
+- `minimal_cube` needs zero re-authoring either, once item 4a's
+  fallback path is in place — a real fact this ADR's own earlier
+  drafting got wrong (it originally claimed no shader reads
+  `minimal_cube`'s UV, and proposed re-unwrapping it; both were
+  incorrect — `lighting_demo` genuinely samples it, so a UV change
+  would have been a real, undisclosed golden-affecting regression).
 
 ### Negative / Trade-offs
 
 - Every static mesh's own per-vertex byte cost grows from 44 to 60
   bytes (+36%), including meshes whose own shader never reads the
   tangent region.
-- Two of the five currently-committed meshes (`minimal_cube`,
-  `pbr_sphere`) require real, disclosed re-authoring before this ADR's
-  own Implementation can land — a genuine, non-trivial prerequisite,
-  not a rounding error. `minimal_cube`'s own new UV mapping is a real,
-  visible content change to that mesh's own future non-degenerate
-  behavior once any shader actually samples it (today, no shader
-  samples `minimal_cube`'s UV — Spec 0029's own compatibility
-  statement covers exactly what this can and cannot affect).
+- One of the five currently-committed meshes (`pbr_sphere`) requires
+  real, disclosed re-authoring before this ADR's own Implementation can
+  land — a genuine, non-trivial prerequisite, not a rounding error.
+- `minimal_cube`'s own 8 fallback-generated tangents (item 4a) carry no
+  UV-derived directional meaning, disclosed explicitly — any future
+  normal-mapped consumer of this mesh (none exists today) would see a
+  flat, arbitrary-but-deterministic tangent basis, not a standard,
+  surface-aligned one. This is judged an acceptable, disclosed
+  limitation of a mesh whose own real UV data is a uniform, non-varying
+  value in the first place, not a regression from any better tangent
+  quality a UV re-unwrap could realistically have provided without
+  itself changing `lighting_demo`'s current rendered output.
 - This ADR requires a Proposed Amendment to **both** ADR-0045's own
   format-scope sentence and ADR-0058's own "one, single vertex layout"
   closed attribute-count/byte-size Decision — filed alongside this ADR
@@ -278,10 +348,22 @@ weighting/averaging scheme.**
   as scope beyond this ADR's own minimal target — no current scene
   authors a negative-determinant conformal transform; deferred as a
   disclosed limitation.
-- **Leaving `minimal_cube`/`pbr_sphere` unmigrated and excluding them
-  from any normal-mapped consumer.** Rejected: this ADR fixes one,
-  single, global mesh schema — there is no per-mesh opt-out
-  mechanism, and introducing one (an optional vertex layout) is
-  explicitly out of scope per this Spec's own instruction to keep a
-  single, fixed vertex layout. Re-authoring the two affected meshes is
-  the only option that preserves that single-layout invariant.
+- **Re-authoring `minimal_cube`'s UV instead of a cook-time fallback.**
+  Rejected once the real consumer chain was traced: `lighting_demo`
+  genuinely samples `minimal_cube`'s UV through `lit_textured.slang`,
+  so any UV re-unwrap would be a real, visible change to that golden's
+  own rendered pixels — a regression this Spec's own compatibility
+  goal explicitly forbids. A cook-time fallback derived from the
+  vertex's own already-validated normal (item 4a) produces a valid
+  60-byte tangent with zero source change and zero golden risk.
+- **Leaving `pbr_sphere` unmigrated and excluding it from any
+  normal-mapped consumer.** Rejected: this ADR fixes one, single,
+  global mesh schema — there is no per-mesh opt-out mechanism, and
+  introducing one (an optional vertex layout) is explicitly out of
+  scope per this Spec's own instruction to keep a single, fixed vertex
+  layout. Unlike `minimal_cube`, `pbr_sphere`'s own problem is a
+  genuine handedness *conflict* between two valid, UV-contributing
+  triangles — item 4a's fallback only applies to a vertex with zero
+  contribution, so it cannot resolve this case; re-authoring (pole
+  vertex splitting) is the only option that preserves the single-layout
+  invariant and produces an unambiguous tangent.
