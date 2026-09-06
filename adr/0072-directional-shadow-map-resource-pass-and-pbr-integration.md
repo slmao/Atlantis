@@ -651,3 +651,216 @@ drafted, with no change, as part of Spec 0029's own Human Review
 Approval. This approval authorizes drafting Plan 0029 only, once
 PR #129 merges to `main` — not any Implementation, asset migration, or
 golden capture.
+
+## Accepted Amendment — 2026-09-07
+
+**Status: Accepted.** Drafted alongside
+[Spec 0030](../specs/0030-directional-shadow-bias-stability.md)
+(`Approved`), in direct response to a real, reproduced defect found while
+reviewing Spec 0029's own `pbr_normal_map_demo` golden candidate (chat,
+2026-09-07): a smooth, curved receiver (`pbr_sphere`) shows visible
+self-shadow acne at grazing incidence to the directional light, traced
+to D-5's own fixed `kShadowBias = 0.0015` literal. Everything above
+remains this ADR's own original, unmodified `Accepted` Decision
+(top-level `Status: Accepted` unchanged, including the 2026-09-06
+Accepted Amendment) — this Proposed Amendment revises only D-5's own
+bias *policy*, nothing else in D-1 through D-7.
+
+### Why this is an ADR-0072 amendment, not an ADR-0074 (Spec 0029) concern
+
+A real, controlled four-way capture (Spec 0030's own Evidence section,
+not repeated here) isolated the defect to `shadowCasterDrawItems`' own
+emptiness — the acne appears identically whether or not the sphere's
+own Material samples a normal map at all, and disappears identically
+in both cases once shadow casting is disabled. The **control**
+material (Spec 0029's own "B" twin, which never builds a TBN basis and
+never samples a normal map) reproduces the identical artifact. This
+rules out Spec 0029/ADR-0074's tangent generation, TBN construction, or
+normal-map sampling as the cause — the defect lives entirely in D-5's
+own shadow-comparison formula, which predates Spec 0029 and is shared,
+byte-identical, by shaders Spec 0029 never touches
+(`pbr_direct_lit.slang`/`pbr_ibl.slang`) as well as the two it added.
+Fixing D-5's own bias policy is squarely this ADR's own scope to amend.
+
+### Decision
+
+D-5's own fixed `kShadowBias` single-literal policy is replaced by a
+bounded, geometric-normal, slope-aware receiver-side bias, computed at
+each of the four PBR shaders' own existing `computeShadowFactor()` call
+site:
+
+1. **Normal type and space:** the receiving fragment's own **geometric**
+   (un-perturbed, per-vertex-interpolated world-space mesh normal) —
+   never the tangent-space-perturbed normal-mapped normal, even in
+   `pbr_direct_lit_normal_map.slang`/`pbr_ibl_normal_map.slang`. In
+   those two shaders this is the existing local `N_geo`, already
+   computed before the TBN blend, at the exact point
+   `computeShadowFactor()` is called — confirmed by direct reading of
+   the real, current shader source (both already-`main` shaders and
+   both shaders currently on the unmerged Spec 0029 feature branch);
+   in `pbr_direct_lit.slang`/`pbr_ibl.slang` this is simply their own
+   existing, only `N` (already geometric, no perturbation exists in
+   either shader).
+2. **Bias computed on the receiver, not the caster:** inside each
+   shader's own existing `computeShadowFactor()`-equivalent function,
+   using the local `N_geo`/`N` and `L` (light direction) already
+   available at the call site — never a Vulkan rasterization
+   `depthBias*` field on the `shadow_cast` Pipeline.
+3. **No RHI/public-API change:** `PipelineCreateParams` gains no new
+   field; `Device`/`VulkanDevice::createPipeline()` is untouched;
+   `CameraUniform`'s byte layout, every existing binding, and the
+   RenderGraph "shadow"/"draw" pass structure are all unchanged. The
+   fix is confined to each shader's own existing local arithmetic.
+4. **Uniform, byte-for-byte-identical formula across all four PBR
+   shader variants** — `pbr_direct_lit.slang`, `pbr_ibl.slang`,
+   `pbr_direct_lit_normal_map.slang`, `pbr_ibl_normal_map.slang` all
+   adopt the same three named constants
+   (`kShadowBiasMin`/`kShadowBiasSlopeScale`/`kShadowBiasMax`,
+   replacing the single `kShadowBias`) and the same clamped
+   slope-scaling expression — never a per-shader divergence.
+5. **Out-of-bounds rule unchanged:** a fragment outside the shadow
+   map's own fixed UV/depth coverage remains always fully lit
+   (`shadowFactor = 1.0`) — D-5's own existing rule, untouched by this
+   Amendment.
+6. **Bounded, never unbounded:** the new bias is
+   `clamp(kShadowBiasMin + kShadowBiasSlopeScale * slope, kShadowBiasMin, kShadowBiasMax)`,
+   where `slope` grows with the angle between `N_geo` and `L` — the
+   `clamp` upper bound is the mechanism that prevents a real, intended
+   cast shadow from detaching from its own caster (peter-panning) as
+   the angle approaches the terminator.
+
+The exact numeric values of `kShadowBiasMin`/`kShadowBiasSlopeScale`/
+`kShadowBiasMax` remain Plan-stage values (mirroring the original
+`kShadowBias`'s own precedent, D-5) — measured against the real
+`pbr_normal_map_demo` fixture, using a paired shadow-on/shadow-off
+differential over a sphere-only pixel mask (never a raw dark-pixel
+count — Spec 0029's own diagnostic `112`/`729`-pixel no-shadow
+baselines prove a raw count cannot serve as an acceptance metric).
+Spec 0030's own Testing & Verification Plan fixes the mask
+construction, the differential noise threshold, the pre-fix baseline,
+and the acne ceiling (`≥99%` reduction from that baseline, capped at
+`10` pixels) **before** any bias parameter is swept — the ceiling is a
+rule applied to a pre-measured baseline, never a number read back off
+whichever post-fix capture is later chosen. The accepted parameter
+value is the first one, in a pre-fixed deterministic candidate order,
+under which the acne ceiling holds *and* the existing `(198,273)`/`>15`
+ground-shadow discriminator stays clear, for all four shader variants,
+on the same real captures — never "tune until it looks good."
+
+### Impact on RHI, Renderer, RenderGraph, descriptors, uniforms
+
+**None.** No new RHI resource type, `PipelineCreateParams` field,
+descriptor binding, descriptor-pool sizing, `VulkanCommandList`
+capacity, uniform-buffer field, or RenderGraph pass. `Renderer::drawFrame()`'s
+own signature is unchanged. This Amendment is confined entirely to the
+body of each of the four shaders' own existing `computeShadowFactor()`
+function and its call site — the same class of change D-5 already
+anticipated living outside a fixed Decision-level number, now
+formalized as a Decision-level *policy* change (bounded, slope-aware,
+geometric-normal) rather than a mechanism change.
+
+### Sync requirement across the four PBR shader variants
+
+`pbr_direct_lit.slang` and `pbr_ibl.slang` (both `main`-resident,
+unrelated to Spec 0029) and `pbr_direct_lit_normal_map.slang`/
+`pbr_ibl_normal_map.slang` (both currently on the unmerged Spec 0029
+feature branch, not on `main`) must all carry the identical
+replacement. Plan 0030 is responsible for **actually executing the
+real-GPU acne/ground-shadow measurement (Spec 0030's own Testing &
+Verification Plan) against all four**, with no exemption for a variant
+an existing fixture does not already exercise under a curved receiver
+— textual identity of the bias computation across all four (mirroring
+ADR-0074's own "exact twin of its sibling" discipline) is a required,
+supplementary check, never a substitute for real-GPU behavioral
+coverage on any of the four. Because two of the four shaders do not
+exist on plain `main`, Plan 0030 cannot reach this coverage from a
+branch cut directly from `main` — see Spec 0030's own **Dependency and
+Integration Sequencing** section for the one, fixed branch/merge/PR
+sequence this requires; this Amendment does not authorize any other
+branching approach.
+
+### Golden impact and Human Review gate
+
+Any existing, already-committed golden whose own scene includes a
+curved or grazing-angle receiver near a directional light may show a
+small, real pixel difference once this bias formula lands — Plan 0030
+runs the full, unmodified compare-first process (all 9 currently-
+committed goldens, `world_scene_loaded`/`sky_background` individually)
+and requests a human-reviewed re-capture only for a golden that
+actually differs, never presumptively. Spec 0029's own
+`pbr_normal_map_demo` candidate — already generated, currently
+untracked, currently un-approved — is discarded outright, never reused
+as a baseline; a fresh candidate is generated against the fixed shaders
+and independently re-reviewed before Spec 0029 Milestone 6 proceeds.
+
+### Alternatives Considered
+
+Full comparative analysis lives in
+[Spec 0030](../specs/0030-directional-shadow-bias-stability.md#alternatives-considered)
+— restated here only as the ADR-level summary: (1) retuning the single
+existing literal, rejected as mechanism-mismatched (the defect is
+angle-dependent, a flat value cannot be simultaneously safe at both
+grazing and near-perpendicular incidence); (2) **the bounded,
+geometric-normal slope-aware receiver bias above — accepted**; (3)
+Vulkan rasterization depth bias, rejected for this round as a real,
+avoidable `PipelineCreateParams`/RHI surface change this Amendment's
+own Goals rule out absent evidence option 2 is insufficient; (4)
+normal-offset shadow mapping, rejected for this round as a strictly
+larger change (a new fixed world-space-texel-size constant, and a
+change to *which* position is compared, not only the threshold) than
+the diagnosed mechanism requires. Options 3 and 4 remain available
+follow-ons, gated on Plan 0030's own real-measurement stop condition
+finding option 2 insufficient — not chosen speculatively now.
+
+### Acceptance Record
+
+Accepted by Human Review on 2026-09-07 against
+[PR #133](https://github.com/slmao/Atlantis/pull/133), as a separate,
+individually-granted approval alongside [Spec 0030's own Human Review
+Approval](../specs/0030-directional-shadow-bias-stability.md#human-review-approval--2026-09-07)
+(user's own verbatim approval text: *"I approve Spec 0030 and
+ADR-0072's 2026-09-07 Proposed Amendment."*). This Acceptance Record
+confirms, unchanged from the Decision above:
+
+1. The fixed `kShadowBias = 0.0015` single literal is superseded by the
+   bounded, geometric-normal, slope-aware receiver-side bias policy —
+   `kShadowBiasMin`/`kShadowBiasSlopeScale`/`kShadowBiasMax`.
+2. The bias input is always the receiver's own **geometric**
+   (un-perturbed) world-space normal — `N_geo` in the two normal-map
+   shaders, the existing `N` in the two non-normal-map shaders — never
+   the tangent-space-perturbed normal.
+3. The bias is computed **receiver-side**, inside each shader's own
+   existing `computeShadowFactor()`-equivalent logic — never a Vulkan
+   rasterization `depthBias*` field on the `shadow_cast` Pipeline.
+4. The identical formula and the identical three named constants apply,
+   byte-for-byte, across all four PBR shader variants
+   (`pbr_direct_lit`, `pbr_ibl`, `pbr_direct_lit_normal_map`,
+   `pbr_ibl_normal_map`) — never a per-shader divergence.
+5. The bias stays **bounded** (`clamp(..., kShadowBiasMin,
+   kShadowBiasMax)`), and the out-of-bounds-fragment rule
+   (`shadowFactor = 1.0`) is unchanged.
+6. **No RHI, `PipelineCreateParams`, descriptor, uniform-buffer, or
+   RenderGraph change** — confirmed unchanged from the "Impact" section
+   above.
+7. The three concrete numeric constant values remain Plan-stage values,
+   fixed only by Plan 0030's own non-circular, pre-sweep-fixed
+   procedure (Spec 0030's own Numeric-value measurement method) — not
+   fixed by this ADR or this Amendment.
+8. Real-GPU execution (not text-inspection alone) of the paired acne
+   metric and ground cast-shadow discriminator against all four shader
+   variants is required, and — because two of the four shaders exist
+   only on the unmerged Spec 0029 feature branch — is carried out on
+   the combined branch Spec 0030's own Dependency and Integration
+   Sequencing section fixes, not on a branch cut from plain `main`.
+
+This Acceptance Record changes no Decision, Consequences, or
+Alternatives Considered text above — including the original `Accepted`
+Decision and the 2026-09-06 Accepted Amendment, both fully unchanged —
+and authorizes drafting Plan 0030 only, once
+[PR #133](https://github.com/slmao/Atlantis/pull/133) itself has merged
+to `main` — not any Implementation, bias-constant selection, or golden
+capture.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-07, accepting this Amendment in full, as
+drafted, with no change.
