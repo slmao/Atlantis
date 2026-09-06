@@ -1342,3 +1342,117 @@ only on the remaining, external gate: a human merging
 Approval recorded 2026-09-06, accepting this correction in full, as
 drafted, with no change, as part of the same review pass that approved
 the matching Spec 0029 and ADR-0073 corrections.
+
+## Proposed Plan Correction — 2026-09-06 (BootstrapConfig shader-pair path count)
+
+**Status:** Proposed / Pending Human Review.
+
+**Origin.** Discovered during resumed Milestone 4 Implementation
+(chat, 2026-09-06), while widening `RealizedMaterialCandidate`/
+`realizeOneMaterialCandidate()`/`realizePendingMaterials()` per P15.
+Does not rewrite P15's own text above (preserved verbatim as
+historical record — it is superseded by this correction, not edited
+in place, matching this Plan's own established precedent for the two
+prior corrections above).
+
+**The error.** P15 states:
+
+> `BootstrapConfig` gains 6 new `std::string` fields (3 per new shader
+> pair, mirroring `pbrIblVertexShaderSpirvPath`'s own shape).
+
+This is a factual error about the real, current shape of
+`BootstrapConfig` ([src/runtime/include/atlantis/runtime/bootstrap_config.h](../src/runtime/include/atlantis/runtime/bootstrap_config.h)),
+not a new architectural choice — the shader-pair loading contract,
+the two new shaders themselves, descriptor bindings, and Runtime
+integration design are all unaffected.
+
+**Real source fact.** Every existing shader pair `BootstrapConfig`
+declares — from the original `vertexShaderSpirvPath` group through
+the most recent `outputTransformSrgb*` group (Plan 0024) — is exactly
+**4** `std::string` fields, with no exception across the struct's
+entire history: `...VertexShaderSpirvPath`, `...VertexShaderReflectionPath`,
+`...FragmentShaderSpirvPath`, `...FragmentShaderReflectionPath`. This
+includes the very pair P15 cites as the mirrored shape — `pbrIbl` is
+itself a 4-field group (`pbrIblVertexShaderSpirvPath`,
+`pbrIblVertexShaderReflectionPath`, `pbrIblFragmentShaderSpirvPath`,
+`pbrIblFragmentShaderReflectionPath`), not 3.
+
+This 4-field shape is not merely declared — it is populated at every
+real call site that constructs a `BootstrapConfig`, with zero
+exceptions, confirmed via `rg 'FragmentShaderReflectionPath'` across
+the repository: [src/runtime/main.cpp](../src/runtime/main.cpp), all
+six `tests/image_regression/golden_generator/*_main.cpp` files, nine
+`tests/image_regression/*_gpu_tests.cpp` files,
+[tests/runtime/runtime_smoke_gpu_tests.cpp](../tests/runtime/runtime_smoke_gpu_tests.cpp),
+and
+[tests/runtime/bootstrap_config_tests.cpp](../tests/runtime/bootstrap_config_tests.cpp)
+— roughly 15 real files, each assigning all four fields for every
+shader pair it configures, unbroken across five-plus prior Milestones
+(Plan 0018 through Plan 0024). Some individual `...FragmentShaderReflectionPath`
+fields are not read back by every load routine that consumes their
+own pair (e.g. `runtime_application.cpp`'s `pbrDirectLit` load block
+only calls `loadReflectionMetadata()` on the vertex path) — but the
+field is still declared and still populated at every call site,
+without exception, matching the struct's own uniform 4-field shape.
+
+**Correction.** `BootstrapConfig` gains **8** new `std::string`
+fields (4 per new shader pair), not 6 (3 per pair):
+
+- `pbrDirectLitNormalMapVertexShaderSpirvPath`
+- `pbrDirectLitNormalMapVertexShaderReflectionPath`
+- `pbrDirectLitNormalMapFragmentShaderSpirvPath`
+- `pbrDirectLitNormalMapFragmentShaderReflectionPath`
+- `pbrIblNormalMapVertexShaderSpirvPath`
+- `pbrIblNormalMapVertexShaderReflectionPath`
+- `pbrIblNormalMapFragmentShaderSpirvPath`
+- `pbrIblNormalMapFragmentShaderReflectionPath`
+
+`runtime_application.cpp`'s own matching load/store block (P15's own
+"mirrors lines 372-389" reference is unaffected — only the field
+count per pair changes, not the load shape or which lines it mirrors)
+reads all four fields per pair, mirroring the existing `pbrDirectLit`/
+`pbrIbl` load blocks exactly, including a fragment-reflection field
+that is declared and populated but not read back by
+`runtime_application.cpp` itself — the same, already-established
+asymmetry the real `pbrDirectLit`/`unlitTextured`/`litTextured`/
+`outputTransform*` pairs already exhibit.
+
+**Scope check — no other Plan text depends on this count.** A search
+of this entire Plan document for every other statement that could
+depend on the wrong number (Milestone 4's own description, the Files/
+Modules Touched table, P16's `createMaterial()` call-site migration
+table, P17's vertex-layout migration table, and the Verification
+Checklist) found no other occurrence of "6 new fields," "3 per pair,"
+or any of the 8 field names above — P15 is the only place this Plan
+ever states a specific count or shape for these fields. No other
+Milestone, file-scope, call-site-migration, or verification statement
+in this Plan requires updating.
+
+**No Spec or ADR correction needed.** This is a pure Plan-level
+implementation-detail correction: the shader pair, its descriptor
+contract, `RealizedMaterialCandidate`/`realizeOneMaterialCandidate()`/
+`realizePendingMaterials()`'s own widened function shapes, and every
+other part of the Runtime-integration design in Spec 0029/ADR-0073/
+ADR-0074 are unchanged. Only the field *count* naming a pre-existing,
+already-`Accepted` `BootstrapConfig` shape is corrected — not a new
+module boundary, public API shape, dependency, or ownership model
+requiring its own ADR (AGENTS.md's Golden Rule).
+
+**Effect on Milestone 4.** P15's own remaining prose (the
+`RealizedMaterialCandidate` diff, `selectShaderPair()`'s widened
+`PbrDirectLit` case, `sampledTextureBindingCountFor()`'s `hasNormalMap`
+parameter, and the `realizeOneMaterialCandidate()`/`realizePendingMaterials()`
+trio-widening) is unaffected and stays exactly as approved. Milestone
+4's own Acceptance Gate (all 9 goldens byte-identical; the 13
+unaffected `createMaterial()` call sites still compile; P18 passes)
+is unaffected.
+
+**Governance record — no implied approval was relied upon.** This
+correction stands alone; it does not rely on, and is not implied by,
+either of the two corrections above. **Implementation of this Plan
+remains paused** — it does not resume until this correction itself
+receives its own explicit Human Review approval and the PR carrying
+it merges to `main`, per the same gate structure the two prior
+corrections above established.
+
+**Deciders:** Pending Human Review.
