@@ -375,13 +375,21 @@ weighting/averaging scheme.**
   vertex splitting) is the only option that preserves the single-layout
   invariant and produces an unambiguous tangent.
 
-## Proposed Correction — 2026-09-06 (`pbr_sphere` handedness-conflict count and location)
+## Accepted Correction — 2026-09-06 (`pbr_sphere` handedness-conflict count and location)
 
-**Status:** Proposed. Pending Human Review. Does not rewrite the
-Decision, Consequences, or Alternatives sections above; supersedes
-only the specific `96/425 (22.6%)` figure and the "concentrated at the
-pole rings" framing appearing in the Context table and in Consequences/
-Alternatives, which do not hold under re-audit.
+**Status:** Accepted. Approved by Human Review, 2026-09-06, against
+[PR #130](https://github.com/slmao/Atlantis/pull/130), named
+individually (not by a blanket approval of Plan 0029 alone) alongside
+the matching correction to
+[Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md#human-review-correction--2026-09-06-pbr_sphere-handedness-conflict-count)
+and [Plan 0029](../plans/0029-tangent-space-normal-mapping-foundation.md)
+itself, in the same review pass. Does not rewrite the Decision,
+Consequences, or Alternatives sections above; supersedes only the
+specific `96/425 (22.6%)` figure and the "concentrated at the pole
+rings" framing appearing in the Context table and in Consequences/
+Alternatives, which did not hold under re-audit. This ADR's own
+top-level `Status: Accepted` (unchanged since this ADR's own original
+acceptance) is unaffected by this correction.
 
 A temporary, uncommitted probe, run strictly to this ADR's own already-
 Accepted algorithm (`h_face = sign(dot(cross(vertexNormal, T_face),
@@ -442,3 +450,12 @@ is the one mesh needing real migration while `minimal_cube` needs
 none, both stand unchanged. [Plan 0029](../plans/0029-tangent-space-normal-mapping-foundation.md)
 depends on this correction and uses its corrected figures throughout,
 not the original `96/425` estimate.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-06, accepting this correction in full, as
+drafted, with no change: the real `48/425` conflict count, its
+location at the north-pole ring and its one adjacent ring, zero
+conflicts at the south pole or any other ring, and the corrected,
+mechanically-simpler sign-split migration method (one new vertex per
+conflicting vertex, `425→473` vertices, `768` triangles/`2304` indices
+unchanged, re-audited to `0` conflicts).

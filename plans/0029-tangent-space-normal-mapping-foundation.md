@@ -1,8 +1,42 @@
 # Plan: Tangent-Space Normal Mapping Foundation
 
 - **Spec:** [specs/0029-tangent-space-normal-mapping-foundation.md](../specs/0029-tangent-space-normal-mapping-foundation.md) (`Approved`)
-- **Status:** Draft
+- **Status:** Approved / Ready for Implementation
 - **Author:** slmao
+- **Human Review Approval (2026-09-06):** Reviewed and approved by
+  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
+  git-identified maintainer) on 2026-09-06, against
+  [PR #130](https://github.com/slmao/Atlantis/pull/130), naming all
+  three items this approval covers individually, per this Plan's own
+  explicit, itemized gate (below) — no blanket, single-statement
+  approval: **(1)** the
+  [Spec 0029 Human Review Correction](../specs/0029-tangent-space-normal-mapping-foundation.md#human-review-correction--2026-09-06-pbr_sphere-handedness-conflict-count)
+  — approved (the real `48/425` conflict count, its location at the
+  north-pole ring 0 and adjacent ring 1, and zero conflicts at the
+  south pole or any other ring); **(2)** the
+  [ADR-0073 Accepted Correction](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#accepted-correction--2026-09-06-pbr_sphere-handedness-conflict-count-and-location)
+  — approved and moved from `Proposed` to `Accepted` (the deterministic
+  sign-split method, one new vertex per conflicting vertex, 425→473
+  vertices, 768 triangles/2304 indices unchanged, and the `0`
+  UV-degenerate/`0` handedness-conflict acceptance gate); **(3)** this
+  Plan itself — approved in full: the seven Milestones and their
+  atomic ordering, the mesh/material schema and migration tables, the
+  descriptor/shader/`Material`/Runtime contracts, the fixed 4×4 RGB8
+  normal-map texture and its `stb_image_write`-based temporary
+  generation method, the fixture's own `DrawItem`-material-pointer
+  A/B substitution, the fixed demo scene/camera/light/shadow-receiver
+  geometry, both discriminative pixels and thresholds (normal-map
+  `(256,256)` `>50`; shadow `(198,273)` `>15` — both explicitly
+  accepted as **not yet measured on real GPU hardware for this exact
+  scene**, each carrying its own non-negotiable "stop and request
+  Human Review, never silently retune" rule), the two-phase golden
+  gate (untracked candidate, then human-approved commit), the
+  byte-identical requirement on all 9 existing goldens, and the
+  mirrored/negative-determinant handedness limitation staying an
+  accepted, deferred limitation, not solved by this Plan. **This
+  approval authorizes Implementation of this Plan only once
+  [PR #130](https://github.com/slmao/Atlantis/pull/130) itself has
+  merged to `main` — not before.**
 
 ## Objective
 
@@ -10,7 +44,7 @@ Implement Spec 0029 in full: a cooker-generated mesh tangent attribute
 (schema 3→4, 44→60 bytes, ADR-0073), a cook-time fallback tangent for
 `minimal_cube` (zero source change) and a real, sign-grouped split
 migration for `pbr_sphere` (the only mesh needing one — corrected
-count and location below, pending Human Review), a per-material
+count and location below, accepted by Human Review), a per-material
 optional normal-map texture on both the direct-lit and IBL
 `PbrDirectLit` paths (material schema 2→3, ADR-0074), a single-pointer
 `Material` API extension with two mechanically-checked preconditions,
@@ -22,42 +56,39 @@ effect. Every no-normal-map material's runtime behavior, shader
 selection, and descriptor-binding results stay unchanged; all 9
 existing goldens stay byte-identical.
 
-**This Plan depends on two Proposed Corrections, filed alongside it,
-still pending Human Review** — see "Dependency on pending corrections"
-below.
+**This Plan depended on two corrections, filed alongside it — both now
+`Accepted`/Human-Review-approved, named individually in this Plan's
+own Human Review Approval record above** — see "Corrections this Plan
+depends on" below for the full derivation.
 
-## Dependency on pending corrections (Plan Review finding, this round)
+## Corrections this Plan depends on (accepted 2026-09-06)
 
 A temporary, uncommitted re-audit of `pbr_sphere.mesh.txt`, run
 strictly to ADR-0073's own already-Accepted handedness formula
 (`h_face = sign(dot(cross(vertexNormal, T_face), B_face))`, raw
 `T_face`/`B_face`, no orthogonalization before the sign check), found
 the real conflict count is **48 of 425 vertices (11.3%)**, not
-`96/425 (22.6%)` as ADR-0073/Spec 0029 currently state, and the real
-location is the north-pole ring plus its one immediately-adjacent
-ring — not "pole rings" (plural) and not the south pole, which has
-zero conflicts. This Plan does not silently use the corrected figures
-without disclosure: a concise
-[`Proposed Correction — 2026-09-06`](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#proposed-correction--2026-09-06-pbr_sphere-handedness-conflict-count-and-location)
-has been appended to ADR-0073, and a matching one to
-[Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md#proposed-correction--2026-09-06-pbr_sphere-handedness-conflict-count),
-both marked `Proposed`, pending Human Review, neither rewriting any
+`96/425 (22.6%)` as ADR-0073/Spec 0029 originally stated, and the real
+location is the north-pole ring (ring 0) plus its one immediately-
+adjacent ring (ring 1) — not "pole rings" (plural) and not the south
+pole, which has zero conflicts. This Plan did not silently use the
+corrected figures without disclosure: a concise
+[`Accepted Correction — 2026-09-06`](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#accepted-correction--2026-09-06-pbr_sphere-handedness-conflict-count-and-location)
+is appended to ADR-0073, and a matching
+[`Human Review Correction`](../specs/0029-tangent-space-normal-mapping-foundation.md#human-review-correction--2026-09-06-pbr_sphere-handedness-conflict-count)
+to Spec 0029 — both accepted by Human Review on 2026-09-06 (named
+individually in this Plan's own header, above), neither rewriting any
 existing Decision/Requirement. **This Plan uses the corrected figures
 (48/425, the exact ring locations, the simpler 2-way sign-split
-method) throughout — P4 below is built on the correction, not on the
-original `96/425` estimate.**
+method) throughout — P4 below is built on the accepted correction, not
+on the original `96/425` estimate.**
 
-**Explicit, itemized Human Review gate — no implied approval.**
-Approving this Plan does **not**, by itself, approve either
-correction. Three separate items require their own explicit approval,
-even when reviewed and recorded in one pass: (1) the
-[Spec 0029 Proposed Correction](../specs/0029-tangent-space-normal-mapping-foundation.md#proposed-correction--2026-09-06-pbr_sphere-handedness-conflict-count),
-(2) the
-[ADR-0073 Proposed Correction](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#proposed-correction--2026-09-06-pbr_sphere-handedness-conflict-count-and-location),
-and (3) this Plan itself. A Human Review Approval record covering all
-three must name each one individually as approved — a single blanket
-statement ("Plan 0029 approved") does not, on its own, constitute
-approval of the two corrections it depends on.
+**Governance record — no implied approval was relied upon.** The
+approval of this Plan did **not**, by itself, stand in for approving
+either correction. Three separate items each received their own
+explicit approval, recorded together in one pass but named
+individually (this Plan's own header, above): (1) the Spec 0029
+correction, (2) the ADR-0073 correction, (3) this Plan itself.
 
 ## Pre-draft verification against real, current source
 
@@ -324,11 +355,11 @@ its exact position/color/UV/normal values and its exact vertex index
 which is at latitude ring 8 (`y=0`), nowhere near ring 0 (north pole)
 or ring 1 (its adjacent ring).
 
-**Dependency:** this method and these figures depend on the two
-pending Proposed Corrections (see "Dependency on pending corrections"
-above) — Implementation of this Milestone must not begin before those
-corrections are accepted by Human Review, since they change what
-"correct" means for this migration's own acceptance gate.
+**Dependency, satisfied:** this method and these figures depended on
+the two corrections (see "Corrections this Plan depends on" above),
+both accepted by Human Review on 2026-09-06 alongside this Plan
+itself — Implementation of this Milestone may proceed using the
+corrected figures throughout.
 
 ## P5. Material grammar — exact new parse/serialize shape
 
@@ -1143,11 +1174,11 @@ survives this round).
 **Not touched by this Plan:** `src/world/`, `src/render_graph/`,
 `src/rhi/` beyond the one `Float4` enumerator, `pbr_direct_lit.slang`/
 `pbr_ibl.slang` themselves (zero edits), `integrated_showcase_demo`'s
-own scene/fixture/golden, any `adr/` file beyond the two pending
-Proposed Corrections already filed alongside this Plan (ADR-0073/0074
-and the three Amendments remain `Accepted`, unmodified in Decision
-content), any of the 9 existing image-regression goldens' own PNG
-bytes.
+own scene/fixture/golden, any `adr/` file beyond the two corrections
+(both now `Accepted`) already filed and approved alongside this Plan
+(ADR-0073/0074 and the three Amendments remain `Accepted`, unmodified
+in Decision content), any of the 9 existing image-regression goldens'
+own PNG bytes.
 
 ## Sequencing & Dependencies
 
@@ -1217,14 +1248,14 @@ in the PR rather than silently working around it (AGENTS.md).
 - [ ] Every existing `createMaterial()` call site (P16's own table)
       confirmed to still compile with zero source edit, except
       `material_realization.cpp`.
-- [ ] All three items are explicitly, individually recorded as
-      approved by Human Review — the Spec 0029 Proposed Correction,
-      the ADR-0073 Proposed Correction, and this Plan itself (they may
-      be approved in one review pass, but the approval record must
-      name each one, not rely on approving this Plan to imply the
-      other two) — Milestone 1's own acceptance gate (`0/473`
-      conflicts) is meaningless if the corrected figures themselves
-      are rejected.
+
+**Governance gate, satisfied before Implementation begins (recorded in
+this Plan's own header, not a Milestone-time checklist item):** the
+Spec 0029 correction, the ADR-0073 correction, and this Plan itself
+were each individually named and approved by Human Review on
+2026-09-06, against PR #130 — Milestone 1's own acceptance gate
+(`0/473` conflicts) relies on the corrected figures those approvals
+cover.
 
 ## Rollback Plan
 
