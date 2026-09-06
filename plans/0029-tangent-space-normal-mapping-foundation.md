@@ -1343,9 +1343,14 @@ Approval recorded 2026-09-06, accepting this correction in full, as
 drafted, with no change, as part of the same review pass that approved
 the matching Spec 0029 and ADR-0073 corrections.
 
-## Proposed Plan Correction — 2026-09-06 (BootstrapConfig shader-pair path count)
+## Human Review Approved Plan Correction — 2026-09-06 (BootstrapConfig shader-pair path count)
 
-**Status:** Proposed / Pending Human Review.
+**Status:** Approved by Human Review, 2026-09-06, against
+[PR #132](https://github.com/slmao/Atlantis/pull/132). Does not
+rewrite this Plan's own header, P15's own text, or either of the two
+corrections above (all preserved verbatim as historical record) —
+this correction supersedes only P15's own `3 fields per pair / 6 new
+fields` claim, quoted and corrected below.
 
 **Origin.** Discovered during resumed Milestone 4 Implementation
 (chat, 2026-09-06), while widening `RealizedMaterialCandidate`/
@@ -1447,12 +1452,29 @@ trio-widening) is unaffected and stays exactly as approved. Milestone
 unaffected `createMaterial()` call sites still compile; P18 passes)
 is unaffected.
 
-**Governance record — no implied approval was relied upon.** This
-correction stands alone; it does not rely on, and is not implied by,
-either of the two corrections above. **Implementation of this Plan
-remains paused** — it does not resume until this correction itself
-receives its own explicit Human Review approval and the PR carrying
-it merges to `main`, per the same gate structure the two prior
-corrections above established.
+**Human Review Approval, recorded 2026-09-06 (chat).** slmao
+(`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
+maintainer) approved this correction in full, as drafted, with no
+change: the two new normal-map shader pairs (`pbrDirectLitNormalMap`,
+`pbrIblNormalMap`) each gain exactly 4 path fields, not 3 — vertex
+SPIR-V, vertex reflection, fragment SPIR-V, and fragment reflection,
+none of the four omissible — for 8 new `std::string` fields on
+`BootstrapConfig` in total, listed in full above. This approval
+supersedes P15's own original `3 fields per pair / 6 new fields`
+text (preserved above, unedited, as historical record). It does not
+change any other numeric value, schema, milestone ordering, or the
+shader/descriptor/`Material`/Runtime design elsewhere in this Plan —
+those stay exactly as already approved.
 
-**Deciders:** Pending Human Review.
+**Governance record — no implied approval was relied upon.** This
+correction's own approval stands alone; it does not rely on, and was
+not implied by, the approval of either of the two corrections above,
+or by any other prior approval in this Plan's history. **Implementation
+of this Plan remains paused** — approving this correction is not
+itself authorization to resume Implementation. Implementation resumes
+only once [PR #132](https://github.com/slmao/Atlantis/pull/132)
+itself has merged to `main` — not before.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-06, accepting this correction in full, as
+drafted, with no change.
