@@ -248,15 +248,32 @@ in `shaders/`).
   `CommandList`-internal array bump, a different axis (ADR-0074 item
   3/4).
 - **FR11 (Renderer public-API extension, one pointer, no second
-  sampler).** `Material` gains exactly one new, optional, borrowed,
-  non-owning `normalMapTexture_` pointer — never a second sampler,
-  since FR7 already fixes the normal map to reuse the material's
-  existing `sampler_`. A new precondition,
-  `ATLANTIS_CHECK(normalMapTexture_ == nullptr || sampledTexture_ != nullptr)`,
-  requires the base-color pair to already be present whenever a normal
-  map is. `createMaterial()` gains the matching trailing parameter,
-  defaulting to `nullptr` — every existing call site is unaffected.
-  `Renderer::drawFrame()` binds the normal map at
+  sampler, contract fully closed).** `Material` gains exactly one new,
+  optional, borrowed, non-owning `normalMapTexture_` pointer — never a
+  second sampler, since FR7 already fixes the normal map to reuse the
+  material's existing `sampler_`. Two mechanically-checked
+  preconditions in the constructor:
+  `ATLANTIS_CHECK(normalMapTexture_ == nullptr || sampledTexture_ != nullptr)`
+  (the base-color pair must already be present) and
+  `ATLANTIS_CHECK(normalMapTexture_ == nullptr || pushConstantLayout_ == MaterialPushConstantLayout::PbrDirectLit)`
+  (a normal map may only be set on a `PbrDirectLit`-layout Material —
+  the only layout the two normal-map shaders use; without this, a
+  non-PBR Material could carry a normal map that binds against a
+  Pipeline whose real shader never declared that binding, a real
+  Vulkan mismatch). A third precondition — the caller's own Pipeline
+  must actually be built from the matching normal-map shader variant
+  for that Material's own `environmentBinding()` — is documented, not
+  mechanically checked (`Pipeline` has no descriptor-layout
+  introspection API; adding one is out of scope). **Runtime's own real
+  path satisfies all three by construction:** FR6's own grammar
+  restriction means `normalMapTexture != 0` implies `kind ==
+  PbrDirectLit`, which `pushConstantLayoutFor()` always maps to
+  `PbrDirectLit`, and `selectShaderPair()`'s own extension (FR8) always
+  selects the matching normal-map shader variant for that same
+  material — no call site on Runtime's own real path can violate any
+  of the three. `createMaterial()` gains the matching trailing
+  parameter, defaulting to `nullptr` — every existing call site is
+  unaffected. `Renderer::drawFrame()` binds the normal map at
   `environmentBinding() == Ibl ? 5U : 3U`, reusing `material.sampler()`
   — the same `VkSampler` already bound for base color — mirroring the
   shadow-map binding's own existing `? 4U : 2U` conditional-index
@@ -464,9 +481,21 @@ across three documents.
   degenerates) plus `NonUnitTangent`/`NonOrthogonalTangent`/
   `InvalidTangentHandedness`; `sampledTextureBindingCountFor()`'s new
   `3`/`5`-result cases (mirroring the existing 4-case lock-down test's
-  own style); and the material grammar's new 9-line-form cases —
+  own style); the material grammar's new 9-line-form cases —
   `NormalMapNotSupportedForKind` (9 lines, `kind: lit_textured`) and
-  `MissingField` (9 lines, empty `normal_map:` value).
+  `MissingField` (9 lines, empty `normal_map:` value); and `Material`'s
+  own two new constructor preconditions (FR11), using this codebase's
+  existing `ScopedFailureHandler` pattern
+  (`tests/renderer/renderer_ownership_tests.cpp`) — never a process-
+  death test, since `ATLANTIS_CHECK` reports through a replaceable
+  handler rather than aborting (`tests/core/assert_tests.cpp`):
+  constructing `Material` with a non-null `normalMapTexture` and no
+  base-color pair must capture exactly one failure; constructing it
+  with a valid base-color pair but `pushConstantLayout =
+  ObjectToWorldOnly` must capture exactly one failure; constructing it
+  with a valid base-color pair and `pushConstantLayout = PbrDirectLit`,
+  for both `MaterialEnvironmentBinding::None` and `Ibl`, must capture
+  zero failures.
 - **GPU-required tests** (new): the new fixture's own non-degenerate-
   frame proof (mirrors `pbr_material_demo_gpu_tests.cpp`'s own first
   `TEST_CASE`); a discriminative pixel check confirming the normal map

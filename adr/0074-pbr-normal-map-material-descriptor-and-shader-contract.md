@@ -34,9 +34,16 @@ Confirmed directly against current `main`:
 - `MaterialAssetData`/`DecodedMaterialArtifact`/`ParsedMaterialSource`/
   `MaterialMetadata` each carry exactly one texture reference,
   `textureAsset` (base color) — no second texture slot exists.
-- `atlantis_material_source_version: 2` is an 8-line, fixed-field-order
-  grammar; the material artifact is a fixed 56-byte record,
-  `kMaterialArtifactSchemaVersion = 2`.
+- `atlantis_material_source_version: 2` is a fixed-field-order grammar
+  with exactly two legal shapes today — **5 lines** (version, kind,
+  texture, filter, address_mode; every `kind` value legal) or **8
+  lines** (the 5 above plus `base_color_factor`/`metallic_factor`/
+  `roughness_factor`, fixed order) — confirmed directly against
+  `material_source.cpp`'s own `kMinLineCount = 5`/`kMaxLineCount = 8`
+  and against real, committed files
+  (`unlit_textured_quad.material.txt`/`lit_textured_quad.material.txt`
+  are 5-line; every `pbr_*.material.txt` is 8-line). The material
+  artifact is a fixed 56-byte record, `kMaterialArtifactSchemaVersion = 2`.
 - `TextureColorSpace` (`texture_types.h:14-17`) already has exactly
   two values, `Unorm` and `Srgb` — `Unorm` is the existing, correct
   choice for non-color directional data (confirmed by direct
@@ -214,28 +221,63 @@ reference passes through):**
 
 **`Material` gains exactly one new, optional, borrowed, non-owning
 member, `normalMapTexture_` — not a second texture+sampler pair.**
-Item 1.5 above already fixed the normal map to reuse the material's
-own existing base-color sampler; introducing a second `Sampler*`
-member would contradict that decision by implying a second, real
-sampler slot that nothing ever populates differently. The single new
-pointer's own precondition is that the *existing* base-color pair is
-present:
+Section 1 item 5 above already fixed the normal map to reuse the
+material's own existing base-color sampler; introducing a second
+`Sampler*` member would contradict that decision by implying a second,
+real sampler slot that nothing ever populates differently. The single
+new pointer's own preconditions are that the *existing* base-color
+pair is present, and that this `Material`'s own push-constant layout
+is `PbrDirectLit` (the only layout the normal-map shaders use):
 
 - `Material`'s constructor gains one new trailing parameter,
   `const atlantis::rhi::SampledTexture* normalMapTexture = nullptr`,
   appended after the existing trailing parameters (every pre-existing
   call site compiles and behaves unchanged, defaulting to `nullptr`).
   `createMaterial()` gains the identical trailing parameter.
-- **New invariant, checked once, in the constructor, alongside the
-  existing both-or-neither check:**
-  `ATLANTIS_CHECK(normalMapTexture_ == nullptr || sampledTexture_ != nullptr);`
-  — a normal map may never be constructed without the base-color pair
-  also present, since both are sampled through the one, same
-  `sampler_`. This is a precondition violation (a programmer error, per
-  AGENTS.md's error-handling rules), not a recoverable `Result` error —
-  identical in kind to the existing
+- **Two invariants, both checked once, in the constructor, alongside
+  the existing both-or-neither check:**
+
+  ```cpp
+  ATLANTIS_CHECK(normalMapTexture_ == nullptr || sampledTexture_ != nullptr);
+  ATLANTIS_CHECK(normalMapTexture_ == nullptr ||
+                 pushConstantLayout_ == MaterialPushConstantLayout::PbrDirectLit);
+  ```
+
+  The first: a normal map may never be constructed without the
+  base-color pair also present, since both are sampled through the
+  one, same `sampler_`. The second, new in this round: a normal map
+  may only be constructed on a Material whose push-constant layout is
+  `PbrDirectLit` — the only layout the two normal-map shaders
+  (`pbr_direct_lit_normal_map.slang`/`pbr_ibl_normal_map.slang`) use
+  (Section 5). Without this check, a caller could construct an
+  `UnlitTextured`/`LitTextured` Material (`ObjectToWorldOnly`) with a
+  non-null `normalMapTexture`; `Renderer::drawFrame()`'s own binding
+  logic (below) would still attempt `cmd.bindTexture(3 or 5, ...)`
+  against a Pipeline whose real shader never declared that binding — a
+  real Vulkan descriptor-binding mismatch, caught here instead, at
+  construction time. Both are precondition violations (programmer
+  errors, per AGENTS.md's error-handling rules), not recoverable
+  `Result` errors — identical in kind to the existing
   `ATLANTIS_CHECK((sampledTexture_ == nullptr) == (sampler_ == nullptr));`
-  it sits beside.
+  they sit beside.
+- **A third precondition, documented, not mechanically checked:** a
+  non-null `normalMapTexture` also requires the caller's own
+  `PipelineCreateParams` to have built a Pipeline from
+  `pbr_direct_lit_normal_map.slang` (declaring binding 3) when
+  `environmentBinding() == None`, or from `pbr_ibl_normal_map.slang`
+  (declaring binding 5) when `environmentBinding() == Ibl` — i.e., the
+  *correct* normal-map shader variant for that Material's own
+  environment state, not merely *a* shader that happens to declare a
+  binding at that index. `atlantis::rhi::Pipeline` has no descriptor-
+  layout introspection API today (confirmed by direct inspection of
+  `pipeline.h`), so this cannot be mechanically verified inside
+  `Material`'s own constructor without adding one — out of scope for
+  this ADR (no new RHI query, no runtime reflection). This is
+  documented as a caller precondition, exactly like the existing
+  ownership/destruction-order contract below is a documented, not
+  mechanically enforced, precondition. **Runtime's own real path
+  satisfies this by construction, not by convention alone** — see the
+  dedicated paragraph after this list.
 - **Ownership/destruction-order contract, identical in kind to the
   existing one, applied to this one additional pointer:** the
   caller-owning composition root — never `Material` itself — must keep
@@ -252,6 +294,32 @@ present:
   named, explicit, optional texture pointer added to an existing,
   already-reviewed borrowed-pointer contract (ADR-0056 item 8).
 
+**Runtime's own real path constructively guarantees both the
+push-constant-layout invariant and the Pipeline-selection precondition
+— not merely by caller discipline:** Section 1's own material-grammar
+restriction (a 9-line `normal_map:` line is legal only for
+`kind: pbr_direct_lit`, rejected outright for any other kind at parse
+time) means `MaterialAssetData::normalMapTexture != 0` implies
+`kind == PbrDirectLit` for every material that ever reaches
+`realizeOneMaterialCandidate()` — there is no code path that can
+produce the opposite combination. `pushConstantLayoutFor(materialData.kind)`
+(confirmed by direct reading, `material_realization.cpp:137-148`)
+already returns `PbrDirectLit` if and only if `kind == PbrDirectLit`,
+so the second new `ATLANTIS_CHECK` above can never fire on Runtime's
+own real path. `selectShaderPair()` (this ADR's own Decision preamble
+above; the two new shader files themselves are Section 5 below) is
+extended so that, for `kind == PbrDirectLit`, it consults
+`normalMapTexture != 0`
+*before* the existing `environmentEnabled` dispatch and selects
+`pbr_direct_lit_normal_map.slang`/`pbr_ibl_normal_map.slang`
+accordingly, while `UnlitTextured`/`LitTextured`'s own dispatch
+branches never consult `normalMapTexture` at all (it is always `0` for
+those kinds, per the grammar restriction) — the *correct* Pipeline for
+the Material's own `environmentBinding()` is therefore always the one
+`realizeOneMaterialCandidate()` passes to `createMaterial()` alongside
+that same `normalMapTexture`, closing the third precondition above for
+every real call site without any new introspection mechanism.
+
 `Renderer::drawFrame()` binds the normal map **at the same
 conditional-index pattern the shadow map already establishes**
 (`renderer.cpp:130`'s own exact shape), reusing `material.sampler()` —
@@ -267,6 +335,41 @@ if (item.material->normalMapTexture() != nullptr) {
   cmd.bindTexture(normalMapBinding, *item.material->normalMapTexture(), *item.material->sampler());
 }
 ```
+
+**New verification requirement — GPU-independent, no Vulkan Device
+needed, since both new `ATLANTIS_CHECK`s live in `Material`'s own
+constructor.** `ATLANTIS_CHECK` never aborts the calling test process
+by itself — its default handler does, but the handler is replaceable
+(`atlantis::assertions::setFailureHandler()`, `assert.h`), and this
+codebase's own existing `ScopedFailureHandler` RAII helper
+(`tests/renderer/renderer_ownership_tests.cpp:49-58`) already installs
+a capturing handler for exactly this purpose, confirmed by direct
+reading — this is the real, established pattern to reuse, not a
+GoogleTest-style process-death test (this codebase uses Catch2, and
+has no such mechanism). Three cases, all GPU-independent, all
+following this exact existing pattern:
+
+1. Install a `ScopedFailureHandler`; construct `Material` with a
+   non-null `normalMapTexture` and a null `sampledTexture`/`sampler`;
+   assert exactly one failure was captured (the first new
+   `ATLANTIS_CHECK` fired; both checks use the plain, no-message
+   `ATLANTIS_CHECK` form, so the captured `AssertFailureInfo::expression`
+   — not `::message`, which is empty for this macro form — is the
+   field a test matches against, mirroring how `assert_tests.cpp`'s own
+   plain-`ATLANTIS_CHECK` test already asserts on `expression`
+   directly, e.g. `recorded[0].expression == "1 == 2"`).
+2. Install a `ScopedFailureHandler`; construct `Material` with a
+   non-null `normalMapTexture`, a valid base-color pair, and
+   `pushConstantLayout = MaterialPushConstantLayout::ObjectToWorldOnly`;
+   assert exactly one failure was captured (the second new
+   `ATLANTIS_CHECK`).
+3. Construct `Material` with a non-null `normalMapTexture`, a valid
+   base-color pair, and
+   `pushConstantLayout = MaterialPushConstantLayout::PbrDirectLit`,
+   once for `MaterialEnvironmentBinding::None` and once for `Ibl` —
+   no `ScopedFailureHandler` needed; both constructions must complete
+   with zero captured failures, confirming the invariant's own legal
+   region is not itself accidentally narrowed.
 
 ### 2a. `RealizedMaterialCandidate` and failure rollback — closed, not deferred
 
@@ -485,6 +588,13 @@ golden:
   by direct inspection of the existing, already-`Accepted`
   `realizeOneMaterialCandidate()`/`realizePendingMaterials()` mechanism
   — no new Open Question deferred to Plan.
+- The `Material` public-API contract for a normal map is fully closed:
+  two mechanically-checked preconditions (base-color pair present,
+  push-constant layout is `PbrDirectLit`) plus one documented Pipeline-
+  matching precondition, and a direct trace showing Runtime's own real
+  path satisfies all three by construction (the material grammar's own
+  kind restriction), not merely by caller discipline — no open
+  question deferred to Plan.
 
 ### Negative / Trade-offs
 
@@ -509,6 +619,17 @@ golden:
   `kind: pbr_direct_lit` — a real, disclosed asymmetry in an otherwise
   kind-agnostic grammar, needed because no other kind's shader declares
   a normal-map binding to consume it.
+- The third precondition (a non-null `normalMapTexture` requires the
+  caller's own Pipeline to be built from the matching normal-map
+  shader variant for its own `environmentBinding()`) is documented,
+  not mechanically checked inside `Material`'s own constructor —
+  `atlantis::rhi::Pipeline` has no descriptor-layout introspection API
+  today, and adding one is out of scope for this ADR. A caller that
+  bypasses `realizeOneMaterialCandidate()` entirely (a hand-written
+  test or fixture) must honor this precondition itself, exactly as it
+  must already honor the existing ownership/destruction-order
+  contract — a real, disclosed limitation of a borrowed-pointer API
+  that predates this ADR, not introduced by it.
 
 ## Alternatives Considered
 
