@@ -1,12 +1,14 @@
 # Spec: Directional Shadow Bias Stability
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-09-07
-- **Related Plan(s):** None yet — drafted after this Spec is approved.
+- **Related Plan(s):** None yet — Plan 0030 is drafted only once
+  [PR #133](https://github.com/slmao/Atlantis/pull/133) merges to
+  `main` (see Human Review Approval below).
 - **Related ADR(s):** [ADR-0072](../adr/0072-directional-shadow-map-resource-pass-and-pbr-integration.md)
-  (`Accepted`; gains a `Proposed / Pending Human Review` Amendment
-  alongside this Spec — see that ADR's own Amendment section).
+  (`Accepted`; gains a 2026-09-07 Accepted Amendment alongside this
+  Spec — see that ADR's own Amendment section).
 
 ## Summary
 
@@ -748,3 +750,71 @@ rasterization depth bias and normal-offset shadow mapping (Alternatives
 3/4) remain available as a follow-on only if Plan-stage measurement
 shows the recommended option insufficient — see the stop condition
 above.
+
+## Human Review Approval — 2026-09-07
+
+**Status:** Approved by Human Review, 2026-09-07, against
+[PR #133](https://github.com/slmao/Atlantis/pull/133). User's own
+verbatim approval text: *"I approve Spec 0030 and ADR-0072's 2026-09-07
+Proposed Amendment."* This is a separate, individually-granted approval
+alongside the [ADR-0072 2026-09-07 Amendment's own Acceptance
+Record](../adr/0072-directional-shadow-map-resource-pass-and-pbr-integration.md#accepted-amendment--2026-09-07)
+— neither approval implies the other; both were granted together in
+this one review round.
+
+**Approved scope**, as drafted, with no change to any Requirement,
+Proposed Design, or Testing & Verification Plan text above:
+
+- The bounded, geometric-normal, slope-aware receiver-side shadow bias
+  (Proposed Design, "Option 2") — `kShadowBiasMin`/
+  `kShadowBiasSlopeScale`/`kShadowBiasMax` replacing the single
+  `kShadowBias` literal, with the three concrete constant values left
+  to Plan 0030's own fixed, real-GPU probe (Numeric-value measurement
+  method above) — not fixed by this Spec itself.
+- No RHI, `PipelineCreateParams`, descriptor-contract, uniform-buffer
+  layout, or RenderGraph change — the fix stays confined to each
+  shader's own existing local computation at the existing
+  `computeShadowFactor()` call site.
+- The paired shadow-on/shadow-off differential acne metric, computed
+  only over pixels the test-only Sphere Coverage Mask confirms belong
+  to the sphere, and the non-circular ceiling procedure (fixed noise
+  threshold, fixed pre-fix baseline, and a `≥99%`-reduction/`≤10`-pixel
+  ceiling rule fixed *before* any parameter sweep) — never a raw
+  dark-pixel count, never a ceiling read back off a chosen candidate.
+- Real-GPU execution, with no text-inspection substitute, of the paired
+  acne metric and the ground cast-shadow discriminator against **all
+  four** PBR shader variants (`pbr_direct_lit`, `pbr_ibl`,
+  `pbr_direct_lit_normal_map`, `pbr_ibl_normal_map`) — source-level
+  formula/constant identity across the four remains a supplementary
+  check only.
+- The existing Spec 0029 ground-shadow discriminator
+  (`(198,273)`/`>15`), the IBL-isolation control, and the
+  always-fully-lit out-of-bounds rule staying unchanged and re-verified
+  after the fix, plus the GPU-independent numeric finiteness test (not
+  a claim that Vulkan Validation Layers detect shader `NaN`/`Inf`).
+- Compare-first against every existing golden, with a human-reviewed
+  re-capture requested only for a golden that actually differs.
+- Spec 0029's own existing, untracked `pbr_normal_map_demo` candidate
+  is discarded outright, never approved or reused as a baseline; a
+  fresh candidate is generated only after Plan 0030's fix lands, and
+  goes through its own, independent Human Review.
+- The Dependency and Integration Sequencing section's fixed 10-step
+  sequence — a new `feature/0030-directional-shadow-bias-stability`
+  branch starting from `feature/0029-...`'s own completed Milestone
+  1–5 HEAD, merged forward with `main`, carrying both Specs'
+  Implementation and verification, closed by **exactly one** combined
+  Implementation PR (base `main`) — and its three explicitly-rejected
+  alternatives.
+
+**This approval authorizes drafting Plan 0030 only, once [PR
+#133](https://github.com/slmao/Atlantis/pull/133) itself has merged to
+`main` — not before, and not any Implementation, bias-constant
+selection, candidate regeneration, or golden submission.** Plan 0030's
+own real-GPU parameter sweep, the fresh `pbr_normal_map_demo` candidate,
+and Spec 0029's own Milestone 6–7 all remain separately gated behind
+Plan 0030's own future Human Review, per the Dependency and Integration
+Sequencing section above.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-07, accepting this Spec in full, as drafted,
+with no change.

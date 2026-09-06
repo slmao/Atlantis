@@ -652,11 +652,11 @@ Approval. This approval authorizes drafting Plan 0029 only, once
 PR #129 merges to `main` — not any Implementation, asset migration, or
 golden capture.
 
-## Proposed Amendment — 2026-09-07
+## Accepted Amendment — 2026-09-07
 
-**Status: Proposed / Pending Human Review.** Drafted alongside
+**Status: Accepted.** Drafted alongside
 [Spec 0030](../specs/0030-directional-shadow-bias-stability.md)
-(`Draft`), in direct response to a real, reproduced defect found while
+(`Approved`), in direct response to a real, reproduced defect found while
 reviewing Spec 0029's own `pbr_normal_map_demo` golden candidate (chat,
 2026-09-07): a smooth, curved receiver (`pbr_sphere`) shows visible
 self-shadow acne at grazing incidence to the directional light, traced
@@ -812,4 +812,55 @@ the diagnosed mechanism requires. Options 3 and 4 remain available
 follow-ons, gated on Plan 0030's own real-measurement stop condition
 finding option 2 insufficient — not chosen speculatively now.
 
-**Deciders:** Pending Human Review.
+### Acceptance Record
+
+Accepted by Human Review on 2026-09-07 against
+[PR #133](https://github.com/slmao/Atlantis/pull/133), as a separate,
+individually-granted approval alongside [Spec 0030's own Human Review
+Approval](../specs/0030-directional-shadow-bias-stability.md#human-review-approval--2026-09-07)
+(user's own verbatim approval text: *"I approve Spec 0030 and
+ADR-0072's 2026-09-07 Proposed Amendment."*). This Acceptance Record
+confirms, unchanged from the Decision above:
+
+1. The fixed `kShadowBias = 0.0015` single literal is superseded by the
+   bounded, geometric-normal, slope-aware receiver-side bias policy —
+   `kShadowBiasMin`/`kShadowBiasSlopeScale`/`kShadowBiasMax`.
+2. The bias input is always the receiver's own **geometric**
+   (un-perturbed) world-space normal — `N_geo` in the two normal-map
+   shaders, the existing `N` in the two non-normal-map shaders — never
+   the tangent-space-perturbed normal.
+3. The bias is computed **receiver-side**, inside each shader's own
+   existing `computeShadowFactor()`-equivalent logic — never a Vulkan
+   rasterization `depthBias*` field on the `shadow_cast` Pipeline.
+4. The identical formula and the identical three named constants apply,
+   byte-for-byte, across all four PBR shader variants
+   (`pbr_direct_lit`, `pbr_ibl`, `pbr_direct_lit_normal_map`,
+   `pbr_ibl_normal_map`) — never a per-shader divergence.
+5. The bias stays **bounded** (`clamp(..., kShadowBiasMin,
+   kShadowBiasMax)`), and the out-of-bounds-fragment rule
+   (`shadowFactor = 1.0`) is unchanged.
+6. **No RHI, `PipelineCreateParams`, descriptor, uniform-buffer, or
+   RenderGraph change** — confirmed unchanged from the "Impact" section
+   above.
+7. The three concrete numeric constant values remain Plan-stage values,
+   fixed only by Plan 0030's own non-circular, pre-sweep-fixed
+   procedure (Spec 0030's own Numeric-value measurement method) — not
+   fixed by this ADR or this Amendment.
+8. Real-GPU execution (not text-inspection alone) of the paired acne
+   metric and ground cast-shadow discriminator against all four shader
+   variants is required, and — because two of the four shaders exist
+   only on the unmerged Spec 0029 feature branch — is carried out on
+   the combined branch Spec 0030's own Dependency and Integration
+   Sequencing section fixes, not on a branch cut from plain `main`.
+
+This Acceptance Record changes no Decision, Consequences, or
+Alternatives Considered text above — including the original `Accepted`
+Decision and the 2026-09-06 Accepted Amendment, both fully unchanged —
+and authorizes drafting Plan 0030 only, once
+[PR #133](https://github.com/slmao/Atlantis/pull/133) itself has merged
+to `main` — not any Implementation, bias-constant selection, or golden
+capture.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-07, accepting this Amendment in full, as
+drafted, with no change.
