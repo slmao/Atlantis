@@ -1,20 +1,36 @@
 # Spec: Tangent-Space Normal Mapping Foundation
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao
 - **Created:** 2026-09-06
-- **Related Plan(s):** None yet — Plan follows once this Spec is Approved.
+- **Related Plan(s):** None yet — Plan 0029 drafting starts only once
+  [PR #129](https://github.com/slmao/Atlantis/pull/129) merges to
+  `main`.
+- **Human Review Approval (2026-09-06):** Approved by the repository
+  maintainer against [PR #129](https://github.com/slmao/Atlantis/pull/129).
+  Accepts this Spec's design as written, [ADR-0073](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md)
+  and [ADR-0074](../adr/0074-pbr-normal-map-material-descriptor-and-shader-contract.md)
+  (both `Accepted`), and the Amendments filed against
+  [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md#accepted-amendment--2026-09-06),
+  [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md#accepted-amendment--2026-09-06),
+  and [ADR-0072](../adr/0072-directional-shadow-map-resource-pass-and-pbr-integration.md#accepted-amendment--2026-09-06)
+  (all three `Accepted`), in the same pass. Explicitly accepts the
+  mirrored/negative-determinant tangent-space handedness limitation
+  (Q1, Risks & Open Questions) as a disclosed, deferred limitation —
+  not solved by this Spec. **This approval authorizes drafting Plan
+  0029 only, once PR #129 merges to `main` — not any Implementation,
+  asset migration, or golden capture.**
 - **Related ADR(s):** [ADR-0073](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md)
-  (`Proposed` — cooked mesh tangent representation, cook-time fallback,
+  (`Accepted` — cooked mesh tangent representation, cook-time fallback,
   and existing-mesh migration), [ADR-0074](../adr/0074-pbr-normal-map-material-descriptor-and-shader-contract.md)
-  (`Proposed` — material/Renderer-API/descriptor/shader contract, both
-  direct-lit and IBL paths), [ADR-0045 Proposed Amendment — 2026-09-06](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
-  (mesh format-scope sentence gains tangent), [ADR-0058 Proposed Amendment — 2026-09-06](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+  (`Accepted` — material/Renderer-API/descriptor/shader contract, both
+  direct-lit and IBL paths), [ADR-0045 Accepted Amendment — 2026-09-06](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md#accepted-amendment--2026-09-06)
+  (mesh format-scope sentence gains tangent), [ADR-0058 Accepted Amendment — 2026-09-06](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md#accepted-amendment--2026-09-06)
   (the "one, single vertex layout" closed attribute-count/byte-size
   Decision gains tangent as a fifth attribute — a genuine conflict
   found by direct inspection, mirroring ADR-0063's own identical
   precedent for the normal attribute; ADR-0063 itself needs no
-  amendment), [ADR-0072 Proposed Amendment — 2026-09-06](../adr/0072-directional-shadow-map-resource-pass-and-pbr-integration.md#proposed-amendment--2026-09-06)
+  amendment), [ADR-0072 Accepted Amendment — 2026-09-06](../adr/0072-directional-shadow-map-resource-pass-and-pbr-integration.md#accepted-amendment--2026-09-06)
   (D-7's own 4-sampler ceiling, `4 * maxSets` pool sizing, and 5-slot
   `textureDescriptorMemos_` array each widen by one — the real
   authoritative source ADR-0074 builds on, not ADR-0064)
@@ -231,7 +247,7 @@ in `shaders/`).
   (base-color@1, shadow-map@2, normal-map@3), and `5` with environment
   enabled (base-color@1, environment@2, DFG LUT@3, shadow-map@4,
   normal-map@5). Three separate limits, all fixed by ADR-0072 D-7 and
-  each widened by one via that ADR's own Proposed Amendment: the
+  each widened by one via that ADR's own Accepted Amendment: the
   per-Pipeline `sampledTextureBindingCount` ceiling (`ATLANTIS_CHECK`
   allowed-set `{0..4}` → `{0..5}`), the pool's own sampler-type sizing
   (`4 * maxSets` → `5 * maxSets`), and
@@ -398,19 +414,19 @@ Summary of the new demo:
 
 ## Architectural Impact
 
-**Yes — two Proposed ADRs, one per real architectural surface this
-Spec touches, confirmed by direct code inspection (mirroring how Spec
-0023's own PBR addition split into ADR-0066 asset-side / ADR-0067
+**Yes — two ADRs, both `Accepted`, one per real architectural surface
+this Spec touches, confirmed by direct code inspection (mirroring how
+Spec 0023's own PBR addition split into ADR-0066 asset-side / ADR-0067
 shader-side):**
 
 1. [ADR-0073](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md)
    — the mesh artifact schema/version bump, the cook-time tangent-
    generation and handedness-conflict-rejection algorithm, and the
    bounded existing-mesh migration (Asset System's own module
-   boundary). Requires Proposed Amendments to both
-   [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
+   boundary). Required Accepted Amendments to both
+   [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md#accepted-amendment--2026-09-06)
    (format-scope sentence) and
-   [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+   [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md#accepted-amendment--2026-09-06)
    ("one, single vertex layout" closed attribute-count Decision) —
    both real, disclosed conflicts confirmed by direct inspection, not
    mechanically filed; ADR-0063 needs none.
@@ -419,8 +435,8 @@ shader-side):**
    extension (`Material`/`createMaterial()`'s one new borrowed
    normal-map texture pointer, reusing the existing sampler), the new
    per-material shader-selection axis, two new shader files, and the
-   descriptor-pool capacity widening. Requires a Proposed Amendment to
-   [ADR-0072](../adr/0072-directional-shadow-map-resource-pass-and-pbr-integration.md)
+   descriptor-pool capacity widening. Required an Accepted Amendment to
+   [ADR-0072](../adr/0072-directional-shadow-map-resource-pass-and-pbr-integration.md#accepted-amendment--2026-09-06)
    D-7 (the real, authoritative source of the sampler ceiling, pool
    sizing, and `textureDescriptorMemos_` array this ADR widens by one)
    — not ADR-0064, whose own descriptor-set-count/growth model this

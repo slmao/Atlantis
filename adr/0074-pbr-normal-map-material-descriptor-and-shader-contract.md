@@ -1,12 +1,19 @@
 # ADR 0074: PBR Normal Map — Material Schema, Renderer API, Descriptor Contract, and Shader Integration
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-06
-- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — pending Human Review
-- **Related Spec:** [specs/0029-tangent-space-normal-mapping-foundation.md](../specs/0029-tangent-space-normal-mapping-foundation.md) (`Draft`)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review, approved 2026-09-06
+- **Related Spec:** [specs/0029-tangent-space-normal-mapping-foundation.md](../specs/0029-tangent-space-normal-mapping-foundation.md) (`Approved`)
+- **Acceptance Record (2026-09-06):** Accepted by Human Review as part
+  of Spec 0029's own Human Review Approval against
+  [PR #129](https://github.com/slmao/Atlantis/pull/129). Does not
+  change this ADR's own Decision, Consequences, or Alternatives
+  Considered below. Authorizes drafting Plan 0029 only, once PR #129
+  merges to `main` — not any Implementation, asset migration, or
+  golden capture.
 - **Related ADR(s):** [ADR-0073](0073-static-mesh-tangent-attribute-generation-and-schema.md)
-  (the tangent vertex attribute this ADR's shaders consume — Proposed,
-  same Spec), [ADR-0066](0066-pbr-material-asset-parameter-set-and-color-space-contract.md)
+  (the tangent vertex attribute this ADR's shaders consume — Accepted,
+  same Spec, same Human Review pass), [ADR-0066](0066-pbr-material-asset-parameter-set-and-color-space-contract.md)
   (the existing PBR material asset schema this ADR extends, including
   its own item 6 base-color-texture-color-space cross-validation
   precedent this ADR mirrors for the normal map), [ADR-0067](0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)
@@ -14,9 +21,10 @@
   unmodified), [ADR-0072](0072-directional-shadow-map-resource-pass-and-pbr-integration.md)
   D-7 (the **authoritative source** of today's 4-sampler-per-Pipeline
   ceiling, `4 * maxSets` pool sizing, and 5-slot
-  `textureDescriptorMemos_` array — this ADR's own Proposed Amendment,
-  filed alongside this ADR, widens each of those three numbers by one;
-  see that ADR's own end), [ADR-0064](0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)
+  `textureDescriptorMemos_` array — this ADR's own Accepted Amendment,
+  filed alongside this ADR and accepted in the same Human Review pass,
+  widens each of those three numbers by one; see that ADR's own end),
+  [ADR-0064](0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)
   (the descriptor-**set**-count/pool-growth/ownership model — a
   different axis from ADR-0072 D-7's per-set sampler-**type** capacity;
   unaffected by this ADR, needs no amendment), [ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md)
@@ -71,10 +79,11 @@ Confirmed directly against current `main`:
   (`vulkan_device.cpp:1059-1068`) is a `std::vector`, sized dynamically
   from `sampledTextureBindingCount` — no fixed-size array needs
   widening there. All three numbers must widen by one for this ADR's
-  own binding-5 (`pbr_ibl` + normal map) case; [ADR-0072's own Proposed
-  Amendment — 2026-09-06](0072-directional-shadow-map-resource-pass-and-pbr-integration.md#proposed-amendment--2026-09-06),
-  filed alongside this ADR, is the authoritative source for this
-  widening — this ADR states the consequences, not the numbers
+  own binding-5 (`pbr_ibl` + normal map) case; [ADR-0072's own Accepted
+  Amendment — 2026-09-06](0072-directional-shadow-map-resource-pass-and-pbr-integration.md#accepted-amendment--2026-09-06),
+  filed alongside this ADR and accepted in the same Human Review pass,
+  is the authoritative source for this widening — this ADR states the
+  consequences, not the numbers
   themselves a second time.
 - `descriptor_contract.cpp:45-63` confirms the exact current entry
   counts: `pbrDirectLitExpectedDescriptorContract()` has **4** entries
@@ -442,10 +451,10 @@ sampler bindings (base-color@1, environment@2, DFG LUT@3, shadow-map@4,
 normal-map@5), one past every existing ceiling.** All three numbers
 below are fixed by
 [ADR-0072](0072-directional-shadow-map-resource-pass-and-pbr-integration.md)
-D-7, and are widened by that same ADR's own [Proposed Amendment —
-2026-09-06](0072-directional-shadow-map-resource-pass-and-pbr-integration.md#proposed-amendment--2026-09-06)
-filed alongside this ADR — restated here as consequences, not
-re-decided:
+D-7, and are widened by that same ADR's own [Accepted Amendment —
+2026-09-06](0072-directional-shadow-map-resource-pass-and-pbr-integration.md#accepted-amendment--2026-09-06)
+filed alongside this ADR and accepted in the same Human Review pass —
+restated here as consequences, not re-decided:
 
 1. `vulkan_device.cpp:1000-1002`'s own `ATLANTIS_CHECK` widens from
    `∈ {0,1,2,3,4}` to `∈ {0,1,2,3,4,5}`.

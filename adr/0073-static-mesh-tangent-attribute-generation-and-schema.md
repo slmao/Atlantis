@@ -1,16 +1,23 @@
 # ADR 0073: Static Mesh Tangent Attribute — Cooker-Generated Schema and Algorithm
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-06
-- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — pending Human Review
-- **Related Spec:** [specs/0029-tangent-space-normal-mapping-foundation.md](../specs/0029-tangent-space-normal-mapping-foundation.md) (`Draft`)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review, approved 2026-09-06
+- **Related Spec:** [specs/0029-tangent-space-normal-mapping-foundation.md](../specs/0029-tangent-space-normal-mapping-foundation.md) (`Approved`)
+- **Acceptance Record (2026-09-06):** Accepted by Human Review as part
+  of Spec 0029's own Human Review Approval against
+  [PR #129](https://github.com/slmao/Atlantis/pull/129). Does not
+  change this ADR's own Decision, Consequences, or Alternatives
+  Considered below. Authorizes drafting Plan 0029 only, once PR #129
+  merges to `main` — not any Implementation, asset migration, or
+  golden capture.
 - **Related ADR(s):** [ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)
-  (data format/versioning policy — gains a Proposed Amendment in this
-  same round, see that ADR's own end), [ADR-0058](0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+  (data format/versioning policy — gained an Accepted Amendment in the
+  same Human Review pass, see that ADR's own end), [ADR-0058](0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
   (the "one, single static mesh vertex layout" closed attribute-count/
   byte-size Decision — genuinely narrowed again by this ADR's own
   fifth attribute, exactly as ADR-0063 itself previously narrowed it
-  for the fourth; gains its own Proposed Amendment in this same round,
+  for the fourth; gained its own Accepted Amendment in the same pass,
   see that ADR's own end), [ADR-0063](0063-static-mesh-normal-attribute-schema-version-and-convention.md)
   (the immediately-prior, structurally-similar precedent for adding a
   mandatory attribute to the static mesh vertex layout — its own
@@ -316,13 +323,13 @@ weighting/averaging scheme.**
   value in the first place, not a regression from any better tangent
   quality a UV re-unwrap could realistically have provided without
   itself changing `lighting_demo`'s current rendered output.
-- This ADR requires a Proposed Amendment to **both** ADR-0045's own
+- This ADR required an Accepted Amendment to **both** ADR-0045's own
   format-scope sentence and ADR-0058's own "one, single vertex layout"
   closed attribute-count/byte-size Decision — filed alongside this ADR
   (see each ADR's own end), matching exactly the same two-amendment
   pattern ADR-0063 itself required for the normal attribute; both
-  pending the same Human Review pass. ADR-0063's own Decision content
-  is unaffected and needs no amendment.
+  accepted in the same Human Review pass. ADR-0063's own Decision
+  content is unaffected and needs no amendment.
 - Handedness's own invariance under an object-to-world transform is
   only guaranteed for a positive-determinant transform (a negative-
   determinant conformal transform passes `checkConformalTransform()`

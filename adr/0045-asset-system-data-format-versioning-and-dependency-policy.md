@@ -416,30 +416,35 @@ one format-scope sentence only, for the second time. The negative/trade-off this
 accepted grows by exactly one more attribute's worth of authoring/
 artifact/loader logic — no new category of maintenance burden.
 
-## Proposed Amendment — 2026-09-06
+## Accepted Amendment — 2026-09-06
 
-**Status: Proposed.** Drafted 2026-09-06 alongside
+**Status: Accepted.** Drafted 2026-09-06 alongside
 [Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md)
-(`Draft`) and
+(`Approved`) and
 [ADR-0073](0073-static-mesh-tangent-attribute-generation-and-schema.md)
-(`Proposed`). **Not yet accepted by Human Review** — Spec 0029 is
-itself still `Draft`. Everything above this section — including both
-prior, already-`Accepted` amendments — remains this ADR's own
-original, unmodified `Accepted` Decision (this ADR's own top-level
-`Status: Accepted` is unchanged and unaffected by this amendment). This
-amendment does not alter, narrow, or reinterpret any of the above as
-originally written; it proposes a third narrowing of this ADR's own
-format-scope sentence (as amended 2026-08-25 and 2026-08-29), not yet
-in effect pending Human Review.
+(`Accepted`), and **formally accepted by Human Review on 2026-09-06**
+as part of Spec 0029's own Human Review Approval against
+[PR #129](https://github.com/slmao/Atlantis/pull/129). Everything
+above this section — including both prior, already-`Accepted`
+amendments — remains this ADR's own original, unmodified `Accepted`
+Decision (this ADR's own top-level `Status: Accepted` is unchanged and
+unaffected by this amendment). This amendment does not alter, narrow,
+or reinterpret any of the above as originally written; it records a
+third narrowing of this ADR's own format-scope sentence (as amended
+2026-08-25 and 2026-08-29), now in effect.
 
-**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — pending Human
-Review as part of Spec 0029's own future Human Review Approval.
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-06, accepting this amendment in full, as
+drafted, with no change, as part of Spec 0029's own Human Review
+Approval. This approval authorizes drafting Plan 0029 only, once
+PR #129 merges to `main` — not any Implementation, asset migration, or
+golden capture.
 
 **Related:**
 [Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md)
-(`Draft`),
+(`Approved`),
 [ADR-0073](0073-static-mesh-tangent-attribute-generation-and-schema.md)
-(`Proposed`) — this Amendment and ADR-0073 cross-reference each other,
+(`Accepted`) — this Amendment and ADR-0073 cross-reference each other,
 mirroring this ADR's own existing relationship with ADR-0063: ADR-0073
 makes the actual tangent-attribute decision (schema, byte offset,
 generation algorithm, numeric contract); this Amendment records the
@@ -461,16 +466,16 @@ amendments' own relationship to this ADR's original Decision.
 pattern:** unlike UV0 and normal, tangent is never hand-authored — the
 authoring **source** format's own version marker
 (`atlantis_static_mesh_source_version`) does **not** change as part of
-this proposed narrowing (it stays at the value ADR-0063's own amendment
-already fixed); only the **runtime artifact's** own `schema_version`
-and per-vertex stride change. This breaks the "source and artifact
+this narrowing (it stays at the value ADR-0063's own amendment already
+fixed); only the **runtime artifact's** own `schema_version` and
+per-vertex stride change. This breaks the "source and artifact
 versions move in lockstep" pattern both prior amendments established —
 disclosed here explicitly, not silently.
 
 ### Decision
 
 This ADR's own Decision (as already amended 2026-08-25 and 2026-08-29)
-would be further amended, in effect, to read:
+is further amended, in effect, to read:
 
 - The runtime artifact format is scoped to this Spec's one supported
   asset type, **as extended by Spec 0017, further extended by Spec
@@ -508,7 +513,6 @@ No change to this ADR's own "no new third-party dependency," "no
 migration mechanism," or byte-order Decisions — this Amendment narrows
 one format-scope sentence only, for the third time, and records one
 genuine, disclosed divergence (no source-version bump) from the
-pattern both prior amendments established. Pending Human Review
-alongside Spec 0029 and ADR-0073; this ADR's own top-level `Status`
-remains `Accepted` regardless of this amendment's own `Proposed`
-status, exactly as both prior amendments left it.
+pattern both prior amendments established. Accepted by Human Review on
+2026-09-06 alongside Spec 0029 and ADR-0073; this ADR's own top-level
+`Status` remains `Accepted`, exactly as both prior amendments left it.

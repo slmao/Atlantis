@@ -604,16 +604,18 @@ ADR.
   list keeps `Renderer` ignorant of `Mesh` layout details, at the cost
   of one more parameter every caller must pass.
 
-## Proposed Amendment — 2026-09-06
+## Accepted Amendment — 2026-09-06
 
-**Status: Proposed.** Drafted alongside
+**Status: Accepted.** Drafted alongside
 [Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md)
-(`Draft`) and
+(`Approved`) and
 [ADR-0074](0074-pbr-normal-map-material-descriptor-and-shader-contract.md)
-(`Proposed`). Not yet accepted — Spec 0029 is itself still `Draft`.
-Everything above remains this ADR's own original, unmodified
-`Accepted` Decision (top-level `Status: Accepted` unchanged). This
-amendment widens D-7's own three fixed capacity numbers by one more
+(`Accepted`), and formally accepted by Human Review on 2026-09-06 as
+part of Spec 0029's own Human Review Approval against
+[PR #129](https://github.com/slmao/Atlantis/pull/129). Everything
+above remains this ADR's own original, unmodified `Accepted` Decision
+(top-level `Status: Accepted` unchanged). This amendment widens D-7's
+own three fixed capacity numbers by one more
 step, for the same reason D-7 itself widened them from `pbr_ibl`'s
 original 3-sampler shape to 4 (a new sampler binding at the next free
 slot): Spec 0029 adds a normal-map sampler at binding 3
@@ -642,3 +644,10 @@ and the shader/Material-side consequences; this Amendment states only
 the three numeric widenings that are, by D-7's own text, this ADR's
 authoritative source, not ADR-0064's (which owns descriptor-**set**
 count/growth, a different axis, unaffected by this amendment).
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-06, accepting this amendment in full, as
+drafted, with no change, as part of Spec 0029's own Human Review
+Approval. This approval authorizes drafting Plan 0029 only, once
+PR #129 merges to `main` — not any Implementation, asset migration, or
+golden capture.
