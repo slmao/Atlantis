@@ -1,8 +1,32 @@
 # Plan: Integrated Multi-Object Showcase Scene
 
 - **Spec:** [specs/0028-integrated-multi-object-showcase-scene.md](../specs/0028-integrated-multi-object-showcase-scene.md) (`Approved`)
-- **Status:** Draft
+- **Status:** Approved / Ready for Implementation
 - **Author:** slmao
+- **Human Review Approval (2026-09-06):** Approved by the repository
+  maintainer against [PR #127](https://github.com/slmao/Atlantis/pull/127),
+  as a joint Spec 0028 + Plan 0028 review. Accepts this Plan as written,
+  including: the fixed 6 renderables / 2 GPU Meshes / 4 GPU Materials;
+  the `ground_plane` mesh and the 8-node scene's own declaration order,
+  transforms, and material assignments; the fixed camera and
+  directional-light transforms, their analytic-target direction, and
+  the float32 mechanical recomputation confirming that target; the
+  shadow footprint pixel `(158,347)`; the warm-up → R1 (6 casters) → R2
+  (empty casters) same-pixel differential; the `rgbSum(R2)-rgbSum(R1) >
+  15` threshold as an approved but not-yet-measured conservative Plan
+  value — if Implementation's real GPU capture shows it does not hold,
+  **stop and request Human Review before changing it, never adjust
+  silently**; the independent `src/runtime/CMakeLists.txt` +
+  `tests/runtime/CMakeLists.txt` scene-macro switch; reuse of the one
+  existing windowed smoke lifecycle with its own dynamic point-light
+  test preserved; the fixture's production `computeShadowLightSpaceMatrices()`
+  path with `includeShadowCasters=true` as its own default; one new
+  golden via ADR-0042's two-phase process; the 8 existing committed
+  goldens confirmed byte-identical, with `world_scene_loaded` and
+  `sky_background` separately re-run (neither is a 9th/10th golden);
+  no new descriptor-peak test, executable, public API, or ADR; and the
+  6 Milestones in their given order. **Implementation starts only once
+  PR #127 merges to `main` — not before.**
 
 ## Non-negotiable rule for Implementation
 
