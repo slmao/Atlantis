@@ -84,9 +84,11 @@ target_compile_definitions(atlantis_runtime PRIVATE
   ATLANTIS_RUNTIME_SHADER_DIR="${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}"
   ATLANTIS_RUNTIME_ASSET_ARTIFACT_PATH="${ATLANTIS_minimal_cube_ARTIFACT_PATH}"
   ATLANTIS_RUNTIME_ASSET_METADATA_PATH="${ATLANTIS_minimal_cube_METADATA_PATH}"
-  ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH="${ATLANTIS_world_scene_ARTIFACT_PATH}"
-  ATLANTIS_RUNTIME_SCENE_METADATA_PATH="${ATLANTIS_world_scene_METADATA_PATH}"
-  ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH="${ATLANTIS_world_scene_MANIFEST_PATH}"
+  # Plan 0028 Milestone 2: atlantis_runtime's own default scene switches
+  # from world_scene to integrated_showcase_demo_scene.
+  ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH="${ATLANTIS_integrated_showcase_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_RUNTIME_SCENE_METADATA_PATH="${ATLANTIS_integrated_showcase_demo_scene_METADATA_PATH}"
+  ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH="${ATLANTIS_integrated_showcase_demo_scene_MANIFEST_PATH}"
   # Plan 0018 Section P10: the second, MaterialKind::UnlitTextured
   # built-in shader pair's own output directory -- reuses the already-
   # exported ATLANTIS_textured_quad_SHADER_OUTPUT_DIR
@@ -147,4 +149,5 @@ target_compile_definitions(atlantis_runtime PRIVATE
 add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
   pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders output_transform_srgb_shaders sky_shaders
   shadow_cast_shaders
-  ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET} ${ATLANTIS_ibl_studio_TARGET})
+  ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
+  ${ATLANTIS_ibl_studio_TARGET})

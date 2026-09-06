@@ -320,3 +320,30 @@ set(ATLANTIS_ibl_studio_ARTIFACT_PATH "${ATLANTIS_ibl_studio_ARTIFACT_PATH}" PAR
 set(ATLANTIS_ibl_studio_METADATA_PATH "${ATLANTIS_ibl_studio_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_ibl_studio_TARGET "${ATLANTIS_ibl_studio_TARGET}" PARENT_SCOPE)
 set(ATLANTIS_ibl_studio_LOGICAL_PATH "${ATLANTIS_ibl_studio_LOGICAL_PATH}" PARENT_SCOPE)
+
+# Plan 0028 Milestone 1: a flat 10x10 ground plane -- the one real asset
+# gap Spec 0028 found (no cooked, World-loadable floor mesh existed).
+atlantis_add_static_mesh_asset(
+  NAME ground_plane
+  SOURCE meshes/ground_plane.mesh.txt
+)
+set(ATLANTIS_ground_plane_ARTIFACT_PATH "${ATLANTIS_ground_plane_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_ground_plane_METADATA_PATH "${ATLANTIS_ground_plane_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_ground_plane_TARGET "${ATLANTIS_ground_plane_TARGET}" PARENT_SCOPE)
+
+# Plan 0028 Milestone 1: the integrated showcase scene -- one ground_plane
+# entity, five pbr_sphere entities reusing the four existing PBR
+# materials (two reused pairs: Sphere E/Sphere D share pbr_metallic_smooth,
+# Ground/Sphere A share pbr_dielectric_rough), one directional light, and
+# one camera. Becomes atlantis_runtime's own default scene (Milestone 2).
+atlantis_add_scene_asset(
+  NAME integrated_showcase_demo_scene
+  SOURCE scenes/integrated_showcase_demo.scene.txt
+  MESH_DEPENDENCIES pbr_sphere ground_plane
+  MATERIAL_DEPENDENCIES pbr_dielectric_rough pbr_dielectric_smooth pbr_metallic_rough pbr_metallic_smooth
+  TEXTURE_DEPENDENCIES textured_quad_srgb
+)
+set(ATLANTIS_integrated_showcase_demo_scene_ARTIFACT_PATH "${ATLANTIS_integrated_showcase_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_integrated_showcase_demo_scene_METADATA_PATH "${ATLANTIS_integrated_showcase_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_integrated_showcase_demo_scene_MANIFEST_PATH "${ATLANTIS_integrated_showcase_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_integrated_showcase_demo_scene_TARGET "${ATLANTIS_integrated_showcase_demo_scene_TARGET}" PARENT_SCOPE)

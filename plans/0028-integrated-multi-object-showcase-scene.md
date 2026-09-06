@@ -632,3 +632,36 @@ See [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
 Deltas specific to this Plan: the golden-update gate (ADR-0042) applies
 to a **new** golden, not a recapture — no prior golden requires re-
 review. Otherwise, none.
+
+## Human-Approved Implementation Deviation — 2026-09-06
+
+Milestone 2's own environment-enabled windowed smoke lifecycle
+(FR8) is the first test in this repository to construct a real
+`RuntimeApplication` with an environment configured and call its real
+`shutdown()` under Vulkan Validation Layers. Running it exposed a
+pre-existing teardown omission, present since Spec 0025, unrelated to
+this Plan's own design: `RuntimeApplication::shutdown()`'s explicit
+release sequence never resets `environmentLightingResources_`.
+
+`runtime_application.h`'s own declaration comment already states the
+intended order: `EnvironmentLightingResources` must release after
+borrowing Materials/Mesh resources and before `Device` — reverse
+declaration order. `shutdown()`'s manual sequence mirrors that order
+for every other member, but omits this one, so `device_.reset()` runs
+while environment resources are still alive — 8 leaked Vulkan objects,
+a Validation Layers fatal abort.
+
+**Approved fix, exact scope:** add one call,
+`environmentLightingResources_.reset();`, to `shutdown()`'s existing
+sequence, between `meshResourceMap_.clear();` and
+`presentation_.reset();` (i.e. also before `device_.reset();`) — no
+other line in `shutdown()` changes. No public API, ownership model,
+member declaration order, or resource type changes.
+`src/runtime/src/runtime_application.cpp` is added to Files Touched
+for this reason alone.
+
+This is a direct regression fix, not new scope: the environment-
+enabled windowed smoke lifecycle Milestone 2 already required
+uncovered a latent bug that would affect any windowed
+`RuntimeApplication` configured with an environment, not something
+Spec 0028 itself introduces.

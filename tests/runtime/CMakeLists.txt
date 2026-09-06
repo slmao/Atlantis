@@ -69,9 +69,13 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   ATLANTIS_RUNTIME_SHADER_DIR="${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}"
   ATLANTIS_RUNTIME_ASSET_ARTIFACT_PATH="${ATLANTIS_minimal_cube_ARTIFACT_PATH}"
   ATLANTIS_RUNTIME_ASSET_METADATA_PATH="${ATLANTIS_minimal_cube_METADATA_PATH}"
-  ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH="${ATLANTIS_world_scene_ARTIFACT_PATH}"
-  ATLANTIS_RUNTIME_SCENE_METADATA_PATH="${ATLANTIS_world_scene_METADATA_PATH}"
-  ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH="${ATLANTIS_world_scene_MANIFEST_PATH}"
+  # Plan 0028 Milestone 2: this target's own real windowed smoke lifecycle
+  # switches from world_scene to integrated_showcase_demo_scene, matching
+  # atlantis_runtime's own default -- a separate, independent switch from
+  # src/runtime/CMakeLists.txt's own (this target does not inherit it).
+  ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH="${ATLANTIS_integrated_showcase_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_RUNTIME_SCENE_METADATA_PATH="${ATLANTIS_integrated_showcase_demo_scene_METADATA_PATH}"
+  ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH="${ATLANTIS_integrated_showcase_demo_scene_MANIFEST_PATH}"
   # Plan 0018 Section P10: the second, MaterialKind::UnlitTextured
   # built-in shader pair -- mirrors ATLANTIS_RUNTIME_SHADER_DIR's own
   # sourcing exactly, now that shaders/textured_quad is unconditional.
@@ -114,7 +118,8 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
 add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
   pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders output_transform_srgb_shaders sky_shaders
   shadow_cast_shaders
-  ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_world_scene_TARGET} ${ATLANTIS_ibl_studio_TARGET})
+  ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
+  ${ATLANTIS_ibl_studio_TARGET})
 
 # LABELS "gpu": the existing plain ctest convention Spec 0006/Spec 0010
 # already established -- matching tests/image_regression/CMakeLists.txt's
