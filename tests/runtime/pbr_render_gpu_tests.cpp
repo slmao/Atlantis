@@ -103,16 +103,25 @@ constexpr Format kColorFormat = Format::Rgba8Unorm;
 // position@0/uv@1/normal@2 (LitTextured/PbrDirectLit) are both valid
 // sub-schemas of this SAME interleaved byte layout, applied via
 // independent VertexInputLayout values against the one shared Mesh.
+// Plan 0029 Section P13: gains a fourth attribute, tangent -- appended
+// trailing, so every existing position/uv/normal-only VertexInputLayout
+// below (offsetof-based, never sizeof-based) is completely unaffected.
 struct Vertex {
   float position[3];
   float uv[2];
   float normal[3];
+  float tangent[4];
 };
 
+// Plan 0029 Section P13: a fixed tangent value, (1,0,0,1) -- this
+// file's own binding-5 test does not exercise tangent-space math
+// correctness (that is Milestone 5's own discriminative-pixel test's
+// job); it only needs a well-formed, non-degenerate attribute value to
+// feed the new pbr_ibl_normal_map Pipeline's own VertexInput.
 constexpr Vertex kTriangleVertices[3] = {
-    {{0.0f, -0.5f, 0.0f}, {0.5f, 1.0f}, {0.0f, 0.0f, 1.0f}},
-    {{0.5f, 0.5f, 0.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+    {{0.0f, -0.5f, 0.0f}, {0.5f, 1.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+    {{0.5f, 0.5f, 0.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+    {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
 };
 constexpr std::uint16_t kTriangleIndices[3] = {0, 1, 2};
 constexpr std::array<float, 16> kIdentityMatrix = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
@@ -132,6 +141,20 @@ constexpr std::array<float, 16> kIdentityMatrix = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0,
       MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
       MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
       MeshVertexAttributeSchema{.location = 2, .offsetBytes = offsetof(Vertex, normal)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
+// Plan 0029 Section P13: pbr_ibl_normal_map.slang's own real VertexInput
+// -- location 0/1/2/3 = position/uv/normal/tangent.
+[[nodiscard]] std::optional<VertexInputLayout> pbrIblNormalMapLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+      MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
+      MeshVertexAttributeSchema{.location = 2, .offsetBytes = offsetof(Vertex, normal)},
+      MeshVertexAttributeSchema{.location = 3, .offsetBytes = offsetof(Vertex, tangent)},
   };
   auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
   if (result.isErr()) return std::nullopt;
@@ -808,4 +831,248 @@ TEST_CASE("PbrDirectLit reflects a runtime Light intensity change on the next fr
   CHECK(brightCenter[0] > dimCenter[0]);
   CHECK(brightCenter[1] > dimCenter[1]);
   CHECK(brightCenter[2] > dimCenter[2]);
+}
+
+// Plan 0029 Section P13 (ADR-0074 Section 3): the one new, real
+// verification requirement that specifically exercises binding 5 --
+// creates a real Pipeline with sampledTextureBindingCount == 5 from
+// the real pbr_ibl_normal_map shader pair, allocates a real descriptor
+// set, and calls cmd.bindTexture() for every one of bindings 1-5 (the
+// last of which is the one call that exercises
+// VulkanCommandList::textureDescriptorMemos_'s own widened size, ADR-
+// 0072 D-7's own Accepted Amendment) before a real draw+submit. This
+// bypasses Material/RealizedMaterialCandidate entirely -- confirmed
+// necessary since Milestone 4 (their own widening) has not landed yet.
+TEST_CASE("A Pipeline with sampledTextureBindingCount == 5 (pbr_ibl_normal_map) allocates, binds every one of "
+          "bindings 1-5 including bindTexture(5, ...), and draws cleanly",
+          "[runtime][gpu][pbr][render][normal_map]") {
+  auto rigOpt = setUpPbrTestRig("Atlantis PBR Render GPU Tests (binding-5 normal-map Pipeline)");
+  REQUIRE(rigOpt.has_value());
+  PbrTestRig& rig = *rigOpt;
+  Device& device = *rig.device;
+
+  const auto normalMapVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_ibl_normal_map.vert.spv");
+  const auto normalMapFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_ibl_normal_map.frag.spv");
+  REQUIRE(normalMapVertexSpirv.has_value());
+  REQUIRE(normalMapFragmentSpirv.has_value());
+  const auto normalMapVertexReflection = loadReflectionMetadata(
+      std::string(ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_ibl_normal_map.vert.refl.json");
+  REQUIRE(normalMapVertexReflection.isOk());
+  const auto normalMapLayout = pbrIblNormalMapLayout(normalMapVertexReflection.value());
+  REQUIRE(normalMapLayout.has_value());
+
+  auto pipelineResult = device.createPipeline(
+      {.vertexShader = {.spirvWords = normalMapVertexSpirv->data(), .wordCount = normalMapVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = normalMapFragmentSpirv->data(), .wordCount = normalMapFragmentSpirv->size()},
+       .vertexInputLayout = *normalMapLayout,
+       .colorFormat = kColorFormat,
+       .depthFormat = DepthFormat::D32Sfloat,
+       .pushConstantSizeBytes = 96,
+       .sampledTextureBindingCount = 5});
+  REQUIRE(pipelineResult.isOk());
+  std::unique_ptr<Pipeline> pipeline = std::move(pipelineResult.value());
+
+  // binding 2 (environment): a real, minimal 1-mip cube texture -- this
+  // test proves binding mechanics, not IBL rendering correctness, so a
+  // single mip/uniform color is sufficient.
+  constexpr Extent2D kCubeExtent{4, 4};
+  constexpr std::size_t kCubeFaceBytes = static_cast<std::size_t>(kCubeExtent.width) * kCubeExtent.height * 8U;  // Rgba16Float
+  auto cubeStagingResult =
+      device.createBuffer({.purpose = BufferPurpose::Staging, .sizeBytes = kCubeFaceBytes * 6U});
+  REQUIRE(cubeStagingResult.isOk());
+  std::unique_ptr<atlantis::rhi::Buffer> cubeStaging = std::move(cubeStagingResult.value());
+  std::memset(cubeStaging->mappedData(), 0x00, kCubeFaceBytes * 6U);
+  std::vector<atlantis::rhi::SampledTextureUploadRegion> cubeRegions;
+  for (std::uint32_t face = 0; face < 6; ++face) {
+    cubeRegions.push_back({.bufferOffsetBytes = static_cast<std::size_t>(face) * kCubeFaceBytes,
+                            .mipLevel = 0,
+                            .arrayLayer = face,
+                            .extent = kCubeExtent});
+  }
+  auto environmentResult = device.createSampledTexture(
+      {.extent = kCubeExtent,
+       .format = SampledTextureFormat::Rgba16Float,
+       .dimension = atlantis::rhi::SampledTextureDimension::TextureCube});
+  REQUIRE(environmentResult.isOk());
+  std::unique_ptr<atlantis::rhi::SampledTexture> environment = std::move(environmentResult.value());
+
+  // binding 3 (DFG LUT): a real, minimal Rg16Float 2D texture.
+  constexpr Extent2D kDfgExtent{4, 4};
+  constexpr std::size_t kDfgBytes = static_cast<std::size_t>(kDfgExtent.width) * kDfgExtent.height * 4U;  // Rg16Float
+  auto dfgStagingResult = device.createBuffer({.purpose = BufferPurpose::Staging, .sizeBytes = kDfgBytes});
+  REQUIRE(dfgStagingResult.isOk());
+  std::unique_ptr<atlantis::rhi::Buffer> dfgStaging = std::move(dfgStagingResult.value());
+  std::memset(dfgStaging->mappedData(), 0x00, kDfgBytes);
+  auto dfgResult = device.createSampledTexture({.extent = kDfgExtent, .format = SampledTextureFormat::Rg16Float});
+  REQUIRE(dfgResult.isOk());
+  std::unique_ptr<atlantis::rhi::SampledTexture> dfgLut = std::move(dfgResult.value());
+
+  // binding 5 (normal map): a real, minimal Rgba8Unorm 2D texture -- the
+  // fixed, flat tangent-space normal (128,128,255) decodes to (0,0,1),
+  // matching the geometric normal exactly (no perturbation), which is
+  // sufficient for this test's own binding-mechanics-only scope.
+  constexpr Extent2D kNormalMapExtent{4, 4};
+  constexpr std::size_t kNormalMapBytes =
+      static_cast<std::size_t>(kNormalMapExtent.width) * kNormalMapExtent.height * 4U;  // Rgba8Unorm
+  auto normalMapStagingResult = device.createBuffer({.purpose = BufferPurpose::Staging, .sizeBytes = kNormalMapBytes});
+  REQUIRE(normalMapStagingResult.isOk());
+  std::unique_ptr<atlantis::rhi::Buffer> normalMapStaging = std::move(normalMapStagingResult.value());
+  {
+    auto* bytes = static_cast<std::uint8_t*>(normalMapStaging->mappedData());
+    for (std::size_t i = 0; i < kNormalMapBytes; i += 4) {
+      bytes[i + 0] = 128;
+      bytes[i + 1] = 128;
+      bytes[i + 2] = 255;
+      bytes[i + 3] = 255;
+    }
+  }
+  auto normalMapResult =
+      device.createSampledTexture({.extent = kNormalMapExtent, .format = SampledTextureFormat::Rgba8Unorm});
+  REQUIRE(normalMapResult.isOk());
+  std::unique_ptr<atlantis::rhi::SampledTexture> normalMap = std::move(normalMapResult.value());
+
+  // binding 4 (shadow map): a real ShadowMap, cleared to maximum depth
+  // via an empty shadow-cast pass (zero casters) -- mirrors renderer.cpp's
+  // own established "shadowCasterDrawItems empty -> cleared, ShaderRead"
+  // pattern exactly, confirmed real by direct reading.
+  auto shadowMapResult = device.createShadowMap({.extent = {256, 256}});
+  REQUIRE(shadowMapResult.isOk());
+  std::unique_ptr<atlantis::rhi::ShadowMap> shadowMap = std::move(shadowMapResult.value());
+  auto shadowMapSamplerResult =
+      device.createSampler({.filter = Filter::Nearest, .addressMode = AddressMode::ClampToEdge});
+  REQUIRE(shadowMapSamplerResult.isOk());
+  std::unique_ptr<atlantis::rhi::Sampler> shadowMapSampler = std::move(shadowMapSamplerResult.value());
+
+  const auto shadowCastVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.vert.spv");
+  const auto shadowCastFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.spv");
+  REQUIRE(shadowCastVertexSpirv.has_value());
+  REQUIRE(shadowCastFragmentSpirv.has_value());
+  auto shadowCastVertexReflectionResult =
+      loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.vert.refl.json");
+  REQUIRE(shadowCastVertexReflectionResult.isOk());
+  const auto shadowCastVertexInputLayout = shadowCastVertexLayout(shadowCastVertexReflectionResult.value());
+  REQUIRE(shadowCastVertexInputLayout.has_value());
+
+  auto shadowCastPipelineResult = device.createPipeline(
+      {.vertexShader = {.spirvWords = shadowCastVertexSpirv->data(), .wordCount = shadowCastVertexSpirv->size()},
+       .fragmentShader = {.spirvWords = shadowCastFragmentSpirv->data(),
+                           .wordCount = shadowCastFragmentSpirv->size()},
+       .vertexInputLayout = *shadowCastVertexInputLayout,
+       .depthFormat = DepthFormat::D32Sfloat,
+       .pushConstantSizeBytes = sizeof(float) * 16,
+       .sampledTextureBindingCount = 0,
+       .hasCameraUniformBinding = true,
+       .hasDepthAttachment = true,
+       .depthWriteEnabled = true,
+       .hasColorAttachment = false});
+  REQUIRE(shadowCastPipelineResult.isOk());
+  std::unique_ptr<Pipeline> shadowCastPipeline = std::move(shadowCastPipelineResult.value());
+
+  auto shadowLightSpaceBufferResult = device.createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 128});
+  REQUIRE(shadowLightSpaceBufferResult.isOk());
+  std::unique_ptr<atlantis::rhi::Buffer> shadowLightSpaceBuffer = std::move(shadowLightSpaceBufferResult.value());
+
+  auto cameraBufferResult = device.createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
+  REQUIRE(cameraBufferResult.isOk());
+  std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer = std::move(cameraBufferResult.value());
+  const FrameLightingData lighting = oneDirectionalLight(2.0f);
+  writeCameraBuffer(*cameraBuffer, kIdentityMatrix, kIdentityMatrix, lighting, CameraWorldPositionData{0, 0, 5, 0});
+
+  auto depthTextureResult = device.createTexture({.extent = kExtent, .format = DepthFormat::D32Sfloat});
+  REQUIRE(depthTextureResult.isOk());
+
+  auto offscreenResult = device.createOffscreenTarget({.extent = kExtent, .format = kColorFormat});
+  REQUIRE(offscreenResult.isOk());
+  auto acquireResult = offscreenResult.value()->acquireTarget();
+  REQUIRE(acquireResult.isOk());
+  std::unique_ptr<atlantis::rhi::RenderTarget> target = std::move(acquireResult.value());
+
+  auto commandListResult = device.createCommandList();
+  REQUIRE(commandListResult.isOk());
+  std::unique_ptr<CommandList> commandList = std::move(commandListResult.value());
+
+  atlantis::render_graph::RenderGraphBuilder builder;
+  const auto cubeResource = builder.declareResource("normal-map-test-cube-upload");
+  const auto cubePass = builder.declarePass("CubeUpload");
+  builder.writes(cubePass, cubeResource, atlantis::rhi::ResourceState::TransferDestination);
+  builder.setExecute(cubePass, [&cubeStaging, &environment, &cubeRegions](CommandList& cmd) {
+    cmd.copyBufferToTexture(*cubeStaging, *environment, cubeRegions);
+  });
+
+  const auto dfgResource = builder.declareResource("normal-map-test-dfg-upload");
+  const auto dfgPass = builder.declarePass("DfgUpload");
+  builder.writes(dfgPass, dfgResource, atlantis::rhi::ResourceState::TransferDestination);
+  builder.setExecute(dfgPass, [&dfgStaging, &dfgLut](CommandList& cmd) { cmd.copyBufferToTexture(*dfgStaging, *dfgLut); });
+
+  const auto normalMapResource = builder.declareResource("normal-map-test-normal-map-upload");
+  const auto normalMapPass = builder.declarePass("NormalMapUpload");
+  builder.writes(normalMapPass, normalMapResource, atlantis::rhi::ResourceState::TransferDestination);
+  builder.setExecute(normalMapPass,
+                      [&normalMapStaging, &normalMap](CommandList& cmd) { cmd.copyBufferToTexture(*normalMapStaging, *normalMap); });
+
+  const auto shadowResource = builder.declareResource("normal-map-test-shadow");
+  const auto shadowPass = builder.declarePass("Shadow");
+  builder.writes(shadowPass, shadowResource, atlantis::rhi::ResourceState::DepthAttachmentReadWrite);
+  builder.setExecute(shadowPass, [&shadowCastPipeline, &shadowLightSpaceBuffer](CommandList& cmd) {
+    cmd.bindPipeline(*shadowCastPipeline);
+    cmd.bindUniformBuffer(*shadowLightSpaceBuffer);
+    // Zero shadow casters -- this test's own scope is binding mechanics,
+    // not a real occluder; the pass still clears/transitions the map.
+  });
+
+  const auto drawResource = builder.declareResource("normal-map-test-draw");
+  const auto drawDepthResource = builder.declareResource("normal-map-test-draw-depth");
+  const auto drawPass = builder.declarePass("Draw");
+  builder.reads(drawPass, cubeResource, atlantis::rhi::ResourceState::ShaderRead);
+  builder.reads(drawPass, dfgResource, atlantis::rhi::ResourceState::ShaderRead);
+  builder.reads(drawPass, normalMapResource, atlantis::rhi::ResourceState::ShaderRead);
+  builder.reads(drawPass, shadowResource, atlantis::rhi::ResourceState::ShaderRead);
+  builder.writes(drawPass, drawResource, atlantis::rhi::ResourceState::ColorAttachmentOutput);
+  builder.writes(drawPass, drawDepthResource, atlantis::rhi::ResourceState::DepthAttachmentReadWrite);
+  builder.setExecute(drawPass, [&](CommandList& cmd) {
+    cmd.bindPipeline(*pipeline);
+    cmd.bindVertexBuffer(rig.mesh.vertexBuffer());
+    cmd.bindIndexBuffer(rig.mesh.indexBuffer());
+    cmd.bindUniformBuffer(*cameraBuffer);
+    cmd.pushConstant(kIdentityMatrix.data(), kIdentityMatrix.size() * sizeof(float));
+    cmd.bindTexture(1, *rig.texture, *rig.sampler);
+    cmd.bindTexture(2, *environment, *rig.sampler);
+    cmd.bindTexture(3, *dfgLut, *rig.sampler);
+    cmd.bindTexture(4, *shadowMap, *shadowMapSampler);
+    // The one call that exercises textureDescriptorMemos_'s own widened
+    // size (ADR-0072 D-7's own Accepted Amendment, Plan 0029 Section
+    // P10) -- binding index 5 fails ATLANTIS_CHECK at the pre-Amendment
+    // array size regardless of whether the Pipeline/descriptor-set
+    // creation above already succeeded.
+    cmd.bindTexture(5, *normalMap, *rig.sampler);
+    cmd.drawIndexed(3);
+  });
+
+  auto compileResult = builder.compile();
+  REQUIRE(compileResult.isOk());
+  const std::vector<atlantis::render_graph::ResourceBinding> bindings{
+      {.resource = compileResult.value().resourceAt(0), .sampledTexture = environment.get(),
+       .finalState = atlantis::rhi::ResourceState::ShaderRead},
+      {.resource = compileResult.value().resourceAt(1), .sampledTexture = dfgLut.get(),
+       .finalState = atlantis::rhi::ResourceState::ShaderRead},
+      {.resource = compileResult.value().resourceAt(2), .sampledTexture = normalMap.get(),
+       .finalState = atlantis::rhi::ResourceState::ShaderRead},
+      {.resource = compileResult.value().resourceAt(3), .depthClear = 1.0f, .shadowMap = shadowMap.get()},
+      {.resource = compileResult.value().resourceAt(4),
+       .target = target.get(),
+       .colorClear = atlantis::rhi::ClearColorValue{0.0f, 0.0f, 0.0f, 1.0f},
+       .finalState = atlantis::rhi::ResourceState::TransferSource},
+      {.resource = compileResult.value().resourceAt(5),
+       .depthTexture = depthTextureResult.value().get(),
+       .depthClear = 1.0f},
+  };
+  atlantis::render_graph::execute(compileResult.value(), bindings, *commandList);
+
+  auto submitResult = device.submit(std::move(commandList), *target);
+  REQUIRE(submitResult.isOk());
+  REQUIRE(device.waitIdle().isOk());
 }

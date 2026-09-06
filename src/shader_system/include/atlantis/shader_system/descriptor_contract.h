@@ -90,6 +90,20 @@ namespace atlantis::shader_system {
 // stage does read the camera uniform for position/normal transforms.
 [[nodiscard]] std::vector<DescriptorBinding> skyExpectedDescriptorContract();
 
+// Plan 0029 Section P11 (ADR-0074 Section 4): pbr_direct_lit_normal_map's
+// own fixed, expected descriptor contract -- identical shape to
+// pbrDirectLitExpectedDescriptorContract() above, plus a fifth entry,
+// the normal-map sampler at binding 3 (the next free binding after the
+// shadow map's own binding 2).
+[[nodiscard]] std::vector<DescriptorBinding> pbrDirectLitNormalMapExpectedDescriptorContract();
+
+// Plan 0029 Section P11 (ADR-0074 Section 4): pbr_ibl_normal_map's own
+// fixed, expected descriptor contract -- identical shape to
+// pbrIblExpectedDescriptorContract() above, plus a seventh entry, the
+// normal-map sampler at binding 5 (the next free binding after the
+// shadow map's own binding 4).
+[[nodiscard]] std::vector<DescriptorBinding> pbrIblNormalMapExpectedDescriptorContract();
+
 // Plan 0027 Milestone 4 (ADR-0072 D-3): shadow_cast's own fixed, expected
 // descriptor contract -- one binding, Vertex-only: {set 0, binding 0,
 // UniformBuffer, Vertex} (the dedicated light-space buffer, referenced

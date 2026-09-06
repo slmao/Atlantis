@@ -102,6 +102,13 @@ add_subdirectory(shaders/pbr_direct_lit)
 # Plan 0025 Milestone 5: opt-in IBL sibling for PbrDirectLit. The
 # existing shader above remains the no-environment path unchanged.
 add_subdirectory(shaders/pbr_ibl)
+# Plan 0029 Section P12 (ADR-0074 Section 5): the two normal-map shader
+# variants -- unconditional here, matching every other production
+# shader pair's own identical placement/reasoning; declared immediately
+# after the existing PBR variants and before src/runtime, for the same
+# add_dependencies()-ordering reason documented below.
+add_subdirectory(shaders/pbr_direct_lit_normal_map)
+add_subdirectory(shaders/pbr_ibl_normal_map)
 # Plan 0024 Milestone 4 (ADR-0068 D-6/D-10): the two output-transform
 # shader pairs -- unconditional here, matching every other production
 # shader pair's own identical placement/reasoning; declared immediately

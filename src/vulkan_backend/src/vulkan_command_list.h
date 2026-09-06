@@ -173,8 +173,10 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   // Plan 0027 Milestone 6 (ADR-0072 D-7): widened from 4 to 5 --
   // pbr_ibl's own new shadow-map slot is binding 4, which fails
   // ATLANTIS_CHECK(binding < textureDescriptorMemos_.size()) in
-  // bindTexture() at the old size.
-  std::array<TextureDescriptorMemo, 5> textureDescriptorMemos_{};
+  // bindTexture() at the old size. ADR-0072 D-7's own Accepted
+  // Amendment, 2026-09-06 (Plan 0029 Section P10): widened again to
+  // 6 -- pbr_ibl_normal_map's own new normal-map slot is binding 5.
+  std::array<TextureDescriptorMemo, 6> textureDescriptorMemos_{};
 };
 
 }  // namespace atlantis::vulkan_backend::detail
