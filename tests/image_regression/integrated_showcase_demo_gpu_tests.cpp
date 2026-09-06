@@ -1,4 +1,5 @@
 #include "fixture/integrated_showcase_demo_fixture.h"
+#include "support/golden_validity.h"
 
 #include <atlantis/runtime/bootstrap_config.h>
 
@@ -7,20 +8,24 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 
-// Plan 0028 Milestone 4 (Spec 0028 FR3/FR4/FR6): the integrated showcase
-// demo fixture's own GPU-required coverage, landed WITHOUT a golden yet,
-// per ADR-0042's own two-phase capture process (matching every sibling
-// demo's own identical precedent). The golden PNG/sidecar and its own
-// capture-compare TEST_CASE land in Milestone 5's own separate, later
-// commit.
+// Plan 0028 Milestone 4/5 (Spec 0028 FR3/FR4/FR6/FR9): the integrated
+// showcase demo fixture's own GPU-required coverage. The first two
+// TEST_CASEs below landed without a golden (Milestone 4); the final
+// capture-compare TEST_CASE landed together with the golden PNG/sidecar
+// themselves (Milestone 5), per ADR-0042's own two-phase process --
+// mirrors pbr_material_demo_gpu_tests.cpp's own identical structure.
 
+using atlantis::image_regression::compareBuffers;
 using atlantis::image_regression::IntegratedShowcaseDemoFixture;
 using atlantis::image_regression::kIntegratedShowcaseDemoExtentPixels;
+using atlantis::image_regression::loadAndValidateGolden;
 using atlantis::image_regression::PixelBuffer;
 using atlantis::image_regression::renderIntegratedShowcaseDemoFrame;
 using atlantis::image_regression::setUpIntegratedShowcaseDemoFixture;
+using atlantis::image_regression::writeFailureArtifacts;
 using atlantis::runtime::BootstrapConfig;
 
 namespace {
@@ -162,12 +167,65 @@ TEST_CASE("Integrated showcase demo: the ground receives a real shadow (R1 real 
   INFO("R1 (real casters) rgbSum at (" << kShadowPixelX << "," << kShadowPixelY << ") = " << r1RgbSum);
   INFO("R2 (no casters) rgbSum at (" << kShadowPixelX << "," << kShadowPixelY << ") = " << r2RgbSum);
 
-  // Plan 0028's own conservative, not-yet-measured floor (carried over
-  // from shadow_gpu_tests.cpp's own already-validated Group B R2-R1
-  // check) -- if this does not hold on real hardware, stop and request
-  // Human Review per the Plan's own Non-negotiable rule, do not retune
-  // silently.
+  // Plan 0028's own conservative floor (carried over from
+  // shadow_gpu_tests.cpp's own already-validated Group B R2-R1 check) --
+  // confirmed on real hardware at 299 (R1=200, R2=499), comfortably
+  // above it. If a future real GPU capture no longer clears it, stop
+  // and request Human Review per the Plan's own Non-negotiable rule, do
+  // not retune silently.
   CHECK(r2RgbSum - r1RgbSum > 15);
+
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+namespace {
+constexpr const char* kIntegratedShowcaseDemoGoldenName =
+    "integrated_showcase_demo/integrated_showcase_demo_512x512_rgba8unorm";
+constexpr const char* kIntegratedShowcaseDemoGoldenSlug = "integrated_showcase_demo_512x512_rgba8unorm";
+}  // namespace
+
+// Plan 0028 Milestone 5: lands together with the golden PNG/sidecar
+// themselves, in their own separate commit, per ADR-0042's own two-
+// phase capture process -- mirrors pbr_material_demo_gpu_tests.cpp's
+// own identical "Full capture-compare cycle..." TEST_CASE exactly. Uses
+// the fixture's own default (real-caster) render path, matching the
+// golden generator's own path exactly.
+TEST_CASE("Full capture-compare cycle against the committed integrated_showcase_demo golden passes",
+          "[image_regression][gpu][integrated_showcase]") {
+  const std::filesystem::path outputDir = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
+  const std::filesystem::path actualArtifact =
+      outputDir / (std::string(kIntegratedShowcaseDemoGoldenSlug) + "_actual.png");
+  const std::filesystem::path diffArtifact =
+      outputDir / (std::string(kIntegratedShowcaseDemoGoldenSlug) + "_diff.png");
+  std::filesystem::remove(actualArtifact);
+  std::filesystem::remove(diffArtifact);
+
+  auto fixtureResult = setUpIntegratedShowcaseDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  IntegratedShowcaseDemoFixture& fixture = fixtureResult.value();
+
+  auto renderResult = renderIntegratedShowcaseDemoFrame(fixture);
+  REQUIRE(renderResult.isOk());
+  const PixelBuffer& actual = renderResult.value();
+
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult =
+      loadAndValidateGolden(goldensDir / (std::string(kIntegratedShowcaseDemoGoldenName) + ".png"),
+                             goldensDir / (std::string(kIntegratedShowcaseDemoGoldenName) + ".sidecar.txt"));
+  {
+    INFO("INVALID GOLDEN: the committed integrated_showcase_demo golden must load and validate cleanly");
+    REQUIRE(goldenResult.isOk());
+  }
+  const auto& validatedGolden = goldenResult.value();
+
+  REQUIRE(actual.width == validatedGolden.pixels.width);
+  REQUIRE(actual.height == validatedGolden.pixels.height);
+
+  const auto report = compareBuffers(actual, validatedGolden.pixels);
+  if (!report.passed) {
+    (void)writeFailureArtifacts(outputDir, kIntegratedShowcaseDemoGoldenSlug, actual, validatedGolden.pixels);
+  }
+  REQUIRE(report.passed);
 
   REQUIRE(fixture.device->waitIdle().isOk());
 }
