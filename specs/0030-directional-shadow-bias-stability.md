@@ -77,6 +77,21 @@ captures (this pixel sits well away from the terminator), confirming
 the defect is specifically a grazing-angle phenomenon, not a
 uniform-brightness or base-color problem.
 
+**This raw `rgbSum < 100` count is diagnostic evidence only — it is
+not, and cannot be, this Spec's own acceptance metric.** C (no shadow
+casters at all) and D (no shadow casters, control material) still show
+**112** and **729** pixels respectively below that same threshold —
+ordinary, expected unlit-hemisphere shading has nothing to do with
+self-shadow acne, but a raw count does not distinguish the two. A
+requirement to drive the *raw* count to "single digits or zero" is
+therefore incoherent — it could never be satisfied even by a perfect
+fix, since D's own 729 baseline-shading pixels alone exceed it with no
+acne present at all. Testing & Verification Plan below replaces this
+raw count with a paired shadow-on/shadow-off differential, computed
+only over pixels confirmed to belong to the sphere's own surface (see
+Sphere Coverage Mask below), which isolates the *acne itself* from
+ordinary shading.
+
 ## Goals
 
 - Eliminate visible self-shadow acne on a smooth, curved receiver at
@@ -357,28 +372,70 @@ for Plan 0030 to carry out** — none may be silently narrowed,
 skipped, or replaced with "tune until it looks good" at Implementation
 time.
 
-- **A real-GPU curved-receiver acne discriminator**, run against the
-  existing `pbr_normal_map_demo` fixture/scene (no new scene, no camera/
-  light change): captures the sphere region (`x∈[205,305], y∈[195,295]`,
-  the same bounding box Evidence above used) with real shadow casters
-  enabled, counts pixels below a fixed `rgbSum` threshold within that
-  region, and asserts the count drops from the diagnosed baseline
-  (**1018** for the normal-mapped material, **1176** for the control
-  material, both at threshold `rgbSum < 100`) to a Plan-fixed, much
-  lower ceiling. This is a **quantitative pixel-count assertion**, not
-  a visual/manual check — Plan 0030 fixes the exact ceiling value
-  (derived from a real post-fix capture, following the measurement
-  method below), never "looks better."
-- **Shadow-on/shadow-off differential**, reusing the exact same
-  `includeShadowCasters` toggle the `pbr_normal_map_demo` fixture
-  already exposes — the acne discriminator above must be run both ways
-  and show the sphere-region dark-pixel count collapse to the same
-  low ceiling in the shadow-off capture as the shadow-on capture (today
-  it does not need to, since shadow-off already has no acne by
-  construction) *and* the shadow-on capture must independently show a
-  genuinely occluded ground pixel darker than its own shadow-off
-  counterpart (see next item) — proving the fix suppresses acne without
-  silently disabling real shadowing.
+- **A real-GPU curved-receiver acne discriminator, computed as a paired
+  shadow-on/shadow-off differential over a sphere-only pixel mask** —
+  see Sphere Coverage Mask and Paired Acne Metric below for the full,
+  non-circular definition. This is a **quantitative, per-pixel
+  differential assertion**, not a visual/manual check and not a raw
+  dark-pixel count (Motivation's own caveat above) — Plan 0030 fixes
+  the exact acne ceiling, noise threshold, and baseline **before**
+  sweeping any bias parameter (see Numeric-Value Measurement Method
+  below), never "looks better," and never a ceiling read back off
+  whichever capture happens to be chosen last.
+
+#### Sphere Coverage Mask
+
+To isolate "pixels that are part of the sphere's own surface" from
+ground and background pixels (neither of which this Spec's own acne
+metric may ever count), Plan 0030 adds one **test-only** capture mode,
+never a product API, scene asset, or committed image:
+
+- The exact same `pbr_normal_map_demo` fixture, camera, projection, and
+  the sphere's own real `DrawItem` (identical `Mesh`/objectToWorld to
+  every other capture in this Spec) are reused unchanged.
+- A separate render draws **only** the sphere `DrawItem`, using this
+  fixture's own already-existing `unlitTexturedVertexInputLayout`/
+  solid-white-material path (the same kind of trivial, already-proven
+  unlit draw every other fixture in this codebase already uses for a
+  reference/control render — no new shader, no new Pipeline shape) —
+  against a **black clear color**, with no sky Pipeline bound and no
+  ground-plane `DrawItem` in the list.
+- Every pixel in the resulting capture that is non-black (any channel
+  `>0`) is, by construction, a sphere-covered pixel; every pixel that
+  is exactly black is not. This mask is computed **once** per fixture
+  configuration and reused for every paired capture below — it does
+  not itself depend on the shadow-bias fix, since it never binds the
+  shadow map or samples `computeShadowFactor()` at all.
+- The mask capture exists solely to drive this test's own pixel
+  selection; it is never encoded to a file, never compared against a
+  golden, and never reused outside this one Spec's own verification
+  scope.
+
+#### Paired Acne Metric
+
+For a given shader path and a given bias configuration (pre-fix or a
+specific post-fix parameter candidate):
+
+1. Capture **shadow-on** (`includeShadowCasters = true`) and
+   **shadow-off** (`includeShadowCasters = false`) renders of the exact
+   same scene/camera/light/material — the fixture's own existing
+   `includeShadowCasters` toggle, no new parameter.
+2. For every pixel the Sphere Coverage Mask marks as sphere-covered
+   (ground and background pixels are never included):
+   `shadowDarkening = rgbSum(shadowOff) - rgbSum(shadowOn)`.
+3. A pixel counts as a **suspected self-shadow-acne pixel** only when
+   `shadowDarkening` exceeds a fixed, Plan-determined noise threshold —
+   ordinary shading is identical between the two captures except where
+   the shadow term itself fires, so a genuinely shadow-driven pixel
+   shows a real, large `shadowDarkening`; acne shows the same signature
+   at scattered, isolated points across the terminator; residual
+   sub-threshold `shadowDarkening` (rounding, texture-filtering noise)
+   is excluded by the noise threshold, never counted.
+4. **Acne pixel count** for that (shader, configuration) pair is the
+   number of suspected self-shadow-acne pixels from step 3. This is the
+   single, non-circular quantity every ceiling/threshold below refers
+   to — never the raw `rgbSum < 100` count from Motivation's own
+   diagnostic table.
 - **Independent ground cast-shadow positive discriminator** — reuses
   Spec 0029's own existing `(198,273)` shadow pixel and `>15` `rgbSum`
   delta threshold (`pbr_normal_map_demo_gpu_tests.cpp`'s own existing
@@ -395,24 +452,46 @@ time.
   IBL/ambient contribution untouched — the multiply-only-the-
   directional-term contract (ADR-0072 D-5) is unchanged by this Spec,
   and this test proves it stays that way after the fix.
-- **All four shader-path coverage** — the acne discriminator and the
-  ground cast-shadow discriminator both run against `pbr_direct_lit`
-  (no environment) and `pbr_ibl`/`pbr_direct_lit_normal_map`/
-  `pbr_ibl_normal_map` (IBL-enabled paths, `pbr_normal_map_demo`'s own
-  scene already exercises the two normal-map variants) — Plan 0030
-  must show the identical formula/constants produce comparable acne
-  suppression on all four, not only the two the current candidate
-  scene happens to exercise. Where an existing fixture/scene does not
-  already exercise a given variant under a grazing-angle receiver
-  (e.g., `pbr_direct_lit` with no environment), Plan 0030 identifies
-  the existing scene/fixture that does (real code, not a new one) or
-  states plainly that no existing curved/grazing-angle receiver
-  exercises that specific variant and confirms via direct code
-  inspection that the shared formula is textually identical across all
-  four shaders instead.
+- **All four shader-path coverage — real GPU execution required, no
+  exemption.** The paired acne metric (above) and the ground
+  cast-shadow discriminator are both actually **run on real GPU
+  hardware** against all four PBR shader variants —
+  `pbr_direct_lit`, `pbr_ibl`, `pbr_direct_lit_normal_map`, and
+  `pbr_ibl_normal_map` — each using the same curved receiver
+  (`pbr_sphere`), the same camera, the same directional light, the same
+  shadow-on/shadow-off paired capture, and the same Sphere Coverage
+  Mask methodology. Plan 0030 reports a pre-fix and a post-fix acne
+  pixel count for **every one of the four**, not only the two
+  `pbr_normal_map_demo` already exercises. Plan 0030 may reuse or
+  parameterize the existing `pbr_normal_map_demo`/`pbr_material_demo`/
+  `ibl_material_demo` fixtures to reach `pbr_direct_lit` (no
+  environment) and `pbr_ibl` (environment, no normal map) under a
+  curved receiver — no new scene asset is required — but the coverage
+  itself is **behavioral, not textual**: source-level identity of the
+  four shaders' own bias formula/constants (see below) is a
+  **supplementary** check only, and never substitutes for actually
+  executing all four paths on real hardware and observing their own
+  real acne pixel counts.
+- **Four-shader formula/constants text-identity check** — in addition
+  to (never instead of) the real-GPU coverage above, Plan 0030 confirms
+  by direct source comparison that all four shaders declare the
+  identical `kShadowBiasMin`/`kShadowBiasSlopeScale`/`kShadowBiasMax`
+  constants and the identical bias-computation expression — the same
+  "exact twin" textual-identity discipline ADR-0074 already established
+  for Spec 0029's own shader pairs.
+- **GPU-independent bias-formula finiteness test** — see Risks & Open
+  Questions item 1 for the full rationale: a plain-C++ mirror of the
+  `slope`/`bias` expression, evaluated across the full approved
+  `NdotLGeo` range and every candidate constant, asserting every result
+  is finite and within `[kShadowBiasMin, kShadowBiasMax]`. This is the
+  test responsible for numeric finiteness — Vulkan Validation Layers
+  (next bullet) are not relied on for it.
 - **Vulkan Validation Layers clean** — zero `VUID`/Validation
   Error/Warning across the full verbose real-GPU test output, Debug and
-  Release, matching every prior Spec's own gate.
+  Release, matching every prior Spec's own gate. This is an API-
+  correctness gate (invalid handles, descriptor mismatches,
+  synchronization errors) — it is not, and is not claimed to be, a
+  shader floating-point finiteness verifier.
 - **Compare-first against every existing golden** — Plan 0030 runs the
   full, unmodified capture-compare suite (all 9 goldens currently
   committed to `main`, plus `world_scene_loaded`/`sky_background`
@@ -439,42 +518,86 @@ time.
 
 ### Numeric-value measurement method (Plan-stage; fixed procedure now, not the numbers themselves)
 
-`kShadowBiasMin`, `kShadowBiasSlopeScale`, `kShadowBiasMax`, and the
-acne discriminator's own dark-pixel-count ceiling are **not** fixed by
-this Spec — but the method to fix them is, so Plan 0030 cannot devolve
-into "tune until it looks good":
+`kShadowBiasMin`, `kShadowBiasSlopeScale`, and `kShadowBiasMax` are
+**not** fixed by this Spec — but every value the acceptance rule
+depends on (the noise threshold, the pre-fix baseline, the acne
+ceiling, and the parameter search itself) must be **fixed in Plan 0030
+before that Plan's own Human Review**, in the order below, so no value
+is ever defined in terms of whichever capture Implementation happens to
+land on. Plan 0030 may use a temporary, uncommitted real-GPU probe
+(mirroring this codebase's own established "temporary, uncommitted
+tool" precedent, e.g. Spec 0029's own `stb_image_write` helper) to
+derive these values — the probe itself is never committed; the values
+it produces are written into Plan 0030's own document.
 
-1. Start from the existing `kShadowBias = 0.0015`'s own derivation
-   (Plan 0027 P4: ~4.5cm world-space slack over the fixed orthographic
-   volume's `29.9`-unit near-far range) as `kShadowBiasMin`'s own
-   starting point — the flat bias already proven adequate at
-   near-perpendicular incidence (Evidence above: `(256,256)`,
-   `dot(N,L)>0.6`, shows no acne in any of the four captures) should
-   not regress there.
-2. Using the real `pbr_normal_map_demo` fixture (already committed on
-   the Spec 0029 feature branch; no new scene), sweep
-   `kShadowBiasSlopeScale` and `kShadowBiasMax` against real captures,
-   re-running the acne discriminator (sphere-region dark-pixel count)
-   after each real GPU render — never a predicted/simulated value.
-3. **Stop condition (both must hold simultaneously on the same real
-   capture, not two separate runs):** the acne discriminator's
-   sphere-region dark-pixel count falls to single digits or zero
-   *and* the ground cast-shadow discriminator's own `(198,273)` delta
-   stays `>15` (its own already-approved Spec 0029 threshold,
-   unmodified). The first parameter combination satisfying both,
-   found by real measurement, is what Plan 0030 fixes as the final
-   value — not the first one that merely suppresses the acne, and not
-   a value chosen before both are actually checked together.
-4. If no `(kShadowBiasSlopeScale, kShadowBiasMax)` pair satisfies both
-   conditions simultaneously, Plan 0030 stops and reports this
-   directly — it does not silently loosen the acne ceiling, weaken the
-   `>15` shadow threshold, or fall back to Alternative 3/4 above
-   without first returning to Human Review with the real, measured
-   evidence for why the recommended option was insufficient.
-5. The acne discriminator's own dark-pixel-count ceiling (the ~1018/
-   ~1176-to-"single digits" target above) is fixed as the exact integer
-   observed in the real capture that satisfies step 3, not a
-   round number chosen in advance.
+**Step 1 — fix the measurement apparatus (before touching any bias
+value):**
+
+1. The Sphere Coverage Mask's own exact construction (fixture/material/
+   clear-color/DrawItem list, as specified above) is implemented and
+   its own output visually confirmed to match the sphere's own real
+   on-screen silhouette, for each of the four shader-path scenes Plan
+   0030 uses.
+2. The `shadowDarkening` noise threshold is fixed from a real,
+   pre-fix capture: measure `shadowDarkening` across every sphere-
+   masked pixel in the existing (unfixed) `pbr_normal_map_demo`
+   fixture, identify the value that separates the terminator's own
+   acne cluster from ordinary sub-threshold shading noise elsewhere on
+   the lit hemisphere, and fix that value as the noise threshold —
+   a real measurement, not an assumed round number.
+
+**Step 2 — fix the pre-fix baseline and the acne ceiling (before
+sweeping any bias parameter):**
+
+3. Using the noise threshold from Step 1 and the current, unfixed
+   shaders (`kShadowBias = 0.0015`), measure the **pre-fix acne pixel
+   count** (Paired Acne Metric above) for each of the four shader
+   paths, on real GPU hardware. These four integers are the fixed
+   **baseline** — recorded in Plan 0030 verbatim, never re-measured
+   or replaced once a bias fix exists.
+4. Fix the **acne ceiling** as a rule computed from that baseline, not
+   as a number read off any post-fix capture:
+   `ceiling = min(10, floor(baseline * 0.01))` per shader path — i.e.,
+   **at least a 99% reduction from that path's own pre-fix baseline,
+   and never more than 10 pixels in absolute terms.** This ceiling is
+   fixed in Plan 0030's own document *before* Step 3's own parameter
+   sweep begins — it does not change based on which parameter
+   candidate is later found to satisfy it.
+5. Fix the ground cast-shadow preservation threshold as Spec 0029's own
+   existing, already-approved `(198,273)`/`>15` `rgbSum` delta,
+   unmodified — not re-derived.
+
+**Step 3 — deterministic parameter sweep:**
+
+6. Fix a finite, ordered candidate set for `(kShadowBiasSlopeScale,
+   kShadowBiasMax)` and a fixed `kShadowBiasMin` starting point (from
+   the existing `kShadowBias = 0.0015`'s own Plan 0027 P4 derivation,
+   ~4.5cm world-space slack — the flat bias already proven adequate at
+   near-perpendicular incidence, Evidence above, should not regress
+   there) — the candidate values, the step size, and the deterministic
+   scan order (e.g., ascending `kShadowBiasSlopeScale` at each fixed
+   `kShadowBiasMax`) are all written into Plan 0030 **before** any
+   candidate is captured, not chosen ad hoc during the sweep.
+7. For each candidate, in the fixed scan order, run the Paired Acne
+   Metric and the ground cast-shadow discriminator, both against real
+   GPU captures, for all four shader paths.
+8. **Acceptance rule (all three conditions, on the same real capture,
+   for every one of the four shader paths):**
+   - post-fix acne pixel count is at least a 99% reduction from that
+     path's own Step 3 baseline, **and**
+   - post-fix acne pixel count does not exceed 10, **and**
+   - the `(198,273)` ground-shadow `rgbSum` delta stays `> 15`.
+
+   The first candidate in the fixed scan order satisfying all three,
+   for all four shader paths, is what Plan 0030 fixes as the final
+   `kShadowBiasSlopeScale`/`kShadowBiasMax` value.
+9. **If no candidate in the fixed set satisfies all three conditions
+   for all four shader paths, Plan 0030 stops and reports this
+   directly with the real, measured evidence** — it does not loosen the
+   acne ceiling, the noise threshold, or the `>15` ground-shadow
+   threshold after the fact, does not silently narrow the candidate
+   set to find a passing value, and does not fall back to Alternative
+   3/4 without first returning to Human Review.
 
 ## Risks & Open Questions
 
@@ -483,11 +606,24 @@ into "tune until it looks good":
    terminator). `kMinDot` (already used elsewhere in all four shaders)
    floors `NdotLGeo` away from exactly zero before the division;
    combined with the outer `clamp(..., kShadowBiasMax)`, the bias stays
-   finite and bounded even at the theoretical limit. Plan 0030 confirms
-   this numerically (no `NaN`/`Inf` in a real capture) as part of its
-   own Validation Layers/correctness pass — a shader producing `NaN`
-   would itself likely surface as a Validation Layers or visibly broken
-   pixel, not a silent pass.
+   finite and bounded even at the theoretical limit. **Vulkan
+   Validation Layers do not reliably detect ordinary shader
+   floating-point `NaN`/`Inf`** — they are an API-correctness gate
+   (invalid handles, descriptor mismatches, synchronization errors),
+   not a shader-arithmetic verifier, and this Spec does not claim
+   otherwise. Instead, Plan 0030 adds a **GPU-independent numeric
+   test** that evaluates the exact `slope`/`bias` expression above in
+   plain C++ (mirroring this codebase's own existing GPU-independent
+   coverage for other closed-form shader-mirrored formulas) across the
+   full approved `NdotLGeo` input range (down to `kMinDot`) and every
+   candidate constant from the Numeric-Value Measurement Method's own
+   fixed sweep, and asserts every result is finite and lies within
+   `[kShadowBiasMin, kShadowBiasMax]`. Real-GPU captures (the Paired
+   Acne Metric and ground cast-shadow discriminator above) separately
+   verify the *rendered, observable behavior* this formula produces;
+   Validation Layers continue to gate real Vulkan API correctness on
+   every real-GPU test, as they already do for every other Spec in this
+   sequence, but are not relied on for numeric finiteness.
 2. **Whether the recommended option alone is sufficient is not
    guaranteed until Plan-stage real measurement** — this Spec's own
    Evidence and code-level analysis support it strongly (the mechanism

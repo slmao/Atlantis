@@ -732,11 +732,20 @@ site:
 The exact numeric values of `kShadowBiasMin`/`kShadowBiasSlopeScale`/
 `kShadowBiasMax` remain Plan-stage values (mirroring the original
 `kShadowBias`'s own precedent, D-5) — measured against the real
-`pbr_normal_map_demo` fixture, under the fixed stop condition Spec
-0030's own Testing & Verification Plan states (acne suppressed to a
-real-measured ceiling *and* the existing `(198,273)`/`>15` ground-
-shadow discriminator stays clear, on the same real capture), never
-"tune until it looks good."
+`pbr_normal_map_demo` fixture, using a paired shadow-on/shadow-off
+differential over a sphere-only pixel mask (never a raw dark-pixel
+count — Spec 0029's own diagnostic `112`/`729`-pixel no-shadow
+baselines prove a raw count cannot serve as an acceptance metric).
+Spec 0030's own Testing & Verification Plan fixes the mask
+construction, the differential noise threshold, the pre-fix baseline,
+and the acne ceiling (`≥99%` reduction from that baseline, capped at
+`10` pixels) **before** any bias parameter is swept — the ceiling is a
+rule applied to a pre-measured baseline, never a number read back off
+whichever post-fix capture is later chosen. The accepted parameter
+value is the first one, in a pre-fixed deterministic candidate order,
+under which the acne ceiling holds *and* the existing `(198,273)`/`>15`
+ground-shadow discriminator stays clear, for all four shader variants,
+on the same real captures — never "tune until it looks good."
 
 ### Impact on RHI, Renderer, RenderGraph, descriptors, uniforms
 
@@ -755,12 +764,14 @@ geometric-normal) rather than a mechanism change.
 `pbr_direct_lit.slang` and `pbr_ibl.slang` (both `main`-resident,
 unrelated to Spec 0029) and `pbr_direct_lit_normal_map.slang`/
 `pbr_ibl_normal_map.slang` (both currently on the unmerged Spec 0029
-feature branch) must all carry the identical replacement — Plan 0030
-is responsible for applying it to all four in one pass, and for
-verifying textual identity of the bias computation across all four
-(mirroring ADR-0074's own "exact twin of its sibling" verification
-discipline), not merely applying it to whichever shader a given test
-happens to exercise.
+feature branch) must all carry the identical replacement. Plan 0030 is
+responsible for **actually executing the real-GPU acne/ground-shadow
+measurement (Spec 0030's own Testing & Verification Plan) against all
+four**, with no exemption for a variant an existing fixture does not
+already exercise under a curved receiver — textual identity of the
+bias computation across all four (mirroring ADR-0074's own "exact twin
+of its sibling" discipline) is a required, supplementary check, never
+a substitute for real-GPU behavioral coverage on any of the four.
 
 ### Golden impact and Human Review gate
 
