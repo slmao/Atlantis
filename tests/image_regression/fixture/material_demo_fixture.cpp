@@ -73,12 +73,14 @@ struct Vertex {
   float color[3];
   float uv[2];
   float normal[3];
+  float tangent[4];
 };
 static_assert(std::is_standard_layout_v<Vertex>);
 static_assert(offsetof(Vertex, position) == atlantis::asset_system::kMeshArtifactPositionOffsetBytes);
 static_assert(offsetof(Vertex, color) == atlantis::asset_system::kMeshArtifactColorOffsetBytes);
 static_assert(offsetof(Vertex, uv) == atlantis::asset_system::kMeshArtifactUv0OffsetBytes);
 static_assert(offsetof(Vertex, normal) == atlantis::asset_system::kMeshArtifactNormalOffsetBytes);
+static_assert(offsetof(Vertex, tangent) == atlantis::asset_system::kMeshArtifactTangentOffsetBytes);
 static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrideBytes);
 
 [[nodiscard]] std::optional<VertexInputLayout> unlitTexturedVertexLayout(const ReflectionMetadata& vertexMetadata) {

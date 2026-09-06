@@ -111,12 +111,13 @@ void collectVaryingLeaves(const JsonValue& node, const std::string& bindingKind,
   if (readStringField(*typeNode, "kind") != "vector") return std::nullopt;
   const auto elementCount = readUint32Field(*typeNode, "elementCount");
   const JsonValue* elementType = typeNode->find("elementType");
-  if (!elementCount.has_value() || (*elementCount != 3 && *elementCount != 2) || elementType == nullptr ||
-      !elementType->isObject()) {
+  if (!elementCount.has_value() || (*elementCount != 4 && *elementCount != 3 && *elementCount != 2) ||
+      elementType == nullptr || !elementType->isObject()) {
     return std::nullopt;
   }
   if (readStringField(*elementType, "kind") != "scalar") return std::nullopt;
   if (readStringField(*elementType, "scalarType") != "float32") return std::nullopt;
+  if (*elementCount == 4) return VertexAttributeType::Float4;
   return *elementCount == 3 ? VertexAttributeType::Float3 : VertexAttributeType::Float2;
 }
 

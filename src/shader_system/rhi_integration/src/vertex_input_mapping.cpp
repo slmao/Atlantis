@@ -13,6 +13,8 @@ namespace {
       return atlantis::rhi::VertexAttributeFormat::Float3;
     case VertexAttributeType::Float2:
       return atlantis::rhi::VertexAttributeFormat::Float2;
+    case VertexAttributeType::Float4:
+      return atlantis::rhi::VertexAttributeFormat::Float4;
   }
   return std::nullopt;
 }

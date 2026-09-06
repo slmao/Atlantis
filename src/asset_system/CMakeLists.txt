@@ -10,6 +10,7 @@ add_library(atlantis_asset_system STATIC
   src/mesh_source.cpp
   src/asset_metadata.cpp
   src/mesh_artifact.cpp
+  src/mesh_tangent_generation.cpp
   src/cook.cpp
   src/load.cpp
   src/scene_source.cpp

@@ -16,6 +16,7 @@ namespace atlantis::shader_system {
 enum class VertexAttributeType {
   Float3,
   Float2,  // new (Spec 0016/D6) -- the interleaved Vertex layout's UV attribute
+  Float4,  // new (Spec 0029/ADR-0073) -- the tangent attribute (xyz + handedness w)
 };
 
 enum class ShaderStage {

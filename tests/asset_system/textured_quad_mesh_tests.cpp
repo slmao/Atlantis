@@ -25,7 +25,10 @@
 // it instead asserts hardcoded expected values against the real,
 // already-cooked artifact). Position/UV assertions below are unaffected
 // -- both remain at their own existing float indices (0-2, 6-7), since
-// normal is appended after UV0, not inserted before it.
+// normal is appended after UV0, not inserted before it. Plan 0029:
+// widened again from 44 to 60 (the new position+color+UV0+normal+
+// tangent layout) -- the identical, same-kind mechanical fix, found
+// the same way.
 
 using namespace atlantis::asset_system;
 
@@ -44,7 +47,7 @@ TEST_CASE("The textured_quad_left mesh asset cooks and loads with its own expect
   REQUIRE(result.isOk());
   const StaticMeshAssetData& data = result.value();
 
-  REQUIRE(data.vertexStrideBytes() == 44);
+  REQUIRE(data.vertexStrideBytes() == 60);
   REQUIRE(data.vertexCount() == 4);
   REQUIRE(data.indexCount() == 6);
 
@@ -78,7 +81,7 @@ TEST_CASE("The textured_quad_right mesh asset cooks and loads with its own expec
   REQUIRE(result.isOk());
   const StaticMeshAssetData& data = result.value();
 
-  REQUIRE(data.vertexStrideBytes() == 44);
+  REQUIRE(data.vertexStrideBytes() == 60);
   REQUIRE(data.vertexCount() == 4);
   REQUIRE(data.indexCount() == 6);
 

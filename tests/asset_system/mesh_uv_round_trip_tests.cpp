@@ -80,10 +80,10 @@ TEST_CASE("A UV value written in a real authoring source reaches loadStaticMeshA
   REQUIRE(loadResult.isOk());
   const StaticMeshAssetData& data = loadResult.value();
 
-  REQUIRE(data.vertexStrideBytes() == 44);
+  REQUIRE(data.vertexStrideBytes() == 60);
   REQUIRE(data.vertexCount() == 3);
 
-  // UV0 occupies float index 6/7 of each 44-byte vertex's own 11 floats
+  // UV0 occupies float index 6/7 of each 60-byte vertex's own 15 floats
   // (offset 24) -- unaffected by Plan 0020's own normal field, which is
   // appended after UV0 (float index 8/9/10, offset 32), not inserted
   // before it.

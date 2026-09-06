@@ -97,6 +97,10 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
       return "artifact write failed";
     case CookError::MetadataWriteFailed:
       return "metadata write failed";
+    case CookError::DegenerateTangentBasis:
+      return "degenerate tangent basis";
+    case CookError::TangentHandednessConflict:
+      return "tangent handedness conflict";
   }
   return "unknown cook error";
 }

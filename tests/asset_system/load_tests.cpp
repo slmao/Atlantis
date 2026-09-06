@@ -73,7 +73,7 @@ TEST_CASE("loadStaticMeshAsset loads a well-formed artifact/metadata pair", "[as
   REQUIRE(result.isOk());
   CHECK(result.value().vertexCount() == 3);
   CHECK(result.value().indexCount() == 3);
-  CHECK(result.value().vertexStrideBytes() == 44);
+  CHECK(result.value().vertexStrideBytes() == 60);
 }
 
 TEST_CASE("loadStaticMeshAsset fails when the artifact file does not exist", "[asset_system]") {
