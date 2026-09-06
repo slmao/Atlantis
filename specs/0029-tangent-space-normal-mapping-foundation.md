@@ -555,6 +555,34 @@ already governing the base-color texture, extended with zero new
 machinery. This was an earlier draft's own Open Question; it is not
 one any longer.
 
+## Proposed Correction — 2026-09-06 (`pbr_sphere` handedness-conflict count)
+
+**Status:** Proposed. Pending Human Review. Does not rewrite this
+Spec's own Goals, Requirements, or Decisions above; supersedes only
+the `96/425 (22.6%)`, "pole rings" (plural) figures in the
+Existing-mesh tangent-generatability audit table and its own
+surrounding prose.
+
+A temporary, uncommitted re-audit, run strictly to ADR-0073's own
+already-Accepted handedness formula, found the real figure is **48 of
+425 vertices (11.3%)**, located precisely at the north-pole ring
+(24/25 vertices) and the one ring immediately adjacent to it (24/25
+vertices) — **not** "pole rings" generally, and **not** the south
+pole, which has zero conflicts under this mesh's own real
+triangulation. See
+[ADR-0073's own Proposed Correction — 2026-09-06](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#proposed-correction--2026-09-06-pbr_sphere-handedness-conflict-count-and-location)
+for the full derivation and the simulated, re-verified migration
+result (425→473 vertices, 768 triangles/2304 indices unchanged, 0
+remaining conflicts) — restated here only to the depth this Spec's own
+role (what/scope) requires, not duplicated in full.
+
+This changes no Goal, Requirement, or Decision — `pbr_sphere` remains
+the one mesh needing real migration, `minimal_cube` remains fully
+resolved by the cook-time fallback with zero source change, and every
+existing golden's own byte-identity requirement is unaffected.
+[Plan 0029](../plans/0029-tangent-space-normal-mapping-foundation.md)
+depends on this correction and uses its corrected figures throughout.
+
 ## Out of Scope / Future Work
 
 - A full MikkTSpace-equivalent tangent-generation algorithm.

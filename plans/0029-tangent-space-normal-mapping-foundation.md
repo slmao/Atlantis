@@ -8,24 +8,51 @@
 
 Implement Spec 0029 in full: a cooker-generated mesh tangent attribute
 (schema 3→4, 44→60 bytes, ADR-0073), a cook-time fallback tangent for
-`minimal_cube` (zero source change) and a real pole-split migration for
-`pbr_sphere` (the only mesh needing one), a per-material optional
-normal-map texture on both the direct-lit and IBL `PbrDirectLit` paths
-(material schema 2→3, ADR-0074), a single-pointer `Material` API
-extension with two mechanically-checked preconditions, three widened
-Vulkan-Backend capacity limits (ADR-0072's own Accepted Amendment), two
-new shaders, and one new, independent, combined normal-map+IBL+sky+
-shadow demo with a fixed, computed discriminative pixel/threshold.
-Every no-normal-map material's runtime behavior, shader selection, and
-descriptor-binding results stay unchanged; all 9 existing goldens stay
-byte-identical.
+`minimal_cube` (zero source change) and a real, sign-grouped split
+migration for `pbr_sphere` (the only mesh needing one — corrected
+count and location below, pending Human Review), a per-material
+optional normal-map texture on both the direct-lit and IBL
+`PbrDirectLit` paths (material schema 2→3, ADR-0074), a single-pointer
+`Material` API extension with two mechanically-checked preconditions,
+three widened Vulkan-Backend capacity limits (ADR-0072's own Accepted
+Amendment), two new shaders, and one new, independent, combined
+normal-map+IBL+sky+shadow demo with fixed, computed discriminative
+pixels/thresholds for both the normal-map effect and the shadow
+effect. Every no-normal-map material's runtime behavior, shader
+selection, and descriptor-binding results stay unchanged; all 9
+existing goldens stay byte-identical.
+
+**This Plan depends on two Proposed Corrections, filed alongside it,
+still pending Human Review** — see "Dependency on pending corrections"
+below.
+
+## Dependency on pending corrections (Plan Review finding, this round)
+
+A temporary, uncommitted re-audit of `pbr_sphere.mesh.txt`, run
+strictly to ADR-0073's own already-Accepted handedness formula
+(`h_face = sign(dot(cross(vertexNormal, T_face), B_face))`, raw
+`T_face`/`B_face`, no orthogonalization before the sign check), found
+the real conflict count is **48 of 425 vertices (11.3%)**, not
+`96/425 (22.6%)` as ADR-0073/Spec 0029 currently state, and the real
+location is the north-pole ring plus its one immediately-adjacent
+ring — not "pole rings" (plural) and not the south pole, which has
+zero conflicts. This Plan does not silently use the corrected figures
+without disclosure: a concise
+[`Proposed Correction — 2026-09-06`](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#proposed-correction--2026-09-06-pbr_sphere-handedness-conflict-count-and-location)
+has been appended to ADR-0073, and a matching one to
+[Spec 0029](../specs/0029-tangent-space-normal-mapping-foundation.md#proposed-correction--2026-09-06-pbr_sphere-handedness-conflict-count),
+both marked `Proposed`, pending Human Review, neither rewriting any
+existing Decision/Requirement. **This Plan uses the corrected figures
+(48/425, the exact ring locations, the simpler 2-way sign-split
+method) throughout — P4 below is built on the correction, not on the
+original `96/425` estimate.** Approving this Plan implies approving
+those two corrections; they are not a separate, later gate.
 
 ## Pre-draft verification against real, current source
 
-Re-confirmed directly against `main` at Plan-drafting time (2026-09-06,
-immediately following Spec 0029's own Human Review Approval and PR
-#129's merge) via `rg` across the whole repository — not reused from
-the Spec/ADRs' own citations without independently re-checking.
+Re-confirmed directly against `main` at Plan-drafting time (2026-09-06)
+via `rg` across the whole repository — not reused from the Spec/ADRs'
+own citations without independently re-checking.
 
 - `mesh_source.h`/`.cpp`: `MeshSourceVertex` is 11 fields (position/
   color/uv/normal); `kVersionLine = "atlantis_static_mesh_source_version: 3"`;
@@ -39,14 +66,12 @@ the Spec/ADRs' own citations without independently re-checking.
   `encodeMeshArtifact(AssetId, const ParsedMeshSource&)` — no tangent
   parameter today. `decodeMeshArtifact()` re-validates finiteness then
   `NonUnitNormal` per vertex.
-- `errors.h`: `CookError` has exactly 5 enumerators
-  (`SourceFileUnreadable, SourceParseFailed, LogicalPathInvalid,
-  ArtifactWriteFailed, MetadataWriteFailed`); `ArtifactDecodeError` has
-  11 (ending `NonFiniteFloat, NonUnitNormal`); `MaterialSourceParseError`
-  (`material_source.h`, not `errors.h`) has 8; `MaterialCookError` has
-  6; `MaterialArtifactDecodeError` has 9; `RuntimeInitError`
+- `errors.h`: `CookError` has exactly 5 enumerators; `ArtifactDecodeError`
+  has 11; `MaterialSourceParseError` (`material_source.h`, not
+  `errors.h`) has 8; `MaterialCookError` has 6;
+  `MaterialArtifactDecodeError` has 9; `RuntimeInitError`
   (`runtime/init_error.h`) ends at `ShadowLightSpaceBufferCreateFailed`,
-  27 enumerators, `PbrBaseColorTextureNotSrgb` at position 15.
+  27 enumerators.
 - `atlantis::rhi::VertexAttributeFormat` (`rhi/types.h:95-98`) and
   `atlantis::shader_system::VertexAttributeType`
   (`reflection_metadata.h:16-19`) each declare only `Float3, Float2`.
@@ -63,142 +88,78 @@ the Spec/ADRs' own citations without independently re-checking.
   `toRhiFormat()` switches on the same two values. All four need a
   `Float4`/`"float4"`/`elementCount==4` case — five files total, not
   the two the ADR names by type alone.
-- **Material side**, all read in full: `material_types.h`
-  (`MaterialKind{UnlitTextured, LitTextured, PbrDirectLit}`,
-  `MaterialAssetData` with `textureAsset` only), `material_source.h`
-  (`ParsedMaterialSource`, `MaterialSourceParseError`),
-  `material_source.cpp` (`kMinLineCount=5`/`kMaxLineCount=8`, both
-  confirmed real today via `unlit_textured_quad.material.txt`/
-  `lit_textured_quad.material.txt` at 5 lines and every `pbr_*` at 8),
-  `material_artifact.h`/`.cpp` (`kMaterialArtifactSchemaVersion = 2`,
-  56-byte fixed record, `encodeMaterialArtifact()` takes each field as
-  a separate parameter, not a struct), `material_metadata.h`/`.cpp`
-  (`kExpectedLineCount = 8`, unconditional — "no optional field
-  concept" for this machine-generated sidecar), `cook_material.cpp`
-  (the real 4-step `cookMaterial()` body), `load_material.cpp` (the
-  real `loadMaterialAsset()` cross-validation body).
+- **Material side**, all read in full: `material_types.h`,
+  `material_source.h`/`.cpp` (`kMinLineCount=5`/`kMaxLineCount=8`, both
+  confirmed real today), `material_artifact.h`/`.cpp`
+  (`kMaterialArtifactSchemaVersion = 2`, 56-byte fixed record),
+  `material_metadata.h`/`.cpp` (`kExpectedLineCount = 8`,
+  unconditional), `cook_material.cpp`, `load_material.cpp` (all real
+  bodies read in full).
 - `scene_load.cpp:130-175` (`loadAndInstantiateScene()`'s own Phase 2
-  material/texture loop) is the exact, real, already-confirmed
-  insertion point for the new Unorm cross-validation (mirrors
-  `PbrBaseColorTextureNotSrgb`'s own existing `if (kind ==
-  PbrDirectLit) { ... }` block, lines 156-172, verbatim in shape).
-- `material.h`/`material.cpp` (full files read): `Material`'s
-  constructor takes `sampledTexture`/`sampler` (both-or-neither,
-  `ATLANTIS_CHECK((sampledTexture_ == nullptr) == (sampler_ ==
-  nullptr))`), `pushConstantLayout`, `baseColorFactor`,
-  `metallicFactor`, `roughnessFactor`, `environmentBinding`, in that
-  order; `createMaterial()` mirrors it as a free function.
-- `renderer.cpp:92-131` (`Renderer::drawFrame()`'s own draw loop): base
-  color bound at 1 iff `sampledTexture() != nullptr`; IBL bound at 2/3
-  iff `environmentBinding() == Ibl`; shadow bound at
-  `environmentBinding() == Ibl ? 4U : 2U` — the exact, already-real
-  conditional-index precedent this Plan's own normal-map binding
-  mirrors.
-- `material_realization.h/.cpp` (full files read): `RealizedMaterialCandidate`
-  has exactly `materialAssetId, textureAssetId, newSampledTexture,
-  stagingBuffer (std::optional<std::unique_ptr<Buffer>>), sampler,
-  material`; `realizeOneMaterialCandidate()` builds this in one local
-  variable, returning `Err` immediately on any failure — real,
-  confirmed RAII rollback, `material_realization.cpp:165-255`.
-  `selectShaderPair()` (lines 101-128) and `pushConstantLayoutFor()`
-  (137-148) both switch on `MaterialKind` alone, no per-material
-  normal-map awareness today. `sampledTextureBindingCountFor()`
-  (371-380) returns `1` (`UnlitTextured`/`LitTextured`) or `2`/`4`
-  (`PbrDirectLit`, no/with environment).
-- `descriptor_contract.cpp:45-63`: `pbrDirectLitExpectedDescriptorContract()`
-  = 4 entries, `pbrIblExpectedDescriptorContract()` = 6 — confirmed by
-  direct count, matching ADR-0074.
-- `vulkan_device.cpp:437-438` (`poolSizes[1].descriptorCount = 4U *
-  maxSets`), `vulkan_device.cpp:1000-1002` (`ATLANTIS_CHECK(...
-  sampledTextureBindingCount == 0 || ... == 4)`).
-- `vulkan_command_list.h:177`: `textureDescriptorMemos_` is
-  `std::array<TextureDescriptorMemo, 5>`; `bindTexture()`
-  (`vulkan_command_list.cpp:432,529`) asserts `binding <
-  textureDescriptorMemos_.size()` before every use.
-- `compile_and_validate.cpp:136-213,366-374` (full relevant section
-  read): `validateDescriptorContractForStage()` string-dispatches
-  `"pbr-direct-lit"`/`"pbr-ibl"` (among others) to the matching
-  `descriptor_contract.cpp` function; `validatePushConstantsForVertexStage()`'s
-  own `isPbr` flag and the fragment-stage push-constant validation
-  guard (line 372) both key off the identical two string literals. A
-  real, `rg`-found, ADR-uncited touch point: this file must gain two
-  more string branches and widen both boolean checks, or the two new
-  shaders' own build-time contract validation either silently skips
-  (wrong) or falls through to the `else` "unknown contract" failure
-  (build break) the first time either is compiled.
-- `runtime_application.cpp:372-389,1184-1185` (the real `pbrIbl*`
-  loading/threading pattern) and `bootstrap_config.h:54-85` (the real
-  `pbrDirectLitVertexShaderSpirvPath`-shaped field-triple convention)
-  — the exact, real precedent the two new shader pairs' own
-  loading/threading extension mirrors.
-- `shaders/pbr_ibl/CMakeLists.txt` (full file read): one
-  `atlantis_add_slang_shader_pair()` call per shader pair, one
-  `add_subdirectory()` line in the root `CMakeLists.txt`
-  (confirmed at lines 79-135, one call per existing pair).
-- **All real `struct Vertex { ... }` sites in this repository**,
-  enumerated via `rg 'struct Vertex \{'` (25 files; 14 doc/plan/ADR
-  matches excluded) and independently read for their own exact field
-  list — the complete, disjoint partition this Plan's own migration
-  table (below) is built from; see that table for the two categories
-  found (44-byte real-mesh consumers vs. hand-fed, mesh-format-
-  independent geometry).
-- **All real `createMaterial(` call sites**, enumerated via `rg` (14
-  real, non-doc files) — see the call-site table below; exactly one
-  (`material_realization.cpp`) needs a real edit, the other 13 compile
-  and behave unchanged under the new trailing-default parameter.
-- `pbr_render_gpu_tests.cpp:97-134` (full relevant section read): this
-  file constructs real, hand-fed vertex buffers (`kTriangleVertices`,
-  position/uv/normal, no color) and draws them with real
-  `UnlitTextured`/`LitTextured`/`PbrDirectLit` Pipelines directly — the
-  established, real, precedented location this Plan's own new
-  5-sampler/`bindTexture(5, ...)` GPU test extends, mirroring its own
-  existing shape rather than inventing a new file.
-- `assets/materials/*.material.txt` (all 6 read): `lit_textured_quad`,
-  `pbr_dielectric_rough`, `pbr_dielectric_smooth`, `pbr_metallic_rough`,
-  `pbr_metallic_smooth`, `unlit_textured_quad` — the complete,
-  exhaustive version-marker migration list (below).
-- `assets/CMakeLists.txt`'s `atlantis_add_material_asset()`
-  (`src/asset_system/CMakeLists.txt:345-391`, full function read): a
-  single, required `TEXTURE` one-value arg, used only for
-  `add_dependencies()` build-graph ordering — **no manifest role**
-  (a material's own texture reference lives inside its `.material.txt`
-  source, resolved to an `AssetId` entirely inside `cookMaterial()`).
-  Confirmed real, additive change needed: one new, **optional**
-  `NORMAL_MAP` one-value arg, conditionally required-declared and
-  conditionally `add_dependencies()`-linked, mirroring `TEXTURE`'s own
-  shape exactly.
-- `pbr_direct_lit.slang`/`pbr_ibl.slang` (both read in full, prior
-  phase): exact `VertexInput`/`CameraUniform`/`PushConstants`/BRDF
-  bodies this Plan's own two new shaders copy verbatim, adding only the
-  tangent input, the normal-map binding, and the TBN
-  reconstruction/normal substitution in `fragmentMain()`.
-- `output_transform_srgb.slang` (read in full): the exact, real
-  tone-mapping formula this Plan's own discriminative-pixel derivation
-  (below) uses — `tonemapped = max(linear,0) / (1 + max(linear,0))`,
-  `kBaselineExposure = 1.0`, no manual OETF for the `*_Srgb` variant
-  (hardware encodes on store).
-- `pbr_material_demo.scene.txt` (read in full): the real camera-at-
-  `(0,0,8)`/`fov_y=1.0472`/`near=0.1`/`far=100`, `512×512` extent
-  precedent (`pbr_material_demo_fixture.h:134`) this Plan's own new
-  scene reuses verbatim for its own camera.
-- `scene_extraction.cpp:243-293`: `direction = normalize(-column2)`
-  for a directional light — **identical** convention to the camera's
-  own `-column2`-forward extraction — confirmed directly, not assumed,
-  the basis for this Plan's own exact light-direction derivation
-  (below).
-- `renderer_ownership_tests.cpp:49-58` (`ScopedFailureHandler`) and
-  `assert_tests.cpp:31-43` (confirms `ATLANTIS_CHECK` reports through a
-  replaceable handler, never aborts the test process by itself) — the
-  real, established pattern this Plan's own new `Material` constructor
-  guard tests reuse, not a GoogleTest-style death test (this codebase
-  has none).
+  material/texture loop) is the exact, real insertion point for the
+  new Unorm cross-validation, mirroring `PbrBaseColorTextureNotSrgb`'s
+  own existing block verbatim in shape. **Confirmed: Phase 1's own
+  `distinctMaterialIds` collection (`scene_load.cpp:53-69`) walks only
+  `node.renderable->materialAsset` — a material declared in the scene's
+  own manifest but referenced by zero nodes is never looked up here**,
+  the real mechanism P17's own control-material handling below relies
+  on.
+- `material.h`/`material.cpp`, `renderer.cpp:92-131`,
+  `material_realization.h`/`.cpp`, `descriptor_contract.cpp:45-63`,
+  `vulkan_device.cpp:437-438,1000-1002`, `vulkan_command_list.h:177`,
+  `compile_and_validate.cpp:136-213,366-374`,
+  `runtime_application.cpp:372-389,1184-1185`, `bootstrap_config.h:54-85`,
+  `shaders/pbr_ibl/CMakeLists.txt` — all read in full, unchanged from
+  the previous round's own citations (see that round's own findings,
+  restated in P6/P8/P10/P11/P14/P15/P16 below).
+- **All real `struct Vertex { ... }` sites** (`rg 'struct Vertex \{'`,
+  25 files, 14 doc/plan/ADR matches excluded) and **all real
+  `createMaterial(` call sites** (`rg`, 14 real, non-doc files) —
+  unchanged from the previous round, see P12/P13.
+- `pbr_render_gpu_tests.cpp:97-134`, `assets/materials/*.material.txt`
+  (all 6 read), `atlantis_add_material_asset()`
+  (`src/asset_system/CMakeLists.txt:345-391`, full function read) —
+  unchanged from the previous round, see P7/P9/P12/P13/P18.
+- `pbr_direct_lit.slang`/`pbr_ibl.slang`/`output_transform_srgb.slang`
+  (all read in full) — the exact BRDF/tonemap formulas P17's own
+  discriminative-pixel computations below transcribe verbatim.
+- **New this round:** `src/world/src/world.cpp:38-95` (full section
+  read) — `Mat4` is **column-major, index `col*4+row`**
+  (`multiply()`'s own header comment, ADR-0050); `rotationX(theta)`
+  gives column2 `(0, -sin(theta), cos(theta))`; `rotationY(theta)`
+  gives column2 `(sin(theta), 0, cos(theta))`; Euler order is
+  `R = Ry(yaw) * Rx(pitch) * Rz(roll)` (`eulerRotation()`, ADR-0050's
+  own fixed order) — the exact, real basis for every camera/light
+  rotation-to-direction computation in P17 below, not assumed from the
+  `-column2` identity-rotation case alone.
+- `src/renderer/include/atlantis/renderer/draw_item.h:17-21` (full
+  struct read): `DrawItem` is exactly `{const Mesh* mesh, const
+  Material* material, std::array<float,16> objectToWorld}` — plain,
+  borrowed, non-owning pointers, trivially copyable — the exact,
+  confirmed basis for P17's own "copy the DrawItem list, swap one
+  `material` pointer" mechanism (no new type, no new field).
+- `assets/meshes/ground_plane.mesh.txt` (full file read): a `10×10`
+  flat quad at `y=0`, `x,z ∈ [-5,5]`, normal `(0,1,0)` — the real
+  receiver geometry P17's own shadow test places under the sphere.
+- `assets/scenes/integrated_showcase_demo.scene.txt` (full file read):
+  confirms this repository's own real, already-golden-backed
+  convention for combining a ground plane, spheres, a directional
+  light, and an elevated/pitched camera in one scene — consulted for
+  precedent shape, not copied verbatim (its own camera/light numbers
+  are specific to its own five-sphere layout and do not transfer to
+  this Plan's own single-sphere, hand-computed-pixel demo).
+- ADR-0042's own "Initial baseline bootstrap" amendment (read in full,
+  `adr/0042-...md`, item 4): **"the golden PNG and sidecar are added
+  via their own separate, subsequent commit"** — the real, established
+  basis for this Plan's own split between generating an untracked
+  candidate (Milestone 5) and committing the reviewed golden
+  (Milestone 6), not an invented gate.
 
-### Existing mesh sources needing a real audit re-run (ADR-0073 Decision item 9)
+### Existing mesh sources needing a real audit re-run (ADR-0073 Decision item 9, as corrected)
 
 Re-run at Plan-drafting time with the identical algorithm (per-triangle
-UV-Jacobian determinant + per-vertex handedness), against
-`assets/meshes/*.mesh.txt` — same figures the Spec/ADR already cite,
-independently reconfirmed:
+UV-Jacobian determinant + per-vertex handedness, `h_face` on raw
+`T_face`, matching ADR-0073's own Decision text exactly):
 
 | Mesh | Triangles | UV-degenerate | Handedness conflicts | Action |
 |---|---|---|---|---|
@@ -206,36 +167,36 @@ independently reconfirmed:
 | `textured_quad_left.mesh.txt` | 2 | 0/2 | 0/4 | None |
 | `textured_quad_right.mesh.txt` | 2 | 0/2 | 0/4 | None |
 | `minimal_cube.mesh.txt` | 12 | 12/12 | 0/8 | None — cook-time fallback (Milestone 1) |
-| `pbr_sphere.mesh.txt` | 768 | 0/768 | 96/425 | **Pole-split migration required** (Milestone 1) |
+| `pbr_sphere.mesh.txt` | 768 | 0/768 | **48/425** (corrected) | **Sign-split migration required** (Milestone 1) |
+
+**Precise conflict location** (17 latitude rings of 25 vertices each,
+`y` from `-1` to `1`; vertex indices 0-24 are the north-pole ring,
+25-49 the adjacent ring): 24 of 25 vertices conflict at `y=1.0`
+(indices 0-23; index 24, the seam-closure duplicate, does not), and 24
+of 25 at `y=0.980785` (indices 26-49; index 25 does not). **Zero
+conflicts at the south pole (`y=-1.0`) or any other ring** — the two
+poles are not symmetric under this mesh's own real triangulation
+winding. Triangles 0-95 (of 768) touch a conflicting vertex.
 
 **A real, non-pole vertex used for the new demo's discriminative
-sample point (below) was independently identified and computed at
-Plan-drafting time:** vertex index 200 in the current, unmigrated
-`pbr_sphere.mesh.txt` — position `(0, ~0, 1)`, normal `(0, ~0, 1)`, UV
-`(0, 0.5)` — has exactly 3 contributing triangles (`(175,200,201)`,
-`(200,225,226)`, `(200,226,201)`), all agreeing at handedness `-1.0`
-(no conflict — it is not one of the 96 pole vertices). Its own
-accumulated-and-orthogonalized tangent, computed via the exact
-ADR-0073 algorithm: `T = (1, 0, 0)` (to 1e-16), `tw = -1.0`, giving
-`B = cross(N,T) * tw = (0, -1, 0)`. Since this vertex is unaffected by
-the pole-split migration (only pole vertices change), this basis is
-already correct today and stable across Implementation.
+sample point (P17) was independently identified and computed:** vertex
+index 200 — position `(0, ~0, 1)`, normal `(0, ~0, 1)`, UV `(0, 0.5)` —
+has exactly 3 contributing triangles, all agreeing at handedness
+`-1.0` (no conflict — it is at latitude ring 8, `y=0`, nowhere near
+either affected ring). Its own accumulated-and-orthogonalized tangent:
+`T = (1, 0, 0)` (to 1e-16), `tw = -1.0`, `B = cross(N,T) * tw = (0,
+-1, 0)`. Unaffected by the migration (only rings 15/16 change); this
+basis is stable across Implementation.
 
 ## P1. Mesh tangent-generation module — exact shape
 
-New file pair, mirroring `mesh_source.h`/`.cpp` and
-`mesh_artifact.h`/`.cpp`'s own naming convention:
-`src/asset_system/include/atlantis/asset_system/mesh_tangent_generation.h`,
+New file pair: `src/asset_system/include/atlantis/asset_system/mesh_tangent_generation.h`,
 `src/asset_system/src/mesh_tangent_generation.cpp`.
 
 ```cpp
 // mesh_tangent_generation.h
 struct VertexTangent { float x = 0.0f, y = 0.0f, z = 0.0f, w = 1.0f; };
 
-// ADR-0073's own generation algorithm (accumulate, orthogonalize,
-// reject on conflict, fall back on zero contribution). One entry per
-// source.vertices element, same order. Never returns a partial
-// vector on Err.
 [[nodiscard]] atlantis::Result<std::vector<VertexTangent>, CookError> generateTangents(
     const ParsedMeshSource& source);
 ```
@@ -243,9 +204,7 @@ struct VertexTangent { float x = 0.0f, y = 0.0f, z = 0.0f, w = 1.0f; };
 `generateTangents()` returns `CookError` directly (the same enum
 `cookStaticMesh()` already returns) — no wrapper enum, since
 `CookError::DegenerateTangentBasis`/`TangentHandednessConflict` are
-themselves `CookError` values per ADR-0073's own Decision, unlike
-`SourceParseError` (a distinct enum `cookStaticMesh()` maps through
-`CookError::SourceParseFailed`).
+themselves `CookError` values per ADR-0073's own Decision.
 
 `encodeMeshArtifact()`'s signature widens:
 
@@ -255,9 +214,7 @@ themselves `CookError` values per ADR-0073's own Decision, unlike
 ```
 
 with `ATLANTIS_CHECK(tangents.size() == source.vertices.size())` as
-the function's own precondition (a programmer error if violated — the
-one and only caller, `cookStaticMesh()`, always satisfies it by
-construction, per AGENTS.md's error-handling rules).
+the function's own precondition.
 
 `cookStaticMesh()` (`cook.cpp`) gains exactly one new step, between the
 existing `parseMeshSource()` call and `encodeMeshArtifact()`:
@@ -270,9 +227,8 @@ const std::vector<byte> artifactBytes = encodeMeshArtifact(assetId, parsed, tang
 
 **Fallback (item 4a) and handedness-conflict (item 4/5) are both
 implemented inside `generateTangents()` itself**, per ADR-0073's own
-Decision — not split across two functions — since both operate on the
-same per-vertex accumulator state built in one pass over all
-triangles.
+Decision — one pass over all triangles builds the shared per-vertex
+accumulator state both need.
 
 ## P2. `errors.h` — five new enumerators, exact placement
 
@@ -280,106 +236,85 @@ triangles.
 enum class CookError {
   SourceFileUnreadable, SourceParseFailed, LogicalPathInvalid,
   ArtifactWriteFailed, MetadataWriteFailed,
-  DegenerateTangentBasis,       // new
-  TangentHandednessConflict,    // new
+  DegenerateTangentBasis, TangentHandednessConflict,  // new
 };
 
 enum class ArtifactDecodeError {
   TooSmallForHeader, BadMagic, UnknownSchemaVersion, UnsupportedVertexStride,
   InconsistentOffsets, SizeMismatch, VertexCountOutOfRange,
   IndexCountNotMultipleOfThree, IndexOutOfRange, NonFiniteFloat, NonUnitNormal,
-  NonUnitTangent,           // new
-  NonOrthogonalTangent,     // new
-  InvalidTangentHandedness, // new
+  NonUnitTangent, NonOrthogonalTangent, InvalidTangentHandedness,  // new
 };
 ```
 
-`material_source.h`'s own `MaterialSourceParseError` gains one:
-
-```cpp
-enum class MaterialSourceParseError {
-  UnknownSourceVersion, MissingField, FieldOrderMismatch, UnknownKind,
-  UnknownFilter, UnknownAddressMode, TrailingContent, MalformedNumber,
-  NormalMapNotSupportedForKind,  // new
-};
-```
-
-`runtime/init_error.h`'s own `RuntimeInitError` gains one, appended
-after `ShadowLightSpaceBufferCreateFailed` (the current last
-enumerator):
-
-```cpp
-enum class RuntimeInitError {
-  /* ...unchanged... */
-  ShadowLightSpaceBufferCreateFailed,
-  PbrNormalMapTextureNotUnorm,  // new
-};
-```
-
+`material_source.h`'s own `MaterialSourceParseError` gains one
+(`NormalMapNotSupportedForKind`); `runtime/init_error.h`'s own
+`RuntimeInitError` gains one, appended after
+`ShadowLightSpaceBufferCreateFailed` (`PbrNormalMapTextureNotUnorm`);
 `init_error.cpp`'s own `toString()` gains the matching `case`.
 
 ## P3. Fixed epsilons and fallback-axis tie-break (restated from ADR-0073, not re-derived)
 
 - UV-degeneracy: `|det| < 1e-12`.
-- Orthogonalization-degeneracy: `< 1e-6` (`kDegenerateLengthEpsilon`,
-  reused).
+- Orthogonalization-degeneracy: `< 1e-6` (`kDegenerateLengthEpsilon`).
 - Handedness zero-tiebreak: `< 1e-9` → `+1.0`.
-- Fallback axis selection (item 4a): compare `|dot(N,X)|`,
-  `|dot(N,Y)|`, `|dot(N,Z)|`; pick the smallest; tie-break order
-  `X, Y, Z`.
+- Fallback axis selection (item 4a): smallest `|dot(N,axis)|` among
+  `X,Y,Z`; tie-break order `X, Y, Z`.
 - Decode-time orthogonality: `|dot(N,T)| < 1e-3`.
 
-No new epsilon is introduced beyond what ADR-0073 already fixed —
-listed here only so Milestone 1's own implementation has one place to
-read them from without re-opening the ADR.
+## P4. `pbr_sphere.mesh.txt` migration — corrected method, real simulated result, audit command, acceptance gate
 
-## P4. `pbr_sphere.mesh.txt` pole-split migration — deterministic method, audit command, acceptance gate
+**Method, corrected from this Plan's own prior draft (2-way sign
+split, not "one copy per triangle wedge"):** `h_face` is binary
+(`±1`), so each of the 48 real conflicting vertices needs **exactly
+one** additional copy, not one per wedge. For each conflicting vertex:
+group its own contributing triangle corners by their own recorded
+`h_face` sign (exactly two groups, by construction — no vertex has
+more than two distinct sign values, since there are only two possible
+values); keep the original vertex index for one sign's group; append
+one new vertex (position/color/UV/normal copied verbatim from the
+original) and repoint the other sign group's own triangle corners to
+it.
 
-**Method (mechanical, not a judgment call):** for each of the two
-poles (north, `y=+1`; south, `y=-1`), the existing per-longitude-
-segment duplicate vertices (24 copies each, one per longitude column,
-already present — Pre-draft verification's own `head` sample shows
-this) are insufficient because a **triangle wedge**, not a longitude
-column, is the unit that must agree on handedness. The migration
-duplicates each pole vertex **once more, per triangle wedge** rather
-than per longitude column: instead of vertex `i` being shared by the 2
-triangles of longitude segment `i` (a wedge spans from longitude `i`'s
-own column to longitude `i+1`'s own column), each pole gets one
-distinct vertex copy per wedge (24 wedges around the pole → 24 vertex
-copies, one triangle pair each, sharing no vertex index with its own
-neighbor). This is the same "one copy per consumer, no sharing" idea
-this mesh's own pole already applies at the *column* granularity,
-carried one level further to the *wedge* granularity — not a new
-topology concept (ADR-0073's own Decision item 9).
+**Simulated on a temporary, uncommitted in-memory copy of the real,
+current `pbr_sphere.mesh.txt`, using this exact method and re-audited
+with the identical, unmodified algorithm:**
 
-**Concrete script-level procedure** (temporary, uncommitted, run by
-Implementation — not part of the shipped cooker):
+| | Vertices | Triangles | Indices | UV-degenerate | Handedness conflicts |
+|---|---|---|---|---|---|
+| Before | 425 | 768 | 2304 | 0/768 | 48/425 |
+| After | **473** (425 + 48) | 768 (unchanged) | 2304 (unchanged) | 0/768 (unchanged) | **0/473** |
 
-1. Parse `pbr_sphere.mesh.txt`; identify pole vertices (`|y| == 1`,
-   confirmed by the audit's own handedness-conflict output — the same
-   96 indices already found).
-2. For each pole vertex, find its own conflicting triangle set (the
-   audit's own per-face handedness list, already computed above).
-3. Replace the single shared pole-vertex index in each triangle with
-   a **new**, appended vertex — an exact copy of the original pole
-   vertex's own position/color/UV/normal — so no two triangles that
-   previously disagreed in handedness still share an index.
-4. Renumber `vertex_count`/`index_count` in the file header to match.
-5. Re-run the identical audit script (Pre-draft verification's own
-   method) against the candidate file.
+Only the vertex count grows, by exactly 48 — the triangle and index
+counts are completely unaffected (each triangle still names 3
+vertices; only which index it names changes for the 48 repointed
+corners).
+
+**Audit command (temporary, uncommitted, run by Implementation):** the
+identical Python-shaped probe used at Plan-drafting time — parse the
+mesh, compute per-triangle UV-Jacobian determinant and per-triangle-
+per-vertex `h_face = sign(dot(cross(vertexNormal, T_face), B_face)))`
+(raw `T_face`/`B_face`), flag any vertex whose own recorded `h_face`
+values are not all equal. Re-run against the candidate (migrated) file
+after applying the split above.
 
 **Acceptance gate (mechanical, not subjective):** the re-run audit
-must report `0/N` UV-degenerate triangles (unchanged — this mesh was
-already `0/768`) **and** `0/M` handedness conflicts, where `M` is the
-new, larger vertex count. If it does not, Implementation stops and
-requests Human Review (per Spec 0029's own "no per-mesh Pipeline
-split" instruction) rather than inventing a different splitting rule.
+must report `0/768` UV-degenerate triangles (unchanged) **and**
+`0/473` handedness conflicts. If either does not hold, Implementation
+stops and requests Human Review rather than inventing a different
+splitting rule.
 
 **Explicitly unaffected, confirmed by the migration's own scope:**
-every already-non-pole vertex (329 of 425 today) keeps its exact
-position/color/UV/normal values and its exact vertex index — including
-vertex 200, the demo's own discriminative sample point (above), which
-is nowhere near either pole (`y ≈ 0`).
+every one of the 377 already-non-conflicting vertices (425 − 48) keeps
+its exact position/color/UV/normal values and its exact vertex index
+— including vertex 200, the demo's own discriminative sample point,
+which is at latitude ring 8 (`y=0`), nowhere near rings 15/16.
+
+**Dependency:** this method and these figures depend on the two
+pending Proposed Corrections (see "Dependency on pending corrections"
+above) — Implementation of this Milestone must not begin before those
+corrections are accepted by Human Review, since they change what
+"correct" means for this migration's own acceptance gate.
 
 ## P5. Material grammar — exact new parse/serialize shape
 
@@ -408,37 +343,30 @@ else keeps `MissingField` (`< 5`) or `TrailingContent` (`> 9`).
 
 `material_artifact.h`: `kMaterialArtifactSchemaVersion = 3`;
 `kMaterialArtifactHeaderSizeBytes = 64`. `encodeMaterialArtifact()`
-gains a trailing `AssetId normalMapTexture` parameter, appended after
-`roughnessFactor`, serialized via the existing `appendU64LE()` at
-offset 56. `decodeMaterialArtifact()` gains, after the existing
-`roughnessFactor` decode: `decoded.normalMapTexture =
-readU64LE(bytes.data() + 56);` — no range check (an `AssetId` is an
-opaque hash, `0` = none, already the established "unassigned"
-convention). `DecodedMaterialArtifact`/`MaterialAssetData` each gain
-`AssetId normalMapTexture = 0;`.
+gains a trailing `AssetId normalMapTexture` parameter, serialized via
+the existing `appendU64LE()` at offset 56. `decodeMaterialArtifact()`
+gains, after the existing `roughnessFactor` decode:
+`decoded.normalMapTexture = readU64LE(bytes.data() + 56);` — no range
+check (`0` = none, the established convention).
+`DecodedMaterialArtifact`/`MaterialAssetData` each gain `AssetId
+normalMapTexture = 0;`.
 
 `material_metadata.h`: `MaterialMetadata` gains `AssetId
 normalMapTexture = 0;`. `material_metadata.cpp`: `kExpectedLineCount`
 becomes `9`; a new, **unconditional** 9th line,
 `normal_map_texture: <16-hex-digit AssetId>` (matching
-`texture_asset:`'s own hex encoding exactly, `0000000000000000` when
-absent) — unconditional because this sidecar is machine-generated only
-(its own existing comment: "no optional field concept here").
+`texture_asset:`'s own hex encoding, `0000000000000000` when absent).
 
-`cookMaterial()` (`cook_material.cpp`) gains, after the existing
-Step 3 (texture identity): normalize `parsed.normalMapLogicalPath` via
-the identical `normalizeLogicalPath()`/`computeAssetId()` pair (only
-when non-empty; `0` otherwise — no `LogicalPathInvalid` check on an
-empty string, mirroring how an absent optional never reaches
-`normalizeLogicalPath()` elsewhere in this codebase); thread the
-result into both `encodeMaterialArtifact()`'s new parameter and
-`metadata.normalMapTexture`.
+`cookMaterial()` gains, after the existing Step 3 (texture identity):
+normalize `parsed.normalMapLogicalPath` via the identical
+`normalizeLogicalPath()`/`computeAssetId()` pair (only when non-empty;
+`0` otherwise); thread the result into both `encodeMaterialArtifact()`'s
+new parameter and `metadata.normalMapTexture`.
 
 `load_material.cpp`'s `loadMaterialAsset()` gains one more field in
-its existing cross-validation `if`:
-`artifact.normalMapTexture != metadata.normalMapTexture` (added to the
-existing `kind`/`textureAsset` check), and `data.normalMapTexture =
-artifact.normalMapTexture;` in the final `MaterialAssetData` build.
+its existing cross-validation `if`: `artifact.normalMapTexture !=
+metadata.normalMapTexture`, and `data.normalMapTexture =
+artifact.normalMapTexture;` in the final build.
 
 ## P7. Existing `.material.txt` migration — exhaustive, real list
 
@@ -456,15 +384,14 @@ All 6 real, committed material sources need exactly one line changed
 
 Two new material sources are added (Milestone 5): `pbr_normal_mapped.material.txt`
 (9 lines, `kind: pbr_direct_lit`, `normal_map:` present) and
-`pbr_normal_mapped_control.material.txt` (8 lines, identical to the
-first in every other field, no `normal_map:` line) — the discriminative
-test's own A/B twin pair.
+`pbr_normal_mapped_control.material.txt` (8 lines, identical in every
+other field, no `normal_map:` line) — the discriminative test's own
+A/B twin pair (P17).
 
 ## P8. Scene dependency loading — exact `scene_load.cpp` change
 
 Inserted immediately after the existing `PbrBaseColorTextureNotSrgb`
-block (`scene_load.cpp:156-172`), inside the same per-material loop,
-mirroring the base-color texture's own dedup-then-validate shape:
+block (`scene_load.cpp:156-172`), inside the same per-material loop:
 
 ```cpp
 if (materialAssetData.normalMapTexture != 0 && !textureDataMap.contains(materialAssetData.normalMapTexture)) {
@@ -490,17 +417,12 @@ if (materialAssetData.normalMapTexture != 0) {
 ```
 
 Reuses the **same** `textureDataMap` the base-color texture already
-populates (keyed by `AssetId` regardless of which material field
-references it) — no new map, no new cache, matching ADR-0074 item 4's
-own "no new resource-map type" contract exactly.
+populates — no new map, no new cache.
 
 ## P9. `atlantis_add_material_asset()` — exact CMake widening
 
-`src/asset_system/CMakeLists.txt:345-391`:
-
 ```cmake
 function(atlantis_add_material_asset)
-  set(options "")
   set(oneValueArgs NAME SOURCE TEXTURE NORMAL_MAP)  # NORMAL_MAP is new, optional
   ...
   if(ARG_NORMAL_MAP)
@@ -513,14 +435,107 @@ function(atlantis_add_material_asset)
   if(ARG_NORMAL_MAP)
     add_dependencies(${ARG_NAME}_asset ${ATLANTIS_${ARG_NORMAL_MAP}_TARGET})
   endif()
-  ...
 endfunction()
 ```
 
 Every existing call site (6, per P7's own table) omits `NORMAL_MAP` and
 is unaffected.
 
-## P10. `Material`/`createMaterial()` — exact diff
+## P10. Descriptor capacity — exact three-line diff (ADR-0072's own Accepted Amendment)
+
+```cpp
+// vulkan_device.cpp:438
+poolSizes[1].descriptorCount = 5U * maxSets;  // was 4U
+
+// vulkan_device.cpp:1000-1002
+ATLANTIS_CHECK(params.sampledTextureBindingCount == 0 || params.sampledTextureBindingCount == 1 ||
+               params.sampledTextureBindingCount == 2 || params.sampledTextureBindingCount == 3 ||
+               params.sampledTextureBindingCount == 4 || params.sampledTextureBindingCount == 5);  // added == 5
+```
+
+```cpp
+// vulkan_command_list.h:177
+std::array<TextureDescriptorMemo, 6> textureDescriptorMemos_{};  // was 5
+```
+
+## P11. New descriptor contracts and shader-compiler contract wiring — exact diff
+
+`descriptor_contract.h`/`.cpp` gain two functions:
+
+```cpp
+std::vector<DescriptorBinding> pbrDirectLitNormalMapExpectedDescriptorContract() {
+  return {{0,0,UniformBuffer,Vertex}, {0,0,UniformBuffer,Fragment},
+          {0,1,Sampler,Fragment}, {0,2,Sampler,Fragment}, {0,3,Sampler,Fragment}};  // 5 entries
+}
+std::vector<DescriptorBinding> pbrIblNormalMapExpectedDescriptorContract() {
+  return {{0,0,UniformBuffer,Vertex}, {0,0,UniformBuffer,Fragment},
+          {0,1,Sampler,Fragment}, {0,2,Sampler,Fragment}, {0,3,Sampler,Fragment},
+          {0,4,Sampler,Fragment}, {0,5,Sampler,Fragment}};  // 7 entries
+}
+```
+
+`compile_and_validate.cpp` (the real, `rg`-found touch point, not named
+by either ADR): `validateDescriptorContractForStage()` gains two more
+`else if` branches (`"pbr-direct-lit-normal-map"`,
+`"pbr-ibl-normal-map"`); `validatePushConstantsForVertexStage()`'s own
+`isPbr` widens to include both new strings; the fragment-stage
+push-constant validation guard (line 372) widens identically.
+
+## P12. Two new shader files — exact structure
+
+`shaders/pbr_direct_lit_normal_map/pbr_direct_lit_normal_map.slang` and
+`shaders/pbr_ibl_normal_map/pbr_ibl_normal_map.slang`, each with its
+own `CMakeLists.txt` (mirroring `pbr_ibl/CMakeLists.txt` verbatim,
+`EXPECTED_CONTRACT pbr-direct-lit-normal-map`/`pbr-ibl-normal-map`),
+and one new `add_subdirectory()` line each in the root `CMakeLists.txt`.
+
+Content (per ADR-0074 Section 5, exact diff from each shader's own
+real, existing twin):
+
+- `VertexInput` gains `[[vk::location(3)]] float4 tangent;`.
+- A `normalMapSampler` `Sampler2D` binding, `[[vk::binding(3,0)]]`
+  (direct) / `[[vk::binding(5,0)]]` (IBL).
+- `vertexMain()` gains `output.worldTangent = mul((float3x3)pushConstants.objectToWorld,
+  input.tangent.xyz); output.tangentHandedness = input.tangent.w;`,
+  using the same submatrix/gate the existing `worldNormal` line uses.
+- `fragmentMain()` gains, before the existing BRDF loops: `float3 N_geo
+  = normalize(input.worldNormal); float3 T = normalize(input.worldTangent -
+  N_geo * dot(N_geo, input.worldTangent)); float3 B = cross(N_geo, T) *
+  input.tangentHandedness; float3 texelN = normalMapSampler.Sample(input.uv).rgb *
+  2.0 - 1.0; float3 N = normalize(texelN.x * T + texelN.y * B + texelN.z *
+  N_geo);` — `N` (not `N_geo`) is then used everywhere `N` already
+  appears in the existing BRDF/IBL body, unchanged otherwise.
+- No push-constant, uniform-buffer, or existing-binding change.
+
+This Milestone's own new GPU test (P18) exercises these two shaders'
+own widened capacity **directly**, via hand-fed vertex buffers
+(`pbr_render_gpu_tests.cpp`'s own established pattern) — it does
+**not** depend on `Material`/`RealizedMaterialCandidate`'s own API
+extension (P14/P15, a later Milestone), since that file already
+bypasses `Renderer::drawFrame()`'s own automatic binding logic and
+calls `cmd.bindTexture()` directly.
+
+## P13. New 5-sampler/`bindTexture(5, ...)` GPU test — exact location and shape
+
+Extends `tests/runtime/pbr_render_gpu_tests.cpp`: after this file's own
+existing `litOrPbrLayout()`, a new `pbrIblNormalMapLayout()` (location
+0/1/2/3 = position/uv/normal/tangent, appended to this file's own
+`Vertex` struct as `float tangent[4]`) and a new `TEST_CASE` that:
+creates a Pipeline with `sampledTextureBindingCount == 5` and
+`EXPECTED_CONTRACT "pbr-ibl-normal-map"` (via the existing
+`createMaterial()` call, base-color texture/sampler only — no normal
+map argument exists yet at this Milestone, and none is needed, since
+this test binds texture 5 directly with `cmd.bindTexture()`, not
+through `Material`'s own field); allocates a real descriptor set;
+calls `cmd.bindUniformBuffer(...)`, `cmd.bindTexture(1, ...)`,
+`cmd.bindTexture(2, ...)`, `cmd.bindTexture(3, ...)`,
+`cmd.bindTexture(4, ...)`, and **`cmd.bindTexture(5, ...)`** (the one
+call that exercises `textureDescriptorMemos_`'s own widened size);
+submits a real draw of `kTriangleVertices` (widened with a fixed
+`tangent` value, `(1,0,0,1)`); confirms success and zero Vulkan
+Validation Layers hits.
+
+## P14. `Material`/`createMaterial()` — exact diff
 
 `material.h`:
 
@@ -551,11 +566,9 @@ ATLANTIS_CHECK(normalMapTexture_ == nullptr || sampledTexture_ != nullptr);
 ATLANTIS_CHECK(normalMapTexture_ == nullptr || pushConstantLayout_ == MaterialPushConstantLayout::PbrDirectLit);
 ```
 
-`createMaterial()` gains the identical trailing parameter, forwarded
-into `Material`'s constructor unchanged.
-
-`renderer.cpp`'s draw loop gains, immediately after the existing shadow
-binding block:
+`createMaterial()` gains the identical trailing parameter.
+`renderer.cpp`'s draw loop gains, after the existing shadow binding
+block:
 
 ```cpp
 if (item.material->normalMapTexture() != nullptr) {
@@ -564,7 +577,7 @@ if (item.material->normalMapTexture() != nullptr) {
 }
 ```
 
-## P11. `RealizedMaterialCandidate`/`realizeOneMaterialCandidate()` — exact diff
+## P15. `RealizedMaterialCandidate`/`realizeOneMaterialCandidate()`/runtime plumbing — exact diff
 
 `material_realization.h`:
 
@@ -585,55 +598,50 @@ struct RealizedMaterialCandidate {
 `realizeOneMaterialCandidate()` gains, immediately after the existing
 base-color texture/staging block and before `device.createSampler(...)`:
 the identical dedup-then-create sequence, keyed by
-`materialData.normalMapTexture` (skipped entirely, leaving
-`newNormalMapTexture` null, when that value is `0`). The call to
-`createMaterial()` gains the new trailing `normalMapTexturePtr`
-argument (the just-created or dedup-reused pointer, or `nullptr`).
+`materialData.normalMapTexture` (skipped, leaving `newNormalMapTexture`
+null, when that value is `0`). The `createMaterial()` call gains the
+new trailing `normalMapTexturePtr` argument.
 `realizePendingMaterials()` publishes `newNormalMapTexture` into the
 **same** `sampledTextureResourceMap_` the base-color texture already
-uses (keyed by `normalMapTextureAssetId`) — after the same
-`submit()`/`waitIdle()` gate, no new map.
+uses — no new map.
 
 `selectShaderPair()`/`realizeOneMaterialCandidate()`/`realizePendingMaterials()`
 each gain two more shader-pair trios as trailing parameters
-(`pbrDirectLitNormalMap*`, `pbrIblNormalMap*` — vertex layout, vertex
-SPIR-V, fragment SPIR-V each), inserted immediately after the existing
-`pbrIbl*` trio, mirroring its own insertion point exactly (Plan 0025's
-own precedent for adding the `pbrIbl*` trio itself).
-`selectShaderPair()`'s own `PbrDirectLit` case becomes:
+(`pbrDirectLitNormalMap*`, `pbrIblNormalMap*`), inserted immediately
+after the existing `pbrIbl*` trio. `selectShaderPair()`'s own
+`PbrDirectLit` case becomes:
 
 ```cpp
 case MaterialKind::PbrDirectLit:
-  if (hasNormalMap) {
-    return environmentEnabled ? pbrIblNormalMapTriple : pbrDirectLitNormalMapTriple;
-  }
+  if (hasNormalMap) return environmentEnabled ? pbrIblNormalMapTriple : pbrDirectLitNormalMapTriple;
   return environmentEnabled ? pbrIblTriple : pbrDirectLitTriple;
 ```
 
-where `hasNormalMap` is a new `bool` parameter, threaded from
-`materialData.normalMapTexture != 0` at the one real call site
-(`realizeOneMaterialCandidate()`). `UnlitTextured`/`LitTextured`'s own
-branches never read `hasNormalMap` — per P5's own grammar restriction,
-it is always `false` for those kinds.
-
+`hasNormalMap` is a new `bool` parameter, threaded from
+`materialData.normalMapTexture != 0` at the one real call site.
 `sampledTextureBindingCountFor()` gains a `bool hasNormalMap`
 parameter: `PbrDirectLit` returns `environmentEnabled ? (hasNormalMap
-? 5U : 4U) : (hasNormalMap ? 3U : 2U)`; the other two kinds ignore it
-(always `1U`).
+? 5U : 4U) : (hasNormalMap ? 3U : 2U)`.
 
-## P12. `createMaterial()` call-site migration — exhaustive, all 14 real sites
+`BootstrapConfig` gains 6 new `std::string` fields (3 per new shader
+pair, mirroring `pbrIblVertexShaderSpirvPath`'s own shape).
+`runtime_application.cpp` gains the matching load/store block (mirrors
+lines 372-389) and threads both new trios into its own
+`realizePendingMaterials()` call.
+
+## P16. `createMaterial()` call-site migration — exhaustive, all 14 real sites
 
 Every site compiles and behaves **unchanged** except the one marked
 "Edited" — the new parameter defaults to `nullptr`.
 
 | File | Change |
 |---|---|
-| `src/runtime/src/material_realization.cpp` | **Edited** — threads the new normal-map pointer (P11) |
-| `src/runtime/src/runtime_application.cpp` | None (calls `realizePendingMaterials()`, not `createMaterial()` directly; gains the two new shader-trio parameters, P11) |
+| `src/runtime/src/material_realization.cpp` | **Edited** — threads the new normal-map pointer (P15) |
+| `src/runtime/src/runtime_application.cpp` | None directly (calls `realizePendingMaterials()`; gains the two new shader-trio parameters, P15) |
 | `tests/vulkan_backend/minimal_renderer_gpu_tests.cpp` | None |
 | `tests/vulkan_backend/descriptor_pool_growth_gpu_tests.cpp` | None |
 | `tests/vulkan_backend/headless_rendering_gpu_tests.cpp` | None |
-| `tests/runtime/pbr_render_gpu_tests.cpp` | None for existing calls; **new** calls added for the new 5-sampler test (Milestone 4) |
+| `tests/runtime/pbr_render_gpu_tests.cpp` | None for existing calls; new calls added for P13's own test (Milestone 3) |
 | `tests/image_regression/shadow_gpu_tests.cpp` | None |
 | `tests/image_regression/sky_background_gpu_tests.cpp` | None |
 | `tests/image_regression/fixture/world_scene_loaded_fixture.cpp` | None |
@@ -646,10 +654,11 @@ Every site compiles and behaves **unchanged** except the one marked
 New fixture `pbr_normal_map_demo_fixture.cpp` (Milestone 5) is a
 **new** call site, not a migration.
 
-## P13. Vertex-layout/stride migration — exhaustive, all real `struct Vertex` sites
+## P17. Vertex-layout/stride migration — exhaustive, all real `struct Vertex` sites
 
 **Category A — real 44-byte mesh-consuming `Vertex` structs, widen to
-60 bytes (append `float tangent[4];`) plus a 6th `static_assert`:**
+60 bytes (append `float tangent[4];`) plus a 6th `static_assert`,
+Milestone 1:**
 
 | File | Line |
 |---|---|
@@ -666,26 +675,21 @@ New fixture `pbr_normal_map_demo_fixture.cpp` (Milestone 5) is a
 
 Each gains, after the existing five `static_assert`s:
 `static_assert(offsetof(Vertex, tangent) ==
-atlantis::asset_system::kMeshArtifactTangentOffsetBytes);` and the
-existing `sizeof(Vertex) == kMeshArtifactVertexStrideBytes` assertion
-now checks against the new `60`.
+atlantis::asset_system::kMeshArtifactTangentOffsetBytes);`, and the
+existing `sizeof(Vertex)` assertion now checks against `60`.
 
-**Category B — no `static_assert`s today (own comment: "never actually
-uploads real vertex data" / "tests Material/Pipeline construction, not
-drawing"), widened only where a normal-map vertex layout needs a real
-offset to name — no correctness requirement, matching the identical
-precedent Plan 0020 already established for `normal`:**
+**Category B — no `static_assert`s today (own comment discloses these
+files never upload real vertex data), widened only where a normal-map
+vertex layout needs a real offset to name:**
 
-| File | Line | Change |
-|---|---|---|
-| `tests/runtime/material_realization_gpu_tests.cpp` | 82 | append `float tangent[4];`, add a new `pbrDirectLitNormalMapVertexLayout()`-style helper |
-| `tests/runtime/pbr_render_gpu_tests.cpp` | 106 | append `float tangent[4];` (its own comment already discloses "position/uv/normal only, no color" — this file's own minimal, sufficient sub-schema convention continues; tangent is appended for the new binding-5 test, Milestone 4) |
+| File | Line | Change | Milestone |
+|---|---|---|---|
+| `tests/runtime/pbr_render_gpu_tests.cpp` | 106 | append `float tangent[4];`, new `pbrIblNormalMapLayout()` (P13) | 3 |
+| `tests/runtime/material_realization_gpu_tests.cpp` | 82 | append `float tangent[4];`, new `pbrDirectLitNormalMapVertexLayout()`-style helper | 4 |
 
 **Category C — hand-fed, position(+color)-only geometry, never tied to
-`mesh_artifact`'s schema, confirmed by direct reading NOT to draw
-through any mesh-loading path — genuinely unaffected, matching Plan
-0020's own identical "not a required touch point" finding for this
-exact file set:**
+`mesh_artifact`'s schema, confirmed NOT to draw through any
+mesh-loading path — genuinely unaffected:**
 
 `examples/minimal_renderer_demo/main.cpp`,
 `examples/headless_rendering_demo/main.cpp`,
@@ -696,308 +700,331 @@ exact file set:**
 `tests/vulkan_backend/shadow_map_render_gpu_tests.cpp`,
 `tests/image_regression/sky_background_gpu_tests.cpp`.
 
-New file: `tests/image_regression/fixture/pbr_normal_map_demo_fixture.cpp`
-(Milestone 5) starts directly at the 60-byte, tangent-including shape
-— not a migration.
+New file `tests/image_regression/fixture/pbr_normal_map_demo_fixture.cpp`
+(Milestone 5) starts directly at the 60-byte shape — not a migration.
 
-## P14. Descriptor capacity — exact three-line diff (ADR-0072's own Accepted Amendment)
-
-```cpp
-// vulkan_device.cpp:438
-poolSizes[1].descriptorCount = 5U * maxSets;  // was 4U
-
-// vulkan_device.cpp:1000-1002
-ATLANTIS_CHECK(params.sampledTextureBindingCount == 0 || params.sampledTextureBindingCount == 1 ||
-               params.sampledTextureBindingCount == 2 || params.sampledTextureBindingCount == 3 ||
-               params.sampledTextureBindingCount == 4 || params.sampledTextureBindingCount == 5);  // added == 5
-```
-
-```cpp
-// vulkan_command_list.h:177
-std::array<TextureDescriptorMemo, 6> textureDescriptorMemos_{};  // was 5
-```
-
-## P15. New descriptor contracts and shader-compiler contract wiring — exact diff
-
-`descriptor_contract.h`/`.cpp` gain two functions:
-
-```cpp
-std::vector<DescriptorBinding> pbrDirectLitNormalMapExpectedDescriptorContract() {
-  return {{0,0,UniformBuffer,Vertex}, {0,0,UniformBuffer,Fragment},
-          {0,1,Sampler,Fragment}, {0,2,Sampler,Fragment}, {0,3,Sampler,Fragment}};  // 5 entries
-}
-std::vector<DescriptorBinding> pbrIblNormalMapExpectedDescriptorContract() {
-  return {{0,0,UniformBuffer,Vertex}, {0,0,UniformBuffer,Fragment},
-          {0,1,Sampler,Fragment}, {0,2,Sampler,Fragment}, {0,3,Sampler,Fragment},
-          {0,4,Sampler,Fragment}, {0,5,Sampler,Fragment}};  // 7 entries
-}
-```
-
-`compile_and_validate.cpp` (the real, `rg`-found touch point, not named
-by either ADR): `validateDescriptorContractForStage()` gains two more
-`else if` branches (`"pbr-direct-lit-normal-map"`,
-`"pbr-ibl-normal-map"`); `validatePushConstantsForVertexStage()`'s own
-`isPbr` becomes `expectedContract == "pbr-direct-lit" ||
-expectedContract == "pbr-ibl" || expectedContract ==
-"pbr-direct-lit-normal-map" || expectedContract ==
-"pbr-ibl-normal-map"`; the fragment-stage push-constant validation
-guard (line 372) widens identically.
-
-## P16. Two new shader files — exact structure
-
-`shaders/pbr_direct_lit_normal_map/pbr_direct_lit_normal_map.slang` and
-`shaders/pbr_ibl_normal_map/pbr_ibl_normal_map.slang`, each with its
-own `CMakeLists.txt` (`atlantis_add_slang_shader_pair(NAME
-pbr_direct_lit_normal_map ... EXPECTED_CONTRACT
-pbr-direct-lit-normal-map)`, mirroring `pbr_ibl/CMakeLists.txt`
-verbatim), and one new `add_subdirectory()` line each in the root
-`CMakeLists.txt`, alongside the existing `pbr_direct_lit`/`pbr_ibl`
-lines.
-
-Content (per ADR-0074 Section 5, restated here as the exact diff from
-each shader's own real, existing twin):
-
-- `VertexInput` gains `[[vk::location(3)]] float4 tangent;`.
-- A `normalMapSampler` `Sampler2D` binding, `[[vk::binding(3,0)]]`
-  (direct) / `[[vk::binding(5,0)]]` (IBL).
-- `vertexMain()` gains `output.worldTangent = mul((float3x3)pushConstants.objectToWorld,
-  input.tangent.xyz); output.tangentHandedness = input.tangent.w;`
-  (two new `Varying` fields), using the exact same submatrix/gate the
-  existing `worldNormal` line already uses.
-- `fragmentMain()` gains, before the existing BRDF loops: `float3 N_geo
-  = normalize(input.worldNormal); float3 T = normalize(input.worldTangent -
-  N_geo * dot(N_geo, input.worldTangent)); float3 B = cross(N_geo, T) *
-  input.tangentHandedness; float3 texelN = normalMapSampler.Sample(input.uv).rgb *
-  2.0 - 1.0; float3 N = normalize(texelN.x * T + texelN.y * B + texelN.z *
-  N_geo);` — `N` (not `N_geo`) is then used everywhere `N` already
-  appears in the existing BRDF/IBL body, unchanged otherwise.
-- No push-constant, uniform-buffer, or existing-binding change of any
-  kind.
-
-`BootstrapConfig` gains 6 new `std::string` fields (3 per shader pair,
-mirroring `pbrIblVertexShaderSpirvPath`'s own 3-field shape).
-`runtime_application.cpp` gains the matching load/store block (mirrors
-lines 372-389 exactly) and threads both new trios into its own
-`realizePendingMaterials()` call (line ~1184-1185).
-
-## P17. New demo — fixed scene, camera, light, material, pixel, threshold
-
-**Assets (new):**
-- `assets/textures/normal_map_tilted_source_unorm.png` — a uniform
-  1×1 (or a small, e.g. 4×4, uniform-fill for authoring-tool
-  compatibility if 1×1 is rejected by the PNG encoder used — confirmed
-  at Implementation time) RGB8 image, pixel value `(204, 128, 230)`
-  exactly. Decoded tangent-space normal (before shader normalization):
-  `(0.6, 0.00392, 0.80392)` — a real, fixed, ~37° tilt toward `+T`,
-  chosen (not arbitrary) to maximize the discriminative delta at the
-  sample point below while keeping the source trivially reproducible
-  (one uniform color, no procedural generation needed). Cooked via
-  `atlantis_add_texture_asset(NAME normal_map_tilted COLOR_SPACE Unorm)`.
-- `assets/materials/pbr_normal_mapped.material.txt` — `kind:
-  pbr_direct_lit`, `texture: textures/textured_quad_source_srgb.png`
-  (reused, no new base-color texture), `filter: linear`,
-  `address_mode: repeat`, `base_color_factor: 1.0 1.0 1.0 1.0`,
-  `metallic_factor: 0.0`, `roughness_factor: 0.5`, `normal_map:
-  textures/normal_map_tilted_source_unorm.png` (9 lines).
-- `assets/materials/pbr_normal_mapped_control.material.txt` —
-  identical, minus the `normal_map:` line (8 lines) — the
-  discriminative test's own "B" twin.
-- `assets/scenes/pbr_normal_map_demo.scene.txt` — reuses `pbr_sphere`
-  (post-migration). One sphere node, `position=0 0 0 rotation=0 0 0
-  scale=1 1 1`, `material=materials/pbr_normal_mapped.material.txt`;
-  one camera node, `position=0 0 8 rotation=0 0 0 fov_y=1.0472
-  near=0.1 far=100.0` (reusing `pbr_material_demo_scene`'s own real
-  camera numbers verbatim); one directional light,
-  `position=0 0 0 rotation=0 0 0 color=1.0 1.0 1.0 intensity=3.0`
-  (identity rotation, deliberate — see derivation below, a real,
-  disclosed departure from other demo scenes' own "never
-  axis-aligned" convention, chosen here specifically so the
-  discriminative pixel is hand-computable, not to re-test direction/
-  axis correctness, which existing goldens already cover).
-- Environment: `ibl_studio` (existing, reused, no new asset) —
-  activates `environmentEnabled = true`, selecting
-  `pbr_ibl_normal_map.slang` for this material.
-- Extent: `512×512` (reusing `pbr_material_demo`'s own precedent).
-
-**Derivation of the light/camera/sample-point geometry (real,
-computed, not assumed):** `scene_extraction.cpp`'s own confirmed
-`direction = normalize(-column2)` convention means identity rotation
-(`0,0,0`) on both the camera and the light gives camera-forward
-`(0,0,-1)` and light-direction `(0,0,-1)` (so `L = -direction =
-(0,0,1)`) — both confirmed against real code, not assumed. Placing the
-sphere at the world origin with identity rotation/scale means vertex
-200's own object-space position `(0, ~0, 1)` is also its world
-position exactly (satisfies `checkConformalTransform()` trivially —
-identity is conformal). With the camera at `(0,0,8)`, `V =
-normalize((0,0,8)-(0,0,1)) = (0,0,1)`. Vertex 200 therefore sits
-exactly on the camera's own optical axis — **its own screen-space
-projection is the exact center pixel, `(256, 256)` for a `512×512`
-target**, with no perspective-matrix derivation needed (unlike Plan
-0028's own off-axis sample point).
-
-**Discriminative pixel test — real, computed BRDF+tonemap+encode
-values (script-computed at Plan-drafting time, Cook-Torrance formula
-transcribed verbatim from `pbr_direct_lit.slang`, Reinhard/exposure
-formula transcribed verbatim from `output_transform_srgb.slang`):**
-with `N = (0,0,1)` (no normal map, the control material), `L = V =
-(0,0,1)`, `baseColorFactor=(1,1,1,1)`, `metallic=0`, `roughness=0.5`,
-`radiance=(3,3,3)`: final 8-bit `rgbSum = 570` (worst case with a pure
-white base-color texel; the real `textured_quad_source_srgb.png`
-texel at this UV is ≤ white, so this is an upper bound on the "no
-normal map" sample). With the perturbed, decoded-and-normalized
-tangent-space normal `(0.598, 0.0039, 0.801)` substituted for `N`
-(everything else identical): `rgbSum = 522`. **Delta = 48** at
-`roughness=0.5`; independently re-verified at `roughness ∈ {0.3, 0.9}`
-and `baseColor ∈ {white, mid-gray, dark}` (a 3×3 sweep), the delta
-never drops below **27** across that whole range. Neither this
-sweep nor the single computed value above accounts for the scene's
-own real IBL ambient term (adds signal in the same direction for a
-diffuse/rough dielectric material, per the environment's own real
-irradiance response to a changed `N` — not modeled exactly here) or
-the real, sub-white base-color texel (reduces the diffuse term
-proportionally, leaving the metallic-independent specular term's own
-delta untouched, since `F0 = 0.04` fixed at `metallic = 0`).
-
-**Threshold, disclosed precisely, mirroring Plan 0028's own exact
-"conservative, not-yet-measured, stop-and-ask-if-wrong" methodology:**
-`rgbSum(pixelAt(controlRender, 256, 256)) - rgbSum(pixelAt(normalMapRender,
-256, 256)) > 20` — comfortably below every value in the 27-48 sweep
-above, leaving real margin for the unmodeled IBL/texture effects noted
-above. **This has not been measured on real GPU hardware for this
-exact scene.** If Implementation's own real capture shows this bound
-does not hold, stop and request Human Review before changing it —
-never retune it silently, per this repository's own established
-non-negotiable rule for exactly this class of Plan-stage estimate.
-
-**Fixture/golden_generator/gpu_tests trio** (new): mirrors
-`integrated_showcase_demo_fixture.cpp`'s own combined PBR+IBL+sky+
-shadow wiring shape exactly (explicit sky Pipeline construction from
-the shared `sky.slang`, no new sky shader) plus
-`pbr_material_demo_fixture.cpp`'s own PBR-realization shape, using the
-new `pbrDirectLitNormalMapVertexLayout()`/`pbrIblNormalMapVertexLayout()`
-functions (location 0/1/2/3 = position/uv/normal/tangent):
-`tests/image_regression/fixture/pbr_normal_map_demo_fixture.h/.cpp`,
-`tests/image_regression/golden_generator/pbr_normal_map_demo_main.cpp`,
-`tests/image_regression/pbr_normal_map_demo_gpu_tests.cpp`. The
-fixture's own render function takes the material logical name
-(`pbr_normal_mapped` vs. `pbr_normal_mapped_control`) as a parameter,
-so the discriminative test can call it twice against the one shared
-scene skeleton — never two separate `.scene.txt` files for the A/B
-comparison (the sphere's own `material=` line is the only difference,
-resolved at the fixture's own call-site by pointing the scene loader
-at whichever of the two cooked material assets the caller names).
-
-**Golden:** exactly one, `pbr_normal_map_demo`, captured against the
-`pbr_normal_mapped` (non-control) material via ADR-0042's existing
-two-phase candidate-generate → human-review process.
-
-## P18. New 5-sampler/`bindTexture(5, ...)` GPU test — exact location and shape
-
-Extends `tests/runtime/pbr_render_gpu_tests.cpp` (P13 Category B):
-after this file's own existing `litOrPbrLayout()`, a new
-`pbrIblNormalMapLayout()` (location 0/1/2/3 = position/uv/normal/
-tangent) and a new `TEST_CASE` that: creates a Pipeline with
-`sampledTextureBindingCount == 5` and `EXPECTED_CONTRACT
-"pbr-ibl-normal-map"`; allocates a real descriptor set; calls
-`cmd.bindUniformBuffer(...)`, `cmd.bindTexture(1, ...)`,
-`cmd.bindTexture(2, ...)`, `cmd.bindTexture(3, ...)`,
-`cmd.bindTexture(4, ...)`, and **`cmd.bindTexture(5, ...)`** (the one
-call that exercises `textureDescriptorMemos_`'s own widened size — a
-Pipeline/descriptor-set creation alone does not); submits a real draw
-of `kTriangleVertices` (widened with a fixed, arbitrary-but-valid
-`tangent` value, e.g. `(1,0,0,1)`); confirms success and zero Vulkan
-Validation Layers hits.
-
-## P19. `Material` constructor guard tests — exact location and shape
+## P18. `Material` constructor guard tests — exact location and shape
 
 New `TEST_CASE`s in `tests/renderer/renderer_ownership_tests.cpp`
-(already owns `ScopedFailureHandler`, P19 reuses it verbatim, no new
-helper):
+(already owns `ScopedFailureHandler`, reused verbatim):
 
 1. `ScopedFailureHandler` installed; construct `Material` with
    `normalMapTexture` non-null, `sampledTexture`/`sampler` both
    `nullptr`; `REQUIRE(failures.size() == 1)`.
 2. `ScopedFailureHandler` installed; construct `Material` with a valid
-   base-color pair, `normalMapTexture` non-null,
-   `pushConstantLayout = ObjectToWorldOnly`;
-   `REQUIRE(failures.size() == 1)`.
+   base-color pair, `normalMapTexture` non-null, `pushConstantLayout =
+   ObjectToWorldOnly`; `REQUIRE(failures.size() == 1)`.
 3. No handler needed; construct `Material` with a valid base-color
    pair, `normalMapTexture` non-null, `pushConstantLayout =
    PbrDirectLit`, once for `MaterialEnvironmentBinding::None` and once
    for `Ibl` — both must construct without any captured failure.
 
+## P19. New demo — fixed scene, camera, light, receiver, materials
+
+**Assets (new), fixed textures:**
+- `assets/textures/normal_map_tilted_source_unorm.png` — a **fixed
+  4×4 RGB8 PNG, all 16 pixels exactly `(204, 128, 230)`** (no
+  implementation-time size choice). Generation method, exact and
+  reproducible: `magick -size 4x4 xc:"rgb(204,128,230)" normal_map_tilted_source_unorm.png`
+  (ImageMagick, or any equivalent tool producing an uncompressed or
+  standard 8-bit RGB PNG with this exact uniform content — the pixel
+  values are the contract, not the tool). Implementation records the
+  resulting file's SHA-256 hash in the Implementation PR description
+  for reviewer verification, matching this repository's own general
+  practice of citing concrete, checkable evidence rather than "should
+  look right." Decoded tangent-space normal (before shader
+  normalization): `(0.6, 0.00392, 0.80392)`. Cooked via
+  `atlantis_add_texture_asset(NAME normal_map_tilted COLOR_SPACE Unorm)`.
+- `assets/materials/pbr_normal_mapped.material.txt` — `kind:
+  pbr_direct_lit`, `texture: textures/textured_quad_source_srgb.png`
+  (reused), `filter: linear`, `address_mode: repeat`,
+  `base_color_factor: 1.0 1.0 1.0 1.0`, `metallic_factor: 0.0`,
+  `roughness_factor: 0.5`, `normal_map:
+  textures/normal_map_tilted_source_unorm.png` (9 lines).
+- `assets/materials/pbr_normal_mapped_control.material.txt` —
+  identical, minus the `normal_map:` line (8 lines) — the
+  discriminative test's own "B" twin, never referenced by any scene
+  node (see the fixture mechanism below).
+
+**Scene geometry (real, computed, disclosed — a real departure from
+this Plan's own prior draft, whose camera/light/pixel/threshold could
+not prove a visible shadow; recomputed in full this round):**
+
+- Sphere: `pbr_sphere` (post-migration), `position=0 0 0 rotation=0 0 0
+  scale=1 1 1`, `material=materials/pbr_normal_mapped.material.txt`.
+  Vertex 200's own world position stays exactly `(0,0,1)` (identity
+  transform).
+- Ground plane (new, the shadow receiver): `ground_plane`,
+  `position=0 -1 0 rotation=0 0 0 scale=1 1 1`,
+  `material=materials/pbr_dielectric_rough.material.txt` (existing,
+  reused, no normal map) — its own `y=0`-local, `10×10` extent
+  (Pre-draft verification) becomes world `y=-1`, tangent to the unit
+  sphere's own bottom without moving the sphere.
+- Camera: `position=0 3 9 rotation=-0.3587707 0 0 fov_y=1.0472
+  near=0.1 far=100.0`. Derivation: `forward = normalize((0,0,1) -
+  (0,3,9)) = (0, -0.3511, -0.9363)`; solving `(0, sin(theta), -cos(theta))
+  = forward` (this Plan's own confirmed `rotationX` column2 formula,
+  Pre-draft verification) gives `theta = atan2(-0.3511, 0.9363) =
+  -0.3587707` rad. Independently re-verified by a full, script-built
+  view/projection (standard symmetric perspective, `fov_y=1.0472`,
+  `512×512`) confirming vertex 200 projects to **exactly pixel
+  `(256, 256)`** — the center-pixel property is preserved under this
+  elevated, pitched camera by construction (the camera's own forward
+  axis passes exactly through the target point; this holds for any
+  camera position/orientation with zero roll, not only the previous
+  drafts' axis-aligned case).
+- Directional light: `position=0 0 0 rotation=-0.6 1.2 0.0
+  color=1.0 1.0 1.0 intensity=3.0`. A real, two-axis (pitch+yaw)
+  rotation, computed via this Plan's own confirmed `R = Ry(yaw) *
+  Rx(pitch) * Rz(roll)` order (Pre-draft verification) to give
+  `direction ≈ (-0.7692, -0.5646, -0.2991)` (`L = -direction ≈
+  (0.7692, 0.5646, 0.2991)`) — chosen (not the identity-rotation light
+  this Plan's own prior draft used) specifically so the sphere's own
+  cast shadow lands beside it on the ground plane, not directly behind
+  it in the same screen column (which the prior, camera-aligned light
+  would have self-occluded).
+- Environment: `ibl_studio` (existing, reused) — activates
+  `environmentEnabled = true`, selecting `pbr_ibl_normal_map.slang`.
+- Extent: `512×512`.
+
+**Shadow-caster proof:** the sphere is the scene's own one real,
+non-degenerate occluder; `shadowCasterDrawItems` is non-empty whenever
+a directional light is configured (the existing, established
+contract) — this demo is the first of this Spec's own scope to combine
+a real shadow-casting occluder with a normal-mapped, IBL-lit material
+in one frame, proving the combined path Spec 0029's own Goals require.
+
+**Discriminative pixel test 1 — normal-map A/B, real computed BRDF
+values at the new camera/light geometry (recomputed this round; the
+sign and magnitude both changed from the prior draft because `L` and
+`V` are no longer both `(0,0,1)`):** with `N = (0,0,1)` (no normal
+map), `V = normalize((0,3,8)) = (0, 0.3511, 0.9363)`, `L ≈ (0.7692,
+0.5646, 0.2991)`, `baseColorFactor=(1,1,1,1)`, `metallic=0`,
+`roughness=0.5`, `radiance=(3,3,3)`: final 8-bit `rgbSum = 384` (`128×3`,
+white base color, upper bound). With the perturbed, decoded-and-
+normalized tangent-space normal `(0.598, 0.0039, 0.801)` substituted
+for `N` (`dot(N',L) ≈ 0.702`, substantially higher than `dot(N,L) ≈
+0.299`, since the perturbation tilts toward `+X` and `L` itself has a
+`+X` component): `rgbSum = 504` (`168×3`). **Delta = +120** (with
+normal map brighter than without, the opposite sign from this Plan's
+own prior draft, because the light/view geometry itself changed) —
+independently re-verified at `roughness ∈ {0.3, 0.9}` and `baseColor ∈
+{white, mid-gray, dark}` (a 3×3 sweep): the delta never drops below
+**+90** across that whole range. Vertex 200 is confirmed unshadowed
+(`dot(N,L) > 0` and `dot(N',L) > 0` — never self-shadowed by a convex
+sphere on its own light-facing side, and no other occluder sits
+between the light and this point). Neither the base computation nor
+the sweep accounts for the scene's own real IBL ambient term or the
+real, sub-white base-color texel — both real, unmodeled, additive
+uncertainty, same disclosure as before.
+
+**Threshold 1:** `rgbSum(pixelAt(withNormalMapRender, 256, 256)) -
+rgbSum(pixelAt(controlRender, 256, 256)) > 50` — comfortably below the
+computed 90-120 range. **Not measured on real GPU hardware for this
+exact scene.** If Implementation's own real capture shows this bound
+does not hold, stop and request Human Review before changing it.
+
+**Discriminative pixel test 2 — shadow on/off, real computed receiver
+pixel, borrowed conservative threshold:** the sphere's own shadow,
+cast along the light direction above onto the `y=-1` ground plane,
+lands (using the sphere's own center as the reference cast point) at
+world `(-0.761, -1, -0.604)`, projecting under the same camera to
+pixel **`(198, 273)`** (script-computed via the identical view/
+projection used for vertex 200 above) — confirmed outside the sphere's
+own on-screen silhouette (`x ∈ [209, 303]` at this camera), so the
+ground, not the sphere, is the visible surface there, and confirmed
+within the ground plane's own `10×10` extent (`x=-0.76, z=-0.60`, well
+inside `[-5,5]`), not at its edge. **R1 (shadowed):** the real,
+production `shadowCasterDrawItems` (the sphere's own `DrawItem`,
+non-empty). **R2 (unshadowed control):** identical scene/camera/light,
+`shadowCasterDrawItems` = an empty span — mirrors Plan 0028's own
+exact same-pixel differential methodology (never a second scene, never
+a light toggled off). **Threshold:** `rgbSum(pixelAt(R2, 198, 273)) -
+rgbSum(pixelAt(R1, 198, 273)) > 15` — this exact number is
+`shadow_gpu_tests.cpp`'s own already-real-GPU-measured floor
+(confirmed precedent, reused verbatim as Plan 0028 itself already
+established the practice of doing), carried over as a conservative
+Plan-stage starting point for this new, different scene/material
+configuration — **not measured for this exact scene.** If
+Implementation's own real capture shows this bound does not hold,
+stop and request Human Review before changing it, never retune it
+silently.
+
+**Fixture A/B mechanism (real, corrected from this Plan's own prior
+draft, which incorrectly described "pointing the scene loader at
+whichever material" — a real scene artifact's own node data is fixed
+at cook time and cannot be rewritten by a loader-side parameter):**
+
+1. `pbr_normal_map_demo_scene`'s own CMake declaration lists **both**
+   `pbr_normal_mapped` and `pbr_normal_mapped_control` under
+   `MATERIAL_DEPENDENCIES` (and both textures under
+   `TEXTURE_DEPENDENCIES`) — the control material is declared,
+   manifested, and cooked, but referenced by **zero** scene nodes,
+   the exact "declared but only transitively used" tolerance this
+   codebase's own `TEXTURE_DEPENDENCIES` mechanism already establishes
+   (Pre-draft verification, `assets/CMakeLists.txt`'s own header
+   comment).
+2. `loadAndInstantiateScene()` runs unmodified: its own Phase 1
+   `distinctMaterialIds` collection walks only
+   `node.renderable->materialAsset` (confirmed, Pre-draft
+   verification) — the control material, referenced by no node, is
+   never resolved or loaded by this call. The scene's own one real
+   sphere `DrawItem` (R1) uses the real, normal-mapped `Material`.
+3. The new fixture's own setup phase, **after** the normal scene-load
+   sequence, independently resolves and realizes the control material:
+   using the `ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH`/
+   `_METADATA_PATH` compile definitions (the exact same mechanism
+   `tests/image_regression/CMakeLists.txt` already uses for every
+   scene's own artifact/metadata path — Pre-draft verification), it
+   calls `loadMaterialAsset()` directly (no manifest lookup needed —
+   the path is already known at compile time, exactly like a scene's
+   own path), then the same `realizeOneMaterialCandidate()`-shaped
+   sequence the scene's own material already went through — reusing
+   the **same**, already-realized base-color texture (both materials
+   reference `textured_quad_srgb`, deduped by `AssetId` through the
+   same `effectiveSampledTextures` map, confirmed by direct reading of
+   `realizeOneMaterialCandidate()`'s own dedup logic) and building its
+   own new `Sampler`/`Material` (a real, second, fixture-owned
+   `Material` object, kept alive alongside the scene's own resources).
+4. **R1 (normal-mapped, the golden's own render):** the scene's real
+   `DrawItem` list, used unmodified.
+5. **R2 (control, discriminative-test-only, never captured as a
+   golden):** a **copy** of the same `DrawItem` vector (`DrawItem` is
+   a plain, trivially-copyable `{const Mesh*, const Material*,
+   std::array<float,16>}`, Pre-draft verification) with the one
+   sphere entry's own `.material` pointer reassigned to `&controlMaterial`
+   — mesh, transform, camera, lighting, environment, and shadow
+   resources are all identical to R1; only this one borrowed pointer
+   differs.
+
+**Golden:** exactly one, `pbr_normal_map_demo`, captured against **R1
+only** (the real, normal-mapped material) via ADR-0042's existing
+two-phase candidate-generate → human-review process. R2 is never
+captured or committed.
+
+**Fixture/golden_generator/gpu_tests trio** (new): mirrors
+`integrated_showcase_demo_fixture.cpp`'s own combined PBR+IBL+sky+
+shadow wiring shape (explicit sky Pipeline construction from the
+shared `sky.slang`, no new sky shader) plus `pbr_material_demo_fixture.cpp`'s
+own PBR-realization shape, using the new
+`pbrDirectLitNormalMapVertexLayout()`/`pbrIblNormalMapVertexLayout()`
+functions (location 0/1/2/3 = position/uv/normal/tangent):
+`tests/image_regression/fixture/pbr_normal_map_demo_fixture.h/.cpp`,
+`tests/image_regression/golden_generator/pbr_normal_map_demo_main.cpp`,
+`tests/image_regression/pbr_normal_map_demo_gpu_tests.cpp`.
+
 ## Milestones / Task Breakdown
 
-Six milestones, strictly ordered — each is atomic internally for the
-identical reason Plan 0020's own Milestone 1 was (a single, global,
-compile-time schema constant; no safe intermediate tree state).
+**Seven milestones, strictly ordered.** Each Implementation milestone
+(1-6) must independently compile and pass its own applicable tests
+before the next begins — no milestone requires a later one to already
+exist in order to build (corrected from this Plan's own prior draft,
+which incorrectly proposed implementing Milestones 3/4 "together in
+source" — a real, disclosed self-contradiction against this same
+document's own "each Milestone is atomic" claim, now removed; no
+placeholder shader-trio argument or "verified as two diffs" framing
+survives this round).
 
-1. **Mesh format extension (atomic).** P1-P4, P13 Category A/B's own
-   mesh-side entries, the RHI/reflection `Float4` five-file diff
-   (Pre-draft verification), `errors.h`'s two new `CookError`/three new
-   `ArtifactDecodeError` values (P2), `pbr_sphere.mesh.txt`'s own real
-   pole-split (P4) verified against its own acceptance gate,
-   `minimal_cube.mesh.txt` left byte-for-byte unchanged, new
-   GPU-independent unit tests (tangent generation against a
-   hand-computable flat-UV triangle; the fallback against a
-   hand-computable zero-contribution vertex; a constructed
-   handedness-conflict case; the narrowed `DegenerateTangentBasis`;
+1. **Mesh format extension.** P1-P4, P17 Category A, the RHI/
+   reflection `Float4` five-file diff, `errors.h`'s new `CookError`/
+   `ArtifactDecodeError` values, `pbr_sphere.mesh.txt`'s own real
+   sign-split migration (P4, depending on the two pending Proposed
+   Corrections), `minimal_cube.mesh.txt` left byte-for-byte unchanged,
+   new GPU-independent unit tests (tangent generation, the fallback,
+   handedness-conflict rejection, the narrowed `DegenerateTangentBasis`,
    `NonUnitTangent`/`NonOrthogonalTangent`/`InvalidTangentHandedness`).
-   **Acceptance gate:** all 9 existing goldens byte-identical; every
-   composition root builds; `pbr_sphere`'s own re-audit reports zero
-   conflicts.
-2. **Material schema and dependency chain (atomic).** P5-P9, the one
-   new `MaterialSourceParseError` enumerator, the one new
+   **Independently buildable and testable: yes** — no dependency on
+   any later milestone. **Acceptance gate:** all 9 existing goldens
+   byte-identical; every composition root builds; `pbr_sphere`'s own
+   re-audit reports `0/473` conflicts.
+2. **Material schema and dependency chain.** P5-P9, the one new
+   `MaterialSourceParseError` enumerator, the one new
    `RuntimeInitError` enumerator, all 6 existing `.material.txt`
-   version-marker edits (P7), new unit tests (`NormalMapNotSupportedForKind`,
+   version-marker edits, new unit tests (`NormalMapNotSupportedForKind`,
    `MissingField` on empty `normal_map:`, artifact/metadata
-   cross-validation of the new field, cook/decode round-trip).
-   **Acceptance gate:** all 9 goldens byte-identical (no scene yet
-   references a normal map); every existing material still cooks and
-   loads unchanged.
-3. **Renderer `Material` API and realization plumbing (atomic).**
-   P10-P12, P19's own guard tests. `selectShaderPair()`/
+   cross-validation, cook/decode round-trip). **Independently
+   buildable and testable: yes** — depends only on Milestone 1's own
+   tangent attribute existing in the mesh schema (referenced by no
+   material yet). **Acceptance gate:** all 9 goldens byte-identical;
+   every existing material still cooks and loads unchanged.
+3. **Descriptor capacity, two new shaders, reflection/contract wiring,
+   real binding-5 test.** P10-P13, P17 Category B's
+   `pbr_render_gpu_tests.cpp` entry. New shader files compile and pass
+   their own `EXPECTED_CONTRACT` validation. **Independently buildable
+   and testable: yes** — this milestone's own new GPU test (P13) binds
+   texture 5 directly via hand-fed vertex buffers and raw
+   `cmd.bindTexture()` calls, entirely bypassing `Material`/
+   `RealizedMaterialCandidate` (Milestone 4's own scope) — confirmed
+   by direct reading of `pbr_render_gpu_tests.cpp`'s own existing
+   shape, which already does this for `UnlitTextured`/`LitTextured`/
+   `PbrDirectLit`. **Real GPU verification required this milestone:**
+   P13's own binding-5 test; the existing `N+4`/`N+5` set-count test
+   re-run unmodified. **Acceptance gate:** all 9 goldens byte-
+   identical; zero Vulkan Validation Layers hits; P13 passes.
+4. **`Material` API and Runtime realization/`BootstrapConfig`
+   integration.** P14-P16, P18's own guard tests, P17 Category B's
+   `material_realization_gpu_tests.cpp` entry. `selectShaderPair()`/
    `sampledTextureBindingCountFor()`/`realizeOneMaterialCandidate()`/
-   `realizePendingMaterials()` widened to accept (but not yet be
-   given, until Milestone 4) the two new shader trios — this
-   milestone compiles against the **existing** `pbr_direct_lit.slang`/
-   `pbr_ibl.slang` trios passed twice (once for the plain slot, once
-   as a placeholder for the not-yet-created normal-map slot) **only if
-   Milestone 4 cannot immediately follow in the same commit**; since
-   this Plan lands all six milestones as one Implementation PR (no
-   intermediate merge), this placeholder is unnecessary — Milestone 3
-   and Milestone 4 are implemented together in source but verified as
-   two separate, reviewable diffs within the one PR, avoiding any real
-   half-built intermediate state. **Acceptance gate:** all 9 goldens
-   byte-identical; the 13 unaffected `createMaterial()` call sites
-   confirmed to still compile unchanged.
-4. **Descriptor capacity, two new shaders, CMake/shader-compiler
-   wiring (atomic).** P14-P18. New shader files compile and pass their
-   own `EXPECTED_CONTRACT` validation; `BootstrapConfig`/
-   `runtime_application.cpp` load and thread both new trios. **Real
-   GPU verification required this milestone, not deferred:** the new
-   binding-5 test (P18) and the existing `N+4`/`N+5` set-count test
-   (re-run unmodified, confirming it still passes — a different axis,
-   per ADR-0074 Section 3). **Acceptance gate:** all 9 goldens
-   byte-identical; zero Vulkan Validation Layers hits; the new P18
-   test passes.
-5. **New demo assets/scene/fixture/golden (atomic).** P17. New
-   texture/material/scene assets; new fixture/golden_generator/
-   gpu_tests trio; the discriminative pixel test (P17's own fixed
-   pixel/threshold); ADR-0042's own candidate-generate step, followed
-   by human review and commit of the final golden. **Acceptance gate:**
-   the discriminative test passes against real GPU output; the new
-   golden is human-reviewed and approved; all 9 existing goldens still
-   byte-identical (re-confirmed once more, since this is the milestone
-   most likely to accidentally touch a shared asset).
-6. **Full verification pass and registry/documentation closeout.** No
-   new source change. Runs the complete Verification Checklist below
-   end to end, both `ATLANTIS_BUILD_TESTS` configurations, both build
-   configurations, records the real, final numbers. `specs/README.md`'s
-   Spec 0029 row updated to reflect this Plan's own real Implementation
-   state; this file's own "Post-Merge Status Update" section added at
-   merge time. If any gate fails, Implementation returns to the
-   relevant earlier milestone, never forward.
+   `realizePendingMaterials()` widened and given the two real shader
+   trios Milestone 3 already compiled — no placeholder trio, since
+   Milestone 3 already produced the real thing. **Independently
+   buildable and testable: yes** — depends on Milestone 3's own two
+   real shaders and Milestone 2's own `normalMapTexture` field
+   existing; does not depend on any demo asset. **Acceptance gate:**
+   all 9 goldens byte-identical; the 13 unaffected `createMaterial()`
+   call sites confirmed to still compile unchanged; P18 passes.
+5. **New demo assets/fixture/discriminative tests — candidate only, no
+   golden commit.** P19 in full (assets, scene, fixture, golden_generator
+   executable, both discriminative-test `TEST_CASE`s), **except** the
+   final golden-comparison assertion, which does not yet exist because
+   no golden is committed yet. Running the golden_generator executable
+   produces an **untracked**, uncommitted candidate PNG under a local
+   output path — never added to `tests/image_regression/goldens/` in
+   this milestone. **Independently buildable and testable: yes** —
+   depends on Milestone 4's own two real shaders and widened capacity;
+   both discriminative tests (P19's own pixel/threshold pairs) run and
+   assert against **live renders only**, needing no committed golden.
+   **Acceptance gate:** both discriminative tests pass against real
+   GPU output; the candidate PNG is generated and stops here, pending
+   human review — **no commit of any golden file happens in this
+   milestone.**
+6. **Human-approved golden commit and capture-compare test.** Only
+   after a human has visually reviewed Milestone 5's own candidate PNG
+   (confirming a correctly-rendered, non-degenerate frame — not black,
+   not garbage) and approved it: commit the golden PNG and its own
+   sidecar under `tests/image_regression/goldens/pbr_normal_map_demo/`,
+   via ADR-0042's own "Initial baseline bootstrap" category (its own
+   four sub-requirements: source revision on a clean tree, full
+   sidecar provenance, the golden PNG/sidecar added via their own
+   separate, subsequent commit — never folded into Milestone 5's own
+   commit — and the required evidence: human visual inspection,
+   zero-diff self-reproduction, a clean real-GPU/Validation-Layers run,
+   citation of the channel-tolerance-0 calibration evidence), and add
+   the new capture-compare `TEST_CASE` to
+   `pbr_normal_map_demo_gpu_tests.cpp` that reads this now-real golden
+   and asserts zero difference. **Independently buildable and
+   testable: yes** — depends only on Milestone 5's own candidate
+   existing and being approved; no other source changes in this
+   milestone. **Acceptance gate:** the new capture-compare test passes;
+   all 9 existing goldens re-confirmed byte-identical (this is the
+   milestone most likely to accidentally touch a shared asset).
+7. **Full verification pass and registry closeout.** No new source
+   change. Runs the complete Verification Checklist below end to end,
+   both `ATLANTIS_BUILD_TESTS` configurations, both build
+   configurations, records the real, final numbers directly in this
+   Plan document (not as a promised future edit). `specs/README.md`'s
+   Spec 0029 row updated to reflect this Plan's own real
+   Implementation state, stated as **"Implemented in
+   [PR #&lt;this PR's own number&gt;]; pending merge"** — never
+   "merged via PR #N," which only a human's own later merge action
+   makes true; the actual "Implemented and merged" registry wording is
+   recorded by a **separate, later** commit or PR, after a human has
+   actually merged this Implementation PR, not by this PR itself
+   (corrected from this Plan's own prior draft, which incorrectly
+   proposed adding a "Post-Merge Status Update" section "at merge
+   time" — an action this PR cannot itself perform once it is already
+   merged). If any gate fails, Implementation returns to the relevant
+   earlier milestone, never forward.
 
 ## Files / Modules Touched (expected)
 
@@ -1006,63 +1033,68 @@ compile-time schema constant; no safe intermediate tree state).
 - `src/asset_system/src/cook.cpp` — Milestone 1
 - `src/asset_system/include/atlantis/asset_system/errors.h` — Milestones 1-2
 - `src/rhi/include/atlantis/rhi/types.h`, `src/shader_system/include/atlantis/shader_system/reflection_metadata.h`, `src/shader_system/src/slang_json_transform.cpp`, `src/shader_system/src/reflection_loader.cpp`, `src/shader_system/rhi_integration/src/vertex_input_mapping.cpp` — Milestone 1 (`Float4`)
-- `assets/meshes/pbr_sphere.mesh.txt` — Milestone 1 (pole-split; `minimal_cube.mesh.txt` NOT touched)
-- All 10 Category A + 2 Category B files in P13's own tables — Milestone 1 (Category A), Milestone 4 (Category B's `pbr_render_gpu_tests.cpp`/`material_realization_gpu_tests.cpp`)
+- `assets/meshes/pbr_sphere.mesh.txt` — Milestone 1 (sign-split migration; `minimal_cube.mesh.txt` NOT touched)
+- P17 Category A's 10 files — Milestone 1
 - New `tests/asset_system/mesh_tangent_generation_tests.cpp`, extended `tests/asset_system/mesh_artifact_tests.cpp` — Milestone 1
 - `src/asset_system/include/atlantis/asset_system/material_types.h`, `material_source.h`/`.cpp`, `material_artifact.h`/`.cpp`, `material_metadata.h`/`.cpp` — Milestone 2
 - `src/asset_system/src/cook_material.cpp`, `src/asset_system/src/load_material.cpp` — Milestone 2
 - `src/runtime/include/atlantis/runtime/init_error.h`, `src/runtime/src/init_error.cpp`, `src/runtime/src/scene_load.cpp` — Milestone 2
 - `src/asset_system/CMakeLists.txt` (`atlantis_add_material_asset()`), `assets/CMakeLists.txt` (6 version-marker edits) — Milestone 2
-- New `tests/asset_system/material_source_tests.cpp`/`material_artifact_tests.cpp`/`material_metadata_tests.cpp` extensions, new `tests/runtime/scene_load_normal_map_tests.cpp`-shaped additions — Milestone 2
-- `src/renderer/include/atlantis/renderer/material.h`, `src/renderer/src/material.cpp` — Milestone 3
-- `src/renderer/src/renderer.cpp` — Milestone 3
-- `src/runtime/include/atlantis/runtime/material_realization.h`, `src/runtime/src/material_realization.cpp` — Milestone 3
-- `tests/renderer/renderer_ownership_tests.cpp` (P19) — Milestone 3
-- `src/vulkan_backend/src/vulkan_device.cpp`, `src/vulkan_backend/src/vulkan_command_list.h` — Milestone 4
-- `src/shader_system/include/atlantis/shader_system/descriptor_contract.h`, `src/shader_system/src/descriptor_contract.cpp` — Milestone 4
-- `src/tools/shader_compiler/compile_and_validate.cpp` — Milestone 4
-- New `shaders/pbr_direct_lit_normal_map/pbr_direct_lit_normal_map.slang`+`CMakeLists.txt`, `shaders/pbr_ibl_normal_map/pbr_ibl_normal_map.slang`+`CMakeLists.txt` — Milestone 4
-- `CMakeLists.txt` (root, two new `add_subdirectory()`) — Milestone 4
+- New/extended material/scene-load unit tests — Milestone 2
+- `src/vulkan_backend/src/vulkan_device.cpp`, `src/vulkan_backend/src/vulkan_command_list.h` — Milestone 3
+- `src/shader_system/include/atlantis/shader_system/descriptor_contract.h`, `src/shader_system/src/descriptor_contract.cpp` — Milestone 3
+- `src/tools/shader_compiler/compile_and_validate.cpp` — Milestone 3
+- New `shaders/pbr_direct_lit_normal_map/*`, `shaders/pbr_ibl_normal_map/*` — Milestone 3
+- `CMakeLists.txt` (root, two new `add_subdirectory()`) — Milestone 3
+- `tests/runtime/pbr_render_gpu_tests.cpp` (P13, P17 Category B) — Milestone 3
+- `src/renderer/include/atlantis/renderer/material.h`, `src/renderer/src/material.cpp` — Milestone 4
+- `src/renderer/src/renderer.cpp` — Milestone 4
+- `src/runtime/include/atlantis/runtime/material_realization.h`, `src/runtime/src/material_realization.cpp` — Milestone 4
 - `src/runtime/include/atlantis/runtime/bootstrap_config.h`, `src/runtime/src/runtime_application.cpp` — Milestone 4
-- `tests/runtime/pbr_render_gpu_tests.cpp` (P18) — Milestone 4
+- `tests/renderer/renderer_ownership_tests.cpp` (P18) — Milestone 4
+- `tests/runtime/material_realization_gpu_tests.cpp` (P17 Category B) — Milestone 4
 - New `assets/textures/normal_map_tilted_source_unorm.png`, `assets/materials/pbr_normal_mapped.material.txt`, `assets/materials/pbr_normal_mapped_control.material.txt`, `assets/scenes/pbr_normal_map_demo.scene.txt` — Milestone 5
 - `assets/CMakeLists.txt` (new asset declarations) — Milestone 5
-- New `tests/image_regression/fixture/pbr_normal_map_demo_fixture.h`/`.cpp`, `tests/image_regression/golden_generator/pbr_normal_map_demo_main.cpp`, `tests/image_regression/pbr_normal_map_demo_gpu_tests.cpp`, `tests/image_regression/goldens/pbr_normal_map_demo/*` — Milestone 5
+- New `tests/image_regression/fixture/pbr_normal_map_demo_fixture.h`/`.cpp`, `tests/image_regression/golden_generator/pbr_normal_map_demo_main.cpp`, `tests/image_regression/pbr_normal_map_demo_gpu_tests.cpp` (both discriminative tests, no golden-compare test yet) — Milestone 5
 - `tests/image_regression/CMakeLists.txt` — Milestone 5
-- [specs/0029-tangent-space-normal-mapping-foundation.md](../specs/0029-tangent-space-normal-mapping-foundation.md) (`Related Plan(s)` field only), `specs/README.md` — Milestone 6
-- This file's own "Post-Merge Status Update" section — Milestone 6
+- New `tests/image_regression/goldens/pbr_normal_map_demo/*`, one new `TEST_CASE` in `pbr_normal_map_demo_gpu_tests.cpp` (golden-compare) — Milestone 6
+- `specs/README.md` — Milestone 7
+- [specs/0029-tangent-space-normal-mapping-foundation.md](../specs/0029-tangent-space-normal-mapping-foundation.md) (`Related Plan(s)` field) — a separate, later commit/PR, after human merge, not this Implementation PR (Milestone 7's own note)
 
-**Not touched by this Plan** (confirmed by the P13 Category C list and
-by the call-site table in P12): `src/world/`, `src/render_graph/`,
+**Not touched by this Plan:** `src/world/`, `src/render_graph/`,
 `src/rhi/` beyond the one `Float4` enumerator, `pbr_direct_lit.slang`/
-`pbr_ibl.slang` themselves (zero edits — both new shaders are
-additions), `integrated_showcase_demo`'s own scene/fixture/golden, any
-`adr/` file (ADR-0073/0074 and the three Amendments are already
-`Accepted`), any of the 9 existing image-regression goldens' own PNG
+`pbr_ibl.slang` themselves (zero edits), `integrated_showcase_demo`'s
+own scene/fixture/golden, any `adr/` file beyond the two pending
+Proposed Corrections already filed alongside this Plan (ADR-0073/0074
+and the three Amendments remain `Accepted`, unmodified in Decision
+content), any of the 9 existing image-regression goldens' own PNG
 bytes.
 
 ## Sequencing & Dependencies
 
-Milestone 1 → 2 → 3 → 4 → 5 → 6, strictly. Milestone 2 depends on
-Milestone 1's own tangent attribute existing (the new material grammar
-references a texture, not the mesh directly, but the combined demo in
-Milestone 5 needs a tangent-bearing mesh to be meaningful). Milestone 3
-depends on Milestone 2's own `normalMapTexture` field existing on
-`MaterialAssetData`. Milestone 4 depends on Milestone 3's own
-`Material`/`RealizedMaterialCandidate` plumbing compiling. Milestone 5
-depends on Milestone 4's own two real shaders and widened capacity
-existing (the demo cannot render without them). Milestone 6 depends on
-Milestone 5's own golden being captured and approved.
+Milestone 1 → 2 → 3 → 4 → 5 → 6 → 7, strictly, **and each of
+Milestones 1-6 independently compiles and passes its own applicable
+tests before the next begins** — no milestone's own source depends on
+a later milestone's own not-yet-written code (the real correction this
+round makes: Milestone 3's new shaders/capacity/binding-5 test come
+**before** Milestone 4's `Material` API integration, since Milestone
+3's own new GPU test reaches the new shaders directly, bypassing
+`Material` entirely, confirmed by direct reading of
+`pbr_render_gpu_tests.cpp`'s own existing, hand-fed-vertex-buffer
+shape). Milestone 5 depends on Milestone 4's own real `Material`/
+runtime-realization plumbing (the demo scene is loaded through the
+real, production path, not a hand-fed test buffer). Milestone 6
+depends on Milestone 5's own candidate being generated and a human
+approving it — this is a real, external gate this Plan cannot
+schedule around; Implementation pauses at the end of Milestone 5 until
+that approval exists. Milestone 7 depends on Milestone 6's own golden
+and capture-compare test both passing.
 
-**No known unavoidable intermediate compile-break or real-GPU red
-window** — Milestones 3/4 are the closest to one (a widened
-`selectShaderPair()` signature requires its one real caller,
-`realizeOneMaterialCandidate()`, and that function's one real caller,
-`runtime_application.cpp`, to update in the same commit); this Plan's
-own Milestone boundaries are reviewable-diff boundaries within one
-Implementation PR, not separate merged commits to `main` — matching
-Plan 0020's own explicit "landed as one atomic step, reviewed as
-several" precedent. If real Implementation finds an unavoidable
+**No unavoidable intermediate compile-break or real-GPU red window**
+in this corrected ordering — each milestone is independently buildable
+by construction, not merely "reviewable as a separate diff" within one
+larger, jointly-implemented change (the prior draft's own
+contradiction). If real Implementation finds an unavoidable
 intermediate break this Plan did not anticipate, stop and disclose it
 in the PR rather than silently working around it (AGENTS.md).
 
@@ -1075,35 +1107,41 @@ in the PR rather than silently working around it (AGENTS.md).
       narrowed trigger, `NonUnitTangent`/`NonOrthogonalTangent`/
       `InvalidTangentHandedness`, `NormalMapNotSupportedForKind`,
       `MissingField` on an empty `normal_map:` value, material
-      artifact/metadata cross-validation of the new field, the P19
-      `Material` constructor guard tests (P19), `sampledTextureBindingCountFor()`'s
+      artifact/metadata cross-validation of the new field, the P18
+      `Material` constructor guard tests, `sampledTextureBindingCountFor()`'s
       new `3`/`5` results.
-- [ ] Real-GPU tests: the P18 binding-5/`bindTexture(5, ...)` test; the
+- [ ] Real-GPU tests: the P13 binding-5/`bindTexture(5, ...)` test; the
       existing `N+4`/`N+5` descriptor-set-count test re-run unmodified;
-      the new fixture's own non-degenerate-frame proof; the P17
-      discriminative pixel test (`rgbSum` delta `> 20` at `(256,256)`).
+      the new fixture's own non-degenerate-frame proof; the P19
+      normal-map discriminative test (`rgbSum` delta `> 50` at
+      `(256,256)`); the P19 shadow discriminative test (`rgbSum` delta
+      `> 15` at `(198,273)`).
 - [ ] Image regression: all 9 existing goldens byte-identical after
-      every milestone that could plausibly affect them (1, 2, 3, 4, 5);
-      exactly one new golden (`pbr_normal_map_demo`), captured and
-      human-reviewed via ADR-0042's two-phase process, never
-      auto-accepted.
+      every milestone that could plausibly affect them (1-6); exactly
+      one new golden (`pbr_normal_map_demo`), captured against R1 only,
+      via ADR-0042's own "Initial baseline bootstrap" category, in its
+      own separate commit (Milestone 6), never folded into Milestone
+      5's own commit, and never auto-accepted.
 - [ ] Vulkan Validation Layers: zero `VUID`/Validation Error/Warning
       hits across the full verbose GPU test output, Debug and Release.
 - [ ] `ctest -LE gpu` and `ctest -L gpu`, Debug and Release.
 - [ ] Fresh `-DATLANTIS_BUILD_TESTS=OFF` configure+build: produces a
       working `atlantis_runtime.exe`, zero test executables, and
       successfully re-cooks every mesh/material/texture asset under
-      the new schema versions with no gap (mirrors Plan 0020's own
-      identical gate).
+      the new schema versions with no gap.
 - [ ] Module/link graph: `Atlantis::AssetSystem` still links
       `Atlantis::Core` only; `Atlantis::RHI`'s public API confirmed
       unchanged beyond the one `Float4` enumerator.
 - [ ] `Vk*` isolation: only the Vulkan Backend module references any
-      `Vk*` type (unaffected by this Plan; re-confirmed, not assumed).
+      `Vk*` type.
 - [ ] `git diff --check` clean.
-- [ ] Every existing `createMaterial()` call site (P12's own table)
+- [ ] Every existing `createMaterial()` call site (P16's own table)
       confirmed to still compile with zero source edit, except
       `material_realization.cpp`.
+- [ ] Both pending Proposed Corrections (ADR-0073, Spec 0029) are
+      accepted by Human Review before or alongside this Plan's own
+      approval — Milestone 1's own acceptance gate (`0/473` conflicts)
+      is meaningless if the corrected figures themselves are rejected.
 
 ## Rollback Plan
 
@@ -1111,12 +1149,13 @@ Revert the Implementation PR's own commit(s) on `main`. No migration
 mechanism exists for any of the widened formats (mesh artifact schema
 4, material artifact schema 3, material source version 3) — a revert
 returns every build-output artifact to the prior schema on the next
-clean configure, since none of this Plan's own artifacts are
-independently distributed or hand-edited outside the build. The two
-new, real, checked-in mesh/material/scene/texture source files (P17)
-and `pbr_sphere.mesh.txt`'s own migrated content are removed by the
-same revert; no other checked-in asset is modified by this Plan
-(`minimal_cube.mesh.txt` stays byte-for-byte unchanged throughout).
+clean configure. The new, real, checked-in mesh/material/scene/texture
+source files (P19) and `pbr_sphere.mesh.txt`'s own migrated content
+are removed by the same revert; `minimal_cube.mesh.txt` stays
+byte-for-byte unchanged throughout, so nothing there needs reverting.
+If Milestone 6 has already landed (a real golden committed) before a
+revert is needed, the golden's own removal is part of the same
+revert — no golden survives independently of the feature it proves.
 
 ## Definition of Done
 
