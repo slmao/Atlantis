@@ -533,10 +533,20 @@ atlantis::Result<PixelBuffer, PbrMaterialDemoRenderError> renderPbrMaterialDemoF
   const bool environmentEnabled = fixture.environmentData.has_value() || fixture.environmentLightingResources.has_value();
 
   std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
+      // Plan 0029 Section P15: this fixture's own scene never realizes a
+      // normal-mapped material (hasNormalMap stays false for every
+      // material realizeOneMaterialCandidate() sees here), so the two
+      // new trailing trios are dead-path filler -- reusing this
+      // fixture's own already-loaded pbrDirectLit*/pbrIbl* values,
+      // mirroring realizePendingMaterials()'s own compatibility
+      // overload's identical reuse pattern (material_realization.h).
       realizePendingMaterials(*fixture.device, *commandList, fixture.unlitTexturedVertexInputLayout,
                                fixture.unlitTexturedVertexSpirv, fixture.unlitTexturedFragmentSpirv,
                                fixture.litTexturedVertexInputLayout,
                                fixture.litTexturedVertexSpirv, fixture.litTexturedFragmentSpirv,
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
+                               fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv,
                                fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
                                fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
                                fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv, environmentEnabled,

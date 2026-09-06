@@ -64,6 +64,22 @@ struct BootstrapConfig {
   std::string pbrIblVertexShaderReflectionPath;
   std::string pbrIblFragmentShaderSpirvPath;
   std::string pbrIblFragmentShaderReflectionPath;
+  // Plan 0029 Section P15 (Human Review Approved Plan Correction,
+  // 2026-09-06, BootstrapConfig shader-pair path count): the two new
+  // normal-map PBR shader pairs -- 4 fields each (8 total), mirroring
+  // pbrDirectLitVertexShaderSpirvPath/pbrIblVertexShaderSpirvPath's own
+  // four-field shape exactly, not the 3-field shape P15's own original
+  // text mistakenly described. pbrDirectLitNormalMap* is unconditionally
+  // required, like pbrDirectLit* above; pbrIblNormalMap* is required
+  // only when an environment is configured, like pbrIbl* above.
+  std::string pbrDirectLitNormalMapVertexShaderSpirvPath;
+  std::string pbrDirectLitNormalMapVertexShaderReflectionPath;
+  std::string pbrDirectLitNormalMapFragmentShaderSpirvPath;
+  std::string pbrDirectLitNormalMapFragmentShaderReflectionPath;
+  std::string pbrIblNormalMapVertexShaderSpirvPath;
+  std::string pbrIblNormalMapVertexShaderReflectionPath;
+  std::string pbrIblNormalMapFragmentShaderSpirvPath;
+  std::string pbrIblNormalMapFragmentShaderReflectionPath;
   // Plan 0026 Milestone 3 (ADR-0071): the sky shader pair -- mirrors
   // pbrIblVertexShaderSpirvPath/.../pbrIblFragmentShaderReflectionPath's
   // own four-field shape and "required only when environmentArtifactPath

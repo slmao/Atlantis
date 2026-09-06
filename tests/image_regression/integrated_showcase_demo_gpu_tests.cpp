@@ -67,6 +67,20 @@ namespace {
       std::string(ATLANTIS_INTEGRATED_SHOWCASE_DEMO_PBR_IBL_SHADER_DIR) + "/pbr_ibl.frag.spv";
   config.pbrIblFragmentShaderReflectionPath =
       std::string(ATLANTIS_INTEGRATED_SHOWCASE_DEMO_PBR_IBL_SHADER_DIR) + "/pbr_ibl.frag.refl.json";
+  // Plan 0029 Section P15: required by validateEnvironmentBootstrapConfig()
+  // (this scene always configures an environment), mirroring the pbrIbl*
+  // block above -- unused by this fixture's own scene (no normal-mapped
+  // material), but still validated.
+  config.pbrIblNormalMapVertexShaderSpirvPath =
+      std::string(ATLANTIS_INTEGRATED_SHOWCASE_DEMO_PBR_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_ibl_normal_map.vert.spv";
+  config.pbrIblNormalMapVertexShaderReflectionPath =
+      std::string(ATLANTIS_INTEGRATED_SHOWCASE_DEMO_PBR_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_ibl_normal_map.vert.refl.json";
+  config.pbrIblNormalMapFragmentShaderSpirvPath =
+      std::string(ATLANTIS_INTEGRATED_SHOWCASE_DEMO_PBR_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_ibl_normal_map.frag.spv";
+  config.pbrIblNormalMapFragmentShaderReflectionPath =
+      std::string(ATLANTIS_INTEGRATED_SHOWCASE_DEMO_PBR_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_ibl_normal_map.frag.refl.json";
   config.skyVertexShaderSpirvPath = std::string(ATLANTIS_INTEGRATED_SHOWCASE_DEMO_SKY_SHADER_DIR) + "/sky.vert.spv";
   config.skyVertexShaderReflectionPath =
       std::string(ATLANTIS_INTEGRATED_SHOWCASE_DEMO_SKY_SHADER_DIR) + "/sky.vert.refl.json";

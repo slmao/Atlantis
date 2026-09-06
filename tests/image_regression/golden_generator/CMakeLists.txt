@@ -260,6 +260,10 @@ target_compile_definitions(atlantis_image_regression_ibl_material_demo_golden_ge
   ATLANTIS_IBL_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_IBL_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_IBL_DEMO_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+  # Plan 0029 Section P15: validateEnvironmentBootstrapConfig() requires
+  # this pair whenever an environment is configured, mirroring
+  # ATLANTIS_IBL_DEMO_PBR_IBL_SHADER_DIR's own identical need.
+  ATLANTIS_IBL_DEMO_PBR_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_ibl_normal_map_SHADER_OUTPUT_DIR}"
   # Plan 0026 Milestone 7 (ADR-0071): the sky shader pair's own output
   # directory, mirroring ATLANTIS_IBL_DEMO_PBR_IBL_SHADER_DIR's own
   # identical need.
@@ -273,7 +277,8 @@ target_compile_definitions(atlantis_image_regression_ibl_material_demo_golden_ge
 )
 add_dependencies(atlantis_image_regression_ibl_material_demo_golden_generator textured_quad_shaders
   lit_textured_shaders pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders sky_shaders
-  shadow_cast_shaders ${ATLANTIS_ibl_material_demo_scene_TARGET} ${ATLANTIS_ibl_studio_TARGET})
+  shadow_cast_shaders pbr_ibl_normal_map_shaders ${ATLANTIS_ibl_material_demo_scene_TARGET}
+  ${ATLANTIS_ibl_studio_TARGET})
 
 # Plan 0024 Milestone 10: a seventh standalone generator for the
 # focused HDR roll-off baseline, using the same fixture/render path as
@@ -328,6 +333,11 @@ target_compile_definitions(atlantis_image_regression_integrated_showcase_demo_go
   ATLANTIS_INTEGRATED_SHOWCASE_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_INTEGRATED_SHOWCASE_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_INTEGRATED_SHOWCASE_DEMO_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+  # Plan 0029 Section P15: validateEnvironmentBootstrapConfig() requires
+  # this pair (this scene always configures an environment), mirroring
+  # ATLANTIS_INTEGRATED_SHOWCASE_DEMO_PBR_IBL_SHADER_DIR's own identical
+  # need.
+  ATLANTIS_INTEGRATED_SHOWCASE_DEMO_PBR_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_ibl_normal_map_SHADER_OUTPUT_DIR}"
   ATLANTIS_INTEGRATED_SHOWCASE_DEMO_SKY_SHADER_DIR="${ATLANTIS_sky_SHADER_OUTPUT_DIR}"
   ATLANTIS_INTEGRATED_SHOWCASE_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
   ATLANTIS_INTEGRATED_SHOWCASE_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
@@ -337,8 +347,8 @@ target_compile_definitions(atlantis_image_regression_integrated_showcase_demo_go
 
 add_dependencies(atlantis_image_regression_integrated_showcase_demo_golden_generator textured_quad_shaders
   lit_textured_shaders pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders sky_shaders
-  shadow_cast_shaders ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
-  ${ATLANTIS_ibl_studio_TARGET})
+  shadow_cast_shaders pbr_ibl_normal_map_shaders ${ATLANTIS_integrated_showcase_demo_scene_TARGET}
+  ${ATLANTIS_ground_plane_TARGET} ${ATLANTIS_ibl_studio_TARGET})
 
 # Deliberately no catch_discover_tests()/LABELS "gpu"/add_test() call in
 # this file -- the concrete enforcement of "never registered with

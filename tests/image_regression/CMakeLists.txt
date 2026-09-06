@@ -167,6 +167,11 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_IBL_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_IBL_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_IBL_DEMO_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+  # Plan 0029 Section P15: validateEnvironmentBootstrapConfig() requires
+  # this pair whenever an environment is configured, exactly like
+  # ATLANTIS_IBL_DEMO_PBR_IBL_SHADER_DIR above -- required even though
+  # this fixture's own scene never realizes a normal-mapped material.
+  ATLANTIS_IBL_DEMO_PBR_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_ibl_normal_map_SHADER_OUTPUT_DIR}"
   # Plan 0026 Milestone 5 (ADR-0071): the sky shader pair's own output
   # directory -- only ever read by the environment-enabled (IBL) config,
   # mirroring ATLANTIS_IBL_DEMO_PBR_IBL_SHADER_DIR's own identical need.
@@ -202,6 +207,10 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_INTEGRATED_SHOWCASE_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_INTEGRATED_SHOWCASE_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_INTEGRATED_SHOWCASE_DEMO_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+  # Plan 0029 Section P15: validateEnvironmentBootstrapConfig() requires
+  # this pair (this scene always configures an environment), mirroring
+  # ATLANTIS_IBL_DEMO_PBR_IBL_NORMAL_MAP_SHADER_DIR's own identical need.
+  ATLANTIS_INTEGRATED_SHOWCASE_DEMO_PBR_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_ibl_normal_map_SHADER_OUTPUT_DIR}"
   ATLANTIS_INTEGRATED_SHOWCASE_DEMO_SKY_SHADER_DIR="${ATLANTIS_sky_SHADER_OUTPUT_DIR}"
   ATLANTIS_INTEGRATED_SHOWCASE_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
   ATLANTIS_INTEGRATED_SHOWCASE_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
@@ -233,7 +242,8 @@ add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TAR
 # which directory ctest (or a human) happens to invoke this executable
 # from.
 add_dependencies(atlantis_image_regression_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
-  pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders sky_shaders shadow_cast_shaders)
+  pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders sky_shaders shadow_cast_shaders
+  pbr_ibl_normal_map_shaders)
 add_custom_command(TARGET atlantis_image_regression_gpu_tests POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_image_regression_gpu_tests>/shaders"

@@ -68,6 +68,13 @@ struct RealizedMaterialCandidate {
   atlantis::asset_system::AssetId textureAssetId = 0;
   std::unique_ptr<atlantis::rhi::SampledTexture> newSampledTexture;  // nullptr if textureAssetId is already realized
   std::optional<std::unique_ptr<atlantis::rhi::Buffer>> stagingBuffer;  // present iff newSampledTexture is non-null
+  // Plan 0029 Section P15 (ADR-0074): identical in kind to
+  // textureAssetId/newSampledTexture/stagingBuffer above, keyed by
+  // materialData.normalMapTexture -- 0 (and both members below left
+  // null) when this material declares no normal map.
+  atlantis::asset_system::AssetId normalMapTextureAssetId = 0;
+  std::unique_ptr<atlantis::rhi::SampledTexture> newNormalMapTexture;
+  std::optional<std::unique_ptr<atlantis::rhi::Buffer>> normalMapStagingBuffer;
   std::unique_ptr<atlantis::rhi::Sampler> sampler;                       // always new -- keyed per material
   std::unique_ptr<atlantis::renderer::Material> material;                // always new -- keyed per material
 };
@@ -134,10 +141,27 @@ struct RealizedMaterialCandidate {
     const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& pbrIblVertexInputLayout,
     const std::vector<std::uint32_t>& pbrIblVertexSpirv,
-    const std::vector<std::uint32_t>& pbrIblFragmentSpirv, bool environmentEnabled,
+    const std::vector<std::uint32_t>& pbrIblFragmentSpirv,
+    // Plan 0029 Section P15 (ADR-0074): the two normal-map shader
+    // trios, inserted immediately after the existing pbrIbl* trio --
+    // selectShaderPair() (material_realization.cpp) picks between all
+    // four PBR trios via environmentEnabled and this call's own
+    // hasNormalMap (materialData.normalMapTexture != 0).
+    const atlantis::rhi::VertexInputLayout& pbrDirectLitNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrDirectLitNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrDirectLitNormalMapFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrIblNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrIblNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrIblNormalMapFragmentSpirv, bool environmentEnabled,
     atlantis::asset_system::AssetId materialAssetId,
     const atlantis::asset_system::MaterialAssetData& materialData,
     const atlantis::asset_system::TextureAssetData& textureData,
+    // Plan 0029 Section P15: the normal map's own TextureAssetData,
+    // resolved by the caller from the same textureDataMap the base-
+    // color textureData above is resolved from, keyed by
+    // materialData.normalMapTexture -- null iff that id is 0 (no
+    // normal map declared for this material).
+    const atlantis::asset_system::TextureAssetData* normalMapTextureData,
     const std::unordered_map<atlantis::asset_system::AssetId, const atlantis::rhi::SampledTexture*>&
         effectiveSampledTextures);
 
@@ -192,7 +216,15 @@ struct RealizedMaterialCandidate {
     const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& pbrIblVertexInputLayout,
     const std::vector<std::uint32_t>& pbrIblVertexSpirv,
-    const std::vector<std::uint32_t>& pbrIblFragmentSpirv, bool environmentEnabled,
+    const std::vector<std::uint32_t>& pbrIblFragmentSpirv,
+    // Plan 0029 Section P15: identical insertion point and threading as
+    // realizeOneMaterialCandidate()'s own two new trios above.
+    const atlantis::rhi::VertexInputLayout& pbrDirectLitNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrDirectLitNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrDirectLitNormalMapFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrIblNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrIblNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrIblNormalMapFragmentSpirv, bool environmentEnabled,
     const std::vector<atlantis::asset_system::AssetId>& pendingIds,
     const std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>>&
         sampledTextureResourceMap,
@@ -222,10 +254,17 @@ realizePendingMaterials(
         materialDataMap,
     const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData>&
         textureDataMap) {
+  // Plan 0029 Section P15: this overload's own callers never declare a
+  // normal map on any material they realize, so the two new trio
+  // slots below are dead code paths, reusing pbrDirectLit*'s own
+  // values -- identical in kind to the pre-existing pbrIbl* reuse two
+  // lines below.
   return realizePendingMaterials(
       device, commandList, unlitTexturedVertexInputLayout, unlitTexturedVertexSpirv,
       unlitTexturedFragmentSpirv, litTexturedVertexInputLayout, litTexturedVertexSpirv,
       litTexturedFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,
+      pbrDirectLitFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,
+      pbrDirectLitFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,
       pbrDirectLitFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,
       pbrDirectLitFragmentSpirv, false, pendingIds, sampledTextureResourceMap, materialDataMap,
       textureDataMap);
@@ -274,7 +313,10 @@ realizePendingMaterials(
 // (base-color@1, shadow-map@2) or 4 with one (base-color@1, environment
 // cubemap@2, DFG LUT@3, shadow-map@4) -- pbr_direct_lit.slang/pbr_ibl.slang
 // both declare exactly that many bindings (Milestone 5).
+// Plan 0029 Section P15 (ADR-0074): hasNormalMap adds one more binding
+// to the PbrDirectLit case only (3 without an environment, 5 with one --
+// pbr_direct_lit_normal_map.slang/pbr_ibl_normal_map.slang, Milestone 3).
 [[nodiscard]] std::uint32_t sampledTextureBindingCountFor(atlantis::asset_system::MaterialKind kind,
-                                                           bool environmentEnabled);
+                                                           bool environmentEnabled, bool hasNormalMap);
 
 }  // namespace atlantis::runtime
