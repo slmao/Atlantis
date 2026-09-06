@@ -45,8 +45,19 @@ both marked `Proposed`, pending Human Review, neither rewriting any
 existing Decision/Requirement. **This Plan uses the corrected figures
 (48/425, the exact ring locations, the simpler 2-way sign-split
 method) throughout — P4 below is built on the correction, not on the
-original `96/425` estimate.** Approving this Plan implies approving
-those two corrections; they are not a separate, later gate.
+original `96/425` estimate.**
+
+**Explicit, itemized Human Review gate — no implied approval.**
+Approving this Plan does **not**, by itself, approve either
+correction. Three separate items require their own explicit approval,
+even when reviewed and recorded in one pass: (1) the
+[Spec 0029 Proposed Correction](../specs/0029-tangent-space-normal-mapping-foundation.md#proposed-correction--2026-09-06-pbr_sphere-handedness-conflict-count),
+(2) the
+[ADR-0073 Proposed Correction](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md#proposed-correction--2026-09-06-pbr_sphere-handedness-conflict-count-and-location),
+and (3) this Plan itself. A Human Review Approval record covering all
+three must name each one individually as approved — a single blanket
+statement ("Plan 0029 approved") does not, on its own, constitute
+approval of the two corrections it depends on.
 
 ## Pre-draft verification against real, current source
 
@@ -185,8 +196,10 @@ has exactly 3 contributing triangles, all agreeing at handedness
 `-1.0` (no conflict — it is at latitude ring 8, `y=0`, nowhere near
 either affected ring). Its own accumulated-and-orthogonalized tangent:
 `T = (1, 0, 0)` (to 1e-16), `tw = -1.0`, `B = cross(N,T) * tw = (0,
--1, 0)`. Unaffected by the migration (only rings 15/16 change); this
-basis is stable across Implementation.
+-1, 0)`. Unaffected by the migration (only ring 0, the north-pole ring,
+and ring 1, its adjacent ring — using the same vertex-index-order
+numbering as "latitude ring 8" above, ring 0 = indices 0-24 — change);
+this basis is stable across Implementation.
 
 ## P1. Mesh tangent-generation module — exact shape
 
@@ -308,7 +321,8 @@ splitting rule.
 every one of the 377 already-non-conflicting vertices (425 − 48) keeps
 its exact position/color/UV/normal values and its exact vertex index
 — including vertex 200, the demo's own discriminative sample point,
-which is at latitude ring 8 (`y=0`), nowhere near rings 15/16.
+which is at latitude ring 8 (`y=0`), nowhere near ring 0 (north pole)
+or ring 1 (its adjacent ring).
 
 **Dependency:** this method and these figures depend on the two
 pending Proposed Corrections (see "Dependency on pending corrections"
@@ -724,16 +738,44 @@ New `TEST_CASE`s in `tests/renderer/renderer_ownership_tests.cpp`
 **Assets (new), fixed textures:**
 - `assets/textures/normal_map_tilted_source_unorm.png` — a **fixed
   4×4 RGB8 PNG, all 16 pixels exactly `(204, 128, 230)`** (no
-  implementation-time size choice). Generation method, exact and
-  reproducible: `magick -size 4x4 xc:"rgb(204,128,230)" normal_map_tilted_source_unorm.png`
-  (ImageMagick, or any equivalent tool producing an uncompressed or
-  standard 8-bit RGB PNG with this exact uniform content — the pixel
-  values are the contract, not the tool). Implementation records the
-  resulting file's SHA-256 hash in the Implementation PR description
-  for reviewer verification, matching this repository's own general
-  practice of citing concrete, checkable evidence rather than "should
-  look right." Decoded tangent-space normal (before shader
-  normalization): `(0.6, 0.00392, 0.80392)`. Cooked via
+  implementation-time size choice). **Generation method — the
+  repository's own already-approved, already-vendored `stb_image_write`
+  (`Stb::Stb`, `cmake/AtlantisStb.cmake`, the same library
+  `tests/image_regression/support/png_codec.cpp` already links), never
+  ImageMagick or any other new tool dependency:** a small, temporary,
+  **uncommitted** C++ helper, compiled ad hoc against the already-
+  fetched `stb_image_write.h` (no new CMake target, no permanent
+  asset-generation tool added to this repository):
+
+  ```cpp
+  #define STB_IMAGE_WRITE_IMPLEMENTATION
+  #include <stb_image_write.h>
+  #include <cstdint>
+
+  int main() {
+    std::uint8_t pixels[4 * 4 * 3];
+    for (int i = 0; i < 16; ++i) {
+      pixels[i * 3 + 0] = 204;
+      pixels[i * 3 + 1] = 128;
+      pixels[i * 3 + 2] = 230;
+    }
+    stbi_write_png("normal_map_tilted_source_unorm.png", 4, 4, 3, pixels, 4 * 3);
+    return 0;
+  }
+  ```
+
+  Implementation compiles and runs this helper once (e.g. a single
+  ad hoc invocation against the CMake-fetched `stb` source directory's
+  own include path), copies the resulting PNG into
+  `assets/textures/`, computes its SHA-256 (any standard tool --
+  `Get-FileHash -Algorithm SHA256` on Windows, `sha256sum` elsewhere),
+  and cites that hash in the Implementation PR description for
+  reviewer verification. **The helper `.cpp` file itself is never
+  committed to this repository** -- it is scratch tooling, deleted
+  after use, exactly matching this Plan's own "temporary, uncommitted"
+  audit-script precedent (P4 above) rather than a new, permanent
+  asset-generation mechanism. Decoded tangent-space normal (before
+  shader normalization): `(0.6, 0.00392, 0.80392)`. Cooked via
   `atlantis_add_texture_asset(NAME normal_map_tilted COLOR_SPACE Unorm)`.
 - `assets/materials/pbr_normal_mapped.material.txt` — `kind:
   pbr_direct_lit`, `texture: textures/textured_quad_source_srgb.png`
@@ -825,16 +867,53 @@ exact scene.** If Implementation's own real capture shows this bound
 does not hold, stop and request Human Review before changing it.
 
 **Discriminative pixel test 2 — shadow on/off, real computed receiver
-pixel, borrowed conservative threshold:** the sphere's own shadow,
-cast along the light direction above onto the `y=-1` ground plane,
-lands (using the sphere's own center as the reference cast point) at
-world `(-0.761, -1, -0.604)`, projecting under the same camera to
-pixel **`(198, 273)`** (script-computed via the identical view/
-projection used for vertex 200 above) — confirmed outside the sphere's
-own on-screen silhouette (`x ∈ [209, 303]` at this camera), so the
-ground, not the sphere, is the visible surface there, and confirmed
-within the ground plane's own `10×10` extent (`x=-0.76, z=-0.60`, well
-inside `[-5,5]`), not at its edge. **R1 (shadowed):** the real,
+pixel, borrowed conservative threshold — world coordinate corrected
+this round; see "Mechanical float32 recomputation" below for the full,
+re-verified derivation:** the sphere's own shadow, cast along the
+light direction above onto the `y=-1` ground plane, lands (using the
+sphere's own center as the reference cast point) at world `(-1.3624,
+-1, -0.5297)`, projecting under the same camera to pixel **`(198,
+273)`** (unchanged from this Plan's own prior draft — the earlier
+world coordinate was a transcription error, copied from a different,
+rejected candidate light rotation; the pixel itself was already
+computed from the correct, chosen rotation and is re-confirmed below)
+— confirmed outside the sphere's own on-screen silhouette (`x ∈ [209,
+303]` at this camera), so the ground, not the sphere, is the visible
+surface there, and confirmed within the ground plane's own `10×10`
+extent (`x=-1.36, z=-0.53`, well inside `[-5,5]`), not at its edge.
+
+**Mechanical float32 recomputation (this round, matching production
+precision — `float`, not Python's default `double`):** using this
+codebase's own real, confirmed `Mat4` layout (column-major,
+`rotationX`/`rotationY`'s own exact column formulas, `R = Ry(yaw) *
+Rx(pitch) * Rz(roll)`, all from `world.cpp`, Pre-draft verification),
+recomputed end to end in `float32`:
+
+- Light direction (`pitch=-0.6, yaw=1.2, roll=0`): `(-0.769245,
+  -0.5646425, -0.29906675)` (float32) — matches the value already
+  used for the normal-map BRDF computation above, to displayed
+  precision.
+- `t = -1 / direction.y = 1.7710321`.
+- Shadow footprint: `(0 + t*direction.x, -1, 0 + t*direction.z) =
+  (-1.3623576, -1.0, -0.5296568)` — the corrected value used above,
+  **not** the `(-0.761, -1, -0.604)` this Plan's own prior draft
+  stated (that value belonged to a different, rejected `(pitch=-0.8,
+  yaw=-0.9)` candidate, carried over by a transcription error, not a
+  computation error in the chosen `(-0.6, 1.2)` candidate itself).
+- Camera pitch (aiming at vertex 200's world position `(0,0,1)` from
+  `(0,3,9)`): `theta = -0.35877067` (float32) — unchanged, re-verified.
+- Vertex 200 projects to pixel `(256.0, 256.0)` exactly (float32
+  recompute) — the center-pixel property holds under full float32
+  precision, not only Python's own default double precision.
+- Shadow footprint projects to pixel `(197.50752, 273.14087)` →
+  rounds to **`(198, 273)`** — **unchanged from this Plan's own prior
+  draft.** The pixel itself was already computed from the correct,
+  chosen light rotation in the prior round; only the accompanying
+  world-coordinate prose was wrong. Sphere silhouette x-range at this
+  camera: `[209.23, 302.77]` (float32) — `197.5` remains safely
+  outside it, confirming the footprint is unoccluded.
+
+**R1 (shadowed):** the real,
 production `shadowCasterDrawItems` (the sphere's own `DrawItem`,
 non-empty). **R2 (unshadowed control):** identical scene/camera/light,
 `shadowCasterDrawItems` = an empty span — mirrors Plan 0028's own
@@ -1138,10 +1217,14 @@ in the PR rather than silently working around it (AGENTS.md).
 - [ ] Every existing `createMaterial()` call site (P16's own table)
       confirmed to still compile with zero source edit, except
       `material_realization.cpp`.
-- [ ] Both pending Proposed Corrections (ADR-0073, Spec 0029) are
-      accepted by Human Review before or alongside this Plan's own
-      approval — Milestone 1's own acceptance gate (`0/473` conflicts)
-      is meaningless if the corrected figures themselves are rejected.
+- [ ] All three items are explicitly, individually recorded as
+      approved by Human Review — the Spec 0029 Proposed Correction,
+      the ADR-0073 Proposed Correction, and this Plan itself (they may
+      be approved in one review pass, but the approval record must
+      name each one, not rely on approving this Plan to imply the
+      other two) — Milestone 1's own acceptance gate (`0/473`
+      conflicts) is meaningless if the corrected figures themselves
+      are rejected.
 
 ## Rollback Plan
 
