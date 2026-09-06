@@ -8,7 +8,7 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_material_source_version: 2";
+constexpr std::string_view kVersionLine = "atlantis_material_source_version: 3";
 constexpr std::string_view kKindPrefix = "kind: ";
 constexpr std::string_view kTexturePrefix = "texture: ";
 constexpr std::string_view kFilterPrefix = "filter: ";
@@ -16,6 +16,7 @@ constexpr std::string_view kAddressModePrefix = "address_mode: ";
 constexpr std::string_view kBaseColorFactorPrefix = "base_color_factor: ";
 constexpr std::string_view kMetallicFactorPrefix = "metallic_factor: ";
 constexpr std::string_view kRoughnessFactorPrefix = "roughness_factor: ";
+constexpr std::string_view kNormalMapPrefix = "normal_map: ";
 
 constexpr std::string_view kKindUnlitTextured = "unlit_textured";
 constexpr std::string_view kKindLitTextured = "lit_textured";
@@ -99,15 +100,19 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
 
   const std::vector<std::string_view> lines = splitLines(text);
 
-  // Plan 0023 Milestone 1 (ADR-0066 item 2): version-2 grammar is either
-  // exactly 5 lines (the three new numeric fields absent, defaults
-  // apply) or exactly 8 lines (all three present, fixed order) -- no
-  // partial subset, no dual-version reader.
+  // Plan 0023 Milestone 1 (ADR-0066 item 2): version-2 grammar was
+  // either exactly 5 lines (the three new numeric fields absent,
+  // defaults apply) or exactly 8 lines (all three present, fixed
+  // order). Plan 0029 Section P5/ADR-0074 Section 1: a third legal
+  // shape, 9 lines (the 8-line form plus a trailing `normal_map:`
+  // line), is now also accepted -- still no partial subset of any
+  // shape, no dual-version reader.
   constexpr std::size_t kMinLineCount = 5;
-  constexpr std::size_t kMaxLineCount = 8;
+  constexpr std::size_t kEightLineCount = 8;
+  constexpr std::size_t kMaxLineCount = 9;
   if (lines.size() < kMinLineCount) return ResultT::Err(MaterialSourceParseError::MissingField);
   if (lines.size() > kMaxLineCount) return ResultT::Err(MaterialSourceParseError::TrailingContent);
-  if (lines.size() != kMinLineCount && lines.size() != kMaxLineCount) {
+  if (lines.size() != kMinLineCount && lines.size() != kEightLineCount && lines.size() != kMaxLineCount) {
     return ResultT::Err(MaterialSourceParseError::TrailingContent);
   }
 
@@ -151,7 +156,7 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
     return ResultT::Err(MaterialSourceParseError::UnknownAddressMode);
   }
 
-  if (lines.size() == kMaxLineCount) {
+  if (lines.size() >= kEightLineCount) {
     if (!matchField(lines[5], kBaseColorFactorPrefix, value)) {
       return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
     }
@@ -174,6 +179,21 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
     if (!parseFloatToken(value, parsed.roughnessFactor)) {
       return ResultT::Err(MaterialSourceParseError::MalformedNumber);
     }
+  }
+
+  // Plan 0029 Section P5/ADR-0074 Section 1: the optional 9th line --
+  // legal only for kind: pbr_direct_lit, since neither
+  // lit_textured.slang nor unlit_textured.slang declares a normal-map
+  // binding to consume it.
+  if (lines.size() == kMaxLineCount) {
+    if (parsed.kind != MaterialKind::PbrDirectLit) {
+      return ResultT::Err(MaterialSourceParseError::NormalMapNotSupportedForKind);
+    }
+    if (!matchField(lines[8], kNormalMapPrefix, value)) {
+      return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+    }
+    if (value.empty()) return ResultT::Err(MaterialSourceParseError::MissingField);
+    parsed.normalMapLogicalPath = std::string(value);
   }
 
   return ResultT::Ok(std::move(parsed));
@@ -220,6 +240,14 @@ std::string serializeMaterialSource(const ParsedMaterialSource& source) {
   out += kRoughnessFactorPrefix;
   out += formatFloat(source.roughnessFactor);
   out += '\n';
+  // Plan 0029 Section P5/ADR-0074 Section 1: the 9th line is emitted
+  // only when a normal map is present -- symmetric with
+  // parseMaterialSource()'s own optional-line acceptance.
+  if (!source.normalMapLogicalPath.empty()) {
+    out += kNormalMapPrefix;
+    out += source.normalMapLogicalPath;
+    out += '\n';
+  }
   return out;
 }
 

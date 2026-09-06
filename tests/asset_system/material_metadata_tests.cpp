@@ -124,7 +124,8 @@ TEST_CASE("parseMaterialMetadata rejects an unknown metadata version", "[asset_s
       "texture_asset: 0000000000000002\n"
       "base_color_factor: 1.000000 1.000000 1.000000 1.000000\n"
       "metallic_factor: 1.000000\n"
-      "roughness_factor: 1.000000\n";
+      "roughness_factor: 1.000000\n"
+      "normal_map_texture: 0000000000000000\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::UnknownMetadataVersion);
@@ -152,7 +153,8 @@ TEST_CASE("parseMaterialMetadata rejects a field name mismatch", "[asset_system]
       "texture_asset: 0000000000000002\n"
       "base_color_factor: 1.000000 1.000000 1.000000 1.000000\n"
       "metallic_factor: 1.000000\n"
-      "roughness_factor: 1.000000\n";
+      "roughness_factor: 1.000000\n"
+      "normal_map_texture: 0000000000000000\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::FieldNameMismatch);
@@ -167,7 +169,8 @@ TEST_CASE("parseMaterialMetadata rejects a malformed kind value", "[asset_system
       "texture_asset: 0000000000000002\n"
       "base_color_factor: 1.000000 1.000000 1.000000 1.000000\n"
       "metallic_factor: 1.000000\n"
-      "roughness_factor: 1.000000\n";
+      "roughness_factor: 1.000000\n"
+      "normal_map_texture: 0000000000000000\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::MalformedValue);
@@ -182,7 +185,8 @@ TEST_CASE("parseMaterialMetadata rejects a malformed asset_id (uppercase hex)", 
       "texture_asset: 0000000000000002\n"
       "base_color_factor: 1.000000 1.000000 1.000000 1.000000\n"
       "metallic_factor: 1.000000\n"
-      "roughness_factor: 1.000000\n";
+      "roughness_factor: 1.000000\n"
+      "normal_map_texture: 0000000000000000\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::MalformedValue);
@@ -197,7 +201,8 @@ TEST_CASE("parseMaterialMetadata rejects a malformed texture_asset (uppercase he
       "texture_asset: 00000000000000CD\n"
       "base_color_factor: 1.000000 1.000000 1.000000 1.000000\n"
       "metallic_factor: 1.000000\n"
-      "roughness_factor: 1.000000\n";
+      "roughness_factor: 1.000000\n"
+      "normal_map_texture: 0000000000000000\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::MalformedValue);
@@ -212,7 +217,45 @@ TEST_CASE("parseMaterialMetadata rejects a malformed base_color_factor component
       "texture_asset: 0000000000000002\n"
       "base_color_factor: 1.000000 not-a-number 1.000000 1.000000\n"
       "metallic_factor: 1.000000\n"
-      "roughness_factor: 1.000000\n";
+      "roughness_factor: 1.000000\n"
+      "normal_map_texture: 0000000000000000\n";
+  const auto result = parseMaterialMetadata(text);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == MetadataParseError::MalformedValue);
+}
+
+// Plan 0029 Section P6/ADR-0074 Section 1: the metadata sidecar's own
+// unconditional normal_map_texture field -- present on every material,
+// `0000000000000000` when absent (this test never sets it, exactly
+// like the round-trip test above never sets baseColorFactor/etc.).
+TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a real, non-zero normalMapTexture",
+          "[asset_system][material]") {
+  MaterialMetadata original;
+  original.assetId = 0x0102030405060708ULL;
+  original.sourceLogicalPath = "materials/pbr_normal_mapped.material.txt";
+  original.kind = MaterialKind::PbrDirectLit;
+  original.textureAsset = 0x1122334455667788ULL;
+  original.normalMapTexture = 0xaabbccdd00112233ULL;
+
+  const std::string text = serializeMaterialMetadata(original);
+  CHECK(text.find("normal_map_texture: aabbccdd00112233\n") != std::string::npos);
+  const auto parsed = parseMaterialMetadata(text);
+  REQUIRE(parsed.isOk());
+  CHECK(parsed.value().normalMapTexture == original.normalMapTexture);
+}
+
+TEST_CASE("parseMaterialMetadata rejects a malformed normal_map_texture (uppercase hex)",
+          "[asset_system][material]") {
+  const std::string text =
+      "atlantis_material_metadata_version: 2\n"
+      "asset_id: 0000000000000001\n"
+      "source_logical_path: a.material.txt\n"
+      "kind: unlit_textured\n"
+      "texture_asset: 0000000000000002\n"
+      "base_color_factor: 1.000000 1.000000 1.000000 1.000000\n"
+      "metallic_factor: 1.000000\n"
+      "roughness_factor: 1.000000\n"
+      "normal_map_texture: 00000000000000EF\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::MalformedValue);

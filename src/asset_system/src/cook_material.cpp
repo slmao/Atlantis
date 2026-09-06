@@ -93,6 +93,18 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   if (normalizedTextureResult.isErr()) return ResultT::Err(MaterialCookError::LogicalPathInvalid);
   const AssetId textureAssetId = computeAssetId(normalizedTextureResult.value());
 
+  // Step 3.4 (Plan 0029 Section P6/ADR-0074 Section 1): the optional
+  // normal-map texture's own identity -- identical value-level-only
+  // normalization, `0` when absent (the material grammar's own kind
+  // restriction already guarantees this is empty for anything but
+  // PbrDirectLit).
+  AssetId normalMapTextureAssetId = 0;
+  if (!parsed.normalMapLogicalPath.empty()) {
+    const auto normalizedNormalMapResult = normalizeLogicalPath(parsed.normalMapLogicalPath);
+    if (normalizedNormalMapResult.isErr()) return ResultT::Err(MaterialCookError::LogicalPathInvalid);
+    normalMapTextureAssetId = computeAssetId(normalizedNormalMapResult.value());
+  }
+
   // Step 3.5 (Plan 0023 Milestone 1, ADR-0066 item 5): value-range
   // validation, both directions -- never a naive parse-and-trust.
   for (float component : parsed.baseColorFactor) {
@@ -105,7 +117,7 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   // Step 4: encode + atomic write.
   const std::vector<std::byte> artifactBytes = encodeMaterialArtifact(
       parsed.kind, textureAssetId, parsed.filter, parsed.addressMode, parsed.baseColorFactor, parsed.metallicFactor,
-      parsed.roughnessFactor);
+      parsed.roughnessFactor, normalMapTextureAssetId);
 
   MaterialMetadata metadata;
   metadata.assetId = selfAssetId;
@@ -115,6 +127,7 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   for (std::size_t i = 0; i < 4; ++i) metadata.baseColorFactor[i] = parsed.baseColorFactor[i];
   metadata.metallicFactor = parsed.metallicFactor;
   metadata.roughnessFactor = parsed.roughnessFactor;
+  metadata.normalMapTexture = normalMapTextureAssetId;
   const std::string metadataText = serializeMaterialMetadata(metadata);
 
   if (!writeBytesAtomically(artifactOutputPath, reinterpret_cast<const char*>(artifactBytes.data()),

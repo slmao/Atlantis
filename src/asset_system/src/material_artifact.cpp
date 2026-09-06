@@ -77,7 +77,7 @@ void appendFloatLE(std::vector<std::byte>& out, float value) { appendU32LE(out, 
 std::vector<std::byte> encodeMaterialArtifact(MaterialKind kind, AssetId textureAsset, MaterialSamplerFilter filter,
                                                MaterialSamplerAddressMode addressMode,
                                                const float (&baseColorFactor)[4], float metallicFactor,
-                                               float roughnessFactor) {
+                                               float roughnessFactor, AssetId normalMapTexture) {
   std::vector<std::byte> out;
   out.reserve(kMaterialArtifactHeaderSizeBytes);
 
@@ -90,6 +90,7 @@ std::vector<std::byte> encodeMaterialArtifact(MaterialKind kind, AssetId texture
   for (float component : baseColorFactor) appendFloatLE(out, component);
   appendFloatLE(out, metallicFactor);
   appendFloatLE(out, roughnessFactor);
+  appendU64LE(out, normalMapTexture);
 
   return out;
 }
@@ -170,6 +171,10 @@ atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMat
     return ResultT::Err(MaterialArtifactDecodeError::MaterialFactorOutOfRange);
   }
   decoded.roughnessFactor = roughnessFactor;
+
+  // Plan 0029 Section P6/ADR-0074 Section 1: no range check -- `0`
+  // (none) is the established convention, same as textureAsset above.
+  decoded.normalMapTexture = readU64LE(bytes.data() + 56);
 
   return ResultT::Ok(std::move(decoded));
 }

@@ -345,7 +345,9 @@ endfunction()
 # must already be declared via atlantis_add_texture_asset() above.
 function(atlantis_add_material_asset)
   set(options "")
-  set(oneValueArgs NAME SOURCE TEXTURE)
+  # NORMAL_MAP (Plan 0029 Section P9/ADR-0074 Section 1) is optional --
+  # every existing call site omits it and is unaffected.
+  set(oneValueArgs NAME SOURCE TEXTURE NORMAL_MAP)
   set(multiValueArgs "")
   cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
@@ -362,6 +364,13 @@ function(atlantis_add_material_asset)
     message(FATAL_ERROR
       "atlantis_add_material_asset(${ARG_NAME}): TEXTURE '${ARG_TEXTURE}' is not a "
       "previously declared texture asset -- declare it via atlantis_add_texture_asset() first.")
+  endif()
+  if(ARG_NORMAL_MAP)
+    if(NOT DEFINED ATLANTIS_${ARG_NORMAL_MAP}_ARTIFACT_PATH)
+      message(FATAL_ERROR
+        "atlantis_add_material_asset(${ARG_NAME}): NORMAL_MAP '${ARG_NORMAL_MAP}' is not a "
+        "previously declared texture asset -- declare it via atlantis_add_texture_asset() first.")
+    endif()
   endif()
 
   add_custom_command(
@@ -383,6 +392,9 @@ function(atlantis_add_material_asset)
   # so the full build graph is consistent, not to mark this material's
   # stamp stale on a texture content edit.
   add_dependencies(${ARG_NAME}_asset ${ATLANTIS_${ARG_TEXTURE}_TARGET})
+  if(ARG_NORMAL_MAP)
+    add_dependencies(${ARG_NAME}_asset ${ATLANTIS_${ARG_NORMAL_MAP}_TARGET})
+  endif()
 
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS "${ARG_SOURCE}")
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)

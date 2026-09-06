@@ -21,6 +21,9 @@ namespace atlantis::asset_system {
 // Milestone 1 (ADR-0066 item 4) -- cross-validated against the
 // artifact's own decoded values by loadMaterialAsset(), exactly as
 // kind/textureAsset already are.
+// normalMapTexture added by Plan 0029 Section P6/ADR-0074 Section 1 --
+// cross-validated against the artifact's own decoded value by
+// loadMaterialAsset(), exactly as kind/textureAsset already are.
 struct MaterialMetadata {
   AssetId assetId = 0;
   std::string sourceLogicalPath;
@@ -29,6 +32,7 @@ struct MaterialMetadata {
   float baseColorFactor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   float metallicFactor = 1.0f;
   float roughnessFactor = 1.0f;
+  AssetId normalMapTexture = 0;
 };
 
 [[nodiscard]] atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std::string_view text);
