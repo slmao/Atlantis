@@ -365,6 +365,105 @@ change ADR-0072's own 2026-09-06 Accepted Amendment (Spec 0029's
 opened; this amends ADR-0072, not ADR-0074 — see the "Why ADR-0072, not
 ADR-0074" note in that ADR's own Amendment.
 
+## Dependency and Integration Sequencing
+
+This section fixes **how** Plan 0030/Implementation reaches `main`,
+given a real, unavoidable dependency this Spec does not get to choose
+around: **two of the four shader variants this Spec requires do not
+exist on `main` today.**
+
+**The dependency, stated plainly:** `pbr_direct_lit.slang` and
+`pbr_ibl.slang` are on `main`. `pbr_direct_lit_normal_map.slang` and
+`pbr_ibl_normal_map.slang` exist only inside Spec 0029's own
+Milestone 1–5 commits, on the unmerged
+`feature/0029-tangent-space-normal-mapping-foundation` branch. This
+Spec's own Testing & Verification Plan requires real-GPU measurement
+against **all four** variants (no source-inspection exemption — see
+above) — an Implementation branch cut from plain `main` cannot satisfy
+that requirement, because two of the four files it needs to edit and
+measure do not exist there yet.
+
+**This is a delivery-sequencing problem, not an architecture
+question.** It does not change the slope-aware, geometric-normal,
+receiver-side bias formula, `Material`, RHI, or any other design
+content of this Spec or its ADR-0072 Amendment. The sequence below is
+the one, fixed answer — Plan 0030 implements it as written; it is not
+Plan 0030's own choice to make a different branching decision.
+
+1. This PR (#133 — Spec 0030 + the ADR-0072 Proposed Amendment) goes
+   through Human Review and merges to `main` on its own, exactly like
+   every other Spec/ADR pair in this repository's history.
+2. Plan 0030 is drafted, reviewed, and merged to `main` next — against
+   whatever `main` is current at that time (which does **not** yet
+   include Spec 0029's own Milestone 1–5 shader files; Plan 0030's own
+   text acknowledges this and does not assume otherwise).
+3. **Implementation is not branched directly from plain `main`.**
+4. A new branch, `feature/0030-directional-shadow-bias-stability`, is
+   created with `feature/0029-tangent-space-normal-mapping-foundation`'s
+   own completed Milestone 1–5 HEAD as its starting content — not a
+   fresh checkout of `main` — and then brought up to date with the
+   latest `main` via an ordinary `merge` (never `rebase`, never
+   `force-push`), mirroring the same safe-sync pattern already used
+   earlier in this same Spec 0029 effort (`git fetch` +
+   fast-forward/merge, stash only for genuinely uncommitted work).
+5. This one branch therefore carries, together: Spec 0029's own
+   Milestone 1–5 source (including both normal-map shaders), the
+   Spec/Plan 0030 governance documents once merged to `main`, and —
+   critically — all four PBR shader variants this Spec's own bias fix
+   must edit and measure, in one place.
+6. Plan 0030's own bias-formula change is implemented on **this**
+   combined branch, where all four shaders genuinely exist — the
+   real-GPU four-shader-path coverage this Spec's own Testing &
+   Verification Plan requires is carried out here, not deferred or
+   partially substituted.
+7. Spec 0029's own existing, untracked `pbr_normal_map_demo` candidate
+   (generated before this fix, already found to show acne) is
+   discarded outright — never approved, never committed, never reused
+   as a baseline. Once the bias fix lands on the combined branch, Spec
+   0029's own Milestone 5 candidate-generation step is re-run in full,
+   producing a fresh candidate PNG/sidecar, which goes through its own,
+   independent Human Review.
+8. Only after that fresh candidate is approved does work continue:
+   Spec 0029's own Milestone 6 (golden commit) and Milestone 7 (final
+   verification/registry closeout), and Spec 0030's own final
+   verification (all four shader paths, compare-first against every
+   existing golden, Validation Layers clean) — both completed on the
+   same combined branch.
+9. **Exactly one Implementation PR is opened, base `main`, from the
+   combined branch** — never two separate PRs waiting on each other.
+   Its own description links Spec/Plan 0029, Spec/Plan 0030, the
+   ADR-0072 Accepted Amendment (once accepted), and both Specs' own
+   complete verification results, including the new golden's own
+   Human Review approval.
+10. `feature/0029-tangent-space-normal-mapping-foundation` itself is
+    never separately merged and never deleted or rewritten — it
+    remains, permanently, the real historical record of Milestone 1–5
+    exactly as they were implemented and reviewed; the combined branch
+    above starts from its content but is a distinct branch with its
+    own distinct history from that point forward.
+
+**Explicitly rejected alternatives** (each already considered and
+rejected — Plan 0030 does not re-litigate this choice):
+
+- **Merge Spec 0029 first, on its own, to unblock Spec 0030.** Rejected
+  — this would require either approving the known-defective candidate
+  (never acceptable) or leaving Spec 0029 merged with Milestone 6–7
+  incomplete and no valid golden, which this repository's own
+  Milestone-atomicity discipline does not permit.
+- **Fix only the two `main`-resident shaders now, defer the two
+  normal-map twins to "whenever Spec 0029 eventually merges."**
+  Rejected — this Spec's own Goals require one shared bias contract
+  across all four variants verified together, not a partial fix that
+  leaves two shipped shaders silently unaudited against the same
+  defect class this Spec exists to close.
+- **A stacked PR, basing Spec 0030's own Implementation branch on
+  Spec 0029's still-open feature branch/PR instead of `main`.**
+  Rejected — this repository's own git workflow bases every PR on
+  `main`; a PR based on another unmerged branch is exactly the
+  "two Implementation PRs waiting on each other" shape this sequencing
+  exists to avoid, and complicates review, CI, and merge order for no
+  benefit the combined-branch approach above does not already provide.
+
 ## Testing & Verification Plan
 
 All of the following are **Plan-stage requirements this Spec fixes now,

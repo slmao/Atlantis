@@ -764,14 +764,20 @@ geometric-normal) rather than a mechanism change.
 `pbr_direct_lit.slang` and `pbr_ibl.slang` (both `main`-resident,
 unrelated to Spec 0029) and `pbr_direct_lit_normal_map.slang`/
 `pbr_ibl_normal_map.slang` (both currently on the unmerged Spec 0029
-feature branch) must all carry the identical replacement. Plan 0030 is
-responsible for **actually executing the real-GPU acne/ground-shadow
-measurement (Spec 0030's own Testing & Verification Plan) against all
-four**, with no exemption for a variant an existing fixture does not
-already exercise under a curved receiver — textual identity of the
-bias computation across all four (mirroring ADR-0074's own "exact twin
-of its sibling" discipline) is a required, supplementary check, never
-a substitute for real-GPU behavioral coverage on any of the four.
+feature branch, not on `main`) must all carry the identical
+replacement. Plan 0030 is responsible for **actually executing the
+real-GPU acne/ground-shadow measurement (Spec 0030's own Testing &
+Verification Plan) against all four**, with no exemption for a variant
+an existing fixture does not already exercise under a curved receiver
+— textual identity of the bias computation across all four (mirroring
+ADR-0074's own "exact twin of its sibling" discipline) is a required,
+supplementary check, never a substitute for real-GPU behavioral
+coverage on any of the four. Because two of the four shaders do not
+exist on plain `main`, Plan 0030 cannot reach this coverage from a
+branch cut directly from `main` — see Spec 0030's own **Dependency and
+Integration Sequencing** section for the one, fixed branch/merge/PR
+sequence this requires; this Amendment does not authorize any other
+branching approach.
 
 ### Golden impact and Human Review gate
 
