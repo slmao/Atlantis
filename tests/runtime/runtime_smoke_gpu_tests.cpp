@@ -101,6 +101,12 @@ struct RuntimeSmokeTestAccess {
     return app.world_->renderableEntities().size();
   }
 
+  // Plan 0028 Milestone 2: one GPU Mesh/Material resource per distinct
+  // AssetId, regardless of how many entities reference it -- reads the
+  // same private maps runFrame()'s own DrawItem loop already uses.
+  static std::size_t meshResourceMapSize(const RuntimeApplication& app) { return app.meshResourceMap_.size(); }
+  static std::size_t materialResourceMapSize(const RuntimeApplication& app) { return app.materialResourceMap_.size(); }
+
   [[nodiscard]] static World& world(RuntimeApplication& app) { return *app.world_; }
 
   [[nodiscard]] static FrameLightingData lightingPayloadBytes(const RuntimeApplication& app) {
@@ -158,6 +164,21 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
       std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.spv";
   config.pbrDirectLitFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.refl.json";
+  // Plan 0028 Milestone 2: mirrors main.cpp's own identical population --
+  // the default scene now configures an environment (sky + IBL), which
+  // this TEST_CASE's own config previously left unset.
+  config.environmentArtifactPath = ATLANTIS_RUNTIME_ENVIRONMENT_ARTIFACT_PATH;
+  config.environmentMetadataPath = ATLANTIS_RUNTIME_ENVIRONMENT_METADATA_PATH;
+  config.pbrIblVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl.vert.spv";
+  config.pbrIblVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl.vert.refl.json";
+  config.pbrIblFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl.frag.spv";
+  config.pbrIblFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl.frag.refl.json";
+  config.skyVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.vert.spv";
+  config.skyVertexShaderReflectionPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.vert.refl.json";
+  config.skyFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.frag.spv";
+  config.skyFragmentShaderReflectionPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.frag.refl.json";
   // Plan 0024 Milestone 6/7: mirrors main.cpp's own identical
   // population of the two output-transform shader pairs.
   config.outputTransformUnormVertexShaderSpirvPath =
@@ -178,8 +199,7 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
       std::string(ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR) + "/output_transform_srgb.frag.refl.json";
   // Plan 0027 Milestone 8 (ADR-0072 D-1): the shadow-casting shader pair
   // -- unconditionally required (mirrors main.cpp's own identical
-  // population), regardless of this test's own no-environment
-  // configuration above.
+  // population).
   config.shadowCastVertexShaderSpirvPath =
       std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.vert.spv";
   config.shadowCastVertexShaderReflectionPath =
@@ -203,15 +223,22 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   }
   REQUIRE(app.shouldContinue());  // did not fail during those frames
 
-  // V22: exactly 5 DrawItems reach Renderer::drawFrame() on a successful
-  // frame -- world_scene.scene.txt declares 5 Renderable nodes (D11),
-  // matching the former hardcoded validation scene's own count exactly.
-  // Vulkan Validation Layers reporting zero warnings/errors for the full
+  // Plan 0028 Milestone 2: exactly 6 DrawItems reach Renderer::drawFrame()
+  // on a successful frame -- integrated_showcase_demo_scene.scene.txt
+  // declares 6 Renderable nodes (one ground plus five spheres). Vulkan
+  // Validation Layers reporting zero warnings/errors for the full
   // multi-item span is this test's own existing crash-on-validation-hit
   // mechanism (enableValidationLayers = true above), unchanged: reaching
   // this REQUIRE at all already proves no validation hit aborted the
   // process.
-  REQUIRE(atlantis::runtime::RuntimeSmokeTestAccess::renderableEntityCount(app) == 5);
+  REQUIRE(atlantis::runtime::RuntimeSmokeTestAccess::renderableEntityCount(app) == 6);
+
+  // One GPU Mesh resource per distinct meshAsset (pbr_sphere,
+  // ground_plane) and one GPU Material resource per distinct
+  // materialAsset (the four PBR materials), regardless of the 6 entities
+  // referencing them.
+  REQUIRE(atlantis::runtime::RuntimeSmokeTestAccess::meshResourceMapSize(app) == 2);
+  REQUIRE(atlantis::runtime::RuntimeSmokeTestAccess::materialResourceMapSize(app) == 4);
 
   // Plan 0022 Section M3: real, direct, byte-level proof that
   // RuntimeApplication::runFrame() itself -- not only the structurally
@@ -266,12 +293,12 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   // bypasses or reorders it.
   using atlantis::runtime::RuntimeSmokeTestAccess;
 
-  // The real, default world_scene.scene.txt declares zero light nodes
-  // (confirmed: `grep -c light assets/scenes/world_scene.scene.txt`
-  // returns no matches) -- this test does not assume a light is already
-  // present after the 3 frames above, it adds one.
+  // The real, default integrated_showcase_demo_scene.scene.txt declares
+  // one Directional light node and zero Point lights -- this test adds
+  // its own Point light below and checks it coexists with the scene's
+  // own Directional one, not that no light is present yet.
   const FrameLightingData beforeAnyLight = RuntimeSmokeTestAccess::lightingPayloadBytes(app);
-  REQUIRE(beforeAnyLight.directionalLightCount == 0);
+  REQUIRE(beforeAnyLight.directionalLightCount == 1);
   REQUIRE(beforeAnyLight.pointLightCount == 0);
 
   // World::createEntity()/setLight() against the real, running app's own
@@ -296,7 +323,7 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   app.runFrame();
   REQUIRE(app.shouldContinue());
   const FrameLightingData afterLightAdded = RuntimeSmokeTestAccess::lightingPayloadBytes(app);
-  CHECK(afterLightAdded.directionalLightCount == 0);
+  CHECK(afterLightAdded.directionalLightCount == 1);
   CHECK(afterLightAdded.pointLightCount == 1);
   CHECK(afterLightAdded.pointLights[0].position[0] == 1.0f);
   CHECK(afterLightAdded.pointLights[0].position[1] == 1.0f);
