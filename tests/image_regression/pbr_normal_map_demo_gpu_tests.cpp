@@ -1,4 +1,5 @@
 #include "fixture/pbr_normal_map_demo_fixture.h"
+#include "support/golden_validity.h"
 
 #include <atlantis/result.h>
 #include <atlantis/runtime/bootstrap_config.h>
@@ -12,17 +13,32 @@
 #include <string>
 
 // Plan 0029 Section P19: the normal-map demo fixture's own GPU-required
-// coverage. Milestone 5 lands only the non-degenerate-frame proof and
-// the two discriminative tests below -- no golden PNG/sidecar and no
-// capture-compare TEST_CASE yet (ADR-0042's own two-phase process,
-// Milestone 6), mirroring integrated_showcase_demo_gpu_tests.cpp's own
-// identical structure and staging.
+// coverage. Milestone 5 landed the non-degenerate-frame proof and the
+// two discriminative tests below with no golden PNG/sidecar and no
+// capture-compare TEST_CASE yet (ADR-0042's own two-phase process).
+// Milestone 6 (this file's own final TEST_CASE below) lands together
+// with the golden PNG/sidecar themselves, in their own separate commit,
+// mirroring integrated_showcase_demo_gpu_tests.cpp's own identical
+// "Full capture-compare cycle ..." TEST_CASE exactly -- captured
+// against R1 only (includeShadowCasters=true, useControlMaterial=false,
+// the fixture's own default render path), via ADR-0042's own "Initial
+// baseline bootstrap" category. Per the 2026-09-07 Human-Approved
+// Implementation Deviation
+// (../../plans/0029-tangent-space-normal-mapping-foundation.md#human-approved-implementation-deviation--2026-09-07),
+// this golden's own sphere shows a disclosed, pre-existing Spec 0027/
+// ADR-0072 shadow-bias limitation (grazing-angle self-shadow acne),
+// confirmed unrelated to this file's own tangent-space/normal-map work
+// -- accepted as this scene's own initial baseline as-is, not deferred
+// further.
 
+using atlantis::image_regression::compareBuffers;
+using atlantis::image_regression::loadAndValidateGolden;
 using atlantis::image_regression::PbrNormalMapDemoFixture;
 using atlantis::image_regression::kPbrNormalMapDemoExtentPixels;
 using atlantis::image_regression::PixelBuffer;
 using atlantis::image_regression::renderPbrNormalMapDemoFrame;
 using atlantis::image_regression::setUpPbrNormalMapDemoFixture;
+using atlantis::image_regression::writeFailureArtifacts;
 using atlantis::runtime::BootstrapConfig;
 
 namespace {
@@ -252,6 +268,55 @@ TEST_CASE("PBR normal-map demo: the sphere casts a real shadow onto the ground a
   // this bound does not hold, this assertion fails and Implementation
   // must stop and request Human Review, never silently retune it.
   CHECK(r2RgbSum - r1RgbSum > 15);
+
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+namespace {
+constexpr const char* kPbrNormalMapDemoGoldenName = "pbr_normal_map_demo/pbr_normal_map_demo_512x512_rgba8unorm";
+constexpr const char* kPbrNormalMapDemoGoldenSlug = "pbr_normal_map_demo_512x512_rgba8unorm";
+}  // namespace
+
+// Milestone 6: lands together with the golden PNG/sidecar themselves,
+// in their own separate commit, per ADR-0042's own two-phase capture
+// process -- mirrors integrated_showcase_demo_gpu_tests.cpp's own
+// identical "Full capture-compare cycle ..." TEST_CASE exactly. Uses
+// the fixture's own default (R1: real casters, real normal-mapped
+// material) render path, matching the golden generator's own path
+// exactly.
+TEST_CASE("Full capture-compare cycle against the committed pbr_normal_map_demo golden passes",
+          "[image_regression][gpu][pbr_normal_map]") {
+  const std::filesystem::path outputDir = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
+  const std::filesystem::path actualArtifact = outputDir / (std::string(kPbrNormalMapDemoGoldenSlug) + "_actual.png");
+  const std::filesystem::path diffArtifact = outputDir / (std::string(kPbrNormalMapDemoGoldenSlug) + "_diff.png");
+  std::filesystem::remove(actualArtifact);
+  std::filesystem::remove(diffArtifact);
+
+  auto fixtureResult = setUpFixture();
+  REQUIRE(fixtureResult.isOk());
+  PbrNormalMapDemoFixture& fixture = fixtureResult.value();
+
+  auto renderResult = renderPbrNormalMapDemoFrame(fixture);
+  REQUIRE(renderResult.isOk());
+  const PixelBuffer& actual = renderResult.value();
+
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult = loadAndValidateGolden(goldensDir / (std::string(kPbrNormalMapDemoGoldenName) + ".png"),
+                                             goldensDir / (std::string(kPbrNormalMapDemoGoldenName) + ".sidecar.txt"));
+  {
+    INFO("INVALID GOLDEN: the committed pbr_normal_map_demo golden must load and validate cleanly");
+    REQUIRE(goldenResult.isOk());
+  }
+  const auto& validatedGolden = goldenResult.value();
+
+  REQUIRE(actual.width == validatedGolden.pixels.width);
+  REQUIRE(actual.height == validatedGolden.pixels.height);
+
+  const auto report = compareBuffers(actual, validatedGolden.pixels);
+  if (!report.passed) {
+    (void)writeFailureArtifacts(outputDir, kPbrNormalMapDemoGoldenSlug, actual, validatedGolden.pixels);
+  }
+  REQUIRE(report.passed);
 
   REQUIRE(fixture.device->waitIdle().isOk());
 }
