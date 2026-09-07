@@ -113,11 +113,21 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   # shadow_cast shader pair's own output directory, mirroring
   # ATLANTIS_RUNTIME_SKY_SHADER_DIR's own sourcing exactly.
   ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+  # Plan 0029 Section P13: pbr_render_gpu_tests.cpp's own new binding-5
+  # GPU test needs the pbr_ibl_normal_map shader pair's own output
+  # directory, mirroring ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR's own
+  # sourcing exactly.
+  ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_ibl_normal_map_SHADER_OUTPUT_DIR}"
+  # Plan 0029 Section P15: material_realization_gpu_tests.cpp's own new
+  # normal-map upload-ordering TEST_CASE needs the pbr_direct_lit_normal_map
+  # shader pair's own output directory, mirroring
+  # ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR's own sourcing exactly.
+  ATLANTIS_RUNTIME_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_direct_lit_normal_map_SHADER_OUTPUT_DIR}"
 )
 
 add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
   pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders output_transform_srgb_shaders sky_shaders
-  shadow_cast_shaders
+  shadow_cast_shaders pbr_direct_lit_normal_map_shaders pbr_ibl_normal_map_shaders
   ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
   ${ATLANTIS_ibl_studio_TARGET})
 

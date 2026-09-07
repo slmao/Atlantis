@@ -56,6 +56,12 @@ struct MaterialAssetData {
   float baseColorFactor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   float metallicFactor = 1.0f;
   float roughnessFactor = 1.0f;
+  // Plan 0029 Section P5/P6/ADR-0074 Section 1: `0` = none, the same
+  // "unassigned" convention `Renderable::meshAsset`'s own default
+  // already establishes. Legal (non-zero) only when kind ==
+  // PbrDirectLit -- enforced at parse time (material_source.cpp),
+  // never here.
+  AssetId normalMapTexture = 0;
 };
 
 }  // namespace atlantis::asset_system

@@ -864,3 +864,66 @@ capture.
 **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
 Approval recorded 2026-09-07, accepting this Amendment in full, as
 drafted, with no change.
+
+## Empirical Deferral Record — 2026-09-07
+
+**Status of this section: recorded, not Accepted as a new Decision.**
+The 2026-09-07 Accepted Amendment immediately above (and this ADR's own
+original Decision, D-1 through D-7, and the 2026-09-06 Accepted
+Amendment) are **preserved verbatim and unmodified** — this section
+neither rewrites nor supersedes any of their Decision text. It records
+a real, subsequent empirical finding and an explicit deferral, per the
+same governance discipline this ADR's own prior amendments already
+established (append, never edit approved Decision text in place).
+
+**The 2026-09-07 Accepted Amendment's own bias policy has been found,
+empirically, to be unimplementable as specified — and is not to be
+implemented.** A real-GPU grazing-receiver/true-occluder discriminator
+found that the bounded slope-aware receiver-depth bias this Amendment's
+own Decision describes (`kShadowBiasMin`/`kShadowBiasSlopeScale`/
+`kShadowBiasMax`, uniform across all four PBR shader variants) —
+concretely, the one real candidate derived for it
+(`0.0015`/`0.003`/`0.040`) — **completely erases a real, physically
+valid nearby occluder's own shadow** whenever tuned strongly enough to
+suppress the grazing-angle self-shadow-acne it was designed to fix; no
+candidate within this Amendment's own formula shape resolves both
+concerns simultaneously (full evidence:
+[Spec 0030's own Human Review Deferral Record — 2026-09-07](../specs/0030-directional-shadow-bias-stability.md#human-review-deferral-record--2026-09-07)).
+A follow-up investigation of this ADR's own D-5 Alternatives Considered
+(items 3 and 4 — Vulkan rasterization depth bias, normal-offset shadow
+mapping) and their combination found the identical structural failure
+in each: the bias magnitude needed to suppress the acne this ADR's own
+Amendment targets always exceeds the bias magnitude that would erase a
+real, nearby occluder's own shadow, by roughly one to two orders of
+magnitude, with no overlap, for every mechanism tested.
+
+**Current production state, explicit.** `pbr_direct_lit.slang`,
+`pbr_ibl.slang`, `pbr_direct_lit_normal_map.slang`, and
+`pbr_ibl_normal_map.slang` all continue to use, unmodified, D-5's own
+original fixed `kShadowBias = 0.0015` literal — the 2026-09-07 Accepted
+Amendment's own bias policy is **not implemented** in any shipped or
+in-flight code, and no RHI or shader change from the follow-up
+alternatives investigation was ever committed (all temporary probe code
+was reverted and removed). The grazing-angle self-shadow-acne artifact
+this Amendment exists to fix remains present, unfixed, and disclosed —
+accepted, by explicit Human Review direction (chat, 2026-09-07), as a
+known, pre-existing limitation of this ADR's own D-5 mechanism for Spec
+0029's own `pbr_normal_map_demo` golden (see
+[Plan 0029's own Human-Approved Implementation Deviation — 2026-09-07](../plans/0029-tangent-space-normal-mapping-foundation.md#human-approved-implementation-deviation--2026-09-07)),
+not as a defect of Spec 0029/ADR-0074's own tangent-space or normal-map
+work.
+
+**No alternative Decision is selected by this record.** Neither the
+2026-09-07 Amendment's own bias policy, nor Alternatives 3/4, nor any
+technique outside this ADR's own existing scope (PCF, cascaded shadow
+maps, variance/exponential shadow maps) is adopted, rejected outright,
+or otherwise decided here — this record only states that the one
+Amendment already `Accepted` above has been found empirically
+unimplementable as written, and that resuming this work requires **a
+new, reviewed Amendment or Correction to this ADR**, backed by its own
+real-GPU evidence and its own Human Review — never a silent
+Implementation-time substitution.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — empirical deferral
+recorded 2026-09-07, per the same Human Review direction recorded in
+Spec 0030's own Human Review Deferral Record above.

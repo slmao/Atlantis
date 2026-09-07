@@ -86,6 +86,68 @@ TEST_CASE("Material is movable, not copyable", "[renderer][ownership]") {
   STATIC_REQUIRE_FALSE(std::is_copy_assignable_v<Material>);
 }
 
+// Plan 0029 Section P18 (ADR-0074): the two new normalMapTexture
+// preconditions, each isolated to exactly one captured failure by
+// keeping every other precondition satisfied.
+TEST_CASE("A normalMapTexture without a base-color sampledTexture/sampler pair fires exactly one guard failure",
+          "[renderer][ownership][normal_map]") {
+  std::vector<std::string> failures;
+  ScopedFailureHandler failureHandler(failures);
+
+  FakeSampledTexture fakeNormalMap("normal_map");
+  // pushConstantLayout is PbrDirectLit here so the second precondition
+  // (layout must be PbrDirectLit) stays satisfied -- isolates the
+  // failure to the first precondition (base-color pair must be present).
+  Material material(std::make_unique<FakePipeline>(), atlantis::renderer::MaterialPushConstantLayout::PbrDirectLit,
+                     /*sampledTexture=*/nullptr, /*sampler=*/nullptr, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 1.0f,
+                     MaterialEnvironmentBinding::None, &fakeNormalMap);
+  REQUIRE(failures.size() == 1);
+}
+
+TEST_CASE("A normalMapTexture on a non-PbrDirectLit Material fires exactly one guard failure",
+          "[renderer][ownership][normal_map]") {
+  std::vector<std::string> failures;
+  ScopedFailureHandler failureHandler(failures);
+
+  FakeSampledTexture fakeTexture("texture");
+  FakeSampler fakeSampler("sampler");
+  FakeSampledTexture fakeNormalMap("normal_map");
+  // The base-color pair is present here so the first precondition stays
+  // satisfied -- isolates the failure to the second precondition
+  // (layout must be PbrDirectLit).
+  Material material(std::make_unique<FakePipeline>(), atlantis::renderer::MaterialPushConstantLayout::ObjectToWorldOnly,
+                     &fakeTexture, &fakeSampler, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 1.0f, MaterialEnvironmentBinding::None,
+                     &fakeNormalMap);
+  REQUIRE(failures.size() == 1);
+}
+
+TEST_CASE("A normalMapTexture with a valid base-color pair and PbrDirectLit layout constructs cleanly, for both "
+          "MaterialEnvironmentBinding::None and Ibl",
+          "[renderer][ownership][normal_map]") {
+  FakeSampledTexture fakeTexture("texture");
+  FakeSampler fakeSampler("sampler");
+  FakeSampledTexture fakeNormalMap("normal_map");
+
+  {
+    std::vector<std::string> failures;
+    ScopedFailureHandler failureHandler(failures);
+    Material material(std::make_unique<FakePipeline>(), atlantis::renderer::MaterialPushConstantLayout::PbrDirectLit,
+                       &fakeTexture, &fakeSampler, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 1.0f,
+                       MaterialEnvironmentBinding::None, &fakeNormalMap);
+    CHECK(material.normalMapTexture() == &fakeNormalMap);
+    REQUIRE(failures.empty());
+  }
+  {
+    std::vector<std::string> failures;
+    ScopedFailureHandler failureHandler(failures);
+    Material material(std::make_unique<FakePipeline>(), atlantis::renderer::MaterialPushConstantLayout::PbrDirectLit,
+                       &fakeTexture, &fakeSampler, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 1.0f, MaterialEnvironmentBinding::Ibl,
+                       &fakeNormalMap);
+    CHECK(material.normalMapTexture() == &fakeNormalMap);
+    REQUIRE(failures.empty());
+  }
+}
+
 TEST_CASE("Renderer keeps every special member at its trivial default -- copyable and movable, no member state",
           "[renderer][ownership]") {
   STATIC_REQUIRE(std::is_copy_constructible_v<Renderer>);

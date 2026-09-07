@@ -49,14 +49,14 @@ void writeFile(const fs::path& path, const std::string& content) {
 }
 
 constexpr std::string_view kValidSource =
-    "atlantis_material_source_version: 2\n"
+    "atlantis_material_source_version: 3\n"
     "kind: unlit_textured\n"
     "texture: textures/textured_quad_source_unorm.png\n"
     "filter: linear\n"
     "address_mode: repeat\n";
 
 constexpr std::string_view kValidPbrSource =
-    "atlantis_material_source_version: 2\n"
+    "atlantis_material_source_version: 3\n"
     "kind: pbr_direct_lit\n"
     "texture: textures/textured_quad_source_srgb.png\n"
     "filter: linear\n"
@@ -145,7 +145,7 @@ TEST_CASE("cookMaterial rejects a source naming a texture with a malformed logic
   TempDirGuard dir("texture_logical_path_invalid");
   const fs::path sourcePath = dir.path / "bad_texture_ref.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 2\n"
+            "atlantis_material_source_version: 3\n"
             "kind: unlit_textured\n"
             "texture: /absolute/not/allowed.png\n"
             "filter: linear\n"
@@ -232,7 +232,7 @@ TEST_CASE("cookMaterial reports BaseColorFactorOutOfRange for a baseColorFactor 
   TempDirGuard dir("base_color_out_of_range");
   const fs::path sourcePath = dir.path / "bad.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 2\n"
+            "atlantis_material_source_version: 3\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -253,7 +253,7 @@ TEST_CASE("cookMaterial reports MaterialFactorOutOfRange for a negative metallic
   TempDirGuard dir("metallic_out_of_range");
   const fs::path sourcePath = dir.path / "bad.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 2\n"
+            "atlantis_material_source_version: 3\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -274,7 +274,7 @@ TEST_CASE("cookMaterial reports MaterialFactorOutOfRange for a roughness_factor 
   TempDirGuard dir("roughness_out_of_range");
   const fs::path sourcePath = dir.path / "bad.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 2\n"
+            "atlantis_material_source_version: 3\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"

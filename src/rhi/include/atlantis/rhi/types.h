@@ -95,6 +95,7 @@ enum class DepthFormat {
 enum class VertexAttributeFormat {
   Float3,
   Float2,  // new (Spec 0016) -- UV vertex attributes
+  Float4,  // new (Spec 0029/ADR-0073) -- tangent vertex attribute (xyz + handedness w)
 };
 
 enum class BufferPurpose {

@@ -5,6 +5,7 @@
 #include <atlantis/asset_system/logical_path.h>
 #include <atlantis/asset_system/mesh_artifact.h>
 #include <atlantis/asset_system/mesh_source.h>
+#include <atlantis/asset_system/mesh_tangent_generation.h>
 
 #include <cstdio>
 #include <filesystem>
@@ -100,8 +101,11 @@ atlantis::Result<std::monostate, CookError> cookStaticMesh(const std::string& so
   if (parsedResult.isErr()) return ResultT::Err(CookError::SourceParseFailed);
   const ParsedMeshSource& parsed = parsedResult.value();
 
+  const auto tangentsResult = generateTangents(parsed);
+  if (tangentsResult.isErr()) return ResultT::Err(tangentsResult.error());
+
   const AssetId assetId = computeAssetId(normalizedLogicalPath);
-  const std::vector<std::byte> artifactBytes = encodeMeshArtifact(assetId, parsed);
+  const std::vector<std::byte> artifactBytes = encodeMeshArtifact(assetId, parsed, tangentsResult.value());
 
   AssetMetadata metadata;
   metadata.assetId = assetId;

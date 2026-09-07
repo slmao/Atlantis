@@ -1,7 +1,7 @@
 # Plan: Tangent-Space Normal Mapping Foundation
 
 - **Spec:** [specs/0029-tangent-space-normal-mapping-foundation.md](../specs/0029-tangent-space-normal-mapping-foundation.md) (`Approved`)
-- **Status:** Approved / Ready for Implementation
+- **Status:** Approved / **Implementation complete in [PR #135](https://github.com/slmao/Atlantis/pull/135); pending merge** (not yet merged — this Plan is not "done" until a human merges that PR)
 - **Author:** slmao
 - **Human Review Approval (2026-09-06):** Reviewed and approved by
   slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
@@ -1478,3 +1478,146 @@ itself has merged to `main` — not before.
 **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
 Approval recorded 2026-09-06, accepting this correction in full, as
 drafted, with no change.
+
+## Human-Approved Implementation Deviation — 2026-09-07
+
+**Status:** Approved by Human Review, 2026-09-07 (chat), against this
+Plan's own Implementation branch (`feature/0029-tangent-space-normal-mapping-foundation`).
+This section does not change this Plan's own `Approved / Ready for
+Implementation` status; it records an explicit, human-directed
+deviation from this Plan's own Milestone 6 gate, per AGENTS.md's own
+"if reality forces a deviation from the plan, stop and call it out
+explicitly ... rather than silently drifting."
+
+**The deviation, precisely.** Milestone 5 produced a real, GPU-captured
+`pbr_normal_map_demo` candidate whose sphere shows a visible field of
+near-black granular artifacts along its own grazing-angle/terminator
+region. A dedicated investigation (Spec 0030, ADR-0072's own 2026-09-07
+Amendment, and a follow-up strategy-correction probe covering caster-
+side Vulkan raster depth bias, geometric-normal world-position offset,
+and their combination) traced this artifact, via a controlled four-way
+A/B/C/D capture, to `computeShadowFactor()`'s own fixed
+`kShadowBias = 0.0015` literal (ADR-0072 D-5, unchanged since Spec
+0027) — **not** to this Plan's own tangent-generation algorithm, TBN
+construction, or normal-map sampling, all three of which the same
+investigation independently ruled out (the identical artifact reproduces
+on the sphere's own **control** material, which never builds a TBN
+basis or samples a normal map at all). Every real-GPU alternative bias
+mechanism investigated (Spec 0030's own originally-approved slope-aware
+receiver-depth bias, caster-side raster depth bias, geometric-normal
+position offset, and a combination of the latter two) was found,
+empirically, to erase a real, physically valid nearby occluder's own
+shadow whenever tuned strongly enough to suppress this artifact — see
+[Spec 0030](../specs/0030-directional-shadow-bias-stability.md)'s own
+Human Review Deferral Record and
+[ADR-0072](../adr/0072-directional-shadow-map-resource-pass-and-pbr-integration.md)'s
+own empirical deferral record for the full evidence.
+
+**User's explicit direction (chat, 2026-09-07):** defer shadow-bias
+remediation work entirely and continue Spec 0029 to completion using
+the existing Milestone 5 candidate as-is. Concretely:
+
+1. **The current, untracked Milestone 5 candidate is approved to
+   proceed to Milestone 6** — no re-capture, no parameter change, no
+   camera/light/geometry/material edit of any kind. Its own fixed,
+   verified content hashes (SHA-256, recomputed and cross-checked
+   immediately before this approval, both from disk and from the
+   staged git blob at commit time):
+   - PNG: `6fb4339782da365fb09bbd25412793c6fde92a9ec0807fc4d9521106ae5ffe0`
+     (see the 2026-09-07 hash-citation correction below — this string
+     is one hex digit short of a complete SHA-256)
+   - sidecar: `45c8d3d0d0a4fe468b5c433b541bf4b9b6733eff50b354fb9ba522a2ed14ceb`
+     (same correction applies)
+2. **The visible black granular artifact is accepted, explicitly, as a
+   disclosed, pre-existing limitation of Spec 0027/ADR-0072's own
+   shared, fixed `kShadowBias` mechanism** — a limitation this Plan's
+   own tangent-space normal-mapping work neither introduces nor is
+   responsible for fixing, confirmed by the A/B/C/D control-material
+   isolation above. It is **not** classified as a tangent-generation,
+   TBN-construction, or normal-map-sampling defect of this Plan's own
+   Implementation.
+3. **No camera, light, geometry, bias, normal-map texture, or
+   discriminative-pixel/threshold value changes** as part of this
+   deviation — Milestone 5's own already-approved fixed scene and
+   Milestone 5/P19's own fixed `(256,256)`/`>50` (normal-map) and
+   `(198,273)`/`>15` (shadow) discriminative pixels and thresholds
+   remain exactly as this Plan already fixed them, unmodified, and
+   both remain real, measured-passing discriminators on this exact
+   candidate (see this Plan's own Milestone 6/7 real measurements
+   below).
+4. **A future shadow-bias remediation, once a real, GPU-verified fix
+   passes Spec 0030's own full acceptance gate, may change this exact
+   golden's own pixel content** — when that happens, the resulting
+   diff goes through its own, independent ADR-0042 Human Review
+   re-capture (golden-update-reason category 1, "Rendering change"),
+   exactly like any other real rendering change; this deviation record
+   is not itself standing authorization for that future re-capture.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-07, directing this exact deviation, as
+described above, with no further condition.
+
+## Milestone 7 Closeout — 2026-09-07
+
+Milestone 7's full Verification Checklist was executed end-to-end on
+`feature/0029-tangent-space-normal-mapping-foundation` at
+`f22a30d` (Milestone 6's own commit), with real results:
+
+- Debug build: succeeded. Release build: succeeded.
+- `ctest -C Debug -LE gpu`: 917/917 passed. `ctest -C Release -LE gpu`:
+  916/916 passed (one fewer is the pre-existing, documented Debug-only
+  `ATLANTIS_ASSERT` test gap, not a regression).
+- `ctest -C Debug -L gpu`: 99/99 passed. `ctest -C Release -L gpu`:
+  99/99 passed. Vulkan Validation Layers output (`ctest -L gpu -V`,
+  both configs) is clean — zero `VUID`/Validation Error/Validation
+  Warning.
+- All 9 pre-existing goldens confirmed byte-identical. The new
+  `pbr_normal_map_demo` capture-compare `TEST_CASE` passes, run twice,
+  byte-identical both times. `world_scene_loaded` passes individually
+  (7 assertions). `sky_background` passes individually (69 assertions).
+  The normal-map discriminative pixel `(256,256)` measures
+  `delta = 103` (gate `>50`, pass). The shadow discriminative pixel
+  `(198,273)` measures `delta = 160` (gate `>15`, pass).
+- A separate `ATLANTIS_BUILD_TESTS=OFF` build was verified: the Runtime
+  builds and runs, assets cook correctly (262 files, including the new
+  normal-map assets), and zero test executables are produced.
+- Module/link boundaries, `Vk*` isolation, RHI public-API diff, and
+  `/w14062` exhaustiveness were all re-checked and remain within this
+  Plan's own established constraints; no violation found.
+
+Implementation is complete on this branch. It is carried by
+[PR #135](https://github.com/slmao/Atlantis/pull/135)
+(`feat: implement tangent-space normal mapping foundation`), which is
+**not yet merged** — this Plan's own status line above reflects that
+honestly; it will not say "merged" until a human actually merges that
+PR.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Milestone 7
+closeout recorded 2026-09-07.
+
+## Hash-Citation Correction — 2026-09-07
+
+The SHA-256 values quoted verbatim in the
+[Human-Approved Implementation Deviation](#human-approved-implementation-deviation--2026-09-07)
+section above (as given in chat, 2026-09-07) are each **63 hex
+characters, one short of a complete 64-character SHA-256** — almost
+certainly a transcription artifact from when the reference values were
+pasted into chat, not a different hash. This does **not** indicate the
+golden file was regenerated, modified, or is otherwise in question: it
+is the same, untouched Milestone 5 candidate throughout, and its real,
+complete, independently-recomputed digests (from disk, matching the
+staged git blob at commit `f22a30d`) are:
+
+- PNG: `6fb4339782da365fb09bbd25412793c6fde92a9ec0807fc4d9521106ae5ffe0d`
+- sidecar: `45c8d3d0d0a4fe468b5c433b541bf4b9b6733eff50b354fb9ba522a2ed14cebe`
+
+Each begins with exactly the 63-character string quoted in chat, with
+one additional trailing hex digit. No other property of the golden
+(pixel content, sidecar fields, git blob) changed. This correction is
+disclosed for record accuracy only; it changes no Decision, gate, or
+approval already recorded above.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — correction
+recorded 2026-09-07 by the implementing agent; disclosed for Human
+Review's own awareness, not requiring re-approval since no content or
+decision changed.

@@ -347,3 +347,65 @@ set(ATLANTIS_integrated_showcase_demo_scene_ARTIFACT_PATH "${ATLANTIS_integrated
 set(ATLANTIS_integrated_showcase_demo_scene_METADATA_PATH "${ATLANTIS_integrated_showcase_demo_scene_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_integrated_showcase_demo_scene_MANIFEST_PATH "${ATLANTIS_integrated_showcase_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
 set(ATLANTIS_integrated_showcase_demo_scene_TARGET "${ATLANTIS_integrated_showcase_demo_scene_TARGET}" PARENT_SCOPE)
+
+# Plan 0029 Section P19 (ADR-0074): the fixed 4x4 RGB8 Unorm normal-map
+# source texture -- all 16 pixels exactly (204,128,230), generated via a
+# temporary, uncommitted stb_image_write helper (never a permanent
+# generator target).
+atlantis_add_texture_asset(
+  NAME normal_map_tilted
+  SOURCE textures/normal_map_tilted_source_unorm.png
+  COLOR_SPACE Unorm
+)
+set(ATLANTIS_normal_map_tilted_ARTIFACT_PATH "${ATLANTIS_normal_map_tilted_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_normal_map_tilted_METADATA_PATH "${ATLANTIS_normal_map_tilted_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_normal_map_tilted_TARGET "${ATLANTIS_normal_map_tilted_TARGET}" PARENT_SCOPE)
+
+# Plan 0029 Section P19: the normal-map demo's own two PbrDirectLit
+# material assets -- pbr_normal_mapped declares the new normal_map:
+# line (NORMAL_MAP arg); pbr_normal_mapped_control is byte-identical
+# minus that line, the discriminative test's own "B" twin, referenced
+# by zero scene nodes (see the scene declaration below).
+atlantis_add_material_asset(
+  NAME pbr_normal_mapped
+  SOURCE materials/pbr_normal_mapped.material.txt
+  TEXTURE textured_quad_srgb
+  NORMAL_MAP normal_map_tilted
+)
+set(ATLANTIS_pbr_normal_mapped_ARTIFACT_PATH "${ATLANTIS_pbr_normal_mapped_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_normal_mapped_METADATA_PATH "${ATLANTIS_pbr_normal_mapped_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_normal_mapped_TARGET "${ATLANTIS_pbr_normal_mapped_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_normal_mapped_LOGICAL_PATH "${ATLANTIS_pbr_normal_mapped_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME pbr_normal_mapped_control
+  SOURCE materials/pbr_normal_mapped_control.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH "${ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_normal_mapped_control_METADATA_PATH "${ATLANTIS_pbr_normal_mapped_control_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_normal_mapped_control_TARGET "${ATLANTIS_pbr_normal_mapped_control_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_normal_mapped_control_LOGICAL_PATH "${ATLANTIS_pbr_normal_mapped_control_LOGICAL_PATH}" PARENT_SCOPE)
+
+# Plan 0029 Section P19: the normal-map demo scene -- one pbr_sphere
+# node bound to pbr_normal_mapped, one ground_plane shadow receiver
+# bound to the existing pbr_dielectric_rough, one Directional light,
+# one camera. Both materials/textures are declared under
+# MATERIAL_DEPENDENCIES/TEXTURE_DEPENDENCIES even though
+# pbr_normal_mapped_control is referenced by zero scene nodes -- the
+# same "declared but only transitively used" tolerance
+# MESH_DEPENDENCIES/TEXTURE_DEPENDENCIES already establish elsewhere in
+# this file; the fixture's own setup phase resolves and realizes the
+# control material independently (see
+# tests/image_regression/fixture/pbr_normal_map_demo_fixture.cpp).
+atlantis_add_scene_asset(
+  NAME pbr_normal_map_demo_scene
+  SOURCE scenes/pbr_normal_map_demo.scene.txt
+  MESH_DEPENDENCIES pbr_sphere ground_plane
+  MATERIAL_DEPENDENCIES pbr_normal_mapped pbr_normal_mapped_control pbr_dielectric_rough
+  TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
+)
+set(ATLANTIS_pbr_normal_map_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_normal_map_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_normal_map_demo_scene_METADATA_PATH "${ATLANTIS_pbr_normal_map_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_normal_map_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_normal_map_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_normal_map_demo_scene_TARGET "${ATLANTIS_pbr_normal_map_demo_scene_TARGET}" PARENT_SCOPE)

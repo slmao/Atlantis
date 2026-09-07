@@ -12,7 +12,9 @@ using atlantis::shader_system::DescriptorBinding;
 using atlantis::shader_system::DescriptorType;
 using atlantis::shader_system::litTexturedExpectedDescriptorContract;
 using atlantis::shader_system::minimalRendererExpectedDescriptorContract;
+using atlantis::shader_system::pbrDirectLitNormalMapExpectedDescriptorContract;
 using atlantis::shader_system::pbrIblExpectedDescriptorContract;
+using atlantis::shader_system::pbrIblNormalMapExpectedDescriptorContract;
 using atlantis::shader_system::ReflectionMetadata;
 using atlantis::shader_system::ShaderStage;
 using atlantis::shader_system::texturedMaterialExpectedDescriptorContract;
@@ -217,4 +219,36 @@ TEST_CASE("validateDescriptorContract() rejects a fragment reflection whose unif
   const auto result = validateDescriptorContract(metadata, fragmentScoped);
   REQUIRE(result.isErr());
   REQUIRE(result.error() == ContractMismatchError::BindingNotFound);
+}
+
+// Plan 0029 Section P11 (ADR-0074 Section 4): identical shape to
+// pbrDirectLitExpectedDescriptorContract() plus a fifth entry, the
+// normal-map sampler at the next free binding.
+TEST_CASE("pbrDirectLitNormalMapExpectedDescriptorContract declares the normal-map sampler at binding 3",
+          "[shader_system][descriptor_contract][pbr_direct_lit_normal_map]") {
+  const std::vector<DescriptorBinding> expected = {
+      {.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
+      {.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+  };
+  CHECK(pbrDirectLitNormalMapExpectedDescriptorContract() == expected);
+}
+
+// Plan 0029 Section P11 (ADR-0074 Section 4): identical shape to
+// pbrIblExpectedDescriptorContract() plus a seventh entry, the
+// normal-map sampler at the next free binding.
+TEST_CASE("pbrIblNormalMapExpectedDescriptorContract declares the normal-map sampler at binding 5",
+          "[shader_system][descriptor_contract][pbr_ibl_normal_map]") {
+  const std::vector<DescriptorBinding> expected = {
+      {.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
+      {.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 5, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+  };
+  CHECK(pbrIblNormalMapExpectedDescriptorContract() == expected);
 }

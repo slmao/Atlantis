@@ -1,0 +1,7 @@
+atlantis_scene_source_version: 3
+node_count: 4
+active_camera: 4
+node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/pbr_normal_mapped.material.txt
+node: node_id=2 parent=none position=0.0 -1.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/ground_plane.mesh.txt material=materials/pbr_dielectric_rough.material.txt
+node: node_id=3 parent=none position=0.0 0.0 0.0 rotation=-0.6 1.2 0.0 scale=1.0 1.0 1.0 light=directional color=1.0 1.0 1.0 intensity=3.0
+node: node_id=4 parent=none position=0.0 3.0 9.0 rotation=-0.3587707 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0

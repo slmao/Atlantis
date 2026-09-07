@@ -21,6 +21,18 @@ atlantis::Result<std::monostate, RuntimeInitError> validateEnvironmentBootstrapC
        config.skyFragmentShaderSpirvPath.empty() || config.skyFragmentShaderReflectionPath.empty())) {
     return ResultT::Err(RuntimeInitError::EnvironmentConfigInvalid);
   }
+  // Plan 0029 Section P15 (BootstrapConfig shader-pair path count
+  // correction): pbrIblNormalMap is required in exactly the same case,
+  // mirroring the pbrIbl check above -- pbrDirectLitNormalMap is
+  // unconditionally required like pbrDirectLit, which this function
+  // never validates either (its own emptiness surfaces as
+  // ShaderLoadFailed at load time, not here).
+  if (hasEnvironment && (config.pbrIblNormalMapVertexShaderSpirvPath.empty() ||
+                         config.pbrIblNormalMapVertexShaderReflectionPath.empty() ||
+                         config.pbrIblNormalMapFragmentShaderSpirvPath.empty() ||
+                         config.pbrIblNormalMapFragmentShaderReflectionPath.empty())) {
+    return ResultT::Err(RuntimeInitError::EnvironmentConfigInvalid);
+  }
   return ResultT::Ok(std::monostate{});
 }
 

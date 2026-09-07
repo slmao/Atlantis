@@ -84,12 +84,14 @@ struct Vertex {
   float color[3];
   float uv[2];
   float normal[3];
+  float tangent[4];
 };
 static_assert(std::is_standard_layout_v<Vertex>);
 static_assert(offsetof(Vertex, position) == atlantis::asset_system::kMeshArtifactPositionOffsetBytes);
 static_assert(offsetof(Vertex, color) == atlantis::asset_system::kMeshArtifactColorOffsetBytes);
 static_assert(offsetof(Vertex, uv) == atlantis::asset_system::kMeshArtifactUv0OffsetBytes);
 static_assert(offsetof(Vertex, normal) == atlantis::asset_system::kMeshArtifactNormalOffsetBytes);
+static_assert(offsetof(Vertex, tangent) == atlantis::asset_system::kMeshArtifactTangentOffsetBytes);
 static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrideBytes);
 
 // Plan 0027 Milestone 9 (ADR-0072 D-1/P5): the no-directional-light
@@ -531,10 +533,20 @@ atlantis::Result<PixelBuffer, PbrMaterialDemoRenderError> renderPbrMaterialDemoF
   const bool environmentEnabled = fixture.environmentData.has_value() || fixture.environmentLightingResources.has_value();
 
   std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
+      // Plan 0029 Section P15: this fixture's own scene never realizes a
+      // normal-mapped material (hasNormalMap stays false for every
+      // material realizeOneMaterialCandidate() sees here), so the two
+      // new trailing trios are dead-path filler -- reusing this
+      // fixture's own already-loaded pbrDirectLit*/pbrIbl* values,
+      // mirroring realizePendingMaterials()'s own compatibility
+      // overload's identical reuse pattern (material_realization.h).
       realizePendingMaterials(*fixture.device, *commandList, fixture.unlitTexturedVertexInputLayout,
                                fixture.unlitTexturedVertexSpirv, fixture.unlitTexturedFragmentSpirv,
                                fixture.litTexturedVertexInputLayout,
                                fixture.litTexturedVertexSpirv, fixture.litTexturedFragmentSpirv,
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
+                               fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv,
                                fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
                                fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
                                fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv, environmentEnabled,

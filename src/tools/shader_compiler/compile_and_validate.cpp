@@ -32,7 +32,9 @@ using atlantis::shader_system::litTexturedExpectedDescriptorContract;
 using atlantis::shader_system::minimalRendererExpectedDescriptorContract;
 using atlantis::shader_system::outputTransformExpectedDescriptorContract;
 using atlantis::shader_system::pbrDirectLitExpectedDescriptorContract;
+using atlantis::shader_system::pbrDirectLitNormalMapExpectedDescriptorContract;
 using atlantis::shader_system::pbrIblExpectedDescriptorContract;
+using atlantis::shader_system::pbrIblNormalMapExpectedDescriptorContract;
 using atlantis::shader_system::shadowCastExpectedDescriptorContract;
 using atlantis::shader_system::skyExpectedDescriptorContract;
 using atlantis::shader_system::PushConstantRange;
@@ -147,6 +149,10 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     fullContract = pbrDirectLitExpectedDescriptorContract();
   } else if (expectedContract == "pbr-ibl") {
     fullContract = pbrIblExpectedDescriptorContract();
+  } else if (expectedContract == "pbr-direct-lit-normal-map") {
+    fullContract = pbrDirectLitNormalMapExpectedDescriptorContract();
+  } else if (expectedContract == "pbr-ibl-normal-map") {
+    fullContract = pbrIblNormalMapExpectedDescriptorContract();
   } else if (expectedContract == "output-transform-unorm" || expectedContract == "output-transform-srgb") {
     // Plan 0024 Milestone 3 (ADR-0068 D-10): both output-transform
     // variants share the identical descriptor contract -- one function,
@@ -201,7 +207,8 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     // expected stays empty -- the sky's own fullscreen triangle needs no
     // per-draw transform either (Plan 0026 Milestone 4).
   } else {
-    const bool isPbr = expectedContract == "pbr-direct-lit" || expectedContract == "pbr-ibl";
+    const bool isPbr = expectedContract == "pbr-direct-lit" || expectedContract == "pbr-ibl" ||
+                       expectedContract == "pbr-direct-lit-normal-map" || expectedContract == "pbr-ibl-normal-map";
     const std::uint32_t expectedSizeBytes = isPbr ? 96 : sizeof(float) * 16;
     expected = {PushConstantRange{.offsetBytes = 0, .sizeBytes = expectedSizeBytes, .stage = ShaderStage::Vertex}};
   }
@@ -369,7 +376,9 @@ int compileAndValidate(const CompileAndValidateRequest& request) {
       validatePushConstantsForVertexStage(vertexResult->metadata, request.expectedContract) &&
       validateUniqueVertexInputLocations(vertexResult->metadata) &&
       validateCrossStageInterface(vertexResult->metadata, fragmentResult->metadata);
-  if (validationOk && (request.expectedContract == "pbr-direct-lit" || request.expectedContract == "pbr-ibl")) {
+  if (validationOk && (request.expectedContract == "pbr-direct-lit" || request.expectedContract == "pbr-ibl" ||
+                       request.expectedContract == "pbr-direct-lit-normal-map" ||
+                       request.expectedContract == "pbr-ibl-normal-map")) {
     validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata);
   }
   if (!validationOk) {

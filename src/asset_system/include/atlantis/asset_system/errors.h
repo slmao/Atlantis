@@ -64,6 +64,13 @@ enum class ArtifactDecodeError {
   // SourceParseError::NonUnitNormal above -- independently re-derived
   // from the artifact's own bytes, never trusting a well-formed cooker.
   NonUnitNormal,
+  // Plan 0029 Section P2/ADR-0073 Decision item 6: the decode-time
+  // twins of the tangent attribute's own three well-formedness checks
+  // -- independently re-derived from the artifact's own bytes, never
+  // trusting a well-formed cooker.
+  NonUnitTangent,
+  NonOrthogonalTangent,
+  InvalidTangentHandedness,
 };
 
 enum class AssetLoadError {
@@ -80,6 +87,17 @@ enum class CookError {
   LogicalPathInvalid,
   ArtifactWriteFailed,
   MetadataWriteFailed,
+  // Plan 0029 Section P2/ADR-0073 Decision items 4a/5: generateTangents()'s
+  // own two whole-mesh failure causes. DegenerateTangentBasis fires when
+  // a vertex has at least one non-degenerate contributing triangle yet
+  // its accumulated tangent still fails the orthogonalization epsilon.
+  // TangentHandednessConflict fires when two valid (geometrically- and
+  // UV-non-degenerate) contributions at the same vertex disagree in
+  // h_face sign -- a real chirality conflict, never an artifact of a
+  // degenerate triangle's own arbitrary tie-broken sign (ADR-0073's own
+  // Accepted Correction, 2026-09-06).
+  DegenerateTangentBasis,
+  TangentHandednessConflict,
 };
 
 // Plan 0015 Section D2 / ADR-0053 (including its own Human Review

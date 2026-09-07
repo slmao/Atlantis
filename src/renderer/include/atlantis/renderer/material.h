@@ -53,12 +53,26 @@ enum class MaterialEnvironmentBinding { None, Ibl };
 // caller to supply EnvironmentLighting to every drawFrame() use.
 class Material {
  public:
+  // Plan 0029 Section P14 (ADR-0074 Section 2): normalMapTexture is a
+  // new, optional, trailing, borrowed, non-owning pointer -- not a
+  // second texture+sampler pair. It reuses this Material's own existing
+  // sampler (Section 1 item 5, ADR-0074) -- introducing a second
+  // Sampler* member would imply a second, real sampler slot nothing
+  // ever populates differently. Two invariants, checked once here
+  // alongside the existing both-or-neither check: a normal map may
+  // never be constructed without the base-color pair also present
+  // (both are sampled through the one, same sampler_), and a normal
+  // map may only be constructed on a Material whose push-constant
+  // layout is PbrDirectLit -- the only layout the two normal-map
+  // shaders use. Ownership/destruction-order contract identical in
+  // kind to sampledTexture/sampler above.
   explicit Material(std::unique_ptr<atlantis::rhi::Pipeline> pipeline, MaterialPushConstantLayout pushConstantLayout,
                      const atlantis::rhi::SampledTexture* sampledTexture = nullptr,
                      const atlantis::rhi::Sampler* sampler = nullptr,
                      std::array<float, 4> baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f}, float metallicFactor = 1.0f,
                      float roughnessFactor = 1.0f,
-                     MaterialEnvironmentBinding environmentBinding = MaterialEnvironmentBinding::None) noexcept;
+                     MaterialEnvironmentBinding environmentBinding = MaterialEnvironmentBinding::None,
+                     const atlantis::rhi::SampledTexture* normalMapTexture = nullptr) noexcept;
   ~Material() = default;
 
   Material(const Material&) = delete;
@@ -74,6 +88,9 @@ class Material {
   [[nodiscard]] float metallicFactor() const noexcept { return metallicFactor_; }
   [[nodiscard]] float roughnessFactor() const noexcept { return roughnessFactor_; }
   [[nodiscard]] MaterialEnvironmentBinding environmentBinding() const noexcept { return environmentBinding_; }
+  // No normalMapSampler() accessor -- sampler() above already covers
+  // it (Section 1 item 5, ADR-0074).
+  [[nodiscard]] const atlantis::rhi::SampledTexture* normalMapTexture() const noexcept { return normalMapTexture_; }
 
  private:
   std::unique_ptr<atlantis::rhi::Pipeline> pipeline_;
@@ -84,6 +101,7 @@ class Material {
   float metallicFactor_ = 1.0f;
   float roughnessFactor_ = 1.0f;
   MaterialEnvironmentBinding environmentBinding_ = MaterialEnvironmentBinding::None;
+  const atlantis::rhi::SampledTexture* normalMapTexture_ = nullptr;  // borrowed, never owned
 };
 
 enum class CreateMaterialError {
@@ -106,12 +124,15 @@ enum class CreateMaterialError {
 // default, per Spec 0023 D9's own Accepted Correction.
 // environmentBinding is the final trailing compatibility parameter and
 // defaults to None.
+// Plan 0029 Section P14: normalMapTexture is the final, new trailing
+// parameter -- every pre-existing call site continues to compile and
+// behave unchanged, defaulting to nullptr.
 [[nodiscard]] atlantis::Result<Material, CreateMaterialError> createMaterial(
     atlantis::rhi::Device& device, const atlantis::rhi::PipelineCreateParams& params,
     const atlantis::rhi::SampledTexture* sampledTexture = nullptr, const atlantis::rhi::Sampler* sampler = nullptr,
     MaterialPushConstantLayout pushConstantLayout = MaterialPushConstantLayout::ObjectToWorldOnly,
     std::array<float, 4> baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f}, float metallicFactor = 1.0f,
-    float roughnessFactor = 1.0f,
-    MaterialEnvironmentBinding environmentBinding = MaterialEnvironmentBinding::None);
+    float roughnessFactor = 1.0f, MaterialEnvironmentBinding environmentBinding = MaterialEnvironmentBinding::None,
+    const atlantis::rhi::SampledTexture* normalMapTexture = nullptr);
 
 }  // namespace atlantis::renderer

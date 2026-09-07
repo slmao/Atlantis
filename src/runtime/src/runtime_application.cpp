@@ -66,12 +66,14 @@ struct Vertex {
   float color[3];
   float uv[2];
   float normal[3];
+  float tangent[4];
 };
 static_assert(std::is_standard_layout_v<Vertex>);
 static_assert(offsetof(Vertex, position) == atlantis::asset_system::kMeshArtifactPositionOffsetBytes);
 static_assert(offsetof(Vertex, color) == atlantis::asset_system::kMeshArtifactColorOffsetBytes);
 static_assert(offsetof(Vertex, uv) == atlantis::asset_system::kMeshArtifactUv0OffsetBytes);
 static_assert(offsetof(Vertex, normal) == atlantis::asset_system::kMeshArtifactNormalOffsetBytes);
+static_assert(offsetof(Vertex, tangent) == atlantis::asset_system::kMeshArtifactTangentOffsetBytes);
 static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrideBytes);
 
 // Plan 0015 Section D10 step (g) / final review round (2026-08-24):
@@ -193,6 +195,26 @@ static_assert(
       MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
       MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
       MeshVertexAttributeSchema{.location = 2, .offsetBytes = offsetof(Vertex, normal)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
+// Plan 0029 Section P13: the two normal-map PBR shader pairs' own
+// vertex schema -- pbrDirectLitVertexLayout()'s own schema above plus a
+// trailing tangent@3, matching pbr_direct_lit_normal_map.slang/
+// pbr_ibl_normal_map.slang's own VertexInput exactly (both shaders
+// declare an identical vertex stage, Milestone 3) -- reused for both,
+// called twice, once per variant's own real reflection metadata,
+// cross-validated independently each time, mirroring
+// outputTransformVertexLayout()'s own reuse pattern below.
+[[nodiscard]] std::optional<VertexInputLayout> pbrNormalMapVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+      MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
+      MeshVertexAttributeSchema{.location = 2, .offsetBytes = offsetof(Vertex, normal)},
+      MeshVertexAttributeSchema{.location = 3, .offsetBytes = offsetof(Vertex, tangent)},
   };
   auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
   if (result.isErr()) return std::nullopt;
@@ -365,6 +387,38 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   pbrDirectLitFragmentSpirv_ = std::move(pbrDirectLitFragmentSpirvOpt.value());
   pbrDirectLitVertexInputLayout_ = std::move(pbrDirectLitLayoutOpt.value());
 
+  // Step 2d-2 (Plan 0029 Section P15): the fifth, normal-map
+  // MaterialKind::PbrDirectLit built-in shader pair -- unconditionally
+  // required, same shape as step 2d above, mirrored exactly, except its
+  // own vertex layout is resolved via pbrNormalMapVertexLayout() (the
+  // tangent-carrying schema).
+  auto pbrDirectLitNormalMapVertexSpirvOpt = loadSpirvFile(config.pbrDirectLitNormalMapVertexShaderSpirvPath);
+  auto pbrDirectLitNormalMapFragmentSpirvOpt = loadSpirvFile(config.pbrDirectLitNormalMapFragmentShaderSpirvPath);
+  if (!pbrDirectLitNormalMapVertexSpirvOpt.has_value() || !pbrDirectLitNormalMapFragmentSpirvOpt.has_value()) {
+    ATLANTIS_LOG_ERROR("Failed to load shader SPIR-V from {} / {}", config.pbrDirectLitNormalMapVertexShaderSpirvPath,
+                        config.pbrDirectLitNormalMapFragmentShaderSpirvPath);
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  auto pbrDirectLitNormalMapVertexReflectionResult =
+      loadReflectionMetadata(config.pbrDirectLitNormalMapVertexShaderReflectionPath);
+  if (pbrDirectLitNormalMapVertexReflectionResult.isErr()) {
+    ATLANTIS_LOG_ERROR("loadReflectionMetadata() failed for {}",
+                        config.pbrDirectLitNormalMapVertexShaderReflectionPath);
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  auto pbrDirectLitNormalMapLayoutOpt = pbrNormalMapVertexLayout(pbrDirectLitNormalMapVertexReflectionResult.value());
+  if (!pbrDirectLitNormalMapLayoutOpt.has_value()) {
+    ATLANTIS_LOG_ERROR(
+        "pbrNormalMapVertexLayout(): reflected vertex-input attributes do not match the Vertex schema");
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+  }
+  pbrDirectLitNormalMapVertexSpirv_ = std::move(pbrDirectLitNormalMapVertexSpirvOpt.value());
+  pbrDirectLitNormalMapFragmentSpirv_ = std::move(pbrDirectLitNormalMapFragmentSpirvOpt.value());
+  pbrDirectLitNormalMapVertexInputLayout_ = std::move(pbrDirectLitNormalMapLayoutOpt.value());
+
   // Step 2e (Plan 0025/M7): the IBL PBR pair is loaded only when an
   // environment is configured; no-environment bootstrap never validates or
   // retains it and therefore preserves the old PBR path structurally.
@@ -387,6 +441,30 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
     pbrIblVertexSpirv_ = std::move(pbrIblVertexSpirvOpt.value());
     pbrIblFragmentSpirv_ = std::move(pbrIblFragmentSpirvOpt.value());
     pbrIblVertexInputLayout_ = std::move(pbrIblLayoutOpt.value());
+
+    // Plan 0029 Section P15: the normal-map IBL PBR pair -- same
+    // hasEnvironment gate, same shape as the pbrIbl load immediately
+    // above, except its own vertex layout is resolved via
+    // pbrNormalMapVertexLayout() (the tangent-carrying schema).
+    auto pbrIblNormalMapVertexSpirvOpt = loadSpirvFile(config.pbrIblNormalMapVertexShaderSpirvPath);
+    auto pbrIblNormalMapFragmentSpirvOpt = loadSpirvFile(config.pbrIblNormalMapFragmentShaderSpirvPath);
+    auto pbrIblNormalMapVertexReflectionResult =
+        loadReflectionMetadata(config.pbrIblNormalMapVertexShaderReflectionPath);
+    if (!pbrIblNormalMapVertexSpirvOpt.has_value() || !pbrIblNormalMapFragmentSpirvOpt.has_value() ||
+        pbrIblNormalMapVertexReflectionResult.isErr()) {
+      ATLANTIS_LOG_ERROR("Failed to load the configured pbrIblNormalMap shader pair");
+      lifecycle_.markFailed();
+      return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+    }
+    auto pbrIblNormalMapLayoutOpt = pbrNormalMapVertexLayout(pbrIblNormalMapVertexReflectionResult.value());
+    if (!pbrIblNormalMapLayoutOpt.has_value()) {
+      ATLANTIS_LOG_ERROR("pbrIblNormalMap reflected vertex inputs do not match the PBR normal-map Vertex schema");
+      lifecycle_.markFailed();
+      return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+    }
+    pbrIblNormalMapVertexSpirv_ = std::move(pbrIblNormalMapVertexSpirvOpt.value());
+    pbrIblNormalMapFragmentSpirv_ = std::move(pbrIblNormalMapFragmentSpirvOpt.value());
+    pbrIblNormalMapVertexInputLayout_ = std::move(pbrIblNormalMapLayoutOpt.value());
 
     // Plan 0026 Milestone 3 (ADR-0071): the sky shader pair -- same
     // hasEnvironment gate, same shape as the pbrIbl load immediately
@@ -1182,7 +1260,10 @@ void RuntimeApplication::runFrame() {
                                unlitTexturedFragmentSpirv_, litTexturedVertexInputLayout_,
                                litTexturedVertexSpirv_, litTexturedFragmentSpirv_, pbrDirectLitVertexInputLayout_,
                                pbrDirectLitVertexSpirv_, pbrDirectLitFragmentSpirv_, pbrIblVertexInputLayout_,
-                               pbrIblVertexSpirv_, pbrIblFragmentSpirv_, environmentEnabled, pendingMaterialIds,
+                               pbrIblVertexSpirv_, pbrIblFragmentSpirv_, pbrDirectLitNormalMapVertexInputLayout_,
+                               pbrDirectLitNormalMapVertexSpirv_, pbrDirectLitNormalMapFragmentSpirv_,
+                               pbrIblNormalMapVertexInputLayout_, pbrIblNormalMapVertexSpirv_,
+                               pbrIblNormalMapFragmentSpirv_, environmentEnabled, pendingMaterialIds,
                                sampledTextureResourceMap_, materialDataMap_, textureDataMap_);
   // Plan 0018 Section P12 (Spec 0018 D8 step 5): gated on "at least one
   // material was newly realized this frame" -- NOT narrowed to "at least
@@ -1389,6 +1470,17 @@ void RuntimeApplication::runFrame() {
     for (auto& [assetId, candidate] : realizedCandidates) {
       if (candidate.newSampledTexture) {
         sampledTextureResourceMap_.emplace(candidate.textureAssetId, std::move(candidate.newSampledTexture));
+      }
+      // Plan 0029 Section P15: the normal-map texture publishes into
+      // the SAME sampledTextureResourceMap_ the base-color texture
+      // already uses -- omitting this (unlike newSampledTexture above)
+      // would destroy the just-uploaded normal-map SampledTexture when
+      // realizedCandidates goes out of scope at the end of this
+      // function, leaving the just-published Material's own
+      // normalMapTexture() a dangling pointer on the very next frame.
+      if (candidate.newNormalMapTexture) {
+        sampledTextureResourceMap_.emplace(candidate.normalMapTextureAssetId,
+                                            std::move(candidate.newNormalMapTexture));
       }
       samplerResourceMap_.emplace(assetId, std::move(candidate.sampler));
       materialResourceMap_.emplace(assetId, std::move(candidate.material));

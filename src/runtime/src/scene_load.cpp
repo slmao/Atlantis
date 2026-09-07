@@ -171,6 +171,35 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
       }
     }
 
+    // Plan 0029 Section P8 (ADR-0074 Section 1 item 6): the optional
+    // normal-map texture -- resolved/loaded/deduplicated through the
+    // same textureDataMap the base-color texture already uses (no new
+    // map, no new cache), then cross-validated for Unorm exactly like
+    // the base-color texture's own Srgb requirement above. A material
+    // with no normal map (normalMapTexture == 0) is completely
+    // unaffected.
+    if (materialAssetData.normalMapTexture != 0 && !textureDataMap.contains(materialAssetData.normalMapTexture)) {
+      const auto* normalMapEntry = resolver.find(materialAssetData.normalMapTexture);
+      if (!normalMapEntry) {
+        ATLANTIS_LOG_ERROR("a material's own referenced normal-map texture AssetId has no manifest entry");
+        return ResultT::Err(RuntimeInitError::SceneDependencyUnresolved);
+      }
+      auto normalMapResult =
+          atlantis::asset_system::loadTextureAsset(normalMapEntry->artifactPath, normalMapEntry->metadataPath);
+      if (normalMapResult.isErr()) {
+        ATLANTIS_LOG_ERROR("loadTextureAsset() failed for a material's own referenced normal-map texture");
+        return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
+      }
+      textureDataMap.emplace(materialAssetData.normalMapTexture, std::move(normalMapResult.value()));
+    }
+    if (materialAssetData.normalMapTexture != 0) {
+      const auto& normalMapData = textureDataMap.at(materialAssetData.normalMapTexture);
+      if (normalMapData.colorSpace != atlantis::asset_system::TextureColorSpace::Unorm) {
+        ATLANTIS_LOG_ERROR("PbrDirectLit material's own normal-map texture is not Unorm");
+        return ResultT::Err(RuntimeInitError::PbrNormalMapTextureNotUnorm);
+      }
+    }
+
     materialDataMap.emplace(distinctMaterialIds[i], materialAssetData);
   }
 

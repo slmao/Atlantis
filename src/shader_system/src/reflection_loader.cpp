@@ -61,6 +61,7 @@ using LoadResult = atlantis::Result<ReflectionMetadata, ReflectionLoadError>;
 [[nodiscard]] std::optional<VertexAttributeType> parseVertexAttributeType(const std::string& text) {
   if (text == "float3") return VertexAttributeType::Float3;
   if (text == "float2") return VertexAttributeType::Float2;  // Spec 0016/D6
+  if (text == "float4") return VertexAttributeType::Float4;  // Spec 0029/ADR-0073
   return std::nullopt;
 }
 
@@ -70,6 +71,8 @@ using LoadResult = atlantis::Result<ReflectionMetadata, ReflectionLoadError>;
       return "float3";
     case VertexAttributeType::Float2:
       return "float2";
+    case VertexAttributeType::Float4:
+      return "float4";
   }
   return "float3";
 }

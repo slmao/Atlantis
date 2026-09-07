@@ -26,6 +26,16 @@ void populateSkyShaders(BootstrapConfig& config) {
   config.skyFragmentShaderReflectionPath = "sky_f.json";
 }
 
+// Plan 0029 Section P15 (BootstrapConfig shader-pair path count
+// correction): pbrIblNormalMap is required in exactly the same case as
+// the IBL pair above -- mirrors populateIblShaders()'s own shape.
+void populatePbrIblNormalMapShaders(BootstrapConfig& config) {
+  config.pbrIblNormalMapVertexShaderSpirvPath = "ibl_nm_v.spv";
+  config.pbrIblNormalMapVertexShaderReflectionPath = "ibl_nm_v.json";
+  config.pbrIblNormalMapFragmentShaderSpirvPath = "ibl_nm_f.spv";
+  config.pbrIblNormalMapFragmentShaderReflectionPath = "ibl_nm_f.json";
+}
+
 }  // namespace
 
 TEST_CASE("Environment bootstrap paths are absent or complete", "[runtime][bootstrap][ibl]") {
@@ -39,8 +49,10 @@ TEST_CASE("Environment bootstrap paths are absent or complete", "[runtime][boots
   config.environmentMetadataPath = "studio.meta";
   REQUIRE(validateEnvironmentBootstrapConfig(config).isErr());
   populateIblShaders(config);
-  REQUIRE(validateEnvironmentBootstrapConfig(config).isErr());  // sky paths still empty
+  REQUIRE(validateEnvironmentBootstrapConfig(config).isErr());  // sky/normal-map paths still empty
   populateSkyShaders(config);
+  REQUIRE(validateEnvironmentBootstrapConfig(config).isErr());  // normal-map paths still empty
+  populatePbrIblNormalMapShaders(config);
   REQUIRE(validateEnvironmentBootstrapConfig(config).isOk());
 
   config.environmentArtifactPath.clear();
@@ -51,6 +63,7 @@ TEST_CASE("No-environment bootstrap ignores IBL and sky shader paths", "[runtime
   BootstrapConfig config;
   populateIblShaders(config);
   populateSkyShaders(config);
+  populatePbrIblNormalMapShaders(config);
   config.pbrIblVertexShaderSpirvPath = "not-a-real-file";
   config.skyVertexShaderSpirvPath = "not-a-real-file";
   REQUIRE(validateEnvironmentBootstrapConfig(config).isOk());
@@ -64,8 +77,25 @@ TEST_CASE("Environment bootstrap requires the sky shader paths too, independent 
   populateIblShaders(config);
   REQUIRE(validateEnvironmentBootstrapConfig(config).isErr());
   populateSkyShaders(config);
+  REQUIRE(validateEnvironmentBootstrapConfig(config).isErr());  // normal-map paths still empty
+  populatePbrIblNormalMapShaders(config);
   REQUIRE(validateEnvironmentBootstrapConfig(config).isOk());
 
   config.skyFragmentShaderReflectionPath.clear();
+  REQUIRE(validateEnvironmentBootstrapConfig(config).isErr());
+}
+
+TEST_CASE("Environment bootstrap requires the pbrIblNormalMap shader paths too, independent of the IBL/sky pairs",
+          "[runtime][bootstrap][ibl][normal-map]") {
+  BootstrapConfig config;
+  config.environmentArtifactPath = "studio.aenv";
+  config.environmentMetadataPath = "studio.meta";
+  populateIblShaders(config);
+  populateSkyShaders(config);
+  REQUIRE(validateEnvironmentBootstrapConfig(config).isErr());
+  populatePbrIblNormalMapShaders(config);
+  REQUIRE(validateEnvironmentBootstrapConfig(config).isOk());
+
+  config.pbrIblNormalMapFragmentShaderReflectionPath.clear();
   REQUIRE(validateEnvironmentBootstrapConfig(config).isErr());
 }

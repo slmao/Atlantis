@@ -110,7 +110,13 @@ struct ShaderPairRef {
     const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& pbrIblVertexInputLayout,
     const std::vector<std::uint32_t>& pbrIblVertexSpirv,
-    const std::vector<std::uint32_t>& pbrIblFragmentSpirv, bool environmentEnabled) {
+    const std::vector<std::uint32_t>& pbrIblFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrDirectLitNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrDirectLitNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrDirectLitNormalMapFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrIblNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrIblNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrIblNormalMapFragmentSpirv, bool environmentEnabled, bool hasNormalMap) {
   switch (kind) {
     case atlantis::asset_system::MaterialKind::UnlitTextured:
       return {&unlitTexturedVertexInputLayout, &unlitTexturedVertexSpirv, &unlitTexturedFragmentSpirv};
@@ -120,6 +126,16 @@ struct ShaderPairRef {
       // Plan 0023 Milestone 5: replaces the Milestone 1 bootstrap
       // placeholder now that this function's own signature carries the
       // real PBR shader triple.
+      // Plan 0029 Section P15 (ADR-0074): hasNormalMap selects between
+      // the normal-map and plain PBR trio, orthogonally to
+      // environmentEnabled's own None/Ibl selection.
+      if (hasNormalMap) {
+        if (environmentEnabled) {
+          return {&pbrIblNormalMapVertexInputLayout, &pbrIblNormalMapVertexSpirv, &pbrIblNormalMapFragmentSpirv};
+        }
+        return {&pbrDirectLitNormalMapVertexInputLayout, &pbrDirectLitNormalMapVertexSpirv,
+                &pbrDirectLitNormalMapFragmentSpirv};
+      }
       if (environmentEnabled) return {&pbrIblVertexInputLayout, &pbrIblVertexSpirv, &pbrIblFragmentSpirv};
       return {&pbrDirectLitVertexInputLayout, &pbrDirectLitVertexSpirv, &pbrDirectLitFragmentSpirv};
   }
@@ -174,13 +190,21 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
     const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& pbrIblVertexInputLayout,
     const std::vector<std::uint32_t>& pbrIblVertexSpirv,
-    const std::vector<std::uint32_t>& pbrIblFragmentSpirv, bool environmentEnabled,
+    const std::vector<std::uint32_t>& pbrIblFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrDirectLitNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrDirectLitNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrDirectLitNormalMapFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrIblNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrIblNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrIblNormalMapFragmentSpirv, bool environmentEnabled,
     atlantis::asset_system::AssetId materialAssetId,
     const atlantis::asset_system::MaterialAssetData& materialData,
     const atlantis::asset_system::TextureAssetData& textureData,
+    const atlantis::asset_system::TextureAssetData* normalMapTextureData,
     const std::unordered_map<atlantis::asset_system::AssetId, const atlantis::rhi::SampledTexture*>&
         effectiveSampledTextures) {
   using ResultT = atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError>;
+  const bool hasNormalMap = materialData.normalMapTexture != 0;
 
   RealizedMaterialCandidate candidate;
   candidate.materialAssetId = materialAssetId;
@@ -209,6 +233,39 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
     sampledTexturePtr = candidate.newSampledTexture.get();
   }
 
+  // Plan 0029 Section P15 (ADR-0074): the identical dedup-then-create
+  // sequence as the base-color texture above, keyed by
+  // materialData.normalMapTexture -- skipped entirely (normalMapTexturePtr
+  // stays null) when this material declares no normal map.
+  const atlantis::rhi::SampledTexture* normalMapTexturePtr = nullptr;
+  if (hasNormalMap) {
+    ATLANTIS_CHECK_MSG(normalMapTextureData != nullptr,
+                        "realizeOneMaterialCandidate(): a material declaring normalMapTexture must be called with "
+                        "its own normalMapTextureData already resolved by the caller");
+    candidate.normalMapTextureAssetId = materialData.normalMapTexture;
+    const auto existingNormalMap = effectiveSampledTextures.find(materialData.normalMapTexture);
+    if (existingNormalMap != effectiveSampledTextures.end()) {
+      normalMapTexturePtr = existingNormalMap->second;
+    } else {
+      auto normalMapTextureResult = device.createSampledTexture(SampledTextureCreateParams{
+          .extent = Extent2D{normalMapTextureData->width, normalMapTextureData->height},
+          .format = toSampledTextureFormat(normalMapTextureData->colorSpace)});
+      if (normalMapTextureResult.isErr()) return ResultT::Err(MaterialRealizationError::SampledTextureCreateFailed);
+      candidate.newNormalMapTexture = std::move(normalMapTextureResult.value());
+
+      const std::size_t normalMapStagingBytes =
+          static_cast<std::size_t>(normalMapTextureData->width) * normalMapTextureData->height * 4;
+      auto normalMapStagingResult =
+          device.createBuffer({.purpose = BufferPurpose::Staging, .sizeBytes = normalMapStagingBytes});
+      if (normalMapStagingResult.isErr()) return ResultT::Err(MaterialRealizationError::StagingBufferCreateFailed);
+      std::memcpy(normalMapStagingResult.value()->mappedData(), normalMapTextureData->pixelBytes.data(),
+                  normalMapStagingBytes);
+      candidate.normalMapStagingBuffer = std::move(normalMapStagingResult.value());
+
+      normalMapTexturePtr = candidate.newNormalMapTexture.get();
+    }
+  }
+
   auto samplerResult = device.createSampler(
       SamplerCreateParams{.filter = toFilter(materialData.filter), .addressMode = toAddressMode(materialData.addressMode)});
   if (samplerResult.isErr()) return ResultT::Err(MaterialRealizationError::SamplerCreateFailed);
@@ -218,8 +275,10 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
       selectShaderPair(materialData.kind, unlitTexturedVertexInputLayout, unlitTexturedVertexSpirv,
                         unlitTexturedFragmentSpirv, litTexturedVertexInputLayout, litTexturedVertexSpirv,
                         litTexturedFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,
-                        pbrDirectLitFragmentSpirv, pbrIblVertexInputLayout, pbrIblVertexSpirv,
-                        pbrIblFragmentSpirv, environmentEnabled);
+                        pbrDirectLitFragmentSpirv, pbrIblVertexInputLayout, pbrIblVertexSpirv, pbrIblFragmentSpirv,
+                        pbrDirectLitNormalMapVertexInputLayout, pbrDirectLitNormalMapVertexSpirv,
+                        pbrDirectLitNormalMapFragmentSpirv, pbrIblNormalMapVertexInputLayout,
+                        pbrIblNormalMapVertexSpirv, pbrIblNormalMapFragmentSpirv, environmentEnabled, hasNormalMap);
   // Plan 0023 Milestone 5: pushConstantSizeBytes/pushConstantLayout are
   // 96/PbrDirectLit only for that kind (every other kind keeps today's
   // 64/ObjectToWorldOnly, unchanged); materialData's three PBR fields
@@ -240,14 +299,16 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
        .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = pushConstantSizeBytesFor(materialData.kind),
-       .sampledTextureBindingCount = sampledTextureBindingCountFor(materialData.kind, environmentEnabled)},
+       .sampledTextureBindingCount =
+           sampledTextureBindingCountFor(materialData.kind, environmentEnabled, hasNormalMap)},
       sampledTexturePtr, candidate.sampler.get(), pushConstantLayoutFor(materialData.kind),
       {materialData.baseColorFactor[0], materialData.baseColorFactor[1], materialData.baseColorFactor[2],
        materialData.baseColorFactor[3]},
       materialData.metallicFactor, materialData.roughnessFactor,
       materialData.kind == atlantis::asset_system::MaterialKind::PbrDirectLit && environmentEnabled
           ? atlantis::renderer::MaterialEnvironmentBinding::Ibl
-          : atlantis::renderer::MaterialEnvironmentBinding::None);
+          : atlantis::renderer::MaterialEnvironmentBinding::None,
+      normalMapTexturePtr);
   if (materialResult.isErr()) return ResultT::Err(MaterialRealizationError::MaterialCreateFailed);
   candidate.material = std::make_unique<atlantis::renderer::Material>(std::move(materialResult.value()));
 
@@ -279,7 +340,13 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
     const std::vector<std::uint32_t>& pbrDirectLitFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& pbrIblVertexInputLayout,
     const std::vector<std::uint32_t>& pbrIblVertexSpirv,
-    const std::vector<std::uint32_t>& pbrIblFragmentSpirv, bool environmentEnabled,
+    const std::vector<std::uint32_t>& pbrIblFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrDirectLitNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrDirectLitNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrDirectLitNormalMapFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrIblNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrIblNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrIblNormalMapFragmentSpirv, bool environmentEnabled,
     const std::vector<atlantis::asset_system::AssetId>& pendingIds,
     const std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>>&
         sampledTextureResourceMap,
@@ -300,10 +367,13 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
 
   std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realized;
   render_graph::RenderGraphBuilder uploadBuilder;
-  // Tracks, in pendingIds' own deterministic order, which ids got a NEW
-  // upload pass this call -- the exact order resourceAt() below must be
-  // indexed in, since realized (an unordered_map) does not preserve it.
-  std::vector<atlantis::asset_system::AssetId> uploadedIds;
+  // Plan 0029 Section P15: a candidate may now record up to two upload
+  // passes (base color and normal map), so upload bookkeeping tracks
+  // the uploaded SampledTexture pointers directly, in the exact order
+  // their own buildTextureUploadPass() calls below declare them -- the
+  // order resourceAt() must be indexed in -- rather than one material
+  // AssetId per upload as before.
+  std::vector<atlantis::rhi::SampledTexture*> uploadedTextures;
 
   for (atlantis::asset_system::AssetId id : pendingIds) {
     const auto materialIt = materialDataMap.find(id);
@@ -314,13 +384,23 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
     ATLANTIS_CHECK_MSG(textureIt != textureDataMap.end(),
                         "realizePendingMaterials(): a material's own textureAsset must already be loaded into "
                         "textureDataMap by Phase 1");
+    const atlantis::asset_system::TextureAssetData* normalMapTextureData = nullptr;
+    if (materialIt->second.normalMapTexture != 0) {
+      const auto normalMapTextureIt = textureDataMap.find(materialIt->second.normalMapTexture);
+      ATLANTIS_CHECK_MSG(normalMapTextureIt != textureDataMap.end(),
+                          "realizePendingMaterials(): a material's own normalMapTexture must already be loaded "
+                          "into textureDataMap by Phase 1");
+      normalMapTextureData = &normalMapTextureIt->second;
+    }
 
     auto candidateResult = realizeOneMaterialCandidate(
         device, unlitTexturedVertexInputLayout, unlitTexturedVertexSpirv, unlitTexturedFragmentSpirv,
         litTexturedVertexInputLayout, litTexturedVertexSpirv, litTexturedFragmentSpirv, pbrDirectLitVertexInputLayout,
         pbrDirectLitVertexSpirv, pbrDirectLitFragmentSpirv, pbrIblVertexInputLayout, pbrIblVertexSpirv,
-        pbrIblFragmentSpirv, environmentEnabled, id, materialIt->second, textureIt->second,
-        effectiveSampledTextures);
+        pbrIblFragmentSpirv, pbrDirectLitNormalMapVertexInputLayout, pbrDirectLitNormalMapVertexSpirv,
+        pbrDirectLitNormalMapFragmentSpirv, pbrIblNormalMapVertexInputLayout, pbrIblNormalMapVertexSpirv,
+        pbrIblNormalMapFragmentSpirv, environmentEnabled, id, materialIt->second, textureIt->second,
+        normalMapTextureData, effectiveSampledTextures);
     if (candidateResult.isErr()) {
       ATLANTIS_LOG_ERROR("realizeOneMaterialCandidate() failed -- material stays pending, retried next frame");
       continue;
@@ -330,22 +410,26 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
     if (candidate.newSampledTexture) {
       buildTextureUploadPass(uploadBuilder, **candidate.stagingBuffer, *candidate.newSampledTexture);
       effectiveSampledTextures.emplace(candidate.textureAssetId, candidate.newSampledTexture.get());
-      uploadedIds.push_back(id);
+      uploadedTextures.push_back(candidate.newSampledTexture.get());
+    }
+    if (candidate.newNormalMapTexture) {
+      buildTextureUploadPass(uploadBuilder, **candidate.normalMapStagingBuffer, *candidate.newNormalMapTexture);
+      effectiveSampledTextures.emplace(candidate.normalMapTextureAssetId, candidate.newNormalMapTexture.get());
+      uploadedTextures.push_back(candidate.newNormalMapTexture.get());
     }
     realized.emplace(id, std::move(candidate));
   }
 
-  if (!uploadedIds.empty()) {
+  if (!uploadedTextures.empty()) {
     auto compileResult = uploadBuilder.compile();
     ATLANTIS_CHECK_MSG(compileResult.isOk(), "realizePendingMaterials(): the upload-only RenderGraph never fails to "
                                               "compile (one TransferDestination write per pass, no cross-pass "
                                               "dependency)");
     std::vector<render_graph::ResourceBinding> bindings;
-    bindings.reserve(uploadedIds.size());
-    for (std::size_t i = 0; i < uploadedIds.size(); ++i) {
-      RealizedMaterialCandidate& candidate = realized.at(uploadedIds[i]);
+    bindings.reserve(uploadedTextures.size());
+    for (std::size_t i = 0; i < uploadedTextures.size(); ++i) {
       bindings.push_back({.resource = compileResult.value().resourceAt(i),
-                           .sampledTexture = candidate.newSampledTexture.get(),
+                           .sampledTexture = uploadedTextures[i],
                            .finalState = atlantis::rhi::ResourceState::ShaderRead});
     }
     render_graph::execute(compileResult.value(), bindings, commandList);
@@ -368,12 +452,14 @@ bool isSrgbFormat(atlantis::rhi::Format format) {
   return false;  // never reached
 }
 
-std::uint32_t sampledTextureBindingCountFor(atlantis::asset_system::MaterialKind kind, bool environmentEnabled) {
+std::uint32_t sampledTextureBindingCountFor(atlantis::asset_system::MaterialKind kind, bool environmentEnabled,
+                                             bool hasNormalMap) {
   switch (kind) {
     case atlantis::asset_system::MaterialKind::UnlitTextured:
     case atlantis::asset_system::MaterialKind::LitTextured:
       return 1U;
     case atlantis::asset_system::MaterialKind::PbrDirectLit:
+      if (hasNormalMap) return environmentEnabled ? 5U : 3U;
       return environmentEnabled ? 4U : 2U;
   }
   ATLANTIS_CHECK_MSG(

@@ -435,7 +435,10 @@ class DescriptorPoolGuard {
   poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
   poolSizes[0].descriptorCount = maxSets;
   poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  poolSizes[1].descriptorCount = 4U * maxSets;
+  // ADR-0072 D-7's own Accepted Amendment, 2026-09-06 (Plan 0029
+  // Section P10): widened from 4U to 5U -- pbr_ibl_normal_map's own
+  // new normal-map sampler slot, binding 5.
+  poolSizes[1].descriptorCount = 5U * maxSets;
 
   VkDescriptorPoolCreateInfo createInfo{};
   createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -693,6 +696,15 @@ namespace {
       return VK_FORMAT_R32G32B32_SFLOAT;
     case atlantis::rhi::VertexAttributeFormat::Float2:
       return VK_FORMAT_R32G32_SFLOAT;
+    // Plan 0029 Section P1/ADR-0073: the tangent vertex attribute
+    // (xyz + handedness w) -- a real, necessary touch point this
+    // switch's own enum-exhaustiveness the Plan's own five-file Float4
+    // diff did not separately name (this file maps RHI's own
+    // VertexAttributeFormat to a real VkFormat, a distinct concern
+    // from shader-reflection's VertexAttributeType this switch does
+    // not itself consume).
+    case atlantis::rhi::VertexAttributeFormat::Float4:
+      return VK_FORMAT_R32G32B32A32_SFLOAT;
   }
   ATLANTIS_CHECK_MSG(false, "vertexAttributeFormatToVkFormat() called with an unhandled enumerator");
   return VK_FORMAT_UNDEFINED;
@@ -999,7 +1011,7 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   // unreviewed removal.
   ATLANTIS_CHECK(params.sampledTextureBindingCount == 0 || params.sampledTextureBindingCount == 1 ||
                  params.sampledTextureBindingCount == 2 || params.sampledTextureBindingCount == 3 ||
-                 params.sampledTextureBindingCount == 4);
+                 params.sampledTextureBindingCount == 4 || params.sampledTextureBindingCount == 5);
 
   auto createShaderModule = [this](const atlantis::rhi::ShaderStageBytecode& bytecode,
                                     VkShaderModule& outModule) -> VkResult {

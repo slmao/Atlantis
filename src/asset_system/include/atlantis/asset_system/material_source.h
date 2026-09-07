@@ -27,6 +27,11 @@ struct ParsedMaterialSource {
   float baseColorFactor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   float metallicFactor = 1.0f;
   float roughnessFactor = 1.0f;
+  // Plan 0029 Section P5/ADR-0074 Section 1: empty = none. A distinct
+  // field, distinct type, matching textureLogicalPath's own precedent
+  // exactly -- a logical path, not yet resolved to an AssetId
+  // (cookMaterial()'s own job).
+  std::string normalMapLogicalPath;
 };
 
 // Plan 0018 Section P2/P4: parse/decode-error conditions specific to the
@@ -45,6 +50,12 @@ enum class MaterialSourceParseError {
   UnknownAddressMode,
   TrailingContent,
   MalformedNumber,
+  // Plan 0029 Section P5/ADR-0074 Section 1: a 9-line source names
+  // `normal_map:` for a `kind` other than `pbr_direct_lit` -- neither
+  // `lit_textured.slang` nor `unlit_textured.slang` declares a
+  // normal-map binding, so accepting this combination would silently
+  // parse a field with no consumer.
+  NormalMapNotSupportedForKind,
 };
 
 // Strict, fixed-field-order, plain-text grammar extending

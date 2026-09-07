@@ -41,6 +41,15 @@ atlantis::runtime::BootstrapConfig buildIblConfig() {
   config.pbrIblVertexShaderReflectionPath = ibl + "/pbr_ibl.vert.refl.json";
   config.pbrIblFragmentShaderSpirvPath = ibl + "/pbr_ibl.frag.spv";
   config.pbrIblFragmentShaderReflectionPath = ibl + "/pbr_ibl.frag.refl.json";
+  // Plan 0029 Section P15: required by validateEnvironmentBootstrapConfig()
+  // whenever an environment is configured, mirroring the pbrIbl* block
+  // above -- unused by this fixture's own scene (no normal-mapped
+  // material), but still validated.
+  const std::string iblNormalMap = ATLANTIS_IBL_DEMO_PBR_IBL_NORMAL_MAP_SHADER_DIR;
+  config.pbrIblNormalMapVertexShaderSpirvPath = iblNormalMap + "/pbr_ibl_normal_map.vert.spv";
+  config.pbrIblNormalMapVertexShaderReflectionPath = iblNormalMap + "/pbr_ibl_normal_map.vert.refl.json";
+  config.pbrIblNormalMapFragmentShaderSpirvPath = iblNormalMap + "/pbr_ibl_normal_map.frag.spv";
+  config.pbrIblNormalMapFragmentShaderReflectionPath = iblNormalMap + "/pbr_ibl_normal_map.frag.refl.json";
   const std::string sky = ATLANTIS_IBL_DEMO_SKY_SHADER_DIR;
   config.skyVertexShaderSpirvPath = sky + "/sky.vert.spv";
   config.skyVertexShaderReflectionPath = sky + "/sky.vert.refl.json";

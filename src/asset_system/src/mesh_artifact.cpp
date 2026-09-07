@@ -55,7 +55,10 @@ void appendFloatLE(std::vector<std::byte>& out, float value) {
 
 }  // namespace
 
-std::vector<std::byte> encodeMeshArtifact(AssetId assetId, const ParsedMeshSource& source) {
+std::vector<std::byte> encodeMeshArtifact(AssetId assetId, const ParsedMeshSource& source,
+                                           const std::vector<VertexTangent>& tangents) {
+  ATLANTIS_CHECK(tangents.size() == source.vertices.size());
+
   std::vector<std::byte> out;
   out.reserve(kMeshArtifactHeaderSizeBytes + source.vertices.size() * kMeshArtifactVertexStrideBytes +
               source.indices.size() * 2);
@@ -73,7 +76,9 @@ std::vector<std::byte> encodeMeshArtifact(AssetId assetId, const ParsedMeshSourc
   appendU32LE(out, vertexBytesOffset);
   appendU32LE(out, indexBytesOffset);
 
-  for (const MeshSourceVertex& v : source.vertices) {
+  for (std::size_t i = 0; i < source.vertices.size(); ++i) {
+    const MeshSourceVertex& v = source.vertices[i];
+    const VertexTangent& t = tangents[i];
     appendFloatLE(out, v.positionX);
     appendFloatLE(out, v.positionY);
     appendFloatLE(out, v.positionZ);
@@ -85,6 +90,10 @@ std::vector<std::byte> encodeMeshArtifact(AssetId assetId, const ParsedMeshSourc
     appendFloatLE(out, v.normalX);
     appendFloatLE(out, v.normalY);
     appendFloatLE(out, v.normalZ);
+    appendFloatLE(out, t.x);
+    appendFloatLE(out, t.y);
+    appendFloatLE(out, t.z);
+    appendFloatLE(out, t.w);
   }
 
   for (std::uint16_t index : source.indices) appendU16LE(out, index);
@@ -144,12 +153,12 @@ atlantis::Result<DecodedMeshArtifact, ArtifactDecodeError> decodeMeshArtifact(co
   // different buffer), so this check and the returned data can never
   // disagree. Plan 0020 Section P7/Spec 0020 D3: the normal's own
   // length-squared check runs only after every one of this vertex's
-  // own 11 floats (not merely the three normal ones) is already
+  // own 15 floats (not merely the three normal ones) is already
   // confirmed finite -- independently re-derived here, never trusting
   // the cooker's own already-performed check.
   for (std::uint32_t v = 0; v < vertexCount; ++v) {
     const std::byte* vertexStart = decoded.vertexBytes.data() + static_cast<std::size_t>(v) * vertexStrideBytes;
-    for (std::size_t floatIndex = 0; floatIndex < 11; ++floatIndex) {
+    for (std::size_t floatIndex = 0; floatIndex < 15; ++floatIndex) {
       const float value = readFloatLE(vertexStart + floatIndex * 4);
       if (!std::isfinite(value)) return ResultT::Err(ArtifactDecodeError::NonFiniteFloat);
     }
@@ -160,6 +169,29 @@ atlantis::Result<DecodedMeshArtifact, ArtifactDecodeError> decodeMeshArtifact(co
     const double lengthSquared = detail::computeNormalLengthSquared(normalX, normalY, normalZ);
     if (!detail::isNormalLengthSquaredInTolerance(lengthSquared)) {
       return ResultT::Err(ArtifactDecodeError::NonUnitNormal);
+    }
+
+    // Plan 0029 Section P2/ADR-0073 Decision item 6: the decode-time
+    // twins of the tangent attribute's own three well-formedness
+    // checks -- independently re-derived from the artifact's own
+    // bytes, never trusting a well-formed cooker.
+    const float tangentX = readFloatLE(vertexStart + kMeshArtifactTangentOffsetBytes);
+    const float tangentY = readFloatLE(vertexStart + kMeshArtifactTangentOffsetBytes + 4);
+    const float tangentZ = readFloatLE(vertexStart + kMeshArtifactTangentOffsetBytes + 8);
+    const float tangentW = readFloatLE(vertexStart + kMeshArtifactTangentOffsetBytes + 12);
+
+    const double tangentLengthSquared = detail::computeNormalLengthSquared(tangentX, tangentY, tangentZ);
+    if (!detail::isNormalLengthSquaredInTolerance(tangentLengthSquared)) {
+      return ResultT::Err(ArtifactDecodeError::NonUnitTangent);
+    }
+
+    const double dotNT = static_cast<double>(normalX) * static_cast<double>(tangentX) +
+                          static_cast<double>(normalY) * static_cast<double>(tangentY) +
+                          static_cast<double>(normalZ) * static_cast<double>(tangentZ);
+    if (std::abs(dotNT) >= 1e-3) return ResultT::Err(ArtifactDecodeError::NonOrthogonalTangent);
+
+    if (tangentW != 1.0f && tangentW != -1.0f) {
+      return ResultT::Err(ArtifactDecodeError::InvalidTangentHandedness);
     }
   }
 

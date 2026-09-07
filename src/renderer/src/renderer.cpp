@@ -130,6 +130,16 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
             item.material->environmentBinding() == MaterialEnvironmentBinding::Ibl ? 4U : 2U;
         cmd.bindTexture(shadowBinding, shadowMap, shadowMapSampler);
       }
+      // Plan 0029 Section P14 (ADR-0074 Section 2): the normal-map
+      // binding, at the same conditional-index pattern the shadow map
+      // above already establishes -- reuses material.sampler(), the
+      // same VkSampler handle already bound at binding 1 for base
+      // color (ordinary, valid Vulkan usage, not a new RHI capability).
+      if (item.material->normalMapTexture() != nullptr) {
+        const std::uint32_t normalMapBinding =
+            item.material->environmentBinding() == MaterialEnvironmentBinding::Ibl ? 5U : 3U;
+        cmd.bindTexture(normalMapBinding, *item.material->normalMapTexture(), *item.material->sampler());
+      }
       // Plan 0023 Milestone 5 (Spec 0023 D9's own Accepted Correction):
       // an exhaustive switch, no default: label -- this repository's own
       // /w14062 /WX already makes a missed MaterialPushConstantLayout

@@ -164,6 +164,19 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
       std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.spv";
   config.pbrDirectLitFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.refl.json";
+  // Plan 0029 Section P15: mirrors main.cpp's own identical population
+  // of the fifth, normal-map MaterialKind::PbrDirectLit built-in shader
+  // pair -- unconditionally required.
+  config.pbrDirectLitNormalMapVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR) + "/pbr_direct_lit_normal_map.vert.spv";
+  config.pbrDirectLitNormalMapVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_direct_lit_normal_map.vert.refl.json";
+  config.pbrDirectLitNormalMapFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR) + "/pbr_direct_lit_normal_map.frag.spv";
+  config.pbrDirectLitNormalMapFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_direct_lit_normal_map.frag.refl.json";
   // Plan 0028 Milestone 2: mirrors main.cpp's own identical population --
   // the default scene now configures an environment (sky + IBL), which
   // this TEST_CASE's own config previously left unset.
@@ -175,6 +188,17 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   config.pbrIblFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl.frag.spv";
   config.pbrIblFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl.frag.refl.json";
+  // Plan 0029 Section P15: mirrors main.cpp's own identical population
+  // of the normal-map IBL PBR pair -- required in exactly the same
+  // environment-configured case as pbrIbl above.
+  config.pbrIblNormalMapVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_ibl_normal_map.vert.spv";
+  config.pbrIblNormalMapVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_ibl_normal_map.vert.refl.json";
+  config.pbrIblNormalMapFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_ibl_normal_map.frag.spv";
+  config.pbrIblNormalMapFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_ibl_normal_map.frag.refl.json";
   config.skyVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.vert.spv";
   config.skyVertexShaderReflectionPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.vert.refl.json";
   config.skyFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.frag.spv";

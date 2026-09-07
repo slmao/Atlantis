@@ -35,6 +35,7 @@ add_executable(atlantis_asset_system_tests
   cook_material_tests.cpp
   load_material_tests.cpp
   material_asset_cmake_declaration_tests.cpp
+  mesh_tangent_generation_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_system_tests
@@ -54,6 +55,16 @@ target_include_directories(atlantis_asset_system_tests PRIVATE
 # tests/image_regression/CMakeLists.txt.
 target_compile_definitions(atlantis_asset_system_tests PRIVATE
   ATLANTIS_ASSET_SYSTEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/asset_system"
+)
+
+# Plan 0029 Section P1: an absolute, configure-time path to the real
+# authoring-source mesh directory -- mesh_tangent_generation_tests.cpp
+# reads all 5 real, committed .mesh.txt files directly (parseMeshSource()
+# + generateTangents(), no cooking/artifact round trip needed) to
+# re-confirm the Existing-mesh tangent-generatability audit table
+# against real, current source, not a hand-copied fixture.
+target_compile_definitions(atlantis_asset_system_tests PRIVATE
+  ATLANTIS_ASSETS_MESHES_DIR="${CMAKE_SOURCE_DIR}/assets/meshes"
 )
 
 # Plan 0016's own "Human Review Correction -- 2026-08-24" (Verification

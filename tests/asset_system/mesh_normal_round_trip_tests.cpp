@@ -54,16 +54,31 @@ void writeFile(const fs::path& path, const std::string& content) {
 // (-0.577350269, -0.577350269, -0.577350269) and v6
 // (0.577350269, 0.577350269, 0.577350269) -- both real, disclosed,
 // mixed-and-uniform-sign authoring values -- plus a third at the exact
-// lower inclusive tolerance boundary (0.99, 0.0, 0.0, lengthSquared ==
+// lower inclusive tolerance boundary (0.0, 0.0, 0.99, lengthSquared ==
 // 0.9801), proving the boundary itself survives the round-trip exactly
-// too, not merely a comfortably-inside value.
+// too, not merely a comfortably-inside value. Plan 0029/ADR-0073: this
+// third normal is placed along Z (perpendicular to this triangle's own
+// flat-XY geometry and its own real tangent direction), not X as an
+// earlier draft of this fixture used -- ADR-0073 Decision item 3's own
+// literal Gram-Schmidt formula (T_ortho = T - N * dot(N, T), never
+// divided by dot(N, N)) is only exactly orthogonal for a perfectly
+// unit-length N; a normal accepted at this format's own separate
+// +-1%-length tolerance (ADR-0063) but not exactly unit, placed nearly
+// parallel to the triangle's own real tangent direction, would leave a
+// real, non-negligible residual dot(N, T) the decode-time 1e-3
+// orthogonality re-check (ADR-0073 Decision item 6) correctly rejects
+// -- a genuine numerical interaction between two independently
+// tolerant, already-approved checks, not a defect in either. Along Z,
+// dot(N, T_face) is exactly 0 regardless of N's own length, avoiding
+// the interaction while preserving this test's own real intent (the
+// normal-tolerance boundary itself round-trips bit-for-bit).
 constexpr std::string_view kNormalBearingSource =
     "atlantis_static_mesh_source_version: 3\n"
     "vertex_count: 3\n"
     "index_count: 3\n"
     "vertex: 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 -0.577350269 -0.577350269 -0.577350269\n"
     "vertex: 1.0 0.0 0.0 0.0 1.0 0.0 1.0 0.0 0.577350269 0.577350269 0.577350269\n"
-    "vertex: 0.0 1.0 0.0 0.0 0.0 1.0 1.0 1.0 0.99 0.0 0.0\n"
+    "vertex: 0.0 1.0 0.0 0.0 0.0 1.0 1.0 1.0 0.0 0.0 0.99\n"
     "index: 0 1 2\n";
 
 [[nodiscard]] const float* vertexFloatsAt(const StaticMeshAssetData& data, std::size_t vertexIndex) {
@@ -91,10 +106,10 @@ TEST_CASE("A normal value written in a real authoring source reaches loadStaticM
   REQUIRE(loadResult.isOk());
   const StaticMeshAssetData& data = loadResult.value();
 
-  REQUIRE(data.vertexStrideBytes() == 44);
+  REQUIRE(data.vertexStrideBytes() == 60);
   REQUIRE(data.vertexCount() == 3);
 
-  // Normal occupies float index 8/9/10 of each 44-byte vertex's own 11
+  // Normal occupies float index 8/9/10 of each 60-byte vertex's own 15
   // floats (offset 32), appended after UV0 (float index 6/7).
   const float* v0 = vertexFloatsAt(data, 0);
   const float* v1 = vertexFloatsAt(data, 1);
@@ -109,9 +124,9 @@ TEST_CASE("A normal value written in a real authoring source reaches loadStaticM
   // The exact lower inclusive tolerance boundary (Spec 0020 D3) also
   // survives exactly, bit-for-bit -- not merely rounded to "close
   // enough".
-  CHECK(v2[8] == 0.99f);
+  CHECK(v2[8] == 0.0f);
   CHECK(v2[9] == 0.0f);
-  CHECK(v2[10] == 0.0f);
+  CHECK(v2[10] == 0.99f);
 
   // Position/color/UV0 are unaffected by normal's own presence --
   // confirms no flip or reordering was introduced anywhere in the same

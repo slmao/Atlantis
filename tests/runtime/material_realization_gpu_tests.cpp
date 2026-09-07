@@ -84,6 +84,7 @@ struct Vertex {
   float color[3];
   float uv[2];
   float normal[3];
+  float tangent[4];
 };
 
 [[nodiscard]] std::optional<std::vector<std::uint32_t>> loadSpirvFile(const std::string& path) {
@@ -133,6 +134,25 @@ struct Vertex {
       MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
       MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
       MeshVertexAttributeSchema{.location = 2, .offsetBytes = offsetof(Vertex, normal)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
+// Plan 0029 Section P15: realizeOneMaterialCandidate()'s own further-
+// widened signature requires a real pbrDirectLitNormalMap* trio, needed
+// by this file's own new normal-map upload-ordering TEST_CASE below --
+// pbrDirectLitVertexLayout()'s own schema above plus a trailing
+// tangent@3, matching pbr_direct_lit_normal_map.slang's own VertexInput
+// exactly (Milestone 3).
+[[nodiscard]] std::optional<VertexInputLayout> pbrDirectLitNormalMapVertexLayout(
+    const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+      MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
+      MeshVertexAttributeSchema{.location = 2, .offsetBytes = offsetof(Vertex, normal)},
+      MeshVertexAttributeSchema{.location = 3, .offsetBytes = offsetof(Vertex, tangent)},
   };
   auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
   if (result.isErr()) return std::nullopt;
@@ -370,6 +390,182 @@ TEST_CASE("A second material that dedups its texture against an EARLIER frame's 
 }
 
 // ---------------------------------------------------------------------
+// Plan 0029 Section P15 (ADR-0074): a PbrDirectLit material with a
+// normal map uploads BOTH its base-color and normal-map textures in the
+// SAME frame (RealizedMaterialCandidate's own newSampledTexture and
+// newNormalMapTexture both non-null after one realizeOneMaterialCandidate()
+// call), and a second material sharing both the same base-color AND the
+// same normal-map AssetId dedups against both -- neither is re-uploaded,
+// mirroring the cross-frame base-color dedup coverage above, extended to
+// the normal-map texture (which shares the SAME sampledTextureResourceMap_
+// the base-color texture already uses, no new map).
+TEST_CASE("A PbrDirectLit material with a normal map uploads base color and normal map in the same frame, and a "
+          "second material sharing both textures dedups against both",
+          "[runtime][gpu][material_realization][normal_map]") {
+  auto deviceResult =
+      atlantis::vulkan_backend::createDevice({.applicationName = "Atlantis Material Realization Normal-Map GPU Tests",
+                                               .enableValidationLayers = true});
+  REQUIRE(deviceResult.isOk());
+  std::unique_ptr<atlantis::rhi::Device> device = std::move(deviceResult.value());
+
+  auto pbrVertexSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.vert.spv");
+  auto pbrFragmentSpirv =
+      loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.frag.spv");
+  REQUIRE(pbrVertexSpirv.has_value());
+  REQUIRE(pbrFragmentSpirv.has_value());
+  auto pbrVertexReflectionResult = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) +
+                                                           "/pbr_direct_lit.vert.refl.json");
+  REQUIRE(pbrVertexReflectionResult.isOk());
+  const auto pbrLayout = pbrDirectLitVertexLayout(pbrVertexReflectionResult.value());
+  REQUIRE(pbrLayout.has_value());
+
+  auto pbrNormalMapVertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR) +
+                                                "/pbr_direct_lit_normal_map.vert.spv");
+  auto pbrNormalMapFragmentSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR) +
+                                                  "/pbr_direct_lit_normal_map.frag.spv");
+  REQUIRE(pbrNormalMapVertexSpirv.has_value());
+  REQUIRE(pbrNormalMapFragmentSpirv.has_value());
+  auto pbrNormalMapVertexReflectionResult =
+      loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR) +
+                              "/pbr_direct_lit_normal_map.vert.refl.json");
+  REQUIRE(pbrNormalMapVertexReflectionResult.isOk());
+  const auto pbrNormalMapLayout = pbrDirectLitNormalMapVertexLayout(pbrNormalMapVertexReflectionResult.value());
+  REQUIRE(pbrNormalMapLayout.has_value());
+
+  constexpr Extent2D kExtent{4, 4};
+  auto offscreenResult = device->createOffscreenTarget({.extent = kExtent, .format = Format::Rgba8Unorm});
+  REQUIRE(offscreenResult.isOk());
+  std::unique_ptr<atlantis::rhi::OffscreenTarget> offscreenTarget = std::move(offscreenResult.value());
+
+  constexpr AssetId kBaseColorTextureId = 200;
+  constexpr AssetId kNormalMapTextureId = 201;
+  constexpr AssetId kMaterialA = 10;
+  constexpr AssetId kMaterialB = 11;
+
+  std::unordered_map<AssetId, MaterialAssetData> materialDataMap;
+  materialDataMap.emplace(kMaterialA, MaterialAssetData{.kind = MaterialKind::PbrDirectLit,
+                                                         .textureAsset = kBaseColorTextureId,
+                                                         .normalMapTexture = kNormalMapTextureId});
+  materialDataMap.emplace(kMaterialB, MaterialAssetData{.kind = MaterialKind::PbrDirectLit,
+                                                         .textureAsset = kBaseColorTextureId,
+                                                         .normalMapTexture = kNormalMapTextureId});
+  std::unordered_map<AssetId, TextureAssetData> textureDataMap;
+  textureDataMap.emplace(kBaseColorTextureId, makeSolidTextureData(4, 0x7F));
+  textureDataMap.emplace(kNormalMapTextureId, makeSolidTextureData(4, 0x80));
+
+  // Same map the base-color texture already publishes into -- Plan 0029
+  // Section P15's own "no new map" requirement.
+  std::unordered_map<AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>> sampledTextureResourceMap;
+  std::unordered_map<AssetId, std::unique_ptr<atlantis::rhi::Sampler>> samplerResourceMap;
+  std::unordered_map<AssetId, std::unique_ptr<atlantis::renderer::Material>> materialResourceMap;
+
+  // ---- "Frame" 1: kMaterialA realizes both its base-color and its
+  // normal-map texture in this ONE frame. ----
+  {
+    const std::vector<AssetId> pendingIds = computePendingMaterialIds({kMaterialA}, /*alreadyRealizedIds=*/{});
+    REQUIRE(pendingIds == std::vector<AssetId>{kMaterialA});
+
+    auto commandListResult = device->createCommandList();
+    REQUIRE(commandListResult.isOk());
+    std::unique_ptr<atlantis::rhi::CommandList> commandList = std::move(commandListResult.value());
+
+    // pbrIbl*/pbrIblNormalMap* trios are dead-path filler here (this test
+    // never sets environmentEnabled=true) -- reusing the real pbrDirectLit*/
+    // pbrDirectLitNormalMap* trios above, mirroring every other no-
+    // environment composition root's identical reuse pattern.
+    std::unordered_map<AssetId, RealizedMaterialCandidate> realized = realizePendingMaterials(
+        *device, *commandList, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv,
+        *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv,
+        *pbrFragmentSpirv, *pbrNormalMapLayout, *pbrNormalMapVertexSpirv, *pbrNormalMapFragmentSpirv,
+        *pbrNormalMapLayout, *pbrNormalMapVertexSpirv, *pbrNormalMapFragmentSpirv, /*environmentEnabled=*/false,
+        pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap);
+
+    REQUIRE(realized.size() == 1);
+    const RealizedMaterialCandidate& candidateA = realized.at(kMaterialA);
+    REQUIRE(candidateA.newSampledTexture != nullptr);
+    REQUIRE(candidateA.textureAssetId == kBaseColorTextureId);
+    REQUIRE(candidateA.newNormalMapTexture != nullptr);
+    REQUIRE(candidateA.normalMapTextureAssetId == kNormalMapTextureId);
+    REQUIRE(candidateA.normalMapStagingBuffer.has_value());
+    REQUIRE(candidateA.sampler != nullptr);
+    REQUIRE(candidateA.material != nullptr);
+
+    auto acquireResult = offscreenTarget->acquireTarget();
+    REQUIRE(acquireResult.isOk());
+    std::unique_ptr<atlantis::rhi::RenderTarget> target = std::move(acquireResult.value());
+    auto submitResult = device->submit(std::move(commandList), *target);
+    REQUIRE(submitResult.isOk());
+    REQUIRE(device->waitIdle().isOk());
+
+    for (auto& [assetId, candidate] : realized) {
+      if (candidate.newSampledTexture) {
+        sampledTextureResourceMap.emplace(candidate.textureAssetId, std::move(candidate.newSampledTexture));
+      }
+      if (candidate.newNormalMapTexture) {
+        sampledTextureResourceMap.emplace(candidate.normalMapTextureAssetId, std::move(candidate.newNormalMapTexture));
+      }
+      samplerResourceMap.emplace(assetId, std::move(candidate.sampler));
+      materialResourceMap.emplace(assetId, std::move(candidate.material));
+    }
+  }
+  // Both textures published into the ONE shared map -- 2 entries total,
+  // not one per material.
+  REQUIRE(sampledTextureResourceMap.size() == 2);
+
+  // ---- "Frame" 2: kMaterialB shares both AssetIds with kMaterialA --
+  // neither texture is re-uploaded. ----
+  {
+    std::vector<AssetId> alreadyRealized;
+    for (const auto& [id, material] : materialResourceMap) alreadyRealized.push_back(id);
+    const std::vector<AssetId> pendingIds = computePendingMaterialIds({kMaterialA, kMaterialB}, alreadyRealized);
+    REQUIRE(pendingIds == std::vector<AssetId>{kMaterialB});
+
+    auto commandListResult = device->createCommandList();
+    REQUIRE(commandListResult.isOk());
+    std::unique_ptr<atlantis::rhi::CommandList> commandList = std::move(commandListResult.value());
+
+    std::unordered_map<AssetId, RealizedMaterialCandidate> realized = realizePendingMaterials(
+        *device, *commandList, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv,
+        *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv,
+        *pbrFragmentSpirv, *pbrNormalMapLayout, *pbrNormalMapVertexSpirv, *pbrNormalMapFragmentSpirv,
+        *pbrNormalMapLayout, *pbrNormalMapVertexSpirv, *pbrNormalMapFragmentSpirv, /*environmentEnabled=*/false,
+        pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap);
+
+    REQUIRE(realized.size() == 1);
+    const RealizedMaterialCandidate& candidateB = realized.at(kMaterialB);
+    REQUIRE(candidateB.newSampledTexture == nullptr);
+    REQUIRE(candidateB.newNormalMapTexture == nullptr);
+    REQUIRE(candidateB.sampler != nullptr);
+    REQUIRE(candidateB.material != nullptr);
+
+    // No upload pass was recorded (both textures already dedupped) -- the
+    // CommandList is submitted empty, matching Frame 1's own gate logic
+    // ("realized" non-empty is still the correct publish gate; no waitIdle
+    // is required here for a staging-buffer-free candidate, but calling it
+    // is still safe and mirrors the fixed runFrame() gate above).
+    auto acquireResult = offscreenTarget->acquireTarget();
+    REQUIRE(acquireResult.isOk());
+    std::unique_ptr<atlantis::rhi::RenderTarget> target = std::move(acquireResult.value());
+    auto submitResult = device->submit(std::move(commandList), *target);
+    REQUIRE(submitResult.isOk());
+    REQUIRE(device->waitIdle().isOk());
+
+    for (auto& [assetId, candidate] : realized) {
+      samplerResourceMap.emplace(assetId, std::move(candidate.sampler));
+      materialResourceMap.emplace(assetId, std::move(candidate.material));
+    }
+  }
+  REQUIRE(sampledTextureResourceMap.size() == 2);  // still exactly 2 -- neither texture was re-uploaded
+  REQUIRE(materialResourceMap.size() == 2);
+
+  materialResourceMap.clear();
+  samplerResourceMap.clear();
+  sampledTextureResourceMap.clear();
+  REQUIRE(device->waitIdle().isOk());
+}
+
+// ---------------------------------------------------------------------
 // Plan 0018 Milestone 11 regression coverage (PR #88 final review round):
 // the three loadAndInstantiateScene() material-loop cases the Approved
 // Plan Milestone 11 promised (a material that resolves and loads but
@@ -475,7 +671,7 @@ struct CookedMaterialFixture {
 [[nodiscard]] CookedMaterialFixture cookFixtureMaterial(const fs::path& dir, const std::string& logicalPath,
                                                           const std::string& textureLogicalPath) {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 2\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 3\n"
                         "kind: unlit_textured\n"
                         "texture: " + textureLogicalPath + "\n"
                         "filter: linear\n"
@@ -494,7 +690,7 @@ struct CookedMaterialFixture {
 [[nodiscard]] CookedMaterialFixture cookFixturePbrMaterial(const fs::path& dir, const std::string& logicalPath,
                                                             const std::string& textureLogicalPath) {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 2\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 3\n"
                         "kind: pbr_direct_lit\n"
                         "texture: " + textureLogicalPath + "\n"
                         "filter: linear\n"

@@ -818,3 +818,118 @@ Sequencing section above.
 **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
 Approval recorded 2026-09-07, accepting this Spec in full, as drafted,
 with no change.
+
+## Human Review Deferral Record — 2026-09-07
+
+**Status:** Recorded by Human Review, 2026-09-07 (chat). This record
+does not change this Spec's own top-level `Status: Approved` above, and
+does not rewrite the Human Review Approval section immediately
+preceding it — this Spec's own problem statement, Requirements, and
+Proposed Design remain exactly as approved. This record documents two
+subsequent, real findings and one explicit deferral decision.
+
+**Finding 1 — the approved slope-aware receiver-depth strategy is not
+implementable.** A real-GPU grazing-receiver/true-occluder discriminator
+(built after this Spec's own approval, per its own Testing &
+Verification Plan) found that the approved candidate
+(`kShadowBiasMin=0.0015`, `kShadowBiasSlopeScale=0.003`,
+`kShadowBiasMax=0.040`) **completely erases a real, physically valid
+nearby occluder's own shadow**: a controlled capture at a fixed grazing
+receiver, with a real occluder whose own light-space depth separation
+from the receiver was measured at `0.019158` (comfortably between
+`kShadowBiasMin` and the candidate's own `kShadowBiasMax`), showed the
+occluder's own shadow at three sampled points (interior, near boundary,
+far boundary) go from a real, deep shadow pre-fix
+(`rgbSum` delta `183`/`195`/`189`) to **zero** difference under the
+candidate (`0`/`0`/`0`) — the receiver never distinguishes "occluded"
+from "unoccluded" once the bias needed to suppress the sphere's own
+grazing-angle acne (empirically `~0.038`–`0.040`) is applied. This is a
+structural conflict, not a bad candidate choice: the two requirements
+(acne suppression, real-occlusion preservation for this occluder) do
+not overlap anywhere in the candidate's own fixed 24-point grid.
+
+**Finding 2 — the two named alternatives, and their combination, were
+also investigated and also fail.** A follow-up, isolated real-GPU
+investigation tested this Spec's own Alternatives Considered options 3
+and 4, plus their combination, against the identical occlusion-guard
+geometry and the existing four-path acne/threshold/ground gates:
+
+- **Caster-side Vulkan raster depth bias** (a temporary,
+  backend-neutral `PipelineCreateParams` depth-bias extension, mapped
+  directly to `depthBiasEnable`/`depthBiasConstantFactor`/
+  `depthBiasSlopeFactor`/`depthBiasClamp` on the `shadow_cast` Pipeline
+  only, receiver compare left at the original small
+  `kShadowBias=0.0015`): occlusion-safe only up to roughly
+  `constantFactor<=10` (100% shadow retention at all 3 sampled points),
+  but acne suppression to within ceiling requires `constantFactor~600`
+  (confirmed: `2`/`1` residual pixels, ceiling `10`) — by
+  `constantFactor=15` the occluder's own interior sample point is
+  already fully erased while acne is still only ~34% reduced. No
+  overlap (~60x gap).
+- **Geometric-normal world-position offset** (an isotropic
+  simplification of Filament's own real `computeLightSpacePosition()`,
+  [`shaders/src/surface_shadowing.glsl`](https://github.com/google/filament/blob/main/shaders/src/surface_shadowing.glsl):
+  `offset = texelWorldSize * normalBiasScale * sin(theta)` along the
+  geometric normal, receiver compare left at the original small
+  `kShadowBias=0.0015`): occlusion-safe only up to
+  `normalBiasScale<=0.28` (acne barely reduced, ~16%), while acne
+  reaches ceiling only at `normalBiasScale~15` (confirmed: `9`/`9`
+  residual) — by which point all 3 occlusion sample points are already
+  fully erased. No overlap (~50x gap); pushing further
+  (`normalBiasScale=40`) makes acne *worse* again (non-monotonic).
+- **Both combined**, each held at its own individually-safe limit
+  (`constantFactor=10`/`slopeFactor=2.5` plus `normalBiasScale=0.28`):
+  still only ~37% acne reduction, and *two* of the three occlusion
+  sample points already lost — worse than either mechanism alone at the
+  same individual settings, not better.
+
+No Proposed Correction was drafted from this investigation — per its own
+governing instructions, a Correction is only drafted once a single
+option (or a combination) passes every fixed gate, which did not happen.
+All temporary probe code (a `PipelineCreateParams` RHI extension, its
+Vulkan Backend mapping, shader edits, GPU test files) was fully
+reverted and removed; no code from this investigation was ever
+committed anywhere.
+
+**Explicit deferral decision.** The user directed (chat, 2026-09-07):
+defer all shadow-bias remediation work — do not implement any new
+shadow bias, PCF, normal-offset, or raster-depth-bias mechanism at this
+time — and continue Spec 0029 to completion, accepting its existing,
+already-generated `pbr_normal_map_demo` candidate as Spec 0029's own
+initial golden, with the candidate's own visible grazing-angle acne
+disclosed and accepted as a pre-existing, shared limitation of Spec
+0027/ADR-0072's own fixed `kShadowBias` mechanism (confirmed, via the
+same A/B/C/D control-material isolation this Spec's own Evidence
+already used, to be unrelated to Spec 0029's own tangent-space/normal-
+map work) — see
+[Plan 0029's own Human-Approved Implementation Deviation — 2026-09-07](../plans/0029-tangent-space-normal-mapping-foundation.md#human-approved-implementation-deviation--2026-09-07)
+for the complete record of that deviation.
+
+**Consequences for this Spec.**
+
+- **Implementation of this Spec remains deferred** — no candidate, no
+  RHI change, no shader change from this investigation is adopted.
+  Neither the originally-approved slope-aware receiver-depth strategy
+  nor either named alternative is implemented.
+- **This Spec no longer blocks Spec 0029's own Milestone 6–7** — Spec
+  0029 proceeds using its own existing candidate, per the explicit
+  deferral above, independently of this Spec's own eventual resolution.
+- **This Spec's own problem statement remains valid and unresolved** —
+  the grazing-angle self-shadow-acne defect this Spec exists to fix is
+  real, reproduced, and not fixed by this deferral; it remains an open
+  problem for a future round.
+- **No alternative strategy (PCF, cascaded shadow maps, variance/
+  exponential shadow maps, or any other technique beyond this Spec's
+  own already-named Alternatives Considered) is selected or authorized
+  by this record.** Resuming this work requires a new, reviewed Spec/
+  ADR revision (or a fresh Spec) and its own Human Review — this
+  deferral record is not itself that review.
+- [Plan 0030](../plans/0030-directional-shadow-bias-stability.md) and
+  its own Implementation PR
+  ([PR #134](https://github.com/slmao/Atlantis/pull/134)) remain
+  `Draft`/blocked — this record does not approve, merge, or advance
+  either.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+deferral direction recorded 2026-09-07, as described above, with no
+further condition.

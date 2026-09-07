@@ -280,6 +280,15 @@ class RuntimeApplication {
   atlantis::rhi::VertexInputLayout pbrIblVertexInputLayout_;
   std::vector<std::uint32_t> pbrIblVertexSpirv_;
   std::vector<std::uint32_t> pbrIblFragmentSpirv_;
+  // Plan 0029 Section P15 (ADR-0074): the two normal-map PBR shader
+  // pairs' own resolved layout/SPIR-V -- mirror pbrDirectLitVertexInputLayout_/
+  // pbrIblVertexInputLayout_'s own role exactly, resolved once at init.
+  atlantis::rhi::VertexInputLayout pbrDirectLitNormalMapVertexInputLayout_;
+  std::vector<std::uint32_t> pbrDirectLitNormalMapVertexSpirv_;
+  std::vector<std::uint32_t> pbrDirectLitNormalMapFragmentSpirv_;
+  atlantis::rhi::VertexInputLayout pbrIblNormalMapVertexInputLayout_;
+  std::vector<std::uint32_t> pbrIblNormalMapVertexSpirv_;
+  std::vector<std::uint32_t> pbrIblNormalMapFragmentSpirv_;
   // Plan 0026 Milestone 3 (ADR-0071): the sky shader pair's own resolved
   // vertex layout/SPIR-V -- loaded conditionally, alongside pbrIblVertexSpirv_/
   // ...FragmentSpirv_ above (same hasEnvironment gate). skyVertexInputLayout_

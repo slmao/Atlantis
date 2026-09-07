@@ -86,6 +86,11 @@ enum class RuntimeInitError {
   ShadowSamplerCreateFailed,
   ShadowCastPipelineCreateFailed,
   ShadowLightSpaceBufferCreateFailed,
+  // Plan 0029 Section P2/P8 (ADR-0074 Section 1 item 6): a PbrDirectLit
+  // material's own resolved normal-map texture's colorSpace is not
+  // Unorm -- mirrors PbrBaseColorTextureNotSrgb's own precedent
+  // exactly, checked at the same scene-dependency-resolution point.
+  PbrNormalMapTextureNotUnorm,
 };
 
 // For logging only -- not part of any Result/error contract.
