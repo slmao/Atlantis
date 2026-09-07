@@ -1524,7 +1524,10 @@ the existing Milestone 5 candidate as-is. Concretely:
    immediately before this approval, both from disk and from the
    staged git blob at commit time):
    - PNG: `6fb4339782da365fb09bbd25412793c6fde92a9ec0807fc4d9521106ae5ffe0`
+     (see the 2026-09-07 hash-citation correction below — this string
+     is one hex digit short of a complete SHA-256)
    - sidecar: `45c8d3d0d0a4fe468b5c433b541bf4b9b6733eff50b354fb9ba522a2ed14ceb`
+     (same correction applies)
 2. **The visible black granular artifact is accepted, explicitly, as a
    disclosed, pre-existing limitation of Spec 0027/ADR-0072's own
    shared, fixed `kShadowBias` mechanism** — a limitation this Plan's
@@ -1591,3 +1594,30 @@ PR.
 
 **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Milestone 7
 closeout recorded 2026-09-07.
+
+## Hash-Citation Correction — 2026-09-07
+
+The SHA-256 values quoted verbatim in the
+[Human-Approved Implementation Deviation](#human-approved-implementation-deviation--2026-09-07)
+section above (as given in chat, 2026-09-07) are each **63 hex
+characters, one short of a complete 64-character SHA-256** — almost
+certainly a transcription artifact from when the reference values were
+pasted into chat, not a different hash. This does **not** indicate the
+golden file was regenerated, modified, or is otherwise in question: it
+is the same, untouched Milestone 5 candidate throughout, and its real,
+complete, independently-recomputed digests (from disk, matching the
+staged git blob at commit `f22a30d`) are:
+
+- PNG: `6fb4339782da365fb09bbd25412793c6fde92a9ec0807fc4d9521106ae5ffe0d`
+- sidecar: `45c8d3d0d0a4fe468b5c433b541bf4b9b6733eff50b354fb9ba522a2ed14cebe`
+
+Each begins with exactly the 63-character string quoted in chat, with
+one additional trailing hex digit. No other property of the golden
+(pixel content, sidecar fields, git blob) changed. This correction is
+disclosed for record accuracy only; it changes no Decision, gate, or
+approval already recorded above.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — correction
+recorded 2026-09-07 by the implementing agent; disclosed for Human
+Review's own awareness, not requiring re-approval since no content or
+decision changed.
