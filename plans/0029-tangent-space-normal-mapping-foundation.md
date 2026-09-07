@@ -1,7 +1,7 @@
 # Plan: Tangent-Space Normal Mapping Foundation
 
 - **Spec:** [specs/0029-tangent-space-normal-mapping-foundation.md](../specs/0029-tangent-space-normal-mapping-foundation.md) (`Approved`)
-- **Status:** Approved / Ready for Implementation
+- **Status:** Approved / **Implementation complete in [PR #135](https://github.com/slmao/Atlantis/pull/135); pending merge** (not yet merged — this Plan is not "done" until a human merges that PR)
 - **Author:** slmao
 - **Human Review Approval (2026-09-06):** Reviewed and approved by
   slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
@@ -1553,3 +1553,41 @@ the existing Milestone 5 candidate as-is. Concretely:
 **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
 Approval recorded 2026-09-07, directing this exact deviation, as
 described above, with no further condition.
+
+## Milestone 7 Closeout — 2026-09-07
+
+Milestone 7's full Verification Checklist was executed end-to-end on
+`feature/0029-tangent-space-normal-mapping-foundation` at
+`f22a30d` (Milestone 6's own commit), with real results:
+
+- Debug build: succeeded. Release build: succeeded.
+- `ctest -C Debug -LE gpu`: 917/917 passed. `ctest -C Release -LE gpu`:
+  916/916 passed (one fewer is the pre-existing, documented Debug-only
+  `ATLANTIS_ASSERT` test gap, not a regression).
+- `ctest -C Debug -L gpu`: 99/99 passed. `ctest -C Release -L gpu`:
+  99/99 passed. Vulkan Validation Layers output (`ctest -L gpu -V`,
+  both configs) is clean — zero `VUID`/Validation Error/Validation
+  Warning.
+- All 9 pre-existing goldens confirmed byte-identical. The new
+  `pbr_normal_map_demo` capture-compare `TEST_CASE` passes, run twice,
+  byte-identical both times. `world_scene_loaded` passes individually
+  (7 assertions). `sky_background` passes individually (69 assertions).
+  The normal-map discriminative pixel `(256,256)` measures
+  `delta = 103` (gate `>50`, pass). The shadow discriminative pixel
+  `(198,273)` measures `delta = 160` (gate `>15`, pass).
+- A separate `ATLANTIS_BUILD_TESTS=OFF` build was verified: the Runtime
+  builds and runs, assets cook correctly (262 files, including the new
+  normal-map assets), and zero test executables are produced.
+- Module/link boundaries, `Vk*` isolation, RHI public-API diff, and
+  `/w14062` exhaustiveness were all re-checked and remain within this
+  Plan's own established constraints; no violation found.
+
+Implementation is complete on this branch. It is carried by
+[PR #135](https://github.com/slmao/Atlantis/pull/135)
+(`feat: implement tangent-space normal mapping foundation`), which is
+**not yet merged** — this Plan's own status line above reflects that
+honestly; it will not say "merged" until a human actually merges that
+PR.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Milestone 7
+closeout recorded 2026-09-07.
