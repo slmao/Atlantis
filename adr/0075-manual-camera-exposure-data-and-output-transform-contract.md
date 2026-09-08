@@ -1,13 +1,14 @@
 # ADR 0075: Manual Camera Exposure Data and Output-Transform Contract
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-08
-- **Deciders:** slmao (drafted by Claude Code at explicit human
-  direction; pending Human Review)
-- **Related Spec:** [specs/0031-manual-camera-exposure-foundation.md](../specs/0031-manual-camera-exposure-foundation.md)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+  Approval recorded 2026-09-08; see this ADR's own
+  [Acceptance Record — 2026-09-08](#acceptance-record--2026-09-08) below
+- **Related Spec:** [specs/0031-manual-camera-exposure-foundation.md](../specs/0031-manual-camera-exposure-foundation.md) (`Approved`)
 - **Related ADR:** amends [ADR-0068](0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md)
-  D-10 via that ADR's own new [Proposed Amendment — 2026-09-08](0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md#proposed-amendment--2026-09-08)
-  section — a separate document, reviewed independently (see Context)
+  D-10 via that ADR's own [Accepted Amendment — 2026-09-08](0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md#accepted-amendment--2026-09-08)
+  section — a separate document, approved independently (see Context)
 
 ## Context
 
@@ -223,3 +224,37 @@ own text describing a contract ("no push constant") that Implementation
 would silently make false, discoverable only by reading ADR-0075 and
 noticing the connection — worse for a future reader than ADR-0068
 carrying its own, explicit, cross-referenced amendment.
+
+## Acceptance Record — 2026-09-08
+
+**Status: Accepted.** Recorded against
+[PR #136](https://github.com/slmao/Atlantis/pull/136). Human Review's
+own words: *"我分别认可 Spec 0031、ADR-0075，以及 ADR-0068 的 2026-09-08
+Proposed Amendment"* ("I separately approve Spec 0031, ADR-0075, and
+ADR-0068's 2026-09-08 Proposed Amendment").
+
+This approval covers this ADR's complete Decision as drafted, with no
+change to the Decision/Consequences/Alternatives text above — in
+particular: the full `Camera`/scene-schema/`Renderer::drawFrame()` data
+flow (Decision 1-5); the `[-16, +16]` authoring-domain policy stated as
+an explicit, chosen policy with a real computed safety margin, not a
+uniquely-derived range (Decision 4); `computeExposureMultiplier()`
+computed once, in C++, per frame, as the sole EV→multiplier
+implementation (Decision 6); the 4-byte Fragment-stage push constant
+carrying the already-computed multiplier (Decision 7); the real
+`slangc`-confirmed push-constant contract fixing
+`compile_and_validate.cpp`'s exact expected shape (Decision 8); and the
+byte-identical-goldens compatibility gate stated as requiring a real
+capture-compare run, not arithmetic alone (Decision 9). Approved
+independently of [Spec 0031](../specs/0031-manual-camera-exposure-foundation.md)
+(`Approved`) and ADR-0068's own
+[Accepted Amendment — 2026-09-08](0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md#accepted-amendment--2026-09-08)
+— this is not a blanket approval of one implying the others.
+
+**This approval authorizes drafting Plan 0031 only once
+[PR #136](https://github.com/slmao/Atlantis/pull/136) itself has merged
+to `main` — not before, and not Implementation of any kind.**
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-08, accepting this ADR in full, as drafted,
+with no change.

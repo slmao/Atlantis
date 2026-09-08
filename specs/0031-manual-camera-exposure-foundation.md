@@ -1,10 +1,12 @@
 # Spec: Manual Camera Exposure Foundation
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-08
-- **Related Plan(s):** None yet — Spec/ADR only this round
-- **Related ADR(s):** [ADR-0075: Manual Camera Exposure Data and Output-Transform Contract](../adr/0075-manual-camera-exposure-data-and-output-transform-contract.md) (`Proposed`); amends [ADR-0068](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md) D-10 via that ADR's own new [Proposed Amendment — 2026-09-08](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md#proposed-amendment--2026-09-08) section (`Proposed`, reviewed independently of ADR-0075 and this Spec)
+- **Related Plan(s):** None yet — Plan 0031 may be drafted only once
+  [PR #136](https://github.com/slmao/Atlantis/pull/136) itself has
+  merged to `main`, not before
+- **Related ADR(s):** [ADR-0075: Manual Camera Exposure Data and Output-Transform Contract](../adr/0075-manual-camera-exposure-data-and-output-transform-contract.md) (`Accepted`); amends [ADR-0068](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md) D-10 via that ADR's own [Accepted Amendment — 2026-09-08](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md#accepted-amendment--2026-09-08) section (`Accepted`, approved independently of ADR-0075 and this Spec) — see this Spec's own [Human Review Approval — 2026-09-08](#human-review-approval--2026-09-08) below
 
 ## Summary
 
@@ -389,9 +391,9 @@ schema + `kSceneArtifactSchemaVersion` bump), and a backend-abstraction
 contract detail (the output-transform `Pipeline`'s push-constant
 layout, previously fixed at zero — [ADR-0068](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md)
 D-10). See [ADR-0075](../adr/0075-manual-camera-exposure-data-and-output-transform-contract.md)
-(`Proposed`), which records the Camera-data/scene-schema/`drawFrame()`
-decision, and ADR-0068's own new [Proposed Amendment — 2026-09-08](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md#proposed-amendment--2026-09-08)
-(`Proposed`), which amends D-10 specifically for the push-constant
+(`Accepted`), which records the Camera-data/scene-schema/`drawFrame()`
+decision, and ADR-0068's own [Accepted Amendment — 2026-09-08](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md#accepted-amendment--2026-09-08)
+(`Accepted`), which amends D-10 specifically for the push-constant
 change — two separate governance records because D-10 is `Accepted`
 text this Spec must not silently rewrite; see that Amendment's own
 Context for why it is not folded into ADR-0075. No third architectural
@@ -556,3 +558,33 @@ this Spec's own Alternatives Considered for what was rejected and why.
   pass) is compatible with, and does not block, either future change.
 - A scene/material editor UI for setting `exposureCompensationEv` is not
   designed here — this Spec only fixes the data model and render path.
+
+## Human Review Approval — 2026-09-08
+
+**Status: Approved.** Recorded against
+[PR #136](https://github.com/slmao/Atlantis/pull/136). Human Review's
+own words: *"我分别认可 Spec 0031、ADR-0075，以及 ADR-0068 的 2026-09-08
+Proposed Amendment"* ("I separately approve Spec 0031, ADR-0075, and
+ADR-0068's 2026-09-08 Proposed Amendment").
+
+This approval covers this Spec's complete Requirements and scope as
+drafted — every functional and non-functional Requirement, the
+Proposed Design (the `computeExposureMultiplier()`/push-constant data
+flow, the `[-16, +16]` authoring-domain policy and its stated safety
+margin, the `NonFiniteValue`-reuse decision, the `slangc`-confirmed
+push-constant contract), the Architectural Impact section's own
+three-separate-approvals requirement, and the Testing & Verification
+Plan — with no change to this Spec's own already-reviewed design text.
+[ADR-0075](../adr/0075-manual-camera-exposure-data-and-output-transform-contract.md)
+and [ADR-0068's own Accepted Amendment](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md#accepted-amendment--2026-09-08)
+are approved independently, each carrying its own Acceptance Record —
+this is not a blanket approval of one implying the others.
+
+**This approval authorizes drafting Plan 0031 only once
+[PR #136](https://github.com/slmao/Atlantis/pull/136) itself has merged
+to `main` — not before, and not Implementation, code, tests, assets, or
+golden capture of any kind.**
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-08, approving this Spec in full, as drafted,
+with no change.
