@@ -216,24 +216,30 @@ TEST_CASE("Renderer::drawFrame() records a full bind/draw sequence per DrawItem 
   Renderer renderer;
   renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
-                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, nullptr, nullptr,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, 0.0f, nullptr, nullptr,
                       shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
 
   // Plan 0024 Milestone 5: one more bindPipeline/bindVertexBuffer/
   // bindIndexBuffer/drawIndexed than before -- the output-transform
   // pass's own fullscreen-triangle draw, in addition to the two
-  // DrawItems' own geometry-pass draws. bindUniformBuffer/pushConstant
-  // counts are unchanged -- the output-transform pass calls neither.
+  // DrawItems' own geometry-pass draws. bindUniformBuffer counts are
+  // unchanged -- the output-transform pass binds no uniform buffer.
+  // Plan 0031: the output-transform pass now also calls pushConstant()
+  // once (the exposure multiplier) -- pushConstants.size() gains
+  // exactly one more entry, landing at index [2] (after the two
+  // DrawItems' own, since "draw" always executes before
+  // "output_transform").
   // Plan 0027 Milestone 9 (ADR-0072 D-1/P6): one more bindPipeline and
   // bindUniformBuffer than that -- the "shadow" pass's own unconditional
   // pair (outside its own empty-shadowCasterDrawItems loop), first every
-  // frame. pushConstant/drawIndexed counts are unaffected -- the shadow
-  // pass calls neither with an empty caster list.
+  // frame. drawIndexed counts are unaffected -- the shadow pass calls
+  // no drawIndexed with an empty caster list, and (unchanged by Plan
+  // 0031) no pushConstant either.
   REQUIRE(commandList.boundPipelines.size() == 4);
   REQUIRE(commandList.boundVertexBuffers.size() == 3);
   REQUIRE(commandList.boundIndexBuffers.size() == 3);
   REQUIRE(commandList.boundUniformBuffers.size() == 3);
-  REQUIRE(commandList.pushConstants.size() == 2);
+  REQUIRE(commandList.pushConstants.size() == 3);
   REQUIRE(commandList.drawIndexedCounts.size() == 3);
   REQUIRE(commandList.drawIndexedCounts[0] == 3);
   REQUIRE(commandList.drawIndexedCounts[1] == 3);
@@ -247,6 +253,15 @@ TEST_CASE("Renderer::drawFrame() records a full bind/draw sequence per DrawItem 
   const auto* secondAsFloats = reinterpret_cast<const float*>(commandList.pushConstantData[1].data());
   REQUIRE(firstAsFloats[12] == 5.0f);
   REQUIRE(secondAsFloats[12] == -5.0f);
+
+  // Plan 0031: the output-transform pass's own new push constant, at
+  // index [2] -- exactly sizeof(ExposurePushConstants) (4 bytes),
+  // decoding to computeExposureMultiplier(0.0f) == 1.0f (this call
+  // site passes 0.0f).
+  REQUIRE(commandList.pushConstantData[2].size() == 4);
+  const float outputTransformMultiplier =
+      *reinterpret_cast<const float*>(commandList.pushConstantData[2].data());
+  REQUIRE(outputTransformMultiplier == 1.0f);
 
   // Plan 0024 Milestone 5: the geometry pass now writes hdrColorTarget
   // (the new beginRendering(HdrColorTarget&, ...) overload, with the
@@ -320,13 +335,13 @@ TEST_CASE("Renderer::drawFrame() passes finalColorState through unmodified, neve
   FakeCommandList windowedCommandList;
   renderer.drawFrame(windowedCommandList, colorTarget, depthTarget, cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
-                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, nullptr, nullptr,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, 0.0f, nullptr, nullptr,
                       shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
 
   FakeCommandList headlessCommandList;
   renderer.drawFrame(headlessCommandList, colorTarget, depthTarget, cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::TransferSource, hdrColorTarget, fullscreenVertexBuffer,
-                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, nullptr, nullptr,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, 0.0f, nullptr, nullptr,
                       shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
 
   REQUIRE(windowedCommandList.events == headlessCommandList.events);
@@ -388,7 +403,7 @@ TEST_CASE("Renderer::drawFrame() with an untextured Material records no bindText
 
   renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
-                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, nullptr, nullptr,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, 0.0f, nullptr, nullptr,
                       shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
 
   // The Material's own untextured DrawItem records no SampledTexture-
@@ -448,7 +463,7 @@ TEST_CASE("Renderer::drawFrame() with a textured Material records bindTexture im
 
   renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
-                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, nullptr, nullptr,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, 0.0f, nullptr, nullptr,
                       shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
 
   // boundTextures counts only the SampledTexture-shaped bindTexture()
@@ -521,7 +536,7 @@ TEST_CASE("Renderer binds base color, environment cube, and DFG LUT at explicit 
   Renderer renderer;
   renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, std::span<const DrawItem>(&item, 1),
                      atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
-                     fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, &lighting, nullptr,
+                     fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, 0.0f, &lighting, nullptr,
                      shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
 
   REQUIRE(commandList.boundTextures.size() == 3);
@@ -540,7 +555,7 @@ TEST_CASE("Renderer binds base color, environment cube, and DFG LUT at explicit 
   renderer.drawFrame(missingLightingCommandList, colorTarget, depthTarget, cameraBuffer,
                      std::span<const DrawItem>(&item, 1), atlantis::rhi::ResourceState::PresentSource,
                      hdrColorTarget, fullscreenVertexBuffer, fullscreenIndexBuffer,
-                     outputTransformPipeline, outputTransformSampler, nullptr, nullptr, shadowMap, shadowMapSampler,
+                     outputTransformPipeline, outputTransformSampler, 0.0f, nullptr, nullptr, shadowMap, shadowMapSampler,
                      shadowCastPipeline, shadowLightSpaceBuffer, {});
   REQUIRE(failures.size() == 1);
   CHECK(failures[0].find("IBL Material") != std::string::npos);
@@ -591,7 +606,7 @@ TEST_CASE("Renderer draws the sky, bound at slot 1, strictly before every DrawIt
   Renderer renderer;
   renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
-                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, &lighting,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, 0.0f, &lighting,
                       &skyPipeline, shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
 
   // Four Pipelines bound in order: the shadow pass (always first --
@@ -662,7 +677,7 @@ TEST_CASE("A non-null skyPipeline with a null environmentLighting fires the prog
   Renderer renderer;
   renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
-                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, 0.0f,
                       /*environmentLighting=*/nullptr, &skyPipeline, shadowMap, shadowMapSampler, shadowCastPipeline,
                       shadowLightSpaceBuffer, {});
 
@@ -707,7 +722,7 @@ TEST_CASE("Renderer::drawFrame() records the \"shadow\" pass's full draw sequenc
   Renderer renderer;
   renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
-                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, nullptr, nullptr,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, 0.0f, nullptr, nullptr,
                       shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer,
                       shadowCasterDrawItems);
 
@@ -787,7 +802,7 @@ TEST_CASE("The shadow-map bind lands at binding 2 for a plain PbrDirectLit DrawI
   Renderer renderer;
   renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
-                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, &lighting, nullptr,
+                      fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, 0.0f, &lighting, nullptr,
                       shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
 
   REQUIRE(commandList.boundShadowMapTextures.size() == 2);

@@ -19,6 +19,7 @@
 using atlantis::shader_system::DescriptorBinding;
 using atlantis::shader_system::loadReflectionMetadata;
 using atlantis::shader_system::outputTransformExpectedDescriptorContract;
+using atlantis::shader_system::PushConstantRange;
 using atlantis::shader_system::ShaderStage;
 using atlantis::shader_system::validateDescriptorContract;
 
@@ -58,14 +59,23 @@ TEST_CASE("Both output-transform variants' real reflection matches the shared C+
       auto vertexResult = loadReflectionMetadata(shaderDirectory + "/" + variant.artifactStem + ".vert.refl.json");
       REQUIRE(vertexResult.isOk());
       CHECK(vertexResult.value().stage == ShaderStage::Vertex);
-      CHECK(vertexResult.value().pushConstantRanges.empty());
+      // Plan 0031 (ADR-0075 Decision 8): a real, stray, unread 4-byte
+      // entry -- confirmed by a real slangc compile, not a guess; see
+      // compile_and_validate.cpp's own identical expectation.
+      const std::vector<PushConstantRange> expectedVertexPushConstants = {
+          PushConstantRange{.offsetBytes = 0, .sizeBytes = 4, .stage = ShaderStage::Vertex}};
+      CHECK(vertexResult.value().pushConstantRanges == expectedVertexPushConstants);
       CHECK(validateDescriptorContract(vertexResult.value(), vertexContract).isOk());
 
       auto fragmentResult =
           loadReflectionMetadata(shaderDirectory + "/" + variant.artifactStem + ".frag.refl.json");
       REQUIRE(fragmentResult.isOk());
       CHECK(fragmentResult.value().stage == ShaderStage::Fragment);
-      CHECK(fragmentResult.value().pushConstantRanges.empty());
+      // The real, genuinely-used entry -- fragmentMain reads
+      // exposurePushConstants.exposureMultiplier.
+      const std::vector<PushConstantRange> expectedFragmentPushConstants = {
+          PushConstantRange{.offsetBytes = 0, .sizeBytes = 4, .stage = ShaderStage::Fragment}};
+      CHECK(fragmentResult.value().pushConstantRanges == expectedFragmentPushConstants);
       CHECK(validateDescriptorContract(fragmentResult.value(), fragmentContract).isOk());
     }
   }

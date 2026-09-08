@@ -1,20 +1,23 @@
-// Plan 0024 Milestone 4 (ADR-0068 D-3/D-5/D-6/D-10): the output-
-// transform pass's own *_Srgb variant -- reads the scene-referred
-// linear HDR intermediate (HdrColorTarget), applies the fixed-exposure
-// Reinhard tone-mapping curve (ADR-0068 D-5), and writes the LINEAR
-// tonemapped value unencoded -- the target image's own VK_FORMAT_*_SRGB
-// view causes the GPU's fixed-function output-merger to perform the
-// identical sRGB encode in hardware on store. This shader never applies
-// the manual OETF -- doing so would double-encode (ADR-0068 D-6's own
-// double-encode-avoidance rule); see output_transform_unorm.slang for
-// the sibling variant that does apply it, for a *_Unorm final target.
-// Never branched by MaterialKind -- all three existing MaterialKinds'
-// own accumulated linear radiance passes through this one shared pass
-// identically. Drawn as one fullscreen triangle via the existing
-// drawIndexed() path -- no non-indexed draw API. Shares its own
-// descriptor contract (one Sampler binding, no uniform buffer, no push
-// constant) with output_transform_unorm.slang's own *_Unorm variant --
-// see outputTransformExpectedDescriptorContract(). Identical vertex
+// Plan 0024 Milestone 4 (ADR-0068 D-3/D-5/D-6/D-10); exposure widened
+// from a fixed constant to a per-frame push constant by Plan 0031
+// (ADR-0075/ADR-0068's own D-10 Amendment): the output-transform
+// pass's own *_Srgb variant -- reads the scene-referred linear HDR
+// intermediate (HdrColorTarget), applies the Reinhard tone-mapping
+// curve (ADR-0068 D-5) at the per-frame exposure multiplier, and
+// writes the LINEAR tonemapped value unencoded -- the target image's
+// own VK_FORMAT_*_SRGB view causes the GPU's fixed-function
+// output-merger to perform the identical sRGB encode in hardware on
+// store. This shader never applies the manual OETF -- doing so would
+// double-encode (ADR-0068 D-6's own double-encode-avoidance rule); see
+// output_transform_unorm.slang for the sibling variant that does apply
+// it, for a *_Unorm final target. Never branched by MaterialKind --
+// all three existing MaterialKinds' own accumulated linear radiance
+// passes through this one shared pass identically. Drawn as one
+// fullscreen triangle via the existing drawIndexed() path -- no
+// non-indexed draw API. Shares its own descriptor contract (one
+// Sampler binding, no uniform buffer -- plus a 4-byte push constant,
+// Plan 0031) with output_transform_unorm.slang's own *_Unorm variant
+// -- see outputTransformExpectedDescriptorContract(). Identical vertex
 // stage and identical tone-mapping math up to `tonemapped` as that
 // sibling file -- the one and only difference is this fragment stage's
 // own final return statement.
@@ -39,8 +42,15 @@ struct VertexInput {
 [[vk::binding(0, 0)]]
 Sampler2D hdrColorSampler;
 
-// ADR-0068 D-5: fixed, named constant -- no auto-exposure.
-static const float kBaselineExposure = 1.0;
+// Plan 0031 (ADR-0075 Decision 6/7; ADR-0068's own D-10 Amendment):
+// the exposure multiplier, already computed once per frame in C++
+// (exp2(exposureCompensationEv), Renderer::drawFrame()) -- this
+// shader never computes exp2() itself, only the one multiply below.
+struct ExposurePushConstants {
+    float exposureMultiplier;
+};
+[[vk::push_constant]]
+ConstantBuffer<ExposurePushConstants> exposurePushConstants;
 
 [shader("vertex")]
 Varying vertexMain(VertexInput input) {
@@ -62,7 +72,7 @@ float4 fragmentMain(Varying input) : SV_Target {
     // D-7) in a different guise -- any positive value, however large,
     // still reaches the curve unclipped.
     float3 linearColor = max(hdrColor.rgb, float3(0.0, 0.0, 0.0));
-    float3 exposedColor = linearColor * kBaselineExposure;
+    float3 exposedColor = linearColor * exposurePushConstants.exposureMultiplier;
     float3 tonemapped = exposedColor / (float3(1.0, 1.0, 1.0) + exposedColor);
 
     // No manual OETF here -- the *_Srgb final target's own hardware

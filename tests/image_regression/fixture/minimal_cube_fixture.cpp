@@ -248,6 +248,7 @@ using Mat4 = std::array<float, 16>;
                            .wordCount = outputTransformFragmentSpirv->size()},
        .vertexInputLayout = *outputTransformVertexInputLayout,
        .colorFormat = kFixtureColorFormat,
+       .pushConstantSizeBytes = 4,  // Plan 0031
        .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
@@ -431,7 +432,7 @@ Result<PixelBuffer, FixtureRenderError> renderOneFrame(MinimalCubeFixture& fixtu
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, drawItems,
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
-                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, nullptr, nullptr,
+                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, 0.0f, nullptr, nullptr,
                       *fixture.shadowMap, *fixture.shadowMapSampler, *fixture.shadowCastPipeline,
                       *fixture.shadowLightSpaceBuffer, {});
 

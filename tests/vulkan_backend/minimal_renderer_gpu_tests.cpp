@@ -399,6 +399,7 @@ TEST_CASE("Renderer::drawFrame() draws a real, multi-item frame through a real a
                            .wordCount = outputTransformFragmentSpirv->size()},
        .vertexInputLayout = *outputTransformVertexInputLayout,
        .colorFormat = target->format(),
+       .pushConstantSizeBytes = 4,  // Plan 0031
        .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
@@ -479,7 +480,7 @@ TEST_CASE("Renderer::drawFrame() draws a real, multi-item frame through a real a
 
   renderer.drawFrame(*commandList, *target, *depthTexture, *cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::PresentSource, *hdrColorTarget, *fullscreenTriangleVertexBuffer,
-                      *fullscreenTriangleIndexBuffer, *outputTransformPipeline, *outputTransformSampler, nullptr,
+                      *fullscreenTriangleIndexBuffer, *outputTransformPipeline, *outputTransformSampler, 0.0f, nullptr,
                       nullptr, *shadowMap, *shadowMapSampler, *shadowCastPipeline, *shadowLightSpaceBuffer, {});
 
   auto submitResult = device->submit(std::move(commandList), *target);

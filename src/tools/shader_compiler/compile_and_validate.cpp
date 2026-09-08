@@ -194,18 +194,26 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
 // 96-byte block (PbrPushConstants, ADR-0067 D-3) here; the other three
 // contracts (minimal-renderer/textured-material/lit-textured) keep the
 // existing 64-byte (ObjectToWorldOnly) expectation, unchanged.
-// Plan 0024 Milestone 3 (ADR-0068 D-10): both output-transform
-// contracts expect a genuinely EMPTY range list, not a zero-sized
-// entry -- the fullscreen triangle needs no per-draw transform, and
-// Slang's raw JSON has no pushConstantBuffer resource to reflect at
-// all when a shader declares none.
+// Plan 0024 Milestone 3 (ADR-0068 D-10): the sky contract expects a
+// genuinely EMPTY range list -- the fullscreen triangle needs no
+// per-draw transform, and Slang's raw JSON has no pushConstantBuffer
+// resource to reflect at all when a shader declares none. Plan 0031
+// (ADR-0075 Decision 8): both output-transform contracts now expect a
+// real, non-empty entry instead -- a real slangc compile (recorded
+// during Spec 0031/ADR-0075 drafting) confirmed a 4-byte
+// ExposurePushConstants declaration, visible at module scope but read
+// only by fragmentMain, still produces this same stray-vertex-side
+// entry, matching the identical "present regardless of real per-stage
+// usage" shape this file's own top comment already documents for the
+// unrelated PBR pair.
 [[nodiscard]] bool validatePushConstantsForVertexStage(const ReflectionMetadata& vertexMetadata,
                                                         const std::string& expectedContract) {
   std::vector<PushConstantRange> expected;
-  if (expectedContract == "output-transform-unorm" || expectedContract == "output-transform-srgb" ||
-      expectedContract == "sky") {
+  if (expectedContract == "sky") {
     // expected stays empty -- the sky's own fullscreen triangle needs no
     // per-draw transform either (Plan 0026 Milestone 4).
+  } else if (expectedContract == "output-transform-unorm" || expectedContract == "output-transform-srgb") {
+    expected = {PushConstantRange{.offsetBytes = 0, .sizeBytes = 4, .stage = ShaderStage::Vertex}};
   } else {
     const bool isPbr = expectedContract == "pbr-direct-lit" || expectedContract == "pbr-ibl" ||
                        expectedContract == "pbr-direct-lit-normal-map" || expectedContract == "pbr-ibl-normal-map";
@@ -222,19 +230,22 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
 }
 
 // Plan 0023 Milestone 3 (ADR-0067 D-4): a second, new check, run only
-// for both PBR variants -- unlike UnlitTextured/LitTextured (where a
-// fragment-stage pushConstantBuffer reflection entry is the already-
-// documented "stray, harmless, unread" case, see
+// for both PBR variants and (Plan 0031) both output-transform variants
+// -- unlike UnlitTextured/LitTextured (where a fragment-stage
+// pushConstantBuffer reflection entry is the already-documented
+// "stray, harmless, unread" case, see
 // validateDescriptorContractForStage()'s own header comment above),
-// PbrDirectLit's own fragment stage genuinely reads push-constant data,
-// so its reflected range must be validated too -- confirmed to exactly
-// match the vertex stage's own {offset:0, size:96}.
-[[nodiscard]] bool validatePushConstantsForFragmentStage(const ReflectionMetadata& fragmentMetadata) {
+// PbrDirectLit's and the output-transform pass's own fragment stages
+// each genuinely read push-constant data, so their reflected range
+// must be validated too.
+[[nodiscard]] bool validatePushConstantsForFragmentStage(const ReflectionMetadata& fragmentMetadata,
+                                                          std::uint32_t expectedSizeBytes) {
   const std::vector<PushConstantRange> expected = {
-      PushConstantRange{.offsetBytes = 0, .sizeBytes = 96, .stage = ShaderStage::Fragment}};
+      PushConstantRange{.offsetBytes = 0, .sizeBytes = expectedSizeBytes, .stage = ShaderStage::Fragment}};
   if (fragmentMetadata.pushConstantRanges != expected) {
     std::cerr << "atlantis_shader_compiler: fragment stage push-constant layout does not match the fixed "
-                 "PBR expectation (offset 0, size 96, fragment stage)\n";
+                 "expectation (offset 0, size "
+              << expectedSizeBytes << ", fragment stage)\n";
     return false;
   }
   return true;
@@ -379,7 +390,10 @@ int compileAndValidate(const CompileAndValidateRequest& request) {
   if (validationOk && (request.expectedContract == "pbr-direct-lit" || request.expectedContract == "pbr-ibl" ||
                        request.expectedContract == "pbr-direct-lit-normal-map" ||
                        request.expectedContract == "pbr-ibl-normal-map")) {
-    validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata);
+    validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata, 96);
+  } else if (validationOk && (request.expectedContract == "output-transform-unorm" ||
+                              request.expectedContract == "output-transform-srgb")) {
+    validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata, 4);
   }
   if (!validationOk) {
     std::filesystem::remove_all(tempDir);

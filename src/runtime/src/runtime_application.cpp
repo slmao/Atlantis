@@ -939,6 +939,7 @@ void RuntimeApplication::runFrame() {
                              .wordCount = outputTransformFragmentSpirvRef.size()},
          .vertexInputLayout = outputTransformVertexLayoutRef,
          .colorFormat = currentFormat,
+         .pushConstantSizeBytes = 4,  // Plan 0031
          .sampledTextureBindingCount = 1,
          .hasCameraUniformBinding = false,
          .hasDepthAttachment = false});
@@ -1396,6 +1397,10 @@ void RuntimeApplication::runFrame() {
   renderer_.drawFrame(*commandList, *target, *depthTexture_, *cameraBuffer_, drawItems,
                        atlantis::rhi::ResourceState::PresentSource, *hdrColorTarget_, *fullscreenTriangleVertexBuffer_,
                        *fullscreenTriangleIndexBuffer_, *effectiveOutputTransformPipeline, *outputTransformSampler_,
+                       // Plan 0031 (Spec 0031 Requirement 8/10): the active
+                       // Camera's own real exposureCompensationEv -- every
+                       // other caller in this repository passes 0.0f.
+                       cameraComponent.exposureCompensationEv,
                        environmentLightingView.has_value() ? &*environmentLightingView : nullptr,
                        // Plan 0026 Milestone 3: already nullptr whenever !hasEnvironment
                        // (skyPipeline_ is only ever constructed inside that same

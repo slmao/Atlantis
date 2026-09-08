@@ -500,6 +500,7 @@ TEST_CASE("A Pipeline created before a growth event remains valid and genuinely 
                            .wordCount = outputTransformFragmentSpirv->size()},
        .vertexInputLayout = *outputTransformVertexInputLayout,
        .colorFormat = kColorFormat,
+       .pushConstantSizeBytes = 4,  // Plan 0031
        .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
@@ -559,7 +560,7 @@ TEST_CASE("A Pipeline created before a growth event remains valid and genuinely 
   Renderer renderer;
   renderer.drawFrame(*commandList, *target, *depthTexture, *cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::TransferSource, *hdrColorTarget, *fullscreenTriangleVertexBuffer,
-                      *fullscreenTriangleIndexBuffer, *outputTransformPipeline, *outputTransformSampler, nullptr,
+                      *fullscreenTriangleIndexBuffer, *outputTransformPipeline, *outputTransformSampler, 0.0f, nullptr,
                       nullptr, *shadowMap, *shadowMapSampler, *shadowCastPipeline, *shadowLightSpaceBuffer, {});
 
   auto submitResult = device->submit(std::move(commandList), *target);

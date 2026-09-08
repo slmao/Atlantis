@@ -350,6 +350,7 @@ setUpIntegratedShowcaseDemoFixture(const atlantis::runtime::BootstrapConfig& con
                            .wordCount = fixture.outputTransformUnormFragmentSpirv.size()},
        .vertexInputLayout = fixture.outputTransformUnormVertexInputLayout,
        .colorFormat = kIntegratedShowcaseDemoColorFormat,
+       .pushConstantSizeBytes = 4,  // Plan 0031
        .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
@@ -591,7 +592,7 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, drawItems,
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
-                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler,
+                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, 0.0f,
                       environmentLightingView.has_value() ? &*environmentLightingView : nullptr,
                       fixture.skyPipeline.get(), *fixture.shadowMap, *fixture.shadowMapSampler,
                       *fixture.shadowCastPipeline, *fixture.shadowLightSpaceBuffer, shadowCasterDrawItems);

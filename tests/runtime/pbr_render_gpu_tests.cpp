@@ -399,6 +399,7 @@ struct PbrTestRig {
                            .wordCount = outputTransformFragmentSpirv->size()},
        .vertexInputLayout = *outputTransformVertexInputLayout,
        .colorFormat = finalFormat,
+       .pushConstantSizeBytes = 4,  // Plan 0031
        .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
@@ -458,7 +459,7 @@ struct PbrTestRig {
   Renderer renderer;
   renderer.drawFrame(*commandList, *target, *depthTextureResult.value(), cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::TransferSource, *hdrColorTarget, *fullscreenTriangleVertexBuffer,
-                      *fullscreenTriangleIndexBuffer, *outputTransformPipeline, *outputTransformSampler, nullptr,
+                      *fullscreenTriangleIndexBuffer, *outputTransformPipeline, *outputTransformSampler, 0.0f, nullptr,
                       nullptr, *shadowMap, *shadowMapSampler, *shadowCastPipeline, *shadowLightSpaceBuffer, {});
 
   atlantis::render_graph::RenderGraphBuilder copyBuilder;

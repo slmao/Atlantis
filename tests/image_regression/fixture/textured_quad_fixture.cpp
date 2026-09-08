@@ -355,6 +355,7 @@ Result<TexturedQuadFixture, TexturedQuadSetupError> setUpTexturedQuadFixture(con
                            .wordCount = outputTransformFragmentSpirv->size()},
        .vertexInputLayout = *outputTransformVertexInputLayout,
        .colorFormat = kTexturedQuadColorFormat,
+       .pushConstantSizeBytes = 4,  // Plan 0031
        .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
@@ -482,7 +483,7 @@ Result<PixelBuffer, TexturedQuadRenderError> renderTexturedQuadFrame(TexturedQua
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, drawItems,
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
-                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, nullptr, nullptr,
+                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, 0.0f, nullptr, nullptr,
                       *fixture.shadowMap, *fixture.shadowMapSampler, *fixture.shadowCastPipeline,
                       *fixture.shadowLightSpaceBuffer, {});
 
@@ -570,7 +571,7 @@ Result<PixelBuffer, TexturedQuadRenderError> renderTexturedQuadBaselineFrame(Tex
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, noDrawItems,
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
-                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, nullptr, nullptr,
+                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, 0.0f, nullptr, nullptr,
                       *fixture.shadowMap, *fixture.shadowMapSampler, *fixture.shadowCastPipeline,
                       *fixture.shadowLightSpaceBuffer, {});
 

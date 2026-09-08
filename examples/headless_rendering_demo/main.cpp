@@ -514,6 +514,7 @@ int main() {
                            .wordCount = outputTransformFragmentSpirv->size()},
        .vertexInputLayout = *outputTransformVertexInputLayout,
        .colorFormat = kColorFormat,
+       .pushConstantSizeBytes = 4,  // Plan 0031
        .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
@@ -715,7 +716,7 @@ int main() {
     renderer.drawFrame(*commandList, *target, *depthTexture, *cameraBuffer, drawItems,
                         atlantis::rhi::ResourceState::TransferSource, *hdrColorTarget,
                         *fullscreenTriangleVertexBuffer, *fullscreenTriangleIndexBuffer, *outputTransformPipeline,
-                        *outputTransformSampler, nullptr, nullptr, *shadowMap, *shadowMapSampler,
+                        *outputTransformSampler, 0.0f, nullptr, nullptr, *shadowMap, *shadowMapSampler,
                         *shadowCastPipeline, *shadowLightSpaceBuffer, {});
 
     // Caller-built copy-pass graph (Spec 0010's own flow) -- separate

@@ -1004,6 +1004,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+3 and succeeds agai
          .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
          .vertexInputLayout = *layout,
          .colorFormat = finalFormat,
+         .pushConstantSizeBytes = 4,  // Plan 0031
          .sampledTextureBindingCount = 1,
          .hasCameraUniformBinding = false,
          .hasDepthAttachment = false});
@@ -1154,6 +1155,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4 with an environme
          .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
          .vertexInputLayout = *layout,
          .colorFormat = finalFormat,
+         .pushConstantSizeBytes = 4,  // Plan 0031
          .sampledTextureBindingCount = 1,
          .hasCameraUniformBinding = false,
          .hasDepthAttachment = false});
@@ -1338,6 +1340,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4/N+5 with both a s
          .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
          .vertexInputLayout = *layout,
          .colorFormat = finalFormat,
+         .pushConstantSizeBytes = 4,  // Plan 0031
          .sampledTextureBindingCount = 1,
          .hasCameraUniformBinding = false,
          .hasDepthAttachment = false});
