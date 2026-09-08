@@ -1,7 +1,7 @@
 # Plan: Manual Camera Exposure Foundation
 
 - **Spec:** [specs/0031-manual-camera-exposure-foundation.md](../specs/0031-manual-camera-exposure-foundation.md) (`Approved`)
-- **Status:** Draft
+- **Status:** Approved / Ready for Implementation
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Related ADR(s):** [ADR-0075](../adr/0075-manual-camera-exposure-data-and-output-transform-contract.md) (`Accepted`); [ADR-0068's own Accepted Amendment — 2026-09-08](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md#accepted-amendment--2026-09-08) (`Accepted`, D-10 only)
 
@@ -734,3 +734,40 @@ See [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
 No delta beyond: this repository has no CI pipeline yet, so "CI green"
 is reported as not applicable, honestly, exactly as every prior PR in
 this repository already does.
+
+## Human Review Approval — 2026-09-09
+
+**Status: Approved.** Recorded against
+[PR #137](https://github.com/slmao/Atlantis/pull/137). Human Review's
+own words: *"我认可 Plan 0031，并确认 Spec 0031 与 Plan 0031 的联合
+Human Review 通过；批准记录随 PR #137 合并后可开始实现"* ("I approve
+Plan 0031, and confirm the joint Human Review of Spec 0031 and Plan
+0031 has passed; the approval record takes effect for starting
+Implementation once PR #137 merges").
+
+This is a **joint** approval of Spec 0031 (already `Approved`,
+2026-09-08) together with this Plan — not a second, independent review
+of the Spec's own design text, and not a reopening of it; the Spec's
+own already-recorded Human Review Approval and its own
+[Plan-Stage Correction](../specs/0031-manual-camera-exposure-foundation.md#plan-stage-correction--2026-09-08)
+stand unchanged. This Plan's own approval covers it in full, as
+drafted — the three strictly-ordered, independently-buildable
+Milestones (M1: `Camera`/`DecodedCamera.exposureCompensationEv`, the
+scene source/artifact schema move to v4 with the full new 116-byte
+offset table and `kVersionLine` migration, and non-zero-EV delivery
+verified end-to-end through `World::getCamera()`; M2: the atomic
+`Renderer::drawFrame()`/push-constant/shader/`Pipeline` migration
+across every real call site and pipeline-creation site rg found,
+landing the real `slangc`-confirmed reflection contract and fixing
+every pre-existing assertion it touches in the same Milestone; M3: the
+new GPU-independent/real-GPU verification coverage plus the full
+Debug/Release/Validation-Layers/`BUILD_TESTS=OFF`/boundary matrix, no
+new golden) — with no change to this Plan's own already-drafted text.
+
+**This approval authorizes starting Implementation only once
+[PR #137](https://github.com/slmao/Atlantis/pull/137) itself has merged
+to `main` — not before.**
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-09, jointly approving Spec 0031 and this
+Plan, with no change to either's already-drafted text.
