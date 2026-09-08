@@ -638,3 +638,95 @@ the four RHI-approved formats a real surface happens to report.
   `drawIndexed()`. Rejected for this round — a new RHI draw-call
   surface is a larger, separate API decision than this ADR's own scope
   needs; the existing indexed path already suffices for one triangle.
+
+## Accepted Amendment — 2026-09-08
+
+**Status: Accepted.** Approved independently of
+[Spec 0031](../specs/0031-manual-camera-exposure-foundation.md) (`Approved`)
+and [ADR-0075](0075-manual-camera-exposure-data-and-output-transform-contract.md)
+(`Accepted`) — see this Amendment's own
+[Acceptance Record — 2026-09-08](#acceptance-record--2026-09-08)
+below. Submitted alongside both of those documents, before any
+Implementation — not written after the fact to describe something
+already built. Everything else in this ADR remains its own original,
+unmodified `Accepted` Decision (top-level `Status: Accepted` unchanged;
+D-5's own Reinhard formula and every other Decision item are
+untouched).
+
+**Context.** D-5 itself already anticipated this: *"a future spec may
+add one [an exposure value], replacing `kBaselineExposure`'s fixed
+value with a computed one without changing this Decision's own curve."*
+D-10, drafted at the same time as D-5's then-fixed constant, stated "no
+uniform buffer ... and no push constant" as a direct consequence of
+that fixed constant, not as an independent invariant. Spec 0031/
+ADR-0075 ask for exactly D-5's own anticipated successor; this
+Amendment updates D-10 to match, and D-10 only.
+
+**Decision.** D-10's descriptor-binding contract is **unchanged** — the
+output-transform `Pipeline` still declares exactly one binding, `{set
+0, binding 0, CombinedImageSampler, Fragment}`, sampling the
+`HdrColorTarget`, validated by the existing, unmodified
+`outputTransformExpectedDescriptorContract()`. D-10's push-constant
+clause is amended: the output-transform `Pipeline` now also declares a
+**4-byte push constant** (`ExposurePushConstants { float
+exposureMultiplier; }`, Fragment-stage real usage — see ADR-0075
+Decision 6/7), replacing D-10's original "no push constant" clause.
+`compile_and_validate.cpp`'s own two `"output-transform-unorm"`/
+`"output-transform-srgb"` contract names are unchanged; only their
+expected push-constant-range table entries change, from empty to the
+real, `slangc`-confirmed shape ADR-0075 Decision 8 records (a stray,
+unread `{offset:0, size:4, Vertex}` entry alongside the real
+`{offset:0, size:4, Fragment}` entry) — this Amendment does not restate
+that evidence, which lives in ADR-0075 as the decision that produced
+it.
+
+## Consequences of this Amendment
+
+### Positive
+
+- D-10's own text stays an accurate description of the shipped
+  contract once this Amendment and its Implementation land, rather than
+  silently going stale.
+- The descriptor-binding half of D-10 (the part unrelated to exposure)
+  is explicitly reaffirmed unchanged, narrowing exactly what changed.
+
+### Negative / Trade-offs
+
+- A second, independent `Accepted`-ADR text now needs its own separate
+  Human Review approval before the same Implementation can land,
+  alongside Spec 0031 and ADR-0075 — more governance surface than one
+  approval, accepted here because D-10 is `Accepted` text this
+  repository's own convention requires be amended, not silently edited.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-08, accepting this Amendment in full, as
+drafted, with no change.
+
+## Acceptance Record — 2026-09-08
+
+**Status: Accepted.** Recorded against
+[PR #136](https://github.com/slmao/Atlantis/pull/136). Human Review's
+own words: *"我分别认可 Spec 0031、ADR-0075，以及 ADR-0068 的 2026-09-08
+Proposed Amendment"* ("I separately approve Spec 0031, ADR-0075, and
+ADR-0068's 2026-09-08 Proposed Amendment").
+
+This approval's scope is limited to exactly this Amendment's own
+Decision, above — **D-10 only**: the descriptor-binding contract stays
+unchanged (one binding, `{set 0, binding 0, CombinedImageSampler,
+Fragment}`); the output-transform `Pipeline` gains the 4-byte
+Fragment-stage push constant described above. No other part of this
+ADR — D-1 through D-9, D-11, the original Decision/Consequences/
+Alternatives text, or the file's own top-level `Status: Accepted` — is
+reopened, reworded, or otherwise touched by this approval. Approved
+independently of [Spec 0031](../specs/0031-manual-camera-exposure-foundation.md)
+(`Approved`) and [ADR-0075](0075-manual-camera-exposure-data-and-output-transform-contract.md)
+(`Accepted`) — this is not a blanket approval of one implying the
+others.
+
+**This approval authorizes drafting Plan 0031 only once
+[PR #136](https://github.com/slmao/Atlantis/pull/136) itself has merged
+to `main` — not before, and not Implementation of any kind.**
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-08, accepting this Amendment's own scope in
+full, as drafted, with no change.
