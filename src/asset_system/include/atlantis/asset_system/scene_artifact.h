@@ -20,15 +20,18 @@ namespace atlantis::asset_system {
 // P4: schema version 3 inserts a 28-byte light slot (has_light u32 +
 // light_kind u32 + color_r/g/b f32x3 + intensity f32 + range f32) at
 // the identical insertion point -- after material, before parent.
-// Versions 1 and 2 are both rejected outright, no dual-version reader.
-inline constexpr std::uint32_t kSceneArtifactSchemaVersion = 3;
+// Plan 0031: schema version 4 inserts a 4-byte exposure_compensation_ev
+// f32 immediately after far_z, before has_renderable. Versions 1-3 are
+// all rejected outright, no dual-version reader.
+inline constexpr std::uint32_t kSceneArtifactSchemaVersion = 4;
 inline constexpr std::size_t kSceneArtifactHeaderSizeBytes = 24;
 // position(12) + rotation(12) + scale(12) + has_camera(4) +
-// fov_y/near_z/far_z(12) + has_renderable(4) + mesh_asset_id(8) +
-// has_material(4) + material_asset_id(8) + has_light(4) +
-// light_kind(4) + color_r/g/b(12) + intensity(4) + range(4) +
-// has_parent(4) + parent_index(4) = 112 bytes.
-inline constexpr std::size_t kSceneArtifactNodeRecordSizeBytes = 112;
+// fov_y/near_z/far_z(12) + exposure_compensation_ev(4) +
+// has_renderable(4) + mesh_asset_id(8) + has_material(4) +
+// material_asset_id(8) + has_light(4) + light_kind(4) +
+// color_r/g/b(12) + intensity(4) + range(4) + has_parent(4) +
+// parent_index(4) = 116 bytes.
+inline constexpr std::size_t kSceneArtifactNodeRecordSizeBytes = 116;
 // "Implausibly large" upper bound (D6 step 4) -- this format is hand-
 // authored text at import time, never a high-poly runtime asset;
 // mirrors kMaxVertexCount's own order of magnitude and role exactly

@@ -26,7 +26,16 @@ struct DecodedCamera {
   float fovYRadians = 0.0f;
   float nearZ = 0.0f;
   float farZ = 0.0f;
+  float exposureCompensationEv = 0.0f;
 };
+
+// Plan 0031 (Spec 0031 Requirement 6/7, ADR-0075 Decision 4): the
+// fixed, finite authoring-domain policy for exposureCompensationEv --
+// Atlantis::AssetSystem's own independent copy (Atlantis::Renderer
+// carries the same values, separately, in src/renderer/src/exposure.h
+// -- the two modules must not depend on each other).
+inline constexpr float kExposureCompensationEvMin = -16.0f;
+inline constexpr float kExposureCompensationEvMax = 16.0f;
 
 // Plan 0018 Section P7 / ADR-0060 Decision item 1: materialAsset is an
 // optional, second, independent reference -- std::nullopt means "no

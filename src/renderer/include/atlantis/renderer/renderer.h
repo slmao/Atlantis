@@ -107,6 +107,16 @@ class Renderer {
   // explicitly. Every call site in the repository is updated in this
   // same commit (P9(e)); this is a mechanical, disclosed, zero-behavior
   // signature correction, not a design change.
+  //
+  // Plan 0031 (Spec 0031 Requirement 7/8, ADR-0075 Decision 6):
+  // outputTransformExposureCompensationEv is the raw EV -- drawFrame()
+  // itself computes and pushes the multiplier exactly once per call.
+  // Precondition, enforced by ATLANTIS_CHECK_MSG (not merely
+  // documented): finite and within
+  // [kExposureCompensationEvMin, kExposureCompensationEvMax]
+  // (src/renderer/src/exposure.h). This is the only real gate for
+  // direct/non-asset callers (examples, fixtures, tests) -- Runtime's
+  // own caller goes through cook/decode's own independent check first.
   void drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& colorTarget,
                  atlantis::rhi::Texture& depthTarget, atlantis::rhi::Buffer& cameraUniformBuffer,
                  std::span<const DrawItem> drawItems, atlantis::rhi::ResourceState finalColorState,
@@ -114,7 +124,8 @@ class Renderer {
                  atlantis::rhi::Buffer& fullscreenTriangleVertexBuffer,
                  atlantis::rhi::Buffer& fullscreenTriangleIndexBuffer,
                  atlantis::rhi::Pipeline& outputTransformPipeline, atlantis::rhi::Sampler& outputTransformSampler,
-                 const EnvironmentLighting* environmentLighting, atlantis::rhi::Pipeline* skyPipeline,
+                 float outputTransformExposureCompensationEv, const EnvironmentLighting* environmentLighting,
+                 atlantis::rhi::Pipeline* skyPipeline,
                  atlantis::rhi::ShadowMap& shadowMap, atlantis::rhi::Sampler& shadowMapSampler,
                  atlantis::rhi::Pipeline& shadowCastPipeline, atlantis::rhi::Buffer& shadowLightSpaceBuffer,
                  std::span<const DrawItem> shadowCasterDrawItems);

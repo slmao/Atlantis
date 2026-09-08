@@ -9,11 +9,11 @@ namespace atlantis::asset_system {
 
 namespace {
 
-// Plan 0019 Section P3/P16: version 3 adds the optional light= token
-// (16/17-token node case, below). Version 2 (and version 1) are both
-// rejected outright by the version-line check immediately below -- no
-// dual-version reader.
-constexpr std::string_view kVersionLine = "atlantis_scene_source_version: 3";
+// Plan 0031: version 4 adds the optional camera_exposure_ev= token
+// (15-token node case, below). Versions 1-3 are all rejected outright
+// by the version-line check immediately below -- no dual-version
+// reader.
+constexpr std::string_view kVersionLine = "atlantis_scene_source_version: 4";
 constexpr std::string_view kNodeCountPrefix = "node_count: ";
 constexpr std::string_view kActiveCameraPrefix = "active_camera: ";
 constexpr std::string_view kNodePrefix = "node: ";
@@ -40,6 +40,9 @@ constexpr std::string_view kMaterialPrefix = "material=";
 constexpr std::string_view kCameraFovYPrefix = "camera_fov_y=";
 constexpr std::string_view kCameraNearZPrefix = "camera_near_z=";
 constexpr std::string_view kCameraFarZPrefix = "camera_far_z=";
+// Plan 0031: optional 4th camera field, a 15th token -- absent means
+// exposureCompensationEv stays its own default 0.0f (Requirement 3).
+constexpr std::string_view kCameraExposureEvPrefix = "camera_exposure_ev=";
 
 // Spec 0019 D3/P2: light=<directional|point> color=<r> <g> <b>
 // intensity=<f> [range=<f>] -- a fifth, disjoint trailing-group shape,
@@ -162,7 +165,7 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
     }
     const auto tokens = splitOnSpace(line.substr(kNodePrefix.size()));
     if (tokens.size() != 11 && tokens.size() != 12 && tokens.size() != 13 && tokens.size() != 14 &&
-        tokens.size() != 16 && tokens.size() != 17) {
+        tokens.size() != 15 && tokens.size() != 16 && tokens.size() != 17) {
       return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
     }
 
@@ -231,7 +234,7 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
         node.materialLogicalPath = std::string(tokens[12].substr(kMaterialPrefix.size()));
         if (node.materialLogicalPath->empty()) return ResultT::Err(SceneSourceParseError::MissingField);
       }
-    } else if (tokens.size() == 14) {
+    } else if (tokens.size() == 14 || tokens.size() == 15) {
       DecodedCamera camera;
       const std::pair<std::string_view, float*> cameraFields[3] = {
           {kCameraFovYPrefix, &camera.fovYRadians}, {kCameraNearZPrefix, &camera.nearZ},
@@ -242,6 +245,16 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
           return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
         }
         *cameraFields[f].second = value;
+      }
+      // Plan 0031: the optional 15th token, camera_exposure_ev=<f> --
+      // absent (14 tokens) leaves exposureCompensationEv at its own
+      // default 0.0f.
+      if (tokens.size() == 15) {
+        float exposureEv = 0.0f;
+        if (!consumePrefixedFloat(tokens[14], kCameraExposureEvPrefix, exposureEv)) {
+          return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
+        }
+        camera.exposureCompensationEv = exposureEv;
       }
       node.camera = camera;
     } else if (tokens.size() == 16 || tokens.size() == 17) {
@@ -388,7 +401,8 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
       out += ' ';
       out += std::string(kCameraFovYPrefix) + std::to_string(node.camera->fovYRadians) + ' ' +
              std::string(kCameraNearZPrefix) + std::to_string(node.camera->nearZ) + ' ' +
-             std::string(kCameraFarZPrefix) + std::to_string(node.camera->farZ);
+             std::string(kCameraFarZPrefix) + std::to_string(node.camera->farZ) + ' ' +
+             std::string(kCameraExposureEvPrefix) + std::to_string(node.camera->exposureCompensationEv);
     } else if (node.light.has_value()) {
       out += ' ';
       out += std::string(kLightPrefix) +

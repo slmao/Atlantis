@@ -64,7 +64,7 @@ void writeFile(const fs::path& path, const std::string& content) {
 }
 
 constexpr std::string_view kValidThreeNodeSource =
-    "atlantis_scene_source_version: 3\n"
+    "atlantis_scene_source_version: 4\n"
     "node_count: 3\n"
     "active_camera: 3\n"
     "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -96,7 +96,7 @@ TEST_CASE("cookScene resolves a node's material= reference to an AssetId (Plan 0
   const fs::path artifactPath = dir.path / "scene.ascene";
   const fs::path metadataPath = dir.path / "scene.ascene.meta.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 3\n"
+            "atlantis_scene_source_version: 4\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -133,7 +133,7 @@ TEST_CASE("cookScene V28: rejects an empty scene (node_count: 0), writing no art
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   const fs::path artifactPath = dir.path / "scene.ascene";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 3\n"
+            "atlantis_scene_source_version: 4\n"
             "node_count: 0\n"
             "active_camera: none\n");
 
@@ -148,7 +148,7 @@ TEST_CASE("cookScene V2: rejects a duplicate node_id, writing no artifact", "[as
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   const fs::path artifactPath = dir.path / "scene.ascene";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 3\n"
+            "atlantis_scene_source_version: 4\n"
             "node_count: 2\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n"
@@ -164,7 +164,7 @@ TEST_CASE("cookScene V3: rejects a parent naming an undeclared node_id", "[asset
   TempDirGuard dir("undeclared_parent");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 3\n"
+            "atlantis_scene_source_version: 4\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=99 position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
@@ -179,7 +179,7 @@ TEST_CASE("cookScene V4: rejects a direct self-parent cycle", "[asset_system][sc
   TempDirGuard dir("self_cycle");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 3\n"
+            "atlantis_scene_source_version: 4\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=1 position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
@@ -194,7 +194,7 @@ TEST_CASE("cookScene V4: rejects a multi-hop (4-node) parent cycle", "[asset_sys
   TempDirGuard dir("multi_hop_cycle");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 3\n"
+            "atlantis_scene_source_version: 4\n"
             "node_count: 4\n"
             "active_camera: none\n"
             "node: node_id=1 parent=4 position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n"
@@ -212,7 +212,7 @@ TEST_CASE("cookScene V5: rejects active_camera naming an undeclared node_id", "[
   TempDirGuard dir("undeclared_camera");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 3\n"
+            "atlantis_scene_source_version: 4\n"
             "node_count: 1\n"
             "active_camera: 99\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
@@ -227,7 +227,7 @@ TEST_CASE("cookScene V6: rejects active_camera naming a node with no camera_* fi
   TempDirGuard dir("camera_missing_camera");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 3\n"
+            "atlantis_scene_source_version: 4\n"
             "node_count: 1\n"
             "active_camera: 1\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
@@ -242,7 +242,7 @@ TEST_CASE("cookScene V7: rejects a non-finite authored float", "[asset_system][s
   TempDirGuard dir("non_finite");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 3\n"
+            "atlantis_scene_source_version: 4\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=nan 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
@@ -257,7 +257,7 @@ TEST_CASE("cookScene V7: rejects a non-finite camera field", "[asset_system][sce
   TempDirGuard dir("non_finite_camera");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 3\n"
+            "atlantis_scene_source_version: 4\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -267,6 +267,74 @@ TEST_CASE("cookScene V7: rejects a non-finite camera field", "[asset_system][sce
                                  (dir.path / "scene.ascene.meta.txt").string());
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneCookError::NonFiniteValue);
+}
+
+TEST_CASE("cookScene Plan 0031: rejects a non-finite exposure field", "[asset_system][scene]") {
+  TempDirGuard dir("non_finite_exposure");
+  const fs::path sourcePath = dir.path / "scene.scene.txt";
+  writeFile(sourcePath,
+            "atlantis_scene_source_version: 4\n"
+            "node_count: 1\n"
+            "active_camera: none\n"
+            "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+            "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0 camera_exposure_ev=inf\n");
+
+  const auto result = cookScene(sourcePath.string(), (dir.path / "scene.ascene").string(),
+                                 (dir.path / "scene.ascene.meta.txt").string());
+  REQUIRE(result.isErr());
+  CHECK(result.error() == SceneCookError::NonFiniteValue);
+}
+
+TEST_CASE("cookScene Plan 0031: rejects an exposure field below kExposureCompensationEvMin",
+          "[asset_system][scene]") {
+  TempDirGuard dir("exposure_below_min");
+  const fs::path sourcePath = dir.path / "scene.scene.txt";
+  writeFile(sourcePath,
+            "atlantis_scene_source_version: 4\n"
+            "node_count: 1\n"
+            "active_camera: none\n"
+            "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+            "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0 camera_exposure_ev=-16.0001\n");
+
+  const auto result = cookScene(sourcePath.string(), (dir.path / "scene.ascene").string(),
+                                 (dir.path / "scene.ascene.meta.txt").string());
+  REQUIRE(result.isErr());
+  CHECK(result.error() == SceneCookError::NonFiniteValue);
+}
+
+TEST_CASE("cookScene Plan 0031: rejects an exposure field above kExposureCompensationEvMax",
+          "[asset_system][scene]") {
+  TempDirGuard dir("exposure_above_max");
+  const fs::path sourcePath = dir.path / "scene.scene.txt";
+  writeFile(sourcePath,
+            "atlantis_scene_source_version: 4\n"
+            "node_count: 1\n"
+            "active_camera: none\n"
+            "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+            "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0 camera_exposure_ev=16.0001\n");
+
+  const auto result = cookScene(sourcePath.string(), (dir.path / "scene.ascene").string(),
+                                 (dir.path / "scene.ascene.meta.txt").string());
+  REQUIRE(result.isErr());
+  CHECK(result.error() == SceneCookError::NonFiniteValue);
+}
+
+TEST_CASE("cookScene Plan 0031: accepts an exposure field at exactly the closed boundary [-16, +16]",
+          "[asset_system][scene]") {
+  TempDirGuard dir("exposure_at_boundary");
+  const fs::path sourcePath = dir.path / "scene.scene.txt";
+  writeFile(sourcePath,
+            "atlantis_scene_source_version: 4\n"
+            "node_count: 2\n"
+            "active_camera: none\n"
+            "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+            "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0 camera_exposure_ev=-16.0\n"
+            "node: node_id=2 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+            "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0 camera_exposure_ev=16.0\n");
+
+  const auto result = cookScene(sourcePath.string(), (dir.path / "scene.ascene").string(),
+                                 (dir.path / "scene.ascene.meta.txt").string());
+  REQUIRE(result.isOk());
 }
 
 TEST_CASE("cookScene V12: cooking the same source twice produces byte-identical output", "[asset_system][scene]") {

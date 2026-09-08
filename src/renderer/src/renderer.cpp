@@ -1,11 +1,13 @@
 #include <atlantis/renderer/renderer.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 #include <atlantis/assert.h>
 #include <atlantis/render_graph/execution.h>
 
+#include "exposure.h"
 #include "pbr_push_constants.h"
 
 namespace atlantis::renderer {
@@ -27,10 +29,21 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
                           atlantis::rhi::Buffer& fullscreenTriangleIndexBuffer,
                           atlantis::rhi::Pipeline& outputTransformPipeline,
                           atlantis::rhi::Sampler& outputTransformSampler,
+                          float outputTransformExposureCompensationEv,
                           const EnvironmentLighting* environmentLighting, atlantis::rhi::Pipeline* skyPipeline,
                           atlantis::rhi::ShadowMap& shadowMap, atlantis::rhi::Sampler& shadowMapSampler,
                           atlantis::rhi::Pipeline& shadowCastPipeline, atlantis::rhi::Buffer& shadowLightSpaceBuffer,
                           std::span<const DrawItem> shadowCasterDrawItems) {
+  // Plan 0031 (Spec 0031 Requirement 7): the one real gate for direct/
+  // non-asset callers, which bypass cook/decode's own independent
+  // check entirely.
+  ATLANTIS_CHECK_MSG(std::isfinite(outputTransformExposureCompensationEv) &&
+                          outputTransformExposureCompensationEv >= kExposureCompensationEvMin &&
+                          outputTransformExposureCompensationEv <= kExposureCompensationEvMax,
+                      "outputTransformExposureCompensationEv must be finite and within "
+                      "[kExposureCompensationEvMin, kExposureCompensationEvMax]");
+  const float exposureMultiplier = computeExposureMultiplier(outputTransformExposureCompensationEv);
+
   atlantis::render_graph::RenderGraphBuilder builder;
   // Plan 0024 Milestone 5 (ADR-0068 D-1/D-3): the existing single "draw"
   // pass now writes hdrResource (the scene-referred linear HDR
@@ -171,8 +184,14 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
   builder.writes(outputTransformPass, finalColorResource, atlantis::rhi::ResourceState::ColorAttachmentOutput);
   builder.setExecute(outputTransformPass, [&commandList, &hdrColorTarget, &fullscreenTriangleVertexBuffer,
                                             &fullscreenTriangleIndexBuffer, &outputTransformPipeline,
-                                            &outputTransformSampler](atlantis::rhi::CommandList& cmd) {
+                                            &outputTransformSampler,
+                                            exposureMultiplier](atlantis::rhi::CommandList& cmd) {
     cmd.bindPipeline(outputTransformPipeline);
+    // Plan 0031 (ADR-0075 Decision 7/ADR-0068's own D-10 Amendment):
+    // the already-computed multiplier, never the raw EV -- the shader
+    // performs one multiply and nothing else.
+    const ExposurePushConstants payload{exposureMultiplier};
+    cmd.pushConstant(&payload, sizeof(payload));
     cmd.bindVertexBuffer(fullscreenTriangleVertexBuffer);
     cmd.bindIndexBuffer(fullscreenTriangleIndexBuffer);
     cmd.bindTexture(0, hdrColorTarget, outputTransformSampler);

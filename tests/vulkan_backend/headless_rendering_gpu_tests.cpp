@@ -446,6 +446,7 @@ TEST_CASE("One full render-and-readback cycle exercises all five corrected call 
                            .wordCount = outputTransformFragmentSpirv->size()},
        .vertexInputLayout = *outputTransformVertexInputLayout,
        .colorFormat = kColorFormat,
+       .pushConstantSizeBytes = 4,  // Plan 0031
        .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
@@ -509,7 +510,7 @@ TEST_CASE("One full render-and-readback cycle exercises all five corrected call 
   Renderer renderer;
   renderer.drawFrame(*commandList, *target, *depthTexture, *cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::TransferSource, *hdrColorTarget, *fullscreenTriangleVertexBuffer,
-                      *fullscreenTriangleIndexBuffer, *outputTransformPipeline, *outputTransformSampler, nullptr,
+                      *fullscreenTriangleIndexBuffer, *outputTransformPipeline, *outputTransformSampler, 0.0f, nullptr,
                       nullptr, *shadowMap, *shadowMapSampler, *shadowCastPipeline, *shadowLightSpaceBuffer, {});
 
   atlantis::render_graph::RenderGraphBuilder copyBuilder;

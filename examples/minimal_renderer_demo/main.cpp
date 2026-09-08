@@ -731,6 +731,7 @@ int main() {
                                      .wordCount = outputTransformFragmentSpirvForFormat->size()},
                  .vertexInputLayout = *outputTransformVertexInputLayoutForFormat,
                  .colorFormat = currentFormat,
+                 .pushConstantSizeBytes = 4,  // Plan 0031
                  .sampledTextureBindingCount = 1,
                  .hasCameraUniformBinding = false,
                  .hasDepthAttachment = false});
@@ -833,7 +834,7 @@ int main() {
             renderer.drawFrame(*commandList, *target, *depthTexture, *cameraBuffer, drawItems,
                                 atlantis::rhi::ResourceState::PresentSource, *hdrColorTarget,
                                 *fullscreenTriangleVertexBuffer, *fullscreenTriangleIndexBuffer,
-                                *effectiveOutputTransformPipeline, *outputTransformSampler, nullptr, nullptr,
+                                *effectiveOutputTransformPipeline, *outputTransformSampler, 0.0f, nullptr, nullptr,
                                 *shadowMap, *shadowMapSampler, *shadowCastPipeline, *shadowLightSpaceBuffer, {});
 
             auto submitResult = device->submit(std::move(commandList), *target);

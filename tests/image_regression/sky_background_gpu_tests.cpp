@@ -277,7 +277,7 @@ PixelBuffer renderOnce(IblMaterialDemoFixture& fixture, std::span<const DrawItem
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, drawItems,
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
-                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, &lightingView,
+                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, 0.0f, &lightingView,
                       skyOn ? fixture.skyPipeline.get() : nullptr, *fixture.shadowMap, *fixture.shadowMapSampler,
                       *fixture.shadowCastPipeline, *fixture.shadowLightSpaceBuffer, {});
 

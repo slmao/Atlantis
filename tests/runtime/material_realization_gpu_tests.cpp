@@ -716,7 +716,7 @@ struct CookedSceneFixture {
     const fs::path& dir, const std::vector<std::string>& meshLogicalPaths,
     const std::vector<std::string>& materialLogicalPaths) {
   REQUIRE(meshLogicalPaths.size() == materialLogicalPaths.size());
-  std::string source = "atlantis_scene_source_version: 3\n";
+  std::string source = "atlantis_scene_source_version: 4\n";
   source += "node_count: " + std::to_string(meshLogicalPaths.size()) + "\n";
   source += "active_camera: none\n";
   for (std::size_t i = 0; i < meshLogicalPaths.size(); ++i) {
@@ -1004,6 +1004,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+3 and succeeds agai
          .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
          .vertexInputLayout = *layout,
          .colorFormat = finalFormat,
+         .pushConstantSizeBytes = 4,  // Plan 0031
          .sampledTextureBindingCount = 1,
          .hasCameraUniformBinding = false,
          .hasDepthAttachment = false});
@@ -1154,6 +1155,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4 with an environme
          .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
          .vertexInputLayout = *layout,
          .colorFormat = finalFormat,
+         .pushConstantSizeBytes = 4,  // Plan 0031
          .sampledTextureBindingCount = 1,
          .hasCameraUniformBinding = false,
          .hasDepthAttachment = false});
@@ -1338,6 +1340,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4/N+5 with both a s
          .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
          .vertexInputLayout = *layout,
          .colorFormat = finalFormat,
+         .pushConstantSizeBytes = 4,  // Plan 0031
          .sampledTextureBindingCount = 1,
          .hasCameraUniformBinding = false,
          .hasDepthAttachment = false});

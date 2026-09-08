@@ -307,6 +307,7 @@ atlantis::Result<LightingDemoFixture, LightingDemoSetupError> setUpLightingDemoF
                            .wordCount = fixture.outputTransformUnormFragmentSpirv.size()},
        .vertexInputLayout = fixture.outputTransformUnormVertexInputLayout,
        .colorFormat = kLightingDemoColorFormat,
+       .pushConstantSizeBytes = 4,  // Plan 0031
        .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
@@ -476,7 +477,7 @@ atlantis::Result<PixelBuffer, LightingDemoRenderError> renderLightingDemoFrame(L
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, drawItems,
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
-                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, nullptr, nullptr,
+                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, 0.0f, nullptr, nullptr,
                       *fixture.shadowMap, *fixture.shadowMapSampler, *fixture.shadowCastPipeline,
                       *fixture.shadowLightSpaceBuffer, {});
 

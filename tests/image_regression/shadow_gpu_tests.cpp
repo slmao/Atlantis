@@ -418,6 +418,7 @@ struct ShadowTestRig {
                            .wordCount = outputTransformFragmentSpirv->size()},
        .vertexInputLayout = *outputTransformVertexInputLayout,
        .colorFormat = kColorFormat,
+       .pushConstantSizeBytes = 4,  // Plan 0031
        .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
@@ -571,7 +572,7 @@ PixelBuffer renderShadowScene(ShadowTestRig& rig, std::optional<Vec3> occluderCe
   renderer.drawFrame(*commandList, *target, *rig.depthTexture, *rig.cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::TransferSource, *rig.hdrColorTarget,
                       *rig.fullscreenTriangleVertexBuffer, *rig.fullscreenTriangleIndexBuffer,
-                      *rig.outputTransformPipeline, *rig.outputTransformSampler, nullptr, nullptr, *rig.shadowMap,
+                      *rig.outputTransformPipeline, *rig.outputTransformSampler, 0.0f, nullptr, nullptr, *rig.shadowMap,
                       *rig.shadowMapSampler, *rig.shadowCastPipeline, *rig.shadowLightSpaceBuffer,
                       shadowCasterDrawItems);
 
@@ -943,7 +944,7 @@ TEST_CASE("Directional shadow leaves the IBL/ambient term untouched: shadowed vs
     renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, drawItems,
                         atlantis::rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                         *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
-                        *fixture.outputTransformPipeline, *fixture.outputTransformSampler, &lightingView, nullptr,
+                        *fixture.outputTransformPipeline, *fixture.outputTransformSampler, 0.0f, &lightingView, nullptr,
                         *fixture.shadowMap, *fixture.shadowMapSampler, *fixture.shadowCastPipeline,
                         *fixture.shadowLightSpaceBuffer, shadowCasterDrawItems);
 

@@ -1118,7 +1118,7 @@ void writeFile(const fs::path& path, const std::string& content) {
 // negative test below changes exactly the one value its own name
 // describes, nothing else.
 constexpr std::string_view kLightingDemoSourceTemplate =
-    "atlantis_scene_source_version: 3\n"
+    "atlantis_scene_source_version: 4\n"
     "node_count: 4\n"
     "active_camera: 2\n"
     "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "

@@ -1,4 +1,4 @@
-atlantis_scene_source_version: 3
+atlantis_scene_source_version: 4
 node_count: 5
 active_camera: 5
 node: node_id=1 parent=none position=-1.3 1.3 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/pbr_dielectric_rough.material.txt
