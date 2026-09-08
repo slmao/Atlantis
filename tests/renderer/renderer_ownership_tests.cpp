@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <memory>
 #include <string>
 #include <type_traits>
@@ -13,6 +14,7 @@
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "fake_command_list.h"
 
@@ -690,6 +692,94 @@ TEST_CASE("A non-null skyPipeline with a null environmentLighting fires the prog
   CHECK(commandList.boundPipelines[0] == &shadowCastPipeline);
   CHECK(commandList.boundPipelines[1] != &skyPipeline);
   CHECK(commandList.boundPipelines[2] != &skyPipeline);
+}
+
+// Plan 0031 Milestone 3 (Spec 0031 Requirement 7): drawFrame()'s own
+// precondition on outputTransformExposureCompensationEv -- the one real
+// gate for direct/non-asset callers, which bypass cook/decode's own
+// independent range check entirely. Mirrors the skyPipeline precondition
+// test immediately above exactly: ATLANTIS_CHECK never aborts once a
+// test failure handler is installed (tests/core/assert_tests.cpp), so
+// drawFrame() completes against the fakes afterward.
+TEST_CASE("drawFrame() fires exactly one recorded failure for an out-of-range or non-finite "
+          "exposureCompensationEv, then still completes (Plan 0031)",
+          "[renderer][ownership][exposure]") {
+  atlantis::renderer::Mesh mesh(std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Vertex, 0),
+                                 std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Index, 0), 3);
+  atlantis::renderer::Material material(std::make_unique<FakePipeline>(),
+                                         atlantis::renderer::MaterialPushConstantLayout::ObjectToWorldOnly);
+  DrawItem item{.mesh = &mesh,
+                .material = &material,
+                .objectToWorld = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
+  const std::vector<DrawItem> drawItems{item};
+
+  FakeRenderTarget colorTarget("color");
+  FakeTexture depthTarget("depth");
+  FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 592);
+  FakeHdrColorTarget hdrColorTarget("hdr");
+  FakeBuffer fullscreenVertexBuffer(atlantis::rhi::BufferPurpose::Vertex, 0);
+  FakeBuffer fullscreenIndexBuffer(atlantis::rhi::BufferPurpose::Index, 0);
+  FakePipeline outputTransformPipeline;
+  FakeSampler outputTransformSampler("output-transform");
+  FakeShadowMap shadowMap("shadow_map");
+  FakeSampler shadowMapSampler("shadow_map_sampler");
+  FakePipeline shadowCastPipeline;
+  FakeBuffer shadowLightSpaceBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
+  Renderer renderer;
+
+  const float outOfRangeEv = GENERATE(17.0f, -17.0f, std::numeric_limits<float>::quiet_NaN());
+  DYNAMIC_SECTION("exposureCompensationEv = " << outOfRangeEv) {
+    std::vector<std::string> failures;
+    ScopedFailureHandler failureHandler(failures);
+    FakeCommandList commandList;
+    renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
+                        atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
+                        fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, outOfRangeEv, nullptr,
+                        nullptr, shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
+
+    REQUIRE(failures.size() == 1);
+    CHECK(failures[0].find("outputTransformExposureCompensationEv") != std::string::npos);
+  }
+}
+
+TEST_CASE("drawFrame() fires no failure for exposureCompensationEv at exactly the closed boundary "
+          "[-16, +16] or 0.0 (Plan 0031)",
+          "[renderer][ownership][exposure]") {
+  atlantis::renderer::Mesh mesh(std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Vertex, 0),
+                                 std::make_unique<FakeBuffer>(atlantis::rhi::BufferPurpose::Index, 0), 3);
+  atlantis::renderer::Material material(std::make_unique<FakePipeline>(),
+                                         atlantis::renderer::MaterialPushConstantLayout::ObjectToWorldOnly);
+  DrawItem item{.mesh = &mesh,
+                .material = &material,
+                .objectToWorld = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
+  const std::vector<DrawItem> drawItems{item};
+
+  FakeRenderTarget colorTarget("color");
+  FakeTexture depthTarget("depth");
+  FakeBuffer cameraBuffer(atlantis::rhi::BufferPurpose::Uniform, 592);
+  FakeHdrColorTarget hdrColorTarget("hdr");
+  FakeBuffer fullscreenVertexBuffer(atlantis::rhi::BufferPurpose::Vertex, 0);
+  FakeBuffer fullscreenIndexBuffer(atlantis::rhi::BufferPurpose::Index, 0);
+  FakePipeline outputTransformPipeline;
+  FakeSampler outputTransformSampler("output-transform");
+  FakeShadowMap shadowMap("shadow_map");
+  FakeSampler shadowMapSampler("shadow_map_sampler");
+  FakePipeline shadowCastPipeline;
+  FakeBuffer shadowLightSpaceBuffer(atlantis::rhi::BufferPurpose::Uniform, 0);
+  Renderer renderer;
+
+  const float acceptedEv = GENERATE(-16.0f, 0.0f, 16.0f);
+  DYNAMIC_SECTION("exposureCompensationEv = " << acceptedEv) {
+    std::vector<std::string> failures;
+    ScopedFailureHandler failureHandler(failures);
+    FakeCommandList commandList;
+    renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
+                        atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
+                        fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, acceptedEv, nullptr,
+                        nullptr, shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, {});
+
+    CHECK(failures.empty());
+  }
 }
 
 TEST_CASE("Renderer::drawFrame() records the \"shadow\" pass's full draw sequence strictly before \"draw\"'s own "

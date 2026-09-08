@@ -327,7 +327,8 @@ struct PbrTestRig {
 // fixture needed for these three, independent TEST_CASEs).
 [[nodiscard]] std::optional<std::vector<std::uint8_t>> renderOneFrame(Device& device, atlantis::rhi::Buffer& cameraBuffer,
                                                                         const std::vector<DrawItem>& drawItems,
-                                                                        Format finalFormat = kColorFormat) {
+                                                                        Format finalFormat = kColorFormat,
+                                                                        float exposureCompensationEv = 0.0f) {
   auto depthTextureResult = device.createTexture({.extent = kExtent, .format = DepthFormat::D32Sfloat});
   if (depthTextureResult.isErr()) return std::nullopt;
 
@@ -459,8 +460,9 @@ struct PbrTestRig {
   Renderer renderer;
   renderer.drawFrame(*commandList, *target, *depthTextureResult.value(), cameraBuffer, drawItems,
                       atlantis::rhi::ResourceState::TransferSource, *hdrColorTarget, *fullscreenTriangleVertexBuffer,
-                      *fullscreenTriangleIndexBuffer, *outputTransformPipeline, *outputTransformSampler, 0.0f, nullptr,
-                      nullptr, *shadowMap, *shadowMapSampler, *shadowCastPipeline, *shadowLightSpaceBuffer, {});
+                      *fullscreenTriangleIndexBuffer, *outputTransformPipeline, *outputTransformSampler,
+                      exposureCompensationEv, nullptr, nullptr, *shadowMap, *shadowMapSampler, *shadowCastPipeline,
+                      *shadowLightSpaceBuffer, {});
 
   atlantis::render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");
@@ -775,6 +777,82 @@ TEST_CASE("Above-1.0 PBR radiance survives the HDR intermediate and follows Rein
   CHECK(higherCenter[0] < 255);
   CHECK(higherCenter[1] < 255);
   CHECK(higherCenter[2] < 255);
+}
+
+// Plan 0031 Milestone 3: real-GPU proof that exposureCompensationEv
+// actually reaches the output-transform pass and brightens/darkens the
+// final captured pixel, at a fixed scene/light/camera -- the same rig
+// this file's own "Above-1.0 PBR radiance..." test above already
+// establishes, reusing kLowerHdrIntensity's own already-real-GPU-
+// verified ">1.0" case, varying only exposureCompensationEv (not light
+// intensity). Ordering, not exact analytical values, is what is
+// asserted here -- mirroring the roll-off test's own established
+// methodology exactly.
+TEST_CASE("Real-GPU: exposureCompensationEv = -1/0/+1 produces a strictly brightening, unsaturated captured pixel",
+          "[runtime][gpu][pbr][render][hdr][tone_mapping][exposure]") {
+  auto rigOpt = setUpPbrTestRig("Atlantis PBR Render GPU Tests (exposure monotonicity)");
+  REQUIRE(rigOpt.has_value());
+  PbrTestRig& rig = *rigOpt;
+
+  auto materialResult = createMaterial(
+      *rig.device,
+      {.vertexShader = {.spirvWords = rig.pbrVertexSpirv.data(), .wordCount = rig.pbrVertexSpirv.size()},
+       .fragmentShader = {.spirvWords = rig.pbrFragmentSpirv.data(), .wordCount = rig.pbrFragmentSpirv.size()},
+       .vertexInputLayout = rig.pbrLayout,
+       .colorFormat = HdrFormat::Rgba16Float,
+       .depthFormat = DepthFormat::D32Sfloat,
+       .pushConstantSizeBytes = 96,
+       .sampledTextureBindingCount = 2},
+      rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
+      std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.5f);
+  REQUIRE(materialResult.isOk());
+
+  auto cameraBufferResult = rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
+  REQUIRE(cameraBufferResult.isOk());
+  std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer = std::move(cameraBufferResult.value());
+
+  DrawItem item;
+  item.mesh = &rig.mesh;
+  item.material = &materialResult.value();
+  item.objectToWorld = kIdentityMatrix;
+
+  // The same real light intensity the roll-off test above already
+  // proves (analytically and, via the shared BRDF's own real linearity
+  // in intensity, cited in Plan 0031 Milestone 3) keeps this scene's
+  // own linear radiance in the > 1.0, real-HDR-roll-off regime, with
+  // enough headroom in both directions for a half/double multiplier.
+  constexpr float kFixedIntensity = 32.0f;
+  writeCameraBuffer(*cameraBuffer, kIdentityMatrix, kIdentityMatrix, oneDirectionalLight(kFixedIntensity),
+                     CameraWorldPositionData{0, 0, 5, 0});
+
+  auto darkerPixels = renderOneFrame(*rig.device, *cameraBuffer, {item}, Format::Rgba8Unorm, -1.0f);
+  REQUIRE(darkerPixels.has_value());
+  auto baselinePixels = renderOneFrame(*rig.device, *cameraBuffer, {item}, Format::Rgba8Unorm, 0.0f);
+  REQUIRE(baselinePixels.has_value());
+  auto brighterPixels = renderOneFrame(*rig.device, *cameraBuffer, {item}, Format::Rgba8Unorm, 1.0f);
+  REQUIRE(brighterPixels.has_value());
+
+  const auto darkerCenter = readCenterPixel(*darkerPixels, kExtent.width, kExtent.height);
+  const auto baselineCenter = readCenterPixel(*baselinePixels, kExtent.width, kExtent.height);
+  const auto brighterCenter = readCenterPixel(*brighterPixels, kExtent.width, kExtent.height);
+
+  CHECK(darkerCenter[0] < baselineCenter[0]);
+  CHECK(darkerCenter[1] < baselineCenter[1]);
+  CHECK(darkerCenter[2] < baselineCenter[2]);
+  CHECK(baselineCenter[0] < brighterCenter[0]);
+  CHECK(baselineCenter[1] < brighterCenter[1]);
+  CHECK(baselineCenter[2] < brighterCenter[2]);
+
+  // Non-saturation headroom -- proven analytically in Plan 0031
+  // Milestone 3 (linearity in intensity + this file's own already-real-
+  // GPU-verified kHigherHdrIntensity = 128.0 case above staying < 255),
+  // not merely hoped for.
+  CHECK(brighterCenter[0] < 255);
+  CHECK(brighterCenter[1] < 255);
+  CHECK(brighterCenter[2] < 255);
+  CHECK(darkerCenter[0] > 0);
+  CHECK(darkerCenter[1] > 0);
+  CHECK(darkerCenter[2] > 0);
 }
 
 TEST_CASE("PbrDirectLit reflects a runtime Light intensity change on the next frame, exactly like LitTextured "

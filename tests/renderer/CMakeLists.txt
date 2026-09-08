@@ -1,4 +1,5 @@
 add_executable(atlantis_renderer_tests
+  exposure_multiplier_tests.cpp
   renderer_ownership_tests.cpp
 )
 target_include_directories(atlantis_renderer_tests
