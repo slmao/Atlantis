@@ -56,6 +56,16 @@ unmodified in behavior.
 - `src/asset_system/src/scene_source.cpp`:
   - `kVersionLine` (line 16): `"atlantis_scene_source_version: 3"` →
     `"...: 4"`.
+  - **The node-line total-token-count whitelist (line 164-165),
+    `tokens.size() != 11 && ... != 14 && ... != 16 && ... != 17`, is
+    the real, earlier gate every node line must pass before any
+    per-component branch below it is even reached — 15 is not in this
+    list today.** It widens first, to also accept `15`
+    (`tokens.size() != 11 && ... != 14 && ... != 15 && ... != 16 &&
+    ... != 17`); only once 15 is accepted here does the camera branch
+    below ever see a 15-token line. Skipping this step would make the
+    camera-branch widening below unreachable dead code for any
+    15-token line, rejected upstream as `InvalidComponentGroup`.
   - The `tokens.size() == 14` camera branch (line 234) widens to
     `tokens.size() == 14 || tokens.size() == 15`; when 15, token 14
     must match `camera_exposure_ev=<f>` (a new prefix constant,
@@ -63,6 +73,10 @@ unmodified in behavior.
     three existing camera-field prefixes at line 40-42), parsed the
     same `consumePrefixedFloat()` way as `fovYRadians`/`nearZ`/`farZ`;
     when 14, `camera.exposureCompensationEv` stays its default `0.0f`.
+    Verified through the public `parseSceneSource()` entry point only
+    (never a private/friend shortcut) — the new grammar test in
+    Milestone 1's own test list below asserts a real 15-token camera
+    line parses successfully via this exact function.
     No finite/range check here — mirrors `fovYRadians`/`nearZ`/`farZ`'s
     own existing precedent of deferring that check to `cookScene()`.
   - `serializeSceneSource()` (line 387-391): always emits
@@ -96,9 +110,16 @@ unmodified in behavior.
     readFloatLE(record + 52);` added; the existing camera finite-check
     (line 203-206) gains the same 4th condition as `cookScene()` above
     (finite + `[kExposureCompensationEvMin, kExposureCompensationEvMax]`),
-    reusing `SceneArtifactDecodeError::NonFiniteValue`; every
-    subsequent `record + N` read (line 210 onward) shifts by `+4` per
-    the offset table below.
+    reusing `SceneArtifactDecodeError::NonFiniteValue`. **The
+    construction immediately below the check, currently `node.camera =
+    DecodedCamera{fovY, nearZ, farZ};` (line 207), changes to the
+    4-argument `DecodedCamera{fovY, nearZ, farZ, exposureEv};`** — the
+    one line that actually delivers the decoded value into the returned
+    struct; reading `exposureEv` into a local without also widening
+    this construction would silently discard it back to the field's own
+    default `0.0f`, the exact class of defect the new end-to-end test
+    below exists to catch. Every subsequent `record + N` read (line 210
+    onward) shifts by `+4` per the offset table below.
 - `src/world/src/scene_instantiation.cpp:27`: `Camera{n.camera->fovYRadians,
   n.camera->nearZ, n.camera->farZ}` → 4-arg,
   `..., n.camera->exposureCompensationEv}`.
@@ -205,7 +226,30 @@ logic fixes rg found; exact occurrence counts confirmed via
   `fovYRadians`/`nearZ`/`farZ`) gains one more line,
   `CHECK(cameraNode2.value().exposureCompensationEv == 0.0f);` —
   confirms the default flows end-to-end through `World` for a 14-token
-  source line, at negligible cost.
+  source line, at negligible cost. **New, non-zero-EV end-to-end
+  `TEST_CASE`, in this same file** (fixed location — this file already
+  owns the one shared helper capable of exercising the complete
+  source→cook→artifact→decode→`World` chain in a single call): reuses
+  the existing `cookAndDecodeScene(sourceText)` helper (line 74, which
+  already calls the real `cookScene()` then the real `decodeScene()` —
+  the sole path to a `ValidatedSceneData`) with a new scene-source
+  constant identical to the existing `kThreeNodeSceneSource` except
+  node 3's camera line carries the 15-token form,
+  `... camera_far_z=100.0 camera_exposure_ev=1.0` (and the version line
+  reads `4`, per this Milestone's own bump). After
+  `fromValidatedSceneData()` and `world.getCamera(*world.activeCamera())`,
+  asserts `exposureCompensationEv == 1.0f` — an exact, non-default,
+  non-zero value that only survives if every one of parse, cook,
+  encode, decode, and `World` construction correctly threads it; a
+  missed assignment at *any* one of those layers (e.g. the exact
+  `DecodedCamera{fovY, nearZ, farZ}`-stays-3-argument defect this
+  Milestone's own `scene_artifact.cpp` fix above corrects) would
+  silently fall back to `0.0f` and fail this exact assertion, not
+  merely a "did it parse" check. The existing 14-token/default-`0.0f`
+  coverage (the assertion added just above, and the pre-existing
+  `cookAndDecodeScene(kThreeNodeSceneSource)`-based `TEST_CASE` it
+  belongs to) stays exactly as it is — both cases live side by side in
+  this one file.
 - `tests/image_regression/lighting_demo_gpu_tests.cpp` (1 occurrence):
   bump 3→4, mechanical.
 - `tests/runtime/material_realization_gpu_tests.cpp` (1 occurrence of
@@ -415,6 +459,55 @@ but never call `createPipeline()` themselves (the former uses a
 already-built pipeline) — only the `drawFrame()` argument list changes
 in those two.
 
+**A pre-existing assertion this Milestone must fix, not defer to
+Milestone 3 — the output-transform pass's own new `pushConstant()` call
+changes a real, already-committed count this codebase already checks.**
+`tests/renderer/renderer_ownership_tests.cpp`'s `TEST_CASE` at line 160
+("records a full bind/draw sequence per DrawItem with distinct
+push-constant data") is the *only* place in the repository asserting on
+`FakeCommandList::pushConstants`/`pushConstantData` (confirmed via rg
+across the whole tree — no other file references either member):
+
+- Line 236, `REQUIRE(commandList.pushConstants.size() == 2);` → `3`
+  (the two `DrawItem`s' own object-to-world push constants, plus the
+  output-transform pass's own new one — which lands strictly after
+  both, since "draw" must execute before "output_transform" in this
+  file's own already-established RenderGraph dependency order, so
+  indices `[0]`/`[1]` below are unaffected).
+- Lines 225-226's own comment, *"pushConstant counts are unchanged --
+  the output-transform pass calls neither [`bindUniformBuffer` nor
+  `pushConstant`]"*, is now half wrong (`bindUniformBuffer` stays
+  correct — output-transform still binds none — `pushConstant` does
+  not) and is corrected to say so.
+- Lines 244/246-249 (`pushConstantData[0]`/`[1]`, the two `DrawItem`s'
+  own distinct `objectToWorld` bytes) are untouched — same indices,
+  same values, same assertions.
+- One new assertion added, proving the new payload's own exact shape
+  and value at this call site (`0.0f` EV, per this Milestone's own
+  mechanical migration, so `computeExposureMultiplier(0.0f) == 1.0f`):
+  ```cpp
+  REQUIRE(commandList.pushConstantData[2].size() == 4);
+  const float outputTransformMultiplier =
+      *reinterpret_cast<const float*>(commandList.pushConstantData[2].data());
+  REQUIRE(outputTransformMultiplier == 1.0f);
+  ```
+
+This repository-wide scan (rg for `pushConstants.size()` /
+`pushConstantData[` / `boundPipelines.size()` / `boundVertexBuffers.size()`
+/ `boundIndexBuffers.size()` / `boundUniformBuffers.size()` /
+`drawIndexedCounts.size()` / `.events` across every test file) found no
+other assertion this Milestone's own changes break: the output-transform
+pass already called `bindPipeline`/`bindVertexBuffer`/`bindIndexBuffer`/
+`bindTexture`/`drawIndexed` once per frame *before* this Plan (only
+`pushConstant` is new), so every other bound-resource-count assertion in
+this file and elsewhere is unaffected; the `FakeCommandList::events`
+combined log gains one new `PushConstant` entry, but every existing
+`events`-based assertion in this file uses either equality between two
+equally-affected recordings, a "never contains X" check unrelated to
+`PushConstant`, or `std::find`-based relative-order checks that do not
+depend on a fixed total count or index — all confirmed to still hold
+after tracing the new entry's exact insertion point.
+
 ### Milestone 3 — New verification coverage and full matrix
 
 **New file**, `tests/renderer/exposure_multiplier_tests.cpp` (added to
@@ -438,10 +531,11 @@ function does not silently clamp — the clamping/rejection is
 `drawFrame()`'s own job, Milestone 2).
 
 **`tests/renderer/renderer_ownership_tests.cpp`**: new `TEST_CASE`s
-using the file's own already-established `ScopedFailureHandler`/
-`FakeCommandList` pattern (the exact same one the existing
-`skyPipeline`-without-`environmentLighting` precondition test at line
-537-544 already uses — mirrored, not invented):
+(separate from the existing, Milestone-2-fixed push-constant-count
+`TEST_CASE` at line 160) using the file's own already-established
+`ScopedFailureHandler`/`FakeCommandList` pattern (the exact same one
+the existing `skyPipeline`-without-`environmentLighting` precondition
+test at line 537-544 already uses — mirrored, not invented):
 
 - An out-of-range (`17.0f`) and a non-finite (`NAN`) EV each fire
   exactly one recorded failure via `ATLANTIS_CHECK_MSG`, matching the
@@ -474,7 +568,7 @@ Milestone 2 mechanical `0.0f`. One new `TEST_CASE`, real-GPU:
 - Renders three frames varying only `exposureCompensationEv` (`-1.0f`,
   `0.0f`, `1.0f`, i.e. multiplier `0.5`/`1.0`/`2.0`), reads
   `readCenterPixel()` for each.
-- Asserts strict monotonicity: `capturedAt(-1) < capturedAt(0) <
+- Asserts the real captured ordering `capturedAt(-1) < capturedAt(0) <
   capturedAt(+1)` (elementwise, all three channels) — mirroring the
   existing roll-off test's own "compare two real captures, never an
   exact analytical value" methodology exactly (confirmed by reading
@@ -484,20 +578,43 @@ Milestone 2 mechanical `0.0f`. One new `TEST_CASE`, real-GPU:
   `capturedAt(-1) > 0` (not black) — the ordering check is only
   meaningful if neither end is clipped.
 
-  **Why `capturedAt(+1) < 255` is provably true, analytically, without a
-  new probe:** `computePbrDirectLighting()` (`scene_extraction.cpp:434,
-  469-474`) has no ambient term and, for a single directional light, its
-  own output is exactly linear in `intensity` (`radiance = color ×
-  intensity`; every other BRDF term is intensity-independent). So
-  `linearRadiance(intensity=32) × multiplier(+1 EV = 2.0) =
-  linearRadiance(intensity=64) × 1.0`, and since Reinhard/sRGB-encode is
-  strictly increasing, `encoded(64, ×1) < encoded(128, ×1)` — and the
-  latter is **already** empirically proven `< 255` by this file's own
-  existing, already-passing "Above-1.0 PBR radiance..." `TEST_CASE`
-  (`CHECK(higherCenter[0] < 255)` at `kHigherHdrIntensity = 128.0f`).
-  Chaining these: `encoded(32, ×2.0) = encoded(64, ×1.0) < encoded(128,
-  ×1.0) < 255`, proven from real, cited source code plus an
-  already-real, already-passing test result — not a fresh assumption.
+  **What is, and is not, provable analytically here, stated precisely:**
+  the *real-valued* (pre-quantization) exposure/Reinhard/sRGB chain is
+  strictly increasing in the multiplier for any fixed, positive linear
+  radiance (Reinhard's `x/(1+x)` and the sRGB OETF are both strictly
+  increasing on their real domain, ADR-0068 D-5/D-6). 8-bit quantization
+  (rounding that real curve to the nearest of 256 levels) is only
+  guaranteed **non-decreasing**, not strictly increasing — two close
+  enough real values could in principle round to the same byte. This
+  Plan does not claim otherwise: the test's own strict (`<`, not `<=`)
+  assertions for the three specific, real, captured bytes are confirmed
+  by the real-GPU test itself running and observing genuinely distinct
+  values (a full-octave multiplier step apart each time — `0.5×`,
+  `1.0×`, `2.0×` — chosen precisely to make that distinctness likely,
+  not merely hoped for), not asserted as a separate mathematical
+  certainty.
+
+  **What *is* provable analytically, and is what this Plan relies on
+  without a new probe, is only the non-saturation bound**
+  `capturedAt(+1) < 255`: `computePbrDirectLighting()`
+  (`scene_extraction.cpp:434, 469-474`) has no ambient term and, for a
+  single directional light, its own output is exactly linear in
+  `intensity` (`radiance = color × intensity`; every other BRDF term is
+  intensity-independent). So `linearRadiance(intensity=32) ×
+  multiplier(+1 EV = 2.0) = linearRadiance(intensity=64) × 1.0`, and
+  since the real-valued chain above is strictly increasing (never
+  merely non-decreasing, on its own real domain, before rounding),
+  `encoded(64, ×1) < encoded(128, ×1)` as real numbers — and `encoded(128,
+  ×1)`'s own *quantized* value is **already** empirically proven `< 255`
+  by this file's own existing, already-passing "Above-1.0 PBR
+  radiance..." `TEST_CASE` (`CHECK(higherCenter[0] < 255)` at
+  `kHigherHdrIntensity = 128.0f`). Because quantization is
+  non-decreasing, a strictly-smaller real value quantizes to at most
+  that same already-`<255` byte: `quantize(encoded(32, ×2.0)) =
+  quantize(encoded(64, ×1.0)) ≤ quantize(encoded(128, ×1.0)) < 255`.
+  This chain alone only proves `≤`, which is exactly the non-saturation
+  headroom the ordering assertion needs to be meaningful — it does not,
+  and is not used to, prove the strict ordering itself.
 
 **No `slangc`/GPU probe was run or left uncommitted for this
 Milestone** — the push-constant reflection contract was already fixed,
@@ -559,12 +676,17 @@ Milestone 1). Summary by module:
   (M2).
 - **Assets**: 9 `.scene.txt` files, version line only (M1).
 - **Tests**: 8 `tests/asset_system/*`-and-adjacent files (M1, listed
-  above); `tests/shader_system/output_transform_reflection_cross_check_tests.cpp`
+  above, including the new non-zero-EV end-to-end `TEST_CASE` in
+  `tests/world/scene_instantiation_tests.cpp`);
+  `tests/shader_system/output_transform_reflection_cross_check_tests.cpp`
   (M2); 19 `drawFrame()` call-site files + `tests/runtime/material_realization_gpu_tests.cpp`
-  (M2, mechanical); new `tests/renderer/exposure_multiplier_tests.cpp`,
-  `tests/renderer/renderer_ownership_tests.cpp` (new cases),
-  `tests/runtime/pbr_render_gpu_tests.cpp` (new case + helper widening)
-  (M3); `tests/renderer/CMakeLists.txt` (one line, M3).
+  (M2, mechanical — one of the 19, `tests/renderer/renderer_ownership_tests.cpp`,
+  additionally gets its pre-existing push-constant-count assertion
+  fixed in this same Milestone, not deferred to M3); new
+  `tests/renderer/exposure_multiplier_tests.cpp`,
+  `tests/renderer/renderer_ownership_tests.cpp` (new precondition
+  cases), `tests/runtime/pbr_render_gpu_tests.cpp` (new case + helper
+  widening) (M3); `tests/renderer/CMakeLists.txt` (one line, M3).
 - **`specs/README.md`**: Plan link updated to point at this file
   (this Plan's own governance commit, not a Milestone).
 
