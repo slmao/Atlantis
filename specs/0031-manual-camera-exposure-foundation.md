@@ -588,3 +588,37 @@ golden capture of any kind.**
 **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
 Approval recorded 2026-09-08, approving this Spec in full, as drafted,
 with no change.
+
+## Plan-Stage Correction — 2026-09-08
+
+**Requirement 3's own claim, "no existing `.scene.txt` file requires
+editing," is corrected — narrowed, not reversed.** Plan-stage
+investigation of the real source (`scene_source.cpp`) found a fact this
+Spec's own drafting missed: `parseSceneSource()` gates every source
+file behind an exact-string-match version line
+(`kVersionLine`, e.g. `"atlantis_scene_source_version: 3"`), with no
+version-range support. `git log -p` confirms this literal — and every
+existing checked-in scene file's own first line — was bumped on **both**
+prior grammar extensions (v1→v2 for material references, v2→v3 for the
+light grammar), including the light grammar, which was itself just as
+additive/backward-compatible at the parser-logic level as this Spec's
+own new optional camera token.
+
+Following that same, twice-established, unconditional precedent (not a
+new policy invented for this Spec), `kVersionLine` bumps 3→4, and each
+of the 8 existing `assets/scenes/*.scene.txt` files' first line is
+edited to match — a mechanical, one-line-per-file, zero-semantic-content
+edit; no node data in any of those files changes. This narrows
+Requirement 3's claim: **no existing camera-node *line* needs editing
+for its own sake** (the 14-token grammar stays fully valid), but the
+source-file *header* line does, in every file, following this
+codebase's own established versioning convention. Requirement 4's
+schema-version-bump treatment (artifact side) was already correct as
+written and needs no correction.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — direction given
+in chat, 2026-09-08, resolving this Plan-stage finding by choosing to
+follow the established v1→v2/v2→v3 precedent exactly (bump and edit
+every existing file) rather than leave `kVersionLine` unbumped. See
+[Plan 0031](../plans/0031-manual-camera-exposure-foundation.md)
+Milestone 1 for the concrete file list.
