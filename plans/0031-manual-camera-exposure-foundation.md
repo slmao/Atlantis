@@ -1,7 +1,7 @@
 # Plan: Manual Camera Exposure Foundation
 
 - **Spec:** [specs/0031-manual-camera-exposure-foundation.md](../specs/0031-manual-camera-exposure-foundation.md) (`Approved`)
-- **Status:** Approved / Ready for Implementation
+- **Status:** Approved / **Implemented in [PR #138](https://github.com/slmao/Atlantis/pull/138); pending merge** (not yet merged — this Plan is not "done" until a human merges that PR)
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Related ADR(s):** [ADR-0075](../adr/0075-manual-camera-exposure-data-and-output-transform-contract.md) (`Accepted`); [ADR-0068's own Accepted Amendment — 2026-09-08](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md#accepted-amendment--2026-09-08) (`Accepted`, D-10 only)
 
