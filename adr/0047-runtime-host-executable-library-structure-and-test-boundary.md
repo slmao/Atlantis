@@ -185,3 +185,36 @@ public dependency surface any other top-level module may consume.**
   lifecycle/failure-classification logic that does *not* need a real
   device, at the speed and determinism GPU-independent tests already
   provide throughout this codebase.
+
+## Proposed Amendment — 2026-09-09
+
+**Status: Proposed — pending Human Review, alongside
+[Spec 0032](../specs/0032-runtime-sample-scene-selection.md) and
+[ADR-0076](0076-runtime-sample-scene-selection-boundary.md).** Everything
+above remains this ADR's own original, unmodified `Accepted` Decision
+(top-level `Status: Accepted` unchanged; the "two CMake targets" shape
+of the Decision is not reopened by this Amendment — see below).
+
+**Context.** This ADR's own Decision text (above) names Spec 0013's
+"Decisions Requiring Human Review item 8" as the explicit boundary on
+`atlantis_runtime`'s own "minimal argument handling." ADR-0076 moves
+that boundary (Runtime's configuration surface now includes a closed,
+whitelisted `--scene`/`--list-scenes`/`--help` flag set, not merely a
+"trivial" cosmetic override) — this Amendment updates only the
+boundary *reference* this ADR's own text carries, so a future reader
+is not left checking a citation that quietly went stale.
+
+**Amendment.** Wherever this ADR's own Decision text bounds
+`atlantis_runtime`'s "minimal argument handling" by Spec 0013 item 8
+alone, that boundary is now: Spec 0013 item 8 **as widened by
+[ADR-0076](0076-runtime-sample-scene-selection-boundary.md)** — the
+closed, three-value `--scene`/`--list-scenes`/`--help` surface ADR-0076
+fixes, nothing wider. The new parsing/mapping logic this surface needs
+lives inside the existing `atlantis_runtime_host` static library (new
+source files only); this ADR's own "two CMake targets," "exactly two
+consumers of `Atlantis::RuntimeHost`," and "no new public dependency
+surface" Decision text is **unchanged and reaffirmed** — ADR-0076's own
+Decision item 2 states this explicitly.
+
+**Deciders:** slmao — pending Human Review. Not yet approved; this
+section records the proposed amendment text only.
