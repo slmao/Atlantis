@@ -185,7 +185,10 @@ atlantis::Result<std::monostate, SceneCookError> cookScene(const std::string& so
 
     if (parsedNode.camera.has_value()) {
       if (!std::isfinite(parsedNode.camera->fovYRadians) || !std::isfinite(parsedNode.camera->nearZ) ||
-          !std::isfinite(parsedNode.camera->farZ)) {
+          !std::isfinite(parsedNode.camera->farZ) ||
+          !std::isfinite(parsedNode.camera->exposureCompensationEv) ||
+          parsedNode.camera->exposureCompensationEv < kExposureCompensationEvMin ||
+          parsedNode.camera->exposureCompensationEv > kExposureCompensationEvMax) {
         return ResultT::Err(SceneCookError::NonFiniteValue);
       }
       node.camera = parsedNode.camera;

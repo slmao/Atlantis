@@ -24,8 +24,12 @@ World fromValidatedSceneData(const atlantis::asset_system::ValidatedSceneData& s
                         "fromValidatedSceneData(): setLocalTransform() failed for a freshly-created entity");
 
     if (n.camera.has_value()) {
-      ATLANTIS_CHECK_MSG(world.setCamera(id, Camera{n.camera->fovYRadians, n.camera->nearZ, n.camera->farZ}).isOk(),
-                          "fromValidatedSceneData(): setCamera() failed for a freshly-created entity");
+      ATLANTIS_CHECK_MSG(
+          world
+              .setCamera(id, Camera{n.camera->fovYRadians, n.camera->nearZ, n.camera->farZ,
+                                     n.camera->exposureCompensationEv})
+              .isOk(),
+          "fromValidatedSceneData(): setCamera() failed for a freshly-created entity");
     }
     if (n.renderable.has_value()) {
       ATLANTIS_CHECK_MSG(

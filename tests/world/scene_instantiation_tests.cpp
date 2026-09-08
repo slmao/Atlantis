@@ -107,7 +107,7 @@ constexpr const char* kNode1MeshPath = "meshes/scene_instantiation_node1.mesh.tx
 // camera. Values match the prior revision's own hand-built fixture
 // exactly, just authored as real scene source text instead.
 constexpr const char* kThreeNodeSceneSource =
-    "atlantis_scene_source_version: 3\n"
+    "atlantis_scene_source_version: 4\n"
     "node_count: 3\n"
     "active_camera: 3\n"
     "node: node_id=1 parent=none position=1.0 2.0 3.0 rotation=0.1 0.2 0.3 scale=1.0 1.0 1.0 "
@@ -116,6 +116,23 @@ constexpr const char* kThreeNodeSceneSource =
     "mesh=meshes/scene_instantiation_node1.mesh.txt\n"
     "node: node_id=3 parent=none position=0.0 2.2 7.0 rotation=-0.3054 0.0 0.0 scale=1.0 1.0 1.0 "
     "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0\n";
+
+// Plan 0031: identical to kThreeNodeSceneSource above except node 3's
+// own camera line carries the optional 15th token -- the fixed
+// location for the one test proving exposureCompensationEv survives
+// the complete source -> cook -> artifact -> decode -> World chain
+// with a real, non-zero, non-default value (1.0), not merely that it
+// parses.
+constexpr const char* kThreeNodeSceneSourceWithExposure =
+    "atlantis_scene_source_version: 4\n"
+    "node_count: 3\n"
+    "active_camera: 3\n"
+    "node: node_id=1 parent=none position=1.0 2.0 3.0 rotation=0.1 0.2 0.3 scale=1.0 1.0 1.0 "
+    "mesh=meshes/scene_instantiation_node0.mesh.txt\n"
+    "node: node_id=2 parent=1 position=4.0 5.0 6.0 rotation=0.0 0.0 0.0 scale=2.0 2.0 2.0 "
+    "mesh=meshes/scene_instantiation_node1.mesh.txt\n"
+    "node: node_id=3 parent=none position=0.0 2.2 7.0 rotation=-0.3054 0.0 0.0 scale=1.0 1.0 1.0 "
+    "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0 camera_exposure_ev=1.0\n";
 
 }  // namespace
 
@@ -175,6 +192,7 @@ TEST_CASE("fromValidatedSceneData() instantiates every node with its own compone
   CHECK(cameraNode2.value().fovYRadians == 1.0472f);
   CHECK(cameraNode2.value().nearZ == 0.1f);
   CHECK(cameraNode2.value().farZ == 100.0f);
+  CHECK(cameraNode2.value().exposureCompensationEv == 0.0f);  // 14-token camera line, default
   CHECK_FALSE(world.getRenderable(node2Id).isOk());  // node2 has no Renderable
 
   const auto transformNode2 = world.getLocalTransform(node2Id);
@@ -183,13 +201,33 @@ TEST_CASE("fromValidatedSceneData() instantiates every node with its own compone
   CHECK(transformNode2.value().localEulerAnglesRadians.x == -0.3054f);
 }
 
+TEST_CASE("A non-zero, non-default exposureCompensationEv survives the complete source->cook->artifact->decode->"
+          "World chain (Plan 0031)",
+          "[world][scene]") {
+  // Reuses the same real cookAndDecodeScene() -> fromValidatedSceneData()
+  // chain the test above already exercises for the default (0.0f) case
+  // -- this is the one place in the repository able to catch a missed
+  // assignment at any single layer (parse/cook/encode/decode/World
+  // construction), not merely "did it parse". A defect that silently
+  // falls back to the field's own default anywhere along that chain
+  // would leave exposureCompensationEv at 0.0f here and fail this
+  // exact assertion.
+  const ValidatedSceneData scene = cookAndDecodeScene(kThreeNodeSceneSourceWithExposure);
+  World world = fromValidatedSceneData(scene);
+
+  REQUIRE(world.activeCamera().has_value());
+  const auto camera = world.getCamera(*world.activeCamera());
+  REQUIRE(camera.isOk());
+  CHECK(camera.value().exposureCompensationEv == 1.0f);
+}
+
 TEST_CASE("fromValidatedSceneData() carries a node's material= reference into Renderable::materialAsset",
           "[world][scene][material]") {
   // Plan 0018 Section P8 / Milestone 8: a scene node naming both mesh=
   // and material= instantiates into a World entity whose Renderable
   // carries both AssetIds.
   const ValidatedSceneData scene = cookAndDecodeScene(
-      "atlantis_scene_source_version: 3\n"
+      "atlantis_scene_source_version: 4\n"
       "node_count: 1\n"
       "active_camera: none\n"
       "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -226,7 +264,7 @@ TEST_CASE("fromValidatedSceneData() leaves Renderable::materialAsset absent when
 TEST_CASE("fromValidatedSceneData() carries a node's light= declaration into World::Light",
           "[world][scene][light]") {
   const ValidatedSceneData scene = cookAndDecodeScene(
-      "atlantis_scene_source_version: 3\n"
+      "atlantis_scene_source_version: 4\n"
       "node_count: 2\n"
       "active_camera: none\n"
       "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -315,7 +353,7 @@ TEST_CASE("fromValidatedSceneData() produces deterministic, repeatable EntityId 
 
 TEST_CASE("fromValidatedSceneData() leaves an empty active camera when the scene declares none", "[world][scene]") {
   constexpr const char* kPlainSceneSource =
-      "atlantis_scene_source_version: 3\n"
+      "atlantis_scene_source_version: 4\n"
       "node_count: 1\n"
       "active_camera: none\n"
       "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";
