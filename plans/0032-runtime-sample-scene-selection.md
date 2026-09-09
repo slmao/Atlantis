@@ -264,8 +264,8 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
 
 #### Full CLI behavior table (fixed; `cli_tests.cpp` has one `TEST_CASE`/`SECTION` per row)
 
-All seventeen rows are exercised purely in-process against a 3-entry
-fixture whitelist (fake, distinguishable path strings per entry, e.g.
+All 23 rows are exercised purely in-process against a 3-entry fixture
+whitelist (fake, distinguishable path strings per entry, e.g.
 `"/fake/a/..."` / `"/fake/b/..."` / `"/fake/c/..."` — never real build
 paths, satisfying Requirement 5's own injection contract) — no process
 launch, no build-path macro.
@@ -282,13 +282,29 @@ launch, no build-path macro.
 | 8 | `--scene` *(last token)* | `PrintErrorAndExit` | stderr: `"--scene requires a value"` + usage | `InitializationFailed` (1) | No |
 | 9 | `--scene ibl_material_demo --scene ibl_material_demo` | `PrintErrorAndExit` | stderr: `"--scene supplied more than once"` + usage | `InitializationFailed` (1) | No |
 | 10 | `--scene ibl_material_demo --scene pbr_normal_map_demo` | `PrintErrorAndExit` | stderr: same as #9 (duplicate flag, value irrelevant) | `InitializationFailed` (1) | No |
-| 11 | `--foo` | `PrintErrorAndExit` | stderr: `"unrecognized argument: --foo"` + usage | `InitializationFailed` (1) | No |
-| 12 | `--scene=ibl_material_demo` *(single token)* | `PrintErrorAndExit` | stderr: `"unrecognized argument: --scene=ibl_material_demo"` + usage | `InitializationFailed` (1) | No |
-| 13 | `ibl_material_demo` *(bare positional)* | `PrintErrorAndExit` | stderr: `"unrecognized argument: ibl_material_demo"` + usage | `InitializationFailed` (1) | No |
-| 14 | `--help --list-scenes` | `PrintErrorAndExit` | stderr: `"--help, --list-scenes, and --scene may not be combined"` + usage | `InitializationFailed` (1) | No |
-| 15 | `--help --scene ibl_material_demo` | `PrintErrorAndExit` | stderr: same as #14 | `InitializationFailed` (1) | No |
-| 16 | `--list-scenes --scene ibl_material_demo` | `PrintErrorAndExit` | stderr: same as #14 | `InitializationFailed` (1) | No |
-| 17 | `--scene ibl_material_demo --help` | `PrintErrorAndExit` | stderr: same as #14 (order-independent) | `InitializationFailed` (1) | No |
+| 11 | `--help --help` | `PrintErrorAndExit` | stderr: `"--help supplied more than once"` + usage | `InitializationFailed` (1) | No |
+| 12 | `--list-scenes --list-scenes` | `PrintErrorAndExit` | stderr: `"--list-scenes supplied more than once"` + usage | `InitializationFailed` (1) | No |
+| 13 | `--foo` | `PrintErrorAndExit` | stderr: `"unrecognized argument: --foo"` + usage | `InitializationFailed` (1) | No |
+| 14 | `--scene=ibl_material_demo` *(single token)* | `PrintErrorAndExit` | stderr: `"unrecognized argument: --scene=ibl_material_demo"` + usage | `InitializationFailed` (1) | No |
+| 15 | `ibl_material_demo` *(bare positional)* | `PrintErrorAndExit` | stderr: `"unrecognized argument: ibl_material_demo"` + usage | `InitializationFailed` (1) | No |
+| 16 | `--scene --help` | `PrintErrorAndExit` | stderr: `"unrecognized --scene value: --help"` + usage | `InitializationFailed` (1) | No |
+| 17 | `--scene --list-scenes` | `PrintErrorAndExit` | stderr: `"unrecognized --scene value: --list-scenes"` + usage | `InitializationFailed` (1) | No |
+| 18 | `--help --list-scenes` | `PrintErrorAndExit` | stderr: `"--help, --list-scenes, and --scene may not be combined"` + usage | `InitializationFailed` (1) | No |
+| 19 | `--list-scenes --help` *(reverse of #18)* | `PrintErrorAndExit` | stderr: same as #18 | `InitializationFailed` (1) | No |
+| 20 | `--help --scene ibl_material_demo` | `PrintErrorAndExit` | stderr: same as #18 | `InitializationFailed` (1) | No |
+| 21 | `--scene ibl_material_demo --help` *(reverse of #20)* | `PrintErrorAndExit` | stderr: same as #18 | `InitializationFailed` (1) | No |
+| 22 | `--list-scenes --scene ibl_material_demo` | `PrintErrorAndExit` | stderr: same as #18 | `InitializationFailed` (1) | No |
+| 23 | `--scene ibl_material_demo --list-scenes` *(reverse of #22)* | `PrintErrorAndExit` | stderr: same as #18 | `InitializationFailed` (1) | No |
+
+Rows 16–17 exercise `--scene`'s own unconditional "consume the very
+next token as the value" behavior in `cli.cpp` above (`requestedSceneName
+= argv[++i];`, no lookahead check on what that token looks like) — the
+algorithm needs no special case for this: `"--help"`/`"--list-scenes"`
+are simply not whitelist entry names, so `findByName()` fails exactly
+as it would for any other unrecognized `--scene` value, and
+`modesRequested` never exceeds 1 (the loop already advanced past both
+tokens as one `--scene` occurrence). Confirmed consistent with the
+fixed algorithm above by inspection, not a separate code path.
 
 `cli_tests.cpp` additionally covers, per Spec 0032's own Testing &
 Verification Plan:
@@ -312,6 +328,26 @@ Verification Plan:
   `enableValidationLayers`, `applicationName`) completely unchanged
   from today — a reviewable property of that Milestone's own diff, not
   a Catch2 assertion.
+- **Missing-default-whitelist precondition** (`kDefaultSceneName`'s own
+  documented contract in `cli.h`): a fixture whitelist with only two
+  entries, neither named `kDefaultSceneName`, passed to a no-argument
+  `parseCommandLine()` call. Verified via the same replaceable
+  `atlantis::assertions::setFailureHandler()` mechanism
+  `tests/core/assert_tests.cpp` establishes and
+  `tests/runtime/scene_extraction_tests.cpp` already reuses for a
+  Runtime-domain `ATLANTIS_CHECK_MSG` case (install a recording
+  handler, call `parseCommandLine()`, restore the previous handler,
+  assert exactly one recorded failure and that the function still
+  returned its defensive `PrintErrorAndExit` fallback rather than
+  crashing or dereferencing).
+
+`tests/runtime/cli_tests.cpp` includes `cli.h` the same way
+`tests/shader_system/json_parser_tests.cpp` includes its own module's
+private header — a relative path from the test file's own directory:
+
+```cpp
+#include "../../src/runtime/cli.h"
+```
 
 ### Milestone 2 — Production wiring + full verification matrix
 
@@ -502,48 +538,61 @@ today).
 ## Verification Checklist
 
 - [ ] **Unit tests (GPU-independent)**: `tests/runtime/cli_tests.cpp` —
-      all 17 CLI-behavior-table rows, the three-different-whitelist
-      mapping/no-cross-contamination cases, and the default-compatibility
-      case (all in-process, fixture whitelists only, no process launch,
+      all 23 CLI-behavior-table rows, the three-different-whitelist
+      mapping/no-cross-contamination cases, the missing-default-whitelist
+      precondition case, and the default-compatibility case (all
+      in-process, fixture whitelists only, no process launch,
       no build-path macro — Requirement 5).
 - [ ] **Real-process verification — `--help`/`--list-scenes`/every
-      invalid-argument row (table rows 5–17), manual, recorded.**
-      Automating this would require either linking `tests/runtime/` against
-      `src/tools/shader_compiler`'s own `atlantis_shader_compiler_lib`
-      (`launchProcess()`) — a new, undisclosed cross-module test
-      dependency Spec 0032/ADR-0076 never named, and one whose own
-      `lpCurrentDirectory = nullptr` behavior does not even support the
-      working-directory verification below — or writing a second,
-      duplicate Win32 `CreateProcessW` test helper inside
-      `tests/runtime/`, expanding this repository's own small,
-      explicitly-tracked "files allowed to include `<windows.h>`
-      directly" set (`windows_platform.cpp`, `process_launch.cpp`) by a
-      third, undisclosed member. Neither is authorized by Requirement 6's
-      fixed, two-file CMake scope or by anything else in Spec 0032/
-      ADR-0076. Spec 0032's own Testing & Verification Plan already
-      invokes Spec 0010's real, established manual-verification
-      precedent for the closely-related real-window case below; this
-      Plan applies the identical, already-accepted treatment here too —
-      run directly from a shell against the real, already-built
-      `atlantis_runtime.exe`, output/exit code recorded in the
-      Implementation PR's own "Manual verification record," exactly
-      like every existing PR that performs real-window verification in
-      this repository already does. **Evidence that Runtime never
-      started**: the absence of `"Atlantis Runtime starting"` (or any
-      later line) anywhere in that invocation's own stdout/stderr —
-      Milestone 2's own `main.cpp` diff moves that log line to strictly
-      *after* the CLI check returns, so its total absence is real,
-      checkable, positive evidence, not an inference from silence.
+      invalid-argument row (table rows 5–23).** Run via a temporary,
+      not-committed PowerShell script (no new product dependency, no new
+      CMake target) that invokes the real, already-built
+      `atlantis_runtime.exe` once per row, capturing stdout/stderr
+      separately and the exit code, with a timeout so a hung process
+      cannot block Verification:
+
+      ```powershell
+      function Invoke-AtlantisRuntimeCase([string]$exePath, [string[]]$cliArgs) {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $exePath
+        $psi.Arguments = ($cliArgs -join ' ')
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.UseShellExecute = $false
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $stdout = $p.StandardOutput.ReadToEnd()
+        $stderr = $p.StandardError.ReadToEnd()
+        if (-not $p.WaitForExit(5000)) { $p.Kill(); throw "timed out: $cliArgs" }
+        [PSCustomObject]@{ ExitCode = $p.ExitCode; StdOut = $stdout; StdErr = $stderr }
+      }
+      ```
+
+      Looped once per row 5–23 (each row's own `argv` tokens as
+      `$cliArgs`), comparing `.ExitCode`/`.StdOut`/`.StdErr` against
+      that row's fixed expectation (message text matched as a substring,
+      exit code matched exactly). Recorded PASS/FAIL per row in the
+      Implementation PR's own "Manual verification record." **Evidence
+      that Runtime never started, in priority order**: (1) the reviewed
+      `main.cpp` diff (Milestone 2 below) shows every `PrintUsageAndExit`/
+      `PrintErrorAndExit` branch `return`s before `BootstrapConfig` is
+      even constructed, let alone `createRuntimeApplication()` called —
+      a structural property of the code, verified by review, not by
+      execution; (2) the process's own real stdout/stderr/exit code
+      match that row's expectation exactly (a mismatch here would itself
+      be the primary failure signal); (3) the absence of `"Atlantis
+      Runtime starting"` in stdout is supplementary corroboration only
+      — never the sole evidence a row passed.
 - [ ] **Real-window verification, one scene per process, from more than
-      one working directory — manual, recorded**, per Spec 0032's own
-      Testing & Verification Plan and its explicit citation of [Spec
-      0010's own precedent](../specs/README.md) ("interactive windowed
-      regression ... performed and observed directly by a human
-      verifier"). Four launches total: `atlantis_runtime.exe` (no
-      argument), `--scene integrated_showcase_demo`, `--scene
-      ibl_material_demo`, `--scene pbr_normal_map_demo` — each its own
-      separate process (`src/platform/src/windows/windows_platform.cpp`'s
-      own `shutdown()` assertion — "called without a successful
+      one working directory — manual, recorded.** This is the only step
+      that needs a human: a real rendered window, judged by eye, has no
+      automated substitute in this repository (see [Spec 0010's own
+      precedent](../specs/README.md), "interactive windowed regression
+      ... performed and observed directly by a human verifier"). Four
+      launches total: `atlantis_runtime.exe` (no argument), `--scene
+      integrated_showcase_demo`, `--scene ibl_material_demo`, `--scene
+      pbr_normal_map_demo` — each its own separate process
+      (`src/platform/src/windows/windows_platform.cpp`'s own
+      `shutdown()` assertion — "called without a successful
       initialize(), or called twice" — and its own "re-initialization
       after shutdown() is unsupported in Phase 1 ... not designed, not
       guarded" comment are the real, cited justification for why three
@@ -578,17 +627,42 @@ today).
   - Debug and Release builds clean, no new compiler warnings
     (`/w14062` untouched — `cli.cpp` does not touch
     `atlantis_runtime_host`'s own enum-exhaustiveness-checked switches).
-  - Module-boundary re-check: `grep -rn "runtime/cli.h"` across `src/`
-    and `tests/` names only `src/runtime/main.cpp`, `src/runtime/cli.cpp`
-    itself, and `tests/runtime/cli_tests.cpp` — confirming `cli.h` is
-    never included from `atlantis_runtime_host`'s own sources or from
-    any other module; `add_library(atlantis_runtime_host ...)`'s own
-    source list (`src/runtime/CMakeLists.txt`) does not gain `cli.cpp`.
+  - **Module-boundary re-check, matched to the real, fixed include
+    forms above** (`main.cpp`/`cli.cpp` both use `#include "cli.h"`;
+    `cli_tests.cpp` uses `#include "../../src/runtime/cli.h"` — a bare
+    `grep -rn "runtime/cli.h"` would miss the first two entirely, since
+    neither literally contains the substring `"runtime/"`):
+    1. `grep -rn '"cli\.h"' src/ tests/` — expect exactly three matches:
+       `src/runtime/main.cpp`, `src/runtime/cli.cpp`,
+       `tests/runtime/cli_tests.cpp`. Any other match means `cli.h`
+       leaked outside its intended two targets.
+    2. `grep -n "cli\.cpp" src/runtime/CMakeLists.txt` — expect it to
+       appear only on the `add_executable(atlantis_runtime ...)` line,
+       never inside the `add_library(atlantis_runtime_host STATIC ...)`
+       block above it.
+    3. `grep -n "cli\.cpp" tests/runtime/CMakeLists.txt` — expect it to
+       appear only on `atlantis_runtime_tests`'s own `add_executable(...)`
+       line, never inside `atlantis_runtime_gpu_tests`'s.
   - `git diff --check` clean.
-  - No-argument launch's real `BootstrapConfig` values (logged at
-    `Info` level) diffed against a pre-change build's own log output —
-    confirming Requirement 3's "byte-for-byte identical to today"
-    claim directly, not merely by code inspection.
+  - **Default-mapping correctness (replaces logging-based comparison —
+    `runtime_application.cpp` does not log a full `BootstrapConfig` at
+    any level; no such mechanism exists to diff against)**: (1) review
+    the `main.cpp` diff itself and confirm only the three
+    `config.sceneArtifactPath`/`sceneMetadataPath`/
+    `sceneDependencyManifestPath` assignment lines changed from a
+    literal macro to `cliResult.selectedScene->...`, with every other
+    `config.*` line byte-identical to today's; (2) `cli_tests.cpp`'s own
+    default-compatibility case (above) already proves no-argument and
+    `--scene integrated_showcase_demo` select identical paths; (3)
+    confirm the whitelist's `"integrated_showcase_demo"` entry in
+    `main.cpp` is literally built from
+    `ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH`/`_METADATA_PATH`/
+    `_MANIFEST_PATH` — the exact three macros already driving today's
+    unconditional default, unrenamed; (4) the real-window verification
+    above already runs both the no-argument and the explicit
+    `--scene integrated_showcase_demo` launches, confirming identical
+    real rendered output. No new logging, public API, or configuration
+    system is added for this check.
 
 ## Rollback Plan
 
@@ -608,8 +682,7 @@ exact prior behavior with no follow-up cleanup.
 See [docs/process/definition-of-done.md](../docs/process/definition-of-done.md).
 No delta beyond: this repository has no CI pipeline yet, so "CI green"
 is reported as not applicable, exactly as every prior PR in this
-repository already does. Real-process (`--help`/`--list-scenes`/error
-rows) and real-window verification are both manual/recorded — see
-Verification Checklist above for the concrete, disclosed reasoning
-(not a gap, a deliberate choice within Requirement 6's own fixed CMake
-scope).
+repository already does. Real-process rows are verified by a
+not-committed PowerShell script, run and recorded by whoever performs
+Verification; real-window verification is the one genuinely manual,
+human-observed step — see Verification Checklist above for both.
