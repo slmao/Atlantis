@@ -63,7 +63,11 @@ target_compile_options(atlantis_runtime_host PRIVATE
 # of its own beyond building a BootstrapConfig from build-tree paths and
 # driving the object atlantis_runtime_host's own public API already
 # vends. Depends on Atlantis::RuntimeHost only.
-add_executable(atlantis_runtime main.cpp)
+# Plan 0032 M2: cli.cpp is atlantis_runtime's own private, executable-
+# scoped startup layer (cli.h, not part of Atlantis::RuntimeHost --
+# ADR-0076 Decision 2). Never added to atlantis_runtime_host's own
+# add_library() above.
+add_executable(atlantis_runtime main.cpp cli.cpp)
 
 target_link_libraries(atlantis_runtime
   PRIVATE
@@ -145,6 +149,17 @@ target_compile_definitions(atlantis_runtime PRIVATE
   # exactly.
   ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
   ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR="${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}"
+  # Plan 0032 M2 (Spec 0032 Requirement 5/6): the two scenes --scene
+  # can additionally select, beyond the default (ATLANTIS_RUNTIME_SCENE_*
+  # above, unrenamed). Same real, already-exported CMake variables
+  # atlantis_add_scene_asset() (assets/CMakeLists.txt) produces --
+  # mirrors ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH's own sourcing exactly.
+  ATLANTIS_RUNTIME_IBL_MATERIAL_DEMO_SCENE_ARTIFACT_PATH="${ATLANTIS_ibl_material_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_RUNTIME_IBL_MATERIAL_DEMO_SCENE_METADATA_PATH="${ATLANTIS_ibl_material_demo_scene_METADATA_PATH}"
+  ATLANTIS_RUNTIME_IBL_MATERIAL_DEMO_SCENE_MANIFEST_PATH="${ATLANTIS_ibl_material_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_ARTIFACT_PATH="${ATLANTIS_pbr_normal_map_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_METADATA_PATH="${ATLANTIS_pbr_normal_map_demo_scene_METADATA_PATH}"
+  ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_MANIFEST_PATH="${ATLANTIS_pbr_normal_map_demo_scene_MANIFEST_PATH}"
 )
 
 # Guarantees the shader-compile and asset-cook targets have already run
@@ -155,9 +170,16 @@ target_compile_definitions(atlantis_runtime PRIVATE
 # unconditionally. Plan 0019 Section P6: lit_textured_shaders added the
 # same way. Plan 0023 Milestone 5: pbr_direct_lit_shaders added the same
 # way. Plan 0024 Milestone 6: output_transform_unorm_shaders/
-# output_transform_srgb_shaders added the same way.
+# output_transform_srgb_shaders added the same way. Plan 0032 M2 (Spec
+# 0032 Requirement 6): ${ATLANTIS_ibl_material_demo_scene_TARGET}/
+# ${ATLANTIS_pbr_normal_map_demo_scene_TARGET} close the real,
+# confirmed gap -- without them, ATLANTIS_BUILD_TESTS=OFF did not cook
+# either scene atlantis_runtime can now select via --scene.
+# atlantis_add_scene_asset()'s own macro already wires each scene
+# target's own MESH_DEPENDENCIES/MATERIAL_DEPENDENCIES/
+# TEXTURE_DEPENDENCIES internally, so no other target name needs adding.
 add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
   pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders output_transform_srgb_shaders sky_shaders
   shadow_cast_shaders pbr_direct_lit_normal_map_shaders pbr_ibl_normal_map_shaders
   ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
-  ${ATLANTIS_ibl_studio_TARGET})
+  ${ATLANTIS_ibl_studio_TARGET} ${ATLANTIS_ibl_material_demo_scene_TARGET} ${ATLANTIS_pbr_normal_map_demo_scene_TARGET})

@@ -4,6 +4,10 @@
 #include <atlantis/runtime/init_error.h>
 #include <atlantis/runtime/runtime_application.h>
 
+#include "cli.h"
+
+#include <array>
+#include <iostream>
 #include <string>
 #include <utility>
 
@@ -13,14 +17,54 @@
 // independent ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR/
 // ATLANTIS_minimal_cube_{ARTIFACT_PATH,METADATA_PATH} CMake variables --
 // never a working-directory-relative path.
+// Plan 0032 M2: ATLANTIS_RUNTIME_SCENE_{ARTIFACT,METADATA,MANIFEST}_PATH
+// (below) is left unrenamed -- it already is integrated_showcase_demo's
+// own triple, the default whitelist entry. ATLANTIS_RUNTIME_IBL_MATERIAL_DEMO_SCENE_*
+// / ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_* are new.
 
 using atlantis::runtime::BootstrapConfig;
 using atlantis::runtime::createRuntimeApplication;
 using atlantis::runtime::RuntimeApplication;
 using atlantis::runtime::RuntimeExitReason;
 using atlantis::runtime::toProcessExitCode;
+using atlantis::runtime::cli::CommandLineOutcome;
+using atlantis::runtime::cli::CommandLineResult;
+using atlantis::runtime::cli::parseCommandLine;
+using atlantis::runtime::cli::SceneBootstrapPaths;
+using atlantis::runtime::cli::SceneWhitelistEntry;
 
-int main() {
+int main(int argc, char** argv) {
+  // Plan 0032 M2: fixed order matches Spec 0032 Requirement 2 exactly --
+  // also fixes --list-scenes' own output order (cli.cpp prints
+  // whitelist order verbatim). Real, absolute, CMake-injected paths
+  // only -- cli.h's own parseCommandLine() never reads a macro itself
+  // (Requirement 5). All parsing/printing/exit happens strictly before
+  // any BootstrapConfig field is populated or createRuntimeApplication()
+  // is called.
+  const std::array<SceneWhitelistEntry, 3> whitelist{{
+      {"integrated_showcase_demo",
+       SceneBootstrapPaths{ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH, ATLANTIS_RUNTIME_SCENE_METADATA_PATH,
+                            ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH}},
+      {"ibl_material_demo",
+       SceneBootstrapPaths{ATLANTIS_RUNTIME_IBL_MATERIAL_DEMO_SCENE_ARTIFACT_PATH,
+                            ATLANTIS_RUNTIME_IBL_MATERIAL_DEMO_SCENE_METADATA_PATH,
+                            ATLANTIS_RUNTIME_IBL_MATERIAL_DEMO_SCENE_MANIFEST_PATH}},
+      {"pbr_normal_map_demo",
+       SceneBootstrapPaths{ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_ARTIFACT_PATH,
+                            ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_METADATA_PATH,
+                            ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_MANIFEST_PATH}},
+  }};
+
+  const CommandLineResult cliResult = parseCommandLine(argc, argv, whitelist);
+  if (cliResult.outcome == CommandLineOutcome::PrintUsageAndExit) {
+    std::cout << cliResult.message;
+    return toProcessExitCode(RuntimeExitReason::Success);
+  }
+  if (cliResult.outcome == CommandLineOutcome::PrintErrorAndExit) {
+    std::cerr << cliResult.message;
+    return toProcessExitCode(RuntimeExitReason::InitializationFailed);
+  }
+
   atlantis::log::setMinLevel(atlantis::LogLevel::Info);
   ATLANTIS_LOG_INFO("Atlantis Runtime starting");
 
@@ -32,9 +76,12 @@ int main() {
   config.fragmentShaderReflectionPath = std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.frag.refl.json";
   config.assetArtifactPath = ATLANTIS_RUNTIME_ASSET_ARTIFACT_PATH;
   config.assetMetadataPath = ATLANTIS_RUNTIME_ASSET_METADATA_PATH;
-  config.sceneArtifactPath = ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_RUNTIME_SCENE_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH;
+  // Plan 0032 M2: the only three fields the CLI selection above
+  // varies -- every other assignment in this function is byte-for-byte
+  // unchanged from before this Milestone.
+  config.sceneArtifactPath = cliResult.selectedScene->sceneArtifactPath;
+  config.sceneMetadataPath = cliResult.selectedScene->sceneMetadataPath;
+  config.sceneDependencyManifestPath = cliResult.selectedScene->sceneDependencyManifestPath;
   config.unlitTexturedVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.refl.json";
