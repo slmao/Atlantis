@@ -1,7 +1,7 @@
 # Plan: Runtime Sample Scene Selection
 
 - **Spec:** [specs/0032-runtime-sample-scene-selection.md](../specs/0032-runtime-sample-scene-selection.md) (`Approved`)
-- **Status:** Draft
+- **Status:** Approved / Ready for Implementation — see this Plan's own [Human Review Approval — 2026-09-10](#human-review-approval--2026-09-10) below. **Implementation starts only once [PR #140](https://github.com/slmao/Atlantis/pull/140) itself has merged to `main` — not before.**
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Related ADR(s):** [ADR-0076](../adr/0076-runtime-sample-scene-selection-boundary.md) (`Accepted`); [ADR-0047's own Accepted Amendment — 2026-09-09](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md#accepted-amendment--2026-09-09) (`Accepted`, boundary reference only)
 
@@ -686,3 +686,36 @@ repository already does. Real-process rows are verified by a
 not-committed PowerShell script, run and recorded by whoever performs
 Verification; real-window verification is the one genuinely manual,
 human-observed step — see Verification Checklist above for both.
+
+## Human Review Approval — 2026-09-10
+
+**Status: Approved.** Recorded against
+[PR #140](https://github.com/slmao/Atlantis/pull/140). Human Review's
+own words: *"我认可 Plan 0032，并确认 Spec 0032 与 Plan 0032 的联合
+Human Review 通过；批准记录随 PR #140 合并后可开始实现"* ("I approve
+Plan 0032, and confirm the joint Human Review of Spec 0032 and Plan
+0032 has passed; the approval record takes effect for starting
+Implementation once PR #140 merges").
+
+This is a **joint** approval of Spec 0032 (already `Approved`,
+2026-09-10) together with this Plan — not a second, independent review
+of the Spec's own design text, and not a reopening of it. This Plan's
+own approval covers it in full, as drafted (including this round's own
+corrections): the two strictly-ordered Milestones (M1: the private,
+executable-scoped `cli.h`/`cli.cpp` pair, compiled as a shared source
+file into both `atlantis_runtime` and `atlantis_runtime_tests`, with
+its caller-injected whitelist and the full 23-row CLI behavior table;
+M2: `main.cpp`/`src/runtime/CMakeLists.txt` production wiring, exactly
+the two CMake files Requirement 6 fixes); the not-committed PowerShell
+real-process verification script and the human-observed real-window
+verification; and the byte-identical, no-new-golden gate on all 10
+existing goldens — with no change to this Plan's own already-drafted
+text.
+
+**This approval authorizes starting Implementation only once
+[PR #140](https://github.com/slmao/Atlantis/pull/140) itself has merged
+to `main` — not before.**
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-10, jointly approving Spec 0032 and this
+Plan, with no change to either's already-drafted text.
