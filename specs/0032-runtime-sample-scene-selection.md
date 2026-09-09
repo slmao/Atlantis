@@ -1,10 +1,12 @@
 # Spec: Runtime Sample Scene Selection
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-09
-- **Related Plan(s):** None yet — Spec/ADR only this round
-- **Related ADR(s):** [ADR-0076: Runtime Sample Scene Selection Boundary](../adr/0076-runtime-sample-scene-selection-boundary.md) (`Proposed`); amends [ADR-0047](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md) via that ADR's own new [Proposed Amendment — 2026-09-09](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md#proposed-amendment--2026-09-09) section
+- **Related Plan(s):** None yet — Plan 0032 may be drafted only once
+  [PR #139](https://github.com/slmao/Atlantis/pull/139) itself has
+  merged to `main`, not before
+- **Related ADR(s):** [ADR-0076: Runtime Sample Scene Selection Boundary](../adr/0076-runtime-sample-scene-selection-boundary.md) (`Accepted`); amends [ADR-0047](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md) via that ADR's own [Accepted Amendment — 2026-09-09](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md#accepted-amendment--2026-09-09) section (`Accepted`, approved independently of ADR-0076 and this Spec) — see this Spec's own [Human Review Approval — 2026-09-10](#human-review-approval--2026-09-10) below
 
 ## Summary
 
@@ -306,15 +308,18 @@ architecturally significant."* A closed, three-way, whitelisted
 pre-approved "trivial" carve-out — it selects among discrete,
 build-time-cooked *configurations*, not a cosmetic override — so this
 Spec does not silently exceed item 8's own scope; it explicitly widens
-it, subject to this round's own Human Review. [ADR-0047](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md)'s
+it, subject to Human Review. [ADR-0047](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md)'s
 own Decision text names item 8 directly as the boundary on
 `atlantis_runtime`'s own "minimal argument handling" — since that
-boundary is moving, ADR-0047 gets a short, cross-referencing Proposed
-Amendment (not a rewrite of its own "two CMake targets" Decision, which
-this Spec's design deliberately does not touch — see Proposed Design's
-own "Startup layer placement" above). See
+boundary is moving, ADR-0047 gets a short, cross-referencing Amendment
+(not a rewrite of its own "two CMake targets" Decision, which this
+Spec's design deliberately does not touch — see Proposed Design's own
+"Startup layer placement" above), now [Accepted](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md#accepted-amendment--2026-09-09)
+independently of this Spec. See
 [ADR-0076](../adr/0076-runtime-sample-scene-selection-boundary.md)
-(`Proposed`) for the full decision record.
+(`Accepted`) for the full decision record — see this Spec's own
+[Human Review Approval — 2026-09-10](#human-review-approval--2026-09-10)
+below for the exact, separate scope each of the three approvals covers.
 
 This Spec was checked against every other `Accepted` ADR whose scope it
 touches (ADR-0046's own resource-destruction-order Decision explicitly
@@ -438,3 +443,39 @@ other conflict.
 - A fourth+ scene, or any scene not already cooked/golden-tested today.
 - Android/iOS entry points (this Spec's own CLI surface is a Windows
   `argv` concern only, per Non-functional above).
+
+## Human Review Approval — 2026-09-10
+
+**Status: Approved.** Recorded against
+[PR #139](https://github.com/slmao/Atlantis/pull/139). Human Review's
+own words: *"我分别认可 Spec 0032、ADR-0076，以及 ADR-0047 的 2026-09-09
+Proposed Amendment"* ("I separately approve Spec 0032, ADR-0076, and
+ADR-0047's 2026-09-09 Proposed Amendment").
+
+This approval covers this Spec's complete Requirements and scope as
+corrected in this round — the executable-private `cli.h`/`cli.cpp`
+pair (outside `atlantis_runtime_host`, shared as a compiled-twice
+source file between `atlantis_runtime` and `atlantis_runtime_tests`,
+not a new library or CMake target), pure-function parsing with the
+caller-injected `SceneWhitelistEntry` table (Requirement 5), the three
+fixed scene names, the established `--scene`/`--list-scenes`/`--help`
+CLI and exit-code contract (Requirements 3-4), the two-file CMake scope
+(Requirement 6: `src/runtime/CMakeLists.txt` and
+`tests/runtime/CMakeLists.txt`), and the Testing & Verification Plan
+(GPU-independent parsing tests, real-process `--help`/`--list-scenes`/
+invalid-argument verification, one real windowed process per scene from
+more than one working directory, all 10 existing goldens re-confirmed).
+No Requirements/Proposed Design text is rewritten by this approval.
+[ADR-0076](../adr/0076-runtime-sample-scene-selection-boundary.md)
+and [ADR-0047's own Accepted Amendment](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md#accepted-amendment--2026-09-09)
+are approved independently, each carrying its own Acceptance Record —
+this is not a blanket approval of one implying the others.
+
+**This approval authorizes drafting Plan 0032 only once
+[PR #139](https://github.com/slmao/Atlantis/pull/139) itself has merged
+to `main` — not before, and not Implementation, code, tests, assets, or
+golden capture of any kind.**
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-10, approving this Spec in full, as corrected
+this round, with no further change.

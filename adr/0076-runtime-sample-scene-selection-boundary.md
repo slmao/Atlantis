@@ -1,10 +1,11 @@
 # ADR 0076: Runtime Sample Scene Selection Boundary
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-09
-- **Deciders:** slmao (drafted by Claude Code at explicit human
-  direction; pending Human Review)
-- **Related Spec:** [specs/0032-runtime-sample-scene-selection.md](../specs/0032-runtime-sample-scene-selection.md)
+- **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+  Approval recorded 2026-09-10; see this ADR's own
+  [Acceptance Record — 2026-09-10](#acceptance-record--2026-09-10) below
+- **Related Spec:** [specs/0032-runtime-sample-scene-selection.md](../specs/0032-runtime-sample-scene-selection.md) (`Approved`)
 
 ## Context
 
@@ -110,3 +111,39 @@ target for the CLI layer) — reproduced there rather than duplicated
 here, since each was rejected using evidence gathered while answering
 that Spec's own Requirements, not a separate architectural trade-off
 this ADR needs to re-litigate independently.
+
+## Acceptance Record — 2026-09-10
+
+**Status: Accepted.** Recorded against
+[PR #139](https://github.com/slmao/Atlantis/pull/139). Human Review's
+own words: *"我分别认可 Spec 0032、ADR-0076，以及 ADR-0047 的 2026-09-09
+Proposed Amendment"* ("I separately approve Spec 0032, ADR-0076, and
+ADR-0047's 2026-09-09 Proposed Amendment").
+
+This approval covers this ADR's complete Decision as corrected in this
+round, with no further change to the Decision/Consequences/
+Alternatives text above — in particular: the closed, three-value
+`--scene`/`--list-scenes`/`--help` boundary (Decision 1); the private,
+executable-scoped `cli.h`/`cli.cpp` pair, outside
+`atlantis_runtime_host`'s own public `include/` directory and not
+compiled into that library, shared as a compiled-twice source file
+between `atlantis_runtime` and `atlantis_runtime_tests` rather than a
+new library or CMake target, and the real (not "exactly two")
+`Atlantis::RuntimeHost` consumer count this Decision does not restate
+or rely on (Decision 2); `RuntimeApplication`/`BootstrapConfig` gaining
+no new field, method, or CLI awareness, with `BootstrapConfig`'s own
+existing no-CLI-parsing contract staying literally true (Decision 3);
+and all parsing/validation/print-and-exit paths running strictly before
+`createRuntimeApplication()` (Decision 4). Approved independently of
+[Spec 0032](../specs/0032-runtime-sample-scene-selection.md)
+(`Approved`) and ADR-0047's own
+[Accepted Amendment — 2026-09-09](0047-runtime-host-executable-library-structure-and-test-boundary.md#accepted-amendment--2026-09-09)
+— this is not a blanket approval of one implying the others.
+
+**This approval authorizes drafting Plan 0032 only once
+[PR #139](https://github.com/slmao/Atlantis/pull/139) itself has merged
+to `main` — not before, and not Implementation of any kind.**
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-10, accepting this ADR in full, as corrected
+this round, with no further change.
