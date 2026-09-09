@@ -185,3 +185,82 @@ public dependency surface any other top-level module may consume.**
   lifecycle/failure-classification logic that does *not* need a real
   device, at the speed and determinism GPU-independent tests already
   provide throughout this codebase.
+
+## Accepted Amendment — 2026-09-09
+
+**Status: Accepted.** Approved independently of
+[Spec 0032](../specs/0032-runtime-sample-scene-selection.md) (`Approved`)
+and [ADR-0076](0076-runtime-sample-scene-selection-boundary.md)
+(`Accepted`) — see this Amendment's own
+[Acceptance Record — 2026-09-10](#acceptance-record--2026-09-10)
+below. Submitted alongside both of those documents, before any
+Implementation — not written after the fact to describe something
+already built. Everything above remains this ADR's own original,
+unmodified `Accepted` Decision (top-level `Status: Accepted` unchanged;
+the "two CMake targets" shape of the Decision is not reopened by this
+Amendment — see below).
+
+**Context.** This ADR's own Decision text (above) names Spec 0013's
+"Decisions Requiring Human Review item 8" as the explicit boundary on
+`atlantis_runtime`'s own "minimal argument handling." ADR-0076 moves
+that boundary (Runtime's configuration surface now includes a closed,
+whitelisted `--scene`/`--list-scenes`/`--help` flag set, not merely a
+"trivial" cosmetic override) — this Amendment updates only the
+boundary *reference* this ADR's own text carries, so a future reader
+is not left checking a citation that quietly went stale.
+
+**Amendment.** Wherever this ADR's own Decision text bounds
+`atlantis_runtime`'s "minimal argument handling" by Spec 0013 item 8
+alone, that boundary is now: Spec 0013 item 8 **as widened by
+[ADR-0076](0076-runtime-sample-scene-selection-boundary.md)** — the
+closed, three-value `--scene`/`--list-scenes`/`--help` surface ADR-0076
+fixes, nothing wider. The new parsing/mapping logic this surface needs
+is a private, executable-scoped `cli.h`/`cli.cpp` pair, outside
+`atlantis_runtime_host`'s own public `include/` directory and not
+compiled into that library — see ADR-0076's own Decision item 2 for the
+full placement and reasoning. This ADR's own "two CMake targets"
+Decision (the `atlantis_runtime_host`/`atlantis_runtime` split itself)
+is **unchanged and reaffirmed**; this Amendment does not restate or
+re-verify this ADR's own original consumer-count sentence above (a
+2026-08-20 snapshot, not reopened here) — ADR-0076's own Context notes
+that count is no longer exactly two in the current codebase, which has
+no bearing on this Amendment's own narrow scope.
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-10, accepting this Amendment in full, as
+drafted, with no change.
+
+## Acceptance Record — 2026-09-10
+
+**Status: Accepted.** Recorded against
+[PR #139](https://github.com/slmao/Atlantis/pull/139). Human Review's
+own words: *"我分别认可 Spec 0032、ADR-0076，以及 ADR-0047 的 2026-09-09
+Proposed Amendment"* ("I separately approve Spec 0032, ADR-0076, and
+ADR-0047's 2026-09-09 Proposed Amendment").
+
+This approval's scope is limited to exactly this Amendment's own
+Decision, above: Spec 0013 item 8's boundary is now item 8 as widened
+by ADR-0076 (the closed `--scene`/`--list-scenes`/`--help` surface,
+nothing wider); the new parsing/mapping logic is the private,
+executable-scoped `cli.h`/`cli.cpp` pair described there, outside
+`atlantis_runtime_host`'s own public `include/` directory and not
+compiled into that library. This ADR's own "two CMake targets" Decision
+(the `atlantis_runtime_host`/`atlantis_runtime` split itself) is
+**not** reopened by this approval, and neither is this ADR's own
+original 2026-08-20 consumer-count sentence in the Decision text
+above — both stay exactly as originally `Accepted`. No other part of
+this ADR — the original Decision/Consequences/Alternatives text or the
+file's own top-level `Status: Accepted` — is reopened, reworded, or
+otherwise touched by this approval. Approved independently of
+[Spec 0032](../specs/0032-runtime-sample-scene-selection.md)
+(`Approved`) and [ADR-0076](0076-runtime-sample-scene-selection-boundary.md)
+(`Accepted`) — this is not a blanket approval of one implying the
+others.
+
+**This approval authorizes drafting Plan 0032 only once
+[PR #139](https://github.com/slmao/Atlantis/pull/139) itself has merged
+to `main` — not before, and not Implementation of any kind.**
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review
+Approval recorded 2026-09-10, accepting this Amendment's own scope in
+full, as drafted, with no further change.
