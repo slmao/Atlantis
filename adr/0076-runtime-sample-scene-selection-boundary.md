@@ -36,25 +36,37 @@ Spec 0032, not silently read into item 8's own already-approved text.
    whitelist is fixed at exactly `integrated_showcase_demo`,
    `ibl_material_demo`, `pbr_normal_map_demo` — extending it to a
    fourth name is a decision for a future spec, not authorized here.
-2. **The new parsing/mapping logic lives inside the existing
-   `atlantis_runtime_host` static library** (new source files only) —
-   `atlantis_runtime` (the executable) still depends on
-   `Atlantis::RuntimeHost` alone, and `Atlantis::RuntimeHost` still has
-   exactly its two existing consumers (`atlantis_runtime` itself and
-   `tests/runtime/`'s own GPU-independent tests). ADR-0047's own "two
-   CMake targets" Decision is unchanged by this ADR — see that ADR's
-   own new Proposed Amendment, which updates only its item-8 boundary
-   reference, not its target-count Decision.
+2. **The new parsing/mapping logic is a private, executable-scoped
+   `cli.h`/`cli.cpp` pair — outside `atlantis_runtime_host`'s own
+   public `include/` directory and not compiled into that library at
+   all.** The same `cli.cpp` source file is compiled directly into
+   both `atlantis_runtime` (the executable) and the existing
+   GPU-independent `atlantis_runtime_tests` target — a shared source
+   file across two already-existing executable targets, not a new
+   library and not a new CMake target. `Atlantis::RuntimeHost`'s own
+   real consumer count is not "exactly two" today (confirmed: at least
+   `atlantis_runtime`, `atlantis_runtime_tests`,
+   `atlantis_runtime_gpu_tests`, and `tests/image_regression/`'s own
+   fixture and golden-generator targets already link it) — ADR-0047's
+   own "exactly two" framing described that library's state as of its
+   own 2026-08-20 acceptance date, not this ADR's own current baseline;
+   this Decision does not restate or rely on that count, and does not
+   change it either way, since the new logic never touches
+   `Atlantis::RuntimeHost`. ADR-0047's own "two CMake targets" Decision
+   (the library/executable split itself) is unchanged by this ADR —
+   see that ADR's own new Proposed Amendment, which updates only its
+   item-8 boundary reference.
 3. **`RuntimeApplication`/`BootstrapConfig` gain no new field, method,
-   or CLI awareness.** The new logic only *produces* a `BootstrapConfig`
-   value from a parsed scene name — `main.cpp` still calls
-   `createRuntimeApplication(config)` exactly as today, and
-   `BootstrapConfig`'s own "populated by the caller from CMake-injected
-   compile definitions, no command-line parsing inside
+   or CLI awareness.** `main.cpp` builds the real `BootstrapConfig`
+   from the parsed scene's own paths and calls
+   `createRuntimeApplication(config)` exactly as today.
+   `BootstrapConfig`'s own existing "populated by the caller from
+   CMake-injected compile definitions, no command-line parsing inside
    Atlantis::RuntimeHost's own composition logic" contract (its own
-   header comment) is read narrowly: the *composition* logic still
-   never parses `argv`; the new, separate CLI-parsing code that
-   *produces* a `BootstrapConfig` is not that composition logic.
+   header comment) stays literally true, with no reinterpretation
+   needed: the new CLI code is not inside `Atlantis::RuntimeHost`, so
+   that library's own composition logic still never sees `argv` in any
+   sense.
 4. **All parsing, whitelist validation, and print-and-exit paths
    (`--help`, `--list-scenes`, any error) run strictly before
    `createRuntimeApplication()` — before any window, Platform session,
@@ -68,9 +80,11 @@ Spec 0032, not silently read into item 8's own already-approved text.
   already-tested scenes reachable only through non-product binaries)
   with the narrowest possible boundary widening — three fixed names,
   nothing arbitrary.
-- `atlantis_runtime_host`'s own existing "private, testable, no
-  external consumer" shape (ADR-0047) already fits this new logic
-  exactly — no new CMake target, no new module boundary.
+- No new CMake target and no new module boundary — `cli.cpp` reuses
+  the two already-existing executable targets directly, and stays
+  entirely outside `atlantis_runtime_host`'s own public surface, so
+  that library's own real (and larger-than-two) set of consumers gains
+  no header they never asked for.
 - Explicit, reviewed widening of Spec 0013 item 8's own boundary,
   rather than an implicit one a future reader would have to notice was
   never actually approved.

@@ -210,11 +210,16 @@ alone, that boundary is now: Spec 0013 item 8 **as widened by
 [ADR-0076](0076-runtime-sample-scene-selection-boundary.md)** — the
 closed, three-value `--scene`/`--list-scenes`/`--help` surface ADR-0076
 fixes, nothing wider. The new parsing/mapping logic this surface needs
-lives inside the existing `atlantis_runtime_host` static library (new
-source files only); this ADR's own "two CMake targets," "exactly two
-consumers of `Atlantis::RuntimeHost`," and "no new public dependency
-surface" Decision text is **unchanged and reaffirmed** — ADR-0076's own
-Decision item 2 states this explicitly.
+is a private, executable-scoped `cli.h`/`cli.cpp` pair, outside
+`atlantis_runtime_host`'s own public `include/` directory and not
+compiled into that library — see ADR-0076's own Decision item 2 for the
+full placement and reasoning. This ADR's own "two CMake targets"
+Decision (the `atlantis_runtime_host`/`atlantis_runtime` split itself)
+is **unchanged and reaffirmed**; this Amendment does not restate or
+re-verify this ADR's own original consumer-count sentence above (a
+2026-08-20 snapshot, not reopened here) — ADR-0076's own Context notes
+that count is no longer exactly two in the current codebase, which has
+no bearing on this Amendment's own narrow scope.
 
 **Deciders:** slmao — pending Human Review. Not yet approved; this
 section records the proposed amendment text only.
