@@ -9,7 +9,8 @@
   the AGENTS.md-only implementation. This is subsequent evidence for the gate
   that the original Plan-approval note left pending.
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  original scope and obligations retained.
+  [PR #144](https://github.com/slmao/Atlantis/pull/144), original scope and
+  obligations retained.
 
 ## Objective
 

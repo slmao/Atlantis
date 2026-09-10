@@ -8,7 +8,8 @@
 - **Related Plan(s):** [Plan 0004](../plans/0004-context-efficiency-guidelines.md)
 - **Related ADR(s):** None — see Architectural Impact.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  original scope and obligations retained.
+  [PR #144](https://github.com/slmao/Atlantis/pull/144), original scope and
+  obligations retained.
 
 ## Summary
 
