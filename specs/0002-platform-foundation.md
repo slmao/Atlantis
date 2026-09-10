@@ -19,7 +19,7 @@
   [ADR-0005](../adr/0005-platform-module-multi-os-windowing.md) — see
   Architecture / Design Constraints.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 1 PR (pending). Original scope
+  [PR #147](https://github.com/slmao/Atlantis/pull/147) Batch 1. Original scope
   and obligations retained.
 
 ## Context

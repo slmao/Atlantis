@@ -21,7 +21,7 @@
   [ADR-0016](../adr/0016-presentation-acquire-present-and-recreation-contract.md);
   all `Accepted`, confirmed alongside this Spec on 2026-08-06.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 1 PR (pending). Original scope
+  [PR #147](https://github.com/slmao/Atlantis/pull/147) Batch 1. Original scope
   and obligations retained.
 
 ## Summary

@@ -14,7 +14,7 @@
   [ADR-0009](../adr/0009-assertion.md), [ADR-0010](../adr/0010-cmake-structure.md)
   — the five decisions in **Architectural Impact**, all `Accepted`.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 1 PR (pending). Original scope
+  [PR #147](https://github.com/slmao/Atlantis/pull/147) Batch 1. Original scope
   and obligations retained.
 
 ## Summary

@@ -12,7 +12,7 @@
   deferred to a separate documentation-consistency task and does not block
   implementation. Every Non-Goal and Section 9 prohibition remains in force.
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  Batch 1 PR (pending). Original scope,
+  [PR #147](https://github.com/slmao/Atlantis/pull/147) Batch 1. Original scope,
   ordered work, and verification retained. Draft-review history — including an
   earlier `ValidationSink` observer type that was designed, then removed as
   unneeded and unauthorized (Section 6), and a corrected claim about what
