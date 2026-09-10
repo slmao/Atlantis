@@ -12,4 +12,9 @@ before code is written against it.
 - Status values: `Draft` → `In Review` → `Approved` (or `Superseded by
   <link>`).
 
-Full process: [AGENTS.md](../AGENTS.md).
+Record joint Spec+Plan approval once through a concise evidence reference.
+Implementation progress and results belong in the implementation PR.
+
+Authoring rules: [AGENTS.md](../AGENTS.md#documentation-and-code-comments).
+Review, corrections, and completed-document compaction:
+[Git workflow](../docs/process/git-workflow.md#specs-plans-and-adrs-are-versioned-like-code).

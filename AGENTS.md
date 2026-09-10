@@ -394,30 +394,52 @@ default.
 
 ## Documentation and code comments
 
-Applies repository-wide: to this file, `README.md`,
-`docs/project-blueprint.md`, specs, plans, ADRs, and code comments
-alike. See [specs/0004-context-efficiency-guidelines.md](specs/0004-context-efficiency-guidelines.md)
-for the full rationale; this section states the rule, not the reasoning.
+Applies repository-wide. Rationale: [Spec 0004](specs/0004-context-efficiency-guidelines.md)
+and [Spec 0033](specs/0033-documentation-lifecycle-and-compaction.md).
 
 **Documentation:**
 
-- A given decision, rule, or status has **one authoritative source** —
-  an Accepted ADR for *why*, an Approved Spec for *what*, an Approved
-  Plan for *how/sequencing*, this file for repository-wide governance
-  and coding rules. Every other document links to that source with a
-  short summary, rather than restating its detail.
-- Navigation/index documents (README, blueprint, spec/plan registries,
-  and similar) stay focused on index, status, dependency, and roadmap
-  content — not full design rationale or argumentation.
-- Read documentation proportional to the task at hand rather than
-  defaulting to the entire historical set. This does not authorize
-  skipping a document a task genuinely needs, and does not loosen this
-  file's own read-in-full-every-session rule above.
-- Concision never justifies omitting a requirement, constraint, design
-  rationale, risk, verification step, or governance status that a
-  document's own role or template requires it to state. No mechanical
-  line/word/token/size limit is used to judge this — it is a reviewed
-  judgment call, like the rest of this document's qualitative rules.
+- Each information class has one authoritative home:
+
+  | Information | Home |
+  |---|---|
+  | Problem, scope, requirements, non-goals | Approved Spec |
+  | Architectural decision and rationale | Accepted ADR |
+  | Implementation order, expected files, verification mapping | Approved Plan |
+  | Review discussion and approval evidence | Reviewing PR |
+  | Implementation deviations, commands, results, hardware, test counts | Implementation PR |
+  | As-built architecture | `docs/architecture/` and current source |
+  | Repository-wide governance and coding rules | This file |
+
+- Other documents use a short summary and a link. Repeat a repository rule
+  only to state a narrower, feature-specific constraint. Requirements should
+  not be restated as duplicate design, review-decision, and acceptance lists.
+- Navigation documents (README, blueprint, registries) contain current index,
+  status, dependency, and roadmap information with evidence links. Update stale
+  entries in place; keep review transcripts, implementation logs, and historical
+  priority-change narration in Git/PR history.
+- Approval metadata contains status and a concise reviewer/date/PR reference.
+  Record the distinct joint Spec+Plan review once in the Plan, naming both
+  documents and linking the evidence; the workflow gates above remain binding.
+  Specs, Plans, and ADRs do not become implementation journals.
+- Plans describe ordered changes and verification. Complete source files,
+  implementation-ready function bodies, large candidate diffs, and exhaustive
+  test inventories belong in code and PRs. Small pseudocode or normative layout
+  fragments are appropriate when needed to resolve an ambiguity.
+- Draft corrections are folded into the text. After approval and implementation
+  start, semantic changes require reviewed follow-up Specs/Plans. Changed
+  architectural decisions require superseding ADRs; Accepted ADRs are not
+  rewritten or compacted in place.
+- Editorial compaction of completed Specs/Plans requires a reviewed Plan naming
+  the files, preserved semantics and links, and a reference to the compaction PR.
+  In-flight work is excluded. Spec 0033's pilot must be accepted before later
+  Plans propose broader batches; no unattended historical rewrite is authorized.
+- Read documentation proportional to the task. Required task reading and this
+  file's full-read requirement remain in force.
+- Concision never justifies omitting required requirements, constraints,
+  rationale, risks, verification, or governance status. Preserve public-API
+  contracts completely. Compactness is a review judgment, with no mechanical
+  line, word, token, size, or comment-density threshold.
 
 **Code comments:**
 

@@ -3,6 +3,14 @@
 - **Spec:** &lt;link — required&gt;
 - **Status:** Draft
 - **Author:**
+- **Joint Human Review:** &lt;pending; once approved: reviewer, date, PR naming
+  this Plan and its Spec and explicitly authorizing implementation&gt;
+
+Authoring/lifecycle rules: [AGENTS.md](../AGENTS.md#documentation-and-code-comments).
+Describe ordered changes, file scope, and verification. Keep complete source
+files, function implementations, candidate diffs, and exhaustive test inventories
+in code/PRs; use small pseudocode or normative layouts only to resolve ambiguity.
+Link Spec requirements and ADR decisions instead of restating them.
 
 ## Objective
 
