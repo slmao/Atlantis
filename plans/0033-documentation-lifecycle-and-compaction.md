@@ -1,9 +1,11 @@
 # Plan: Documentation Lifecycle and Historical Compaction
 
 - **Spec:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md)
-- **Status:** In Review
+- **Status:** Approved / Implemented in [PR #144](https://github.com/slmao/Atlantis/pull/144); merged 2026-09-10
 - **Author:** slmao (drafted by Codex at explicit human direction)
-- **Human Review:** Pending joint review of Spec 0033 and this Plan.
+- **Joint Human Review:** Completed by slmao in the implementation review for
+  [PR #144](https://github.com/slmao/Atlantis/pull/144), which accepted the
+  Spec/Plan scope and the pilot's semantic-preservation evidence before merge.
 
 ## Objective
 
