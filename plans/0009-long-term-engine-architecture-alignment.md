@@ -26,7 +26,7 @@
   merged by a human, following this Plan's own Implementation Order and
   Verification Checklist.
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  Batch 3 PR (pending). Original
+  [PR #150](https://github.com/slmao/Atlantis/pull/150) Batch 3. Original
   scope, planned document design, and verification retained; the
   HR-PLAN-0009 topic-by-topic narration is preserved in PR #40 history.
 

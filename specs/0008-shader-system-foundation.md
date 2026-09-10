@@ -95,7 +95,7 @@
   properties a future implementation must satisfy, not ones already
   verified.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 3 PR (pending). Original
+  [PR #150](https://github.com/slmao/Atlantis/pull/150) Batch 3. Original
   scope and obligations retained; the original GLSL-based draft, the
   Slang re-evaluation narration, and the full HR-0008 decision-memo
   walkthrough are preserved in

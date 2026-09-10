@@ -43,7 +43,7 @@
   single-Implementation-PR shape. It does **not** authorize merging any
   PR on the human's behalf.
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  Batch 3 PR (pending). Original
+  [PR #150](https://github.com/slmao/Atlantis/pull/150) Batch 3. Original
   scope, ordered work, and verification retained. Candidate C++ headers,
   class bodies, and `VkImageCreateInfo`/`VkBufferImageCopy` fragments
   drafted here are summarised to their contracts and preserved in

@@ -37,7 +37,7 @@
   does not decide iOS's Metal-vs-MoltenVK question; and does not modify the
   Candidate Spec Backlog (`specs/README.md` Section B) or its priorities.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 3 PR (pending). Original
+  [PR #150](https://github.com/slmao/Atlantis/pull/150) Batch 3. Original
   scope and obligations retained; the full HR-0009 topic-by-topic
   narration is preserved in PR #39/#40 history.
 

@@ -85,7 +85,7 @@
   [ADR-0006](../adr/0006-dependency-management.md)/[ADR-0007](../adr/0007-test-framework.md),
   all `Accepted`.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 3 PR (pending). Original
+  [PR #150](https://github.com/slmao/Atlantis/pull/150) Batch 3. Original
   scope and obligations retained; the round-by-round independent-review
   narration is preserved in PR #50 history.
 

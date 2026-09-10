@@ -28,7 +28,7 @@
   4. Does **not** authorize merging any pull request on the human's
      behalf.
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  Batch 3 PR (pending). Original
+  [PR #150](https://github.com/slmao/Atlantis/pull/150) Batch 3. Original
   scope, ordered work, and verification retained. Candidate C++ headers,
   class bodies, and CMake fragments drafted here (§2–§7) are summarised to
   their contracts and preserved in

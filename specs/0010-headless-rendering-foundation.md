@@ -125,7 +125,7 @@
   (`Renderer::drawFrame()` gains an explicit `finalColorState` parameter),
   now `Accepted Amendment`.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 3 PR (pending). Original
+  [PR #150](https://github.com/slmao/Atlantis/pull/150) Batch 3. Original
   scope, obligations, and the corrected-design evidence trail retained;
   the round-by-round Human Review narration is preserved in PR #42/#43
   history.
