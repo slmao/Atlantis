@@ -1,10 +1,11 @@
 # Spec: Documentation Lifecycle and Historical Compaction
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Codex at explicit human direction)
 - **Created:** 2026-09-10
-- **Related Plan(s):** None — Plan drafting begins only after this Spec is
-  approved and merged.
+- **Approval:** slmao, [PR #142](https://github.com/slmao/Atlantis/pull/142),
+  merged 2026-09-10; maintainer confirmed continuation to Plan drafting.
+- **Related Plan(s):** [Plan 0033](../plans/0033-documentation-lifecycle-and-compaction.md)
 - **Related ADR(s):** None — see Architectural Impact.
 
 ## Summary
