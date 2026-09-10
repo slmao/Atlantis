@@ -62,7 +62,7 @@
   [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)–[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md);
   all `Accepted` alongside this Spec.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  [PR #147](https://github.com/slmao/Atlantis/pull/147) Batch 2. Original scope
+  [PR #149](https://github.com/slmao/Atlantis/pull/149) Batch 2. Original scope
   and obligations retained.
 
 ## Summary

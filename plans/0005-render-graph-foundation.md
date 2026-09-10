@@ -11,7 +11,7 @@
   as written — none of the nineteen changes Spec 0005/ADR-0017/ADR-0018's own
   decisions; Human Review blockers surfaced by drafting this Plan: none.
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  [PR #147](https://github.com/slmao/Atlantis/pull/147) Batch 2. Original scope,
+  [PR #149](https://github.com/slmao/Atlantis/pull/149) Batch 2. Original scope,
   ordered work, and verification retained. Candidate C++ headers/algorithms
   drafted here, and the multi-round revision history and 16-item Consistency
   Review, are preserved in this PR's and

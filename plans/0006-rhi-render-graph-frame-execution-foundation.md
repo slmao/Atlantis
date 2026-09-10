@@ -22,7 +22,7 @@
   authorized, but must not begin until this Plan's own PR has merged into
   `main`.
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  [PR #147](https://github.com/slmao/Atlantis/pull/147) Batch 2. Original scope,
+  [PR #149](https://github.com/slmao/Atlantis/pull/149) Batch 2. Original scope,
   ordered work, and verification retained. Candidate C++ headers/algorithms and
   the three-round revision history are preserved in this PR's and
   [PR #23](https://github.com/slmao/Atlantis/pull/23)/[PR #24](https://github.com/slmao/Atlantis/pull/24)'s

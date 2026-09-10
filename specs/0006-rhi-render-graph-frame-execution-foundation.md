@@ -34,7 +34,7 @@
   [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md);
   all `Accepted` alongside this Spec.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  [PR #147](https://github.com/slmao/Atlantis/pull/147) Batch 2. Original scope
+  [PR #149](https://github.com/slmao/Atlantis/pull/149) Batch 2. Original scope
   and obligations retained.
 
 ## Summary
