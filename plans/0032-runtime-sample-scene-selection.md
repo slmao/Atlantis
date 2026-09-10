@@ -1,7 +1,7 @@
 # Plan: Runtime Sample Scene Selection
 
 - **Spec:** [specs/0032-runtime-sample-scene-selection.md](../specs/0032-runtime-sample-scene-selection.md) (`Approved`)
-- **Status:** Approved / Ready for Implementation — see this Plan's own [Human Review Approval — 2026-09-10](#human-review-approval--2026-09-10) below. **Implementation starts only once [PR #140](https://github.com/slmao/Atlantis/pull/140) itself has merged to `main` — not before.**
+- **Status:** Approved / **Implemented in [PR #141](https://github.com/slmao/Atlantis/pull/141); pending merge** (not yet merged — this Plan is not "done" until a human merges that PR)
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Related ADR(s):** [ADR-0076](../adr/0076-runtime-sample-scene-selection-boundary.md) (`Accepted`); [ADR-0047's own Accepted Amendment — 2026-09-09](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md#accepted-amendment--2026-09-09) (`Accepted`, boundary reference only)
 

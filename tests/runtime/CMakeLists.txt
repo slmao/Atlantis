@@ -1,5 +1,14 @@
 # Plan 0013 Step 1: GPU-independent tests only -- no Device, no GPU, and
 # no real window required to run.
+# Plan 0032 M1: cli.cpp is atlantis_runtime's own private, executable-
+# scoped startup layer (src/runtime/cli.h, not part of
+# Atlantis::RuntimeHost -- ADR-0076 Decision 2) -- included here via a
+# relative-path source reference, the same "test compiles a module's
+# private source file directly" precedent
+# tests/shader_system/json_parser_tests.cpp already establishes,
+# recompiled as its own translation unit into this target (cli.cpp has
+# no home library to link against). cli_tests.cpp is the new test file
+# exercising it. No change to atlantis_runtime_gpu_tests below.
 add_executable(atlantis_runtime_tests
   lifecycle_state_tests.cpp
   bootstrap_config_tests.cpp
@@ -13,6 +22,8 @@ add_executable(atlantis_runtime_tests
   scene_load_tests.cpp
   pbr_reflection_cross_check_tests.cpp
   material_realization_tests.cpp
+  cli_tests.cpp
+  ../../src/runtime/cli.cpp
 )
 
 target_link_libraries(atlantis_runtime_tests
