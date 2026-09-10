@@ -16,4 +16,9 @@ mind gets a new ADR that supersedes the old one, so the history of
   enters review, but it must be `Accepted` before the spec (and any plan
   built on it) is approved for implementation.
 
-Full process: [AGENTS.md](../AGENTS.md).
+Acceptance metadata links to the reviewing PR; review discussion and execution
+logs stay there. Existing historical amendments remain part of the record, not
+a precedent for new in-place amendments or editorial compaction.
+
+Authoring rules: [AGENTS.md](../AGENTS.md#documentation-and-code-comments).
+Full lifecycle: [Git workflow](../docs/process/git-workflow.md#specs-plans-and-adrs-are-versioned-like-code).

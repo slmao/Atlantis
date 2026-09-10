@@ -4,7 +4,13 @@
 - **Author:**
 - **Created:** &lt;YYYY-MM-DD&gt;
 - **Related Plan(s):** &lt;link once a plan exists&gt;
+- **Approval:** &lt;reviewer, date, reviewing PR once approved; otherwise pending&gt;
 - **Related ADR(s):** &lt;link, or "None — see Architectural Impact"&gt;
+
+Authoring/lifecycle rules: [AGENTS.md](../AGENTS.md#documentation-and-code-comments).
+State each requirement once; link ADR rationale and map verification to the
+requirements rather than adding duplicate acceptance or review-decision lists.
+Keep implementation code, diffs, review transcripts, and execution logs in PRs.
 
 ## Summary
 

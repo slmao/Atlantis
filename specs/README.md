@@ -14,7 +14,11 @@ against it.
   must exist (at least as `Proposed`) before the spec can move to
   `Approved`.
 
-Full process: [AGENTS.md](../AGENTS.md).
+Approval metadata links to the reviewing PR. Implementation progress and
+verification evidence stay in the implementation PR.
+Authoring rules: [AGENTS.md](../AGENTS.md#documentation-and-code-comments).
+Review and editorial lifecycle:
+[Git workflow](../docs/process/git-workflow.md#specs-plans-and-adrs-are-versioned-like-code).
 
 ## Spec Registry
 

@@ -43,7 +43,16 @@ branch, its spec, and its plan are traceable to each other at a glance.
 ## Pull requests
 
 - Every PR uses [.github/PULL_REQUEST_TEMPLATE.md](../../.github/PULL_REQUEST_TEMPLATE.md)
-  and links its spec, plan, and any ADRs.
+  and links its spec, plan, and any ADRs. Identify the stage: a Spec/Plan review
+  PR requests approval of its proposal; an implementation PR cites prior
+  approval and the distinct joint Spec+Plan Human Review.
+- The reviewing PR owns discussion and approval evidence. Keep a concise
+  reviewer/date/PR reference in the approved document; record joint review once
+  in the Plan, naming both documents and the implementation authorization.
+- The implementation PR owns deviations, commands, test results, hardware,
+  limitations, and any required human golden review. Registries link that PR
+  with a coarse current state. Mark genuinely inapplicable checks N/A with a
+  reason; a proposal's own approval is pending until the human gives it.
 - An agent opens PRs but never merges them. A human reviews and merges.
 - See [Definition of Done](definition-of-done.md) for merge criteria.
 
@@ -56,3 +65,15 @@ branch, its spec, and its plan are traceable to each other at a glance.
   `Approved` and implementation has started against it, further changes go
   through a new revision or a follow-up spec — don't rewrite history
   underneath work already in flight.
+
+- Completed Specs/Plans may undergo editorial compaction only through an
+  explicitly scoped, reviewed Plan under
+  [Spec 0033](../../specs/0033-documentation-lifecycle-and-compaction.md).
+  Preserve effective contracts, historical scope, and links; include an
+  obligation-to-retained-text comparison and descriptive before/after metrics
+  in the compaction PR, plus an editorial reference in each compacted document.
+  This is not authorization for semantic changes or editing in-flight work.
+- Accepted ADRs retain their decisions and history; changed decisions get a
+  new superseding ADR, not an in-place amendment or compaction.
+- For information ownership and proportional reading, follow
+  [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).

@@ -3,7 +3,12 @@
 - **Status:** Proposed
 - **Date:** &lt;YYYY-MM-DD&gt;
 - **Deciders:**
+- **Acceptance:** &lt;reviewer, date, reviewing PR once accepted; otherwise pending&gt;
 - **Related Spec:** &lt;link&gt;
+
+Record one decision and its rationale. Follow the
+[ADR lifecycle](README.md); keep approval discussion and execution evidence in
+PRs. After acceptance, a changed decision requires a new superseding ADR.
 
 ## Context
 
