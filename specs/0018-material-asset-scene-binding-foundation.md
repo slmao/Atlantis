@@ -5,6 +5,10 @@
 - **Created:** 2026-08-26
 - **Related Plan(s):** [plans/0018-material-asset-scene-binding-foundation.md](../plans/0018-material-asset-scene-binding-foundation.md) (`In Review` — drafted 2026-08-28; this Spec's own approval authorized drafting the Plan only, per [AGENTS.md](../AGENTS.md)'s Golden Rule; Implementation awaits the Plan's own Human Review Approval)
 - **Related ADR(s):** [ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md) (`Accepted`), [ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md) (`Accepted`)
+- **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
+  Batch 5 PR (pending). Original scope and obligations retained; the
+  two centralized final-review rounds are preserved in
+  [PR #86](https://github.com/slmao/Atlantis/pull/86) history.
 - **Human Review Approval (2026-08-27):** Reviewed and approved by
   slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
   maintainer) on 2026-08-27, accepting this document's own "Decisions
@@ -1568,153 +1572,39 @@ Spec 0017's own checklist shape:
 - **A distributable, cross-session Asset Catalog** — remains explicitly
   deferred, as it has been since Spec 0015.
 
-## Readiness for Human Review — Round 1 (2026-08-27 centralized final review)
+## Historical scope — two centralized final-review rounds (2026-08-27)
 
-A second, evidence-driven centralized review pass re-verified this
-Draft's own architectural claims directly against real code the review
-had not yet read line-by-line the first time — `RuntimeApplication::initializeSteps()`/
-`runFrame()` in full, `Renderer::drawFrame()`'s own real
-`RenderGraphBuilder` usage, `Device::submit()`'s and
-`Presentation::present()`'s own real signatures, and
-`shaders/textured_quad/CMakeLists.txt`'s own real `add_subdirectory()`
-placement. It found and closed two genuine architectural gaps — both
-fixable with real, evidenced designs, neither requiring an objection
-that the recommended approach is unsupportable:
-
-- **Closed, a real Must Fix, not a nuance (D8, and its ADR-0060
-  mirror):** the original draft claimed real `SampledTexture`/
-  `Sampler`/`Material` GPU resources could be constructed as part of
-  `loadAndInstantiateScene()`'s own step (e), inside
-  `initializeSteps()`. Confirmed directly this is architecturally
-  impossible: `initializeSteps()` runs entirely before any real
-  windowed `RenderTarget` exists (`Presentation` is not constructed
-  until the first `SurfaceCreated` event, observed only inside
-  `runFrame()`), and `Device::submit()`'s own real signature takes a
-  non-null `RenderTarget&` with no target-independent overload — Spec
-  0016's own "texture upload must go through RenderGraph against a
-  real RenderTarget, no target-independent submission" constraint,
-  applied literally, not merely cited. D8 is rewritten in full: CPU-only
-  resolve/load stays in the atomic Phase 1 publish (unchanged in kind
-  from mesh handling); GPU realization (`Sampler`, `SampledTexture`,
-  staging-buffer upload, `Pipeline`/`Material` construction) is
-  deferred to `runFrame()`'s own existing format-change check — the
-  one real place a `RenderTarget` and a known `colorFormat` first
-  coexist — sharing one `CommandList` and one `submit()` call with that
-  frame's real draw graph, with staging-buffer lifetime resolved via an
-  explicit `waitIdle()` on realization frames only (a one-time,
-  disclosed CPU stall, not a per-frame cost), and a three-state
-  `materialAsset` semantics (absent → fallback; present-but-unloadable
-  → scene-load-fatal; present-but-not-yet-realized → per-frame,
-  per-entity recoverable skip) made explicit in D4 to prevent these
-  three states from ever being conflated in Implementation.
-- **Closed, a real, disclosed CMake fix (D3):** `MaterialKind::UnlitTextured`
-  mapping directly to `shaders/textured_quad/textured_quad.slang` as
-  originally drafted would have silently made a shipping executable
-  (`atlantis_runtime`) depend on a CMake target declared only inside
-  the `if(ATLANTIS_BUILD_TESTS)` block — confirmed directly, that
-  shader's own `add_subdirectory()` call is test-gated today, exactly
-  the "silently promote a test-private shader to a Runtime public
-  dependency" outcome this Spec is directed to avoid. Fixed by moving
-  that one `add_subdirectory()` call to the same unconditional
-  placement `shaders/minimal_renderer` already has, for the identical,
-  already-precedented reason (`atlantis_runtime` needs it) — no new
-  shader content, no duplicate `.slang` file, and the shader's own real
-  reflected contract (camera uniform, push constant, vertex-input
-  shape) confirmed compatible with Runtime's existing `Camera`/`DrawItem`
-  contract with no change.
-
-Additional findings, smaller in scope, closed in the same pass: D4 now
-states the three-way `materialAsset` semantics explicitly rather than
-leaving "present but not yet realized" implicit; D7 now accounts for
-every `SceneManifestError` enumerator's own generalization and
-explicitly resolves the "wrong asset kind" question (surfaces as
-`BadMagic` one layer up, no dedicated enumerator needed) and the
-"unused declared dependency" question (explicitly permitted, matching
-`MESH_DEPENDENCIES`'s own existing tolerance); D6 gained a consolidated,
-exhaustive accounting of every new error enumerator this Spec's own
-format needs versus every existing one it reuses verbatim, plus an
-explicit rejection of severity-collapsing (no recoverable error becomes
-an assertion, no broad enumerator papers over a genuinely distinct
-failure stage); D9 extends the already-accepted single-`Material`
-format-change-rebuild tradeoff to every `materialResourceMap_` entry
-independently; D12 now requires the new verification fixture to
-directly link and call Runtime's own real `Atlantis::RuntimeHost`
-code (a deliberate, disclosed departure from
-`world_scene_loaded_fixture.cpp`'s own "duplicate, don't share"
-precedent, justified because Phase 2's own realization logic is
-exactly the kind of code a fixture-private lookalike could silently
-stop proving) and lists explicit negative proofs the golden must
-demonstrate, not merely a passing positive case.
-
-No finding in this pass reversed this Spec's own core recommendations
-(Material as a fourth Asset System asset type; a closed `MaterialKind`
-shader-identity scheme; an optional `Renderable` material reference
-with a hardcoded fallback) — every gap found had a real, evidenced fix
-within the existing architecture, confirmed against real signatures and
-real CMake files, not assumed. This Spec, and both
-[ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)/
-[ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md),
-were assessed ready for a formal Human Review pass at the end of this
-round — **superseded by Round 2's own finding, below, that the
-format-change rebuild contract this round left as a per-entry-
-independent design was itself a real gap requiring correction before
-approval.**
-
-## Readiness for Human Review — Round 2 (2026-08-27, a further, focused review)
-
-A second, narrowly-scoped review pass re-examined exactly the two
-points Round 1 had not itself scrutinized closely enough: the
-format-change rebuild's own atomicity, and the rigor behind the
-`waitIdle()`-then-`present()` timing claim.
-
-- **Closed, a real correction, not a nuance (D9):** Round 1's own D9
-  let each `materialResourceMap_` entry rebuild independently on a
-  format change, keeping a stale, old-format `Material` on a per-entry
-  rebuild failure. Re-examined against `PipelineCreateParams::colorFormat`
-  being baked into a `Pipeline` at creation time, this is a genuine
-  mismatched-attachment-format condition if that stale `Material` is
-  ever actually drawn — and confirmed directly, today's own existing
-  single-`material_` code has exactly this latent gap on its own
-  rebuild-failure path already (draws with the old-format `material_`
-  against the new-format `*target` two lines after a failed rebuild).
-  D9 is rewritten: format-change rebuild is now one atomic,
-  all-or-nothing candidate-batch swap covering the fallback `Material`
-  and every `materialResourceMap_` entry together; any single failure
-  discards the whole candidate batch, leaves the existing state
-  untouched, and draws nothing that frame (never a format-mismatched
-  draw) — a disclosed, deliberate behavior correction to Spec 0013's
-  own existing code, surfaced only by unifying it into this Spec's own
-  new, generalized contract. `SampledTexture`/`Sampler` are confirmed
-  to never need rebuilding on a format change at all (format-
-  independent), so a rebuild is a purely synchronous, upload-free
-  operation. ADR-0060 rewritten to match.
-- **Closed, verified against real Vulkan calls, not asserted (D8):**
-  the `waitIdle()`-before-`present()` staging-buffer-safety claim is
-  now traced through the real `VulkanDevice::submit()`/`waitIdle()`
-  and `VulkanPresentation::present()` implementations —
-  `vkQueueSubmit`'s own `pSignalSemaphores`, `vkWaitForFences`,
-  `vkDeviceWaitIdle`, and `vkQueuePresentKHR`'s own `pWaitSemaphores` —
-  confirming the exact same `VkSemaphore` is signaled by the frame's
-  own submission and later waited on by `present()`, and that Vulkan's
-  own binary-semaphore contract makes waiting on an already-signaled
-  semaphore ordinary, not a special case. See ADR-0060's own Decision
-  for the full call-by-call proof.
-- **Formalized, not merely implied:** the shader promotion (D3) is now
-  its own explicit, six-point decision (production status, unconditional
-  CMake target, no `tests/` dependency from production, no shader path
-  stored in the Material artifact, a Runtime-private locating mapping,
-  and confirmed forward-compatibility with a future rename); the
-  deferred-realization ownership sequence (D8) now states explicitly
-  that a realization frame's own `DrawItem` list is built from the
-  candidate bundle directly (visible the same frame it succeeds, not
-  the next one), with the C++-object-address-vs-Vulkan-handle safety
-  argument for why this is sound made explicit rather than left
-  implicit.
-
-No finding in this second round left any recommended design
-unsupportable by real, current code or the real Vulkan contract; every
-gap found had a real, evidenced fix, applied above. **This Spec, and
-both ADR-0059/ADR-0060, are approved** — see the Human Review Approval
-note at the top of this document for the complete, itemized record.
-This approval authorizes drafting Plan 0018 only; it does not authorize
-Implementation.
+Both rounds' own findings are already stated, condensed, in the Human
+Review Approval note at the top of this document ("No unresolvable
+architectural conflict was found across either centralized final-review
+round..."), and every correction they produced is fully reflected in the
+D-section it fixed (D3, D4, D6, D7, D8, D9, D12). Round 1 re-verified
+this Draft's own architectural claims directly against real code not yet
+read line-by-line the first time (`RuntimeApplication::initializeSteps()`/
+`runFrame()`, `Renderer::drawFrame()`'s own `RenderGraphBuilder` usage,
+`Device::submit()`/`Presentation::present()`'s real signatures,
+`shaders/textured_quad/CMakeLists.txt`'s real `add_subdirectory()`
+placement) and closed two real gaps: GPU resource realization cannot
+happen inside `initializeSteps()` at all (no `RenderTarget` exists that
+early; Spec 0016's own no-target-independent-submission constraint,
+applied literally), corrected by deferring it to `runFrame()`'s own
+format-change check (D8); and the original `MaterialKind::UnlitTextured`
+→ `shaders/textured_quad` mapping would have made a shipping executable
+silently depend on a test-gated CMake target, corrected by moving that
+shader's `add_subdirectory()` to the same unconditional placement
+`shaders/minimal_renderer` already has (D3). Round 2 re-examined
+exactly the two points Round 1 had not itself scrutinized closely
+enough: the format-change rebuild's own atomicity (found the original
+per-entry-independent design could leave a stale, format-mismatched
+`Material` drawn after a partial rebuild failure — a latent gap already
+present in Spec 0013's own existing single-`Material` code, only
+surfaced by generalizing it here — corrected to one atomic,
+all-or-nothing candidate-batch swap, D9), and the
+`waitIdle()`-before-`present()` staging-buffer-safety claim (traced
+through the real `VulkanDevice::submit()`/`waitIdle()` and
+`VulkanPresentation::present()` implementations — `vkQueueSubmit`,
+`vkWaitForFences`, `vkDeviceWaitIdle`, `vkQueuePresentKHR` — rather than
+asserted, D8). **This Spec, and both ADR-0059/ADR-0060, are approved** —
+see the Human Review Approval note at the top of this document for the
+complete, itemized record. This approval authorizes drafting Plan 0018
+only; it does not authorize Implementation.

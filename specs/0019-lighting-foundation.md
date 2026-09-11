@@ -13,6 +13,10 @@
   required before Implementation may begin, per
   [AGENTS.md](../AGENTS.md)'s own Golden Rule.
 - **Related ADR(s):** [ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md) (`Accepted`), [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md) (`Accepted`)
+- **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
+  Batch 5 PR (pending). Original scope and obligations retained; the
+  final review round is preserved in
+  [PR #90](https://github.com/slmao/Atlantis/pull/90) history.
 - **Human Review Approval (2026-08-29):** Reviewed and approved by
   slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
   git-identified maintainer) on 2026-08-29, accepting this document's
@@ -26,132 +30,43 @@
   merged — see D1's own governance-gate text, which this approval
   accepts verbatim, not as a placeholder to be revisited later.
 
-## Final Review Round (2026-08-29) — closed findings, recorded before approval
+## Historical scope — Final Review Round (2026-08-29), closed before approval
 
-A single, targeted final review round examined twelve specific areas of
-this Spec's own real-code implementability and honesty, focused on the
-mesh-normal governance gate, GPU resource lifetime/visibility, and
-whether this Spec's own claims about runtime light mutation matched what
-its own design actually does. Every item below was closed at the Spec
-level; two items (D1, D5-adjacent frame-data ownership) produced a real,
-disclosed *design change* from this Spec's own first draft, not merely
-clarified wording — recorded here so the change is visible, not silently
-folded in:
-
-1. **D1's own dependency wording corrected from "Approved" to a real
-   governance gate.** The first draft said this Spec's own Plan is
-   blocked once its prerequisite reaches `Approved`; that is
-   insufficient — an `Approved`-but-not-yet-`Implemented` prerequisite
-   Spec has no real, buildable API yet, so a Plan drafted against it
-   would depend on a contract that does not exist in source. Corrected:
-   Plan 0019 is blocked until Spec 0020's own **Implementation PR
-   merges** (Spec 0020 both `Approved` and its Plan `Approved`, real
-   code landed and verified) — not merely until Spec 0020 itself reaches
-   `Approved`. This Spec's own header and D1 now state this precisely,
-   and `specs/README.md` registers `Spec 0020 — Mesh Normal Attribute
-   Foundation` explicitly as the next, already-identified, not-yet-
-   drafted spec (a deliberate, disclosed exception to Section B's own
-   general "no number pre-assigned before drafting" rule, made because
-   Spec 0019's own approval is real and needs a stable, named
-   dependency to point at — see `specs/README.md`'s own note recording
-   this exception).
-2. **The frame lighting data's own update model was not honestly
-   closed — a real design change, not a wording fix.** The first draft
-   re-derived and rewrote the light array into the shared uniform
-   buffer unconditionally every frame, mirroring the camera data's own
-   existing per-frame write, without ever stating plainly whether a
-   runtime change to a `Light` component would or would not reach the
-   GPU, and without any test proving either answer. Corrected: this
-   Spec now commits explicitly to the **static-snapshot** model —
-   `RuntimeApplication` captures the frame lighting array **exactly
-   once**, on the first successful frame (immediately after
-   `World::updateTransforms()` first runs, alongside Phase 2 material
-   realization), and never rewrites it again for that
-   `RuntimeApplication` instance's own lifetime. A runtime change to any
-   `Light` component (via `World::setLight()`) after that point is
-   **not** reflected in any rendered frame — reloading the scene (or
-   restarting Runtime) is required. This is now stated as an explicit
-   Requirement, a Non-Goal, a Known Limitation, and has its own,
-   dedicated negative test (D9/D10, Known Limitations, below). A real
-   future "Dynamic Frame Uniform Updates" capability is named as its own
-   disclosed future candidate, not solved here. The camera view/
-   projection portion of the *same* buffer is completely unaffected —
-   still recomputed and rewritten every frame exactly as it already is
-   today, including its own existing resize/aspect-ratio behavior,
-   which this Spec does not touch (see D9's own explicit "resize is
-   unaffected" note).
-3. **World `Light` semantics were underspecified — now fixed
-   precisely.** D2 is rewritten with an exact field list, an exact
-   direction/position derivation formula (matching `Camera`'s own real
-   extraction code, cited by line), an exact, evidence-based statement
-   of which transform properties (parent composition, negative scale,
-   non-uniform scale, shear) are safe for light direction/position
-   extraction specifically and why (a real linear-algebra argument, not
-   an assertion), an exact error-precedence order (matching `World::validate()`'s
-   own real, current code), and an exact degenerate-transform rejection
-   (mirroring `DegenerateCameraForward`) so Runtime never guesses a
-   direction or silently normalizes an near-zero vector.
-4. **Over-limit lights: corrected from deterministic truncation to a
-   hard cook/decode-time error.** The first draft's own truncation
-   recommendation risked silently masking a real scene-authoring
-   mistake (an author who did not realize a cap exists gets a
-   dimmer-than-intended, silently-incomplete scene with no visible
-   signal beyond a log line). Corrected, matching Spec 0018 D4's own
-   "no silent fallback for a genuinely present-but-broken reference"
-   reasoning: a scene declaring more lights of a given kind than the
-   fixed maximum is a **cook-time and decode-time structural error** —
-   the scene never cooks (or, for a hand-corrupted artifact, never
-   decodes) rather than silently rendering with fewer lights than
-   authored.
-5. **Lighting math was named but not written out — now a complete,
-   exact, per-value-testable specification** (D6): the diffuse term,
-   the directional-light sign convention, the point-light vector/
-   epsilon/attenuation/range formula, the color/intensity value ranges,
-   the explicit absence of an ambient term, the exact clamp location,
-   and the no-tone-mapping boundary are all now stated as literal
-   formulas, not prose description.
-6. **Normal transform's own safety condition was too narrow.**
-   The first draft's "uniform scale" check missed that a *uniform
-   negative* scale (a point reflection) is also mathematically safe
-   under a direct (non-inverse-transpose) 3×3 transform, while a
-   *single-axis* negative scale is not simply "non-uniform" in the same
-   sense — both cases needed a real linear-algebra check, not an
-   intensity-of-belief guess. Corrected: D7 now uses the exact, general,
-   provably-sufficient condition — the world matrix's own upper-left 3×3
-   columns are mutually orthogonal and equal in length (a "conformal"/
-   similarity transform, which includes uniform scale of either sign and
-   pure rotation/reflection, and excludes non-uniform scale and shear)
-   — checked on the *fully composed* world matrix (not merely an
-   entity's own local `Transform.localScale`), since a parent's own
-   non-uniform scale can introduce shear a child's own local transform
-   never had. This is a Runtime-extraction-time, per-entity, per-frame
-   check (not a scene-validation-time one), since it depends on the
-   full, composed hierarchy only `World` can resolve.
-7. **Material/shader boundary detail was named but not specified** —
-   D8 (formerly D4's own material scope, renumbered for clarity in this
-   round) now states the exact CMake target shape, the exact expected
-   descriptor contract (three binding entries, not two — the shared
-   uniform binding reflects from *both* stages), the exact vertex-input
-   schema shape (deferred only on Spec 0020's own exact byte offsets,
-   never on its existence), and confirms, precisely, that no material
-   artifact schema-version bump is required.
-8. **Verification was missing CPU-level math tests and negative
-   coverage for the two new hard-error/skip conditions** (D10): now
-   requires hand-computed-expected-value unit tests for every formula
-   in D6, and dedicated negative tests for the over-limit hard error
-   (finding 4) and the non-conformal-transform skip (finding 6).
-9. **ADR scope re-checked: neither ADR-0061 nor ADR-0062 decides
-   anything about Spec 0020's own eventual mesh-normal schema, stride,
-   offset, or migration** — confirmed by re-reading both ADRs in full
-   during this round; both were already scoped correctly and needed no
-   change on this point, stated here as a closed check, not a silent
-   assumption.
-
-No unresolvable architectural conflict was found. Every finding above
-was closed with a real, evidenced fix within this Spec's own existing
-scope — none required inventing new capability this codebase does not
-already have, beyond the one, already-disclosed RHI stage-visibility
-widening (D5/ADR-0062, unchanged by this round).
+A single, targeted final review round examined twelve areas of this
+Spec's own real-code implementability and honesty; every finding is
+already reflected in the D-section it fixed (D1–D3, D6–D10) — this note
+records that two of them were genuine, disclosed *design changes* from
+the first draft, not mere wording fixes. **D1's own governance gate**
+was corrected from "blocked until the prerequisite Spec reaches
+`Approved`" (insufficient — an `Approved`-but-not-yet-`Implemented`
+Spec has no real, buildable API yet) to "blocked until Spec 0020's own
+Implementation PR merges," with `specs/README.md` registering `Spec
+0020 — Mesh Normal Attribute Foundation` explicitly as a disclosed
+exception to its own general no-pre-assigned-number rule. **The frame
+lighting data's own update model** was not honestly closed in the first
+draft (light data was rewritten every frame, mirroring the camera data,
+with no test proving whether a runtime `Light` change reaches the GPU)
+and is now committed explicitly to a **static-snapshot** model: Runtime
+captures the frame lighting array exactly once, on the first successful
+frame, and never rewrites it again for that `RuntimeApplication`
+instance's lifetime — a runtime `Light` change after that point is not
+reflected without reloading the scene, now stated as an explicit
+Requirement, Non-Goal, Known Limitation, and negative test (D9/D10); the
+camera view/projection portion of the same buffer is unaffected. The
+remaining ten findings each tightened an existing D-section's own
+precision without changing its recommendation: D2's exact `Light` field
+list and direction/position-extraction safety argument; D3/D9's
+over-limit-lights correction from truncation to a hard cook/decode-time
+error; D6's complete, per-value-testable lighting-math formulas; D7's
+normal-transform safety condition widened to the exact, general
+"conformal transform" (mutually orthogonal, equal-length 3×3 columns)
+check, evaluated on the fully composed world matrix; D8's exact
+material/shader CMake/descriptor-contract shape; D10's added CPU-level
+math and negative-coverage tests; and a re-confirmation that neither
+ADR-0061 nor ADR-0062 decides anything about Spec 0020's own eventual
+mesh-normal schema. No unresolvable architectural conflict was found —
+every finding was closed within this Spec's own existing scope, beyond
+the one, already-disclosed RHI stage-visibility widening (D5/ADR-0062).
 
 ## Summary
 

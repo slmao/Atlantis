@@ -17,6 +17,10 @@
   (ADR-0045 additionally carries its own "Accepted Amendment —
   2026-08-25", accepted in the same Human Review pass — see below) and
   [ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md).
+- **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
+  Batch 5 PR (pending). Original scope and obligations retained; the
+  self-review narration is preserved in
+  [PR #82](https://github.com/slmao/Atlantis/pull/82) history.
 - **Human Review Approval (2026-08-25):** Reviewed and approved by
   slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
   maintainer) on 2026-08-25, accepting this document's own "Decisions
@@ -805,71 +809,27 @@ At the Spec level, one further alternative was considered and rejected:
   identity — unchanged, carried forward from Spec 0012/0015.
 - Android/iOS/Linux implementation.
 
-## Readiness for Human Review (2026-08-25 self-review)
+## Historical scope — self-review before Human Review (2026-08-25)
 
 A centralized, evidence-driven self-review pass re-verified every claim
-in this Draft directly against current, real code before this note was
-written — not by re-reading this document's own prose. It resolved one
-real governance gap and tightened or newly disclosed several findings;
-none reversed this Spec's own core recommendation (a mandatory,
-fixed, 32-byte vertex layout):
-
-- **Closed:** [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
-  gained its own new Amendment section (drafted `Proposed`, cross-
-  referenced with [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
-  and this Spec, submitted to the same Human Review pass — since
-  accepted; now "Accepted Amendment — 2026-08-25," see the Human Review
-  Approval note above), rather than leaving ADR-0045's own required
-  narrowing as unrecorded future work.
-- **Closed, with real proof, not assertion:** the vertex-layout/Shader-
-  reflection closure (Decision item 7) is now grounded directly in
-  `Device::createPipeline()`'s own real
-  `VkVertexInputBindingDescription`/`VkVertexInputAttributeDescription`
-  construction (`src/vulkan_backend/src/vulkan_device.cpp`) — confirmed
-  that an attribute-less region of a vertex's own stride (whether
-  trailing or interior) is never read by a pipeline whose own
-  `VertexInputLayout` does not name it. This holds for both directions
-  this Spec needs: a color-only shader ignoring a trailing UV region,
-  and a UV-only shader ignoring an interior color region.
-- **Newly disclosed, not previously stated:** `minimal_cube.mesh.txt`'s
-  own 8-vertex, shared-corner topology cannot express a correct
-  per-face UV unwrap under any UV values — its own migration can only
-  ever carry deterministic, non-default placeholder UV data, never a
-  real texture-ready unwrap, and it must never be proposed as a
-  texture-sampling proof mesh (Decision items 2 and 11).
-- **Newly disclosed, not previously stated:** the existing
-  `textured_quad` golden and its own already-recorded V38 confirmation
-  prove only render self-consistency and Unorm-vs-Srgb color
-  difference — not the absolute correctness of the UV-origin/
-  V-direction convention itself, since a regular checkerboard is
-  visually near-symmetric under a vertical flip and no existing test
-  asserts an absolute expected color at a known UV-mapped position.
-  This is submitted as an explicit Human Review choice (Decision item
-  11), not silently assumed either way.
-- **Re-confirmed by a fresh, broader repository search:** exactly four
-  composition-root call sites require a mechanical vertex-stride
-  widening (FR8); the count and file list are unchanged from this
-  Draft's own original claim, now additionally cross-checked against
-  `scene_load.cpp`/`scene_load_tests.cpp`/`vertex_input_mapping_tests.cpp`,
-  each confirmed unaffected for a distinct, stated reason rather than
-  merely omitted.
-- **No finding in this review pass overturned the core recommendation.**
-  `decodeMeshArtifact()`'s own single-global-constant stride check, and
-  the real Vulkan pipeline evidence above, both continue to support one
-  mandatory, fixed vertex layout over a variable/optional one — no
-  smaller alternative surfaced that still satisfies FR9's own real,
-  asset-sourced GPU proof requirement.
-
-**This Spec, [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md),
-and ADR-0045's own Amendment were, on this basis, submitted for a real,
-formal Human Review pass** — every decision this document asked Human
-Review to make was backed by direct code evidence or an explicit,
-honest disclosure of what remained genuinely uncertain, rather than an
-assumption. **That Human Review pass completed on 2026-08-25 — see the
-"Human Review Approval (2026-08-25)" note at the top of this document
-for the full, accepted record.** This Spec's own Status is now
-`Approved`; [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
-and ADR-0045's own Amendment are both `Accepted`, in the same pass. This
-approval authorizes drafting Plan 0017 only — Implementation itself
-must still wait for Plan 0017's own separate Human Review and merged
-approval PR.
+in this Draft directly against current, real code, resolving one real
+governance gap and disclosing several findings — none reversed this
+Spec's own core recommendation (a mandatory, fixed, 32-byte vertex
+layout): closed ADR-0045's own required narrowing via its new "Accepted
+Amendment — 2026-08-25" section (submitted to, and accepted in, the same
+Human Review pass as this Spec and ADR-0058); grounded the vertex-layout/
+Shader-reflection closure (Decision item 7) in `Device::createPipeline()`'s
+own real `VkVertexInputBindingDescription`/`VkVertexInputAttributeDescription`
+construction, rather than an assertion; disclosed `minimal_cube.mesh.txt`'s
+own 8-vertex, shared-corner topology cannot express a correct per-face
+UV unwrap under any values (Decision items 2, 11); disclosed the
+existing `textured_quad` golden proves only render self-consistency, not
+the UV-origin/V-direction convention's own absolute correctness, since a
+regular checkerboard is near-symmetric under a vertical flip (Decision
+item 11); and re-confirmed, via a fresh, broader search, that exactly
+four composition-root call sites need the mechanical stride widening
+(FR8). **That Human Review pass completed on 2026-08-25 — see the "Human
+Review Approval (2026-08-25)" note at the top of this document for the
+full, accepted record.** This approval authorizes drafting Plan 0017
+only — Implementation itself must still wait for Plan 0017's own
+separate Human Review and merged approval PR.

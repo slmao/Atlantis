@@ -121,50 +121,28 @@
   Review, per the same Spec → Plan → Human Review → Implementation →
   Verification → PR → Merge path every prior spec in this line has
   followed.
-- **Revised 2026-08-23** — a centralized, evidence-driven final review
-  (still on this Spec's own first PR, no new PR) found and fixed two
-  real, previously-glossed-over gaps before Human Review: (1) the
-  original draft's "submit and wait" language for the one-time texture
-  upload never checked whether `Device::submit()` actually requires a
-  real `RenderTarget` — it does, unconditionally, and there is no
-  target-independent submit path; the corrected design reuses the
-  fixture's own already-acquired `OffscreenTarget`-vended `RenderTarget`
-  for the upload's own `submit()` call (no new `Device`/`Renderer`
-  public API), with `Device::waitIdle()` (an already-existing, already-
-  used blocking completion API) as the real synchronization mechanism,
-  not a guess. (2) "Hand-authored UV in the fixture" is not actually
-  achievable with zero shared/public type changes, as first drafted —
-  `VertexAttributeFormat` (RHI) has no `Float2` variant anywhere in the
-  pipeline; a real UV0 vertex attribute requires adding one, a small,
-  disclosed, mechanical RHI/Shader-System change fully decoupled from
-  Asset System's own mesh cook/artifact/load pipeline (which remains
-  untouched). See the Human Review Decision Table (items 6, 11, and new
-  items 17–19) and Proposed Design below for the corrected, code-proven
-  designs.
-- **Revised again, 2026-08-24** — a final, targeted revision (still the
-  same PR) resolved two further points before this Spec proceeds to
-  formal Human Review, without broadening the review further: (1) the
-  immediately-prior revision's own upload design ran as its own,
-  separate `submit()`/`waitIdle()` cycle before a later, separate draw
-  submission — corrected so the upload, the real draw, and a readback
-  all share **exactly one** combined `Device::submit()` call against a
-  `RenderTarget` that genuinely participates (never a dummy token used
-  only to satisfy the parameter), matching
-  `headless_rendering_gpu_tests.cpp`'s own closest existing precedent as
-  closely as possible; `ShaderRead` correctness is now stated
-  precisely as coming from the upload's own barrier and recorded
-  execution order *within* that one submission, never from
-  `waitIdle()`, whose own role is narrowed to its real, purely CPU-side
-  purpose. Target-independent submission is named, explicit future
-  work, not solved with a workaround. (2) `Rgba8Srgb`'s own hardware
-  linearization-on-sample is real GPU behavior, not tonemapping, and
-  cannot be proven by a CPU-only artifact round-trip test as the
-  immediately-prior revision had it — the fixture now cooks the same
-  source image twice (`Rgba8Unorm` and `Rgba8Srgb`) and samples both as
-  two quads in one golden, proving both real GPU sampling paths. See
-  Human Review Decision items 3, 6, 13, and 14 for the corrected
-  designs; this Spec is submitted for formal Human Review as of this
-  revision.
+- **Historical scope — two targeted revisions before formal Human
+  Review (2026-08-23, 2026-08-24, both on this Spec's own drafting
+  [PR #76](https://github.com/slmao/Atlantis/pull/76), no new PR):** a
+  first pass found `Device::submit()` requires a real `RenderTarget`
+  (there is no target-independent path), so the upload reuses the
+  fixture's own already-acquired `RenderTarget` rather than a dummy
+  token, with `Device::waitIdle()` as the real, already-existing
+  synchronization mechanism; and found "hand-authored UV, zero
+  shared-type changes" is not achievable, since `VertexAttributeFormat`
+  (RHI) has no `Float2` variant anywhere in the pipeline, requiring the
+  small, disclosed RHI/Shader-System addition covered in Requirements
+  (item 11). A second pass corrected the upload to share **exactly one**
+  combined `Device::submit()` call with the real draw and its own
+  readback (not a separate, earlier submission), with `ShaderRead`
+  correctness coming from the upload's own barrier and recorded
+  execution order *within* that one submission, never from `waitIdle()`
+  (whose role stays purely CPU-side); and replaced a single-format
+  golden with a dual-format one (`Rgba8Unorm` + `Rgba8Srgb`, same source
+  bytes, two quads in one golden), since sRGB linearization-on-sample is
+  real GPU behavior a CPU-only round-trip test cannot prove. Both
+  corrections are fully reflected in Requirements and the Human Review
+  Decision Table below (items 3, 6, 11, 13, 14, 17, 18).
 - **Related Plan(s):** [plans/0016-texture-sampler-foundation.md](../plans/0016-texture-sampler-foundation.md)
   (`In Review`) — drafted following this Spec's own Human Review
   Approval (2026-08-24), which authorizes drafting a Plan but does not
@@ -181,6 +159,10 @@
   2026-08-24. [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)'s
   own top-level Status remains `Accepted`, unchanged; its own "Accepted
   Amendment — 2026-08-24" section was accepted in the same pass.
+- **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
+  Batch 5 PR (pending). Original scope and obligations retained; the
+  round-by-round revision narration is preserved in
+  [PR #76](https://github.com/slmao/Atlantis/pull/76) history.
 
 ## Summary
 
