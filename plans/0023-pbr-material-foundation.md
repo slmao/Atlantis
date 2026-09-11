@@ -26,6 +26,10 @@
   condition restated in Milestone 9 itself). **This approval authorizes
   Implementation of this Plan only once its own Implementation PR has
   merged — not before.**
+- **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
+  [PR #153](https://github.com/slmao/Atlantis/pull/153) Batch 6. Original scope, all nine Milestones, and the
+  full Verification Checklist retained; the Post-Merge Status Update is
+  retained in full.
 
 ## Objective
 

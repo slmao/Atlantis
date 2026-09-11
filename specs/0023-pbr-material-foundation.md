@@ -22,6 +22,11 @@
   [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)**
   (the ADR that already owns that buffer's layout), not a third ADR
   and not folded into ADR-0067.
+- **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
+  [PR #153](https://github.com/slmao/Atlantis/pull/153) Batch 6. Original scope and obligations retained; the
+  load-bearing "Accepted Correction — 2026-08-30" section is preserved
+  in full, unedited. Drafting history in
+  [PR #108](https://github.com/slmao/Atlantis/pull/108).
 - **Human Review Approval (2026-08-30):** Reviewed and approved by
   slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
   git-identified maintainer) on 2026-08-30, accepting this document's
