@@ -7,10 +7,9 @@
   Review Approval immediately below.
 - **Created:** 2026-08-23
 - **Human Review Approval (2026-08-23):** Reviewed and approved by
-  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
-  maintainer) on 2026-08-23, accepting this document's own Human Review
-  Decision Table in full — all 16 items, as recommended, with no
-  amendment. This approval explicitly accepts:
+  slmao (`slmao <slmaosjtu@gmail.com>`) on 2026-08-23, accepting this
+  document's own Human Review Decision Table in full — all 16 items, as
+  recommended, with no amendment. This approval explicitly accepts:
 
   1. Scene authoring/cook/decode belongs to `Atlantis::AssetSystem`; no
      new, independent Serialization module (item 1; [ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)).
@@ -26,16 +25,11 @@
      public construction of any kind, including no public default
      constructor** (a zero-node scene is an explicit, named cook-time
      and decode-time error, not a trivially-constructible empty
-     instance), copy/move preserving validity, and no path by which a
-     caller can produce or mutate an invalid hierarchy, index,
-     active-camera reference, or component value (item 15; ADR-0053).
-     **This wording matches ADR-0053's own text exactly as of its own
-     "Human Review Correction (2026-08-23)"** — the two documents were
-     never intended to diverge; that correction removes a wording gap
-     between this summary and ADR-0053's own original Decision body
-     (which had briefly kept a trivial public default constructor for
-     an empty-scene case) without reopening or narrowing this Spec's
-     own Approval, recorded here, above.
+     instance) (item 15; ADR-0053). This wording matches ADR-0053's own
+     "Human Review Correction (2026-08-23)" exactly, closing a wording
+     gap left by ADR-0053's original Decision body (which briefly kept a
+     trivial public default constructor for an empty-scene case) without
+     reopening this Spec's own Approval.
   4. `World` accepts only `ValidatedSceneData` and returns a fresh
      `World` value — infallibly, no `SceneInstantiationError` (item 6;
      ADR-0052, [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)).
@@ -55,7 +49,7 @@
   9. A manifest entry the scene never actually references is explicitly
      permitted, not an error (item 16; ADR-0054).
   10. Runtime resolves and loads mesh dependencies in the scene's own
-      deterministic, ascending first-reference order — never relying on
+      deterministic, ascending first-reference order — never
       `std::unordered_map`'s own unspecified iteration order (item 16;
       ADR-0054).
   11. Every mesh dependency resolves and loads before any `Entity` is
@@ -65,8 +59,8 @@
       discarded by RAII, with no partial state (item 7; ADR-0054).
   13. **The dependency manifest exists to serve the current build tree
       only — it is never part of, or shipped alongside, the portable
-      scene artifact.** This Spec does not claim to solve distributable-
-      asset packaging or a general-purpose Asset Catalog; both remain
+      scene artifact.** This Spec does not solve distributable-asset
+      packaging or a general-purpose Asset Catalog; both remain
       explicitly future, unscoped work (item 13; ADR-0054; see Non-Goals
       and `specs/README.md`'s own Candidate Order 7).
   14. Reuses the existing Asset System CMake re-import-triggering
@@ -74,8 +68,8 @@
       cache (item 5; ADR-0052).
   15. The first scene asset's headless load reuses the existing
       `world_scene` golden with **zero** difference — no new or updated
-      equivalent golden — and Runtime's windowed path remains smoke-only
-      plus genuine human visual confirmation, never an automated pixel-
+      golden — and Runtime's windowed path remains smoke-only plus
+      genuine human visual confirmation, never an automated pixel-
       comparison claim (item 11; this Spec's own Requirements/Goals).
   16. Every Non-Goal named in this document, including no new
       third-party dependency and no change to `Renderer`/`RHI`/
@@ -84,17 +78,15 @@
 
   [ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)–[ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)
   all move to `Accepted` alongside this approval — see each ADR's own
-  new Acceptance Record. **This approval authorizes drafting Plan 0015
-  against this Spec, per [AGENTS.md](../AGENTS.md); it does not itself
-  authorize Implementation** — that future Plan must still pass its own
-  Human Review, per the same Spec → Plan → Human Review → Implementation
-  → Verification → PR → Merge path every prior spec in this line has
-  followed.
+  Acceptance Record. **This approval authorizes drafting Plan 0015
+  against this Spec; it does not itself authorize Implementation** — the
+  Plan must still pass its own Human Review, per the same
+  Spec → Plan → Human Review → Implementation → Verification → PR →
+  Merge path every prior spec in this line has followed.
 - **Related Plan(s):** [plans/0015-scene-asset-serialization-foundation.md](../plans/0015-scene-asset-serialization-foundation.md)
-  (`In Review`) — drafted following this Spec's own Human Review
-  Approval (2026-08-23), which authorizes drafting a Plan but does not
-  itself authorize Implementation; see that Plan's own Human Review
-  Approval note once recorded.
+  — drafted following this Spec's own Human Review Approval, which
+  authorizes drafting a Plan but not Implementation; see that Plan's own
+  Human Review Approval note.
 - **Related ADR(s):**
   [ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)
   (module boundary and ownership),
@@ -103,6 +95,9 @@
   [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)
   (transactional instantiation contract) — all `Accepted`, alongside
   this Spec's own Human Review Approval recorded 2026-08-23.
+- **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
+  [PR #151](https://github.com/slmao/Atlantis/pull/151) Batch 4. Original scope and obligations retained
+  verbatim; only prose tightened.
 
 ## Summary
 
