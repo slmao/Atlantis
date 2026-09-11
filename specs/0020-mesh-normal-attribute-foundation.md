@@ -17,7 +17,7 @@
   own merge is.
 - **Related ADR(s):** [ADR-0063](../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md) (`Accepted`), plus Accepted Amendments to [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md) and [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 5 PR (pending). Original scope and obligations retained; the
+  [PR #152](https://github.com/slmao/Atlantis/pull/152) Batch 5. Original scope and obligations retained; the
   final review round is preserved in
   [PR #91](https://github.com/slmao/Atlantis/pull/91) history.
 - **Human Review Approval (2026-08-29):** Reviewed and approved by

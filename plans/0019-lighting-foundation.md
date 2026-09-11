@@ -33,7 +33,7 @@
   review round — every finding was resolved entirely within this Plan's
   own Plan-level-decision authority.
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  Batch 5 PR (pending). Original scope, P1–P16, the Milestones/Task
+  [PR #152](https://github.com/slmao/Atlantis/pull/152) Batch 5. Original scope, P1–P16, the Milestones/Task
   Breakdown, and the full Verification Checklist retained; the two
   pre-approval review rounds are condensed above into their own
   P-section pointers, and the post-merge Implementation Status Update

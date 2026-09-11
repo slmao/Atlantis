@@ -14,7 +14,7 @@
   [AGENTS.md](../AGENTS.md)'s own Golden Rule.
 - **Related ADR(s):** [ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md) (`Accepted`), [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md) (`Accepted`)
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 5 PR (pending). Original scope and obligations retained; the
+  [PR #152](https://github.com/slmao/Atlantis/pull/152) Batch 5. Original scope and obligations retained; the
   final review round is preserved in
   [PR #90](https://github.com/slmao/Atlantis/pull/90) history.
 - **Human Review Approval (2026-08-29):** Reviewed and approved by

@@ -160,7 +160,7 @@
   own top-level Status remains `Accepted`, unchanged; its own "Accepted
   Amendment — 2026-08-24" section was accepted in the same pass.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 5 PR (pending). Original scope and obligations retained; the
+  [PR #152](https://github.com/slmao/Atlantis/pull/152) Batch 5. Original scope and obligations retained; the
   round-by-round revision narration is preserved in
   [PR #76](https://github.com/slmao/Atlantis/pull/76) history.
 

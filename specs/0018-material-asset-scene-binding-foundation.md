@@ -6,7 +6,7 @@
 - **Related Plan(s):** [plans/0018-material-asset-scene-binding-foundation.md](../plans/0018-material-asset-scene-binding-foundation.md) (`In Review` — drafted 2026-08-28; this Spec's own approval authorized drafting the Plan only, per [AGENTS.md](../AGENTS.md)'s Golden Rule; Implementation awaits the Plan's own Human Review Approval)
 - **Related ADR(s):** [ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md) (`Accepted`), [ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md) (`Accepted`)
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 5 PR (pending). Original scope and obligations retained; the
+  [PR #152](https://github.com/slmao/Atlantis/pull/152) Batch 5. Original scope and obligations retained; the
   two centralized final-review rounds are preserved in
   [PR #86](https://github.com/slmao/Atlantis/pull/86) history.
 - **Human Review Approval (2026-08-27):** Reviewed and approved by

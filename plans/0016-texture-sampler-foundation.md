@@ -144,7 +144,7 @@
   Plan's own PR (#77) must be merged first; see
   [specs/README.md](../specs/README.md).**
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  Batch 5 PR (pending). Original scope, D1–D11, the Milestones/Task
+  [PR #152](https://github.com/slmao/Atlantis/pull/152) Batch 5. Original scope, D1–D11, the Milestones/Task
   Breakdown, and the full V1–V49 matrix retained; the two Independent
   Review rounds are condensed above, with the full drafts preserved in
   [PR #77](https://github.com/slmao/Atlantis/pull/77) history.

@@ -15,7 +15,7 @@
   merge.
 - **Related ADR(s):** [ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md) (`Accepted`), [ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md) (`Accepted`)
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  Batch 5 PR (pending). Original scope, P1–P16, the Milestones/Task
+  [PR #152](https://github.com/slmao/Atlantis/pull/152) Batch 5. Original scope, P1–P16, the Milestones/Task
   Breakdown, and the full Verification Checklist retained; the Human
   Review Approval list is tightened to point at the P-section carrying
   each item's own technical substance, rather than restating it a

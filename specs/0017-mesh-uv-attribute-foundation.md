@@ -18,7 +18,7 @@
   2026-08-25", accepted in the same Human Review pass — see below) and
   [ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md).
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 5 PR (pending). Original scope and obligations retained; the
+  [PR #152](https://github.com/slmao/Atlantis/pull/152) Batch 5. Original scope and obligations retained; the
   self-review narration is preserved in
   [PR #82](https://github.com/slmao/Atlantis/pull/82) history.
 - **Human Review Approval (2026-08-25):** Reviewed and approved by
