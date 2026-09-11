@@ -10,7 +10,7 @@ namespace atlantis {
 
 // Minimal explicit-ownership result/error type — not a general-purpose
 // utility library, just enough for Atlantis Core's own use per
-// specs/0001-project-foundation.md. Accessing value()/error() on the
+// docs/specs/0001-project-foundation.md. Accessing value()/error() on the
 // wrong state is a programmer error (ATLANTIS_CHECK), not a recoverable
 // runtime error.
 template <typename T, typename E>

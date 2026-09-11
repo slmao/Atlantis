@@ -374,7 +374,7 @@ TEST_CASE("parseSceneSource rejects trailing content after the final node line",
   CHECK(result.error() == SceneSourceParseError::TrailingContent);
 }
 
-// Spec 0019 D3 / plans/0019-lighting-foundation.md P3, V2: the light=
+// Spec 0019 D3 / docs/plans/0019-lighting-foundation.md P3, V2: the light=
 // grammar's own well-formed shapes.
 TEST_CASE("parseSceneSource parses a well-formed directional light node", "[asset_system][scene][light]") {
   const auto result = parseSceneSource(

@@ -39,6 +39,6 @@ automatically; a build-time failure (a Slang compile error, a
 descriptor-contract mismatch, a `spirv-val` failure) fails the build
 with the real tool diagnostics, not a silently stale checked-in `.spv`.
 
-See [specs/0008-shader-system-foundation.md](../../specs/0008-shader-system-foundation.md)
-and [plans/0008-shader-system-foundation.md](../../plans/0008-shader-system-foundation.md)
+See [specs/0008-shader-system-foundation.md](../../docs/specs/0008-shader-system-foundation.md)
+and [plans/0008-shader-system-foundation.md](../../docs/plans/0008-shader-system-foundation.md)
 for the full design.

@@ -8,7 +8,7 @@
 > platform decision: adds **Atlantis Platform** as a module, and updates
 > Renderer/RHI/Vulkan Backend/Runtime boundaries accordingly. Linux is not
 > a target platform. See
-> [ADR-0005](../../adr/0005-platform-module-multi-os-windowing.md).
+> [ADR-0005](../adr/0005-platform-module-multi-os-windowing.md).
 
 For a higher-level overview connecting these modules to Atlantis's
 conceptual architecture and current build status, see
@@ -96,7 +96,7 @@ surface invalidity is expected to propagate.
 the opaque native-surface-handle type, and exact shape of lifecycle event
 delivery (callback vs. polled-at-frame-boundary vs. queue) are **not
 decided by this document** — see
-[ADR-0005](../../adr/0005-platform-module-multi-os-windowing.md) and
+[ADR-0005](../adr/0005-platform-module-multi-os-windowing.md) and
 Open Questions in [threading.md](threading.md).
 
 ---
@@ -120,7 +120,7 @@ surface. No windowing-library type (GLFW/SDL) and **no Atlantis Platform
 type** (Win32/Android NDK/future UIKit) anywhere in RHI — `Presentation`
 creation accepts an opaque native-surface handle as a parameter, not a
 `Platform` object. See
-[ADR-0001](../../adr/0001-rhi-backend-independence.md).
+[ADR-0001](../adr/0001-rhi-backend-independence.md).
 
 **Ownership:** RHI defines the *interface* for resource/RenderTarget
 lifetime; it does not itself decide caching/pooling policy. See
@@ -174,7 +174,7 @@ that construction API's return values — callers get back RHI handles.
 **Extension points:** future iOS via MoltenVK would extend this module
 with a third WSI path (`VK_MVK_ios_surface`/`VK_EXT_metal_surface`); not
 designed, not implemented, not decided over the native-Metal-backend
-alternative — see [ADR-0005](../../adr/0005-platform-module-multi-os-windowing.md).
+alternative — see [ADR-0005](../adr/0005-platform-module-multi-os-windowing.md).
 
 ---
 
@@ -221,9 +221,9 @@ Receives a `RenderTarget` from its caller each frame and draws into it.
 Android NDK, GLFW/SDL or any windowing/platform library, `VkSurfaceKHR`,
 `VkSwapchainKHR`, any `Vk*` type, the Vulkan Backend module directly, and
 the Atlantis Platform module directly. See
-[ADR-0001](../../adr/0001-rhi-backend-independence.md),
-[ADR-0002](../../adr/0002-presentation-rendertarget-unification.md), and
-[ADR-0005](../../adr/0005-platform-module-multi-os-windowing.md).
+[ADR-0001](../adr/0001-rhi-backend-independence.md),
+[ADR-0002](../adr/0002-presentation-rendertarget-unification.md), and
+[ADR-0005](../adr/0005-platform-module-multi-os-windowing.md).
 
 **Depended on by:** Runtime.
 
@@ -358,7 +358,7 @@ silently share one Asset ID.
 authoring/artifact format bumped to schema version 2 -- every vertex is
 now position(3)+color(3)+UV0(2), a fixed 32-byte stride at byte offsets
 0/12/24, mandatory for every vertex, no optional/variant layout
-([ADR-0058](../../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)).
+([ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)).
 Version 1 (24-byte, position+color-only) is rejected outright by both
 `parseMeshSource()` and `decodeMeshArtifact()` -- no dual-version
 reader, no compatibility migrator. UV is never clamped or flipped by
@@ -379,7 +379,7 @@ still Core-only:** a small, versioned DTO — a closed `MaterialKind` enum
 (one enumerator this round, `UnlitTextured`), a texture Asset ID, and
 `Sampler` parameters (`Filter`/`AddressMode`) mirroring
 `atlantis::rhi::SamplerCreateParams` exactly
-([ADR-0059](../../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)).
+([ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)).
 `MaterialAssetData` names no RHI type and no shader path/identifier —
 shader identity is a closed, Runtime-private mapping from `MaterialKind`
 to a fixed, already-compiled built-in shader pair, never a Shader Asset
@@ -392,7 +392,7 @@ version 2: a node's `Renderable` slot gained an *optional* material
 Asset ID beside its existing mandatory mesh Asset ID (the per-node
 record widened from 72 to 84 bytes); version 1 is rejected outright, no
 dual-version reader
-([ADR-0060](../../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md)).
+([ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md)).
 The per-scene manifest (Spec 0015) gained `MATERIAL_DEPENDENCIES`/
 `TEXTURE_DEPENDENCIES` CMake arguments, still the same, unwidened
 three-column, build-tree-private, scene-scoped file — never a fourth
@@ -408,7 +408,7 @@ now position(3)+color(3)+UV0(2)+normal(3), a fixed 44-byte stride at
 byte offsets 0/12/24/32, mandatory for every vertex, no optional/
 variant layout, four named `constexpr` offset constants in
 `mesh_artifact.h`
-([ADR-0063](../../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md)).
+([ADR-0063](../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md)).
 Versions 1 and 2 (24-byte position+color-only, 32-byte pre-normal) are
 both rejected outright by both `parseMeshSource()` and
 `decodeMeshArtifact()` -- no dual-version reader, no compatibility
@@ -435,7 +435,7 @@ gains a third optional per-entity component, `Light` (Directional or
 Point — a flat DTO, no direction/position of its own, both re-derived
 from the owning entity's own current world matrix), mirroring
 `Camera`/`Renderable`'s own existing shape exactly
-([ADR-0061](../../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md)).
+([ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md)).
 The Scene Asset format gains an optional, structurally capped light
 node (one Directional, up to four Point) at both the source-grammar and
 artifact layers, schema version bumped 2 → 3 the same way Material's
@@ -448,7 +448,7 @@ from 128 to 304 bytes), never a second buffer or a new RHI/Renderer
 public API; the one real RHI-internal change is the existing uniform
 binding's own Vulkan `stageFlags` widening from vertex-only to
 vertex-and-fragment (one value, one line,
-[ADR-0062](../../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)).
+[ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)).
 **Disclosed, real, pre-existing limitation found and not fixed by this
 Spec: no runtime light-update capability of any kind** — a
 `World::setLight()` call after that one-time capture changed `World`'s
@@ -479,7 +479,7 @@ replaced by a private, growable set — a fixed
 a `std::vector` (this render path must stay exception-free; a
 dynamically-growing container risks `std::bad_alloc`/a leak-on-throw
 window a fixed array cannot,
-[ADR-0064](../../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)).
+[ADR-0064](../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)).
 One shared helper creates both the initial pool (generation 0,
 `maxSets = 4`) and every later-grown pool (generations 1-3: `maxSets =
 8, 16, 32`, geometric doubling), so they cannot drift apart.
@@ -521,7 +521,7 @@ The Camera(128-byte)/Lighting(176-byte) = 304-byte shared Buffer layout,
 the existing uniform binding's own stage visibility, and every other
 Spec 0019 decision are unchanged. Zero RHI/Renderer/Material public API
 change; zero new synchronization primitive.
-[ADR-0065](../../adr/0065-explicit-pre-write-submission-drain-for-frame-uniform-safety.md),
+[ADR-0065](../adr/0065-explicit-pre-write-submission-drain-for-frame-uniform-safety.md),
 which would have recorded the originally-proposed new RHI method, is
 `Rejected` — its own Decision was never implemented and must not be read
 as a current architectural decision.
@@ -535,12 +535,12 @@ lighting `k = (roughness+1)²/8` remap + Schlick Fresnel) for Directional/
 Point lights, sharing `UnlitTextured`/`LitTextured`'s own single-texture
 Material architecture. The Material artifact/schema bumps to 56 bytes
 (`baseColorFactor`/`metallicFactor`/`roughnessFactor`,
-[ADR-0066](../../adr/0066-pbr-material-asset-parameter-set-and-color-space-contract.md));
+[ADR-0066](../adr/0066-pbr-material-asset-parameter-set-and-color-space-contract.md));
 the existing push constant widens to 96 bytes with vertex-and-fragment
 stage visibility, and the camera uniform buffer extends to 320 bytes via
 a new, separate `CameraWorldPositionData` tail appended after the
 existing, untouched 304-byte Camera+Lighting region
-([ADR-0067](../../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)).
+([ADR-0067](../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md)).
 `atlantis::renderer::Material` gains a `MaterialPushConstantLayout`
 discriminator (`ObjectToWorldOnly` / `PbrDirectLit`) so
 `Renderer::drawFrame()` selects the correct push-constant payload shape

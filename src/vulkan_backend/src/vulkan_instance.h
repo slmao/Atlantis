@@ -11,7 +11,7 @@
 namespace atlantis::vulkan_backend::detail {
 
 // Builds the VkDebugUtilsMessengerCreateInfoEXT this module uses at both
-// installation sites (see plans/0003-rhi-vulkan-windowed-foundation.md
+// installation sites (see docs/plans/0003-rhi-vulkan-windowed-foundation.md
 // Section 6): the VkInstanceCreateInfo::pNext chain createInstance()
 // builds below, and the separate, explicit VkDebugUtilsMessengerEXT
 // VulkanDevice installs immediately after instance creation succeeds.

@@ -71,7 +71,7 @@ not, by itself, resolve either.
 - **Android CI:** how/whether Android builds are verified in CI at all in
   Phase 1 (NDK cross-compilation build-only vs. emulator/device runs) —
   not designed here; deferred to whatever spec adds Android build support
-  (see [specs/0001-project-foundation.md](../../specs/0001-project-foundation.md),
+  (see [specs/0001-project-foundation.md](../specs/0001-project-foundation.md),
   which is Windows-only and explicitly excludes this).
 - **Static analysis / formatting:** whether `clang-format` and/or
   `clang-tidy` are enforced in CI, and their configuration.

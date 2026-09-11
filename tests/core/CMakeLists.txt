@@ -2,7 +2,7 @@
 # cmake/AtlantisDependencies.cmake, included from the root
 # CMakeLists.txt — see that file for the FetchContent declaration and why
 # URL+URL_HASH is used instead of ADR-0006's literal GIT_TAG wording, and
-# plans/0002-platform-foundation.md Section 3 for why this declaration
+# docs/plans/0002-platform-foundation.md Section 3 for why this declaration
 # moved out of this file (it previously made tests/platform's ability to
 # link Catch2::Catch2WithMain depend on this directory being processed
 # first; neither test directory depends on the other now).

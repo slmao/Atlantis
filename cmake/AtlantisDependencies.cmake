@@ -2,7 +2,7 @@
 # (FetchContent, pinned, no package manager) and ADR-0007 (Catch2 v3).
 # Included once from the root CMakeLists.txt, before any test
 # subdirectory that links Catch2::Catch2WithMain — see
-# plans/0002-platform-foundation.md Section 3. This removes the prior
+# docs/plans/0002-platform-foundation.md Section 3. This removes the prior
 # tests/core -> tests/platform directory-ordering dependency: both now
 # just link the target this file makes available, independently.
 include_guard(GLOBAL)

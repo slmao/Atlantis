@@ -6,11 +6,11 @@
 >
 > **Revised 2026-08-02** to generalize windowed-path invalidation triggers
 > across Windows and Android for the primary-platform decision — see
-> [ADR-0005](../../adr/0005-platform-module-multi-os-windowing.md).
+> [ADR-0005](../adr/0005-platform-module-multi-os-windowing.md).
 
 This document states the ownership/lifetime model RHI resources and
 `RenderTarget` are designed against. See
-[ADR-0003](../../adr/0003-resource-rendertarget-ownership-model.md).
+[ADR-0003](../adr/0003-resource-rendertarget-ownership-model.md).
 
 ## Principle: explicit ownership, borrowed use
 

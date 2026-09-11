@@ -8,7 +8,7 @@
 > in its `Accepted` ADR, the current *what* stays in `Approved` Specs and
 > [module_boundaries.md](module_boundaries.md), and roadmap/status stays
 > in [project-blueprint.md](../project-blueprint.md)/
-> [specs/README.md](../../specs/README.md). Where this document and any
+> [specs/README.md](../specs/README.md). Where this document and any
 > of those disagree, they win, and that is a bug in this document to fix,
 > not a license to follow this document instead.
 >
@@ -32,7 +32,7 @@ were the permanent ceiling.
 
 ## 2. Two Orthogonal Views
 
-Per [ADR-0032](../../adr/0032-conceptual-architecture-layers-versus-source-module-ownership.md),
+Per [ADR-0032](../adr/0032-conceptual-architecture-layers-versus-source-module-ownership.md),
 Atlantis is described by two views that answer different questions and
 do not replace each other:
 
@@ -70,7 +70,7 @@ surrounding prose):**
 - The only Device Backend that exists and is implemented today is
   Atlantis Vulkan Backend. Direct3D 12 and Metal appear here solely as
   future candidate positions
-  ([ADR-0037](../../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md));
+  ([ADR-0037](../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md));
   naming them here authorizes no code, directory, target, dependency, or
   timetable.
 - Atlantis's ten-module, source/build-ownership view (Section 4) remains
@@ -93,16 +93,16 @@ lifetime detail lives in
 
 | Module | Responsibility | Status | Authoritative Detail |
 |---|---|---|---|
-| Atlantis Core | Foundation: logging, assertions, `Result<T,E>`, non-graphics utilities | As-built | [Spec 0001](../../specs/0001-project-foundation.md) |
-| Atlantis Platform | Per-OS windowing/surface/lifecycle abstraction | As-built (Windows); Android/iOS architecture-only | [Spec 0002](../../specs/0002-platform-foundation.md), [ADR-0005](../../adr/0005-platform-module-multi-os-windowing.md) |
-| Atlantis RHI | Backend-agnostic Render Hardware Interface | As-built | [Spec 0003](../../specs/0003-rhi-vulkan-windowed-foundation.md), [ADR-0001](../../adr/0001-rhi-backend-independence.md) |
-| Atlantis Vulkan Backend | Sole Phase 1 implementation of RHI, on Vulkan — `VulkanDevice`'s own descriptor-pool capacity is now a private, growable set (fixed `std::array`, 4 pools/60 concurrent descriptor sets, never unbounded) | As-built | [Spec 0003](../../specs/0003-rhi-vulkan-windowed-foundation.md), [Spec 0021](../../specs/0021-descriptor-pool-capacity-foundation.md), [ADR-0064](../../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md) |
-| Atlantis RenderGraph | Central rendering abstraction: passes, dependencies, barriers | As-built | [Spec 0005](../../specs/0005-render-graph-foundation.md) |
-| Atlantis Renderer | Frame orchestration built on RenderGraph + RHI | As-built | [Spec 0007](../../specs/0007-minimal-renderer.md) |
-| Atlantis Shader System | Shader authoring/compilation/reflection (Slang → SPIR-V) | As-built | [Spec 0008](../../specs/0008-shader-system-foundation.md) |
-| Atlantis Asset System | Deterministic authoring-source → runtime-artifact pipeline (four asset types: static mesh — position/color/UV0/normal — scene — now an optional per-node `light` node, capped one Directional/four Point — texture, material — three kinds, `UnlitTextured`/`LitTextured`/`PbrDirectLit`, the last carrying `baseColorFactor`/`metallicFactor`/`roughnessFactor` in a 56-byte artifact); Core-only dependency | As-built | [Spec 0012](../../specs/0012-asset-system-foundation.md), [Spec 0015](../../specs/0015-scene-asset-serialization-foundation.md), [Spec 0016](../../specs/0016-texture-sampler-foundation.md), [Spec 0017](../../specs/0017-mesh-uv-attribute-foundation.md), [Spec 0018](../../specs/0018-material-asset-scene-binding-foundation.md), [Spec 0020](../../specs/0020-mesh-normal-attribute-foundation.md), [Spec 0019](../../specs/0019-lighting-foundation.md), [Spec 0023](../../specs/0023-pbr-material-foundation.md), [ADR-0043](../../adr/0043-asset-system-module-boundary.md)–[ADR-0045](../../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md), [ADR-0058](../../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md), [ADR-0059](../../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)–[ADR-0060](../../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md), [ADR-0063](../../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md), [ADR-0061](../../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md), [ADR-0066](../../adr/0066-pbr-material-asset-parameter-set-and-color-space-contract.md)–[ADR-0067](../../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md) |
-| Atlantis Runtime | Windows windowed composition root — computes a fixed-size active-light array (`FrameLightingData`, 176 bytes) re-extracted from `World`'s own live state and republished every successful frame (Spec 0022 fixed Spec 0019's own original one-time-per-session capture) through the existing camera uniform buffer; `World::setLight()`, a Light's own local/parent `Transform`, and Light entity creation/removal are all reflected on the next successful frame | As-built (Windows windowed composition root); its future Client-boundary/multi-client authority principle remains Approved direction, not yet built | [Spec 0013](../../specs/0013-runtime-host-foundation.md), [Spec 0019](../../specs/0019-lighting-foundation.md), [Spec 0022](../../specs/0022-dynamic-frame-uniform-updates-foundation.md), [ADR-0046](../../adr/0046-runtime-composition-ownership-and-frame-lifecycle.md), [ADR-0047](../../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md), [ADR-0062](../../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md), [ADR-0033](../../adr/0033-runtime-authority-and-client-boundary.md) (Client-boundary principle, separate from the module itself) |
-| Atlantis Tools | Offline/developer tooling | As-built (shader-compiler and asset-cooker CLI content; broader scope not yet specced) | [Spec 0008](../../specs/0008-shader-system-foundation.md), [Spec 0012](../../specs/0012-asset-system-foundation.md) |
+| Atlantis Core | Foundation: logging, assertions, `Result<T,E>`, non-graphics utilities | As-built | [Spec 0001](../specs/0001-project-foundation.md) |
+| Atlantis Platform | Per-OS windowing/surface/lifecycle abstraction | As-built (Windows); Android/iOS architecture-only | [Spec 0002](../specs/0002-platform-foundation.md), [ADR-0005](../adr/0005-platform-module-multi-os-windowing.md) |
+| Atlantis RHI | Backend-agnostic Render Hardware Interface | As-built | [Spec 0003](../specs/0003-rhi-vulkan-windowed-foundation.md), [ADR-0001](../adr/0001-rhi-backend-independence.md) |
+| Atlantis Vulkan Backend | Sole Phase 1 implementation of RHI, on Vulkan — `VulkanDevice`'s own descriptor-pool capacity is now a private, growable set (fixed `std::array`, 4 pools/60 concurrent descriptor sets, never unbounded) | As-built | [Spec 0003](../specs/0003-rhi-vulkan-windowed-foundation.md), [Spec 0021](../specs/0021-descriptor-pool-capacity-foundation.md), [ADR-0064](../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md) |
+| Atlantis RenderGraph | Central rendering abstraction: passes, dependencies, barriers | As-built | [Spec 0005](../specs/0005-render-graph-foundation.md) |
+| Atlantis Renderer | Frame orchestration built on RenderGraph + RHI | As-built | [Spec 0007](../specs/0007-minimal-renderer.md) |
+| Atlantis Shader System | Shader authoring/compilation/reflection (Slang → SPIR-V) | As-built | [Spec 0008](../specs/0008-shader-system-foundation.md) |
+| Atlantis Asset System | Deterministic authoring-source → runtime-artifact pipeline (four asset types: static mesh — position/color/UV0/normal — scene — now an optional per-node `light` node, capped one Directional/four Point — texture, material — three kinds, `UnlitTextured`/`LitTextured`/`PbrDirectLit`, the last carrying `baseColorFactor`/`metallicFactor`/`roughnessFactor` in a 56-byte artifact); Core-only dependency | As-built | [Spec 0012](../specs/0012-asset-system-foundation.md), [Spec 0015](../specs/0015-scene-asset-serialization-foundation.md), [Spec 0016](../specs/0016-texture-sampler-foundation.md), [Spec 0017](../specs/0017-mesh-uv-attribute-foundation.md), [Spec 0018](../specs/0018-material-asset-scene-binding-foundation.md), [Spec 0020](../specs/0020-mesh-normal-attribute-foundation.md), [Spec 0019](../specs/0019-lighting-foundation.md), [Spec 0023](../specs/0023-pbr-material-foundation.md), [ADR-0043](../adr/0043-asset-system-module-boundary.md)–[ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md), [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md), [ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)–[ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md), [ADR-0063](../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md), [ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md), [ADR-0066](../adr/0066-pbr-material-asset-parameter-set-and-color-space-contract.md)–[ADR-0067](../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md) |
+| Atlantis Runtime | Windows windowed composition root — computes a fixed-size active-light array (`FrameLightingData`, 176 bytes) re-extracted from `World`'s own live state and republished every successful frame (Spec 0022 fixed Spec 0019's own original one-time-per-session capture) through the existing camera uniform buffer; `World::setLight()`, a Light's own local/parent `Transform`, and Light entity creation/removal are all reflected on the next successful frame | As-built (Windows windowed composition root); its future Client-boundary/multi-client authority principle remains Approved direction, not yet built | [Spec 0013](../specs/0013-runtime-host-foundation.md), [Spec 0019](../specs/0019-lighting-foundation.md), [Spec 0022](../specs/0022-dynamic-frame-uniform-updates-foundation.md), [ADR-0046](../adr/0046-runtime-composition-ownership-and-frame-lifecycle.md), [ADR-0047](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md), [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md), [ADR-0033](../adr/0033-runtime-authority-and-client-boundary.md) (Client-boundary principle, separate from the module itself) |
+| Atlantis Tools | Offline/developer tooling | As-built (shader-compiler and asset-cooker CLI content; broader scope not yet specced) | [Spec 0008](../specs/0008-shader-system-foundation.md), [Spec 0012](../specs/0012-asset-system-foundation.md) |
 
 For the current, detailed dependency graph and per-milestone build
 status, see [project-blueprint.md](../project-blueprint.md)'s own
@@ -115,9 +115,9 @@ interface — see [Section 6](#6-device-backend-boundary) below.
 
 | Tag | Meaning |
 |---|---|
-| **As-built** | `Approved` Spec, implemented, merged. Verifiable against [specs/README.md](../../specs/README.md). |
+| **As-built** | `Approved` Spec, implemented, merged. Verifiable against [specs/README.md](../specs/README.md). |
 | **Approved direction (partially implemented)** | An `Accepted` ADR states a principle or boundary, but no concrete module/system implementing it yet exists. |
-| **Long-term candidate** | Named in [Spec 0009](../../specs/0009-long-term-engine-architecture-alignment.md) or the Candidate Spec Backlog as a future direction; no `Accepted` ADR or `Approved` Spec commits to *building* it yet. |
+| **Long-term candidate** | Named in [Spec 0009](../specs/0009-long-term-engine-architecture-alignment.md) or the Candidate Spec Backlog as a future direction; no `Accepted` ADR or `Approved` Spec commits to *building* it yet. |
 
 The labels below describe the implementation state of each
 architectural capability, not the formal status of the ADR that names
@@ -133,26 +133,26 @@ describes has been built.
   and asset-cooker CLI content).
 - **Approved direction (partially implemented):** the five-layer/
   ten-module coexistence
-  ([ADR-0032](../../adr/0032-conceptual-architecture-layers-versus-source-module-ownership.md));
+  ([ADR-0032](../adr/0032-conceptual-architecture-layers-versus-source-module-ownership.md));
   Runtime authority and Client boundary
-  ([ADR-0033](../../adr/0033-runtime-authority-and-client-boundary.md));
+  ([ADR-0033](../adr/0033-runtime-authority-and-client-boundary.md));
   stable schema/identity/protocol boundary
-  ([ADR-0034](../../adr/0034-stable-public-boundary-versus-internal-cpp-layout.md),
+  ([ADR-0034](../adr/0034-stable-public-boundary-versus-internal-cpp-layout.md),
   already realized narrowly by ADR-0001/ADR-0030); authoring/runtime
   data separation as an available option
-  ([ADR-0035](../../adr/0035-authoring-runtime-data-separation-as-a-long-term-principle.md),
+  ([ADR-0035](../adr/0035-authoring-runtime-data-separation-as-a-long-term-principle.md),
   already realized narrowly by Shader System and, since Spec 0012, by
   Asset System too); Agent-native/
   machine-verifiable development-tooling direction
-  ([ADR-0036](../../adr/0036-agent-native-automation-and-machine-verifiable-architecture-as-long-term-goals.md));
+  ([ADR-0036](../adr/0036-agent-native-automation-and-machine-verifiable-architecture-as-long-term-goals.md));
   long-term Device Backend sibling-boundary reservation
-  ([ADR-0037](../../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md)).
+  ([ADR-0037](../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md)).
 - **Long-term candidate:** World/ECS, Public SDK, Package System, Job
   System, Editor/Tool Connection Protocol, Gameplay SDK,
   Research/Simulation API, AI Inference Integration, UGC Sandbox,
   Direct3D 12 Device Backend, Metal Device Backend, Android Platform
   implementation, iOS Platform, Agent-native CLI/manifest/diagnostic
-  tooling — see [specs/README.md](../../specs/README.md) Section B for
+  tooling — see [specs/README.md](../specs/README.md) Section B for
   each item's Candidate Backlog row, where one exists. (Atlantis Runtime
   the module is now As-built, above — only its future Client-boundary/
   multi-client authority principle remains here, listed under Approved
@@ -166,7 +166,7 @@ timetable unless its own `Approved` Spec explicitly says so.
 
 ## 6. Device Backend Boundary
 
-Per [ADR-0037](../../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md):
+Per [ADR-0037](../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md):
 
 | Backend | Status | Notes |
 |---|---|---|
@@ -204,23 +204,23 @@ the above may exist — see ADR-0037's own "Future approval gate."
 - Vulkan Backend is the **only** Device Backend that exists today.
 - iOS's graphics backend choice (Metal vs. Vulkan/MoltenVK) **remains
   undecided**.
-- "Agent-native" ([ADR-0036](../../adr/0036-agent-native-automation-and-machine-verifiable-architecture-as-long-term-goals.md))
+- "Agent-native" ([ADR-0036](../adr/0036-agent-native-automation-and-machine-verifiable-architecture-as-long-term-goals.md))
   is a **development-tooling direction** — not a runtime AI feature, not
   an in-game agent API.
 - Headless rendering is **implemented and merged** (Spec 0010
   `Approved`, [PR #48](https://github.com/slmao/Atlantis/pull/48)),
   having followed windowed rendering per Phase 1 sequencing as required
-  — see the Spec 0010 row in [specs/README.md](../../specs/README.md)
+  — see the Spec 0010 row in [specs/README.md](../specs/README.md)
   for full scope and verification detail, including its own disclosed
   single-GPU-vendor verification limitation.
 - Direct3D 12 and Metal are **not** Candidate Spec Backlog items — see
-  [specs/README.md](../../specs/README.md) Section B, unmodified.
+  [specs/README.md](../specs/README.md) Section B, unmodified.
 - RenderGraph remains the mandatory path for GPU work — no ad hoc
   direct-submission path bypasses it.
 - Renderer's existing boundary from Platform, Window, Swapchain, and any
   concrete graphics API is unchanged — see
-  [ADR-0001](../../adr/0001-rhi-backend-independence.md) and
-  [ADR-0002](../../adr/0002-presentation-rendertarget-unification.md).
+  [ADR-0001](../adr/0001-rhi-backend-independence.md) and
+  [ADR-0002](../adr/0002-presentation-rendertarget-unification.md).
 
 ## 8. Where to Go Next
 
@@ -231,9 +231,9 @@ the above may exist — see ADR-0037's own "Future approval gate."
 - [project-blueprint.md](../project-blueprint.md) — current build
   status, milestone sequencing, and roadmap.
 - [threading.md](threading.md) — Phase 1 threading assumptions.
-- [specs/README.md](../../specs/README.md) — the full Spec registry and
+- [specs/README.md](../specs/README.md) — the full Spec registry and
   the Candidate Spec Backlog.
-- [Spec 0009](../../specs/0009-long-term-engine-architecture-alignment.md)
+- [Spec 0009](../specs/0009-long-term-engine-architecture-alignment.md)
   — the long-term alignment Spec this document implements.
-- [ADR-0032](../../adr/0032-conceptual-architecture-layers-versus-source-module-ownership.md)–[ADR-0037](../../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md)
+- [ADR-0032](../adr/0032-conceptual-architecture-layers-versus-source-module-ownership.md)–[ADR-0037](../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md)
   — the six `Accepted` decisions this document surfaces.

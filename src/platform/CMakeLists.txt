@@ -20,6 +20,6 @@ if(WIN32)
   target_sources(atlantis_platform PRIVATE src/windows/windows_platform.cpp)
 elseif(ANDROID)
   # Not implemented — Android build/toolchain support does not exist yet.
-  # See specs/0001-project-foundation.md and
-  # specs/0002-platform-foundation.md Non-Goals.
+  # See docs/specs/0001-project-foundation.md and
+  # docs/specs/0002-platform-foundation.md Non-Goals.
 endif()

@@ -55,7 +55,7 @@ result, not an automatic gate; see [ci-strategy.md](ci-strategy.md).
   `tests/image_regression/goldens/<scene-slug>/<golden-name>.png`, each
   with its own provenance sidecar (capture date, source revision, GPU/
   driver/Vulkan-version fields, extent/format) — settled by Spec 0011/
-  [ADR-0042](../../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md).
+  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md).
 - Updating a golden image is a reviewed, visible diff in a PR — never a
   silent regeneration step that a CI job runs and commits automatically.
   Regeneration is performed only by a standalone, non-CTest-registered
@@ -93,10 +93,10 @@ pre-design for it now.
 
 All three questions this section originally listed are now resolved by
 already-`Accepted`/`Approved` decisions, not open: the test framework is
-Catch2 v3 ([ADR-0007](../../adr/0007-test-framework.md), since Spec
+Catch2 v3 ([ADR-0007](../adr/0007-test-framework.md), since Spec
 0001); the image diff algorithm and tolerance thresholds are exact
 pixel match, channel tolerance 0, failing-pixel budget 0
-([ADR-0042](../../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md),
+([ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md),
 Spec 0011); and headless/image-regression GPU tests run against real
 Vulkan-capable hardware only, never a software implementation (Spec
 0010/0011, both disclosing this as a single-GPU-vendor limitation, not

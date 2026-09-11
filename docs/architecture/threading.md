@@ -6,11 +6,11 @@
 >
 > **Revised 2026-08-02** to add a Platform/OS-lifecycle note for the
 > Windows + Android (primary) / iOS (future) platform decision — see
-> [ADR-0005](../../adr/0005-platform-module-multi-os-windowing.md).
+> [ADR-0005](../adr/0005-platform-module-multi-os-windowing.md).
 
 This document states the threading *assumption* Phase 1 modules are
 designed against, and what is deliberately left open. It is a baseline,
-not a locked model — see [ADR-0004](../../adr/0004-phase1-threading-baseline.md).
+not a locked model — see [ADR-0004](../adr/0004-phase1-threading-baseline.md).
 
 ## Phase 1 baseline
 

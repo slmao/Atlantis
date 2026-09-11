@@ -3,7 +3,7 @@
 **`minimal_renderer/`** — Spec 0007's fixed, temporary, checked-in vertex/
 fragment SPIR-V pair (`minimal_mesh.{vert,frag}.glsl` source plus
 pre-compiled `.spv` bytecode and a compiler/version note), per
-[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md):
+[ADR-0027](../docs/adr/0027-temporary-precompiled-spirv-shader-artifacts.md):
 no shader compiler, and no SPIR-V reflection, is invoked by any Atlantis
 build target. This is a narrow, explicitly-bounded exception, not the
 Shader System — see below.

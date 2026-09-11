@@ -6,10 +6,10 @@
 
 namespace atlantis::platform {
 
-// See specs/0002-platform-foundation.md Window Extent. logical and
+// See docs/specs/0002-platform-foundation.md Window Extent. logical and
 // framebuffer are independent fields — not assumed equal — even though
 // the Windows implementation reports them equal in Phase 1 (see
-// plans/0002-platform-foundation.md Section 7).
+// docs/plans/0002-platform-foundation.md Section 7).
 struct WindowExtent {
   unsigned int width = 0;
   unsigned int height = 0;
@@ -41,7 +41,7 @@ struct Quit {};
 
 // std::variant chosen over a polymorphic event base, consistent with
 // atlantis::Result's existing value-type style — see ADR-0011's Open
-// Questions and plans/0002-platform-foundation.md Section 2.
+// Questions and docs/plans/0002-platform-foundation.md Section 2.
 using PlatformEvent = std::variant<WindowResize, WindowCloseRequested, FocusGained, FocusLost,
                                     ApplicationPause, ApplicationResume, SurfaceCreated,
                                     SurfaceDestroyed, Quit>;

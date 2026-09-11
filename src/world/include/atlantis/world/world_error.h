@@ -2,8 +2,8 @@
 
 namespace atlantis::world {
 
-// See adr/0049-entity-identity-and-handle-invalidation.md,
-// adr/0050-transform-hierarchy-composition-and-update-model.md. Every
+// See docs/adr/0049-entity-identity-and-handle-invalidation.md,
+// docs/adr/0050-transform-hierarchy-composition-and-update-model.md. Every
 // public World API that can fail returns exactly one of these -- no
 // exception, never undefined behavior for a caller-supplied handle
 // mismatch. Checked exhaustively by every switch/if-chain in world.cpp;

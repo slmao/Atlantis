@@ -3,7 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 // Task 2.3: Windows integration/smoke tests, per
-// plans/0002-platform-foundation.md Section 11. This file tests Atlantis
+// docs/plans/0002-platform-foundation.md Section 11. This file tests Atlantis
 // Platform's own lifecycle/event contract specifically -- a separate,
 // explicit Windows test boundary from
 // tests/vulkan_backend/vulkan_presentation_gpu_tests.cpp (Spec 0003's
@@ -29,7 +29,7 @@
 namespace {
 
 // Phase 1 does not support re-initializing Platform after shutdown()
-// (plans/0002-platform-foundation.md Section 6 / Unresolved
+// (docs/plans/0002-platform-foundation.md Section 6 / Unresolved
 // Implementation Details #7), so every scenario below shares one
 // initialize()->shutdown() lifecycle within a single TEST_CASE rather
 // than being split into Catch2 SECTIONs, which would re-run the test body

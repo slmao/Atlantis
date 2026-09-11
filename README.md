@@ -6,7 +6,7 @@
 
 Atlantis is a long-term, real-time rendering engine written in C++20,
 built on a backend-independent RHI (currently Vulkan) and a RenderGraph.
-It is in active development; see [specs/README.md](specs/README.md) for
+It is in active development; see [docs/specs/README.md](docs/specs/README.md) for
 the current, authoritative status of every module.
 
 ## Features
@@ -42,10 +42,10 @@ Spec  →  Plan  →  Human Review  →  Implementation  →  Verification  → 
 
 | Stage | Lives in | Purpose |
 |---|---|---|
-| Spec | [specs/](specs/) | What problem, what requirements, what design, what's out of scope |
-| Plan | [plans/](plans/) | How an approved spec becomes an ordered, reviewable set of changes |
+| Spec | [docs/specs/](docs/specs/) | What problem, what requirements, what design, what's out of scope |
+| Plan | [docs/plans/](docs/plans/) | How an approved spec becomes an ordered, reviewable set of changes |
 | Human Review | — | Explicit human sign-off on spec + plan before implementation begins |
-| ADR | [adr/](adr/) | Permanent record of any architectural decision and why it was made |
+| ADR | [docs/adr/](docs/adr/) | Permanent record of any architectural decision and why it was made |
 | Implementation | `src/`, `tests/` | Code written strictly against the approved plan |
 | Verification | PR | Checked against the plan's verification checklist and the [Definition of Done](docs/process/definition-of-done.md) |
 | PR → Merge | GitHub | An agent opens the PR; a human reviews and merges — never the reverse |
@@ -58,21 +58,24 @@ maps onto branches and PRs.
 ## Repository layout
 
 ```
-AGENTS.md    Canonical agent operating rules (read this first)
-CLAUDE.md    Claude Code–specific pointer to AGENTS.md
-README.md    This file
-docs/        Architecture records (as-built), process docs, and the project roadmap
-specs/       Proposed work, pre-implementation (specs/README.md is the status registry)
-plans/       Approved implementation plans
-adr/         Architectural decision records
-src/         Source — see src/README.md for the full, up-to-date per-module breakdown
-examples/    Non-shipping demo programs
-tests/       Tests — see tests/README.md for what each suite covers
-shaders/     Shader sources (Slang)
-assets/      Engine/sample assets
-tools/       Offline/dev tooling
-cmake/       CMake helper modules
-.github/     PR template and repository automation
+AGENTS.md          Canonical agent operating rules (read this first)
+CLAUDE.md          Claude Code–specific pointer to AGENTS.md
+README.md          This file
+docs/
+  specs/           Proposed work, pre-implementation (specs/README.md is the status registry)
+  plans/           Approved implementation plans
+  adr/             Architectural decision records
+  architecture/    As-built design records
+  process/         Prescriptive process docs (git workflow, Definition of Done, CI/testing strategy)
+  project-blueprint.md   Roadmap and status navigation index
+src/               Source — see src/README.md for the full, up-to-date per-module breakdown
+examples/          Non-shipping demo programs
+tests/             Tests — see tests/README.md for what each suite covers
+shaders/           Shader sources (Slang)
+assets/            Engine/sample assets
+tools/             Offline/dev tooling
+cmake/             CMake helper modules
+.github/           PR template and repository automation
 ```
 
 For a full architecture overview and navigation entry point, see
@@ -96,7 +99,7 @@ $env:VULKAN_SDK = 'C:\VulkanSDK\<version>'
 ```
 
 The Vulkan SDK is an external prerequisite installed separately, not a
-dependency this project downloads (see [ADR-0006](adr/0006-dependency-management.md)'s
+dependency this project downloads (see [ADR-0006](docs/adr/0006-dependency-management.md)'s
 external-system-dependency category). The unit test framework (Catch2 v3)
 remains the only dependency CMake fetches automatically, via
 `FetchContent` on first configure.
@@ -123,7 +126,7 @@ the GPU-required ones — prefer the explicit `-LE gpu`/`-L gpu` commands
 above. See [tests/README.md](tests/README.md) for what each suite covers.
 
 Run the real product binary (see
-[specs/0032-runtime-sample-scene-selection.md](specs/0032-runtime-sample-scene-selection.md)
+[docs/specs/0032-runtime-sample-scene-selection.md](docs/specs/0032-runtime-sample-scene-selection.md)
 for the `--scene`/`--list-scenes`/`--help` flags):
 ```
 build/src/runtime/Debug/atlantis_runtime.exe
@@ -133,7 +136,7 @@ build/src/runtime/Debug/atlantis_runtime.exe
 
 ## Status
 
-Engineering-foundation stage. See [specs/README.md](specs/README.md) for
+Engineering-foundation stage. See [docs/specs/README.md](docs/specs/README.md) for
 the full, authoritative registry of every Spec's status, its Plan, and
 its implementation PR(s).
 

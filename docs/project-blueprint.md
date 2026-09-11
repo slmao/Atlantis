@@ -147,20 +147,20 @@ ADR or the architecture docs above — see the links inline):
   Platform and RHI are **siblings** — RHI does not depend on Platform;
   Runtime passes the opaque native-surface handle Platform produces
   into RHI's `Presentation` construction. See
-  [ADR-0001](../adr/0001-rhi-backend-independence.md) and
-  [ADR-0014](../adr/0014-rhi-device-presentation-construction-boundary.md).
+  [ADR-0001](adr/0001-rhi-backend-independence.md) and
+  [ADR-0014](adr/0014-rhi-device-presentation-construction-boundary.md).
 - **Vulkan Backend implements RHI's interfaces**; it is not a
   dependency of RHI. Only Vulkan Backend's private WSI boundary
   consumes `NativeWindowHandle` and interprets `Vk*` types — see
-  [ADR-0005 (amended)](../adr/0005-platform-module-multi-os-windowing.md)
+  [ADR-0005 (amended)](adr/0005-platform-module-multi-os-windowing.md)
   and
   [docs/architecture/platform-vulkan-wsi-boundary.md](architecture/platform-vulkan-wsi-boundary.md).
 - **Renderer depends only on Core, RHI, and RenderGraph.** It must
   never include a Win32/Android NDK/`Vk*` type, never see a window, a
   `Platform` instance, `VkSurfaceKHR`, or `VkSwapchainKHR` — see
   [docs/architecture/overview.md](architecture/overview.md#dependency-direction),
-  [ADR-0001](../adr/0001-rhi-backend-independence.md),
-  [ADR-0002](../adr/0002-presentation-rendertarget-unification.md).
+  [ADR-0001](adr/0001-rhi-backend-independence.md),
+  [ADR-0002](adr/0002-presentation-rendertarget-unification.md).
 - **All GPU work is mandatory through RenderGraph** — no subsystem
   submits ad hoc, hand-scheduled GPU work outside it (per
   [AGENTS.md](../AGENTS.md)'s Golden Rule and Architecture Principles,
@@ -171,7 +171,7 @@ ADR or the architecture docs above — see the links inline):
   [docs/architecture/overview.md](architecture/overview.md#windowed-vs-headless-the-shared-path-across-platforms).
 - **RenderGraph's dependency on RHI (already drawn in the diagram above)
   is now a reviewed decision, not only an anticipated one** — Spec 0006
-  ([ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md))
+  ([ADR-0021](adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md))
   realizes it for the frame-execution slice (`CommandList`,
   `ResourceState`, `RenderTarget`), splitting responsibility so
   RenderGraph decides *when*/*between what states* a resource transition
@@ -190,22 +190,22 @@ inferred from file names or intent.
 
 | Item | Status | Evidence |
 |---|---|---|
-| **Spec 0001 — Project Foundation** | `Approved`, **Implemented** | [specs/0001-project-foundation.md](../specs/0001-project-foundation.md) status field; `src/core/` (log, assert, result), `tests/core/`, `examples/foundation_demo/` all exist and match the spec/plan's file list |
-| Plan 0001 | `Approved / Ready for Implementation` | [plans/0001-project-foundation.md](../plans/0001-project-foundation.md) |
-| **Spec 0002 — Platform Foundation** | `Approved`, **Windows path Implemented**; Android/iOS architecture-only, not implemented | [specs/0002-platform-foundation.md](../specs/0002-platform-foundation.md); `src/platform/` (Windows implementation, `windows_platform.cpp`), `tests/platform/` (including Windows-only smoke tests), `examples/platform_demo/` all exist. No `src/platform/src/android/` or `src/platform/src/ios/` directory exists. |
-| Plan 0002 | `Approved / Ready for Implementation` (Windows portion) | [plans/0002-platform-foundation.md](../plans/0002-platform-foundation.md) |
-| **Spec 0003 — RHI and Vulkan Windowed Foundation** | `Approved`, **Implemented** (windowed Vulkan presentation foundation; no acquire/present, no `RenderTarget`, no rendered output) | [specs/0003-rhi-vulkan-windowed-foundation.md](../specs/0003-rhi-vulkan-windowed-foundation.md) status field; `src/rhi/`, `src/vulkan_backend/`, `tests/rhi/`, `tests/vulkan_backend/`, `examples/rhi_vulkan_demo/` all exist and match the spec/plan's file list; implementation merged via [PR #14](https://github.com/slmao/Atlantis/pull/14). No `src/render_graph/` or `src/renderer/` directory exists. |
-| Plan 0003 | `Approved / Ready for Implementation` | [plans/0003-rhi-vulkan-windowed-foundation.md](../plans/0003-rhi-vulkan-windowed-foundation.md); records a joint Spec + Plan Human Review completed 2026-08-08 |
-| **Spec 0004 — Context-Efficient Documentation and Code Comment Guidelines** | `Approved`, **Implemented** | [specs/0004-context-efficiency-guidelines.md](../specs/0004-context-efficiency-guidelines.md); `AGENTS.md` now contains the `## Documentation and code comments` section, merged via PR #11. Governance/documentation convention only — no architecture or runtime module changed. |
-| Plan 0004 | `Approved / Ready for Implementation` | [plans/0004-context-efficiency-guidelines.md](../plans/0004-context-efficiency-guidelines.md) |
-| **Spec 0005 — RenderGraph Foundation (GPU-Independent Graph Core)** | `Approved`, **Implemented** (GPU-independent RenderGraph construction/compilation foundation; no RHI resource binding, command recording, GPU execution, barriers, pass culling, or resource lifetime/aliasing) | [specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md) status field; all 16 architectural decisions this spec settles were reviewed and accepted (see the spec's own Human Review Approval note); `src/render_graph/`, `tests/render_graph/` exist and match the spec/plan's file list; implementation merged via [PR #18](https://github.com/slmao/Atlantis/pull/18). No `src/renderer/` directory exists. |
-| Plan 0005 | `Approved / Ready for Implementation` | [plans/0005-render-graph-foundation.md](../plans/0005-render-graph-foundation.md); records a joint Spec + Plan Human Review completed 2026-08-09, accepting all 19 Plan-stage details in Section 7's disposition table with zero Human Review blockers |
-| **Spec 0006 — RHI / RenderGraph Frame Execution Foundation** | `Approved`, **Implemented** — frame-scoped `RenderTarget`; `Presentation::acquireNextTarget()`/`present()`; a minimal RHI `CommandList`/`Device::submit()` single-frame-in-flight baseline; RenderGraph `execute()` with barrier/transition responsibility | [specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md) status field and its own Human Review Approval note; implementation merged via [PR #23](https://github.com/slmao/Atlantis/pull/23), which itself merged before GPU verification could run. [PR #24](https://github.com/slmao/Atlantis/pull/24) is the deferred GPU verification — fresh Debug/Release builds, 138/138 GPU-independent tests, 2/2 GPU-required tests, and an interactive `frame_execution_demo` run (resize, minimize/restore, normal close), all with Vulkan Validation Layers clean — and fixed three real Validation Layer defects (missing `VK_IMAGE_USAGE_TRANSFER_DST_BIT` on swapchain images; an acquire-complete semaphore reuse race; a render-finished semaphore reuse race across `vkQueuePresentKHR`) plus a reproducible resize→minimize crash it found, none of which needed a public API, ownership, synchronization-model, module-boundary, or ADR change. `src/rhi/`, `src/vulkan_backend/`, `src/render_graph/`'s execution extension, and `examples/frame_execution_demo/` all exist and match the spec/plan. This was the prerequisite the "Minimal Renderer" backlog entry ([specs/README.md](../specs/README.md) Section B) needed in addition to Spec 0005 — both dependencies are now satisfied. |
-| Plan 0006 | `Approved / Ready for Implementation` | [plans/0006-rhi-render-graph-frame-execution-foundation.md](../plans/0006-rhi-render-graph-frame-execution-foundation.md) |
+| **Spec 0001 — Project Foundation** | `Approved`, **Implemented** | [specs/0001-project-foundation.md](specs/0001-project-foundation.md) status field; `src/core/` (log, assert, result), `tests/core/`, `examples/foundation_demo/` all exist and match the spec/plan's file list |
+| Plan 0001 | `Approved / Ready for Implementation` | [plans/0001-project-foundation.md](plans/0001-project-foundation.md) |
+| **Spec 0002 — Platform Foundation** | `Approved`, **Windows path Implemented**; Android/iOS architecture-only, not implemented | [specs/0002-platform-foundation.md](specs/0002-platform-foundation.md); `src/platform/` (Windows implementation, `windows_platform.cpp`), `tests/platform/` (including Windows-only smoke tests), `examples/platform_demo/` all exist. No `src/platform/src/android/` or `src/platform/src/ios/` directory exists. |
+| Plan 0002 | `Approved / Ready for Implementation` (Windows portion) | [plans/0002-platform-foundation.md](plans/0002-platform-foundation.md) |
+| **Spec 0003 — RHI and Vulkan Windowed Foundation** | `Approved`, **Implemented** (windowed Vulkan presentation foundation; no acquire/present, no `RenderTarget`, no rendered output) | [specs/0003-rhi-vulkan-windowed-foundation.md](specs/0003-rhi-vulkan-windowed-foundation.md) status field; `src/rhi/`, `src/vulkan_backend/`, `tests/rhi/`, `tests/vulkan_backend/`, `examples/rhi_vulkan_demo/` all exist and match the spec/plan's file list; implementation merged via [PR #14](https://github.com/slmao/Atlantis/pull/14). No `src/render_graph/` or `src/renderer/` directory exists. |
+| Plan 0003 | `Approved / Ready for Implementation` | [plans/0003-rhi-vulkan-windowed-foundation.md](plans/0003-rhi-vulkan-windowed-foundation.md); records a joint Spec + Plan Human Review completed 2026-08-08 |
+| **Spec 0004 — Context-Efficient Documentation and Code Comment Guidelines** | `Approved`, **Implemented** | [specs/0004-context-efficiency-guidelines.md](specs/0004-context-efficiency-guidelines.md); `AGENTS.md` now contains the `## Documentation and code comments` section, merged via PR #11. Governance/documentation convention only — no architecture or runtime module changed. |
+| Plan 0004 | `Approved / Ready for Implementation` | [plans/0004-context-efficiency-guidelines.md](plans/0004-context-efficiency-guidelines.md) |
+| **Spec 0005 — RenderGraph Foundation (GPU-Independent Graph Core)** | `Approved`, **Implemented** (GPU-independent RenderGraph construction/compilation foundation; no RHI resource binding, command recording, GPU execution, barriers, pass culling, or resource lifetime/aliasing) | [specs/0005-render-graph-foundation.md](specs/0005-render-graph-foundation.md) status field; all 16 architectural decisions this spec settles were reviewed and accepted (see the spec's own Human Review Approval note); `src/render_graph/`, `tests/render_graph/` exist and match the spec/plan's file list; implementation merged via [PR #18](https://github.com/slmao/Atlantis/pull/18). No `src/renderer/` directory exists. |
+| Plan 0005 | `Approved / Ready for Implementation` | [plans/0005-render-graph-foundation.md](plans/0005-render-graph-foundation.md); records a joint Spec + Plan Human Review completed 2026-08-09, accepting all 19 Plan-stage details in Section 7's disposition table with zero Human Review blockers |
+| **Spec 0006 — RHI / RenderGraph Frame Execution Foundation** | `Approved`, **Implemented** — frame-scoped `RenderTarget`; `Presentation::acquireNextTarget()`/`present()`; a minimal RHI `CommandList`/`Device::submit()` single-frame-in-flight baseline; RenderGraph `execute()` with barrier/transition responsibility | [specs/0006-rhi-render-graph-frame-execution-foundation.md](specs/0006-rhi-render-graph-frame-execution-foundation.md) status field and its own Human Review Approval note; implementation merged via [PR #23](https://github.com/slmao/Atlantis/pull/23), which itself merged before GPU verification could run. [PR #24](https://github.com/slmao/Atlantis/pull/24) is the deferred GPU verification — fresh Debug/Release builds, 138/138 GPU-independent tests, 2/2 GPU-required tests, and an interactive `frame_execution_demo` run (resize, minimize/restore, normal close), all with Vulkan Validation Layers clean — and fixed three real Validation Layer defects (missing `VK_IMAGE_USAGE_TRANSFER_DST_BIT` on swapchain images; an acquire-complete semaphore reuse race; a render-finished semaphore reuse race across `vkQueuePresentKHR`) plus a reproducible resize→minimize crash it found, none of which needed a public API, ownership, synchronization-model, module-boundary, or ADR change. `src/rhi/`, `src/vulkan_backend/`, `src/render_graph/`'s execution extension, and `examples/frame_execution_demo/` all exist and match the spec/plan. This was the prerequisite the "Minimal Renderer" backlog entry ([specs/README.md](specs/README.md) Section B) needed in addition to Spec 0005 — both dependencies are now satisfied. |
+| Plan 0006 | `Approved / Ready for Implementation` | [plans/0006-rhi-render-graph-frame-execution-foundation.md](plans/0006-rhi-render-graph-frame-execution-foundation.md) |
 | ADR-0001 through ADR-0016 | All 16 `Accepted` | Verified by grepping each ADR file's `Status:` field |
 | ADR-0017 and ADR-0018 | Both `Accepted` (2026-08-09) | Filed alongside Spec 0005's Human Review Approval; verified by grepping each ADR file's `Status:` field |
 | ADR-0019, ADR-0020, and ADR-0021 | All three `Accepted` (2026-08-09) | Filed alongside Spec 0006's Human Review Approval; verified by grepping each ADR file's `Status:` field |
-| **Spec 0007 — Minimal Renderer** | `Approved`, **Implemented** — `Atlantis Renderer` (`src/renderer/`); RHI `Buffer`/`Texture`/`Pipeline` and draw-command surface; RenderGraph multi-attachment/draw-pass execution; Vulkan dynamic rendering (capability-detected Core/Extension dual path); a Windows Vulkan demo drawing a real, visible, depth-tested mesh with a camera and a minimal material | [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md) status field and Human Review Approval note (2026-08-11); `src/renderer/`, `tests/renderer/`, `shaders/minimal_renderer/`, `examples/minimal_renderer_demo/` all exist and match the spec/plan's file list. Implementation merged via [PR #28](https://github.com/slmao/Atlantis/pull/28). Post-merge review found the shipped dynamic-rendering Core path deviated from [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)'s approved design (it unconditionally depended on `VK_KHR_dynamic_rendering` even on Core-capable devices); [PR #29](https://github.com/slmao/Atlantis/pull/29) is the documentation-only Human Review that accepted a fix amendment (a loader-version-gated instance `apiVersion` strategy), and [PR #30](https://github.com/slmao/Atlantis/pull/30) is the code fix implementing it — Core and Extension dynamic-rendering paths are now fully separated, with the Core path never depending on the `VK_KHR_dynamic_rendering` extension. See [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)'s "Accepted Amendment — 2026-08-13" section for the full design. |
+| **Spec 0007 — Minimal Renderer** | `Approved`, **Implemented** — `Atlantis Renderer` (`src/renderer/`); RHI `Buffer`/`Texture`/`Pipeline` and draw-command surface; RenderGraph multi-attachment/draw-pass execution; Vulkan dynamic rendering (capability-detected Core/Extension dual path); a Windows Vulkan demo drawing a real, visible, depth-tested mesh with a camera and a minimal material | [specs/0007-minimal-renderer.md](specs/0007-minimal-renderer.md) status field and Human Review Approval note (2026-08-11); `src/renderer/`, `tests/renderer/`, `shaders/minimal_renderer/`, `examples/minimal_renderer_demo/` all exist and match the spec/plan's file list. Implementation merged via [PR #28](https://github.com/slmao/Atlantis/pull/28). Post-merge review found the shipped dynamic-rendering Core path deviated from [ADR-0024](adr/0024-vulkan-dynamic-rendering-for-attachments.md)'s approved design (it unconditionally depended on `VK_KHR_dynamic_rendering` even on Core-capable devices); [PR #29](https://github.com/slmao/Atlantis/pull/29) is the documentation-only Human Review that accepted a fix amendment (a loader-version-gated instance `apiVersion` strategy), and [PR #30](https://github.com/slmao/Atlantis/pull/30) is the code fix implementing it — Core and Extension dynamic-rendering paths are now fully separated, with the Core path never depending on the `VK_KHR_dynamic_rendering` extension. See [ADR-0024](adr/0024-vulkan-dynamic-rendering-for-attachments.md)'s "Accepted Amendment — 2026-08-13" section for the full design. |
 | ADR-0022 through ADR-0027 | All six `Accepted` (2026-08-11); ADR-0024 additionally carries an Accepted Amendment (2026-08-13) | Filed alongside Spec 0007's Human Review Approval; ADR-0024's amendment recorded via [PR #29](https://github.com/slmao/Atlantis/pull/29), implemented via [PR #30](https://github.com/slmao/Atlantis/pull/30); verified by grepping each ADR file's `Status:` field |
 | `docs/architecture/{overview,module_boundaries,threading,resource_lifetime}.md` | Still carry their own `PROPOSED — pending spec/ADR approval. Not as-built` banner | Read in full; banners unrevised as of this document — a known, still-open documentation gap (see above), not resolved by Spec 0006 |
 | `docs/rhi/README.md`, `docs/render_graph/README.md`, `docs/renderer/README.md` | Same `PROPOSED`, no-code status | Read in full; also unrevised — same known gap |
@@ -244,7 +244,7 @@ cube with a per-vertex-color minimal material) with a working camera
 transform, through RHI's new `Buffer`/`Texture`/`Pipeline` types and
 RenderGraph's new multi-attachment/draw-pass execution support, using
 Vulkan dynamic rendering (a capability-detected Core/Extension dual path —
-see [ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)).
+see [ADR-0024](adr/0024-vulkan-dynamic-rendering-for-attachments.md)).
 `examples/minimal_renderer_demo` is the non-shipping verification
 composition; this path is verified interactively across resize
 (depth `Texture` recreated, `Pipeline` not) and minimize/restore, with
@@ -260,13 +260,13 @@ Android/iOS path exists yet. A headless rendering path now exists (Spec
 0010, `Approved`, implemented and merged via
 [PR #48](https://github.com/slmao/Atlantis/pull/48) — see Milestone 7 in
 Section 5 and the Spec 0010 row in
-[specs/README.md](../specs/README.md) for full scope and verification
+[specs/README.md](specs/README.md) for full scope and verification
 detail, including its own disclosed single-GPU-vendor verification
 limitation). A local/manual image-regression gate now exists too (Spec
 0011, `Approved`, implemented and merged via
 [PR #52](https://github.com/slmao/Atlantis/pull/52) — see Milestone 8 in
 Section 5 and the Spec 0011 row in
-[specs/README.md](../specs/README.md) for full scope, verification, and
+[specs/README.md](specs/README.md) for full scope, verification, and
 the same disclosed single-GPU-vendor limitation); CI-enforced automatic
 gating remains not implemented.
 
@@ -276,7 +276,7 @@ Review → Implementation → Verification → PR → Merge sequence (see the
 Spec 0006 row above for Spec 0006's own two-PR verification history, and
 the Spec 0007 row above for Spec 0007's own three-PR history — an
 implementation PR, a documentation-only ADR-amendment Human Review, and a
-follow-up code-fix PR; see [specs/README.md](../specs/README.md)'s own
+follow-up code-fix PR; see [specs/README.md](specs/README.md)'s own
 Spec 0008 row for that spec's single-PR implementation history,
 [PR #36](https://github.com/slmao/Atlantis/pull/36)).
 
@@ -294,7 +294,7 @@ implementation, iOS Platform, World/ECS, and everything else in Section
 testing, Asset System foundation, and Runtime Host Foundation now have
 specs — Spec 0010, Spec 0011, Spec 0012, and Spec 0013, all `Approved`,
 implemented — see above and Milestone 10 in Section 5.) These remain
-backlog candidates (see [specs/README.md](../specs/README.md) Section B)
+backlog candidates (see [specs/README.md](specs/README.md) Section B)
 and are not `Approved` — no spec number, API shape, or Candidate-status
 promotion is assigned to any of them by this document.
 
@@ -306,9 +306,9 @@ milestone being listed does not authorize starting it — see Section 1.
 ### Milestone 1 — Windows Vulkan windowed presentation foundation
 
 - **Governance state:** Spec `Approved`
-  ([specs/0003-rhi-vulkan-windowed-foundation.md](../specs/0003-rhi-vulkan-windowed-foundation.md)).
+  ([specs/0003-rhi-vulkan-windowed-foundation.md](specs/0003-rhi-vulkan-windowed-foundation.md)).
   Plan `Approved / Ready for Implementation`
-  ([plans/0003-rhi-vulkan-windowed-foundation.md](../plans/0003-rhi-vulkan-windowed-foundation.md)),
+  ([plans/0003-rhi-vulkan-windowed-foundation.md](plans/0003-rhi-vulkan-windowed-foundation.md)),
   with a joint Spec + Plan Human Review completed 2026-08-08.
   Implementation merged via
   [PR #14](https://github.com/slmao/Atlantis/pull/14); verification
@@ -327,7 +327,7 @@ milestone being listed does not authorize starting it — see Section 1.
   Non-Goals): any acquire/present operation, any `RenderTarget`, any
   command buffer, any draw call — the whole frame-level acquire →
   graph-recorded work → present cycle is bundled and deferred, per
-  [ADR-0016](../adr/0016-presentation-acquire-present-and-recreation-contract.md).
+  [ADR-0016](adr/0016-presentation-acquire-present-and-recreation-contract.md).
   That bundle landed as its own Milestone 3 (Frame Execution Foundation,
   below) once RenderGraph's own compilation core (Milestone 2) existed to
   build execution against — not folded into Milestone 2 itself, whose
@@ -337,15 +337,15 @@ milestone being listed does not authorize starting it — see Section 1.
 
 - **Governance state:** **`Approved` Spec, `Approved / Ready for
   Implementation` Plan, Implemented —
-  [specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md),
-  [plans/0005-render-graph-foundation.md](../plans/0005-render-graph-foundation.md).**
+  [specs/0005-render-graph-foundation.md](specs/0005-render-graph-foundation.md),
+  [plans/0005-render-graph-foundation.md](plans/0005-render-graph-foundation.md).**
   Human Review Approval recorded 2026-08-09: all sixteen architectural
   decisions the spec enumerates were reviewed and accepted (see the
   spec's own Human Review Approval note). Its Architectural Impact
   identified two new decisions, filed as
-  [ADR-0017](../adr/0017-render-graph-construction-compile-layering.md)
+  [ADR-0017](adr/0017-render-graph-construction-compile-layering.md)
   and
-  [ADR-0018](../adr/0018-render-graph-dependency-derivation-and-ordering.md),
+  [ADR-0018](adr/0018-render-graph-dependency-derivation-and-ordering.md),
   both `Accepted` alongside this approval. A joint Spec+Plan Human Review
   completed 2026-08-09; implementation (the GPU-independent
   `Atlantis::RenderGraph` construction/compilation foundation) merged via
@@ -376,15 +376,15 @@ milestone being listed does not authorize starting it — see Section 1.
 
 - **Governance state:** **`Approved` Spec, `Approved / Ready for
   Implementation` Plan, Implemented —
-  [specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md),
-  [plans/0006-rhi-render-graph-frame-execution-foundation.md](../plans/0006-rhi-render-graph-frame-execution-foundation.md).**
+  [specs/0006-rhi-render-graph-frame-execution-foundation.md](specs/0006-rhi-render-graph-frame-execution-foundation.md),
+  [plans/0006-rhi-render-graph-frame-execution-foundation.md](plans/0006-rhi-render-graph-frame-execution-foundation.md).**
   Human Review Approval recorded 2026-08-09 (see the spec's own Human
   Review Approval note; also summarized in Section 4's table above).
   Its Architectural Impact identified three new decisions, filed as
-  [ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md),
-  [ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md),
+  [ADR-0019](adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md),
+  [ADR-0020](adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md),
   and
-  [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md),
+  [ADR-0021](adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md),
   all `Accepted` alongside this approval, merged via
   [PR #20](https://github.com/slmao/Atlantis/pull/20). Its dependencies,
   Spec 0003 (RHI/Vulkan windowed foundation) and Spec 0005 (RenderGraph
@@ -436,11 +436,11 @@ milestone being listed does not authorize starting it — see Section 1.
 
 - **Governance state:** **`Approved` Spec, `Approved / Ready for
   Implementation` Plan, Implemented —
-  [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md),
-  [plans/0007-minimal-renderer.md](../plans/0007-minimal-renderer.md).**
+  [specs/0007-minimal-renderer.md](specs/0007-minimal-renderer.md),
+  [plans/0007-minimal-renderer.md](plans/0007-minimal-renderer.md).**
   Human Review Approval recorded 2026-08-11 (joint Spec 0007 + Plan 0007
   review). Its Architectural Impact identified six new decisions, filed
-  as [ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md)–[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md),
+  as [ADR-0022](adr/0022-minimal-renderer-public-api-and-resource-ownership.md)–[ADR-0027](adr/0027-temporary-precompiled-spirv-shader-artifacts.md),
   all `Accepted` alongside this approval. Implementation merged via
   [PR #28](https://github.com/slmao/Atlantis/pull/28); a post-merge
   review found the shipped dynamic-rendering Core path deviated from
@@ -458,7 +458,7 @@ milestone being listed does not authorize starting it — see Section 1.
   module — `Mesh`/`Material`/`DrawItem`/`Renderer` — receiving a
   caller-supplied `RenderTarget` and having no knowledge of Platform,
   Window, Swapchain, or any `Vk*` type
-  ([ADR-0001](../adr/0001-rhi-backend-independence.md)); all GPU work
+  ([ADR-0001](adr/0001-rhi-backend-independence.md)); all GPU work
   goes through RenderGraph; the minimal closed loop this milestone
   targeted — mesh + depth + camera + material — is drawn end-to-end on
   Windows/Vulkan, not a feature-complete renderer. See the Spec 0007 row
@@ -468,14 +468,14 @@ milestone being listed does not authorize starting it — see Section 1.
 
 - **Governance state:** **`Approved` Spec, `Approved / Ready for
   Implementation` Plan, Implemented —
-  [specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md),
-  [plans/0008-shader-system-foundation.md](../plans/0008-shader-system-foundation.md).**
+  [specs/0008-shader-system-foundation.md](specs/0008-shader-system-foundation.md),
+  [plans/0008-shader-system-foundation.md](plans/0008-shader-system-foundation.md).**
   Human Review Approval recorded 2026-08-14 (Spec) and 2026-08-15 (Plan).
   Its Architectural Impact identified four new decisions, filed as
-  [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)–[ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md),
+  [ADR-0028](adr/0028-shader-system-source-language-and-compiler.md)–[ADR-0031](adr/0031-shader-system-artifact-versioning-and-reproducibility.md),
   all `Accepted` alongside the Spec approval. Implementation merged via
   [PR #36](https://github.com/slmao/Atlantis/pull/36) — see
-  [specs/README.md](../specs/README.md)'s own Spec 0008 row for full
+  [specs/README.md](specs/README.md)'s own Spec 0008 row for full
   scope/deviation/verification detail.
 - **Problem domain, as resolved by the Approved Spec/ADRs:** Slang (a
   Khronos-governed shading language, bundled with the Vulkan SDK) as
@@ -488,7 +488,7 @@ milestone being listed does not authorize starting it — see Section 1.
   validating a fixed descriptor/push-constant contract, not general
   pipeline-layout construction. Spec 0007's own narrow, temporary,
   checked-in-`.spv` sourcing mechanism
-  ([ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md))
+  ([ADR-0027](adr/0027-temporary-precompiled-spirv-shader-artifacts.md))
   is superseded in *mechanism* by this milestone; ADR-0027 itself remains
   `Accepted` and unmodified.
 - **Explicitly out of scope for this milestone and Phase 1 overall:**
@@ -503,9 +503,9 @@ milestone being listed does not authorize starting it — see Section 1.
 - **Governance state:** Candidate — requires a new Spec (Android
   Platform implementation) and likely an amendment/new ADR for the
   Vulkan Backend's Android WSI path. Architecturally anticipated by
-  [ADR-0005](../adr/0005-platform-module-multi-os-windowing.md),
-  [ADR-0012](../adr/0012-application-lifecycle-and-event-model.md), and
-  [ADR-0013](../adr/0013-platform-window-ownership-and-lifetime.md),
+  [ADR-0005](adr/0005-platform-module-multi-os-windowing.md),
+  [ADR-0012](adr/0012-application-lifecycle-and-event-model.md), and
+  [ADR-0013](adr/0013-platform-window-ownership-and-lifetime.md),
   none of which authorize implementation on their own. Not started —
   no `src/platform/src/android/` directory exists.
 - **Scope:** Android Activity/Surface lifecycle; `ANativeWindow`
@@ -520,7 +520,7 @@ milestone being listed does not authorize starting it — see Section 1.
 - **Governance state:** Spec 0010 `Approved`, ADR-0038/0039/0040
   `Accepted` (plus ADR-0022's Accepted Amendment). **Implemented and
   merged** via [PR #48](https://github.com/slmao/Atlantis/pull/48) —
-  see the Spec 0010 row in [specs/README.md](../specs/README.md) for
+  see the Spec 0010 row in [specs/README.md](specs/README.md) for
   full scope and verification detail, including its own disclosed
   single-GPU-vendor verification limitation. Followed the windowed path
   per [AGENTS.md](../AGENTS.md)'s explicit sequencing, as required.
@@ -533,21 +533,21 @@ milestone being listed does not authorize starting it — see Section 1.
 
 - **Governance state:** **`Approved` Spec, `Approved` Plan, Implemented
   (local/manual gate only) —
-  [specs/0011-image-regression-testing-foundation.md](../specs/0011-image-regression-testing-foundation.md),
-  [plans/0011-image-regression-testing-foundation.md](../plans/0011-image-regression-testing-foundation.md).**
+  [specs/0011-image-regression-testing-foundation.md](specs/0011-image-regression-testing-foundation.md),
+  [plans/0011-image-regression-testing-foundation.md](plans/0011-image-regression-testing-foundation.md).**
   Human Review Approval recorded 2026-08-16 (Spec) and 2026-08-17
   (Plan). Its Architectural Impact identified two new decisions, filed
   as
-  [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)
+  [ADR-0041](adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)
   and
-  [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md),
+  [ADR-0042](adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md),
   both `Accepted` alongside the Spec approval; ADR-0042 additionally
   carries an **Accepted Amendment** (2026-08-17, adding an "Initial
   baseline bootstrap" golden-update-reason category for a scene's
   first-ever golden) recorded via
   [PR #53](https://github.com/slmao/Atlantis/pull/53). Implementation
   merged via [PR #52](https://github.com/slmao/Atlantis/pull/52) — see
-  the Spec 0011 row in [specs/README.md](../specs/README.md) for full
+  the Spec 0011 row in [specs/README.md](specs/README.md) for full
   scope, verification, and deviation detail. Its dependency, Milestone
   7 (Headless rendering), is implemented.
 - **Partially complete — the local/manual half of this milestone's own
@@ -576,18 +576,18 @@ milestone being listed does not authorize starting it — see Section 1.
 ### Milestone 9 — Asset System foundation
 
 - **Governance state:** **`Approved` Spec, `Approved` Plan, Implemented —
-  [specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md),
-  [plans/0012-asset-system-foundation.md](../plans/0012-asset-system-foundation.md).**
+  [specs/0012-asset-system-foundation.md](specs/0012-asset-system-foundation.md),
+  [plans/0012-asset-system-foundation.md](plans/0012-asset-system-foundation.md).**
   Human Review Approval recorded 2026-08-19 for both the Spec (with
   three targeted corrections applied at approval time — see the Spec's
   own Human Review Approval note) and the Plan. Its Architectural Impact
   identified three new decisions, filed as
-  [ADR-0043](../adr/0043-asset-system-module-boundary.md) (module
+  [ADR-0043](adr/0043-asset-system-module-boundary.md) (module
   boundary — a new, tenth top-level module, Atlantis Asset System,
   depending on Core only),
-  [ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md)
+  [ADR-0044](adr/0044-asset-system-identity-provenance-and-import-methodology.md)
   (path-derived Asset ID, provenance, import methodology), and
-  [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
+  [ADR-0045](adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
   (hand-rolled data formats, no new third-party dependency), all
   `Accepted` alongside the Spec approval. Does not depend on, and is not
   blocked by, a future Atlantis Runtime — see the Spec's own "Why this
@@ -595,7 +595,7 @@ milestone being listed does not authorize starting it — see Section 1.
   [PR #58](https://github.com/slmao/Atlantis/pull/58), including a
   post-implementation independent review round (commit `bc7fc02`) that
   found and fixed real gaps before merge — see the Spec 0012 row in
-  [specs/README.md](../specs/README.md) for full verification detail.
+  [specs/README.md](specs/README.md) for full verification detail.
 - **Scope actually delivered:** a deterministic authoring-source →
   runtime-artifact pipeline for one asset type (a static
   position/colour mesh) — logical-path normalization, a 64-bit FNV-1a
@@ -619,15 +619,15 @@ milestone being listed does not authorize starting it — see Section 1.
 
 - **Governance state:** **`Approved` Spec, `Approved` Plan, Implemented and
   merged** via [PR #63](https://github.com/slmao/Atlantis/pull/63) —
-  [specs/0013-runtime-host-foundation.md](../specs/0013-runtime-host-foundation.md),
-  [plans/0013-runtime-host-foundation.md](../plans/0013-runtime-host-foundation.md).
+  [specs/0013-runtime-host-foundation.md](specs/0013-runtime-host-foundation.md),
+  [plans/0013-runtime-host-foundation.md](plans/0013-runtime-host-foundation.md).
   Human Review Approval recorded 2026-08-20 for the Spec and 2026-08-20
   for the Plan (14 explicitly accepted review items). Its Architectural
   Impact identified two new decisions, filed as
-  [ADR-0046](../adr/0046-runtime-composition-ownership-and-frame-lifecycle.md)
+  [ADR-0046](adr/0046-runtime-composition-ownership-and-frame-lifecycle.md)
   (object ownership order, six-step initialization, ten-step per-frame
   orchestration, unified idempotent shutdown) and
-  [ADR-0047](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md)
+  [ADR-0047](adr/0047-runtime-host-executable-library-structure-and-test-boundary.md)
   (`atlantis_runtime_host` static library / `atlantis_runtime` thin
   executable split, purely for GPU-independent testability — not a
   dependency surface for any other module), both `Accepted` alongside the
@@ -642,7 +642,7 @@ milestone being listed does not authorize starting it — see Section 1.
   move-assignment operator that could call `platform::shutdown()` a
   second time, or tear the window down ahead of still-live GPU resources
   — both are now deleted, move-construction-only. See the Spec 0013 row
-  in [specs/README.md](../specs/README.md) for full verification detail.
+  in [specs/README.md](specs/README.md) for full verification detail.
 - **Scope actually delivered:** a real Windows windowed composition root
   drawing the same Asset-System-sourced `minimal_cube` mesh and
   Shader-System-compiled material used by earlier milestones, through the
@@ -691,23 +691,23 @@ milestone being listed does not authorize starting it — see Section 1.
   PASS). Milestone 11 is code-complete and fully verified — see "Not
   implemented" below for what remains explicitly out of scope, still
   pending its own future Spec** —
-  [specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md),
-  [plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md).
+  [specs/0014-world-scene-foundation.md](specs/0014-world-scene-foundation.md),
+  [plans/0014-world-scene-foundation.md](plans/0014-world-scene-foundation.md).
   Human Review Approval recorded 2026-08-22 for the Spec (17
   explicitly accepted items) and 2026-08-22 for the Plan, following four
   independent Plan Review rounds; a fifth round (2026-08-23) applied a
   mechanical encapsulation correction. Its Architectural Impact
   identified four new decisions, filed as
-  [ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md)
+  [ADR-0048](adr/0048-world-scene-module-boundary-and-ownership.md)
   (module boundary and ownership),
-  [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)
+  [ADR-0049](adr/0049-entity-identity-and-handle-invalidation.md)
   (entity identity and handle invalidation, including its own Accepted
   Amendment adding a stable, per-`World` identity token after Human
   Review rejected leaving cross-`World`-instance `EntityId` use as
   undetectable UB),
-  [ADR-0050](../adr/0050-transform-hierarchy-composition-and-update-model.md)
+  [ADR-0050](adr/0050-transform-hierarchy-composition-and-update-model.md)
   (transform hierarchy composition and update model), and
-  [ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)
+  [ADR-0051](adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md)
   (World-to-Renderer extraction and asset resolution boundary), all
   `Accepted`.
 - **Scope actually delivered:** a new, eleventh top-level module,
@@ -758,8 +758,8 @@ milestone being listed does not authorize starting it — see Section 1.
   reviewed and **rejected** by Human Review (2026-08-23); `WorldError`
   now carries a fifth enumerator, `NoRenderableComponent`, and
   `getRenderable()` returns it correctly; see
-  [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s
-  and [Spec 0014](../specs/0014-world-scene-foundation.md)'s own "Human
+  [ADR-0049](adr/0049-entity-identity-and-handle-invalidation.md)'s
+  and [Spec 0014](specs/0014-world-scene-foundation.md)'s own "Human
   Review Correction (2026-08-23)" notes and Plan 0014's own V28.
 - **Not implemented** (per Spec 0014's own Non-Goals, unchanged):
   scene serialization or a scene file format, a scene-asset cooker, a
@@ -772,17 +772,17 @@ milestone being listed does not authorize starting it — see Section 1.
 - **Governance state:** **`Approved` Spec, `Approved` Plan. Implementation
   merged via [PR #74](https://github.com/slmao/Atlantis/pull/74)
   (2026-08-23)** —
-  [specs/0015-scene-asset-serialization-foundation.md](../specs/0015-scene-asset-serialization-foundation.md),
-  [plans/0015-scene-asset-serialization-foundation.md](../plans/0015-scene-asset-serialization-foundation.md).
+  [specs/0015-scene-asset-serialization-foundation.md](specs/0015-scene-asset-serialization-foundation.md),
+  [plans/0015-scene-asset-serialization-foundation.md](plans/0015-scene-asset-serialization-foundation.md).
   Architectural Impact identified three new decisions, filed as
-  [ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)
+  [ADR-0052](adr/0052-scene-asset-module-boundary-and-ownership.md)
   (module boundary and ownership — AssetSystem's own scene DTOs never
   name a `world::` type),
-  [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md)
+  [ADR-0053](adr/0053-scene-artifact-format-versioning-and-node-identity.md)
   (artifact format versioning and node identity, including its own
   Human Review Correction settling `ValidatedSceneData`'s own
   no-public-default-constructor contract), and
-  [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)
+  [ADR-0054](adr/0054-scene-loading-transactional-instantiation-contract.md)
   (scene loading's own transactional instantiation contract), all
   `Accepted`. A pre-merge centralized final review (still on PR #74, no
   new PR) removed a test-only friend that had weakened
@@ -833,24 +833,24 @@ milestone being listed does not authorize starting it — see Section 1.
 - **Governance state:** **`Approved` Spec, `Approved` Plan. Implementation
   merged via [PR #78](https://github.com/slmao/Atlantis/pull/78)
   (2026-08-24)** —
-  [specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md),
-  [plans/0016-texture-sampler-foundation.md](../plans/0016-texture-sampler-foundation.md).
+  [specs/0016-texture-sampler-foundation.md](specs/0016-texture-sampler-foundation.md),
+  [plans/0016-texture-sampler-foundation.md](plans/0016-texture-sampler-foundation.md).
   Architectural Impact identified three new decisions, filed as
-  [ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)
+  [ADR-0055](adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)
   (`SampledTexture`/`Sampler` RHI module boundary and ownership),
-  [ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md)
+  [ADR-0056](adr/0056-texture-upload-resource-state-and-descriptor-binding.md)
   (texture upload, resource state, and descriptor binding), and
-  [ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md)
+  [ADR-0057](adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md)
   (texture asset format, decoder dependency, and color-space contract),
   all `Accepted`, alongside an **Accepted Amendment** to the
-  already-`Accepted` [ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)
+  already-`Accepted` [ADR-0041](adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)
   (widening `stb_image`'s linkage from test-only to Tools/cooker use).
   **A real post-merge gap was found and corrected in two further PRs,
   not silently patched into PR #78:** Human Review found that PR #78's
   own textured fixture cooked one shared source PNG twice under two
   `NAME`s/color spaces, so both cooked artifacts derived the same
   AssetId from the same logical path -- silently violating
-  [ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md)'s
+  [ADR-0044](adr/0044-asset-system-identity-provenance-and-import-methodology.md)'s
   one-asset-one-AssetId contract, tolerated by a collision-detector
   bypass in `atlantis_add_texture_asset()`.
   [PR #79](https://github.com/slmao/Atlantis/pull/79) (2026-08-24,
@@ -864,7 +864,7 @@ milestone being listed does not authorize starting it — see Section 1.
   `cook_texture.h`/`load_texture.h`, following the same
   cook/artifact/metadata-sidecar/load shape mesh and scene already
   established); a new RHI `SampledTexture`/`Sampler` pair
-  ([ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md));
+  ([ADR-0055](adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md));
   a new RenderGraph sampled-resource binding kind and a one-time
   CPU→GPU upload integrated into the same single `Device::submit()`
   call as the real draw and readback, against a real,
@@ -943,13 +943,13 @@ milestone being listed does not authorize starting it — see Section 1.
 - **Governance state:** **`Approved` Spec, `Approved` Plan. Implementation
   merged via [PR #84](https://github.com/slmao/Atlantis/pull/84)
   (2026-08-26)** —
-  [specs/0017-mesh-uv-attribute-foundation.md](../specs/0017-mesh-uv-attribute-foundation.md),
-  [plans/0017-mesh-uv-attribute-foundation.md](../plans/0017-mesh-uv-attribute-foundation.md).
+  [specs/0017-mesh-uv-attribute-foundation.md](specs/0017-mesh-uv-attribute-foundation.md),
+  [plans/0017-mesh-uv-attribute-foundation.md](plans/0017-mesh-uv-attribute-foundation.md).
   Architectural Impact identified one new decision, filed as
-  [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+  [ADR-0058](adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
   (static mesh UV0 vertex layout and sampling convention), `Accepted`,
   which directly narrowed an already-`Accepted` sentence of
-  [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
+  [ADR-0045](adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
   (previously scoped to "position and color" only) -- ADR-0045's own
   "Accepted Amendment -- 2026-08-25" section records that widening,
   accepted in the same Human Review pass. Closes Spec 0016's own named,
@@ -1014,13 +1014,13 @@ milestone being listed does not authorize starting it — see Section 1.
 - **Governance state:** **`Approved` Spec, `Approved` Plan. Implemented
   and merged via [PR #88](https://github.com/slmao/Atlantis/pull/88)
   (2026-08-28)** —
-  [specs/0018-material-asset-scene-binding-foundation.md](../specs/0018-material-asset-scene-binding-foundation.md),
-  [plans/0018-material-asset-scene-binding-foundation.md](../plans/0018-material-asset-scene-binding-foundation.md).
+  [specs/0018-material-asset-scene-binding-foundation.md](specs/0018-material-asset-scene-binding-foundation.md),
+  [plans/0018-material-asset-scene-binding-foundation.md](plans/0018-material-asset-scene-binding-foundation.md).
   Architectural Impact identified two new decisions, filed as
-  [ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)
+  [ADR-0059](adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)
   (Material Asset's own module boundary, artifact/metadata format, and
   closed `MaterialKind`-to-built-in-shader identity scheme) and
-  [ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md)
+  [ADR-0060](adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md)
   (Scene Asset/`World` schema widening, per-scene manifest extension,
   and Runtime's two-phase CPU-transaction/deferred-GPU-realization
   contract), both `Accepted`. Closes Spec 0016's/Spec 0017's own named,
@@ -1099,7 +1099,7 @@ milestone being listed does not authorize starting it — see Section 1.
   verification (both Debug and Release, literal process exit code 0,
   zero Vulkan Validation Layers output) are both PASS, recorded
   2026-08-29 as PR comments. See
-  [plans/0018-material-asset-scene-binding-foundation.md](../plans/0018-material-asset-scene-binding-foundation.md)'s
+  [plans/0018-material-asset-scene-binding-foundation.md](plans/0018-material-asset-scene-binding-foundation.md)'s
   own "Post-Merge Status Update" for the full record.
 - **Not implemented** (per Spec 0018's own Non-Goals, unchanged): PBR,
   metallic/roughness, or any multi-texture material model; lighting,
@@ -1121,17 +1121,17 @@ milestone being listed does not authorize starting it — see Section 1.
 - **Governance state:** **`Approved` Spec, `Approved` Plan. Implemented
   and merged via [PR #93](https://github.com/slmao/Atlantis/pull/93)
   (2026-08-29)** —
-  [specs/0020-mesh-normal-attribute-foundation.md](../specs/0020-mesh-normal-attribute-foundation.md),
-  [plans/0020-mesh-normal-attribute-foundation.md](../plans/0020-mesh-normal-attribute-foundation.md).
+  [specs/0020-mesh-normal-attribute-foundation.md](specs/0020-mesh-normal-attribute-foundation.md),
+  [plans/0020-mesh-normal-attribute-foundation.md](plans/0020-mesh-normal-attribute-foundation.md).
   Architectural Impact identified one new decision, filed as
-  [ADR-0063](../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md)
+  [ADR-0063](adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md)
   (the normal attribute's own schema, four real named byte-offset
   constants, version bump, double-precision length-squared numeric
   contract, and coordinate convention), `Accepted`, plus Accepted
   Amendments narrowing the already-`Accepted`
-  [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
+  [ADR-0045](adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
   and
-  [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md).
+  [ADR-0058](adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md).
   Closes Lighting Foundation's own named, hard, non-negotiable
   prerequisite (Spec 0019 D1) — a real, asset-sourced vertex normal was
   confirmed absent anywhere in this codebase before this Milestone.
@@ -1191,7 +1191,7 @@ milestone being listed does not authorize starting it — see Section 1.
   a confirmed zero visual change is the entire, correct outcome (no
   human visual/interactive-window confirmation applies for the same
   reason). See
-  [plans/0020-mesh-normal-attribute-foundation.md](../plans/0020-mesh-normal-attribute-foundation.md)'s
+  [plans/0020-mesh-normal-attribute-foundation.md](plans/0020-mesh-normal-attribute-foundation.md)'s
   own "Post-Merge Status Update" for the full record.
 - **Not implemented** (per Spec 0020's own Non-Goals, unchanged):
   tangent/bitangent attributes, normal mapping, or any hard-edge/
@@ -1205,14 +1205,14 @@ milestone being listed does not authorize starting it — see Section 1.
 - **Governance state:** **`Approved` Spec, `Approved` Plan. Implemented
   and merged via [PR #96](https://github.com/slmao/Atlantis/pull/96)
   (2026-08-29)** —
-  [specs/0019-lighting-foundation.md](../specs/0019-lighting-foundation.md),
-  [plans/0019-lighting-foundation.md](../plans/0019-lighting-foundation.md).
+  [specs/0019-lighting-foundation.md](specs/0019-lighting-foundation.md),
+  [plans/0019-lighting-foundation.md](plans/0019-lighting-foundation.md).
   Architectural Impact identified two new decisions, filed as
-  [ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md)
+  [ADR-0061](adr/0061-world-light-component-and-scene-lighting-binding-boundary.md)
   (`World`'s new `Light` component, the Scene Asset format's light-node
   extension and its own hard, structural per-kind light-count cap, and
   Material's new `LitTextured` kind) and
-  [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)
+  [ADR-0062](adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)
   (the frame lighting data's own one-time-capture contract and exact
   CPU/GPU layout, the one real RHI decision this Spec required, and the
   complete, exact lighting math), both `Accepted`. Closed this
@@ -1292,7 +1292,7 @@ milestone being listed does not authorize starting it — see Section 1.
   (`world_scene`, never changed to `lighting_demo`) renders identically
   to its pre-Spec appearance, with normal resize/minimize/restore/close
   behavior, exit code 0 both times, zero log hits both times. See
-  [plans/0019-lighting-foundation.md](../plans/0019-lighting-foundation.md)'s
+  [plans/0019-lighting-foundation.md](plans/0019-lighting-foundation.md)'s
   own "Post-Merge Status Update" for the full record.
 - **Not implemented** (per Spec 0019's own Non-Goals, unchanged): PBR,
   metallic/roughness, or any physically-based shading model; shadows or
@@ -1312,10 +1312,10 @@ milestone being listed does not authorize starting it — see Section 1.
 - **Governance state:** **`Approved` Spec, `Approved` Plan. Implemented
   and merged via [PR #100](https://github.com/slmao/Atlantis/pull/100)
   (2026-08-30)** —
-  [specs/0021-descriptor-pool-capacity-foundation.md](../specs/0021-descriptor-pool-capacity-foundation.md),
-  [plans/0021-descriptor-pool-capacity-foundation.md](../plans/0021-descriptor-pool-capacity-foundation.md).
+  [specs/0021-descriptor-pool-capacity-foundation.md](specs/0021-descriptor-pool-capacity-foundation.md),
+  [plans/0021-descriptor-pool-capacity-foundation.md](plans/0021-descriptor-pool-capacity-foundation.md).
   Architectural Impact identified one decision, filed as
-  [ADR-0064](../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)
+  [ADR-0064](adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)
   (the descriptor-pool ownership/growth model), `Accepted`. Closes the
   real, pre-existing capacity gap the previous Milestone's own final
   review found, root-caused, and disclosed — human-directed, drafted
@@ -1380,7 +1380,7 @@ milestone being listed does not authorize starting it — see Section 1.
   `atlantis_runtime.exe` with zero test executables; all five existing
   goldens confirmed byte-for-byte/pixel-for-pixel unchanged — no golden
   was regenerated, since this Milestone changes zero rendered pixels.
-  See [plans/0021-descriptor-pool-capacity-foundation.md](../plans/0021-descriptor-pool-capacity-foundation.md)'s
+  See [plans/0021-descriptor-pool-capacity-foundation.md](plans/0021-descriptor-pool-capacity-foundation.md)'s
   own "Post-Merge Status Update" for the full record.
 - **Not implemented:** bindless rendering or descriptor indexing;
   descriptor buffers; a cross-frame descriptor-*set* caching/reuse
@@ -1399,8 +1399,8 @@ milestone being listed does not authorize starting it — see Section 1.
 - **Governance state:** **`Approved` Spec (corrected design), `Approved /
   Ready for Implementation` Plan. Implemented and merged via
   [PR #106](https://github.com/slmao/Atlantis/pull/106) (2026-08-30)** —
-  [specs/0022-dynamic-frame-uniform-updates-foundation.md](../specs/0022-dynamic-frame-uniform-updates-foundation.md),
-  [plans/0022-dynamic-frame-uniform-updates-foundation.md](../plans/0022-dynamic-frame-uniform-updates-foundation.md).
+  [specs/0022-dynamic-frame-uniform-updates-foundation.md](specs/0022-dynamic-frame-uniform-updates-foundation.md),
+  [plans/0022-dynamic-frame-uniform-updates-foundation.md](plans/0022-dynamic-frame-uniform-updates-foundation.md).
   This Spec's own first draft proposed a new RHI synchronization method
   to close what it believed was a real, currently-shipped Camera/
   Lighting write-timing race; a pre-drafting governance gate for this
@@ -1410,7 +1410,7 @@ milestone being listed does not authorize starting it — see Section 1.
   during Plan 0006's own post-implementation GPU testing for an
   unrelated hazard) that closes it on the windowed path — and the Spec
   was corrected before approval to a substantially narrower design.
-  [ADR-0065](../adr/0065-explicit-pre-write-submission-drain-for-frame-uniform-safety.md),
+  [ADR-0065](adr/0065-explicit-pre-write-submission-drain-for-frame-uniform-safety.md),
   which would have recorded that new RHI method, is `Rejected` — its own
   Decision was never implemented; it is not a current architectural
   decision and must not be read as one. Human-directed, drafted ahead of
@@ -1473,7 +1473,7 @@ milestone being listed does not authorize starting it — see Section 1.
   tests' own variable-isolation tightened; a strengthened host/device
   concurrency argument for the new windowed accessor) — none changing
   scope, the container/algorithm, or any public API. See
-  [plans/0022-dynamic-frame-uniform-updates-foundation.md](../plans/0022-dynamic-frame-uniform-updates-foundation.md)'s
+  [plans/0022-dynamic-frame-uniform-updates-foundation.md](plans/0022-dynamic-frame-uniform-updates-foundation.md)'s
   own "Implementation Status Update" for the full record.
 - **Not implemented:** PBR Material, Shadow, IBL, or Post-processing (all
   explicitly deferred, unrelated to this Milestone's own scope); a ring
@@ -1490,8 +1490,8 @@ milestone being listed does not authorize starting it — see Section 1.
   discriminator), `Approved / Ready for Implementation` Plan.
   Implemented and merged via
   [PR #111](https://github.com/slmao/Atlantis/pull/111) (2026-08-31)** —
-  [specs/0023-pbr-material-foundation.md](../specs/0023-pbr-material-foundation.md),
-  [plans/0023-pbr-material-foundation.md](../plans/0023-pbr-material-foundation.md).
+  [specs/0023-pbr-material-foundation.md](specs/0023-pbr-material-foundation.md),
+  [plans/0023-pbr-material-foundation.md](plans/0023-pbr-material-foundation.md).
   Human-directed, drafted ahead of Candidate Backlog Section B's own
   Android Platform (Candidate Order 1, unaffected) and ahead of
   Shadow/IBL/Post-processing.
@@ -1546,14 +1546,14 @@ milestone being listed does not authorize starting it — see Section 1.
   `include/` with no governance document ever naming that location
   (demoted to a private `src/renderer/src/` header, zero functional
   change). See
-  [plans/0023-pbr-material-foundation.md](../plans/0023-pbr-material-foundation.md)'s
+  [plans/0023-pbr-material-foundation.md](plans/0023-pbr-material-foundation.md)'s
   own "Post-Merge Status Update" for the full record.
 - **Subsequent status:** Spec 0024 implemented the HDR intermediate and shared
   output-transfer pass via [PR #115](https://github.com/slmao/Atlantis/pull/115).
   Spec 0025 then implemented image-based lighting via
   [PR #119](https://github.com/slmao/Atlantis/pull/119). Shadows and normal
   mapping/tangent-space input remain unimplemented; approved
-  [Spec 0026](../specs/0026-visible-sky-foundation.md) proposes a visible sky
+  [Spec 0026](specs/0026-visible-sky-foundation.md) proposes a visible sky
   background reusing Spec 0025's environment asset and Spec 0024's HDR/
   output-transform pipeline. Physical camera/exposure and post-processing
   beyond the fixed output transform remain deferred; Android/iOS/Linux
@@ -1595,10 +1595,10 @@ anything architectural, its own ADR before any of the below moves past
 | M4 | **Met.** A first mesh is drawn end-to-end through Renderer → RenderGraph → RHI → Vulkan Backend, with a working camera and one material, Validation Layers clean — see `examples/minimal_renderer_demo` and the Spec 0007 row in Section 4. |
 | M5 | A shader authored in Phase 1's chosen source form compiles to SPIR-V, is reflected, and backs a working pipeline used by M4's mesh draw. |
 | M6 | The same Renderer output from M4 appears on an Android device/emulator via the Android Platform + Vulkan Backend path, with no Renderer/RenderGraph code fork. |
-| M7 | **Met** (headless GPU-readback path). The same rendering stack from M4, driven headlessly via `OffscreenTarget`, produces a GPU-readback image with no window or swapchain involved — see `examples/headless_rendering_demo` and the Spec 0010 row in [specs/README.md](../specs/README.md). Pixel/image-level comparison *against the windowed output* is explicitly Milestone 8/Image Regression Testing's own, separate scope, not part of M7/Spec 0010 — see the M8 row below (`Approved`, implemented, partially met). |
-| M8 | **Partially met.** A human/agent-run golden-image comparison (`ctest -L gpu` against `tests/image_regression/`) genuinely catches an intentionally introduced rendering regression and passes on a known-good build — see `specs/README.md`'s Spec 0011 row and [PR #52](https://github.com/slmao/Atlantis/pull/52) for the real, recorded proof. **Not yet met:** this comparison does not yet run in CI or gate merges automatically — no CI pipeline exists in this repository (see [docs/process/ci-strategy.md](../docs/process/ci-strategy.md)). |
-| M9 | **Met.** A real, checked-in authoring-source mesh (`assets/meshes/minimal_cube.mesh.txt`) is cooked deterministically, loaded as CPU-only data, and rendered through the existing, unmodified Renderer → RenderGraph → RHI → Vulkan Backend stack by a test-owned composition root — pixel-identical (zero channel difference) to the M8 golden — see the Spec 0012 row in [specs/README.md](../specs/README.md). |
-| M10 | **Met** (composition and lifecycle). A real `atlantis_runtime` Windows executable, backed by the `atlantis_runtime_host` composition library, opens a live window and draws the same Asset-System-sourced mesh and Shader-System-compiled material through the existing, unmodified Renderer → RenderGraph → RHI → Vulkan Backend stack; interactive resize, minimize/restore, and close verified programmatically (real Win32 message injection), Vulkan Validation Layers clean throughout. **Not yet met:** an actual by-eye windowed pixel/visual check of the rendered frame against the existing golden — no automated screenshot capture was possible from the implementing agent session; this remains an outstanding, human-only verification step (see the Spec 0013 row in [specs/README.md](../specs/README.md)). |
+| M7 | **Met** (headless GPU-readback path). The same rendering stack from M4, driven headlessly via `OffscreenTarget`, produces a GPU-readback image with no window or swapchain involved — see `examples/headless_rendering_demo` and the Spec 0010 row in [specs/README.md](specs/README.md). Pixel/image-level comparison *against the windowed output* is explicitly Milestone 8/Image Regression Testing's own, separate scope, not part of M7/Spec 0010 — see the M8 row below (`Approved`, implemented, partially met). |
+| M8 | **Partially met.** A human/agent-run golden-image comparison (`ctest -L gpu` against `tests/image_regression/`) genuinely catches an intentionally introduced rendering regression and passes on a known-good build — see `specs/README.md`'s Spec 0011 row and [PR #52](https://github.com/slmao/Atlantis/pull/52) for the real, recorded proof. **Not yet met:** this comparison does not yet run in CI or gate merges automatically — no CI pipeline exists in this repository (see [docs/process/ci-strategy.md](process/ci-strategy.md)). |
+| M9 | **Met.** A real, checked-in authoring-source mesh (`assets/meshes/minimal_cube.mesh.txt`) is cooked deterministically, loaded as CPU-only data, and rendered through the existing, unmodified Renderer → RenderGraph → RHI → Vulkan Backend stack by a test-owned composition root — pixel-identical (zero channel difference) to the M8 golden — see the Spec 0012 row in [specs/README.md](specs/README.md). |
+| M10 | **Met** (composition and lifecycle). A real `atlantis_runtime` Windows executable, backed by the `atlantis_runtime_host` composition library, opens a live window and draws the same Asset-System-sourced mesh and Shader-System-compiled material through the existing, unmodified Renderer → RenderGraph → RHI → Vulkan Backend stack; interactive resize, minimize/restore, and close verified programmatically (real Win32 message injection), Vulkan Validation Layers clean throughout. **Not yet met:** an actual by-eye windowed pixel/visual check of the rendered frame against the existing golden — no automated screenshot capture was possible from the implementing agent session; this remains an outstanding, human-only verification step (see the Spec 0013 row in [specs/README.md](specs/README.md)). |
 
 ## 7. Explicitly deferred or off-limits for now
 
@@ -1617,15 +1617,15 @@ already-approved:
   milestone. Conflicts with `D:\blueprint.md`'s §14 graphics-backend
   roadmap (Vulkan → D3D12 → Metal → WebGPU); resolved per
   [AGENTS.md](../AGENTS.md): Phase 1 is Vulkan-only, and no second
-  backend is scaffolded "for later." [ADR-0037](../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md)
+  backend is scaffolded "for later." [ADR-0037](adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md)
   additionally now records Direct3D 12 as a long-term candidate sibling
   Device Backend — a boundary-level direction only, not a change to
   this milestone/Phase-1 conclusion.
 - **Metal backend** (native, for macOS/iOS). iOS's own graphics-backend
   choice (MoltenVK vs. a native Metal RHI backend) is explicitly
   undecided — see [README.md](../README.md) and
-  [ADR-0005](../adr/0005-platform-module-multi-os-windowing.md).
-  [ADR-0037](../adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md)
+  [ADR-0005](adr/0005-platform-module-multi-os-windowing.md).
+  [ADR-0037](adr/0037-long-term-device-backend-extensibility-without-phase1-scaffolding.md)
   additionally now records Metal as a long-term candidate sibling Device
   Backend, without deciding the MoltenVK-vs-native-Metal question above.
 - **WebGPU backend.** Same as D3D12 above — named in
@@ -1649,7 +1649,7 @@ already-approved:
   Atlantis-approved.
 - **UGC VM.** `D:\blueprint.md` §10 proposes Luau; not Atlantis-approved.
 - **GPU memory allocator strategy.** Explicitly deferred by
-  [ADR-0015](../adr/0015-vulkan-memory-allocation-deferred.md) — no
+  [ADR-0015](adr/0015-vulkan-memory-allocation-deferred.md) — no
   code before whichever future spec resolves this may depend on VMA or
   write a hand-rolled suballocator, and no RHI/Vulkan Backend interface
   may presume either strategy.

@@ -15,7 +15,7 @@
 > platform at all.** This revision introduces **Atlantis Platform** as a
 > named module and generalizes the windowed rendering path across
 > multiple operating systems. See
-> [ADR-0005](../../adr/0005-platform-module-multi-os-windowing.md).
+> [ADR-0005](../adr/0005-platform-module-multi-os-windowing.md).
 
 ## Purpose
 
@@ -149,9 +149,9 @@ likely to get silently blurred later, so it is called out on its own:
   interface for Phase 1, on both Windows and Android. The only module
   permitted to include Vulkan headers or reference `Vk*` types.
 
-See [ADR-0001](../../adr/0001-rhi-backend-independence.md),
-[ADR-0002](../../adr/0002-presentation-rendertarget-unification.md), and
-[ADR-0005](../../adr/0005-platform-module-multi-os-windowing.md).
+See [ADR-0001](../adr/0001-rhi-backend-independence.md),
+[ADR-0002](../adr/0002-presentation-rendertarget-unification.md), and
+[ADR-0005](../adr/0005-platform-module-multi-os-windowing.md).
 
 ## Windowed vs. headless: the shared path, across platforms
 
@@ -204,7 +204,7 @@ Windowed shipped first per Phase 1 sequencing (on Windows and/or
 Android), and headless has since followed (Spec 0010, `Approved`,
 implemented and merged via
 [PR #48](https://github.com/slmao/Atlantis/pull/48) — see the Spec 0010
-row in [specs/README.md](../../specs/README.md) for full scope and
+row in [specs/README.md](../specs/README.md) for full scope and
 verification detail, including its own disclosed single-GPU-vendor
 verification limitation). iOS remains future and undecided (see above).
 The shared `RenderTarget` boundary is what *allowed* headless to follow
@@ -223,10 +223,10 @@ whenever it is specced — not a reason to have built any of them early.
 - [docs/rhi/README.md](../rhi/README.md),
   [docs/render_graph/README.md](../render_graph/README.md),
   [docs/renderer/README.md](../renderer/README.md) — per-module scope notes.
-- ADRs: [0001](../../adr/0001-rhi-backend-independence.md),
-  [0002](../../adr/0002-presentation-rendertarget-unification.md),
-  [0003](../../adr/0003-resource-rendertarget-ownership-model.md),
-  [0004](../../adr/0004-phase1-threading-baseline.md),
-  [0005](../../adr/0005-platform-module-multi-os-windowing.md) — all
+- ADRs: [0001](../adr/0001-rhi-backend-independence.md),
+  [0002](../adr/0002-presentation-rendertarget-unification.md),
+  [0003](../adr/0003-resource-rendertarget-ownership-model.md),
+  [0004](../adr/0004-phase1-threading-baseline.md),
+  [0005](../adr/0005-platform-module-multi-os-windowing.md) — all
   `Proposed`, none `Accepted`. See the final report for what requires
   human review before any of this can move to `Accepted`/implementation.

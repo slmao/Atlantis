@@ -6,7 +6,7 @@ namespace atlantis::world {
 
 enum class LightKind { Directional, Point };
 
-// See specs/0019-lighting-foundation.md D2, plans/0019-lighting-foundation.md
+// See docs/specs/0019-lighting-foundation.md D2, docs/plans/0019-lighting-foundation.md
 // P1. No direction/position of its own -- both are re-derived from the
 // owning entity's own current world matrix, the one time Runtime ever
 // reads them (Spec 0019 D9): normalize(-column2) for Directional,

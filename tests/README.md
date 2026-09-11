@@ -1,18 +1,18 @@
 # tests/
 
 **`core/`** — unit tests for Atlantis Core, per
-[specs/0001-project-foundation.md](../specs/0001-project-foundation.md),
-[plans/0001-project-foundation.md](../plans/0001-project-foundation.md),
-and [ADR-0007](../adr/0007-test-framework.md) (Catch2 v3, fetched via
-CMake `FetchContent` per [ADR-0006](../adr/0006-dependency-management.md)).
+[specs/0001-project-foundation.md](../docs/specs/0001-project-foundation.md),
+[plans/0001-project-foundation.md](../docs/plans/0001-project-foundation.md),
+and [ADR-0007](../docs/adr/0007-test-framework.md) (Catch2 v3, fetched via
+CMake `FetchContent` per [ADR-0006](../docs/adr/0006-dependency-management.md)).
 Run via `ctest --test-dir build -C Debug -LE gpu --output-on-failure`
 (GPU-independent; see below for why a bare `ctest` is not recommended
 once `gpu`-labeled tests exist in the same build), or by invoking
 `atlantis_core_tests` directly.
 
 **`platform/`** — tests for Atlantis Platform, per
-[specs/0002-platform-foundation.md](../specs/0002-platform-foundation.md)
-and [plans/0002-platform-foundation.md](../plans/0002-platform-foundation.md),
+[specs/0002-platform-foundation.md](../docs/specs/0002-platform-foundation.md)
+and [plans/0002-platform-foundation.md](../docs/plans/0002-platform-foundation.md),
 built as the `atlantis_platform_tests` Catch2 v3 executable:
 - Portable, no-GPU, no-live-window unit tests (`NativeWindowHandle`,
   `PlatformEvent`, `WindowExtent`, the monotonic clock) plus a compile/
@@ -40,10 +40,10 @@ registered elsewhere in the same build), or by invoking
 `atlantis_platform_tests "[integration]"`).
 
 **`rhi/`** — unit tests for Atlantis RHI, per
-[specs/0003-rhi-vulkan-windowed-foundation.md](../specs/0003-rhi-vulkan-windowed-foundation.md)/[plans/0003-rhi-vulkan-windowed-foundation.md](../plans/0003-rhi-vulkan-windowed-foundation.md),
-[specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md)/[plans/0006-rhi-render-graph-frame-execution-foundation.md](../plans/0006-rhi-render-graph-frame-execution-foundation.md),
+[specs/0003-rhi-vulkan-windowed-foundation.md](../docs/specs/0003-rhi-vulkan-windowed-foundation.md)/[plans/0003-rhi-vulkan-windowed-foundation.md](../docs/plans/0003-rhi-vulkan-windowed-foundation.md),
+[specs/0006-rhi-render-graph-frame-execution-foundation.md](../docs/specs/0006-rhi-render-graph-frame-execution-foundation.md)/[plans/0006-rhi-render-graph-frame-execution-foundation.md](../docs/plans/0006-rhi-render-graph-frame-execution-foundation.md),
 and
-[specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md)/[plans/0007-minimal-renderer.md](../plans/0007-minimal-renderer.md),
+[specs/0007-minimal-renderer.md](../docs/specs/0007-minimal-renderer.md)/[plans/0007-minimal-renderer.md](../docs/plans/0007-minimal-renderer.md),
 built as the `atlantis_rhi_tests` Catch2 v3 executable. GPU-independent:
 covers RHI's value types (`Extent2D`, `Format`, `SwapchainMetadata`,
 `PresentationError`, `ResourceState`, `ClearColorValue`) — defaults,
@@ -107,10 +107,10 @@ the GPU-required ones — prefer the explicit `-LE gpu`/`-L gpu` commands
 above over a bare invocation.
 
 **`render_graph/`** — unit tests for Atlantis RenderGraph, per
-[specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md)/[plans/0005-render-graph-foundation.md](../plans/0005-render-graph-foundation.md),
-[specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md)/[plans/0006-rhi-render-graph-frame-execution-foundation.md](../plans/0006-rhi-render-graph-frame-execution-foundation.md),
+[specs/0005-render-graph-foundation.md](../docs/specs/0005-render-graph-foundation.md)/[plans/0005-render-graph-foundation.md](../docs/plans/0005-render-graph-foundation.md),
+[specs/0006-rhi-render-graph-frame-execution-foundation.md](../docs/specs/0006-rhi-render-graph-frame-execution-foundation.md)/[plans/0006-rhi-render-graph-frame-execution-foundation.md](../docs/plans/0006-rhi-render-graph-frame-execution-foundation.md),
 and
-[specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md)/[plans/0007-minimal-renderer.md](../plans/0007-minimal-renderer.md),
+[specs/0007-minimal-renderer.md](../docs/specs/0007-minimal-renderer.md)/[plans/0007-minimal-renderer.md](../docs/plans/0007-minimal-renderer.md),
 built as the `atlantis_render_graph_tests` Catch2 v3 executable.
 Entirely GPU-independent — no test in this executable carries the CTest
 `gpu` label; a fake, non-Vulkan `CommandList` (`fake_command_list.h`)
@@ -131,7 +131,7 @@ Vulkan device or window is required. Run via
 GPU-independent command as every other suite in this directory.
 
 **`renderer/`** — unit tests for Atlantis Renderer, per
-[specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md)/[plans/0007-minimal-renderer.md](../plans/0007-minimal-renderer.md),
+[specs/0007-minimal-renderer.md](../docs/specs/0007-minimal-renderer.md)/[plans/0007-minimal-renderer.md](../docs/plans/0007-minimal-renderer.md),
 built as the `atlantis_renderer_tests` Catch2 v3 executable
 (`renderer_ownership_tests.cpp`). Entirely GPU-independent — compile-time
 and fake-`CommandList` checks that `Renderer` retains no GPU resource or
@@ -140,7 +140,7 @@ created, cached, or looked up by `Renderer` itself. Run via
 `ctest --test-dir build -C Debug -LE gpu --output-on-failure`.
 
 **`asset_system/`** — unit tests for Atlantis Asset System, per
-[specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md)/[plans/0012-asset-system-foundation.md](../plans/0012-asset-system-foundation.md),
+[specs/0012-asset-system-foundation.md](../docs/specs/0012-asset-system-foundation.md)/[plans/0012-asset-system-foundation.md](../docs/plans/0012-asset-system-foundation.md),
 built as the `atlantis_asset_system_tests` Catch2 v3 executable.
 Entirely GPU-independent — no test in this executable carries the CTest
 `gpu` label. Covers `StaticMeshAssetData` construction/move semantics;
@@ -180,7 +180,7 @@ per the same Spec/Plan 0012 references, built as two executables:
 
 **`image_regression/`** — tests for Atlantis's image regression
 harness, per
-[specs/0011-image-regression-testing-foundation.md](../specs/0011-image-regression-testing-foundation.md)/[plans/0011-image-regression-testing-foundation.md](../plans/0011-image-regression-testing-foundation.md),
+[specs/0011-image-regression-testing-foundation.md](../docs/specs/0011-image-regression-testing-foundation.md)/[plans/0011-image-regression-testing-foundation.md](../docs/plans/0011-image-regression-testing-foundation.md),
 built as two executables:
 - `atlantis_image_regression_tests` — GPU-independent, carries no
   CTest `gpu` label. Covers the pixel-diff comparison algorithm
@@ -209,7 +209,7 @@ reachable from an ordinary `ctest` run) are this suite's own
 supporting subdirectories, not additional test executables. See
 [docs/process/testing-strategy.md](../docs/process/testing-strategy.md)
 for the settled golden format/location/tolerance and
-[ADR-0041](../adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)/[ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
+[ADR-0041](../docs/adr/0041-image-regression-testing-golden-image-data-format-and-codec-dependency.md)/[ADR-0042](../docs/adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
 for the full design. Run the GPU-independent suite the same way as
 every other suite above; run the GPU-required suite via
 `ctest --test-dir build -C Debug -L gpu --output-on-failure` on a real,

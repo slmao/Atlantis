@@ -7,7 +7,7 @@
 
 // GPU-required, windowed integration coverage for Presentation's non-frame
 // lifecycle (Spec 0003 / ADR-0016), per
-// plans/0003-rhi-vulkan-windowed-foundation.md Section 8/Implementation
+// docs/plans/0003-rhi-vulkan-windowed-foundation.md Section 8/Implementation
 // Order Step 10. Windows-only, real Vulkan device, real window -- see
 // tests/platform/windows_platform_smoke_tests.cpp for the sibling Windows
 // test boundary this file mirrors (Platform's own lifecycle/event
