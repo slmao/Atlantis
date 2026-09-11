@@ -9,6 +9,9 @@
   all ten implementation gates below, and the complete verification checklist.
   Implementation is authorized only after this approval record merges to
   `main` through PR #118.
+- **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
+  [PR #154](https://github.com/slmao/Atlantis/pull/154) Batch 7. Original scope, P1–P4, all ten Milestones, and
+  the full Verification Checklist retained.
 
 ## Objective
 
