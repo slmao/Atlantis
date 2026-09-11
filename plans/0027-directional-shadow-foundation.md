@@ -20,6 +20,11 @@
   matrix exactly; any deviation found necessary during Implementation is
   called out explicitly, not silently applied (per this Plan's own
   Non-negotiable rule and AGENTS.md).
+- **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
+  Batch 7 PR (pending). Original scope, P1-P11, all ten Milestones, and
+  the full Verification Checklist retained; the load-bearing "Proposed
+  Correction" section for drawFrame() default arguments is preserved in
+  full, unedited.
 
 ## Objective
 

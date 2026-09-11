@@ -21,6 +21,9 @@
   in-place corrections. **This approval authorizes Implementation of
   this Plan only once its own Implementation PR has merged — not
   before.**
+- **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
+  Batch 7 PR (pending). Original scope, all ten Milestones, and the
+  full Verification Checklist retained.
 
 ## Objective
 

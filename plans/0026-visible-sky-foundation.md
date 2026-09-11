@@ -11,6 +11,10 @@
   requirement; P2's existing-matrix ray reconstruction; Milestone 6's
   independent `N+4` descriptor-pool `TEST_CASE`. Implementation starts
   only after this PR merges to `main` — not before.
+- **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
+  Batch 7 PR (pending). Original scope, P1–P5, all seven Milestones, and
+  the full Verification Checklist retained; the load-bearing "Accepted
+  Correction — 2026-09-04" section is preserved in full, unedited.
 
 ## Objective
 
