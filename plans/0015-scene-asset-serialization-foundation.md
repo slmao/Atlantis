@@ -2,23 +2,19 @@
 
 - **Spec:** [specs/0015-scene-asset-serialization-foundation.md](../specs/0015-scene-asset-serialization-foundation.md)
   (`Approved`, Human Review Approval recorded 2026-08-23, accepting all
-  16 items of that Spec's own Human Review Decision Table — see that
-  Spec's own approval note for the full record)
-- **Status:** `Approved / Ready for Implementation`. See "Human Review
-  Approval" below for the full record.
+  16 items of that Spec's own Human Review Decision Table)
+- **Status:** `Approved / Ready for Implementation`.
 - **Author:** Drafted by Claude Code (AI agent) at explicit human
   direction, following AGENTS.md's Spec → Plan → Human Review →
   Implementation path. Reviewed and approved by a human — see Human
-  Review Approval immediately below; the two "Independent Review"
-  sections further below are the self-review record that preceded and
-  fed that approval, not a substitute for it.
+  Review Approval immediately below.
 - **Human Review Approval (2026-08-23):** Reviewed and approved by
-  slmao (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
-  maintainer) on 2026-08-23, accepting this Plan in full as revised
-  through both Independent Review rounds below (the second of which
-  found and fixed a real compile error, a misleading load-order
-  description, an over-triggering CMake dependency, and completed a
-  switch-exhaustiveness inventory). This approval explicitly covers:
+  slmao (`slmao <slmaosjtu@gmail.com>`) on 2026-08-23, accepting this
+  Plan in full as revised through two Independent Review rounds
+  (condensed below — the second found and fixed a real compile error, a
+  misleading load-order description, an over-triggering CMake
+  dependency, and completed a switch-exhaustiveness inventory). This
+  approval explicitly covers:
 
   1. **The full ten-step Milestones / Task Breakdown**, its own
      Sequencing & Dependencies, and the Files / Modules Touched scope —
@@ -86,6 +82,45 @@
   This approval does not authorize Implementation to begin immediately
   — per this repository's own PR-based workflow, this Plan's own PR
   must be merged first; see [specs/README.md](../specs/README.md).
+- **Historical scope — Independent Review, two rounds (2026-08-23):**
+  a self-review pass confirmed every C++/CMake shape this Plan proposes
+  against `main`'s own real, current source tree, not the Spec/ADRs'
+  illustrative prose alone (`Result<T,E>` shape, `cook_command.cpp`'s
+  real logical-path handling, `Atlantis::World`'s existing `PUBLIC` link
+  to `Atlantis::AssetSystem`, `AssetMetadata`'s real field shape) — no
+  Spec/ADR content was re-litigated. Round 2 found and fixed six
+  concrete, mechanical issues, each folded directly into the D-sections
+  above rather than left as a note: (1) a real compile error —
+  `RuntimeApplication::world_` is a bare, non-move-assignable `World`
+  in `main`, so the original `world_ = std::move(world)` would not
+  compile; fixed by retyping to `std::optional<World>` and publishing
+  via `emplace()` (D2, D10); (2) a misleading claim that the resolver's
+  own `AssetId`-sorted storage established load order, corrected to
+  state the resolver is a point-lookup structure only and the real
+  ordering guarantee comes from walking `ValidatedSceneData`'s own node
+  array in first-reference order (D2/D8/D10; V19 rewritten to
+  deliberately test a scene where first-reference and `AssetId`-numeric
+  order disagree); (3) an over-triggering CMake `DEPENDS` on every mesh
+  dependency's own content edit, fixed by moving those edges to
+  `add_dependencies()` (ordering only), out of the custom command's own
+  staleness check (D7's "Rebuild scoping"); (4) a bare "multi-config-safe"
+  assertion replaced with a citation to `src/runtime/CMakeLists.txt`'s
+  own real, already-`Accepted` precedent; (5) an incomplete
+  switch-exhaustiveness inventory completed into D2's own table, adding
+  one new, disclosed `/w14062` on `atlantis_asset_cooker_lib`; (6) a
+  wording-precision discrepancy between Spec 0015's condensed Human
+  Review Approval summary (item 3) and ADR-0053's own more detailed
+  Decision text over `ValidatedSceneData`'s default constructor,
+  disclosed rather than silently resolved — since settled by ADR-0053's
+  own "Human Review Correction (2026-08-23)" in the "no public default
+  construction" direction, which this Plan's D2/D4/D6 and V11/V28
+  already reflect.
+- **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
+  Batch 4 PR (pending). Original scope, D1–D11, the Milestones/Task
+  Breakdown, and the full V1–V28 matrix retained; the two Independent
+  Review rounds are condensed above into their own load-bearing
+  findings, each of which is already reflected in the D-sections they
+  fixed.
 
 ## Objective
 
@@ -372,7 +407,7 @@ class ValidatedSceneData {
   ```
 - **Switch-exhaustiveness inventory (every new enum, every consuming
   switch, exact protection)** — enumerated explicitly rather than
-  assumed, per this Plan's own Independent Review:
+  assumed:
 
   | Enum | Consuming switch | Target | `/w14062` already present? |
   |---|---|---|---|
@@ -478,9 +513,9 @@ node: node_id=6 parent=none position=0.0 2.2 7.0 rotation=-0.3054 0.0 0.0 scale=
   on a node meant to carry a `Camera`.
 - `active_camera: <node_id>`: a scene-level field (not per-node),
   parsed once, before any `node:` line — the grammar has exactly one
-  slot for it, so "more than one node claims the active-camera role"
-  is not a reachable authoring mistake this grammar can even express
-  (Spec 0015's own Human Review Approval item 9 — `UndeclaredActiveCameraReference`
+  slot for it, so "more than one node claims the active-camera role" is
+  not a reachable authoring mistake this grammar can even express (Spec
+  0015's own Human Review Approval item 9 — `UndeclaredActiveCameraReference`
   and `ActiveCameraMissingCamera` are the two reachable active-camera
   mistakes, both checked, D4).
 
@@ -690,9 +725,11 @@ function(atlantis_add_scene_asset)
   # config a multi-config (Visual Studio) generator later builds --
   # this manifest's own content (paths, not compiled binaries) does not
   # vary by config, matching atlantis_add_static_mesh_asset()'s own
-  # ARTIFACT_PATH/METADATA_PATH (also config-independent, both already
+  # ARTIFACT_PATH/METADATA_PATH (also config-independent, already
   # proven working under this project's own real Visual Studio
-  # generator). No $<CONFIG> generator expression is needed or used.
+  # generator -- src/runtime/CMakeLists.txt lines 69-80's own comment
+  # states this explicitly). No $<CONFIG> generator expression is
+  # needed or used.
   file(GENERATE OUTPUT "${manifest_path}" CONTENT "${manifest_lines}")
 
   add_custom_command(
@@ -1195,12 +1232,12 @@ the same diff.
   golden — Spec 0015's own explicit requirement), `tests/image_regression/fixture/world_scene_fixture.cpp`
   (Spec 0015 Human Review Decision Table item 11 — the existing hand-
   authored-fixture path is re-run unmodified, not migrated).
-- **Checked in vs. build-tree-only — explicit, per Independent Review.**
-  Checked in: `assets/scenes/world_scene.scene.txt` (the authoring
-  source — matches `assets/meshes/minimal_cube.mesh.txt`'s own
-  precedent exactly: authoring sources are committed, cooked output is
-  not). **Never checked in, build-tree-only, generated fresh by every
-  build** (matches `minimal_cube`'s own `.amesh`/`.amesh.meta.txt`,
+- **Checked in vs. build-tree-only — explicit, per Independent
+  Review.** Checked in: `assets/scenes/world_scene.scene.txt` (the
+  authoring source — matches `assets/meshes/minimal_cube.mesh.txt`'s
+  own precedent exactly: authoring sources are committed, cooked
+  output is not). **Never checked in, build-tree-only, generated fresh
+  by every build** (matches `minimal_cube`'s own `.amesh`/`.amesh.meta.txt`,
   neither of which is committed, confirmed real by their absence from
   `assets/` and their presence only under `${CMAKE_BINARY_DIR}/assets/`):
   the cooked scene artifact (`.ascene`), its metadata sidecar
@@ -1300,110 +1337,6 @@ Deltas specific to this plan:
   `tests/world/module_boundary_tests.cpp` both pass unmodified,
   confirming no new forbidden dependency edge exists.
 
-## Independent Review (self-review, 2026-08-23)
-
-Performed during drafting, against `main`'s actual, current source tree
-(not the Spec/ADRs' own illustrative prose alone), for every file this
-Plan touches or extends:
-
-- **`Result<T, E>` shape confirmed** (`src/core/include/atlantis/result.h`):
-  `Ok(T)`/`Err(E)`, `isOk()`/`isErr()`, `value()`/`error()` — every
-  `Result`-returning signature in this Plan's own D-sections matches
-  this exactly; no `Result<void, E>` anywhere (this codebase's own
-  established `Result<std::monostate, E>` convention, per Spec 0014's
-  own disclosed deviation, applies identically here where a `Result`
-  carries no success payload).
-- **`cook_command.cpp`'s own real implementation read in full**, not
-  assumed from `cook_command.h`'s own comments alone — confirmed the
-  logical path passed to `cookStaticMesh()` retains the `.mesh.txt`
-  authoring extension (only the *output-filename* `base` variable has
-  it stripped); D3's own authoring-grammar example and D7's own
-  manifest design are written to match this exactly, not a plausible-
-  looking guess.
-- **`Atlantis::World`'s own existing `PUBLIC` link to `Atlantis::AssetSystem`
-  confirmed** (`src/world/CMakeLists.txt`) — `scene_instantiation.h`
-  naming `ValidatedSceneData` needs no `target_link_libraries()` change,
-  stated as fact in D1, not assumed.
-- **`AssetMetadata`'s own real field shape confirmed** — mesh-specific
-  (`vertexCount`/`indexCount`/`vertexStrideBytes`); the new
-  `SceneMetadata` (D5) is a distinct, scene-specific struct, not a
-  forced reuse of a mesh-shaped one, while still reusing
-  `MetadataParseError`'s own generic-shaped enum for the parse
-  discipline itself (D2's own explicit reasoning for why one is reused
-  and the other is not).
-- **No Spec/ADR content re-litigated.** Every D-section above supplies
-  a concrete shape for something Spec 0015/ADR-0052–0054 explicitly
-  left as "a Plan-level detail" — none contradicts, narrows, or
-  silently reinterprets a Human-Review-Approved decision. No
-  architectural blocker was found; nothing here required stopping to
-  raise an objection.
-
-## Independent Review — Round 2 (2026-08-23): targeted final fix, not a broad re-review
-
-Six concrete findings, each corrected directly in the D-sections above
-rather than left as a note — all mechanical (this Plan's own C++/CMake
-shape choices), none touching Spec 0015 or ADR-0052–0054's own already-
-Approved/Accepted content:
-
-1. **A real compile error, found and fixed.** `RuntimeApplication::world_`
-   is declared today as a bare `World` (confirmed real,
-   `runtime_application.h`); `World` is not move-assignable. The prior
-   draft's own `world_ = std::move(world);` would not compile. Fixed:
-   `world_`'s own type changes to `std::optional<World>` (matching
-   `mesh_`/`material_`'s own already-existing pattern for the identical
-   shape), published via `world_.emplace(std::move(world))` — in-place
-   move-construction, never assignment (D2, D10).
-2. **A misleading internal description, found and fixed.** D8's own
-   prior text claimed the resolver's `AssetId`-sorted storage was "what
-   makes load order deterministic" — factually wrong relative to D10's
-   own code, which was already correct (first-reference order from
-   walking `ValidatedSceneData`'s own node array) but risked being
-   misread as license to iterate the resolver directly, which would
-   silently produce `AssetId`-numeric order instead of the Human-
-   Review-Approved first-reference order. Fixed: D2/D8/D10 now state,
-   consistently, that the resolver is a point-lookup structure only;
-   V19 rewritten to deliberately test a scene whose first-reference and
-   `AssetId`-numeric orders disagree, specifically to catch this class
-   of regression rather than merely confirming "some" deterministic
-   order.
-3. **An over-triggering CMake dependency, found and fixed.** The prior
-   draft's own `add_custom_command(... DEPENDS ... ${dependency_targets})`
-   would re-cook the scene on every mesh *content* edit, even though
-   the scene artifact's own bytes (which store only a path-derived
-   `AssetId`, unaffected by mesh content) never actually change as a
-   result. Fixed: mesh targets move to `add_dependencies()` on the
-   scene's own target (ordering only), out of the custom command's own
-   `DEPENDS` (staleness) — D7's own "Rebuild scoping" now states each
-   distinct trigger condition explicitly, including the case this fix
-   addresses.
-4. **A bare assertion, replaced with cited real evidence.** "multi-
-   config-safe" was previously asserted from `file(GENERATE)`'s own
-   general behavior alone. D7 now cites the exact real file/lines
-   (`src/runtime/CMakeLists.txt` lines 69–80, whose own comment
-   literally reads "absolute, configuration-independent build-tree
-   paths") as the concrete, already-`Accepted`, already-working
-   precedent this Plan's own manifest mechanism matches.
-5. **An incomplete exhaustiveness inventory, completed.** Every new
-   enum's own consuming switch (or explicit absence of one) is now
-   listed with its exact target and exact protection status (D2's own
-   new table); one new, disclosed `/w14062` addition
-   (`atlantis_asset_cooker_lib`) was found necessary and added; two
-   enums' own switches were confirmed to already fall under
-   `atlantis_runtime_host`'s own existing protection, requiring no new
-   CMake change; new V27 records the positive/negative build check.
-6. **A wording-precision finding, disclosed, not silently resolved.**
-   Spec 0015's own Human Review Approval note (item 3) summarizes
-   `ValidatedSceneData`'s own construction contract as "no public
-   default/arbitrary construction"; ADR-0053's own more detailed,
-   Accepted Decision (item 4) explicitly keeps a trivial `public`
-   default constructor for the empty-scene case. This Plan follows the
-   ADR's own more detailed, reasoned text (D2) and flags the
-   discrepancy for Human Review's own awareness — it is a summary-
-   wording precision question, not a design disagreement (no caller can
-   construct a non-empty, malformed instance either way), and is
-   explicitly **not** resolved here by editing either already-approved
-   document.
-
 ## Deviations, objections, and open mechanical details
 
 **No `Accepted`/`Approved` decision in Spec 0015 or ADR-0052–0054 was
@@ -1421,13 +1354,14 @@ Review's own awareness and neither blocked this Plan's own approval:
    with no design content (`Files / Modules Touched` already discloses
    this as undecided).
 
-**Resolved since the prior round:** the `ValidatedSceneData` default-
+**Resolved during drafting:** the `ValidatedSceneData` default-
 constructor wording discrepancy between Spec 0015's own condensed
-Human Review Approval summary and ADR-0053's own Decision (Independent
-Review Round 2, item 6 above) is settled — ADR-0053 now carries its
-own "Human Review Correction (2026-08-23)" resolving it in the "no
-public default construction" direction; this Plan's own D2/D4/D6 and
-V11/V28 already reflect the corrected design. See
+Human Review Approval summary and ADR-0053's own Decision (surfaced
+during Independent Review Round 2, see "Historical scope" above) is
+settled — ADR-0053 now carries its own "Human Review Correction
+(2026-08-23)" resolving it in the "no public default construction"
+direction; this Plan's own D2/D4/D6 and V11/V28 already reflect the
+corrected design. See
 [ADR-0053](../adr/0053-scene-artifact-format-versioning-and-node-identity.md)'s
 own Correction and Spec 0015's own updated Human Review Approval item 3
 cross-reference for the full record.
