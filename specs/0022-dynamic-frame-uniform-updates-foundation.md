@@ -18,6 +18,14 @@
   (`Rejected` — see that ADR's own "Rejected — 2026-08-30" section and the
   correction below). This Spec's corrected design needs **no** ADR — see
   the corrected Architectural Impact section.
+- **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
+  Batch 6 PR (pending). This document already carries its own governance-
+  driven compaction (the "Correction — 2026-08-30" section summarizes,
+  rather than reproduces, the superseded original Motivation/Design/
+  Architectural Impact/Final Review Round/Human Review Approval content,
+  preserved verbatim in this repository's git history per that section's
+  own note) — no further editorial compaction was applied beyond this
+  line.
 
 ## Correction — 2026-08-30 (found during Plan 0022 pre-drafting investigation)
 
