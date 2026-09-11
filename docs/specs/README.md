@@ -60,6 +60,7 @@ keeps approval and implementation state separate.
 | 0031 | [Manual Camera Exposure Foundation](0031-manual-camera-exposure-foundation.md) | Approved | [Plan 0031](../plans/0031-manual-camera-exposure-foundation.md) (Approved) | Merged: [PR #138](https://github.com/slmao/Atlantis/pull/138) | Manual exposure / output-transform contract; [ADR-0075](../adr/0075-manual-camera-exposure-data-and-output-transform-contract.md). |
 | 0032 | [Runtime Sample Scene Selection](0032-runtime-sample-scene-selection.md) | Approved | [Plan 0032](../plans/0032-runtime-sample-scene-selection.md) (Approved) | Merged: [PR #141](https://github.com/slmao/Atlantis/pull/141) | Selects existing 0025/0028/0029 scenes. |
 | 0033 | [Documentation Lifecycle and Historical Compaction](0033-documentation-lifecycle-and-compaction.md) | Approved | [Plan 0033](../plans/0033-documentation-lifecycle-and-compaction.md) (Approved; implementation [PR #144](https://github.com/slmao/Atlantis/pull/144) merged) | Implemented: [PR #144](https://github.com/slmao/Atlantis/pull/144) merged | Follow-up to 0004; guidance/templates, registry, and 0004 pilot only. |
+| 0034 | [Android Platform and Vulkan Presentation](0034-android-platform-vulkan-presentation.md) | Approved (2026-09-12, chat confirmation; no PR yet) | [Plan 0034](../plans/0034-android-platform-vulkan-presentation.md) (Draft) | Not started | Depends on 0002, 0003; formerly Candidate Order 1 (below). Four new decisions recorded as `Accepted` ADR-0077–ADR-0080 (same basis). |
 
 ### B. Candidate Spec Backlog
 
@@ -68,7 +69,7 @@ Spec number only when drafting begins. The current candidate order is retained:
 
 | Candidate Order | Working Title | Depends On | Intended Outcome | Governance State |
 |---|---|---|---|---|
-| 1 | Android Platform and Vulkan Presentation | Specs 0002, 0003 | Android Activity/Surface lifecycle, borrowed `ANativeWindow`, Android Vulkan WSI, shared rendering stack | Candidate |
+| 1 | Android Platform and Vulkan Presentation | Specs 0002, 0003 | Android Activity/Surface lifecycle, borrowed `ANativeWindow`, Android Vulkan WSI, shared rendering stack | Drafted as [Spec 0034](0034-android-platform-vulkan-presentation.md) (`Draft`, not yet `Approved`) |
 | 2 | Tool/Editor Connection Protocol | Spec 0013 | Editor–Runtime communication; process model undecided | Candidate |
 | 3 | Gameplay SDK | Spec 0014, Candidate 2 | First-party gameplay surface; language undecided | Candidate |
 | 4 | Research/Simulation API | Specs 0013, 0010 | Observation/action/episode interface; language/transport undecided | Candidate |
