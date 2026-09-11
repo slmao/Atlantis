@@ -7,6 +7,11 @@
   [PR #136](https://github.com/slmao/Atlantis/pull/136) itself has
   merged to `main`, not before
 - **Related ADR(s):** [ADR-0075: Manual Camera Exposure Data and Output-Transform Contract](../adr/0075-manual-camera-exposure-data-and-output-transform-contract.md) (`Accepted`); amends [ADR-0068](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md) D-10 via that ADR's own [Accepted Amendment — 2026-09-08](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md#accepted-amendment--2026-09-08) section (`Accepted`, approved independently of ADR-0075 and this Spec) — see this Spec's own [Human Review Approval — 2026-09-08](#human-review-approval--2026-09-08) below
+- **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
+  [PR #155](https://github.com/slmao/Atlantis/pull/155) Batch 8. Original scope and obligations retained; the
+  load-bearing "Plan-Stage Correction — 2026-09-08" section is preserved
+  in full, unedited. Drafting history in
+  [PR #136](https://github.com/slmao/Atlantis/pull/136).
 
 ## Summary
 

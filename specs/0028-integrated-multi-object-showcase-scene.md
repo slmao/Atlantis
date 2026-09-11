@@ -25,6 +25,9 @@
   and no new ADR. **This approval authorizes drafting Plan 0028 only
   once PR #126 merges to `main` — it does not authorize starting
   Implementation.**
+- **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
+  [PR #155](https://github.com/slmao/Atlantis/pull/155) Batch 8. Original scope and obligations retained. Drafting
+  history in [PR #126](https://github.com/slmao/Atlantis/pull/126).
 
 ## Summary
 
