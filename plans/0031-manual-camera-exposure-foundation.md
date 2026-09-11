@@ -5,7 +5,7 @@
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Related ADR(s):** [ADR-0075](../adr/0075-manual-camera-exposure-data-and-output-transform-contract.md) (`Accepted`); [ADR-0068's own Accepted Amendment — 2026-09-08](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md#accepted-amendment--2026-09-08) (`Accepted`, D-10 only)
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  Batch 8 PR (pending). Original scope, all three Milestones, and the
+  [PR #155](https://github.com/slmao/Atlantis/pull/155) Batch 8. Original scope, all three Milestones, and the
   full Verification Checklist retained; the load-bearing "Plan-Stage
   Finding, Resolved by Human Direction" section is preserved in full,
   unedited.
