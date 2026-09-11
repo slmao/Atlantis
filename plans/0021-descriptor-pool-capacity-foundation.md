@@ -15,9 +15,14 @@
   own atomic boundaries, the full Files/Modules Touched list, and the
   complete V1-V27 Verification Checklist (including the N=6 correction
   to V16/V17 and the capacity-derivation fixes to V1-V3/V10/V13) — see
-  the Plan's own "Final Review Round" section for the complete,
-  itemized record. **This approval authorizes Implementation of this
-  Plan only once this PR itself has merged — not before.**
+  the Plan's own "Historical scope" section for the complete, itemized
+  record. **This approval authorizes Implementation of this Plan only
+  once this PR itself has merged — not before.**
+- **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
+  Batch 6 PR (pending). Original scope, P1–P8, the Milestones/Task
+  Breakdown, and the full V1–V27 checklist retained; the two review
+  rounds are condensed above, and the post-merge status record is
+  retained in full.
 
 ## Objective
 
@@ -205,10 +210,10 @@ a paired pool/size struct) — both are strictly smaller-footprint or
 more-precise realizations of the same, unchanged, Approved architectural
 decision, not deviations from it. Neither requires returning to
 Spec/ADR review. **P2's own exact container shape was itself further
-corrected during this Plan's own later final review round — see "Final
-Review Round" below for the complete record; this Plan's own P2/P3/P5/P6
-sections state the corrected, final design directly, not the
-superseded first draft.**
+corrected during this Plan's own later final review round — see
+"Historical scope" above for the complete record; this Plan's own
+P2/P3/P5/P6 sections state the corrected, final design directly, not
+the superseded first draft.**
 
 ## Plan-level decisions (fixed here, not left to Implementation)
 
@@ -795,202 +800,54 @@ here only to make the real, current headroom legible for this Plan's own
 review, exactly as Spec 0021 D6 requires ("never a content-scaling
 ceiling," "checked, not assumed").
 
-## Plan Review (drafting-time self-review)
+## Historical scope — two review rounds before Human Review Approval
 
-A centralized self-review of this Plan's own draft, checking it against
-nine specific concerns before presenting it for Human Review — findings
-recorded here, not silently absorbed, matching this codebase's own
+Both rounds' own real content lives in the P-section or Verification
+Checklist item each finding fixed, matching this codebase's own
 established Plan Review disclosure precedent (Plan 0020's identical
-section). **This Plan remains `In Review` after this section — no
-finding here constitutes a Human Review approval; that decision belongs
-to the human maintainer.** (**Superseded in part by this Plan's own
-later "Final Review Round" below**, which corrected item 3's own
-container choice from `std::vector` to a fixed `std::array` — this
-section is kept, unedited otherwise, as the historical record of this
-Plan's own first-draft self-review, matching this codebase's own
-"record findings, don't silently absorb them" discipline; do not read
-item 3 below as describing the final, `std::vector`-based design — it
-does not use one.)
-
-1. **The `4` pools / `60` sets figure is consistent with Spec 0021 D6
-   exactly** — re-checked: `kMaxDescriptorPoolCount = 4` pools total,
-   geometric doubling, `4+8+16+32 = 60`. V3 makes this a direct, literal
-   test assertion, not merely a Plan-prose claim.
-2. **Pool sizes are sufficient for any uniform/textured mixed
-   workload, at every pool generation, not only the first** — P8's own
-   proof is generation-independent (holds for any `maxSets` value
-   because every pool preserves the same 1:1:1 sizing ratio by
-   construction), re-derived explicitly rather than assumed to
-   generalize from Spec 0021 D4's own single-pool version.
-3. **`std::vector` growth cannot invalidate a Pipeline's own origin-pool
-   handle** — confirmed twice: (a) `VulkanPipeline`'s own
-   `descriptorPool_` field is, and remains, a plain `VkDescriptorPool`
-   *value* (P1 — no change at all, so no new risk is introduced); (b)
-   `allocateDescriptorSet()`'s own algorithm (P5) assigns
-   `outOriginPool` from a local value, never from a pointer/reference
-   into `descriptorPools_`'s own storage — confirmed by direct reading
-   of the algorithm's own final draft, not merely asserted. **(This
-   Plan's own later final review round replaced the container itself
-   with a fixed `std::array`, for independent exception-safety reasons —
-   see "Final Review Round" below — which makes this specific concern
-   moot rather than merely addressed: a fixed array never reallocates
-   at all.)**
-4. **Every `createPipeline()` failure path frees to the correct pool** —
-   re-traced all post-allocation failure branches (P6's own edits):
-   pipeline-layout failure, `vkCreateGraphicsPipelines` failure, and
-   (inside `allocateDescriptorSet()` itself) the failed-retry-after-
-   growth branch, which frees nothing (no set was ever allocated on that
-   path) — confirmed no branch is missing a repoint from the old
-   `descriptorPool_` to `originPool`.
-5. **An empty, newly-grown-but-unused pool is explicitly never called a
-   leak** — P5's own algorithm comment and V11 both state plainly that
-   this is a disclosed, safe, Spec-0021-D9-sanctioned retention policy,
-   verified by a clean Validation-Layers/Device-destruction sequence,
-   not by a claim with no test behind it.
-6. **No test depends on an unapproved production introspection API** —
-   `descriptorPool()` is removed outright (not widened), and V10's own
-   ceiling-then-reuse technique proves reuse-before-growth using only
-   the pool set's own real, approved hard ceiling as the discriminating
-   signal — exactly the indirect method Human Review specified, not a
-   new pool-count accessor.
-7. **V10 genuinely distinguishes "reused an existing pool" from "created
-   another pool"** — re-checked the logic: Phase 2's own 10 new
-   Pipelines can only succeed via reuse, because Phase 1 has already
-   driven the pool set to its own hard ceiling (4 pools), making a 5th
-   pool's creation impossible by construction (Step 2 of P5's own
-   algorithm) — success in Phase 2 has no alternative explanation.
-8. **No RHI, Renderer, or Material public API is touched** — "Files /
-   Modules Touched" above lists only `vulkan_backend`'s own private
-   sources and this module's own tests; re-confirmed by the same
-   repository-wide search this Plan's own "Pre-draft verification"
-   already ran for `descriptorPool()`'s own zero callers.
-9. **No new synchronization mechanism or third-party dependency** — the
-   entire algorithm (P5) runs on the same single logical thread every
-   other `VulkanDevice` call already runs on (no lock, no atomic); V24/
-   V26 make this a checked verification item, not merely a design
-   intent.
-
-No finding required objecting to Spec 0021/ADR-0064 or returning to
-Spec/ADR review — every item above was either already correctly
-designed (re-confirmed by this self-review) or is a disclosed,
-in-scope Plan-level detail (P1, P2) that narrows or concretizes the
-approved architecture without changing it.
-
-## Final Review Round (2026-08-29) — closed findings, recorded before approval
-
-A single, centralized final review round verified this Plan's own
-concrete implementation shape against real C++/Vulkan safety concerns
-across ten specific areas: container choice and exception safety, pool
-RAII/publish/destruction order, the allocation-result type, exact scan/
-grow termination, geometric-capacity/integer safety, every
-`createPipeline()` failure path, initial-vs-grown pool configuration
-consistency, test realism, `DeviceLost`/lifecycle, and documentation/
-atomic boundaries. Every item below was closed with a real, disclosed
-fix to this Plan's own document — none required objecting to the
-Approved Spec/ADR, changing the RHI public API, the Pipeline ownership
-model, or the four-pool/60-set contract:
-
-1. **`std::vector<DescriptorPoolEntry>` was a real exception-safety
-   defect, not a style question — replaced with a fixed
-   `std::array<DescriptorPoolEntry, kMaxDescriptorPoolCount>` plus an
-   explicit live count.** `push_back()` can throw `std::bad_alloc` on
-   the render path this codebase's own Error Handling rules require to
-   stay exception-free, and — more seriously — a successfully-created
-   `VkDescriptorPool` handle could leak if the *following* `push_back()`
-   call then threw (nothing else would ever reference that handle).
-   `reserve()`-up-front does not resolve this, only relocates the same
-   throw risk to `VulkanDevice`'s own construction. Since the Approved
-   ceiling is a small, fixed, compile-time constant, a `std::array` is
-   the *more correct* representation, not merely a smaller-exception-
-   surface substitute — it makes the four-pool ceiling a structural,
-   type-level invariant. See P2's own full reasoning.
-2. **The initial-pool-creation path (`createDevice()`) and the runtime
-   growth path used two separate, independently-written pieces of pool-
-   creation code — unified into one shared function,
-   `createDescriptorPoolOfSize()`, called identically by both.** This
-   was a real, avoidable drift risk (Human Review's own explicit
-   concern) — the two paths can no longer diverge because they now
-   execute the literal same code. See P6.
-3. **"Hold the new pool in a local RAII guard until published" was
-   asked for explicitly — this Plan states, rather than merely assumes,
-   why no separate guard *type* is needed for the growth path, unlike
-   `createDevice()`'s own `DescriptorPoolGuard`.** With the fixed-array
-   redesign (item 1), the publish step (an array-slot assignment plus
-   an increment) is the literal next statement after pool creation
-   succeeds, with zero intervening fallible operation — the "guarded
-   until published" property holds by direct construction of the code
-   itself. `createDevice()`'s own guard exists because *that* sequence
-   has multiple, real, intervening fallible operations across five
-   separate resources; the growth path does not share that shape. See
-   P6's own "Pool RAII and publish order" note, which also names the
-   two genuinely distinct phases (pre-publish failure vs. post-publish-
-   retry-fails) explicitly, never conflating them.
-4. **A generic `nextDescriptorPoolMaxSets(x) -> x*2` function was
-   replaced with a fixed, literal table, `kDescriptorPoolMaxSetsByGeneration
-   = {4, 8, 16, 32}`, indexed by generation.** The doubling function was
-   never actually reachable beyond the approved four generations (its
-   one call site was already ceiling-gated), but a fixed table locks
-   the growth strategy to the exact, Approved sequence *structurally*,
-   not merely by call-site discipline — directly closing Human Review's
-   own "don't let a surface-generic helper secretly permit a fifth
-   generation" concern. See P3.
-5. **`descriptorPoolMaxSetsForGeneration()`'s own out-of-range input is
-   an `ATLANTIS_CHECK`, never a recoverable error type** — matching
-   AGENTS.md's own "programmer errors are assertions, not error
-   returns" rule exactly; V3 states explicitly that this path is not,
-   and should not be, exercised by a Catch2 assertion, matching this
-   codebase's own existing precedent for every other `ATLANTIS_CHECK`-
-   guarded function.
-6. **V16's own N=5 draft was arithmetically wrong — corrected to N=6
-   with a full frame-by-frame trace, not a re-assertion of the naive
-   `2*(N+1)` peak formula.** The naive peak formula alone does not
-   determine which pool generation a real scenario reaches, because the
-   real, reuse-first scan algorithm means Frame 1's own initial
-   realization already builds cumulative pool capacity that Frame 2's
-   own format-change allocations partially reuse. Tracing N=5 by hand
-   shows Frame 2's own 6 new allocations fit *exactly* inside pool0+
-   pool1's own combined 12-set capacity (already sized during Frame 1)
-   with zero overflow — no third pool is ever created. N=6 is the real,
-   smallest N that forces one. See V16's own full trace table.
-7. **The reuse test (V10) and the origin-pool-correctness test (V13)
-   both now compute their own real capacity totals from
-   `kDescriptorPoolMaxSetsByGeneration`/`kMaxDescriptorPoolCount`
-   directly, never a hand-copied literal** — requiring one new,
-   narrowly-scoped `target_include_directories` addition to
-   `atlantis_vulkan_backend_gpu_tests` (Milestone 3 item 1), confirmed
-   to add no link-graph change (V24). V10 also now explicitly confirms
-   its own dedicated `Device` carries no other, untracked Pipeline that
-   could confound the capacity-total derivation, and states its own
-   real cost (80 Pipeline creations in one `TEST_CASE`) honestly rather
-   than silently.
-8. **V13 now requires two independent proofs of origin-pool
-   correctness (Validation Layers clean *and* a real reallocation
-   success), never either alone** — a wrong-pool free could plausibly
-   pass one check while failing the other; Human Review's own explicit
-   instruction is now a structural requirement of the test itself, not
-   a suggestion left to Implementation's own judgment.
-9. **`VulkanDevice`'s own move/copy special members were re-confirmed,
-   fresh, this round — not assumed** — all four (`copy ctor`, `copy
-   assign`, `move ctor`, `move assign`) are `= delete`d
-   (`vulkan_device.h:96-99`), confirming a "moved-from double-destroy"
-   of `descriptorPools_` is structurally unreachable, not merely
-   unlikely. See P6's own closing note.
-10. **Milestone boundaries re-verified complete**: Milestone 1 remains
-    genuinely independent (no dead code — its own new table/classifier
-    are fully unit-tested in place, simply not yet called); Milestone 2
-    is confirmed to include every piece that must land atomically (the
-    fixed-array member, the shared creation helper, the allocation
-    result type, all four `createPipeline()` call-site edits, the
-    constructor/destructor, and both of PR #96's own test-flip edits —
-    nothing deferred to a later milestone that would leave an
-    intermediate tree half-fixed); Milestone 3 adds only the dedicated
-    stress/reuse verification and the one CMake include-path change
-    that verification needs.
-
-No finding required changing the Accepted Spec/ADR, the RHI public API,
-the `Pipeline` ownership model, or the four-pool/60-set contract. This
-Plan's own container/algorithm/test corrections above are all Plan-level
-concretizations of the same, unchanged, Approved architecture.
+section). The first, a drafting-time self-review against nine concerns,
+confirmed the `4`-pools/`60`-sets figure (V3), the pool-size proof's own
+generation-independence (P8), that a `std::vector`'s own growth could
+not invalidate a Pipeline's origin-pool handle (superseded, see below),
+every `createPipeline()` failure path freeing to the correct pool (P6),
+an unused-but-grown pool never being a leak (P5/V11), no test depending
+on an unapproved introspection API (`descriptorPool()` removed outright,
+V10's own ceiling-then-reuse technique instead), V10 genuinely
+distinguishing reuse from re-growth, and no RHI/Renderer/Material public
+API or new synchronization mechanism. The second, a centralized final
+review across ten real C++/Vulkan safety concerns, found one genuine
+design change and nine precision fixes, none requiring the Accepted
+Spec/ADR, the RHI public API, the Pipeline ownership model, or the
+four-pool/60-set contract to change: **the container itself moved from
+`std::vector<DescriptorPoolEntry>` to a fixed
+`std::array<DescriptorPoolEntry, kMaxDescriptorPoolCount>` plus an
+explicit live count** — a real exception-safety defect, not a style
+question (`push_back()` can throw on this codebase's own required-
+exception-free render path, and a successfully-created `VkDescriptorPool`
+handle could leak if the following `push_back()` then threw; since the
+ceiling is a small, fixed, compile-time constant, `std::array` is the
+more correct representation, making the ceiling a structural, type-level
+invariant), which also makes the first round's own item 3 concern moot
+rather than merely addressed (P2). The nine precision fixes: unifying
+the initial-pool-creation and runtime-growth paths into one shared
+`createDescriptorPoolOfSize()` function, closing a real drift risk (P6);
+stating why no separate RAII guard type is needed for the growth path,
+unlike `createDevice()`'s own `DescriptorPoolGuard` (P6); replacing a
+generic doubling function with a fixed, literal table,
+`kDescriptorPoolMaxSetsByGeneration = {4, 8, 16, 32}`, locking the growth
+sequence structurally (P3); an out-of-range generation input as an
+`ATLANTIS_CHECK`, never a recoverable error (P3); V16's own N=5 draft
+corrected to N=6 via a full frame-by-frame trace, since the naive
+`2*(N+1)` peak formula alone does not account for the reuse-first scan
+algorithm's own cumulative capacity effects; V10/V13 computing their own
+real capacity totals from the named constants directly, never a
+hand-copied literal; V13 requiring two independent proofs of origin-pool
+correctness (Validation Layers clean *and* a real reallocation success);
+re-confirming `VulkanDevice`'s own four special members are all
+`= delete`d, making a moved-from double-destroy structurally
+unreachable; and re-verifying the three Milestone boundaries are
+complete, with nothing deferred that would leave an intermediate tree
+half-fixed.
 
 ## Milestones / Task Breakdown
 

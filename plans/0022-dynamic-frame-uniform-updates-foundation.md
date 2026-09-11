@@ -8,9 +8,15 @@
 - **Human Review Approval (2026-08-30):** Reviewed and approved by slmao
   (`slmao <slmaosjtu@gmail.com>`, this repository's git-identified
   maintainer) on 2026-08-30, following the centralized final review round
-  recorded below — see "Final Review Round" for the complete, itemized
-  record. **This approval authorizes Implementation of this Plan only
-  once this PR itself has merged — not before.**
+  recorded below — see "Historical scope — Final Review Round" for the
+  complete, itemized record. **This approval authorizes Implementation
+  of this Plan only once this PR itself has merged — not before.**
+- **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
+  Batch 6 PR (pending). Original scope, Plan-level decisions P1–P8, the
+  Milestones/Task Breakdown, and the full V1–V33 checklist retained; the
+  Final Review Round is condensed above (its own findings already stated
+  in "Pre-draft verification"), and the Implementation/Post-Merge Status
+  Update sections are retained in full.
 
 ## Objective
 
@@ -795,72 +801,27 @@ Maps to Spec 0022's own Testing & Verification Plan section by name.
       test output.
 - [ ] V33: `git diff --check` clean; working tree clean.
 
-## Final Review Round
+## Historical scope — Final Review Round
 
 A centralized final review, conducted at explicit human direction before
-approval, re-examined this Plan's own first draft against the real,
-current codebase — specifically whether it truly established one
-authoritative dynamic Lighting code path, rather than leaving a
-now-superseded static-snapshot test standing as a contradictory second
-authority alongside a newly-proposed, duplicate fixture.
-
-**Central finding, corrected in this round:** the first draft's own
-decision (P1: add a new, separate `DynamicLightingFixture`, leave
-`LightingDemoFixture` and its own static-snapshot negative test
-untouched) was wrong. Re-reading `LightingDemoFixture`'s own header
-comments and `lighting_demo_gpu_tests.cpp`'s own
-`TEST_CASE("LightingDemoFixture: World::setLight() after the one-time
-capture...")` in full confirmed that test's every assertion is a direct,
-load-bearing claim that the static-snapshot behavior is *correct* —
-directly contradicting Spec 0022's own `Approved` design, which exists
-specifically to remove that behavior. `LightingDemoFixture` is a
-test-private composition root (never referenced outside
-`tests/image_regression/`), and its own `renderLightingDemoFrame()` was
-confirmed, line-for-line, to run the identical `World::updateTransforms()`/
-`extractFrameLightingData()`/176-byte-write sequence
-`RuntimeApplication::runFrame()` runs — the same real code, not a
-reimplementation. An exhaustive, test-by-test re-read of all nine
-`TEST_CASE`s in `lighting_demo_gpu_tests.cpp` found exactly one depends
-on the guard; the golden-comparison test and both deliberate-error
-negative tests each call `renderLightingDemoFrame()` exactly once,
-confirming the committed `lighting_demo` golden is provably a function
-of the first render cycle only, and cannot move by making later cycles
-unconditional.
-
-**Correction made in this same round:** this Plan now refactors
-`LightingDemoFixture` in place (removing its own `lightingDataCaptured`
-field and guard, the exact mechanical twin of Milestone 1's own
-`RuntimeApplication` change), replaces the one now-invalidated negative
-test with its positive counterpart (reusing that test's own established
-byte-snapshot technique), and adds every new dynamic-behavior test case
-against this same, now-dynamic fixture — never a second one. Every other
-pre-existing `TEST_CASE` in that file is confirmed, by the same
-test-by-test table, to need no change. `dynamic_lighting_fixture.{h,cpp}`
-and `dynamic_lighting_gpu_tests.cpp` are removed from this Plan's own
-file list entirely.
-
-**Also corrected in this round:** Milestone 3's own windowed regression
-proof was strengthened from "the run didn't crash" to real, direct
-byte-level evidence against `RuntimeApplication` itself — extending the
-already-existing, already-approved `RuntimeSmokeTestAccess` test-only
-friend struct with one new accessor into `cameraBuffer_`'s own raw bytes
-(the identical mechanism `runtime_smoke_gpu_tests.cpp` already uses for
-`renderableEntityCount()`, not a new pattern), and confirming — rather
-than assuming — that the default `world_scene` scene this test already
-loads has zero light nodes, so the new test scenario must actively add
-one, not merely mutate an existing one.
-
-**Confirmed unchanged and still correct from the first draft:** all
-Pre-draft verification against `RuntimeApplication`/`FrameLightingData`/
-`extractFrameLightingData()`/`World`'s real API/the RHI `Device` surface;
-Milestone 1's own exact scope; P4/P5 (independently-computed expected
-values, no new golden); the CMake/dependency-wiring facts (now correctly
-stated as requiring zero changes for an in-place refactor, rather than
-zero *new* wiring for a second fixture); the 31-then-33-item Verification
-Checklist's own full-matrix coverage.
-
-No blocking objection remains: the refactor is proven safe by direct,
-exhaustive evidence (the test-by-test table above), not by assertion; the
+approval, re-examined this Plan's own first draft — specifically whether
+it truly established one authoritative dynamic Lighting code path,
+rather than leaving a now-superseded static-snapshot test standing as a
+contradictory second authority alongside a newly-proposed, duplicate
+fixture. Its full findings and the resulting correction are already
+stated in "`LightingDemoFixture` — corrected decision" (Pre-draft
+verification, above) and reflected directly in P1/Milestone 2's own
+final text — this review did not leave the first draft's own separate-
+fixture design standing (P1: add a new `DynamicLightingFixture`, leave
+`LightingDemoFixture` untouched), corrected in place, per that section's
+own exhaustive, test-by-test evidence. It also strengthened Milestone
+3's own windowed regression proof from "the run didn't crash" to real,
+direct byte-level evidence via one new `RuntimeSmokeTestAccess`
+accessor (the identical mechanism that struct already uses for
+`renderableEntityCount()`), confirming — rather than assuming — that the
+default `world_scene` scene carries zero light nodes, so the new test
+scenario actively adds one. No blocking objection remained: the refactor
+is proven safe by direct, exhaustive evidence, not assertion; the
 windowed proof no longer rests on absence-of-crash alone; and no new
 public API, RHI surface, ADR, golden, or second authoritative fixture
 survives into this Plan's own final scope.
