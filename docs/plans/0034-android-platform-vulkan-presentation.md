@@ -49,17 +49,31 @@ against it.
    is a finding for [ADR-0078](../adr/0078-android-ndk-build-and-packaging-integration.md)
    to revisit, not something to route around silently.
 2. **Android Platform module.** Implement `src/platform/src/android/android_platform.cpp`
-   (plus any Android-private headers under that same directory) against the
-   existing `atlantis::platform` interface
-   (`src/platform/include/atlantis/platform/platform.h`), wiring
-   `android_native_app_glue`'s `android_main`/`ALooper_pollAll` and the
-   `APP_CMD_*` → `PlatformEvent` mapping table exactly as
+   (plus any Android-private headers under that same directory, including
+   the private `setAndroidApp(android_app*)` injection declaration — see
+   [ADR-0077](../adr/0077-android-native-entry-point-and-process-model.md)'s
+   amendment) against the existing `atlantis::platform` interface
+   (`src/platform/include/atlantis/platform/platform.h`). **`android_main`
+   itself is not implemented here** — per
+   [ADR-0077](../adr/0077-android-native-entry-point-and-process-model.md)
+   and [ADR-0080](../adr/0080-android-asset-delivery-and-composition-root-boundary.md),
+   it lives in `atlantis_runtime_android` (Milestone/Step 5 below), which
+   calls `setAndroidApp()` once, before `createRuntimeApplication()`. This
+   step's own `processEvents()` implementation consumes that injected
+   `android_app*`: it calls `ALooper_pollAll(0, ...)` (non-blocking) to drain
+   `android_native_app_glue`'s command queue and translates each pending
+   `APP_CMD_*` per the mapping table
    [ADR-0077](../adr/0077-android-native-entry-point-and-process-model.md)
    specifies. `NativeWindowHandle::value0` carries `app->window` verbatim, no
    acquire/release call, per
    [ADR-0079](../adr/0079-android-native-window-reference-management.md).
-   Update `src/platform/CMakeLists.txt`'s existing `elseif(ANDROID)` stub
-   (currently empty, citing this Spec by number) to add the new source
+   Calling `processEvents()` (or anything else needing the injected pointer)
+   before Step 5's `android_main` calls `setAndroidApp()` is a programmer
+   error (assertion failure), per
+   [ADR-0077](../adr/0077-android-native-entry-point-and-process-model.md)'s
+   amendment — implement and test that failure mode here, not deferred to
+   Step 5. Update `src/platform/CMakeLists.txt`'s existing `elseif(ANDROID)`
+   stub (currently empty, citing this Spec by number) to add the new source
    file(s) and link `android_native_app_glue` (built as a static library
    from the NDK-supplied source, per the NDK's own recommended CMake
    pattern) plus Android's `log`/`android` system libraries.
@@ -103,7 +117,13 @@ against it.
    New `src/runtime/android/` subdirectory: `android_main.cpp` implementing
    the asset-extraction-then-`createRuntimeApplication()`-then-frame-loop
    sequence [ADR-0080](../adr/0080-android-asset-delivery-and-composition-root-boundary.md)
-   specifies, built as a new `atlantis_runtime_android` shared-library CMake
+   specifies. Before calling `createRuntimeApplication()`, `android_main`
+   calls Android Platform's private `setAndroidApp(app)` injection function
+   (Step 2 above, per
+   [ADR-0077](../adr/0077-android-native-entry-point-and-process-model.md)'s
+   amendment) — this is the only point in the sequence with direct access to
+   the `android_app*` the NDK entry point received. Built as a new
+   `atlantis_runtime_android` shared-library CMake
    target (gated `if(ANDROID)` inside `src/runtime/CMakeLists.txt`, alongside
    the existing, unconditional `atlantis_runtime` executable target — the
    two do not conflict, each gated to its own platform) linking

@@ -65,6 +65,26 @@ static helper library shipped inside the Android NDK (`$NDK/sources/android/nati
   (declared in `AndroidManifest.xml`, see
   [ADR-0078](0078-android-ndk-build-and-packaging-integration.md)) — Atlantis
   contributes zero Java/Kotlin source.
+- **`android_app*` injection (amended 2026-09-12, pre-implementation,
+  pending Joint Human Review).** `atlantis::platform::initialize()` takes no
+  parameters (`src/platform/include/atlantis/platform/platform.h`) and is
+  called, on every platform, from `atlantis_runtime_host`'s
+  `createPlatformSession()` (`src/runtime/src/platform_session.cpp`), with
+  no way to pass a platform-specific value through that shared call. On
+  Android, Android Platform's implementation still needs the `android_app*`
+  `android_main` received (per the entry-point decision above) before its
+  `processEvents()` can do anything useful. This is resolved by a
+  **module-private injection function**, declared in a header under
+  `src/platform/src/android/` (never under `src/platform/include/`, so it is
+  invisible to any consumer other than `atlantis_runtime_android`, and never
+  reaches Windows builds or `atlantis::platform`'s public interface):
+  `void setAndroidApp(android_app* app)` (borrowed, not owned — Android
+  Platform never outlives or destroys it). `atlantis_runtime_android`'s
+  `android_main` (see
+  [ADR-0080](0080-android-asset-delivery-and-composition-root-boundary.md))
+  calls `setAndroidApp()` exactly once, before calling
+  `createRuntimeApplication()` (and therefore before
+  `createPlatformSession()`'s own call to `initialize()`).
 - This ADR does not change `atlantis::platform`'s public interface shape in
   any way — `initialize()`/`processEvents()`/`shouldQuit()`/`shutdown()`/
   `currentPlatform()` keep the exact signatures [Spec 0002](../specs/0002-platform-foundation.md)
@@ -104,6 +124,15 @@ static helper library shipped inside the Android NDK (`$NDK/sources/android/nati
   etc.) are silently discarded rather than surfaced in any way — acceptable
   for this Spec's Non-Goals, but a future input or process-death-handling
   spec must revisit this table rather than assume it is exhaustive forever.
+- Platform state (the injected `android_app*`) is threaded in a
+  module-private way, outside the shared `initialize()`/`processEvents()`
+  interface — calling `processEvents()` (or anything else needing that
+  pointer) before `atlantis_runtime_android` has called `setAndroidApp()` is
+  a programmer error on Android, enforced by an `ATLANTIS_ASSERT`/
+  `ATLANTIS_CHECK` failure inside Android Platform's implementation, not a
+  `Result`-typed recoverable error — consistent with
+  [AGENTS.md](../../AGENTS.md)'s "programmer errors are assertions, not
+  error returns" rule.
 
 ## Alternatives Considered
 

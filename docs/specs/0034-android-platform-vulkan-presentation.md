@@ -20,13 +20,15 @@
   [ADR-0013](../adr/0013-platform-window-ownership-and-lifetime.md),
   [ADR-0043](../adr/0043-asset-system-module-boundary.md),
   [ADR-0047](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md).
-  This Spec identifies four new decisions — see Architectural Impact — drafted
-  alongside it as **`Proposed`** ADRs: [ADR-0077](../adr/0077-android-native-entry-point-and-process-model.md),
+  This Spec identifies four new decisions — see Architectural Impact —
+  recorded alongside it as **`Accepted`** ADRs (2026-09-12, same
+  chat-confirmation basis as this Spec's own Approval, above):
+  [ADR-0077](../adr/0077-android-native-entry-point-and-process-model.md),
   [ADR-0078](../adr/0078-android-ndk-build-and-packaging-integration.md),
   [ADR-0079](../adr/0079-android-native-window-reference-management.md),
   [ADR-0080](../adr/0080-android-asset-delivery-and-composition-root-boundary.md).
-  None is `Accepted` yet; all four must reach `Accepted` before this Spec can
-  be marked `Approved`, per [AGENTS.md](../../AGENTS.md#the-workflow-stage-by-stage).
+  All four are `Accepted`, consistent with this Spec's own `Approved`
+  status, per [AGENTS.md](../../AGENTS.md#the-workflow-stage-by-stage).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 State each requirement once; link ADR rationale and map verification to the
@@ -123,7 +125,12 @@ on the Android half.
 - **Android Platform module** (`src/platform/src/android/`, per
   [Spec 0002](0002-platform-foundation.md)'s already-declared, not-yet-built
   directory): implements the existing `atlantis::platform` interface;
-  `currentPlatform()` returns `PlatformKind::Android`.
+  `currentPlatform()` returns `PlatformKind::Android`. The `android_app*`
+  `android_main` receives is threaded into this implementation via a
+  module-private injection function (`setAndroidApp()`), not a public
+  interface or `initialize()` signature change — see
+  [ADR-0077](../adr/0077-android-native-entry-point-and-process-model.md)'s
+  amendment.
 - **Native entry point and process model**: resolved by
   [ADR-0077](../adr/0077-android-native-entry-point-and-process-model.md) —
   proposes `android_native_app_glue`, mapping its `AInputEvent`-free app

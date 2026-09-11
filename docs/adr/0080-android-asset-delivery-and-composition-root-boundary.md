@@ -96,7 +96,11 @@ existing, already-verified frame-loop logic.
   point (per [ADR-0077](0077-android-native-entry-point-and-process-model.md))
   performs the asset-extraction step above, builds the same shape of
   `BootstrapConfig` `main.cpp` already builds (Android-specific path values
-  only), calls `createRuntimeApplication(config)`, and drives
+  only), calls Android Platform's private `setAndroidApp(app)` injection
+  function (per [ADR-0077](0077-android-native-entry-point-and-process-model.md)'s
+  amendment — the only point in this sequence with direct access to the
+  `android_app*` `android_main` itself received), calls
+  `createRuntimeApplication(config)`, and drives
   `shouldContinue()`/`runFrame()`/`shutdown()` inside the loop
   `ALooper_pollAll` and Android Platform's `processEvents()` require — the
   same three-call frame-loop shape `main.cpp` already uses, adapted to
