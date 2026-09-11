@@ -21,8 +21,8 @@ namespace atlantis::world {
 class WorldIdentity;  // opaque; complete definition private to world.cpp
 struct Slot;          // complete definition private to world.cpp
 
-// See specs/0014-world-scene-foundation.md and
-// adr/0048-0051-*.md. World owns every entity and component outright --
+// See docs/specs/0014-world-scene-foundation.md and
+// docs/adr/0048-0051-*.md. World owns every entity and component outright --
 // no reference or pointer into its own internal storage ever crosses
 // this public API; every accessor returns by value. Move-constructible,
 // not copyable, not move-assignable (see world.cpp's own constructor/
@@ -77,7 +77,7 @@ class World {
   // World mutation.
   [[nodiscard]] std::vector<EntityId> renderableEntities() const;
 
-  // Spec 0019 D2 / plans/0019-lighting-foundation.md P1: a third optional
+  // Spec 0019 D2 / docs/plans/0019-lighting-foundation.md P1: a third optional
   // per-entity component, at most one per entity, mirroring Camera's own
   // set/remove/get shape exactly.
   [[nodiscard]] atlantis::Result<std::monostate, WorldError> setLight(EntityId id, Light light);

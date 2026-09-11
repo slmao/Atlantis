@@ -68,7 +68,7 @@ branch, its spec, and its plan are traceable to each other at a glance.
 
 - Completed Specs/Plans may undergo editorial compaction only through an
   explicitly scoped, reviewed Plan under
-  [Spec 0033](../../specs/0033-documentation-lifecycle-and-compaction.md).
+  [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md).
   Preserve effective contracts, historical scope, and links; include an
   obligation-to-retained-text comparison and descriptive before/after metrics
   in the compaction PR, plus an editorial reference in each compacted document.

@@ -39,7 +39,7 @@ struct DescriptorPoolEntry {
 // graphics/present queue family, that queue family's index, (when
 // validation is enabled) the explicit VkDebugUtilsMessengerEXT installed
 // immediately after instance creation succeeds (see
-// plans/0003-rhi-vulkan-windowed-foundation.md Section 6), and -- new in
+// docs/plans/0003-rhi-vulkan-windowed-foundation.md Section 6), and -- new in
 // Plan 0006 -- a persistent VkCommandPool and a persistent submission
 // VkFence used by createCommandList()/submit()/waitIdle() below. The
 // render-finished semaphore submit() signals is NOT owned here -- found
@@ -87,7 +87,7 @@ struct DescriptorPoolEntry {
 // VulkanPresentation::present() for a successful submit() before calling
 // submit() again -- submit() followed directly by application exit
 // remains legal (waitIdle() drains it). See
-// plans/0006-rhi-render-graph-frame-execution-foundation.md. A *headless*
+// docs/plans/0006-rhi-render-graph-frame-execution-foundation.md. A *headless*
 // caller (Spec 0010/ADR-0038) never constructs a VulkanPresentation and
 // therefore never calls present() at all -- its own repeated-submit()
 // safety comes entirely from submit()'s existing internal single-frame-

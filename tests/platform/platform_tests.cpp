@@ -3,7 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 // Task 2.3: Platform's Phase 1 lifecycle does not support
-// re-initialization (plans/0002-platform-foundation.md Section 6 /
+// re-initialization (docs/plans/0002-platform-foundation.md Section 6 /
 // Unresolved Implementation Details #7), and Windows Platform's state is
 // process-wide, file-local state. Actually calling initialize()/
 // shutdown() here would contend with windows_platform_smoke_tests.cpp's

@@ -46,16 +46,16 @@ guessing.
 
 ## The workflow, stage by stage
 
-1. **Spec** (`specs/`) — Problem, goals/non-goals, requirements, proposed
+1. **Spec** (`docs/specs/`) — Problem, goals/non-goals, requirements, proposed
    design, and an explicit **Architectural Impact** section. If the spec
    touches architecture, it must name the ADR that will be written. A spec
    is not implementation-ready until a human has approved it. Use
-   [specs/template.md](specs/template.md).
+   [docs/specs/template.md](docs/specs/template.md).
 
-2. **Plan** (`plans/`) — Turns an approved spec into an ordered, reviewable
+2. **Plan** (`docs/plans/`) — Turns an approved spec into an ordered, reviewable
    task breakdown: files/modules touched, sequencing, and a verification
    checklist that maps back to the spec. A plan is not implementation-ready
-   until a human has approved it. Use [plans/template.md](plans/template.md).
+   until a human has approved it. Use [docs/plans/template.md](docs/plans/template.md).
 
 3. **Human Review** — The explicit gate between planning and coding: a
    human has read the spec and plan together and signed off that
@@ -64,12 +64,12 @@ guessing.
    Implementation on its own judgment that "the spec and plan look
    approved enough."
 
-4. **ADR** (`adr/`) — Any architectural decision identified by a spec gets
+4. **ADR** (`docs/adr/`) — Any architectural decision identified by a spec gets
    its own ADR: context, decision, consequences, alternatives considered.
    ADRs are the permanent record of *why*; specs and plans may be
    superseded, ADRs are not silently rewritten. Use
-   [adr/template.md](adr/template.md). An ADR is drafted alongside the spec
-   that identifies the decision (see [specs/template.md](specs/template.md)
+   [docs/adr/template.md](docs/adr/template.md). An ADR is drafted alongside the spec
+   that identifies the decision (see [docs/specs/template.md](docs/specs/template.md)
    Architectural Impact section) and must reach `Accepted` before or during
    Human Review — not discovered as a gap during implementation.
 
@@ -173,8 +173,8 @@ dependency (the last verified by an include-scanning test since Spec
 root outside the module (a test, an example, or Atlantis Runtime, which
 now does this in practice — see below) loads its CPU-side asset data
 and is itself responsible for constructing any GPU resource from it.
-See [ADR-0043](adr/0043-asset-system-module-boundary.md) and
-[ADR-0052](adr/0052-scene-asset-module-boundary-and-ownership.md)–[ADR-0054](adr/0054-scene-loading-transactional-instantiation-contract.md).
+See [ADR-0043](docs/adr/0043-asset-system-module-boundary.md) and
+[ADR-0052](docs/adr/0052-scene-asset-module-boundary-and-ownership.md)–[ADR-0054](docs/adr/0054-scene-loading-transactional-instantiation-contract.md).
 
 **Atlantis World** (Spec 0014, `Approved`) is Atlantis's in-memory,
 multi-entity scene module — `atlantis::world::World`, an index+generation-
@@ -186,7 +186,7 @@ System (for `AssetId` only) — no RHI, Renderer, RenderGraph, Shader
 System, Vulkan Backend, Platform, Runtime, or Tools dependency in either
 direction. `World` never returns a reference or pointer into its own
 internal storage; every accessor is by value. See
-[ADR-0048](adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md).
+[ADR-0048](docs/adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](docs/adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md).
 
 Atlantis Runtime (Spec 0013, `Approved`; extended by Spec 0014,
 `Approved`, and Spec 0015, `Approved`) is the actual composition root — a private
@@ -200,10 +200,10 @@ instance and is the sole place a `World`-driven scene is turned into
 other module. `atlantis_runtime_host` exists solely for testability (its
 own GPU-independent lifecycle/error-classification tests) and is not a
 dependency any other top-level module may take. See
-[ADR-0046](adr/0046-runtime-composition-ownership-and-frame-lifecycle.md),
-[ADR-0047](adr/0047-runtime-host-executable-library-structure-and-test-boundary.md),
+[ADR-0046](docs/adr/0046-runtime-composition-ownership-and-frame-lifecycle.md),
+[ADR-0047](docs/adr/0047-runtime-host-executable-library-structure-and-test-boundary.md),
 and
-[ADR-0051](adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md).
+[ADR-0051](docs/adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md).
 
 **Atlantis Platform** is the per-OS windowing/surface/lifecycle
 abstraction — it is to *operating systems* what RHI is to *graphics
@@ -225,7 +225,7 @@ those declarations need) — strictly to consume Platform's
 `NativeWindowHandle` (borrowed, not owned) and produce a `VkSurfaceKHR`;
 those OS-specific types stay private to that WSI boundary and never reach
 RHI's public API, Renderer, or RenderGraph. See
-[ADR-0005](adr/0005-platform-module-multi-os-windowing.md).
+[ADR-0005](docs/adr/0005-platform-module-multi-os-windowing.md).
 **RHI does not depend on Atlantis Platform either** — it receives an
 opaque native-surface handle (produced by Platform, threaded through
 Runtime) at `Presentation`-creation time and never references Platform's
@@ -236,9 +236,9 @@ Full per-module responsibility/dependency/ownership detail — drafted as a
 `PROPOSED`, not-yet-approved architecture baseline — lives in
 [docs/architecture/module_boundaries.md](docs/architecture/module_boundaries.md),
 with the boundary decisions themselves recorded in
-[ADR-0001](adr/0001-rhi-backend-independence.md),
-[ADR-0002](adr/0002-presentation-rendertarget-unification.md), and
-[ADR-0005](adr/0005-platform-module-multi-os-windowing.md) (all
+[ADR-0001](docs/adr/0001-rhi-backend-independence.md),
+[ADR-0002](docs/adr/0002-presentation-rendertarget-unification.md), and
+[ADR-0005](docs/adr/0005-platform-module-multi-os-windowing.md) (all
 `Proposed`, not `Accepted`). Treat that document as the detailed
 reference; this section is the summary an agent should hold in mind by
 default.
@@ -303,7 +303,7 @@ default.
 - Subsystem-specific ownership models (e.g., how RHI resources and
   `RenderTarget`s are owned) are decided by that subsystem's own spec/ADR,
   not invented ad hoc in implementation — see
-  [ADR-0003](adr/0003-resource-rendertarget-ownership-model.md) (currently
+  [ADR-0003](docs/adr/0003-resource-rendertarget-ownership-model.md) (currently
   `Proposed`) for the RHI baseline.
 
 ## Threading rules
@@ -312,7 +312,7 @@ default.
   event loop, `Presentation` acquire/present, RenderGraph construction, and
   RHI command recording all happen on one logical thread. See
   [docs/architecture/threading.md](docs/architecture/threading.md) and
-  [ADR-0004](adr/0004-phase1-threading-baseline.md) (both `Proposed`).
+  [ADR-0004](docs/adr/0004-phase1-threading-baseline.md) (both `Proposed`).
 - **Every type used across threads documents its thread-safety contract**
   at its public API — one line in the header ("not thread-safe", "safe for
   concurrent reads", etc.) is enough, but silence is not an acceptable
@@ -329,14 +329,14 @@ default.
   [docs/process/ci-strategy.md](docs/process/ci-strategy.md) and
   [docs/process/testing-strategy.md](docs/process/testing-strategy.md).
 - **Only the Vulkan Backend module may include Vulkan headers or reference
-  `Vk*` types.** See [ADR-0001](adr/0001-rhi-backend-independence.md).
+  `Vk*` types.** See [ADR-0001](docs/adr/0001-rhi-backend-independence.md).
 - **No global `VkInstance`/`VkDevice` singleton.** These are owned by the
   RHI `Device` construction path and passed down explicitly.
 - **No direct `vkCmd*` calls outside the Vulkan Backend's `CommandList`
   implementation.** All command recording goes through RHI/RenderGraph.
 - **Swapchain (`VkSwapchainKHR`) lifetime and recreation logic lives
   entirely inside the `Presentation` implementation** — see
-  [ADR-0002](adr/0002-presentation-rendertarget-unification.md). Renderer
+  [ADR-0002](docs/adr/0002-presentation-rendertarget-unification.md). Renderer
   never sees a swapchain object.
 - **Platform-specific WSI surface creation** (`vkCreateWin32SurfaceKHR` /
   `VK_KHR_win32_surface` on Windows, `vkCreateAndroidSurfaceKHR` /
@@ -359,7 +359,7 @@ default.
   harness exists (Spec 0011, `Approved`, `tests/image_regression/`); any
   golden-image diffs in the PR were reviewed by a human, not
   auto-accepted, and categorized per
-  [ADR-0042](adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
+  [ADR-0042](docs/adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
   golden-update-reason rule. This is currently a **local/manual** gate —
   no CI pipeline exists yet — so it's run and reported by whoever opens
   the PR, alongside a clean Vulkan Validation Layers run.
@@ -385,17 +385,17 @@ default.
 
 - [README.md](README.md) — project overview
 - [docs/](docs/) — architecture records (as-built) and process docs
-- [specs/](specs/) — proposed work, pre-implementation
-- [plans/](plans/) — approved implementation plans
-- [adr/](adr/) — architectural decision records
+- [docs/specs/](docs/specs/) — proposed work, pre-implementation
+- [docs/plans/](docs/plans/) — approved implementation plans
+- [docs/adr/](docs/adr/) — architectural decision records
 - `src/`, `tests/` — currently empty placeholders; their internal structure
   is itself an architectural decision and will be established by the first
   approved spec + plan + ADR, not invented ahead of time
 
 ## Documentation and code comments
 
-Applies repository-wide. Rationale: [Spec 0004](specs/0004-context-efficiency-guidelines.md)
-and [Spec 0033](specs/0033-documentation-lifecycle-and-compaction.md).
+Applies repository-wide. Rationale: [Spec 0004](docs/specs/0004-context-efficiency-guidelines.md)
+and [Spec 0033](docs/specs/0033-documentation-lifecycle-and-compaction.md).
 
 **Documentation:**
 

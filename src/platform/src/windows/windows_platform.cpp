@@ -1,6 +1,6 @@
 // Task 2.2/2.3: real Win32 implementation of the Atlantis Platform
 // lifecycle interface declared in platform.h. Per ADR-0005 (amended) and
-// plans/0002-platform-foundation.md Sections 6-9, this is the Win32
+// docs/plans/0002-platform-foundation.md Sections 6-9, this is the Win32
 // isolation boundary *for the Atlantis Platform module*: no Win32 header,
 // type, macro, or call appears anywhere else in src/platform, including
 // its public headers (include/atlantis/platform/*.h) or any other .cpp
@@ -89,7 +89,7 @@ NativeWindowHandle currentHandle() {
 
 // Both WindowResize fields are populated from the same client-area pixel
 // rect -- Windows reports logical and framebuffer extents as equal in
-// Phase 1; see plans/0002-platform-foundation.md Section 7.
+// Phase 1; see docs/plans/0002-platform-foundation.md Section 7.
 WindowExtent clientExtent(HWND hwnd) {
   RECT rect{};
   GetClientRect(hwnd, &rect);
@@ -116,7 +116,7 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
       s.pendingBuffer.push_back(PlatformEvent{FocusLost{}});
       return 0;
     case WM_CLOSE:
-      // Request only, per plans/0002-platform-foundation.md Section 6:
+      // Request only, per docs/plans/0002-platform-foundation.md Section 6:
       // enqueue and return 0 without calling DestroyWindow or
       // DefWindowProc for this message. The window stays fully valid;
       // only shutdown() may destroy it.
@@ -203,7 +203,7 @@ atlantis::Result<std::monostate, PlatformError> initialize() {
   // processEvents() call folds pendingBuffer into outputBuffer as that
   // call's batch prefix (see movePendingIntoOutput), so SurfaceCreated
   // ends up first in the batch, ahead of any such synchronous resize/
-  // focus event -- see plans/0002-platform-foundation.md Section 6.
+  // focus event -- see docs/plans/0002-platform-foundation.md Section 6.
   s.pendingBuffer.push_back(PlatformEvent{SurfaceCreated{currentHandle()}});
 
   ShowWindow(s.hwnd, SW_SHOWDEFAULT);

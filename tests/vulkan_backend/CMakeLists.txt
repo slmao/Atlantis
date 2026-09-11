@@ -1,4 +1,4 @@
-# See plans/0003-rhi-vulkan-windowed-foundation.md Section 8: this
+# See docs/plans/0003-rhi-vulkan-windowed-foundation.md Section 8: this
 # executable is GPU-independent by construction (no source file here
 # touches a real VkInstance/VkDevice) and is discovered by a bare
 # ctest -LE gpu run with no label to exclude. The separate, GPU-required

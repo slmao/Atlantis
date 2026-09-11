@@ -24,7 +24,7 @@ enum class MaterialSamplerAddressMode {
 // shader pair (Plan 0018 Section P10, Plan 0019 Section P6); the
 // Material artifact stores only this enumerator, never a shader path or
 // identifier of any kind. LitTextured added by ADR-0061 Decision 3 /
-// plans/0019-lighting-foundation.md P5 -- reuses MaterialAssetData's own
+// docs/plans/0019-lighting-foundation.md P5 -- reuses MaterialAssetData's own
 // existing, unchanged shape; no LitColored (untextured) kind this
 // round, no real consumer names one yet. PbrDirectLit added by ADR-0066
 // Decision item 1 / Plan 0023 Milestone 1 -- reuses this same shape too,

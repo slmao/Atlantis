@@ -151,7 +151,7 @@ atlantis::Result<std::monostate, WorldError> World::destroyEntity(EntityId id) {
   if (auto r = validate(id); r.isErr()) return r;
 
   // Collection phase: build the full transitive-descendant set before
-  // mutating anything. See plans/0014-world-scene-foundation.md D3 for
+  // mutating anything. See docs/plans/0014-world-scene-foundation.md D3 for
   // the full correctness argument (no missed descendant, no double-
   // processing, no slot-reuse-mid-scan hazard).
   std::vector<EntityId> toDestroy{id};

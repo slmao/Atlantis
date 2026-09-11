@@ -10,8 +10,8 @@
 #include <variant>
 
 // Spec 0003's non-shipping verification composition (see
-// specs/0003-rhi-vulkan-windowed-foundation.md's Non-Goals and
-// plans/0003-rhi-vulkan-windowed-foundation.md Section 11). This is NOT
+// docs/specs/0003-rhi-vulkan-windowed-foundation.md's Non-Goals and
+// docs/plans/0003-rhi-vulkan-windowed-foundation.md Section 11). This is NOT
 // the Atlantis Runtime module and does not preview its future
 // architecture -- Runtime's own responsibilities (owning Platform across
 // the application's full lifetime, general frame-loop policy, Android

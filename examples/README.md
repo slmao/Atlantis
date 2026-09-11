@@ -3,14 +3,14 @@
 Non-shipping demonstration programs — not part of the Atlantis runtime
 architecture. Kept out of `src/` deliberately so a smoke-test/demo
 program can never be mistaken for a shipping engine module; see
-[ADR-0010](../adr/0010-cmake-structure.md).
+[ADR-0010](../docs/adr/0010-cmake-structure.md).
 
 - **`foundation_demo/`** — proof-of-build executable for
-  [specs/0001-project-foundation.md](../specs/0001-project-foundation.md).
+  [specs/0001-project-foundation.md](../docs/specs/0001-project-foundation.md).
   Links `Atlantis::Core` and exercises the logging and assertion
   abstractions. Not a preview of Atlantis Runtime.
 - **`platform_demo/`** — Windows Platform lifecycle demo for
-  [specs/0002-platform-foundation.md](../specs/0002-platform-foundation.md).
+  [specs/0002-platform-foundation.md](../docs/specs/0002-platform-foundation.md).
   Links `Atlantis::Platform`, opens a real top-level window, and logs
   every `PlatformEvent` (resize, focus, close request, shutdown ordering)
   and elapsed monotonic time. The window stays entirely blank — no
@@ -18,7 +18,7 @@ program can never be mistaken for a shipping engine module; see
   Atlantis Runtime.
 - **`rhi_vulkan_demo/`** — RHI + Vulkan Backend verification demo (target
   `atlantis_rhi_vulkan_demo`) for
-  [specs/0003-rhi-vulkan-windowed-foundation.md](../specs/0003-rhi-vulkan-windowed-foundation.md).
+  [specs/0003-rhi-vulkan-windowed-foundation.md](../docs/specs/0003-rhi-vulkan-windowed-foundation.md).
   Links `Atlantis::Core`, `Atlantis::Platform`, `Atlantis::RHI`, and
   `Atlantis::VulkanBackend`. Opens a real top-level window, creates a
   Vulkan `Device` and `Presentation` through Atlantis's public API only,
@@ -38,7 +38,7 @@ program can never be mistaken for a shipping engine module; see
   (path varies by generator/configuration).
 - **`minimal_renderer_demo/`** — Minimal Renderer verification demo
   (target `atlantis_minimal_renderer_demo`) for
-  [specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md).
+  [specs/0007-minimal-renderer.md](../docs/specs/0007-minimal-renderer.md).
   Links `Atlantis::Core`, `Atlantis::Platform`, `Atlantis::RHI`,
   `Atlantis::VulkanBackend`, `Atlantis::RenderGraph`, and
   `Atlantis::Renderer`. Opens a real top-level window and, driven by the

@@ -3,7 +3,7 @@
 #include <vulkan/vulkan_core.h>
 
 // Private Vulkan Validation Layer enforcement policy. See
-// plans/0003-rhi-vulkan-windowed-foundation.md Section 6: whenever
+// docs/plans/0003-rhi-vulkan-windowed-foundation.md Section 6: whenever
 // validation layers are enabled, any WARNING/ERROR severity message must
 // structurally fail the current process -- unconditionally, regardless of
 // which AssertFailureHandler happens to be installed. Nothing here creates
@@ -70,7 +70,7 @@ inline constexpr bool IsDebugBuild = false;
 // this is this module's own local reinforcement of the fatal invariant
 // above, not a change to ATLANTIS_CHECK_MSG/ADR-0009 and not a new public
 // assertion mechanism (confirmed at Human Review, per
-// plans/0003-rhi-vulkan-windowed-foundation.md Section 6/Consistency
+// docs/plans/0003-rhi-vulkan-windowed-foundation.md Section 6/Consistency
 // Review item 17). In the ordinary case (the default failure handler,
 // which already calls std::abort() internally) this std::abort() is
 // unreachable; it exists for the case where a replacement handler

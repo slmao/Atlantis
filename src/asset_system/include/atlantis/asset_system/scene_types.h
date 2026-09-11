@@ -47,7 +47,7 @@ struct DecodedRenderable {
   std::optional<atlantis::asset_system::AssetId> materialAsset;
 };
 
-// Spec 0019 D2 / ADR-0061 Decision item 1 / plans/0019-lighting-foundation.md
+// Spec 0019 D2 / ADR-0061 Decision item 1 / docs/plans/0019-lighting-foundation.md
 // P2: a deliberately separate, Atlantis::AssetSystem-owned shape from
 // atlantis::world::LightKind/Light -- never names a world:: type, the
 // identical reasoning DecodedCamera already establishes. Flat fields

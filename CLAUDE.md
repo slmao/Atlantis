@@ -21,12 +21,12 @@ drafting the spec/plan artifacts over jumping to code.
 2. **Inspect existing architecture before making changes** —
    [docs/architecture/](docs/architecture/), the relevant module's own
    README under `docs/`, and any prior implementation already in `src/`.
-3. **Read the relevant Spec** in [specs/](specs/) for the work at hand.
+3. **Read the relevant Spec** in [docs/specs/](docs/specs/) for the work at hand.
    Do not start from the task description alone if a spec exists.
-4. **Read relevant ADRs** in [adr/](adr/) — both ones the spec names and
+4. **Read relevant ADRs** in [docs/adr/](docs/adr/) — both ones the spec names and
    any others that bound the module(s) being touched.
-5. **Create an implementation Plan before coding**, in [plans/](plans/)
-   using [plans/template.md](plans/template.md), and get it through Human
+5. **Create an implementation Plan before coding**, in [docs/plans/](docs/plans/)
+   using [docs/plans/template.md](docs/plans/template.md), and get it through Human
    Review per AGENTS.md — do not start writing code against an unapproved
    plan.
 6. **Do not modify the Spec to make implementation easier.** If the spec
@@ -48,7 +48,7 @@ drafting the spec/plan artifacts over jumping to code.
 
 ## Current repository state
 
-`specs/0001-project-foundation.md` is implemented: a minimal C++20/CMake
+`docs/specs/0001-project-foundation.md` is implemented: a minimal C++20/CMake
 project exists (`src/core/` — Atlantis Core: logging, assertions, a
 result/error type — `examples/foundation_demo/`, `tests/core/`). No RHI,
 Renderer, RenderGraph, windowing, Vulkan, or CI pipeline yet — those
@@ -67,7 +67,7 @@ ctest --test-dir build -C Debug
 
 The unit test framework (Catch2 v3) is fetched automatically via CMake
 `FetchContent` on first configure (network access required then only) —
-see [ADR-0006](adr/0006-dependency-management.md).
+see [ADR-0006](docs/adr/0006-dependency-management.md).
 
 **Platform note:** Atlantis's target platforms are Windows and Android
 (primary) and iOS (future, not started) — see [AGENTS.md](AGENTS.md)
@@ -80,9 +80,11 @@ command should look like once one exists.
 
 ## Working conventions in this repo
 
-- Treat `specs/`, `plans/`, and `adr/` as required reading before touching
-  anything under `src/` or `tests/` once those gain real content.
-- Use the templates in `specs/template.md`, `plans/template.md`, and
-  `adr/template.md` — don't freehand new formats for these documents.
+- Treat `docs/specs/`, `docs/plans/`, and `docs/adr/` as required reading
+  before touching anything under `src/` or `tests/` once those gain real
+  content.
+- Use the templates in `docs/specs/template.md`, `docs/plans/template.md`,
+  and `docs/adr/template.md` — don't freehand new formats for these
+  documents.
 - Never push to `main` or merge a PR without explicit human instruction to
   do so, per this session's standing safety rules.

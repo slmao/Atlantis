@@ -3,7 +3,7 @@
 // the one-time frame lighting data (ADR-0062 D1/D5) read from the
 // existing camera uniform binding's own newly-fragment-visible stage
 // (ADR-0062 Decision 2). The CameraUniform layout below mirrors
-// plans/0019-lighting-foundation.md P7's own single authoritative field
+// docs/plans/0019-lighting-foundation.md P7's own single authoritative field
 // table field-for-field, offset-for-offset -- Milestone 6's own real
 // Slang reflection is the actual verification of that claim, not this
 // comment alone.
@@ -71,7 +71,7 @@ Varying vertexMain(VertexInput input) {
     // matrix's own upper-left 3x3 -- correct exactly when that
     // submatrix is conformal (Runtime's own checkConformalTransform()
     // gates which entities ever reach this shader with a non-conformal
-    // transform, plans/0019-lighting-foundation.md P8/P15).
+    // transform, docs/plans/0019-lighting-foundation.md P8/P15).
     output.worldNormal = mul((float3x3)pushConstants.objectToWorld, input.normal);
     output.uv = input.uv;
     return output;

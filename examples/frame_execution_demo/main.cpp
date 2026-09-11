@@ -13,9 +13,9 @@
 #include <variant>
 
 // Spec 0006's non-shipping verification composition (see
-// specs/0006-rhi-render-graph-frame-execution-foundation.md's Testing &
+// docs/specs/0006-rhi-render-graph-frame-execution-foundation.md's Testing &
 // Verification Plan and
-// plans/0006-rhi-render-graph-frame-execution-foundation.md Section 13).
+// docs/plans/0006-rhi-render-graph-frame-execution-foundation.md Section 13).
 // This is NOT the Atlantis Runtime module and does not preview its future
 // architecture -- same disclaimer as examples/rhi_vulkan_demo, which
 // remains Spec 0003's own, unmodified, still-renders-nothing artifact.

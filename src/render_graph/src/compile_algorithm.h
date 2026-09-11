@@ -12,7 +12,7 @@ namespace atlantis::render_graph::detail {
 // Private, plain-data mirror of what a RenderGraphBuilder has already
 // accumulated -- deliberately not the public PassHandle/ResourceHandle
 // API, so this algorithm is unit-testable without constructing a full
-// RenderGraphBuilder (Plan 0005 Section 6, mirroring plans/0003's
+// RenderGraphBuilder (Plan 0005 Section 6, mirroring docs/plans/0003's
 // detail::decideRecreateAction() precedent).
 //
 // Precondition (enforced by RenderGraphBuilder, not re-checked here):

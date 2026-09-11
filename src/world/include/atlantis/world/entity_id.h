@@ -9,8 +9,8 @@ class World;          // forward declaration (friend)
 class WorldIdentity;  // opaque forward declaration only -- full definition
                        // private to world.cpp; EntityId never dereferences it
 
-// See specs/0014-world-scene-foundation.md and
-// adr/0049-entity-identity-and-handle-invalidation.md (including its own
+// See docs/specs/0014-world-scene-foundation.md and
+// docs/adr/0049-entity-identity-and-handle-invalidation.md (including its own
 // Accepted Amendment -- stable World identity token). A non-owning,
 // borrowed handle: it must not outlive the World instance that issued
 // it, and must never be serialized, persisted, or used across a process

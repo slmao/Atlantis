@@ -11,7 +11,7 @@ using atlantis::world::LightKind;
 using atlantis::world::World;
 using atlantis::world::WorldError;
 
-// Spec 0019 D2 / plans/0019-lighting-foundation.md P1, V1: mirrors
+// Spec 0019 D2 / docs/plans/0019-lighting-foundation.md P1, V1: mirrors
 // camera_tests.cpp's own exact shape for setCamera()/getCamera()/
 // removeCamera() -- Light follows the identical set/get/remove
 // contract.

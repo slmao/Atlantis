@@ -2,17 +2,17 @@
 
 **`core/`** — Atlantis Core: logging, assertions, and a minimal
 result/error utility type. Implemented per
-[specs/0001-project-foundation.md](../specs/0001-project-foundation.md),
-[plans/0001-project-foundation.md](../plans/0001-project-foundation.md),
-and [ADR-0006](../adr/0006-dependency-management.md)–[ADR-0010](../adr/0010-cmake-structure.md).
+[specs/0001-project-foundation.md](../docs/specs/0001-project-foundation.md),
+[plans/0001-project-foundation.md](../docs/plans/0001-project-foundation.md),
+and [ADR-0006](../docs/adr/0006-dependency-management.md)–[ADR-0010](../docs/adr/0010-cmake-structure.md).
 
 **`platform/`** — Atlantis Platform: application lifecycle, window
 creation/ownership/destruction, `NativeWindowHandle`, `PlatformEvent`
 delivery, and monotonic timing. Only the **Windows** path is implemented,
-per [specs/0002-platform-foundation.md](../specs/0002-platform-foundation.md),
-[plans/0002-platform-foundation.md](../plans/0002-platform-foundation.md),
-and [ADR-0005](../adr/0005-platform-module-multi-os-windowing.md),
-[ADR-0010](../adr/0010-cmake-structure.md)–[ADR-0013](../adr/0013-platform-window-ownership-and-lifetime.md).
+per [specs/0002-platform-foundation.md](../docs/specs/0002-platform-foundation.md),
+[plans/0002-platform-foundation.md](../docs/plans/0002-platform-foundation.md),
+and [ADR-0005](../docs/adr/0005-platform-module-multi-os-windowing.md),
+[ADR-0010](../docs/adr/0010-cmake-structure.md)–[ADR-0013](../docs/adr/0013-platform-window-ownership-and-lifetime.md).
 Android and iOS are specified architecturally (ADR-0005, ADR-0012,
 ADR-0013) but **not implemented** — `src/platform/src/windows/` is the
 only per-OS implementation directory that currently exists.
@@ -27,34 +27,34 @@ frame-scoped write-only `RenderTarget`, a minimal `CommandList`
 supporting value types `Extent2D`, `Format`, `SwapchainMetadata`,
 `PresentationError`, and `ResourceState`. RHI's public headers reference
 no Vulkan or Platform type. Non-frame construction implemented per
-[specs/0003-rhi-vulkan-windowed-foundation.md](../specs/0003-rhi-vulkan-windowed-foundation.md),
-[plans/0003-rhi-vulkan-windowed-foundation.md](../plans/0003-rhi-vulkan-windowed-foundation.md),
-and [ADR-0001](../adr/0001-rhi-backend-independence.md),
-[ADR-0002](../adr/0002-presentation-rendertarget-unification.md),
-[ADR-0003](../adr/0003-resource-rendertarget-ownership-model.md),
-[ADR-0014](../adr/0014-rhi-device-presentation-construction-boundary.md),
-[ADR-0016](../adr/0016-presentation-acquire-present-and-recreation-contract.md);
+[specs/0003-rhi-vulkan-windowed-foundation.md](../docs/specs/0003-rhi-vulkan-windowed-foundation.md),
+[plans/0003-rhi-vulkan-windowed-foundation.md](../docs/plans/0003-rhi-vulkan-windowed-foundation.md),
+and [ADR-0001](../docs/adr/0001-rhi-backend-independence.md),
+[ADR-0002](../docs/adr/0002-presentation-rendertarget-unification.md),
+[ADR-0003](../docs/adr/0003-resource-rendertarget-ownership-model.md),
+[ADR-0014](../docs/adr/0014-rhi-device-presentation-construction-boundary.md),
+[ADR-0016](../docs/adr/0016-presentation-acquire-present-and-recreation-contract.md);
 the frame-execution surface (`RenderTarget`, `CommandList`, `submit()`/
 `acquireNextTarget()`/`present()`, `SubmissionSignal`) implemented per
-[specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md),
-[plans/0006-rhi-render-graph-frame-execution-foundation.md](../plans/0006-rhi-render-graph-frame-execution-foundation.md),
-and [ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md),
-[ADR-0020](../adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md);
+[specs/0006-rhi-render-graph-frame-execution-foundation.md](../docs/specs/0006-rhi-render-graph-frame-execution-foundation.md),
+[plans/0006-rhi-render-graph-frame-execution-foundation.md](../docs/plans/0006-rhi-render-graph-frame-execution-foundation.md),
+and [ADR-0019](../docs/adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md),
+[ADR-0020](../docs/adr/0020-rhi-minimal-resource-command-recording-and-submission-interface.md);
 the minimal GPU resource/pipeline/draw surface (`Buffer`, `Texture`,
 `Pipeline`, `Device::createBuffer/createTexture/createPipeline()`, and
 `CommandList`'s bind/push-constant/draw operations) implemented per
-[specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md),
-[plans/0007-minimal-renderer.md](../plans/0007-minimal-renderer.md), and
-[ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md),
-[ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md);
+[specs/0007-minimal-renderer.md](../docs/specs/0007-minimal-renderer.md),
+[plans/0007-minimal-renderer.md](../docs/plans/0007-minimal-renderer.md), and
+[ADR-0023](../docs/adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md),
+[ADR-0025](../docs/adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md);
 a sampled-texture surface (`SampledTexture`, `Sampler`,
 `Device::createSampledTexture()/createSampler()`,
 `CommandList::copyBufferToTexture()`, and `BufferPurpose::Staging` as a
 host-visible upload source) implemented per
-[specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md),
-[plans/0016-texture-sampler-foundation.md](../plans/0016-texture-sampler-foundation.md),
+[specs/0016-texture-sampler-foundation.md](../docs/specs/0016-texture-sampler-foundation.md),
+[plans/0016-texture-sampler-foundation.md](../docs/plans/0016-texture-sampler-foundation.md),
 and
-[ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md),
+[ADR-0055](../docs/adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0056](../docs/adr/0056-texture-upload-resource-state-and-descriptor-binding.md),
 merged via [PR #78](https://github.com/slmao/Atlantis/pull/78).
 
 **`vulkan_backend/`** — Atlantis Vulkan Backend: Phase 1's sole graphics
@@ -67,20 +67,20 @@ image render-finished-semaphore pool, a persistent acquire-complete
 semaphore, a single-frame-in-flight command pool/fence), and
 `vkCmdClearColorImage`/barrier recording; still no general GPU memory
 allocator (direct, unpooled, per-resource allocation only — see
-[ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)).
+[ADR-0023](../docs/adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)).
 Vulkan and Win32 WSI types stay private to this module's own
 implementation files; Windows is currently the only implemented WSI path
 (Android is not implemented). Non-frame swapchain construction
 implemented per
-[specs/0003-rhi-vulkan-windowed-foundation.md](../specs/0003-rhi-vulkan-windowed-foundation.md),
-[plans/0003-rhi-vulkan-windowed-foundation.md](../plans/0003-rhi-vulkan-windowed-foundation.md),
-and [ADR-0014](../adr/0014-rhi-device-presentation-construction-boundary.md),
-[ADR-0015](../adr/0015-vulkan-memory-allocation-deferred.md),
-[ADR-0016](../adr/0016-presentation-acquire-present-and-recreation-contract.md);
+[specs/0003-rhi-vulkan-windowed-foundation.md](../docs/specs/0003-rhi-vulkan-windowed-foundation.md),
+[plans/0003-rhi-vulkan-windowed-foundation.md](../docs/plans/0003-rhi-vulkan-windowed-foundation.md),
+and [ADR-0014](../docs/adr/0014-rhi-device-presentation-construction-boundary.md),
+[ADR-0015](../docs/adr/0015-vulkan-memory-allocation-deferred.md),
+[ADR-0016](../docs/adr/0016-presentation-acquire-present-and-recreation-contract.md);
 frame execution implemented per
-[specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md),
-[plans/0006-rhi-render-graph-frame-execution-foundation.md](../plans/0006-rhi-render-graph-frame-execution-foundation.md),
-and [ADR-0019](../adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)–[ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md),
+[specs/0006-rhi-render-graph-frame-execution-foundation.md](../docs/specs/0006-rhi-render-graph-frame-execution-foundation.md),
+[plans/0006-rhi-render-graph-frame-execution-foundation.md](../docs/plans/0006-rhi-render-graph-frame-execution-foundation.md),
+and [ADR-0019](../docs/adr/0019-presentation-acquire-present-and-rendertarget-frame-borrow-contract.md)–[ADR-0021](../docs/adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md),
 merged via [PR #23](https://github.com/slmao/Atlantis/pull/23) and a
 post-merge GPU-verification fix PR,
 [PR #24](https://github.com/slmao/Atlantis/pull/24) (three real Vulkan
@@ -90,13 +90,13 @@ found only by running on real GPU hardware); `VulkanBuffer`/
 recording path, and Vulkan dynamic rendering as a capability-detected
 Core/Extension dual path (no `VkRenderPass`/`VkFramebuffer` anywhere)
 implemented per
-[specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md),
-[plans/0007-minimal-renderer.md](../plans/0007-minimal-renderer.md), and
-[ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)–[ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md),
+[specs/0007-minimal-renderer.md](../docs/specs/0007-minimal-renderer.md),
+[plans/0007-minimal-renderer.md](../docs/plans/0007-minimal-renderer.md), and
+[ADR-0023](../docs/adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md)–[ADR-0025](../docs/adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md),
 merged via [PR #28](https://github.com/slmao/Atlantis/pull/28); the
 dynamic-rendering Core path's post-merge fix (separating it fully from
 `VK_KHR_dynamic_rendering`) implemented per
-[ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md)'s
+[ADR-0024](../docs/adr/0024-vulkan-dynamic-rendering-for-attachments.md)'s
 "Accepted Amendment — 2026-08-13", merged via
 [PR #29](https://github.com/slmao/Atlantis/pull/29) (amendment) and
 [PR #30](https://github.com/slmao/Atlantis/pull/30) (fix); `VulkanSampledTexture`/
@@ -104,22 +104,22 @@ dynamic-rendering Core path's post-merge fix (separating it fully from
 (`copyBufferToTexture()`'s own staging-buffer-to-image copy and
 Undefined→TransferDestination→ShaderRead barrier sequencing) implemented
 per
-[specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md),
-[plans/0016-texture-sampler-foundation.md](../plans/0016-texture-sampler-foundation.md),
+[specs/0016-texture-sampler-foundation.md](../docs/specs/0016-texture-sampler-foundation.md),
+[plans/0016-texture-sampler-foundation.md](../docs/plans/0016-texture-sampler-foundation.md),
 and
-[ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md),
+[ADR-0055](../docs/adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0056](../docs/adr/0056-texture-upload-resource-state-and-descriptor-binding.md),
 merged via [PR #78](https://github.com/slmao/Atlantis/pull/78); the
 camera uniform binding's own Vulkan `stageFlags` widened from
 vertex-only to vertex-and-fragment (one value, one line — no second
 `VkDescriptorSetLayoutBinding`, no new RHI/Renderer public API)
 implemented per
-[specs/0019-lighting-foundation.md](../specs/0019-lighting-foundation.md)
+[specs/0019-lighting-foundation.md](../docs/specs/0019-lighting-foundation.md)
 and
-[ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md),
+[ADR-0062](../docs/adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md),
 merged via [PR #96](https://github.com/slmao/Atlantis/pull/96).
 `VulkanDevice`'s own descriptor-pool capacity, originally a single,
 Device-global, fixed `maxSets = 4` pool
-([Plan 0007](../plans/0007-minimal-renderer.md) Section 10, sized for a
+([Plan 0007](../docs/plans/0007-minimal-renderer.md) Section 10, sized for a
 "exactly one Material" assumption that no longer held once Spec 0018
 introduced arbitrary-N-materials support — a real, currently-supported
 two-distinct-material color-format change exceeded it, reproduced by a
@@ -129,7 +129,7 @@ record has the full root-cause trace), **has since been fixed**:
 `VulkanDevice` now privately owns a fixed-size
 `std::array<DescriptorPoolEntry, 4>` descriptor-pool set (never a
 `std::vector` — a deliberate exception-safety choice, see
-[ADR-0064](../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)),
+[ADR-0064](../docs/adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)),
 starting with one pool (`maxSets = 4`) and growing — one pool at a time,
 geometric doubling (`4, 8, 16, 32`), only on a real, observed
 `VK_ERROR_OUT_OF_POOL_MEMORY`/`VK_ERROR_FRAGMENTED_POOL` — up to a hard
@@ -139,10 +139,10 @@ reusing capacity an earlier `VulkanPipeline` destructor already freed,
 before ever creating a new pool; `VK_ERROR_DEVICE_LOST`/host-or-device
 out-of-memory fail immediately with no growth attempted. Implemented
 per
-[specs/0021-descriptor-pool-capacity-foundation.md](../specs/0021-descriptor-pool-capacity-foundation.md),
-[plans/0021-descriptor-pool-capacity-foundation.md](../plans/0021-descriptor-pool-capacity-foundation.md),
+[specs/0021-descriptor-pool-capacity-foundation.md](../docs/specs/0021-descriptor-pool-capacity-foundation.md),
+[plans/0021-descriptor-pool-capacity-foundation.md](../docs/plans/0021-descriptor-pool-capacity-foundation.md),
 and
-[ADR-0064](../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md),
+[ADR-0064](../docs/adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md),
 merged via [PR #100](https://github.com/slmao/Atlantis/pull/100) — zero
 RHI/Renderer/Material public API change; `VulkanPipeline` itself needed
 no modification at all. **The four-pool/60-concurrent-descriptor-set
@@ -172,18 +172,18 @@ recognizes a **draw pass** (a `ColorAttachmentOutput`/
 with Vulkan dynamic-rendering attachment-scoping calls. **Not yet
 implemented:** pass culling and resource lifetime/aliasing. Construction/
 compilation implemented per
-[specs/0005-render-graph-foundation.md](../specs/0005-render-graph-foundation.md),
-[plans/0005-render-graph-foundation.md](../plans/0005-render-graph-foundation.md),
-and [ADR-0017](../adr/0017-render-graph-construction-compile-layering.md),
-[ADR-0018](../adr/0018-render-graph-dependency-derivation-and-ordering.md);
+[specs/0005-render-graph-foundation.md](../docs/specs/0005-render-graph-foundation.md),
+[plans/0005-render-graph-foundation.md](../docs/plans/0005-render-graph-foundation.md),
+and [ADR-0017](../docs/adr/0017-render-graph-construction-compile-layering.md),
+[ADR-0018](../docs/adr/0018-render-graph-dependency-derivation-and-ordering.md);
 `execute()` implemented per
-[specs/0006-rhi-render-graph-frame-execution-foundation.md](../specs/0006-rhi-render-graph-frame-execution-foundation.md),
-[plans/0006-rhi-render-graph-frame-execution-foundation.md](../plans/0006-rhi-render-graph-frame-execution-foundation.md),
-and [ADR-0021](../adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md);
+[specs/0006-rhi-render-graph-frame-execution-foundation.md](../docs/specs/0006-rhi-render-graph-frame-execution-foundation.md),
+[plans/0006-rhi-render-graph-frame-execution-foundation.md](../docs/plans/0006-rhi-render-graph-frame-execution-foundation.md),
+and [ADR-0021](../docs/adr/0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md);
 multi-attachment/draw-pass execution implemented per
-[specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md),
-[plans/0007-minimal-renderer.md](../plans/0007-minimal-renderer.md), and
-[ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md);
+[specs/0007-minimal-renderer.md](../docs/specs/0007-minimal-renderer.md),
+[plans/0007-minimal-renderer.md](../docs/plans/0007-minimal-renderer.md), and
+[ADR-0026](../docs/adr/0026-render-graph-multi-attachment-draw-pass-integration.md);
 `ResourceBinding` gained a third bind-kind (`sampledTexture`, alongside
 `target`/`depthTexture` — exactly one of the three non-null per entry),
 tracking a one-time texture upload's own
@@ -191,10 +191,10 @@ Undefined→TransferDestination→ShaderRead transition, with `finalState`
 widened to sampledTexture bindings (the same trailing-transition
 mechanism Spec 0010/ADR-0039 already established, not a new one),
 implemented per
-[specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md),
-[plans/0016-texture-sampler-foundation.md](../plans/0016-texture-sampler-foundation.md),
+[specs/0016-texture-sampler-foundation.md](../docs/specs/0016-texture-sampler-foundation.md),
+[plans/0016-texture-sampler-foundation.md](../docs/plans/0016-texture-sampler-foundation.md),
 and
-[ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md),
+[ADR-0056](../docs/adr/0056-texture-upload-resource-state-and-descriptor-binding.md),
 merged via [PR #78](https://github.com/slmao/Atlantis/pull/78).
 
 **`renderer/`** — Atlantis Renderer: the thin, stateless frame
@@ -206,22 +206,22 @@ depending only on `Atlantis::Core`, `Atlantis::RHI`, `Atlantis::RenderGraph`
 never created/cached/looked-up by `Renderer` itself), `DrawItem`, and
 `Renderer::drawFrame()`, which retains no GPU resource or frame-to-frame
 state across calls. Implemented per
-[specs/0007-minimal-renderer.md](../specs/0007-minimal-renderer.md),
-[plans/0007-minimal-renderer.md](../plans/0007-minimal-renderer.md), and
-[ADR-0022](../adr/0022-minimal-renderer-public-api-and-resource-ownership.md),
+[specs/0007-minimal-renderer.md](../docs/specs/0007-minimal-renderer.md),
+[plans/0007-minimal-renderer.md](../docs/plans/0007-minimal-renderer.md), and
+[ADR-0022](../docs/adr/0022-minimal-renderer-public-api-and-resource-ownership.md),
 merged via [PR #28](https://github.com/slmao/Atlantis/pull/28). This same
 spec extended `rhi/` with `Buffer`/`Texture`/`Pipeline` and a minimal
 graphics-pipeline/binding/draw-command surface
-([ADR-0023](../adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md),
-[ADR-0025](../adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)),
+([ADR-0023](../docs/adr/0023-rhi-minimal-gpu-resource-types-and-allocation.md),
+[ADR-0025](../docs/adr/0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md)),
 `vulkan_backend/` with Vulkan dynamic rendering as a capability-detected
 Core/Extension dual path
-([ADR-0024](../adr/0024-vulkan-dynamic-rendering-for-attachments.md) —
+([ADR-0024](../docs/adr/0024-vulkan-dynamic-rendering-for-attachments.md) —
 its Core path was fixed post-merge by
 [PR #29](https://github.com/slmao/Atlantis/pull/29)/[PR #30](https://github.com/slmao/Atlantis/pull/30),
 see that ADR's "Accepted Amendment — 2026-08-13" section), and
 `render_graph/` with multi-attachment/draw-pass execution
-([ADR-0026](../adr/0026-render-graph-multi-attachment-draw-pass-integration.md)).
+([ADR-0026](../docs/adr/0026-render-graph-multi-attachment-draw-pass-integration.md)).
 Only a single, fixed, solid/vertex-color material and a single, fixed,
 hand-authored mesh are supported this round — see the spec's own
 Non-Goals for the full list of what this module deliberately does not
@@ -233,15 +233,15 @@ both defaulting to `nullptr` — so a `Material` may optionally sample one
 fixed texture through one fixed descriptor binding; still one texture
 per `Material`, never a material graph or multiple slots, implemented
 per
-[specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md),
-[plans/0016-texture-sampler-foundation.md](../plans/0016-texture-sampler-foundation.md),
+[specs/0016-texture-sampler-foundation.md](../docs/specs/0016-texture-sampler-foundation.md),
+[plans/0016-texture-sampler-foundation.md](../docs/plans/0016-texture-sampler-foundation.md),
 and
-[ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md),
+[ADR-0056](../docs/adr/0056-texture-upload-resource-state-and-descriptor-binding.md),
 merged via [PR #78](https://github.com/slmao/Atlantis/pull/78).
 
 **`shader_system/`** — Atlantis Shader System: a build-time Slang →
 SPIR-V compile/reflect/validate pipeline, superseding
-[ADR-0027](../adr/0027-temporary-precompiled-spirv-shader-artifacts.md)'s
+[ADR-0027](../docs/adr/0027-temporary-precompiled-spirv-shader-artifacts.md)'s
 temporary checked-in-bytecode bootstrap. Target `atlantis_shader_system`,
 alias `Atlantis::ShaderSystem` (`Atlantis::Core`-only): a private JSON
 parser, the versioned `ReflectionMetadata` schema and its loader/saver,
@@ -255,9 +255,9 @@ repository depending on both `Atlantis::ShaderSystem` and
 reflected shader data with a caller-supplied host vertex schema into
 RHI's existing `VertexInputLayout`/push-constant size, never constructing
 or caching any RHI/GPU resource itself. Implemented per
-[specs/0008-shader-system-foundation.md](../specs/0008-shader-system-foundation.md),
-[plans/0008-shader-system-foundation.md](../plans/0008-shader-system-foundation.md),
-and [ADR-0028](../adr/0028-shader-system-source-language-and-compiler.md)–[ADR-0031](../adr/0031-shader-system-artifact-versioning-and-reproducibility.md),
+[specs/0008-shader-system-foundation.md](../docs/specs/0008-shader-system-foundation.md),
+[plans/0008-shader-system-foundation.md](../docs/plans/0008-shader-system-foundation.md),
+and [ADR-0028](../docs/adr/0028-shader-system-source-language-and-compiler.md)–[ADR-0031](../docs/adr/0031-shader-system-artifact-versioning-and-reproducibility.md),
 merged via [PR #36](https://github.com/slmao/Atlantis/pull/36).
 
 **`asset_system/`** — Atlantis Asset System: a deterministic
@@ -331,40 +331,40 @@ covered by the metadata sidecar's own cross-check); reference
 validation (the embedded texture Asset ID) is value-level only, never an
 existence check — an unresolvable reference surfaces as a Runtime-side
 error at scene-load time, not an Asset System error. Implemented per
-[specs/0012-asset-system-foundation.md](../specs/0012-asset-system-foundation.md),
-[plans/0012-asset-system-foundation.md](../plans/0012-asset-system-foundation.md),
-[ADR-0043](../adr/0043-asset-system-module-boundary.md)–[ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md);
+[specs/0012-asset-system-foundation.md](../docs/specs/0012-asset-system-foundation.md),
+[plans/0012-asset-system-foundation.md](../docs/plans/0012-asset-system-foundation.md),
+[ADR-0043](../docs/adr/0043-asset-system-module-boundary.md)–[ADR-0045](../docs/adr/0045-asset-system-data-format-versioning-and-dependency-policy.md);
 the scene graph asset type extended per
-[specs/0015-scene-asset-serialization-foundation.md](../specs/0015-scene-asset-serialization-foundation.md),
-[plans/0015-scene-asset-serialization-foundation.md](../plans/0015-scene-asset-serialization-foundation.md),
+[specs/0015-scene-asset-serialization-foundation.md](../docs/specs/0015-scene-asset-serialization-foundation.md),
+[plans/0015-scene-asset-serialization-foundation.md](../docs/plans/0015-scene-asset-serialization-foundation.md),
 and
-[ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)–[ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md);
+[ADR-0052](../docs/adr/0052-scene-asset-module-boundary-and-ownership.md)–[ADR-0054](../docs/adr/0054-scene-loading-transactional-instantiation-contract.md);
 the texture asset type added per
-[specs/0016-texture-sampler-foundation.md](../specs/0016-texture-sampler-foundation.md),
-[plans/0016-texture-sampler-foundation.md](../plans/0016-texture-sampler-foundation.md),
+[specs/0016-texture-sampler-foundation.md](../docs/specs/0016-texture-sampler-foundation.md),
+[plans/0016-texture-sampler-foundation.md](../docs/plans/0016-texture-sampler-foundation.md),
 and
-[ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md);
+[ADR-0055](../docs/adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)–[ADR-0057](../docs/adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md);
 the static mesh format's UV0 attribute added per
-[specs/0017-mesh-uv-attribute-foundation.md](../specs/0017-mesh-uv-attribute-foundation.md),
-[plans/0017-mesh-uv-attribute-foundation.md](../plans/0017-mesh-uv-attribute-foundation.md),
+[specs/0017-mesh-uv-attribute-foundation.md](../docs/specs/0017-mesh-uv-attribute-foundation.md),
+[plans/0017-mesh-uv-attribute-foundation.md](../docs/plans/0017-mesh-uv-attribute-foundation.md),
 and
-[ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md),
+[ADR-0058](../docs/adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md),
 merged via [PR #84](https://github.com/slmao/Atlantis/pull/84); the
 Material asset type and the scene graph's own optional material
 reference added per
-[specs/0018-material-asset-scene-binding-foundation.md](../specs/0018-material-asset-scene-binding-foundation.md),
-[plans/0018-material-asset-scene-binding-foundation.md](../plans/0018-material-asset-scene-binding-foundation.md),
+[specs/0018-material-asset-scene-binding-foundation.md](../docs/specs/0018-material-asset-scene-binding-foundation.md),
+[plans/0018-material-asset-scene-binding-foundation.md](../docs/plans/0018-material-asset-scene-binding-foundation.md),
 and
-[ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)–[ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md),
+[ADR-0059](../docs/adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)–[ADR-0060](../docs/adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md),
 merged via [PR #88](https://github.com/slmao/Atlantis/pull/88); the
 static mesh format's object-space normal attribute added per
-[specs/0020-mesh-normal-attribute-foundation.md](../specs/0020-mesh-normal-attribute-foundation.md),
-[plans/0020-mesh-normal-attribute-foundation.md](../plans/0020-mesh-normal-attribute-foundation.md),
-[ADR-0063](../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md),
+[specs/0020-mesh-normal-attribute-foundation.md](../docs/specs/0020-mesh-normal-attribute-foundation.md),
+[plans/0020-mesh-normal-attribute-foundation.md](../docs/plans/0020-mesh-normal-attribute-foundation.md),
+[ADR-0063](../docs/adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md),
 and Accepted Amendments to
-[ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
+[ADR-0045](../docs/adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
 and
-[ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md),
+[ADR-0058](../docs/adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md),
 merged via [PR #93](https://github.com/slmao/Atlantis/pull/93) — a
 normal *data contract* only (authoring → cook → artifact → load), with
 no Lighting, no Lit Material, no shader consuming the new attribute,
@@ -408,18 +408,18 @@ never a reference or pointer into `World`'s own internal storage.
 System's own `ValidatedSceneData` into a real `World` — two-pass,
 deterministic, genuinely infallible instantiation; scene-local node
 indices are never persisted as `EntityId`. Implemented per
-[specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md),
-[plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md),
-[ADR-0048](../adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md);
+[specs/0014-world-scene-foundation.md](../docs/specs/0014-world-scene-foundation.md),
+[plans/0014-world-scene-foundation.md](../docs/plans/0014-world-scene-foundation.md),
+[ADR-0048](../docs/adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](../docs/adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md);
 `fromValidatedSceneData()` extended per
-[specs/0015-scene-asset-serialization-foundation.md](../specs/0015-scene-asset-serialization-foundation.md)
+[specs/0015-scene-asset-serialization-foundation.md](../docs/specs/0015-scene-asset-serialization-foundation.md)
 and
-[ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md);
+[ADR-0054](../docs/adr/0054-scene-loading-transactional-instantiation-contract.md);
 the `Light` component added per
-[specs/0019-lighting-foundation.md](../specs/0019-lighting-foundation.md),
-[plans/0019-lighting-foundation.md](../plans/0019-lighting-foundation.md),
+[specs/0019-lighting-foundation.md](../docs/specs/0019-lighting-foundation.md),
+[plans/0019-lighting-foundation.md](../docs/plans/0019-lighting-foundation.md),
 and
-[ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md),
+[ADR-0061](../docs/adr/0061-world-light-component-and-scene-lighting-binding-boundary.md),
 merged via [PR #96](https://github.com/slmao/Atlantis/pull/96).
 
 **`tools/asset_cooker/`** — Atlantis Tools' second real content:
@@ -514,37 +514,37 @@ values (address-stable borrows, independent of map rehash/move) in a
 declaration order that keeps every `SampledTexture`/`Sampler` a borrowed
 `Material` might reference destroyed strictly after that `Material`.
 Implemented per
-[specs/0013-runtime-host-foundation.md](../specs/0013-runtime-host-foundation.md),
-[plans/0013-runtime-host-foundation.md](../plans/0013-runtime-host-foundation.md),
-[ADR-0046](../adr/0046-runtime-composition-ownership-and-frame-lifecycle.md),
-[ADR-0047](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md);
+[specs/0013-runtime-host-foundation.md](../docs/specs/0013-runtime-host-foundation.md),
+[plans/0013-runtime-host-foundation.md](../docs/plans/0013-runtime-host-foundation.md),
+[ADR-0046](../docs/adr/0046-runtime-composition-ownership-and-frame-lifecycle.md),
+[ADR-0047](../docs/adr/0047-runtime-host-executable-library-structure-and-test-boundary.md);
 the `World`-driven scene and extraction adapter extended per
-[specs/0014-world-scene-foundation.md](../specs/0014-world-scene-foundation.md),
-[plans/0014-world-scene-foundation.md](../plans/0014-world-scene-foundation.md),
+[specs/0014-world-scene-foundation.md](../docs/specs/0014-world-scene-foundation.md),
+[plans/0014-world-scene-foundation.md](../docs/plans/0014-world-scene-foundation.md),
 and
-[ADR-0051](../adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md);
+[ADR-0051](../docs/adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md);
 the manifest-driven real scene asset load implemented per
-[specs/0015-scene-asset-serialization-foundation.md](../specs/0015-scene-asset-serialization-foundation.md),
-[plans/0015-scene-asset-serialization-foundation.md](../plans/0015-scene-asset-serialization-foundation.md),
+[specs/0015-scene-asset-serialization-foundation.md](../docs/specs/0015-scene-asset-serialization-foundation.md),
+[plans/0015-scene-asset-serialization-foundation.md](../docs/plans/0015-scene-asset-serialization-foundation.md),
 and
-[ADR-0052](../adr/0052-scene-asset-module-boundary-and-ownership.md)–[ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md);
+[ADR-0052](../docs/adr/0052-scene-asset-module-boundary-and-ownership.md)–[ADR-0054](../docs/adr/0054-scene-loading-transactional-instantiation-contract.md);
 the Phase 1 CPU-transaction widening, Phase 2 deferred GPU material
 realization, and the format-change rebuild's own old-`Pipeline`-in-
 flight safety fix implemented per
-[specs/0018-material-asset-scene-binding-foundation.md](../specs/0018-material-asset-scene-binding-foundation.md),
-[plans/0018-material-asset-scene-binding-foundation.md](../plans/0018-material-asset-scene-binding-foundation.md),
+[specs/0018-material-asset-scene-binding-foundation.md](../docs/specs/0018-material-asset-scene-binding-foundation.md),
+[plans/0018-material-asset-scene-binding-foundation.md](../docs/plans/0018-material-asset-scene-binding-foundation.md),
 and
-[ADR-0059](../adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)–[ADR-0060](../adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md),
+[ADR-0059](../docs/adr/0059-material-asset-module-boundary-artifact-format-and-shader-identity.md)–[ADR-0060](../docs/adr/0060-scene-material-binding-and-runtime-transactional-resource-publish.md),
 merged via [PR #88](https://github.com/slmao/Atlantis/pull/88). A
 second `MaterialKind`, `LitTextured`, dispatched through one shared,
 C4062-guarded `selectShaderPair()` helper both `realizeOneMaterialCandidate()`
 and `rebuildMaterialsForFormatChange()` call identically, plus a
 176-byte `FrameLightingData` payload written into the existing camera
 `Buffer`'s own tail bytes (widened 128 → 304 bytes) — implemented per
-[specs/0019-lighting-foundation.md](../specs/0019-lighting-foundation.md),
-[plans/0019-lighting-foundation.md](../plans/0019-lighting-foundation.md),
+[specs/0019-lighting-foundation.md](../docs/specs/0019-lighting-foundation.md),
+[plans/0019-lighting-foundation.md](../docs/plans/0019-lighting-foundation.md),
 and
-[ADR-0061](../adr/0061-world-light-component-and-scene-lighting-binding-boundary.md)–[ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md),
+[ADR-0061](../docs/adr/0061-world-light-component-and-scene-lighting-binding-boundary.md)–[ADR-0062](../docs/adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md),
 merged via [PR #96](https://github.com/slmao/Atlantis/pull/96). That
 payload's own original one-time-per-session capture (never re-captured,
 never updated by a later `World::setLight()` call) has since been fixed:
@@ -552,22 +552,22 @@ it is now re-extracted from `World`'s live state and republished every
 successful frame — `World::setLight()`, a Light's own local/parent
 `Transform`, and Light entity creation/removal are all reflected on the
 next successful frame — via
-[specs/0022-dynamic-frame-uniform-updates-foundation.md](../specs/0022-dynamic-frame-uniform-updates-foundation.md),
-[plans/0022-dynamic-frame-uniform-updates-foundation.md](../plans/0022-dynamic-frame-uniform-updates-foundation.md),
+[specs/0022-dynamic-frame-uniform-updates-foundation.md](../docs/specs/0022-dynamic-frame-uniform-updates-foundation.md),
+[plans/0022-dynamic-frame-uniform-updates-foundation.md](../docs/plans/0022-dynamic-frame-uniform-updates-foundation.md),
 merged via [PR #106](https://github.com/slmao/Atlantis/pull/106), with
 zero RHI/Renderer/Material public API change and zero new
 synchronization primitive — a first-draft proposal for a new RHI wait
 method
-([ADR-0065](../adr/0065-explicit-pre-write-submission-drain-for-frame-uniform-safety.md))
+([ADR-0065](../docs/adr/0065-explicit-pre-write-submission-drain-for-frame-uniform-safety.md))
 was found unnecessary during that Spec's own governance gate and was
 never implemented; `ADR-0065` is `Rejected`, not a current architectural
 decision. A third `MaterialKind`, `PbrDirectLit` — a metallic-roughness
 Cook-Torrance BRDF for Directional/Point lights, sharing the existing
 single-texture Material architecture — is implemented per
-[specs/0023-pbr-material-foundation.md](../specs/0023-pbr-material-foundation.md),
-[plans/0023-pbr-material-foundation.md](../plans/0023-pbr-material-foundation.md),
+[specs/0023-pbr-material-foundation.md](../docs/specs/0023-pbr-material-foundation.md),
+[plans/0023-pbr-material-foundation.md](../docs/plans/0023-pbr-material-foundation.md),
 and
-[ADR-0066](../adr/0066-pbr-material-asset-parameter-set-and-color-space-contract.md)–[ADR-0067](../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md),
+[ADR-0066](../docs/adr/0066-pbr-material-asset-parameter-set-and-color-space-contract.md)–[ADR-0067](../docs/adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md),
 merged via [PR #111](https://github.com/slmao/Atlantis/pull/111). It
 extends the Material artifact/schema to 56 bytes, the push constant to
 96 bytes (vertex+fragment stage visibility), and the camera uniform
@@ -585,7 +585,7 @@ public `include/` — it carries no cross-module contract, unlike
 image-based lighting (merged via
 [PR #119](https://github.com/slmao/Atlantis/pull/119)). Shadows and normal
 mapping/tangent-space input remain unimplemented; the approved
-[Spec 0026](../specs/0026-visible-sky-foundation.md) proposes a visible sky
+[Spec 0026](../docs/specs/0026-visible-sky-foundation.md) proposes a visible sky
 background reusing the same HDR intermediate and environment asset.
 See
 [docs/architecture/module_boundaries.md](../docs/architecture/module_boundaries.md)

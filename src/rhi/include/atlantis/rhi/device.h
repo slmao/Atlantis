@@ -46,7 +46,7 @@ class Device {
   // for a successful submit() before calling submit() again; submit()
   // followed directly by application exit remains legal (waitIdle()
   // drains it). See
-  // plans/0006-rhi-render-graph-frame-execution-foundation.md. A
+  // docs/plans/0006-rhi-render-graph-frame-execution-foundation.md. A
   // *headless* caller (Spec 0010/ADR-0038) never constructs a
   // Presentation and therefore never calls present() at all -- its own
   // repeated-submit() safety comes entirely from this method's existing

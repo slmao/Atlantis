@@ -12,7 +12,7 @@ absence of relevance must be obvious, not assumed.
 - [ ] An approved plan exists and the implementation matches it — any
       deviation is called out explicitly in the PR description
 - [ ] Any architectural decision introduced by this work has a
-      corresponding ADR in [adr/](../../adr/)
+      corresponding ADR in [adr/](../adr/)
 
 ## Code
 

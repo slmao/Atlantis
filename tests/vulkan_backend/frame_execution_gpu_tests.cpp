@@ -10,7 +10,7 @@
 
 // GPU-required, windowed integration coverage for the full frame
 // execution cycle (Spec 0006 / ADR-0019-0021), per
-// plans/0006-rhi-render-graph-frame-execution-foundation.md Section 13 /
+// docs/plans/0006-rhi-render-graph-frame-execution-foundation.md Section 13 /
 // Implementation Order Step 8. Windows-only, real Vulkan device, real
 // window -- mirrors vulkan_presentation_gpu_tests.cpp's own structure and
 // PlatformLifecycleGuard pattern. Drives the whole path exclusively

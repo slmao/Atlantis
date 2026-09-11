@@ -4,7 +4,7 @@
 
 namespace atlantis::world {
 
-// See adr/0050-transform-hierarchy-composition-and-update-model.md's own
+// See docs/adr/0050-transform-hierarchy-composition-and-update-model.md's own
 // Math contract: localEulerAnglesRadians is (pitch, yaw, roll) about
 // (x, y, z), composed as Ry(yaw) * Rx(pitch) * Rz(roll); local matrix is
 // T * R * S.

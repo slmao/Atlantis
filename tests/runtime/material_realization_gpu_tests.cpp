@@ -874,7 +874,7 @@ TEST_CASE("loadAndInstantiateScene: a PbrDirectLit material whose own resolved b
 // A real, pre-existing, PRE-Plan-0019 architectural ceiling -- FIXED by
 // Spec 0021/ADR-0062/Plan 0021 (Descriptor Pool Capacity Foundation).
 // Originally found and disclosed, not fixed, during Spec 0019's own
-// final centralized review (see plans/0019-lighting-foundation.md's own
+// final centralized review (see docs/plans/0019-lighting-foundation.md's own
 // "Implementation Status Update" for that original finding).
 //
 // Root cause, as originally traced: VulkanDevice's own VkDescriptorPool

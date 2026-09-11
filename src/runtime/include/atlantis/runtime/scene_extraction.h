@@ -29,8 +29,8 @@ struct Vec3 {
   float z = 0.0f;
 };
 
-// See specs/0014-world-scene-foundation.md,
-// adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md.
+// See docs/specs/0014-world-scene-foundation.md,
+// docs/adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md.
 // Runtime-private: atlantis::runtime remains Runtime's own internal
 // namespace, nothing here is consumed by any other module. Factored out
 // of runtime_application.cpp's own anonymous namespace so this pure,
@@ -64,7 +64,7 @@ struct CameraMatrices {
 };
 
 // Plan 0019 Section P7: the single authoritative field table's own
-// direct C++ transcription -- see plans/0019-lighting-foundation.md P7
+// direct C++ transcription -- see docs/plans/0019-lighting-foundation.md P7
 // for the full, offset-by-offset rationale. Appended immediately after
 // the existing 128-byte camera view+projection block inside the same
 // uniform Buffer (runtime_application.cpp / P9) -- this struct's own
