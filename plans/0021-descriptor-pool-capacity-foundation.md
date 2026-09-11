@@ -19,7 +19,7 @@
   record. **This approval authorizes Implementation of this Plan only
   once this PR itself has merged — not before.**
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  Batch 6 PR (pending). Original scope, P1–P8, the Milestones/Task
+  [PR #153](https://github.com/slmao/Atlantis/pull/153) Batch 6. Original scope, P1–P8, the Milestones/Task
   Breakdown, and the full V1–V27 checklist retained; the two review
   rounds are condensed above, and the post-merge status record is
   retained in full.

@@ -12,7 +12,7 @@
 - **Related ADR(s):** [ADR-0064](../adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)
   (`Accepted`)
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 6 PR (pending). Original scope and obligations retained; the
+  [PR #153](https://github.com/slmao/Atlantis/pull/153) Batch 6. Original scope and obligations retained; the
   final review round is preserved in
   [PR #98](https://github.com/slmao/Atlantis/pull/98) history.
 - **Human Review Approval (2026-08-29):** Reviewed and approved by

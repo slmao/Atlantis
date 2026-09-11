@@ -19,7 +19,7 @@
   correction below). This Spec's corrected design needs **no** ADR — see
   the corrected Architectural Impact section.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 6 PR (pending). This document already carries its own governance-
+  [PR #153](https://github.com/slmao/Atlantis/pull/153) Batch 6. This document already carries its own governance-
   driven compaction (the "Correction — 2026-08-30" section summarizes,
   rather than reproduces, the superseded original Motivation/Design/
   Architectural Impact/Final Review Round/Human Review Approval content,
