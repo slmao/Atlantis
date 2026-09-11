@@ -95,6 +95,9 @@
   settled. **This approval authorizes Implementation only once this
   Plan's own PR (#83) is merged** — it does not itself constitute that
   merge.
+- **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
+  Batch 5 PR (pending). Original scope, D1–D9, the Milestones/Task
+  Breakdown, and the full V1–V37 matrix retained.
 
 ## Plan Review (2026-08-26, pre-approval)
 

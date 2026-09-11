@@ -143,6 +143,11 @@
   immediately — per this repository's own PR-based workflow, this
   Plan's own PR (#77) must be merged first; see
   [specs/README.md](../specs/README.md).**
+- **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
+  Batch 5 PR (pending). Original scope, D1–D11, the Milestones/Task
+  Breakdown, and the full V1–V49 matrix retained; the two Independent
+  Review rounds are condensed above, with the full drafts preserved in
+  [PR #77](https://github.com/slmao/Atlantis/pull/77) history.
 
 ## Objective
 
@@ -1650,181 +1655,42 @@ Deltas specific to this plan:
   to the two already-disclosed translation units (ADR-0041's own
   Accepted Amendment).
 
-## Independent Review — Round 1 (self-review, 2026-08-24)
+## Historical scope — Independent Review, two rounds (self-review, 2026-08-24)
 
-A centralized, evidence-driven self-review pass, before this Plan
-proceeds to Human Review — mechanical issues found and fixed directly,
-not left for a reviewer to discover:
-
-- **Found and fixed:** the original draft placed the GPU-required
-  upload-primitive verification (now V17) inside Milestone 2, before
-  `ResourceBinding`'s own third field (Milestone 3) existed — a real
-  step-ordering error, since AGENTS.md's Golden Rule forbids exercising
-  the new `copyBufferToTexture()`/barrier pair through anything other
-  than a real RenderGraph pass, which cannot be built until Milestone 3
-  lands. Moved V17 to the end of Milestone 3, with Milestone 2's own GPU
-  verification narrowed to resource-creation-only (V12), matching what
-  is actually possible at that point in the sequence.
-- **Found and fixed:** the first draft did not explicitly resolve
-  where `stbi_load()` itself is called, leaving an implicit assumption
-  that `atlantis::asset_system::cookTexture()` would call it directly —
-  which would have required linking `Stb::Stb` into `Atlantis::AssetSystem`
-  itself, directly contradicting ADR-0057's own Decision 4 boundary.
-  Resolved explicitly (Pre-draft verification section, D1, D9): the
-  decode call lives in `src/tools/asset_cooker/cook_command.cpp`'s own
-  new `runCookTextureMode()`; `cookTexture()` itself takes already-
-  decoded bytes. This is a genuine Plan-level architectural decision,
-  not a silent workaround — recorded explicitly, with its own rationale,
-  rather than left implicit.
-- **Found and fixed:** the first draft left `TextureAssetData`'s own
-  color-space field typed as `atlantis::rhi::SampledTextureFormat`,
-  which would give `Atlantis::AssetSystem` a forbidden compile-time
-  dependency on `Atlantis::RHI`. Resolved by introducing `TextureColorSpace`
-  as Asset System's own, independent enum (D8), translated to RHI's
-  `SampledTextureFormat` only by the composition root — matching Spec
-  0015's own already-`Accepted` DTO-decoupling precedent exactly, not a
-  new pattern invented for this Plan.
-- **Found and fixed:** `Material`'s new fields were first drafted as
-  `const SampledTexture&`/`const Sampler&` (non-nullable references),
-  which cannot represent "no texture bound" — the overwhelming majority
-  of existing `Material`s. Corrected to nullable pointers (D3), with an
-  explicit both-or-neither `ATLANTIS_CHECK` invariant.
-- **No blocking issue found** in the RHI/Vulkan-Backend atomic-step
-  boundary (Milestone 2), the combined-submission design (Milestone 9),
-  the `stb` CMake-ordering fix (Milestone 1/D10), or the artifact
-  overflow/row-order/mip contract (D8) — each was independently
-  re-checked against the Spec's own Human Review Decision Table and
-  found to match exactly, with no deviation introduced by this Plan.
-- **Left as a genuinely open, disclosed mechanical detail, not
-  resolved here** (matching Spec 0015's own precedent for leaving
-  concrete shapes to Implementation where no architectural content is
-  at stake): the exact `kMaxTextureDimension` value (this Plan fixes
-  `8192` as a reasoned default per D8's own overflow-safety math,
-  Implementation may adjust with disclosure if a real constraint is
-  found); the exact new shader file's own directory placement
-  (`shaders/textured_quad/` assumed, matching
-  `shaders/minimal_renderer/`'s own precedent). **The Slang reflection-
-  JSON shape for a combined image sampler binding, flagged in this
-  round as an open guess, is resolved with real evidence in Independent
-  Review — Round 2 below** — no longer open.
-
-Round 1 found no blocking issue beyond the two corrected above. Round 2
-below, prompted by a further Plan Review, replaces the guess this round
-left open with real evidence and fixes three further, genuine gaps.
-
-## Independent Review — Round 2 (final Plan Review, 2026-08-24)
-
-A second, targeted review round — not a broad re-review — resolving
-three Must Fix findings and five Should Fix precision items before this
-Plan proceeds to formal Human Review, without broadening scope further:
-
-- **Must Fix, resolved — not by reversing Approved architecture.** A
-  reviewer asked whether the third `ResourceBinding` field should be a
-  composite type also carrying the source staging `Buffer`. Re-verified
-  against ADR-0056 Decision 4 and Spec 0016 Human Review item 6: the
-  Approved design **already explicitly decided** the staging `Buffer` is
-  not RenderGraph-tracked, matching `copyRenderTargetToBuffer()`'s own
-  established precedent — reversing that at Plan-review time would be
-  exactly the kind of silent architecture change AGENTS.md forbids, and
-  would also reintroduce the "unbounded generic resource system" both
-  Spec 0016 and this Plan explicitly reject (Buffers have no Vulkan
-  image layout — there is nothing for `ResourceBinding`'s own
-  state-transition machinery to track). The **real, separate** gap the
-  same finding pointed at — the dependency being visible only inside an
-  anonymous lambda's own capture list — is genuine and is fixed: D4 now
-  specifies a named `buildTextureUploadPass()` helper taking the staging
-  `Buffer` as an explicit, required parameter, with the architectural
-  reasoning stated inline so a future reader sees a deliberate design,
-  not an oversight (V39).
-- **Must Fix, resolved with a full, repo-wide audit, not the
-  previously-checked subset.** Every abstract RHI interface
-  (`Device`, `CommandList`, `Buffer`, `Texture`, `RenderTarget`,
-  `Pipeline`, `OffscreenTarget`, `Presentation`, `SubmissionSignal`) and
-  every one of its real implementers (Vulkan and Fake) is now
-  enumerated in the Pre-draft verification section's own table. Two
-  genuine findings: (1) `RenderTarget` has **three** implementers
-  (`VulkanRenderTarget`, `VulkanOffscreenRenderTarget`, `FakeRenderTarget`)
-  — irrelevant to this Plan (its interface is untouched) but recorded so
-  a future reader does not assume the two-implementer `CommandList`
-  shape generalizes; (2) `Material`/`Mesh` are confirmed, verbatim, to
-  have zero virtual methods and no base class — there is no
-  `VulkanMaterial`, and the "every implementer in one atomic step" rule
-  simply does not apply to `Material`'s own new fields, which are
-  ordinary data members. `SampledTexture`/`Sampler` follow depth
-  `Texture`'s own single-real-implementer precedent (`static_cast`, not
-  `RenderTarget`'s own `dynamic_cast`-based access pattern, which exists
-  only because `RenderTarget` genuinely has two real implementers).
-- **Must Fix, resolved precisely, not left implicit.** "Staging
-  `Buffer`s survive until `waitIdle()` returns `Ok`" only ever covered
-  the success path. New D5a section states three distinct failure
-  shapes explicitly: early setup failure (safe, immediate, unconditional
-  cleanup — nothing was ever submitted); `submit()` itself failing
-  (equally safe and immediate — the GPU never began executing this
-  `CommandList`'s own work); `waitIdle()` returning `Err` including
-  `DeviceLost` (treated as fatal for the fixture, matching every
-  existing headless GPU test's own already-established
-  `REQUIRE(...isOk())` fail-fast pattern — not a new graceful-recovery
-  mechanism this codebase does not have anywhere else, and building one
-  would be solving a problem well outside Spec 0016's own single-fixture
-  scope). Confirmed this Plan reuses `VulkanDevice::waitIdle()`'s own
-  existing internal `waitAndReleaseRetainedSubmission()`/fence contract
-  unchanged — no new fence or retained-submission concept introduced
-  (V40, V41, V42).
-- **Should Fix, resolved with real evidence, not a guess — the most
-  consequential finding of this round.** A real `slangc` compile (this
-  repository's own pinned Vulkan SDK toolchain, run directly during this
-  review) of a `[[vk::binding(1,0)]] Sampler2D` declaration confirms the
-  reflection JSON's top-level `binding.kind` is `"descriptorTableSlot"`
-  — **the same string a uniform buffer already uses** — not a distinct
-  `"combinedImageSampler"` kind as Round 1 had guessed. The real
-  distinguishing shape is one level deeper:
-  `type.kind == "resource"`, `type.baseShape == "texture2D"`,
-  `type.combined == true`. D6 now shows the exact confirmed JSON and the
-  exact, corrected `slang_json_transform.cpp` extension (widening the
-  existing `descriptorTableSlot` branch's own `moduleTypeKind` check,
-  not adding a new top-level branch) — a real, previously-unverified
-  assumption this round would have caught only after Milestone 4 was
-  already underway, not before. `Float2`'s own reflection shape
-  (`elementCount: 2`) is confirmed by the same probe compile (V18).
-- **Should Fix, resolved:** `Material`'s both-or-neither invariant is
-  confirmed to have exactly one entry point (the constructor) and no
-  rebind surface of any kind (no setter exists, matching `pipeline_`'s
-  own existing precedent) — a structural guarantee, not a documented
-  convention. `PipelineCreateParams::hasSampledTextureBinding`'s own
-  exact mechanism (a caller-derived `bool`, defaulting to `false`,
-  zero change to any existing call site) is now specified precisely
-  rather than hand-waved as "indicates" (D5, V44).
-- **Should Fix, resolved:** the fixture's own `Vertex` struct, binding,
-  offset, stride, and location assignment for `Float2` are now fully
-  specified (D11) — interleaved, single buffer, matching
-  `minimal_cube_fixture.cpp`'s own established shape, cross-validated
-  against the shader's own real reflection, no Asset System or
-  test-private-backdoor involvement. This Plan's own recommendation
-  drops the per-vertex color attribute Spec 0016's own illustrative
-  `location(2)` mention implied, explicitly disclosed as a Plan-level
-  simplification (a texture-sampling proof needs no vertex color), not
-  a silent deviation.
-- **Should Fix, resolved:** the combined-submission ordering (D11) is
-  now a fully explicit seven-step sequence, and a new baseline-
-  comparison test (V27, expanded) proves the `RenderTarget` is
-  genuinely drawn into and read from, not merely passed to satisfy
-  `submit()`'s own signature.
-- **Should Fix, resolved:** `stb`'s CMake split is re-verified against
-  the pinned commit hash staying identical across the file move (V43),
-  the per-static-library (not per-executable) implementation-macro
-  count (V9, corrected wording), and an explicit CMake link-graph check
-  — not header-grep alone — confirming `Atlantis::AssetSystem`'s own
-  link closure never reaches `Stb::Stb` (V35, corrected wording).
-
-No blocking issue remained after this round. Every Must Fix and Should
-Fix item from this round's own review was resolved with either a
-corrected design (backed, where relevant, by real empirical evidence —
-the `slangc` probe) or an explicit, disclosed confirmation that the
-Approved architecture already correctly addressed the concern raised.
-This Plan was subsequently reviewed and approved in full — see "Human
-Review Approval (2026-08-24)" at the top of this document for the
-complete record; this Plan's own status is `Approved / Ready for
-Implementation`, not merely `In Review`, as of that approval.
+Round 1 found and fixed four issues before Human Review: a step-ordering
+error (the GPU-required upload-primitive verification, now V17, needed
+`ResourceBinding`'s own third field and so had to move from Milestone 2
+to the end of Milestone 3); an unresolved question of where `stbi_load()`
+is called (resolved: the decode call lives in Tools' own
+`runCookTextureMode()`, never in `Atlantis::AssetSystem`, D1/D9);
+`TextureAssetData`'s color-space field typed as
+`atlantis::rhi::SampledTextureFormat` (a forbidden `AssetSystem`→`RHI`
+dependency, corrected to Asset System's own independent
+`TextureColorSpace` enum, D8, matching Spec 0015's DTO-decoupling
+precedent); and `Material`'s new fields first drafted as non-nullable
+references (unable to represent "no texture bound," corrected to
+nullable pointers with a both-or-neither `ATLANTIS_CHECK`, D3). Round 2
+(final Plan Review) resolved three Must Fix findings and five Should Fix
+precision items: confirmed the staging `Buffer` correctly stays outside
+RenderGraph's own tracking (ADR-0056 Decision 4, unchanged) while fixing
+the real, separate gap of its visibility only inside a lambda capture
+(D4's named `buildTextureUploadPass()` helper, V39); completed a
+full, repo-wide RHI-interface/implementer audit, now in the Pre-draft
+verification table above (confirming `RenderTarget` has three
+implementers, irrelevant here, and `Material`/`Mesh` have none); made
+D5a's three-case `submit()`/`waitIdle()` failure-lifecycle contract
+explicit (V40–V42); replaced a guessed Slang reflection-JSON shape for a
+combined-sampler binding with the real, `slangc`-confirmed shape (D6,
+V18) — the most consequential finding, since the guess (`"combinedImageSampler"`)
+was wrong and the real shape reuses `"descriptorTableSlot"` one level
+higher, distinguished by `type.baseShape`/`type.combined`; and precisely
+specified `Material`'s single-entry-point validation (D3), the fixture's
+exact `Vertex` layout (D11), the seven-step combined-submission ordering
+plus its own baseline-comparison proof (D11, V27), and `stb`'s CMake
+split (V9, V35, V43). No blocking issue remained after either round —
+every finding is reflected in the D-section it fixed. This Plan was
+subsequently reviewed and approved in full — see "Human Review Approval
+(2026-08-24)" at the top of this document.
 
 ## Human Review Correction — 2026-08-24
 
