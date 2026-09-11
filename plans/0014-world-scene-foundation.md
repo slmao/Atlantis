@@ -111,7 +111,7 @@
   all `Accepted` 2026-08-22, **including** ADR-0049's "Accepted Amendment"
   section (2026-08-22, stable `World` identity token).
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  Batch 4 PR (pending). Original scope, D1–D11, the Milestones/Task
+  [PR #151](https://github.com/slmao/Atlantis/pull/151) Batch 4. Original scope, D1–D11, the Milestones/Task
   Breakdown, and the full V1–V28 matrix retained; the six-round Independent
   Review narration is condensed above, with the full drafts preserved in
   [PR #67](https://github.com/slmao/Atlantis/pull/67) history.

@@ -96,7 +96,7 @@
   (transactional instantiation contract) — all `Accepted`, alongside
   this Spec's own Human Review Approval recorded 2026-08-23.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 4 PR (pending). Original scope and obligations retained
+  [PR #151](https://github.com/slmao/Atlantis/pull/151) Batch 4. Original scope and obligations retained
   verbatim; only prose tightened.
 
 ## Summary

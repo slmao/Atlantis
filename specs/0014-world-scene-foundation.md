@@ -174,7 +174,7 @@
   (World-to-Renderer extraction and asset resolution boundary) — all four
   `Accepted`.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 4 PR (pending). Original scope, obligations, the Human Review
+  [PR #151](https://github.com/slmao/Atlantis/pull/151) Batch 4. Original scope, obligations, the Human Review
   Decision Table, and the full Accepted Amendment (stable `World`
   identity, and its two subsequent corrections) retained; the round-by-round
   self-review narration is preserved in PR #67 history.

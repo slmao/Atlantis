@@ -40,7 +40,7 @@
   [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md)
   — all three `Accepted` 2026-08-19.
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  Batch 4 PR (pending). Original scope, ordered work, decisions D1–D10,
+  [PR #151](https://github.com/slmao/Atlantis/pull/151) Batch 4. Original scope, ordered work, decisions D1–D10,
   and the V1–V11 matrix retained; candidate CMake fragments and the
   Independent Review narration are condensed, with the full drafts
   preserved in [PR #57](https://github.com/slmao/Atlantis/pull/57)

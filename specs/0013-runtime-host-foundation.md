@@ -112,7 +112,7 @@
   (Runtime Host executable/library structure and test boundary) — both
   `Accepted` alongside this spec's Human Review Approval.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 4 PR (pending). Original scope, obligations, the fixed
+  [PR #151](https://github.com/slmao/Atlantis/pull/151) Batch 4. Original scope, obligations, the fixed
   initialization/per-frame/shutdown ordering, and the error-state table
   retained; the round-by-round self-review narration is preserved in PR
   #61 history.

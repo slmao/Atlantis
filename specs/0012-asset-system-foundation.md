@@ -85,7 +85,7 @@
   (data format, versioning, third-party dependency policy) — all three
   `Accepted` 2026-08-19.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 4 PR (pending). Original scope and obligations retained; the
+  [PR #151](https://github.com/slmao/Atlantis/pull/151) Batch 4. Original scope and obligations retained; the
   round-by-round independent-review narration is preserved in PR #55
   history.
 

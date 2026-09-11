@@ -106,7 +106,7 @@
   (executable/library structure, test boundary) — both `Accepted`
   2026-08-20.
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  Batch 4 PR (pending). Original scope, ordered work, decisions D1–D10
+  [PR #151](https://github.com/slmao/Atlantis/pull/151) Batch 4. Original scope, ordered work, decisions D1–D10
   (including the 2026-08-21 D3/V3 amendment), and the V1–V11 matrix
   retained; candidate C++ blocks and the round-by-round review narration
   are condensed, with the full drafts preserved in

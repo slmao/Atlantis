@@ -116,7 +116,7 @@
   construction" direction, which this Plan's D2/D4/D6 and V11/V28
   already reflect.
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  Batch 4 PR (pending). Original scope, D1–D11, the Milestones/Task
+  [PR #151](https://github.com/slmao/Atlantis/pull/151) Batch 4. Original scope, D1–D11, the Milestones/Task
   Breakdown, and the full V1–V28 matrix retained; the two Independent
   Review rounds are condensed above into their own load-bearing
   findings, each of which is already reflected in the D-sections they
