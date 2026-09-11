@@ -22,7 +22,7 @@
   this Plan only once its own Implementation PR has merged — not
   before.**
 - **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
-  Batch 7 PR (pending). Original scope, all ten Milestones, and the
+  [PR #154](https://github.com/slmao/Atlantis/pull/154) Batch 7. Original scope, all ten Milestones, and the
   full Verification Checklist retained.
 
 ## Objective

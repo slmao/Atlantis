@@ -16,7 +16,7 @@
   as deferred to Plan/Implementation, not as blockers to this approval.
   This authorizes drafting Plan 0026, not implementation.
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 7 PR (pending). Original scope and obligations retained; the
+  [PR #154](https://github.com/slmao/Atlantis/pull/154) Batch 7. Original scope and obligations retained; the
   load-bearing "Accepted Correction — 2026-09-04" section is preserved
   in full, unedited. A standalone "Human Review Approval — 2026-09-04"
   section, fully duplicating this header bullet, is folded into it here.

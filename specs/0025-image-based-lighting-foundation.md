@@ -6,7 +6,7 @@
 - **Related Plan(s):** [plans/0025-image-based-lighting-foundation.md](../plans/0025-image-based-lighting-foundation.md) (`Approved / Ready for Implementation`; implementation starts only after [PR #118](https://github.com/slmao/Atlantis/pull/118) merges)
 - **Related ADR(s):** [ADR-0069](../adr/0069-environment-asset-preprocessing-and-ownership.md) (`Accepted`); [ADR-0070](../adr/0070-ibl-frame-binding-and-cubemap-resource-contract.md) (`Accepted`)
 - **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
-  Batch 7 PR (pending). Original scope and obligations retained; the
+  [PR #154](https://github.com/slmao/Atlantis/pull/154) Batch 7. Original scope and obligations retained; the
   load-bearing "Accepted Correction — 2026-09-03" section is preserved
   in full, unedited. Drafting history in
   [PR #116](https://github.com/slmao/Atlantis/pull/116).
