@@ -7,6 +7,9 @@
   [PR #139](https://github.com/slmao/Atlantis/pull/139) itself has
   merged to `main`, not before
 - **Related ADR(s):** [ADR-0076: Runtime Sample Scene Selection Boundary](../adr/0076-runtime-sample-scene-selection-boundary.md) (`Accepted`); amends [ADR-0047](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md) via that ADR's own [Accepted Amendment — 2026-09-09](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md#accepted-amendment--2026-09-09) section (`Accepted`, approved independently of ADR-0076 and this Spec) — see this Spec's own [Human Review Approval — 2026-09-10](#human-review-approval--2026-09-10) below
+- **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
+  Batch 8 PR (pending). Original scope and obligations retained. Drafting
+  history in [PR #139](https://github.com/slmao/Atlantis/pull/139).
 
 ## Summary
 

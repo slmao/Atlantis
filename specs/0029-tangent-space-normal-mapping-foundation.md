@@ -20,6 +20,11 @@
   not solved by this Spec. **This approval authorizes drafting Plan
   0029 only, once PR #129 merges to `main` — not any Implementation,
   asset migration, or golden capture.**
+- **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
+  Batch 8 PR (pending). Original scope and obligations retained; both
+  chained "Human Review Correction"/"Human Review Approved Correction"
+  sections (2026-09-06) are preserved in full, unedited. Drafting
+  history in [PR #129](https://github.com/slmao/Atlantis/pull/129).
 - **Related ADR(s):** [ADR-0073](../adr/0073-static-mesh-tangent-attribute-generation-and-schema.md)
   (`Accepted` — cooked mesh tangent representation, cook-time fallback,
   and existing-mesh migration), [ADR-0074](../adr/0074-pbr-normal-map-material-descriptor-and-shader-contract.md)
