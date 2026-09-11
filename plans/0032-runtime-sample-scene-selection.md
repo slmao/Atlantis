@@ -4,6 +4,9 @@
 - **Status:** Approved / **Implemented in [PR #141](https://github.com/slmao/Atlantis/pull/141); pending merge** (not yet merged — this Plan is not "done" until a human merges that PR)
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Related ADR(s):** [ADR-0076](../adr/0076-runtime-sample-scene-selection-boundary.md) (`Accepted`); [ADR-0047's own Accepted Amendment — 2026-09-09](../adr/0047-runtime-host-executable-library-structure-and-test-boundary.md#accepted-amendment--2026-09-09) (`Accepted`, boundary reference only)
+- **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
+  Batch 8 PR (pending). Original scope, both Milestones, and the full
+  Verification Checklist retained.
 
 ## Objective
 

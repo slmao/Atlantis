@@ -27,6 +27,11 @@
   no new descriptor-peak test, executable, public API, or ADR; and the
   6 Milestones in their given order. **Implementation starts only once
   PR #127 merges to `main` — not before.**
+- **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
+  Batch 8 PR (pending). Original scope, all six Milestones, and the full
+  Verification Checklist retained; the load-bearing "Human-Approved
+  Implementation Deviation — 2026-09-06" section is preserved in full,
+  unedited.
 
 ## Non-negotiable rule for Implementation
 

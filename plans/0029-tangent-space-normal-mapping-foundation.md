@@ -37,6 +37,12 @@
   approval authorizes Implementation of this Plan only once
   [PR #130](https://github.com/slmao/Atlantis/pull/130) itself has
   merged to `main` — not before.**
+- **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
+  Batch 8 PR (pending). Original scope, all seven Milestones, and the
+  full Verification Checklist retained; every chained "Human Review
+  Approved Plan Correction"/"Human-Approved Implementation Deviation"/
+  "Milestone 7 Closeout"/"Hash-Citation Correction" section is preserved
+  in full, unedited.
 
 ## Objective
 
