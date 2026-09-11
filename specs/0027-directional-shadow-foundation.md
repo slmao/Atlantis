@@ -20,6 +20,9 @@
   review. This approval authorizes drafting Plan 0027, not
   implementation; implementation still requires its own Plan and a
   separate Spec+Plan Human Review before coding begins.
+- **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
+  Batch 7 PR (pending). Original scope and obligations retained. Drafting
+  history in [PR #123](https://github.com/slmao/Atlantis/pull/123).
 
 ## Summary
 

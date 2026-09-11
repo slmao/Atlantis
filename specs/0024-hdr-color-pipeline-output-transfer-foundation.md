@@ -10,6 +10,9 @@
   Implementation of that Plan only once its own Implementation PR has
   merged — not before.**)
 - **Related ADR(s):** [ADR-0068](../adr/0068-hdr-color-pipeline-output-transfer-architecture-and-tone-mapping-contract.md) (`Accepted`)
+- **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
+  Batch 7 PR (pending). Original scope and obligations retained. Drafting
+  history in [PR #113](https://github.com/slmao/Atlantis/pull/113).
 - **Human Review Approval (2026-08-31):** Reviewed and approved by
   slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
   git-identified maintainer) on 2026-08-31, accepting this document's
