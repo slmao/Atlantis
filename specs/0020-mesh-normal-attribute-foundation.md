@@ -16,6 +16,10 @@
   never claimed to be, sufficient to unblock Plan 0019 — only this PR's
   own merge is.
 - **Related ADR(s):** [ADR-0063](../adr/0063-static-mesh-normal-attribute-schema-version-and-convention.md) (`Accepted`), plus Accepted Amendments to [ADR-0045](../adr/0045-asset-system-data-format-versioning-and-dependency-policy.md) and [ADR-0058](../adr/0058-static-mesh-uv0-vertex-layout-and-sampling-convention.md)
+- **Editorial revision:** [Spec 0033](0033-documentation-lifecycle-and-compaction.md);
+  [PR #152](https://github.com/slmao/Atlantis/pull/152) Batch 5. Original scope and obligations retained; the
+  final review round is preserved in
+  [PR #91](https://github.com/slmao/Atlantis/pull/91) history.
 - **Human Review Approval (2026-08-29):** Reviewed and approved by
   slmao (`slmao <slmaosjtu@gmail.com>`, this repository's
   git-identified maintainer) on 2026-08-29, accepting this document's
@@ -35,78 +39,41 @@
   Plan-blocked until this Spec's own Implementation PR has merged —
   unchanged, unshortened by this approval.
 
-## Final Review Round (2026-08-29) — closed findings, recorded before approval
+## Historical scope — Final Review Round (2026-08-29), closed before approval
 
-A single, targeted final review round examined ten specific areas of
-this Spec's own numeric determinism, error-domain precision, and
-layout-contract testability. Every item was closed at the Spec level;
-two produced a real, disclosed *design change* from this Spec's own
-first draft, not merely clarified wording — recorded here so the
-change is visible, not silently folded in:
-
-1. **The normal length check is restated on length-*squared*, in
-   double precision, never `std::sqrt` — a real design change, not a
-   wording fix.** The first draft stated its `[0.99, 1.01]` tolerance
-   on `length` directly, implying a `std::sqrt` call whose own
-   preceding `x·x + y·y + z·z` sum has a real, if small, ISA/compiler-
-   dependent rounding-path variability (fused-multiply-add availability
-   differs between this codebase's own two Phase 1 targets, x86-64
-   Windows and ARM/AArch64 Android) — a genuine determinism risk for a
-   value compared against a fixed boundary, never actually addressed by
-   the first draft's own text. Corrected: the check is now stated and
-   computed on `length`-*squared* (`[0.9801, 1.0201]`, the identical
-   real tolerance restated on the squared quantity), computed via
-   explicit double-precision arithmetic after an exact float-to-double
-   promotion of each already-finite-checked component — `std::sqrt`
-   appears nowhere in this Spec's own numeric contract anymore (D3).
-2. **The layout's own four per-attribute byte offsets become real,
-   named, `constexpr` constants — a real reversal, not a wording fix.**
-   The first draft kept every offset (including the new normal one)
-   documented only in `mesh_artifact.h`'s own prose comment, reasoning
-   from today's own precedent (only stride/schema-version are named).
-   This round's own review correctly identified that a comment is not
-   compile-time-checkable — a future consumer could still hand-write
-   the wrong magic offset with nothing to catch the mistake. Corrected:
-   `kMeshArtifactPositionOffsetBytes`/`ColorOffsetBytes`/
-   `Uv0OffsetBytes`/`NormalOffsetBytes` are added to `mesh_artifact.h`
-   as real, public constants — all four attributes, not normal alone,
-   closing the asymmetry a normal-only constant would have created —
-   and each of the six real composition-root touch points gains four
-   `static_assert`s tying its own local `Vertex` struct to them, a
-   compiler-enforced synchronization guarantee (D7).
-
-Eight further findings closed with real evidence, none requiring a
-further design change: the complete six-scenario error-domain matrix
-confirmed against `errors.h`'s own real, current enumerator lists, with
-a direct-search-confirmed finding that neither `SourceParseError` nor
-`ArtifactDecodeError` is consumed by any exhaustive `switch` anywhere in
-this codebase today, so this Spec's own two new `NonUnitNormal`
-enumerators require no C4062 protection (D2); explicit required test
-cases for the length-squared boundary, `-0.0`, an extremely small
-non-zero vector, and `NaN`/`Inf` ordering (D3); the cube's own smooth
-normals pinned to an exact, `from_chars`-recoverable nine-significant-
-digit decimal literal (`0.577350269`) rather than an approximate value,
-with the resulting bit pattern locked by a pinned-byte test once a real
-build exists, never hand-derived in this Spec's own text (D5); both
-quads' `(0, 0, 1)` normal reconfirmed via **both** triangles of **each**
-quad independently (four total computations, all agreeing), not
-inferred from one triangle (D6); a fresh, explicit re-confirmation that
-no artifact-distribution mechanism exists in this codebase today (not
-silently inherited from ADR-0045's 2026-08-19 statement) and that all
-three real mesh assets are confirmed unconditionally declared, re-
-cookable under `ATLANTIS_BUILD_TESTS=OFF` (Requirements); confirmed
-`specs/README.md`'s own Spec 0019 row already states the real
-Implementation-merged governance gate, never loose "after `Approved`"
-language; confirmed no other `Accepted` ADR beyond ADR-0045/ADR-0058
-closes the mesh vertex schema (a repository-wide search of every ADR
-mentioning "position and color"/vertex layout found only a contextual,
-non-authoritative reference in ADR-0059); and the Testing & Verification
-Plan expanded to an explicit, complete checklist matching every item
-this round's own review named.
-
-No unresolvable architectural conflict was found. Every finding above
-was closed with a real, evidenced fix within this Spec's own existing
-scope.
+A single, targeted final review round examined ten areas of this Spec's
+own numeric determinism, error-domain precision, and layout-contract
+testability; every finding is fully reflected in the D-section it
+fixed. Two were genuine, disclosed *design changes* from the first
+draft: the normal length check moved from `length` (implying
+`std::sqrt`, whose preceding sum has real ISA/compiler-dependent
+rounding-path variability between this codebase's two Phase 1 targets)
+to `length`-*squared* in explicit double precision, `std::sqrt`
+appearing nowhere in the numeric contract (D3); and the layout's four
+per-attribute byte offsets moved from comment-only to real, named,
+public `constexpr` constants in `mesh_artifact.h` — all four
+attributes, not normal alone — with each of the six real
+composition-root touch points gaining four `static_assert`s tying its
+own local `Vertex` struct to them (D7). Eight further findings closed
+with real evidence, none requiring a design change: the complete
+six-scenario error-domain matrix confirmed against `errors.h`'s real
+enumerator lists, with neither `SourceParseError` nor
+`ArtifactDecodeError` consumed by any exhaustive `switch` anywhere
+today, so the two new `NonUnitNormal` enumerators need no C4062
+protection (D2); explicit required test cases for the length-squared
+boundary, `-0.0`, an extremely small non-zero vector, and `NaN`/`Inf`
+ordering (D3); the cube's smooth normals pinned to an exact,
+`from_chars`-recoverable nine-significant-digit literal, `0.577350269`
+(D5); both quads' `(0, 0, 1)` normal reconfirmed via both triangles of
+each quad independently, four total agreeing computations (D6); a
+fresh re-confirmation that no artifact-distribution mechanism exists in
+this codebase today and all three real mesh assets are unconditionally
+declared, re-cookable under `ATLANTIS_BUILD_TESTS=OFF`; confirmation
+that `specs/README.md`'s own Spec 0019 row already states the real
+Implementation-merged governance gate; confirmation that no `Accepted`
+ADR beyond ADR-0045/ADR-0058 closes the mesh vertex schema; and the
+Testing & Verification Plan expanded to an explicit, complete checklist.
+No unresolvable architectural conflict was found.
 
 ## Human Review Correction — 2026-08-29
 

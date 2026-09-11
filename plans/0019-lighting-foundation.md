@@ -32,6 +32,12 @@
   had their own already-`Accepted`/`Approved` text modified by either
   review round — every finding was resolved entirely within this Plan's
   own Plan-level-decision authority.
+- **Editorial revision:** [Spec 0033](../specs/0033-documentation-lifecycle-and-compaction.md);
+  [PR #152](https://github.com/slmao/Atlantis/pull/152) Batch 5. Original scope, P1–P16, the Milestones/Task
+  Breakdown, and the full Verification Checklist retained; the two
+  pre-approval review rounds are condensed above into their own
+  P-section pointers, and the post-merge Implementation Status Update
+  is retained in full as the real, as-built governance record.
 
 ## Pre-draft verification gate
 
@@ -2476,191 +2482,57 @@ capability since Spec 0018, so, unlike Plan 0020's own negative-only
 delta, this Plan's Definition of Done applies in its ordinary, positive
 form here.
 
-## Plan Review (self-check before Human Review)
+## Historical scope — two review rounds before Human Review Approval
 
-A single, targeted self-review pass, run immediately after this
-document's own first full draft above, checking this Plan's own claims
-against the real source a second time rather than trusting the first
-pass's own transcription:
-
-1. **Re-verified the scene artifact byte-offset table (P4) by
-   re-deriving it independently from the insertion rule** ("after
-   material, before parent") rather than trusting the first-pass
-   arithmetic alone — confirmed `has_light`/`light_kind` land at
-   `76`-`83` (the material slot's own end, `75`, plus one byte) and the
-   full light block occupies exactly `76`-`103` (28 bytes), moving
-   `has_parent`/`parent_index` from their old `76`-`83` to a new
-   `104`-`111` — matches the table as drafted; no correction needed.
-2. **Re-verified `FrameLightingData`'s own std140 padding requirement**
-   by checking whether a plain C++ struct without the explicit
-   `_pad1[2]` member would already produce the required 16-byte
-   alignment by accident (e.g. via the compiler's own natural alignment
-   of the nested `DirectionalLightGpu[1]` array member) — confirmed it
-   would **not**: `DirectionalLightGpu`'s own strictest member is a
-   4-byte `float`/`std::uint32_t`, so the array's own natural C++
-   alignment requirement is 4 bytes, not 16; without the explicit pad,
-   `directionalLights` would land at offset 8, not 16, silently
-   producing a CPU/GPU layout mismatch no `static_assert` in a naive
-   draft would have caught. The explicit `_pad1[2]` member (and its own
-   `static_assert(offsetof(..., directionalLights) == 16)`) is
-   confirmed load-bearing, not decorative — kept as drafted.
-3. **Re-checked whether `validateDescriptorContract()`'s own
-   `(set, binding)`-only matching (not also `stage`) is actually safe
-   for a three-entry, repeated-`(0,0)` contract** — this was flagged as
-   a real, investigated risk during Pre-draft verification, not
-   assumed safe; traced the one real caller
-   (`validateDescriptorContractForStage()`) and confirmed it always
-   pre-filters by stage before calling the shared function, so the
-   theoretical ambiguity never actually arises in practice — no fix
-   needed to either function, confirmed by tracing the real call path,
-   not merely inspecting the function's own signature in isolation.
-4. **Re-checked `rebuildMaterialsForFormatChange()`'s own missing
-   `materialDataMap` parameter** — the first draft's own P6 already
-   named this as a "second, disclosed, necessary signature widening,"
-   confirmed correct on this pass: without it, a format-change rebuild
-   would have no way to know which shader pair a given existing
-   `Material` was built with, silently rebuilding every material as
-   `UnlitTextured` regardless of its own real `MaterialKind` — a real,
-   would-have-been-silent defect this Plan's own P6 already closes;
-   restated here for visibility since it is the least "obvious" of this
-   Plan's own several signature-widening decisions.
-5. **Re-checked whether `intensity`'s own `>= 0.0f` check alone would
-   incorrectly accept `+Infinity`** (P3) — confirmed yes, `+Infinity >=
-   0.0f` is `true` under IEEE-754, so the explicit, separate
-   `std::isfinite()` check is load-bearing, not redundant with the
-   range check the way it might appear to be at a glance — this
-   distinction is now stated explicitly in P3's own text (not merely
-   implied), matching the mathematical honesty precedent Plan 0020's
-   own numeric-contract review established for a structurally identical
-   class of "does the range check alone imply finiteness" question.
-6. **Confirmed no Approved Spec/ADR text needed correction** —
-   every real-code finding this Plan's own drafting surfaced (the
-   material-realization hardcoding, the descriptor-contract
-   per-stage-scoping investigation, the `rebuildMaterialsForFormatChange()`
-   missing parameter, the `lit_textured`-CMakeLists.txt stale-comment
-   sibling finding) was resolvable entirely within this Plan's own
-   Plan-level-decision authority — none required stopping to raise an
-   objection against Spec 0019, ADR-0061, or ADR-0062's own already-
-   `Accepted` text.
-
-### Second review round (final, targeted — 13 named items, closed before Human Review Approval)
-
-A second, later, explicitly-scoped review pass, run against 13 specific
-questions a human reviewer raised after this Plan's own first draft —
-each closed with real, verified content added directly to the sections
-above, not merely answered in this log:
-
-7. **`FrameLightingData`'s 176-byte layout re-derived a third time,
-   this time as a literal, single field-by-field table** (P7) — field
-   name, type, offset, size, alignment, array stride, culminating in
-   the same `176` total the first review round's own item 2 already
-   confirmed — reproduced successfully from the table alone, field by
-   field, with `alignas(16)`, explicit (never implicit) padding,
-   value-initialization, `is_standard_layout_v`, and a complete
-   `sizeof`/`alignof`/`offsetof` `static_assert` set now required
-   explicitly, plus a dedicated fixed-byte test (V28) and a real Slang
-   reflection cross-check (P7 requirement 7, V9) — closing the "must
-   not be approved if 176 cannot be reproduced from a real field table"
-   condition this round's own review explicitly set.
-8. **Static snapshot / uniform buffer lifecycle re-derived from real,
-   cited ownership facts, not restated from Spec prose** (P9) — traced
-   `RuntimeApplication`'s own real member declaration order and its own
-   real, explicit `shutdown()` reset sequence (`runtime_application.cpp:739-747`),
-   and, by contrast, `MaterialDemoFixture`'s own different (but equally
-   safe) implicit destruction order — establishing, as a directly
-   verified fact rather than an assumption, that `Material` never
-   borrows the camera/lighting buffer at all (confirmed against
-   `material.h`'s own real field list), so no ownership-order
-   constraint between them exists to violate either way. Strengthened
-   V15 into a byte-level check (V30), not only a pixel-level one.
-9. **`MaterialKind` dispatch consolidated into one shared, file-local
-   `selectShaderPair()` helper** (P6), replacing this Plan's own first
-   draft's "two separately-written switches" — both real
-   `PipelineCreateParams`-constructing entry points
-   (`realizeOneMaterialCandidate()`, `rebuildMaterialsForFormatChange()`'s
-   own rebuild loop) now call the identical function; confirmed
-   `realizePendingMaterials()` is not a third such entry point (it
-   never itself constructs `PipelineCreateParams`) and the fallback
-   colored material is never `MaterialKind`-dispatched at all (it has
-   no associated `MaterialAssetData`) — both facts re-verified against
-   the real file, not assumed. Confirmed `selectShaderPair()`'s own
-   `switch` matches this codebase's own real, existing no-`default:`-label
-   C4062 convention (`kindToField()`'s own real shape, re-inspected this
-   round), with a stricter, fail-fast (`ATLANTIS_CHECK_MSG`, confirmed
-   always-evaluated in both Debug and Release, not the debug-only
-   `ATLANTIS_ASSERT`) fallback.
-10. **Descriptor visibility restated as an explicit negative
-    confirmation** (P12/P13) — exactly one `VkDescriptorSetLayoutBinding`
-    at `(0,0)`, its own `stageFlags` a bitmask (never a second Vulkan
-    binding), zero new RHI/Renderer public API; the real
-    `validateDescriptorContractForStage()`/`validateDescriptorContract()`
-    call chain re-traced a second time end to end (not merely re-cited);
-    a genuine negative descriptor-contract-mismatch test added (not
-    only a positive pass-case), mirroring Plan 0017's own empirical
-    mutation-probe precedent for "does this check actually check
-    anything."
-11. **`TooManyLights`'s own error semantics restated across all three
-    real paths explicitly** (P1/P8) — source cook and artifact decode
-    both real `Result::Err` gates (unchanged from the first draft);
-    programmatic `World` extraction is confirmed, by direct citation of
-    `assert.h`'s own real macro documentation, to be a genuine,
-    always-evaluated (Debug **and** Release), fail-fast abort via
-    `ATLANTIS_CHECK_MSG` — never a silently-compiled-out `ATLANTIS_ASSERT`,
-    never a silent truncation, and never an out-of-bounds array write
-    (the abort happens before any write past the cap could occur).
-12. **A dedicated CPU reference implementation,
-    `computeLambertianDiffuse()`, added** (P14) specifically to close
-    the "CPU test vs. GPU shader, two independently-invented magic
-    constants" circularity risk this round's own review named directly
-    — cross-validated two ways (hand-computed-formula unit tests, V10/V29,
-    **and** a real, executed per-pixel comparison against the actual
-    GPU-captured output, Milestone 10/V29), neither alone sufficient,
-    both together closing the loop; `kPointLightDistanceEpsilon`'s own
-    C++/Slang duplication is disclosed explicitly as the same,
-    already-accepted class of "hand-kept-in-sync" risk
-    `descriptor_contract.h` already discloses for a different pair of
-    files, not silently introduced as a new, undisclosed one.
-13. **Lit/Unlit dispatch precision and the migration-atomicity
-    guarantee both made explicit** (P15/P16) — `checkConformalTransform()`
-    confirmed called from exactly one site, gated on
-    `MaterialKind::LitTextured` specifically, never for an `UnlitTextured`
-    or fallback-material entity; the mesh normal attribute's own
-    location/offset cross-checked via `toVertexInputLayout()`'s own
-    real, existing validation, not merely asserted equal by inspection;
-    a full, repository-wide search for every real file naming
-    `atlantis_scene_source_version` found eleven real, non-historical
-    touch points (not the smaller set the first draft's own Files/
-    Modules Touched section implied), including two real, existing,
-    golden-backing scene assets (`world_scene.scene.txt`,
-    `material_demo.scene.txt`) that need their own version line bumped
-    even though neither declares a light — a genuine expansion of this
-    Plan's own known touch-point list, now recorded as its own explicit
-    atomicity requirement (P16, V33) rather than left implicit in the
-    original Files/Modules Touched enumeration.
-
-**Document proportion, checked directly against this round's own
-request:** re-scanned the full document for verbatim or near-verbatim
-reproduction of any Approved Spec/ADR's own "Consequences"/"Alternatives
-Considered" reasoning — found none; every section above states a real
-file, a real line citation, a real byte offset, real code, or a real,
-newly-traced call chain, not a re-argument of *why* Spec 0019/ADR-0061/
-ADR-0062 already decided what they decided. No trim was therefore
-needed to satisfy this round's own "delete long repeated argumentation,
-keep implementation facts" instruction — the growth in this document's
-own length across both review rounds is entirely new, previously-absent
-verified content (the P7 table, P9's ownership citations, P6's shared
-helper, P14's cross-validation design, P16's eleven-file enumeration),
-not restated Spec/ADR prose.
-
-**All 13 named items are closed. No new architectural conflict was
-found against Spec 0019, ADR-0061, or ADR-0062's own already-`Accepted`
-text — every finding this second round surfaced was resolvable
-entirely within this Plan's own Plan-level-decision authority, the
-identical conclusion the first round already reached for its own,
-smaller finding set.** See this document's own "Human Review Approval"
-note, at the top of this document, for the resulting status change —
-this Plan's own **Status** field now reads `Approved / Ready for
-Implementation`.
+Both rounds' own real content lives entirely in the P-section each
+finding fixed — this note records what each round checked and confirmed
+resolved, not a second copy of the reasoning. The first, a self-review
+pass immediately after the first full draft, re-verified six claims
+against real source a second time: the scene artifact byte-offset table
+(P4, re-derived independently from the insertion rule — matched, no
+correction); `FrameLightingData`'s std140 padding requirement (P7,
+confirmed the explicit `_pad1[2]` member is load-bearing, not
+decorative — without it `directionalLights` would land at offset 8, not
+16); whether `validateDescriptorContract()`'s `(set, binding)`-only
+matching is safe for a three-entry, repeated-`(0,0)` contract (confirmed
+safe — the one real caller always pre-filters by stage first);
+`rebuildMaterialsForFormatChange()`'s missing `materialDataMap`
+parameter (P6, confirmed necessary — without it a format-change rebuild
+would silently rebuild every material as `UnlitTextured`); whether
+`intensity`'s `>= 0.0f` check alone would accept `+Infinity` (P3,
+confirmed yes under IEEE-754, so the separate `std::isfinite()` check is
+load-bearing, not redundant); and confirmed no Approved Spec/ADR text
+needed correction. The second, a later round scoped to 13 questions a
+human reviewer raised, closed each with real, verified content added
+directly to the P-sections: `FrameLightingData`'s 176-byte layout
+re-derived a third time as a literal field-by-field table, with a
+complete `static_assert` set, a fixed-byte test (V28), and a real Slang
+reflection cross-check (P7, V9); the static-snapshot/uniform-buffer
+lifecycle re-derived from cited real ownership facts, confirming
+`Material` never borrows the camera/lighting buffer at all, and
+strengthening V15 into a byte-level check (V30) (P9); `MaterialKind`
+dispatch consolidated into one shared `selectShaderPair()` helper
+called from both real `PipelineCreateParams`-constructing entry points,
+matching this codebase's existing no-`default:`-label C4062 convention
+(P6); descriptor visibility restated as an explicit negative
+confirmation with a genuine mismatch test added, not only a positive
+case (P12/P13); `TooManyLights`'s error semantics restated across all
+three real paths (cook, decode, and a genuine, always-evaluated
+`ATLANTIS_CHECK_MSG` fail-fast for programmatic `World` extraction —
+never a silent truncation or out-of-bounds write) (P1/P8); a dedicated
+CPU reference implementation, `computeLambertianDiffuse()`, added and
+cross-validated two independent ways (hand-computed unit tests and a
+real per-pixel comparison against GPU-captured output) to close a
+circularity risk (P14); and Lit/Unlit dispatch precision plus the
+migration-atomicity guarantee both made explicit, including a
+full, repository-wide search finding eleven real touch points for the
+scene-source-version bump — two more than the first draft's own Files/
+Modules Touched list implied (P15/P16). **All 13 named items are
+closed. No new architectural conflict was found against Spec 0019,
+ADR-0061, or ADR-0062's own already-`Accepted` text** — every finding
+was resolvable entirely within this Plan's own Plan-level-decision
+authority. See "Human Review Approval" at the top of this document for
+the resulting status change.
 
 ## Implementation Status Update (2026-08-29, pre-merge)
 
