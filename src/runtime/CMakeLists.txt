@@ -67,6 +67,17 @@ target_compile_options(atlantis_runtime_host PRIVATE
 # scoped startup layer (cli.h, not part of Atlantis::RuntimeHost --
 # ADR-0076 Decision 2). Never added to atlantis_runtime_host's own
 # add_library() above.
+# Plan 0034 Milestone 1 (ADR-0078/ADR-0080): atlantis_runtime is the
+# Windows-only per-OS entry point -- its own BootstrapConfig paths and
+# add_dependencies() below both reference shader/asset cook targets that
+# only exist under the top-level CMakeLists.txt's own if(NOT ANDROID)
+# gate, so this target itself is gated the same way, ahead of its
+# originally-planned Milestone 5 (atlantis_runtime_android, the Android
+# peer entry point). atlantis_runtime_host above stays unconditional --
+# it is exactly what Milestone 5's atlantis_runtime_android will also
+# link. Deviation from Plan 0034's own sequencing, reported in the
+# implementing PR per AGENTS.md.
+if(WIN32)
 add_executable(atlantis_runtime main.cpp cli.cpp)
 
 target_link_libraries(atlantis_runtime
@@ -183,3 +194,4 @@ add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit
   shadow_cast_shaders pbr_direct_lit_normal_map_shaders pbr_ibl_normal_map_shaders
   ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
   ${ATLANTIS_ibl_studio_TARGET} ${ATLANTIS_ibl_material_demo_scene_TARGET} ${ATLANTIS_pbr_normal_map_demo_scene_TARGET})
+endif()

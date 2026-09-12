@@ -60,22 +60,51 @@ add_subdirectory(src/renderer)
 # function is defined inside src/shader_system/CMakeLists.txt itself,
 # and only directories processed after this one can see it.
 add_subdirectory(src/shader_system)
-add_subdirectory(src/tools/shader_compiler)
-add_subdirectory(src/tools/asset_cooker)
-# Must come after add_subdirectory(src/asset_system) and
-# add_subdirectory(src/tools/asset_cooker) (Plan 0012 Section D4):
-# atlantis_add_static_mesh_asset() is defined in the former and this
-# call site's own custom command invokes the atlantis_asset_cooker
-# target defined in the latter.
-add_subdirectory(assets)
-# Plan 0012 Section D4: called exactly once, after every
-# add_subdirectory() that could declare an asset (today, just assets/
-# above) -- writes the accumulated declared-asset list and declares the
-# set-level validation target.
-atlantis_finalize_asset_validation()
+# Plan 0034 Milestone 1 (ADR-0078/ADR-0080): shader_compiler/asset_cooker
+# are host-only build-time tools (Plan 0008 Section 4: "SPIR-V
+# compilation always happens on a host, never the Android target
+# device") and assets/ below cooks every checked-in authoring asset
+# through them. Per ADR-0080, an Android build packages the
+# already-cooked artifacts a prior Windows build produced into the
+# APK; it never re-cooks or re-compiles them itself, so none of this
+# needs to build for the Android target. This gating is a Plan 0034
+# deviation from its own Files/Modules Touched list (which named only
+# src/platform/, src/vulkan_backend/, src/runtime/, and android/) --
+# reported explicitly in the implementing PR, per AGENTS.md.
+if(NOT ANDROID)
+  add_subdirectory(src/tools/shader_compiler)
+  add_subdirectory(src/tools/asset_cooker)
+  # Must come after add_subdirectory(src/asset_system) and
+  # add_subdirectory(src/tools/asset_cooker) (Plan 0012 Section D4):
+  # atlantis_add_static_mesh_asset() is defined in the former and this
+  # call site's own custom command invokes the atlantis_asset_cooker
+  # target defined in the latter.
+  add_subdirectory(assets)
+  # Plan 0012 Section D4: called exactly once, after every
+  # add_subdirectory() that could declare an asset (today, just assets/
+  # above) -- writes the accumulated declared-asset list and declares
+  # the set-level validation target. Moved inside this same
+  # if(NOT ANDROID) block (Plan 0034 Milestone 1 build-smoke-test
+  # finding): atlantis_finalize_asset_validation()'s own implementation
+  # (src/asset_system/CMakeLists.txt) unconditionally declares an ALL
+  # target that DEPENDS the host tool atlantis_asset_cooker and runs it
+  # at build time (Plan 0012 D4/ADR-0044) -- it is itself host-pipeline
+  # machinery, not merely "validates an empty set," so it cannot stay
+  # unconditional once atlantis_asset_cooker above is gated. On Android,
+  # assets/ above declares nothing, so there is no validation target to
+  # produce -- confirmed this function has exactly one call site in the
+  # whole repository, so nothing else depends on it running unconditionally.
+  atlantis_finalize_asset_validation()
+endif()
+# Plan 0034 Milestone 1 (ADR-0078/ADR-0080): every production shader
+# pair below is compiled by atlantis_add_slang_shader_pair()
+# (src/shader_system/CMakeLists.txt), itself a host-side slangc/
+# spirv-val invocation -- same host-only/cooked-artifact reasoning as
+# the src/tools/ and assets/ gate above; same Plan 0034 deviation.
 # Must come after add_subdirectory(src/shader_system) (Plan 0008 Section
 # 7/8): atlantis_add_slang_shader_pair() is defined there, and this call
 # site invokes it.
+if(NOT ANDROID)
 add_subdirectory(shaders/minimal_renderer)
 # Plan 0018 Section P10 / D3: promoted from a test-only fixture resource
 # (formerly added inside the ATLANTIS_BUILD_TESTS block below) to a
@@ -130,6 +159,7 @@ add_subdirectory(shaders/sky)
 # immediately after sky and before src/runtime, for the same
 # add_dependencies()-ordering reason documented below.
 add_subdirectory(shaders/shadow_cast)
+endif()
 # Plan 0013 Section D1: must come after add_subdirectory(assets),
 # add_subdirectory(shaders/minimal_renderer), (Plan 0018 Section P10)
 # add_subdirectory(shaders/textured_quad), (Plan 0019 Section P11)
