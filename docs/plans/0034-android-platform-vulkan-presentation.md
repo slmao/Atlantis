@@ -48,6 +48,19 @@ against it.
    Windows-desktop-Vulkan-SDK substitution or similar — a real failure here
    is a finding for [ADR-0078](../adr/0078-android-ndk-build-and-packaging-integration.md)
    to revisit, not something to route around silently.
+   **Empirically executed, 2026-09-13:** confirmed both an NDK version
+   floor (r29+/LLVM ≥ 20) and that Android's own CMake configure must
+   exclude every host-only build-time subtree (shader_compiler,
+   asset_cooker, assets/, all production shaders/*, and
+   `atlantis_finalize_asset_validation()`) plus the Windows-only
+   `atlantis_runtime` executable target — see
+   [ADR-0078](../adr/0078-android-ndk-build-and-packaging-integration.md)'s
+   own Decision for both facts' full record. With those two findings
+   landed, a full `cmake --build` (including a `ninja -k 0`
+   continue-past-failures pass) succeeds for every target except
+   `src/vulkan_backend/src/wsi/win32_surface.cpp`, exactly Milestone 3's
+   own, already-planned gap (that file is not yet platform-gated) — no
+   other failure of any kind remains.
 2. **Android Platform module.** Implement `src/platform/src/android/android_platform.cpp`
    (plus any Android-private headers under that same directory, including
    the private `setAndroidApp(android_app*)` injection declaration — see

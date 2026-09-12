@@ -57,6 +57,40 @@ full Spec → Plan → ADR path — this is such a change.
   its own Vulkan headers/loader stub) but its exact behavior under the
   Android toolchain file is a Plan-stage verification item, not asserted as
   already-working by this ADR.
+- **NDK floor: r29+ (LLVM/libc++ ≥ 20) — empirically confirmed 2026-09-13
+  (Spec 0034 Milestone 1 build smoke test).** NDK r27d (LLVM 18) fails to
+  compile `Atlantis Asset System`'s existing `mesh_source.cpp`/
+  `scene_source.cpp` (floating-point `std::from_chars(...,
+  std::chars_format::general)`, used by both files' own token-parsing) —
+  that NDK version's bundled libc++ implements only the integral
+  `std::from_chars` overloads, not the floating-point one this code
+  already relies on (and already compiles cleanly under, unaffected, on
+  MSVC's STL). NDK r29 (29.0.14206865, LLVM/Clang 21) bundles a libc++
+  that implements the floating-point overload and compiles both files
+  unmodified. This is a floor on which NDK version this Spec's own
+  build/verification may use — not a change to Asset System's own code,
+  and not itself a new architectural decision.
+- **Android's own CMake configure excludes every host-only build-time
+  subtree** — `src/tools/shader_compiler`, `src/tools/asset_cooker`,
+  `assets/`, all eleven production `shaders/*` directories, and the
+  `atlantis_finalize_asset_validation()` call (which itself depends on
+  `atlantis_asset_cooker`) — landing Plan 0008 Section 4's own existing
+  decision ("SPIR-V compilation always happens on a host, never the
+  Android target device") and this ADR/
+  [ADR-0080](0080-android-asset-delivery-and-composition-root-boundary.md)'s
+  own already-accepted design (an Android build packages already-cooked
+  Windows-build artifacts into the APK, never re-cooking or
+  re-compiling them itself) directly in CMake, via `if(NOT ANDROID)`
+  gating. `atlantis_runtime`'s own Windows-only executable target is
+  gated the same way (`if(WIN32)`), ahead of its originally-planned
+  Milestone 5, since `atlantis_runtime_host` — the part every
+  platform's own entry point actually links — stays unconditional. This
+  CMake-level landing was not named in Plan 0034's own Files/Modules
+  Touched list (which named only `src/platform/`, `src/vulkan_backend/`,
+  `src/runtime/`'s Android additions, and a new `android/` directory) —
+  an implementation-time finding, reported as an explicit deviation in
+  the implementing PR per AGENTS.md, not a new architectural decision
+  requiring its own ADR.
 - **Gradle is the outer packaging layer**, using Android Gradle Plugin's
   `externalNativeBuild` (CMake mode) pointed at this repository's existing
   top-level `CMakeLists.txt` with the arguments above — Gradle does not get
