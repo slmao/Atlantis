@@ -52,11 +52,6 @@ constexpr std::string_view kAuthoringExtension = ".mesh.txt";
 // scene pipeline's own source-relative-path/output-basename
 // computation.
 constexpr std::string_view kSceneAuthoringExtension = ".scene.txt";
-// Plan 0016 Section D9: mirrors kAuthoringExtension exactly, for the
-// texture pipeline's own source-relative-path computation (the output
-// basename itself is NAME-derived, not SOURCE-derived -- see
-// runCookTextureMode()'s own comment).
-constexpr std::string_view kTextureAuthoringExtension = ".png";
 // Plan 0018 Section P4: mirrors kAuthoringExtension exactly, for the
 // material pipeline's own source-relative-path/output-basename
 // computation.

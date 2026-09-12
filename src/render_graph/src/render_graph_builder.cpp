@@ -18,7 +18,7 @@ ResourceHandle RenderGraphBuilder::declareResource(std::string_view label) {
 
 PassHandle RenderGraphBuilder::declarePass(std::string_view label) {
   const std::size_t index = passes_.size();
-  passes_.push_back(PassRecord{std::string(label), {}});
+  passes_.push_back(PassRecord{std::string(label), {}, {}});
   return PassHandle(this, index);
 }
 
