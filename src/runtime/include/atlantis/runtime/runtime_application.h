@@ -301,6 +301,16 @@ class RuntimeApplication {
   atlantis::rhi::VertexInputLayout pbrClearcoatIblNormalMapVertexInputLayout_;
   std::vector<std::uint32_t> pbrClearcoatIblNormalMapVertexSpirv_;
   std::vector<std::uint32_t> pbrClearcoatIblNormalMapFragmentSpirv_;
+  // Plan 0035 Milestone 3 (ADR-0081): PbrSheen's own two IBL-lit shader
+  // pairs' own resolved layout/SPIR-V -- mirrors pbrClearcoatIbl*'s own
+  // role and gating exactly (config.pbrSheenIblVertexShaderSpirvPath
+  // non-empty).
+  atlantis::rhi::VertexInputLayout pbrSheenIblVertexInputLayout_;
+  std::vector<std::uint32_t> pbrSheenIblVertexSpirv_;
+  std::vector<std::uint32_t> pbrSheenIblFragmentSpirv_;
+  atlantis::rhi::VertexInputLayout pbrSheenIblNormalMapVertexInputLayout_;
+  std::vector<std::uint32_t> pbrSheenIblNormalMapVertexSpirv_;
+  std::vector<std::uint32_t> pbrSheenIblNormalMapFragmentSpirv_;
   // Plan 0026 Milestone 3 (ADR-0071): the sky shader pair's own resolved
   // vertex layout/SPIR-V -- loaded conditionally, alongside pbrIblVertexSpirv_/
   // ...FragmentSpirv_ above (same hasEnvironment gate). skyVertexInputLayout_

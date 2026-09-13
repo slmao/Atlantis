@@ -124,11 +124,21 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   if (!isValidFactor(parsed.clearcoatFactor) || !isValidFactor(parsed.clearcoatRoughness)) {
     return ResultT::Err(MaterialCookError::MaterialFactorOutOfRange);
   }
+  // Plan 0035 Milestone 3/ADR-0081 widening: sheenColor's three
+  // components and sheenRoughness share MaterialFactorOutOfRange too,
+  // mirroring clearcoatFactor/clearcoatRoughness's own identical
+  // reasoning immediately above -- parseMaterialSource() already
+  // guarantees these are only ever non-default for kind == PbrSheen.
+  for (float component : parsed.sheenColor) {
+    if (!isValidFactor(component)) return ResultT::Err(MaterialCookError::MaterialFactorOutOfRange);
+  }
+  if (!isValidFactor(parsed.sheenRoughness)) return ResultT::Err(MaterialCookError::MaterialFactorOutOfRange);
 
   // Step 4: encode + atomic write.
   const std::vector<std::byte> artifactBytes = encodeMaterialArtifact(
       parsed.kind, textureAssetId, parsed.filter, parsed.addressMode, parsed.baseColorFactor, parsed.metallicFactor,
-      parsed.roughnessFactor, normalMapTextureAssetId, parsed.clearcoatFactor, parsed.clearcoatRoughness);
+      parsed.roughnessFactor, normalMapTextureAssetId, parsed.clearcoatFactor, parsed.clearcoatRoughness,
+      parsed.sheenColor, parsed.sheenRoughness);
 
   MaterialMetadata metadata;
   metadata.assetId = selfAssetId;
@@ -141,6 +151,8 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   metadata.normalMapTexture = normalMapTextureAssetId;
   metadata.clearcoatFactor = parsed.clearcoatFactor;
   metadata.clearcoatRoughness = parsed.clearcoatRoughness;
+  for (std::size_t i = 0; i < 3; ++i) metadata.sheenColor[i] = parsed.sheenColor[i];
+  metadata.sheenRoughness = parsed.sheenRoughness;
   const std::string metadataText = serializeMaterialMetadata(metadata);
 
   if (!writeBytesAtomically(artifactOutputPath, reinterpret_cast<const char*>(artifactBytes.data()),

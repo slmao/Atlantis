@@ -46,6 +46,17 @@ struct ParsedMaterialSource {
   // LitTextured.
   float clearcoatFactor = 0.0f;
   float clearcoatRoughness = 0.0f;
+  // Plan 0035 Milestone 3/ADR-0081: two new, REQUIRED (not optional)
+  // trailing fields whenever kind == PbrSheen -- mirrors
+  // clearcoatFactor/clearcoatRoughness's own identical reasoning
+  // immediately above (a PbrSheen material with no real sheenColor/
+  // sheenRoughness would be a no-op sheen, defeating the purpose of
+  // declaring this kind at all); parseMaterialSource() rejects that
+  // combination outright (MissingSheenFields). sheenColor is RGB,
+  // linear-space, following baseColorFactor's own established ADR-0066
+  // convention. Never read for any other kind.
+  float sheenColor[3] = {0.0f, 0.0f, 0.0f};
+  float sheenRoughness = 0.0f;
 };
 
 // Plan 0018 Section P2/P4: parse/decode-error conditions specific to the
@@ -82,6 +93,15 @@ enum class MaterialSourceParseError {
   // purpose of declaring this kind; rejected outright rather than
   // silently accepted.
   MissingClearcoatFields,
+  // Plan 0035 Milestone 3/ADR-0081: a 10/11-line source (sheen_color/
+  // sheen_roughness present) for a `kind` other than `pbr_sheen` --
+  // mirrors ClearcoatFieldsNotSupportedForKind's own reasoning exactly,
+  // no other kind's shader reads these fields.
+  SheenFieldsNotSupportedForKind,
+  // Plan 0035 Milestone 3/ADR-0081: `kind: pbr_sheen` with NEITHER
+  // sheen_color NOR sheen_roughness present (a 5- or 8-line source) --
+  // mirrors MissingClearcoatFields's own reasoning exactly.
+  MissingSheenFields,
 };
 
 // Strict, fixed-field-order, plain-text grammar extending

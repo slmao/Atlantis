@@ -20,8 +20,10 @@ namespace atlantis::renderer {
 // PbrClearcoat added by Plan 0035 Milestone 2/ADR-0081 -- its own new,
 // independent payload shape (PbrClearcoatPushConstants,
 // src/renderer/src/pbr_clearcoat_push_constants.h), not a widening of
-// PbrDirectLit's own 96-byte layout.
-enum class MaterialPushConstantLayout { ObjectToWorldOnly, PbrDirectLit, PbrClearcoat };
+// PbrDirectLit's own 96-byte layout. PbrSheen added by Plan 0035
+// Milestone 3/ADR-0081 -- same shape again (PbrSheenPushConstants,
+// src/renderer/src/pbr_sheen_push_constants.h).
+enum class MaterialPushConstantLayout { ObjectToWorldOnly, PbrDirectLit, PbrClearcoat, PbrSheen };
 
 enum class MaterialEnvironmentBinding { None, Ibl };
 
@@ -82,7 +84,8 @@ class Material {
                      float roughnessFactor = 1.0f,
                      MaterialEnvironmentBinding environmentBinding = MaterialEnvironmentBinding::None,
                      const atlantis::rhi::SampledTexture* normalMapTexture = nullptr, float clearcoatFactor = 0.0f,
-                     float clearcoatRoughness = 0.0f) noexcept;
+                     float clearcoatRoughness = 0.0f, std::array<float, 3> sheenColor = {0.0f, 0.0f, 0.0f},
+                     float sheenRoughness = 0.0f) noexcept;
   ~Material() = default;
 
   Material(const Material&) = delete;
@@ -107,6 +110,12 @@ class Material {
   // PbrClearcoat.
   [[nodiscard]] float clearcoatFactor() const noexcept { return clearcoatFactor_; }
   [[nodiscard]] float clearcoatRoughness() const noexcept { return clearcoatRoughness_; }
+  // Plan 0035 Milestone 3/ADR-0081: identical in kind to
+  // clearcoatFactor()/clearcoatRoughness() above -- immutable by
+  // encapsulation, meaningful only when pushConstantLayout() ==
+  // PbrSheen.
+  [[nodiscard]] const std::array<float, 3>& sheenColor() const noexcept { return sheenColor_; }
+  [[nodiscard]] float sheenRoughness() const noexcept { return sheenRoughness_; }
 
  private:
   std::unique_ptr<atlantis::rhi::Pipeline> pipeline_;
@@ -120,6 +129,8 @@ class Material {
   const atlantis::rhi::SampledTexture* normalMapTexture_ = nullptr;  // borrowed, never owned
   float clearcoatFactor_ = 0.0f;
   float clearcoatRoughness_ = 0.0f;
+  std::array<float, 3> sheenColor_{0.0f, 0.0f, 0.0f};
+  float sheenRoughness_ = 0.0f;
 };
 
 enum class CreateMaterialError {
@@ -155,6 +166,7 @@ enum class CreateMaterialError {
     std::array<float, 4> baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f}, float metallicFactor = 1.0f,
     float roughnessFactor = 1.0f, MaterialEnvironmentBinding environmentBinding = MaterialEnvironmentBinding::None,
     const atlantis::rhi::SampledTexture* normalMapTexture = nullptr, float clearcoatFactor = 0.0f,
-    float clearcoatRoughness = 0.0f);
+    float clearcoatRoughness = 0.0f, std::array<float, 3> sheenColor = {0.0f, 0.0f, 0.0f},
+    float sheenRoughness = 0.0f);
 
 }  // namespace atlantis::renderer

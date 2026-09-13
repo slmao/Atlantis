@@ -84,6 +84,16 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(const s
       artifact.clearcoatRoughness != metadata.clearcoatRoughness) {
     return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
   }
+  // Plan 0035 Milestone 3/ADR-0081: sheenColor/sheenRoughness cross-
+  // validated identically.
+  for (std::size_t i = 0; i < 3; ++i) {
+    if (artifact.sheenColor[i] != metadata.sheenColor[i]) {
+      return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
+    }
+  }
+  if (artifact.sheenRoughness != metadata.sheenRoughness) {
+    return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
+  }
 
   // Self-consistency, not just artifact-vs-metadata agreement: the
   // metadata sidecar's own two fields (its recorded Asset ID and its
@@ -104,6 +114,8 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(const s
   data.normalMapTexture = artifact.normalMapTexture;
   data.clearcoatFactor = artifact.clearcoatFactor;
   data.clearcoatRoughness = artifact.clearcoatRoughness;
+  for (std::size_t i = 0; i < 3; ++i) data.sheenColor[i] = artifact.sheenColor[i];
+  data.sheenRoughness = artifact.sheenRoughness;
   return ResultT::Ok(std::move(data));
 }
 

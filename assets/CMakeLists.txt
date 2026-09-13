@@ -608,3 +608,79 @@ set(ATLANTIS_pbr_clearcoat_normal_map_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_c
 set(ATLANTIS_pbr_clearcoat_normal_map_demo_scene_METADATA_PATH "${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_clearcoat_normal_map_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_clearcoat_normal_map_demo_scene_TARGET "${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_TARGET}" PARENT_SCOPE)
+
+# Plan 0035 Milestone 3: the sheen-roughness parameter-sweep scene's own
+# three materials -- all reusing the already-cooked textured_quad_srgb
+# texture (and, for the normal-mapped one, the already-cooked
+# normal_map_tilted texture), mirroring the clearcoat materials' own
+# identical "reuse the existing texture" precedent immediately above.
+atlantis_add_material_asset(
+  NAME pbr_sheen_low_roughness
+  SOURCE materials/pbr_sheen_low_roughness.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_pbr_sheen_low_roughness_ARTIFACT_PATH "${ATLANTIS_pbr_sheen_low_roughness_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_low_roughness_METADATA_PATH "${ATLANTIS_pbr_sheen_low_roughness_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_low_roughness_TARGET "${ATLANTIS_pbr_sheen_low_roughness_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_low_roughness_LOGICAL_PATH "${ATLANTIS_pbr_sheen_low_roughness_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME pbr_sheen_mid_roughness
+  SOURCE materials/pbr_sheen_mid_roughness.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_pbr_sheen_mid_roughness_ARTIFACT_PATH "${ATLANTIS_pbr_sheen_mid_roughness_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_mid_roughness_METADATA_PATH "${ATLANTIS_pbr_sheen_mid_roughness_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_mid_roughness_TARGET "${ATLANTIS_pbr_sheen_mid_roughness_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_mid_roughness_LOGICAL_PATH "${ATLANTIS_pbr_sheen_mid_roughness_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME pbr_sheen_high_roughness
+  SOURCE materials/pbr_sheen_high_roughness.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_pbr_sheen_high_roughness_ARTIFACT_PATH "${ATLANTIS_pbr_sheen_high_roughness_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_high_roughness_METADATA_PATH "${ATLANTIS_pbr_sheen_high_roughness_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_high_roughness_TARGET "${ATLANTIS_pbr_sheen_high_roughness_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_high_roughness_LOGICAL_PATH "${ATLANTIS_pbr_sheen_high_roughness_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME pbr_sheen_normal_mapped
+  SOURCE materials/pbr_sheen_normal_mapped.material.txt
+  TEXTURE textured_quad_srgb
+  NORMAL_MAP normal_map_tilted
+)
+set(ATLANTIS_pbr_sheen_normal_mapped_ARTIFACT_PATH "${ATLANTIS_pbr_sheen_normal_mapped_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_normal_mapped_METADATA_PATH "${ATLANTIS_pbr_sheen_normal_mapped_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_normal_mapped_TARGET "${ATLANTIS_pbr_sheen_normal_mapped_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_normal_mapped_LOGICAL_PATH "${ATLANTIS_pbr_sheen_normal_mapped_LOGICAL_PATH}" PARENT_SCOPE)
+
+# Plan 0035 Milestone 3: the sheen-roughness parameter-sweep scene
+# (low/mid/high sheen_roughness, same sheenColor) -- IBL-only, no Light
+# node, mirroring pbr_clearcoat_demo_scene's own identical shape.
+atlantis_add_scene_asset(
+  NAME pbr_sheen_demo_scene
+  SOURCE scenes/pbr_sheen_demo.scene.txt
+  MESH_DEPENDENCIES pbr_sphere
+  MATERIAL_DEPENDENCIES pbr_sheen_low_roughness pbr_sheen_mid_roughness pbr_sheen_high_roughness
+  TEXTURE_DEPENDENCIES textured_quad_srgb
+)
+set(ATLANTIS_pbr_sheen_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_sheen_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_demo_scene_METADATA_PATH "${ATLANTIS_pbr_sheen_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_sheen_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_demo_scene_TARGET "${ATLANTIS_pbr_sheen_demo_scene_TARGET}" PARENT_SCOPE)
+
+# Plan 0035 Milestone 3: the sheen normal-map variant's own dedicated
+# scene -- one sphere, the pbr_sheen_ibl_normal_map shader pair's own
+# real coverage.
+atlantis_add_scene_asset(
+  NAME pbr_sheen_normal_map_demo_scene
+  SOURCE scenes/pbr_sheen_normal_map_demo.scene.txt
+  MESH_DEPENDENCIES pbr_sphere
+  MATERIAL_DEPENDENCIES pbr_sheen_normal_mapped
+  TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
+)
+set(ATLANTIS_pbr_sheen_normal_map_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_sheen_normal_map_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_normal_map_demo_scene_METADATA_PATH "${ATLANTIS_pbr_sheen_normal_map_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_normal_map_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_sheen_normal_map_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_normal_map_demo_scene_TARGET "${ATLANTIS_pbr_sheen_normal_map_demo_scene_TARGET}" PARENT_SCOPE)

@@ -50,6 +50,8 @@ void appendFloatLE(std::vector<std::byte>& out, float value) { appendU32LE(out, 
       return 2;
     case MaterialKind::PbrClearcoat:
       return 3;
+    case MaterialKind::PbrSheen:
+      return 4;
   }
   return 0;
 }
@@ -80,7 +82,8 @@ std::vector<std::byte> encodeMaterialArtifact(MaterialKind kind, AssetId texture
                                                MaterialSamplerAddressMode addressMode,
                                                const float (&baseColorFactor)[4], float metallicFactor,
                                                float roughnessFactor, AssetId normalMapTexture,
-                                               float clearcoatFactor, float clearcoatRoughness) {
+                                               float clearcoatFactor, float clearcoatRoughness,
+                                               const float (&sheenColor)[3], float sheenRoughness) {
   std::vector<std::byte> out;
   out.reserve(kMaterialArtifactHeaderSizeBytes);
 
@@ -96,6 +99,8 @@ std::vector<std::byte> encodeMaterialArtifact(MaterialKind kind, AssetId texture
   appendU64LE(out, normalMapTexture);
   appendFloatLE(out, clearcoatFactor);
   appendFloatLE(out, clearcoatRoughness);
+  for (float component : sheenColor) appendFloatLE(out, component);
+  appendFloatLE(out, sheenRoughness);
 
   return out;
 }
@@ -131,6 +136,8 @@ atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMat
     decoded.kind = MaterialKind::PbrDirectLit;
   } else if (kindField == 3) {
     decoded.kind = MaterialKind::PbrClearcoat;
+  } else if (kindField == 4) {
+    decoded.kind = MaterialKind::PbrSheen;
   } else {
     return ResultT::Err(MaterialArtifactDecodeError::UnknownMaterialKind);
   }
@@ -199,6 +206,25 @@ atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMat
     return ResultT::Err(MaterialArtifactDecodeError::MaterialFactorOutOfRange);
   }
   decoded.clearcoatRoughness = clearcoatRoughness;
+
+  // Plan 0035 Milestone 3 (ADR-0081): independently re-validated here
+  // against the artifact's own decoded bytes, mirroring
+  // clearcoatFactor/clearcoatRoughness's own identical discipline
+  // immediately above -- never trusted from a well-formed cooker output
+  // alone.
+  for (std::size_t i = 0; i < 3; ++i) {
+    const float component = readFloatLE(bytes.data() + 72 + (i * 4));
+    if (!std::isfinite(component) || component < 0.0f || component > 1.0f) {
+      return ResultT::Err(MaterialArtifactDecodeError::MaterialFactorOutOfRange);
+    }
+    decoded.sheenColor[i] = component;
+  }
+
+  const float sheenRoughness = readFloatLE(bytes.data() + 84);
+  if (!std::isfinite(sheenRoughness) || sheenRoughness < 0.0f || sheenRoughness > 1.0f) {
+    return ResultT::Err(MaterialArtifactDecodeError::MaterialFactorOutOfRange);
+  }
+  decoded.sheenRoughness = sheenRoughness;
 
   return ResultT::Ok(std::move(decoded));
 }

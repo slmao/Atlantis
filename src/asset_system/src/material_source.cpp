@@ -8,7 +8,7 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_material_source_version: 4";
+constexpr std::string_view kVersionLine = "atlantis_material_source_version: 5";
 constexpr std::string_view kKindPrefix = "kind: ";
 constexpr std::string_view kTexturePrefix = "texture: ";
 constexpr std::string_view kFilterPrefix = "filter: ";
@@ -23,12 +23,22 @@ constexpr std::string_view kNormalMapPrefix = "normal_map: ";
 // kMetallicFactorPrefix/kRoughnessFactorPrefix's own naming convention.
 constexpr std::string_view kClearcoatFactorPrefix = "clearcoat_factor: ";
 constexpr std::string_view kClearcoatRoughnessPrefix = "clearcoat_roughness: ";
+// Plan 0035 Milestone 3/ADR-0081: two new, PbrSheen-only field lines,
+// same shape/position as kClearcoatFactorPrefix/kClearcoatRoughnessPrefix
+// above (mutually exclusive with them, ADR-0081's own "no material may
+// combine two or more of {clearcoat, sheen, anisotropy}" rule) --
+// sheen_color is a 3-float RGB line (base_color_factor's own convention,
+// minus the alpha component), sheen_roughness a single scalar.
+constexpr std::string_view kSheenColorPrefix = "sheen_color: ";
+constexpr std::string_view kSheenRoughnessPrefix = "sheen_roughness: ";
 
 constexpr std::string_view kKindUnlitTextured = "unlit_textured";
 constexpr std::string_view kKindLitTextured = "lit_textured";
 constexpr std::string_view kKindPbrDirectLit = "pbr_direct_lit";
 // Plan 0035 Milestone 2/ADR-0081: MaterialKind's fourth enumerator.
 constexpr std::string_view kKindPbrClearcoat = "pbr_clearcoat";
+// Plan 0035 Milestone 3/ADR-0081: MaterialKind's fifth enumerator.
+constexpr std::string_view kKindPbrSheen = "pbr_sheen";
 constexpr std::string_view kFilterNearest = "nearest";
 constexpr std::string_view kFilterLinear = "linear";
 constexpr std::string_view kAddressModeRepeat = "repeat";
@@ -145,21 +155,41 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
     parsed.kind = MaterialKind::PbrDirectLit;
   } else if (value == kKindPbrClearcoat) {
     parsed.kind = MaterialKind::PbrClearcoat;
+  } else if (value == kKindPbrSheen) {
+    parsed.kind = MaterialKind::PbrSheen;
   } else {
     return ResultT::Err(MaterialSourceParseError::UnknownKind);
   }
 
-  // Plan 0035 Milestone 2/ADR-0081: kind: pbr_clearcoat REQUIRES the
-  // 10- or 11-line shape (real clearcoat_factor/clearcoat_roughness);
-  // every other kind FORBIDS it (no other shader reads those fields) --
-  // checked immediately after kind is known, before any further line
-  // parsing, mirroring this function's own existing fail-fast style.
+  // Plan 0035 Milestone 2/ADR-0081, widened by Milestone 3: kind:
+  // pbr_clearcoat REQUIRES the 10- or 11-line shape (real
+  // clearcoat_factor/clearcoat_roughness); kind: pbr_sheen REQUIRES the
+  // SAME 10- or 11-line shape (real sheen_color/sheen_roughness, ADR-0081's
+  // own "no material may combine two or more of {clearcoat, sheen,
+  // anisotropy}" rule means these two optional-field groups never
+  // coexist, so they can share one line-count shape); every other kind
+  // FORBIDS it (no other shader reads either field group) -- checked
+  // immediately after kind is known, before any further line parsing,
+  // mirroring this function's own existing fail-fast style.
   if (parsed.kind == MaterialKind::PbrClearcoat) {
     if (lines.size() != kTenLineCount && lines.size() != kMaxLineCount) {
       return ResultT::Err(MaterialSourceParseError::MissingClearcoatFields);
     }
+  } else if (parsed.kind == MaterialKind::PbrSheen) {
+    if (lines.size() != kTenLineCount && lines.size() != kMaxLineCount) {
+      return ResultT::Err(MaterialSourceParseError::MissingSheenFields);
+    }
   } else {
     if (lines.size() == kTenLineCount || lines.size() == kMaxLineCount) {
+      // Peeks at line[8]'s own prefix (cheap, no float parsing) to
+      // report the more specific of the two "fields not supported for
+      // kind" errors -- falls back to the clearcoat one when the extra
+      // content matches neither shape (e.g. garbage lines), still a
+      // correct rejection either way.
+      std::string_view peek;
+      if (matchField(lines[8], kSheenColorPrefix, peek)) {
+        return ResultT::Err(MaterialSourceParseError::SheenFieldsNotSupportedForKind);
+      }
       return ResultT::Err(MaterialSourceParseError::ClearcoatFieldsNotSupportedForKind);
     }
   }
@@ -213,35 +243,59 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
     }
   }
 
-  // Plan 0035 Milestone 2/ADR-0081: clearcoat_factor/clearcoat_roughness
-  // -- REQUIRED whenever kind == PbrClearcoat (already enforced above
-  // via the 10/11-line-count gate), immediately after roughness_factor,
-  // before the optional normal_map line.
+  // Plan 0035 Milestone 2/ADR-0081, widened by Milestone 3: clearcoat_factor/
+  // clearcoat_roughness OR sheen_color/sheen_roughness -- REQUIRED
+  // whenever kind == PbrClearcoat/PbrSheen respectively (already enforced
+  // above via the 10/11-line-count gate; the two groups are mutually
+  // exclusive by kind, never both present), immediately after
+  // roughness_factor, before the optional normal_map line.
   if (lines.size() == kTenLineCount || lines.size() == kMaxLineCount) {
-    if (!matchField(lines[8], kClearcoatFactorPrefix, value)) {
-      return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
-    }
-    if (!parseFloatToken(value, parsed.clearcoatFactor)) {
-      return ResultT::Err(MaterialSourceParseError::MalformedNumber);
-    }
+    if (parsed.kind == MaterialKind::PbrClearcoat) {
+      if (!matchField(lines[8], kClearcoatFactorPrefix, value)) {
+        return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+      }
+      if (!parseFloatToken(value, parsed.clearcoatFactor)) {
+        return ResultT::Err(MaterialSourceParseError::MalformedNumber);
+      }
 
-    if (!matchField(lines[9], kClearcoatRoughnessPrefix, value)) {
-      return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
-    }
-    if (!parseFloatToken(value, parsed.clearcoatRoughness)) {
-      return ResultT::Err(MaterialSourceParseError::MalformedNumber);
+      if (!matchField(lines[9], kClearcoatRoughnessPrefix, value)) {
+        return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+      }
+      if (!parseFloatToken(value, parsed.clearcoatRoughness)) {
+        return ResultT::Err(MaterialSourceParseError::MalformedNumber);
+      }
+    } else {
+      if (!matchField(lines[8], kSheenColorPrefix, value)) {
+        return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+      }
+      const std::vector<std::string_view> sheenColorTokens = splitOnSpace(value);
+      if (sheenColorTokens.size() != 3) return ResultT::Err(MaterialSourceParseError::MalformedNumber);
+      for (std::size_t i = 0; i < 3; ++i) {
+        if (!parseFloatToken(sheenColorTokens[i], parsed.sheenColor[i])) {
+          return ResultT::Err(MaterialSourceParseError::MalformedNumber);
+        }
+      }
+
+      if (!matchField(lines[9], kSheenRoughnessPrefix, value)) {
+        return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+      }
+      if (!parseFloatToken(value, parsed.sheenRoughness)) {
+        return ResultT::Err(MaterialSourceParseError::MalformedNumber);
+      }
     }
   }
 
   // Plan 0029 Section P5/ADR-0074 Section 1 (Plan 0035 Milestone 2/
-  // ADR-0081 widening): the optional trailing normal_map line -- legal
-  // only for kind: pbr_direct_lit (9-line form, line index 8) or
-  // kind: pbr_clearcoat (11-line form, line index 10, after the two
-  // clearcoat fields) -- neither lit_textured.slang nor
-  // unlit_textured.slang declares a normal-map binding to consume it.
+  // ADR-0081 widening, Milestone 3 widening again): the optional
+  // trailing normal_map line -- legal only for kind: pbr_direct_lit
+  // (9-line form, line index 8), kind: pbr_clearcoat, or kind: pbr_sheen
+  // (11-line form, line index 10, after the two clearcoat/sheen fields)
+  // -- neither lit_textured.slang nor unlit_textured.slang declares a
+  // normal-map binding to consume it.
   const bool hasTrailingNormalMapLine = lines.size() == kNineLineCount || lines.size() == kMaxLineCount;
   if (hasTrailingNormalMapLine) {
-    if (parsed.kind != MaterialKind::PbrDirectLit && parsed.kind != MaterialKind::PbrClearcoat) {
+    if (parsed.kind != MaterialKind::PbrDirectLit && parsed.kind != MaterialKind::PbrClearcoat &&
+        parsed.kind != MaterialKind::PbrSheen) {
       return ResultT::Err(MaterialSourceParseError::NormalMapNotSupportedForKind);
     }
     const std::size_t normalMapLineIndex = lines.size() == kNineLineCount ? 8 : 10;
@@ -260,17 +314,19 @@ std::string serializeMaterialSource(const ParsedMaterialSource& source) {
   out += kVersionLine;
   out += '\n';
   out += kKindPrefix;
-  // Plan 0023 Milestone 1 (Plan 0035 Milestone 2/ADR-0081 widening):
-  // MaterialKind is a closed, four-enumerator vocabulary now --
-  // selected by source.kind.
+  // Plan 0023 Milestone 1 (Plan 0035 Milestone 2/ADR-0081 widening,
+  // Milestone 3 widening again): MaterialKind is a closed,
+  // five-enumerator vocabulary now -- selected by source.kind.
   if (source.kind == MaterialKind::UnlitTextured) {
     out += kKindUnlitTextured;
   } else if (source.kind == MaterialKind::LitTextured) {
     out += kKindLitTextured;
   } else if (source.kind == MaterialKind::PbrDirectLit) {
     out += kKindPbrDirectLit;
-  } else {
+  } else if (source.kind == MaterialKind::PbrClearcoat) {
     out += kKindPbrClearcoat;
+  } else {
+    out += kKindPbrSheen;
   }
   out += '\n';
   out += kTexturePrefix;
@@ -299,15 +355,27 @@ std::string serializeMaterialSource(const ParsedMaterialSource& source) {
   out += kRoughnessFactorPrefix;
   out += formatFloat(source.roughnessFactor);
   out += '\n';
-  // Plan 0035 Milestone 2/ADR-0081: emitted only for kind: pbr_clearcoat
-  // -- symmetric with parseMaterialSource()'s own kind-gated acceptance,
-  // and positioned before the optional normal_map line below.
+  // Plan 0035 Milestone 2/ADR-0081, widened by Milestone 3: emitted only
+  // for kind: pbr_clearcoat / kind: pbr_sheen respectively (mutually
+  // exclusive) -- symmetric with parseMaterialSource()'s own kind-gated
+  // acceptance, and positioned before the optional normal_map line
+  // below.
   if (source.kind == MaterialKind::PbrClearcoat) {
     out += kClearcoatFactorPrefix;
     out += formatFloat(source.clearcoatFactor);
     out += '\n';
     out += kClearcoatRoughnessPrefix;
     out += formatFloat(source.clearcoatRoughness);
+    out += '\n';
+  } else if (source.kind == MaterialKind::PbrSheen) {
+    out += kSheenColorPrefix;
+    for (std::size_t i = 0; i < 3; ++i) {
+      if (i != 0) out += ' ';
+      out += formatFloat(source.sheenColor[i]);
+    }
+    out += '\n';
+    out += kSheenRoughnessPrefix;
+    out += formatFloat(source.sheenRoughness);
     out += '\n';
   }
   // Plan 0029 Section P5/ADR-0074 Section 1: the trailing normal_map

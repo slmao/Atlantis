@@ -121,6 +121,20 @@ namespace atlantis::shader_system {
 // binding 5).
 [[nodiscard]] std::vector<DescriptorBinding> pbrClearcoatIblNormalMapExpectedDescriptorContract();
 
+// Plan 0035 Milestone 3 (ADR-0081): pbr_sheen_ibl's own fixed, expected
+// descriptor contract -- identical shape to
+// pbrClearcoatIblExpectedDescriptorContract() above (0V, 0F, 1F, 2F,
+// 3F, no shadow-map binding, same IBL-only/no-shadow scope).
+[[nodiscard]] std::vector<DescriptorBinding> pbrSheenIblExpectedDescriptorContract();
+
+// Plan 0035 Milestone 3 (ADR-0081): pbr_sheen_ibl_normal_map's own
+// fixed, expected descriptor contract -- identical to
+// pbrSheenIblExpectedDescriptorContract() above, plus a sixth entry, the
+// normal-map sampler at binding 4 -- mirrors
+// pbrClearcoatIblNormalMapExpectedDescriptorContract()'s own identical
+// shape.
+[[nodiscard]] std::vector<DescriptorBinding> pbrSheenIblNormalMapExpectedDescriptorContract();
+
 // Plan 0027 Milestone 4 (ADR-0072 D-3): shadow_cast's own fixed, expected
 // descriptor contract -- one binding, Vertex-only: {set 0, binding 0,
 // UniformBuffer, Vertex} (the dedicated light-space buffer, referenced

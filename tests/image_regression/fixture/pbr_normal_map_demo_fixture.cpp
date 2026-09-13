@@ -596,7 +596,14 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
                                fixture.pbrIblNormalMapFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
                                fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
                                fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
-                               fixture.pbrDirectLitFragmentSpirv, environmentEnabled, pendingMaterialIds,
+                               fixture.pbrDirectLitFragmentSpirv,
+                               // Plan 0035 Milestone 3 (ADR-0081): same
+                               // dead-path sheen filler reasoning as the
+                               // clearcoat trios immediately above.
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
+                               fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv, environmentEnabled,
+                               pendingMaterialIds,
                                fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);
 
   // Plan 0029 Section P19 (Fixture A/B mechanism, step 3): the control
@@ -628,8 +635,12 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
         fixture.pbrIblNormalMapVertexInputLayout, fixture.pbrIblNormalMapVertexSpirv,
         fixture.pbrIblNormalMapFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
         fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
-        fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv, environmentEnabled,
-        fixture.controlMaterialAssetId, *fixture.controlMaterialData, controlTextureIt->second,
+        fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+        // Plan 0035 Milestone 3 (ADR-0081): same dead-path sheen filler
+        // as the clearcoat trios above.
+        fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+        fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+        environmentEnabled, fixture.controlMaterialAssetId, *fixture.controlMaterialData, controlTextureIt->second,
         /*normalMapTextureData=*/nullptr, effectiveSampledTextures);
     if (controlCandidateResult.isErr()) {
       return ResultT::Err(PbrNormalMapDemoRenderError::ControlMaterialRealizationFailed);

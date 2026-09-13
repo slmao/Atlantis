@@ -1,4 +1,4 @@
-#include "integrated_showcase_demo_fixture.h"
+#include "pbr_sheen_demo_fixture.h"
 
 #include <atlantis/asset_system/mesh_artifact.h>
 #include <atlantis/asset_system/load_environment.h>
@@ -25,15 +25,16 @@
 #include <utility>
 #include <vector>
 
-// Plan 0028 Milestone 3: same resource-creation skeleton as
-// pbr_material_demo_fixture.cpp -- calls Atlantis::RuntimeHost's real
+// Plan 0035 Milestone 3: see pbr_sheen_demo_fixture.h's own top-of-file
+// comment -- this file calls Atlantis::RuntimeHost's real
 // loadAndInstantiateScene()/computePendingMaterialIds()/
 // realizePendingMaterials()/extractCameraMatrices()/
 // extractCameraWorldPosition()/extractFrameLightingData()/
-// resolveMeshAsset()/resolveMaterialAsset()/checkConformalTransform()/
-// computeShadowLightSpaceMatrices() directly, never re-implementing any
-// of them. The shadow path is real (not a no-op sentinel): see
-// renderIntegratedShowcaseDemoFrame() below.
+// resolveMeshAsset()/resolveMaterialAsset()/checkConformalTransform()
+// directly, never re-implementing any of them. Duplicated, not shared,
+// from pbr_clearcoat_demo_fixture.cpp (that file's own top-of-file
+// comment establishes this repository's convention for from-scratch
+// composition roots).
 
 namespace atlantis::image_regression {
 
@@ -45,25 +46,20 @@ using atlantis::rhi::BufferPurpose;
 using atlantis::rhi::DepthFormat;
 using atlantis::rhi::Extent2D;
 using atlantis::rhi::VertexInputLayout;
-using atlantis::runtime::CameraMatrices;
 using atlantis::runtime::CameraWorldPositionData;
 using atlantis::runtime::checkConformalTransform;
 using atlantis::runtime::computePendingMaterialIds;
-using atlantis::runtime::computeShadowLightSpaceMatrices;
 using atlantis::runtime::extractCameraMatrices;
 using atlantis::runtime::extractCameraWorldPosition;
 using atlantis::runtime::extractFrameLightingData;
 using atlantis::runtime::FrameLightingData;
-using atlantis::runtime::identityMatrix;
 using atlantis::runtime::LightExtractionInput;
 using atlantis::runtime::loadAndInstantiateScene;
-using atlantis::runtime::Mat4;
 using atlantis::runtime::realizePendingMaterials;
 using atlantis::runtime::RealizedMaterialCandidate;
 using atlantis::runtime::resolveMeshAsset;
 using atlantis::runtime::resolveMaterialAsset;
 using atlantis::runtime::SceneLoadOutcome;
-using atlantis::runtime::Vec3;
 using atlantis::shader_system::loadReflectionMetadata;
 using atlantis::shader_system::ReflectionMetadata;
 using atlantis::shader_system::rhi_integration::MeshVertexAttributeSchema;
@@ -82,10 +78,9 @@ using atlantis::shader_system::rhi_integration::toVertexInputLayout;
   return words;
 }
 
-// Duplicated, not shared -- matches pbr_material_demo_fixture.cpp's own
-// identical Vertex schema exactly (Spec 0020's 44-byte
-// position+color+UV0+normal mesh artifact layout, which
-// ground_plane.mesh.txt/pbr_sphere.mesh.txt both use).
+// Duplicated, not shared -- matches every sibling fixture's own identical
+// Vertex schema (Spec 0020's 44-byte position+color+UV0+normal+tangent
+// mesh artifact layout, which pbr_sphere.mesh.txt also uses).
 struct Vertex {
   float position[3];
   float color[3];
@@ -100,6 +95,12 @@ static_assert(offsetof(Vertex, uv) == atlantis::asset_system::kMeshArtifactUv0Of
 static_assert(offsetof(Vertex, normal) == atlantis::asset_system::kMeshArtifactNormalOffsetBytes);
 static_assert(offsetof(Vertex, tangent) == atlantis::asset_system::kMeshArtifactTangentOffsetBytes);
 static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrideBytes);
+
+// Plan 0027 Milestone 9 (ADR-0072 D-1/P5): the no-directional-light
+// light-space sentinel -- this fixture never configures a real
+// shadow-casting occluder, matching every sibling fixture's own identical
+// reasoning.
+constexpr float kIdentityMatrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
 
 [[nodiscard]] std::optional<VertexInputLayout> unlitTexturedVertexLayout(const ReflectionMetadata& vertexMetadata) {
   const std::vector<MeshVertexAttributeSchema> schema = {
@@ -133,6 +134,23 @@ static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrid
   return result.value();
 }
 
+// Plan 0029 Section P13/Plan 0035: pbrDirectLitVertexLayout()'s own
+// schema above plus a trailing tangent@3, matching
+// pbr_ibl_normal_map.slang/pbr_sheen_ibl_normal_map.slang's own
+// VertexInput exactly -- mirrors runtime_application.cpp's own identical
+// pbrNormalMapVertexLayout().
+[[nodiscard]] std::optional<VertexInputLayout> pbrNormalMapVertexLayout(const ReflectionMetadata& vertexMetadata) {
+  const std::vector<MeshVertexAttributeSchema> schema = {
+      MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
+      MeshVertexAttributeSchema{.location = 1, .offsetBytes = offsetof(Vertex, uv)},
+      MeshVertexAttributeSchema{.location = 2, .offsetBytes = offsetof(Vertex, normal)},
+      MeshVertexAttributeSchema{.location = 3, .offsetBytes = offsetof(Vertex, tangent)},
+  };
+  auto result = toVertexInputLayout(vertexMetadata, schema, sizeof(Vertex));
+  if (result.isErr()) return std::nullopt;
+  return result.value();
+}
+
 [[nodiscard]] std::optional<VertexInputLayout> shadowCastVertexLayout(const ReflectionMetadata& vertexMetadata) {
   const std::vector<MeshVertexAttributeSchema> schema = {
       MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
@@ -153,101 +171,123 @@ static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrid
 
 }  // namespace
 
-atlantis::Result<IntegratedShowcaseDemoFixture, IntegratedShowcaseDemoSetupError>
-setUpIntegratedShowcaseDemoFixture(const atlantis::runtime::BootstrapConfig& config) {
-  using ResultT = atlantis::Result<IntegratedShowcaseDemoFixture, IntegratedShowcaseDemoSetupError>;
+atlantis::Result<PbrSheenDemoFixture, PbrSheenDemoSetupError> setUpPbrSheenDemoFixture(
+    const atlantis::runtime::BootstrapConfig& config) {
+  using ResultT = atlantis::Result<PbrSheenDemoFixture, PbrSheenDemoSetupError>;
 
   auto vertexSpirv = loadSpirvFile(config.unlitTexturedVertexShaderSpirvPath.c_str());
   auto fragmentSpirv = loadSpirvFile(config.unlitTexturedFragmentShaderSpirvPath.c_str());
   if (!vertexSpirv.has_value() || !fragmentSpirv.has_value()) {
-    return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
+    return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
   }
   auto vertexReflectionResult = loadReflectionMetadata(config.unlitTexturedVertexShaderReflectionPath.c_str());
-  if (vertexReflectionResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
+  if (vertexReflectionResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
   const auto vertexInputLayout = unlitTexturedVertexLayout(vertexReflectionResult.value());
-  if (!vertexInputLayout.has_value()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
+  if (!vertexInputLayout.has_value()) return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
 
   auto litVertexSpirv = loadSpirvFile(config.litTexturedVertexShaderSpirvPath.c_str());
   auto litFragmentSpirv = loadSpirvFile(config.litTexturedFragmentShaderSpirvPath.c_str());
   if (!litVertexSpirv.has_value() || !litFragmentSpirv.has_value()) {
-    return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
+    return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
   }
   auto litVertexReflectionResult = loadReflectionMetadata(config.litTexturedVertexShaderReflectionPath.c_str());
-  if (litVertexReflectionResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
+  if (litVertexReflectionResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
   const auto litVertexInputLayout = litTexturedVertexLayout(litVertexReflectionResult.value());
-  if (!litVertexInputLayout.has_value()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
+  if (!litVertexInputLayout.has_value()) return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
 
   auto pbrVertexSpirv = loadSpirvFile(config.pbrDirectLitVertexShaderSpirvPath.c_str());
   auto pbrFragmentSpirv = loadSpirvFile(config.pbrDirectLitFragmentShaderSpirvPath.c_str());
   if (!pbrVertexSpirv.has_value() || !pbrFragmentSpirv.has_value()) {
-    return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
+    return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
   }
   auto pbrVertexReflectionResult = loadReflectionMetadata(config.pbrDirectLitVertexShaderReflectionPath.c_str());
-  if (pbrVertexReflectionResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
+  if (pbrVertexReflectionResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
   const auto pbrVertexInputLayout = pbrDirectLitVertexLayout(pbrVertexReflectionResult.value());
-  if (!pbrVertexInputLayout.has_value()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
+  if (!pbrVertexInputLayout.has_value()) return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
 
   auto shadowCastVertexSpirv = loadSpirvFile(config.shadowCastVertexShaderSpirvPath.c_str());
   auto shadowCastFragmentSpirv = loadSpirvFile(config.shadowCastFragmentShaderSpirvPath.c_str());
   if (!shadowCastVertexSpirv.has_value() || !shadowCastFragmentSpirv.has_value()) {
-    return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
+    return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
   }
   auto shadowCastVertexReflectionResult = loadReflectionMetadata(config.shadowCastVertexShaderReflectionPath.c_str());
-  if (shadowCastVertexReflectionResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
+  if (shadowCastVertexReflectionResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
   const auto shadowCastVertexInputLayout = shadowCastVertexLayout(shadowCastVertexReflectionResult.value());
-  if (!shadowCastVertexInputLayout.has_value()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
+  if (!shadowCastVertexInputLayout.has_value()) return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
 
-  std::optional<std::vector<std::uint32_t>> pbrIblVertexSpirv;
-  std::optional<std::vector<std::uint32_t>> pbrIblFragmentSpirv;
-  std::optional<VertexInputLayout> pbrIblVertexInputLayout;
-  std::optional<std::vector<std::uint32_t>> skyVertexSpirv;
-  std::optional<std::vector<std::uint32_t>> skyFragmentSpirv;
-  std::optional<VertexInputLayout> skyVertexInputLayout;
-  if (!config.environmentArtifactPath.empty()) {
-    if (atlantis::runtime::validateEnvironmentBootstrapConfig(config).isErr()) {
-      return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
-    }
-    pbrIblVertexSpirv = loadSpirvFile(config.pbrIblVertexShaderSpirvPath.c_str());
-    pbrIblFragmentSpirv = loadSpirvFile(config.pbrIblFragmentShaderSpirvPath.c_str());
-    auto pbrIblReflection = loadReflectionMetadata(config.pbrIblVertexShaderReflectionPath.c_str());
-    if (!pbrIblVertexSpirv.has_value() || !pbrIblFragmentSpirv.has_value() || pbrIblReflection.isErr()) {
-      return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
-    }
-    pbrIblVertexInputLayout = pbrDirectLitVertexLayout(pbrIblReflection.value());
-    if (!pbrIblVertexInputLayout.has_value()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
+  // Plan 0035 Milestone 3 (ADR-0081): this fixture's own scenes always
+  // configure an environment (selectShaderPair() requires
+  // environmentEnabled for MaterialKind::PbrSheen), so pbrIbl/sky/
+  // pbrSheenIbl*/pbrSheenIblNormalMap* are all loaded unconditionally
+  // inside this block, mirroring setUpPbrClearcoatDemoFixture()'s own
+  // identical "environment always configured" convention.
+  if (atlantis::runtime::validateEnvironmentBootstrapConfig(config).isErr()) {
+    return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
+  }
+  auto pbrIblVertexSpirv = loadSpirvFile(config.pbrIblVertexShaderSpirvPath.c_str());
+  auto pbrIblFragmentSpirv = loadSpirvFile(config.pbrIblFragmentShaderSpirvPath.c_str());
+  auto pbrIblReflection = loadReflectionMetadata(config.pbrIblVertexShaderReflectionPath.c_str());
+  if (!pbrIblVertexSpirv.has_value() || !pbrIblFragmentSpirv.has_value() || pbrIblReflection.isErr()) {
+    return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
+  }
+  auto pbrIblVertexInputLayout = pbrDirectLitVertexLayout(pbrIblReflection.value());
+  if (!pbrIblVertexInputLayout.has_value()) return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
 
-    skyVertexSpirv = loadSpirvFile(config.skyVertexShaderSpirvPath.c_str());
-    skyFragmentSpirv = loadSpirvFile(config.skyFragmentShaderSpirvPath.c_str());
-    auto skyReflection = loadReflectionMetadata(config.skyVertexShaderReflectionPath.c_str());
-    if (!skyVertexSpirv.has_value() || !skyFragmentSpirv.has_value() || skyReflection.isErr()) {
-      return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
-    }
-    skyVertexInputLayout = outputTransformVertexLayout(skyReflection.value());
-    if (!skyVertexInputLayout.has_value()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
+  auto skyVertexSpirv = loadSpirvFile(config.skyVertexShaderSpirvPath.c_str());
+  auto skyFragmentSpirv = loadSpirvFile(config.skyFragmentShaderSpirvPath.c_str());
+  auto skyReflection = loadReflectionMetadata(config.skyVertexShaderReflectionPath.c_str());
+  if (!skyVertexSpirv.has_value() || !skyFragmentSpirv.has_value() || skyReflection.isErr()) {
+    return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
+  }
+  auto skyVertexInputLayout = outputTransformVertexLayout(skyReflection.value());
+  if (!skyVertexInputLayout.has_value()) return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
+
+  // Plan 0035 Milestone 3 (ADR-0081): the two real sheen shader trios --
+  // this fixture's own point of difference from every other sibling
+  // fixture (which all pass dead-path filler for these two trios).
+  auto pbrSheenIblVertexSpirv = loadSpirvFile(config.pbrSheenIblVertexShaderSpirvPath.c_str());
+  auto pbrSheenIblFragmentSpirv = loadSpirvFile(config.pbrSheenIblFragmentShaderSpirvPath.c_str());
+  auto pbrSheenIblReflection = loadReflectionMetadata(config.pbrSheenIblVertexShaderReflectionPath.c_str());
+  if (!pbrSheenIblVertexSpirv.has_value() || !pbrSheenIblFragmentSpirv.has_value() ||
+      pbrSheenIblReflection.isErr()) {
+    return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
+  }
+  auto pbrSheenIblVertexInputLayout = pbrDirectLitVertexLayout(pbrSheenIblReflection.value());
+  if (!pbrSheenIblVertexInputLayout.has_value()) {
+    return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
+  }
+
+  auto pbrSheenIblNormalMapVertexSpirv = loadSpirvFile(config.pbrSheenIblNormalMapVertexShaderSpirvPath.c_str());
+  auto pbrSheenIblNormalMapFragmentSpirv =
+      loadSpirvFile(config.pbrSheenIblNormalMapFragmentShaderSpirvPath.c_str());
+  auto pbrSheenIblNormalMapReflection =
+      loadReflectionMetadata(config.pbrSheenIblNormalMapVertexShaderReflectionPath.c_str());
+  if (!pbrSheenIblNormalMapVertexSpirv.has_value() || !pbrSheenIblNormalMapFragmentSpirv.has_value() ||
+      pbrSheenIblNormalMapReflection.isErr()) {
+    return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
+  }
+  auto pbrSheenIblNormalMapVertexInputLayout = pbrNormalMapVertexLayout(pbrSheenIblNormalMapReflection.value());
+  if (!pbrSheenIblNormalMapVertexInputLayout.has_value()) {
+    return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
   }
 
   auto outputTransformVertexSpirv = loadSpirvFile(config.outputTransformUnormVertexShaderSpirvPath.c_str());
   auto outputTransformFragmentSpirv = loadSpirvFile(config.outputTransformUnormFragmentShaderSpirvPath.c_str());
   if (!outputTransformVertexSpirv.has_value() || !outputTransformFragmentSpirv.has_value()) {
-    return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
+    return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
   }
   auto outputTransformVertexReflectionResult =
       loadReflectionMetadata(config.outputTransformUnormVertexShaderReflectionPath.c_str());
-  if (outputTransformVertexReflectionResult.isErr()) {
-    return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
-  }
+  if (outputTransformVertexReflectionResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
   const auto outputTransformVertexInputLayout =
       outputTransformVertexLayout(outputTransformVertexReflectionResult.value());
-  if (!outputTransformVertexInputLayout.has_value()) {
-    return ResultT::Err(IntegratedShowcaseDemoSetupError::ShaderLoadFailed);
-  }
+  if (!outputTransformVertexInputLayout.has_value()) return ResultT::Err(PbrSheenDemoSetupError::ShaderLoadFailed);
 
   auto deviceResult = atlantis::vulkan_backend::createDevice(
-      {.applicationName = "Atlantis Image Regression Fixture (Integrated Showcase Demo)",
-       .enableValidationLayers = true});
-  if (deviceResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::DeviceCreationFailed);
+      {.applicationName = "Atlantis Image Regression Fixture (PBR Sheen Demo)", .enableValidationLayers = true});
+  if (deviceResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::DeviceCreationFailed);
 
-  IntegratedShowcaseDemoFixture fixture;
+  PbrSheenDemoFixture fixture;
   fixture.device = std::move(deviceResult.value());
   fixture.unlitTexturedVertexInputLayout = *vertexInputLayout;
   fixture.unlitTexturedVertexSpirv = std::move(*vertexSpirv);
@@ -261,69 +301,72 @@ setUpIntegratedShowcaseDemoFixture(const atlantis::runtime::BootstrapConfig& con
   fixture.shadowCastVertexInputLayout = *shadowCastVertexInputLayout;
   fixture.shadowCastVertexSpirv = std::move(*shadowCastVertexSpirv);
   fixture.shadowCastFragmentSpirv = std::move(*shadowCastFragmentSpirv);
-  if (pbrIblVertexSpirv.has_value()) {
-    fixture.pbrIblVertexInputLayout = std::move(*pbrIblVertexInputLayout);
-    fixture.pbrIblVertexSpirv = std::move(*pbrIblVertexSpirv);
-    fixture.pbrIblFragmentSpirv = std::move(*pbrIblFragmentSpirv);
-  }
-  if (skyVertexSpirv.has_value()) {
-    fixture.skyVertexInputLayout = std::move(*skyVertexInputLayout);
-    fixture.skyVertexSpirv = std::move(*skyVertexSpirv);
-    fixture.skyFragmentSpirv = std::move(*skyFragmentSpirv);
-  }
+  fixture.pbrIblVertexInputLayout = std::move(*pbrIblVertexInputLayout);
+  fixture.pbrIblVertexSpirv = std::move(*pbrIblVertexSpirv);
+  fixture.pbrIblFragmentSpirv = std::move(*pbrIblFragmentSpirv);
+  fixture.skyVertexInputLayout = std::move(*skyVertexInputLayout);
+  fixture.skyVertexSpirv = std::move(*skyVertexSpirv);
+  fixture.skyFragmentSpirv = std::move(*skyFragmentSpirv);
+  fixture.pbrSheenIblVertexInputLayout = std::move(*pbrSheenIblVertexInputLayout);
+  fixture.pbrSheenIblVertexSpirv = std::move(*pbrSheenIblVertexSpirv);
+  fixture.pbrSheenIblFragmentSpirv = std::move(*pbrSheenIblFragmentSpirv);
+  fixture.pbrSheenIblNormalMapVertexInputLayout = std::move(*pbrSheenIblNormalMapVertexInputLayout);
+  fixture.pbrSheenIblNormalMapVertexSpirv = std::move(*pbrSheenIblNormalMapVertexSpirv);
+  fixture.pbrSheenIblNormalMapFragmentSpirv = std::move(*pbrSheenIblNormalMapFragmentSpirv);
   fixture.outputTransformUnormVertexInputLayout = *outputTransformVertexInputLayout;
   fixture.outputTransformUnormVertexSpirv = std::move(*outputTransformVertexSpirv);
   fixture.outputTransformUnormFragmentSpirv = std::move(*outputTransformFragmentSpirv);
 
+  // Phase 1: the real, Runtime-private CPU load/instantiate pipeline --
+  // never duplicated here.
   auto sceneLoadResult = loadAndInstantiateScene(config, fixture.device.get(), *vertexInputLayout);
-  if (sceneLoadResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::SceneLoadFailed);
+  if (sceneLoadResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::SceneLoadFailed);
   SceneLoadOutcome outcome = std::move(sceneLoadResult.value());
   fixture.world.emplace(std::move(outcome.world));
   fixture.meshResourceMap = std::move(outcome.meshResourceMap);
   fixture.materialDataMap = std::move(outcome.materialDataMap);
   fixture.textureDataMap = std::move(outcome.textureDataMap);
-  if (!config.environmentArtifactPath.empty()) {
-    auto environmentResult = atlantis::asset_system::loadEnvironmentAsset(config.environmentArtifactPath,
-                                                                           config.environmentMetadataPath);
-    if (environmentResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::SceneLoadFailed);
-    fixture.environmentData.emplace(std::move(environmentResult.value()));
-  }
+  auto environmentResult =
+      atlantis::asset_system::loadEnvironmentAsset(config.environmentArtifactPath, config.environmentMetadataPath);
+  if (environmentResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::SceneLoadFailed);
+  fixture.environmentData.emplace(std::move(environmentResult.value()));
 
-  // Matches runtime_application.cpp's own current camera buffer sizing
-  // exactly (32 floats view+projection + 176-byte FrameLightingData +
-  // 16-byte CameraWorldPositionData + 128-byte light-space tail = 592).
-  auto cameraBufferResult = fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
-  if (cameraBufferResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ResourceCreationFailed);
+  // Plan 0023 Milestone 2/8 / Plan 0027 Milestone 9 (ADR-0072 D-9/P9d):
+  // this fixture's own independent 592-byte Camera/Lighting/
+  // CameraWorldPosition/light-space buffer -- matches every sibling
+  // fixture's own identical, current sizing.
+  auto cameraBufferResult = fixture.device->createBuffer(
+      {.purpose = BufferPurpose::Uniform,
+       .sizeBytes = 592});
+  if (cameraBufferResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ResourceCreationFailed);
   fixture.cameraBuffer = std::move(cameraBufferResult.value());
 
-  const Extent2D extent{kIntegratedShowcaseDemoExtentPixels, kIntegratedShowcaseDemoExtentPixels};
+  const Extent2D extent{kPbrSheenDemoExtentPixels, kPbrSheenDemoExtentPixels};
 
   auto depthTextureResult = fixture.device->createTexture({.extent = extent, .format = DepthFormat::D32Sfloat});
-  if (depthTextureResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ResourceCreationFailed);
+  if (depthTextureResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ResourceCreationFailed);
   fixture.depthTexture = std::move(depthTextureResult.value());
 
   auto offscreenTargetResult =
-      fixture.device->createOffscreenTarget({.extent = extent, .format = kIntegratedShowcaseDemoColorFormat});
-  if (offscreenTargetResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ResourceCreationFailed);
+      fixture.device->createOffscreenTarget({.extent = extent, .format = kPbrSheenDemoColorFormat});
+  if (offscreenTargetResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ResourceCreationFailed);
   fixture.offscreenTarget = std::move(offscreenTargetResult.value());
 
   const std::size_t readbackSizeBytes =
-      static_cast<std::size_t>(kIntegratedShowcaseDemoExtentPixels) * kIntegratedShowcaseDemoExtentPixels * 4;
+      static_cast<std::size_t>(kPbrSheenDemoExtentPixels) * kPbrSheenDemoExtentPixels * 4;
   auto readbackBufferResult =
       fixture.device->createBuffer({.purpose = BufferPurpose::Readback, .sizeBytes = readbackSizeBytes});
-  if (readbackBufferResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ResourceCreationFailed);
+  if (readbackBufferResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ResourceCreationFailed);
   fixture.readbackBuffer = std::move(readbackBufferResult.value());
 
   auto hdrColorTargetResult = fixture.device->createHdrColorTarget({.extent = extent});
-  if (hdrColorTargetResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ResourceCreationFailed);
+  if (hdrColorTargetResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ResourceCreationFailed);
   fixture.hdrColorTarget = std::move(hdrColorTargetResult.value());
 
   const float fullscreenTriangleVertices[6] = {-1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f};
   auto fullscreenTriangleVertexBufferResult = fixture.device->createBuffer(
       {.purpose = BufferPurpose::Vertex, .sizeBytes = sizeof(fullscreenTriangleVertices)});
-  if (fullscreenTriangleVertexBufferResult.isErr()) {
-    return ResultT::Err(IntegratedShowcaseDemoSetupError::ResourceCreationFailed);
-  }
+  if (fullscreenTriangleVertexBufferResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ResourceCreationFailed);
   fixture.fullscreenTriangleVertexBuffer = std::move(fullscreenTriangleVertexBufferResult.value());
   std::memcpy(fixture.fullscreenTriangleVertexBuffer->mappedData(), fullscreenTriangleVertices,
               sizeof(fullscreenTriangleVertices));
@@ -331,16 +374,14 @@ setUpIntegratedShowcaseDemoFixture(const atlantis::runtime::BootstrapConfig& con
   const std::uint16_t fullscreenTriangleIndices[3] = {0, 1, 2};
   auto fullscreenTriangleIndexBufferResult = fixture.device->createBuffer(
       {.purpose = BufferPurpose::Index, .sizeBytes = sizeof(fullscreenTriangleIndices)});
-  if (fullscreenTriangleIndexBufferResult.isErr()) {
-    return ResultT::Err(IntegratedShowcaseDemoSetupError::ResourceCreationFailed);
-  }
+  if (fullscreenTriangleIndexBufferResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ResourceCreationFailed);
   fixture.fullscreenTriangleIndexBuffer = std::move(fullscreenTriangleIndexBufferResult.value());
   std::memcpy(fixture.fullscreenTriangleIndexBuffer->mappedData(), fullscreenTriangleIndices,
               sizeof(fullscreenTriangleIndices));
 
   auto outputTransformSamplerResult = fixture.device->createSampler(
       {.filter = atlantis::rhi::Filter::Linear, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
-  if (outputTransformSamplerResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ResourceCreationFailed);
+  if (outputTransformSamplerResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ResourceCreationFailed);
   fixture.outputTransformSampler = std::move(outputTransformSamplerResult.value());
 
   auto outputTransformPipelineResult = fixture.device->createPipeline(
@@ -349,36 +390,34 @@ setUpIntegratedShowcaseDemoFixture(const atlantis::runtime::BootstrapConfig& con
        .fragmentShader = {.spirvWords = fixture.outputTransformUnormFragmentSpirv.data(),
                            .wordCount = fixture.outputTransformUnormFragmentSpirv.size()},
        .vertexInputLayout = fixture.outputTransformUnormVertexInputLayout,
-       .colorFormat = kIntegratedShowcaseDemoColorFormat,
+       .colorFormat = kPbrSheenDemoColorFormat,
        .pushConstantSizeBytes = 4,  // Plan 0031
        .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
-  if (outputTransformPipelineResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ResourceCreationFailed);
+  if (outputTransformPipelineResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ResourceCreationFailed);
   fixture.outputTransformPipeline = std::move(outputTransformPipelineResult.value());
 
-  if (skyVertexSpirv.has_value()) {
-    auto skyPipelineResult = fixture.device->createPipeline(
-        {.vertexShader = {.spirvWords = fixture.skyVertexSpirv.data(), .wordCount = fixture.skyVertexSpirv.size()},
-         .fragmentShader = {.spirvWords = fixture.skyFragmentSpirv.data(),
-                             .wordCount = fixture.skyFragmentSpirv.size()},
-         .vertexInputLayout = fixture.skyVertexInputLayout,
-         .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
-         .depthFormat = DepthFormat::D32Sfloat,
-         .sampledTextureBindingCount = 1,
-         .hasDepthAttachment = true,
-         .depthWriteEnabled = false});
-    if (skyPipelineResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ResourceCreationFailed);
-    fixture.skyPipeline = std::move(skyPipelineResult.value());
-  }
+  auto skyPipelineResult = fixture.device->createPipeline(
+      {.vertexShader = {.spirvWords = fixture.skyVertexSpirv.data(), .wordCount = fixture.skyVertexSpirv.size()},
+       .fragmentShader = {.spirvWords = fixture.skyFragmentSpirv.data(),
+                           .wordCount = fixture.skyFragmentSpirv.size()},
+       .vertexInputLayout = fixture.skyVertexInputLayout,
+       .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
+       .depthFormat = DepthFormat::D32Sfloat,
+       .sampledTextureBindingCount = 1,
+       .hasDepthAttachment = true,
+       .depthWriteEnabled = false});
+  if (skyPipelineResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ResourceCreationFailed);
+  fixture.skyPipeline = std::move(skyPipelineResult.value());
 
   auto shadowMapResult = fixture.device->createShadowMap({.extent = {1024, 1024}});
-  if (shadowMapResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ResourceCreationFailed);
+  if (shadowMapResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ResourceCreationFailed);
   fixture.shadowMap = std::move(shadowMapResult.value());
 
   auto shadowMapSamplerResult = fixture.device->createSampler(
       {.filter = atlantis::rhi::Filter::Nearest, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
-  if (shadowMapSamplerResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ResourceCreationFailed);
+  if (shadowMapSamplerResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ResourceCreationFailed);
   fixture.shadowMapSampler = std::move(shadowMapSamplerResult.value());
 
   auto shadowCastPipelineResult = fixture.device->createPipeline(
@@ -394,40 +433,39 @@ setUpIntegratedShowcaseDemoFixture(const atlantis::runtime::BootstrapConfig& con
        .hasDepthAttachment = true,
        .depthWriteEnabled = true,
        .hasColorAttachment = false});
-  if (shadowCastPipelineResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ResourceCreationFailed);
+  if (shadowCastPipelineResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ResourceCreationFailed);
   fixture.shadowCastPipeline = std::move(shadowCastPipelineResult.value());
 
   auto shadowLightSpaceBufferResult =
       fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 128});
-  if (shadowLightSpaceBufferResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ResourceCreationFailed);
+  if (shadowLightSpaceBufferResult.isErr()) return ResultT::Err(PbrSheenDemoSetupError::ResourceCreationFailed);
   fixture.shadowLightSpaceBuffer = std::move(shadowLightSpaceBufferResult.value());
 
   return ResultT::Ok(std::move(fixture));
 }
 
-atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegratedShowcaseDemoFrame(
-    IntegratedShowcaseDemoFixture& fixture, bool includeShadowCasters) {
+atlantis::Result<PixelBuffer, PbrSheenDemoRenderError> renderPbrSheenDemoFrame(PbrSheenDemoFixture& fixture) {
   namespace rhi = atlantis::rhi;
   namespace render_graph = atlantis::render_graph;
-  using ResultT = atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError>;
+  using ResultT = atlantis::Result<PixelBuffer, PbrSheenDemoRenderError>;
 
   auto acquireResult = fixture.offscreenTarget->acquireTarget();
-  if (acquireResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoRenderError::AcquireFailed);
+  if (acquireResult.isErr()) return ResultT::Err(PbrSheenDemoRenderError::AcquireFailed);
   std::unique_ptr<rhi::RenderTarget> target = std::move(acquireResult.value());
 
   fixture.world->updateTransforms();
 
   const auto activeCamera = fixture.world->activeCamera();
-  if (!activeCamera.has_value()) return ResultT::Err(IntegratedShowcaseDemoRenderError::NoActiveCamera);
+  if (!activeCamera.has_value()) return ResultT::Err(PbrSheenDemoRenderError::NoActiveCamera);
   const auto cameraWorldMatrixResult = fixture.world->getWorldMatrix(*activeCamera);
   const auto cameraComponentResult = fixture.world->getCamera(*activeCamera);
   if (cameraWorldMatrixResult.isErr() || cameraComponentResult.isErr()) {
-    return ResultT::Err(IntegratedShowcaseDemoRenderError::ExtractionFailed);
+    return ResultT::Err(PbrSheenDemoRenderError::ExtractionFailed);
   }
   const atlantis::world::Camera cameraComponent = cameraComponentResult.value();
   const auto extractionResult = extractCameraMatrices(cameraWorldMatrixResult.value(), cameraComponent.fovYRadians,
                                                         cameraComponent.nearZ, cameraComponent.farZ, 1.0f);
-  if (extractionResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoRenderError::ExtractionFailed);
+  if (extractionResult.isErr()) return ResultT::Err(PbrSheenDemoRenderError::ExtractionFailed);
 
   auto* cameraData = static_cast<float*>(fixture.cameraBuffer->mappedData());
   for (std::size_t i = 0; i < 16; ++i) cameraData[i] = extractionResult.value().view[i];
@@ -438,12 +476,12 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
     const auto lightResult = fixture.world->getLight(id);
     const auto lightWorldMatrixResult = fixture.world->getWorldMatrix(id);
     if (lightResult.isErr() || lightWorldMatrixResult.isErr()) {
-      return ResultT::Err(IntegratedShowcaseDemoRenderError::LightExtractionFailed);
+      return ResultT::Err(PbrSheenDemoRenderError::LightExtractionFailed);
     }
     lightInputs.push_back({lightResult.value(), lightWorldMatrixResult.value()});
   }
   const auto lightingResult = extractFrameLightingData(lightInputs);
-  if (lightingResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoRenderError::LightExtractionFailed);
+  if (lightingResult.isErr()) return ResultT::Err(PbrSheenDemoRenderError::LightExtractionFailed);
   auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
   *lightingData = lightingResult.value();
 
@@ -457,29 +495,8 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
   }
   atlantis::runtime::writeEnvironmentIrradianceSh(std::span<float, 36>(cameraData + 80, 36), irradianceShSource);
 
-  // Plan 0028 Milestone 3 (Spec 0028 FR6): the real light-space view/
-  // projection, computed by the production computeShadowLightSpaceMatrices()
-  // -- not pbr_material_demo_fixture.cpp's own identity sentinel, since
-  // this scene always configures one directional light and needs a real
-  // shadow. Dual-write mirrors runtime_application.cpp's own identical
-  // sequence exactly: both the camera buffer's own light-space tail and
-  // shadowLightSpaceBuffer_'s own independent buffer.
-  const bool hasDirectionalLight = lightingResult.value().directionalLightCount > 0;
-  Mat4 lightSpaceView = identityMatrix();
-  Mat4 lightSpaceProjection = identityMatrix();
-  if (hasDirectionalLight) {
-    const auto& gpuDirection = lightingResult.value().directionalLights[0].direction;
-    const CameraMatrices lightSpaceMatrices =
-        computeShadowLightSpaceMatrices(Vec3{gpuDirection[0], gpuDirection[1], gpuDirection[2]});
-    lightSpaceView = lightSpaceMatrices.view;
-    lightSpaceProjection = lightSpaceMatrices.projection;
-  }
-  float* lightSpaceTail = cameraData + 116;
-  std::memcpy(lightSpaceTail, lightSpaceView.data(), sizeof(float) * 16);
-  std::memcpy(lightSpaceTail + 16, lightSpaceProjection.data(), sizeof(float) * 16);
-  auto* shadowLightSpaceData = static_cast<float*>(fixture.shadowLightSpaceBuffer->mappedData());
-  std::memcpy(shadowLightSpaceData, lightSpaceView.data(), sizeof(float) * 16);
-  std::memcpy(shadowLightSpaceData + 16, lightSpaceProjection.data(), sizeof(float) * 16);
+  std::memcpy(cameraData + 116, kIdentityMatrix, sizeof(float) * 16);
+  std::memcpy(cameraData + 116 + 16, kIdentityMatrix, sizeof(float) * 16);
 
   std::vector<atlantis::asset_system::AssetId> referencedMaterialIds;
   for (const auto& id : fixture.world->renderableEntities()) {
@@ -499,51 +516,45 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
       computePendingMaterialIds(referencedMaterialIds, alreadyRealizedMaterialIds);
 
   auto commandListResult = fixture.device->createCommandList();
-  if (commandListResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoRenderError::CommandListCreationFailed);
+  if (commandListResult.isErr()) return ResultT::Err(PbrSheenDemoRenderError::CommandListCreationFailed);
   std::unique_ptr<rhi::CommandList> commandList = std::move(commandListResult.value());
 
   std::optional<atlantis::runtime::EnvironmentLightingCandidate> environmentCandidate;
   if (fixture.environmentData.has_value() && !fixture.environmentLightingResources.has_value()) {
     auto result = atlantis::runtime::realizeEnvironmentCandidate(*fixture.device, *fixture.environmentData);
-    if (result.isErr()) return ResultT::Err(IntegratedShowcaseDemoRenderError::CommandListCreationFailed);
+    if (result.isErr()) return ResultT::Err(PbrSheenDemoRenderError::CommandListCreationFailed);
     environmentCandidate.emplace(std::move(result.value()));
     atlantis::runtime::recordEnvironmentUploads(*commandList, *environmentCandidate);
   }
-  const bool environmentEnabled =
-      fixture.environmentData.has_value() || fixture.environmentLightingResources.has_value();
+  const bool environmentEnabled = fixture.environmentData.has_value() || fixture.environmentLightingResources.has_value();
 
   std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
-      // Plan 0029 Section P15: this fixture's own scene never realizes a
-      // normal-mapped material (hasNormalMap stays false for every
-      // material realizeOneMaterialCandidate() sees here), so the two
-      // new trailing trios are dead-path filler -- reusing this
-      // fixture's own already-loaded pbrDirectLit*/pbrIbl* values,
-      // mirroring realizePendingMaterials()'s own compatibility
-      // overload's identical reuse pattern (material_realization.h).
-      // Plan 0035 Milestone 2 (ADR-0081): the two new clearcoat trailing
-      // trios are dead-path filler too -- this fixture's own scene never
-      // realizes a PbrClearcoat material, mirroring the normal-map
-      // trios' own identical reuse immediately above.
+      // Plan 0035 Milestone 3 (ADR-0081): unlike every other sibling
+      // fixture, the two trailing trios below are the REAL, loaded
+      // pbrSheenIbl*/pbrSheenIblNormalMap* shader data -- this
+      // fixture's own scenes reference MaterialKind::PbrSheen
+      // materials, so selectShaderPair() (material_realization.cpp)
+      // must see genuine shader trios here, never dead-path filler. The
+      // two clearcoat trailing trios are dead-path filler, reusing
+      // pbrDirectLit* -- this fixture never realizes a PbrClearcoat
+      // material.
       realizePendingMaterials(*fixture.device, *commandList, fixture.unlitTexturedVertexInputLayout,
                                fixture.unlitTexturedVertexSpirv, fixture.unlitTexturedFragmentSpirv,
-                               fixture.litTexturedVertexInputLayout, fixture.litTexturedVertexSpirv,
-                               fixture.litTexturedFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
-                               fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
-                               fixture.pbrIblVertexInputLayout, fixture.pbrIblVertexSpirv,
-                               fixture.pbrIblFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
-                               fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
-                               fixture.pbrIblVertexInputLayout, fixture.pbrIblVertexSpirv,
-                               fixture.pbrIblFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
-                               fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
-                               fixture.pbrIblVertexInputLayout, fixture.pbrIblVertexSpirv,
-                               fixture.pbrIblFragmentSpirv,
-                               // Plan 0035 Milestone 3 (ADR-0081): the
-                               // two new sheen trailing trios are
-                               // dead-path filler too, same reason as
-                               // the clearcoat trios above.
+                               fixture.litTexturedVertexInputLayout,
+                               fixture.litTexturedVertexSpirv, fixture.litTexturedFragmentSpirv,
                                fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
                                fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
-                               fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv, environmentEnabled,
+                               fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv,
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
+                               fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv,
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
+                               fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+                               fixture.pbrSheenIblVertexInputLayout, fixture.pbrSheenIblVertexSpirv,
+                               fixture.pbrSheenIblFragmentSpirv, fixture.pbrSheenIblNormalMapVertexInputLayout,
+                               fixture.pbrSheenIblNormalMapVertexSpirv,
+                               fixture.pbrSheenIblNormalMapFragmentSpirv, environmentEnabled,
                                pendingMaterialIds,
                                fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);
 
@@ -566,10 +577,15 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
     if (!materialAsset.has_value()) continue;
     if (resolveMaterialAsset(*materialAsset, knownMaterialIds).isErr()) continue;
 
+    // Gated on this entity's OWN MaterialAssetData.kind -- an
+    // UnlitTextured-bound entity never calls checkConformalTransform().
+    // Plan 0035 Milestone 3: PbrSheen shares PbrDirectLit's own exact
+    // vertex-normal-transform shape, so it needs this same gate too.
     const auto materialDataIt = fixture.materialDataMap.find(*materialAsset);
     if (materialDataIt == fixture.materialDataMap.end()) continue;  // resolveMaterialAsset() already confirmed membership; defensive only
     if (materialDataIt->second.kind == atlantis::asset_system::MaterialKind::LitTextured ||
-        materialDataIt->second.kind == atlantis::asset_system::MaterialKind::PbrDirectLit) {
+        materialDataIt->second.kind == atlantis::asset_system::MaterialKind::PbrDirectLit ||
+        materialDataIt->second.kind == atlantis::asset_system::MaterialKind::PbrSheen) {
       if (checkConformalTransform(worldMatrixResult.value()).isErr()) continue;  // skip this entity for this frame only
     }
 
@@ -588,14 +604,6 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
     item.objectToWorld = worldMatrixResult.value();
     drawItems.push_back(item);
   }
-  fixture.lastDrawItemCount = drawItems.size();
-
-  // Spec 0028 FR6: shadowCasterDrawItems is drawItems itself when
-  // includeShadowCasters is true (the default, and the only path the
-  // golden generator uses) -- mirroring
-  // RuntimeApplication::runFrame()'s own unconditional contract -- or an
-  // empty span when false (Milestone 4's own R2 comparison render).
-  const std::vector<DrawItem> shadowCasterDrawItems = includeShadowCasters ? drawItems : std::vector<DrawItem>{};
 
   Renderer renderer;
   std::optional<atlantis::renderer::EnvironmentLighting> environmentLightingView;
@@ -610,7 +618,7 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
                       *fixture.outputTransformPipeline, *fixture.outputTransformSampler, 0.0f,
                       environmentLightingView.has_value() ? &*environmentLightingView : nullptr,
                       fixture.skyPipeline.get(), *fixture.shadowMap, *fixture.shadowMapSampler,
-                      *fixture.shadowCastPipeline, *fixture.shadowLightSpaceBuffer, shadowCasterDrawItems);
+                      *fixture.shadowCastPipeline, *fixture.shadowLightSpaceBuffer, {});
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");
@@ -620,32 +628,31 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
     cmd.copyRenderTargetToBuffer(*target, *fixture.readbackBuffer);
   });
   auto copyCompileResult = copyBuilder.compile();
-  if (copyCompileResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoRenderError::CommandListCreationFailed);
+  if (copyCompileResult.isErr()) return ResultT::Err(PbrSheenDemoRenderError::CommandListCreationFailed);
   const std::vector<render_graph::ResourceBinding> copyBindings{{.resource = copyCompileResult.value().resourceAt(0),
                                                                    .target = target.get(),
                                                                    .incomingState = rhi::ResourceState::TransferSource}};
   render_graph::execute(copyCompileResult.value(), copyBindings, *commandList);
 
   auto submitResult = fixture.device->submit(std::move(commandList), *target);
-  if (submitResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoRenderError::SubmitFailed);
+  if (submitResult.isErr()) return ResultT::Err(PbrSheenDemoRenderError::SubmitFailed);
 
   auto waitResult = fixture.device->waitIdle();
-  if (waitResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoRenderError::WaitIdleFailed);
+  if (waitResult.isErr()) return ResultT::Err(PbrSheenDemoRenderError::WaitIdleFailed);
 
   for (auto& [assetId, candidate] : realizedCandidates) {
     if (candidate.newSampledTexture) {
       fixture.sampledTextureResourceMap.emplace(candidate.textureAssetId, std::move(candidate.newSampledTexture));
     }
-    // Plan 0035 Milestone 3 fix (found during Milestone 2's own
-    // PbrClearcoatDemoFixture work): normalMapTextureAssetId/
+    // Plan 0035 Milestone 3 (fix-0): mirrors runtime_application.cpp's
+    // own real, production commit (Step 3) -- normalMapTextureAssetId/
     // newNormalMapTexture is a second, independent texture slot on
     // RealizedMaterialCandidate (material_realization.h), same shape as
-    // textureAssetId/newSampledTexture immediately above -- mirrors
-    // runtime_application.cpp's own correct production commit. Without
-    // this, a normal-mapped Material's own raw normalMapTexture()
-    // pointer dangles the moment realizedCandidates goes out of scope at
-    // the end of this function, surfacing as an invalid VkImageView on
-    // this fixture's very next render call.
+    // textureAssetId/newSampledTexture immediately above, and equally
+    // needs a persistent home; this fixture's own normal-mapped scene
+    // (pbr_sheen_normal_map_demo) genuinely realizes such a material, so
+    // omitting this would dangle on this fixture's very next
+    // renderPbrSheenDemoFrame() call.
     if (candidate.newNormalMapTexture) {
       fixture.sampledTextureResourceMap.emplace(candidate.normalMapTextureAssetId,
                                                   std::move(candidate.newNormalMapTexture));
@@ -660,10 +667,10 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
   }
 
   PixelBuffer result;
-  result.width = kIntegratedShowcaseDemoExtentPixels;
-  result.height = kIntegratedShowcaseDemoExtentPixels;
+  result.width = kPbrSheenDemoExtentPixels;
+  result.height = kPbrSheenDemoExtentPixels;
   const std::size_t byteCount =
-      static_cast<std::size_t>(kIntegratedShowcaseDemoExtentPixels) * kIntegratedShowcaseDemoExtentPixels * 4;
+      static_cast<std::size_t>(kPbrSheenDemoExtentPixels) * kPbrSheenDemoExtentPixels * 4;
   const auto* readbackData = static_cast<const std::uint8_t*>(fixture.readbackBuffer->mappedData());
   result.rgba8.assign(readbackData, readbackData + byteCount);
 

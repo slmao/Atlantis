@@ -11,6 +11,7 @@ add_library(atlantis_image_regression_fixture STATIC
   integrated_showcase_demo_fixture.cpp
   pbr_normal_map_demo_fixture.cpp
   pbr_clearcoat_demo_fixture.cpp
+  pbr_sheen_demo_fixture.cpp
 )
 
 target_include_directories(atlantis_image_regression_fixture

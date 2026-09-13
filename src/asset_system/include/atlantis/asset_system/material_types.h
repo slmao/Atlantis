@@ -34,11 +34,16 @@ enum class MaterialSamplerAddressMode {
 // mutually-exclusive kind, not a feature flag on PbrDirectLit (ADR-0081's
 // own Decision). Reuses this same MaterialAssetData shape, widened by
 // two new fields below (present, but inert, for every other kind).
+// Plan 0035 Milestone 3 (ADR-0081): PbrSheen added -- same shape again,
+// its own new, mutually-exclusive kind (ADR-0081 Decision item "No
+// material may combine two or more of {clearcoat, sheen, anisotropy}"),
+// widened by two more fields below.
 enum class MaterialKind {
   UnlitTextured,
   LitTextured,
   PbrDirectLit,
   PbrClearcoat,
+  PbrSheen,
 };
 
 // CPU-side result of loadMaterialAsset() -- names no RHI type, matching
@@ -76,6 +81,15 @@ struct MaterialAssetData {
   // whose own 1.0f default predates this convention.
   float clearcoatFactor = 0.0f;
   float clearcoatRoughness = 0.0f;
+  // Plan 0035 Milestone 3 (ADR-0081): present on every MaterialKind via
+  // this one unconditional schema (mirroring clearcoatFactor/
+  // clearcoatRoughness's own established precedent immediately above),
+  // only PbrSheen gives them real rendering meaning. sheenColor is RGB,
+  // linear-space, following baseColorFactor's own established ADR-0066
+  // convention; both default to 0.0f ("no sheen"), the correct inert
+  // default for every other kind.
+  float sheenColor[3] = {0.0f, 0.0f, 0.0f};
+  float sheenRoughness = 0.0f;
 };
 
 }  // namespace atlantis::asset_system

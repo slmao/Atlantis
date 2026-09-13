@@ -481,8 +481,11 @@ TEST_CASE("A PbrDirectLit material with a normal map uploads base color and norm
         *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv,
         *pbrFragmentSpirv, *pbrNormalMapLayout, *pbrNormalMapVertexSpirv, *pbrNormalMapFragmentSpirv,
         *pbrNormalMapLayout, *pbrNormalMapVertexSpirv, *pbrNormalMapFragmentSpirv, *pbrLayout, *pbrVertexSpirv,
-        *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, /*environmentEnabled=*/false,
-        pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap);
+        *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv,
+        // Plan 0035 Milestone 3 (ADR-0081): the two new sheen trios are
+        // dead-path filler for the identical reason.
+        *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv,
+        /*environmentEnabled=*/false, pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap);
 
     REQUIRE(realized.size() == 1);
     const RealizedMaterialCandidate& candidateA = realized.at(kMaterialA);
@@ -535,8 +538,11 @@ TEST_CASE("A PbrDirectLit material with a normal map uploads base color and norm
         *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv,
         *pbrFragmentSpirv, *pbrNormalMapLayout, *pbrNormalMapVertexSpirv, *pbrNormalMapFragmentSpirv,
         *pbrNormalMapLayout, *pbrNormalMapVertexSpirv, *pbrNormalMapFragmentSpirv, *pbrLayout, *pbrVertexSpirv,
-        *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, /*environmentEnabled=*/false,
-        pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap);
+        *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv,
+        // Plan 0035 Milestone 3 (ADR-0081): same dead-path sheen filler
+        // as the call above.
+        *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv,
+        /*environmentEnabled=*/false, pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap);
 
     REQUIRE(realized.size() == 1);
     const RealizedMaterialCandidate& candidateB = realized.at(kMaterialB);
@@ -677,7 +683,7 @@ struct CookedMaterialFixture {
 [[nodiscard]] CookedMaterialFixture cookFixtureMaterial(const fs::path& dir, const std::string& logicalPath,
                                                           const std::string& textureLogicalPath) {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 4\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 5\n"
                         "kind: unlit_textured\n"
                         "texture: " + textureLogicalPath + "\n"
                         "filter: linear\n"
@@ -696,7 +702,7 @@ struct CookedMaterialFixture {
 [[nodiscard]] CookedMaterialFixture cookFixturePbrMaterial(const fs::path& dir, const std::string& logicalPath,
                                                             const std::string& textureLogicalPath) {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 4\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 5\n"
                         "kind: pbr_direct_lit\n"
                         "texture: " + textureLogicalPath + "\n"
                         "filter: linear\n"

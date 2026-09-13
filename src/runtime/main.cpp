@@ -155,6 +155,27 @@ int main(int argc, char** argv) {
   config.pbrClearcoatIblNormalMapFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_NORMAL_MAP_SHADER_DIR) +
       "/pbr_clearcoat_ibl_normal_map.frag.refl.json";
+  // Plan 0035 Milestone 3 (ADR-0081): PbrSheen's own two IBL-lit shader
+  // pairs -- same unconditional-population shape as PbrClearcoat's own
+  // pair immediately above.
+  config.pbrSheenIblVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_SHADER_DIR) + "/pbr_sheen_ibl.vert.spv";
+  config.pbrSheenIblVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_SHADER_DIR) + "/pbr_sheen_ibl.vert.refl.json";
+  config.pbrSheenIblFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_SHADER_DIR) + "/pbr_sheen_ibl.frag.spv";
+  config.pbrSheenIblFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_SHADER_DIR) + "/pbr_sheen_ibl.frag.refl.json";
+  config.pbrSheenIblNormalMapVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_sheen_ibl_normal_map.vert.spv";
+  config.pbrSheenIblNormalMapVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_sheen_ibl_normal_map.vert.refl.json";
+  config.pbrSheenIblNormalMapFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_sheen_ibl_normal_map.frag.spv";
+  config.pbrSheenIblNormalMapFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_sheen_ibl_normal_map.frag.refl.json";
   config.skyVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.vert.spv";
   config.skyVertexShaderReflectionPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.vert.refl.json";
   config.skyFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.frag.spv";

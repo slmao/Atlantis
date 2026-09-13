@@ -556,6 +556,13 @@ atlantis::Result<PixelBuffer, PbrMaterialDemoRenderError> renderPbrMaterialDemoF
                                fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv,
                                fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
                                fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
+                               fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv,
+                               // Plan 0035 Milestone 3 (ADR-0081): the
+                               // two new sheen trailing trios are
+                               // dead-path filler too, same reuse
+                               // pattern as the clearcoat trios above.
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
                                fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv, environmentEnabled,
                                pendingMaterialIds,
                                fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);

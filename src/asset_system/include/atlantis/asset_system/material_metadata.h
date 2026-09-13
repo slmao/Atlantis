@@ -27,6 +27,9 @@ namespace atlantis::asset_system {
 // clearcoatFactor/clearcoatRoughness added by Plan 0035 Milestone 2/
 // ADR-0081 -- cross-validated identically, unconditionally present
 // (like every other field here), inert except for MaterialKind::PbrClearcoat.
+// sheenColor/sheenRoughness added by Plan 0035 Milestone 3/ADR-0081 --
+// cross-validated identically, unconditionally present, inert except for
+// MaterialKind::PbrSheen.
 struct MaterialMetadata {
   AssetId assetId = 0;
   std::string sourceLogicalPath;
@@ -38,6 +41,8 @@ struct MaterialMetadata {
   AssetId normalMapTexture = 0;
   float clearcoatFactor = 0.0f;
   float clearcoatRoughness = 0.0f;
+  float sheenColor[3] = {0.0f, 0.0f, 0.0f};
+  float sheenRoughness = 0.0f;
 };
 
 [[nodiscard]] atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std::string_view text);

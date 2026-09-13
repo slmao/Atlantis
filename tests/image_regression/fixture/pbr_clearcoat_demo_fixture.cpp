@@ -554,7 +554,18 @@ atlantis::Result<PixelBuffer, PbrClearcoatDemoRenderError> renderPbrClearcoatDem
                                fixture.pbrClearcoatIblVertexInputLayout, fixture.pbrClearcoatIblVertexSpirv,
                                fixture.pbrClearcoatIblFragmentSpirv, fixture.pbrClearcoatIblNormalMapVertexInputLayout,
                                fixture.pbrClearcoatIblNormalMapVertexSpirv,
-                               fixture.pbrClearcoatIblNormalMapFragmentSpirv, environmentEnabled,
+                               fixture.pbrClearcoatIblNormalMapFragmentSpirv,
+                               // Plan 0035 Milestone 3 (ADR-0081): this
+                               // fixture's own scenes never realize a
+                               // PbrSheen material, so the two new
+                               // trailing trios are dead-path filler,
+                               // reusing this fixture's own already-
+                               // loaded pbrDirectLit* values -- mirrors
+                               // the pre-existing pbrIbl*/pbrDirectLit*
+                               // reuse pattern immediately above.
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
+                               fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv, environmentEnabled,
                                pendingMaterialIds,
                                fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);
 
