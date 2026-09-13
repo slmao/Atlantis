@@ -195,3 +195,30 @@ add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit
   ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
   ${ATLANTIS_ibl_studio_TARGET} ${ATLANTIS_ibl_material_demo_scene_TARGET} ${ATLANTIS_pbr_normal_map_demo_scene_TARGET})
 endif()
+
+# Plan 0034 Milestone 5 (ADR-0077/ADR-0080): atlantis_runtime_android is
+# the Android peer of atlantis_runtime above -- a SHARED library
+# (android.app.NativeActivity's own android:value naming requirement,
+# ADR-0080), never an executable, since Android loads it as a .so via
+# ANativeActivity_onCreate. Its own android_main.cpp performs asset
+# extraction and android_app* injection before calling into the same
+# Atlantis::RuntimeHost every platform's own entry point links; no
+# BootstrapConfig path here is CMake-injected the way atlantis_runtime's
+# are above, since Android's own CMake configure never runs the
+# shader/asset-cooking subtree that would define those compile
+# definitions (Plan 0034 Milestone 1) -- see android_main.cpp's own
+# comment for the fixed, packaged-relative-path scheme this target's
+# paths use instead.
+if(ANDROID)
+  add_library(atlantis_runtime_android SHARED android/android_main.cpp android/asset_extraction.cpp)
+
+  target_link_libraries(atlantis_runtime_android
+    PRIVATE
+      Atlantis::RuntimeHost
+      Atlantis::PlatformAndroidEntry
+      atlantis_compiler_warnings
+      atlantis_android_native_app_glue
+      log
+      android
+  )
+endif()

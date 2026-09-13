@@ -1,0 +1,205 @@
+plugins {
+  id 'com.android.application'
+}
+
+// Plan 0034 Milestone 4 (ADR-0078): points at the repository's existing,
+// unmodified Windows build tree -- the packaging task below copies
+// already-cooked artifacts a prior Windows build produced (ADR-0080);
+// it never invokes CMake, the asset cooker, or the shader compiler
+// itself. Override with -PatlantisBuildDir=<path> if the Windows build
+// directory isn't the repository's own conventional build/ (see
+// CLAUDE.md's documented `cmake -S . -B build` commands).
+def atlantisBuildDir = project.hasProperty('atlantisBuildDir') \
+    ? file(atlantisBuildDir) \
+    : file("${rootDir}/../../build")
+
+// Plan 0034 Milestone 5 (android_main.cpp's own comment): every
+// packaged relative path BootstrapConfig needs by name -- kept in
+// lock-step with android_main.cpp's own identical literal list by
+// construction (both enumerate the same 51 files; a mismatch here
+// would surface as a missing-asset log error at first launch, not a
+// build failure, so this list is deliberately the single place a
+// human reviews both sides against each other).
+def namedAssetRelativePaths = [
+  'shaders/minimal_renderer/minimal_mesh.vert.spv',
+  'shaders/minimal_renderer/minimal_mesh.vert.refl.json',
+  'shaders/minimal_renderer/minimal_mesh.frag.spv',
+  'shaders/minimal_renderer/minimal_mesh.frag.refl.json',
+  'assets/meshes/minimal_cube.amesh',
+  'assets/meshes/minimal_cube.amesh.meta.txt',
+  'assets/scenes/integrated_showcase_demo.ascene',
+  'assets/scenes/integrated_showcase_demo.ascene.meta.txt',
+  // integrated_showcase_demo.ascene.manifest.txt is handled separately
+  // below -- its own artifact/metadata columns need rewriting, not a
+  // verbatim copy.
+  'shaders/textured_quad/textured_quad.vert.spv',
+  'shaders/textured_quad/textured_quad.vert.refl.json',
+  'shaders/textured_quad/textured_quad.frag.spv',
+  'shaders/textured_quad/textured_quad.frag.refl.json',
+  'shaders/lit_textured/lit_textured.vert.spv',
+  'shaders/lit_textured/lit_textured.vert.refl.json',
+  'shaders/lit_textured/lit_textured.frag.spv',
+  'shaders/lit_textured/lit_textured.frag.refl.json',
+  'shaders/pbr_direct_lit/pbr_direct_lit.vert.spv',
+  'shaders/pbr_direct_lit/pbr_direct_lit.vert.refl.json',
+  'shaders/pbr_direct_lit/pbr_direct_lit.frag.spv',
+  'shaders/pbr_direct_lit/pbr_direct_lit.frag.refl.json',
+  'shaders/pbr_direct_lit_normal_map/pbr_direct_lit_normal_map.vert.spv',
+  'shaders/pbr_direct_lit_normal_map/pbr_direct_lit_normal_map.vert.refl.json',
+  'shaders/pbr_direct_lit_normal_map/pbr_direct_lit_normal_map.frag.spv',
+  'shaders/pbr_direct_lit_normal_map/pbr_direct_lit_normal_map.frag.refl.json',
+  'assets/ibl_studio.aenv',
+  'assets/ibl_studio.aenv.meta.txt',
+  'shaders/pbr_ibl/pbr_ibl.vert.spv',
+  'shaders/pbr_ibl/pbr_ibl.vert.refl.json',
+  'shaders/pbr_ibl/pbr_ibl.frag.spv',
+  'shaders/pbr_ibl/pbr_ibl.frag.refl.json',
+  'shaders/pbr_ibl_normal_map/pbr_ibl_normal_map.vert.spv',
+  'shaders/pbr_ibl_normal_map/pbr_ibl_normal_map.vert.refl.json',
+  'shaders/pbr_ibl_normal_map/pbr_ibl_normal_map.frag.spv',
+  'shaders/pbr_ibl_normal_map/pbr_ibl_normal_map.frag.refl.json',
+  'shaders/sky/sky.vert.spv',
+  'shaders/sky/sky.vert.refl.json',
+  'shaders/sky/sky.frag.spv',
+  'shaders/sky/sky.frag.refl.json',
+  'shaders/shadow_cast/shadow_cast.vert.spv',
+  'shaders/shadow_cast/shadow_cast.vert.refl.json',
+  'shaders/shadow_cast/shadow_cast.frag.spv',
+  'shaders/shadow_cast/shadow_cast.frag.refl.json',
+  'shaders/output_transform_unorm/output_transform_unorm.vert.spv',
+  'shaders/output_transform_unorm/output_transform_unorm.vert.refl.json',
+  'shaders/output_transform_unorm/output_transform_unorm.frag.spv',
+  'shaders/output_transform_unorm/output_transform_unorm.frag.refl.json',
+  'shaders/output_transform_srgb/output_transform_srgb.vert.spv',
+  'shaders/output_transform_srgb/output_transform_srgb.vert.refl.json',
+  'shaders/output_transform_srgb/output_transform_srgb.frag.spv',
+  'shaders/output_transform_srgb/output_transform_srgb.frag.refl.json',
+]
+
+def sceneManifestRelativePath = 'assets/scenes/integrated_showcase_demo.ascene.manifest.txt'
+
+// Plan 0034 Milestone 4/5 (ADR-0078/ADR-0080): copies every named asset
+// verbatim, then handles the one scene dependency manifest specially --
+// its own artifact/metadata columns are absolute Windows build-tree
+// paths at generation time (scene_manifest.h's tab-separated format),
+// meaningless on Android. This task rewrites those two columns to paths
+// relative to the packaged assets root (everything after this task's
+// own atlantisBuildDir prefix) and copies each dependency file the
+// manifest references -- discovered dynamically from the manifest's own
+// content, not a second hardcoded list, so a scene's dependency set can
+// change without this task needing an update. The remaining half of
+// this rewrite -- turning those now-relative paths into real, per-device
+// absolute paths -- happens at runtime in asset_extraction.cpp's own
+// extractSceneManifest(), which is the only place that can know the
+// device's real internalDataPath.
+tasks.register('packageAtlantisAssets') {
+  def assetsDir = file("${projectDir}/src/main/assets")
+  inputs.dir(atlantisBuildDir)
+  outputs.dir(assetsDir)
+
+  doLast {
+    if (!atlantisBuildDir.isDirectory()) {
+      throw new GradleException(
+          "atlantisBuildDir (${atlantisBuildDir}) does not exist -- run the Windows build first " +
+          "(cmake -S . -B build && cmake --build build --config Debug), per CLAUDE.md, or pass " +
+          "-PatlantisBuildDir=<path> pointing at an existing build tree.")
+    }
+
+    namedAssetRelativePaths.each { relativePath ->
+      def source = new File(atlantisBuildDir, relativePath)
+      if (!source.isFile()) {
+        throw new GradleException(
+            "Expected Windows-build artifact not found: ${source} -- the Windows build tree at " +
+            "${atlantisBuildDir} does not match this task's own fixed relative-path list " +
+            "(android/app/build.gradle); rebuild Windows first, or this list is stale.")
+      }
+      def destination = new File(assetsDir, relativePath)
+      destination.parentFile.mkdirs()
+      destination.bytes = source.bytes
+    }
+
+    def manifestSource = new File(atlantisBuildDir, sceneManifestRelativePath)
+    if (!manifestSource.isFile()) {
+      throw new GradleException("Expected scene manifest not found: ${manifestSource}")
+    }
+    def atlantisBuildPath = atlantisBuildDir.toPath()
+    def rewrittenLines = manifestSource.readLines().findAll { !it.trim().isEmpty() }.collect { line ->
+      def columns = line.split('\t')
+      if (columns.length != 3) {
+        throw new GradleException("Malformed scene manifest line in ${manifestSource}: ${line}")
+      }
+      def (logicalPath, artifactAbsolutePath, metadataAbsolutePath) = columns
+      [artifactAbsolutePath, metadataAbsolutePath].each { absolutePath ->
+        def relativePath = atlantisBuildPath.relativize(new File(absolutePath).toPath()).toString().replace('\\', '/')
+        def depSource = new File(atlantisBuildDir, relativePath)
+        if (!depSource.isFile()) {
+          throw new GradleException("Scene dependency file not found: ${depSource} (referenced by ${manifestSource})")
+        }
+        def depDestination = new File(assetsDir, relativePath)
+        depDestination.parentFile.mkdirs()
+        depDestination.bytes = depSource.bytes
+      }
+      def artifactRelative = atlantisBuildPath.relativize(new File(artifactAbsolutePath).toPath()).toString().replace('\\', '/')
+      def metadataRelative = atlantisBuildPath.relativize(new File(metadataAbsolutePath).toPath()).toString().replace('\\', '/')
+      "${logicalPath}\t${artifactRelative}\t${metadataRelative}"
+    }
+    def manifestDestination = new File(assetsDir, sceneManifestRelativePath)
+    manifestDestination.parentFile.mkdirs()
+    manifestDestination.text = rewrittenLines.join('\n') + '\n'
+  }
+}
+
+tasks.named('preBuild').configure {
+  dependsOn 'packageAtlantisAssets'
+}
+
+android {
+  namespace 'com.atlantis.runtime'
+  compileSdk 36
+  // Plan 0034 Milestone 4 (ADR-0078): pinned, not left to AGP's own
+  // default -- the exact NDK version Milestone 1 established as this
+  // Spec's own floor (r29+/LLVM >= 20).
+  ndkVersion "29.0.14206865"
+
+  defaultConfig {
+    applicationId "com.atlantis.runtime"
+    minSdk 29
+    targetSdk 36
+    versionCode 1
+    versionName "0.1"
+
+    ndk {
+      abiFilters "arm64-v8a"
+    }
+
+    externalNativeBuild {
+      cmake {
+        arguments "-DANDROID_PLATFORM=android-29", "-DATLANTIS_BUILD_TESTS=OFF", "-DATLANTIS_BUILD_EXAMPLES=OFF"
+        targets "atlantis_runtime_android"
+      }
+    }
+  }
+
+  // Plan 0034 Milestone 4 (ADR-0078): points at the repository's
+  // existing, unmodified top-level CMakeLists.txt -- Gradle drives the
+  // same CMake project every other configuration already uses, never a
+  // second, forked build graph.
+  externalNativeBuild {
+    cmake {
+      path "../../CMakeLists.txt"
+      version "3.22.1"
+    }
+  }
+
+  buildTypes {
+    debug {
+      // No production release configuration is authorized by this
+      // Spec (Non-Goals) -- debug is this Milestone's only build type.
+    }
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}

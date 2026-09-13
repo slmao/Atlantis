@@ -21,18 +21,20 @@ namespace atlantis::platform::android_detail {
 // different pointer within one process lifetime (Plan 0034 Milestone 5's
 // own responsibility to uphold, not enforced here).
 //
-// Cross-module visibility open question (flagged, not resolved by this
-// Milestone): this header lives under src/platform/src/android/, per
-// ADR-0077's own instruction that it never reach src/platform/include/ --
-// but per ADR-0010's include-path hygiene rule, that directory is
-// structurally absent from every consumer's include path, including a
-// future atlantis_runtime_android's android_main.cpp (a different
-// top-level module, Atlantis Runtime). How Milestone 5 actually reaches
-// this declaration to call setAndroidApp() is not decided here; that
-// Milestone's own implementation must resolve it (e.g. a narrowly-scoped
-// additional include-directory grant, mirroring the whitebox-test
-// pattern tests/platform/CMakeLists.txt already uses to reach this same
-// directory) rather than this header being silently relocated.
+// Cross-module visibility (Plan 0034 Milestone 5): this header lives
+// under src/platform/src/android/, per ADR-0077's own instruction that
+// it never reach src/platform/include/ -- ADR-0010's include-path
+// hygiene rule would otherwise keep it structurally absent from every
+// consumer's include path, including atlantis_runtime_android's
+// android_main.cpp (a different top-level module, Atlantis Runtime).
+// Resolved via a narrow, single-consumer extension point:
+// src/platform/CMakeLists.txt declares an INTERFACE target,
+// atlantis_platform_android_entry (Atlantis::PlatformAndroidEntry),
+// under if(ANDROID), granting include-path visibility into this
+// directory to whichever target links it -- mirroring the whitebox-test
+// pattern tests/platform/CMakeLists.txt already uses for this same
+// directory, but as a real build-graph dependency edge rather than a
+// test-only grant.
 void setAndroidApp(android_app* app);
 
 // Returns the pointer set by setAndroidApp(), or triggers

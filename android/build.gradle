@@ -1,0 +1,7 @@
+// Plan 0034 Milestone 4 (ADR-0078): AGP 9.3.0 -- the newest 9.x release
+// confirmed compatible with the pinned Gradle 9.5.1 (AGP 9.3.0's own
+// documented floor is Gradle >= 9.5.0), a conservative pick rather than
+// tracking AGP's own latest release.
+plugins {
+  id 'com.android.application' version '9.3.0' apply false
+}

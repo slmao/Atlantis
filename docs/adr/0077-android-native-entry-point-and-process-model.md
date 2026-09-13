@@ -96,6 +96,17 @@ static helper library shipped inside the Android NDK (`$NDK/sources/android/nati
   calls `setAndroidApp()` exactly once, before calling
   `createRuntimeApplication()` (and therefore before
   `createPlatformSession()`'s own call to `initialize()`).
+  **Cross-module visibility (2026-09-13, Plan 0034 Milestone 5, human-directed):**
+  `atlantis_runtime_android` reaches this header through a narrow,
+  single-consumer extension point — an `INTERFACE` CMake target,
+  `atlantis_platform_android_entry` (`Atlantis::PlatformAndroidEntry`),
+  declared alongside `atlantis_platform` under `if(ANDROID)`, whose sole
+  effect is granting include-path visibility into
+  `src/platform/src/android/` to whichever target links it. It carries
+  no sources, is not part of `Atlantis::Platform`'s own public interface,
+  and is not a general-purpose escape hatch — it exists for this one
+  Android-entry-point consumer, not as a precedent for other modules to
+  reach into another module's private `src/`.
 - This ADR does not change `atlantis::platform`'s public interface shape in
   any way — `initialize()`/`processEvents()`/`shouldQuit()`/`shutdown()`/
   `currentPlatform()` keep the exact signatures [Spec 0002](../specs/0002-platform-foundation.md)

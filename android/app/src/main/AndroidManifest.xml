@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Plan 0034 Milestone 4 (ADR-0077/ADR-0078): a single android.app.NativeActivity,
+  hasCode="false" -- Atlantis contributes zero Java/Kotlin source
+  (ADR-0077's own "No custom JNI bridge is written"). android:value
+  names the native library android_native_app_glue's own
+  ANativeActivity_onCreate hook loads (lib<value>.so, CMake's own
+  default SHARED-library naming for atlantis_runtime_android, src/runtime/CMakeLists.txt).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+  <uses-feature android:name="android.hardware.vulkan.level" android:required="true" />
+
+  <application
+      android:hasCode="false"
+      android:label="@string/app_name"
+      android:icon="@drawable/ic_launcher"
+      tools:targetApi="29">
+
+    <activity
+        android:name="android.app.NativeActivity"
+        android:exported="true"
+        android:configChanges="orientation|screenSize|keyboardHidden"
+        android:screenOrientation="landscape">
+      <meta-data
+          android:name="android.app.lib_name"
+          android:value="atlantis_runtime_android" />
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+
+  </application>
+</manifest>

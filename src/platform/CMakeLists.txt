@@ -55,4 +55,23 @@ elseif(ANDROID)
       log
       android
   )
+
+  # Plan 0034 Milestone 5 (ADR-0077 amendment): resolves
+  # android_app_injection.h's own flagged open question -- a future
+  # atlantis_runtime_android (a different top-level module, Atlantis
+  # Runtime) needs to call setAndroidApp(), but src/platform/src/ is
+  # structurally outside every consumer's include path (ADR-0010).
+  # atlantis_platform_android_entry is a narrow, single-consumer
+  # extension point: an INTERFACE target (no sources of its own) whose
+  # only purpose is to grant include-path visibility into
+  # src/platform/src/android/ -- it is not linked into anything, does
+  # not become part of Atlantis::Platform's own PUBLIC interface, and
+  # is named for exactly what it is (an Android-only Runtime entry-point
+  # concern), not a general-purpose escape hatch other modules might
+  # reach for.
+  add_library(atlantis_platform_android_entry INTERFACE)
+  add_library(Atlantis::PlatformAndroidEntry ALIAS atlantis_platform_android_entry)
+  target_include_directories(atlantis_platform_android_entry INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/android
+  )
 endif()
