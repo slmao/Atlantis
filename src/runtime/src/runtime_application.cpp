@@ -900,8 +900,51 @@ void RuntimeApplication::runFrame() {
       closeRequested_ = true;
     } else if (std::holds_alternative<platform::SurfaceDestroyed>(event)) {
       if (presentation_) {
-        ATLANTIS_LOG_ERROR("SurfaceDestroyed observed while a Presentation still exists");
-        lifecycle_.markFailed();
+        // Plan 0034 Milestone 6 (human-directed, disclosed deviation --
+        // runtime_host internals, per Plan 0034's own not-touched list;
+        // real on-device finding, Android pause/resume): per ADR-0013's
+        // own "SurfaceDestroyed is not a resize" rule, this event is a
+        // normal, expected part of Android's Activity lifecycle (e.g.
+        // backgrounding then foregrounding the app) -- not the
+        // catastrophic condition it represents on Windows, which never
+        // synthesizes a second SurfaceCreated/SurfaceDestroyed pair
+        // after the first (Spec 0002's own Ownership and Lifetime
+        // table), so this branch's prior markFailed() was a real,
+        // Windows-shaped assumption baked into shared runtime_host code
+        // -- exactly the class of latent gap ADR-0080's own "stop-and-
+        // escalate finding" clause anticipated.
+        //
+        // Tears down only Presentation -- the one lifetime ADR-0013
+        // ties to native window lifetime. device_ and every GPU
+        // resource this class owns (meshes, materials, buffers,
+        // pipelines) are NOT tied to native window lifetime and stay
+        // alive untouched, per Spec 0002's own "a future RHI Device may
+        // outlive Android surface destroy/recreate cycles." No new
+        // lifecycle_ transition -- remaining in Running (never Failed)
+        // is itself the fix: the existing "!presentation_" guard
+        // immediately below this loop already treats a null
+        // presentation_ as "nothing to draw this frame" (the idle
+        // state this event now enters), and the existing
+        // SurfaceCreated branch above already rebuilds a fresh
+        // Presentation from whatever handle the next SurfaceCreated
+        // event carries, resuming the frame loop automatically -- both
+        // paths were already correct; only this branch's own
+        // markFailed() call was the bug.
+        //
+        // waitIdle() first: presentation_'s own swapchain images may
+        // still be referenced by an in-flight submission from a
+        // previous frame; destroying them while that submission is
+        // still outstanding would be exactly the hazard this same
+        // waitIdle() call already guards against elsewhere in this
+        // file (shutdown(), the post-realization-submit() path) -- not
+        // a new capability, the same existing, already-tested pattern.
+        auto waitResult = device_->waitIdle();
+        if (waitResult.isErr()) {
+          ATLANTIS_LOG_ERROR("waitIdle() failed while tearing down Presentation for SurfaceDestroyed");
+          lifecycle_.markFailed();
+        } else {
+          presentation_.reset();
+        }
       }
     }
     // Quit / FocusGained / FocusLost / ApplicationPause / ApplicationResume: no state change.

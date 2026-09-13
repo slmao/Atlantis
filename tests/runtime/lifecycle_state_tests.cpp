@@ -153,6 +153,56 @@ TEST_CASE("markShutDown() from Running (skipping beginShutdown()) triggers the a
   REQUIRE(recorded.size() == 1);
 }
 
+TEST_CASE("Running survives a Created-Destroyed-Created-shaped event sequence with no Failed transition",
+          "[runtime][lifecycle_state]") {
+  // Plan 0034 Milestone 6 (human-directed, disclosed deviation --
+  // runtime_host internals, per Plan 0034's own not-touched list): the
+  // state-machine-level invariant runtime_application.cpp's own
+  // SurfaceCreated/SurfaceDestroyed handling in runFrame() now relies
+  // on. That fix's own logic is not itself GPU-independently testable
+  // -- it calls real atlantis::vulkan_backend::createPresentation() and
+  // Device::waitIdle(), both genuine GPU calls this test suite
+  // deliberately does not make (this file, unlike
+  // tests/runtime/runtime_smoke_gpu_tests.cpp, is GPU-independent by
+  // design). This test instead confirms, at the pure
+  // RuntimeLifecycleTracker level, exactly the invariant the fix
+  // depends on: Running is a legal state to remain in indefinitely
+  // across a sequence standing in for Android's own repeated surface
+  // destroy/recreate cycle (ADR-0013) -- no hidden requirement exists
+  // to transition through Failed, or any other state, merely because
+  // such a cycle occurred while Running. RuntimeLifecycleTracker itself
+  // has no SurfaceCreated/SurfaceDestroyed-specific method (those are
+  // Presentation-level concerns the tracker never represents), so this
+  // is the most this state machine's own GPU-independent test
+  // framework can directly assert -- the actual event-dispatch and
+  // Presentation teardown/rebuild logic remains covered only by manual
+  // on-device verification, disclosed as such.
+  std::vector<RecordedFailure> recorded;
+  ScopedFailureHandler guard(recorded);
+
+  RuntimeLifecycleTracker tracker;
+  tracker.beginInitializing();
+  tracker.markRunning();
+  REQUIRE(tracker.state() == RuntimeLifecycleState::Running);
+  REQUIRE(tracker.hasEverRun());
+
+  for (int cycle = 0; cycle < 3; ++cycle) {
+    // Created -> ... -> Destroyed -> ... -> Created again: the tracker
+    // itself is never touched by either event (runFrame()'s own fix
+    // deliberately makes no lifecycle_ call for SurfaceDestroyed at
+    // all) -- state and hasEverRun() must both stay exactly as they
+    // were, every single cycle, with no assertion firing.
+    REQUIRE(tracker.state() == RuntimeLifecycleState::Running);
+    REQUIRE(tracker.hasEverRun());
+  }
+
+  tracker.beginShutdown();
+  tracker.markShutDown();
+  REQUIRE(tracker.state() == RuntimeLifecycleState::ShutDown);
+  REQUIRE(tracker.hasEverRun());
+  REQUIRE(recorded.empty());
+}
+
 TEST_CASE("beginInitializing() called twice triggers the assertion policy", "[runtime][lifecycle_state]") {
   std::vector<RecordedFailure> recorded;
   ScopedFailureHandler guard(recorded);
