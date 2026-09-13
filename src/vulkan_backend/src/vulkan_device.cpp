@@ -1774,9 +1774,19 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
   // nullptr (both already default-initialized above), which
   // MessengerGuard below already treats as a safe no-op (mirrors how it
   // already handles validationEnabled == false on every other platform,
-  // not a new code path). validationEnabled itself is untouched here --
-  // kValidationLayerName is still requested and enabled exactly as on
-  // every other platform.
+  // not a new code path). validationEnabled itself is untouched here.
+  //
+  // Superseding this comment's original "kValidationLayerName is still
+  // requested" stance: a second, independent translation-layer crash
+  // site (SIGSEGV in RunGuest_vkGetPhysicalDeviceFeatures2KHR) was later
+  // confirmed once the layer was actually interposed on an ordinary
+  // physical-device query, not only at this messenger. As of this same
+  // Plan 0034 Milestone 6, vulkan_instance.cpp's own createInstance() no
+  // longer requests VK_LAYER_KHRONOS_validation at all on __ANDROID__ --
+  // this messenger gate above is therefore moot on Android regardless
+  // (there is no layer loaded to report through it either way), but is
+  // left in place unchanged since it is still correct and still the
+  // Windows behavior's own gate.
 #endif
   detail::MessengerGuard messengerGuard(instanceGuard.get(), explicitMessenger, destroyMessengerFn);
 
