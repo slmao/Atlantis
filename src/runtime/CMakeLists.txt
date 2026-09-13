@@ -67,6 +67,17 @@ target_compile_options(atlantis_runtime_host PRIVATE
 # scoped startup layer (cli.h, not part of Atlantis::RuntimeHost --
 # ADR-0076 Decision 2). Never added to atlantis_runtime_host's own
 # add_library() above.
+# Plan 0034 Milestone 1 (ADR-0078/ADR-0080): atlantis_runtime is the
+# Windows-only per-OS entry point -- its own BootstrapConfig paths and
+# add_dependencies() below both reference shader/asset cook targets that
+# only exist under the top-level CMakeLists.txt's own if(NOT ANDROID)
+# gate, so this target itself is gated the same way, ahead of its
+# originally-planned Milestone 5 (atlantis_runtime_android, the Android
+# peer entry point). atlantis_runtime_host above stays unconditional --
+# it is exactly what Milestone 5's atlantis_runtime_android will also
+# link. Deviation from Plan 0034's own sequencing, reported in the
+# implementing PR per AGENTS.md.
+if(WIN32)
 add_executable(atlantis_runtime main.cpp cli.cpp)
 
 target_link_libraries(atlantis_runtime
@@ -183,3 +194,49 @@ add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit
   shadow_cast_shaders pbr_direct_lit_normal_map_shaders pbr_ibl_normal_map_shaders
   ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
   ${ATLANTIS_ibl_studio_TARGET} ${ATLANTIS_ibl_material_demo_scene_TARGET} ${ATLANTIS_pbr_normal_map_demo_scene_TARGET})
+endif()
+
+# Plan 0034 Milestone 5 (ADR-0077/ADR-0080): atlantis_runtime_android is
+# the Android peer of atlantis_runtime above -- a SHARED library
+# (android.app.NativeActivity's own android:value naming requirement,
+# ADR-0080), never an executable, since Android loads it as a .so via
+# ANativeActivity_onCreate. Its own android_main.cpp performs asset
+# extraction and android_app* injection before calling into the same
+# Atlantis::RuntimeHost every platform's own entry point links; no
+# BootstrapConfig path here is CMake-injected the way atlantis_runtime's
+# are above, since Android's own CMake configure never runs the
+# shader/asset-cooking subtree that would define those compile
+# definitions (Plan 0034 Milestone 1) -- see android_main.cpp's own
+# comment for the fixed, packaged-relative-path scheme this target's
+# paths use instead.
+if(ANDROID)
+  add_library(atlantis_runtime_android SHARED android/android_main.cpp android/asset_extraction.cpp
+    android/android_log_sink.cpp)
+
+  # Plan 0034 Milestone 6 (real on-device finding): the linker only pulls
+  # an object file out of a STATIC archive when something else in the
+  # link already has an unresolved reference to a symbol that object
+  # defines. Nothing in this repository's own code ever calls
+  # ANativeActivity_onCreate() directly -- it is the one symbol the
+  # Android framework finds via dlsym() at NativeActivity load time
+  # (android_native_app_glue's own documented contract), so the ordinary,
+  # selective link left main.c's own object out of
+  # libatlantis_runtime_android.so entirely, and the framework's dlsym()
+  # call failed with UnsatisfiedLinkError: undefined symbol
+  # ANativeActivity_onCreate -- confirmed by a real on-device install/
+  # launch attempt. --whole-archive/--no-whole-archive forces every
+  # object in atlantis_android_native_app_glue's archive into the final
+  # .so regardless of whether anything references it, exactly the
+  # dlsym-found-not-statically-referenced case this target needs.
+  target_link_libraries(atlantis_runtime_android
+    PRIVATE
+      Atlantis::RuntimeHost
+      Atlantis::PlatformAndroidEntry
+      atlantis_compiler_warnings
+      -Wl,--whole-archive
+      atlantis_android_native_app_glue
+      -Wl,--no-whole-archive
+      log
+      android
+  )
+endif()

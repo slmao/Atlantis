@@ -68,7 +68,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
 
   const auto shadowPass = builder.declarePass("shadow");
   builder.writes(shadowPass, shadowMapResource, atlantis::rhi::ResourceState::DepthAttachmentReadWrite);
-  builder.setExecute(shadowPass, [&commandList, &shadowCastPipeline, &shadowLightSpaceBuffer,
+  builder.setExecute(shadowPass, [&shadowCastPipeline, &shadowLightSpaceBuffer,
                                   shadowCasterDrawItems](atlantis::rhi::CommandList& cmd) {
     cmd.bindPipeline(shadowCastPipeline);
     cmd.bindUniformBuffer(shadowLightSpaceBuffer);
@@ -84,7 +84,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
   builder.writes(drawPass, hdrResource, atlantis::rhi::ResourceState::ColorAttachmentOutput);
   builder.writes(drawPass, depthResource, atlantis::rhi::ResourceState::DepthAttachmentReadWrite);
   builder.reads(drawPass, shadowMapResource, atlantis::rhi::ResourceState::ShaderRead);
-  builder.setExecute(drawPass, [&commandList, &cameraUniformBuffer, drawItems, environmentLighting, skyPipeline,
+  builder.setExecute(drawPass, [&cameraUniformBuffer, drawItems, environmentLighting, skyPipeline,
                                 &fullscreenTriangleVertexBuffer, &fullscreenTriangleIndexBuffer, &shadowMap,
                                 &shadowMapSampler](atlantis::rhi::CommandList& cmd) {
     // Plan 0026 Milestone 2 (ADR-0071 P5, Proposed Correction): the sky
@@ -182,7 +182,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
   const auto outputTransformPass = builder.declarePass("output_transform");
   builder.reads(outputTransformPass, hdrResource, atlantis::rhi::ResourceState::ShaderRead);
   builder.writes(outputTransformPass, finalColorResource, atlantis::rhi::ResourceState::ColorAttachmentOutput);
-  builder.setExecute(outputTransformPass, [&commandList, &hdrColorTarget, &fullscreenTriangleVertexBuffer,
+  builder.setExecute(outputTransformPass, [&hdrColorTarget, &fullscreenTriangleVertexBuffer,
                                             &fullscreenTriangleIndexBuffer, &outputTransformPipeline,
                                             &outputTransformSampler,
                                             exposureMultiplier](atlantis::rhi::CommandList& cmd) {
@@ -209,13 +209,20 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
   const std::vector<atlantis::render_graph::ResourceBinding> bindings{
       {.resource = compileResult.value().resourceAt(0),
        .colorClear = kBackgroundClearColor,
-       .hdrColorTarget = &hdrColorTarget},
-      {.resource = compileResult.value().resourceAt(1), .depthTexture = &depthTarget, .depthClear = 1.0f},
+       .hdrColorTarget = &hdrColorTarget,
+       .finalState = std::nullopt},
+      {.resource = compileResult.value().resourceAt(1),
+       .depthTexture = &depthTarget,
+       .depthClear = 1.0f,
+       .finalState = std::nullopt},
       {.resource = compileResult.value().resourceAt(2),
        .target = &colorTarget,
        .colorClear = kBackgroundClearColor,
        .finalState = finalColorState},
-      {.resource = compileResult.value().resourceAt(3), .depthClear = 1.0f, .shadowMap = &shadowMap},
+      {.resource = compileResult.value().resourceAt(3),
+       .depthClear = 1.0f,
+       .shadowMap = &shadowMap,
+       .finalState = std::nullopt},
   };
   atlantis::render_graph::execute(compileResult.value(), bindings, commandList);
 }

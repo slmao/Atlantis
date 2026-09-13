@@ -25,8 +25,12 @@ add_library(atlantis_vulkan_backend STATIC
   src/vulkan_offscreen_render_target.cpp
   src/vulkan_hdr_color_target.cpp
   src/vulkan_shadow_map.cpp
-  src/wsi/win32_surface.cpp
 )
+if(WIN32)
+  target_sources(atlantis_vulkan_backend PRIVATE src/wsi/win32_surface.cpp)
+elseif(ANDROID)
+  target_sources(atlantis_vulkan_backend PRIVATE src/wsi/android_surface.cpp)
+endif()
 add_library(Atlantis::VulkanBackend ALIAS atlantis_vulkan_backend)
 
 target_include_directories(atlantis_vulkan_backend

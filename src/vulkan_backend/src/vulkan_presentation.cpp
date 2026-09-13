@@ -13,7 +13,13 @@
 #include "vulkan_render_target.h"
 #include "vulkan_result.h"
 #include "vulkan_submission_signal.h"
+// Plan 0034 Milestone 3: same platform branch as vulkan_device.cpp's own
+// identical include -- see that file's comment.
+#if defined(_WIN32)
 #include "wsi/win32_surface.h"
+#elif defined(__ANDROID__)
+#include "wsi/android_surface.h"
+#endif
 
 namespace atlantis::vulkan_backend::detail {
 
@@ -652,8 +658,17 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Presentation>, PresentationCreat
   ATLANTIS_CHECK_MSG(vulkanDevice != nullptr,
                       "createPresentation() received a Device not produced by this module's own createDevice()");
 
+  // Plan 0034 Milestone 3: exactly one of these two compiles in for any
+  // given build -- the two result types are structurally identical
+  // ({VkResult result; VkSurfaceKHR surface;}), so every line after this
+  // block is already platform-agnostic.
+#if defined(_WIN32)
   const detail::Win32SurfaceCreateResult surfaceResult =
       detail::createWin32Surface(vulkanDevice->instance(), windowHandle);
+#elif defined(__ANDROID__)
+  const detail::AndroidSurfaceCreateResult surfaceResult =
+      detail::createAndroidSurface(vulkanDevice->instance(), windowHandle);
+#endif
   if (surfaceResult.result != VK_SUCCESS) {
     return ResultT::Err(PresentationCreateError::SurfaceCreationFailed);
   }
@@ -662,12 +677,17 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Presentation>, PresentationCreat
   // has been successfully constructed below.
   detail::SurfaceGuard surfaceGuard(vulkanDevice->instance(), surfaceResult.surface);
 
-  // The concrete-surface presentation-support check (Section 5): the
-  // Win32-generic check at Device construction only confirmed the queue
-  // family *can generically* present to a Win32 window; this confirms
-  // the *specific* surface just created is supported by that exact queue
-  // family. This call can itself fail, independent of the boolean it
-  // writes.
+  // The concrete-surface presentation-support check (Section 5). On
+  // Windows, Device construction's own win32PresentationSupported()
+  // check only confirmed the queue family *can generically* present to
+  // a Win32 window; this confirms the *specific* surface just created is
+  // supported by that exact queue family. On Android (Plan 0034
+  // Milestone 3), Device construction performed no platform-specific
+  // pre-check at all (none exists for VK_KHR_android_surface), so this
+  // call is the only presentation-support check that ever runs -- still
+  // against this exact surface and queue family, the same authoritative
+  // role it plays on every platform. This call can itself fail,
+  // independent of the boolean it writes.
   VkBool32 supported = VK_FALSE;
   const VkResult supportResult = vkGetPhysicalDeviceSurfaceSupportKHR(
       vulkanDevice->physicalDevice(), vulkanDevice->queueFamilyIndex(), surfaceGuard.get(), &supported);

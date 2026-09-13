@@ -1,0 +1,25 @@
+// Plan 0034 Milestone 4 (ADR-0078): a minimal Gradle project, sibling to
+// src/, tests/, examples/ -- not a second, forked copy of Atlantis's own
+// CMake build graph (ADR-0078's own "Alternatives Considered"). This
+// project exists solely to drive Android Gradle Plugin's
+// externalNativeBuild against the repository's existing top-level
+// CMakeLists.txt and package the result into an installable APK.
+
+pluginManagement {
+  repositories {
+    google()
+    mavenCentral()
+    gradlePluginPortal()
+  }
+}
+
+dependencyResolutionManagement {
+  repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+  repositories {
+    google()
+    mavenCentral()
+  }
+}
+
+rootProject.name = "atlantis-android"
+include ":app"

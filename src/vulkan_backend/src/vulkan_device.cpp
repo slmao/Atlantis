@@ -35,7 +35,17 @@
 #include "vulkan_shadow_map.h"
 #include "vulkan_submission_signal.h"
 #include "vulkan_texture.h"
+// Plan 0034 Milestone 3: the header itself is portable (declares only
+// portable Vulkan-core-typed signatures, per win32_surface.h/
+// android_surface.h's own design), but the function it declares is only
+// ever *defined* by its platform-matching .cpp, gated the same way in
+// vulkan_backend/CMakeLists.txt -- calling the wrong one would fail to
+// link, not merely misbehave.
+#if defined(_WIN32)
 #include "wsi/win32_surface.h"
+#elif defined(__ANDROID__)
+#include "wsi/android_surface.h"
+#endif
 
 namespace atlantis::vulkan_backend::detail {
 
@@ -125,16 +135,34 @@ constexpr const char* kDynamicRenderingExtension = "VK_KHR_dynamic_rendering";
 }
 
 // The first queue family index on physicalDevice supporting both
-// VK_QUEUE_GRAPHICS_BIT and Win32 generic presentation (Plan Section 7
-// item 2) -- a combined graphics+present family. Separate-family fallback
-// is not implemented, per the Plan's explicit Phase 1 disposition.
+// VK_QUEUE_GRAPHICS_BIT and generic presentation for the active platform
+// (Plan Section 7 item 2) -- a combined graphics+present family.
+// Separate-family fallback is not implemented, per the Plan's explicit
+// Phase 1 disposition.
 [[nodiscard]] std::optional<std::uint32_t> findCombinedGraphicsPresentQueueFamily(VkPhysicalDevice physicalDevice) {
   const std::vector<VkQueueFamilyProperties> families = queryQueueFamilies(physicalDevice);
   for (std::uint32_t index = 0; index < families.size(); ++index) {
     const bool hasGraphics = (families[index].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0;
+#if defined(_WIN32)
     if (hasGraphics && win32PresentationSupported(physicalDevice, index)) {
       return index;
     }
+#elif defined(__ANDROID__)
+    // Plan 0034 Milestone 3: Vulkan's VK_KHR_android_surface extension
+    // declares no vkGetPhysicalDeviceAndroidPresentationSupportKHR-
+    // equivalent early query (confirmed absent from the NDK's own
+    // <vulkan/vulkan_android.h> and <vulkan/vulkan_core.h>) -- per the
+    // Vulkan specification, any queue family supporting
+    // VK_QUEUE_GRAPHICS_BIT on Android implicitly supports presentation
+    // to any native window. The later, platform-agnostic
+    // vkGetPhysicalDeviceSurfaceSupportKHR check against a real
+    // VkSurfaceKHR (this function's own "necessary but not sufficient"
+    // caveat below still applies) remains the authoritative check on
+    // every platform, Android included.
+    if (hasGraphics) {
+      return index;
+    }
+#endif
   }
   return std::nullopt;
 }
@@ -1719,6 +1747,7 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
 
   VkDebugUtilsMessengerEXT explicitMessenger = VK_NULL_HANDLE;
   PFN_vkDestroyDebugUtilsMessengerEXT destroyMessengerFn = nullptr;
+#if !defined(__ANDROID__)
   if (validationEnabled) {
     auto createMessengerFn = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
         vkGetInstanceProcAddr(instanceGuard.get(), "vkCreateDebugUtilsMessengerEXT"));
@@ -1733,6 +1762,32 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
       return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
     }
   }
+#else
+  // Plan 0034 Milestone 6 (human-directed, disclosed deviation -- see
+  // vulkan_instance.cpp's own matching gate on the pNext-chained
+  // messenger for the full rationale): this is the second, explicit
+  // VkDebugUtilsMessengerEXT this same emulator translation-layer crash
+  // would also hit, marshalling the identical
+  // VkDebugUtilsMessengerCreateInfoEXT.pfnUserCallback field during
+  // vkCreateDebugUtilsMessengerEXT. Never created on Android --
+  // explicitMessenger stays VK_NULL_HANDLE and destroyMessengerFn stays
+  // nullptr (both already default-initialized above), which
+  // MessengerGuard below already treats as a safe no-op (mirrors how it
+  // already handles validationEnabled == false on every other platform,
+  // not a new code path). validationEnabled itself is untouched here.
+  //
+  // Superseding this comment's original "kValidationLayerName is still
+  // requested" stance: a second, independent translation-layer crash
+  // site (SIGSEGV in RunGuest_vkGetPhysicalDeviceFeatures2KHR) was later
+  // confirmed once the layer was actually interposed on an ordinary
+  // physical-device query, not only at this messenger. As of this same
+  // Plan 0034 Milestone 6, vulkan_instance.cpp's own createInstance() no
+  // longer requests VK_LAYER_KHRONOS_validation at all on __ANDROID__ --
+  // this messenger gate above is therefore moot on Android regardless
+  // (there is no layer loaded to report through it either way), but is
+  // left in place unchanged since it is still correct and still the
+  // Windows behavior's own gate.
+#endif
   detail::MessengerGuard messengerGuard(instanceGuard.get(), explicitMessenger, destroyMessengerFn);
 
   const std::optional<std::vector<VkPhysicalDevice>> physicalDevices =

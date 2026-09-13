@@ -50,3 +50,29 @@ Thumbs.db
 # See tests/image_regression/current_environment.sidecar.txt.example
 # for the template and setup instructions.
 tests/image_regression/current_environment.sidecar.txt
+
+# Plan 0034 Milestone 4 (ADR-0078): Gradle/Android build output and
+# machine-local configuration -- android/local.properties records this
+# machine's own sdk.dir (never portable across machines, same reasoning
+# as the Vulkan/GPU sidecar above); android/app/src/main/assets/ is
+# packageAtlantisAssets' own generated output (android/app/build.gradle),
+# copied from a prior Windows build, never authored by hand. The Gradle
+# wrapper JAR itself (gradle/wrapper/gradle-wrapper.jar) is deliberately
+# NOT listed here -- committing it is the standard, human-directed
+# exception to this repository's usual no-binaries convention, so a
+# clone can run ./gradlew without a pre-installed Gradle.
+android/local.properties
+android/.gradle/
+android/app/build/
+android/app/.cxx/
+android/build/
+android/app/src/main/assets/
+
+# Deliberate, narrow exception to this file's own blanket *.so rule
+# above -- the Vulkan Validation Layer binary
+# jniLibs/README.txt documents belongs at
+# android/app/src/main/jniLibs/arm64-v8a/libVkLayer_khronos_validation.so
+# and, unlike every other .so in this repository, IS meant to be
+# committed once a future Milestone sources it (it ships prebuilt;
+# there is no source to build it from here).
+!android/app/src/main/jniLibs/**/*.so

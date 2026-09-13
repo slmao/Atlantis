@@ -2,12 +2,12 @@
 
 - **Spec:** [specs/0034-android-platform-vulkan-presentation.md](../specs/0034-android-platform-vulkan-presentation.md)
   (`Approved`, 2026-09-12, chat confirmation — no reviewing PR yet)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Drafted by Claude Sonnet 5 at explicit human direction.
-- **Joint Human Review:** Pending; once approved: reviewer, date, PR naming
-  this Plan and Spec 0034 together and explicitly authorizing
-  Implementation. **Implementation must not begin before this record
-  exists**, per [AGENTS.md](../../AGENTS.md#the-workflow-stage-by-stage).
+- **Joint Human Review:** slmao, 2026-09-12 — 联合审阅本 Plan 与 Spec 0034
+  （文档集经 [PR #157](https://github.com/slmao/Atlantis/pull/157) 合并，含
+  ADR-0077 `android_app*` 注入修订）并显式授权自 Milestone 1 起开始实施；本记录
+  为实施分支 `feature/0034-android-platform-vulkan-presentation` 的首个提交。
 - **Related ADR(s):** [ADR-0077](../adr/0077-android-native-entry-point-and-process-model.md)–[ADR-0080](../adr/0080-android-asset-delivery-and-composition-root-boundary.md),
   all `Accepted` 2026-09-12 (same chat-confirmation basis as the Spec).
 
@@ -48,6 +48,19 @@ against it.
    Windows-desktop-Vulkan-SDK substitution or similar — a real failure here
    is a finding for [ADR-0078](../adr/0078-android-ndk-build-and-packaging-integration.md)
    to revisit, not something to route around silently.
+   **Empirically executed, 2026-09-13:** confirmed both an NDK version
+   floor (r29+/LLVM ≥ 20) and that Android's own CMake configure must
+   exclude every host-only build-time subtree (shader_compiler,
+   asset_cooker, assets/, all production shaders/*, and
+   `atlantis_finalize_asset_validation()`) plus the Windows-only
+   `atlantis_runtime` executable target — see
+   [ADR-0078](../adr/0078-android-ndk-build-and-packaging-integration.md)'s
+   own Decision for both facts' full record. With those two findings
+   landed, a full `cmake --build` (including a `ninja -k 0`
+   continue-past-failures pass) succeeds for every target except
+   `src/vulkan_backend/src/wsi/win32_surface.cpp`, exactly Milestone 3's
+   own, already-planned gap (that file is not yet platform-gated) — no
+   other failure of any kind remains.
 2. **Android Platform module.** Implement `src/platform/src/android/android_platform.cpp`
    (plus any Android-private headers under that same directory, including
    the private `setAndroidApp(android_app*)` injection declaration — see

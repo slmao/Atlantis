@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <atlantis/assert.h>
+#include <atlantis/log.h>
 
 #include "instance_api_version.h"
 #include "validation.h"
@@ -16,9 +17,18 @@ namespace atlantis::vulkan_backend::detail {
 namespace {
 
 constexpr const char* kSurfaceExtension = "VK_KHR_surface";
-constexpr const char* kWin32SurfaceExtension = "VK_KHR_win32_surface";
+// Plan 0034 Milestone 6: both now used only inside the
+// #if !defined(__ANDROID__) validation-layer-request blocks further
+// down this file (the layer is no longer requested at all on Android --
+// see createInstance()'s own comment on the two confirmed, deterministic
+// translation-layer crash sites this defers to). Guarded here for the
+// same -Wunused-const-variable (-Werror on Android) reason
+// kPlatformSurfaceExtension's own branch below already documents -- not
+// a behavior change.
+#if !defined(__ANDROID__)
 constexpr const char* kDebugUtilsExtension = "VK_EXT_debug_utils";
 constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
+#endif  // !defined(__ANDROID__)
 // Spec 0007 / ADR-0024 Section 8: queried and, if present, enabled at the
 // instance level -- purely a query-mechanism prerequisite for the later
 // per-physical-device dynamic-rendering capability query
@@ -27,6 +37,23 @@ constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
 // itself indicate anything about which dynamic-rendering path any given
 // physical device supports.
 constexpr const char* kGetPhysicalDeviceProperties2Extension = "VK_KHR_get_physical_device_properties2";
+
+// Plan 0034 Milestone 3: the one platform-surface extension this build
+// actually needs -- guarded, not just its two use sites below, since an
+// unconditionally-declared kWin32SurfaceExtension/kAndroidSurfaceExtension
+// pair would leave one of the two genuinely unused on every single-
+// platform build; Clang's -Wunused-const-variable (-Werror on Android)
+// would reject that, even though MSVC's /W4 does not flag the symmetric
+// case on Windows (confirmed by this Plan's own Milestone 1 finding,
+// commit 67499e3). Previously kWin32SurfaceExtension was declared and
+// used unconditionally (confirmed at Plan-drafting time: this file had
+// never been compiled for any platform but Windows) -- this is the
+// first real platform branch this file has ever needed.
+#if defined(_WIN32)
+constexpr const char* kPlatformSurfaceExtension = "VK_KHR_win32_surface";
+#elif defined(__ANDROID__)
+constexpr const char* kPlatformSurfaceExtension = "VK_KHR_android_surface";
+#endif
 
 // Two-call idiom for vkEnumerateInstanceExtensionProperties (pLayerName ==
 // nullptr: the implementation's own extensions, not a specific layer's).
@@ -40,9 +67,16 @@ constexpr const char* kGetPhysicalDeviceProperties2Extension = "VK_KHR_get_physi
 // count may be smaller than the first call's count, and the vector must
 // never be returned with trailing, never-written default-constructed
 // elements past it.
-[[nodiscard]] std::optional<std::vector<VkExtensionProperties>> enumerateInstanceExtensions() {
+// Plan 0034 Milestone 6 (human-directed, disclosed deviation): layerName
+// defaults to nullptr (the implementation's own extensions, this
+// function's original and only behavior) -- generalized, not changed
+// in effect at its existing nullptr call site, so passing a real layer
+// name (below, VK_LAYER_KHRONOS_validation) can reuse this same
+// two-call idiom instead of a near-duplicate second function.
+[[nodiscard]] std::optional<std::vector<VkExtensionProperties>> enumerateInstanceExtensions(
+    const char* layerName = nullptr) {
   std::uint32_t count = 0;
-  if (vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr) != VK_SUCCESS) {
+  if (vkEnumerateInstanceExtensionProperties(layerName, &count, nullptr) != VK_SUCCESS) {
     return std::nullopt;
   }
   if (count == 0) {
@@ -50,7 +84,7 @@ constexpr const char* kGetPhysicalDeviceProperties2Extension = "VK_KHR_get_physi
   }
 
   std::vector<VkExtensionProperties> extensions(count);
-  const VkResult fillResult = vkEnumerateInstanceExtensionProperties(nullptr, &count, extensions.data());
+  const VkResult fillResult = vkEnumerateInstanceExtensionProperties(layerName, &count, extensions.data());
   if (fillResult != VK_SUCCESS) {
     return std::nullopt;
   }
@@ -61,6 +95,14 @@ constexpr const char* kGetPhysicalDeviceProperties2Extension = "VK_KHR_get_physi
 // Two-call idiom for vkEnumerateInstanceLayerProperties. Same
 // VK_INCOMPLETE/failure-handling and final-count-resize rationale as
 // enumerateInstanceExtensions() above.
+//
+// Plan 0034 Milestone 6: only called from the layer-availability check
+// below, which is itself now #if !defined(__ANDROID__) (the validation
+// layer is never requested on Android -- see that block's own comment).
+// Compiled out here on __ANDROID__ too, purely so an Android build does
+// not warning-as-error on an otherwise-unused file-local function --
+// not a behavior change.
+#if !defined(__ANDROID__)
 [[nodiscard]] std::optional<std::vector<VkLayerProperties>> enumerateInstanceLayers() {
   std::uint32_t count = 0;
   if (vkEnumerateInstanceLayerProperties(&count, nullptr) != VK_SUCCESS) {
@@ -78,6 +120,7 @@ constexpr const char* kGetPhysicalDeviceProperties2Extension = "VK_KHR_get_physi
   layers.resize(count);
   return layers;
 }
+#endif  // !defined(__ANDROID__)
 
 [[nodiscard]] bool containsExtension(const std::vector<VkExtensionProperties>& extensions, const char* name) {
   for (const auto& extension : extensions) {
@@ -88,6 +131,9 @@ constexpr const char* kGetPhysicalDeviceProperties2Extension = "VK_KHR_get_physi
   return false;
 }
 
+// Plan 0034 Milestone 6: same rationale as enumerateInstanceLayers()
+// above -- only called from the same #if !defined(__ANDROID__) block.
+#if !defined(__ANDROID__)
 [[nodiscard]] bool containsLayer(const std::vector<VkLayerProperties>& layers, const char* name) {
   for (const auto& layer : layers) {
     if (std::strcmp(layer.layerName, name) == 0) {
@@ -95,6 +141,54 @@ constexpr const char* kGetPhysicalDeviceProperties2Extension = "VK_KHR_get_physi
     }
   }
   return false;
+}
+#endif  // !defined(__ANDROID__)
+
+// Plan 0034 Milestone 6 (human-directed, disclosed deviation -- second-
+// level diagnostic, see this change's own commit message): diagnostic-
+// only, private to this file. Every createInstance() exit returning
+// DeviceCreateError::InstanceCreationFailed shares that one enum value
+// (runtime_application.cpp's own deviceCreateErrorMessage() cannot
+// distinguish them further) -- these two helpers and the
+// ATLANTIS_LOG_ERROR calls at each such exit below exist solely so a
+// real on-device failure is diagnosable without attaching a debugger.
+// Not a new Atlantis::VulkanBackend public API; no success path touched.
+[[nodiscard]] std::string joinExtensionNames(const std::vector<VkExtensionProperties>& extensions) {
+  std::string joined;
+  for (std::size_t i = 0; i < extensions.size(); ++i) {
+    if (i != 0) joined += ", ";
+    joined += extensions[i].extensionName;
+  }
+  return joined;
+}
+
+// Not exhaustive by design (VkResult is an external, non-Atlantis-owned
+// enum with far more values than instance creation can plausibly
+// return) -- a best-effort label for the common failure codes, falling
+// back to the raw decimal value alone for anything not listed here.
+// Callers always print the decimal value alongside this name, so an
+// unrecognized code is still fully diagnosable.
+[[nodiscard]] const char* vkResultName(VkResult result) {
+  switch (result) {
+    case VK_ERROR_OUT_OF_HOST_MEMORY:
+      return "VK_ERROR_OUT_OF_HOST_MEMORY";
+    case VK_ERROR_OUT_OF_DEVICE_MEMORY:
+      return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
+    case VK_ERROR_INITIALIZATION_FAILED:
+      return "VK_ERROR_INITIALIZATION_FAILED";
+    case VK_ERROR_LAYER_NOT_PRESENT:
+      return "VK_ERROR_LAYER_NOT_PRESENT";
+    case VK_ERROR_EXTENSION_NOT_PRESENT:
+      return "VK_ERROR_EXTENSION_NOT_PRESENT";
+    case VK_ERROR_INCOMPATIBLE_DRIVER:
+      return "VK_ERROR_INCOMPATIBLE_DRIVER";
+    case VK_ERROR_OUT_OF_POOL_MEMORY:
+      return "VK_ERROR_OUT_OF_POOL_MEMORY";
+    case VK_ERROR_UNKNOWN:
+      return "VK_ERROR_UNKNOWN";
+    default:
+      return "(unlisted VkResult -- see decimal value)";
+  }
 }
 
 using ResultT = atlantis::Result<InstanceCreateResult, DeviceCreateError>;
@@ -116,40 +210,128 @@ VkDebugUtilsMessengerCreateInfoEXT makeDebugMessengerCreateInfo() noexcept {
 
 atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const DeviceCreateParams& params,
                                                                           bool validationEnabled) {
+#if defined(__ANDROID__)
+  // Plan 0034 Milestone 6: every read of validationEnabled below this
+  // point is inside an #if !defined(__ANDROID__) block now that the
+  // validation layer is never requested on Android (see that block's
+  // own comment) -- this parameter is otherwise genuinely unused on an
+  // Android build, which -Werror,-Wunused-parameter would reject.
+  (void)validationEnabled;
+#endif
   const std::optional<std::vector<VkExtensionProperties>> availableExtensions = enumerateInstanceExtensions();
   if (!availableExtensions.has_value()) {
+    ATLANTIS_LOG_ERROR(
+        "createInstance(): enumerateInstanceExtensions() failed "
+        "(vkEnumerateInstanceExtensionProperties returned non-VK_SUCCESS)");
     return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
   }
   if (!containsExtension(*availableExtensions, kSurfaceExtension) ||
-      !containsExtension(*availableExtensions, kWin32SurfaceExtension)) {
+      !containsExtension(*availableExtensions, kPlatformSurfaceExtension)) {
+    std::string missing;
+    if (!containsExtension(*availableExtensions, kSurfaceExtension)) missing += kSurfaceExtension;
+    if (!containsExtension(*availableExtensions, kPlatformSurfaceExtension)) {
+      if (!missing.empty()) missing += ", ";
+      missing += kPlatformSurfaceExtension;
+    }
+    ATLANTIS_LOG_ERROR("createInstance(): required surface extension(s) unavailable: {} -- {} extension(s) reported: {}",
+                        missing, availableExtensions->size(), joinExtensionNames(*availableExtensions));
     return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
   }
-  if (validationEnabled && !containsExtension(*availableExtensions, kDebugUtilsExtension)) {
-    return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
-  }
-
   // Spec 0007 / ADR-0024 Section 8, step 1: computed exactly once, before
   // the instance exists at all -- an instance-wide fact, never re-queried
   // per physical-device candidate below.
   const bool physicalDeviceProperties2Available =
       containsExtension(*availableExtensions, kGetPhysicalDeviceProperties2Extension);
 
+  // Plan 0034 Milestone 6 (human-directed, disclosed deviation -- deeper
+  // than vulkan_instance.cpp's/vulkan_device.cpp's own earlier
+  // messenger-only gate, and superseding this same Milestone's earlier
+  // "validation layer itself stays requested" stance): this Android
+  // emulator's ARM64-guest/x86_64-host translation layer
+  // (libndk_translation_proxy_libvulkan.so) is now confirmed to crash at
+  // TWO independent, deterministic sites whenever
+  // VK_LAYER_KHRONOS_validation is loaded, not only at the messenger
+  // callback --
+  //   (1) marshalling VkDebugUtilsMessengerCreateInfoEXT.pfnUserCallback
+  //       via ToHostType(...) during vkCreateInstance's pNext chain
+  //       (SIGABRT, "Trying to wrap non-executable guest address...");
+  //   (2) marshalling arguments for vkGetPhysicalDeviceFeatures2KHR once
+  //       the layer is interposed on the physical-device query chain
+  //       (SIGSEGV inside RunGuest_vkGetPhysicalDeviceFeatures2KHR).
+  // Both are on-device-confirmed, deterministic across repeated launches,
+  // and both are in this same upstream translation-layer library, not in
+  // this application's own Vulkan usage -- reported upstream (see this
+  // Plan's PR). The layer is therefore physically unusable on this
+  // emulator regardless of whether its messenger callback is installed,
+  // so it is no longer requested at all on __ANDROID__ builds:
+  // validationEnabled itself is untouched (still forced true on Debug
+  // builds by validation.h's effectiveValidationLayersEnabled(), exactly
+  // as on every other platform -- AGENTS.md's "Validation Layers are
+  // always enabled in debug builds" rule is unchanged for Windows and
+  // for a real Android device/emulator once this translation-layer
+  // defect is fixed upstream or worked around); only whether THIS
+  // specific emulator's loader is actually asked to load the layer is
+  // gated here. The recovery point once the upstream defect closes is
+  // this block plus b7d5caa's messenger gate -- removing both restores
+  // full validation coverage on Android with no other code change.
+#if !defined(__ANDROID__)
   if (validationEnabled) {
     const std::optional<std::vector<VkLayerProperties>> availableLayers = enumerateInstanceLayers();
     if (!availableLayers.has_value()) {
+      ATLANTIS_LOG_ERROR(
+          "createInstance(): enumerateInstanceLayers() failed "
+          "(vkEnumerateInstanceLayerProperties returned non-VK_SUCCESS)");
       return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
     }
     if (!containsLayer(*availableLayers, kValidationLayerName)) {
       return ResultT::Err(DeviceCreateError::ValidationLayerUnavailable);
     }
-  }
 
-  std::vector<const char*> enabledExtensions{kSurfaceExtension, kWin32SurfaceExtension};
+    // Plan 0034 Milestone 6 (human-directed, disclosed deviation --
+    // Vulkan-semantics fix, not a workaround): per the Vulkan
+    // specification, an instance extension a LAYER provides is exactly
+    // as legitimately enabled as one the base implementation provides.
+    // Checking kDebugUtilsExtension only against availableExtensions
+    // (queried with layerName == nullptr, the implementation's own
+    // extensions) was an incomplete check -- no ADR ever recorded
+    // "implementation-only" as a deliberate restriction. Found on a
+    // real device (Intel Arc B370 host-GPU passthrough, Vulkan 1.4.335,
+    // Plan 0034 Milestone 6): this ICD's own
+    // vkEnumerateInstanceExtensionProperties(nullptr, ...) does not
+    // report VK_EXT_debug_utils at all -- the validation layer itself
+    // provides it, discoverable only via
+    // vkEnumerateInstanceExtensionProperties(VK_LAYER_KHRONOS_validation, ...).
+    // Querying the layer's own extension list is safe only here, after
+    // containsLayer() immediately above has already confirmed the layer
+    // itself is present. Windows' own desktop Vulkan SDK/driver
+    // combination happens to report VK_EXT_debug_utils from both the
+    // implementation and the layer, so this gap was never exposed
+    // there -- this change is a behavior-preserving superset on that
+    // platform, not a functional change.
+    if (!containsExtension(*availableExtensions, kDebugUtilsExtension)) {
+      const std::optional<std::vector<VkExtensionProperties>> layerExtensions =
+          enumerateInstanceExtensions(kValidationLayerName);
+      const bool layerProvidesDebugUtils =
+          layerExtensions.has_value() && containsExtension(*layerExtensions, kDebugUtilsExtension);
+      if (!layerProvidesDebugUtils) {
+        ATLANTIS_LOG_ERROR(
+            "createInstance(): required extension unavailable: {} (checked both the "
+            "implementation's own extension list and {}'s own)",
+            kDebugUtilsExtension, kValidationLayerName);
+        return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
+      }
+    }
+  }
+#endif  // !defined(__ANDROID__)
+
+  std::vector<const char*> enabledExtensions{kSurfaceExtension, kPlatformSurfaceExtension};
   std::vector<const char*> enabledLayers;
+#if !defined(__ANDROID__)
   if (validationEnabled) {
     enabledExtensions.push_back(kDebugUtilsExtension);
     enabledLayers.push_back(kValidationLayerName);
   }
+#endif  // !defined(__ANDROID__)
   // Step 2: if available, requested alongside whatever this repository's
   // existing instance creation already enables. If unavailable, simply
   // not requested -- vkCreateInstance() itself is entirely unaffected
@@ -204,15 +386,41 @@ atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const D
   createInfo.ppEnabledExtensionNames = enabledExtensions.data();
   createInfo.enabledLayerCount = static_cast<std::uint32_t>(enabledLayers.size());
   createInfo.ppEnabledLayerNames = enabledLayers.data();
+#if !defined(__ANDROID__)
   if (validationEnabled) {
     // Input structure consumed synchronously by vkCreateInstance; not
     // retained by the loader beyond this call (see vulkan_instance.h /
     // Section 6's "Precisely What the pNext-Chained Messenger Covers").
     createInfo.pNext = &debugCreateInfo;
   }
+#else
+  // Plan 0034 Milestone 6 (human-directed, disclosed deviation -- an
+  // explicit, temporary coverage gap for this Milestone, not a general
+  // relaxation of AGENTS.md's Vulkan-specific rules): this Android
+  // emulator's own ARM64-guest/x86_64-host binary translation layer
+  // (libndk_translation_proxy_libvulkan.so) crashes deterministically
+  // (SIGABRT, "Trying to wrap non-executable guest address...") while
+  // marshalling this exact struct's pfnUserCallback across the ABI
+  // boundary during vkCreateInstance -- a real, upstream translation-
+  // layer defect, confirmed by a real on-device tombstone, not
+  // anything wrong with this struct or this call. debugCreateInfo is
+  // therefore never chained here on Android regardless. This is now
+  // moot either way on Android: this Plan's later Milestone 6 finding
+  // (see the top of this function, where enabledLayers is populated)
+  // supersedes the original "layer stays requested" stance -- a second,
+  // independent translation-layer crash site was found once the layer
+  // was actually interposed on ordinary calls, so
+  // VK_LAYER_KHRONOS_validation is no longer requested at all on
+  // Android, and this pNext chain has nothing to attach to regardless
+  // of debugCreateInfo's own construction here.
+  (void)debugCreateInfo;
+#endif
 
   VkInstance instance = VK_NULL_HANDLE;
-  if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
+  const VkResult createInstanceResult = vkCreateInstance(&createInfo, nullptr, &instance);
+  if (createInstanceResult != VK_SUCCESS) {
+    ATLANTIS_LOG_ERROR("createInstance(): vkCreateInstance() returned {} ({})",
+                        static_cast<int>(createInstanceResult), vkResultName(createInstanceResult));
     return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
   }
 
