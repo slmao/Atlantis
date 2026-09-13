@@ -16,7 +16,6 @@ namespace atlantis::vulkan_backend::detail {
 namespace {
 
 constexpr const char* kSurfaceExtension = "VK_KHR_surface";
-constexpr const char* kWin32SurfaceExtension = "VK_KHR_win32_surface";
 constexpr const char* kDebugUtilsExtension = "VK_EXT_debug_utils";
 constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
 // Spec 0007 / ADR-0024 Section 8: queried and, if present, enabled at the
@@ -27,6 +26,23 @@ constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
 // itself indicate anything about which dynamic-rendering path any given
 // physical device supports.
 constexpr const char* kGetPhysicalDeviceProperties2Extension = "VK_KHR_get_physical_device_properties2";
+
+// Plan 0034 Milestone 3: the one platform-surface extension this build
+// actually needs -- guarded, not just its two use sites below, since an
+// unconditionally-declared kWin32SurfaceExtension/kAndroidSurfaceExtension
+// pair would leave one of the two genuinely unused on every single-
+// platform build; Clang's -Wunused-const-variable (-Werror on Android)
+// would reject that, even though MSVC's /W4 does not flag the symmetric
+// case on Windows (confirmed by this Plan's own Milestone 1 finding,
+// commit 67499e3). Previously kWin32SurfaceExtension was declared and
+// used unconditionally (confirmed at Plan-drafting time: this file had
+// never been compiled for any platform but Windows) -- this is the
+// first real platform branch this file has ever needed.
+#if defined(_WIN32)
+constexpr const char* kPlatformSurfaceExtension = "VK_KHR_win32_surface";
+#elif defined(__ANDROID__)
+constexpr const char* kPlatformSurfaceExtension = "VK_KHR_android_surface";
+#endif
 
 // Two-call idiom for vkEnumerateInstanceExtensionProperties (pLayerName ==
 // nullptr: the implementation's own extensions, not a specific layer's).
@@ -121,7 +137,7 @@ atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const D
     return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
   }
   if (!containsExtension(*availableExtensions, kSurfaceExtension) ||
-      !containsExtension(*availableExtensions, kWin32SurfaceExtension)) {
+      !containsExtension(*availableExtensions, kPlatformSurfaceExtension)) {
     return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
   }
   if (validationEnabled && !containsExtension(*availableExtensions, kDebugUtilsExtension)) {
@@ -144,7 +160,7 @@ atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const D
     }
   }
 
-  std::vector<const char*> enabledExtensions{kSurfaceExtension, kWin32SurfaceExtension};
+  std::vector<const char*> enabledExtensions{kSurfaceExtension, kPlatformSurfaceExtension};
   std::vector<const char*> enabledLayers;
   if (validationEnabled) {
     enabledExtensions.push_back(kDebugUtilsExtension);
