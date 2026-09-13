@@ -1747,6 +1747,7 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
 
   VkDebugUtilsMessengerEXT explicitMessenger = VK_NULL_HANDLE;
   PFN_vkDestroyDebugUtilsMessengerEXT destroyMessengerFn = nullptr;
+#if !defined(__ANDROID__)
   if (validationEnabled) {
     auto createMessengerFn = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
         vkGetInstanceProcAddr(instanceGuard.get(), "vkCreateDebugUtilsMessengerEXT"));
@@ -1761,6 +1762,22 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
       return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
     }
   }
+#else
+  // Plan 0034 Milestone 6 (human-directed, disclosed deviation -- see
+  // vulkan_instance.cpp's own matching gate on the pNext-chained
+  // messenger for the full rationale): this is the second, explicit
+  // VkDebugUtilsMessengerEXT this same emulator translation-layer crash
+  // would also hit, marshalling the identical
+  // VkDebugUtilsMessengerCreateInfoEXT.pfnUserCallback field during
+  // vkCreateDebugUtilsMessengerEXT. Never created on Android --
+  // explicitMessenger stays VK_NULL_HANDLE and destroyMessengerFn stays
+  // nullptr (both already default-initialized above), which
+  // MessengerGuard below already treats as a safe no-op (mirrors how it
+  // already handles validationEnabled == false on every other platform,
+  // not a new code path). validationEnabled itself is untouched here --
+  // kValidationLayerName is still requested and enabled exactly as on
+  // every other platform.
+#endif
   detail::MessengerGuard messengerGuard(instanceGuard.get(), explicitMessenger, destroyMessengerFn);
 
   const std::optional<std::vector<VkPhysicalDevice>> physicalDevices =

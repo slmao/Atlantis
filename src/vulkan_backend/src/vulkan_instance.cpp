@@ -320,12 +320,34 @@ atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const D
   createInfo.ppEnabledExtensionNames = enabledExtensions.data();
   createInfo.enabledLayerCount = static_cast<std::uint32_t>(enabledLayers.size());
   createInfo.ppEnabledLayerNames = enabledLayers.data();
+#if !defined(__ANDROID__)
   if (validationEnabled) {
     // Input structure consumed synchronously by vkCreateInstance; not
     // retained by the loader beyond this call (see vulkan_instance.h /
     // Section 6's "Precisely What the pNext-Chained Messenger Covers").
     createInfo.pNext = &debugCreateInfo;
   }
+#else
+  // Plan 0034 Milestone 6 (human-directed, disclosed deviation -- an
+  // explicit, temporary coverage gap for this Milestone, not a general
+  // relaxation of AGENTS.md's Vulkan-specific rules): this Android
+  // emulator's own ARM64-guest/x86_64-host binary translation layer
+  // (libndk_translation_proxy_libvulkan.so) crashes deterministically
+  // (SIGABRT, "Trying to wrap non-executable guest address...") while
+  // marshalling this exact struct's pfnUserCallback across the ABI
+  // boundary during vkCreateInstance -- a real, upstream translation-
+  // layer defect, confirmed by a real on-device tombstone, not
+  // anything wrong with this struct or this call. debugCreateInfo is
+  // therefore never chained here on Android -- kValidationLayerName
+  // itself is still requested and enabled below exactly as on every
+  // other platform (AGENTS.md's "Validation Layers are always enabled
+  // in debug builds" is satisfied literally), only the messenger
+  // callback that would report what the layer finds is not installed.
+  // No validation output reaches this application on Android until
+  // this gap closes -- see vulkan_device.cpp's own matching gate for
+  // the second, explicit messenger this same crash would also hit.
+  (void)debugCreateInfo;
+#endif
 
   VkInstance instance = VK_NULL_HANDLE;
   const VkResult createInstanceResult = vkCreateInstance(&createInfo, nullptr, &instance);

@@ -22,7 +22,7 @@
         android:name="android.app.NativeActivity"
         android:exported="true"
         android:configChanges="orientation|screenSize|keyboardHidden"
-        android:screenOrientation="landscape">
+        android:screenOrientation="unspecified">
       <meta-data
           android:name="android.app.lib_name"
           android:value="atlantis_runtime_android" />
