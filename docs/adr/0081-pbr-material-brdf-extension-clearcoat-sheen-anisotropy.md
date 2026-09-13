@@ -1,10 +1,11 @@
 # ADR 0081: PBR Material BRDF Extension — Clearcoat, Sheen, Anisotropy
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-13
 - **Deciders:** slmao
-- **Acceptance:** pending
-- **Related Spec:** [Spec 0035: Clearcoat, Sheen, and Anisotropy PBR Materials](../specs/0035-clearcoat-sheen-anisotropy-materials.md) (`Proposed`)
+- **Acceptance:** slmao, 2026-09-13 (chat confirmation; reviewed alongside
+  this branch's own PR)
+- **Related Spec:** [Spec 0035: Clearcoat, Sheen, and Anisotropy PBR Materials](../specs/0035-clearcoat-sheen-anisotropy-materials.md) (`Approved`)
 
 Record one decision and its rationale. Follow the
 [ADR lifecycle](README.md); keep approval discussion and execution evidence in

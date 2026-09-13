@@ -1,11 +1,14 @@
 # Spec: Clearcoat, Sheen, and Anisotropy PBR Materials
 
-- **Status:** Proposed
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-13
-- **Related Plan(s):** None yet
-- **Approval:** pending
-- **Related ADR(s):** [ADR-0081: PBR Material BRDF Extension — Clearcoat, Sheen, Anisotropy](../adr/0081-pbr-material-brdf-extension-clearcoat-sheen-anisotropy.md) (`Proposed`)
+- **Related Plan(s):** [Plan 0035](../plans/0035-clearcoat-sheen-anisotropy-materials.md) (`Draft`)
+- **Approval:** slmao, 2026-09-13 (chat confirmation, no reviewing PR). This
+  approval authorizes drafting Plan 0035 only — not Implementation, which
+  still requires a separate Joint Human Review of Spec 0035 and Plan 0035
+  together, per AGENTS.md's own Human Review gate.
+- **Related ADR(s):** [ADR-0081: PBR Material BRDF Extension — Clearcoat, Sheen, Anisotropy](../adr/0081-pbr-material-brdf-extension-clearcoat-sheen-anisotropy.md) (`Accepted`)
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 State each requirement once; link ADR rationale and map verification to the
@@ -425,13 +428,18 @@ question. The decision — three new mutually-exclusive `MaterialKind`s
 with independent per-kind push-constant budgets, rather than combinable
 feature flags on the existing `PbrDirectLit` kind — is recorded in
 [ADR-0081](../adr/0081-pbr-material-brdf-extension-clearcoat-sheen-anisotropy.md)
-(`Proposed`), which must reach `Accepted` before this Spec is approved
-for implementation, per AGENTS.md's own ADR workflow rule. ADR-0081 is
-explicitly framed as an **extension** of ADR-0066/ADR-0067's own already-
-`Accepted` decisions (same asset-schema-versioning approach, same
-linear-space scalar-factor convention, same texture-vs-push-constant
-split, same closed-switch `MaterialKind` dispatch pattern), not a
-reversal of either.
+(`Accepted`, alongside this Spec's own `Approved` status — see header
+metadata above), per AGENTS.md's own ADR workflow rule requiring an
+architecturally-significant spec's own ADR to reach `Accepted` before or
+during Human Review. ADR-0081 is explicitly framed as an **extension**
+of ADR-0066/ADR-0067's own already-`Accepted` decisions (same asset-
+schema-versioning approach, same linear-space scalar-factor convention,
+same texture-vs-push-constant split, same closed-switch `MaterialKind`
+dispatch pattern), not a reversal of either. Note: this Spec's own
+`Approved` status (header) authorizes drafting Plan 0035 only — per
+AGENTS.md's own distinct Human Review gate, Implementation itself still
+requires a separate Joint Human Review of Spec 0035 and Plan 0035
+together, not implied by this approval alone.
 
 This Spec was checked against Spec 0032/ADR-0076 (the `--scene`
 whitelist this Spec's own Requirement 7 extends — confirmed additive,
