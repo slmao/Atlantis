@@ -1,11 +1,19 @@
 # Plan: Clearcoat, Sheen, and Anisotropy PBR Materials
 
 - **Spec:** [Spec 0035: Clearcoat, Sheen, and Anisotropy PBR Materials](../specs/0035-clearcoat-sheen-anisotropy-materials.md) (`Approved`) — [ADR-0081](../adr/0081-pbr-material-brdf-extension-clearcoat-sheen-anisotropy.md) (`Accepted`)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending — Spec 0035's own `Approved` status
-  authorizes drafting this Plan only; Implementation requires a separate
-  Joint Human Review of Spec 0035 and this Plan together, per AGENTS.md.
+- **Joint Human Review:** slmao, 2026-09-13 — Spec 0035 and this Plan
+  reviewed together (basis: [PR #159](https://github.com/slmao/Atlantis/pull/159)'s
+  documentation set plus that same day's chat session) and Implementation
+  explicitly authorized. This round's three open points were confirmed
+  as drafted, not overridden: three incremental schema bumps (v4/v5/v6,
+  one per BRDF slice, not one batched bump — Sequencing & Dependencies);
+  Milestone 6's temporary `android_main.cpp` scene-switch on-device
+  verification mechanism (captured, then reverted, disclosed in that
+  Milestone's own PR); and the Clearcoat → Sheen → Anisotropy risk
+  ordering (cheapest push-constant budget first, highest shading-math
+  risk last).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
