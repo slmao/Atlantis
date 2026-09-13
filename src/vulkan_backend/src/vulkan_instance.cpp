@@ -57,9 +57,16 @@ constexpr const char* kPlatformSurfaceExtension = "VK_KHR_android_surface";
 // count may be smaller than the first call's count, and the vector must
 // never be returned with trailing, never-written default-constructed
 // elements past it.
-[[nodiscard]] std::optional<std::vector<VkExtensionProperties>> enumerateInstanceExtensions() {
+// Plan 0034 Milestone 6 (human-directed, disclosed deviation): layerName
+// defaults to nullptr (the implementation's own extensions, this
+// function's original and only behavior) -- generalized, not changed
+// in effect at its existing nullptr call site, so passing a real layer
+// name (below, VK_LAYER_KHRONOS_validation) can reuse this same
+// two-call idiom instead of a near-duplicate second function.
+[[nodiscard]] std::optional<std::vector<VkExtensionProperties>> enumerateInstanceExtensions(
+    const char* layerName = nullptr) {
   std::uint32_t count = 0;
-  if (vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr) != VK_SUCCESS) {
+  if (vkEnumerateInstanceExtensionProperties(layerName, &count, nullptr) != VK_SUCCESS) {
     return std::nullopt;
   }
   if (count == 0) {
@@ -67,7 +74,7 @@ constexpr const char* kPlatformSurfaceExtension = "VK_KHR_android_surface";
   }
 
   std::vector<VkExtensionProperties> extensions(count);
-  const VkResult fillResult = vkEnumerateInstanceExtensionProperties(nullptr, &count, extensions.data());
+  const VkResult fillResult = vkEnumerateInstanceExtensionProperties(layerName, &count, extensions.data());
   if (fillResult != VK_SUCCESS) {
     return std::nullopt;
   }
@@ -199,11 +206,6 @@ atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const D
                         missing, availableExtensions->size(), joinExtensionNames(*availableExtensions));
     return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
   }
-  if (validationEnabled && !containsExtension(*availableExtensions, kDebugUtilsExtension)) {
-    ATLANTIS_LOG_ERROR("createInstance(): required extension unavailable: {}", kDebugUtilsExtension);
-    return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
-  }
-
   // Spec 0007 / ADR-0024 Section 8, step 1: computed exactly once, before
   // the instance exists at all -- an instance-wide fact, never re-queried
   // per physical-device candidate below.
@@ -220,6 +222,41 @@ atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const D
     }
     if (!containsLayer(*availableLayers, kValidationLayerName)) {
       return ResultT::Err(DeviceCreateError::ValidationLayerUnavailable);
+    }
+
+    // Plan 0034 Milestone 6 (human-directed, disclosed deviation --
+    // Vulkan-semantics fix, not a workaround): per the Vulkan
+    // specification, an instance extension a LAYER provides is exactly
+    // as legitimately enabled as one the base implementation provides.
+    // Checking kDebugUtilsExtension only against availableExtensions
+    // (queried with layerName == nullptr, the implementation's own
+    // extensions) was an incomplete check -- no ADR ever recorded
+    // "implementation-only" as a deliberate restriction. Found on a
+    // real device (Intel Arc B370 host-GPU passthrough, Vulkan 1.4.335,
+    // Plan 0034 Milestone 6): this ICD's own
+    // vkEnumerateInstanceExtensionProperties(nullptr, ...) does not
+    // report VK_EXT_debug_utils at all -- the validation layer itself
+    // provides it, discoverable only via
+    // vkEnumerateInstanceExtensionProperties(VK_LAYER_KHRONOS_validation, ...).
+    // Querying the layer's own extension list is safe only here, after
+    // containsLayer() immediately above has already confirmed the layer
+    // itself is present. Windows' own desktop Vulkan SDK/driver
+    // combination happens to report VK_EXT_debug_utils from both the
+    // implementation and the layer, so this gap was never exposed
+    // there -- this change is a behavior-preserving superset on that
+    // platform, not a functional change.
+    if (!containsExtension(*availableExtensions, kDebugUtilsExtension)) {
+      const std::optional<std::vector<VkExtensionProperties>> layerExtensions =
+          enumerateInstanceExtensions(kValidationLayerName);
+      const bool layerProvidesDebugUtils =
+          layerExtensions.has_value() && containsExtension(*layerExtensions, kDebugUtilsExtension);
+      if (!layerProvidesDebugUtils) {
+        ATLANTIS_LOG_ERROR(
+            "createInstance(): required extension unavailable: {} (checked both the "
+            "implementation's own extension list and {}'s own)",
+            kDebugUtilsExtension, kValidationLayerName);
+        return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
+      }
     }
   }
 
