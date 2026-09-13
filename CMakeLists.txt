@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(Atlantis LANGUAGES CXX)
+# Plan 0034 Milestone 2/3: C is needed solely to compile the Android
+# NDK's own unmodified android_native_app_glue.c (a real C source file,
+# not C++-compatible as-is -- confirmed by a real Android build attempt)
+# as the C it actually is, rather than forcing it through a C++
+# compiler. Zero-cost on every other configuration: MSVC's cl.exe
+# already handles both C and C++ with no separate toolchain to install,
+# and Clang (Android's own compiler) does too -- this adds no new
+# compiler requirement anywhere this repository builds.
+project(Atlantis LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -41,12 +41,23 @@ static helper library shipped inside the Android NDK (`$NDK/sources/android/nati
 - `android_native_app_glue` posts lifecycle/window transitions as integer
   **app commands** (`APP_CMD_*`) through its own command pipe, drained by
   `android_app_poll_source`'s `process` callback wired to the `app->cmd`
-  looper identifier. Android Platform's `processEvents()` calls
-  `ALooper_pollAll(0, ...)` (non-blocking, matching the existing non-blocking
-  drain contract) once per invocation, translating every pending `APP_CMD_*`
-  into the **existing, closed** `PlatformEvent` set — no fifth category and
-  no new variant is introduced; [ADR-0012](0012-application-lifecycle-and-event-model.md)'s
-  four-category closed set stands unmodified:
+  looper identifier. Android Platform's `processEvents()` loops
+  `ALooper_pollOnce(0, ...)` (non-blocking, matching the existing
+  non-blocking drain contract) once per invocation until nothing is left
+  pending, translating every pending `APP_CMD_*` into the **existing,
+  closed** `PlatformEvent` set — no fifth category and no new variant is
+  introduced; [ADR-0012](0012-application-lifecycle-and-event-model.md)'s
+  four-category closed set stands unmodified. **Implementation-time
+  correction (2026-09-13, Plan 0034 Milestone 2):** this Decision
+  originally named `ALooper_pollAll` illustratively; the NDK's own
+  `<android/looper.h>` (confirmed against NDK 29.0.14206865) marks that
+  function `__REMOVED_IN(1, ...)`, making it unusable at any API level
+  this repository could target. A looped `ALooper_pollOnce` achieves the
+  identical "drain everything currently pending, non-blocking" semantics
+  this Decision actually requires — a correction to the illustrative NDK
+  call named here, not to the drain/mapping semantics themselves, which
+  are unchanged. See `src/platform/src/android/android_platform.cpp`'s
+  own code comment for the full record.
 
   | `android_native_app_glue` command | `PlatformEvent` | Notes |
   |---|---|---|
@@ -58,7 +69,7 @@ static helper library shipped inside the Android NDK (`$NDK/sources/android/nati
   | `APP_CMD_PAUSE` | `ApplicationPause` | The Android-shaped event `ADR-0012` reserved specifically for this case. |
   | `APP_CMD_RESUME` | `ApplicationResume` | |
   | `APP_CMD_DESTROY` | `Quit` | Maps `shouldQuit()` to `true`, mirroring `WindowCloseRequested`'s effect on Windows. |
-  | `APP_CMD_INPUT_CHANGED`, `APP_CMD_CONFIG_CHANGED`, `APP_CMD_LOW_MEMORY`, `APP_CMD_SAVE_STATE`, `APP_CMD_START`, `APP_CMD_STOP` | *(none — observed and discarded)* | Out of scope: input, configuration change beyond resize, low-memory handling, and state save/restore are all explicitly Non-Goals of [Spec 0002](../specs/0002-platform-foundation.md) and [Spec 0034](../specs/0034-android-platform-vulkan-presentation.md). Discarding rather than asserting/erroring on them keeps `processEvents()` forward-compatible with commands this Spec doesn't yet act on. |
+  | `APP_CMD_INPUT_CHANGED`, `APP_CMD_WINDOW_REDRAW_NEEDED`, `APP_CMD_CONFIG_CHANGED`, `APP_CMD_LOW_MEMORY`, `APP_CMD_SAVE_STATE`, `APP_CMD_START`, `APP_CMD_STOP` | *(none — observed and discarded)* | Out of scope: input, a redraw request, configuration change beyond resize, low-memory handling, and state save/restore are all explicitly Non-Goals of [Spec 0002](../specs/0002-platform-foundation.md) and [Spec 0034](../specs/0034-android-platform-vulkan-presentation.md). Discarding rather than asserting/erroring on them keeps `processEvents()` forward-compatible with commands this Spec doesn't yet act on. **Completeness correction (2026-09-13):** this row originally omitted `APP_CMD_WINDOW_REDRAW_NEEDED` — the NDK's 16-value `APP_CMD_*` enum has one more value than this table's original 9 mapped + 6 discarded rows accounted for; found via an exhaustive, no-`default` switch over this module's own `AppCommand` mirror. Added here on this row's own existing rationale, which already applies to it identically — not a new decision. |
 
 - **No custom JNI bridge is written.** All Java/Kotlin-side code needed to
   host a native activity is the standard, boilerplate `android.app.NativeActivity`
