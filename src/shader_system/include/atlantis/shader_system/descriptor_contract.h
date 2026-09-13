@@ -135,6 +135,24 @@ namespace atlantis::shader_system {
 // shape.
 [[nodiscard]] std::vector<DescriptorBinding> pbrSheenIblNormalMapExpectedDescriptorContract();
 
+// Plan 0035 Milestone 4 (ADR-0081): pbr_anisotropic_ibl's own fixed,
+// expected descriptor contract -- identical shape to
+// pbrClearcoatIblExpectedDescriptorContract()/pbrSheenIblExpectedDescriptorContract()
+// above (0V, 0F, 1F, 2F, 3F, no shadow-map binding) -- the extra tangent
+// VERTEX attribute this kind's own VertexInput carries (unlike
+// PbrClearcoat's/PbrSheen's own non-normal-map variants) has no effect
+// on this descriptor contract; vertex attributes and descriptor
+// bindings are orthogonal.
+[[nodiscard]] std::vector<DescriptorBinding> pbrAnisotropicIblExpectedDescriptorContract();
+
+// Plan 0035 Milestone 4 (ADR-0081): pbr_anisotropic_ibl_normal_map's own
+// fixed, expected descriptor contract -- identical to
+// pbrAnisotropicIblExpectedDescriptorContract() above, plus a sixth
+// entry, the normal-map sampler at binding 4 -- mirrors
+// pbrClearcoatIblNormalMapExpectedDescriptorContract()'s/
+// pbrSheenIblNormalMapExpectedDescriptorContract()'s own identical shape.
+[[nodiscard]] std::vector<DescriptorBinding> pbrAnisotropicIblNormalMapExpectedDescriptorContract();
+
 // Plan 0027 Milestone 4 (ADR-0072 D-3): shadow_cast's own fixed, expected
 // descriptor contract -- one binding, Vertex-only: {set 0, binding 0,
 // UniformBuffer, Vertex} (the dedicated light-space buffer, referenced

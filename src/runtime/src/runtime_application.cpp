@@ -594,6 +594,66 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
       pbrSheenIblNormalMapVertexInputLayout_ = std::move(pbrSheenIblNormalMapLayoutOpt.value());
     }
 
+    // Plan 0035 Milestone 4 (ADR-0081): PbrAnisotropic's own two IBL-lit
+    // shader pairs -- identical gating shape to PbrClearcoat/PbrSheen's
+    // own pairs immediately above (BOTH hasEnvironment AND
+    // config.pbrAnisotropicIblVertexShaderSpirvPath non-empty). UNLIKE
+    // every PBR pair above (including the non-normal-map PbrClearcoat/
+    // PbrSheen trios, resolved via pbrDirectLitVertexLayout()), BOTH
+    // variants here are resolved via pbrNormalMapVertexLayout() -- this
+    // Milestone's own fragment-stage tangent rotation needs the tangent
+    // vertex attribute even when no normal map texture is bound (Spec
+    // 0035's own Milestone 4 shape), so pbrAnisotropicIbl.slang itself
+    // declares the same 4-attribute vertex input as
+    // pbrAnisotropicIblNormalMap.slang, not the 3-attribute schema its
+    // non-normal-map siblings use.
+    if (!config.pbrAnisotropicIblVertexShaderSpirvPath.empty()) {
+      auto pbrAnisotropicIblVertexSpirvOpt = loadSpirvFile(config.pbrAnisotropicIblVertexShaderSpirvPath);
+      auto pbrAnisotropicIblFragmentSpirvOpt = loadSpirvFile(config.pbrAnisotropicIblFragmentShaderSpirvPath);
+      auto pbrAnisotropicIblVertexReflectionResult =
+          loadReflectionMetadata(config.pbrAnisotropicIblVertexShaderReflectionPath);
+      if (!pbrAnisotropicIblVertexSpirvOpt.has_value() || !pbrAnisotropicIblFragmentSpirvOpt.has_value() ||
+          pbrAnisotropicIblVertexReflectionResult.isErr()) {
+        ATLANTIS_LOG_ERROR("Failed to load the configured pbrAnisotropicIbl shader pair");
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+      }
+      auto pbrAnisotropicIblLayoutOpt = pbrNormalMapVertexLayout(pbrAnisotropicIblVertexReflectionResult.value());
+      if (!pbrAnisotropicIblLayoutOpt.has_value()) {
+        ATLANTIS_LOG_ERROR("pbrAnisotropicIbl reflected vertex inputs do not match the PBR normal-map Vertex schema");
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+      }
+      pbrAnisotropicIblVertexSpirv_ = std::move(pbrAnisotropicIblVertexSpirvOpt.value());
+      pbrAnisotropicIblFragmentSpirv_ = std::move(pbrAnisotropicIblFragmentSpirvOpt.value());
+      pbrAnisotropicIblVertexInputLayout_ = std::move(pbrAnisotropicIblLayoutOpt.value());
+
+      auto pbrAnisotropicIblNormalMapVertexSpirvOpt =
+          loadSpirvFile(config.pbrAnisotropicIblNormalMapVertexShaderSpirvPath);
+      auto pbrAnisotropicIblNormalMapFragmentSpirvOpt =
+          loadSpirvFile(config.pbrAnisotropicIblNormalMapFragmentShaderSpirvPath);
+      auto pbrAnisotropicIblNormalMapVertexReflectionResult =
+          loadReflectionMetadata(config.pbrAnisotropicIblNormalMapVertexShaderReflectionPath);
+      if (!pbrAnisotropicIblNormalMapVertexSpirvOpt.has_value() ||
+          !pbrAnisotropicIblNormalMapFragmentSpirvOpt.has_value() ||
+          pbrAnisotropicIblNormalMapVertexReflectionResult.isErr()) {
+        ATLANTIS_LOG_ERROR("Failed to load the configured pbrAnisotropicIblNormalMap shader pair");
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+      }
+      auto pbrAnisotropicIblNormalMapLayoutOpt =
+          pbrNormalMapVertexLayout(pbrAnisotropicIblNormalMapVertexReflectionResult.value());
+      if (!pbrAnisotropicIblNormalMapLayoutOpt.has_value()) {
+        ATLANTIS_LOG_ERROR(
+            "pbrAnisotropicIblNormalMap reflected vertex inputs do not match the PBR normal-map Vertex schema");
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+      }
+      pbrAnisotropicIblNormalMapVertexSpirv_ = std::move(pbrAnisotropicIblNormalMapVertexSpirvOpt.value());
+      pbrAnisotropicIblNormalMapFragmentSpirv_ = std::move(pbrAnisotropicIblNormalMapFragmentSpirvOpt.value());
+      pbrAnisotropicIblNormalMapVertexInputLayout_ = std::move(pbrAnisotropicIblNormalMapLayoutOpt.value());
+    }
+
     // Plan 0026 Milestone 3 (ADR-0071): the sky shader pair -- same
     // hasEnvironment gate, same shape as the pbrIbl load immediately
     // above. Its own vertex layout is resolved via the existing
@@ -1441,7 +1501,10 @@ void RuntimeApplication::runFrame() {
                                pbrClearcoatIblNormalMapFragmentSpirv_, pbrSheenIblVertexInputLayout_,
                                pbrSheenIblVertexSpirv_, pbrSheenIblFragmentSpirv_,
                                pbrSheenIblNormalMapVertexInputLayout_, pbrSheenIblNormalMapVertexSpirv_,
-                               pbrSheenIblNormalMapFragmentSpirv_, environmentEnabled, pendingMaterialIds,
+                               pbrSheenIblNormalMapFragmentSpirv_, pbrAnisotropicIblVertexInputLayout_,
+                               pbrAnisotropicIblVertexSpirv_, pbrAnisotropicIblFragmentSpirv_,
+                               pbrAnisotropicIblNormalMapVertexInputLayout_, pbrAnisotropicIblNormalMapVertexSpirv_,
+                               pbrAnisotropicIblNormalMapFragmentSpirv_, environmentEnabled, pendingMaterialIds,
                                sampledTextureResourceMap_, materialDataMap_, textureDataMap_);
   // Plan 0018 Section P12 (Spec 0018 D8 step 5): gated on "at least one
   // material was newly realized this frame" -- NOT narrowed to "at least

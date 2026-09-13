@@ -30,6 +30,9 @@ namespace atlantis::asset_system {
 // sheenColor/sheenRoughness added by Plan 0035 Milestone 3/ADR-0081 --
 // cross-validated identically, unconditionally present, inert except for
 // MaterialKind::PbrSheen.
+// anisotropyFactor/anisotropyRotation added by Plan 0035 Milestone 4/
+// ADR-0081 -- cross-validated identically, unconditionally present,
+// inert except for MaterialKind::PbrAnisotropic.
 struct MaterialMetadata {
   AssetId assetId = 0;
   std::string sourceLogicalPath;
@@ -43,6 +46,8 @@ struct MaterialMetadata {
   float clearcoatRoughness = 0.0f;
   float sheenColor[3] = {0.0f, 0.0f, 0.0f};
   float sheenRoughness = 0.0f;
+  float anisotropyFactor = 0.0f;
+  float anisotropyRotation = 0.0f;
 };
 
 [[nodiscard]] atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std::string_view text);

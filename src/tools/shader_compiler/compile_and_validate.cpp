@@ -39,6 +39,8 @@ using atlantis::shader_system::pbrIblExpectedDescriptorContract;
 using atlantis::shader_system::pbrIblNormalMapExpectedDescriptorContract;
 using atlantis::shader_system::pbrSheenIblExpectedDescriptorContract;
 using atlantis::shader_system::pbrSheenIblNormalMapExpectedDescriptorContract;
+using atlantis::shader_system::pbrAnisotropicIblExpectedDescriptorContract;
+using atlantis::shader_system::pbrAnisotropicIblNormalMapExpectedDescriptorContract;
 using atlantis::shader_system::shadowCastExpectedDescriptorContract;
 using atlantis::shader_system::skyExpectedDescriptorContract;
 using atlantis::shader_system::PushConstantRange;
@@ -165,6 +167,10 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     fullContract = pbrSheenIblExpectedDescriptorContract();
   } else if (expectedContract == "pbr-sheen-ibl-normal-map") {
     fullContract = pbrSheenIblNormalMapExpectedDescriptorContract();
+  } else if (expectedContract == "pbr-anisotropic-ibl") {
+    fullContract = pbrAnisotropicIblExpectedDescriptorContract();
+  } else if (expectedContract == "pbr-anisotropic-ibl-normal-map") {
+    fullContract = pbrAnisotropicIblNormalMapExpectedDescriptorContract();
   } else if (expectedContract == "output-transform-unorm" || expectedContract == "output-transform-srgb") {
     // Plan 0024 Milestone 3 (ADR-0068 D-10): both output-transform
     // variants share the identical descriptor contract -- one function,
@@ -234,9 +240,18 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     // independent struct that happens to total the identical 96 bytes
     // PbrPushConstants does, confirmed by that struct's own
     // static_asserts, not assumed here.
+    // Plan 0035 Milestone 4 (ADR-0081 D-3/D-4): PbrAnisotropicPushConstants
+    // shares this 96-byte bucket too -- anisotropyFactor/anisotropyRotation
+    // are both plain scalars (unlike sheenColor's own vec3), so they pack
+    // tightly right after roughnessFactor (offset 88-96) with no
+    // alignment padding needed, confirmed by a real slangc compile of
+    // pbr_anisotropic_ibl.slang/pbr_anisotropic_ibl_normal_map.slang and
+    // cross-checked against PbrAnisotropicPushConstants's own MSVC
+    // static_assert (src/renderer/src/pbr_anisotropic_push_constants.h).
     const bool isPbr = expectedContract == "pbr-direct-lit" || expectedContract == "pbr-ibl" ||
                        expectedContract == "pbr-direct-lit-normal-map" || expectedContract == "pbr-ibl-normal-map" ||
-                       expectedContract == "pbr-clearcoat-ibl" || expectedContract == "pbr-clearcoat-ibl-normal-map";
+                       expectedContract == "pbr-clearcoat-ibl" || expectedContract == "pbr-clearcoat-ibl-normal-map" ||
+                       expectedContract == "pbr-anisotropic-ibl" || expectedContract == "pbr-anisotropic-ibl-normal-map";
     // Plan 0035 Milestone 3 (ADR-0081 D-3/D-4): PbrSheenPushConstants
     // does NOT share the 96-byte bucket above -- sheenColor's real vec3
     // alignment padding (ADR-0081's own flagged tipping-point risk)
@@ -428,7 +443,9 @@ int compileAndValidate(const CompileAndValidateRequest& request) {
                        request.expectedContract == "pbr-direct-lit-normal-map" ||
                        request.expectedContract == "pbr-ibl-normal-map" ||
                        request.expectedContract == "pbr-clearcoat-ibl" ||
-                       request.expectedContract == "pbr-clearcoat-ibl-normal-map")) {
+                       request.expectedContract == "pbr-clearcoat-ibl-normal-map" ||
+                       request.expectedContract == "pbr-anisotropic-ibl" ||
+                       request.expectedContract == "pbr-anisotropic-ibl-normal-map")) {
     validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata, 96);
   } else if (validationOk && (request.expectedContract == "pbr-sheen-ibl" ||
                               request.expectedContract == "pbr-sheen-ibl-normal-map")) {

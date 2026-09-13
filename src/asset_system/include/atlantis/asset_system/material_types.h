@@ -38,12 +38,16 @@ enum class MaterialSamplerAddressMode {
 // its own new, mutually-exclusive kind (ADR-0081 Decision item "No
 // material may combine two or more of {clearcoat, sheen, anisotropy}"),
 // widened by two more fields below.
+// Plan 0035 Milestone 4 (ADR-0081): PbrAnisotropic added -- same shape
+// again, its own new, mutually-exclusive kind, widened by two more
+// fields below.
 enum class MaterialKind {
   UnlitTextured,
   LitTextured,
   PbrDirectLit,
   PbrClearcoat,
   PbrSheen,
+  PbrAnisotropic,
 };
 
 // CPU-side result of loadMaterialAsset() -- names no RHI type, matching
@@ -66,11 +70,12 @@ struct MaterialAssetData {
   float baseColorFactor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   float metallicFactor = 1.0f;
   float roughnessFactor = 1.0f;
-  // Plan 0029 Section P5/P6/ADR-0074 Section 1: `0` = none, the same
-  // "unassigned" convention `Renderable::meshAsset`'s own default
-  // already establishes. Legal (non-zero) only when kind ==
-  // PbrDirectLit or PbrClearcoat -- enforced at parse time
-  // (material_source.cpp), never here.
+  // Plan 0029 Section P5/P6/ADR-0074 Section 1, widened by Plan 0035
+  // Milestones 3/4: `0` = none, the same "unassigned" convention
+  // `Renderable::meshAsset`'s own default already establishes. Legal
+  // (non-zero) only when kind == PbrDirectLit, PbrClearcoat, PbrSheen,
+  // or PbrAnisotropic -- enforced at parse time (material_source.cpp),
+  // never here.
   AssetId normalMapTexture = 0;
   // Plan 0035 Milestone 2 (ADR-0081): present on every MaterialKind via
   // this one unconditional schema (mirroring baseColorFactor/
@@ -90,6 +95,14 @@ struct MaterialAssetData {
   // default for every other kind.
   float sheenColor[3] = {0.0f, 0.0f, 0.0f};
   float sheenRoughness = 0.0f;
+  // Plan 0035 Milestone 4 (ADR-0081): present on every MaterialKind via
+  // this one unconditional schema (mirroring sheenColor/sheenRoughness's
+  // own established precedent immediately above), only PbrAnisotropic
+  // gives them real rendering meaning. anisotropyFactor is -1..1
+  // (strength/sign); both default to 0.0f ("no anisotropy"), the
+  // correct inert default for every other kind.
+  float anisotropyFactor = 0.0f;
+  float anisotropyRotation = 0.0f;
 };
 
 }  // namespace atlantis::asset_system

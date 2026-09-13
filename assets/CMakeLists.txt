@@ -684,3 +684,80 @@ set(ATLANTIS_pbr_sheen_normal_map_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_sheen
 set(ATLANTIS_pbr_sheen_normal_map_demo_scene_METADATA_PATH "${ATLANTIS_pbr_sheen_normal_map_demo_scene_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_sheen_normal_map_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_sheen_normal_map_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_sheen_normal_map_demo_scene_TARGET "${ATLANTIS_pbr_sheen_normal_map_demo_scene_TARGET}" PARENT_SCOPE)
+
+# Plan 0035 Milestone 4: the anisotropy-rotation parameter-sweep scene's
+# own three materials -- all reusing the already-cooked
+# textured_quad_srgb texture (and, for the normal-mapped one, the
+# already-cooked normal_map_tilted texture), mirroring the sheen
+# materials' own identical "reuse the existing texture" precedent
+# immediately above.
+atlantis_add_material_asset(
+  NAME pbr_anisotropic_rotation_0
+  SOURCE materials/pbr_anisotropic_rotation_0.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_pbr_anisotropic_rotation_0_ARTIFACT_PATH "${ATLANTIS_pbr_anisotropic_rotation_0_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_rotation_0_METADATA_PATH "${ATLANTIS_pbr_anisotropic_rotation_0_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_rotation_0_TARGET "${ATLANTIS_pbr_anisotropic_rotation_0_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_rotation_0_LOGICAL_PATH "${ATLANTIS_pbr_anisotropic_rotation_0_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME pbr_anisotropic_rotation_45
+  SOURCE materials/pbr_anisotropic_rotation_45.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_pbr_anisotropic_rotation_45_ARTIFACT_PATH "${ATLANTIS_pbr_anisotropic_rotation_45_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_rotation_45_METADATA_PATH "${ATLANTIS_pbr_anisotropic_rotation_45_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_rotation_45_TARGET "${ATLANTIS_pbr_anisotropic_rotation_45_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_rotation_45_LOGICAL_PATH "${ATLANTIS_pbr_anisotropic_rotation_45_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME pbr_anisotropic_rotation_90
+  SOURCE materials/pbr_anisotropic_rotation_90.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_pbr_anisotropic_rotation_90_ARTIFACT_PATH "${ATLANTIS_pbr_anisotropic_rotation_90_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_rotation_90_METADATA_PATH "${ATLANTIS_pbr_anisotropic_rotation_90_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_rotation_90_TARGET "${ATLANTIS_pbr_anisotropic_rotation_90_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_rotation_90_LOGICAL_PATH "${ATLANTIS_pbr_anisotropic_rotation_90_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME pbr_anisotropic_normal_mapped
+  SOURCE materials/pbr_anisotropic_normal_mapped.material.txt
+  TEXTURE textured_quad_srgb
+  NORMAL_MAP normal_map_tilted
+)
+set(ATLANTIS_pbr_anisotropic_normal_mapped_ARTIFACT_PATH "${ATLANTIS_pbr_anisotropic_normal_mapped_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_normal_mapped_METADATA_PATH "${ATLANTIS_pbr_anisotropic_normal_mapped_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_normal_mapped_TARGET "${ATLANTIS_pbr_anisotropic_normal_mapped_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_normal_mapped_LOGICAL_PATH "${ATLANTIS_pbr_anisotropic_normal_mapped_LOGICAL_PATH}" PARENT_SCOPE)
+
+# Plan 0035 Milestone 4: the anisotropy-rotation parameter-sweep scene
+# (rotation 0/45/90 degrees, same anisotropy_factor) -- IBL-only, no
+# Light node, mirroring pbr_sheen_demo_scene's own identical shape.
+atlantis_add_scene_asset(
+  NAME pbr_anisotropic_demo_scene
+  SOURCE scenes/pbr_anisotropic_demo.scene.txt
+  MESH_DEPENDENCIES pbr_sphere
+  MATERIAL_DEPENDENCIES pbr_anisotropic_rotation_0 pbr_anisotropic_rotation_45 pbr_anisotropic_rotation_90
+  TEXTURE_DEPENDENCIES textured_quad_srgb
+)
+set(ATLANTIS_pbr_anisotropic_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_anisotropic_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_demo_scene_METADATA_PATH "${ATLANTIS_pbr_anisotropic_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_anisotropic_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_demo_scene_TARGET "${ATLANTIS_pbr_anisotropic_demo_scene_TARGET}" PARENT_SCOPE)
+
+# Plan 0035 Milestone 4: the anisotropic normal-map variant's own
+# dedicated scene -- one sphere, the pbr_anisotropic_ibl_normal_map
+# shader pair's own real coverage.
+atlantis_add_scene_asset(
+  NAME pbr_anisotropic_normal_map_demo_scene
+  SOURCE scenes/pbr_anisotropic_normal_map_demo.scene.txt
+  MESH_DEPENDENCIES pbr_sphere
+  MATERIAL_DEPENDENCIES pbr_anisotropic_normal_mapped
+  TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
+)
+set(ATLANTIS_pbr_anisotropic_normal_map_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_normal_map_demo_scene_METADATA_PATH "${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_normal_map_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_normal_map_demo_scene_TARGET "${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_TARGET}" PARENT_SCOPE)

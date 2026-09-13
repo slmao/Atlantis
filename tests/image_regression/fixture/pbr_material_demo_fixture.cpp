@@ -563,6 +563,14 @@ atlantis::Result<PixelBuffer, PbrMaterialDemoRenderError> renderPbrMaterialDemoF
                                // pattern as the clearcoat trios above.
                                fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
                                fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
+                               fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv,
+                               // Plan 0035 Milestone 4 (ADR-0081): the
+                               // two new anisotropic trailing trios are
+                               // dead-path filler too, same reuse
+                               // pattern as the clearcoat/sheen trios
+                               // above.
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
                                fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv, environmentEnabled,
                                pendingMaterialIds,
                                fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);

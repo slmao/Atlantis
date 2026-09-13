@@ -8,6 +8,7 @@
 #include <atlantis/render_graph/execution.h>
 
 #include "exposure.h"
+#include "pbr_anisotropic_push_constants.h"
 #include "pbr_clearcoat_push_constants.h"
 #include "pbr_push_constants.h"
 #include "pbr_sheen_push_constants.h"
@@ -150,18 +151,20 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
       // above already establishes -- reuses material.sampler(), the
       // same VkSampler handle already bound at binding 1 for base
       // color (ordinary, valid Vulkan usage, not a new RHI capability).
-      // Plan 0035 Milestone 2/ADR-0081, widened by Milestone 3:
-      // PbrClearcoat and PbrSheen both have this same, different binding
-      // layout -- no shadow-map binding at all (this Milestone's own
-      // disclosed IBL-only, no-shadow scope, Spec 0035 Non-Goals), so
-      // their normal map always sits at binding 4 (base@1, env@2, dfg@3,
-      // normal@4) regardless of environmentBinding() -- a real
-      // PbrClearcoat/PbrSheen material is always IBL-bound this round
+      // Plan 0035 Milestone 2/ADR-0081, widened by Milestones 3/4:
+      // PbrClearcoat, PbrSheen, and PbrAnisotropic all have this same,
+      // different binding layout -- no shadow-map binding at all (this
+      // Milestone's own disclosed IBL-only, no-shadow scope, Spec 0035
+      // Non-Goals), so their normal map always sits at binding 4
+      // (base@1, env@2, dfg@3, normal@4) regardless of
+      // environmentBinding() -- a real PbrClearcoat/PbrSheen/
+      // PbrAnisotropic material is always IBL-bound this round
       // (selectShaderPair()'s own ATLANTIS_CHECK, material_realization.cpp).
       if (item.material->normalMapTexture() != nullptr) {
         std::uint32_t normalMapBinding = 0;
         if (item.material->pushConstantLayout() == MaterialPushConstantLayout::PbrClearcoat ||
-            item.material->pushConstantLayout() == MaterialPushConstantLayout::PbrSheen) {
+            item.material->pushConstantLayout() == MaterialPushConstantLayout::PbrSheen ||
+            item.material->pushConstantLayout() == MaterialPushConstantLayout::PbrAnisotropic) {
           normalMapBinding = 4U;
         } else {
           normalMapBinding = item.material->environmentBinding() == MaterialEnvironmentBinding::Ibl ? 5U : 3U;
@@ -219,6 +222,23 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
           const auto& sheenColor = item.material->sheenColor();
           std::copy(sheenColor.begin(), sheenColor.end(), std::begin(payload.sheenColor));
           payload.sheenRoughness = item.material->sheenRoughness();
+          cmd.pushConstant(&payload, sizeof(payload));
+          break;
+        }
+        // Plan 0035 Milestone 4/ADR-0081: PbrAnisotropic's own,
+        // independent 96-byte payload (PbrAnisotropicPushConstants's own
+        // real, measured layout -- see that struct's own top comment) --
+        // objectToWorld from item.objectToWorld exactly like every other
+        // arm here.
+        case MaterialPushConstantLayout::PbrAnisotropic: {
+          PbrAnisotropicPushConstants payload;
+          std::copy(item.objectToWorld.begin(), item.objectToWorld.end(), std::begin(payload.objectToWorld));
+          const auto& baseColorFactor = item.material->baseColorFactor();
+          std::copy(baseColorFactor.begin(), baseColorFactor.end(), std::begin(payload.baseColorFactor));
+          payload.metallicFactor = item.material->metallicFactor();
+          payload.roughnessFactor = item.material->roughnessFactor();
+          payload.anisotropyFactor = item.material->anisotropyFactor();
+          payload.anisotropyRotation = item.material->anisotropyRotation();
           cmd.pushConstant(&payload, sizeof(payload));
           break;
         }

@@ -9,7 +9,8 @@ Material::Material(std::unique_ptr<atlantis::rhi::Pipeline> pipeline, MaterialPu
                     std::array<float, 4> baseColorFactor, float metallicFactor, float roughnessFactor,
                     MaterialEnvironmentBinding environmentBinding,
                     const atlantis::rhi::SampledTexture* normalMapTexture, float clearcoatFactor,
-                    float clearcoatRoughness, std::array<float, 3> sheenColor, float sheenRoughness) noexcept
+                    float clearcoatRoughness, std::array<float, 3> sheenColor, float sheenRoughness,
+                    float anisotropyFactor, float anisotropyRotation) noexcept
     : pipeline_(std::move(pipeline)),
       sampledTexture_(sampledTexture),
       sampler_(sampler),
@@ -22,19 +23,22 @@ Material::Material(std::unique_ptr<atlantis::rhi::Pipeline> pipeline, MaterialPu
       clearcoatFactor_(clearcoatFactor),
       clearcoatRoughness_(clearcoatRoughness),
       sheenColor_(sheenColor),
-      sheenRoughness_(sheenRoughness) {
+      sheenRoughness_(sheenRoughness),
+      anisotropyFactor_(anisotropyFactor),
+      anisotropyRotation_(anisotropyRotation) {
   ATLANTIS_CHECK((sampledTexture_ == nullptr) == (sampler_ == nullptr));
   // Plan 0029 Section P14 (ADR-0074 Section 2): a normal map may never
   // be constructed without the base-color pair also present -- both
   // are sampled through the one, same sampler_.
   ATLANTIS_CHECK(normalMapTexture_ == nullptr || sampledTexture_ != nullptr);
   // A normal map may only be constructed on a Material whose push-
-  // constant layout is PbrDirectLit, PbrClearcoat, or PbrSheen (Plan
-  // 0035 Milestone 2/3 ADR-0081 widening) -- the only layouts whose own
-  // shaders declare a normal-map binding.
+  // constant layout is PbrDirectLit, PbrClearcoat, PbrSheen, or
+  // PbrAnisotropic (Plan 0035 Milestones 2/3/4 ADR-0081 widening) --
+  // the only layouts whose own shaders declare a normal-map binding.
   ATLANTIS_CHECK(normalMapTexture_ == nullptr || pushConstantLayout_ == MaterialPushConstantLayout::PbrDirectLit ||
                  pushConstantLayout_ == MaterialPushConstantLayout::PbrClearcoat ||
-                 pushConstantLayout_ == MaterialPushConstantLayout::PbrSheen);
+                 pushConstantLayout_ == MaterialPushConstantLayout::PbrSheen ||
+                 pushConstantLayout_ == MaterialPushConstantLayout::PbrAnisotropic);
 }
 
 atlantis::Result<Material, CreateMaterialError> createMaterial(
@@ -43,7 +47,7 @@ atlantis::Result<Material, CreateMaterialError> createMaterial(
     MaterialPushConstantLayout pushConstantLayout, std::array<float, 4> baseColorFactor, float metallicFactor,
     float roughnessFactor, MaterialEnvironmentBinding environmentBinding,
     const atlantis::rhi::SampledTexture* normalMapTexture, float clearcoatFactor, float clearcoatRoughness,
-    std::array<float, 3> sheenColor, float sheenRoughness) {
+    std::array<float, 3> sheenColor, float sheenRoughness, float anisotropyFactor, float anisotropyRotation) {
   using ResultT = atlantis::Result<Material, CreateMaterialError>;
 
   auto pipelineResult = device.createPipeline(params);
@@ -52,7 +56,8 @@ atlantis::Result<Material, CreateMaterialError> createMaterial(
   }
   return ResultT::Ok(Material(std::move(pipelineResult.value()), pushConstantLayout, sampledTexture, sampler,
                                baseColorFactor, metallicFactor, roughnessFactor, environmentBinding, normalMapTexture,
-                               clearcoatFactor, clearcoatRoughness, sheenColor, sheenRoughness));
+                               clearcoatFactor, clearcoatRoughness, sheenColor, sheenRoughness, anisotropyFactor,
+                               anisotropyRotation));
 }
 
 }  // namespace atlantis::renderer

@@ -113,6 +113,18 @@ struct BootstrapConfig {
   std::string pbrSheenIblNormalMapVertexShaderReflectionPath;
   std::string pbrSheenIblNormalMapFragmentShaderSpirvPath;
   std::string pbrSheenIblNormalMapFragmentShaderReflectionPath;
+  // Plan 0035 Milestone 4 (ADR-0081): PbrAnisotropic's own two IBL-lit
+  // shader pairs -- same "genuinely optional, gated on its own vertex
+  // path's emptiness" shape as pbrClearcoatIbl*/pbrSheenIbl* immediately
+  // above.
+  std::string pbrAnisotropicIblVertexShaderSpirvPath;
+  std::string pbrAnisotropicIblVertexShaderReflectionPath;
+  std::string pbrAnisotropicIblFragmentShaderSpirvPath;
+  std::string pbrAnisotropicIblFragmentShaderReflectionPath;
+  std::string pbrAnisotropicIblNormalMapVertexShaderSpirvPath;
+  std::string pbrAnisotropicIblNormalMapVertexShaderReflectionPath;
+  std::string pbrAnisotropicIblNormalMapFragmentShaderSpirvPath;
+  std::string pbrAnisotropicIblNormalMapFragmentShaderReflectionPath;
   // Plan 0026 Milestone 3 (ADR-0071): the sky shader pair -- mirrors
   // pbrIblVertexShaderSpirvPath/.../pbrIblFragmentShaderReflectionPath's
   // own four-field shape and "required only when environmentArtifactPath

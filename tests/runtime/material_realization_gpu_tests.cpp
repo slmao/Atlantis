@@ -485,6 +485,9 @@ TEST_CASE("A PbrDirectLit material with a normal map uploads base color and norm
         // Plan 0035 Milestone 3 (ADR-0081): the two new sheen trios are
         // dead-path filler for the identical reason.
         *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv,
+        // Plan 0035 Milestone 4 (ADR-0081): the two new anisotropic trios
+        // are dead-path filler for the identical reason.
+        *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv,
         /*environmentEnabled=*/false, pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap);
 
     REQUIRE(realized.size() == 1);
@@ -541,6 +544,9 @@ TEST_CASE("A PbrDirectLit material with a normal map uploads base color and norm
         *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv,
         // Plan 0035 Milestone 3 (ADR-0081): same dead-path sheen filler
         // as the call above.
+        *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv,
+        // Plan 0035 Milestone 4 (ADR-0081): same dead-path anisotropic
+        // filler as the call above.
         *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv,
         /*environmentEnabled=*/false, pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap);
 
@@ -683,7 +689,7 @@ struct CookedMaterialFixture {
 [[nodiscard]] CookedMaterialFixture cookFixtureMaterial(const fs::path& dir, const std::string& logicalPath,
                                                           const std::string& textureLogicalPath) {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 5\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 6\n"
                         "kind: unlit_textured\n"
                         "texture: " + textureLogicalPath + "\n"
                         "filter: linear\n"
@@ -702,7 +708,7 @@ struct CookedMaterialFixture {
 [[nodiscard]] CookedMaterialFixture cookFixturePbrMaterial(const fs::path& dir, const std::string& logicalPath,
                                                             const std::string& textureLogicalPath) {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 5\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 6\n"
                         "kind: pbr_direct_lit\n"
                         "texture: " + textureLogicalPath + "\n"
                         "filter: linear\n"

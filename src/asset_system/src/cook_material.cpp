@@ -61,6 +61,14 @@ namespace fs = std::filesystem;
 // scalar factors.
 [[nodiscard]] bool isValidFactor(float value) { return std::isfinite(value) && value >= 0.0f && value <= 1.0f; }
 
+// Plan 0035 Milestone 4 (ADR-0081): anisotropyFactor's own valid range
+// is [-1, 1] (Spec 0035's own field definition), NOT [0, 1] like every
+// other factor isValidFactor() above checks -- a real, deliberate
+// difference, not an oversight.
+[[nodiscard]] bool isValidAnisotropyFactor(float value) {
+  return std::isfinite(value) && value >= -1.0f && value <= 1.0f;
+}
+
 }  // namespace
 
 atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::string& sourceFilePath,
@@ -133,12 +141,23 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
     if (!isValidFactor(component)) return ResultT::Err(MaterialCookError::MaterialFactorOutOfRange);
   }
   if (!isValidFactor(parsed.sheenRoughness)) return ResultT::Err(MaterialCookError::MaterialFactorOutOfRange);
+  // Plan 0035 Milestone 4/ADR-0081 widening: anisotropyFactor uses its
+  // own [-1, 1] range check (isValidAnisotropyFactor, above);
+  // anisotropyRotation is an unbounded angle in radians, only checked
+  // for finiteness -- parseMaterialSource() already guarantees both are
+  // only ever non-default for kind == PbrAnisotropic.
+  if (!isValidAnisotropyFactor(parsed.anisotropyFactor)) {
+    return ResultT::Err(MaterialCookError::MaterialFactorOutOfRange);
+  }
+  if (!std::isfinite(parsed.anisotropyRotation)) {
+    return ResultT::Err(MaterialCookError::MaterialFactorOutOfRange);
+  }
 
   // Step 4: encode + atomic write.
   const std::vector<std::byte> artifactBytes = encodeMaterialArtifact(
       parsed.kind, textureAssetId, parsed.filter, parsed.addressMode, parsed.baseColorFactor, parsed.metallicFactor,
       parsed.roughnessFactor, normalMapTextureAssetId, parsed.clearcoatFactor, parsed.clearcoatRoughness,
-      parsed.sheenColor, parsed.sheenRoughness);
+      parsed.sheenColor, parsed.sheenRoughness, parsed.anisotropyFactor, parsed.anisotropyRotation);
 
   MaterialMetadata metadata;
   metadata.assetId = selfAssetId;
@@ -153,6 +172,8 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   metadata.clearcoatRoughness = parsed.clearcoatRoughness;
   for (std::size_t i = 0; i < 3; ++i) metadata.sheenColor[i] = parsed.sheenColor[i];
   metadata.sheenRoughness = parsed.sheenRoughness;
+  metadata.anisotropyFactor = parsed.anisotropyFactor;
+  metadata.anisotropyRotation = parsed.anisotropyRotation;
   const std::string metadataText = serializeMaterialMetadata(metadata);
 
   if (!writeBytesAtomically(artifactOutputPath, reinterpret_cast<const char*>(artifactBytes.data()),

@@ -52,6 +52,8 @@ void appendFloatLE(std::vector<std::byte>& out, float value) { appendU32LE(out, 
       return 3;
     case MaterialKind::PbrSheen:
       return 4;
+    case MaterialKind::PbrAnisotropic:
+      return 5;
   }
   return 0;
 }
@@ -83,7 +85,8 @@ std::vector<std::byte> encodeMaterialArtifact(MaterialKind kind, AssetId texture
                                                const float (&baseColorFactor)[4], float metallicFactor,
                                                float roughnessFactor, AssetId normalMapTexture,
                                                float clearcoatFactor, float clearcoatRoughness,
-                                               const float (&sheenColor)[3], float sheenRoughness) {
+                                               const float (&sheenColor)[3], float sheenRoughness,
+                                               float anisotropyFactor, float anisotropyRotation) {
   std::vector<std::byte> out;
   out.reserve(kMaterialArtifactHeaderSizeBytes);
 
@@ -101,6 +104,8 @@ std::vector<std::byte> encodeMaterialArtifact(MaterialKind kind, AssetId texture
   appendFloatLE(out, clearcoatRoughness);
   for (float component : sheenColor) appendFloatLE(out, component);
   appendFloatLE(out, sheenRoughness);
+  appendFloatLE(out, anisotropyFactor);
+  appendFloatLE(out, anisotropyRotation);
 
   return out;
 }
@@ -138,6 +143,8 @@ atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMat
     decoded.kind = MaterialKind::PbrClearcoat;
   } else if (kindField == 4) {
     decoded.kind = MaterialKind::PbrSheen;
+  } else if (kindField == 5) {
+    decoded.kind = MaterialKind::PbrAnisotropic;
   } else {
     return ResultT::Err(MaterialArtifactDecodeError::UnknownMaterialKind);
   }
@@ -225,6 +232,28 @@ atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMat
     return ResultT::Err(MaterialArtifactDecodeError::MaterialFactorOutOfRange);
   }
   decoded.sheenRoughness = sheenRoughness;
+
+  // Plan 0035 Milestone 4 (ADR-0081): independently re-validated here
+  // against the artifact's own decoded bytes, mirroring
+  // sheenColor/sheenRoughness's own identical discipline immediately
+  // above -- never trusted from a well-formed cooker output alone.
+  // anisotropyFactor's own valid range is [-1, 1] (Spec 0035's own field
+  // definition), NOT [0, 1] like every other factor in this artifact --
+  // a real, deliberate difference, not an oversight.
+  const float anisotropyFactor = readFloatLE(bytes.data() + 88);
+  if (!std::isfinite(anisotropyFactor) || anisotropyFactor < -1.0f || anisotropyFactor > 1.0f) {
+    return ResultT::Err(MaterialArtifactDecodeError::MaterialFactorOutOfRange);
+  }
+  decoded.anisotropyFactor = anisotropyFactor;
+
+  // anisotropyRotation is an angle in radians -- no fixed valid range
+  // (every real value is a legal rotation), only finiteness is checked,
+  // unlike every other factor in this artifact.
+  const float anisotropyRotation = readFloatLE(bytes.data() + 92);
+  if (!std::isfinite(anisotropyRotation)) {
+    return ResultT::Err(MaterialArtifactDecodeError::MaterialFactorOutOfRange);
+  }
+  decoded.anisotropyRotation = anisotropyRotation;
 
   return ResultT::Ok(std::move(decoded));
 }

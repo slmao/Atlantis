@@ -54,6 +54,7 @@ add_executable(atlantis_image_regression_gpu_tests
   pbr_normal_map_demo_gpu_tests.cpp
   pbr_clearcoat_demo_gpu_tests.cpp
   pbr_sheen_demo_gpu_tests.cpp
+  pbr_anisotropic_demo_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_image_regression_gpu_tests
@@ -292,6 +293,30 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_PBR_SHEEN_DEMO_PBR_SHEEN_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_sheen_ibl_normal_map_SHADER_OUTPUT_DIR}"
   ATLANTIS_PBR_SHEEN_DEMO_ENVIRONMENT_ARTIFACT_PATH="${ATLANTIS_ibl_studio_ARTIFACT_PATH}"
   ATLANTIS_PBR_SHEEN_DEMO_ENVIRONMENT_METADATA_PATH="${ATLANTIS_ibl_studio_METADATA_PATH}"
+  # Plan 0035 Milestone 4 (ADR-0081/ADR-0042): the two anisotropic demo
+  # scenes' own real, cooked scene artifact/metadata/manifest paths,
+  # every shader pair's own output directory (including the two new
+  # pbrAnisotropicIbl*/pbrAnisotropicIblNormalMap* pairs), and the
+  # shared ibl_studio environment reused by both -- mirrors
+  # ATLANTIS_PBR_SHEEN_DEMO_*'s own identical need immediately above.
+  ATLANTIS_pbr_anisotropic_demo_scene_ARTIFACT_PATH="${ATLANTIS_pbr_anisotropic_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_pbr_anisotropic_demo_scene_METADATA_PATH="${ATLANTIS_pbr_anisotropic_demo_scene_METADATA_PATH}"
+  ATLANTIS_pbr_anisotropic_demo_scene_MANIFEST_PATH="${ATLANTIS_pbr_anisotropic_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_pbr_anisotropic_normal_map_demo_scene_ARTIFACT_PATH="${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_pbr_anisotropic_normal_map_demo_scene_METADATA_PATH="${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_METADATA_PATH}"
+  ATLANTIS_pbr_anisotropic_normal_map_demo_scene_MANIFEST_PATH="${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_ibl_normal_map_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_SKY_SHADER_DIR="${ATLANTIS_sky_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_ANISOTROPIC_IBL_SHADER_DIR="${ATLANTIS_pbr_anisotropic_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_ANISOTROPIC_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_anisotropic_ibl_normal_map_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_ENVIRONMENT_ARTIFACT_PATH="${ATLANTIS_ibl_studio_ARTIFACT_PATH}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_ENVIRONMENT_METADATA_PATH="${ATLANTIS_ibl_studio_METADATA_PATH}"
 )
 
 # Plan 0012 Step 6: the asset-sourced GPU test case needs
@@ -310,7 +335,8 @@ add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TAR
   ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
   ${ATLANTIS_pbr_normal_map_demo_scene_TARGET} ${ATLANTIS_pbr_normal_mapped_control_TARGET}
   ${ATLANTIS_pbr_clearcoat_demo_scene_TARGET} ${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_TARGET}
-  ${ATLANTIS_pbr_sheen_demo_scene_TARGET} ${ATLANTIS_pbr_sheen_normal_map_demo_scene_TARGET})
+  ${ATLANTIS_pbr_sheen_demo_scene_TARGET} ${ATLANTIS_pbr_sheen_normal_map_demo_scene_TARGET}
+  ${ATLANTIS_pbr_anisotropic_demo_scene_TARGET} ${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_TARGET})
 
 # Same build-tree shader artifact set as the golden generator -- this
 # executable renders the identical fixture. WORKING_DIRECTORY above
@@ -323,7 +349,8 @@ add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TAR
 add_dependencies(atlantis_image_regression_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
   pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders sky_shaders shadow_cast_shaders
   pbr_ibl_normal_map_shaders pbr_direct_lit_normal_map_shaders pbr_clearcoat_ibl_shaders
-  pbr_clearcoat_ibl_normal_map_shaders pbr_sheen_ibl_shaders pbr_sheen_ibl_normal_map_shaders)
+  pbr_clearcoat_ibl_normal_map_shaders pbr_sheen_ibl_shaders pbr_sheen_ibl_normal_map_shaders
+  pbr_anisotropic_ibl_shaders pbr_anisotropic_ibl_normal_map_shaders)
 add_custom_command(TARGET atlantis_image_regression_gpu_tests POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_image_regression_gpu_tests>/shaders"

@@ -133,7 +133,20 @@ struct ShaderPairRef {
     const std::vector<std::uint32_t>& pbrSheenIblFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& pbrSheenIblNormalMapVertexInputLayout,
     const std::vector<std::uint32_t>& pbrSheenIblNormalMapVertexSpirv,
-    const std::vector<std::uint32_t>& pbrSheenIblNormalMapFragmentSpirv, bool environmentEnabled,
+    const std::vector<std::uint32_t>& pbrSheenIblNormalMapFragmentSpirv,
+    // Plan 0035 Milestone 4 (ADR-0081): PbrAnisotropic's own two IBL-lit
+    // trios, same insertion point/shape as the PbrClearcoat/PbrSheen
+    // pairs above. Both variants (not just NormalMap) need the tangent
+    // vertex attribute -- their vertexInputLayout is always
+    // pbrNormalMapVertexLayout()-shaped, never pbrDirectLitVertexLayout()
+    // -shaped, so both trios below are threaded from the caller's own
+    // *NormalMapVertexInputLayout binding (see runtime_application.cpp).
+    const atlantis::rhi::VertexInputLayout& pbrAnisotropicIblVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblVertexSpirv,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrAnisotropicIblNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblNormalMapFragmentSpirv, bool environmentEnabled,
     bool hasNormalMap) {
   switch (kind) {
     case atlantis::asset_system::MaterialKind::UnlitTextured:
@@ -182,6 +195,19 @@ struct ShaderPairRef {
                 &pbrSheenIblNormalMapFragmentSpirv};
       }
       return {&pbrSheenIblVertexInputLayout, &pbrSheenIblVertexSpirv, &pbrSheenIblFragmentSpirv};
+    case atlantis::asset_system::MaterialKind::PbrAnisotropic:
+      // Plan 0035 Milestone 4 (ADR-0081/Spec 0035 Requirement 4):
+      // IBL-only this round, mirroring PbrClearcoat/PbrSheen's own
+      // identical gate above -- no direct-lit anisotropic shader exists
+      // yet.
+      ATLANTIS_CHECK_MSG(environmentEnabled,
+                          "selectShaderPair(): MaterialKind::PbrAnisotropic requires an environment this round "
+                          "(Spec 0035's own IBL-only scope) -- no direct-lit anisotropic shader exists yet");
+      if (hasNormalMap) {
+        return {&pbrAnisotropicIblNormalMapVertexInputLayout, &pbrAnisotropicIblNormalMapVertexSpirv,
+                &pbrAnisotropicIblNormalMapFragmentSpirv};
+      }
+      return {&pbrAnisotropicIblVertexInputLayout, &pbrAnisotropicIblVertexSpirv, &pbrAnisotropicIblFragmentSpirv};
   }
   ATLANTIS_CHECK_MSG(false, "selectShaderPair(): unreachable -- MaterialKind's own closed switch above is exhaustive");
   return {&unlitTexturedVertexInputLayout, &unlitTexturedVertexSpirv, &unlitTexturedFragmentSpirv};  // never reached
@@ -206,6 +232,8 @@ struct ShaderPairRef {
       return atlantis::renderer::MaterialPushConstantLayout::PbrClearcoat;
     case atlantis::asset_system::MaterialKind::PbrSheen:
       return atlantis::renderer::MaterialPushConstantLayout::PbrSheen;
+    case atlantis::asset_system::MaterialKind::PbrAnisotropic:
+      return atlantis::renderer::MaterialPushConstantLayout::PbrAnisotropic;
   }
   ATLANTIS_CHECK_MSG(false, "pushConstantLayoutFor(): unreachable -- MaterialKind's own closed switch above is exhaustive");
   return atlantis::renderer::MaterialPushConstantLayout::ObjectToWorldOnly;  // never reached
@@ -240,6 +268,17 @@ struct ShaderPairRef {
     // assumed here.
     case atlantis::asset_system::MaterialKind::PbrSheen:
       return 112;
+    // Plan 0035 Milestone 4 (ADR-0081): PbrAnisotropic's own independent
+    // 96-byte layout (PbrAnisotropicPushConstants,
+    // src/renderer/src/pbr_anisotropic_push_constants.h) -- two plain
+    // trailing scalars, no padding, same as PbrClearcoat above (NOT
+    // PbrSheen's 112, which vec3 alignment forces wider) -- confirmed
+    // by that struct's own static_asserts and by
+    // atlantis_shader_compiler's own real Slang reflection of
+    // pbr_anisotropic_ibl.slang/pbr_anisotropic_ibl_normal_map.slang
+    // (compile_and_validate.cpp), not assumed here.
+    case atlantis::asset_system::MaterialKind::PbrAnisotropic:
+      return 96;
   }
   ATLANTIS_CHECK_MSG(false,
                       "pushConstantSizeBytesFor(): unreachable -- MaterialKind's own closed switch above is exhaustive");
@@ -286,7 +325,17 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
     const std::vector<std::uint32_t>& pbrSheenIblFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& pbrSheenIblNormalMapVertexInputLayout,
     const std::vector<std::uint32_t>& pbrSheenIblNormalMapVertexSpirv,
-    const std::vector<std::uint32_t>& pbrSheenIblNormalMapFragmentSpirv, bool environmentEnabled,
+    const std::vector<std::uint32_t>& pbrSheenIblNormalMapFragmentSpirv,
+    // Plan 0035 Milestone 4 (ADR-0081): PbrAnisotropic's own two IBL-lit
+    // shader trios, inserted immediately after the existing
+    // pbrSheenIblNormalMap* trio -- IBL-only this round (Spec 0035's own
+    // scope), no direct-lit anisotropic trio exists or is threaded here.
+    const atlantis::rhi::VertexInputLayout& pbrAnisotropicIblVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblVertexSpirv,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrAnisotropicIblNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblNormalMapFragmentSpirv, bool environmentEnabled,
     atlantis::asset_system::AssetId materialAssetId,
     const atlantis::asset_system::MaterialAssetData& materialData,
     const atlantis::asset_system::TextureAssetData& textureData,
@@ -373,8 +422,11 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
                         pbrClearcoatIblNormalMapVertexInputLayout, pbrClearcoatIblNormalMapVertexSpirv,
                         pbrClearcoatIblNormalMapFragmentSpirv, pbrSheenIblVertexInputLayout, pbrSheenIblVertexSpirv,
                         pbrSheenIblFragmentSpirv, pbrSheenIblNormalMapVertexInputLayout,
-                        pbrSheenIblNormalMapVertexSpirv, pbrSheenIblNormalMapFragmentSpirv, environmentEnabled,
-                        hasNormalMap);
+                        pbrSheenIblNormalMapVertexSpirv, pbrSheenIblNormalMapFragmentSpirv,
+                        pbrAnisotropicIblVertexInputLayout, pbrAnisotropicIblVertexSpirv,
+                        pbrAnisotropicIblFragmentSpirv, pbrAnisotropicIblNormalMapVertexInputLayout,
+                        pbrAnisotropicIblNormalMapVertexSpirv, pbrAnisotropicIblNormalMapFragmentSpirv,
+                        environmentEnabled, hasNormalMap);
   // Plan 0023 Milestone 5: pushConstantSizeBytes/pushConstantLayout are
   // 96/PbrDirectLit only for that kind (every other kind keeps today's
   // 64/ObjectToWorldOnly, unchanged); materialData's three PBR fields
@@ -401,24 +453,25 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
       {materialData.baseColorFactor[0], materialData.baseColorFactor[1], materialData.baseColorFactor[2],
        materialData.baseColorFactor[3]},
       materialData.metallicFactor, materialData.roughnessFactor,
-      // Plan 0035 Milestone 2 (ADR-0081), widened by Milestone 3:
-      // PbrClearcoat and PbrSheen are both IBL-only this round (Spec
-      // 0035's own scope, enforced above by selectShaderPair()'s own
-      // ATLANTIS_CHECK), so both are Ibl-bound exactly like
-      // PbrDirectLit's own existing condition -- all three kinds share
-      // the identical "environment-bound iff this kind AND
+      // Plan 0035 Milestone 2 (ADR-0081), widened by Milestones 3/4:
+      // PbrClearcoat, PbrSheen, and PbrAnisotropic are all IBL-only this
+      // round (Spec 0035's own scope, enforced above by
+      // selectShaderPair()'s own ATLANTIS_CHECK), so all are Ibl-bound
+      // exactly like PbrDirectLit's own existing condition -- all four
+      // kinds share the identical "environment-bound iff this kind AND
       // environmentEnabled" shape, not collapsed into one shared check
-      // since a future direct-lit variant of either would need to
-      // diverge here.
+      // since a future direct-lit variant of any would need to diverge
+      // here.
       (materialData.kind == atlantis::asset_system::MaterialKind::PbrDirectLit ||
        materialData.kind == atlantis::asset_system::MaterialKind::PbrClearcoat ||
-       materialData.kind == atlantis::asset_system::MaterialKind::PbrSheen) &&
+       materialData.kind == atlantis::asset_system::MaterialKind::PbrSheen ||
+       materialData.kind == atlantis::asset_system::MaterialKind::PbrAnisotropic) &&
               environmentEnabled
           ? atlantis::renderer::MaterialEnvironmentBinding::Ibl
           : atlantis::renderer::MaterialEnvironmentBinding::None,
       normalMapTexturePtr, materialData.clearcoatFactor, materialData.clearcoatRoughness,
       {materialData.sheenColor[0], materialData.sheenColor[1], materialData.sheenColor[2]},
-      materialData.sheenRoughness);
+      materialData.sheenRoughness, materialData.anisotropyFactor, materialData.anisotropyRotation);
   if (materialResult.isErr()) return ResultT::Err(MaterialRealizationError::MaterialCreateFailed);
   candidate.material = std::make_unique<atlantis::renderer::Material>(std::move(materialResult.value()));
 
@@ -472,7 +525,15 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
     const std::vector<std::uint32_t>& pbrSheenIblFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& pbrSheenIblNormalMapVertexInputLayout,
     const std::vector<std::uint32_t>& pbrSheenIblNormalMapVertexSpirv,
-    const std::vector<std::uint32_t>& pbrSheenIblNormalMapFragmentSpirv, bool environmentEnabled,
+    const std::vector<std::uint32_t>& pbrSheenIblNormalMapFragmentSpirv,
+    // Plan 0035 Milestone 4 (ADR-0081): identical insertion point and
+    // threading as realizeOneMaterialCandidate()'s own two new trios.
+    const atlantis::rhi::VertexInputLayout& pbrAnisotropicIblVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblVertexSpirv,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrAnisotropicIblNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblNormalMapFragmentSpirv, bool environmentEnabled,
     const std::vector<atlantis::asset_system::AssetId>& pendingIds,
     const std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>>&
         sampledTextureResourceMap,
@@ -529,8 +590,10 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
         pbrClearcoatIblFragmentSpirv, pbrClearcoatIblNormalMapVertexInputLayout, pbrClearcoatIblNormalMapVertexSpirv,
         pbrClearcoatIblNormalMapFragmentSpirv, pbrSheenIblVertexInputLayout, pbrSheenIblVertexSpirv,
         pbrSheenIblFragmentSpirv, pbrSheenIblNormalMapVertexInputLayout, pbrSheenIblNormalMapVertexSpirv,
-        pbrSheenIblNormalMapFragmentSpirv, environmentEnabled, id, materialIt->second, textureIt->second,
-        normalMapTextureData, effectiveSampledTextures);
+        pbrSheenIblNormalMapFragmentSpirv, pbrAnisotropicIblVertexInputLayout, pbrAnisotropicIblVertexSpirv,
+        pbrAnisotropicIblFragmentSpirv, pbrAnisotropicIblNormalMapVertexInputLayout,
+        pbrAnisotropicIblNormalMapVertexSpirv, pbrAnisotropicIblNormalMapFragmentSpirv, environmentEnabled, id,
+        materialIt->second, textureIt->second, normalMapTextureData, effectiveSampledTextures);
     if (candidateResult.isErr()) {
       ATLANTIS_LOG_ERROR("realizeOneMaterialCandidate() failed -- material stays pending, retried next frame");
       continue;
@@ -609,6 +672,16 @@ std::uint32_t sampledTextureBindingCountFor(atlantis::asset_system::MaterialKind
     // pbr_sheen_ibl.slang/pbr_sheen_ibl_normal_map.slang declare the
     // same base-color@1/environment@2/DFG-LUT@3(/normal-map@4) bindings.
     case atlantis::asset_system::MaterialKind::PbrSheen:
+      if (hasNormalMap) return environmentEnabled ? 4U : 3U;
+      return environmentEnabled ? 3U : 2U;
+    // Plan 0035 Milestone 4 (ADR-0081): PbrAnisotropic's own binding
+    // layout is identical in shape to PbrClearcoat/PbrSheen's own
+    // immediately above -- pbr_anisotropic_ibl.slang/
+    // pbr_anisotropic_ibl_normal_map.slang declare the same base-
+    // color@1/environment@2/DFG-LUT@3(/normal-map@4) bindings. The
+    // extra tangent vertex attribute both variants need is orthogonal
+    // to this descriptor-binding count -- no new binding for it.
+    case atlantis::asset_system::MaterialKind::PbrAnisotropic:
       if (hasNormalMap) return environmentEnabled ? 4U : 3U;
       return environmentEnabled ? 3U : 2U;
   }

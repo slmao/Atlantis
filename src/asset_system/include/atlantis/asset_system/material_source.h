@@ -57,6 +57,15 @@ struct ParsedMaterialSource {
   // convention. Never read for any other kind.
   float sheenColor[3] = {0.0f, 0.0f, 0.0f};
   float sheenRoughness = 0.0f;
+  // Plan 0035 Milestone 4/ADR-0081: two new, REQUIRED (not optional)
+  // trailing fields whenever kind == PbrAnisotropic -- mirrors
+  // clearcoatFactor/clearcoatRoughness's/sheenColor/sheenRoughness's own
+  // identical reasoning above. anisotropyFactor is -1..1
+  // (strength/sign, Spec 0035's own field definition), never
+  // range-validated here (cookMaterial()'s own job). Never read for any
+  // other kind.
+  float anisotropyFactor = 0.0f;
+  float anisotropyRotation = 0.0f;
 };
 
 // Plan 0018 Section P2/P4: parse/decode-error conditions specific to the
@@ -102,6 +111,16 @@ enum class MaterialSourceParseError {
   // sheen_color NOR sheen_roughness present (a 5- or 8-line source) --
   // mirrors MissingClearcoatFields's own reasoning exactly.
   MissingSheenFields,
+  // Plan 0035 Milestone 4/ADR-0081: a 10/11-line source (anisotropy_factor/
+  // anisotropy_rotation present) for a `kind` other than
+  // `pbr_anisotropic` -- mirrors ClearcoatFieldsNotSupportedForKind's/
+  // SheenFieldsNotSupportedForKind's own reasoning exactly.
+  AnisotropyFieldsNotSupportedForKind,
+  // Plan 0035 Milestone 4/ADR-0081: `kind: pbr_anisotropic` with NEITHER
+  // anisotropy_factor NOR anisotropy_rotation present (a 5- or 8-line
+  // source) -- mirrors MissingClearcoatFields's/MissingSheenFields's own
+  // reasoning exactly.
+  MissingAnisotropyFields,
 };
 
 // Strict, fixed-field-order, plain-text grammar extending

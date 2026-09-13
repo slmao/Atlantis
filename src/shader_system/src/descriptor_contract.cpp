@@ -133,6 +133,29 @@ std::vector<DescriptorBinding> pbrSheenIblNormalMapExpectedDescriptorContract() 
           DescriptorBinding{.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
+// Plan 0035 Milestone 4 (ADR-0081): identical shape to
+// pbrClearcoatIblExpectedDescriptorContract()/pbrSheenIblExpectedDescriptorContract()
+// above -- same IBL-only, no-shadow scope.
+std::vector<DescriptorBinding> pbrAnisotropicIblExpectedDescriptorContract() {
+  return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
+          DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
+          DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          DescriptorBinding{.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+}
+
+// Plan 0035 Milestone 4 (ADR-0081): identical to
+// pbrAnisotropicIblExpectedDescriptorContract() above, plus the
+// normal-map sampler at the next free binding (4).
+std::vector<DescriptorBinding> pbrAnisotropicIblNormalMapExpectedDescriptorContract() {
+  return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
+          DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
+          DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          DescriptorBinding{.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          DescriptorBinding{.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+}
+
 // Plan 0024 Milestone 3 (ADR-0068 D-10): a genuinely smaller contract
 // than every MaterialKind's own -- one binding, no uniform buffer.
 std::vector<DescriptorBinding> outputTransformExpectedDescriptorContract() {

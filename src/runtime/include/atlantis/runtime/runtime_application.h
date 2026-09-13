@@ -311,6 +311,20 @@ class RuntimeApplication {
   atlantis::rhi::VertexInputLayout pbrSheenIblNormalMapVertexInputLayout_;
   std::vector<std::uint32_t> pbrSheenIblNormalMapVertexSpirv_;
   std::vector<std::uint32_t> pbrSheenIblNormalMapFragmentSpirv_;
+  // Plan 0035 Milestone 4 (ADR-0081): PbrAnisotropic's own two IBL-lit
+  // shader pairs' own resolved layout/SPIR-V -- mirrors pbrSheenIbl*'s
+  // own role and gating exactly (config.pbrAnisotropicIblVertexShaderSpirvPath
+  // non-empty). Both variants' own vertexInputLayout_ is always resolved
+  // via pbrNormalMapVertexLayout() (never pbrDirectLitVertexLayout()) --
+  // this Milestone's own tangent-rotation shading needs the tangent
+  // attribute even without a normal map texture (see
+  // material_realization.cpp's own selectShaderPair() comment).
+  atlantis::rhi::VertexInputLayout pbrAnisotropicIblVertexInputLayout_;
+  std::vector<std::uint32_t> pbrAnisotropicIblVertexSpirv_;
+  std::vector<std::uint32_t> pbrAnisotropicIblFragmentSpirv_;
+  atlantis::rhi::VertexInputLayout pbrAnisotropicIblNormalMapVertexInputLayout_;
+  std::vector<std::uint32_t> pbrAnisotropicIblNormalMapVertexSpirv_;
+  std::vector<std::uint32_t> pbrAnisotropicIblNormalMapFragmentSpirv_;
   // Plan 0026 Milestone 3 (ADR-0071): the sky shader pair's own resolved
   // vertex layout/SPIR-V -- loaded conditionally, alongside pbrIblVertexSpirv_/
   // ...FragmentSpirv_ above (same hasEnvironment gate). skyVertexInputLayout_

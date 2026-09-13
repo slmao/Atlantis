@@ -552,6 +552,85 @@ add_dependencies(atlantis_image_regression_pbr_sheen_normal_map_demo_golden_gene
   ${ATLANTIS_pbr_sheen_demo_scene_TARGET} ${ATLANTIS_pbr_sheen_normal_map_demo_scene_TARGET}
   ${ATLANTIS_ibl_studio_TARGET})
 
+# pbr_anisotropic_demo_main.cpp, mirroring the pbr_sheen_demo_main.cpp
+# executable-sharing pattern above -- one for the rotation-sweep
+# 3-sphere scene, one
+# (ATLANTIS_ANISOTROPIC_NORMAL_MAP_GOLDEN_GENERATOR=1) for the normal-
+# mapped 1-sphere variant. Both link the dedicated
+# PbrAnisotropicDemoFixture (not PbrMaterialDemoFixture/
+# PbrSheenDemoFixture), since only that fixture loads the real
+# pbrAnisotropicIbl*/pbrAnisotropicIblNormalMap* shader trios instead of
+# dead-path filler.
+add_executable(atlantis_image_regression_pbr_anisotropic_demo_golden_generator pbr_anisotropic_demo_main.cpp)
+target_link_libraries(atlantis_image_regression_pbr_anisotropic_demo_golden_generator PRIVATE
+  Atlantis::ImageRegressionFixture Atlantis::ImageRegressionSupport atlantis_compiler_warnings)
+target_compile_definitions(atlantis_image_regression_pbr_anisotropic_demo_golden_generator PRIVATE
+  ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+  ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
+  ATLANTIS_pbr_anisotropic_demo_scene_ARTIFACT_PATH="${ATLANTIS_pbr_anisotropic_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_pbr_anisotropic_demo_scene_METADATA_PATH="${ATLANTIS_pbr_anisotropic_demo_scene_METADATA_PATH}"
+  ATLANTIS_pbr_anisotropic_demo_scene_MANIFEST_PATH="${ATLANTIS_pbr_anisotropic_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_pbr_anisotropic_normal_map_demo_scene_ARTIFACT_PATH="${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_pbr_anisotropic_normal_map_demo_scene_METADATA_PATH="${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_METADATA_PATH}"
+  ATLANTIS_pbr_anisotropic_normal_map_demo_scene_MANIFEST_PATH="${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_ibl_normal_map_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_SKY_SHADER_DIR="${ATLANTIS_sky_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_ANISOTROPIC_IBL_SHADER_DIR="${ATLANTIS_pbr_anisotropic_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_ANISOTROPIC_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_anisotropic_ibl_normal_map_SHADER_OUTPUT_DIR}"
+  # Milestone 4 reuses the existing ibl_studio environment (same
+  # reasoning as ATLANTIS_PBR_SHEEN_DEMO_ENVIRONMENT_ARTIFACT_PATH
+  # above) -- same environment, same sha256 literals.
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_ENVIRONMENT_ARTIFACT_PATH="${ATLANTIS_ibl_studio_ARTIFACT_PATH}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_ENVIRONMENT_METADATA_PATH="${ATLANTIS_ibl_studio_METADATA_PATH}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_ENVIRONMENT_SOURCE_SHA256="a5d9b1a50102f8f2761a61be0574b5036277a8da61268c922d3f82ebe839e4e4"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_ENVIRONMENT_ARTIFACT_SHA256="bd0c9f75c5e26418f7de6f9165675fb54a5a045cdbb3265aae05ba18be4a1f83"
+)
+add_dependencies(atlantis_image_regression_pbr_anisotropic_demo_golden_generator textured_quad_shaders
+  lit_textured_shaders pbr_direct_lit_shaders pbr_ibl_shaders pbr_ibl_normal_map_shaders output_transform_unorm_shaders
+  sky_shaders shadow_cast_shaders pbr_anisotropic_ibl_shaders pbr_anisotropic_ibl_normal_map_shaders
+  ${ATLANTIS_pbr_anisotropic_demo_scene_TARGET} ${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_TARGET}
+  ${ATLANTIS_ibl_studio_TARGET})
+
+add_executable(atlantis_image_regression_pbr_anisotropic_normal_map_demo_golden_generator pbr_anisotropic_demo_main.cpp)
+target_link_libraries(atlantis_image_regression_pbr_anisotropic_normal_map_demo_golden_generator PRIVATE
+  Atlantis::ImageRegressionFixture Atlantis::ImageRegressionSupport atlantis_compiler_warnings)
+target_compile_definitions(atlantis_image_regression_pbr_anisotropic_normal_map_demo_golden_generator PRIVATE
+  ATLANTIS_ANISOTROPIC_NORMAL_MAP_GOLDEN_GENERATOR=1
+  ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+  ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
+  ATLANTIS_pbr_anisotropic_demo_scene_ARTIFACT_PATH="${ATLANTIS_pbr_anisotropic_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_pbr_anisotropic_demo_scene_METADATA_PATH="${ATLANTIS_pbr_anisotropic_demo_scene_METADATA_PATH}"
+  ATLANTIS_pbr_anisotropic_demo_scene_MANIFEST_PATH="${ATLANTIS_pbr_anisotropic_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_pbr_anisotropic_normal_map_demo_scene_ARTIFACT_PATH="${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_pbr_anisotropic_normal_map_demo_scene_METADATA_PATH="${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_METADATA_PATH}"
+  ATLANTIS_pbr_anisotropic_normal_map_demo_scene_MANIFEST_PATH="${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_ibl_normal_map_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_SKY_SHADER_DIR="${ATLANTIS_sky_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_ANISOTROPIC_IBL_SHADER_DIR="${ATLANTIS_pbr_anisotropic_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_ANISOTROPIC_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_anisotropic_ibl_normal_map_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_ENVIRONMENT_ARTIFACT_PATH="${ATLANTIS_ibl_studio_ARTIFACT_PATH}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_ENVIRONMENT_METADATA_PATH="${ATLANTIS_ibl_studio_METADATA_PATH}"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_ENVIRONMENT_SOURCE_SHA256="a5d9b1a50102f8f2761a61be0574b5036277a8da61268c922d3f82ebe839e4e4"
+  ATLANTIS_PBR_ANISOTROPIC_DEMO_ENVIRONMENT_ARTIFACT_SHA256="bd0c9f75c5e26418f7de6f9165675fb54a5a045cdbb3265aae05ba18be4a1f83"
+)
+add_dependencies(atlantis_image_regression_pbr_anisotropic_normal_map_demo_golden_generator textured_quad_shaders
+  lit_textured_shaders pbr_direct_lit_shaders pbr_ibl_shaders pbr_ibl_normal_map_shaders output_transform_unorm_shaders
+  sky_shaders shadow_cast_shaders pbr_anisotropic_ibl_shaders pbr_anisotropic_ibl_normal_map_shaders
+  ${ATLANTIS_pbr_anisotropic_demo_scene_TARGET} ${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_TARGET}
+  ${ATLANTIS_ibl_studio_TARGET})
+
 # Deliberately no catch_discover_tests()/LABELS "gpu"/add_test() call in
 # this file -- the concrete enforcement of "never registered with
 # CTest." Deliberately no run_... convenience custom target: this tool

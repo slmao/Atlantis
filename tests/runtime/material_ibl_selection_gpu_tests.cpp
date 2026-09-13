@@ -79,6 +79,10 @@ TEST_CASE("PBR material realization selects the IBL pipeline only when an enviro
       // Plan 0035 Milestone 3 (ADR-0081): same dead-path sheen filler
       // as the clearcoat trios above -- neither call realizes a
       // PbrSheen material either.
+      layout, *directVertex, *directFragment, layout, *directVertex, *directFragment,
+      // Plan 0035 Milestone 4 (ADR-0081): same dead-path anisotropic
+      // filler as the clearcoat/sheen trios above -- neither call
+      // realizes a PbrAnisotropic material either.
       layout, *directVertex, *directFragment, layout, *directVertex, *directFragment, false, 1, materialData,
       textureData, /*normalMapTextureData=*/nullptr, noTextures);
   REQUIRE(direct.isOk());
@@ -88,7 +92,8 @@ TEST_CASE("PBR material realization selects the IBL pipeline only when an enviro
       *device, layout, *directVertex, *directFragment, layout, *directVertex, *directFragment, layout,
       *directVertex, *directFragment, layout, *iblVertex, *iblFragment, layout, *directVertex, *directFragment,
       layout, *directVertex, *directFragment, layout, *directVertex, *directFragment, layout, *directVertex,
-      *directFragment, layout, *directVertex, *directFragment, layout, *directVertex, *directFragment, true, 2,
+      *directFragment, layout, *directVertex, *directFragment, layout, *directVertex, *directFragment,
+      layout, *directVertex, *directFragment, layout, *directVertex, *directFragment, true, 2,
       materialData, textureData, /*normalMapTextureData=*/nullptr, noTextures);
   REQUIRE(ibl.isOk());
   CHECK(ibl.value().material->environmentBinding() == atlantis::renderer::MaterialEnvironmentBinding::Ibl);

@@ -314,7 +314,8 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
       return "base_color_factor component out of range (must be finite, in [0, 1])";
     case atlantis::asset_system::MaterialCookError::MaterialFactorOutOfRange:
       return "metallic_factor/roughness_factor/clearcoat_factor/clearcoat_roughness/sheen_color/sheen_roughness "
-             "out of range (must be finite, in [0, 1])";
+             "out of range (must be finite, in [0, 1]), or anisotropy_factor out of range (must be finite, in "
+             "[-1, 1]), or anisotropy_rotation not finite";
   }
   return "unknown material cook error";
 }

@@ -173,7 +173,22 @@ struct RealizedMaterialCandidate {
     const std::vector<std::uint32_t>& pbrSheenIblFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& pbrSheenIblNormalMapVertexInputLayout,
     const std::vector<std::uint32_t>& pbrSheenIblNormalMapVertexSpirv,
-    const std::vector<std::uint32_t>& pbrSheenIblNormalMapFragmentSpirv, bool environmentEnabled,
+    const std::vector<std::uint32_t>& pbrSheenIblNormalMapFragmentSpirv,
+    // Plan 0035 Milestone 4 (ADR-0081): PbrAnisotropic's own two IBL-lit
+    // shader trios, inserted immediately after the existing
+    // pbrSheenIblNormalMap* trio -- IBL-only this round (Spec 0035's own
+    // scope), no direct-lit anisotropic trio exists or is threaded here.
+    // Unlike every prior pair, BOTH of these vertexInputLayout params
+    // must be the tangent-carrying, normal-map-shaped layout -- Milestone
+    // 4's own anisotropic tangent rotation needs a tangent frame even
+    // without a normal map texture (see selectShaderPair()'s own comment,
+    // material_realization.cpp).
+    const atlantis::rhi::VertexInputLayout& pbrAnisotropicIblVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblVertexSpirv,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrAnisotropicIblNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblNormalMapFragmentSpirv, bool environmentEnabled,
     atlantis::asset_system::AssetId materialAssetId,
     const atlantis::asset_system::MaterialAssetData& materialData,
     const atlantis::asset_system::TextureAssetData& textureData,
@@ -263,7 +278,16 @@ struct RealizedMaterialCandidate {
     const std::vector<std::uint32_t>& pbrSheenIblFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& pbrSheenIblNormalMapVertexInputLayout,
     const std::vector<std::uint32_t>& pbrSheenIblNormalMapVertexSpirv,
-    const std::vector<std::uint32_t>& pbrSheenIblNormalMapFragmentSpirv, bool environmentEnabled,
+    const std::vector<std::uint32_t>& pbrSheenIblNormalMapFragmentSpirv,
+    // Plan 0035 Milestone 4 (ADR-0081): identical insertion point and
+    // threading as realizeOneMaterialCandidate()'s own two new trios
+    // above.
+    const atlantis::rhi::VertexInputLayout& pbrAnisotropicIblVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblVertexSpirv,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrAnisotropicIblNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrAnisotropicIblNormalMapFragmentSpirv, bool environmentEnabled,
     const std::vector<atlantis::asset_system::AssetId>& pendingIds,
     const std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>>&
         sampledTextureResourceMap,
@@ -303,11 +327,15 @@ realizePendingMaterials(
   // composition root) never realize a PbrClearcoat material either
   // (PbrClearcoat is IBL-only this round, Spec 0035's own scope). Plan
   // 0035 Milestone 3 (ADR-0081): the two new sheen trio slots are
-  // dead-path filler for the identical reason.
+  // dead-path filler for the identical reason. Plan 0035 Milestone 4
+  // (ADR-0081): the two new anisotropic trio slots are dead-path
+  // filler for the identical reason.
   return realizePendingMaterials(
       device, commandList, unlitTexturedVertexInputLayout, unlitTexturedVertexSpirv,
       unlitTexturedFragmentSpirv, litTexturedVertexInputLayout, litTexturedVertexSpirv,
       litTexturedFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,
+      pbrDirectLitFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,
+      pbrDirectLitFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,
       pbrDirectLitFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,
       pbrDirectLitFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,
       pbrDirectLitFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,

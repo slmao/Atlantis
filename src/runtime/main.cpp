@@ -176,6 +176,29 @@ int main(int argc, char** argv) {
   config.pbrSheenIblNormalMapFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_NORMAL_MAP_SHADER_DIR) +
       "/pbr_sheen_ibl_normal_map.frag.refl.json";
+  // Plan 0035 Milestone 4 (ADR-0081): PbrAnisotropic's own two IBL-lit
+  // shader pairs -- same unconditional-population shape as
+  // PbrClearcoat/PbrSheen's own pairs immediately above.
+  config.pbrAnisotropicIblVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_ANISOTROPIC_IBL_SHADER_DIR) + "/pbr_anisotropic_ibl.vert.spv";
+  config.pbrAnisotropicIblVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_ANISOTROPIC_IBL_SHADER_DIR) + "/pbr_anisotropic_ibl.vert.refl.json";
+  config.pbrAnisotropicIblFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_ANISOTROPIC_IBL_SHADER_DIR) + "/pbr_anisotropic_ibl.frag.spv";
+  config.pbrAnisotropicIblFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_ANISOTROPIC_IBL_SHADER_DIR) + "/pbr_anisotropic_ibl.frag.refl.json";
+  config.pbrAnisotropicIblNormalMapVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_ANISOTROPIC_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_anisotropic_ibl_normal_map.vert.spv";
+  config.pbrAnisotropicIblNormalMapVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_ANISOTROPIC_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_anisotropic_ibl_normal_map.vert.refl.json";
+  config.pbrAnisotropicIblNormalMapFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_ANISOTROPIC_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_anisotropic_ibl_normal_map.frag.spv";
+  config.pbrAnisotropicIblNormalMapFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_ANISOTROPIC_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_anisotropic_ibl_normal_map.frag.refl.json";
   config.skyVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.vert.spv";
   config.skyVertexShaderReflectionPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.vert.refl.json";
   config.skyFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.frag.spv";

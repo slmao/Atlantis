@@ -9,7 +9,7 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_material_metadata_version: 4";
+constexpr std::string_view kVersionLine = "atlantis_material_metadata_version: 5";
 constexpr std::string_view kAssetIdPrefix = "asset_id: ";
 constexpr std::string_view kSourceLogicalPathPrefix = "source_logical_path: ";
 constexpr std::string_view kKindPrefix = "kind: ";
@@ -28,6 +28,11 @@ constexpr std::string_view kClearcoatRoughnessPrefix = "clearcoat_roughness: ";
 // clearcoat_roughness above.
 constexpr std::string_view kSheenColorPrefix = "sheen_color: ";
 constexpr std::string_view kSheenRoughnessPrefix = "sheen_roughness: ";
+// Plan 0035 Milestone 4/ADR-0081: two more, unconditionally present
+// fields, same "no optional field" discipline as sheen_color/
+// sheen_roughness above.
+constexpr std::string_view kAnisotropyFactorPrefix = "anisotropy_factor: ";
+constexpr std::string_view kAnisotropyRotationPrefix = "anisotropy_rotation: ";
 // Plan 0023 Milestone 1: widened from 5 to 8. Plan 0029 Section P6/
 // ADR-0074 Section 1: widened again to 9 -- the normal-map-texture
 // field is always present, unconditionally (`0000000000000000` when
@@ -37,8 +42,10 @@ constexpr std::string_view kSheenRoughnessPrefix = "sheen_roughness: ";
 // Milestone 2/ADR-0081: widened again to 11 -- clearcoat_factor/
 // clearcoat_roughness, same unconditional-presence discipline. Plan
 // 0035 Milestone 3/ADR-0081: widened again to 13 -- sheen_color/
-// sheen_roughness, same discipline.
-constexpr std::size_t kExpectedLineCount = 13;
+// sheen_roughness, same discipline. Plan 0035 Milestone 4/ADR-0081:
+// widened again to 15 -- anisotropy_factor/anisotropy_rotation, same
+// discipline.
+constexpr std::size_t kExpectedLineCount = 15;
 
 constexpr std::string_view kKindUnlitTextured = "unlit_textured";
 constexpr std::string_view kKindPbrDirectLit = "pbr_direct_lit";
@@ -61,6 +68,9 @@ constexpr std::string_view kKindPbrClearcoat = "pbr_clearcoat";
 // Plan 0035 Milestone 3/ADR-0081: MaterialKind's fifth enumerator --
 // mirrors kKindPbrClearcoat's own widening exactly.
 constexpr std::string_view kKindPbrSheen = "pbr_sheen";
+// Plan 0035 Milestone 4/ADR-0081: MaterialKind's sixth enumerator --
+// mirrors kKindPbrSheen's own widening exactly.
+constexpr std::string_view kKindPbrAnisotropic = "pbr_anisotropic";
 
 // Duplicated from texture_metadata.cpp's own identical helpers rather
 // than shared, matching that file's own file-local, not-exported
@@ -173,6 +183,8 @@ atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std
     metadata.kind = MaterialKind::PbrClearcoat;
   } else if (value == kKindPbrSheen) {
     metadata.kind = MaterialKind::PbrSheen;
+  } else if (value == kKindPbrAnisotropic) {
+    metadata.kind = MaterialKind::PbrAnisotropic;
   } else {
     return ResultT::Err(MetadataParseError::MalformedValue);
   }
@@ -220,6 +232,16 @@ atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std
   if (!matchField(lines[12], kSheenRoughnessPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseFloatToken(value, metadata.sheenRoughness)) return ResultT::Err(MetadataParseError::MalformedValue);
 
+  if (!matchField(lines[13], kAnisotropyFactorPrefix, value)) {
+    return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  }
+  if (!parseFloatToken(value, metadata.anisotropyFactor)) return ResultT::Err(MetadataParseError::MalformedValue);
+
+  if (!matchField(lines[14], kAnisotropyRotationPrefix, value)) {
+    return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  }
+  if (!parseFloatToken(value, metadata.anisotropyRotation)) return ResultT::Err(MetadataParseError::MalformedValue);
+
   return ResultT::Ok(std::move(metadata));
 }
 
@@ -242,8 +264,10 @@ std::string serializeMaterialMetadata(const MaterialMetadata& metadata) {
     out += kKindPbrDirectLit;
   } else if (metadata.kind == MaterialKind::PbrClearcoat) {
     out += kKindPbrClearcoat;
-  } else {
+  } else if (metadata.kind == MaterialKind::PbrSheen) {
     out += kKindPbrSheen;
+  } else {
+    out += kKindPbrAnisotropic;
   }
   out += '\n';
   out += kTextureAssetPrefix;
@@ -278,6 +302,12 @@ std::string serializeMaterialMetadata(const MaterialMetadata& metadata) {
   out += '\n';
   out += kSheenRoughnessPrefix;
   out += formatFloat(metadata.sheenRoughness);
+  out += '\n';
+  out += kAnisotropyFactorPrefix;
+  out += formatFloat(metadata.anisotropyFactor);
+  out += '\n';
+  out += kAnisotropyRotationPrefix;
+  out += formatFloat(metadata.anisotropyRotation);
   out += '\n';
   return out;
 }

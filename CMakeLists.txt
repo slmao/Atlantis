@@ -172,6 +172,11 @@ add_subdirectory(shaders/pbr_clearcoat_ibl_normal_map)
 # above.
 add_subdirectory(shaders/pbr_sheen_ibl)
 add_subdirectory(shaders/pbr_sheen_ibl_normal_map)
+# Plan 0035 Milestone 4 (ADR-0081): PbrAnisotropic's own two IBL-lit
+# shader pairs -- same shape/placement as PbrClearcoat's/PbrSheen's own
+# pairs immediately above.
+add_subdirectory(shaders/pbr_anisotropic_ibl)
+add_subdirectory(shaders/pbr_anisotropic_ibl_normal_map)
 # Plan 0024 Milestone 4 (ADR-0068 D-6/D-10): the two output-transform
 # shader pairs -- unconditional here, matching every other production
 # shader pair's own identical placement/reasoning; declared immediately

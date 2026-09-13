@@ -12,13 +12,16 @@ constexpr float kDefaultBaseColorFactor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 // Plan 0035 Milestone 3/ADR-0081: mirrors kDefaultBaseColorFactor's own
 // role, for encodeMaterialArtifact()'s two new trailing sheen args.
 constexpr float kDefaultSheenColor[3] = {0.0f, 0.0f, 0.0f};
+// Plan 0035 Milestone 4/ADR-0081: the two new trailing anisotropy args
+// are plain scalars (0.0f, 0.0f), passed directly at each call site --
+// no array constant needed, unlike kDefaultSheenColor above.
 
 }  // namespace
 
 TEST_CASE("encodeMaterialArtifact then decodeMaterialArtifact round-trips exactly", "[asset_system][material]") {
   const auto encoded =
       encodeMaterialArtifact(MaterialKind::UnlitTextured, 0x0102030405060708ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   REQUIRE(encoded.size() == kMaterialArtifactHeaderSizeBytes);
 
   const auto decoded = decodeMaterialArtifact(encoded);
@@ -41,7 +44,7 @@ TEST_CASE("encodeMaterialArtifact then decodeMaterialArtifact round-trips Materi
   const float baseColorFactor[4] = {0.8f, 0.2f, 0.1f, 1.0f};
   const auto encoded =
       encodeMaterialArtifact(MaterialKind::PbrDirectLit, 0x0102030405060708ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, baseColorFactor, 0.5f, 0.25f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              MaterialSamplerAddressMode::Repeat, baseColorFactor, 0.5f, 0.25f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   const auto decoded = decodeMaterialArtifact(encoded);
   REQUIRE(decoded.isOk());
   CHECK(decoded.value().kind == MaterialKind::PbrDirectLit);
@@ -57,7 +60,7 @@ TEST_CASE("encodeMaterialArtifact round-trips Nearest filter and ClampToEdge add
           "[asset_system][material]") {
   const auto encoded =
       encodeMaterialArtifact(MaterialKind::UnlitTextured, 42ULL, MaterialSamplerFilter::Nearest,
-                              MaterialSamplerAddressMode::ClampToEdge, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              MaterialSamplerAddressMode::ClampToEdge, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   const auto decoded = decodeMaterialArtifact(encoded);
   REQUIRE(decoded.isOk());
   CHECK(decoded.value().filter == MaterialSamplerFilter::Nearest);
@@ -76,12 +79,12 @@ TEST_CASE("encodeMaterialArtifact matches an independently-computed expected byt
   // 00 00 80 3F -- independently computed, not copied from production.
   const auto encoded =
       encodeMaterialArtifact(MaterialKind::UnlitTextured, 0x0102030405060708ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
 
   const std::vector<std::byte> expected = {
       std::byte{0x41}, std::byte{0x54}, std::byte{0x4C}, std::byte{0x4D}, std::byte{0x41}, std::byte{0x54},
       std::byte{0x00}, std::byte{0x00},                                        // magic "ATLMAT\0\0"
-      std::byte{0x05}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // schemaVersion = 5
+      std::byte{0x06}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // schemaVersion = 6
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // kind = 0 (UnlitTextured)
       std::byte{0x08}, std::byte{0x07}, std::byte{0x06}, std::byte{0x05}, std::byte{0x04}, std::byte{0x03},
       std::byte{0x02}, std::byte{0x01},                                        // texture_asset_id = 0x0102030405060708
@@ -101,8 +104,10 @@ TEST_CASE("encodeMaterialArtifact matches an independently-computed expected byt
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // sheen_color[1] = 0.0f
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // sheen_color[2] = 0.0f
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // sheen_roughness = 0.0f
+      std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // anisotropy_factor = 0.0f
+      std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // anisotropy_rotation = 0.0f
   };
-  REQUIRE(expected.size() == 88);
+  REQUIRE(expected.size() == 96);
   CHECK(encoded == expected);
 }
 
@@ -129,11 +134,11 @@ TEST_CASE("decodeMaterialArtifact rejects a real, old, 32-byte schema-version-1 
   CHECK(result.error() == MaterialArtifactDecodeError::TruncatedHeader);
 }
 
-TEST_CASE("decodeMaterialArtifact rejects a buffer larger than the fixed 88-byte record",
+TEST_CASE("decodeMaterialArtifact rejects a buffer larger than the fixed 96-byte record",
           "[asset_system][material]") {
   auto bytes =
       encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   bytes.push_back(std::byte{0xFF});
   const auto result = decodeMaterialArtifact(bytes);
   REQUIRE(result.isErr());
@@ -143,7 +148,7 @@ TEST_CASE("decodeMaterialArtifact rejects a buffer larger than the fixed 88-byte
 TEST_CASE("decodeMaterialArtifact rejects a bad magic", "[asset_system][material]") {
   auto bytes =
       encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   bytes[0] = std::byte{0x00};
   const auto result = decodeMaterialArtifact(bytes);
   REQUIRE(result.isErr());
@@ -153,11 +158,11 @@ TEST_CASE("decodeMaterialArtifact rejects a bad magic", "[asset_system][material
 TEST_CASE("decodeMaterialArtifact rejects an unsupported schema version", "[asset_system][material]") {
   auto bytes =
       encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
-  // Plan 0035 Milestone 3/ADR-0081: this literal must name a value
-  // still genuinely unsupported now that 5 (this round's own bump) is
-  // valid -- 6 here, not 5.
-  bytes[8] = std::byte{0x06};  // schemaVersion's low byte, offset 8: 5 -> 6 (unsupported)
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
+  // Plan 0035 Milestone 4/ADR-0081: this literal must name a value
+  // still genuinely unsupported now that 6 (this round's own bump) is
+  // valid -- 7 here, not 6.
+  bytes[8] = std::byte{0x07};  // schemaVersion's low byte, offset 8: 6 -> 7 (unsupported)
   const auto result = decodeMaterialArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialArtifactDecodeError::UnsupportedSchemaVersion);
@@ -165,13 +170,13 @@ TEST_CASE("decodeMaterialArtifact rejects an unsupported schema version", "[asse
 
 TEST_CASE("decodeMaterialArtifact rejects an unknown kind value", "[asset_system][material]") {
   // Plan 0023 Milestone 1 (Plan 0035 Milestone 2/ADR-0081 widening,
-  // Milestone 3 widening again): this literal must name a value still
-  // genuinely unrecognized now that 4 (PbrSheen) is also valid -- 5
-  // here, not 4.
+  // Milestone 3 widening again, Milestone 4 widening again): this
+  // literal must name a value still genuinely unrecognized now that 5
+  // (PbrAnisotropic) is also valid -- 6 here, not 5.
   auto bytes =
       encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
-  bytes[12] = std::byte{0x05};  // kind's low byte, offset 12: 0 -> 5 (unknown)
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
+  bytes[12] = std::byte{0x06};  // kind's low byte, offset 12: 0 -> 6 (unknown)
   const auto result = decodeMaterialArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialArtifactDecodeError::UnknownMaterialKind);
@@ -181,7 +186,7 @@ TEST_CASE("encodeMaterialArtifact then decodeMaterialArtifact round-trips Materi
           "[asset_system][material]") {
   const auto encoded =
       encodeMaterialArtifact(MaterialKind::LitTextured, 0x0102030405060708ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   const auto decoded = decodeMaterialArtifact(encoded);
   REQUIRE(decoded.isOk());
   CHECK(decoded.value().kind == MaterialKind::LitTextured);
@@ -197,34 +202,40 @@ TEST_CASE("kindToField()'s own C4062 protection: each MaterialKind decodes to it
           "[asset_system][material]") {
   const auto unlit =
       encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   const auto lit =
       encodeMaterialArtifact(MaterialKind::LitTextured, 1ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   const auto pbr =
       encodeMaterialArtifact(MaterialKind::PbrDirectLit, 1ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   // Plan 0035 Milestone 2/ADR-0081: PbrClearcoat's own distinct field
   // value, added to this same C4062-protection probe.
   const auto clearcoat =
       encodeMaterialArtifact(MaterialKind::PbrClearcoat, 1ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   // Plan 0035 Milestone 3/ADR-0081: PbrSheen's own distinct field value,
   // added to this same C4062-protection probe.
   const auto sheen =
       encodeMaterialArtifact(MaterialKind::PbrSheen, 1ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
+  // Plan 0035 Milestone 4/ADR-0081: PbrAnisotropic's own distinct field
+  // value, added to this same C4062-protection probe.
+  const auto anisotropic =
+      encodeMaterialArtifact(MaterialKind::PbrAnisotropic, 1ULL, MaterialSamplerFilter::Linear,
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   CHECK(unlit[12] == std::byte{0x00});
   CHECK(lit[12] == std::byte{0x01});
   CHECK(pbr[12] == std::byte{0x02});
   CHECK(clearcoat[12] == std::byte{0x03});
   CHECK(sheen[12] == std::byte{0x04});
+  CHECK(anisotropic[12] == std::byte{0x05});
 }
 
 TEST_CASE("decodeMaterialArtifact rejects an unknown filter value", "[asset_system][material]") {
   auto bytes =
       encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   bytes[24] = std::byte{0x02};  // filter's low byte, offset 24: 1 -> 2 (unknown)
   const auto result = decodeMaterialArtifact(bytes);
   REQUIRE(result.isErr());
@@ -234,7 +245,7 @@ TEST_CASE("decodeMaterialArtifact rejects an unknown filter value", "[asset_syst
 TEST_CASE("decodeMaterialArtifact rejects an unknown address_mode value", "[asset_system][material]") {
   auto bytes =
       encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   bytes[28] = std::byte{0x02};  // address_mode's low byte, offset 28: 0 -> 2 (unknown)
   const auto result = decodeMaterialArtifact(bytes);
   REQUIRE(result.isErr());
@@ -244,7 +255,7 @@ TEST_CASE("decodeMaterialArtifact rejects an unknown address_mode value", "[asse
 TEST_CASE("decodeMaterialArtifact rejects a baseColorFactor component above 1.0", "[asset_system][material]") {
   const float outOfRange[4] = {1.5f, 1.0f, 1.0f, 1.0f};
   auto bytes = encodeMaterialArtifact(MaterialKind::PbrDirectLit, 1ULL, MaterialSamplerFilter::Linear,
-                                       MaterialSamplerAddressMode::Repeat, outOfRange, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                                       MaterialSamplerAddressMode::Repeat, outOfRange, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   const auto result = decodeMaterialArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialArtifactDecodeError::BaseColorFactorOutOfRange);
@@ -253,7 +264,7 @@ TEST_CASE("decodeMaterialArtifact rejects a baseColorFactor component above 1.0"
 TEST_CASE("decodeMaterialArtifact rejects a negative metallicFactor", "[asset_system][material]") {
   auto bytes =
       encodeMaterialArtifact(MaterialKind::PbrDirectLit, 1ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, -0.1f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, -0.1f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   const auto result = decodeMaterialArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialArtifactDecodeError::MaterialFactorOutOfRange);
@@ -262,7 +273,7 @@ TEST_CASE("decodeMaterialArtifact rejects a negative metallicFactor", "[asset_sy
 TEST_CASE("decodeMaterialArtifact rejects a roughnessFactor above 1.0", "[asset_system][material]") {
   auto bytes =
       encodeMaterialArtifact(MaterialKind::PbrDirectLit, 1ULL, MaterialSamplerFilter::Linear,
-                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.1f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.1f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   const auto result = decodeMaterialArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialArtifactDecodeError::MaterialFactorOutOfRange);
@@ -276,7 +287,7 @@ TEST_CASE("encodeMaterialArtifact then decodeMaterialArtifact round-trips a real
   const auto encoded =
       encodeMaterialArtifact(MaterialKind::PbrDirectLit, 0x0102030405060708ULL, MaterialSamplerFilter::Linear,
                               MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f,
-                              0x1122334455667788ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f);
+                              0x1122334455667788ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
   REQUIRE(encoded.size() == kMaterialArtifactHeaderSizeBytes);
   const auto decoded = decodeMaterialArtifact(encoded);
   REQUIRE(decoded.isOk());

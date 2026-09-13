@@ -602,6 +602,12 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
                                // clearcoat trios immediately above.
                                fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
                                fixture.pbrDirectLitFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
+                               fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+                               // Plan 0035 Milestone 4 (ADR-0081): same
+                               // dead-path anisotropic filler reasoning
+                               // as the clearcoat/sheen trios above.
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
                                fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv, environmentEnabled,
                                pendingMaterialIds,
                                fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);
@@ -638,6 +644,10 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
         fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
         // Plan 0035 Milestone 3 (ADR-0081): same dead-path sheen filler
         // as the clearcoat trios above.
+        fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+        fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+        // Plan 0035 Milestone 4 (ADR-0081): same dead-path anisotropic
+        // filler as the clearcoat/sheen trios above.
         fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
         fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
         environmentEnabled, fixture.controlMaterialAssetId, *fixture.controlMaterialData, controlTextureIt->second,

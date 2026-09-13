@@ -565,6 +565,14 @@ atlantis::Result<PixelBuffer, PbrClearcoatDemoRenderError> renderPbrClearcoatDem
                                // reuse pattern immediately above.
                                fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
                                fixture.pbrDirectLitFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
+                               fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+                               // Plan 0035 Milestone 4 (ADR-0081): this
+                               // fixture's own scenes never realize a
+                               // PbrAnisotropic material either, same
+                               // dead-path filler reason as the sheen
+                               // trios above.
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
                                fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv, environmentEnabled,
                                pendingMaterialIds,
                                fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);

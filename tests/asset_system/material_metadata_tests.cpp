@@ -110,18 +110,18 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a me
 }
 
 TEST_CASE("parseMaterialMetadata rejects a wrong line count", "[asset_system][material]") {
-  const auto result = parseMaterialMetadata("atlantis_material_metadata_version: 4\n");
+  const auto result = parseMaterialMetadata("atlantis_material_metadata_version: 5\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::WrongLineCount);
 }
 
 TEST_CASE("parseMaterialMetadata rejects an unknown metadata version", "[asset_system][material]") {
-  // Plan 0035 Milestone 2/ADR-0081, widened by Milestone 3: version 2
-  // here, not 3 or 4 -- this literal must name a value still genuinely
-  // unknown now that 4 (this round's own bump) is current; line count
-  // is the new 13 (sheen_color/sheen_roughness appended) so the version
-  // check -- which runs only after the line-count check -- is actually
-  // reached.
+  // Plan 0035 Milestone 2/ADR-0081, widened by Milestones 3/4: version 2
+  // here, not 3, 4, or 5 -- this literal must name a value still
+  // genuinely unknown now that 5 (this round's own bump) is current;
+  // line count is the new 15 (anisotropy_factor/anisotropy_rotation
+  // appended) so the version check -- which runs only after the
+  // line-count check -- is actually reached.
   const std::string text =
       "atlantis_material_metadata_version: 2\n"
       "asset_id: 0000000000000001\n"
@@ -135,7 +135,9 @@ TEST_CASE("parseMaterialMetadata rejects an unknown metadata version", "[asset_s
       "clearcoat_factor: 0.000000\n"
       "clearcoat_roughness: 0.000000\n"
       "sheen_color: 0.000000 0.000000 0.000000\n"
-      "sheen_roughness: 0.000000\n";
+      "sheen_roughness: 0.000000\n"
+      "anisotropy_factor: 0.000000\n"
+      "anisotropy_rotation: 0.000000\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::UnknownMetadataVersion);
@@ -156,7 +158,7 @@ TEST_CASE("parseMaterialMetadata rejects the retired version 1 (wrong line count
 
 TEST_CASE("parseMaterialMetadata rejects a field name mismatch", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 4\n"
+      "atlantis_material_metadata_version: 5\n"
       "asset_id: 0000000000000001\n"
       "wrong_field: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -168,7 +170,9 @@ TEST_CASE("parseMaterialMetadata rejects a field name mismatch", "[asset_system]
       "clearcoat_factor: 0.000000\n"
       "clearcoat_roughness: 0.000000\n"
       "sheen_color: 0.000000 0.000000 0.000000\n"
-      "sheen_roughness: 0.000000\n";
+      "sheen_roughness: 0.000000\n"
+      "anisotropy_factor: 0.000000\n"
+      "anisotropy_rotation: 0.000000\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::FieldNameMismatch);
@@ -176,7 +180,7 @@ TEST_CASE("parseMaterialMetadata rejects a field name mismatch", "[asset_system]
 
 TEST_CASE("parseMaterialMetadata rejects a malformed kind value", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 4\n"
+      "atlantis_material_metadata_version: 5\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: pbr\n"
@@ -188,7 +192,9 @@ TEST_CASE("parseMaterialMetadata rejects a malformed kind value", "[asset_system
       "clearcoat_factor: 0.000000\n"
       "clearcoat_roughness: 0.000000\n"
       "sheen_color: 0.000000 0.000000 0.000000\n"
-      "sheen_roughness: 0.000000\n";
+      "sheen_roughness: 0.000000\n"
+      "anisotropy_factor: 0.000000\n"
+      "anisotropy_rotation: 0.000000\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::MalformedValue);
@@ -196,7 +202,7 @@ TEST_CASE("parseMaterialMetadata rejects a malformed kind value", "[asset_system
 
 TEST_CASE("parseMaterialMetadata rejects a malformed asset_id (uppercase hex)", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 4\n"
+      "atlantis_material_metadata_version: 5\n"
       "asset_id: 00000000000000AB\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -208,7 +214,9 @@ TEST_CASE("parseMaterialMetadata rejects a malformed asset_id (uppercase hex)", 
       "clearcoat_factor: 0.000000\n"
       "clearcoat_roughness: 0.000000\n"
       "sheen_color: 0.000000 0.000000 0.000000\n"
-      "sheen_roughness: 0.000000\n";
+      "sheen_roughness: 0.000000\n"
+      "anisotropy_factor: 0.000000\n"
+      "anisotropy_rotation: 0.000000\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::MalformedValue);
@@ -216,7 +224,7 @@ TEST_CASE("parseMaterialMetadata rejects a malformed asset_id (uppercase hex)", 
 
 TEST_CASE("parseMaterialMetadata rejects a malformed texture_asset (uppercase hex)", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 4\n"
+      "atlantis_material_metadata_version: 5\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -228,7 +236,9 @@ TEST_CASE("parseMaterialMetadata rejects a malformed texture_asset (uppercase he
       "clearcoat_factor: 0.000000\n"
       "clearcoat_roughness: 0.000000\n"
       "sheen_color: 0.000000 0.000000 0.000000\n"
-      "sheen_roughness: 0.000000\n";
+      "sheen_roughness: 0.000000\n"
+      "anisotropy_factor: 0.000000\n"
+      "anisotropy_rotation: 0.000000\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::MalformedValue);
@@ -236,7 +246,7 @@ TEST_CASE("parseMaterialMetadata rejects a malformed texture_asset (uppercase he
 
 TEST_CASE("parseMaterialMetadata rejects a malformed base_color_factor component", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 4\n"
+      "atlantis_material_metadata_version: 5\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -248,7 +258,9 @@ TEST_CASE("parseMaterialMetadata rejects a malformed base_color_factor component
       "clearcoat_factor: 0.000000\n"
       "clearcoat_roughness: 0.000000\n"
       "sheen_color: 0.000000 0.000000 0.000000\n"
-      "sheen_roughness: 0.000000\n";
+      "sheen_roughness: 0.000000\n"
+      "anisotropy_factor: 0.000000\n"
+      "anisotropy_rotation: 0.000000\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::MalformedValue);
@@ -277,7 +289,7 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a re
 TEST_CASE("parseMaterialMetadata rejects a malformed normal_map_texture (uppercase hex)",
           "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 4\n"
+      "atlantis_material_metadata_version: 5\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -289,7 +301,9 @@ TEST_CASE("parseMaterialMetadata rejects a malformed normal_map_texture (upperca
       "clearcoat_factor: 0.000000\n"
       "clearcoat_roughness: 0.000000\n"
       "sheen_color: 0.000000 0.000000 0.000000\n"
-      "sheen_roughness: 0.000000\n";
+      "sheen_roughness: 0.000000\n"
+      "anisotropy_factor: 0.000000\n"
+      "anisotropy_rotation: 0.000000\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::MalformedValue);
@@ -300,7 +314,7 @@ TEST_CASE("parseMaterialMetadata rejects a malformed normal_map_texture (upperca
 // every other field's own identical pattern in this file.
 TEST_CASE("parseMaterialMetadata rejects a malformed clearcoat_factor", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 4\n"
+      "atlantis_material_metadata_version: 5\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -312,7 +326,9 @@ TEST_CASE("parseMaterialMetadata rejects a malformed clearcoat_factor", "[asset_
       "clearcoat_factor: not-a-number\n"
       "clearcoat_roughness: 0.000000\n"
       "sheen_color: 0.000000 0.000000 0.000000\n"
-      "sheen_roughness: 0.000000\n";
+      "sheen_roughness: 0.000000\n"
+      "anisotropy_factor: 0.000000\n"
+      "anisotropy_rotation: 0.000000\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::MalformedValue);
@@ -320,7 +336,7 @@ TEST_CASE("parseMaterialMetadata rejects a malformed clearcoat_factor", "[asset_
 
 TEST_CASE("parseMaterialMetadata rejects a malformed clearcoat_roughness", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 4\n"
+      "atlantis_material_metadata_version: 5\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -332,7 +348,9 @@ TEST_CASE("parseMaterialMetadata rejects a malformed clearcoat_roughness", "[ass
       "clearcoat_factor: 0.000000\n"
       "clearcoat_roughness: not-a-number\n"
       "sheen_color: 0.000000 0.000000 0.000000\n"
-      "sheen_roughness: 0.000000\n";
+      "sheen_roughness: 0.000000\n"
+      "anisotropy_factor: 0.000000\n"
+      "anisotropy_rotation: 0.000000\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::MalformedValue);
@@ -363,7 +381,7 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a Pb
 // clearcoat_factor/clearcoat_roughness's own identical pattern above.
 TEST_CASE("parseMaterialMetadata rejects a malformed sheen_color component", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 4\n"
+      "atlantis_material_metadata_version: 5\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -375,7 +393,9 @@ TEST_CASE("parseMaterialMetadata rejects a malformed sheen_color component", "[a
       "clearcoat_factor: 0.000000\n"
       "clearcoat_roughness: 0.000000\n"
       "sheen_color: 0.000000 not-a-number 0.000000\n"
-      "sheen_roughness: 0.000000\n";
+      "sheen_roughness: 0.000000\n"
+      "anisotropy_factor: 0.000000\n"
+      "anisotropy_rotation: 0.000000\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::MalformedValue);
@@ -383,7 +403,7 @@ TEST_CASE("parseMaterialMetadata rejects a malformed sheen_color component", "[a
 
 TEST_CASE("parseMaterialMetadata rejects a malformed sheen_roughness", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 4\n"
+      "atlantis_material_metadata_version: 5\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -395,7 +415,9 @@ TEST_CASE("parseMaterialMetadata rejects a malformed sheen_roughness", "[asset_s
       "clearcoat_factor: 0.000000\n"
       "clearcoat_roughness: 0.000000\n"
       "sheen_color: 0.000000 0.000000 0.000000\n"
-      "sheen_roughness: not-a-number\n";
+      "sheen_roughness: not-a-number\n"
+      "anisotropy_factor: 0.000000\n"
+      "anisotropy_rotation: 0.000000\n";
   const auto result = parseMaterialMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::MalformedValue);
@@ -423,4 +445,72 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a Pb
   CHECK(parsed.value().sheenColor[1] == original.sheenColor[1]);
   CHECK(parsed.value().sheenColor[2] == original.sheenColor[2]);
   CHECK(parsed.value().sheenRoughness == original.sheenRoughness);
+}
+
+// Plan 0035 Milestone 4/ADR-0081: the metadata sidecar's own two new,
+// unconditional anisotropy fields -- malformed-value coverage mirroring
+// clearcoat_factor/clearcoat_roughness's/sheen_color/sheen_roughness's
+// own identical pattern above.
+TEST_CASE("parseMaterialMetadata rejects a malformed anisotropy_factor", "[asset_system][material]") {
+  const std::string text =
+      "atlantis_material_metadata_version: 5\n"
+      "asset_id: 0000000000000001\n"
+      "source_logical_path: a.material.txt\n"
+      "kind: unlit_textured\n"
+      "texture_asset: 0000000000000002\n"
+      "base_color_factor: 1.000000 1.000000 1.000000 1.000000\n"
+      "metallic_factor: 1.000000\n"
+      "roughness_factor: 1.000000\n"
+      "normal_map_texture: 0000000000000000\n"
+      "clearcoat_factor: 0.000000\n"
+      "clearcoat_roughness: 0.000000\n"
+      "sheen_color: 0.000000 0.000000 0.000000\n"
+      "sheen_roughness: 0.000000\n"
+      "anisotropy_factor: not-a-number\n"
+      "anisotropy_rotation: 0.000000\n";
+  const auto result = parseMaterialMetadata(text);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == MetadataParseError::MalformedValue);
+}
+
+TEST_CASE("parseMaterialMetadata rejects a malformed anisotropy_rotation", "[asset_system][material]") {
+  const std::string text =
+      "atlantis_material_metadata_version: 5\n"
+      "asset_id: 0000000000000001\n"
+      "source_logical_path: a.material.txt\n"
+      "kind: unlit_textured\n"
+      "texture_asset: 0000000000000002\n"
+      "base_color_factor: 1.000000 1.000000 1.000000 1.000000\n"
+      "metallic_factor: 1.000000\n"
+      "roughness_factor: 1.000000\n"
+      "normal_map_texture: 0000000000000000\n"
+      "clearcoat_factor: 0.000000\n"
+      "clearcoat_roughness: 0.000000\n"
+      "sheen_color: 0.000000 0.000000 0.000000\n"
+      "sheen_roughness: 0.000000\n"
+      "anisotropy_factor: 0.000000\n"
+      "anisotropy_rotation: not-a-number\n";
+  const auto result = parseMaterialMetadata(text);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == MetadataParseError::MalformedValue);
+}
+
+TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a PbrAnisotropic kind and its own "
+          "anisotropy fields exactly",
+          "[asset_system][material]") {
+  MaterialMetadata original;
+  original.assetId = 0x0102030405060708ULL;
+  original.sourceLogicalPath = "materials/anisotropic_test.material.txt";
+  original.kind = MaterialKind::PbrAnisotropic;
+  original.textureAsset = 0x1122334455667788ULL;
+  original.anisotropyFactor = -0.6f;
+  original.anisotropyRotation = 1.5707963f;
+
+  const std::string text = serializeMaterialMetadata(original);
+  CHECK(text.find("kind: pbr_anisotropic\n") != std::string::npos);
+  const auto parsed = parseMaterialMetadata(text);
+  REQUIRE(parsed.isOk());
+  CHECK(parsed.value().kind == MaterialKind::PbrAnisotropic);
+  CHECK(parsed.value().anisotropyFactor == original.anisotropyFactor);
+  CHECK(parsed.value().anisotropyRotation == original.anisotropyRotation);
 }
