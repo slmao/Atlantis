@@ -16,12 +16,14 @@
 #include <atlantis/runtime/init_error.h>
 #include <atlantis/runtime/runtime_application.h>
 
+#include "android_log_sink.h"
 #include "asset_extraction.h"
 #include <android_app_injection.h>
 
 #include <android_native_app_glue.h>
 
 #include <chrono>
+#include <memory>
 #include <string>
 #include <thread>
 
@@ -29,6 +31,7 @@ using atlantis::runtime::BootstrapConfig;
 using atlantis::runtime::createRuntimeApplication;
 using atlantis::runtime::RuntimeApplication;
 using atlantis::runtime::RuntimeExitReason;
+using atlantis::runtime::android_detail::AndroidLogSink;
 using atlantis::runtime::android_detail::extractAsset;
 using atlantis::runtime::android_detail::extractSceneManifest;
 
@@ -45,6 +48,12 @@ constexpr const char* kSceneRelativeManifestPath = "assets/scenes/integrated_sho
 }  // namespace
 
 void android_main(struct android_app* app) {
+  // The very first statement, before any other log call: Core's default
+  // ConsoleLogSink is invisible on Android (see android_log_sink.h's own
+  // comment) -- every ATLANTIS_LOG_* call below this line, in this file
+  // and in every module createRuntimeApplication() reaches, must go
+  // through the Android-visible sink instead.
+  atlantis::log::initialize(std::make_shared<AndroidLogSink>());
   atlantis::log::setMinLevel(atlantis::LogLevel::Info);
   ATLANTIS_LOG_INFO("Atlantis Runtime (Android) starting");
 

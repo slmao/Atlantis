@@ -210,7 +210,8 @@ endif()
 # comment for the fixed, packaged-relative-path scheme this target's
 # paths use instead.
 if(ANDROID)
-  add_library(atlantis_runtime_android SHARED android/android_main.cpp android/asset_extraction.cpp)
+  add_library(atlantis_runtime_android SHARED android/android_main.cpp android/asset_extraction.cpp
+    android/android_log_sink.cpp)
 
   # Plan 0034 Milestone 6 (real on-device finding): the linker only pulls
   # an object file out of a STATIC archive when something else in the
