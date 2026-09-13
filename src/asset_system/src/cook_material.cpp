@@ -105,19 +105,30 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
     normalMapTextureAssetId = computeAssetId(normalizedNormalMapResult.value());
   }
 
-  // Step 3.5 (Plan 0023 Milestone 1, ADR-0066 item 5): value-range
-  // validation, both directions -- never a naive parse-and-trust.
+  // Step 3.5 (Plan 0023 Milestone 1, ADR-0066 item 5; Plan 0035
+  // Milestone 2/ADR-0081 widening): value-range validation, both
+  // directions -- never a naive parse-and-trust. clearcoatFactor/
+  // clearcoatRoughness share MaterialFactorOutOfRange with metallic/
+  // roughness (the same "a scalar material factor is out of range"
+  // condition, not a new enumerator) -- parseMaterialSource() already
+  // guarantees these two are only ever non-default for kind ==
+  // PbrClearcoat, so validating them unconditionally here is harmless
+  // for every other kind (still their own inert 0.0f default, always
+  // in range).
   for (float component : parsed.baseColorFactor) {
     if (!isValidFactor(component)) return ResultT::Err(MaterialCookError::BaseColorFactorOutOfRange);
   }
   if (!isValidFactor(parsed.metallicFactor) || !isValidFactor(parsed.roughnessFactor)) {
     return ResultT::Err(MaterialCookError::MaterialFactorOutOfRange);
   }
+  if (!isValidFactor(parsed.clearcoatFactor) || !isValidFactor(parsed.clearcoatRoughness)) {
+    return ResultT::Err(MaterialCookError::MaterialFactorOutOfRange);
+  }
 
   // Step 4: encode + atomic write.
   const std::vector<std::byte> artifactBytes = encodeMaterialArtifact(
       parsed.kind, textureAssetId, parsed.filter, parsed.addressMode, parsed.baseColorFactor, parsed.metallicFactor,
-      parsed.roughnessFactor, normalMapTextureAssetId);
+      parsed.roughnessFactor, normalMapTextureAssetId, parsed.clearcoatFactor, parsed.clearcoatRoughness);
 
   MaterialMetadata metadata;
   metadata.assetId = selfAssetId;
@@ -128,6 +139,8 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   metadata.metallicFactor = parsed.metallicFactor;
   metadata.roughnessFactor = parsed.roughnessFactor;
   metadata.normalMapTexture = normalMapTextureAssetId;
+  metadata.clearcoatFactor = parsed.clearcoatFactor;
+  metadata.clearcoatRoughness = parsed.clearcoatRoughness;
   const std::string metadataText = serializeMaterialMetadata(metadata);
 
   if (!writeBytesAtomically(artifactOutputPath, reinterpret_cast<const char*>(artifactBytes.data()),

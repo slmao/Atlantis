@@ -130,6 +130,31 @@ int main(int argc, char** argv) {
       std::string(ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_ibl_normal_map.frag.spv";
   config.pbrIblNormalMapFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_ibl_normal_map.frag.refl.json";
+  // Plan 0035 Milestone 2 (ADR-0081): PbrClearcoat's own two IBL-lit
+  // shader pairs -- populated unconditionally here (bootstrap_config.h's
+  // own comment: genuinely optional, but this real product binary makes
+  // the shader available regardless of whether any of its own three
+  // whitelisted scenes currently uses a PbrClearcoat material).
+  config.pbrClearcoatIblVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_SHADER_DIR) + "/pbr_clearcoat_ibl.vert.spv";
+  config.pbrClearcoatIblVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_SHADER_DIR) + "/pbr_clearcoat_ibl.vert.refl.json";
+  config.pbrClearcoatIblFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_SHADER_DIR) + "/pbr_clearcoat_ibl.frag.spv";
+  config.pbrClearcoatIblFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_SHADER_DIR) + "/pbr_clearcoat_ibl.frag.refl.json";
+  config.pbrClearcoatIblNormalMapVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_clearcoat_ibl_normal_map.vert.spv";
+  config.pbrClearcoatIblNormalMapVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_clearcoat_ibl_normal_map.vert.refl.json";
+  config.pbrClearcoatIblNormalMapFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_clearcoat_ibl_normal_map.frag.spv";
+  config.pbrClearcoatIblNormalMapFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_clearcoat_ibl_normal_map.frag.refl.json";
   config.skyVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.vert.spv";
   config.skyVertexShaderReflectionPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.vert.refl.json";
   config.skyFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.frag.spv";

@@ -527,3 +527,84 @@ set(ATLANTIS_warehouse_interior_ARTIFACT_PATH "${ATLANTIS_warehouse_interior_ART
 set(ATLANTIS_warehouse_interior_METADATA_PATH "${ATLANTIS_warehouse_interior_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_warehouse_interior_TARGET "${ATLANTIS_warehouse_interior_TARGET}" PARENT_SCOPE)
 set(ATLANTIS_warehouse_interior_LOGICAL_PATH "${ATLANTIS_warehouse_interior_LOGICAL_PATH}" PARENT_SCOPE)
+
+# Plan 0035 Milestone 2 (Spec 0035 Requirement 4/Testing Plan): four
+# MaterialKind::PbrClearcoat material assets -- a clearcoat-roughness
+# sweep at clearcoat_factor=1.0 (low_roughness/high_roughness), a
+# clearcoat_factor=0.0 control (no_coat), and one normal-mapped variant
+# -- all reusing the already-cooked textured_quad_srgb texture (and,
+# for the last one, the already-cooked normal_map_tilted texture),
+# never a new PNG, mirroring pbr_dielectric_rough/etc.'s own established
+# "reuse the existing texture" precedent.
+atlantis_add_material_asset(
+  NAME pbr_clearcoat_no_coat
+  SOURCE materials/pbr_clearcoat_no_coat.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_pbr_clearcoat_no_coat_ARTIFACT_PATH "${ATLANTIS_pbr_clearcoat_no_coat_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_no_coat_METADATA_PATH "${ATLANTIS_pbr_clearcoat_no_coat_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_no_coat_TARGET "${ATLANTIS_pbr_clearcoat_no_coat_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_no_coat_LOGICAL_PATH "${ATLANTIS_pbr_clearcoat_no_coat_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME pbr_clearcoat_low_roughness
+  SOURCE materials/pbr_clearcoat_low_roughness.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_pbr_clearcoat_low_roughness_ARTIFACT_PATH "${ATLANTIS_pbr_clearcoat_low_roughness_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_low_roughness_METADATA_PATH "${ATLANTIS_pbr_clearcoat_low_roughness_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_low_roughness_TARGET "${ATLANTIS_pbr_clearcoat_low_roughness_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_low_roughness_LOGICAL_PATH "${ATLANTIS_pbr_clearcoat_low_roughness_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME pbr_clearcoat_high_roughness
+  SOURCE materials/pbr_clearcoat_high_roughness.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_pbr_clearcoat_high_roughness_ARTIFACT_PATH "${ATLANTIS_pbr_clearcoat_high_roughness_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_high_roughness_METADATA_PATH "${ATLANTIS_pbr_clearcoat_high_roughness_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_high_roughness_TARGET "${ATLANTIS_pbr_clearcoat_high_roughness_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_high_roughness_LOGICAL_PATH "${ATLANTIS_pbr_clearcoat_high_roughness_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME pbr_clearcoat_normal_mapped
+  SOURCE materials/pbr_clearcoat_normal_mapped.material.txt
+  TEXTURE textured_quad_srgb
+  NORMAL_MAP normal_map_tilted
+)
+set(ATLANTIS_pbr_clearcoat_normal_mapped_ARTIFACT_PATH "${ATLANTIS_pbr_clearcoat_normal_mapped_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_normal_mapped_METADATA_PATH "${ATLANTIS_pbr_clearcoat_normal_mapped_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_normal_mapped_TARGET "${ATLANTIS_pbr_clearcoat_normal_mapped_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_normal_mapped_LOGICAL_PATH "${ATLANTIS_pbr_clearcoat_normal_mapped_LOGICAL_PATH}" PARENT_SCOPE)
+
+# Plan 0035 Milestone 2: the clearcoat parameter-sweep scene (no_coat/
+# low_roughness/high_roughness, clearcoat_factor sweep + clearcoat_
+# roughness sweep) -- IBL-only, no Light node, mirroring
+# ibl_material_demo_scene's own identical "zero Light entities"
+# precedent.
+atlantis_add_scene_asset(
+  NAME pbr_clearcoat_demo_scene
+  SOURCE scenes/pbr_clearcoat_demo.scene.txt
+  MESH_DEPENDENCIES pbr_sphere
+  MATERIAL_DEPENDENCIES pbr_clearcoat_no_coat pbr_clearcoat_low_roughness pbr_clearcoat_high_roughness
+  TEXTURE_DEPENDENCIES textured_quad_srgb
+)
+set(ATLANTIS_pbr_clearcoat_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_clearcoat_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_demo_scene_METADATA_PATH "${ATLANTIS_pbr_clearcoat_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_clearcoat_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_demo_scene_TARGET "${ATLANTIS_pbr_clearcoat_demo_scene_TARGET}" PARENT_SCOPE)
+
+# Plan 0035 Milestone 2: the clearcoat normal-map variant's own
+# dedicated scene -- one sphere, the pbr_clearcoat_ibl_normal_map
+# shader pair's own real coverage.
+atlantis_add_scene_asset(
+  NAME pbr_clearcoat_normal_map_demo_scene
+  SOURCE scenes/pbr_clearcoat_normal_map_demo.scene.txt
+  MESH_DEPENDENCIES pbr_sphere
+  MATERIAL_DEPENDENCIES pbr_clearcoat_normal_mapped
+  TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
+)
+set(ATLANTIS_pbr_clearcoat_normal_map_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_normal_map_demo_scene_METADATA_PATH "${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_normal_map_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_normal_map_demo_scene_TARGET "${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_TARGET}" PARENT_SCOPE)

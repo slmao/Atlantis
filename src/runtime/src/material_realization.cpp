@@ -116,7 +116,17 @@ struct ShaderPairRef {
     const std::vector<std::uint32_t>& pbrDirectLitNormalMapFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& pbrIblNormalMapVertexInputLayout,
     const std::vector<std::uint32_t>& pbrIblNormalMapVertexSpirv,
-    const std::vector<std::uint32_t>& pbrIblNormalMapFragmentSpirv, bool environmentEnabled, bool hasNormalMap) {
+    const std::vector<std::uint32_t>& pbrIblNormalMapFragmentSpirv,
+    // Plan 0035 Milestone 2 (ADR-0081): PbrClearcoat's own two IBL-lit
+    // trios -- see this file's own realizeOneMaterialCandidate() header
+    // comment for the full parameter-list rationale.
+    const atlantis::rhi::VertexInputLayout& pbrClearcoatIblVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrClearcoatIblVertexSpirv,
+    const std::vector<std::uint32_t>& pbrClearcoatIblFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrClearcoatIblNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrClearcoatIblNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrClearcoatIblNormalMapFragmentSpirv, bool environmentEnabled,
+    bool hasNormalMap) {
   switch (kind) {
     case atlantis::asset_system::MaterialKind::UnlitTextured:
       return {&unlitTexturedVertexInputLayout, &unlitTexturedVertexSpirv, &unlitTexturedFragmentSpirv};
@@ -138,6 +148,20 @@ struct ShaderPairRef {
       }
       if (environmentEnabled) return {&pbrIblVertexInputLayout, &pbrIblVertexSpirv, &pbrIblFragmentSpirv};
       return {&pbrDirectLitVertexInputLayout, &pbrDirectLitVertexSpirv, &pbrDirectLitFragmentSpirv};
+    case atlantis::asset_system::MaterialKind::PbrClearcoat:
+      // Plan 0035 Milestone 2 (ADR-0081/Spec 0035 Requirement 4):
+      // IBL-only this round -- no direct-lit clearcoat shader exists,
+      // so a PbrClearcoat material realized without an environment is a
+      // real, disclosed configuration error, not silently handled by
+      // falling back to some other kind's shader.
+      ATLANTIS_CHECK_MSG(environmentEnabled,
+                          "selectShaderPair(): MaterialKind::PbrClearcoat requires an environment this round "
+                          "(Spec 0035's own IBL-only scope) -- no direct-lit clearcoat shader exists yet");
+      if (hasNormalMap) {
+        return {&pbrClearcoatIblNormalMapVertexInputLayout, &pbrClearcoatIblNormalMapVertexSpirv,
+                &pbrClearcoatIblNormalMapFragmentSpirv};
+      }
+      return {&pbrClearcoatIblVertexInputLayout, &pbrClearcoatIblVertexSpirv, &pbrClearcoatIblFragmentSpirv};
   }
   ATLANTIS_CHECK_MSG(false, "selectShaderPair(): unreachable -- MaterialKind's own closed switch above is exhaustive");
   return {&unlitTexturedVertexInputLayout, &unlitTexturedVertexSpirv, &unlitTexturedFragmentSpirv};  // never reached
@@ -158,6 +182,8 @@ struct ShaderPairRef {
       return atlantis::renderer::MaterialPushConstantLayout::ObjectToWorldOnly;
     case atlantis::asset_system::MaterialKind::PbrDirectLit:
       return atlantis::renderer::MaterialPushConstantLayout::PbrDirectLit;
+    case atlantis::asset_system::MaterialKind::PbrClearcoat:
+      return atlantis::renderer::MaterialPushConstantLayout::PbrClearcoat;
   }
   ATLANTIS_CHECK_MSG(false, "pushConstantLayoutFor(): unreachable -- MaterialKind's own closed switch above is exhaustive");
   return atlantis::renderer::MaterialPushConstantLayout::ObjectToWorldOnly;  // never reached
@@ -169,6 +195,16 @@ struct ShaderPairRef {
     case atlantis::asset_system::MaterialKind::LitTextured:
       return sizeof(float) * 16;
     case atlantis::asset_system::MaterialKind::PbrDirectLit:
+      return 96;
+    // Plan 0035 Milestone 2 (ADR-0081): PbrClearcoat's own independent
+    // 96-byte layout (PbrClearcoatPushConstants,
+    // src/renderer/src/pbr_clearcoat_push_constants.h) -- numerically
+    // identical to PbrDirectLit's own 96 but a DIFFERENT struct shape
+    // (objectToWorld/baseColorFactor/metallicFactor/roughnessFactor/
+    // clearcoatFactor/clearcoatRoughness, no padding needed -- the
+    // struct's own static_asserts confirm this), not a coincidence to
+    // collapse into one case label.
+    case atlantis::asset_system::MaterialKind::PbrClearcoat:
       return 96;
   }
   ATLANTIS_CHECK_MSG(false,
@@ -196,7 +232,17 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
     const std::vector<std::uint32_t>& pbrDirectLitNormalMapFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& pbrIblNormalMapVertexInputLayout,
     const std::vector<std::uint32_t>& pbrIblNormalMapVertexSpirv,
-    const std::vector<std::uint32_t>& pbrIblNormalMapFragmentSpirv, bool environmentEnabled,
+    const std::vector<std::uint32_t>& pbrIblNormalMapFragmentSpirv,
+    // Plan 0035 Milestone 2 (ADR-0081): PbrClearcoat's own two IBL-lit
+    // shader trios, inserted immediately after the existing
+    // pbrIblNormalMap* trio -- selectShaderPair() (above) picks between
+    // them via hasNormalMap, exactly like the PbrDirectLit quartet.
+    const atlantis::rhi::VertexInputLayout& pbrClearcoatIblVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrClearcoatIblVertexSpirv,
+    const std::vector<std::uint32_t>& pbrClearcoatIblFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrClearcoatIblNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrClearcoatIblNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrClearcoatIblNormalMapFragmentSpirv, bool environmentEnabled,
     atlantis::asset_system::AssetId materialAssetId,
     const atlantis::asset_system::MaterialAssetData& materialData,
     const atlantis::asset_system::TextureAssetData& textureData,
@@ -278,7 +324,10 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
                         pbrDirectLitFragmentSpirv, pbrIblVertexInputLayout, pbrIblVertexSpirv, pbrIblFragmentSpirv,
                         pbrDirectLitNormalMapVertexInputLayout, pbrDirectLitNormalMapVertexSpirv,
                         pbrDirectLitNormalMapFragmentSpirv, pbrIblNormalMapVertexInputLayout,
-                        pbrIblNormalMapVertexSpirv, pbrIblNormalMapFragmentSpirv, environmentEnabled, hasNormalMap);
+                        pbrIblNormalMapVertexSpirv, pbrIblNormalMapFragmentSpirv, pbrClearcoatIblVertexInputLayout,
+                        pbrClearcoatIblVertexSpirv, pbrClearcoatIblFragmentSpirv,
+                        pbrClearcoatIblNormalMapVertexInputLayout, pbrClearcoatIblNormalMapVertexSpirv,
+                        pbrClearcoatIblNormalMapFragmentSpirv, environmentEnabled, hasNormalMap);
   // Plan 0023 Milestone 5: pushConstantSizeBytes/pushConstantLayout are
   // 96/PbrDirectLit only for that kind (every other kind keeps today's
   // 64/ObjectToWorldOnly, unchanged); materialData's three PBR fields
@@ -305,10 +354,20 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
       {materialData.baseColorFactor[0], materialData.baseColorFactor[1], materialData.baseColorFactor[2],
        materialData.baseColorFactor[3]},
       materialData.metallicFactor, materialData.roughnessFactor,
-      materialData.kind == atlantis::asset_system::MaterialKind::PbrDirectLit && environmentEnabled
+      // Plan 0035 Milestone 2 (ADR-0081): PbrClearcoat is IBL-only this
+      // round (Spec 0035's own scope, enforced above by
+      // selectShaderPair()'s own ATLANTIS_CHECK), so it is Ibl-bound
+      // exactly like PbrDirectLit's own existing condition -- both
+      // kinds share the identical "environment-bound iff this kind AND
+      // environmentEnabled" shape, not collapsed into one shared check
+      // since a future direct-lit clearcoat variant would need to
+      // diverge here.
+      (materialData.kind == atlantis::asset_system::MaterialKind::PbrDirectLit ||
+       materialData.kind == atlantis::asset_system::MaterialKind::PbrClearcoat) &&
+              environmentEnabled
           ? atlantis::renderer::MaterialEnvironmentBinding::Ibl
           : atlantis::renderer::MaterialEnvironmentBinding::None,
-      normalMapTexturePtr);
+      normalMapTexturePtr, materialData.clearcoatFactor, materialData.clearcoatRoughness);
   if (materialResult.isErr()) return ResultT::Err(MaterialRealizationError::MaterialCreateFailed);
   candidate.material = std::make_unique<atlantis::renderer::Material>(std::move(materialResult.value()));
 
@@ -346,7 +405,15 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
     const std::vector<std::uint32_t>& pbrDirectLitNormalMapFragmentSpirv,
     const atlantis::rhi::VertexInputLayout& pbrIblNormalMapVertexInputLayout,
     const std::vector<std::uint32_t>& pbrIblNormalMapVertexSpirv,
-    const std::vector<std::uint32_t>& pbrIblNormalMapFragmentSpirv, bool environmentEnabled,
+    const std::vector<std::uint32_t>& pbrIblNormalMapFragmentSpirv,
+    // Plan 0035 Milestone 2 (ADR-0081): identical insertion point and
+    // threading as realizeOneMaterialCandidate()'s own two new trios.
+    const atlantis::rhi::VertexInputLayout& pbrClearcoatIblVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrClearcoatIblVertexSpirv,
+    const std::vector<std::uint32_t>& pbrClearcoatIblFragmentSpirv,
+    const atlantis::rhi::VertexInputLayout& pbrClearcoatIblNormalMapVertexInputLayout,
+    const std::vector<std::uint32_t>& pbrClearcoatIblNormalMapVertexSpirv,
+    const std::vector<std::uint32_t>& pbrClearcoatIblNormalMapFragmentSpirv, bool environmentEnabled,
     const std::vector<atlantis::asset_system::AssetId>& pendingIds,
     const std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>>&
         sampledTextureResourceMap,
@@ -399,7 +466,9 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
         pbrDirectLitVertexSpirv, pbrDirectLitFragmentSpirv, pbrIblVertexInputLayout, pbrIblVertexSpirv,
         pbrIblFragmentSpirv, pbrDirectLitNormalMapVertexInputLayout, pbrDirectLitNormalMapVertexSpirv,
         pbrDirectLitNormalMapFragmentSpirv, pbrIblNormalMapVertexInputLayout, pbrIblNormalMapVertexSpirv,
-        pbrIblNormalMapFragmentSpirv, environmentEnabled, id, materialIt->second, textureIt->second,
+        pbrIblNormalMapFragmentSpirv, pbrClearcoatIblVertexInputLayout, pbrClearcoatIblVertexSpirv,
+        pbrClearcoatIblFragmentSpirv, pbrClearcoatIblNormalMapVertexInputLayout, pbrClearcoatIblNormalMapVertexSpirv,
+        pbrClearcoatIblNormalMapFragmentSpirv, environmentEnabled, id, materialIt->second, textureIt->second,
         normalMapTextureData, effectiveSampledTextures);
     if (candidateResult.isErr()) {
       ATLANTIS_LOG_ERROR("realizeOneMaterialCandidate() failed -- material stays pending, retried next frame");
@@ -461,6 +530,19 @@ std::uint32_t sampledTextureBindingCountFor(atlantis::asset_system::MaterialKind
     case atlantis::asset_system::MaterialKind::PbrDirectLit:
       if (hasNormalMap) return environmentEnabled ? 5U : 3U;
       return environmentEnabled ? 4U : 2U;
+    // Plan 0035 Milestone 2 (ADR-0081): PbrClearcoat's own binding
+    // layout has no shadow-map slot (this Milestone's own disclosed
+    // IBL-only, no-shadow scope) -- base-color@1, environment
+    // cubemap@2, DFG LUT@3 (+normal map@4 when hasNormalMap) --
+    // pbr_clearcoat_ibl.slang/pbr_clearcoat_ibl_normal_map.slang both
+    // declare exactly that many bindings. environmentEnabled is
+    // asserted true elsewhere (selectShaderPair()) for this kind; the
+    // false arms here exist only so this function itself stays a total
+    // function over its own parameter domain, never called in that
+    // configuration in practice.
+    case atlantis::asset_system::MaterialKind::PbrClearcoat:
+      if (hasNormalMap) return environmentEnabled ? 4U : 3U;
+      return environmentEnabled ? 3U : 2U;
   }
   ATLANTIS_CHECK_MSG(
       false, "sampledTextureBindingCountFor(): unreachable -- MaterialKind's own closed switch above is exhaustive");

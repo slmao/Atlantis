@@ -1,16 +1,14 @@
-#include "pbr_normal_map_demo_fixture.h"
+#include "pbr_clearcoat_demo_fixture.h"
 
-#include <atlantis/asset_system/asset_id.h>
-#include <atlantis/asset_system/load_environment.h>
-#include <atlantis/asset_system/load_material.h>
 #include <atlantis/asset_system/mesh_artifact.h>
+#include <atlantis/asset_system/load_environment.h>
 #include <atlantis/render_graph/execution.h>
 #include <atlantis/render_graph/render_graph_builder.h>
 #include <atlantis/renderer/draw_item.h>
 #include <atlantis/renderer/renderer.h>
 #include <atlantis/rhi/command_list.h>
-#include <atlantis/runtime/environment_realization.h>
 #include <atlantis/runtime/material_realization.h>
+#include <atlantis/runtime/environment_realization.h>
 #include <atlantis/runtime/scene_extraction.h>
 #include <atlantis/runtime/scene_load.h>
 #include <atlantis/shader_system/reflection_loader.h>
@@ -27,19 +25,16 @@
 #include <utility>
 #include <vector>
 
-// Plan 0029 Section P19: same resource-creation skeleton as
-// integrated_showcase_demo_fixture.cpp -- calls Atlantis::RuntimeHost's
-// real loadAndInstantiateScene()/computePendingMaterialIds()/
-// realizePendingMaterials()/realizeOneMaterialCandidate()/
-// extractCameraMatrices()/extractCameraWorldPosition()/
-// extractFrameLightingData()/resolveMeshAsset()/resolveMaterialAsset()/
-// checkConformalTransform()/computeShadowLightSpaceMatrices() directly,
-// never re-implementing any of them. The shadow path is real, mirroring
-// that fixture's own identical shape. The control material (Fixture A/B
-// mechanism, P19) is realized once, lazily, on the first
-// renderPbrNormalMapDemoFrame() call -- see that function's own comment
-// below for why this is deferred past setUpPbrNormalMapDemoFixture()
-// itself.
+// Plan 0035 Milestone 2: see pbr_clearcoat_demo_fixture.h's own
+// top-of-file comment -- this file calls Atlantis::RuntimeHost's real
+// loadAndInstantiateScene()/computePendingMaterialIds()/
+// realizePendingMaterials()/extractCameraMatrices()/
+// extractCameraWorldPosition()/extractFrameLightingData()/
+// resolveMeshAsset()/resolveMaterialAsset()/checkConformalTransform()
+// directly, never re-implementing any of them. Duplicated, not shared,
+// from pbr_material_demo_fixture.cpp (that file's own top-of-file
+// comment establishes this repository's convention for from-scratch
+// composition roots).
 
 namespace atlantis::image_regression {
 
@@ -51,26 +46,20 @@ using atlantis::rhi::BufferPurpose;
 using atlantis::rhi::DepthFormat;
 using atlantis::rhi::Extent2D;
 using atlantis::rhi::VertexInputLayout;
-using atlantis::runtime::CameraMatrices;
 using atlantis::runtime::CameraWorldPositionData;
 using atlantis::runtime::checkConformalTransform;
 using atlantis::runtime::computePendingMaterialIds;
-using atlantis::runtime::computeShadowLightSpaceMatrices;
 using atlantis::runtime::extractCameraMatrices;
 using atlantis::runtime::extractCameraWorldPosition;
 using atlantis::runtime::extractFrameLightingData;
 using atlantis::runtime::FrameLightingData;
-using atlantis::runtime::identityMatrix;
 using atlantis::runtime::LightExtractionInput;
 using atlantis::runtime::loadAndInstantiateScene;
-using atlantis::runtime::Mat4;
-using atlantis::runtime::realizeOneMaterialCandidate;
 using atlantis::runtime::realizePendingMaterials;
 using atlantis::runtime::RealizedMaterialCandidate;
 using atlantis::runtime::resolveMeshAsset;
 using atlantis::runtime::resolveMaterialAsset;
 using atlantis::runtime::SceneLoadOutcome;
-using atlantis::runtime::Vec3;
 using atlantis::shader_system::loadReflectionMetadata;
 using atlantis::shader_system::ReflectionMetadata;
 using atlantis::shader_system::rhi_integration::MeshVertexAttributeSchema;
@@ -89,9 +78,9 @@ using atlantis::shader_system::rhi_integration::toVertexInputLayout;
   return words;
 }
 
-// Duplicated, not shared -- matches integrated_showcase_demo_fixture.cpp's
-// own identical Vertex schema exactly (the real, 60-byte mesh artifact
-// layout, Milestone 1).
+// Duplicated, not shared -- matches every sibling fixture's own identical
+// Vertex schema (Spec 0020's 44-byte position+color+UV0+normal+tangent
+// mesh artifact layout, which pbr_sphere.mesh.txt also uses).
 struct Vertex {
   float position[3];
   float color[3];
@@ -106,6 +95,12 @@ static_assert(offsetof(Vertex, uv) == atlantis::asset_system::kMeshArtifactUv0Of
 static_assert(offsetof(Vertex, normal) == atlantis::asset_system::kMeshArtifactNormalOffsetBytes);
 static_assert(offsetof(Vertex, tangent) == atlantis::asset_system::kMeshArtifactTangentOffsetBytes);
 static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrideBytes);
+
+// Plan 0027 Milestone 9 (ADR-0072 D-1/P5): the no-directional-light
+// light-space sentinel -- this fixture never configures a real
+// shadow-casting occluder, matching every sibling fixture's own identical
+// reasoning.
+constexpr float kIdentityMatrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
 
 [[nodiscard]] std::optional<VertexInputLayout> unlitTexturedVertexLayout(const ReflectionMetadata& vertexMetadata) {
   const std::vector<MeshVertexAttributeSchema> schema = {
@@ -139,10 +134,11 @@ static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrid
   return result.value();
 }
 
-// Plan 0029 Section P13/P19: the two normal-map PBR shader pairs' own
-// vertex schema -- pbrDirectLitVertexLayout()'s own schema above plus a
-// trailing tangent@3, matching pbr_direct_lit_normal_map.slang/
-// pbr_ibl_normal_map.slang's own VertexInput exactly.
+// Plan 0029 Section P13/Plan 0035 Milestone 2: pbrDirectLitVertexLayout()'s
+// own schema above plus a trailing tangent@3, matching
+// pbr_ibl_normal_map.slang/pbr_clearcoat_ibl_normal_map.slang's own
+// VertexInput exactly -- mirrors runtime_application.cpp's own identical
+// pbrNormalMapVertexLayout().
 [[nodiscard]] std::optional<VertexInputLayout> pbrNormalMapVertexLayout(const ReflectionMetadata& vertexMetadata) {
   const std::vector<MeshVertexAttributeSchema> schema = {
       MeshVertexAttributeSchema{.location = 0, .offsetBytes = offsetof(Vertex, position)},
@@ -175,133 +171,128 @@ static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrid
 
 }  // namespace
 
-atlantis::Result<PbrNormalMapDemoFixture, PbrNormalMapDemoSetupError> setUpPbrNormalMapDemoFixture(
-    const atlantis::runtime::BootstrapConfig& config, const std::string& controlMaterialArtifactPath,
-    const std::string& controlMaterialMetadataPath) {
-  using ResultT = atlantis::Result<PbrNormalMapDemoFixture, PbrNormalMapDemoSetupError>;
+atlantis::Result<PbrClearcoatDemoFixture, PbrClearcoatDemoSetupError> setUpPbrClearcoatDemoFixture(
+    const atlantis::runtime::BootstrapConfig& config) {
+  using ResultT = atlantis::Result<PbrClearcoatDemoFixture, PbrClearcoatDemoSetupError>;
 
   auto vertexSpirv = loadSpirvFile(config.unlitTexturedVertexShaderSpirvPath.c_str());
   auto fragmentSpirv = loadSpirvFile(config.unlitTexturedFragmentShaderSpirvPath.c_str());
   if (!vertexSpirv.has_value() || !fragmentSpirv.has_value()) {
-    return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+    return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
   }
   auto vertexReflectionResult = loadReflectionMetadata(config.unlitTexturedVertexShaderReflectionPath.c_str());
-  if (vertexReflectionResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+  if (vertexReflectionResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
   const auto vertexInputLayout = unlitTexturedVertexLayout(vertexReflectionResult.value());
-  if (!vertexInputLayout.has_value()) return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+  if (!vertexInputLayout.has_value()) return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
 
   auto litVertexSpirv = loadSpirvFile(config.litTexturedVertexShaderSpirvPath.c_str());
   auto litFragmentSpirv = loadSpirvFile(config.litTexturedFragmentShaderSpirvPath.c_str());
   if (!litVertexSpirv.has_value() || !litFragmentSpirv.has_value()) {
-    return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+    return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
   }
   auto litVertexReflectionResult = loadReflectionMetadata(config.litTexturedVertexShaderReflectionPath.c_str());
-  if (litVertexReflectionResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+  if (litVertexReflectionResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
   const auto litVertexInputLayout = litTexturedVertexLayout(litVertexReflectionResult.value());
-  if (!litVertexInputLayout.has_value()) return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+  if (!litVertexInputLayout.has_value()) return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
 
   auto pbrVertexSpirv = loadSpirvFile(config.pbrDirectLitVertexShaderSpirvPath.c_str());
   auto pbrFragmentSpirv = loadSpirvFile(config.pbrDirectLitFragmentShaderSpirvPath.c_str());
   if (!pbrVertexSpirv.has_value() || !pbrFragmentSpirv.has_value()) {
-    return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+    return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
   }
   auto pbrVertexReflectionResult = loadReflectionMetadata(config.pbrDirectLitVertexShaderReflectionPath.c_str());
-  if (pbrVertexReflectionResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+  if (pbrVertexReflectionResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
   const auto pbrVertexInputLayout = pbrDirectLitVertexLayout(pbrVertexReflectionResult.value());
-  if (!pbrVertexInputLayout.has_value()) return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
-
-  // Plan 0029 Section P15: the fifth, normal-map PbrDirectLit shader
-  // pair -- unconditionally required, mirroring runtime_application.cpp's
-  // own identical Step 2d-2.
-  auto pbrNormalMapVertexSpirv = loadSpirvFile(config.pbrDirectLitNormalMapVertexShaderSpirvPath.c_str());
-  auto pbrNormalMapFragmentSpirv = loadSpirvFile(config.pbrDirectLitNormalMapFragmentShaderSpirvPath.c_str());
-  if (!pbrNormalMapVertexSpirv.has_value() || !pbrNormalMapFragmentSpirv.has_value()) {
-    return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
-  }
-  auto pbrNormalMapVertexReflectionResult =
-      loadReflectionMetadata(config.pbrDirectLitNormalMapVertexShaderReflectionPath.c_str());
-  if (pbrNormalMapVertexReflectionResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
-  const auto pbrNormalMapVertexInputLayout = pbrNormalMapVertexLayout(pbrNormalMapVertexReflectionResult.value());
-  if (!pbrNormalMapVertexInputLayout.has_value()) return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+  if (!pbrVertexInputLayout.has_value()) return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
 
   auto shadowCastVertexSpirv = loadSpirvFile(config.shadowCastVertexShaderSpirvPath.c_str());
   auto shadowCastFragmentSpirv = loadSpirvFile(config.shadowCastFragmentShaderSpirvPath.c_str());
   if (!shadowCastVertexSpirv.has_value() || !shadowCastFragmentSpirv.has_value()) {
-    return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+    return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
   }
   auto shadowCastVertexReflectionResult = loadReflectionMetadata(config.shadowCastVertexShaderReflectionPath.c_str());
-  if (shadowCastVertexReflectionResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+  if (shadowCastVertexReflectionResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
   const auto shadowCastVertexInputLayout = shadowCastVertexLayout(shadowCastVertexReflectionResult.value());
-  if (!shadowCastVertexInputLayout.has_value()) return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+  if (!shadowCastVertexInputLayout.has_value()) return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
 
-  std::optional<std::vector<std::uint32_t>> pbrIblVertexSpirv;
-  std::optional<std::vector<std::uint32_t>> pbrIblFragmentSpirv;
-  std::optional<VertexInputLayout> pbrIblVertexInputLayout;
-  std::optional<std::vector<std::uint32_t>> pbrIblNormalMapVertexSpirv;
-  std::optional<std::vector<std::uint32_t>> pbrIblNormalMapFragmentSpirv;
-  std::optional<VertexInputLayout> pbrIblNormalMapVertexInputLayout;
-  std::optional<std::vector<std::uint32_t>> skyVertexSpirv;
-  std::optional<std::vector<std::uint32_t>> skyFragmentSpirv;
-  std::optional<VertexInputLayout> skyVertexInputLayout;
-  if (!config.environmentArtifactPath.empty()) {
-    if (atlantis::runtime::validateEnvironmentBootstrapConfig(config).isErr()) {
-      return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
-    }
-    pbrIblVertexSpirv = loadSpirvFile(config.pbrIblVertexShaderSpirvPath.c_str());
-    pbrIblFragmentSpirv = loadSpirvFile(config.pbrIblFragmentShaderSpirvPath.c_str());
-    auto pbrIblReflection = loadReflectionMetadata(config.pbrIblVertexShaderReflectionPath.c_str());
-    if (!pbrIblVertexSpirv.has_value() || !pbrIblFragmentSpirv.has_value() || pbrIblReflection.isErr()) {
-      return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
-    }
-    pbrIblVertexInputLayout = pbrDirectLitVertexLayout(pbrIblReflection.value());
-    if (!pbrIblVertexInputLayout.has_value()) return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+  // Plan 0035 Milestone 2 (ADR-0081): this fixture's own scenes always
+  // configure an environment (selectShaderPair() requires
+  // environmentEnabled for MaterialKind::PbrClearcoat), so pbrIbl/sky/
+  // pbrClearcoatIbl*/pbrClearcoatIblNormalMap* are all loaded
+  // unconditionally inside this block, mirroring
+  // setUpIblMaterialDemoFixture()'s own identical "environment always
+  // configured" convention -- unlike setUpPbrMaterialDemoFixture()'s own
+  // conditional gate.
+  if (atlantis::runtime::validateEnvironmentBootstrapConfig(config).isErr()) {
+    return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
+  }
+  auto pbrIblVertexSpirv = loadSpirvFile(config.pbrIblVertexShaderSpirvPath.c_str());
+  auto pbrIblFragmentSpirv = loadSpirvFile(config.pbrIblFragmentShaderSpirvPath.c_str());
+  auto pbrIblReflection = loadReflectionMetadata(config.pbrIblVertexShaderReflectionPath.c_str());
+  if (!pbrIblVertexSpirv.has_value() || !pbrIblFragmentSpirv.has_value() || pbrIblReflection.isErr()) {
+    return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
+  }
+  auto pbrIblVertexInputLayout = pbrDirectLitVertexLayout(pbrIblReflection.value());
+  if (!pbrIblVertexInputLayout.has_value()) return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
 
-    // Plan 0029 Section P15: the normal-map IBL PBR pair -- same
-    // hasEnvironment gate, same shape as the pbrIbl load immediately
-    // above.
-    pbrIblNormalMapVertexSpirv = loadSpirvFile(config.pbrIblNormalMapVertexShaderSpirvPath.c_str());
-    pbrIblNormalMapFragmentSpirv = loadSpirvFile(config.pbrIblNormalMapFragmentShaderSpirvPath.c_str());
-    auto pbrIblNormalMapReflection = loadReflectionMetadata(config.pbrIblNormalMapVertexShaderReflectionPath.c_str());
-    if (!pbrIblNormalMapVertexSpirv.has_value() || !pbrIblNormalMapFragmentSpirv.has_value() ||
-        pbrIblNormalMapReflection.isErr()) {
-      return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
-    }
-    pbrIblNormalMapVertexInputLayout = pbrNormalMapVertexLayout(pbrIblNormalMapReflection.value());
-    if (!pbrIblNormalMapVertexInputLayout.has_value()) {
-      return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
-    }
+  auto skyVertexSpirv = loadSpirvFile(config.skyVertexShaderSpirvPath.c_str());
+  auto skyFragmentSpirv = loadSpirvFile(config.skyFragmentShaderSpirvPath.c_str());
+  auto skyReflection = loadReflectionMetadata(config.skyVertexShaderReflectionPath.c_str());
+  if (!skyVertexSpirv.has_value() || !skyFragmentSpirv.has_value() || skyReflection.isErr()) {
+    return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
+  }
+  auto skyVertexInputLayout = outputTransformVertexLayout(skyReflection.value());
+  if (!skyVertexInputLayout.has_value()) return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
 
-    skyVertexSpirv = loadSpirvFile(config.skyVertexShaderSpirvPath.c_str());
-    skyFragmentSpirv = loadSpirvFile(config.skyFragmentShaderSpirvPath.c_str());
-    auto skyReflection = loadReflectionMetadata(config.skyVertexShaderReflectionPath.c_str());
-    if (!skyVertexSpirv.has_value() || !skyFragmentSpirv.has_value() || skyReflection.isErr()) {
-      return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
-    }
-    skyVertexInputLayout = outputTransformVertexLayout(skyReflection.value());
-    if (!skyVertexInputLayout.has_value()) return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+  // Plan 0035 Milestone 2 (ADR-0081): the two real clearcoat shader
+  // trios -- this fixture's own point of difference from every other
+  // sibling fixture (which all pass dead-path filler for these two
+  // trios).
+  auto pbrClearcoatIblVertexSpirv = loadSpirvFile(config.pbrClearcoatIblVertexShaderSpirvPath.c_str());
+  auto pbrClearcoatIblFragmentSpirv = loadSpirvFile(config.pbrClearcoatIblFragmentShaderSpirvPath.c_str());
+  auto pbrClearcoatIblReflection = loadReflectionMetadata(config.pbrClearcoatIblVertexShaderReflectionPath.c_str());
+  if (!pbrClearcoatIblVertexSpirv.has_value() || !pbrClearcoatIblFragmentSpirv.has_value() ||
+      pbrClearcoatIblReflection.isErr()) {
+    return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
+  }
+  auto pbrClearcoatIblVertexInputLayout = pbrDirectLitVertexLayout(pbrClearcoatIblReflection.value());
+  if (!pbrClearcoatIblVertexInputLayout.has_value()) {
+    return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
+  }
+
+  auto pbrClearcoatIblNormalMapVertexSpirv =
+      loadSpirvFile(config.pbrClearcoatIblNormalMapVertexShaderSpirvPath.c_str());
+  auto pbrClearcoatIblNormalMapFragmentSpirv =
+      loadSpirvFile(config.pbrClearcoatIblNormalMapFragmentShaderSpirvPath.c_str());
+  auto pbrClearcoatIblNormalMapReflection =
+      loadReflectionMetadata(config.pbrClearcoatIblNormalMapVertexShaderReflectionPath.c_str());
+  if (!pbrClearcoatIblNormalMapVertexSpirv.has_value() || !pbrClearcoatIblNormalMapFragmentSpirv.has_value() ||
+      pbrClearcoatIblNormalMapReflection.isErr()) {
+    return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
+  }
+  auto pbrClearcoatIblNormalMapVertexInputLayout =
+      pbrNormalMapVertexLayout(pbrClearcoatIblNormalMapReflection.value());
+  if (!pbrClearcoatIblNormalMapVertexInputLayout.has_value()) {
+    return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
   }
 
   auto outputTransformVertexSpirv = loadSpirvFile(config.outputTransformUnormVertexShaderSpirvPath.c_str());
   auto outputTransformFragmentSpirv = loadSpirvFile(config.outputTransformUnormFragmentShaderSpirvPath.c_str());
   if (!outputTransformVertexSpirv.has_value() || !outputTransformFragmentSpirv.has_value()) {
-    return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+    return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
   }
   auto outputTransformVertexReflectionResult =
       loadReflectionMetadata(config.outputTransformUnormVertexShaderReflectionPath.c_str());
-  if (outputTransformVertexReflectionResult.isErr()) {
-    return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
-  }
+  if (outputTransformVertexReflectionResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
   const auto outputTransformVertexInputLayout =
       outputTransformVertexLayout(outputTransformVertexReflectionResult.value());
-  if (!outputTransformVertexInputLayout.has_value()) {
-    return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
-  }
+  if (!outputTransformVertexInputLayout.has_value()) return ResultT::Err(PbrClearcoatDemoSetupError::ShaderLoadFailed);
 
   auto deviceResult = atlantis::vulkan_backend::createDevice(
-      {.applicationName = "Atlantis Image Regression Fixture (PBR Normal Map Demo)", .enableValidationLayers = true});
-  if (deviceResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::DeviceCreationFailed);
+      {.applicationName = "Atlantis Image Regression Fixture (PBR Clearcoat Demo)", .enableValidationLayers = true});
+  if (deviceResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::DeviceCreationFailed);
 
-  PbrNormalMapDemoFixture fixture;
+  PbrClearcoatDemoFixture fixture;
   fixture.device = std::move(deviceResult.value());
   fixture.unlitTexturedVertexInputLayout = *vertexInputLayout;
   fixture.unlitTexturedVertexSpirv = std::move(*vertexSpirv);
@@ -312,75 +303,75 @@ atlantis::Result<PbrNormalMapDemoFixture, PbrNormalMapDemoSetupError> setUpPbrNo
   fixture.pbrDirectLitVertexInputLayout = *pbrVertexInputLayout;
   fixture.pbrDirectLitVertexSpirv = std::move(*pbrVertexSpirv);
   fixture.pbrDirectLitFragmentSpirv = std::move(*pbrFragmentSpirv);
-  fixture.pbrDirectLitNormalMapVertexInputLayout = *pbrNormalMapVertexInputLayout;
-  fixture.pbrDirectLitNormalMapVertexSpirv = std::move(*pbrNormalMapVertexSpirv);
-  fixture.pbrDirectLitNormalMapFragmentSpirv = std::move(*pbrNormalMapFragmentSpirv);
   fixture.shadowCastVertexInputLayout = *shadowCastVertexInputLayout;
   fixture.shadowCastVertexSpirv = std::move(*shadowCastVertexSpirv);
   fixture.shadowCastFragmentSpirv = std::move(*shadowCastFragmentSpirv);
-  if (pbrIblVertexSpirv.has_value()) {
-    fixture.pbrIblVertexInputLayout = std::move(*pbrIblVertexInputLayout);
-    fixture.pbrIblVertexSpirv = std::move(*pbrIblVertexSpirv);
-    fixture.pbrIblFragmentSpirv = std::move(*pbrIblFragmentSpirv);
-    fixture.pbrIblNormalMapVertexInputLayout = std::move(*pbrIblNormalMapVertexInputLayout);
-    fixture.pbrIblNormalMapVertexSpirv = std::move(*pbrIblNormalMapVertexSpirv);
-    fixture.pbrIblNormalMapFragmentSpirv = std::move(*pbrIblNormalMapFragmentSpirv);
-  }
-  if (skyVertexSpirv.has_value()) {
-    fixture.skyVertexInputLayout = std::move(*skyVertexInputLayout);
-    fixture.skyVertexSpirv = std::move(*skyVertexSpirv);
-    fixture.skyFragmentSpirv = std::move(*skyFragmentSpirv);
-  }
+  fixture.pbrIblVertexInputLayout = std::move(*pbrIblVertexInputLayout);
+  fixture.pbrIblVertexSpirv = std::move(*pbrIblVertexSpirv);
+  fixture.pbrIblFragmentSpirv = std::move(*pbrIblFragmentSpirv);
+  fixture.skyVertexInputLayout = std::move(*skyVertexInputLayout);
+  fixture.skyVertexSpirv = std::move(*skyVertexSpirv);
+  fixture.skyFragmentSpirv = std::move(*skyFragmentSpirv);
+  fixture.pbrClearcoatIblVertexInputLayout = std::move(*pbrClearcoatIblVertexInputLayout);
+  fixture.pbrClearcoatIblVertexSpirv = std::move(*pbrClearcoatIblVertexSpirv);
+  fixture.pbrClearcoatIblFragmentSpirv = std::move(*pbrClearcoatIblFragmentSpirv);
+  fixture.pbrClearcoatIblNormalMapVertexInputLayout = std::move(*pbrClearcoatIblNormalMapVertexInputLayout);
+  fixture.pbrClearcoatIblNormalMapVertexSpirv = std::move(*pbrClearcoatIblNormalMapVertexSpirv);
+  fixture.pbrClearcoatIblNormalMapFragmentSpirv = std::move(*pbrClearcoatIblNormalMapFragmentSpirv);
   fixture.outputTransformUnormVertexInputLayout = *outputTransformVertexInputLayout;
   fixture.outputTransformUnormVertexSpirv = std::move(*outputTransformVertexSpirv);
   fixture.outputTransformUnormFragmentSpirv = std::move(*outputTransformFragmentSpirv);
 
+  // Phase 1: the real, Runtime-private CPU load/instantiate pipeline --
+  // never duplicated here.
   auto sceneLoadResult = loadAndInstantiateScene(config, fixture.device.get(), *vertexInputLayout);
-  if (sceneLoadResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::SceneLoadFailed);
+  if (sceneLoadResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::SceneLoadFailed);
   SceneLoadOutcome outcome = std::move(sceneLoadResult.value());
   fixture.world.emplace(std::move(outcome.world));
   fixture.meshResourceMap = std::move(outcome.meshResourceMap);
   fixture.materialDataMap = std::move(outcome.materialDataMap);
   fixture.textureDataMap = std::move(outcome.textureDataMap);
-  if (!config.environmentArtifactPath.empty()) {
-    auto environmentResult = atlantis::asset_system::loadEnvironmentAsset(config.environmentArtifactPath,
-                                                                           config.environmentMetadataPath);
-    if (environmentResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::SceneLoadFailed);
-    fixture.environmentData.emplace(std::move(environmentResult.value()));
-  }
+  auto environmentResult =
+      atlantis::asset_system::loadEnvironmentAsset(config.environmentArtifactPath, config.environmentMetadataPath);
+  if (environmentResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::SceneLoadFailed);
+  fixture.environmentData.emplace(std::move(environmentResult.value()));
 
-  auto cameraBufferResult = fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
-  if (cameraBufferResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
+  // Plan 0023 Milestone 2/8 / Plan 0027 Milestone 9 (ADR-0072 D-9/P9d):
+  // this fixture's own independent 592-byte Camera/Lighting/
+  // CameraWorldPosition/light-space buffer -- matches every sibling
+  // fixture's own identical, current sizing.
+  auto cameraBufferResult = fixture.device->createBuffer(
+      {.purpose = BufferPurpose::Uniform,
+       .sizeBytes = 592});
+  if (cameraBufferResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ResourceCreationFailed);
   fixture.cameraBuffer = std::move(cameraBufferResult.value());
 
-  const Extent2D extent{kPbrNormalMapDemoExtentPixels, kPbrNormalMapDemoExtentPixels};
+  const Extent2D extent{kPbrClearcoatDemoExtentPixels, kPbrClearcoatDemoExtentPixels};
 
   auto depthTextureResult = fixture.device->createTexture({.extent = extent, .format = DepthFormat::D32Sfloat});
-  if (depthTextureResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
+  if (depthTextureResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ResourceCreationFailed);
   fixture.depthTexture = std::move(depthTextureResult.value());
 
   auto offscreenTargetResult =
-      fixture.device->createOffscreenTarget({.extent = extent, .format = kPbrNormalMapDemoColorFormat});
-  if (offscreenTargetResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
+      fixture.device->createOffscreenTarget({.extent = extent, .format = kPbrClearcoatDemoColorFormat});
+  if (offscreenTargetResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ResourceCreationFailed);
   fixture.offscreenTarget = std::move(offscreenTargetResult.value());
 
   const std::size_t readbackSizeBytes =
-      static_cast<std::size_t>(kPbrNormalMapDemoExtentPixels) * kPbrNormalMapDemoExtentPixels * 4;
+      static_cast<std::size_t>(kPbrClearcoatDemoExtentPixels) * kPbrClearcoatDemoExtentPixels * 4;
   auto readbackBufferResult =
       fixture.device->createBuffer({.purpose = BufferPurpose::Readback, .sizeBytes = readbackSizeBytes});
-  if (readbackBufferResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
+  if (readbackBufferResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ResourceCreationFailed);
   fixture.readbackBuffer = std::move(readbackBufferResult.value());
 
   auto hdrColorTargetResult = fixture.device->createHdrColorTarget({.extent = extent});
-  if (hdrColorTargetResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
+  if (hdrColorTargetResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ResourceCreationFailed);
   fixture.hdrColorTarget = std::move(hdrColorTargetResult.value());
 
   const float fullscreenTriangleVertices[6] = {-1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f};
   auto fullscreenTriangleVertexBufferResult = fixture.device->createBuffer(
       {.purpose = BufferPurpose::Vertex, .sizeBytes = sizeof(fullscreenTriangleVertices)});
-  if (fullscreenTriangleVertexBufferResult.isErr()) {
-    return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
-  }
+  if (fullscreenTriangleVertexBufferResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ResourceCreationFailed);
   fixture.fullscreenTriangleVertexBuffer = std::move(fullscreenTriangleVertexBufferResult.value());
   std::memcpy(fixture.fullscreenTriangleVertexBuffer->mappedData(), fullscreenTriangleVertices,
               sizeof(fullscreenTriangleVertices));
@@ -388,16 +379,14 @@ atlantis::Result<PbrNormalMapDemoFixture, PbrNormalMapDemoSetupError> setUpPbrNo
   const std::uint16_t fullscreenTriangleIndices[3] = {0, 1, 2};
   auto fullscreenTriangleIndexBufferResult = fixture.device->createBuffer(
       {.purpose = BufferPurpose::Index, .sizeBytes = sizeof(fullscreenTriangleIndices)});
-  if (fullscreenTriangleIndexBufferResult.isErr()) {
-    return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
-  }
+  if (fullscreenTriangleIndexBufferResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ResourceCreationFailed);
   fixture.fullscreenTriangleIndexBuffer = std::move(fullscreenTriangleIndexBufferResult.value());
   std::memcpy(fixture.fullscreenTriangleIndexBuffer->mappedData(), fullscreenTriangleIndices,
               sizeof(fullscreenTriangleIndices));
 
   auto outputTransformSamplerResult = fixture.device->createSampler(
       {.filter = atlantis::rhi::Filter::Linear, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
-  if (outputTransformSamplerResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
+  if (outputTransformSamplerResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ResourceCreationFailed);
   fixture.outputTransformSampler = std::move(outputTransformSamplerResult.value());
 
   auto outputTransformPipelineResult = fixture.device->createPipeline(
@@ -406,36 +395,34 @@ atlantis::Result<PbrNormalMapDemoFixture, PbrNormalMapDemoSetupError> setUpPbrNo
        .fragmentShader = {.spirvWords = fixture.outputTransformUnormFragmentSpirv.data(),
                            .wordCount = fixture.outputTransformUnormFragmentSpirv.size()},
        .vertexInputLayout = fixture.outputTransformUnormVertexInputLayout,
-       .colorFormat = kPbrNormalMapDemoColorFormat,
+       .colorFormat = kPbrClearcoatDemoColorFormat,
        .pushConstantSizeBytes = 4,  // Plan 0031
        .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
        .hasDepthAttachment = false});
-  if (outputTransformPipelineResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
+  if (outputTransformPipelineResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ResourceCreationFailed);
   fixture.outputTransformPipeline = std::move(outputTransformPipelineResult.value());
 
-  if (skyVertexSpirv.has_value()) {
-    auto skyPipelineResult = fixture.device->createPipeline(
-        {.vertexShader = {.spirvWords = fixture.skyVertexSpirv.data(), .wordCount = fixture.skyVertexSpirv.size()},
-         .fragmentShader = {.spirvWords = fixture.skyFragmentSpirv.data(),
-                             .wordCount = fixture.skyFragmentSpirv.size()},
-         .vertexInputLayout = fixture.skyVertexInputLayout,
-         .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
-         .depthFormat = DepthFormat::D32Sfloat,
-         .sampledTextureBindingCount = 1,
-         .hasDepthAttachment = true,
-         .depthWriteEnabled = false});
-    if (skyPipelineResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
-    fixture.skyPipeline = std::move(skyPipelineResult.value());
-  }
+  auto skyPipelineResult = fixture.device->createPipeline(
+      {.vertexShader = {.spirvWords = fixture.skyVertexSpirv.data(), .wordCount = fixture.skyVertexSpirv.size()},
+       .fragmentShader = {.spirvWords = fixture.skyFragmentSpirv.data(),
+                           .wordCount = fixture.skyFragmentSpirv.size()},
+       .vertexInputLayout = fixture.skyVertexInputLayout,
+       .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
+       .depthFormat = DepthFormat::D32Sfloat,
+       .sampledTextureBindingCount = 1,
+       .hasDepthAttachment = true,
+       .depthWriteEnabled = false});
+  if (skyPipelineResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ResourceCreationFailed);
+  fixture.skyPipeline = std::move(skyPipelineResult.value());
 
   auto shadowMapResult = fixture.device->createShadowMap({.extent = {1024, 1024}});
-  if (shadowMapResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
+  if (shadowMapResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ResourceCreationFailed);
   fixture.shadowMap = std::move(shadowMapResult.value());
 
   auto shadowMapSamplerResult = fixture.device->createSampler(
       {.filter = atlantis::rhi::Filter::Nearest, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
-  if (shadowMapSamplerResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
+  if (shadowMapSamplerResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ResourceCreationFailed);
   fixture.shadowMapSampler = std::move(shadowMapSamplerResult.value());
 
   auto shadowCastPipelineResult = fixture.device->createPipeline(
@@ -451,54 +438,40 @@ atlantis::Result<PbrNormalMapDemoFixture, PbrNormalMapDemoSetupError> setUpPbrNo
        .hasDepthAttachment = true,
        .depthWriteEnabled = true,
        .hasColorAttachment = false});
-  if (shadowCastPipelineResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
+  if (shadowCastPipelineResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ResourceCreationFailed);
   fixture.shadowCastPipeline = std::move(shadowCastPipelineResult.value());
 
   auto shadowLightSpaceBufferResult =
       fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 128});
-  if (shadowLightSpaceBufferResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
+  if (shadowLightSpaceBufferResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ResourceCreationFailed);
   fixture.shadowLightSpaceBuffer = std::move(shadowLightSpaceBufferResult.value());
-
-  // Plan 0029 Section P19 (Fixture A/B mechanism, step 3): resolve the
-  // control material's own CPU-side data now (no GPU work, no
-  // dependency on a CommandList) -- its own GPU realization (which DOES
-  // need a CommandList and this frame's own dedup state) is deferred to
-  // the first renderPbrNormalMapDemoFrame() call, matching how every
-  // OTHER GPU resource in this fixture (materials, environment) is
-  // already realized lazily during render(), never during setup().
-  auto controlMaterialResult =
-      atlantis::asset_system::loadMaterialAsset(controlMaterialArtifactPath, controlMaterialMetadataPath);
-  if (controlMaterialResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::SceneLoadFailed);
-  fixture.controlMaterialData.emplace(controlMaterialResult.value());
-  fixture.controlMaterialAssetId =
-      atlantis::asset_system::computeAssetId("materials/pbr_normal_mapped_control.material.txt");
 
   return ResultT::Ok(std::move(fixture));
 }
 
-atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDemoFrame(
-    PbrNormalMapDemoFixture& fixture, bool includeShadowCasters, bool useControlMaterial) {
+atlantis::Result<PixelBuffer, PbrClearcoatDemoRenderError> renderPbrClearcoatDemoFrame(
+    PbrClearcoatDemoFixture& fixture) {
   namespace rhi = atlantis::rhi;
   namespace render_graph = atlantis::render_graph;
-  using ResultT = atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError>;
+  using ResultT = atlantis::Result<PixelBuffer, PbrClearcoatDemoRenderError>;
 
   auto acquireResult = fixture.offscreenTarget->acquireTarget();
-  if (acquireResult.isErr()) return ResultT::Err(PbrNormalMapDemoRenderError::AcquireFailed);
+  if (acquireResult.isErr()) return ResultT::Err(PbrClearcoatDemoRenderError::AcquireFailed);
   std::unique_ptr<rhi::RenderTarget> target = std::move(acquireResult.value());
 
   fixture.world->updateTransforms();
 
   const auto activeCamera = fixture.world->activeCamera();
-  if (!activeCamera.has_value()) return ResultT::Err(PbrNormalMapDemoRenderError::NoActiveCamera);
+  if (!activeCamera.has_value()) return ResultT::Err(PbrClearcoatDemoRenderError::NoActiveCamera);
   const auto cameraWorldMatrixResult = fixture.world->getWorldMatrix(*activeCamera);
   const auto cameraComponentResult = fixture.world->getCamera(*activeCamera);
   if (cameraWorldMatrixResult.isErr() || cameraComponentResult.isErr()) {
-    return ResultT::Err(PbrNormalMapDemoRenderError::ExtractionFailed);
+    return ResultT::Err(PbrClearcoatDemoRenderError::ExtractionFailed);
   }
   const atlantis::world::Camera cameraComponent = cameraComponentResult.value();
   const auto extractionResult = extractCameraMatrices(cameraWorldMatrixResult.value(), cameraComponent.fovYRadians,
                                                         cameraComponent.nearZ, cameraComponent.farZ, 1.0f);
-  if (extractionResult.isErr()) return ResultT::Err(PbrNormalMapDemoRenderError::ExtractionFailed);
+  if (extractionResult.isErr()) return ResultT::Err(PbrClearcoatDemoRenderError::ExtractionFailed);
 
   auto* cameraData = static_cast<float*>(fixture.cameraBuffer->mappedData());
   for (std::size_t i = 0; i < 16; ++i) cameraData[i] = extractionResult.value().view[i];
@@ -509,12 +482,12 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
     const auto lightResult = fixture.world->getLight(id);
     const auto lightWorldMatrixResult = fixture.world->getWorldMatrix(id);
     if (lightResult.isErr() || lightWorldMatrixResult.isErr()) {
-      return ResultT::Err(PbrNormalMapDemoRenderError::LightExtractionFailed);
+      return ResultT::Err(PbrClearcoatDemoRenderError::LightExtractionFailed);
     }
     lightInputs.push_back({lightResult.value(), lightWorldMatrixResult.value()});
   }
   const auto lightingResult = extractFrameLightingData(lightInputs);
-  if (lightingResult.isErr()) return ResultT::Err(PbrNormalMapDemoRenderError::LightExtractionFailed);
+  if (lightingResult.isErr()) return ResultT::Err(PbrClearcoatDemoRenderError::LightExtractionFailed);
   auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
   *lightingData = lightingResult.value();
 
@@ -528,22 +501,8 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   }
   atlantis::runtime::writeEnvironmentIrradianceSh(std::span<float, 36>(cameraData + 80, 36), irradianceShSource);
 
-  const bool hasDirectionalLight = lightingResult.value().directionalLightCount > 0;
-  Mat4 lightSpaceView = identityMatrix();
-  Mat4 lightSpaceProjection = identityMatrix();
-  if (hasDirectionalLight) {
-    const auto& gpuDirection = lightingResult.value().directionalLights[0].direction;
-    const CameraMatrices lightSpaceMatrices =
-        computeShadowLightSpaceMatrices(Vec3{gpuDirection[0], gpuDirection[1], gpuDirection[2]});
-    lightSpaceView = lightSpaceMatrices.view;
-    lightSpaceProjection = lightSpaceMatrices.projection;
-  }
-  float* lightSpaceTail = cameraData + 116;
-  std::memcpy(lightSpaceTail, lightSpaceView.data(), sizeof(float) * 16);
-  std::memcpy(lightSpaceTail + 16, lightSpaceProjection.data(), sizeof(float) * 16);
-  auto* shadowLightSpaceData = static_cast<float*>(fixture.shadowLightSpaceBuffer->mappedData());
-  std::memcpy(shadowLightSpaceData, lightSpaceView.data(), sizeof(float) * 16);
-  std::memcpy(shadowLightSpaceData + 16, lightSpaceProjection.data(), sizeof(float) * 16);
+  std::memcpy(cameraData + 116, kIdentityMatrix, sizeof(float) * 16);
+  std::memcpy(cameraData + 116 + 16, kIdentityMatrix, sizeof(float) * 16);
 
   std::vector<atlantis::asset_system::AssetId> referencedMaterialIds;
   for (const auto& id : fixture.world->renderableEntities()) {
@@ -563,89 +522,41 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
       computePendingMaterialIds(referencedMaterialIds, alreadyRealizedMaterialIds);
 
   auto commandListResult = fixture.device->createCommandList();
-  if (commandListResult.isErr()) return ResultT::Err(PbrNormalMapDemoRenderError::CommandListCreationFailed);
+  if (commandListResult.isErr()) return ResultT::Err(PbrClearcoatDemoRenderError::CommandListCreationFailed);
   std::unique_ptr<rhi::CommandList> commandList = std::move(commandListResult.value());
 
   std::optional<atlantis::runtime::EnvironmentLightingCandidate> environmentCandidate;
   if (fixture.environmentData.has_value() && !fixture.environmentLightingResources.has_value()) {
     auto result = atlantis::runtime::realizeEnvironmentCandidate(*fixture.device, *fixture.environmentData);
-    if (result.isErr()) return ResultT::Err(PbrNormalMapDemoRenderError::CommandListCreationFailed);
+    if (result.isErr()) return ResultT::Err(PbrClearcoatDemoRenderError::CommandListCreationFailed);
     environmentCandidate.emplace(std::move(result.value()));
     atlantis::runtime::recordEnvironmentUploads(*commandList, *environmentCandidate);
   }
-  const bool environmentEnabled =
-      fixture.environmentData.has_value() || fixture.environmentLightingResources.has_value();
+  const bool environmentEnabled = fixture.environmentData.has_value() || fixture.environmentLightingResources.has_value();
 
-  // Plan 0029 Section P15: the real, normal-mapped trios (not filler) --
-  // this fixture's own sphere material genuinely declares a normal map.
-  // Plan 0035 Milestone 2 (ADR-0081): the two new clearcoat trailing
-  // trios are dead-path filler -- this fixture's own scene never
-  // realizes a PbrClearcoat material, reusing pbrDirectLit*'s own
-  // values, mirroring every other no-clearcoat composition root's
-  // identical reuse.
   std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
+      // Plan 0035 Milestone 2 (ADR-0081): unlike every other sibling
+      // fixture, the two trailing trios below are the REAL, loaded
+      // pbrClearcoatIbl*/pbrClearcoatIblNormalMap* shader data -- this
+      // fixture's own scenes reference MaterialKind::PbrClearcoat
+      // materials, so selectShaderPair() (material_realization.cpp) must
+      // see genuine shader trios here, never dead-path filler.
       realizePendingMaterials(*fixture.device, *commandList, fixture.unlitTexturedVertexInputLayout,
                                fixture.unlitTexturedVertexSpirv, fixture.unlitTexturedFragmentSpirv,
-                               fixture.litTexturedVertexInputLayout, fixture.litTexturedVertexSpirv,
-                               fixture.litTexturedFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
-                               fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
-                               fixture.pbrIblVertexInputLayout, fixture.pbrIblVertexSpirv,
-                               fixture.pbrIblFragmentSpirv, fixture.pbrDirectLitNormalMapVertexInputLayout,
-                               fixture.pbrDirectLitNormalMapVertexSpirv, fixture.pbrDirectLitNormalMapFragmentSpirv,
-                               fixture.pbrIblNormalMapVertexInputLayout, fixture.pbrIblNormalMapVertexSpirv,
-                               fixture.pbrIblNormalMapFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
-                               fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+                               fixture.litTexturedVertexInputLayout,
+                               fixture.litTexturedVertexSpirv, fixture.litTexturedFragmentSpirv,
                                fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
-                               fixture.pbrDirectLitFragmentSpirv, environmentEnabled, pendingMaterialIds,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
+                               fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv,
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
+                               fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv,
+                               fixture.pbrClearcoatIblVertexInputLayout, fixture.pbrClearcoatIblVertexSpirv,
+                               fixture.pbrClearcoatIblFragmentSpirv, fixture.pbrClearcoatIblNormalMapVertexInputLayout,
+                               fixture.pbrClearcoatIblNormalMapVertexSpirv,
+                               fixture.pbrClearcoatIblNormalMapFragmentSpirv, environmentEnabled,
+                               pendingMaterialIds,
                                fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);
-
-  // Plan 0029 Section P19 (Fixture A/B mechanism, step 3): the control
-  // material's own one-time GPU realization -- deferred to here (not
-  // setup()) so it can dedup its shared base-color texture against
-  // whatever the real material's own realizePendingMaterials() call
-  // just uploaded THIS SAME frame (frame 1) or already published in an
-  // earlier frame. Reuses the exact same effectiveSampledTextures
-  // dedup shape realizePendingMaterials() itself builds internally.
-  if (!fixture.controlMaterial) {
-    std::unordered_map<atlantis::asset_system::AssetId, const rhi::SampledTexture*> effectiveSampledTextures;
-    for (const auto& [id, texture] : fixture.sampledTextureResourceMap) effectiveSampledTextures.emplace(id, texture.get());
-    for (const auto& [materialId, candidate] : realizedCandidates) {
-      if (candidate.newSampledTexture) effectiveSampledTextures.emplace(candidate.textureAssetId, candidate.newSampledTexture.get());
-    }
-    const auto controlTextureIt = fixture.textureDataMap.find(fixture.controlMaterialData->textureAsset);
-    if (controlTextureIt == fixture.textureDataMap.end()) {
-      return ResultT::Err(PbrNormalMapDemoRenderError::ControlMaterialRealizationFailed);
-    }
-    // Plan 0035 Milestone 2 (ADR-0081): same dead-path clearcoat filler
-    // as the realizePendingMaterials() call above.
-    auto controlCandidateResult = realizeOneMaterialCandidate(
-        *fixture.device, fixture.unlitTexturedVertexInputLayout, fixture.unlitTexturedVertexSpirv,
-        fixture.unlitTexturedFragmentSpirv, fixture.litTexturedVertexInputLayout, fixture.litTexturedVertexSpirv,
-        fixture.litTexturedFragmentSpirv, fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
-        fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout, fixture.pbrIblVertexSpirv,
-        fixture.pbrIblFragmentSpirv, fixture.pbrDirectLitNormalMapVertexInputLayout,
-        fixture.pbrDirectLitNormalMapVertexSpirv, fixture.pbrDirectLitNormalMapFragmentSpirv,
-        fixture.pbrIblNormalMapVertexInputLayout, fixture.pbrIblNormalMapVertexSpirv,
-        fixture.pbrIblNormalMapFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
-        fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
-        fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv, environmentEnabled,
-        fixture.controlMaterialAssetId, *fixture.controlMaterialData, controlTextureIt->second,
-        /*normalMapTextureData=*/nullptr, effectiveSampledTextures);
-    if (controlCandidateResult.isErr()) {
-      return ResultT::Err(PbrNormalMapDemoRenderError::ControlMaterialRealizationFailed);
-    }
-    RealizedMaterialCandidate controlCandidate = std::move(controlCandidateResult.value());
-    // The base-color texture is always already realized by the real
-    // material above (same frame or an earlier one) -- a genuine dedup
-    // miss here would indicate the two materials' own textureAsset
-    // values unexpectedly diverged, an invariant violation this fixture
-    // does not attempt to recover from.
-    if (controlCandidate.newSampledTexture) {
-      return ResultT::Err(PbrNormalMapDemoRenderError::ControlMaterialRealizationFailed);
-    }
-    fixture.controlSampler = std::move(controlCandidate.sampler);
-    fixture.controlMaterial = std::move(controlCandidate.material);
-  }
 
   std::vector<atlantis::asset_system::AssetId> knownMaterialIds = alreadyRealizedMaterialIds;
   for (const auto& [assetId, candidate] : realizedCandidates) knownMaterialIds.push_back(assetId);
@@ -655,12 +566,6 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   for (const auto& [assetId, mesh] : fixture.meshResourceMap) knownMeshAssetIds.push_back(assetId);
 
   std::vector<DrawItem> drawItems;
-  // Plan 0029 Section P19: the one DrawItem whose own resolved material
-  // declares a normal map (this scene's sphere, the only one) -- tracked
-  // by index while building R1 below, so the R2 comparison render (P19's
-  // own Fixture A/B mechanism) can swap exactly that one entry's own
-  // `.material` pointer, never guessing by position.
-  std::optional<std::size_t> normalMappedDrawItemIndex;
   for (const auto& id : fixture.world->renderableEntities()) {
     const auto renderableResult = fixture.world->getRenderable(id);
     if (renderableResult.isErr()) continue;
@@ -672,10 +577,15 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
     if (!materialAsset.has_value()) continue;
     if (resolveMaterialAsset(*materialAsset, knownMaterialIds).isErr()) continue;
 
+    // Gated on this entity's OWN MaterialAssetData.kind -- an
+    // UnlitTextured-bound entity never calls checkConformalTransform().
+    // Plan 0035 Milestone 2: PbrClearcoat shares PbrDirectLit's own exact
+    // vertex-normal-transform shape, so it needs this same gate too.
     const auto materialDataIt = fixture.materialDataMap.find(*materialAsset);
     if (materialDataIt == fixture.materialDataMap.end()) continue;  // resolveMaterialAsset() already confirmed membership; defensive only
     if (materialDataIt->second.kind == atlantis::asset_system::MaterialKind::LitTextured ||
-        materialDataIt->second.kind == atlantis::asset_system::MaterialKind::PbrDirectLit) {
+        materialDataIt->second.kind == atlantis::asset_system::MaterialKind::PbrDirectLit ||
+        materialDataIt->second.kind == atlantis::asset_system::MaterialKind::PbrClearcoat) {
       if (checkConformalTransform(worldMatrixResult.value()).isErr()) continue;  // skip this entity for this frame only
     }
 
@@ -692,20 +602,7 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
     item.mesh = &fixture.meshResourceMap.at(renderableResult.value().meshAsset);
     item.material = resolvedMaterial;
     item.objectToWorld = worldMatrixResult.value();
-    if (materialDataIt->second.normalMapTexture != 0) normalMappedDrawItemIndex = drawItems.size();
     drawItems.push_back(item);
-  }
-  fixture.lastDrawItemCount = drawItems.size();
-
-  const std::vector<DrawItem> shadowCasterDrawItems = includeShadowCasters ? drawItems : std::vector<DrawItem>{};
-
-  // Plan 0029 Section P19 (Fixture A/B mechanism): R2 is a copy of R1's
-  // own DrawItems with only the sphere entry's `.material` reassigned
-  // to `&fixture.controlMaterial` -- mesh, transform, and every other
-  // DrawItem are untouched.
-  std::vector<DrawItem> renderDrawItems = drawItems;
-  if (useControlMaterial && normalMappedDrawItemIndex.has_value()) {
-    renderDrawItems[*normalMappedDrawItemIndex].material = fixture.controlMaterial.get();
   }
 
   Renderer renderer;
@@ -715,13 +612,13 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   } else if (fixture.environmentLightingResources.has_value()) {
     environmentLightingView.emplace(fixture.environmentLightingResources->borrowedView());
   }
-  renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, renderDrawItems,
+  renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, drawItems,
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
                       *fixture.outputTransformPipeline, *fixture.outputTransformSampler, 0.0f,
                       environmentLightingView.has_value() ? &*environmentLightingView : nullptr,
                       fixture.skyPipeline.get(), *fixture.shadowMap, *fixture.shadowMapSampler,
-                      *fixture.shadowCastPipeline, *fixture.shadowLightSpaceBuffer, shadowCasterDrawItems);
+                      *fixture.shadowCastPipeline, *fixture.shadowLightSpaceBuffer, {});
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");
@@ -731,32 +628,35 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
     cmd.copyRenderTargetToBuffer(*target, *fixture.readbackBuffer);
   });
   auto copyCompileResult = copyBuilder.compile();
-  if (copyCompileResult.isErr()) return ResultT::Err(PbrNormalMapDemoRenderError::CommandListCreationFailed);
+  if (copyCompileResult.isErr()) return ResultT::Err(PbrClearcoatDemoRenderError::CommandListCreationFailed);
   const std::vector<render_graph::ResourceBinding> copyBindings{{.resource = copyCompileResult.value().resourceAt(0),
                                                                    .target = target.get(),
                                                                    .incomingState = rhi::ResourceState::TransferSource}};
   render_graph::execute(copyCompileResult.value(), copyBindings, *commandList);
 
   auto submitResult = fixture.device->submit(std::move(commandList), *target);
-  if (submitResult.isErr()) return ResultT::Err(PbrNormalMapDemoRenderError::SubmitFailed);
+  if (submitResult.isErr()) return ResultT::Err(PbrClearcoatDemoRenderError::SubmitFailed);
 
   auto waitResult = fixture.device->waitIdle();
-  if (waitResult.isErr()) return ResultT::Err(PbrNormalMapDemoRenderError::WaitIdleFailed);
+  if (waitResult.isErr()) return ResultT::Err(PbrClearcoatDemoRenderError::WaitIdleFailed);
 
   for (auto& [assetId, candidate] : realizedCandidates) {
     if (candidate.newSampledTexture) {
       fixture.sampledTextureResourceMap.emplace(candidate.textureAssetId, std::move(candidate.newSampledTexture));
     }
-    // Plan 0029 Section P15: the normal-map texture publishes into the
-    // SAME sampledTextureResourceMap the base-color texture already
-    // uses -- omitting this (unlike newSampledTexture above) would
-    // destroy the just-uploaded normal-map SampledTexture when
-    // realizedCandidates goes out of scope at the end of this
-    // function, leaving the just-published Material's own
-    // normalMapTexture() a dangling pointer on the very next frame.
+    // Plan 0035 Milestone 2: mirrors runtime_application.cpp's own real,
+    // production commit (Step 3) -- normalMapTextureAssetId/
+    // newNormalMapTexture is a second, independent texture slot on
+    // RealizedMaterialCandidate (material_realization.h), same shape as
+    // textureAssetId/newSampledTexture immediately above, and equally
+    // needs a persistent home; the fixture's own Material now holds a
+    // raw pointer into whichever SampledTexture ends up here, so leaving
+    // this candidate unmoved would dangle on this fixture's very next
+    // renderPbrClearcoatDemoFrame() call once realizedCandidates goes
+    // out of scope.
     if (candidate.newNormalMapTexture) {
       fixture.sampledTextureResourceMap.emplace(candidate.normalMapTextureAssetId,
-                                                 std::move(candidate.newNormalMapTexture));
+                                                  std::move(candidate.newNormalMapTexture));
     }
     fixture.samplerResourceMap.emplace(assetId, std::move(candidate.sampler));
     fixture.materialResourceMap.emplace(assetId, std::move(candidate.material));
@@ -768,10 +668,10 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   }
 
   PixelBuffer result;
-  result.width = kPbrNormalMapDemoExtentPixels;
-  result.height = kPbrNormalMapDemoExtentPixels;
+  result.width = kPbrClearcoatDemoExtentPixels;
+  result.height = kPbrClearcoatDemoExtentPixels;
   const std::size_t byteCount =
-      static_cast<std::size_t>(kPbrNormalMapDemoExtentPixels) * kPbrNormalMapDemoExtentPixels * 4;
+      static_cast<std::size_t>(kPbrClearcoatDemoExtentPixels) * kPbrClearcoatDemoExtentPixels * 4;
   const auto* readbackData = static_cast<const std::uint8_t*>(fixture.readbackBuffer->mappedData());
   result.rgba8.assign(readbackData, readbackData + byteCount);
 

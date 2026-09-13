@@ -48,6 +48,8 @@ void appendFloatLE(std::vector<std::byte>& out, float value) { appendU32LE(out, 
       return 1;
     case MaterialKind::PbrDirectLit:
       return 2;
+    case MaterialKind::PbrClearcoat:
+      return 3;
   }
   return 0;
 }
@@ -77,7 +79,8 @@ void appendFloatLE(std::vector<std::byte>& out, float value) { appendU32LE(out, 
 std::vector<std::byte> encodeMaterialArtifact(MaterialKind kind, AssetId textureAsset, MaterialSamplerFilter filter,
                                                MaterialSamplerAddressMode addressMode,
                                                const float (&baseColorFactor)[4], float metallicFactor,
-                                               float roughnessFactor, AssetId normalMapTexture) {
+                                               float roughnessFactor, AssetId normalMapTexture,
+                                               float clearcoatFactor, float clearcoatRoughness) {
   std::vector<std::byte> out;
   out.reserve(kMaterialArtifactHeaderSizeBytes);
 
@@ -91,6 +94,8 @@ std::vector<std::byte> encodeMaterialArtifact(MaterialKind kind, AssetId texture
   appendFloatLE(out, metallicFactor);
   appendFloatLE(out, roughnessFactor);
   appendU64LE(out, normalMapTexture);
+  appendFloatLE(out, clearcoatFactor);
+  appendFloatLE(out, clearcoatRoughness);
 
   return out;
 }
@@ -124,6 +129,8 @@ atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMat
     decoded.kind = MaterialKind::LitTextured;
   } else if (kindField == 2) {
     decoded.kind = MaterialKind::PbrDirectLit;
+  } else if (kindField == 3) {
+    decoded.kind = MaterialKind::PbrClearcoat;
   } else {
     return ResultT::Err(MaterialArtifactDecodeError::UnknownMaterialKind);
   }
@@ -175,6 +182,23 @@ atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMat
   // Plan 0029 Section P6/ADR-0074 Section 1: no range check -- `0`
   // (none) is the established convention, same as textureAsset above.
   decoded.normalMapTexture = readU64LE(bytes.data() + 56);
+
+  // Plan 0035 Milestone 2 (ADR-0081): independently re-validated here
+  // against the artifact's own decoded bytes, mirroring
+  // baseColorFactor/metallicFactor/roughnessFactor's own identical
+  // discipline above -- never trusted from a well-formed cooker output
+  // alone.
+  const float clearcoatFactor = readFloatLE(bytes.data() + 64);
+  if (!std::isfinite(clearcoatFactor) || clearcoatFactor < 0.0f || clearcoatFactor > 1.0f) {
+    return ResultT::Err(MaterialArtifactDecodeError::MaterialFactorOutOfRange);
+  }
+  decoded.clearcoatFactor = clearcoatFactor;
+
+  const float clearcoatRoughness = readFloatLE(bytes.data() + 68);
+  if (!std::isfinite(clearcoatRoughness) || clearcoatRoughness < 0.0f || clearcoatRoughness > 1.0f) {
+    return ResultT::Err(MaterialArtifactDecodeError::MaterialFactorOutOfRange);
+  }
+  decoded.clearcoatRoughness = clearcoatRoughness;
 
   return ResultT::Ok(std::move(decoded));
 }

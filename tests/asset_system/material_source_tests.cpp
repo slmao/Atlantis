@@ -7,14 +7,14 @@ using namespace atlantis::asset_system;
 namespace {
 
 constexpr std::string_view kValidSource =
-    "atlantis_material_source_version: 3\n"
+    "atlantis_material_source_version: 4\n"
     "kind: unlit_textured\n"
     "texture: textures/textured_quad_source_unorm.png\n"
     "filter: linear\n"
     "address_mode: repeat\n";
 
 constexpr std::string_view kValidPbrSource =
-    "atlantis_material_source_version: 3\n"
+    "atlantis_material_source_version: 4\n"
     "kind: pbr_direct_lit\n"
     "texture: textures/textured_quad_source_srgb.png\n"
     "filter: linear\n"
@@ -45,7 +45,7 @@ TEST_CASE("parseMaterialSource parses a well-formed material", "[asset_system][m
 
 TEST_CASE("parseMaterialSource parses nearest filter and clamp_to_edge address mode", "[asset_system][material]") {
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: unlit_textured\n"
       "texture: textures/foo.png\n"
       "filter: nearest\n"
@@ -72,7 +72,7 @@ TEST_CASE("parseMaterialSource round-trips through serializeMaterialSource", "[a
 // Plan 0019 P5: parses the new kind: lit_textured token.
 TEST_CASE("parseMaterialSource parses kind: lit_textured", "[asset_system][material]") {
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: lit_textured\n"
       "texture: textures/textured_quad_source_unorm.png\n"
       "filter: linear\n"
@@ -89,7 +89,7 @@ TEST_CASE("parseMaterialSource parses kind: lit_textured", "[asset_system][mater
 TEST_CASE("parseMaterialSource round-trips kind: lit_textured through serializeMaterialSource",
           "[asset_system][material]") {
   const auto parsedResult = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: lit_textured\n"
       "texture: textures/a.png\n"
       "filter: linear\n"
@@ -145,7 +145,7 @@ TEST_CASE("parseMaterialSource round-trips a metallic_factor/roughness_factor va
           "NOT preserve exactly",
           "[asset_system][material]") {
   const auto parsedResult = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: pbr_direct_lit\n"
       "texture: textures/foo.png\n"
       "filter: linear\n"
@@ -163,7 +163,7 @@ TEST_CASE("parseMaterialSource round-trips a metallic_factor/roughness_factor va
 
 TEST_CASE("parseMaterialSource rejects a malformed base_color_factor component", "[asset_system][material]") {
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: pbr_direct_lit\n"
       "texture: textures/foo.png\n"
       "filter: linear\n"
@@ -177,7 +177,7 @@ TEST_CASE("parseMaterialSource rejects a malformed base_color_factor component",
 
 TEST_CASE("parseMaterialSource rejects a malformed metallic_factor", "[asset_system][material]") {
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: pbr_direct_lit\n"
       "texture: textures/foo.png\n"
       "filter: linear\n"
@@ -191,7 +191,7 @@ TEST_CASE("parseMaterialSource rejects a malformed metallic_factor", "[asset_sys
 
 TEST_CASE("parseMaterialSource rejects a base_color_factor with the wrong token count", "[asset_system][material]") {
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: pbr_direct_lit\n"
       "texture: textures/foo.png\n"
       "filter: linear\n"
@@ -204,11 +204,11 @@ TEST_CASE("parseMaterialSource rejects a base_color_factor with the wrong token 
 }
 
 TEST_CASE("parseMaterialSource rejects an unknown source version", "[asset_system][material]") {
-  // Plan 0029: this literal must name a version still genuinely
-  // unrecognized now that 3 is the real, accepted version -- 4 here,
-  // not 3.
+  // Plan 0035 Milestone 2/ADR-0081: this literal must name a version
+  // still genuinely unrecognized now that 4 (this round's own bump) is
+  // the real, accepted version -- 5 here, not 4.
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 4\n"
+      "atlantis_material_source_version: 5\n"
       "kind: unlit_textured\n"
       "texture: textures/foo.png\n"
       "filter: linear\n"
@@ -243,7 +243,7 @@ TEST_CASE("parseMaterialSource rejects the retired version 2", "[asset_system][m
 
 TEST_CASE("parseMaterialSource rejects a source with too few lines", "[asset_system][material]") {
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: unlit_textured\n"
       "texture: textures/foo.png\n");
   REQUIRE(result.isErr());
@@ -253,7 +253,7 @@ TEST_CASE("parseMaterialSource rejects a source with too few lines", "[asset_sys
 TEST_CASE("parseMaterialSource rejects a source with trailing content (a partial PBR field block)",
           "[asset_system][material]") {
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: unlit_textured\n"
       "texture: textures/foo.png\n"
       "filter: linear\n"
@@ -265,10 +265,15 @@ TEST_CASE("parseMaterialSource rejects a source with trailing content (a partial
 
 TEST_CASE("parseMaterialSource rejects a source with too many lines", "[asset_system][material]") {
   // Plan 0029: the legal ceiling widened from 8 to 9 (the optional
-  // normal_map: line) -- this fixture now needs two trailing garbage
-  // lines, not one, to genuinely exceed it.
+  // normal_map: line). Plan 0035 Milestone 2/ADR-0081: widened again to
+  // 11 (PbrClearcoat's own 10/11-line forms) -- this fixture now needs
+  // four trailing garbage lines (8 + 4 = 12 > 11), not two, to
+  // genuinely exceed the new ceiling; kind stays pbr_direct_lit
+  // specifically so a 10-line total (8 + 2 garbage) would otherwise hit
+  // ClearcoatFieldsNotSupportedForKind first, not the TrailingContent
+  // this test means to exercise.
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: pbr_direct_lit\n"
       "texture: textures/foo.png\n"
       "filter: linear\n"
@@ -277,7 +282,9 @@ TEST_CASE("parseMaterialSource rejects a source with too many lines", "[asset_sy
       "metallic_factor: 0.5\n"
       "roughness_factor: 0.25\n"
       "extra: line\n"
-      "another: line\n");
+      "another: line\n"
+      "third: line\n"
+      "fourth: line\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialSourceParseError::TrailingContent);
 }
@@ -289,7 +296,7 @@ TEST_CASE("parseMaterialSource rejects a 9-line source whose own 9th line does n
   // FieldOrderMismatch, not TrailingContent (that requires exceeding
   // the line-count ceiling itself, covered above).
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: pbr_direct_lit\n"
       "texture: textures/foo.png\n"
       "filter: linear\n"
@@ -304,7 +311,7 @@ TEST_CASE("parseMaterialSource rejects a 9-line source whose own 9th line does n
 
 TEST_CASE("parseMaterialSource rejects a field-order mismatch", "[asset_system][material]") {
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "texture: textures/foo.png\n"
       "kind: unlit_textured\n"
       "filter: linear\n"
@@ -315,7 +322,7 @@ TEST_CASE("parseMaterialSource rejects a field-order mismatch", "[asset_system][
 
 TEST_CASE("parseMaterialSource rejects an unknown kind", "[asset_system][material]") {
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: pbr\n"
       "texture: textures/foo.png\n"
       "filter: linear\n"
@@ -326,7 +333,7 @@ TEST_CASE("parseMaterialSource rejects an unknown kind", "[asset_system][materia
 
 TEST_CASE("parseMaterialSource rejects an unknown filter", "[asset_system][material]") {
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: unlit_textured\n"
       "texture: textures/foo.png\n"
       "filter: bicubic\n"
@@ -337,7 +344,7 @@ TEST_CASE("parseMaterialSource rejects an unknown filter", "[asset_system][mater
 
 TEST_CASE("parseMaterialSource rejects an unknown address mode", "[asset_system][material]") {
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: unlit_textured\n"
       "texture: textures/foo.png\n"
       "filter: linear\n"
@@ -348,7 +355,7 @@ TEST_CASE("parseMaterialSource rejects an unknown address mode", "[asset_system]
 
 TEST_CASE("parseMaterialSource rejects an empty texture logical path", "[asset_system][material]") {
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: unlit_textured\n"
       "texture: \n"
       "filter: linear\n"
@@ -362,7 +369,7 @@ TEST_CASE("parseMaterialSource rejects an empty texture logical path", "[asset_s
 TEST_CASE("parseMaterialSource parses the 9-line form's own normal_map: line for kind: pbr_direct_lit",
           "[asset_system][material]") {
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: pbr_direct_lit\n"
       "texture: textures/foo.png\n"
       "filter: linear\n"
@@ -378,7 +385,7 @@ TEST_CASE("parseMaterialSource parses the 9-line form's own normal_map: line for
 TEST_CASE("parseMaterialSource round-trips the 9-line form's own normal_map: line through serializeMaterialSource",
           "[asset_system][material]") {
   const auto parsedResult = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: pbr_direct_lit\n"
       "texture: textures/foo.png\n"
       "filter: linear\n"
@@ -417,7 +424,7 @@ TEST_CASE("parseMaterialSource rejects normal_map: for kind: unlit_textured with
   // must still be present syntactically to reach the kind check at
   // line 9 -- this is not itself the thing under test.
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: unlit_textured\n"
       "texture: textures/foo.png\n"
       "filter: linear\n"
@@ -433,7 +440,7 @@ TEST_CASE("parseMaterialSource rejects normal_map: for kind: unlit_textured with
 TEST_CASE("parseMaterialSource rejects normal_map: for kind: lit_textured with NormalMapNotSupportedForKind",
           "[asset_system][material]") {
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: lit_textured\n"
       "texture: textures/foo.png\n"
       "filter: linear\n"
@@ -451,7 +458,7 @@ TEST_CASE("parseMaterialSource rejects an empty normal_map: value with MissingFi
   // already uses -- an author who wants "no normal map" omits the line
   // entirely, exactly like every other optional field in this grammar.
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 3\n"
+      "atlantis_material_source_version: 4\n"
       "kind: pbr_direct_lit\n"
       "texture: textures/foo.png\n"
       "filter: linear\n"

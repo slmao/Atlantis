@@ -62,24 +62,28 @@ TEST_CASE("PBR material realization selects the IBL pipeline only when an enviro
   const std::unordered_map<atlantis::asset_system::AssetId, const atlantis::rhi::SampledTexture*> noTextures;
 
   // Plan 0029 Section P15: neither call below realizes a normal-mapped
-  // material (materialData.normalMapTexture stays 0), so the two new
-  // trailing trios and the trailing normalMapTextureData pointer are
-  // dead-path filler/null -- reusing layout/directVertex/directFragment,
-  // mirroring realizePendingMaterials()'s own compatibility overload's
-  // identical reuse pattern (material_realization.h).
+  // material (materialData.normalMapTexture stays 0), so the two
+  // normal-map trailing trios and the trailing normalMapTextureData
+  // pointer are dead-path filler/null -- reusing
+  // layout/directVertex/directFragment, mirroring
+  // realizePendingMaterials()'s own compatibility overload's identical
+  // reuse pattern (material_realization.h). Plan 0035 Milestone 2
+  // (ADR-0081): the two new clearcoat trailing trios are dead-path
+  // filler for the identical reason -- neither call realizes a
+  // PbrClearcoat material either.
   auto direct = atlantis::runtime::realizeOneMaterialCandidate(
       *device, layout, *directVertex, *directFragment, layout, *directVertex, *directFragment, layout,
       *directVertex, *directFragment, layout, *iblVertex, *iblFragment, layout, *directVertex, *directFragment,
-      layout, *directVertex, *directFragment, false, 1, materialData, textureData, /*normalMapTextureData=*/nullptr,
-      noTextures);
+      layout, *directVertex, *directFragment, layout, *directVertex, *directFragment, layout, *directVertex,
+      *directFragment, false, 1, materialData, textureData, /*normalMapTextureData=*/nullptr, noTextures);
   REQUIRE(direct.isOk());
   CHECK(direct.value().material->environmentBinding() == atlantis::renderer::MaterialEnvironmentBinding::None);
 
   auto ibl = atlantis::runtime::realizeOneMaterialCandidate(
       *device, layout, *directVertex, *directFragment, layout, *directVertex, *directFragment, layout,
       *directVertex, *directFragment, layout, *iblVertex, *iblFragment, layout, *directVertex, *directFragment,
-      layout, *directVertex, *directFragment, true, 2, materialData, textureData, /*normalMapTextureData=*/nullptr,
-      noTextures);
+      layout, *directVertex, *directFragment, layout, *directVertex, *directFragment, layout, *directVertex,
+      *directFragment, true, 2, materialData, textureData, /*normalMapTextureData=*/nullptr, noTextures);
   REQUIRE(ibl.isOk());
   CHECK(ibl.value().material->environmentBinding() == atlantis::renderer::MaterialEnvironmentBinding::Ibl);
   REQUIRE(device->waitIdle().isOk());

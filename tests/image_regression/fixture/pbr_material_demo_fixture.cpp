@@ -541,10 +541,16 @@ atlantis::Result<PixelBuffer, PbrMaterialDemoRenderError> renderPbrMaterialDemoF
       // fixture's own already-loaded pbrDirectLit*/pbrIbl* values,
       // mirroring realizePendingMaterials()'s own compatibility
       // overload's identical reuse pattern (material_realization.h).
+      // Plan 0035 Milestone 2 (ADR-0081): the two new clearcoat trailing
+      // trios are dead-path filler too, same reuse pattern as the
+      // normal-map trios immediately above.
       realizePendingMaterials(*fixture.device, *commandList, fixture.unlitTexturedVertexInputLayout,
                                fixture.unlitTexturedVertexSpirv, fixture.unlitTexturedFragmentSpirv,
                                fixture.litTexturedVertexInputLayout,
                                fixture.litTexturedVertexSpirv, fixture.litTexturedFragmentSpirv,
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
+                               fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv,
                                fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
                                fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
                                fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv,

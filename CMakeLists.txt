@@ -160,6 +160,13 @@ add_subdirectory(shaders/pbr_ibl)
 # add_dependencies()-ordering reason documented below.
 add_subdirectory(shaders/pbr_direct_lit_normal_map)
 add_subdirectory(shaders/pbr_ibl_normal_map)
+# Plan 0035 Milestone 2 (ADR-0081): PbrClearcoat's own two IBL-lit
+# shader pairs -- unconditional here, matching every other production
+# shader pair's own identical placement/reasoning; declared immediately
+# after the existing PBR normal-map variants and before src/runtime,
+# for the same add_dependencies()-ordering reason documented below.
+add_subdirectory(shaders/pbr_clearcoat_ibl)
+add_subdirectory(shaders/pbr_clearcoat_ibl_normal_map)
 # Plan 0024 Milestone 4 (ADR-0068 D-6/D-10): the two output-transform
 # shader pairs -- unconditional here, matching every other production
 # shader pair's own identical placement/reasoning; declared immediately

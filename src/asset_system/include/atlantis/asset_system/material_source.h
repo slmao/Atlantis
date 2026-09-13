@@ -32,6 +32,20 @@ struct ParsedMaterialSource {
   // exactly -- a logical path, not yet resolved to an AssetId
   // (cookMaterial()'s own job).
   std::string normalMapLogicalPath;
+  // Plan 0035 Milestone 2/ADR-0081: two new, REQUIRED (not optional)
+  // trailing fields whenever kind == PbrClearcoat -- unlike
+  // baseColorFactor/metallicFactor/roughnessFactor (optional for every
+  // kind, including PbrClearcoat, since PbrClearcoat still needs a base
+  // layer), a PbrClearcoat material with no real clearcoat_factor/
+  // clearcoat_roughness would be a no-op clearcoat, defeating the
+  // purpose of declaring this kind at all -- parseMaterialSource()
+  // rejects that combination outright (MissingClearcoatFields) rather
+  // than silently defaulting to an inert 0.0f clearcoat. Never read for
+  // any other kind, same "present in the struct, inert in practice"
+  // shape base_color_factor/etc. already have for UnlitTextured/
+  // LitTextured.
+  float clearcoatFactor = 0.0f;
+  float clearcoatRoughness = 0.0f;
 };
 
 // Plan 0018 Section P2/P4: parse/decode-error conditions specific to the
@@ -51,11 +65,23 @@ enum class MaterialSourceParseError {
   TrailingContent,
   MalformedNumber,
   // Plan 0029 Section P5/ADR-0074 Section 1: a 9-line source names
-  // `normal_map:` for a `kind` other than `pbr_direct_lit` -- neither
-  // `lit_textured.slang` nor `unlit_textured.slang` declares a
-  // normal-map binding, so accepting this combination would silently
-  // parse a field with no consumer.
+  // `normal_map:` for a `kind` other than `pbr_direct_lit`/`pbr_clearcoat`
+  // (Plan 0035 widening) -- neither `lit_textured.slang` nor
+  // `unlit_textured.slang` declares a normal-map binding, so accepting
+  // this combination would silently parse a field with no consumer.
   NormalMapNotSupportedForKind,
+  // Plan 0035 Milestone 2/ADR-0081: a 10/11-line source (clearcoat_factor/
+  // clearcoat_roughness present) for a `kind` other than `pbr_clearcoat`
+  // -- mirrors NormalMapNotSupportedForKind's own reasoning exactly, no
+  // other kind's shader reads these fields.
+  ClearcoatFieldsNotSupportedForKind,
+  // Plan 0035 Milestone 2/ADR-0081: `kind: pbr_clearcoat` with NEITHER
+  // clearcoat_factor NOR clearcoat_roughness present (a 5- or 8-line
+  // source) -- a clearcoat material with no real clearcoat parameters
+  // would silently default to an inert 0.0f clearcoat, defeating the
+  // purpose of declaring this kind; rejected outright rather than
+  // silently accepted.
+  MissingClearcoatFields,
 };
 
 // Strict, fixed-field-order, plain-text grammar extending

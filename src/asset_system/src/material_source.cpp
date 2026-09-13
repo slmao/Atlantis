@@ -8,7 +8,7 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_material_source_version: 3";
+constexpr std::string_view kVersionLine = "atlantis_material_source_version: 4";
 constexpr std::string_view kKindPrefix = "kind: ";
 constexpr std::string_view kTexturePrefix = "texture: ";
 constexpr std::string_view kFilterPrefix = "filter: ";
@@ -17,10 +17,18 @@ constexpr std::string_view kBaseColorFactorPrefix = "base_color_factor: ";
 constexpr std::string_view kMetallicFactorPrefix = "metallic_factor: ";
 constexpr std::string_view kRoughnessFactorPrefix = "roughness_factor: ";
 constexpr std::string_view kNormalMapPrefix = "normal_map: ";
+// Plan 0035 Milestone 2/ADR-0081: two new, PbrClearcoat-only field
+// lines, positioned immediately after roughness_factor and before the
+// optional normal_map line -- mirrors kBaseColorFactorPrefix/
+// kMetallicFactorPrefix/kRoughnessFactorPrefix's own naming convention.
+constexpr std::string_view kClearcoatFactorPrefix = "clearcoat_factor: ";
+constexpr std::string_view kClearcoatRoughnessPrefix = "clearcoat_roughness: ";
 
 constexpr std::string_view kKindUnlitTextured = "unlit_textured";
 constexpr std::string_view kKindLitTextured = "lit_textured";
 constexpr std::string_view kKindPbrDirectLit = "pbr_direct_lit";
+// Plan 0035 Milestone 2/ADR-0081: MaterialKind's fourth enumerator.
+constexpr std::string_view kKindPbrClearcoat = "pbr_clearcoat";
 constexpr std::string_view kFilterNearest = "nearest";
 constexpr std::string_view kFilterLinear = "linear";
 constexpr std::string_view kAddressModeRepeat = "repeat";
@@ -105,14 +113,21 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
   // defaults apply) or exactly 8 lines (all three present, fixed
   // order). Plan 0029 Section P5/ADR-0074 Section 1: a third legal
   // shape, 9 lines (the 8-line form plus a trailing `normal_map:`
-  // line), is now also accepted -- still no partial subset of any
-  // shape, no dual-version reader.
+  // line), is now also accepted for kind: pbr_direct_lit. Plan 0035
+  // Milestone 2/ADR-0081: two more legal shapes for kind: pbr_clearcoat
+  // only -- 10 lines (the 8-line form plus REQUIRED clearcoat_factor/
+  // clearcoat_roughness) or 11 lines (10-line form plus a trailing
+  // `normal_map:` line) -- still no partial subset of any shape, no
+  // dual-version reader.
   constexpr std::size_t kMinLineCount = 5;
   constexpr std::size_t kEightLineCount = 8;
-  constexpr std::size_t kMaxLineCount = 9;
+  constexpr std::size_t kNineLineCount = 9;
+  constexpr std::size_t kTenLineCount = 10;
+  constexpr std::size_t kMaxLineCount = 11;
   if (lines.size() < kMinLineCount) return ResultT::Err(MaterialSourceParseError::MissingField);
   if (lines.size() > kMaxLineCount) return ResultT::Err(MaterialSourceParseError::TrailingContent);
-  if (lines.size() != kMinLineCount && lines.size() != kEightLineCount && lines.size() != kMaxLineCount) {
+  if (lines.size() != kMinLineCount && lines.size() != kEightLineCount && lines.size() != kNineLineCount &&
+      lines.size() != kTenLineCount && lines.size() != kMaxLineCount) {
     return ResultT::Err(MaterialSourceParseError::TrailingContent);
   }
 
@@ -128,8 +143,25 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
     parsed.kind = MaterialKind::LitTextured;
   } else if (value == kKindPbrDirectLit) {
     parsed.kind = MaterialKind::PbrDirectLit;
+  } else if (value == kKindPbrClearcoat) {
+    parsed.kind = MaterialKind::PbrClearcoat;
   } else {
     return ResultT::Err(MaterialSourceParseError::UnknownKind);
+  }
+
+  // Plan 0035 Milestone 2/ADR-0081: kind: pbr_clearcoat REQUIRES the
+  // 10- or 11-line shape (real clearcoat_factor/clearcoat_roughness);
+  // every other kind FORBIDS it (no other shader reads those fields) --
+  // checked immediately after kind is known, before any further line
+  // parsing, mirroring this function's own existing fail-fast style.
+  if (parsed.kind == MaterialKind::PbrClearcoat) {
+    if (lines.size() != kTenLineCount && lines.size() != kMaxLineCount) {
+      return ResultT::Err(MaterialSourceParseError::MissingClearcoatFields);
+    }
+  } else {
+    if (lines.size() == kTenLineCount || lines.size() == kMaxLineCount) {
+      return ResultT::Err(MaterialSourceParseError::ClearcoatFieldsNotSupportedForKind);
+    }
   }
 
   if (!matchField(lines[2], kTexturePrefix, value)) return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
@@ -181,15 +213,39 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
     }
   }
 
-  // Plan 0029 Section P5/ADR-0074 Section 1: the optional 9th line --
-  // legal only for kind: pbr_direct_lit, since neither
-  // lit_textured.slang nor unlit_textured.slang declares a normal-map
-  // binding to consume it.
-  if (lines.size() == kMaxLineCount) {
-    if (parsed.kind != MaterialKind::PbrDirectLit) {
+  // Plan 0035 Milestone 2/ADR-0081: clearcoat_factor/clearcoat_roughness
+  // -- REQUIRED whenever kind == PbrClearcoat (already enforced above
+  // via the 10/11-line-count gate), immediately after roughness_factor,
+  // before the optional normal_map line.
+  if (lines.size() == kTenLineCount || lines.size() == kMaxLineCount) {
+    if (!matchField(lines[8], kClearcoatFactorPrefix, value)) {
+      return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+    }
+    if (!parseFloatToken(value, parsed.clearcoatFactor)) {
+      return ResultT::Err(MaterialSourceParseError::MalformedNumber);
+    }
+
+    if (!matchField(lines[9], kClearcoatRoughnessPrefix, value)) {
+      return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+    }
+    if (!parseFloatToken(value, parsed.clearcoatRoughness)) {
+      return ResultT::Err(MaterialSourceParseError::MalformedNumber);
+    }
+  }
+
+  // Plan 0029 Section P5/ADR-0074 Section 1 (Plan 0035 Milestone 2/
+  // ADR-0081 widening): the optional trailing normal_map line -- legal
+  // only for kind: pbr_direct_lit (9-line form, line index 8) or
+  // kind: pbr_clearcoat (11-line form, line index 10, after the two
+  // clearcoat fields) -- neither lit_textured.slang nor
+  // unlit_textured.slang declares a normal-map binding to consume it.
+  const bool hasTrailingNormalMapLine = lines.size() == kNineLineCount || lines.size() == kMaxLineCount;
+  if (hasTrailingNormalMapLine) {
+    if (parsed.kind != MaterialKind::PbrDirectLit && parsed.kind != MaterialKind::PbrClearcoat) {
       return ResultT::Err(MaterialSourceParseError::NormalMapNotSupportedForKind);
     }
-    if (!matchField(lines[8], kNormalMapPrefix, value)) {
+    const std::size_t normalMapLineIndex = lines.size() == kNineLineCount ? 8 : 10;
+    if (!matchField(lines[normalMapLineIndex], kNormalMapPrefix, value)) {
       return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
     }
     if (value.empty()) return ResultT::Err(MaterialSourceParseError::MissingField);
@@ -204,14 +260,17 @@ std::string serializeMaterialSource(const ParsedMaterialSource& source) {
   out += kVersionLine;
   out += '\n';
   out += kKindPrefix;
-  // Plan 0023 Milestone 1: MaterialKind is a closed, three-enumerator
-  // vocabulary now (ADR-0066 item 1) -- selected by source.kind.
+  // Plan 0023 Milestone 1 (Plan 0035 Milestone 2/ADR-0081 widening):
+  // MaterialKind is a closed, four-enumerator vocabulary now --
+  // selected by source.kind.
   if (source.kind == MaterialKind::UnlitTextured) {
     out += kKindUnlitTextured;
   } else if (source.kind == MaterialKind::LitTextured) {
     out += kKindLitTextured;
-  } else {
+  } else if (source.kind == MaterialKind::PbrDirectLit) {
     out += kKindPbrDirectLit;
+  } else {
+    out += kKindPbrClearcoat;
   }
   out += '\n';
   out += kTexturePrefix;
@@ -240,8 +299,19 @@ std::string serializeMaterialSource(const ParsedMaterialSource& source) {
   out += kRoughnessFactorPrefix;
   out += formatFloat(source.roughnessFactor);
   out += '\n';
-  // Plan 0029 Section P5/ADR-0074 Section 1: the 9th line is emitted
-  // only when a normal map is present -- symmetric with
+  // Plan 0035 Milestone 2/ADR-0081: emitted only for kind: pbr_clearcoat
+  // -- symmetric with parseMaterialSource()'s own kind-gated acceptance,
+  // and positioned before the optional normal_map line below.
+  if (source.kind == MaterialKind::PbrClearcoat) {
+    out += kClearcoatFactorPrefix;
+    out += formatFloat(source.clearcoatFactor);
+    out += '\n';
+    out += kClearcoatRoughnessPrefix;
+    out += formatFloat(source.clearcoatRoughness);
+    out += '\n';
+  }
+  // Plan 0029 Section P5/ADR-0074 Section 1: the trailing normal_map
+  // line is emitted only when a normal map is present -- symmetric with
   // parseMaterialSource()'s own optional-line acceptance.
   if (!source.normalMapLogicalPath.empty()) {
     out += kNormalMapPrefix;

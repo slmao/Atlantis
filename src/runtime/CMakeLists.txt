@@ -136,6 +136,15 @@ target_compile_definitions(atlantis_runtime PRIVATE
   # own sourcing exactly.
   ATLANTIS_RUNTIME_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_direct_lit_normal_map_SHADER_OUTPUT_DIR}"
   ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_ibl_normal_map_SHADER_OUTPUT_DIR}"
+  # Plan 0035 Milestone 2 (ADR-0081): PbrClearcoat's own two IBL-lit
+  # shader pairs' own output directories -- reuse the already-exported
+  # ATLANTIS_pbr_clearcoat_ibl_SHADER_OUTPUT_DIR/
+  # ATLANTIS_pbr_clearcoat_ibl_normal_map_SHADER_OUTPUT_DIR
+  # (shaders/pbr_clearcoat_ibl/CMakeLists.txt,
+  # shaders/pbr_clearcoat_ibl_normal_map/CMakeLists.txt, unconditional),
+  # mirroring ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR's own sourcing exactly.
+  ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_SHADER_DIR="${ATLANTIS_pbr_clearcoat_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_clearcoat_ibl_normal_map_SHADER_OUTPUT_DIR}"
   # Plan 0026 Milestone 3 (ADR-0071): the sky shader pair's own output
   # directory -- reuses the already-exported ATLANTIS_sky_SHADER_OUTPUT_DIR
   # (shaders/sky/CMakeLists.txt's own atlantis_add_slang_shader_pair()
@@ -192,6 +201,7 @@ target_compile_definitions(atlantis_runtime PRIVATE
 add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
   pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders output_transform_srgb_shaders sky_shaders
   shadow_cast_shaders pbr_direct_lit_normal_map_shaders pbr_ibl_normal_map_shaders
+  pbr_clearcoat_ibl_shaders pbr_clearcoat_ibl_normal_map_shaders
   ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
   ${ATLANTIS_ibl_studio_TARGET} ${ATLANTIS_ibl_material_demo_scene_TARGET} ${ATLANTIS_pbr_normal_map_demo_scene_TARGET})
 endif()

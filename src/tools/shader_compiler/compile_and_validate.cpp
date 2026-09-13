@@ -31,6 +31,8 @@ using atlantis::shader_system::DescriptorBinding;
 using atlantis::shader_system::litTexturedExpectedDescriptorContract;
 using atlantis::shader_system::minimalRendererExpectedDescriptorContract;
 using atlantis::shader_system::outputTransformExpectedDescriptorContract;
+using atlantis::shader_system::pbrClearcoatIblExpectedDescriptorContract;
+using atlantis::shader_system::pbrClearcoatIblNormalMapExpectedDescriptorContract;
 using atlantis::shader_system::pbrDirectLitExpectedDescriptorContract;
 using atlantis::shader_system::pbrDirectLitNormalMapExpectedDescriptorContract;
 using atlantis::shader_system::pbrIblExpectedDescriptorContract;
@@ -153,6 +155,10 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     fullContract = pbrDirectLitNormalMapExpectedDescriptorContract();
   } else if (expectedContract == "pbr-ibl-normal-map") {
     fullContract = pbrIblNormalMapExpectedDescriptorContract();
+  } else if (expectedContract == "pbr-clearcoat-ibl") {
+    fullContract = pbrClearcoatIblExpectedDescriptorContract();
+  } else if (expectedContract == "pbr-clearcoat-ibl-normal-map") {
+    fullContract = pbrClearcoatIblNormalMapExpectedDescriptorContract();
   } else if (expectedContract == "output-transform-unorm" || expectedContract == "output-transform-srgb") {
     // Plan 0024 Milestone 3 (ADR-0068 D-10): both output-transform
     // variants share the identical descriptor contract -- one function,
@@ -215,8 +221,16 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
   } else if (expectedContract == "output-transform-unorm" || expectedContract == "output-transform-srgb") {
     expected = {PushConstantRange{.offsetBytes = 0, .sizeBytes = 4, .stage = ShaderStage::Vertex}};
   } else {
+    // Plan 0035 Milestone 2 (ADR-0081): pbr-clearcoat-ibl/pbr-clearcoat-
+    // ibl-normal-map share this same 96-byte expectation -- a real
+    // coincidence, not a merge of the two contracts: PbrClearcoatPushConstants
+    // (src/renderer/src/pbr_clearcoat_push_constants.h) is its own,
+    // independent struct that happens to total the identical 96 bytes
+    // PbrPushConstants does, confirmed by that struct's own
+    // static_asserts, not assumed here.
     const bool isPbr = expectedContract == "pbr-direct-lit" || expectedContract == "pbr-ibl" ||
-                       expectedContract == "pbr-direct-lit-normal-map" || expectedContract == "pbr-ibl-normal-map";
+                       expectedContract == "pbr-direct-lit-normal-map" || expectedContract == "pbr-ibl-normal-map" ||
+                       expectedContract == "pbr-clearcoat-ibl" || expectedContract == "pbr-clearcoat-ibl-normal-map";
     const std::uint32_t expectedSizeBytes = isPbr ? 96 : sizeof(float) * 16;
     expected = {PushConstantRange{.offsetBytes = 0, .sizeBytes = expectedSizeBytes, .stage = ShaderStage::Vertex}};
   }
@@ -389,7 +403,9 @@ int compileAndValidate(const CompileAndValidateRequest& request) {
       validateCrossStageInterface(vertexResult->metadata, fragmentResult->metadata);
   if (validationOk && (request.expectedContract == "pbr-direct-lit" || request.expectedContract == "pbr-ibl" ||
                        request.expectedContract == "pbr-direct-lit-normal-map" ||
-                       request.expectedContract == "pbr-ibl-normal-map")) {
+                       request.expectedContract == "pbr-ibl-normal-map" ||
+                       request.expectedContract == "pbr-clearcoat-ibl" ||
+                       request.expectedContract == "pbr-clearcoat-ibl-normal-map")) {
     validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata, 96);
   } else if (validationOk && (request.expectedContract == "output-transform-unorm" ||
                               request.expectedContract == "output-transform-srgb")) {

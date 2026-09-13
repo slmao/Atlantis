@@ -80,6 +80,27 @@ struct BootstrapConfig {
   std::string pbrIblNormalMapVertexShaderReflectionPath;
   std::string pbrIblNormalMapFragmentShaderSpirvPath;
   std::string pbrIblNormalMapFragmentShaderReflectionPath;
+  // Plan 0035 Milestone 2 (ADR-0081): PbrClearcoat's own two IBL-lit
+  // shader pairs -- unlike every field group above, these are
+  // genuinely OPTIONAL, even when environmentArtifactPath is populated:
+  // MaterialKind::PbrClearcoat is new, real content using it does not
+  // yet exist in every composition root (this Milestone's own scope is
+  // the new per-BRDF golden scenes only, not every existing fixture),
+  // and validateEnvironmentBootstrapConfig() below deliberately does
+  // NOT require these fields the way it requires pbrIbl*/
+  // pbrIblNormalMap* -- a composition root that never realizes a
+  // PbrClearcoat material may leave all 8 of these fields empty; one
+  // that does must populate them itself (initializeSteps() gates
+  // loading on pbrClearcoatIblVertexShaderSpirvPath's own emptiness,
+  // runtime_application.cpp).
+  std::string pbrClearcoatIblVertexShaderSpirvPath;
+  std::string pbrClearcoatIblVertexShaderReflectionPath;
+  std::string pbrClearcoatIblFragmentShaderSpirvPath;
+  std::string pbrClearcoatIblFragmentShaderReflectionPath;
+  std::string pbrClearcoatIblNormalMapVertexShaderSpirvPath;
+  std::string pbrClearcoatIblNormalMapVertexShaderReflectionPath;
+  std::string pbrClearcoatIblNormalMapFragmentShaderSpirvPath;
+  std::string pbrClearcoatIblNormalMapFragmentShaderReflectionPath;
   // Plan 0026 Milestone 3 (ADR-0071): the sky shader pair -- mirrors
   // pbrIblVertexShaderSpirvPath/.../pbrIblFragmentShaderReflectionPath's
   // own four-field shape and "required only when environmentArtifactPath

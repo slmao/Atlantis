@@ -1,9 +1,11 @@
 atlantis_material_source_version: 4
-kind: pbr_direct_lit
+kind: pbr_clearcoat
 texture: textures/textured_quad_source_srgb.png
 filter: linear
 address_mode: repeat
-base_color_factor: 1.0 1.0 1.0 1.0
+base_color_factor: 0.8 0.15 0.1 1.0
 metallic_factor: 0.0
-roughness_factor: 0.5
+roughness_factor: 0.6
+clearcoat_factor: 1.0
+clearcoat_roughness: 0.1
 normal_map: textures/normal_map_tilted_source_unorm.png

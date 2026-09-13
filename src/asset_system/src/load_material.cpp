@@ -78,6 +78,12 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(const s
   if (artifact.normalMapTexture != metadata.normalMapTexture) {
     return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
   }
+  // Plan 0035 Milestone 2/ADR-0081: clearcoatFactor/clearcoatRoughness
+  // cross-validated identically.
+  if (artifact.clearcoatFactor != metadata.clearcoatFactor ||
+      artifact.clearcoatRoughness != metadata.clearcoatRoughness) {
+    return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
+  }
 
   // Self-consistency, not just artifact-vs-metadata agreement: the
   // metadata sidecar's own two fields (its recorded Asset ID and its
@@ -96,6 +102,8 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(const s
   data.metallicFactor = artifact.metallicFactor;
   data.roughnessFactor = artifact.roughnessFactor;
   data.normalMapTexture = artifact.normalMapTexture;
+  data.clearcoatFactor = artifact.clearcoatFactor;
+  data.clearcoatRoughness = artifact.clearcoatRoughness;
   return ResultT::Ok(std::move(data));
 }
 
