@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <atlantis/assert.h>
+#include <atlantis/log.h>
 
 #include "instance_api_version.h"
 #include "validation.h"
@@ -113,6 +114,53 @@ constexpr const char* kPlatformSurfaceExtension = "VK_KHR_android_surface";
   return false;
 }
 
+// Plan 0034 Milestone 6 (human-directed, disclosed deviation -- second-
+// level diagnostic, see this change's own commit message): diagnostic-
+// only, private to this file. Every createInstance() exit returning
+// DeviceCreateError::InstanceCreationFailed shares that one enum value
+// (runtime_application.cpp's own deviceCreateErrorMessage() cannot
+// distinguish them further) -- these two helpers and the
+// ATLANTIS_LOG_ERROR calls at each such exit below exist solely so a
+// real on-device failure is diagnosable without attaching a debugger.
+// Not a new Atlantis::VulkanBackend public API; no success path touched.
+[[nodiscard]] std::string joinExtensionNames(const std::vector<VkExtensionProperties>& extensions) {
+  std::string joined;
+  for (std::size_t i = 0; i < extensions.size(); ++i) {
+    if (i != 0) joined += ", ";
+    joined += extensions[i].extensionName;
+  }
+  return joined;
+}
+
+// Not exhaustive by design (VkResult is an external, non-Atlantis-owned
+// enum with far more values than instance creation can plausibly
+// return) -- a best-effort label for the common failure codes, falling
+// back to the raw decimal value alone for anything not listed here.
+// Callers always print the decimal value alongside this name, so an
+// unrecognized code is still fully diagnosable.
+[[nodiscard]] const char* vkResultName(VkResult result) {
+  switch (result) {
+    case VK_ERROR_OUT_OF_HOST_MEMORY:
+      return "VK_ERROR_OUT_OF_HOST_MEMORY";
+    case VK_ERROR_OUT_OF_DEVICE_MEMORY:
+      return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
+    case VK_ERROR_INITIALIZATION_FAILED:
+      return "VK_ERROR_INITIALIZATION_FAILED";
+    case VK_ERROR_LAYER_NOT_PRESENT:
+      return "VK_ERROR_LAYER_NOT_PRESENT";
+    case VK_ERROR_EXTENSION_NOT_PRESENT:
+      return "VK_ERROR_EXTENSION_NOT_PRESENT";
+    case VK_ERROR_INCOMPATIBLE_DRIVER:
+      return "VK_ERROR_INCOMPATIBLE_DRIVER";
+    case VK_ERROR_OUT_OF_POOL_MEMORY:
+      return "VK_ERROR_OUT_OF_POOL_MEMORY";
+    case VK_ERROR_UNKNOWN:
+      return "VK_ERROR_UNKNOWN";
+    default:
+      return "(unlisted VkResult -- see decimal value)";
+  }
+}
+
 using ResultT = atlantis::Result<InstanceCreateResult, DeviceCreateError>;
 
 }  // namespace
@@ -134,13 +182,25 @@ atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const D
                                                                           bool validationEnabled) {
   const std::optional<std::vector<VkExtensionProperties>> availableExtensions = enumerateInstanceExtensions();
   if (!availableExtensions.has_value()) {
+    ATLANTIS_LOG_ERROR(
+        "createInstance(): enumerateInstanceExtensions() failed "
+        "(vkEnumerateInstanceExtensionProperties returned non-VK_SUCCESS)");
     return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
   }
   if (!containsExtension(*availableExtensions, kSurfaceExtension) ||
       !containsExtension(*availableExtensions, kPlatformSurfaceExtension)) {
+    std::string missing;
+    if (!containsExtension(*availableExtensions, kSurfaceExtension)) missing += kSurfaceExtension;
+    if (!containsExtension(*availableExtensions, kPlatformSurfaceExtension)) {
+      if (!missing.empty()) missing += ", ";
+      missing += kPlatformSurfaceExtension;
+    }
+    ATLANTIS_LOG_ERROR("createInstance(): required surface extension(s) unavailable: {} -- {} extension(s) reported: {}",
+                        missing, availableExtensions->size(), joinExtensionNames(*availableExtensions));
     return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
   }
   if (validationEnabled && !containsExtension(*availableExtensions, kDebugUtilsExtension)) {
+    ATLANTIS_LOG_ERROR("createInstance(): required extension unavailable: {}", kDebugUtilsExtension);
     return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
   }
 
@@ -153,6 +213,9 @@ atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const D
   if (validationEnabled) {
     const std::optional<std::vector<VkLayerProperties>> availableLayers = enumerateInstanceLayers();
     if (!availableLayers.has_value()) {
+      ATLANTIS_LOG_ERROR(
+          "createInstance(): enumerateInstanceLayers() failed "
+          "(vkEnumerateInstanceLayerProperties returned non-VK_SUCCESS)");
       return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
     }
     if (!containsLayer(*availableLayers, kValidationLayerName)) {
@@ -228,7 +291,10 @@ atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const D
   }
 
   VkInstance instance = VK_NULL_HANDLE;
-  if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
+  const VkResult createInstanceResult = vkCreateInstance(&createInfo, nullptr, &instance);
+  if (createInstanceResult != VK_SUCCESS) {
+    ATLANTIS_LOG_ERROR("createInstance(): vkCreateInstance() returned {} ({})",
+                        static_cast<int>(createInstanceResult), vkResultName(createInstanceResult));
     return ResultT::Err(DeviceCreateError::InstanceCreationFailed);
   }
 
