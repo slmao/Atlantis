@@ -11,7 +11,7 @@ plugins {
 // CLAUDE.md's documented `cmake -S . -B build` commands).
 def atlantisBuildDir = project.hasProperty('atlantisBuildDir') \
     ? file(atlantisBuildDir) \
-    : file("${rootDir}/../../build")
+    : file("${rootDir}/../build")
 
 // Plan 0034 Milestone 5 (android_main.cpp's own comment): every
 // packaged relative path BootstrapConfig needs by name -- kept in
@@ -187,7 +187,6 @@ android {
   externalNativeBuild {
     cmake {
       path "../../CMakeLists.txt"
-      version "3.22.1"
     }
   }
 

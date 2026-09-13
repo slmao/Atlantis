@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Plan 0034 Milestone 4 (ADR-0078): the minimal icon resource Android's
-     manifest schema needs -- a plain vector drawable, not an adaptive
+     manifest schema needs, a plain vector drawable, not an adaptive
      icon (no background/foreground/monochrome layers), sufficient for
      this Milestone's own "installable and launchable" bar. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"

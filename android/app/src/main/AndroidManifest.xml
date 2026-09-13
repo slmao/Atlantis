@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Plan 0034 Milestone 4 (ADR-0077/ADR-0078): a single android.app.NativeActivity,
-  hasCode="false" -- Atlantis contributes zero Java/Kotlin source
+  hasCode="false", since Atlantis contributes zero Java/Kotlin source
   (ADR-0077's own "No custom JNI bridge is written"). android:value
   names the native library android_native_app_glue's own
   ANativeActivity_onCreate hook loads (lib<value>.so, CMake's own
