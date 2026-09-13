@@ -212,12 +212,29 @@ endif()
 if(ANDROID)
   add_library(atlantis_runtime_android SHARED android/android_main.cpp android/asset_extraction.cpp)
 
+  # Plan 0034 Milestone 6 (real on-device finding): the linker only pulls
+  # an object file out of a STATIC archive when something else in the
+  # link already has an unresolved reference to a symbol that object
+  # defines. Nothing in this repository's own code ever calls
+  # ANativeActivity_onCreate() directly -- it is the one symbol the
+  # Android framework finds via dlsym() at NativeActivity load time
+  # (android_native_app_glue's own documented contract), so the ordinary,
+  # selective link left main.c's own object out of
+  # libatlantis_runtime_android.so entirely, and the framework's dlsym()
+  # call failed with UnsatisfiedLinkError: undefined symbol
+  # ANativeActivity_onCreate -- confirmed by a real on-device install/
+  # launch attempt. --whole-archive/--no-whole-archive forces every
+  # object in atlantis_android_native_app_glue's archive into the final
+  # .so regardless of whether anything references it, exactly the
+  # dlsym-found-not-statically-referenced case this target needs.
   target_link_libraries(atlantis_runtime_android
     PRIVATE
       Atlantis::RuntimeHost
       Atlantis::PlatformAndroidEntry
       atlantis_compiler_warnings
+      -Wl,--whole-archive
       atlantis_android_native_app_glue
+      -Wl,--no-whole-archive
       log
       android
   )

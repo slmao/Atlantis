@@ -1,4 +1,18 @@
-cmake_minimum_required(VERSION 3.21)
+# Plan 0034 Milestone 6 (real build finding, e9207c2): raised from 3.21 --
+# cmake/AtlantisStb.cmake's own DOWNLOAD_EXTRACT_TIMESTAMP
+# (FetchContent_Declare(), line 24) requires CMake >= 3.24; empirically
+# confirmed a real CMake 3.22.1 (the Android SDK's own bundled version)
+# silently mis-parses it as a continuation of the preceding URL_HASH
+# value instead of a separate keyword, rather than raising a clear
+# "unknown argument" error. 3.21 was never actually sufficient for this
+# repository's own CMakeLists.txt tree; every build before Milestone 6's
+# own diagnosis happened to use a newer CMake already (Windows via
+# Visual Studio's bundled 4.3.1; every direct, non-Gradle Android build
+# in this Plan), masking the gap. Raising this removes this repository's
+# only remaining implicit dependence on a machine-local cmake.dir
+# override (android/local.properties, gitignored) to avoid the same
+# failure under Gradle's own externalNativeBuild.
+cmake_minimum_required(VERSION 3.24)
 
 # Plan 0034 Milestone 2/3: C is needed solely to compile the Android
 # NDK's own unmodified android_native_app_glue.c (a real C source file,
