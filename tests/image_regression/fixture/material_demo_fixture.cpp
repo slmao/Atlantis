@@ -502,6 +502,20 @@ atlantis::Result<PixelBuffer, MaterialDemoRenderError> renderMaterialDemoFrame(M
     if (candidate.newSampledTexture) {
       fixture.sampledTextureResourceMap.emplace(candidate.textureAssetId, std::move(candidate.newSampledTexture));
     }
+    // Plan 0035 Milestone 3 fix (found during Milestone 2's own
+    // PbrClearcoatDemoFixture work): normalMapTextureAssetId/
+    // newNormalMapTexture is a second, independent texture slot on
+    // RealizedMaterialCandidate (material_realization.h), same shape as
+    // textureAssetId/newSampledTexture immediately above -- mirrors
+    // runtime_application.cpp's own correct production commit. Without
+    // this, a normal-mapped Material's own raw normalMapTexture()
+    // pointer dangles the moment realizedCandidates goes out of scope at
+    // the end of this function, surfacing as an invalid VkImageView on
+    // this fixture's very next render call.
+    if (candidate.newNormalMapTexture) {
+      fixture.sampledTextureResourceMap.emplace(candidate.normalMapTextureAssetId,
+                                                  std::move(candidate.newNormalMapTexture));
+    }
     fixture.samplerResourceMap.emplace(assetId, std::move(candidate.sampler));
     fixture.materialResourceMap.emplace(assetId, std::move(candidate.material));
   }
