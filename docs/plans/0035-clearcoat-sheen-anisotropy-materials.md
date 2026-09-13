@@ -129,26 +129,32 @@ assumed:
 
 1. **Content procurement** (independent — see Sequencing). Source CC0
    PBR texture sets (metal, wood, stone, tile/mosaic, carbon-fiber-weave
-   — matching Spec 0035's own reference-image material variety) and one
-   CC0 warehouse-interior HDRI, from Poly Haven/ambientCG-class
-   providers, **in `.hdr` (Radiance) form** for the environment (convert
-   from `.exr` if needed — see Pre-drafting reading). Record a
-   provenance/attribution sidecar per imported asset, matching this
-   repo's own already-established `<name>_source.provenance.txt`
-   precedent (`assets/environments/ibl_studio_source.provenance.txt`) —
-   Filament's own analogous `URL.txt` practice independently reaches the
-   same idea, cited in Spec 0035 as precedent, not as the literal
-   filename convention this repo actually uses. Author the dimpled test-
-   sphere mesh via a throwaway generator script (uncommitted, per the
-   `generate_ibl_studio_source.ps1` precedent) emitting a
-   `pbr_sphere.mesh.txt`-shaped `.mesh.txt` with a recessed spherical
-   cap, satisfying Spec 0029's own mandatory-tangent mesh-artifact
-   requirement. **Risk gate**: if no suitably-licensed CC0 texture/HDRI
-   set is found for a given material category, or the generated mesh
-   fails `atlantis_asset_cooker`'s own mesh-cooking validation (tangent/
-   normal generation), stop and report rather than substituting an
-   unlicensed asset or silently relaxing the mesh's own tangent
-   requirement.
+   — matching Spec 0035's own reference-image material variety), **one
+   weathered-concrete/asphalt ground-plane PBR texture set (CC0, same
+   provider class as the rest)**, matching Spec 0035 Requirement 6's own
+   "rough, granular gray ground plane" description, and one CC0
+   warehouse-interior HDRI, from Poly Haven/ambientCG-class providers,
+   **in `.hdr` (Radiance) form** for the environment (convert from
+   `.exr` if needed — see Pre-drafting reading). Record a provenance/
+   attribution sidecar per imported asset, matching this repo's own
+   already-established `<name>_source.provenance.txt` precedent
+   (`assets/environments/ibl_studio_source.provenance.txt`) — Filament's
+   own analogous `URL.txt` practice independently reaches the same idea,
+   cited in Spec 0035 as precedent, not as the literal filename
+   convention this repo actually uses. Author **both the dimpled test-
+   sphere mesh and a small pedestal/stand mesh** (Spec 0035 Requirement
+   6's own "each on its own small pedestal-like base") from the same
+   one-off generator script (uncommitted, per the
+   `generate_ibl_studio_source.ps1` precedent), each emitting its own
+   `pbr_sphere.mesh.txt`-shaped `.mesh.txt` — the sphere with a recessed
+   spherical cap, the pedestal a simple turned/cylindrical profile — both
+   satisfying Spec 0029's own mandatory-tangent mesh-artifact requirement
+   identically. **Risk gate**: if no suitably-licensed CC0 texture/HDRI
+   set is found for a given material category (including the ground),
+   or either generated mesh fails `atlantis_asset_cooker`'s own
+   mesh-cooking validation (tangent/normal generation), stop and report
+   rather than substituting an unlicensed asset or silently relaxing
+   either mesh's own tangent requirement.
 2. **Clearcoat end-to-end slice.** `MaterialKind::PbrClearcoat` +
    material-asset schema **v3→v4** (new fields:
    `clearcoatFactor`/`clearcoatRoughness`, plus the field-parsing/
@@ -219,12 +225,36 @@ assumed:
    `screencap` → logcat summary), inheriting that same Plan's own
    disclosed "no Validation Layer coverage on this translation-layer
    emulator" gap (Spec 0035 Non-functional) — not re-litigated here.
-   Windows: full Debug + Release build, full `ctest`, zero real
-   Validation Layer hits. **Risk gate**: any packaged asset present on
-   one side of the Android lock-step but not the other is a stop-and-fix
-   item before proceeding to on-device verification, not a "log and
-   continue" — exactly the failure mode both files' own comments exist
-   to prevent.
+   **On-device verification scene mechanism (human-directed):**
+   `android_main.cpp` hard-builds one fixed `BootstrapConfig` (Plan 0034
+   Milestone 5) — there is no Android-side `--scene` equivalent (Spec
+   0032's own Non-Goals), and Spec 0035 itself leaves "does the showcase
+   scene become Android's default boot scene" an explicit, undecided
+   Non-Goal. To actually render the new showcase scene on-device for
+   this Milestone's own verification (asset packaging/extraction alone
+   does not confirm it renders correctly), this Milestone **temporarily**
+   points `android_main.cpp`'s `BootstrapConfig` scene fields at the new
+   showcase scene's own artifact/metadata/manifest paths — a verification-
+   only change, not a product decision — captures its own evidence
+   (`screencap`, logcat), then **reverts** `android_main.cpp` back to
+   `integrated_showcase_demo` before this Milestone's own PR is opened.
+   The temporary switch and its revert are both explicitly disclosed in
+   that PR's own description, matching this repository's own established
+   "diagnostic-only, must-revert, disclosed" pattern (Plan 0034 Milestone
+   6's own precedent). Spec 0035's own Non-Goal — Android's real default
+   boot scene remains `integrated_showcase_demo`, undecided by this
+   Plan — is unchanged by this verification-only detour. Windows: full
+   Debug + Release build, full `ctest`, zero real Validation Layer hits.
+   **Risk gate**: any packaged asset present on one side of the Android
+   lock-step but not the other is a stop-and-fix item before proceeding
+   to on-device verification, not a "log and continue" — exactly the
+   failure mode both files' own comments exist to prevent. A second risk
+   gate: if `android_main.cpp`'s temporary scene switch is not fully
+   reverted (confirmed via `git diff`/`git status` showing a clean tree
+   on that field before the PR is opened, mirroring Plan 0034's own
+   revert-confirmation discipline), stop and fix before opening the PR —
+   an unreverted temporary switch would silently change Android's real
+   product behavior, not merely this Milestone's own verification.
 
 ## Files / Modules Touched (expected)
 
@@ -351,7 +381,13 @@ Mapped to Spec 0035's own Testing & Verification Plan:
       Milestone 5.
 - [ ] **Android on-device verification** — Plan 0034 Milestone 6's own
       protocol, disclosed Validation-Layer-coverage gap inherited, not
-      re-decided. Milestone 6.
+      re-decided. **The new showcase scene must actually be rendered on
+      a real device/emulator** (via Milestone 6's own temporary
+      `android_main.cpp` scene-field switch, captured and reverted, not
+      left in place) — asset packaging/`extractAsset()` success alone is
+      not sufficient evidence for this item; a scene that extracts
+      cleanly but was never actually instantiated/rendered on-device does
+      not satisfy this checklist item. Milestone 6.
 - [ ] **Windows regression** — full Debug + Release build, full `ctest`,
       zero real Validation Layer hits. Milestone 6 (and after every
       Milestone 2-5 landing, per AGENTS.md's "build and test after every
