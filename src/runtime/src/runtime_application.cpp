@@ -252,6 +252,30 @@ static_assert(
   return result.value();
 }
 
+// Plan 0034 Milestone 6 (human-directed, disclosed deviation -- see this
+// change's own commit message): a diagnostic-only mapping, private to
+// this file, not a new Atlantis::VulkanBackend public API. Added
+// because a real on-device failure (createDevice() erroring with no
+// further detail logged) was otherwise undiagnosable: Atlantis::VulkanBackend
+// has no existing toString()-style helper for this enum to reuse.
+// Covers only the error-logging call site below; the success path is
+// unchanged.
+[[nodiscard]] const char* deviceCreateErrorMessage(atlantis::vulkan_backend::DeviceCreateError error) {
+  switch (error) {
+    case atlantis::vulkan_backend::DeviceCreateError::InstanceCreationFailed:
+      return "InstanceCreationFailed";
+    case atlantis::vulkan_backend::DeviceCreateError::ValidationLayerUnavailable:
+      return "ValidationLayerUnavailable";
+    case atlantis::vulkan_backend::DeviceCreateError::NoSuitablePhysicalDevice:
+      return "NoSuitablePhysicalDevice";
+    case atlantis::vulkan_backend::DeviceCreateError::DeviceCreationFailed:
+      return "DeviceCreationFailed";
+    case atlantis::vulkan_backend::DeviceCreateError::DynamicRenderingUnavailable:
+      return "DynamicRenderingUnavailable";
+  }
+  return "unknown DeviceCreateError";
+}
+
 }  // namespace
 
 RuntimeApplication::RuntimeApplication(PlatformSession&& session) noexcept
@@ -584,7 +608,7 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   auto deviceResult = atlantis::vulkan_backend::createDevice(
       {.applicationName = config.applicationName, .enableValidationLayers = config.enableValidationLayers});
   if (deviceResult.isErr()) {
-    ATLANTIS_LOG_ERROR("createDevice() failed");
+    ATLANTIS_LOG_ERROR("createDevice() failed: {}", deviceCreateErrorMessage(deviceResult.error()));
     lifecycle_.markFailed();
     return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::DeviceCreateFailed);
   }
