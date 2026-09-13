@@ -178,12 +178,24 @@ can demonstrate.
    vertex attribute is needed; see ADR-0081's Decision), matching
    Filament's own anisotropic model (Filament, *Anisotropic model* —
    link below).
-4. Each of the three is its own new `MaterialKind` enumerator, its own
-   dedicated `.slang` shader pair, and its own material-asset schema
-   version bump — exactly mirroring `PbrDirectLit`'s own existing
-   relationship to `UnlitTextured`/`LitTextured` (ADR-0066/ADR-0067),
-   not a modification of the existing `PbrDirectLit` kind's own shader
-   or push-constant layout. See ADR-0081.
+4. Each of the three is its own new `MaterialKind` enumerator and its
+   own material-asset schema version bump — exactly mirroring
+   `PbrDirectLit`'s own existing relationship to `UnlitTextured`/
+   `LitTextured` (ADR-0066/ADR-0067), not a modification of the existing
+   `PbrDirectLit` kind's own shader or push-constant layout. See
+   ADR-0081. Each new kind also supports the existing, optional
+   `normalMapTexture` field (Spec 0029/ADR-0074's mechanism, unchanged:
+   a texture/descriptor binding, zero push-constant cost) exactly as
+   `PbrDirectLit` already does — not a new capability, a reused one. To
+   support it, each new kind ships **two** `.slang` variants —
+   `<kind>_ibl` and `<kind>_ibl_normal_map` (exact file names: Plan-stage
+   detail) — and `selectShaderPair()` gains a `hasNormalMap`-nested arm
+   for each new kind following exactly the pattern already established
+   inside its existing `PbrDirectLit` arm, not a new dispatch mechanism.
+   The per-BRDF golden tests (Testing & Verification Plan) cover both
+   variants of each new kind — a normal-mapped case is not optional
+   coverage, since it is a required, not incidental, part of this
+   Requirement.
 5. **IBL-only lighting.** The new showcase scene (and each per-BRDF
    golden scene) declares zero `Light` entities; environment/IBL is the
    sole light source, using the existing `MaterialEnvironmentBinding::Ibl`
@@ -373,9 +385,11 @@ kind's own ~2-4 new scalar fields, individually budget-confirmed against
 Vulkan's 128-byte guarantee at Plan/Implementation time — see Non-
 functional), its own `.slang` shader pair(s) implementing that BRDF
 against Filament's cited math, and its own arm in `selectShaderPair()`'s
-existing closed switch. At minimum, each new kind gets an IBL-lit
-variant (this Spec's own scene is IBL-only); a direct-lit variant of any
-new kind is Out of Scope/Future Work unless Plan finds a concrete need.
+existing closed switch. Each new kind gets exactly two IBL-lit variants
+— with and without `normalMapTexture` (Requirement 4) — matching
+`selectShaderPair()`'s existing `hasNormalMap`-nested pattern; a
+direct-lit variant of any new kind is Out of Scope/Future Work unless
+Plan finds a concrete need.
 
 The showcase scene is a new `.ascene` asset: roughly two dozen-plus
 `PbrDirectLit` spheres (reusing existing base-material machinery,
@@ -468,8 +482,9 @@ accounts for, no conflict). No other `Accepted` ADR's scope is touched.
 
 ## Testing & Verification Plan
 
-- **Per-BRDF GPU/image-regression goldens** (3 new tests, one per new
-  `MaterialKind`), each a small, parameterized scene (mirroring
+- **Per-BRDF GPU/image-regression goldens** (at least 6 new tests — both
+  the `_ibl` and `_ibl_normal_map` variant, per new `MaterialKind`,
+  Requirement 4), each a small, parameterized scene (mirroring
   `tests/image_regression/`'s existing sphere-grid/parameter-sweep
   pattern, e.g. `ibl_material_demo_gpu_tests.cpp`'s own structure)
   sweeping that BRDF's own defining parameter (`clearcoatRoughness`,

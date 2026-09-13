@@ -95,16 +95,26 @@ Each new kind gets:
    must be confirmed via real Slang reflection plus an MSVC
    `static_assert` probe, exactly matching ADR-0067 D-3's own required
    method, at Plan/Implementation time — not fixed by this ADR.
-3. **Its own dedicated `.slang` shader pair(s)**, added as new arms to
-   `selectShaderPair()`'s existing closed switch (and
+3. **Its own dedicated pair of `.slang` shader pairs**, added as new arms
+   to `selectShaderPair()`'s existing closed switch (and
    `sampledTextureBindingCountFor()`'s matching switch) — the same
    structural extension `PbrDirectLit`'s own `hasNormalMap`/
    `environmentEnabled` nesting already demonstrates is a workable
-   pattern, just one level up (a new `MaterialKind` arm, not a new
-   nested boolean inside the existing `PbrDirectLit` arm).
-4. At minimum, an IBL-lit variant (Spec 0035's own showcase scene is
-   IBL-only); a direct-lit variant of any new kind is Spec 0035's own
-   Out of Scope/Future Work, not decided here.
+   pattern, just one level up (a new `MaterialKind` arm, itself
+   `hasNormalMap`-nested exactly as `PbrDirectLit`'s own arm already is,
+   rather than a new nested boolean inside the existing `PbrDirectLit`
+   arm).
+4. **Exactly two IBL-lit variants — `<kind>_ibl` and
+   `<kind>_ibl_normal_map`** (Spec 0035 Requirement 4) — not "at
+   minimum one, more to be decided": Spec 0035's own showcase scene is
+   IBL-only, and every new kind supports the existing, optional
+   `normalMapTexture` field (Spec 0029/ADR-0074) exactly as
+   `PbrDirectLit` already does, so both variants are required, not
+   optional coverage. A direct-lit variant of any new kind (a third,
+   `_direct_lit`-style pair) is Spec 0035's own Out of Scope/Future
+   Work, not decided here. This fixes each new kind's own variant count
+   at exactly 2 — **6 new `.slang` pairs total** across the three new
+   kinds, not an open-ended count.
 
 `MaterialKind`'s existing three enumerators and `PbrDirectLit`'s own
 existing 96-byte push-constant layout are **unchanged** by this decision
@@ -130,11 +140,12 @@ replacing them.
   clearcoat+sheen together, which this decision never has to support or
   test, because it is architecturally impossible to select both at
   once).
-- No shader-variant combinatorial explosion: three new kinds each add a
-  small, fixed number of their own variants (IBL-lit, optionally +
-  normal-mapped) rather than multiplying against `PbrDirectLit`'s
-  existing 4 variants with up to 3 new independent boolean axes (which
-  would risk up to 32 variants).
+- No shader-variant combinatorial explosion: three new kinds each add
+  exactly 2 fixed variants of their own (IBL-lit, and IBL-lit +
+  normal-mapped — Decision item 4; 6 new `.slang` pairs total) rather
+  than multiplying against `PbrDirectLit`'s existing 4 variants with up
+  to 3 new independent boolean axes (which would risk up to 32
+  variants).
 - Directly reuses every one of ADR-0066/ADR-0067's own established
   conventions — no new asset-schema philosophy, no new color-space
   rule, no new dispatch philosophy — genuinely an extension, not a
@@ -156,10 +167,11 @@ replacing them.
   more later if this pattern continues, which is a real, if modest,
   enum-growth cost future specs should weigh against the uniform-buffer
   alternative once composability actually matters.
-- Three new `.slang` shader pairs (at minimum) means three more compiled
-  artifacts Android's own asset lock-step (Spec 0035's own Goals/
-  Requirement 8) must track — a real, if mechanical, maintenance cost
-  already accepted by every prior shader addition to this codebase.
+- Six new `.slang` shader pairs (2 per new kind, Decision item 4) means
+  six more compiled artifacts Android's own asset lock-step (Spec 0035's
+  own Goals/Requirement 8) must track — a real, if mechanical,
+  maintenance cost already accepted by every prior shader addition to
+  this codebase.
 - Per-kind push-constant byte budgets are tight enough (see Context's
   own table) that a future, even-modestly-larger fourth parameter added
   to any *one* of these three kinds could force that specific kind past
