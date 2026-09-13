@@ -1,0 +1,8 @@
+asset: textures/mosaic_tile_source_srgb.png
+source: https://polyhaven.com/a/old_mosaic_floor
+source_file: old_mosaic_floor_diff_1k.jpg (converted to PNG, no pixel-data re-encoding beyond container format change)
+author: Amal Kumar
+license: CC0 1.0 Universal (https://polyhaven.com/license)
+dimensions: 1024x1024
+downloaded: 2026-09-13
+sha256: 1ca21dcce33a5152309de05353b92369a71976a4623aa66e6cca3c6ce265967c

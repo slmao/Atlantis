@@ -1,0 +1,11 @@
+asset: textures/ground_concrete_source_srgb.png
+source: https://polyhaven.com/a/worn_concrete_floor
+source_file: worn_concrete_floor_diff_1k.jpg (converted to PNG, no pixel-data re-encoding beyond container format change)
+author: Dimitrios Savva
+license: CC0 1.0 Universal (https://polyhaven.com/license)
+dimensions: 1024x1024
+downloaded: 2026-09-13
+sha256: 912d76cf089e52299bb1b11db448294788d5d86b4705c6a7187f71edf2fa2a45
+note: Spec 0035 Requirement 6's own "rough, granular gray ground plane"
+  content; used as the showcase scene's ground-plane albedo (Plan 0035
+  Milestone 1).

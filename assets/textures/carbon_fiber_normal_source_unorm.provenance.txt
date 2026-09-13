@@ -1,0 +1,12 @@
+asset: textures/carbon_fiber_normal_source_unorm.png
+source: https://ambientcg.com/a/Fabric004
+source_file: Fabric004_1K-JPG_NormalGL.jpg (OpenGL +Y convention, matching Spec 0029/ADR-0073's own established tangent-space convention -- converted to PNG, no pixel-data re-encoding beyond container format change)
+author: ambientCG (Lennart Demes) -- procedural/photogrammetric, no individual photographer credited
+license: CC0 1.0 Universal (https://docs.ambientcg.com/license/)
+dimensions: 1024x1024
+downloaded: 2026-09-13
+sha256: a61a2d16e3ec368ccfc9957461bf57dfb9ffa7b0042113b90e455e4b688cdf12
+note: paired with carbon_fiber_source_srgb.png (same source asset's own
+  Color map). NormalDX was available from the same download but not
+  used -- this repo's normal-map convention is OpenGL +Y (Spec 0029
+  line 243), not DirectX.

@@ -1,0 +1,11 @@
+asset: textures/carbon_fiber_source_srgb.png
+source: https://ambientcg.com/a/Fabric004
+source_file: Fabric004_1K-JPG_Color.jpg (converted to PNG, no pixel-data re-encoding beyond container format change)
+author: ambientCG (Lennart Demes) -- procedural/photogrammetric, no individual photographer credited
+license: CC0 1.0 Universal (https://docs.ambientcg.com/license/)
+dimensions: 1024x1024
+downloaded: 2026-09-13
+sha256: e9338d9ed02fb6b76a33d68ebd44c1391c1fcb53c8b5726db8029b47ffa92213
+note: paired with carbon_fiber_normal_source_unorm.png (same source
+  asset's own NormalGL map) for this Spec 0035's own clearcoat-normal-
+  map demonstration material (Spec 0035 Requirement 1).

@@ -1,0 +1,8 @@
+asset: textures/marble_source_srgb.png
+source: https://polyhaven.com/a/marble_01
+source_file: marble_01_diff_1k.jpg (converted to PNG, no pixel-data re-encoding beyond container format change)
+author: Rob Tuytel
+license: CC0 1.0 Universal (https://polyhaven.com/license)
+dimensions: 1024x1024
+downloaded: 2026-09-13
+sha256: 2e1bf5c3a5f8bee44124933bd688a68c181b9933688b3ed8fb36eb68b66c83fb
