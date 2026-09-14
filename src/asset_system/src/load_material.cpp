@@ -78,6 +78,28 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(const s
   if (artifact.normalMapTexture != metadata.normalMapTexture) {
     return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
   }
+  // Plan 0035 Milestone 2/ADR-0081: clearcoatFactor/clearcoatRoughness
+  // cross-validated identically.
+  if (artifact.clearcoatFactor != metadata.clearcoatFactor ||
+      artifact.clearcoatRoughness != metadata.clearcoatRoughness) {
+    return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
+  }
+  // Plan 0035 Milestone 3/ADR-0081: sheenColor/sheenRoughness cross-
+  // validated identically.
+  for (std::size_t i = 0; i < 3; ++i) {
+    if (artifact.sheenColor[i] != metadata.sheenColor[i]) {
+      return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
+    }
+  }
+  if (artifact.sheenRoughness != metadata.sheenRoughness) {
+    return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
+  }
+  // Plan 0035 Milestone 4/ADR-0081: anisotropyFactor/anisotropyRotation
+  // cross-validated identically.
+  if (artifact.anisotropyFactor != metadata.anisotropyFactor ||
+      artifact.anisotropyRotation != metadata.anisotropyRotation) {
+    return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
+  }
 
   // Self-consistency, not just artifact-vs-metadata agreement: the
   // metadata sidecar's own two fields (its recorded Asset ID and its
@@ -96,6 +118,12 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(const s
   data.metallicFactor = artifact.metallicFactor;
   data.roughnessFactor = artifact.roughnessFactor;
   data.normalMapTexture = artifact.normalMapTexture;
+  data.clearcoatFactor = artifact.clearcoatFactor;
+  data.clearcoatRoughness = artifact.clearcoatRoughness;
+  for (std::size_t i = 0; i < 3; ++i) data.sheenColor[i] = artifact.sheenColor[i];
+  data.sheenRoughness = artifact.sheenRoughness;
+  data.anisotropyFactor = artifact.anisotropyFactor;
+  data.anisotropyRotation = artifact.anisotropyRotation;
   return ResultT::Ok(std::move(data));
 }
 

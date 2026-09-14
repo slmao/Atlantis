@@ -1,0 +1,8 @@
+asset: textures/metal_rust_source_srgb.png
+source: https://polyhaven.com/a/rusty_metal
+source_file: rusty_metal_diff_1k.jpg (converted to PNG, no pixel-data re-encoding beyond container format change)
+author: Rob Tuytel
+license: CC0 1.0 Universal (https://polyhaven.com/license)
+dimensions: 1024x1024
+downloaded: 2026-09-13
+sha256: 29e965f1eadf769677c48ccb02149cb7336b7981b1862faaca4a206225217718

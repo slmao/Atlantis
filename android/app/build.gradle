@@ -16,10 +16,12 @@ def atlantisBuildDir = project.hasProperty('atlantisBuildDir') \
 // Plan 0034 Milestone 5 (android_main.cpp's own comment): every
 // packaged relative path BootstrapConfig needs by name -- kept in
 // lock-step with android_main.cpp's own identical literal list by
-// construction (both enumerate the same 51 files; a mismatch here
+// construction (both enumerate the same 75 files; a mismatch here
 // would surface as a missing-asset log error at first launch, not a
 // build failure, so this list is deliberately the single place a
-// human reviews both sides against each other).
+// human reviews both sides against each other). Plan 0035 Milestone 6
+// added the trailing 24 entries (PbrClearcoat/PbrSheen/PbrAnisotropic's
+// own six IBL-lit shader pairs).
 def namedAssetRelativePaths = [
   'shaders/minimal_renderer/minimal_mesh.vert.spv',
   'shaders/minimal_renderer/minimal_mesh.vert.refl.json',
@@ -74,6 +76,30 @@ def namedAssetRelativePaths = [
   'shaders/output_transform_srgb/output_transform_srgb.vert.refl.json',
   'shaders/output_transform_srgb/output_transform_srgb.frag.spv',
   'shaders/output_transform_srgb/output_transform_srgb.frag.refl.json',
+  'shaders/pbr_clearcoat_ibl/pbr_clearcoat_ibl.vert.spv',
+  'shaders/pbr_clearcoat_ibl/pbr_clearcoat_ibl.vert.refl.json',
+  'shaders/pbr_clearcoat_ibl/pbr_clearcoat_ibl.frag.spv',
+  'shaders/pbr_clearcoat_ibl/pbr_clearcoat_ibl.frag.refl.json',
+  'shaders/pbr_clearcoat_ibl_normal_map/pbr_clearcoat_ibl_normal_map.vert.spv',
+  'shaders/pbr_clearcoat_ibl_normal_map/pbr_clearcoat_ibl_normal_map.vert.refl.json',
+  'shaders/pbr_clearcoat_ibl_normal_map/pbr_clearcoat_ibl_normal_map.frag.spv',
+  'shaders/pbr_clearcoat_ibl_normal_map/pbr_clearcoat_ibl_normal_map.frag.refl.json',
+  'shaders/pbr_sheen_ibl/pbr_sheen_ibl.vert.spv',
+  'shaders/pbr_sheen_ibl/pbr_sheen_ibl.vert.refl.json',
+  'shaders/pbr_sheen_ibl/pbr_sheen_ibl.frag.spv',
+  'shaders/pbr_sheen_ibl/pbr_sheen_ibl.frag.refl.json',
+  'shaders/pbr_sheen_ibl_normal_map/pbr_sheen_ibl_normal_map.vert.spv',
+  'shaders/pbr_sheen_ibl_normal_map/pbr_sheen_ibl_normal_map.vert.refl.json',
+  'shaders/pbr_sheen_ibl_normal_map/pbr_sheen_ibl_normal_map.frag.spv',
+  'shaders/pbr_sheen_ibl_normal_map/pbr_sheen_ibl_normal_map.frag.refl.json',
+  'shaders/pbr_anisotropic_ibl/pbr_anisotropic_ibl.vert.spv',
+  'shaders/pbr_anisotropic_ibl/pbr_anisotropic_ibl.vert.refl.json',
+  'shaders/pbr_anisotropic_ibl/pbr_anisotropic_ibl.frag.spv',
+  'shaders/pbr_anisotropic_ibl/pbr_anisotropic_ibl.frag.refl.json',
+  'shaders/pbr_anisotropic_ibl_normal_map/pbr_anisotropic_ibl_normal_map.vert.spv',
+  'shaders/pbr_anisotropic_ibl_normal_map/pbr_anisotropic_ibl_normal_map.vert.refl.json',
+  'shaders/pbr_anisotropic_ibl_normal_map/pbr_anisotropic_ibl_normal_map.frag.spv',
+  'shaders/pbr_anisotropic_ibl_normal_map/pbr_anisotropic_ibl_normal_map.frag.refl.json',
 ]
 
 def sceneManifestRelativePath = 'assets/scenes/integrated_showcase_demo.ascene.manifest.txt'

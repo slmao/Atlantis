@@ -80,6 +80,51 @@ struct BootstrapConfig {
   std::string pbrIblNormalMapVertexShaderReflectionPath;
   std::string pbrIblNormalMapFragmentShaderSpirvPath;
   std::string pbrIblNormalMapFragmentShaderReflectionPath;
+  // Plan 0035 Milestone 2 (ADR-0081): PbrClearcoat's own two IBL-lit
+  // shader pairs -- unlike every field group above, these are
+  // genuinely OPTIONAL, even when environmentArtifactPath is populated:
+  // MaterialKind::PbrClearcoat is new, real content using it does not
+  // yet exist in every composition root (this Milestone's own scope is
+  // the new per-BRDF golden scenes only, not every existing fixture),
+  // and validateEnvironmentBootstrapConfig() below deliberately does
+  // NOT require these fields the way it requires pbrIbl*/
+  // pbrIblNormalMap* -- a composition root that never realizes a
+  // PbrClearcoat material may leave all 8 of these fields empty; one
+  // that does must populate them itself (initializeSteps() gates
+  // loading on pbrClearcoatIblVertexShaderSpirvPath's own emptiness,
+  // runtime_application.cpp).
+  std::string pbrClearcoatIblVertexShaderSpirvPath;
+  std::string pbrClearcoatIblVertexShaderReflectionPath;
+  std::string pbrClearcoatIblFragmentShaderSpirvPath;
+  std::string pbrClearcoatIblFragmentShaderReflectionPath;
+  std::string pbrClearcoatIblNormalMapVertexShaderSpirvPath;
+  std::string pbrClearcoatIblNormalMapVertexShaderReflectionPath;
+  std::string pbrClearcoatIblNormalMapFragmentShaderSpirvPath;
+  std::string pbrClearcoatIblNormalMapFragmentShaderReflectionPath;
+  // Plan 0035 Milestone 3 (ADR-0081): PbrSheen's own two IBL-lit shader
+  // pairs -- same "genuinely optional, gated on its own vertex path's
+  // emptiness" shape as pbrClearcoatIbl*/pbrClearcoatIblNormalMap*
+  // immediately above.
+  std::string pbrSheenIblVertexShaderSpirvPath;
+  std::string pbrSheenIblVertexShaderReflectionPath;
+  std::string pbrSheenIblFragmentShaderSpirvPath;
+  std::string pbrSheenIblFragmentShaderReflectionPath;
+  std::string pbrSheenIblNormalMapVertexShaderSpirvPath;
+  std::string pbrSheenIblNormalMapVertexShaderReflectionPath;
+  std::string pbrSheenIblNormalMapFragmentShaderSpirvPath;
+  std::string pbrSheenIblNormalMapFragmentShaderReflectionPath;
+  // Plan 0035 Milestone 4 (ADR-0081): PbrAnisotropic's own two IBL-lit
+  // shader pairs -- same "genuinely optional, gated on its own vertex
+  // path's emptiness" shape as pbrClearcoatIbl*/pbrSheenIbl* immediately
+  // above.
+  std::string pbrAnisotropicIblVertexShaderSpirvPath;
+  std::string pbrAnisotropicIblVertexShaderReflectionPath;
+  std::string pbrAnisotropicIblFragmentShaderSpirvPath;
+  std::string pbrAnisotropicIblFragmentShaderReflectionPath;
+  std::string pbrAnisotropicIblNormalMapVertexShaderSpirvPath;
+  std::string pbrAnisotropicIblNormalMapVertexShaderReflectionPath;
+  std::string pbrAnisotropicIblNormalMapFragmentShaderSpirvPath;
+  std::string pbrAnisotropicIblNormalMapFragmentShaderReflectionPath;
   // Plan 0026 Milestone 3 (ADR-0071): the sky shader pair -- mirrors
   // pbrIblVertexShaderSpirvPath/.../pbrIblFragmentShaderReflectionPath's
   // own four-field shape and "required only when environmentArtifactPath

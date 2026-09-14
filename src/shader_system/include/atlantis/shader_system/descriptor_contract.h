@@ -104,6 +104,55 @@ namespace atlantis::shader_system {
 // shadow map's own binding 4).
 [[nodiscard]] std::vector<DescriptorBinding> pbrIblNormalMapExpectedDescriptorContract();
 
+// Plan 0035 Milestone 2 (ADR-0081): pbr_clearcoat_ibl's own fixed,
+// expected descriptor contract -- base-color/environment/DFG-LUT
+// bindings identical in shape to pbrIblExpectedDescriptorContract()
+// above (0V, 0F, 1F, 2F, 3F), but with NO shadow-map binding -- this
+// Milestone's own disclosed IBL-only, no-shadow scope (Spec 0035
+// Non-Goals), not an oversight.
+[[nodiscard]] std::vector<DescriptorBinding> pbrClearcoatIblExpectedDescriptorContract();
+
+// Plan 0035 Milestone 2 (ADR-0081): pbr_clearcoat_ibl_normal_map's own
+// fixed, expected descriptor contract -- identical to
+// pbrClearcoatIblExpectedDescriptorContract() above, plus a sixth
+// entry, the normal-map sampler at binding 4 (the next free binding
+// after DFG LUT's own binding 3 -- there is no shadow-map binding here
+// to follow, unlike pbrIblNormalMapExpectedDescriptorContract()'s own
+// binding 5).
+[[nodiscard]] std::vector<DescriptorBinding> pbrClearcoatIblNormalMapExpectedDescriptorContract();
+
+// Plan 0035 Milestone 3 (ADR-0081): pbr_sheen_ibl's own fixed, expected
+// descriptor contract -- identical shape to
+// pbrClearcoatIblExpectedDescriptorContract() above (0V, 0F, 1F, 2F,
+// 3F, no shadow-map binding, same IBL-only/no-shadow scope).
+[[nodiscard]] std::vector<DescriptorBinding> pbrSheenIblExpectedDescriptorContract();
+
+// Plan 0035 Milestone 3 (ADR-0081): pbr_sheen_ibl_normal_map's own
+// fixed, expected descriptor contract -- identical to
+// pbrSheenIblExpectedDescriptorContract() above, plus a sixth entry, the
+// normal-map sampler at binding 4 -- mirrors
+// pbrClearcoatIblNormalMapExpectedDescriptorContract()'s own identical
+// shape.
+[[nodiscard]] std::vector<DescriptorBinding> pbrSheenIblNormalMapExpectedDescriptorContract();
+
+// Plan 0035 Milestone 4 (ADR-0081): pbr_anisotropic_ibl's own fixed,
+// expected descriptor contract -- identical shape to
+// pbrClearcoatIblExpectedDescriptorContract()/pbrSheenIblExpectedDescriptorContract()
+// above (0V, 0F, 1F, 2F, 3F, no shadow-map binding) -- the extra tangent
+// VERTEX attribute this kind's own VertexInput carries (unlike
+// PbrClearcoat's/PbrSheen's own non-normal-map variants) has no effect
+// on this descriptor contract; vertex attributes and descriptor
+// bindings are orthogonal.
+[[nodiscard]] std::vector<DescriptorBinding> pbrAnisotropicIblExpectedDescriptorContract();
+
+// Plan 0035 Milestone 4 (ADR-0081): pbr_anisotropic_ibl_normal_map's own
+// fixed, expected descriptor contract -- identical to
+// pbrAnisotropicIblExpectedDescriptorContract() above, plus a sixth
+// entry, the normal-map sampler at binding 4 -- mirrors
+// pbrClearcoatIblNormalMapExpectedDescriptorContract()'s/
+// pbrSheenIblNormalMapExpectedDescriptorContract()'s own identical shape.
+[[nodiscard]] std::vector<DescriptorBinding> pbrAnisotropicIblNormalMapExpectedDescriptorContract();
+
 // Plan 0027 Milestone 4 (ADR-0072 D-3): shadow_cast's own fixed, expected
 // descriptor contract -- one binding, Vertex-only: {set 0, binding 0,
 // UniformBuffer, Vertex} (the dedicated light-space buffer, referenced

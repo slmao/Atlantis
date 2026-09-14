@@ -520,6 +520,10 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
       // fixture's own already-loaded pbrDirectLit*/pbrIbl* values,
       // mirroring realizePendingMaterials()'s own compatibility
       // overload's identical reuse pattern (material_realization.h).
+      // Plan 0035 Milestone 2 (ADR-0081): the two new clearcoat trailing
+      // trios are dead-path filler too -- this fixture's own scene never
+      // realizes a PbrClearcoat material, mirroring the normal-map
+      // trios' own identical reuse immediately above.
       realizePendingMaterials(*fixture.device, *commandList, fixture.unlitTexturedVertexInputLayout,
                                fixture.unlitTexturedVertexSpirv, fixture.unlitTexturedFragmentSpirv,
                                fixture.litTexturedVertexInputLayout, fixture.litTexturedVertexSpirv,
@@ -529,7 +533,25 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
                                fixture.pbrIblFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
                                fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
                                fixture.pbrIblVertexInputLayout, fixture.pbrIblVertexSpirv,
-                               fixture.pbrIblFragmentSpirv, environmentEnabled, pendingMaterialIds,
+                               fixture.pbrIblFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
+                               fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+                               fixture.pbrIblVertexInputLayout, fixture.pbrIblVertexSpirv,
+                               fixture.pbrIblFragmentSpirv,
+                               // Plan 0035 Milestone 3 (ADR-0081): the
+                               // two new sheen trailing trios are
+                               // dead-path filler too, same reason as
+                               // the clearcoat trios above.
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
+                               fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv,
+                               // Plan 0035 Milestone 4 (ADR-0081): the
+                               // two new anisotropic trailing trios are
+                               // dead-path filler too, same reason as
+                               // the clearcoat/sheen trios above.
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
+                               fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv, environmentEnabled,
+                               pendingMaterialIds,
                                fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);
 
   std::vector<atlantis::asset_system::AssetId> knownMaterialIds = alreadyRealizedMaterialIds;
@@ -620,6 +642,20 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
   for (auto& [assetId, candidate] : realizedCandidates) {
     if (candidate.newSampledTexture) {
       fixture.sampledTextureResourceMap.emplace(candidate.textureAssetId, std::move(candidate.newSampledTexture));
+    }
+    // Plan 0035 Milestone 3 fix (found during Milestone 2's own
+    // PbrClearcoatDemoFixture work): normalMapTextureAssetId/
+    // newNormalMapTexture is a second, independent texture slot on
+    // RealizedMaterialCandidate (material_realization.h), same shape as
+    // textureAssetId/newSampledTexture immediately above -- mirrors
+    // runtime_application.cpp's own correct production commit. Without
+    // this, a normal-mapped Material's own raw normalMapTexture()
+    // pointer dangles the moment realizedCandidates goes out of scope at
+    // the end of this function, surfacing as an invalid VkImageView on
+    // this fixture's very next render call.
+    if (candidate.newNormalMapTexture) {
+      fixture.sampledTextureResourceMap.emplace(candidate.normalMapTextureAssetId,
+                                                  std::move(candidate.newNormalMapTexture));
     }
     fixture.samplerResourceMap.emplace(assetId, std::move(candidate.sampler));
     fixture.materialResourceMap.emplace(assetId, std::move(candidate.material));

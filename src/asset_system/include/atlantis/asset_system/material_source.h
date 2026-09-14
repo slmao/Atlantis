@@ -32,6 +32,40 @@ struct ParsedMaterialSource {
   // exactly -- a logical path, not yet resolved to an AssetId
   // (cookMaterial()'s own job).
   std::string normalMapLogicalPath;
+  // Plan 0035 Milestone 2/ADR-0081: two new, REQUIRED (not optional)
+  // trailing fields whenever kind == PbrClearcoat -- unlike
+  // baseColorFactor/metallicFactor/roughnessFactor (optional for every
+  // kind, including PbrClearcoat, since PbrClearcoat still needs a base
+  // layer), a PbrClearcoat material with no real clearcoat_factor/
+  // clearcoat_roughness would be a no-op clearcoat, defeating the
+  // purpose of declaring this kind at all -- parseMaterialSource()
+  // rejects that combination outright (MissingClearcoatFields) rather
+  // than silently defaulting to an inert 0.0f clearcoat. Never read for
+  // any other kind, same "present in the struct, inert in practice"
+  // shape base_color_factor/etc. already have for UnlitTextured/
+  // LitTextured.
+  float clearcoatFactor = 0.0f;
+  float clearcoatRoughness = 0.0f;
+  // Plan 0035 Milestone 3/ADR-0081: two new, REQUIRED (not optional)
+  // trailing fields whenever kind == PbrSheen -- mirrors
+  // clearcoatFactor/clearcoatRoughness's own identical reasoning
+  // immediately above (a PbrSheen material with no real sheenColor/
+  // sheenRoughness would be a no-op sheen, defeating the purpose of
+  // declaring this kind at all); parseMaterialSource() rejects that
+  // combination outright (MissingSheenFields). sheenColor is RGB,
+  // linear-space, following baseColorFactor's own established ADR-0066
+  // convention. Never read for any other kind.
+  float sheenColor[3] = {0.0f, 0.0f, 0.0f};
+  float sheenRoughness = 0.0f;
+  // Plan 0035 Milestone 4/ADR-0081: two new, REQUIRED (not optional)
+  // trailing fields whenever kind == PbrAnisotropic -- mirrors
+  // clearcoatFactor/clearcoatRoughness's/sheenColor/sheenRoughness's own
+  // identical reasoning above. anisotropyFactor is -1..1
+  // (strength/sign, Spec 0035's own field definition), never
+  // range-validated here (cookMaterial()'s own job). Never read for any
+  // other kind.
+  float anisotropyFactor = 0.0f;
+  float anisotropyRotation = 0.0f;
 };
 
 // Plan 0018 Section P2/P4: parse/decode-error conditions specific to the
@@ -51,11 +85,42 @@ enum class MaterialSourceParseError {
   TrailingContent,
   MalformedNumber,
   // Plan 0029 Section P5/ADR-0074 Section 1: a 9-line source names
-  // `normal_map:` for a `kind` other than `pbr_direct_lit` -- neither
-  // `lit_textured.slang` nor `unlit_textured.slang` declares a
-  // normal-map binding, so accepting this combination would silently
-  // parse a field with no consumer.
+  // `normal_map:` for a `kind` other than `pbr_direct_lit`/`pbr_clearcoat`
+  // (Plan 0035 widening) -- neither `lit_textured.slang` nor
+  // `unlit_textured.slang` declares a normal-map binding, so accepting
+  // this combination would silently parse a field with no consumer.
   NormalMapNotSupportedForKind,
+  // Plan 0035 Milestone 2/ADR-0081: a 10/11-line source (clearcoat_factor/
+  // clearcoat_roughness present) for a `kind` other than `pbr_clearcoat`
+  // -- mirrors NormalMapNotSupportedForKind's own reasoning exactly, no
+  // other kind's shader reads these fields.
+  ClearcoatFieldsNotSupportedForKind,
+  // Plan 0035 Milestone 2/ADR-0081: `kind: pbr_clearcoat` with NEITHER
+  // clearcoat_factor NOR clearcoat_roughness present (a 5- or 8-line
+  // source) -- a clearcoat material with no real clearcoat parameters
+  // would silently default to an inert 0.0f clearcoat, defeating the
+  // purpose of declaring this kind; rejected outright rather than
+  // silently accepted.
+  MissingClearcoatFields,
+  // Plan 0035 Milestone 3/ADR-0081: a 10/11-line source (sheen_color/
+  // sheen_roughness present) for a `kind` other than `pbr_sheen` --
+  // mirrors ClearcoatFieldsNotSupportedForKind's own reasoning exactly,
+  // no other kind's shader reads these fields.
+  SheenFieldsNotSupportedForKind,
+  // Plan 0035 Milestone 3/ADR-0081: `kind: pbr_sheen` with NEITHER
+  // sheen_color NOR sheen_roughness present (a 5- or 8-line source) --
+  // mirrors MissingClearcoatFields's own reasoning exactly.
+  MissingSheenFields,
+  // Plan 0035 Milestone 4/ADR-0081: a 10/11-line source (anisotropy_factor/
+  // anisotropy_rotation present) for a `kind` other than
+  // `pbr_anisotropic` -- mirrors ClearcoatFieldsNotSupportedForKind's/
+  // SheenFieldsNotSupportedForKind's own reasoning exactly.
+  AnisotropyFieldsNotSupportedForKind,
+  // Plan 0035 Milestone 4/ADR-0081: `kind: pbr_anisotropic` with NEITHER
+  // anisotropy_factor NOR anisotropy_rotation present (a 5- or 8-line
+  // source) -- mirrors MissingClearcoatFields's/MissingSheenFields's own
+  // reasoning exactly.
+  MissingAnisotropyFields,
 };
 
 // Strict, fixed-field-order, plain-text grammar extending

@@ -17,7 +17,15 @@ namespace atlantis::renderer {
 // push-constant payload shape a Material's own Pipeline expects.
 // Consumed by Renderer::drawFrame()'s own exhaustive switch (never a
 // new DrawItem field) to decide which payload to build and push.
-enum class MaterialPushConstantLayout { ObjectToWorldOnly, PbrDirectLit };
+// PbrClearcoat added by Plan 0035 Milestone 2/ADR-0081 -- its own new,
+// independent payload shape (PbrClearcoatPushConstants,
+// src/renderer/src/pbr_clearcoat_push_constants.h), not a widening of
+// PbrDirectLit's own 96-byte layout. PbrSheen added by Plan 0035
+// Milestone 3/ADR-0081 -- same shape again (PbrSheenPushConstants,
+// src/renderer/src/pbr_sheen_push_constants.h). PbrAnisotropic added by
+// Plan 0035 Milestone 4/ADR-0081 -- same shape again
+// (PbrAnisotropicPushConstants, src/renderer/src/pbr_anisotropic_push_constants.h).
+enum class MaterialPushConstantLayout { ObjectToWorldOnly, PbrDirectLit, PbrClearcoat, PbrSheen, PbrAnisotropic };
 
 enum class MaterialEnvironmentBinding { None, Ibl };
 
@@ -66,13 +74,21 @@ class Material {
   // layout is PbrDirectLit -- the only layout the two normal-map
   // shaders use. Ownership/destruction-order contract identical in
   // kind to sampledTexture/sampler above.
+  // Plan 0035 Milestone 2/ADR-0081: clearcoatFactor/clearcoatRoughness
+  // are the final, new trailing parameters -- every pre-existing call
+  // site continues to compile and behave unchanged, defaulting to 0.0f
+  // (the same "inert, no clearcoat" default MaterialAssetData's own
+  // field already establishes).
   explicit Material(std::unique_ptr<atlantis::rhi::Pipeline> pipeline, MaterialPushConstantLayout pushConstantLayout,
                      const atlantis::rhi::SampledTexture* sampledTexture = nullptr,
                      const atlantis::rhi::Sampler* sampler = nullptr,
                      std::array<float, 4> baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f}, float metallicFactor = 1.0f,
                      float roughnessFactor = 1.0f,
                      MaterialEnvironmentBinding environmentBinding = MaterialEnvironmentBinding::None,
-                     const atlantis::rhi::SampledTexture* normalMapTexture = nullptr) noexcept;
+                     const atlantis::rhi::SampledTexture* normalMapTexture = nullptr, float clearcoatFactor = 0.0f,
+                     float clearcoatRoughness = 0.0f, std::array<float, 3> sheenColor = {0.0f, 0.0f, 0.0f},
+                     float sheenRoughness = 0.0f, float anisotropyFactor = 0.0f,
+                     float anisotropyRotation = 0.0f) noexcept;
   ~Material() = default;
 
   Material(const Material&) = delete;
@@ -91,6 +107,23 @@ class Material {
   // No normalMapSampler() accessor -- sampler() above already covers
   // it (Section 1 item 5, ADR-0074).
   [[nodiscard]] const atlantis::rhi::SampledTexture* normalMapTexture() const noexcept { return normalMapTexture_; }
+  // Plan 0035 Milestone 2/ADR-0081: identical in kind to
+  // metallicFactor()/roughnessFactor() above -- immutable by
+  // encapsulation, meaningful only when pushConstantLayout() ==
+  // PbrClearcoat.
+  [[nodiscard]] float clearcoatFactor() const noexcept { return clearcoatFactor_; }
+  [[nodiscard]] float clearcoatRoughness() const noexcept { return clearcoatRoughness_; }
+  // Plan 0035 Milestone 3/ADR-0081: identical in kind to
+  // clearcoatFactor()/clearcoatRoughness() above -- immutable by
+  // encapsulation, meaningful only when pushConstantLayout() ==
+  // PbrSheen.
+  [[nodiscard]] const std::array<float, 3>& sheenColor() const noexcept { return sheenColor_; }
+  [[nodiscard]] float sheenRoughness() const noexcept { return sheenRoughness_; }
+  // Plan 0035 Milestone 4/ADR-0081: identical in kind to
+  // sheenColor()/sheenRoughness() above -- immutable by encapsulation,
+  // meaningful only when pushConstantLayout() == PbrAnisotropic.
+  [[nodiscard]] float anisotropyFactor() const noexcept { return anisotropyFactor_; }
+  [[nodiscard]] float anisotropyRotation() const noexcept { return anisotropyRotation_; }
 
  private:
   std::unique_ptr<atlantis::rhi::Pipeline> pipeline_;
@@ -102,6 +135,12 @@ class Material {
   float roughnessFactor_ = 1.0f;
   MaterialEnvironmentBinding environmentBinding_ = MaterialEnvironmentBinding::None;
   const atlantis::rhi::SampledTexture* normalMapTexture_ = nullptr;  // borrowed, never owned
+  float clearcoatFactor_ = 0.0f;
+  float clearcoatRoughness_ = 0.0f;
+  std::array<float, 3> sheenColor_{0.0f, 0.0f, 0.0f};
+  float sheenRoughness_ = 0.0f;
+  float anisotropyFactor_ = 0.0f;
+  float anisotropyRotation_ = 0.0f;
 };
 
 enum class CreateMaterialError {
@@ -124,15 +163,20 @@ enum class CreateMaterialError {
 // default, per Spec 0023 D9's own Accepted Correction.
 // environmentBinding is the final trailing compatibility parameter and
 // defaults to None.
-// Plan 0029 Section P14: normalMapTexture is the final, new trailing
-// parameter -- every pre-existing call site continues to compile and
-// behave unchanged, defaulting to nullptr.
+// Plan 0029 Section P14: normalMapTexture was the final, new trailing
+// parameter at that time -- every pre-existing call site continued to
+// compile and behave unchanged, defaulting to nullptr. Plan 0035
+// Milestone 2/ADR-0081: clearcoatFactor/clearcoatRoughness are now the
+// final trailing parameters, same compatibility shape, defaulting to
+// 0.0f.
 [[nodiscard]] atlantis::Result<Material, CreateMaterialError> createMaterial(
     atlantis::rhi::Device& device, const atlantis::rhi::PipelineCreateParams& params,
     const atlantis::rhi::SampledTexture* sampledTexture = nullptr, const atlantis::rhi::Sampler* sampler = nullptr,
     MaterialPushConstantLayout pushConstantLayout = MaterialPushConstantLayout::ObjectToWorldOnly,
     std::array<float, 4> baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f}, float metallicFactor = 1.0f,
     float roughnessFactor = 1.0f, MaterialEnvironmentBinding environmentBinding = MaterialEnvironmentBinding::None,
-    const atlantis::rhi::SampledTexture* normalMapTexture = nullptr);
+    const atlantis::rhi::SampledTexture* normalMapTexture = nullptr, float clearcoatFactor = 0.0f,
+    float clearcoatRoughness = 0.0f, std::array<float, 3> sheenColor = {0.0f, 0.0f, 0.0f},
+    float sheenRoughness = 0.0f, float anisotropyFactor = 0.0f, float anisotropyRotation = 0.0f);
 
 }  // namespace atlantis::renderer

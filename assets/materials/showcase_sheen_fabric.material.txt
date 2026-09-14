@@ -1,0 +1,10 @@
+atlantis_material_source_version: 6
+kind: pbr_sheen
+texture: textures/textured_quad_source_srgb.png
+filter: linear
+address_mode: repeat
+base_color_factor: 0.6 0.15 0.2 1.0
+metallic_factor: 0.0
+roughness_factor: 0.60
+sheen_color: 0.85 0.75 0.6
+sheen_roughness: 0.3

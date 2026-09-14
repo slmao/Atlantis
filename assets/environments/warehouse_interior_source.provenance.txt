@@ -1,0 +1,17 @@
+asset: environments/warehouse_interior_source.hdr
+source: https://polyhaven.com/a/empty_warehouse_01
+source_file: empty_warehouse_01_2k.hdr (Radiance HDR, used as downloaded -- no conversion)
+author: Sergej Majboroda
+license: CC0 1.0 Universal (https://polyhaven.com/license)
+dimensions: 2048x1024
+downloaded: 2026-09-13
+sha256: 9734d30c83fe480a2a7c7521b7bdb816d869c2468d45d3794bde729d6181f830
+note: Spec 0035 Requirement 6's own "warehouse-interior-style HDRI
+  environment" -- Poly Haven's own tags for this asset are "warehouse,
+  derelict, fluorescent, concrete, industrial", matching Spec 0035's
+  own reference-image content analysis (a blurred industrial-interior
+  background, a support pillar, a waste container). This is a real,
+  photographed environment map, distinct from ibl_studio_source.hdr's
+  own repository-authored, purely analytic content (see that asset's
+  own provenance.txt) -- the first externally-sourced environment in
+  this repository.

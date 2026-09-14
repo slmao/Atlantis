@@ -5,6 +5,8 @@
 #include <atlantis/rhi/command_list.h>
 
 #include <array>
+#include <cstddef>
+#include <unordered_map>
 
 // Concrete Vulkan implementation of atlantis::rhi::CommandList
 // (ADR-0020). See vulkan_device.cpp for where this is constructed
@@ -134,33 +136,59 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   // was already vkCmdBindDescriptorSets()'d earlier in the *same*
   // not-yet-submitted command buffer recording (its layout has no
   // VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT, per Section 10's fixed,
-  // minimal design). Multiple DrawItems sharing one Material (Section 11
-  // deliberately allows this -- "reference reuse, not a cache") call
-  // bindPipeline()/bindUniformBuffer() again for every item, each with
-  // byte-identical VkDescriptorBufferInfo contents (the one shared
-  // camera Buffer) -- so this narrow, per-recording (not per-frame,
-  // not cross-CommandList, never persisted) memo of "which VkBuffer is
-  // already written into which VkDescriptorSet, in this recording"
-  // lets bindUniformBuffer() skip only the exact redundant
-  // vkUpdateDescriptorSets() call, never the vkCmdBindDescriptorSets()
-  // call itself (always re-issued, matching Section 10's own stated
-  // "re-binds every draw item regardless, for simplicity" design) --
-  // this is not the general resource cache Section 10/ADR-0025
-  // deliberately avoids; it holds no GPU resource, outlives nothing, and
-  // is reset implicitly every time a *different* Buffer or Pipeline is
-  // bound.
-  VkDescriptorSet lastUpdatedDescriptorSet_ = VK_NULL_HANDLE;
-  VkBuffer lastUpdatedUniformBuffer_ = VK_NULL_HANDLE;
+  // minimal design). The real, load-bearing invariant this memo must
+  // maintain is: **a given VkDescriptorSet's binding N may be written by
+  // vkUpdateDescriptorSets() at most once per recording, no matter how
+  // many other sets are bound in between** -- not the narrower "the two
+  // most recent calls happened to touch the same set back-to-back"
+  // reading a single last-touched scalar/slot can only approximate.
+  //
+  // Found the hard way, 2026-09-14 (Plan 0035 Milestone 5): the original
+  // implementation here tracked only the SINGLE most-recently-touched
+  // (VkDescriptorSet, resource) pair per binding, on the unstated
+  // assumption that multiple DrawItems sharing one Material are always
+  // drawn back-to-back. Plan 0035's own ~28-sphere showcase scene was
+  // the first real draw order to violate that assumption -- 28 pedestal
+  // nodes sharing one Material, each interleaved with a *different*
+  // sphere Material's DrawItem in between -- so every revisit of the
+  // shared pedestal set found the memo already overwritten by the
+  // intervening sphere set, concluded (wrongly) that the pedestal set
+  // had never been written this recording, and re-issued
+  // vkUpdateDescriptorSets() on a set already bound earlier in this same
+  // recording: VUID-vkCmdBindDescriptorSets-commandBuffer-recording,
+  // observed as a real Validation Layer FATAL. Keying the memo by the
+  // VkDescriptorSet itself (below), not merely by "was it the last one
+  // touched," is what actually keeps this invariant regardless of draw
+  // order/interleaving -- a real correctness fix, not a cache-eviction
+  // tuning knob.
+  //
+  // Still per-recording only (not per-frame, not cross-CommandList,
+  // never persisted): every VulkanCommandList instance owns exactly one
+  // VkCommandBuffer allocation for its entire lifetime (VulkanDevice::
+  // createCommandList() always calls vkAllocateCommandBuffers() fresh,
+  // never vkResetCommandBuffer() on a reused instance -- see that
+  // function's own body), so this member's own default-empty
+  // construction already *is* "clear all memos at the start of every
+  // recording" -- no separate reset step exists or is needed. Holds no
+  // GPU resource, still never the general resource cache Section 10/
+  // ADR-0025 deliberately avoids -- it remembers state already written
+  // into a set this CommandList itself owns for this recording, nothing
+  // shared or outliving it. bindUniformBuffer() still skips only the
+  // exact redundant vkUpdateDescriptorSets() call, never the
+  // vkCmdBindDescriptorSets() call itself (always re-issued, matching
+  // Section 10's own stated "re-binds every draw item regardless, for
+  // simplicity" design).
+  std::unordered_map<VkDescriptorSet, VkBuffer> uniformBufferMemo_;
 
-  // Same memo pattern as lastUpdatedDescriptorSet_/lastUpdatedUniformBuffer_
-  // above, for bindTexture() (Spec 0016/D3) -- a textured Material shared
-  // by multiple DrawItems calls bindTexture() again for every item, each
-  // with byte-identical VkDescriptorImageInfo contents (the one shared
-  // SampledTexture/Sampler pair). Pointer identity only, matching the
-  // buffer memo's own VkBuffer-handle-identity comparison; neither
-  // pointer is ever dereferenced through this member.
-  struct TextureDescriptorMemo {
-    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+  // Same memo pattern and the same 2026-09-14 fix as uniformBufferMemo_
+  // above, for bindTexture() (Spec 0016/D3) -- a textured Material
+  // shared by multiple DrawItems calls bindTexture() again for every
+  // item, each with byte-identical VkDescriptorImageInfo contents (the
+  // one shared SampledTexture/Sampler pair), and the same non-
+  // consecutive-revisit hazard applies per binding. Pointer identity
+  // only, matching the buffer memo's own VkBuffer-handle-identity
+  // comparison; no pointer here is ever dereferenced.
+  struct TextureBindingMemo {
     const VulkanSampledTexture* texture = nullptr;
     // Plan 0027 Milestone 2 (ADR-0072 D-4/D-7): a binding index is always
     // exclusively one resource kind for any given Pipeline's own
@@ -172,11 +200,17 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   };
   // Plan 0027 Milestone 6 (ADR-0072 D-7): widened from 4 to 5 --
   // pbr_ibl's own new shadow-map slot is binding 4, which fails
-  // ATLANTIS_CHECK(binding < textureDescriptorMemos_.size()) in
-  // bindTexture() at the old size. ADR-0072 D-7's own Accepted
-  // Amendment, 2026-09-06 (Plan 0029 Section P10): widened again to
-  // 6 -- pbr_ibl_normal_map's own new normal-map slot is binding 5.
-  std::array<TextureDescriptorMemo, 6> textureDescriptorMemos_{};
+  // ATLANTIS_CHECK(binding < kMaxTextureBindingSlots) in bindTexture()
+  // at the old size. ADR-0072 D-7's own Accepted Amendment, 2026-09-06
+  // (Plan 0029 Section P10): widened again to 6 -- pbr_ibl_normal_map's
+  // own new normal-map slot is binding 5.
+  static constexpr std::size_t kMaxTextureBindingSlots = 6;
+  // Outer key: the VkDescriptorSet itself (2026-09-14 fix, see
+  // uniformBufferMemo_'s own comment above for the full reasoning) --
+  // default-constructed to an all-nullptr array of kMaxTextureBindingSlots
+  // memo slots the first time any given set is touched this recording.
+  std::unordered_map<VkDescriptorSet, std::array<TextureBindingMemo, kMaxTextureBindingSlots>>
+      textureDescriptorMemos_;
 };
 
 }  // namespace atlantis::vulkan_backend::detail

@@ -578,6 +578,11 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
 
   // Plan 0029 Section P15: the real, normal-mapped trios (not filler) --
   // this fixture's own sphere material genuinely declares a normal map.
+  // Plan 0035 Milestone 2 (ADR-0081): the two new clearcoat trailing
+  // trios are dead-path filler -- this fixture's own scene never
+  // realizes a PbrClearcoat material, reusing pbrDirectLit*'s own
+  // values, mirroring every other no-clearcoat composition root's
+  // identical reuse.
   std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
       realizePendingMaterials(*fixture.device, *commandList, fixture.unlitTexturedVertexInputLayout,
                                fixture.unlitTexturedVertexSpirv, fixture.unlitTexturedFragmentSpirv,
@@ -588,7 +593,23 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
                                fixture.pbrIblFragmentSpirv, fixture.pbrDirectLitNormalMapVertexInputLayout,
                                fixture.pbrDirectLitNormalMapVertexSpirv, fixture.pbrDirectLitNormalMapFragmentSpirv,
                                fixture.pbrIblNormalMapVertexInputLayout, fixture.pbrIblNormalMapVertexSpirv,
-                               fixture.pbrIblNormalMapFragmentSpirv, environmentEnabled, pendingMaterialIds,
+                               fixture.pbrIblNormalMapFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
+                               fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv,
+                               // Plan 0035 Milestone 3 (ADR-0081): same
+                               // dead-path sheen filler reasoning as the
+                               // clearcoat trios immediately above.
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
+                               fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+                               // Plan 0035 Milestone 4 (ADR-0081): same
+                               // dead-path anisotropic filler reasoning
+                               // as the clearcoat/sheen trios above.
+                               fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
+                               fixture.pbrDirectLitFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
+                               fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv, environmentEnabled,
+                               pendingMaterialIds,
                                fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);
 
   // Plan 0029 Section P19 (Fixture A/B mechanism, step 3): the control
@@ -608,6 +629,8 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
     if (controlTextureIt == fixture.textureDataMap.end()) {
       return ResultT::Err(PbrNormalMapDemoRenderError::ControlMaterialRealizationFailed);
     }
+    // Plan 0035 Milestone 2 (ADR-0081): same dead-path clearcoat filler
+    // as the realizePendingMaterials() call above.
     auto controlCandidateResult = realizeOneMaterialCandidate(
         *fixture.device, fixture.unlitTexturedVertexInputLayout, fixture.unlitTexturedVertexSpirv,
         fixture.unlitTexturedFragmentSpirv, fixture.litTexturedVertexInputLayout, fixture.litTexturedVertexSpirv,
@@ -616,9 +639,19 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
         fixture.pbrIblFragmentSpirv, fixture.pbrDirectLitNormalMapVertexInputLayout,
         fixture.pbrDirectLitNormalMapVertexSpirv, fixture.pbrDirectLitNormalMapFragmentSpirv,
         fixture.pbrIblNormalMapVertexInputLayout, fixture.pbrIblNormalMapVertexSpirv,
-        fixture.pbrIblNormalMapFragmentSpirv, environmentEnabled, fixture.controlMaterialAssetId,
-        *fixture.controlMaterialData, controlTextureIt->second, /*normalMapTextureData=*/nullptr,
-        effectiveSampledTextures);
+        fixture.pbrIblNormalMapFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
+        fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
+        fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+        // Plan 0035 Milestone 3 (ADR-0081): same dead-path sheen filler
+        // as the clearcoat trios above.
+        fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+        fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+        // Plan 0035 Milestone 4 (ADR-0081): same dead-path anisotropic
+        // filler as the clearcoat/sheen trios above.
+        fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+        fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
+        environmentEnabled, fixture.controlMaterialAssetId, *fixture.controlMaterialData, controlTextureIt->second,
+        /*normalMapTextureData=*/nullptr, effectiveSampledTextures);
     if (controlCandidateResult.isErr()) {
       return ResultT::Err(PbrNormalMapDemoRenderError::ControlMaterialRealizationFailed);
     }

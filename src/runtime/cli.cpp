@@ -14,7 +14,8 @@ constexpr std::string_view kUsageText =
     "       atlantis_runtime --list-scenes\n"
     "       atlantis_runtime --help\n"
     "\n"
-    "<name> is one of: integrated_showcase_demo, ibl_material_demo, pbr_normal_map_demo\n";
+    "<name> is one of: integrated_showcase_demo, ibl_material_demo, pbr_normal_map_demo, "
+    "pbr_materials_showcase\n";
 
 [[nodiscard]] const SceneWhitelistEntry* findByName(std::span<const SceneWhitelistEntry> whitelist,
                                                       std::string_view name) {

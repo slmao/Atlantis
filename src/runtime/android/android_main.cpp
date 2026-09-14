@@ -169,6 +169,71 @@ void android_main(struct android_app* app) {
       assetManager, internalDataPath, "shaders/output_transform_srgb/output_transform_srgb.frag.spv");
   config.outputTransformSrgbFragmentShaderReflectionPath = extractAsset(
       assetManager, internalDataPath, "shaders/output_transform_srgb/output_transform_srgb.frag.refl.json");
+  // Plan 0035 Milestone 6 (asset lock-step): PbrClearcoat/PbrSheen/
+  // PbrAnisotropic's own six IBL-lit shader pairs -- populated
+  // unconditionally here, same shape as every shader pair above and
+  // main.cpp's own identical unconditional-population precedent
+  // (main.cpp:141-209), regardless of whether integrated_showcase_demo
+  // (this file's own fixed default scene) currently uses any of these
+  // three MaterialKinds.
+  config.pbrClearcoatIblVertexShaderSpirvPath =
+      extractAsset(assetManager, internalDataPath, "shaders/pbr_clearcoat_ibl/pbr_clearcoat_ibl.vert.spv");
+  config.pbrClearcoatIblVertexShaderReflectionPath =
+      extractAsset(assetManager, internalDataPath, "shaders/pbr_clearcoat_ibl/pbr_clearcoat_ibl.vert.refl.json");
+  config.pbrClearcoatIblFragmentShaderSpirvPath =
+      extractAsset(assetManager, internalDataPath, "shaders/pbr_clearcoat_ibl/pbr_clearcoat_ibl.frag.spv");
+  config.pbrClearcoatIblFragmentShaderReflectionPath =
+      extractAsset(assetManager, internalDataPath, "shaders/pbr_clearcoat_ibl/pbr_clearcoat_ibl.frag.refl.json");
+  config.pbrClearcoatIblNormalMapVertexShaderSpirvPath = extractAsset(
+      assetManager, internalDataPath,
+      "shaders/pbr_clearcoat_ibl_normal_map/pbr_clearcoat_ibl_normal_map.vert.spv");
+  config.pbrClearcoatIblNormalMapVertexShaderReflectionPath = extractAsset(
+      assetManager, internalDataPath,
+      "shaders/pbr_clearcoat_ibl_normal_map/pbr_clearcoat_ibl_normal_map.vert.refl.json");
+  config.pbrClearcoatIblNormalMapFragmentShaderSpirvPath = extractAsset(
+      assetManager, internalDataPath,
+      "shaders/pbr_clearcoat_ibl_normal_map/pbr_clearcoat_ibl_normal_map.frag.spv");
+  config.pbrClearcoatIblNormalMapFragmentShaderReflectionPath = extractAsset(
+      assetManager, internalDataPath,
+      "shaders/pbr_clearcoat_ibl_normal_map/pbr_clearcoat_ibl_normal_map.frag.refl.json");
+  config.pbrSheenIblVertexShaderSpirvPath =
+      extractAsset(assetManager, internalDataPath, "shaders/pbr_sheen_ibl/pbr_sheen_ibl.vert.spv");
+  config.pbrSheenIblVertexShaderReflectionPath =
+      extractAsset(assetManager, internalDataPath, "shaders/pbr_sheen_ibl/pbr_sheen_ibl.vert.refl.json");
+  config.pbrSheenIblFragmentShaderSpirvPath =
+      extractAsset(assetManager, internalDataPath, "shaders/pbr_sheen_ibl/pbr_sheen_ibl.frag.spv");
+  config.pbrSheenIblFragmentShaderReflectionPath =
+      extractAsset(assetManager, internalDataPath, "shaders/pbr_sheen_ibl/pbr_sheen_ibl.frag.refl.json");
+  config.pbrSheenIblNormalMapVertexShaderSpirvPath = extractAsset(
+      assetManager, internalDataPath, "shaders/pbr_sheen_ibl_normal_map/pbr_sheen_ibl_normal_map.vert.spv");
+  config.pbrSheenIblNormalMapVertexShaderReflectionPath = extractAsset(
+      assetManager, internalDataPath,
+      "shaders/pbr_sheen_ibl_normal_map/pbr_sheen_ibl_normal_map.vert.refl.json");
+  config.pbrSheenIblNormalMapFragmentShaderSpirvPath = extractAsset(
+      assetManager, internalDataPath, "shaders/pbr_sheen_ibl_normal_map/pbr_sheen_ibl_normal_map.frag.spv");
+  config.pbrSheenIblNormalMapFragmentShaderReflectionPath = extractAsset(
+      assetManager, internalDataPath,
+      "shaders/pbr_sheen_ibl_normal_map/pbr_sheen_ibl_normal_map.frag.refl.json");
+  config.pbrAnisotropicIblVertexShaderSpirvPath =
+      extractAsset(assetManager, internalDataPath, "shaders/pbr_anisotropic_ibl/pbr_anisotropic_ibl.vert.spv");
+  config.pbrAnisotropicIblVertexShaderReflectionPath = extractAsset(
+      assetManager, internalDataPath, "shaders/pbr_anisotropic_ibl/pbr_anisotropic_ibl.vert.refl.json");
+  config.pbrAnisotropicIblFragmentShaderSpirvPath =
+      extractAsset(assetManager, internalDataPath, "shaders/pbr_anisotropic_ibl/pbr_anisotropic_ibl.frag.spv");
+  config.pbrAnisotropicIblFragmentShaderReflectionPath = extractAsset(
+      assetManager, internalDataPath, "shaders/pbr_anisotropic_ibl/pbr_anisotropic_ibl.frag.refl.json");
+  config.pbrAnisotropicIblNormalMapVertexShaderSpirvPath = extractAsset(
+      assetManager, internalDataPath,
+      "shaders/pbr_anisotropic_ibl_normal_map/pbr_anisotropic_ibl_normal_map.vert.spv");
+  config.pbrAnisotropicIblNormalMapVertexShaderReflectionPath = extractAsset(
+      assetManager, internalDataPath,
+      "shaders/pbr_anisotropic_ibl_normal_map/pbr_anisotropic_ibl_normal_map.vert.refl.json");
+  config.pbrAnisotropicIblNormalMapFragmentShaderSpirvPath = extractAsset(
+      assetManager, internalDataPath,
+      "shaders/pbr_anisotropic_ibl_normal_map/pbr_anisotropic_ibl_normal_map.frag.spv");
+  config.pbrAnisotropicIblNormalMapFragmentShaderReflectionPath = extractAsset(
+      assetManager, internalDataPath,
+      "shaders/pbr_anisotropic_ibl_normal_map/pbr_anisotropic_ibl_normal_map.frag.refl.json");
   config.enableValidationLayers = true;
 
   // ADR-0077's own amendment: the only point in this sequence with

@@ -1,0 +1,8 @@
+asset: textures/wood_dark_source_srgb.png
+source: https://polyhaven.com/a/dark_wood
+source_file: dark_wood_diff_1k.jpg (converted to PNG, no pixel-data re-encoding beyond container format change)
+author: Dario Barresi (baking), Dimitrios Savva (photography), Rico Cilliers (tiling)
+license: CC0 1.0 Universal (https://polyhaven.com/license)
+dimensions: 1024x1024
+downloaded: 2026-09-13
+sha256: 88ac8e514248ab19d828cc00b5b3388f956874bd73d1b16f4f7484c00c77dc6b

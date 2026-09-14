@@ -490,6 +490,170 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
     pbrIblNormalMapFragmentSpirv_ = std::move(pbrIblNormalMapFragmentSpirvOpt.value());
     pbrIblNormalMapVertexInputLayout_ = std::move(pbrIblNormalMapLayoutOpt.value());
 
+    // Plan 0035 Milestone 2 (ADR-0081): PbrClearcoat's own two IBL-lit
+    // shader pairs -- narrower gate than pbrIbl/pbrIblNormalMap/sky
+    // above: loaded only when BOTH hasEnvironment (this block) AND
+    // config.pbrClearcoatIblVertexShaderSpirvPath is itself non-empty
+    // (bootstrap_config.h's own comment on why these 8 fields are
+    // genuinely optional, unlike every other field group in this
+    // block). A composition root that never populates these fields
+    // simply never realizes a PbrClearcoat material -- selectShaderPair()
+    // (material_realization.cpp) is never reached for that kind in that
+    // case.
+    if (!config.pbrClearcoatIblVertexShaderSpirvPath.empty()) {
+      auto pbrClearcoatIblVertexSpirvOpt = loadSpirvFile(config.pbrClearcoatIblVertexShaderSpirvPath);
+      auto pbrClearcoatIblFragmentSpirvOpt = loadSpirvFile(config.pbrClearcoatIblFragmentShaderSpirvPath);
+      auto pbrClearcoatIblVertexReflectionResult =
+          loadReflectionMetadata(config.pbrClearcoatIblVertexShaderReflectionPath);
+      if (!pbrClearcoatIblVertexSpirvOpt.has_value() || !pbrClearcoatIblFragmentSpirvOpt.has_value() ||
+          pbrClearcoatIblVertexReflectionResult.isErr()) {
+        ATLANTIS_LOG_ERROR("Failed to load the configured pbrClearcoatIbl shader pair");
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+      }
+      auto pbrClearcoatIblLayoutOpt = pbrDirectLitVertexLayout(pbrClearcoatIblVertexReflectionResult.value());
+      if (!pbrClearcoatIblLayoutOpt.has_value()) {
+        ATLANTIS_LOG_ERROR("pbrClearcoatIbl reflected vertex inputs do not match the PBR Vertex schema");
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+      }
+      pbrClearcoatIblVertexSpirv_ = std::move(pbrClearcoatIblVertexSpirvOpt.value());
+      pbrClearcoatIblFragmentSpirv_ = std::move(pbrClearcoatIblFragmentSpirvOpt.value());
+      pbrClearcoatIblVertexInputLayout_ = std::move(pbrClearcoatIblLayoutOpt.value());
+
+      auto pbrClearcoatIblNormalMapVertexSpirvOpt =
+          loadSpirvFile(config.pbrClearcoatIblNormalMapVertexShaderSpirvPath);
+      auto pbrClearcoatIblNormalMapFragmentSpirvOpt =
+          loadSpirvFile(config.pbrClearcoatIblNormalMapFragmentShaderSpirvPath);
+      auto pbrClearcoatIblNormalMapVertexReflectionResult =
+          loadReflectionMetadata(config.pbrClearcoatIblNormalMapVertexShaderReflectionPath);
+      if (!pbrClearcoatIblNormalMapVertexSpirvOpt.has_value() ||
+          !pbrClearcoatIblNormalMapFragmentSpirvOpt.has_value() ||
+          pbrClearcoatIblNormalMapVertexReflectionResult.isErr()) {
+        ATLANTIS_LOG_ERROR("Failed to load the configured pbrClearcoatIblNormalMap shader pair");
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+      }
+      auto pbrClearcoatIblNormalMapLayoutOpt =
+          pbrNormalMapVertexLayout(pbrClearcoatIblNormalMapVertexReflectionResult.value());
+      if (!pbrClearcoatIblNormalMapLayoutOpt.has_value()) {
+        ATLANTIS_LOG_ERROR(
+            "pbrClearcoatIblNormalMap reflected vertex inputs do not match the PBR normal-map Vertex schema");
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+      }
+      pbrClearcoatIblNormalMapVertexSpirv_ = std::move(pbrClearcoatIblNormalMapVertexSpirvOpt.value());
+      pbrClearcoatIblNormalMapFragmentSpirv_ = std::move(pbrClearcoatIblNormalMapFragmentSpirvOpt.value());
+      pbrClearcoatIblNormalMapVertexInputLayout_ = std::move(pbrClearcoatIblNormalMapLayoutOpt.value());
+    }
+
+    // Plan 0035 Milestone 3 (ADR-0081): PbrSheen's own two IBL-lit
+    // shader pairs -- identical gating shape to PbrClearcoat's own pair
+    // immediately above (BOTH hasEnvironment AND
+    // config.pbrSheenIblVertexShaderSpirvPath non-empty).
+    if (!config.pbrSheenIblVertexShaderSpirvPath.empty()) {
+      auto pbrSheenIblVertexSpirvOpt = loadSpirvFile(config.pbrSheenIblVertexShaderSpirvPath);
+      auto pbrSheenIblFragmentSpirvOpt = loadSpirvFile(config.pbrSheenIblFragmentShaderSpirvPath);
+      auto pbrSheenIblVertexReflectionResult = loadReflectionMetadata(config.pbrSheenIblVertexShaderReflectionPath);
+      if (!pbrSheenIblVertexSpirvOpt.has_value() || !pbrSheenIblFragmentSpirvOpt.has_value() ||
+          pbrSheenIblVertexReflectionResult.isErr()) {
+        ATLANTIS_LOG_ERROR("Failed to load the configured pbrSheenIbl shader pair");
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+      }
+      auto pbrSheenIblLayoutOpt = pbrDirectLitVertexLayout(pbrSheenIblVertexReflectionResult.value());
+      if (!pbrSheenIblLayoutOpt.has_value()) {
+        ATLANTIS_LOG_ERROR("pbrSheenIbl reflected vertex inputs do not match the PBR Vertex schema");
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+      }
+      pbrSheenIblVertexSpirv_ = std::move(pbrSheenIblVertexSpirvOpt.value());
+      pbrSheenIblFragmentSpirv_ = std::move(pbrSheenIblFragmentSpirvOpt.value());
+      pbrSheenIblVertexInputLayout_ = std::move(pbrSheenIblLayoutOpt.value());
+
+      auto pbrSheenIblNormalMapVertexSpirvOpt = loadSpirvFile(config.pbrSheenIblNormalMapVertexShaderSpirvPath);
+      auto pbrSheenIblNormalMapFragmentSpirvOpt = loadSpirvFile(config.pbrSheenIblNormalMapFragmentShaderSpirvPath);
+      auto pbrSheenIblNormalMapVertexReflectionResult =
+          loadReflectionMetadata(config.pbrSheenIblNormalMapVertexShaderReflectionPath);
+      if (!pbrSheenIblNormalMapVertexSpirvOpt.has_value() || !pbrSheenIblNormalMapFragmentSpirvOpt.has_value() ||
+          pbrSheenIblNormalMapVertexReflectionResult.isErr()) {
+        ATLANTIS_LOG_ERROR("Failed to load the configured pbrSheenIblNormalMap shader pair");
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+      }
+      auto pbrSheenIblNormalMapLayoutOpt =
+          pbrNormalMapVertexLayout(pbrSheenIblNormalMapVertexReflectionResult.value());
+      if (!pbrSheenIblNormalMapLayoutOpt.has_value()) {
+        ATLANTIS_LOG_ERROR(
+            "pbrSheenIblNormalMap reflected vertex inputs do not match the PBR normal-map Vertex schema");
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+      }
+      pbrSheenIblNormalMapVertexSpirv_ = std::move(pbrSheenIblNormalMapVertexSpirvOpt.value());
+      pbrSheenIblNormalMapFragmentSpirv_ = std::move(pbrSheenIblNormalMapFragmentSpirvOpt.value());
+      pbrSheenIblNormalMapVertexInputLayout_ = std::move(pbrSheenIblNormalMapLayoutOpt.value());
+    }
+
+    // Plan 0035 Milestone 4 (ADR-0081): PbrAnisotropic's own two IBL-lit
+    // shader pairs -- identical gating shape to PbrClearcoat/PbrSheen's
+    // own pairs immediately above (BOTH hasEnvironment AND
+    // config.pbrAnisotropicIblVertexShaderSpirvPath non-empty). UNLIKE
+    // every PBR pair above (including the non-normal-map PbrClearcoat/
+    // PbrSheen trios, resolved via pbrDirectLitVertexLayout()), BOTH
+    // variants here are resolved via pbrNormalMapVertexLayout() -- this
+    // Milestone's own fragment-stage tangent rotation needs the tangent
+    // vertex attribute even when no normal map texture is bound (Spec
+    // 0035's own Milestone 4 shape), so pbrAnisotropicIbl.slang itself
+    // declares the same 4-attribute vertex input as
+    // pbrAnisotropicIblNormalMap.slang, not the 3-attribute schema its
+    // non-normal-map siblings use.
+    if (!config.pbrAnisotropicIblVertexShaderSpirvPath.empty()) {
+      auto pbrAnisotropicIblVertexSpirvOpt = loadSpirvFile(config.pbrAnisotropicIblVertexShaderSpirvPath);
+      auto pbrAnisotropicIblFragmentSpirvOpt = loadSpirvFile(config.pbrAnisotropicIblFragmentShaderSpirvPath);
+      auto pbrAnisotropicIblVertexReflectionResult =
+          loadReflectionMetadata(config.pbrAnisotropicIblVertexShaderReflectionPath);
+      if (!pbrAnisotropicIblVertexSpirvOpt.has_value() || !pbrAnisotropicIblFragmentSpirvOpt.has_value() ||
+          pbrAnisotropicIblVertexReflectionResult.isErr()) {
+        ATLANTIS_LOG_ERROR("Failed to load the configured pbrAnisotropicIbl shader pair");
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+      }
+      auto pbrAnisotropicIblLayoutOpt = pbrNormalMapVertexLayout(pbrAnisotropicIblVertexReflectionResult.value());
+      if (!pbrAnisotropicIblLayoutOpt.has_value()) {
+        ATLANTIS_LOG_ERROR("pbrAnisotropicIbl reflected vertex inputs do not match the PBR normal-map Vertex schema");
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+      }
+      pbrAnisotropicIblVertexSpirv_ = std::move(pbrAnisotropicIblVertexSpirvOpt.value());
+      pbrAnisotropicIblFragmentSpirv_ = std::move(pbrAnisotropicIblFragmentSpirvOpt.value());
+      pbrAnisotropicIblVertexInputLayout_ = std::move(pbrAnisotropicIblLayoutOpt.value());
+
+      auto pbrAnisotropicIblNormalMapVertexSpirvOpt =
+          loadSpirvFile(config.pbrAnisotropicIblNormalMapVertexShaderSpirvPath);
+      auto pbrAnisotropicIblNormalMapFragmentSpirvOpt =
+          loadSpirvFile(config.pbrAnisotropicIblNormalMapFragmentShaderSpirvPath);
+      auto pbrAnisotropicIblNormalMapVertexReflectionResult =
+          loadReflectionMetadata(config.pbrAnisotropicIblNormalMapVertexShaderReflectionPath);
+      if (!pbrAnisotropicIblNormalMapVertexSpirvOpt.has_value() ||
+          !pbrAnisotropicIblNormalMapFragmentSpirvOpt.has_value() ||
+          pbrAnisotropicIblNormalMapVertexReflectionResult.isErr()) {
+        ATLANTIS_LOG_ERROR("Failed to load the configured pbrAnisotropicIblNormalMap shader pair");
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+      }
+      auto pbrAnisotropicIblNormalMapLayoutOpt =
+          pbrNormalMapVertexLayout(pbrAnisotropicIblNormalMapVertexReflectionResult.value());
+      if (!pbrAnisotropicIblNormalMapLayoutOpt.has_value()) {
+        ATLANTIS_LOG_ERROR(
+            "pbrAnisotropicIblNormalMap reflected vertex inputs do not match the PBR normal-map Vertex schema");
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+      }
+      pbrAnisotropicIblNormalMapVertexSpirv_ = std::move(pbrAnisotropicIblNormalMapVertexSpirvOpt.value());
+      pbrAnisotropicIblNormalMapFragmentSpirv_ = std::move(pbrAnisotropicIblNormalMapFragmentSpirvOpt.value());
+      pbrAnisotropicIblNormalMapVertexInputLayout_ = std::move(pbrAnisotropicIblNormalMapLayoutOpt.value());
+    }
+
     // Plan 0026 Milestone 3 (ADR-0071): the sky shader pair -- same
     // hasEnvironment gate, same shape as the pbrIbl load immediately
     // above. Its own vertex layout is resolved via the existing
@@ -1331,7 +1495,16 @@ void RuntimeApplication::runFrame() {
                                pbrIblVertexSpirv_, pbrIblFragmentSpirv_, pbrDirectLitNormalMapVertexInputLayout_,
                                pbrDirectLitNormalMapVertexSpirv_, pbrDirectLitNormalMapFragmentSpirv_,
                                pbrIblNormalMapVertexInputLayout_, pbrIblNormalMapVertexSpirv_,
-                               pbrIblNormalMapFragmentSpirv_, environmentEnabled, pendingMaterialIds,
+                               pbrIblNormalMapFragmentSpirv_, pbrClearcoatIblVertexInputLayout_,
+                               pbrClearcoatIblVertexSpirv_, pbrClearcoatIblFragmentSpirv_,
+                               pbrClearcoatIblNormalMapVertexInputLayout_, pbrClearcoatIblNormalMapVertexSpirv_,
+                               pbrClearcoatIblNormalMapFragmentSpirv_, pbrSheenIblVertexInputLayout_,
+                               pbrSheenIblVertexSpirv_, pbrSheenIblFragmentSpirv_,
+                               pbrSheenIblNormalMapVertexInputLayout_, pbrSheenIblNormalMapVertexSpirv_,
+                               pbrSheenIblNormalMapFragmentSpirv_, pbrAnisotropicIblVertexInputLayout_,
+                               pbrAnisotropicIblVertexSpirv_, pbrAnisotropicIblFragmentSpirv_,
+                               pbrAnisotropicIblNormalMapVertexInputLayout_, pbrAnisotropicIblNormalMapVertexSpirv_,
+                               pbrAnisotropicIblNormalMapFragmentSpirv_, environmentEnabled, pendingMaterialIds,
                                sampledTextureResourceMap_, materialDataMap_, textureDataMap_);
   // Plan 0018 Section P12 (Spec 0018 D8 step 5): gated on "at least one
   // material was newly realized this frame" -- NOT narrowed to "at least

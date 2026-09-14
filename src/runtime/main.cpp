@@ -41,7 +41,11 @@ int main(int argc, char** argv) {
   // (Requirement 5). All parsing/printing/exit happens strictly before
   // any BootstrapConfig field is populated or createRuntimeApplication()
   // is called.
-  const std::array<SceneWhitelistEntry, 3> whitelist{{
+  // Plan 0035 Milestone 5 (Spec 0035 Requirement 7): the 4th, additive
+  // whitelist entry -- purely appended, no change to the existing three
+  // entries' own behavior (Spec 0032's own established "closed
+  // whitelist, additive-only" design).
+  const std::array<SceneWhitelistEntry, 4> whitelist{{
       {"integrated_showcase_demo",
        SceneBootstrapPaths{ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH, ATLANTIS_RUNTIME_SCENE_METADATA_PATH,
                             ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH}},
@@ -53,6 +57,10 @@ int main(int argc, char** argv) {
        SceneBootstrapPaths{ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_ARTIFACT_PATH,
                             ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_METADATA_PATH,
                             ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_MANIFEST_PATH}},
+      {"pbr_materials_showcase",
+       SceneBootstrapPaths{ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_ARTIFACT_PATH,
+                            ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_METADATA_PATH,
+                            ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_MANIFEST_PATH}},
   }};
 
   const CommandLineResult cliResult = parseCommandLine(argc, argv, whitelist);
@@ -130,6 +138,75 @@ int main(int argc, char** argv) {
       std::string(ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_ibl_normal_map.frag.spv";
   config.pbrIblNormalMapFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_ibl_normal_map.frag.refl.json";
+  // Plan 0035 Milestone 2 (ADR-0081): PbrClearcoat's own two IBL-lit
+  // shader pairs -- populated unconditionally here (bootstrap_config.h's
+  // own comment: genuinely optional, but this real product binary makes
+  // the shader available regardless of whether any of its own three
+  // whitelisted scenes currently uses a PbrClearcoat material).
+  config.pbrClearcoatIblVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_SHADER_DIR) + "/pbr_clearcoat_ibl.vert.spv";
+  config.pbrClearcoatIblVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_SHADER_DIR) + "/pbr_clearcoat_ibl.vert.refl.json";
+  config.pbrClearcoatIblFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_SHADER_DIR) + "/pbr_clearcoat_ibl.frag.spv";
+  config.pbrClearcoatIblFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_SHADER_DIR) + "/pbr_clearcoat_ibl.frag.refl.json";
+  config.pbrClearcoatIblNormalMapVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_clearcoat_ibl_normal_map.vert.spv";
+  config.pbrClearcoatIblNormalMapVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_clearcoat_ibl_normal_map.vert.refl.json";
+  config.pbrClearcoatIblNormalMapFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_clearcoat_ibl_normal_map.frag.spv";
+  config.pbrClearcoatIblNormalMapFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_CLEARCOAT_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_clearcoat_ibl_normal_map.frag.refl.json";
+  // Plan 0035 Milestone 3 (ADR-0081): PbrSheen's own two IBL-lit shader
+  // pairs -- same unconditional-population shape as PbrClearcoat's own
+  // pair immediately above.
+  config.pbrSheenIblVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_SHADER_DIR) + "/pbr_sheen_ibl.vert.spv";
+  config.pbrSheenIblVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_SHADER_DIR) + "/pbr_sheen_ibl.vert.refl.json";
+  config.pbrSheenIblFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_SHADER_DIR) + "/pbr_sheen_ibl.frag.spv";
+  config.pbrSheenIblFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_SHADER_DIR) + "/pbr_sheen_ibl.frag.refl.json";
+  config.pbrSheenIblNormalMapVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_sheen_ibl_normal_map.vert.spv";
+  config.pbrSheenIblNormalMapVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_sheen_ibl_normal_map.vert.refl.json";
+  config.pbrSheenIblNormalMapFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_sheen_ibl_normal_map.frag.spv";
+  config.pbrSheenIblNormalMapFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_SHEEN_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_sheen_ibl_normal_map.frag.refl.json";
+  // Plan 0035 Milestone 4 (ADR-0081): PbrAnisotropic's own two IBL-lit
+  // shader pairs -- same unconditional-population shape as
+  // PbrClearcoat/PbrSheen's own pairs immediately above.
+  config.pbrAnisotropicIblVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_ANISOTROPIC_IBL_SHADER_DIR) + "/pbr_anisotropic_ibl.vert.spv";
+  config.pbrAnisotropicIblVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_ANISOTROPIC_IBL_SHADER_DIR) + "/pbr_anisotropic_ibl.vert.refl.json";
+  config.pbrAnisotropicIblFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_ANISOTROPIC_IBL_SHADER_DIR) + "/pbr_anisotropic_ibl.frag.spv";
+  config.pbrAnisotropicIblFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_ANISOTROPIC_IBL_SHADER_DIR) + "/pbr_anisotropic_ibl.frag.refl.json";
+  config.pbrAnisotropicIblNormalMapVertexShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_ANISOTROPIC_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_anisotropic_ibl_normal_map.vert.spv";
+  config.pbrAnisotropicIblNormalMapVertexShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_ANISOTROPIC_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_anisotropic_ibl_normal_map.vert.refl.json";
+  config.pbrAnisotropicIblNormalMapFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_ANISOTROPIC_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_anisotropic_ibl_normal_map.frag.spv";
+  config.pbrAnisotropicIblNormalMapFragmentShaderReflectionPath =
+      std::string(ATLANTIS_RUNTIME_PBR_ANISOTROPIC_IBL_NORMAL_MAP_SHADER_DIR) +
+      "/pbr_anisotropic_ibl_normal_map.frag.refl.json";
   config.skyVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.vert.spv";
   config.skyVertexShaderReflectionPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.vert.refl.json";
   config.skyFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_SKY_SHADER_DIR) + "/sky.frag.spv";
