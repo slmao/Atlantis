@@ -215,8 +215,9 @@ can demonstrate.
    cropped at the frame's left edge, consistent with a fuller underlying
    array the photo itself does not fully capture; this Spec targets
    "on the order of 24-30", not an exact reproduced count, since the
-   photo itself does not establish one), arranged in a fan/arc, each on
-   its own small pedestal-like base, on a rough, granular gray ground
+   photo itself does not establish one), arranged in a matrix/grid
+   (amended post-merge at owner direction, 2026-09-15 — was "fan/arc"),
+   each on its own small pedestal-like base, on a rough, granular gray ground
    plane (visually: weathered concrete/asphalt, matching the "cement
    ground" description), lit by one new warehouse-interior-style HDRI
    environment (content source: see Requirements/Non-functional
@@ -398,7 +399,8 @@ The showcase scene is a new `.ascene` asset: roughly two dozen-plus
 `PbrDirectLit` spheres (reusing existing base-material machinery,
 skinned with newly-sourced CC0 PBR textures — metal, wood, stone,
 tile/mosaic — matching the reference image's own visible material
-variety) arranged in a fan/arc on a ground-plane mesh, plus at least one
+variety) arranged in a matrix/grid on a ground-plane mesh (amended
+post-merge at owner direction, 2026-09-15 — was "fan/arc"), plus at least one
 sphere each of `PbrClearcoat`, `PbrSheen`, and `PbrAnisotropic`, all
 using a single new warehouse-interior CC0 HDRI environment
 (`MaterialEnvironmentBinding::Ibl`), zero `Light` entities. The sphere
