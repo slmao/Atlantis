@@ -37,10 +37,12 @@ struct FakeArgv {
   [[nodiscard]] char** argv() { return pointers.data(); }
 };
 
-// Three fixture entries, fake/distinguishable paths only -- never real
+// Four fixture entries, fake/distinguishable paths only -- never real
 // build paths (Spec 0032 Requirement 5). `suffix` lets a test build
-// several independently-distinguishable whitelists.
-[[nodiscard]] std::array<SceneWhitelistEntry, 3> makeFixtureWhitelist(std::string_view suffix = "") {
+// several independently-distinguishable whitelists. Plan 0035 Milestone
+// 5 (Spec 0035 Requirement 7): the 4th entry is purely additive -- the
+// existing three entries' own fake paths are unchanged.
+[[nodiscard]] std::array<SceneWhitelistEntry, 4> makeFixtureWhitelist(std::string_view suffix = "") {
   return {{
       {"integrated_showcase_demo", SceneBootstrapPaths{std::string("/fake/a/artifact").append(suffix),
                                                          std::string("/fake/a/metadata").append(suffix),
@@ -51,10 +53,13 @@ struct FakeArgv {
       {"pbr_normal_map_demo", SceneBootstrapPaths{std::string("/fake/c/artifact").append(suffix),
                                                    std::string("/fake/c/metadata").append(suffix),
                                                    std::string("/fake/c/manifest").append(suffix)}},
+      {"pbr_materials_showcase", SceneBootstrapPaths{std::string("/fake/d/artifact").append(suffix),
+                                                       std::string("/fake/d/metadata").append(suffix),
+                                                       std::string("/fake/d/manifest").append(suffix)}},
   }};
 }
 
-[[nodiscard]] const SceneWhitelistEntry& findFixtureEntry(const std::array<SceneWhitelistEntry, 3>& whitelist,
+[[nodiscard]] const SceneWhitelistEntry& findFixtureEntry(const std::array<SceneWhitelistEntry, 4>& whitelist,
                                                            std::string_view name) {
   for (const auto& entry : whitelist) {
     if (entry.name == name) return entry;
@@ -63,7 +68,7 @@ struct FakeArgv {
   return whitelist[0];
 }
 
-void requireRunScene(const CommandLineResult& result, const std::array<SceneWhitelistEntry, 3>& whitelist,
+void requireRunScene(const CommandLineResult& result, const std::array<SceneWhitelistEntry, 4>& whitelist,
                       std::string_view expectedName) {
   REQUIRE(result.outcome == CommandLineOutcome::RunScene);
   REQUIRE(result.message.empty());
@@ -123,6 +128,16 @@ TEST_CASE("parseCommandLine(): --scene pbr_normal_map_demo selects that scene", 
   requireRunScene(result, whitelist, "pbr_normal_map_demo");
 }
 
+// Plan 0035 Milestone 5 (Spec 0035 Requirement 7): the 4th whitelist
+// entry's own name-to-path mapping, mirroring the three TEST_CASEs
+// above exactly.
+TEST_CASE("parseCommandLine(): --scene pbr_materials_showcase selects that scene", "[runtime][cli]") {
+  const auto whitelist = makeFixtureWhitelist();
+  FakeArgv fa{"--scene", "pbr_materials_showcase"};
+  const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+  requireRunScene(result, whitelist, "pbr_materials_showcase");
+}
+
 // ---------------------------------------------------------------------------
 // Rows 5-6: --help / --list-scenes.
 // ---------------------------------------------------------------------------
@@ -132,16 +147,17 @@ TEST_CASE("parseCommandLine(): --help prints usage and exits", "[runtime][cli]")
   FakeArgv fa{"--help"};
   const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
   requireUsage(result, "usage: atlantis_runtime [--scene <name>]");
-  REQUIRE(result.message.find("integrated_showcase_demo, ibl_material_demo, pbr_normal_map_demo") !=
+  REQUIRE(result.message.find(
+              "integrated_showcase_demo, ibl_material_demo, pbr_normal_map_demo, pbr_materials_showcase") !=
           std::string::npos);
 }
 
-TEST_CASE("parseCommandLine(): --list-scenes prints the three names in whitelist order", "[runtime][cli]") {
+TEST_CASE("parseCommandLine(): --list-scenes prints the four names in whitelist order", "[runtime][cli]") {
   const auto whitelist = makeFixtureWhitelist();
   FakeArgv fa{"--list-scenes"};
   const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
   REQUIRE(result.outcome == CommandLineOutcome::PrintUsageAndExit);
-  REQUIRE(result.message == "integrated_showcase_demo\nibl_material_demo\npbr_normal_map_demo\n");
+  REQUIRE(result.message == "integrated_showcase_demo\nibl_material_demo\npbr_normal_map_demo\npbr_materials_showcase\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -293,7 +309,8 @@ TEST_CASE("parseCommandLine(): three independently-constructed whitelists each s
   const auto whitelistTwo = makeFixtureWhitelist("-w2");
   const auto whitelistThree = makeFixtureWhitelist("-w3");
 
-  for (const auto* name : {"integrated_showcase_demo", "ibl_material_demo", "pbr_normal_map_demo"}) {
+  for (const auto* name :
+       {"integrated_showcase_demo", "ibl_material_demo", "pbr_normal_map_demo", "pbr_materials_showcase"}) {
     FakeArgv faOne{"--scene", name};
     requireRunScene(parseCommandLine(faOne.argc(), faOne.argv(), whitelistOne), whitelistOne, name);
 

@@ -631,6 +631,54 @@ add_dependencies(atlantis_image_regression_pbr_anisotropic_normal_map_demo_golde
   ${ATLANTIS_pbr_anisotropic_demo_scene_TARGET} ${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_TARGET}
   ${ATLANTIS_ibl_studio_TARGET})
 
+# pbr_materials_showcase_main.cpp (Spec 0035 Requirement 6): the
+# showcase-scene golden generator -- one executable, no #ifdef variant
+# split (this scene has no normal-map sibling). Links
+# PbrMaterialsShowcaseFixture, the only fixture that loads all three of
+# pbrClearcoatIbl*/pbrSheenIbl*/pbrAnisotropicIbl* as real shader data
+# at once.
+add_executable(atlantis_image_regression_pbr_materials_showcase_golden_generator pbr_materials_showcase_main.cpp)
+target_link_libraries(atlantis_image_regression_pbr_materials_showcase_golden_generator PRIVATE
+  Atlantis::ImageRegressionFixture Atlantis::ImageRegressionSupport atlantis_compiler_warnings)
+target_compile_definitions(atlantis_image_regression_pbr_materials_showcase_golden_generator PRIVATE
+  ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+  ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
+  ATLANTIS_pbr_materials_showcase_scene_ARTIFACT_PATH="${ATLANTIS_pbr_materials_showcase_scene_ARTIFACT_PATH}"
+  ATLANTIS_pbr_materials_showcase_scene_METADATA_PATH="${ATLANTIS_pbr_materials_showcase_scene_METADATA_PATH}"
+  ATLANTIS_pbr_materials_showcase_scene_MANIFEST_PATH="${ATLANTIS_pbr_materials_showcase_scene_MANIFEST_PATH}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+  # validateEnvironmentBootstrapConfig() (bootstrap_config.cpp) requires
+  # pbrIblNormalMap* to be non-empty whenever an environment is
+  # configured, regardless of whether this fixture's own real trio-
+  # passing call ever reads it (it does not -- dead-path filler reuses
+  # pbrIbl* instead) -- every sibling per-BRDF fixture's own config
+  # builder populates this same field for the identical reason.
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_PBR_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_ibl_normal_map_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_SKY_SHADER_DIR="${ATLANTIS_sky_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_PBR_CLEARCOAT_IBL_SHADER_DIR="${ATLANTIS_pbr_clearcoat_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_PBR_SHEEN_IBL_SHADER_DIR="${ATLANTIS_pbr_sheen_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_PBR_ANISOTROPIC_IBL_SHADER_DIR="${ATLANTIS_pbr_anisotropic_ibl_SHADER_OUTPUT_DIR}"
+  # This scene's own dedicated warehouse_interior HDRI -- distinct from
+  # every sibling demo's own ibl_studio (Milestone 1's own real,
+  # externally-sourced environment, first such asset in this
+  # repository). sha256 literals are the real, measured values (source
+  # .hdr and cooked .aenv artifact), confirmed via sha256sum, not
+  # copied/assumed.
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_ENVIRONMENT_ARTIFACT_PATH="${ATLANTIS_warehouse_interior_ARTIFACT_PATH}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_ENVIRONMENT_METADATA_PATH="${ATLANTIS_warehouse_interior_METADATA_PATH}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_ENVIRONMENT_SOURCE_SHA256="9734d30c83fe480a2a7c7521b7bdb816d869c2468d45d3794bde729d6181f830"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_ENVIRONMENT_ARTIFACT_SHA256="375bdbebddf326fe41e65e4cf543c530c95d96e4510b5308db71c517bc41a365"
+)
+add_dependencies(atlantis_image_regression_pbr_materials_showcase_golden_generator textured_quad_shaders
+  lit_textured_shaders pbr_direct_lit_shaders pbr_ibl_shaders pbr_ibl_normal_map_shaders output_transform_unorm_shaders
+  sky_shaders shadow_cast_shaders pbr_clearcoat_ibl_shaders pbr_sheen_ibl_shaders pbr_anisotropic_ibl_shaders
+  ${ATLANTIS_pbr_materials_showcase_scene_TARGET} ${ATLANTIS_warehouse_interior_TARGET})
+
 # Deliberately no catch_discover_tests()/LABELS "gpu"/add_test() call in
 # this file -- the concrete enforcement of "never registered with
 # CTest." Deliberately no run_... convenience custom target: this tool

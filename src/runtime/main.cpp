@@ -41,7 +41,11 @@ int main(int argc, char** argv) {
   // (Requirement 5). All parsing/printing/exit happens strictly before
   // any BootstrapConfig field is populated or createRuntimeApplication()
   // is called.
-  const std::array<SceneWhitelistEntry, 3> whitelist{{
+  // Plan 0035 Milestone 5 (Spec 0035 Requirement 7): the 4th, additive
+  // whitelist entry -- purely appended, no change to the existing three
+  // entries' own behavior (Spec 0032's own established "closed
+  // whitelist, additive-only" design).
+  const std::array<SceneWhitelistEntry, 4> whitelist{{
       {"integrated_showcase_demo",
        SceneBootstrapPaths{ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH, ATLANTIS_RUNTIME_SCENE_METADATA_PATH,
                             ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH}},
@@ -53,6 +57,10 @@ int main(int argc, char** argv) {
        SceneBootstrapPaths{ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_ARTIFACT_PATH,
                             ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_METADATA_PATH,
                             ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_MANIFEST_PATH}},
+      {"pbr_materials_showcase",
+       SceneBootstrapPaths{ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_ARTIFACT_PATH,
+                            ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_METADATA_PATH,
+                            ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_MANIFEST_PATH}},
   }};
 
   const CommandLineResult cliResult = parseCommandLine(argc, argv, whitelist);

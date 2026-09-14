@@ -1,0 +1,10 @@
+atlantis_material_source_version: 6
+kind: pbr_anisotropic
+texture: textures/metal_rust_source_srgb.png
+filter: linear
+address_mode: repeat
+base_color_factor: 0.9 0.9 0.92 1.0
+metallic_factor: 1.0
+roughness_factor: 0.30
+anisotropy_factor: 0.6
+anisotropy_rotation: 0.0

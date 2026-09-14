@@ -190,6 +190,12 @@ target_compile_definitions(atlantis_runtime PRIVATE
   ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_ARTIFACT_PATH="${ATLANTIS_pbr_normal_map_demo_scene_ARTIFACT_PATH}"
   ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_METADATA_PATH="${ATLANTIS_pbr_normal_map_demo_scene_METADATA_PATH}"
   ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_MANIFEST_PATH="${ATLANTIS_pbr_normal_map_demo_scene_MANIFEST_PATH}"
+  # Plan 0035 Milestone 5 (Spec 0035 Requirement 7): the 4th --scene
+  # whitelist entry's own three path macros, same sourcing shape as the
+  # three above.
+  ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_ARTIFACT_PATH="${ATLANTIS_pbr_materials_showcase_scene_ARTIFACT_PATH}"
+  ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_METADATA_PATH="${ATLANTIS_pbr_materials_showcase_scene_METADATA_PATH}"
+  ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_MANIFEST_PATH="${ATLANTIS_pbr_materials_showcase_scene_MANIFEST_PATH}"
 )
 
 # Guarantees the shader-compile and asset-cook targets have already run
@@ -215,7 +221,21 @@ add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit
   pbr_sheen_ibl_shaders pbr_sheen_ibl_normal_map_shaders
   pbr_anisotropic_ibl_shaders pbr_anisotropic_ibl_normal_map_shaders
   ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
-  ${ATLANTIS_ibl_studio_TARGET} ${ATLANTIS_ibl_material_demo_scene_TARGET} ${ATLANTIS_pbr_normal_map_demo_scene_TARGET})
+  ${ATLANTIS_ibl_studio_TARGET} ${ATLANTIS_ibl_material_demo_scene_TARGET} ${ATLANTIS_pbr_normal_map_demo_scene_TARGET}
+  # Plan 0035 Milestone 5 (Spec 0035 Requirement 7): closes the same
+  # real gap the comment above already discloses for the prior two
+  # whitelist scenes -- without this, ATLANTIS_BUILD_TESTS=OFF would not
+  # cook the 4th scene atlantis_runtime can now select via --scene.
+  # (atlantis_runtime's own BootstrapConfig hardcodes a single, global
+  # environment -- ATLANTIS_RUNTIME_ENVIRONMENT_ARTIFACT_PATH, ibl_studio,
+  # above -- shared by all four whitelisted scenes when run via this
+  # executable's own interactive --scene CLI; this scene's own real,
+  # golden-tested warehouse_interior environment is used by its own
+  # dedicated image-regression fixture/golden-generator instead, matching
+  # every other scene's identical pattern -- a pre-existing Spec 0032
+  # constraint, not a gap this Milestone's own Requirement 7 scope
+  # extends to fixing.)
+  ${ATLANTIS_pbr_materials_showcase_scene_TARGET})
 endif()
 
 # Plan 0034 Milestone 5 (ADR-0077/ADR-0080): atlantis_runtime_android is

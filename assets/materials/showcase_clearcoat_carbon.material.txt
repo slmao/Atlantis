@@ -1,0 +1,10 @@
+atlantis_material_source_version: 6
+kind: pbr_clearcoat
+texture: textures/carbon_fiber_source_srgb.png
+filter: linear
+address_mode: repeat
+base_color_factor: 1.0 1.0 1.0 1.0
+metallic_factor: 0.10
+roughness_factor: 0.40
+clearcoat_factor: 1.0
+clearcoat_roughness: 0.05

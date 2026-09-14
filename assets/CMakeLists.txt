@@ -761,3 +761,336 @@ set(ATLANTIS_pbr_anisotropic_normal_map_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr
 set(ATLANTIS_pbr_anisotropic_normal_map_demo_scene_METADATA_PATH "${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_anisotropic_normal_map_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_anisotropic_normal_map_demo_scene_TARGET "${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_TARGET}" PARENT_SCOPE)
+
+# Plan 0035 Milestone 5 (Spec 0035 Requirement 6): the showcase scene's
+# own 30 material assets -- 25 PbrDirectLit parameter-sweep variants
+# across the four Milestone 1 CC0 textures (metal/wood/marble/tile) plus
+# one neutral reference, one PbrClearcoat/PbrSheen/PbrAnisotropic
+# identifiable showcase sphere each (Requirement 6's own "at minimum one
+# each" bar), the ground material, and one shared pedestal material
+# reused by all 28 pedestal nodes (keeps this scene's own real
+# descriptor-set demand at 30 distinct materials, not 58 -- see this
+# Milestone's own PR for the real, measured N+5=35-set peak against the
+# ADR-0064 60-set ceiling).
+
+atlantis_add_material_asset(
+  NAME showcase_metal_polished
+  SOURCE materials/showcase_metal_polished.material.txt
+  TEXTURE metal_rust_srgb
+)
+set(ATLANTIS_showcase_metal_polished_ARTIFACT_PATH "${ATLANTIS_showcase_metal_polished_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_polished_METADATA_PATH "${ATLANTIS_showcase_metal_polished_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_polished_TARGET "${ATLANTIS_showcase_metal_polished_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_polished_LOGICAL_PATH "${ATLANTIS_showcase_metal_polished_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_metal_satin
+  SOURCE materials/showcase_metal_satin.material.txt
+  TEXTURE metal_rust_srgb
+)
+set(ATLANTIS_showcase_metal_satin_ARTIFACT_PATH "${ATLANTIS_showcase_metal_satin_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_satin_METADATA_PATH "${ATLANTIS_showcase_metal_satin_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_satin_TARGET "${ATLANTIS_showcase_metal_satin_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_satin_LOGICAL_PATH "${ATLANTIS_showcase_metal_satin_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_metal_semi_rough
+  SOURCE materials/showcase_metal_semi_rough.material.txt
+  TEXTURE metal_rust_srgb
+)
+set(ATLANTIS_showcase_metal_semi_rough_ARTIFACT_PATH "${ATLANTIS_showcase_metal_semi_rough_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_semi_rough_METADATA_PATH "${ATLANTIS_showcase_metal_semi_rough_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_semi_rough_TARGET "${ATLANTIS_showcase_metal_semi_rough_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_semi_rough_LOGICAL_PATH "${ATLANTIS_showcase_metal_semi_rough_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_metal_rough
+  SOURCE materials/showcase_metal_rough.material.txt
+  TEXTURE metal_rust_srgb
+)
+set(ATLANTIS_showcase_metal_rough_ARTIFACT_PATH "${ATLANTIS_showcase_metal_rough_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_rough_METADATA_PATH "${ATLANTIS_showcase_metal_rough_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_rough_TARGET "${ATLANTIS_showcase_metal_rough_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_rough_LOGICAL_PATH "${ATLANTIS_showcase_metal_rough_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_metal_matte
+  SOURCE materials/showcase_metal_matte.material.txt
+  TEXTURE metal_rust_srgb
+)
+set(ATLANTIS_showcase_metal_matte_ARTIFACT_PATH "${ATLANTIS_showcase_metal_matte_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_matte_METADATA_PATH "${ATLANTIS_showcase_metal_matte_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_matte_TARGET "${ATLANTIS_showcase_metal_matte_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_matte_LOGICAL_PATH "${ATLANTIS_showcase_metal_matte_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_metal_gold_tint
+  SOURCE materials/showcase_metal_gold_tint.material.txt
+  TEXTURE metal_rust_srgb
+)
+set(ATLANTIS_showcase_metal_gold_tint_ARTIFACT_PATH "${ATLANTIS_showcase_metal_gold_tint_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_gold_tint_METADATA_PATH "${ATLANTIS_showcase_metal_gold_tint_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_gold_tint_TARGET "${ATLANTIS_showcase_metal_gold_tint_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_metal_gold_tint_LOGICAL_PATH "${ATLANTIS_showcase_metal_gold_tint_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_wood_glossy_varnish
+  SOURCE materials/showcase_wood_glossy_varnish.material.txt
+  TEXTURE wood_dark_srgb
+)
+set(ATLANTIS_showcase_wood_glossy_varnish_ARTIFACT_PATH "${ATLANTIS_showcase_wood_glossy_varnish_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_glossy_varnish_METADATA_PATH "${ATLANTIS_showcase_wood_glossy_varnish_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_glossy_varnish_TARGET "${ATLANTIS_showcase_wood_glossy_varnish_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_glossy_varnish_LOGICAL_PATH "${ATLANTIS_showcase_wood_glossy_varnish_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_wood_satin
+  SOURCE materials/showcase_wood_satin.material.txt
+  TEXTURE wood_dark_srgb
+)
+set(ATLANTIS_showcase_wood_satin_ARTIFACT_PATH "${ATLANTIS_showcase_wood_satin_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_satin_METADATA_PATH "${ATLANTIS_showcase_wood_satin_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_satin_TARGET "${ATLANTIS_showcase_wood_satin_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_satin_LOGICAL_PATH "${ATLANTIS_showcase_wood_satin_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_wood_natural
+  SOURCE materials/showcase_wood_natural.material.txt
+  TEXTURE wood_dark_srgb
+)
+set(ATLANTIS_showcase_wood_natural_ARTIFACT_PATH "${ATLANTIS_showcase_wood_natural_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_natural_METADATA_PATH "${ATLANTIS_showcase_wood_natural_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_natural_TARGET "${ATLANTIS_showcase_wood_natural_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_natural_LOGICAL_PATH "${ATLANTIS_showcase_wood_natural_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_wood_worn
+  SOURCE materials/showcase_wood_worn.material.txt
+  TEXTURE wood_dark_srgb
+)
+set(ATLANTIS_showcase_wood_worn_ARTIFACT_PATH "${ATLANTIS_showcase_wood_worn_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_worn_METADATA_PATH "${ATLANTIS_showcase_wood_worn_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_worn_TARGET "${ATLANTIS_showcase_wood_worn_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_worn_LOGICAL_PATH "${ATLANTIS_showcase_wood_worn_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_wood_reddish_stain
+  SOURCE materials/showcase_wood_reddish_stain.material.txt
+  TEXTURE wood_dark_srgb
+)
+set(ATLANTIS_showcase_wood_reddish_stain_ARTIFACT_PATH "${ATLANTIS_showcase_wood_reddish_stain_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_reddish_stain_METADATA_PATH "${ATLANTIS_showcase_wood_reddish_stain_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_reddish_stain_TARGET "${ATLANTIS_showcase_wood_reddish_stain_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_reddish_stain_LOGICAL_PATH "${ATLANTIS_showcase_wood_reddish_stain_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_wood_ash_tint
+  SOURCE materials/showcase_wood_ash_tint.material.txt
+  TEXTURE wood_dark_srgb
+)
+set(ATLANTIS_showcase_wood_ash_tint_ARTIFACT_PATH "${ATLANTIS_showcase_wood_ash_tint_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_ash_tint_METADATA_PATH "${ATLANTIS_showcase_wood_ash_tint_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_ash_tint_TARGET "${ATLANTIS_showcase_wood_ash_tint_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_wood_ash_tint_LOGICAL_PATH "${ATLANTIS_showcase_wood_ash_tint_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_marble_polished
+  SOURCE materials/showcase_marble_polished.material.txt
+  TEXTURE marble_srgb
+)
+set(ATLANTIS_showcase_marble_polished_ARTIFACT_PATH "${ATLANTIS_showcase_marble_polished_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_polished_METADATA_PATH "${ATLANTIS_showcase_marble_polished_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_polished_TARGET "${ATLANTIS_showcase_marble_polished_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_polished_LOGICAL_PATH "${ATLANTIS_showcase_marble_polished_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_marble_satin
+  SOURCE materials/showcase_marble_satin.material.txt
+  TEXTURE marble_srgb
+)
+set(ATLANTIS_showcase_marble_satin_ARTIFACT_PATH "${ATLANTIS_showcase_marble_satin_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_satin_METADATA_PATH "${ATLANTIS_showcase_marble_satin_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_satin_TARGET "${ATLANTIS_showcase_marble_satin_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_satin_LOGICAL_PATH "${ATLANTIS_showcase_marble_satin_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_marble_honed
+  SOURCE materials/showcase_marble_honed.material.txt
+  TEXTURE marble_srgb
+)
+set(ATLANTIS_showcase_marble_honed_ARTIFACT_PATH "${ATLANTIS_showcase_marble_honed_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_honed_METADATA_PATH "${ATLANTIS_showcase_marble_honed_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_honed_TARGET "${ATLANTIS_showcase_marble_honed_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_honed_LOGICAL_PATH "${ATLANTIS_showcase_marble_honed_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_marble_rough
+  SOURCE materials/showcase_marble_rough.material.txt
+  TEXTURE marble_srgb
+)
+set(ATLANTIS_showcase_marble_rough_ARTIFACT_PATH "${ATLANTIS_showcase_marble_rough_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_rough_METADATA_PATH "${ATLANTIS_showcase_marble_rough_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_rough_TARGET "${ATLANTIS_showcase_marble_rough_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_rough_LOGICAL_PATH "${ATLANTIS_showcase_marble_rough_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_marble_charcoal_tint
+  SOURCE materials/showcase_marble_charcoal_tint.material.txt
+  TEXTURE marble_srgb
+)
+set(ATLANTIS_showcase_marble_charcoal_tint_ARTIFACT_PATH "${ATLANTIS_showcase_marble_charcoal_tint_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_charcoal_tint_METADATA_PATH "${ATLANTIS_showcase_marble_charcoal_tint_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_charcoal_tint_TARGET "${ATLANTIS_showcase_marble_charcoal_tint_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_charcoal_tint_LOGICAL_PATH "${ATLANTIS_showcase_marble_charcoal_tint_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_marble_rose_tint
+  SOURCE materials/showcase_marble_rose_tint.material.txt
+  TEXTURE marble_srgb
+)
+set(ATLANTIS_showcase_marble_rose_tint_ARTIFACT_PATH "${ATLANTIS_showcase_marble_rose_tint_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_rose_tint_METADATA_PATH "${ATLANTIS_showcase_marble_rose_tint_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_rose_tint_TARGET "${ATLANTIS_showcase_marble_rose_tint_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_marble_rose_tint_LOGICAL_PATH "${ATLANTIS_showcase_marble_rose_tint_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_tile_glossy
+  SOURCE materials/showcase_tile_glossy.material.txt
+  TEXTURE mosaic_tile_srgb
+)
+set(ATLANTIS_showcase_tile_glossy_ARTIFACT_PATH "${ATLANTIS_showcase_tile_glossy_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_glossy_METADATA_PATH "${ATLANTIS_showcase_tile_glossy_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_glossy_TARGET "${ATLANTIS_showcase_tile_glossy_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_glossy_LOGICAL_PATH "${ATLANTIS_showcase_tile_glossy_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_tile_satin
+  SOURCE materials/showcase_tile_satin.material.txt
+  TEXTURE mosaic_tile_srgb
+)
+set(ATLANTIS_showcase_tile_satin_ARTIFACT_PATH "${ATLANTIS_showcase_tile_satin_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_satin_METADATA_PATH "${ATLANTIS_showcase_tile_satin_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_satin_TARGET "${ATLANTIS_showcase_tile_satin_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_satin_LOGICAL_PATH "${ATLANTIS_showcase_tile_satin_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_tile_matte
+  SOURCE materials/showcase_tile_matte.material.txt
+  TEXTURE mosaic_tile_srgb
+)
+set(ATLANTIS_showcase_tile_matte_ARTIFACT_PATH "${ATLANTIS_showcase_tile_matte_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_matte_METADATA_PATH "${ATLANTIS_showcase_tile_matte_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_matte_TARGET "${ATLANTIS_showcase_tile_matte_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_matte_LOGICAL_PATH "${ATLANTIS_showcase_tile_matte_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_tile_worn
+  SOURCE materials/showcase_tile_worn.material.txt
+  TEXTURE mosaic_tile_srgb
+)
+set(ATLANTIS_showcase_tile_worn_ARTIFACT_PATH "${ATLANTIS_showcase_tile_worn_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_worn_METADATA_PATH "${ATLANTIS_showcase_tile_worn_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_worn_TARGET "${ATLANTIS_showcase_tile_worn_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_worn_LOGICAL_PATH "${ATLANTIS_showcase_tile_worn_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_tile_teal_tint
+  SOURCE materials/showcase_tile_teal_tint.material.txt
+  TEXTURE mosaic_tile_srgb
+)
+set(ATLANTIS_showcase_tile_teal_tint_ARTIFACT_PATH "${ATLANTIS_showcase_tile_teal_tint_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_teal_tint_METADATA_PATH "${ATLANTIS_showcase_tile_teal_tint_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_teal_tint_TARGET "${ATLANTIS_showcase_tile_teal_tint_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_teal_tint_LOGICAL_PATH "${ATLANTIS_showcase_tile_teal_tint_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_tile_amber_tint
+  SOURCE materials/showcase_tile_amber_tint.material.txt
+  TEXTURE mosaic_tile_srgb
+)
+set(ATLANTIS_showcase_tile_amber_tint_ARTIFACT_PATH "${ATLANTIS_showcase_tile_amber_tint_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_amber_tint_METADATA_PATH "${ATLANTIS_showcase_tile_amber_tint_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_amber_tint_TARGET "${ATLANTIS_showcase_tile_amber_tint_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_tile_amber_tint_LOGICAL_PATH "${ATLANTIS_showcase_tile_amber_tint_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_neutral_reference
+  SOURCE materials/showcase_neutral_reference.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_showcase_neutral_reference_ARTIFACT_PATH "${ATLANTIS_showcase_neutral_reference_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_neutral_reference_METADATA_PATH "${ATLANTIS_showcase_neutral_reference_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_neutral_reference_TARGET "${ATLANTIS_showcase_neutral_reference_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_neutral_reference_LOGICAL_PATH "${ATLANTIS_showcase_neutral_reference_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_clearcoat_carbon
+  SOURCE materials/showcase_clearcoat_carbon.material.txt
+  TEXTURE carbon_fiber_srgb
+  NORMAL_MAP carbon_fiber_normal_unorm
+)
+set(ATLANTIS_showcase_clearcoat_carbon_ARTIFACT_PATH "${ATLANTIS_showcase_clearcoat_carbon_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_clearcoat_carbon_METADATA_PATH "${ATLANTIS_showcase_clearcoat_carbon_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_clearcoat_carbon_TARGET "${ATLANTIS_showcase_clearcoat_carbon_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_clearcoat_carbon_LOGICAL_PATH "${ATLANTIS_showcase_clearcoat_carbon_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_sheen_fabric
+  SOURCE materials/showcase_sheen_fabric.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_showcase_sheen_fabric_ARTIFACT_PATH "${ATLANTIS_showcase_sheen_fabric_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_sheen_fabric_METADATA_PATH "${ATLANTIS_showcase_sheen_fabric_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_sheen_fabric_TARGET "${ATLANTIS_showcase_sheen_fabric_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_sheen_fabric_LOGICAL_PATH "${ATLANTIS_showcase_sheen_fabric_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_anisotropic_brushed
+  SOURCE materials/showcase_anisotropic_brushed.material.txt
+  TEXTURE metal_rust_srgb
+)
+set(ATLANTIS_showcase_anisotropic_brushed_ARTIFACT_PATH "${ATLANTIS_showcase_anisotropic_brushed_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_anisotropic_brushed_METADATA_PATH "${ATLANTIS_showcase_anisotropic_brushed_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_anisotropic_brushed_TARGET "${ATLANTIS_showcase_anisotropic_brushed_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_anisotropic_brushed_LOGICAL_PATH "${ATLANTIS_showcase_anisotropic_brushed_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME worn_concrete_floor
+  SOURCE materials/worn_concrete_floor.material.txt
+  TEXTURE ground_concrete_srgb
+)
+set(ATLANTIS_worn_concrete_floor_ARTIFACT_PATH "${ATLANTIS_worn_concrete_floor_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_worn_concrete_floor_METADATA_PATH "${ATLANTIS_worn_concrete_floor_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_worn_concrete_floor_TARGET "${ATLANTIS_worn_concrete_floor_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_worn_concrete_floor_LOGICAL_PATH "${ATLANTIS_worn_concrete_floor_LOGICAL_PATH}" PARENT_SCOPE)
+
+atlantis_add_material_asset(
+  NAME showcase_pedestal
+  SOURCE materials/showcase_pedestal.material.txt
+  TEXTURE ground_concrete_srgb
+)
+set(ATLANTIS_showcase_pedestal_ARTIFACT_PATH "${ATLANTIS_showcase_pedestal_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_pedestal_METADATA_PATH "${ATLANTIS_showcase_pedestal_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_showcase_pedestal_TARGET "${ATLANTIS_showcase_pedestal_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_showcase_pedestal_LOGICAL_PATH "${ATLANTIS_showcase_pedestal_LOGICAL_PATH}" PARENT_SCOPE)
+
+# Plan 0035 Milestone 5 (Spec 0035 Requirement 6): the showcase scene
+# itself -- 28 spheres (25 PbrDirectLit + 1 each PbrClearcoat/PbrSheen/
+# PbrAnisotropic) in a fan/arc, each on its own pedestal, over a
+# weathered-concrete ground plane, lit solely by the warehouse_interior
+# HDRI (zero Light nodes -- Spec 0035 Requirement 5).
+atlantis_add_scene_asset(
+  NAME pbr_materials_showcase_scene
+  SOURCE scenes/pbr_materials_showcase.scene.txt
+  MESH_DEPENDENCIES pbr_dimpled_sphere pbr_pedestal ground_plane
+  MATERIAL_DEPENDENCIES showcase_metal_polished showcase_metal_satin showcase_metal_semi_rough showcase_metal_rough showcase_metal_matte showcase_metal_gold_tint
+    showcase_wood_glossy_varnish showcase_wood_satin showcase_wood_natural showcase_wood_worn showcase_wood_reddish_stain showcase_wood_ash_tint
+    showcase_marble_polished showcase_marble_satin showcase_marble_honed showcase_marble_rough showcase_marble_charcoal_tint showcase_marble_rose_tint
+    showcase_tile_glossy showcase_tile_satin showcase_tile_matte showcase_tile_worn showcase_tile_teal_tint showcase_tile_amber_tint
+    showcase_neutral_reference showcase_clearcoat_carbon showcase_sheen_fabric showcase_anisotropic_brushed worn_concrete_floor showcase_pedestal
+  TEXTURE_DEPENDENCIES carbon_fiber_normal_unorm carbon_fiber_srgb ground_concrete_srgb marble_srgb metal_rust_srgb mosaic_tile_srgb textured_quad_srgb wood_dark_srgb
+)
+set(ATLANTIS_pbr_materials_showcase_scene_ARTIFACT_PATH "${ATLANTIS_pbr_materials_showcase_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_materials_showcase_scene_METADATA_PATH "${ATLANTIS_pbr_materials_showcase_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_materials_showcase_scene_MANIFEST_PATH "${ATLANTIS_pbr_materials_showcase_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_materials_showcase_scene_TARGET "${ATLANTIS_pbr_materials_showcase_scene_TARGET}" PARENT_SCOPE)

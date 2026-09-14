@@ -55,6 +55,7 @@ add_executable(atlantis_image_regression_gpu_tests
   pbr_clearcoat_demo_gpu_tests.cpp
   pbr_sheen_demo_gpu_tests.cpp
   pbr_anisotropic_demo_gpu_tests.cpp
+  pbr_materials_showcase_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_image_regression_gpu_tests
@@ -317,6 +318,35 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_ANISOTROPIC_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_anisotropic_ibl_normal_map_SHADER_OUTPUT_DIR}"
   ATLANTIS_PBR_ANISOTROPIC_DEMO_ENVIRONMENT_ARTIFACT_PATH="${ATLANTIS_ibl_studio_ARTIFACT_PATH}"
   ATLANTIS_PBR_ANISOTROPIC_DEMO_ENVIRONMENT_METADATA_PATH="${ATLANTIS_ibl_studio_METADATA_PATH}"
+  # Plan 0035 Milestone 5 (Spec 0035 Requirement 6/ADR-0042): the
+  # showcase scene's own real, cooked scene artifact/metadata/manifest
+  # paths, every shader pair's own output directory (including the
+  # three real pbrClearcoatIbl*/pbrSheenIbl*/pbrAnisotropicIbl* pairs --
+  # no *NormalMap variant needed, this scene's three special spheres
+  # are all non-normal-mapped), and its own dedicated warehouse_interior
+  # environment (distinct from every sibling demo's own ibl_studio).
+  ATLANTIS_pbr_materials_showcase_scene_ARTIFACT_PATH="${ATLANTIS_pbr_materials_showcase_scene_ARTIFACT_PATH}"
+  ATLANTIS_pbr_materials_showcase_scene_METADATA_PATH="${ATLANTIS_pbr_materials_showcase_scene_METADATA_PATH}"
+  ATLANTIS_pbr_materials_showcase_scene_MANIFEST_PATH="${ATLANTIS_pbr_materials_showcase_scene_MANIFEST_PATH}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+  # validateEnvironmentBootstrapConfig() (bootstrap_config.cpp) requires
+  # pbrIblNormalMap* to be non-empty whenever an environment is
+  # configured, regardless of whether this fixture's own real trio-
+  # passing call ever reads it (it does not -- dead-path filler reuses
+  # pbrIbl* instead) -- every sibling per-BRDF fixture's own config
+  # builder populates this same field for the identical reason.
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_PBR_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_ibl_normal_map_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_SKY_SHADER_DIR="${ATLANTIS_sky_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_PBR_CLEARCOAT_IBL_SHADER_DIR="${ATLANTIS_pbr_clearcoat_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_PBR_SHEEN_IBL_SHADER_DIR="${ATLANTIS_pbr_sheen_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_PBR_ANISOTROPIC_IBL_SHADER_DIR="${ATLANTIS_pbr_anisotropic_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_ENVIRONMENT_ARTIFACT_PATH="${ATLANTIS_warehouse_interior_ARTIFACT_PATH}"
+  ATLANTIS_PBR_MATERIALS_SHOWCASE_ENVIRONMENT_METADATA_PATH="${ATLANTIS_warehouse_interior_METADATA_PATH}"
 )
 
 # Plan 0012 Step 6: the asset-sourced GPU test case needs
@@ -336,7 +366,8 @@ add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TAR
   ${ATLANTIS_pbr_normal_map_demo_scene_TARGET} ${ATLANTIS_pbr_normal_mapped_control_TARGET}
   ${ATLANTIS_pbr_clearcoat_demo_scene_TARGET} ${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_TARGET}
   ${ATLANTIS_pbr_sheen_demo_scene_TARGET} ${ATLANTIS_pbr_sheen_normal_map_demo_scene_TARGET}
-  ${ATLANTIS_pbr_anisotropic_demo_scene_TARGET} ${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_TARGET})
+  ${ATLANTIS_pbr_anisotropic_demo_scene_TARGET} ${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_TARGET}
+  ${ATLANTIS_pbr_materials_showcase_scene_TARGET} ${ATLANTIS_warehouse_interior_TARGET})
 
 # Same build-tree shader artifact set as the golden generator -- this
 # executable renders the identical fixture. WORKING_DIRECTORY above

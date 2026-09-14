@@ -13,6 +13,7 @@ add_library(atlantis_image_regression_fixture STATIC
   pbr_clearcoat_demo_fixture.cpp
   pbr_sheen_demo_fixture.cpp
   pbr_anisotropic_demo_fixture.cpp
+  pbr_materials_showcase_fixture.cpp
 )
 
 target_include_directories(atlantis_image_regression_fixture
