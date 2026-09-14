@@ -393,13 +393,17 @@ void VulkanCommandList::bindUniformBuffer(atlantis::rhi::Buffer& buffer) {
   auto& vulkanBuffer = static_cast<VulkanBuffer&>(buffer);
   const VkBuffer vkBuffer = vulkanBuffer.vkBuffer();
 
-  // See this class's own header comment on lastUpdatedDescriptorSet_/
-  // lastUpdatedUniformBuffer_ for why this call is skipped, and only
-  // this call, when it would be an exact redundant repeat: Vulkan
-  // invalidates a command buffer if a VkDescriptorSet already bound via
-  // vkCmdBindDescriptorSets earlier in this same recording is written
-  // again via vkUpdateDescriptorSets (no UPDATE_AFTER_BIND, Section 10).
-  if (boundDescriptorSet_ != lastUpdatedDescriptorSet_ || vkBuffer != lastUpdatedUniformBuffer_) {
+  // See this class's own header comment on uniformBufferMemo_ for why
+  // this call is skipped, and only this call, when it would be an exact
+  // redundant repeat: Vulkan invalidates a command buffer if a
+  // VkDescriptorSet already bound via vkCmdBindDescriptorSets earlier in
+  // this same recording is written again via vkUpdateDescriptorSets (no
+  // UPDATE_AFTER_BIND, Section 10). Keyed by the set itself (2026-09-14
+  // fix) so a non-consecutive revisit of the same set still finds its
+  // own already-written value, not whatever a different, intervening
+  // set's own touch last left behind.
+  if (auto [it, inserted] = uniformBufferMemo_.try_emplace(boundDescriptorSet_, vkBuffer);
+      inserted || it->second != vkBuffer) {
     VkDescriptorBufferInfo bufferInfo{};
     bufferInfo.buffer = vkBuffer;
     bufferInfo.offset = 0;
@@ -416,8 +420,7 @@ void VulkanCommandList::bindUniformBuffer(atlantis::rhi::Buffer& buffer) {
     // vkUpdateDescriptorSets returns void -- no VkResult exists for this
     // call (Plan 0007 Section 10).
     vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
-    lastUpdatedDescriptorSet_ = boundDescriptorSet_;
-    lastUpdatedUniformBuffer_ = vkBuffer;
+    it->second = vkBuffer;
   }
 
   vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipelineLayout_, 0, 1,
@@ -429,7 +432,7 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
   ATLANTIS_CHECK(boundDescriptorSet_ != VK_NULL_HANDLE);
   ATLANTIS_CHECK(isSampledTextureBindingInRange(boundSampledTextureFirstBinding_,
                                                 boundSampledTextureBindingCount_, binding));
-  ATLANTIS_CHECK(binding < textureDescriptorMemos_.size());
+  ATLANTIS_CHECK(binding < kMaxTextureBindingSlots);
   const auto& vulkanTexture = static_cast<const VulkanSampledTexture&>(texture);
   const auto& vulkanSampler = static_cast<const VulkanSampler&>(sampler);
 
@@ -443,15 +446,16 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
   imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
   // Same redundant-write memo as bindUniformBuffer() above, and for the
-  // same reason (this class's own header comment on
-  // lastUpdatedDescriptorSet_/lastUpdatedUniformBuffer_): a textured
+  // same reason and the same 2026-09-14 fix (this class's own header
+  // comment on uniformBufferMemo_/textureDescriptorMemos_): a textured
   // Material shared by multiple DrawItems in one frame calls
   // bindTexture() again for every item, each with byte-identical
   // VkDescriptorImageInfo contents, so the redundant vkUpdateDescriptorSets
   // call (and only that call) is skipped when this exact
-  // (descriptor set, SampledTexture, Sampler) triple repeats.
-  TextureDescriptorMemo& memo = textureDescriptorMemos_[binding];
-  if (boundDescriptorSet_ != memo.descriptorSet || &vulkanTexture != memo.texture || &vulkanSampler != memo.sampler) {
+  // (SampledTexture, Sampler) pair already sits at this (descriptor
+  // set, binding) slot, however many other sets were touched in between.
+  TextureBindingMemo& memo = textureDescriptorMemos_[boundDescriptorSet_][binding];
+  if (&vulkanTexture != memo.texture || &vulkanSampler != memo.sampler) {
     VkWriteDescriptorSet write{};
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     write.dstSet = boundDescriptorSet_;
@@ -461,7 +465,6 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
     write.pImageInfo = &imageInfo;
 
     vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
-    memo.descriptorSet = boundDescriptorSet_;
     memo.texture = &vulkanTexture;
     memo.sampler = &vulkanSampler;
   }
@@ -526,7 +529,7 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
   ATLANTIS_CHECK(boundDescriptorSet_ != VK_NULL_HANDLE);
   ATLANTIS_CHECK(isSampledTextureBindingInRange(boundSampledTextureFirstBinding_,
                                                 boundSampledTextureBindingCount_, binding));
-  ATLANTIS_CHECK(binding < textureDescriptorMemos_.size());
+  ATLANTIS_CHECK(binding < kMaxTextureBindingSlots);
   const auto& vulkanShadowMap = static_cast<const VulkanShadowMap&>(texture);
   const auto& vulkanSampler = static_cast<const VulkanSampler&>(sampler);
 
@@ -540,13 +543,13 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
   imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
   // Same redundant-write memo as bindTexture(SampledTexture&, ...)
-  // above, and for the same reason -- a PbrDirectLit/pbr_ibl Material
-  // shared by multiple DrawItems in one frame calls this again for
-  // every item, each with byte-identical VkDescriptorImageInfo contents
-  // (the one shared ShadowMap/Sampler pair for the whole frame).
-  TextureDescriptorMemo& memo = textureDescriptorMemos_[binding];
-  if (boundDescriptorSet_ != memo.descriptorSet || &vulkanShadowMap != memo.shadowMap ||
-      &vulkanSampler != memo.sampler) {
+  // above, and for the same reason and the same 2026-09-14 fix -- a
+  // PbrDirectLit/pbr_ibl Material shared by multiple DrawItems in one
+  // frame calls this again for every item, each with byte-identical
+  // VkDescriptorImageInfo contents (the one shared ShadowMap/Sampler
+  // pair for the whole frame).
+  TextureBindingMemo& memo = textureDescriptorMemos_[boundDescriptorSet_][binding];
+  if (&vulkanShadowMap != memo.shadowMap || &vulkanSampler != memo.sampler) {
     VkWriteDescriptorSet write{};
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     write.dstSet = boundDescriptorSet_;
@@ -556,7 +559,6 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
     write.pImageInfo = &imageInfo;
 
     vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
-    memo.descriptorSet = boundDescriptorSet_;
     memo.shadowMap = &vulkanShadowMap;
     memo.sampler = &vulkanSampler;
   }

@@ -169,31 +169,25 @@ TEST_CASE("PipelineCreateParams::depthWriteEnabled disables depth writes while k
   std::unique_ptr<atlantis::rhi::Pipeline> pipelineB = std::move(pipelineBResult.value());
 
   // A second write-off Pipeline instance, identical PipelineCreateParams
-  // to pipelineA, for the blue draw. This exists ONLY to sidestep a real,
-  // pre-existing, independent constraint of
-  // VulkanCommandList::bindUniformBuffer() -- it is a TEST-side
-  // workaround, not a fix, and this Plan 0026 PR does not fix the
-  // underlying issue (out of scope; disclosed here so it is not mistaken
-  // for "resolved").
+  // to pipelineA, for the blue draw. Originally added (Plan 0026) to
+  // sidestep a real, pre-existing, independent bug in
+  // VulkanCommandList::bindUniformBuffer()/bindTexture() -- a TEST-side
+  // workaround, not a fix, at the time this comment was first written.
   //
-  // The underlying issue: bindUniformBuffer()'s own redundant-write skip
-  // (vulkan_command_list.cpp:328, `if (boundDescriptorSet_ !=
-  // lastUpdatedDescriptorSet_ || vkBuffer != lastUpdatedUniformBuffer_)`)
-  // only covers immediately-consecutive rebinds of the SAME descriptor
-  // set. Revisiting pipelineA's own set for a third draw, after
-  // pipelineB's own distinct set was bound in between, would call
+  // FIXED 2026-09-14 (Plan 0035 Milestone 5, vulkan_command_list.h/.cpp):
+  // the bug this workaround sidestepped -- bindUniformBuffer()'s own
+  // redundant-write skip only tracking the single most-recently-touched
+  // VkDescriptorSet (an A-B-A revisit of pipelineA's own set, after
+  // pipelineB's distinct set was bound in between, would call
   // vkUpdateDescriptorSets() on a set already bound via
   // vkCmdBindDescriptorSets() earlier in this same recording -- a real
-  // Validation Layers error (no UPDATE_AFTER_BIND pool), reproduced and
-  // confirmed during this Plan's own implementation before this
-  // workaround was added. This is a general constraint of
-  // bindUniformBuffer() itself (any A-B-A Pipeline sequence sharing one
-  // CommandList would hit it, not something specific to depthWriteEnabled
-  // or this test), pre-existing and independent of Plan 0026/ADR-0071.
-  //
-  // A distinct Pipeline/descriptor-set per draw sidesteps it without
-  // changing what this TEST_CASE exercises, since pipelineA2 shares
-  // pipelineA's own exact depthWriteEnabled = false configuration.
+  // Validation Layers error, no UPDATE_AFTER_BIND pool) -- is now fixed
+  // at the root: the memo is keyed by VkDescriptorSet itself, so a
+  // revisit after any number of intervening different sets is safe.
+  // This workaround Pipeline is no longer load-bearing but is kept here
+  // unchanged (removing it is an unrelated simplification, out of this
+  // fix's own scope) -- pipelineA2 still shares pipelineA's own exact
+  // depthWriteEnabled = false configuration either way.
   auto pipelineA2Result = device->createPipeline(
       {.vertexShader = {.spirvWords = vertexSpirv->data(), .wordCount = vertexSpirv->size()},
        .fragmentShader = {.spirvWords = fragmentSpirv->data(), .wordCount = fragmentSpirv->size()},
