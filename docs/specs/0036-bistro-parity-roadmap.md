@@ -1,12 +1,17 @@
 # Spec: Bistro Parity Roadmap
 
-- **Status:** Proposed
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-15
 - **Related Plan(s):** None yet — this Spec is roadmap-stage; each named
   workflow below gets its own future Spec + Plan before any
   Implementation begins on it.
-- **Approval:** pending
+- **Approval:** slmao, 2026-09-15 (chat confirmation, no reviewing PR —
+  this roadmap-stage Spec has no Implementation of its own to gate;
+  approval authorizes each of the seven named workflows to open its own
+  Spec → Plan → Human Review → Implementation cycle independently. This
+  Spec itself still authorizes no Implementation, per its own
+  Architectural Impact and Proposed Design sections above.)
 - **Related ADR(s):** None — this Spec makes zero architectural
   decisions itself; every decision surface it identifies is explicitly
   deferred to that workflow's own future Spec + ADR (see Architectural
@@ -425,12 +430,12 @@ graph LR
   W1 -. soft .-> W2
   W1 -. soft .-> W3
   W1 -. soft .-> W4
-  W2 --> W5
-  W3 --> W5
-  W4 --> W5
-  W2 --> W6
-  W3 --> W6
-  W5 --> W6
+  W2 -. soft .-> W5
+  W3 -. soft .-> W5
+  W4 -. soft .-> W5
+  W2 -. soft .-> W6
+  W3 -. soft .-> W6
+  W5 -. soft .-> W6
   W1 --> W7
   W2 --> W7
   W3 --> W7
