@@ -14,6 +14,13 @@
   this decision converts *into*. [ADR-0073](0073-static-mesh-tangent-attribute-generation-and-schema.md)
   (`Accepted`) — the tangent-generation contract this decision must
   reconcile with glTF's own pre-computed `TANGENT` attribute (below).
+  [Spec 0038: Block-Compressed Texture Support](../specs/0038-block-compressed-textures.md)
+  (`Proposed`) — D4 below records the human ruling (2026-09-15) that
+  native GPU block-compressed texture support is a real RHI/Vulkan
+  Backend capability this ADR's own Tools-only scope must not decide,
+  and is instead carried by that independent Spec; this workflow's own
+  texture milestone (D4) is a hard dependency on Spec 0038 landing
+  first.
 
 ## Context
 
@@ -145,9 +152,9 @@ This is the same "documented, disclosed compromise, not a silent
 feature loss" discipline this project's own Non-Goals sections already
 use throughout.
 
-### D4 — Texture format: DDS pixel data is CPU-decoded to the existing
-`Rgba8Unorm`/`Rgba8Srgb` artifact format; native GPU block-compressed
-texture import is named, explicitly **not decided by this ADR**
+### D4 — Texture format: **native GPU block-compressed texture support,
+carried by independent Spec 0038** — CPU decode rejected, ruling
+recorded 2026-09-15
 
 **Quantified basis — the single largest, most consequential finding of
 this ADR's own investigation:** `bistro.gltf`'s own `images[]` array
@@ -162,41 +169,45 @@ least 512×512 to 4096×4096 in the samples inspected. `stb_image`
 DDS/BC-compressed data** — it has never supported block-compression
 formats.
 
-Two real paths exist, and this ADR deliberately does not pick between
-them:
+This ADR's own original draft named two real paths without choosing
+between them (CPU-side BC7 decode into the existing `Rgba8Unorm`/
+`Rgba8Srgb` pipeline vs. a new native GPU block-compressed
+`SampledTextureFormat`) and escalated the choice to Human Review, since
+either resolution reaches outside this ADR's own Tools-only scope.
+**Human Review ruled directly on 2026-09-15:**
 
-- **(a) CPU-side BC7 decode → existing `Rgba8Unorm`/`Rgba8Srgb` pipeline,
-  unchanged.** Contained entirely within the new Tools subsystem
-  (ADR-0084) — no RHI, Vulkan Backend, or `SampledTextureFormat` change.
-  **Real, quantified cost:** BC7 is a 4:1-compressed format relative to
-  raw RGBA8; decoding Bistro's own ~2.18 GB of DDS data to raw pixels
-  would produce **on the order of 8-9 GB of uncompressed texture bytes**
-  (order-of-magnitude, not a precise figure — exact ratio depends on
-  each file's own real mip-chain contents, not individually measured
-  this round) — a real, large, likely-impractical VRAM/RAM footprint on
-  either target platform (Windows dev hardware or, more acutely,
-  Android), disclosed here as a major, unresolved Risk, not minimized.
-- **(b) Native GPU block-compressed texture import** — a new
-  `SampledTextureFormat` value (e.g. a `Bc7Srgb` variant), a new
-  `VkFormat` mapping, and a cooker path that copies DDS texel data
-  verbatim instead of routing through `stb_image`. This is the
-  architecturally *correct* long-term answer (smaller GPU memory
-  footprint, faster transfer, no decode cost) — but it is a **new RHI/
-  Vulkan Backend capability**, squarely outside the Tools-module
-  boundary this ADR's own sibling (ADR-0084) deliberately keeps workflow
-  ① inside. Per AGENTS.md's own module-boundary rules, a Tools-subsystem
-  Spec is not the place to unilaterally decide a new RHI capability.
+**Ruling: CPU-side decode is rejected outright** — the quantified basis
+above (BC7's own 4:1 compression ratio against ~2.18 GB of real,
+measured DDS source data) means decoding to raw `Rgba8Unorm`/`Rgba8Srgb`
+would produce **on the order of 8-9 GB of uncompressed texture bytes**
+for Bistro's own texture set alone — an infeasible VRAM/RAM footprint on
+either target platform (Windows dev hardware, and far more acutely
+Android's own real memory ceiling), not a viable "simple, contained"
+option once actually sized against real data, regardless of it staying
+inside the Tools module boundary. **Native GPU block-compressed texture
+support is the only viable path** and is carried by its own independent
+Spec — [Spec 0038: Block-Compressed Texture Support](../specs/0038-block-compressed-textures.md)
+— rather than folded into this workflow's own Tools-scoped ADR, exactly
+because it is a real RHI/Vulkan Backend capability change
+(`SampledTextureFormat` extension, `VkFormat` mapping, upload/
+validation-path changes) that AGENTS.md's own module-boundary rules
+reserve for its own, separately-reviewed decision — this ADR's own
+original reasoning for *not* deciding it unilaterally stands unchanged;
+what changed is that the choice between the two named paths is now
+made (native BC support, not CPU decode), while the actual RHI/Vulkan
+Backend design remains entirely Spec 0038's own, not restated or
+duplicated here.
 
-**Decision:** this ADR does **not** choose between (a) and (b) — doing
-so would silently expand this Spec's own scope across a module boundary
-(Tools → RHI/Vulkan Backend/Renderer) AGENTS.md reserves for its own,
-separately-reviewed decision. **This is escalated as Spec 0037's own
-highest-priority open question for Human Review** (see that Spec's own
-Risks & Open Questions), not resolved here. Spec 0037's own Plan-stage
-scope, pending that resolution, may need to develop and verify against a
-**reduced texture subset** (a representative sample of Bistro's own 390
-DDS files, not the full ~2.18 GB) rather than blocking entirely on this
-decision — itself a Plan-stage sequencing choice, not fixed by this ADR.
+**Consequence for this workflow: a hard dependency.** Workflow ①'s own
+texture-import milestone cannot land before Spec 0038's own native
+block-compressed `SampledTextureFormat`/cooker path exists — this ADR's
+own D1-D3/D5-D8 decisions (mesh, material, scene-graph mapping) are
+**not** blocked by this dependency and may proceed independently; only
+the texture-artifact-emission half of this workflow is gated. Recorded
+in [Spec 0036](../specs/0036-bistro-parity-roadmap.md)'s own amended
+workflow list as workflow ⓪, a hard DAG prerequisite to this workflow's
+own texture milestone specifically (not to mesh/material/scene-graph
+mapping).
 
 ### D5 — Scene-graph/node-hierarchy mapping goes through the existing
 `.scene.txt` authoring-source format, unchanged in shape
@@ -280,9 +291,11 @@ assumed equivalent.
   roughness materials, glTF's own documented default, ADR-0073's own
   tangent generator) rather than inventing a new one, keeping this
   Spec's own new-surface footprint smaller than it could have been.
-- D4's own explicit non-decision protects the module boundary
-  AGENTS.md's Golden Rule exists to protect, rather than quietly
-  deciding an RHI-level question inside a Tools-subsystem ADR.
+- D4's own escalation (rather than a unilateral Tools-subsystem
+  decision) meant the real, quantified CPU-decode cost (~8-9 GB) surfaced
+  and was rejected *before* any implementation effort was sunk into it —
+  the module-boundary discipline AGENTS.md's Golden Rule exists to
+  protect did its job here, not merely in the abstract.
 
 ### Negative / Trade-offs
 
@@ -290,26 +303,28 @@ assumed equivalent.
   always hand-authorable text" pipeline shape.
 - D2 introduces a second runtime-artifact index-width variant,
   real bookkeeping/loader-branching cost, however precedented in shape.
-- D3's specular-glossiness conversion and D4's texture-format resolution
-  are both real, unresolved-risk items this ADR names rather than
-  eliminates.
+- D3's specular-glossiness conversion remains a real, unresolved-risk
+  item this ADR names rather than eliminates. D4 is no longer open (see
+  above) but is now a real, hard cross-Spec dependency — this workflow's
+  own texture milestone cannot land until Spec 0038 does.
 - D8 discards real, already-computed upstream tangent data.
 
 ## Alternatives Considered
 
 Each Decision item above states its own rejected alternative inline
 (intermediate-source-text generation for D1; mesh-splitting for D2; a
-new specular-glossiness `MaterialKind` for D3; deciding the DDS question
-unilaterally for D4) rather than restating them in a separate section,
-since each alternative's own rejection is the direct, inseparable basis
-for that item's own recommendation.
+new specular-glossiness `MaterialKind` for D3; CPU-side BC7 decode for
+D4, rejected by Human Review ruling 2026-09-15 on quantified-cost
+grounds) rather than restating them in a separate section, since each
+alternative's own rejection is the direct, inseparable basis for that
+item's own recommendation.
 
 ## Risks & Open Questions
 
-- **D4 (texture format) is this ADR's own single largest open
-  question**, escalated to Human Review via Spec 0037, not resolved
-  here — see that Spec's own Risks & Open Questions for the full
-  framing.
+- **D4 is resolved** (native block-compressed support via Spec 0038,
+  CPU decode rejected) but introduces a real, hard cross-Spec
+  dependency in its place — this workflow's own texture milestone is
+  blocked on that independent Spec landing first (see D4 above).
 - D3's conversion formula is named in kind, not pinned to an exact
   published reference — Plan-stage detail.
 - D6's handedness question is unverified against real evidence — Plan-
