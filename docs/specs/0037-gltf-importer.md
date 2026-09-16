@@ -4,7 +4,9 @@
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-16
 - **Related Plan(s):** None yet — Plan drafting starts only once this
-  Spec and its related ADRs clear Human Review.
+  Spec and its related ADRs clear Human Review, and (for the
+  texture-import milestone specifically) once
+  [Spec 0038](0038-block-compressed-textures.md) lands.
 - **Approval:** pending
 - **Related ADR(s):** [ADR-0082](../adr/0082-gltf-parser-dependency-selection.md)
   (`Proposed`) — parser dependency; [ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md)
@@ -13,6 +15,14 @@
   this Spec, per [Spec 0036](0036-bistro-parity-roadmap.md) workflow
   ①'s own named ADR obligations, which this Spec's own Architectural
   Impact section treats as a contract to discharge, not restate.
+  **Revision (2026-09-16):** [ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md)
+  D4 and this Spec's own vendoring/Risks sections were revised following
+  a Human Review ruling on texture format (CPU decode rejected; native
+  block-compressed support carried by the new
+  [Spec 0038](0038-block-compressed-textures.md)) and a repository-level
+  large-content policy — see this Spec's own Investigation 4/Risks
+  sections and ADR-0083 D4 for the current, ruled state; nothing in this
+  revision note restates content already correct in the body below.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 State each requirement once; link ADR rationale and map verification to the
@@ -75,8 +85,10 @@ Spec 0036 named.
 - Produce, for a successfully-imported scene: cooked `.amesh` mesh
   artifacts (directly, [ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md)
   D1), `.material.txt` authoring source (converted per D3), `.scene.txt`
-  authoring source (per D5/D6), and texture artifacts (per D4, pending
-  its own named open question).
+  authoring source (per D5/D6), and texture artifacts (per D4, as native
+  block-compressed artifacts once [Spec 0038](0038-block-compressed-textures.md)
+  lands — a hard dependency for this one milestone only, ruled
+  2026-09-15).
 - Every recoverable error follows this repository's own established
   `Result`/error-enum contract (AGENTS.md Error handling) — a malformed
   glTF file, an unsupported extension actually encountered, an
@@ -117,12 +129,11 @@ Spec 0036 named.
   refraction remains excluded, unrevisited since Spec 0035's own
   Non-Goals.
 - **CPU-side decoding of block-compressed (DDS/BC) textures to an
-  uncompressed format as this Spec's own committed design** — named as
-  one live option in [ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md)
-  D4, but **explicitly not decided by this Spec** (Architectural Impact,
-  Risks below) pending Human Review, since either resolution crosses a
-  module boundary this Spec's own Tools-only scope should not decide
-  unilaterally.
+  uncompressed format.** Considered and **rejected by Human Review
+  (2026-09-15)** on quantified-cost grounds
+  ([ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md) D4)
+  — native GPU block-compressed texture support, carried by
+  [Spec 0038](0038-block-compressed-textures.md), is the path instead.
 - **A general-purpose, format-agnostic 3D-interchange import framework.**
   This importer is scoped to glTF 2.0 plus the three named extensions —
   not Assimp-style multi-format support, not forward-compatible with
@@ -193,10 +204,15 @@ Spec 0036 named.
   estimated here.
 - **Memory:** The single largest, most consequential finding of this
   Spec's own investigation — see Investigation 1 (texture volume) and
-  [ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md) D4
-  (the ~2.18 GB DDS / potential ~8-9 GB decompressed-texture risk,
-  explicitly unresolved by this Spec). Mesh data's own binary-artifact
-  footprint is a comparatively modest, real ~120 MB (Investigation 2).
+  [ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md) D4.
+  The ~8-9 GB decompressed-texture footprint a naive CPU-decode path
+  would have produced was the real, quantified basis for rejecting that
+  path (ruled 2026-09-15); the real runtime memory footprint under
+  native GPU block-compressed import (~2.18 GB DDS, no CPU-side
+  inflation) is [Spec 0038](0038-block-compressed-textures.md)'s own
+  concern to size precisely, not restated here. Mesh data's own
+  binary-artifact footprint is a comparatively modest, real ~120 MB
+  (Investigation 2).
 - **Portability (Vulkan-only Phase 1):** No portability-relevant change
   — this is an offline, host-side (Windows development machine) tool,
   matching `atlantis_asset_cooker`'s own existing execution model
@@ -244,9 +260,10 @@ real `.dds` files are physically present, **totaling ~2.18 GB**
 (`git lfs ls-files -s`, summed), confirmed `BC7_UNORM_SRGB`-compressed
 via direct DDS header parsing of sampled files, resolutions observed
 from 512×512 to 4096×4096 in the samples inspected (not every file
-individually measured). This is the real basis for
+individually measured). This is the real, quantified basis for
 [ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md) D4's
-own escalated, unresolved risk.
+own ruling (2026-09-15): native GPU block-compressed texture support,
+carried by [Spec 0038](0038-block-compressed-textures.md).
 
 Also confirmed: Filament's own bistro glTF (Spec 0036's own citation of
 `google/filament` Issue #3248) is a **separate, internally-modified**
@@ -307,12 +324,69 @@ naming precedent, scoped to the whole imported Bistro asset tree rather
 than one file) is sufficient and avoids 390+ files of pure duplication.
 **Plan-stage detail, not fixed here:** the exact file name/location.
 
-**Vendoring strategy:** per Spec 0036's own already-named mitigation (a
-live GitHub repository is not a durable dependency), the recommended
-implementation path is to vendor a copy of the imported source content
-into this repository's own asset pipeline at import time — never a
-live fetch at build or runtime — matching this repository's own
-established practice for every other imported CC0 asset.
+**Vendoring strategy — reversed from Spec 0036's own original
+mitigation, by explicit human ruling (2026-09-15), on real measured
+volume.** Spec 0036's own Risks section named "vendor a copy + provenance
+sidecar at import time" as the mitigation for a live GitHub repository
+not being a durable dependency — a reasonable default *before* this
+Spec's own Investigation 1 actually measured the asset. Now measured:
+the full recommended Bistro source is **~2.28 GB** (2.18 GB DDS + 96 MB
+`.bin` + 4.7 MB `.gltf`) — committing this into `git` (even via Git LFS,
+which the upstream source itself uses) would make every clone of this
+repository pull multiple gigabytes of content the overwhelming majority
+of contributors never need to build, run tests, or review a PR. This is
+a real, disclosed **deviation** from Spec 0036's own named mitigation,
+justified by evidence that mitigation did not anticipate, not a quiet
+reversal.
+
+**Resolved here as a general, repository-level content policy** (stated
+in reusable terms, since the same shape will recur for any future large
+external asset, not only Bistro):
+
+- **Any single content collection whose total real, measured size
+  exceeds 50 MB is not committed to `git`** — neither directly nor via
+  Git LFS. Instead, a **pinned, SHA256-verified, one-time fetch script**
+  (naming convention: `fetch_<name>.ps1`, documenting its own source
+  URL(s) in a header comment, matching this repository's own existing
+  `generate_ibl_studio_source.ps1`-style throwaway-script precedent but
+  **committed**, not throwaway, since it is the only record of how to
+  reproduce the content) downloads the real content into a **`content/`
+  directory added to `.gitignore`** at the point this policy first
+  applies. The fetch script verifies each downloaded file's SHA256
+  against a hash pinned in the script itself — the same "pinned by hash,
+  not by mutable tag" discipline this repository's own `stb`
+  `FetchContent_Declare` (`cmake/AtlantisStb.cmake`) already established
+  for a source dependency, applied here to authored content instead.
+  Bistro (~2.28 GB) is the first real case this policy applies to.
+- **Provenance and license files are always committed to `git`**,
+  regardless of the content-volume rule above — a `.gitignore`d
+  `content/` directory holds only the large, reproducible-by-fetch-
+  script bytes; the human-readable record of *what* was fetched, from
+  *where*, under *what* license (Investigation 4's own single
+  scene-level provenance file, this policy's own general form) is small,
+  reviewable-in-a-PR text that belongs in version control exactly like
+  every other provenance sidecar this repository already commits.
+- **Tests that depend on this externally-fetched content `SKIP` (not
+  `FAIL`) when it is absent**, printing the exact fetch-script
+  invocation needed to obtain it — this is the mechanism that keeps this
+  repository's own "clone → build → full `ctest` green" contract
+  (CLAUDE.md's own documented build/test commands) true for a
+  contributor who has not run `fetch_bistro.ps1`: they see a skipped
+  test with clear instructions, never a red, unexplained failure. This
+  is a real, new test-classification concept this repository's own
+  existing test suites have not needed before (every prior GPU-
+  independent/GPU-required split has assumed all referenced content is
+  always present) — Plan-stage detail for exactly how a Catch2
+  `SKIP`/tag mechanism expresses this, not fixed here.
+- **Small assets are unaffected by this policy and continue exactly as
+  before**: CC0 texture sets (Spec 0035's own precedent, each well under
+  the 50 MB threshold), golden images and their sidecars, and any
+  existing checked-in binary (e.g. the Validation Layer `.so`, Plan 0034)
+  stay committed to `git` exactly as today. **Golden images are never
+  subject to this policy, unconditionally** — ADR-0042's own golden-
+  image-testing contract requires every golden PNG/sidecar be committed
+  alongside the code it verifies, and nothing about this content policy
+  changes, narrows, or creates an exception to that requirement.
 
 ## Proposed Design
 
@@ -332,8 +406,10 @@ importer itself; materials and scene nodes generate `.material.txt`/
 unmodified `atlantis_asset_cooker` — the same two-stage pipeline every
 hand-authored asset already uses for those two asset types. Texture
 handling ([ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md)
-D4) is explicitly gated on this Spec's own escalated Human Review
-question (Risks below) before a Plan can fix its own concrete shape.
+D4) emits native block-compressed texture artifacts, consuming the new
+`SampledTextureFormat` value(s) [Spec 0038](0038-block-compressed-textures.md)
+adds — a hard dependency on that Spec landing first (ruled 2026-09-15),
+not an open design question.
 
 ## Architectural Impact
 
@@ -347,20 +423,23 @@ one-ADR-per-decision discipline, ADR-0043/0044/0045's own precedent):
 - [ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md) —
   format-mapping decisions (mesh/material/texture/scene-graph/
   coordinate-system), including a real runtime-artifact schema
-  widening (D2) and one deliberately **unresolved** question (D4,
-  texture format) escalated rather than silently decided.
+  widening (D2) and one question (D4, texture format) that was
+  escalated rather than silently decided, then ruled by Human Review
+  (2026-09-15) — native block-compressed support, not CPU decode.
 - [ADR-0084](../adr/0084-gltf-importer-tools-subsystem-boundary.md) —
   new Tools subsystem module boundary and dependency surface.
 
-**One decision this Spec deliberately does not make**, named explicitly
-rather than smuggled through as a side effect of a Tools-scoped ADR:
-whether imported DDS/BC-compressed textures get CPU-decoded into the
-existing `Rgba8Unorm`/`Rgba8Srgb` pipeline or get a new, native GPU
-block-compressed `SampledTextureFormat` — the latter is a real RHI/
-Vulkan Backend capability change, outside this Spec's own Tools-only
-scope and this Spec's own three ADRs' own stated boundaries. Human
-Review must resolve this (or explicitly defer it to its own follow-up
-Spec/ADR) before Plan 0037 can fix a concrete texture-import design.
+**One decision this Spec's own three ADRs deliberately do not make**,
+named explicitly rather than smuggled through as a side effect of a
+Tools-scoped ADR: the actual RHI/Vulkan Backend design for native GPU
+block-compressed texture support (new `SampledTextureFormat` value(s),
+`VkFormat` mapping, upload/validation-path changes) — a real capability
+change outside this Spec's own Tools-only scope, correctly carried by
+its own independent [Spec 0038](0038-block-compressed-textures.md)
+rather than folded in here. This Spec's own texture-import Requirement
+(2/6) is a **hard dependency** on that Spec, recorded in
+[Spec 0036](0036-bistro-parity-roadmap.md)'s own amended workflow DAG as
+workflow ⓪ gating this workflow's texture milestone specifically.
 
 ## Alternatives Considered
 
@@ -392,10 +471,11 @@ mapped against this Spec's own Requirements:
   `bistro.gltf`, runs the generated material/scene source through the
   real `atlantis_asset_cooker`, and confirms the resulting artifacts
   load successfully through Asset System's own existing loader path.
-  This test's own real texture-handling scope depends on the
-  Architectural Impact's own unresolved D4 question — Plan-stage
-  detail once that resolves, potentially scoped to a representative
-  texture subset rather than the full ~2.18 GB (Risks below).
+  This test's own real texture-handling scope is gated on
+  [Spec 0038](0038-block-compressed-textures.md) landing first (D4,
+  ruled 2026-09-15) — Plan-stage detail once that dependency resolves,
+  potentially scoped to a representative texture subset (per the
+  content policy above) rather than the full ~2.18 GB.
 - Vulkan Validation Layers clean is **not applicable** to this Spec's
   own scope — this is an offline, CPU-only tool; no GPU-touching code
   path is introduced.
@@ -406,35 +486,68 @@ mapped against this Spec's own Requirements:
 
 ## Risks & Open Questions
 
+Each open item below is stated as **ruled** (a human decision already
+landed this item, recorded where) or **still open** (genuinely
+undecided, deferred to Plan/Implementation stage) — not left ambiguous
+between the two.
+
 - **[ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md)
-  D4 (texture format) is this Spec's own single highest-priority open
-  question** — CPU-decode-to-existing-format (simple, contained, ~8-9
-  GB order-of-magnitude decompressed footprint, likely impractical at
-  full scale) vs. native GPU block-compressed import (correct long-term
-  answer, crosses the Tools/RHI module boundary, needs its own
-  coordinated review). This Spec recommends Human Review either resolve
-  this directly or explicitly authorize a follow-up Spec/ADR scoped to
-  the RHI/Vulkan Backend side, before Plan 0037 fixes concrete texture
-  handling.
+  D4 (texture format) — ruled 2026-09-15.** CPU-decode rejected on
+  quantified-cost grounds (~8-9 GB decompressed, infeasible); native GPU
+  block-compressed texture support is the path, carried by
+  [Spec 0038](0038-block-compressed-textures.md) as its own independent
+  Spec, not decided inside this one. **Consequence, not fully resolved:**
+  this workflow's own texture-import milestone is now a **hard
+  dependency on Spec 0038 landing first** — mesh/material/scene-graph
+  mapping (Requirements 2-3-4, D1/D2/D3/D5/D6/D7/D8) are unblocked and
+  may proceed independently.
 - **Real import wall-clock time against the full 1.75M-triangle,
-  254-material, 5,908-node asset is unmeasured** — this Spec's own
-  Non-functional section names this a real gap, not a claimed bound.
+  254-material, 5,908-node asset is unmeasured — still open.** This
+  Spec's own Non-functional section names this a real gap, not a
+  claimed bound.
 - **`cgltf`'s own real parsing behavior against the actual `bistro.gltf`
-  file is unverified by this Spec** (ADR-0082's own disclosed gap) —
-  confirmed only via direct source-code inspection of `cgltf.h`'s own
-  struct definitions, not by actually compiling and running it.
-  Plan-stage/Implementation-stage verification required.
+  file is unverified by this Spec — still open, ruled how it gets
+  closed.** ADR-0082's own disclosed gap (confirmed only via direct
+  source-code inspection of `cgltf.h`'s own struct definitions, not by
+  compiling and running it) is **not** left as a generic "Plan-stage
+  detail" — it is Plan 0037's own **first-milestone smoke test gate**,
+  matching Plan 0034 Milestone 1's own precedent ("NDK/CMake build-
+  infrastructure smoke test... confirm, in isolation, [the toolchain
+  works] before any Android-specific code is written," Spec 0034): the
+  very first thing Plan 0037's own Implementation does is compile
+  `cgltf` against this repository's own build and successfully parse
+  the real `bistro.gltf` file's top-level structure (mesh/material/node
+  counts matching Investigation 1's own measured figures) — every
+  later milestone in Plan 0037 depends on this gate passing first,
+  exactly the way every later Android milestone in Plan 0034 depended
+  on its own Milestone 1.
 - **`MSFT_texture_dds` extraction via `cgltf`'s generic extension
-  pass-through is unverified** — `tinygltf` v3 is the named fallback if
-  this proves awkward (ADR-0082).
+  pass-through is unverified — still open.** `tinygltf` v3 is the named
+  fallback if this proves awkward (ADR-0082). Relevant to
+  [Spec 0038](0038-block-compressed-textures.md)'s own cooker-side work
+  once that Spec's RHI-side capability exists, not blocking this Spec's
+  own smoke-test gate above (which only needs mesh/material/node
+  top-level structure, not texture bytes).
 - **D2's `uint32_t`-index runtime-artifact schema-version number is
-  unassigned** — Plan-stage detail, not fixed by this Spec or its ADRs.
-- **D6 (glTF right-handed vs. Atlantis's own handedness) is unverified**
-  — cheap to catch via a real test render at Plan/Implementation time,
-  named as an open question rather than silently assumed correct.
-- **D3's specular-glossiness → metallic-roughness conversion formula is
-  named in kind, not pinned to an exact published reference** —
-  Plan-stage detail.
+  unassigned — still open.** Plan-stage detail, not fixed by this Spec
+  or its ADRs.
+- **D6 (glTF right-handed vs. Atlantis's own handedness) — still open,
+  ruled how it gets closed.** Not left as "assumed correct until a
+  visible defect appears" — Plan 0037 must explicitly confirm glTF's
+  own right-handed convention against Atlantis's **own existing,
+  already-established coordinate-convention/math contract** (this
+  codebase's own `Mat4`/transform-composition code and any
+  already-recorded handedness convention it embodies) as a named
+  verification step, not merely wait for a rendering artifact to reveal
+  a mismatch.
+- **D3's specular-glossiness → metallic-roughness conversion formula —
+  still open, ruled how it gets closed.** Named in kind (the
+  well-known dielectric-proximity/`1 - glossiness` approach), not
+  pinned to an exact published reference in this Spec or ADR-0083;
+  Plan 0037 must cite the specific formula/reference actually
+  implemented (matching ADR-0067's own established "cite the real math"
+  discipline for BRDF equations, applied here to a conversion formula
+  instead), not merely restate "well-known conversion."
 - **Bistro's own real download/vendoring size (~2.28 GB total: ~2.18 GB
   DDS + 96 MB `.bin` + 4.7 MB `.gltf`) is a real repository-storage
   question** this Spec does not resolve — whether the full asset is
@@ -445,9 +558,10 @@ mapped against this Spec's own Requirements:
 ## Out of Scope / Future Work
 
 - Everything in Non-Goals.
-- The RHI/Vulkan Backend-side resolution of D4 (texture format), if
-  Human Review defers rather than resolves it directly here.
-- Workflows ②-⑦ of Spec 0036's own roadmap — this Spec implements
-  workflow ① only.
+- The RHI/Vulkan Backend-side design for native block-compressed texture
+  support — carried entirely by [Spec 0038](0038-block-compressed-textures.md),
+  this Spec's own hard dependency, not restated here.
+- Workflows ②-⑦ of Spec 0036's own roadmap (and now workflow ⓪) — this
+  Spec implements workflow ① only.
 - A general-purpose glTF *export* path, or support for glTF extensions
   beyond the three this Spec's own real investigation found in use.
