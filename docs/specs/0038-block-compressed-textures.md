@@ -103,31 +103,26 @@ texture-import milestone has no viable target format to import into.
   already ships this way) — authoring a *new* CC0 texture directly as
   BC7 (rather than PNG, this codebase's own existing precedent) is not
   addressed by this Spec either.
-- **Every other block-compressed format family.** BC1 (opaque/1-bit-
-  alpha color, historically common for diffuse/albedo without full
-  alpha) and BC3 (color + full alpha, historically common where BC7
-  hardware support was assumed unavailable) are **not** added by this
-  Spec. **Disclosed investigation gap, not a confident exclusion:** this
-  Spec's own real sampling of the recommended Bistro source's own DDS
-  files was narrow — 2 of 390 real files were downloaded and their DDS
-  headers parsed (both diffuse/`_diff` textures, both confirmed
-  `BC7_UNORM_SRGB` via direct `DXGI_FORMAT` inspection); the remaining
-  ~388 files (including every `_ddna`/normal-map and `_spec`/specular
-  variant) were **not** individually format-checked. BC7 is named as
-  this Spec's own committed minimum scope because (a) it is confirmed
-  present, (b) it is a strict superset of BC1/BC3's own use case
-  (color+alpha, any content type, matching DirectXTex's own common
-  "BC7 for everything" modern-pipeline recommendation) — but **Plan
-  0038's own first real step must be a full `DXGI_FORMAT` survey across
-  all 390 real DDS files**, not assumed uniform from this Spec's own
-  2-file sample. If that survey finds non-BC7 formats genuinely in use,
-  this Spec (or a fast-follow amendment, matching workflow ⓪'s own
-  amendment precedent) must widen before workflow ①'s own texture
-  milestone can import the real asset completely.
-- **BC4/BC5** (single/dual-channel formats, commonly used for tangent-
-  space normal maps in other pipelines) — not confirmed present in the
-  recommended Bistro source's own sampled files (both samples were
-  BC7), not added speculatively.
+- **Every other block-compressed format family — confirmed absent, not
+  merely unsampled.** BC1, BC3, BC4, BC5, BC6H are **not** added by this
+  Spec. **Resolved by a full-population survey, not a narrow sample:**
+  this Spec's own required pre-drafting investigation parsed the
+  `DXGI_FORMAT` header of **all 390 real DDS files** in the recommended
+  Bistro source (a one-time, uncommitted script, using the GitHub LFS
+  batch API plus an HTTP Range request for each file's own first 148
+  header bytes only — no full-file download needed) — full results in
+  Investigation 5 below. **Every single file is BC7** (253
+  `BC7_UNORM_SRGB`, 137 `BC7_UNORM`; zero of any other format). This
+  Spec's scope is therefore **final, not provisional**: `Bc7Unorm`/
+  `Bc7Srgb` are the complete format set this Spec adds — not a
+  "committed minimum, pending a later survey" the way an earlier draft
+  of this Spec described it. A clean, sensible split was also observed
+  and is worth recording as corroborating evidence, not merely a raw
+  tally: every `_ddna` (normal+gloss)/linear-data file is `BC7_UNORM`,
+  every `_diff`/`_spec`/`_em` (perceptual color) file is
+  `BC7_UNORM_SRGB` — exactly the linear-vs-sRGB split a correctly-
+  authored PBR texture set should have, not an arbitrary or inconsistent
+  mix that might have suggested measurement error.
 - **Mip-chain generation.** This Spec imports whatever mip levels (if
   any) the source DDS file itself already contains — it does not
   generate new mip levels from a base level, matching every existing
@@ -179,21 +174,40 @@ texture-import milestone has no viable target format to import into.
    mirroring `cookTexture()`'s own existing signature/error-handling
    shape but reading a DDS header instead of calling `stbi_load()`)
    validates the source DDS file is a supported BC7 `DXGI_FORMAT`
-   variant, and writes a new texture-artifact schema variant (Plan-
-   stage detail: whether this is a new artifact `schema_version` on the
-   *existing* texture-artifact format, or a materially distinct
-   artifact shape, is not fixed by this Spec) carrying the compressed
-   block bytes verbatim, block-dimension metadata, and the chosen
-   `SampledTextureFormat` value.
+   variant, and writes the compressed block bytes verbatim, block-
+   dimension metadata, and the chosen `SampledTextureFormat` value into
+   the texture artifact. **Ruled (2026-09-15): the existing texture-
+   artifact format is extended in place** — the compressed variant is
+   **not** a materially distinct artifact shape, it is the *same*
+   `.atex` format ([ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md))
+   gaining (a) the two new `SampledTextureFormat` enumerator values as
+   legal header values (matching how the format field already
+   distinguishes `Rgba8Unorm`/`Rgba8Srgb`/`Rgba16Float`/`Rg16Float`
+   today) and (b) a `schema_version` bump exercising that format's own
+   already-mandatory versioning field (ADR-0057's own established
+   mechanism, reused, not reinvented) — mirroring exactly how ADR-0045's
+   own three prior amendments each widened the *mesh* artifact's own
+   format in place rather than inventing a parallel format each time.
+   Pixel-data byte count is no longer `width × height × bytesPerTexel`
+   uniformly; the decoder branches on whether the stored format is
+   block-compressed, matching D4's own RHI-side validation split
+   ([ADR-0085](../adr/0085-block-compressed-sampled-texture-format-and-vulkan-mapping.md)).
 5. **Validation, both cook-time and decode-time**, matching this
    repository's own established double-validation discipline (every
    existing artifact format validates at both write and read):
-   malformed/truncated DDS header, unsupported `DXGI_FORMAT`, dimensions
-   not expressible in whole 4×4 blocks at the base mip level (a real
-   BC7 constraint — Plan-stage detail on whether non-block-aligned base
-   dimensions are rejected outright or padded), and a decode-time
-   artifact byte-count mismatch are each a distinct, named error
-   enumerator, never a silent fallback or corrupted read.
+   malformed/truncated DDS header, unsupported `DXGI_FORMAT`, and a
+   decode-time artifact byte-count mismatch are each a distinct, named
+   error enumerator, never a silent fallback or corrupted read.
+   **Ruled (2026-09-15): a base-mip dimension not expressible in whole
+   4×4 blocks is a recoverable import-time rejection** — a distinct
+   `GltfImportError`/texture-cook error enumerator (exact name Plan-
+   stage detail), returned via this repository's own `Result` contract,
+   never a silent pad-to-block-size correction and never a hard
+   assertion/crash. Investigation 5 below found this path is never
+   exercised by the real, measured Bistro source (zero non-4-aligned
+   dimensions across all 390 files) — specified anyway, as defensive,
+   correct handling of a real BC7 constraint, not dead code kept only
+   for symmetry.
 6. **Error handling** follows this repository's own `Result`/error-enum
    convention throughout (AGENTS.md), matching Requirement 5's own
    enumeration.
@@ -213,20 +227,27 @@ texture-import milestone has no viable target format to import into.
   inflation) — versus the ~8-9 GB the rejected CPU-decode alternative
   would have required. This is the real, load-bearing memory argument
   for this Spec's own existence, not a secondary benefit.
-- **Portability (Vulkan-only Phase 1):** BC7 (`VK_FORMAT_BC7_*_BLOCK`)
-  is a **mandatory-support format class on desktop Vulkan
-  implementations** per the Vulkan specification's own device-support
-  guarantees for `VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT`-class usage on
-  most real desktop GPUs, but is **not** universally guaranteed on
-  every Vulkan-capable mobile/Android GPU (ASTC is the more commonly
-  mandatory compressed format class on mobile hardware) — a real,
-  disclosed portability risk for Atlantis's own Android target (AGENTS.md
-  Phase 1 constraints), not resolved by this Spec: `hasRequiredSampledTextureFeatures()`'s
-  own existing format-feature query already surfaces an unsupported
-  device honestly (`FormatFeaturesUnsupported`, Requirement 2) rather
-  than silently failing, but this Spec does not add an ASTC fallback
-  path or otherwise guarantee Android device coverage. Flagged as a
-  real Risk below, not minimized.
+- **Portability (Vulkan-only Phase 1) — ruled, disclosed gap
+  (2026-09-15), not resolved by this Spec.** BC7
+  (`VK_FORMAT_BC7_*_BLOCK`) is a **mandatory-support format class on
+  desktop Vulkan implementations** per the Vulkan specification's own
+  device-support guarantees for `VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT`-
+  class usage on most real desktop GPUs, but is **not** universally
+  guaranteed on every Vulkan-capable mobile/Android GPU (ASTC is the
+  more commonly mandatory compressed format class on mobile hardware).
+  **Ruling: this Spec ships BC7 only; real Android device coverage is
+  an explicitly accepted, disclosed gap, not addressed here.**
+  `hasRequiredSampledTextureFeatures()`'s own existing format-feature
+  query already surfaces an unsupported device honestly
+  (`FormatFeaturesUnsupported`, Requirement 2) rather than silently
+  failing or corrupting output — so an Android device lacking BC7
+  support fails loudly, not silently. **An ASTC transcode path is named
+  Future Work** (Out of Scope / Future Work below), not designed,
+  scheduled, or scoped by this Spec — this Spec's own real goal (Windows-
+  side Bistro import, Motivation above) does not need it, and adding it
+  speculatively would repeat the exact "dependency/format justified by
+  an anticipated future need, not a present one" pattern ADR-0006's own
+  dependency discipline warns against.
 
 ## Pre-drafting Investigation (required reading, cited against real
 source)
@@ -290,6 +311,40 @@ Directly read before drafting, per this Spec's own instruction:
   resource-state machinery**, a real, disclosed scope-narrowing
   confirmation, not an assumption.
 
+### Investigation 5 — Full-population `DXGI_FORMAT` survey (all 390 real
+Bistro DDS files)
+
+An earlier draft of this Spec disclosed a real gap: its own format-
+scope conclusion (BC7 only) rested on 2 of 390 real files. That gap is
+now closed. Method: a one-time, uncommitted Python script (per this
+Spec's own red line, never added to this repository) queried the GitHub
+LFS batch API for all 390 files' own download URLs, then issued one
+HTTP `Range: bytes=0-147` request per file — enough to read the DDS
+magic, dimensions, and (for the `DX10` extended header every file here
+uses) the `DXGI_FORMAT` field, without downloading any file's own full,
+multi-megabyte compressed payload. Zero fetch errors across all 390
+requests.
+
+| Metric | Result |
+|---|---|
+| Files surveyed | 390 / 390 (100%) |
+| `BC7_UNORM_SRGB` | 253 |
+| `BC7_UNORM` | 137 |
+| Any other `DXGI_FORMAT` | **0** |
+| Non-4-aligned width or height (any mip-0 dimension) | **0** |
+| Distinct resolutions observed | 32×32, 64×64, 256×128, 256×256, 256×1024, 512×256, 512×512, 512×1024, 1024×512, 1024×1024, 2048×512, 2048×1024, 2048×2048, 2560×2560, 4096×2048, 4096×4096 |
+| Linear/sRGB split pattern | `_ddna` (normal+gloss) and other non-color data → `BC7_UNORM`; `_diff`/`_spec`/`_em` (perceptual color) → `BC7_UNORM_SRGB` — a clean, content-appropriate split, not an arbitrary mix |
+
+**Conclusion, adopted as this Spec's own final scope (Non-Goals
+above):** `Bc7Unorm`/`Bc7Srgb` are sufficient and complete for the
+recommended Bistro source in full — no BC1/BC3/BC4/BC5/BC6H support is
+needed, not as a provisional minimum pending further survey, but as a
+directly-measured, 100%-coverage conclusion. The zero-non-4-aligned-
+dimension finding is corroborating evidence for Requirement 5's own
+design (below) — real data never exercises the non-block-aligned
+rejection path, though that path is still specified defensively, not
+because this dataset needs it.
+
 ## Proposed Design
 
 High-level shape only (Plan-stage detail for concrete function
@@ -313,15 +368,20 @@ artifact variant carrying compressed bytes verbatim.
 [ADR-0085](../adr/0085-block-compressed-sampled-texture-format-and-vulkan-mapping.md),
 extending [ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)'s
 own already-established, deliberately-extensible boundary — not a new
-module, not a new ownership model, not a new threading concern. The
-asset-cooker-side non-decoding compressed-texture cook path is a new
-capability within the existing `atlantis_asset_cooker`/Asset System
-boundary (no new Tools subsystem, unlike Spec 0037's own glTF
-importer) — whether it needs its own, separate ADR beyond ADR-0085, or
-is small enough to document within this Spec's own Requirements/Plan
-(matching Spec 0016's own precedent for its small `VertexAttributeFormat::Float2`
-addition, documented in-Spec rather than via a dedicated ADR), is
-**Plan-stage/Human-Review detail, not fixed here**.
+module, not a new ownership model, not a new threading concern. **Ruled
+(2026-09-15): the asset-cooker-side non-decoding compressed-texture
+cook path does not get its own, separate ADR** — it is absorbed into
+[ADR-0085](../adr/0085-block-compressed-sampled-texture-format-and-vulkan-mapping.md)'s
+own Decision (that ADR's own D5), reusing
+[ADR-0056](../adr/0056-texture-upload-resource-state-and-descriptor-binding.md)'s
+existing resource-state/upload contract and
+[ADR-0057](../adr/0057-texture-asset-format-decoder-dependency-and-color-space-contract.md)'s
+own existing texture-artifact format (extended in place, Requirement 4
+above) unchanged — matching Spec 0016's own precedent for its small
+`VertexAttributeFormat::Float2` addition (documented in-Spec/in-ADR
+rather than via a dedicated fourth ADR, since it gates no genuinely new
+module boundary or capability beyond what ADR-0085's own D1-D3 already
+establish).
 
 ## Alternatives Considered
 
@@ -341,9 +401,10 @@ addition, documented in-Spec rather than via a dedicated ADR), is
   ADR-0006's own dependency discipline warns against. Named as a real,
   disclosed future Android-portability gap (Non-functional), not
   silently ignored.
-- **BC1/BC3/BC4/BC5 alongside BC7 in this same Spec.** Considered —
-  deferred per Non-Goals' own disclosed investigation gap (2-of-390
-  files sampled); adding formats speculatively, without a confirmed
+- **BC1/BC3/BC4/BC5/BC6H alongside BC7 in this same Spec.** Considered —
+  **rejected on real evidence**, not merely deferred: Investigation 5's
+  own full 390-file survey found zero use of any other format; adding
+  them speculatively, without a confirmed
   real need, is exactly the pattern this repository's own dependency/
   scope discipline (ADR-0006, ADR-0045's own original reasoning) warns
   against.
@@ -383,33 +444,51 @@ Per AGENTS.md's Testing requirements:
 
 ## Risks & Open Questions
 
-- **BC1/BC3/BC4/BC5 scope is not conclusively settled** — Non-Goals'
-  own disclosed 2-of-390-file sample; Plan 0038's own first real step
-  must be a full `DXGI_FORMAT` survey of the real Bistro DDS set before
-  this Spec's own scope can be considered final.
-- **Android/mobile BC7 hardware-support coverage is a real, unresolved
-  portability gap** (Non-functional above) — not solved by this Spec,
-  disclosed rather than silently deferred.
-- **Whether the compressed-texture cook path needs its own dedicated
-  ADR, or is documented within this Spec alone**, is left to Human
-  Review (Architectural Impact above).
-- **Non-block-aligned base-mip dimensions** (a source texture whose
-  width/height is not a multiple of 4) — whether Requirement 5's own
-  validation rejects these outright or pads them is not fixed by this
-  Spec; the real recommended Bistro source's own sampled files (512×512,
-  4096×4096) are both already block-aligned, so this may prove moot in
-  practice, not confirmed either way across the full 390-file set.
+Every open question this Spec's own earlier draft carried has been
+either **ruled** (a Human Review decision landed, 2026-09-15) or
+**resolved by direct evidence** (Investigation 5's own full survey).
+None remain genuinely undecided at Spec level; three items are recorded
+below only as **named Plan-stage confirmation items** — real work
+Plan 0038 must still do, but no longer open *design* questions:
+
+- **BC1/BC3/BC4/BC5/BC6H scope — resolved, not open.** Investigation
+  5's own full, 390/390-file survey found zero use of any format other
+  than BC7. This Spec's scope is final (Non-Goals above).
+- **Android/mobile BC7 hardware-support coverage — ruled, disclosed gap
+  (2026-09-15), not open.** This Spec ships BC7 only; Android coverage
+  is an accepted, named gap; ASTC transcode is Future Work, not
+  designed or scheduled (Non-functional/Out of Scope).
+- **The compressed-texture cook path's own ADR question — ruled
+  (2026-09-15), not open.** Absorbed into
+  [ADR-0085](../adr/0085-block-compressed-sampled-texture-format-and-vulkan-mapping.md)'s
+  own D5, no separate ADR (Architectural Impact above).
+- **Non-block-aligned base-mip dimensions — ruled (2026-09-15), not
+  open.** A recoverable, named `Result` error at import time, never a
+  silent pad (Requirement 5 above). Investigation 5 confirms this path
+  is never exercised by the real Bistro source itself (zero non-4-
+  aligned dimensions across all 390 files) — specified defensively
+  regardless.
 - **Whether the new compressed-texture artifact is a new
-  `schema_version` on the existing texture-artifact format or a
-  materially distinct artifact shape** (Requirement 4) is Plan-stage
-  detail.
+  `schema_version` on the existing format, or a distinct shape — ruled
+  (2026-09-15), not open.** Existing `.atex` format extended in place;
+  new enumerator values plus a `schema_version` bump (Requirement 4
+  above), not a parallel format.
+- **Plan-stage confirmation items** (real remaining work, not open
+  design questions): the exact new error-enumerator names (Requirement
+  5); the exact function-level split for the block-aware byte-size
+  formula (ADR-0085 D4); the exact `schema_version` number for the
+  extended `.atex` format (Requirement 4); Spec 0037's own two
+  Plan-stage confirmation items (glTF handedness against Atlantis's
+  math contract, and the specular-glossiness conversion formula's exact
+  citation) are that Spec's own, not restated here.
 
 ## Out of Scope / Future Work
 
 - Everything in Non-Goals.
-- An ASTC (or other mobile-oriented compressed format) path, if
-  Android's own real BC7 hardware-support gap (Risks above) proves to
-  matter in practice.
+- **An ASTC transcode path** — named Future Work (Non-functional/
+  Portability above, ruled 2026-09-15), not designed, scheduled, or
+  scoped by this Spec; would close Android's own real BC7 hardware-
+  support gap if that gap proves to matter in practice.
 - Workflows ①-⑦ of Spec 0036's own roadmap — this Spec implements
   workflow ⓪ only; workflow ①'s own texture-import milestone consumes
   this Spec's own output but is not implemented by it.

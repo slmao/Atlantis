@@ -125,7 +125,8 @@ detail, not fixed here:** the exact function signature/structure of
 this split (a `switch`-on-format-kind inside the existing functions, vs.
 two parallel sibling functions) is left to Spec 0038's own Plan.
 
-### D5 — Cooker-side: a new, non-decoding compressed-texture cook path
+### D5 — Cooker-side: a new, non-decoding compressed-texture cook path,
+absorbed into this ADR — no separate ADR (ruled 2026-09-15)
 
 The one existing `stbi_load()` call site (`cook_command.cpp:273`)
 decodes PNG/JPG-class sources into raw RGBA8 pixels — structurally
@@ -134,14 +135,33 @@ a new cook code path reads a DDS file's own header directly (magic,
 dimensions, `DXGI_FORMAT`), validates it is a supported BC7 variant, and
 copies the compressed block bytes into a new texture-artifact variant
 verbatim — no decode, no `stb_image` involvement at all for this path.
-**Plan-stage detail, not fixed here:** whether this lands as a new
-`schema_version` on the *existing* texture-artifact format (ADR-0057's
-own format) or a materially distinct artifact shape; whether it needs
-its own dedicated ADR or is documented within Spec 0038's own
-Requirements (matching Spec 0016's own small-`Float2`-addition
-precedent of in-Spec documentation over a dedicated ADR for a
-sufficiently small addition) is explicitly left open, per Spec 0038's
-own Architectural Impact section.
+
+**Ruled 2026-09-15, closing this D5's own two previously-open
+questions:**
+
+- **The compressed-texture artifact extends the existing `.atex`
+  format in place** ([ADR-0057](0057-texture-asset-format-decoder-dependency-and-color-space-contract.md)'s
+  own format) — the two new `SampledTextureFormat` enumerators (D1)
+  become legal header values, plus a `schema_version` bump exercising
+  that format's own already-mandatory versioning field. **Not** a
+  materially distinct artifact shape — mirroring ADR-0045's own three
+  prior amendments, each of which widened the mesh artifact's own
+  existing format in place rather than inventing a parallel one.
+- **This cooker-side change gets no dedicated fourth ADR** — it is
+  documented here, as this ADR's own D5, and reuses two already-
+  `Accepted` ADRs unchanged: [ADR-0056](0056-texture-upload-resource-state-and-descriptor-binding.md)'s
+  own existing `ResourceState`/descriptor-binding contract (D3 above
+  already confirmed this ADR's own D1/D2 introduce no new resource-
+  state or barrier concern; the cook-path change is CPU-side/offline
+  and touches none of ADR-0056's own runtime machinery either) and
+  [ADR-0057](0057-texture-asset-format-decoder-dependency-and-color-space-contract.md)'s
+  own existing artifact-format/versioning mechanism (reused, not
+  reinvented, per the bullet above). This matches Spec 0016's own
+  precedent for its small `VertexAttributeFormat::Float2` addition
+  (documented in-Spec/in-ADR rather than via a dedicated ADR, since it
+  gates no module boundary or capability beyond what this ADR's own
+  D1-D3 already establish) — the basis for this ruling, not a fresh
+  argument invented for D5 alone.
 
 ## Consequences
 
@@ -175,19 +195,28 @@ own Architectural Impact section.
 
 See [Spec 0038](../specs/0038-block-compressed-textures.md)'s own
 Alternatives Considered (CPU-side decode, rejected by the Human Review
-ruling this ADR carries out; ASTC, deferred as a real but unconfirmed-
-need future gap; BC1/BC3/BC4/BC5, deferred pending a full-file-set
-format survey) — not restated here, since each rejection's own
-reasoning is Spec-level, not RHI/Vulkan-mapping-specific.
+ruling this ADR carries out; ASTC, named Future Work per that same
+ruling; BC1/BC3/BC4/BC5/BC6H, rejected on Investigation 5's own
+full-file-set survey evidence — zero real use found across all 390
+files) — not restated here, since each rejection's own reasoning is
+Spec-level, not RHI/Vulkan-mapping-specific.
 
 ## Risks & Open Questions
 
-- D4's exact function-level implementation shape (branching within
-  existing functions vs. new sibling functions) is Plan-stage detail.
-- D5's exact artifact-format shape (new schema version vs. distinct
-  format) and whether it needs its own ADR are both open, deferred to
-  Spec 0038's own Plan/Human Review.
-- Whether `isValidSampledTextureCreateParams()`'s own new mip-dimension
-  check should *reject* a non-block-aligned base-mip dimension outright
-  or *pad* it is unresolved — Spec 0038's own Risks section names this
-  the same way.
+Every question this ADR's own earlier draft left open here has been
+ruled (2026-09-15, Spec 0038's own Risks section carries the full
+record) — none remain open at ADR level:
+
+- **D5's artifact-format shape and ADR question — ruled, not open**
+  (see D5 above): existing `.atex` format extended in place, no
+  separate ADR.
+- **Non-block-aligned base-mip dimensions — ruled, not open**: a
+  recoverable `Result` error at import time (Spec 0038 Requirement 5),
+  never a silent pad — Investigation 5 confirms this path is never
+  exercised by the real Bistro source itself, specified defensively
+  regardless.
+- **Remaining Plan-stage detail** (not open design questions): D4's
+  exact function-level implementation shape (branching within existing
+  functions vs. new sibling functions); the exact new error-enumerator
+  names; the exact `schema_version` number for the extended `.atex`
+  format.
