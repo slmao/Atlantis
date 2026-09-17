@@ -110,11 +110,17 @@ enum class BufferPurpose {
 // of the swapchain/offscreen-shaped Format enum above (whose own BGRA
 // variants are meaningless for an authored texture). First two values
 // only -- see ADR-0057.
+// Spec 0038/ADR-0085: the two BC7 block-compressed variants -- 16 bytes
+// per 4x4-texel block, uploaded verbatim (never CPU-decoded); base-mip
+// dimensions must be multiples of 4. Android real-device BC7 coverage is
+// a disclosed portability gap (Spec 0038 Portability).
 enum class SampledTextureFormat {
   Rgba8Unorm,  // linear
   Rgba8Srgb,
   Rgba16Float,
   Rg16Float,
+  Bc7Unorm,
+  Bc7Srgb,
 };
 
 enum class SampledTextureDimension {

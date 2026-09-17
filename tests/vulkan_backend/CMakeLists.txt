@@ -20,6 +20,7 @@ add_executable(atlantis_vulkan_backend_tests
   descriptor_pool_growth_tests.cpp
   hdr_color_target_capability_tests.cpp
   shadow_map_capability_tests.cpp
+  sampled_texture_block_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_tests

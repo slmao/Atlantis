@@ -7,16 +7,38 @@ namespace atlantis::vulkan_backend::detail {
 
 namespace {
 
-[[nodiscard]] std::size_t bytesPerTexel(atlantis::rhi::SampledTextureFormat format) noexcept {
+// Spec 0038/ADR-0085: one uniform shape for both uncompressed and
+// block-compressed formats -- bytesPerElement is bytes per texel for
+// uncompressed formats (blockExtent 1) and bytes per 4x4-texel block for
+// BC7 (blockExtent 4). Every size/alignment computation below derives
+// from this pair, so legacy formats keep byte-identical behavior.
+struct ElementLayout {
+  std::size_t bytesPerElement;
+  std::uint32_t blockExtent;
+};
+
+[[nodiscard]] constexpr ElementLayout elementLayout(atlantis::rhi::SampledTextureFormat format) noexcept {
   switch (format) {
     case atlantis::rhi::SampledTextureFormat::Rgba8Unorm:
     case atlantis::rhi::SampledTextureFormat::Rgba8Srgb:
     case atlantis::rhi::SampledTextureFormat::Rg16Float:
-      return 4;
+      return ElementLayout{4, 1};
     case atlantis::rhi::SampledTextureFormat::Rgba16Float:
-      return 8;
+      return ElementLayout{8, 1};
+    case atlantis::rhi::SampledTextureFormat::Bc7Unorm:
+    case atlantis::rhi::SampledTextureFormat::Bc7Srgb:
+      return ElementLayout{16, 4};
   }
-  return 0;
+  return ElementLayout{0, 0};
+}
+
+[[nodiscard]] constexpr bool isBlockCompressed(atlantis::rhi::SampledTextureFormat format) noexcept {
+  return elementLayout(format).blockExtent != 1;
+}
+
+// ceil(value / blockExtent) without floating point.
+[[nodiscard]] constexpr std::size_t blockCount(std::size_t value, std::uint32_t blockExtent) noexcept {
+  return (value + blockExtent - 1) / blockExtent;
 }
 
 }  // namespace
@@ -25,6 +47,14 @@ bool isValidSampledTextureCreateParams(const atlantis::rhi::SampledTextureCreate
   if (params.extent.width == 0 || params.extent.height == 0 || params.mipLevelCount == 0) return false;
   if (params.dimension == atlantis::rhi::SampledTextureDimension::TextureCube &&
       params.extent.width != params.extent.height) {
+    return false;
+  }
+  // Spec 0038 Requirement 5: a block-compressed base mip whose width or
+  // height is not a whole multiple of the block extent is a recoverable
+  // rejection, never a silent pad.
+  if (isBlockCompressed(params.format) &&
+      (params.extent.width % elementLayout(params.format).blockExtent != 0 ||
+       params.extent.height % elementLayout(params.format).blockExtent != 0)) {
     return false;
   }
   std::uint32_t maximumMipCount = 0;
@@ -47,15 +77,23 @@ bool isValidSampledTextureUploadRegion(
   const std::uint32_t mipWidth = std::max(1U, textureExtent.width >> region.mipLevel);
   const std::uint32_t mipHeight = std::max(1U, textureExtent.height >> region.mipLevel);
   if (region.extent.width > mipWidth || region.extent.height > mipHeight) return false;
-  const std::size_t texelBytes = bytesPerTexel(format);
-  if (texelBytes == 0 || region.bufferOffsetBytes % texelBytes != 0) return false;
-  const std::size_t width = region.extent.width;
-  const std::size_t height = region.extent.height;
-  if (width > std::numeric_limits<std::size_t>::max() / height ||
-      width * height > std::numeric_limits<std::size_t>::max() / texelBytes) {
+  const ElementLayout layout = elementLayout(format);
+  if (layout.bytesPerElement == 0 || region.bufferOffsetBytes % layout.bytesPerElement != 0) return false;
+  // A block-compressed copy region must itself be block-aligned in both
+  // dimensions (VkBufferImageCopy block-compressed constraints): partial
+  // blocks cannot be expressed.
+  if (layout.blockExtent != 1 &&
+      (region.extent.width % layout.blockExtent != 0 || region.extent.height % layout.blockExtent != 0)) {
     return false;
   }
-  const std::size_t regionBytes = width * height * texelBytes;
+  const std::size_t elementCountWidth = blockCount(region.extent.width, layout.blockExtent);
+  const std::size_t elementCountHeight = blockCount(region.extent.height, layout.blockExtent);
+  if (elementCountWidth > std::numeric_limits<std::size_t>::max() / elementCountHeight ||
+      elementCountWidth * elementCountHeight >
+          std::numeric_limits<std::size_t>::max() / layout.bytesPerElement) {
+    return false;
+  }
+  const std::size_t regionBytes = elementCountWidth * elementCountHeight * layout.bytesPerElement;
   return region.bufferOffsetBytes <= sourceSizeBytes && regionBytes <= sourceSizeBytes - region.bufferOffsetBytes;
 }
 
