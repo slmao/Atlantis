@@ -18,8 +18,8 @@ constexpr std::size_t kDx10TotalHeaderBytes = kBaseHeaderBytes + kDx10HeaderSize
 
 // DDS_HEADER field offsets (relative to the header's own start).
 constexpr std::size_t kHeaderHeightOffset = 8;
-constexpr std::size_t kHeaderMipMapCountOffset = 28;  // valid only when DDSD_MIPMAPCOUNT is set
-constexpr std::size_t kPixelFormatOffset = 76;        // DDPIXELFORMAT start
+constexpr std::size_t kHeaderMipMapCountOffset = 24;  // valid only when DDSD_MIPMAPCOUNT is set
+constexpr std::size_t kPixelFormatOffset = 72;        // DDPIXELFORMAT start (header-relative: 7 leading DWORDs + dwReserved1[11] = 28 + 44 = 72; empirically confirmed against NVIDIA RTXDI-Assets' own bistro DDS files)
 
 // DDPIXELFORMAT field offsets (relative to its own start).
 constexpr std::size_t kPfFourCCOffset = 8;

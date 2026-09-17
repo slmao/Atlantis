@@ -262,6 +262,15 @@ function(atlantis_add_texture_asset)
 
   string(TOLOWER "${ARG_COLOR_SPACE}" color_space_lower)
 
+  # Spec 0038: COLOR_SPACE is the PNG path's own knob and is deliberately
+  # OMITTED for .dds sources -- the DDS file's own DXGI format is the sole
+  # color-space authority there (the cooker's DDS branch never reads this
+  # flag), so a DDS declaration passes no COLOR_SPACE at all.
+  set(color_space_args "")
+  if(ARG_COLOR_SPACE)
+    list(APPEND color_space_args "--color-space=${color_space_lower}")
+  endif()
+
   set(artifact_path "${output_dir}/${ARG_NAME}.atex")
   set(metadata_path "${output_dir}/${ARG_NAME}.atex.meta.txt")
   set(stamp "${output_dir}/${ARG_NAME}.stamp")
@@ -271,7 +280,7 @@ function(atlantis_add_texture_asset)
     BYPRODUCTS "${artifact_path}" "${metadata_path}"
     COMMAND atlantis_asset_cooker
       --kind=texture --source=${source_path} --asset-root=${asset_root}
-      --output-dir=${output_dir} --stamp=${stamp} --color-space=${color_space_lower}
+      --output-dir=${output_dir} --stamp=${stamp} ${color_space_args}
     DEPENDS ${source_path} atlantis_asset_cooker
     COMMENT "Cooking texture asset: ${ARG_NAME} (${ARG_SOURCE}, ${ARG_COLOR_SPACE})"
     VERBATIM

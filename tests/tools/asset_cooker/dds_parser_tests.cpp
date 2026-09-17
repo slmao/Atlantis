@@ -20,7 +20,7 @@ using atlantis::asset_cooker::DdsParseError;
 using atlantis::asset_cooker::parseDdsBc7;
 
 constexpr std::size_t kHeaderOffset = 4;    // after "DDS "
-constexpr std::size_t kPfOffset = 76;
+constexpr std::size_t kPfOffset = 72;
 constexpr std::size_t kDx10Offset = 128;
 
 void putU32LE(std::vector<std::uint8_t>& bytes, std::size_t offset, std::uint32_t value) {
@@ -150,7 +150,7 @@ TEST_CASE("parseDdsBc7 ignores extra mips beyond the base", "[asset_cooker][dds]
   // count at offset 28) and append a plausible second-mip payload --
   // the parse must still succeed and return only the base mip.
   putU32LE(bytes, kHeaderOffset + 4, 0x1000 | 0x20000 /*CAPS|MIPMAPCOUNT*/);
-  putU32LE(bytes, kHeaderOffset + 28, 2);
+  putU32LE(bytes, kHeaderOffset + 24, 2);
   bytes.insert(bytes.end(), 16, 0xAB);  // mip 1 (4x4 = one block)
   const auto result = parseDdsBc7(bytes.data(), bytes.size());
   REQUIRE(result.isOk());

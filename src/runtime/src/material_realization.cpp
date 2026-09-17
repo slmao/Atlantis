@@ -18,6 +18,7 @@ namespace {
 using atlantis::asset_system::MaterialSamplerAddressMode;
 using atlantis::asset_system::MaterialSamplerFilter;
 using atlantis::asset_system::TextureColorSpace;
+using atlantis::asset_system::TextureDataLayout;
 using atlantis::renderer::createMaterial;
 using atlantis::rhi::AddressMode;
 using atlantis::rhi::BufferPurpose;
@@ -32,12 +33,17 @@ using atlantis::rhi::SamplerCreateParams;
 // matching Spec 0016/D8's own module-boundary precedent, already
 // established by every other Runtime/fixture composition root that
 // touches TextureColorSpace).
-[[nodiscard]] SampledTextureFormat toSampledTextureFormat(TextureColorSpace colorSpace) {
-  switch (colorSpace) {
-    case TextureColorSpace::Unorm:
-      return SampledTextureFormat::Rgba8Unorm;
-    case TextureColorSpace::Srgb:
-      return SampledTextureFormat::Rgba8Srgb;
+// Spec 0038: the layout dimension joins the color-space dimension --
+// still a pure, total function over the pair, still never an Asset
+// System concern (the same composition-root translation point).
+[[nodiscard]] SampledTextureFormat toSampledTextureFormat(TextureColorSpace colorSpace,
+                                                           TextureDataLayout layout) {
+  const bool srgb = colorSpace == TextureColorSpace::Srgb;
+  switch (layout) {
+    case TextureDataLayout::Rgba8:
+      return srgb ? SampledTextureFormat::Rgba8Srgb : SampledTextureFormat::Rgba8Unorm;
+    case TextureDataLayout::Bc7:
+      return srgb ? SampledTextureFormat::Bc7Srgb : SampledTextureFormat::Bc7Unorm;
   }
   return SampledTextureFormat::Rgba8Unorm;
 }
@@ -358,11 +364,13 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
   } else {
     auto textureResult = device.createSampledTexture(SampledTextureCreateParams{
         .extent = Extent2D{textureData.width, textureData.height},
-        .format = toSampledTextureFormat(textureData.colorSpace)});
+        .format = toSampledTextureFormat(textureData.colorSpace, textureData.layout)});
     if (textureResult.isErr()) return ResultT::Err(MaterialRealizationError::SampledTextureCreateFailed);
     candidate.newSampledTexture = std::move(textureResult.value());
 
-    const std::size_t stagingBytes = static_cast<std::size_t>(textureData.width) * textureData.height * 4;
+    // Spec 0038: the payload size is layout-derived -- pixelBytes.size()
+    // is exactly the upload size for both Rgba8 and Bc7 layouts.
+    const std::size_t stagingBytes = textureData.pixelBytes.size();
     auto stagingResult =
         device.createBuffer({.purpose = BufferPurpose::Staging, .sizeBytes = stagingBytes});
     if (stagingResult.isErr()) return ResultT::Err(MaterialRealizationError::StagingBufferCreateFailed);
@@ -388,12 +396,11 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
     } else {
       auto normalMapTextureResult = device.createSampledTexture(SampledTextureCreateParams{
           .extent = Extent2D{normalMapTextureData->width, normalMapTextureData->height},
-          .format = toSampledTextureFormat(normalMapTextureData->colorSpace)});
+          .format = toSampledTextureFormat(normalMapTextureData->colorSpace, normalMapTextureData->layout)});
       if (normalMapTextureResult.isErr()) return ResultT::Err(MaterialRealizationError::SampledTextureCreateFailed);
       candidate.newNormalMapTexture = std::move(normalMapTextureResult.value());
 
-      const std::size_t normalMapStagingBytes =
-          static_cast<std::size_t>(normalMapTextureData->width) * normalMapTextureData->height * 4;
+      const std::size_t normalMapStagingBytes = normalMapTextureData->pixelBytes.size();
       auto normalMapStagingResult =
           device.createBuffer({.purpose = BufferPurpose::Staging, .sizeBytes = normalMapStagingBytes});
       if (normalMapStagingResult.isErr()) return ResultT::Err(MaterialRealizationError::StagingBufferCreateFailed);

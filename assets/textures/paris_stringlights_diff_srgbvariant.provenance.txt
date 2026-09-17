@@ -1,0 +1,10 @@
+asset: textures/paris_stringlights_diff_srgbvariant.dds
+source: derived from paris_stringlights_diff.dds (this directory) -- the DX10
+  header's dxgiFormat field is flipped from 99 (BC7_UNORM) to 100
+  (BC7_UNORM_SRGB) in a one-field patch; every BC7 block byte is
+  byte-identical to the unmodified file, so the dual-quad golden proves
+  hardware sRGB decode on the same real texel data (Spec 0038's own
+  testing-plan wording).
+upstream_source: https://github.com/NVIDIA-RTX/RTXDI-Assets/blob/main/bistro/objects/props/street/paris_stringlights_01/Paris_StringLights_01_diff.dds
+license: MIT (RTXDI-Assets repository license); original scene CC-BY 4.0
+sha256: 82dbe22e88d65facfb36661e9c38fdb3e3adf2a0f10c56f9933b215b8559d575
