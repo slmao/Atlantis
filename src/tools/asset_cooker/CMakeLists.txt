@@ -11,6 +11,7 @@
 # (tests/tools/asset_cooker/CMakeLists.txt links this same library).
 add_library(atlantis_asset_cooker_lib STATIC
   cook_command.cpp
+  dds_parser.cpp
 )
 
 target_include_directories(atlantis_asset_cooker_lib

@@ -57,6 +57,16 @@ namespace fs = std::filesystem;
 
 }  // namespace
 
+// Shared writer both public entry points funnel into once their own
+// layout-specific validation has passed (file-local; the fs::path alias
+// above is visible at this scope because the anonymous namespace's own
+// names are reachable from the enclosing namespace).
+[[nodiscard]] atlantis::Result<std::monostate, TextureCookError> cookTextureInternal(
+    const std::uint8_t* pixelBytes, std::size_t pixelByteCount, std::uint32_t width, std::uint32_t height,
+    std::int32_t channelsInFile, TextureColorSpace colorSpace, TextureDataLayout layout,
+    const std::string& normalizedLogicalPath, const fs::path& artifactOutputPath,
+    const fs::path& metadataOutputPath);
+
 atlantis::Result<std::monostate, TextureCookError> cookTexture(const std::uint8_t* pixelBytes, std::uint32_t width,
                                                                  std::uint32_t height, std::int32_t channelsInFile,
                                                                  TextureColorSpace colorSpace,
@@ -86,9 +96,47 @@ atlantis::Result<std::monostate, TextureCookError> cookTexture(const std::uint8_
   }
   const auto pixelByteCount = static_cast<std::size_t>(pixelByteCount64);
 
+  return cookTextureInternal(pixelBytes, pixelByteCount, width, height, channelsInFile, colorSpace,
+                              TextureDataLayout::Rgba8, normalizedLogicalPath, artifactOutputPath,
+                              metadataOutputPath);
+}
+
+atlantis::Result<std::monostate, TextureCookError> cookTextureBc7(
+    const std::uint8_t* blockBytes, std::size_t blockByteCount, std::uint32_t width, std::uint32_t height,
+    TextureColorSpace colorSpace, const std::string& logicalPathInput,
+    const std::filesystem::path& artifactOutputPath, const std::filesystem::path& metadataOutputPath) {
+  using ResultT = atlantis::Result<std::monostate, TextureCookError>;
+
+  const auto normalizedResult = normalizeLogicalPath(logicalPathInput);
+  if (normalizedResult.isErr()) return ResultT::Err(TextureCookError::LogicalPathInvalid);
+  const std::string& normalizedLogicalPath = normalizedResult.value();
+
+  if (width == 0 || height == 0) return ResultT::Err(TextureCookError::ZeroDimension);
+  if (width > kMaxTextureDimension || height > kMaxTextureDimension) {
+    return ResultT::Err(TextureCookError::DimensionExceedsMaximum);
+  }
+  // Spec 0038 Requirement 5: non-4-aligned BC7 base mips are a
+  // recoverable rejection, never a silent pad.
+  if (width % 4 != 0 || height % 4 != 0) return ResultT::Err(TextureCookError::NonAlignedDimensions);
+  if (static_cast<std::uint64_t>(blockByteCount) != bc7BlockByteCount(width, height)) {
+    return ResultT::Err(TextureCookError::BlockDataSizeMismatch);
+  }
+
+  return cookTextureInternal(blockBytes, blockByteCount, width, height, 4, colorSpace,
+                             TextureDataLayout::Bc7, normalizedLogicalPath, artifactOutputPath,
+                             metadataOutputPath);
+}
+
+atlantis::Result<std::monostate, TextureCookError> cookTextureInternal(
+    const std::uint8_t* pixelBytes, std::size_t pixelByteCount, std::uint32_t width, std::uint32_t height,
+    std::int32_t channelsInFile, TextureColorSpace colorSpace, TextureDataLayout layout,
+    const std::string& normalizedLogicalPath, const fs::path& artifactOutputPath,
+    const fs::path& metadataOutputPath) {
+  using ResultT = atlantis::Result<std::monostate, TextureCookError>;
+
   const AssetId assetId = computeAssetId(normalizedLogicalPath);
   const std::vector<std::byte> artifactBytes =
-      encodeTextureArtifact(width, height, colorSpace, pixelBytes, pixelByteCount);
+      encodeTextureArtifact(width, height, colorSpace, layout, pixelBytes, pixelByteCount);
 
   TextureMetadata metadata;
   metadata.assetId = assetId;
@@ -96,6 +144,7 @@ atlantis::Result<std::monostate, TextureCookError> cookTexture(const std::uint8_
   metadata.width = width;
   metadata.height = height;
   metadata.format = colorSpace;
+  metadata.layout = layout;
   metadata.channelsInFile = channelsInFile;
   const std::string metadataText = serializeTextureMetadata(metadata);
 

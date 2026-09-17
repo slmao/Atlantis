@@ -1,4 +1,5 @@
 #include "cook_command.h"
+#include "dds_parser.h"
 
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/asset_set_validation.h>
@@ -11,8 +12,10 @@
 #include <atlantis/asset_system/texture_types.h>
 
 #include <filesystem>
+
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -128,6 +131,10 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
       return "logical path invalid";
     case TextureCookError::AtomicWriteFailed:
       return "atomic write failed";
+    case TextureCookError::NonAlignedDimensions:
+      return "BC7 base-mip width/height not a multiple of 4";
+    case TextureCookError::BlockDataSizeMismatch:
+      return "BC7 block byte count does not match ceil(w/4)*ceil(h/4)*16";
   }
   return "unknown texture cook error";
 }
@@ -244,9 +251,77 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
 // relativePath (the source's own asset-root-relative path) is still
 // used for cookTexture()'s own logicalPathInput, unchanged from every
 // other cook mode's own convention.
+[[nodiscard]] const char* ddsParseErrorMessage(atlantis::asset_cooker::DdsParseError error) {
+  using atlantis::asset_cooker::DdsParseError;
+  switch (error) {
+    case DdsParseError::MalformedHeader:
+      return "malformed DDS header";
+    case DdsParseError::UnsupportedFormat:
+      return "DDS file is not a 2D BC7 texture (DXGI 99/100, or legacy fourCC 'BC7')";
+    case DdsParseError::Truncated:
+      return "DDS file truncated before its claimed base-mip bytes";
+    case DdsParseError::NonAlignedDimensions:
+      return "BC7 base-mip width/height not a multiple of 4";
+  }
+  return "unknown DDS parse error";
+}
+
+// Spec 0038/Plan 0038 Milestone 2: the BC7 cook path -- a .dds source is
+// parsed (header only, blocks passed through verbatim, never decoded) and
+// funneled into cookTextureBc7(). The DDS file's own DXGI format is the
+// sole color-space authority here: --color-space is ignored for .dds
+// sources (it exists for the stb-decoded PNG path below only).
+[[nodiscard]] int runCookTextureDdsMode(const CookCommandRequest& request) {
+  using atlantis::asset_system::cookTextureBc7;
+
+  std::ifstream file(request.sourcePath, std::ios::binary);
+  if (!file.is_open()) {
+    std::cerr << "atlantis_asset_cooker: failed to open DDS source: " << request.sourcePath << "\n";
+    return 1;
+  }
+  std::vector<std::uint8_t> ddsBytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+  if (file.bad()) {
+    std::cerr << "atlantis_asset_cooker: failed to read DDS source: " << request.sourcePath << "\n";
+    return 1;
+  }
+
+  const auto parsed = atlantis::asset_cooker::parseDdsBc7(ddsBytes.data(), ddsBytes.size());
+  if (parsed.isErr()) {
+    std::cerr << "atlantis_asset_cooker: " << ddsParseErrorMessage(parsed.error())
+              << ": " << request.sourcePath << "\n";
+    return 1;
+  }
+  const atlantis::asset_cooker::DdsBc7Image& image = parsed.value();
+
+  const std::string relativePath = computeRelativePathString(request.sourcePath, request.assetRoot);
+  const std::string base = fs::path(request.stampPath).stem().string();
+  const fs::path artifactPath = fs::path(request.outputDir) / (base + ".atex");
+  const fs::path metadataPath = fs::path(request.outputDir) / (base + ".atex.meta.txt");
+
+  const auto result = cookTextureBc7(image.baseMipBlockBytes.data(), image.baseMipBlockBytes.size(), image.width,
+                                     image.height, image.srgb ? atlantis::asset_system::TextureColorSpace::Srgb
+                                                              : atlantis::asset_system::TextureColorSpace::Unorm,
+                                     relativePath, artifactPath, metadataPath);
+  if (result.isErr()) {
+    std::cerr << "atlantis_asset_cooker: cook failed: " << textureCookErrorMessage(result.error()) << "\n";
+    return 1;
+  }
+
+  if (!writeStamp(request.stampPath)) {
+    std::cerr << "atlantis_asset_cooker: failed to write stamp file: " << request.stampPath << "\n";
+    return 1;
+  }
+
+  return 0;
+}
+
 [[nodiscard]] int runCookTextureMode(const CookCommandRequest& request) {
   using atlantis::asset_system::cookTexture;
   using atlantis::asset_system::TextureColorSpace;
+
+  if (fs::path(request.sourcePath).extension() == ".dds") {
+    return runCookTextureDdsMode(request);
+  }
 
   const std::string relativePath = computeRelativePathString(request.sourcePath, request.assetRoot);
 

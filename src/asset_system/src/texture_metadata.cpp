@@ -9,14 +9,18 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_texture_metadata_version: 1";
+constexpr std::string_view kVersionLine = "atlantis_texture_metadata_version: 2";
 constexpr std::string_view kAssetIdPrefix = "asset_id: ";
 constexpr std::string_view kSourceLogicalPathPrefix = "source_logical_path: ";
 constexpr std::string_view kWidthPrefix = "width: ";
 constexpr std::string_view kHeightPrefix = "height: ";
 constexpr std::string_view kFormatPrefix = "format: ";
 constexpr std::string_view kChannelsInFilePrefix = "channels_in_file: ";
-constexpr std::size_t kExpectedLineCount = 7;
+constexpr std::size_t kExpectedLineCount = 8;
+
+constexpr std::string_view kDataLayoutPrefix = "data_layout: ";
+constexpr std::string_view kLayoutRgba8 = "rgba8";
+constexpr std::string_view kLayoutBc7 = "bc7";
 
 constexpr std::string_view kFormatUnorm = "unorm";
 constexpr std::string_view kFormatSrgb = "srgb";
@@ -109,7 +113,16 @@ atlantis::Result<TextureMetadata, MetadataParseError> parseTextureMetadata(std::
     return ResultT::Err(MetadataParseError::MalformedValue);
   }
 
-  if (!matchField(lines[6], kChannelsInFilePrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[6], kDataLayoutPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (value == kLayoutRgba8) {
+    metadata.layout = TextureDataLayout::Rgba8;
+  } else if (value == kLayoutBc7) {
+    metadata.layout = TextureDataLayout::Bc7;
+  } else {
+    return ResultT::Err(MetadataParseError::MalformedValue);
+  }
+
+  if (!matchField(lines[7], kChannelsInFilePrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseSigned(value, metadata.channelsInFile)) return ResultT::Err(MetadataParseError::MalformedValue);
 
   return ResultT::Ok(std::move(metadata));
@@ -133,6 +146,9 @@ std::string serializeTextureMetadata(const TextureMetadata& metadata) {
   out += '\n';
   out += kFormatPrefix;
   out += (metadata.format == TextureColorSpace::Srgb ? kFormatSrgb : kFormatUnorm);
+  out += '\n';
+  out += kDataLayoutPrefix;
+  out += (metadata.layout == TextureDataLayout::Bc7 ? kLayoutBc7 : kLayoutRgba8);
   out += '\n';
   out += kChannelsInFilePrefix;
   out += std::to_string(metadata.channelsInFile);
