@@ -3,11 +3,15 @@
 - **Spec:** [Spec 0038: Block-Compressed Textures](../specs/0038-block-compressed-textures.md)
   (`Approved`, 2026-09-17) — [ADR-0085](../adr/0085-block-compressed-sampled-texture-format-and-vulkan-mapping.md)
   (`Accepted`)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by ZCode agent at explicit human direction)
-- **Joint Human Review:** pending — Spec 0038's own `Approved` status authorizes
-  drafting this Plan only; Implementation requires a separate Joint Human
-  Review of Spec 0038 and this Plan together, per AGENTS.md.
+- **Joint Human Review:** slmao, 2026-09-17 — reviewed this Plan and
+  [Spec 0038](../specs/0038-block-compressed-textures.md) together and
+  explicitly authorized Implementation from Milestone 1 (chat confirmation;
+  document set carried by this branch's PR). The Plan's three named scope
+  decisions — base-mip upload only (mip-chain deferred to Spec 0037), no
+  dedicated Android on-device BC7 test, and the 40-byte schema-v2 header —
+  were confirmed as part of this review.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
