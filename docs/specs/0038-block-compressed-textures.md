@@ -1,14 +1,20 @@
 # Spec: Block-Compressed Texture Support
 
-- **Status:** Proposed
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-16
-- **Related Plan(s):** None yet — Plan drafting starts only once this
-  Spec and its related ADR clear Human Review.
-- **Approval:** pending
+- **Related Plan(s):** None yet — Plan drafting may now begin (this
+  Spec and its related ADR have cleared Human Review, below).
+  **Implementation still awaits its own, separate Joint Human Review**
+  of Spec + Plan together, per AGENTS.md's own workflow — this Approval
+  authorizes drafting Plan 0038 only.
+- **Approval:** slmao, 2026-09-17 (chat confirmation, no reviewing PR —
+  authorizes drafting Plan 0038; Implementation itself still awaits its
+  own, separate Joint Human Review of Spec + Plan together).
 - **Related ADR(s):** [ADR-0085](../adr/0085-block-compressed-sampled-texture-format-and-vulkan-mapping.md)
-  (`Proposed`) — `SampledTextureFormat` extension and `VkFormat`
-  mapping, drafted alongside this Spec.
+  (`Accepted`) — `SampledTextureFormat` extension and `VkFormat`
+  mapping, drafted alongside this Spec, accepted 2026-09-17 alongside
+  this Spec's own Approval.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 State each requirement once; link ADR rationale and map verification to the

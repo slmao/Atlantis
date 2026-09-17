@@ -1,10 +1,11 @@
 # ADR 0085: Block-Compressed `SampledTextureFormat` and Vulkan Mapping
 
-- **Status:** Proposed
-- **Date:** 2026-09-16
-- **Deciders:** pending Human Review (drafted alongside
-  [Spec 0038](../specs/0038-block-compressed-textures.md))
-- **Related Spec:** [Spec 0038: Block-Compressed Texture Support](../specs/0038-block-compressed-textures.md) (`Proposed`)
+- **Status:** Accepted
+- **Date:** 2026-09-16 (accepted 2026-09-17)
+- **Deciders:** slmao — Human Review, chat confirmation, no reviewing
+  PR, alongside [Spec 0038](../specs/0038-block-compressed-textures.md)'s
+  own Approval (2026-09-17)
+- **Related Spec:** [Spec 0038: Block-Compressed Texture Support](../specs/0038-block-compressed-textures.md) (`Approved`)
 - **Related ADR(s):** [ADR-0055](0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)
   (`Accepted`) — establishes `SampledTexture`/`SampledTextureFormat` as
   an independent, explicitly-extensible RHI boundary; this ADR is that
@@ -14,7 +15,7 @@
   [ADR-0056](0056-texture-upload-resource-state-and-descriptor-binding.md)
   (`Accepted`) — confirmed, by direct reading, **unaffected** by this
   ADR (see Context). [ADR-0083](0083-gltf-to-atlantis-asset-format-mapping.md)
-  (`Proposed`) — D4's own ruling (2026-09-15) that this capability is
+  (`Accepted`) — D4's own ruling (2026-09-15) that this capability is
   necessary and belongs in its own Spec/ADR, not decided inside a
   Tools-subsystem ADR.
 

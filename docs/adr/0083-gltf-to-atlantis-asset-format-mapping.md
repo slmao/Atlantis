@@ -1,21 +1,22 @@
 # ADR 0083: glTF-to-Atlantis Asset Format Mapping
 
-- **Status:** Proposed
-- **Date:** 2026-09-16
-- **Deciders:** pending Human Review (drafted alongside
-  [Spec 0037](../specs/0037-gltf-importer.md))
-- **Related Spec:** [Spec 0037: glTF 2.0 Importer](../specs/0037-gltf-importer.md) (`Proposed`)
+- **Status:** Accepted
+- **Date:** 2026-09-16 (accepted 2026-09-17)
+- **Deciders:** slmao — Human Review, chat confirmation, no reviewing
+  PR, alongside [Spec 0037](../specs/0037-gltf-importer.md)'s own
+  Approval (2026-09-17)
+- **Related Spec:** [Spec 0037: glTF 2.0 Importer](../specs/0037-gltf-importer.md) (`Approved`)
 - **Related ADR(s):** [ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)
   (`Accepted`) — this ADR's own mesh/material/texture artifact formats
   are the target this decision maps into, unmodified in shape except
   where explicitly widened below. [ADR-0082](0082-gltf-parser-dependency-selection.md)
-  (`Proposed`) — the parser this mapping consumes. [ADR-0066](0066-pbr-material-asset-parameter-set-and-color-space-contract.md)
+  (`Accepted`) — the parser this mapping consumes. [ADR-0066](0066-pbr-material-asset-parameter-set-and-color-space-contract.md)
   (`Accepted`) — the `MaterialAssetData` metallic-roughness contract
   this decision converts *into*. [ADR-0073](0073-static-mesh-tangent-attribute-generation-and-schema.md)
   (`Accepted`) — the tangent-generation contract this decision must
   reconcile with glTF's own pre-computed `TANGENT` attribute (below).
   [Spec 0038: Block-Compressed Texture Support](../specs/0038-block-compressed-textures.md)
-  (`Proposed`) — D4 below records the human ruling (2026-09-15) that
+  (`Approved`) — D4 below records the human ruling (2026-09-15) that
   native GPU block-compressed texture support is a real RHI/Vulkan
   Backend capability this ADR's own Tools-only scope must not decide,
   and is instead carried by that independent Spec; this workflow's own

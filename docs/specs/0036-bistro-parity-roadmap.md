@@ -12,23 +12,31 @@
   Spec → Plan → Human Review → Implementation cycle independently. This
   Spec itself still authorizes no Implementation, per its own
   Architectural Impact and Proposed Design sections above.)
-- **Amendment (2026-09-15, post-Approval):** workflow ⓪ (Block-
-  Compressed Texture Support) added — a real, investigation-discovered
-  gap workflow ①'s own Spec 0037 surfaced mid-drafting, not present in
-  this Spec's own originally-Approved seven-workflow set. Approved by
-  slmao alongside this amendment's own reviewing PR (the same PR
-  carrying this revision, Spec 0038, and ADR-0083's own D4 revision) —
-  a real, disclosed widening of this Spec's own workflow count from
-  seven to eight, not a silent edit to the original, already-Approved
-  text (which remains unchanged above and throughout, per this
-  repository's own established "amendments are appended, originals are
-  not rewritten" discipline, ADR-0045's own precedent applied here to a
-  Spec instead of an ADR). See the amended Requirements/Dependency-graph
-  sections below for the workflow's own full definition.
+- **Amendment (2026-09-15, post-Approval; confirmed 2026-09-17):**
+  workflow ⓪ (Block-Compressed Texture Support) added — a real,
+  investigation-discovered gap workflow ①'s own Spec 0037 surfaced
+  mid-drafting, not present in this Spec's own originally-Approved
+  seven-workflow set. Ruled by slmao on 2026-09-15 (the same ruling that
+  settled ADR-0083's own D4), and formally confirmed alongside the
+  documents that ruling produced — [Spec 0037](0037-gltf-importer.md)'s
+  own Approval, [Spec 0038](0038-block-compressed-textures.md) (new,
+  `Approved`), and [ADR-0082](../adr/0082-gltf-parser-dependency-selection.md)/[ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md)/[ADR-0084](../adr/0084-gltf-importer-tools-subsystem-boundary.md)/[ADR-0085](../adr/0085-block-compressed-sampled-texture-format-and-vulkan-mapping.md)
+  (all `Accepted`) — all slmao, chat confirmation, no reviewing PR,
+  2026-09-17, one and the same approval pass covering this amendment
+  and its own sibling documents together. A real, disclosed widening of
+  this Spec's own workflow count from seven to eight, not a silent edit
+  to the original, already-Approved text (which remains unchanged above
+  and throughout, per this repository's own established "amendments are
+  appended, originals are not rewritten" discipline, ADR-0045's own
+  precedent applied here to a Spec instead of an ADR). See the amended
+  Requirements/Dependency-graph sections below for the workflow's own
+  full definition.
 - **Related ADR(s):** None of this Spec's own — every decision surface
   it identifies is explicitly deferred to that workflow's own future
   Spec + ADR (see Architectural Impact). Workflow ⓪'s own ADR is
-  [Spec 0038](0038-block-compressed-textures.md)'s, not this Spec's.
+  [Spec 0038](0038-block-compressed-textures.md)'s (`Approved`), namely
+  [ADR-0085](../adr/0085-block-compressed-sampled-texture-format-and-vulkan-mapping.md)
+  (`Accepted`), not this Spec's own.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 State each requirement once; link ADR rationale and map verification to the
@@ -176,9 +184,11 @@ fabricated per-feature unlock count.
 
 **⓪ Block-Compressed Texture Support** — Size: **M**
 
-**Amendment (2026-09-15), post-Approval, reviewed alongside this PR.**
-This workflow did not exist in this Spec's own original, Approved
-draft — it was discovered mid-implementation of workflow ①'s own Spec
+**Amendment (2026-09-15), post-Approval; confirmed 2026-09-17 (slmao,
+chat confirmation, no reviewing PR, alongside Spec 0037/0038's own
+Approval and ADR-0082/0083/0084/0085's own Acceptance).** This workflow
+did not exist in this Spec's own original, Approved draft — it was
+discovered mid-implementation of workflow ①'s own Spec
 ([Spec 0037](0037-gltf-importer.md)), when that Spec's own required
 pre-drafting investigation measured the actual recommended Bistro
 source and found its real texture set (390 files, ~2.18 GB,

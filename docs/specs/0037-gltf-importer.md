@@ -1,20 +1,26 @@
 # Spec: glTF 2.0 Importer
 
-- **Status:** Proposed
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-16
-- **Related Plan(s):** None yet — Plan drafting starts only once this
-  Spec and its related ADRs clear Human Review, and (for the
-  texture-import milestone specifically) once
-  [Spec 0038](0038-block-compressed-textures.md) lands.
-- **Approval:** pending
+- **Related Plan(s):** None yet — Plan drafting may now begin (this
+  Spec and its related ADRs have cleared Human Review, below), and (for
+  the texture-import milestone specifically) once
+  [Spec 0038](0038-block-compressed-textures.md) lands. **Implementation
+  still awaits its own, separate Joint Human Review** of Spec + Plan
+  together, per AGENTS.md's own workflow — this Approval authorizes
+  drafting Plan 0037 only.
+- **Approval:** slmao, 2026-09-17 (chat confirmation, no reviewing PR —
+  authorizes drafting Plan 0037; Implementation itself still awaits its
+  own, separate Joint Human Review of Spec + Plan together).
 - **Related ADR(s):** [ADR-0082](../adr/0082-gltf-parser-dependency-selection.md)
-  (`Proposed`) — parser dependency; [ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md)
-  (`Proposed`) — format mapping; [ADR-0084](../adr/0084-gltf-importer-tools-subsystem-boundary.md)
-  (`Proposed`) — Tools subsystem boundary. All three drafted alongside
+  (`Accepted`) — parser dependency; [ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md)
+  (`Accepted`) — format mapping; [ADR-0084](../adr/0084-gltf-importer-tools-subsystem-boundary.md)
+  (`Accepted`) — Tools subsystem boundary. All three drafted alongside
   this Spec, per [Spec 0036](0036-bistro-parity-roadmap.md) workflow
   ①'s own named ADR obligations, which this Spec's own Architectural
-  Impact section treats as a contract to discharge, not restate.
+  Impact section treats as a contract to discharge, not restate. All
+  three accepted 2026-09-17, alongside this Spec's own Approval.
   **Revision (2026-09-16):** [ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md)
   D4 and this Spec's own vendoring/Risks sections were revised following
   a Human Review ruling on texture format (CPU decode rejected; native

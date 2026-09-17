@@ -1,13 +1,14 @@
 # ADR 0084: glTF Importer Tools Subsystem Boundary
 
-- **Status:** Proposed
-- **Date:** 2026-09-16
-- **Deciders:** pending Human Review (drafted alongside
-  [Spec 0037](../specs/0037-gltf-importer.md))
-- **Related Spec:** [Spec 0037: glTF 2.0 Importer](../specs/0037-gltf-importer.md) (`Proposed`)
+- **Status:** Accepted
+- **Date:** 2026-09-16 (accepted 2026-09-17)
+- **Deciders:** slmao — Human Review, chat confirmation, no reviewing
+  PR, alongside [Spec 0037](../specs/0037-gltf-importer.md)'s own
+  Approval (2026-09-17)
+- **Related Spec:** [Spec 0037: glTF 2.0 Importer](../specs/0037-gltf-importer.md) (`Approved`)
 - **Related ADR(s):** [ADR-0082](0082-gltf-parser-dependency-selection.md)
-  (`Proposed`) — the dependency this module links.
-  [ADR-0083](0083-gltf-to-atlantis-asset-format-mapping.md) (`Proposed`)
+  (`Accepted`) — the dependency this module links.
+  [ADR-0083](0083-gltf-to-atlantis-asset-format-mapping.md) (`Accepted`)
   — the mapping logic this module implements.
   [ADR-0043](0043-asset-system-module-boundary.md) (`Accepted`) — the
   Asset System module boundary this new Tools subsystem depends on and
