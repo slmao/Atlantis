@@ -12,10 +12,31 @@
   Spec → Plan → Human Review → Implementation cycle independently. This
   Spec itself still authorizes no Implementation, per its own
   Architectural Impact and Proposed Design sections above.)
-- **Related ADR(s):** None — this Spec makes zero architectural
-  decisions itself; every decision surface it identifies is explicitly
-  deferred to that workflow's own future Spec + ADR (see Architectural
-  Impact).
+- **Amendment (2026-09-15, post-Approval; confirmed 2026-09-17):**
+  workflow ⓪ (Block-Compressed Texture Support) added — a real,
+  investigation-discovered gap workflow ①'s own Spec 0037 surfaced
+  mid-drafting, not present in this Spec's own originally-Approved
+  seven-workflow set. Ruled by slmao on 2026-09-15 (the same ruling that
+  settled ADR-0083's own D4), and formally confirmed alongside the
+  documents that ruling produced — [Spec 0037](0037-gltf-importer.md)'s
+  own Approval, [Spec 0038](0038-block-compressed-textures.md) (new,
+  `Approved`), and [ADR-0082](../adr/0082-gltf-parser-dependency-selection.md)/[ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md)/[ADR-0084](../adr/0084-gltf-importer-tools-subsystem-boundary.md)/[ADR-0085](../adr/0085-block-compressed-sampled-texture-format-and-vulkan-mapping.md)
+  (all `Accepted`) — all slmao, chat confirmation, no reviewing PR,
+  2026-09-17, one and the same approval pass covering this amendment
+  and its own sibling documents together. A real, disclosed widening of
+  this Spec's own workflow count from seven to eight, not a silent edit
+  to the original, already-Approved text (which remains unchanged above
+  and throughout, per this repository's own established "amendments are
+  appended, originals are not rewritten" discipline, ADR-0045's own
+  precedent applied here to a Spec instead of an ADR). See the amended
+  Requirements/Dependency-graph sections below for the workflow's own
+  full definition.
+- **Related ADR(s):** None of this Spec's own — every decision surface
+  it identifies is explicitly deferred to that workflow's own future
+  Spec + ADR (see Architectural Impact). Workflow ⓪'s own ADR is
+  [Spec 0038](0038-block-compressed-textures.md)'s (`Approved`), namely
+  [ADR-0085](../adr/0085-block-compressed-sampled-texture-format-and-vulkan-mapping.md)
+  (`Accepted`), not this Spec's own.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 State each requirement once; link ADR rationale and map verification to the
@@ -143,11 +164,13 @@ roadmap's entire span, not just its first workflow:
 
 ### Functional — the workflow decomposition and dependency graph
 
-This roadmap's own functional requirements ARE its seven workflows and
-the edges between them, in place of a conventional acceptance-criteria
-list — stated once here per AGENTS.md's "state each requirement once"
-rule; each workflow's own future Spec restates none of this, it only
-cites this Spec by number.
+This roadmap's own functional requirements ARE its eight workflows
+(seven originally approved, plus one investigation-discovered
+supplementary workflow, ⓪ — see the amendment note immediately below)
+and the edges between them, in place of a conventional acceptance-
+criteria list — stated once here per AGENTS.md's "state each
+requirement once" rule; each workflow's own future Spec restates none
+of this, it only cites this Spec by number.
 
 **Legend:** Size is a rough engineering-effort order-of-magnitude (S/M/L/
 XL), not a schedule commitment. "Unlocks" is this workflow's own
@@ -156,6 +179,56 @@ one hard count this Spec's own investigation actually confirmed
 (`google/filament/samples/` contains 35 sample program files today, per
 this Spec's own repository listing — Non-functional below), not a
 fabricated per-feature unlock count.
+
+---
+
+**⓪ Block-Compressed Texture Support** — Size: **M**
+
+**Amendment (2026-09-15), post-Approval; confirmed 2026-09-17 (slmao,
+chat confirmation, no reviewing PR, alongside Spec 0037/0038's own
+Approval and ADR-0082/0083/0084/0085's own Acceptance).** This workflow
+did not exist in this Spec's own original, Approved draft — it was
+discovered mid-implementation of workflow ①'s own Spec
+([Spec 0037](0037-gltf-importer.md)), when that Spec's own required
+pre-drafting investigation measured the actual recommended Bistro
+source and found its real texture set (390 files, ~2.18 GB,
+`BC7_UNORM_SRGB`-compressed) has no usable uncompressed fallback in the
+source repository at all (the `.png`/`.jpg` paths the glTF JSON itself
+references do not exist as real files). Decoding that data to this
+engine's existing uncompressed `Rgba8Unorm`/`Rgba8Srgb` pipeline would
+produce an estimated ~8-9 GB of raw texture bytes — quantified,
+infeasible, and rejected by Human Review (2026-09-15,
+[ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md) D4).
+This is exactly the kind of real, investigation-surfaced gap this
+roadmap's own Requirements section (Goals: "record Atlantis's own
+current per-workflow capability ceiling... so each later workflow Spec
+starts from a checked baseline") exists to catch — added here as a
+genuine roadmap amendment, not silently absorbed into workflow ①'s own
+scope, per this document's own "Accepted ADRs are not silently
+rewritten" discipline (AGENTS.md) applied to an Approved Spec instead.
+
+Adds a native block-compressed `SampledTextureFormat` to the RHI's
+public API (BC7 at minimum — Non-functional below), the matching
+Vulkan Backend image-creation/upload path, and an asset-pipeline
+cooker path that passes compressed texel data through verbatim (no
+CPU-side decode) — see [Spec 0038](0038-block-compressed-textures.md),
+drafted alongside this amendment.
+
+**Unlocks:** any future Filament sample, or any other externally-
+authored glTF asset, shipping block-compressed textures — not specific
+to Bistro (qualitative).
+
+**Dependency:** none upstream — this workflow needs nothing from ①-⑥.
+**Hard downstream dependency:** workflow ①'s own texture-import
+milestone specifically (mesh/material/scene-graph mapping are
+unaffected and unblocked) — recorded in the Dependency graph below.
+
+**ADR obligation:** `SampledTextureFormat` extension and `VkFormat`
+mapping decision — [Spec 0038](0038-block-compressed-textures.md)'s own
+ADR, drafted alongside it, extending
+[ADR-0055](../adr/0055-sampled-texture-and-sampler-rhi-module-boundary-and-ownership.md)'s
+own already-established, deliberately-extensible `SampledTextureFormat`
+boundary.
 
 ---
 
@@ -419,6 +492,7 @@ time, not asserted as certain here.
 
 ```mermaid
 graph LR
+  W0["⓪ Block-Compressed Textures (M)"]
   W1["① glTF Importer (XL)"]
   W2["② Multi-Light (L)"]
   W3["③ Emissive (S)"]
@@ -427,6 +501,7 @@ graph LR
   W6["⑥ Bloom (M)"]
   W7["⑦ Finale: Assembly + Whitelist + Dual-Platform"]
 
+  W0 --> W1
   W1 -. soft .-> W2
   W1 -. soft .-> W3
   W1 -. soft .-> W4
@@ -449,8 +524,12 @@ before the source can integrate against it); dashed edges are soft/
 development-order preferences only (②/③/④ can each be developed and
 verified against a hand-authored test scene before ① lands, matching
 how Spec 0035's own per-BRDF milestones were each independently
-verifiable before its own Milestone 5 assembly). ① and ⑦ are the graph's
-only hard join/root points.
+verifiable before its own Milestone 5 assembly). ⓪ and ⑦ are the
+graph's only hard join/root points — ⓪ gates ①'s own texture-import
+milestone specifically (①'s own mesh/material/scene-graph mapping are
+unblocked by ⓪, per Spec 0037's own Architectural Impact section); this
+single `W0 --> W1` edge is a simplification of that narrower, milestone-
+scoped reality, not a claim that all of workflow ① waits on ⓪.
 
 ### Non-functional
 
