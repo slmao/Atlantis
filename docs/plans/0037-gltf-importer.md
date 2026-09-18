@@ -4,11 +4,14 @@
   (`Approved`, 2026-09-17) — [ADR-0082](../adr/0082-gltf-parser-dependency-selection.md),
   [ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md),
   [ADR-0084](../adr/0084-gltf-importer-tools-subsystem-boundary.md) (all `Accepted`)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending — Implementation must not start until a
-  human reviews this Plan and Spec 0037 together and explicitly authorizes
-  it. The Open Points section lists the items that review must rule on.
+- **Joint Human Review:** slmao, 2026-09-19 — reviewed this Plan and
+  [Spec 0037](../specs/0037-gltf-importer.md) together and explicitly authorized
+  Implementation from Milestone 1 (chat confirmation; document set carried by
+  this branch's PR). All ten review items were ruled on; the rulings are
+  recorded in [Review rulings](#review-rulings-ruled-2026-09-19) and applied in
+  the body below.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -105,7 +108,7 @@ In that `cgltf.h`:
   kept (`dds_parser.h:19-21`). Plan 0038 Milestone 3 **explicitly deferred mip-chain
   passthrough "to Spec 0037's importer milestone"**
   (`docs/plans/0038-block-compressed-textures.md:114-116`). This Plan cannot absorb
-  that deferral; see Open Point 6.
+  that deferral; see Ruling 6.
 - *Render-side index width.* `VK_INDEX_TYPE_UINT16` is hardcoded at
   `vulkan_command_list.cpp:387`; the RHI has no index-type concept. Runtime uploads
   `meshAssetData.indices()` at `scene_load.cpp:112-113`.
@@ -128,11 +131,11 @@ In that `cgltf.h`:
 - **Licence finding:** PR #165's own committed
   `assets/textures/paris_stringlights_diff.provenance.txt` records the upstream as
   "Amazon Lumberyard Bistro (NVIDIA ORCA, CC-BY 4.0)" repackaged under the
-  repository's MIT licence. Spec 0037 Investigation 4 says "one single license".
-  See Open Point 1.
+  repository's MIT licence. Spec 0037 Investigation 4 said "one single license";
+  it is corrected on this branch (Ruling 1).
 - The same fixture shows a **`_diff` (base-color) DDS stored as `BC7_UNORM`, not
   `_SRGB`** (256×128). This contradicts the Spec's sampled "all `BC7_UNORM_SRGB`"
-  finding and interacts with the cooker's DXGI-is-authority rule; see Open Point 4.
+  finding and interacts with the cooker's DXGI-is-authority rule; see Ruling 4.
 
 ## Plan-stage decisions (closing the items the Spec/ADRs deferred here)
 
@@ -148,8 +151,8 @@ unified reader:
 
 Rationale: this leaves Runtime, `StaticMeshAssetData`, and the RHI's hardcoded
 `UINT16` binding untouched, which this Plan's scope requires. The cost is disclosed:
-**a v5 `.amesh` cannot be rendered until a separate RHI index-type decision lands**
-(Open Point 5).
+**a v5 `.amesh` cannot be rendered until a separate RHI index-type decision lands**.
+That decision is now tracked as Spec 0036 workflow ①b (Ruling 5).
 
 **D8 — one tangent generator, two index widths.** `generateTangents()` gets a
 `uint32_t`-index overload. Both overloads share one algorithm body (Lengyel,
@@ -226,8 +229,9 @@ example, `spec = (1, 1, 1)` gives `b = 0.92`, `c = −0.96`, `D = 1`, so
 The Plan therefore applies the formula **only to materials without
 `specularGlossinessTexture`**. For textured spec-gloss materials the default is a
 dielectric fallback: `metallic = 0`, `baseColor = diffuseFactor`,
-`roughness = 1 − glossinessFactor`, with the texture dropped and reported. This needs
-explicit sign-off (Open Point 2). The conversion happens once, at import, and is
+`roughness = 1 − glossinessFactor`, with the texture dropped and reported in
+`import_report.txt` (Ruling 2). Per-texel conversion baked into new textures is
+Future Work. The conversion happens once, at import, and is
 baked into `.material.txt` (ADR-0083 D3). Every material's kind is `pbr_direct_lit`:
 the ADR's "PbrClearcoat if eligible" never applies, because no clearcoat extension is
 in the scope.
@@ -243,10 +247,11 @@ in the scope.
 - `doubleSided`
 - `normalTexture.scale ≠ 1`
 - `specularGlossinessTexture`
+- DDS colour-space heuristic warnings (Ruling 4, see Textures)
 
 The report is needed because the `.material.txt` grammar has no comment syntax, so
 ADR-0083 D3's "recorded in the material's own provenance/comment" cannot be done
-in-file. It is a disclosed adaptation (Open Point 3).
+in-file. It is a disclosed adaptation (Ruling 3).
 
 **Textures.** Only textures referenced by an imported material are cooked:
 
@@ -255,11 +260,14 @@ in-file. It is a disclosed adaptation (Open Point 3).
   (`--kind=texture`). The cooker's `parseDdsBc7` does the validation, so the importer
   duplicates no DDS parser and takes no dependency on `atlantis_asset_cooker_lib`.
   This keeps ADR-0084's dependency surface exact.
+  The DDS file's DXGI format stays authoritative: the file wins and nothing is
+  overridden. As a heuristic, a `*_diff*` DDS that is not `BC7_UNORM_SRGB` adds a
+  warning to `import_report.txt` (Ruling 4).
 - *No DDS extension.* The core `source` image (PNG/JPG) goes through the cooker's stb
   path. Color space is set by usage: base color → `srgb`, normal → `unorm`.
 - *Material with no base-color texture.* The v6 grammar's mandatory `texture:` line is
   satisfied by one importer-generated 4×4 solid-white BC7 DDS in the import output,
-  cooked like any other texture (Open Point 7).
+  cooked like any other texture (Ruling 7).
 - *Sampler mapping.* `LINEAR*` → `linear`, `NEAREST*` → `nearest`,
   `REPEAT` → `repeat`, `CLAMP_TO_EDGE` → `clamp_to_edge`. `MIRRORED_REPEAT`, or
   differing wrapS/wrapT, is a named error.
@@ -281,10 +289,17 @@ The rest of the rules:
   static bind pose is imported.
 - **`KHR_lights_punctual`** maps as follows:
   - directional → `light=directional`;
-  - point → `light=point` with `range` (an undefined or infinite range is a rule for
-    Open Point 8);
-  - **spot → named error `UnsupportedLightKind`**, because Atlantis has no spot kind
-    (Open Point 8).
+  - point → `light=point`;
+  - `color=` and `intensity=` carry the raw glTF values (lux for directional,
+    candela for point) and the units are recorded in `import_report.txt`. Their
+    photometric meaning in Atlantis belongs to workflow ②'s ADR, not this importer
+    (Ruling 8).
+  - glTF `range` is discarded and recorded in `import_report.txt` (Ruling 8). The
+    v4 grammar makes a positive `range=` mandatory for point lights
+    (`scene_source.cpp:280-330`), so the importer writes one fixed, named
+    placeholder constant. Its value is chosen in Milestone 5 and reported in the PR.
+  - **spot → a named error in the `UnsupportedContent` category**, because Atlantis
+    has no spot kind (Ruling 8).
   - The 1-directional/4-point cap is pre-checked as a named error rather than left to
     the cooker's generic failure.
   - Light direction (glTF: the node's −Z) is checked against Runtime's extraction
@@ -297,8 +312,8 @@ The rest of the rules:
 gives a synthesis rule only for `COLOR_0`. glTF-mandated flat normals would need a
 vertex-splitting pass. Missing UVs would make tangent generation fail
 (`DegenerateTangentBasis`). Default: named error `MissingRequiredAttribute`. Bistro
-carries both attributes on every primitive (Spec Investigation 1). This needs sign-off
-(Open Point 9).
+carries both attributes on every primitive (Spec Investigation 1). The review kept
+this default (Ruling 9).
 
 **Normals.** Every `NORMAL` must pass the existing ±1% tolerance
 (`isNormalLengthSquaredInTolerance`). Failures are a named error; there is no silent
@@ -308,8 +323,9 @@ renormalization. This is the "归一化校验" (normalization check) requirement
 (default: the glTF file stem, so `bistro/`). This namespace keeps a future second
 import from colliding.
 
-- Meshes: `bistro/meshes/m<mesh>_p<prim>`. Glyph-safe, index-based, and independent
-  of glTF names, which are neither unique nor path-safe.
+- Meshes: `bistro/meshes/m<mesh>_p<prim>`. The names are built only from glTF array
+  indices, so they are always valid logical paths. glTF names are not used because
+  they are neither unique nor path-safe.
 - Materials: `bistro/materials/<index>.material.txt`.
 - Scene: `bistro/bistro.scene.txt`.
 - Textures: `bistro/<upstream-relative .dds path>`. The cooker is run with
@@ -373,7 +389,7 @@ enumerator list is an implementation detail; the **categories** are fixed here:
    out-of-range accessor or bufferView).
 2. **Unsupported content:** required or encountered extension outside the scope,
    non-`TRIANGLES` mode, non-indexed primitive, missing `POSITION` (and
-   `NORMAL`/`TEXCOORD_0` per Open Point 9), spot light, mirrored-repeat or
+   `NORMAL`/`TEXCOORD_0` per Ruling 9), spot light (Ruling 8), mirrored-repeat or
    mixed-wrap sampler, non-decomposable node matrix, texture with neither a DDS nor a
    core image source.
 3. **Value validation:** non-finite value, normal out of tolerance, index ≥ vertex
@@ -408,7 +424,8 @@ gate** means: stop and report, with no workaround.
      spec/gloss factors, or have an emissive texture; the sampler's filter and wrap;
      how many nodes use `matrix` versus TRS; negative-determinant nodes; index
      component types; primitives missing `NORMAL`/`TEXCOORD_0`/`TANGENT`.
-     Open Points 2, 4, 7, and 9 are ruled on with these real numbers.
+     These numbers show the real impact of Rulings 2, 4, 7, and 9. They are
+     reported, and the rulings are not reopened on the strength of them.
    - **Risk gate:** any count mismatch, parse or validate failure, or cgltf failing to
      compile cleanly under this repo's MSVC flags stops the work. A switch to the
      `tinygltf` v3 fallback (ADR-0082) is a human decision, not an agent one.
@@ -454,8 +471,7 @@ gate** means: stop and report, with no workaround.
    - Asset System: add `.amesh` schema 5 with separate encode and decode functions and
      the `uint32_t` tangent overload (per the decisions above), with tests alongside
      the existing `mesh_artifact`/tangent tests.
-   - Importer: add the primitive → `.amesh` v5 path (the uniform v5 choice is an open
-     point, below) and the `.amesh.meta.txt` sidecar via the existing
+   - Importer: add the primitive → `.amesh` v5 path (uniform v5, Ruling 5) and the `.amesh.meta.txt` sidecar via the existing
      `serializeAssetMetadata`. Include the error enum, the staging/atomic-commit
      writer, and the exe's argument grammar (`--input=`, `--output-dir=`, `--name=`,
      `--content-root=`).
@@ -507,9 +523,9 @@ gate** means: stop and report, with no workaround.
        and compare to the cgltf local matrix, 1e-5);
      - `matrix` decomposition, including a negative determinant, with shear rejected;
      - a 3-level hierarchy;
-     - a synthetic `KHR_lights_punctual` fixture: 1 directional + 2 point imported,
-       spot rejected, a 5th point rejected (the Spec's disclosed Bistro gap, covered
-       here);
+     - a synthetic `KHR_lights_punctual` fixture: 1 directional + 2 point imported
+       with raw intensity, range discarded and the placeholder written, spot and a
+       5th point light rejected (the Spec's disclosed Bistro gap, covered here);
      - light direction.
    - Read-only confirmation step: cite the Runtime light-direction derivation and
      state the match with glTF's −Z in the PR.
@@ -640,7 +656,7 @@ gate** means: stop and report, with no workaround.
 ## Non-Goals (reaffirmed from the Spec, not extended)
 
 - **No rendering of imported content.** Rendering Bistro belongs to workflow ⑦, and
-  it is additionally blocked on Open Points 5 and 6.
+  it is additionally blocked on Spec 0036 workflows ①b and ①c (Rulings 5 and 6).
 - **No glTF import of animation, skinning, or morph targets.** When present, these
   are ignored and reported, never mapped.
 - **No glTF write-back or export.**
@@ -648,45 +664,56 @@ gate** means: stop and report, with no workaround.
 Also excluded, per the Spec: camera mapping, non-triangle modes, CPU BC decode, new
 `MaterialKind`s, transmission as a feature, and a general multi-format framework.
 
-## Open Points (for Joint Human Review)
+**Future Work (out of this Plan, recorded by the review):**
 
-1. **Licence chain.** PR #165's own provenance records Bistro as CC-BY 4.0 (Amazon
-   Lumberyard / NVIDIA ORCA), repackaged under the repository's MIT licence. This
-   Plan's provenance file will carry both, including CC-BY attribution text.
-   *Question:* does the Spec's "single license" statement need a follow-up correction?
-2. **D3 for textured spec-gloss materials.** Applying the formula to factors alone
-   makes them fully metallic (see the D3 decision above). *Proposed:* dielectric
-   fallback with the texture dropped and reported. *Alternative:* a named error, which
-   would block most of Bistro. The Milestone 1 census supplies the counts.
-3. **Properties with no destination recorded in `import_report.txt`, not in the
-   material file.** ADR-0083 D3 says "provenance/comment", but the v6 grammar has no
-   comments. This also covers alphaMode for all 254 materials, not just the
-   transmission ones. **Transparency cannot be expressed until a workflow ④ schema
-   bump.**
-4. **DDS colour space versus usage.** At least one `_diff` DDS is `BC7_UNORM`. Under
-   Spec 0038's rule that the DXGI format is the sole authority, such base-color
-   textures will sample as linear. The unmodified cooker offers no override.
-   *Proposed:* report the mismatches (Milestone 2 census) and change nothing; any
-   override is a Spec 0038 follow-up.
-5. **uint32 meshes cannot render yet.** The RHI binds `UINT16` only
-   (`vulkan_command_list.cpp:387`). Consuming schema 5 needs a new RHI index-type
-   decision, which requires its own Spec and ADR.
-   *Question:* register it as a new Spec 0036 roadmap gap ahead of ⑦, like ⓪ was.
-   Sub-question: should the importer emit v4 for the 548 primitives that fit in
-   `uint16_t`, and v5 only for the 3 oversized ones? *Proposed:* uniform v5, to keep
-   one importer path.
-6. **Mip-chain passthrough.** Plan 0038 (`:114-116`) deferred it to this importer.
-   It needs `.atex` multi-mip plus a Runtime upload loop, both outside this Plan's
-   Tools-only scope and red lines. *Proposed:* re-defer it explicitly to a follow-up
-   Spec before ⑦. Base-mip-only 4096² textures will alias.
-7. **Materials without a base-color texture.** *Proposed:* an importer-generated 4×4
-   white BC7 DDS. *Alternative:* a named error.
-8. **Lights.** Spec Goals name spot lights, but Atlantis has no spot kind.
-   *Proposed:* named error. The intensity units (glTF lux/candela) against Atlantis's
-   intensity, and point `range` when undefined, also need a rule. *Proposed:* pass the
-   values through unchanged plus a report note. Bistro is unaffected (0 lights).
-9. **Missing `NORMAL`/`TEXCOORD_0`.** The Spec says optional; the Plan proposes a
-   named error (no synthesis rule in ADR-0083).
+- per-texel spec-gloss → metallic-roughness conversion baked into new textures
+  (Ruling 2);
+- RHI index-type parameterization for rendering v5 meshes (Spec 0036 ①b, Ruling 5);
+- static-texture mip-chain passthrough upload (Spec 0036 ①c, Ruling 6).
+
+## Review rulings (ruled 2026-09-19)
+
+slmao ruled on each item in the Joint Human Review above. The body of this Plan
+already reflects every ruling.
+
+1. **Licence chain (ruled 2026-09-19).** Attribution is two lines:
+   - the repository, `NVIDIA-RTX/RTXDI-Assets` (MIT);
+   - the original scene, Amazon Lumberyard Bistro (NVIDIA ORCA, CC-BY 4.0), with its
+     CC-BY attribution text.
+
+   `tools/content/bistro_source.provenance.txt` carries both lines. Spec 0037's
+   "one single license" wording is corrected on this branch.
+2. **Textured spec-gloss materials (ruled 2026-09-19).** These use the dielectric
+   fallback: `metallic = 0`, the texture is dropped, and `import_report.txt` records
+   the loss. Per-texel conversion baking is Future Work.
+3. **Properties with no destination (ruled 2026-09-19).** They are recorded in
+   `import_report.txt`, as the Plan proposed. This includes alphaMode for all 254
+   materials. Transparency cannot be expressed until workflow ④ adds it to the schema.
+4. **DDS colour space versus usage (ruled 2026-09-19).** The file wins: the DXGI
+   format stays authoritative and nothing is overridden. A heuristic warning goes to
+   `import_report.txt`: a `*_diff*` texture is expected to be `BC7_UNORM_SRGB`.
+5. **uint32 rendering gap (ruled 2026-09-19).** Recorded as a Spec 0036 addition,
+   workflow ①b (RHI index-type parameterization), which must land before ⑦. The review
+   left the Plan's uniform-v5 decision in place.
+6. **Mip-chain passthrough (ruled 2026-09-19).** Deferred again, because it needs
+   Runtime changes. It is recorded as Spec 0036 workflow ①c and must land before ⑦.
+   This Plan imports the base mip only.
+7. **Materials without a base-color texture (ruled 2026-09-19).** The importer
+   generates a 4×4 white BC7 DDS as a stand-in, as the Plan proposed.
+8. **Lights (ruled 2026-09-19).**
+   - A spot light fails with a named error in the `UnsupportedContent` category.
+   - Intensity is recorded as the raw glTF value; what it means belongs to workflow
+     ②'s ADR.
+   - `range` is discarded and recorded. Because of the grammar constraint, a fixed
+     placeholder is written (see Scene graph).
+   - Bistro is unaffected (0 lights).
+9. **Missing `NORMAL`/`TEXCOORD_0` (ruled 2026-09-19).** This is a named error, as
+   the Plan proposed.
+10. **Factual corrections (ruled 2026-09-19).**
+    - This Plan's mesh logical-path wording is corrected.
+    - ADR-0084's tool CMake registration location gets an as-built correction note:
+      the root `CMakeLists.txt`, inside the `if(NOT ANDROID)` block. The ADR's
+      decision itself is unchanged.
 
 ## Rollback Plan
 
@@ -706,4 +733,4 @@ See [docs/process/definition-of-done.md](../process/definition-of-done.md). Delt
 - The Validation-Layer item is N/A for the new code; existing GPU tests still run clean.
 - The Milestone 1 gate result and human checkpoint are recorded in the PR.
 - Import/cook measurements are reported in the PR.
-- Every Open Point ruling is reflected in the implementation and cited in the PR.
+- Every review ruling (2026-09-19) is reflected in the implementation and cited in the PR.
