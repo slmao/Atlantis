@@ -771,9 +771,12 @@ Spec + ADR, none pre-decided:
   Filament's own undocumented Blender-conversion approach) rather than
   using `NVIDIA-RTX/RTXDI-Assets`' own pre-made `bistro.gltf`. Rejected as
   the primary path: redoing a conversion NVIDIA's own GameWorks org has
-  already published, under a more permissive license (MIT vs. CC-BY),
-  in the exact target format, is strictly more work for a strictly worse
-  license outcome — not ruled out as a fallback if the pre-made glTF
+  already published in the exact target format is strictly more work, with
+  no licence advantage. The pre-made asset carries a two-line attribution:
+  the `NVIDIA-RTX/RTXDI-Assets` repository under MIT, and the original
+  Amazon Lumberyard Bistro scene under CC-BY 4.0. That CC-BY obligation
+  applies to a re-conversion just the same (corrected 2026-09-19, same
+  basis as Spec 0037 Investigation 4 / Review ruling 1). Not ruled out as a fallback if the pre-made glTF
   proves technically unsuitable (Risks below).
 
 ## Testing & Verification Plan
