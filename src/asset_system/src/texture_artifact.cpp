@@ -28,10 +28,27 @@ void appendU32LE(std::vector<std::byte>& out, std::uint32_t value) {
   return 0;
 }
 
+[[nodiscard]] std::uint32_t layoutToDataLayoutField(TextureDataLayout layout) {
+  switch (layout) {
+    case TextureDataLayout::Rgba8:
+      return 0;
+    case TextureDataLayout::Bc7:
+      return 1;
+  }
+  return 0;
+}
+
 }  // namespace
 
+std::uint64_t bc7BlockByteCount(std::uint32_t width, std::uint32_t height) noexcept {
+  const std::uint64_t blocksWide = (static_cast<std::uint64_t>(width) + 3ULL) / 4ULL;
+  const std::uint64_t blocksHigh = (static_cast<std::uint64_t>(height) + 3ULL) / 4ULL;
+  return blocksWide * blocksHigh * 16ULL;
+}
+
 std::vector<std::byte> encodeTextureArtifact(std::uint32_t width, std::uint32_t height, TextureColorSpace colorSpace,
-                                              const std::uint8_t* pixelBytes, std::size_t pixelByteCount) {
+                                              TextureDataLayout layout, const std::uint8_t* pixelBytes,
+                                              std::size_t pixelByteCount) {
   std::vector<std::byte> out;
   out.reserve(kTextureArtifactHeaderSizeBytes + pixelByteCount);
 
@@ -43,6 +60,7 @@ std::vector<std::byte> encodeTextureArtifact(std::uint32_t width, std::uint32_t 
   appendU32LE(out, 1);  // mipCount -- always 1 this round
   appendU32LE(out, static_cast<std::uint32_t>(kTextureArtifactHeaderSizeBytes));
   appendU32LE(out, static_cast<std::uint32_t>(pixelByteCount));
+  appendU32LE(out, layoutToDataLayoutField(layout));
 
   for (std::size_t i = 0; i < pixelByteCount; ++i) out.push_back(static_cast<std::byte>(pixelBytes[i]));
 
@@ -86,13 +104,32 @@ atlantis::Result<DecodedTextureArtifact, TextureArtifactDecodeError> decodeTextu
   const std::uint32_t pixelDataOffset = readU32LE(bytes.data() + 28);
   const std::uint32_t pixelDataSizeBytes = readU32LE(bytes.data() + 32);
 
+  const std::uint32_t dataLayoutField = readU32LE(bytes.data() + 36);
+  TextureDataLayout layout = TextureDataLayout::Rgba8;
+  if (dataLayoutField == 0) {
+    layout = TextureDataLayout::Rgba8;
+  } else if (dataLayoutField == 1) {
+    layout = TextureDataLayout::Bc7;
+  } else {
+    return ResultT::Err(TextureArtifactDecodeError::UnknownDataLayout);
+  }
+
+  // A Bc7 base mip that is not a multiple of 4 cannot have an exact
+  // block count -- a recoverable decode rejection, never a silent pad
+  // (Spec 0038 Requirement 5).
+  if (layout == TextureDataLayout::Bc7 && (width % 4 != 0 || height % 4 != 0)) {
+    return ResultT::Err(TextureArtifactDecodeError::NonAlignedDimensions);
+  }
+
   // Every size computed in uint64_t before comparison, so a header
   // crafted to overflow a 32-bit product cannot drive an oversized or
   // wrapped-around allocation -- width/height are already bounded above,
-  // so this product cannot itself overflow uint64_t.
+  // so these products cannot themselves overflow uint64_t.
   const auto expectedPixelDataOffset = static_cast<std::uint64_t>(kTextureArtifactHeaderSizeBytes);
   const std::uint64_t expectedPixelDataSizeBytes =
-      static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height) * 4ULL;
+      layout == TextureDataLayout::Bc7
+          ? bc7BlockByteCount(width, height)
+          : static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height) * 4ULL;
 
   if (static_cast<std::uint64_t>(pixelDataOffset) != expectedPixelDataOffset ||
       static_cast<std::uint64_t>(pixelDataSizeBytes) != expectedPixelDataSizeBytes) {
@@ -108,6 +145,7 @@ atlantis::Result<DecodedTextureArtifact, TextureArtifactDecodeError> decodeTextu
   decoded.width = width;
   decoded.height = height;
   decoded.colorSpace = colorSpace;
+  decoded.layout = layout;
   decoded.pixelBytes.reserve(pixelDataSizeBytes);
   for (std::uint32_t i = 0; i < pixelDataSizeBytes; ++i) {
     decoded.pixelBytes.push_back(static_cast<std::uint8_t>(bytes[pixelDataOffset + i]));

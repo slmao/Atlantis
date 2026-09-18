@@ -152,6 +152,67 @@ add_custom_command(TARGET atlantis_image_regression_textured_quad_golden_generat
 # Atlantis::ImageRegressionFixture's own PUBLIC dependency, Spec 0018
 # D12's sanctioned exception) to build the BootstrapConfig
 # setUpMaterialDemoFixture() requires.
+
+add_executable(atlantis_image_regression_bc7_dual_quad_golden_generator bc7_dual_quad_main.cpp)
+
+target_link_libraries(atlantis_image_regression_bc7_dual_quad_golden_generator
+  PRIVATE
+    Atlantis::ImageRegressionFixture
+    Atlantis::ImageRegressionSupport
+    atlantis_compiler_warnings
+)
+
+target_compile_definitions(atlantis_image_regression_bc7_dual_quad_golden_generator PRIVATE
+  ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+  ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
+  # Spec 0038/Plan 0038 Milestone 3b: re-pointed at the two Bc7 fixtures
+  # (mesh paths and every shader copy below are shared with textured_quad).
+  ATLANTIS_bc7_stringlights_unorm_ARTIFACT_PATH="${ATLANTIS_bc7_stringlights_unorm_ARTIFACT_PATH}"
+  ATLANTIS_bc7_stringlights_unorm_METADATA_PATH="${ATLANTIS_bc7_stringlights_unorm_METADATA_PATH}"
+  ATLANTIS_bc7_stringlights_srgb_ARTIFACT_PATH="${ATLANTIS_bc7_stringlights_srgb_ARTIFACT_PATH}"
+  ATLANTIS_bc7_stringlights_srgb_METADATA_PATH="${ATLANTIS_bc7_stringlights_srgb_METADATA_PATH}"
+  # Plan 0017 Milestone 3: the textured fixture's own two cooked static
+  # mesh artifact/metadata paths (Milestone 2).
+  ATLANTIS_textured_quad_left_ARTIFACT_PATH="${ATLANTIS_textured_quad_left_ARTIFACT_PATH}"
+  ATLANTIS_textured_quad_left_METADATA_PATH="${ATLANTIS_textured_quad_left_METADATA_PATH}"
+  ATLANTIS_textured_quad_right_ARTIFACT_PATH="${ATLANTIS_textured_quad_right_ARTIFACT_PATH}"
+  ATLANTIS_textured_quad_right_METADATA_PATH="${ATLANTIS_textured_quad_right_METADATA_PATH}"
+)
+
+add_dependencies(atlantis_image_regression_bc7_dual_quad_golden_generator textured_quad_shaders
+  output_transform_unorm_shaders shadow_cast_shaders
+  ${ATLANTIS_bc7_stringlights_unorm_TARGET} ${ATLANTIS_bc7_stringlights_srgb_TARGET}
+  ${ATLANTIS_textured_quad_left_TARGET} ${ATLANTIS_textured_quad_right_TARGET})
+add_custom_command(TARGET atlantis_image_regression_bc7_dual_quad_golden_generator POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+      "$<TARGET_FILE_DIR:atlantis_image_regression_bc7_dual_quad_golden_generator>/shaders"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.vert.spv"
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.vert.refl.json"
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.frag.spv"
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_bc7_dual_quad_golden_generator>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.spv"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.refl.json"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.spv"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_bc7_dual_quad_golden_generator>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.refl.json"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_bc7_dual_quad_golden_generator>/shaders/"
+)
+
+# Plan 0018 Milestone 16: a fourth, standalone golden-generator executable
+# for the material_demo fixture -- same reused git/provenance/PNG steps,
+# "render one frame" replaced with renderMaterialDemoFrame(). Unlike the
+# three generators above, this one links Atlantis::RuntimeHost (via
+# Atlantis::ImageRegressionFixture's own PUBLIC dependency, Spec 0018
+# D12's sanctioned exception) to build the BootstrapConfig
+# setUpMaterialDemoFixture() requires.
 add_executable(atlantis_image_regression_material_demo_golden_generator material_demo_main.cpp)
 
 target_link_libraries(atlantis_image_regression_material_demo_golden_generator

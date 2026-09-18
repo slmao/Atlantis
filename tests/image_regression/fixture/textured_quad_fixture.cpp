@@ -169,7 +169,9 @@ Result<TexturedQuadFixture, TexturedQuadSetupError> setUpTexturedQuadFixture(con
                                                                               const char* leftMeshArtifactPath,
                                                                               const char* leftMeshMetadataPath,
                                                                               const char* rightMeshArtifactPath,
-                                                                              const char* rightMeshMetadataPath) {
+                                                                              const char* rightMeshMetadataPath,
+                                                                              SampledTextureFormat leftTextureFormat,
+                                                                              SampledTextureFormat rightTextureFormat) {
   using ResultT = Result<TexturedQuadFixture, TexturedQuadSetupError>;
 
   const auto vertexSpirv = loadSpirvFile("shaders/textured_quad.vert.spv");
@@ -219,13 +221,13 @@ Result<TexturedQuadFixture, TexturedQuadSetupError> setUpTexturedQuadFixture(con
   // module-boundary note).
   auto unormTextureResult = fixture.device->createSampledTexture(
       SampledTextureCreateParams{.extent = Extent2D{unormData.width, unormData.height},
-                                  .format = SampledTextureFormat::Rgba8Unorm});
+                                  .format = leftTextureFormat});
   if (unormTextureResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);
   fixture.sampledTextureUnorm = std::move(unormTextureResult.value());
 
   auto srgbTextureResult = fixture.device->createSampledTexture(
       SampledTextureCreateParams{.extent = Extent2D{srgbData.width, srgbData.height},
-                                  .format = SampledTextureFormat::Rgba8Srgb});
+                                  .format = rightTextureFormat});
   if (srgbTextureResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);
   fixture.sampledTextureSrgb = std::move(srgbTextureResult.value());
 
@@ -422,16 +424,17 @@ Result<PixelBuffer, TexturedQuadRenderError> renderTexturedQuadFrame(TexturedQua
   if (acquireResult.isErr()) return ResultT::Err(TexturedQuadRenderError::AcquireFailed);
   std::unique_ptr<rhi::RenderTarget> target = std::move(acquireResult.value());
 
-  const auto unormExtent = fixture.sampledTextureUnorm->extent();
-  const std::size_t unormStagingBytes = static_cast<std::size_t>(unormExtent.width) * unormExtent.height * 4;
+  // Spec 0038: the staging size is the loaded payload's own size --
+  // layout-correct for both Rgba8 (w*h*4, byte-identical to the old
+  // expression) and Bc7 (the block byte count).
+  const std::size_t unormStagingBytes = fixture.unormPixelBytes.size();
   auto stagingUnormResult =
       fixture.device->createBuffer({.purpose = rhi::BufferPurpose::Staging, .sizeBytes = unormStagingBytes});
   if (stagingUnormResult.isErr()) return ResultT::Err(TexturedQuadRenderError::StagingBufferCreationFailed);
   std::unique_ptr<rhi::Buffer> stagingBufferUnorm = std::move(stagingUnormResult.value());
   std::memcpy(stagingBufferUnorm->mappedData(), fixture.unormPixelBytes.data(), unormStagingBytes);
 
-  const auto srgbExtent = fixture.sampledTextureSrgb->extent();
-  const std::size_t srgbStagingBytes = static_cast<std::size_t>(srgbExtent.width) * srgbExtent.height * 4;
+  const std::size_t srgbStagingBytes = fixture.srgbPixelBytes.size();
   auto stagingSrgbResult =
       fixture.device->createBuffer({.purpose = rhi::BufferPurpose::Staging, .sizeBytes = srgbStagingBytes});
   if (stagingSrgbResult.isErr()) return ResultT::Err(TexturedQuadRenderError::StagingBufferCreationFailed);

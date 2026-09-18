@@ -89,6 +89,26 @@ atlantis_add_texture_asset(
   SOURCE textures/textured_quad_source_srgb.png
   COLOR_SPACE Srgb
 )
+
+# Spec 0038/Plan 0038 Milestone 3: the two BC7 test fixtures (dual-quad
+# golden). No COLOR_SPACE -- the DDS file's own DXGI format is the sole
+# color-space authority on the cooker's DDS path. Test-side assets, not
+# packaged app assets (no Android lock-step entries, Plan 0038).
+atlantis_add_texture_asset(
+  NAME bc7_stringlights_unorm
+  SOURCE textures/paris_stringlights_diff.dds
+)
+set(ATLANTIS_bc7_stringlights_unorm_ARTIFACT_PATH "${ATLANTIS_bc7_stringlights_unorm_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_bc7_stringlights_unorm_METADATA_PATH "${ATLANTIS_bc7_stringlights_unorm_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_bc7_stringlights_unorm_TARGET "${ATLANTIS_bc7_stringlights_unorm_TARGET}" PARENT_SCOPE)
+
+atlantis_add_texture_asset(
+  NAME bc7_stringlights_srgb
+  SOURCE textures/paris_stringlights_diff_srgbvariant.dds
+)
+set(ATLANTIS_bc7_stringlights_srgb_ARTIFACT_PATH "${ATLANTIS_bc7_stringlights_srgb_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_bc7_stringlights_srgb_METADATA_PATH "${ATLANTIS_bc7_stringlights_srgb_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_bc7_stringlights_srgb_TARGET "${ATLANTIS_bc7_stringlights_srgb_TARGET}" PARENT_SCOPE)
 set(ATLANTIS_textured_quad_srgb_ARTIFACT_PATH "${ATLANTIS_textured_quad_srgb_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_textured_quad_srgb_METADATA_PATH "${ATLANTIS_textured_quad_srgb_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_textured_quad_srgb_TARGET "${ATLANTIS_textured_quad_srgb_TARGET}" PARENT_SCOPE)

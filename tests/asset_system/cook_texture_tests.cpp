@@ -189,3 +189,79 @@ TEST_CASE("cookTexture accepts a not-yet-normalized logical path, cooking under 
   CHECK(metadata.value().sourceLogicalPath == "textures/a.png");
   CHECK(metadata.value().assetId == computeAssetId("textures/a.png"));
 }
+
+// ---------------------------------------------------------------------------
+// Spec 0038 / Plan 0038 Milestone 2: cookTextureBc7() -- the verbatim
+// block-bytes entry point. Validation cases here mirror cookTexture()'s
+// own above (same writer, same error discipline), plus the two
+// BC7-specific rejections the Spec's Requirement 5 names.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("cookTextureBc7 writes a well-formed v2 artifact/metadata pair", "[asset_system]") {
+  TempDirGuard dir("bc7_success");
+  std::vector<std::uint8_t> blocks(static_cast<std::size_t>(bc7BlockByteCount(8, 8)));
+  for (std::size_t i = 0; i < blocks.size(); ++i) blocks[i] = static_cast<std::uint8_t>((i * 11 + 5) % 256);
+
+  const auto result = cookTextureBc7(blocks.data(), blocks.size(), 8, 8, TextureColorSpace::Srgb,
+                                     "textures/rust.dds", dir.path / "rust.atex", dir.path / "rust.atex.meta.txt");
+  REQUIRE(result.isOk());
+
+  const std::string artifactText = readFile(dir.path / "rust.atex");
+  std::vector<std::byte> artifactBytes(artifactText.size());
+  for (std::size_t i = 0; i < artifactText.size(); ++i) {
+    artifactBytes[i] = static_cast<std::byte>(static_cast<unsigned char>(artifactText[i]));
+  }
+  const auto decoded = decodeTextureArtifact(artifactBytes);
+  REQUIRE(decoded.isOk());
+  CHECK(decoded.value().width == 8);
+  CHECK(decoded.value().height == 8);
+  CHECK(decoded.value().colorSpace == TextureColorSpace::Srgb);
+  CHECK(decoded.value().layout == TextureDataLayout::Bc7);
+  CHECK(decoded.value().pixelBytes == blocks);  // verbatim, never decoded
+
+  const auto metadata = parseTextureMetadata(readFile(dir.path / "rust.atex.meta.txt"));
+  REQUIRE(metadata.isOk());
+  CHECK(metadata.value().layout == TextureDataLayout::Bc7);
+  CHECK(metadata.value().channelsInFile == 4);  // BC7 is always RGBA
+  CHECK(metadata.value().assetId == computeAssetId("textures/rust.dds"));
+}
+
+TEST_CASE("cookTextureBc7 rejects non-4-aligned dimensions", "[asset_system]") {
+  TempDirGuard dir("bc7_non_aligned");
+  std::vector<std::uint8_t> blocks(16);
+
+  SECTION("width not a multiple of 4") {
+    const auto result = cookTextureBc7(blocks.data(), blocks.size(), 6, 4, TextureColorSpace::Unorm, "a.dds",
+                                       dir.path / "a.atex", dir.path / "a.atex.meta.txt");
+    REQUIRE(result.isErr());
+    CHECK(result.error() == TextureCookError::NonAlignedDimensions);
+  }
+
+  SECTION("height not a multiple of 4") {
+    const auto result = cookTextureBc7(blocks.data(), blocks.size(), 4, 5, TextureColorSpace::Unorm, "a.dds",
+                                       dir.path / "a.atex", dir.path / "a.atex.meta.txt");
+    REQUIRE(result.isErr());
+    CHECK(result.error() == TextureCookError::NonAlignedDimensions);
+  }
+}
+
+TEST_CASE("cookTextureBc7 rejects a block byte count that does not match the dimensions", "[asset_system]") {
+  TempDirGuard dir("bc7_size_mismatch");
+  std::vector<std::uint8_t> blocks(32);  // 8x8 needs 64, not 32
+
+  const auto result = cookTextureBc7(blocks.data(), blocks.size(), 8, 8, TextureColorSpace::Unorm, "a.dds",
+                                     dir.path / "a.atex", dir.path / "a.atex.meta.txt");
+  REQUIRE(result.isErr());
+  CHECK(result.error() == TextureCookError::BlockDataSizeMismatch);
+  CHECK_FALSE(fs::exists(dir.path / "a.atex"));
+}
+
+TEST_CASE("cookTextureBc7 rejects a malformed logical path like cookTexture does", "[asset_system]") {
+  TempDirGuard dir("bc7_logical_path");
+  std::vector<std::uint8_t> blocks(16);
+
+  const auto result = cookTextureBc7(blocks.data(), blocks.size(), 4, 4, TextureColorSpace::Unorm,
+                                     "../escape.dds", dir.path / "a.atex", dir.path / "a.atex.meta.txt");
+  REQUIRE(result.isErr());
+  CHECK(result.error() == TextureCookError::LogicalPathInvalid);
+}

@@ -1,0 +1,10 @@
+asset: textures/paris_stringlights_diff.dds
+source: https://github.com/NVIDIA-RTX/RTXDI-Assets/blob/main/bistro/objects/props/street/paris_stringlights_01/Paris_StringLights_01_diff.dds
+source_repository: NVIDIA-RTX/RTXDI-Assets (bistro/, MIT license)
+source_provenance: Amazon Lumberyard Bistro (NVIDIA ORCA, CC-BY 4.0), converted to glTF-era DDS by NVIDIA
+original_asset: Paris_StringLights_01_diff.dds (256x128 BC7_UNORM, 9 mip levels; base-mip content only is cooked)
+download_date: 2026-09-18
+sha256: c6453bcabbf5e3007681eddc96466dc4e64d6812590a063a5278d6d896c079b6
+license: MIT (RTXDI-Assets repository license); original scene CC-BY 4.0
+purpose: Spec 0038 dual-quad BC7 golden test fixture (committed test-side under
+  Spec 0037's repository content policy, small-asset branch)

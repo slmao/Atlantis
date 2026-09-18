@@ -16,9 +16,10 @@ namespace atlantis::asset_system {
 // mesh-specific shape does not fit), matching SceneMetadata's own
 // precedent of a dedicated shape when the existing one does not apply.
 // Wire encoding: strict, anchored-prefix, versioned flat text, exactly
-// 7 lines, matching AssetMetadata/SceneMetadata's own established
-// grammar discipline -- this module's parser is new, independent code,
-// never shared with either of theirs.
+// 8 lines (Spec 0038's v2 added the data_layout line between format and
+// channels_in_file), matching AssetMetadata/SceneMetadata's own
+// established grammar discipline -- this module's parser is new,
+// independent code, never shared with either of theirs.
 //
 // channelsInFile is the source's own real decoded channel count --
 // provenance only, never a hard validation gate the way a golden's
@@ -32,6 +33,7 @@ struct TextureMetadata {
   std::uint32_t width = 0;
   std::uint32_t height = 0;
   TextureColorSpace format = TextureColorSpace::Unorm;
+  TextureDataLayout layout = TextureDataLayout::Rgba8;  // Spec 0038 (metadata v2)
   std::int32_t channelsInFile = 0;
 };
 

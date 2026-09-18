@@ -108,7 +108,14 @@ enum class TexturedQuadSetupError {
 [[nodiscard]] atlantis::Result<TexturedQuadFixture, TexturedQuadSetupError> setUpTexturedQuadFixture(
     const char* unormArtifactPath, const char* unormMetadataPath, const char* srgbArtifactPath,
     const char* srgbMetadataPath, const char* leftMeshArtifactPath, const char* leftMeshMetadataPath,
-    const char* rightMeshArtifactPath, const char* rightMeshMetadataPath);
+    const char* rightMeshArtifactPath, const char* rightMeshMetadataPath,
+    atlantis::rhi::SampledTextureFormat leftTextureFormat = atlantis::rhi::SampledTextureFormat::Rgba8Unorm,
+    atlantis::rhi::SampledTextureFormat rightTextureFormat = atlantis::rhi::SampledTextureFormat::Rgba8Srgb);
+// Spec 0038/Plan 0038 Milestone 3b: the two trailing format parameters
+// default to the original Rgba8 pair, byte-identically preserving every
+// pre-existing caller; the BC7 dual-quad golden passes Bc7Unorm/Bc7Srgb
+// with the two Bc7-layout artifacts -- everything else (meshes, shaders,
+// render path) is shared unchanged.
 
 enum class TexturedQuadRenderError {
   AcquireFailed,

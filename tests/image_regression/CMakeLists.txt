@@ -56,6 +56,7 @@ add_executable(atlantis_image_regression_gpu_tests
   pbr_sheen_demo_gpu_tests.cpp
   pbr_anisotropic_demo_gpu_tests.cpp
   pbr_materials_showcase_gpu_tests.cpp
+  bc7_dual_quad_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_image_regression_gpu_tests
@@ -104,6 +105,12 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_textured_quad_left_METADATA_PATH="${ATLANTIS_textured_quad_left_METADATA_PATH}"
   ATLANTIS_textured_quad_right_ARTIFACT_PATH="${ATLANTIS_textured_quad_right_ARTIFACT_PATH}"
   ATLANTIS_textured_quad_right_METADATA_PATH="${ATLANTIS_textured_quad_right_METADATA_PATH}"
+  # Spec 0038/Plan 0038 Milestone 3b: the BC7 dual-quad golden's two
+  # fixtures (mesh/shader paths are shared with textured_quad above).
+  ATLANTIS_bc7_stringlights_unorm_ARTIFACT_PATH="${ATLANTIS_bc7_stringlights_unorm_ARTIFACT_PATH}"
+  ATLANTIS_bc7_stringlights_unorm_METADATA_PATH="${ATLANTIS_bc7_stringlights_unorm_METADATA_PATH}"
+  ATLANTIS_bc7_stringlights_srgb_ARTIFACT_PATH="${ATLANTIS_bc7_stringlights_srgb_ARTIFACT_PATH}"
+  ATLANTIS_bc7_stringlights_srgb_METADATA_PATH="${ATLANTIS_bc7_stringlights_srgb_METADATA_PATH}"
   # Plan 0018 Milestone 16: the material_demo fixture's own real, cooked
   # scene artifact/metadata/manifest paths and the MaterialKind::UnlitTextured
   # built-in shader pair's own output directory.
@@ -381,7 +388,8 @@ add_dependencies(atlantis_image_regression_gpu_tests minimal_mesh_shaders textur
   pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders sky_shaders shadow_cast_shaders
   pbr_ibl_normal_map_shaders pbr_direct_lit_normal_map_shaders pbr_clearcoat_ibl_shaders
   pbr_clearcoat_ibl_normal_map_shaders pbr_sheen_ibl_shaders pbr_sheen_ibl_normal_map_shaders
-  pbr_anisotropic_ibl_shaders pbr_anisotropic_ibl_normal_map_shaders)
+  pbr_anisotropic_ibl_shaders pbr_anisotropic_ibl_normal_map_shaders
+  ${ATLANTIS_bc7_stringlights_unorm_TARGET} ${ATLANTIS_bc7_stringlights_srgb_TARGET})
 add_custom_command(TARGET atlantis_image_regression_gpu_tests POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_image_regression_gpu_tests>/shaders"

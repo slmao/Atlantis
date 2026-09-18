@@ -18,6 +18,7 @@
 #include "dynamic_rendering.h"
 #include "dynamic_rendering_entry_points.h"
 #include "hdr_color_target_capability.h"
+#include "sampled_texture_format_mapping.h"
 #include "shadow_map_capability.h"
 #include "validation.h"
 #include "vulkan_buffer.h"
@@ -735,25 +736,6 @@ namespace {
       return VK_FORMAT_R32G32B32A32_SFLOAT;
   }
   ATLANTIS_CHECK_MSG(false, "vertexAttributeFormatToVkFormat() called with an unhandled enumerator");
-  return VK_FORMAT_UNDEFINED;
-}
-
-// Spec 0016: SampledTexture's own format vocabulary is deliberately
-// separate from Texture's depth-only Format (D2's "depth-only Texture
-// stays unchanged" constraint), so it gets its own toVkFormat() overload
-// rather than extending the existing one.
-[[nodiscard]] VkFormat toVkFormat(atlantis::rhi::SampledTextureFormat format) {
-  switch (format) {
-    case atlantis::rhi::SampledTextureFormat::Rgba8Unorm:
-      return VK_FORMAT_R8G8B8A8_UNORM;
-    case atlantis::rhi::SampledTextureFormat::Rgba8Srgb:
-      return VK_FORMAT_R8G8B8A8_SRGB;
-    case atlantis::rhi::SampledTextureFormat::Rgba16Float:
-      return VK_FORMAT_R16G16B16A16_SFLOAT;
-    case atlantis::rhi::SampledTextureFormat::Rg16Float:
-      return VK_FORMAT_R16G16_SFLOAT;
-  }
-  ATLANTIS_CHECK_MSG(false, "toVkFormat(SampledTextureFormat) called with an unhandled enumerator");
   return VK_FORMAT_UNDEFINED;
 }
 
