@@ -110,6 +110,14 @@ shape, ADR-0041/ADR-0006), and a new `Cgltf::Cgltf` imported target —
 **Plan-stage detail**, not fixed here beyond naming that these three
 additions are the expected shape, following existing precedent exactly.
 
+**As-built correction, 2026-09-19** (slmao, Joint Human Review of
+[Plan 0037](../plans/0037-gltf-importer.md); factual only, the decision is
+unchanged): `src/tools/CMakeLists.txt` does not exist. Every tool is added
+from the **root** `CMakeLists.txt`, inside its `if(NOT ANDROID)` block
+(`add_subdirectory(src/tools/asset_cooker)` and its shader-compiler
+sibling), so the importer is registered there too. The `cgltf` include
+goes in the same block, so Android never fetches it.
+
 ## Consequences
 
 ### Positive
