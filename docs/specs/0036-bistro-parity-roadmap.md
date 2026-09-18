@@ -31,6 +31,16 @@
   precedent applied here to a Spec instead of an ADR). See the amended
   Requirements/Dependency-graph sections below for the workflow's own
   full definition.
+- **Amendment (2026-09-19, post-Approval; approved by slmao the same
+  day, chat confirmation, reviewed in the Plan 0037 document PR):**
+  workflows ①b (RHI index-type parameterization) and ①c (static-texture
+  mip-chain passthrough upload) added. Both are gaps that
+  [Plan 0037](../plans/0037-gltf-importer.md)'s pre-drafting
+  investigation found (Rulings 5/6), and both follow the ⓪ amendment
+  precedent above: appended, with the originally-Approved text
+  unchanged. The workflow count widens from eight to ten, and both new
+  workflows are hard prerequisites of ⑦. Definitions and DAG edges are
+  below.
 - **Related ADR(s):** None of this Spec's own — every decision surface
   it identifies is explicitly deferred to that workflow's own future
   Spec + ADR (see Architectural Impact). Workflow ⓪'s own ADR is
@@ -164,9 +174,10 @@ roadmap's entire span, not just its first workflow:
 
 ### Functional — the workflow decomposition and dependency graph
 
-This roadmap's own functional requirements ARE its eight workflows
-(seven originally approved, plus one investigation-discovered
-supplementary workflow, ⓪ — see the amendment note immediately below)
+This roadmap's own functional requirements ARE its ten workflows
+(seven originally approved, plus three investigation-discovered
+supplementary workflows: ⓪, and ①b/①c added 2026-09-19 — see the
+amendment notes in this Spec's header and on each workflow)
 and the edges between them, in place of a conventional acceptance-
 criteria list — stated once here per AGENTS.md's "state each
 requirement once" rule; each workflow's own future Spec restates none
@@ -273,6 +284,57 @@ subsystem/dependency choice — a new `src/tools/gltf_importer/` module
 boundary, and whether to adopt a third-party glTF parser (`cgltf`/
 `tinygltf`) or hand-roll one, explicitly reopening ADR-0045's own "no
 glTF/Assimp dependency" line.
+
+---
+
+**①b RHI Index-Type Parameterization (uint16/uint32)** — Size: **M**
+(rough)
+
+**Amendment (2026-09-19), post-Approval; approved by slmao the same
+day (chat confirmation, reviewed in the Plan 0037 document PR).**
+Discovered by [Plan 0037](../plans/0037-gltf-importer.md)'s
+pre-drafting investigation (Ruling 5). [ADR-0083](../adr/0083-gltf-to-atlantis-asset-format-mapping.md)
+D2 gives importer-produced `.amesh` artifacts `uint32_t` indices
+(Plan 0037: schema version 5), because 3 of Bistro's 551 primitives
+exceed 65,535 vertices. The render side cannot consume them: the RHI has
+no index-type concept, and the Vulkan Backend binds
+`VK_INDEX_TYPE_UINT16` unconditionally (`vulkan_command_list.cpp:387`).
+This workflow parameterizes the index type through the RHI, the Vulkan
+Backend, and the Runtime mesh-loading path (`scene_load.cpp`), so v5
+meshes can be drawn.
+
+**Dependency:** soft on ① (its v5 artifacts are the real test data; a
+hand-built `uint32_t` mesh can verify the path first). **Hard downstream
+dependency:** ⑦, which cannot render Bistro without it.
+
+**ADR obligation:** the RHI public-API shape for index type (an index
+type chosen when a buffer is bound or when it is created, and how Runtime
+selects it per mesh) — decided by this workflow's own future Spec + ADR.
+
+---
+
+**①c Static-Texture Mip-Chain Passthrough Upload** — Size: **M** (rough)
+
+**Amendment (2026-09-19), post-Approval; approved by slmao the same
+day (chat confirmation, reviewed in the Plan 0037 document PR).**
+[Plan 0038](../plans/0038-block-compressed-textures.md) Milestone 3
+(`:114-116`) deferred mip-chain passthrough to Spec 0037's importer.
+[Plan 0037](../plans/0037-gltf-importer.md) (Ruling 6) defers it again,
+because it needs Runtime changes outside that Plan's Tools-only scope.
+Today the `.atex` artifact carries the base mip only (`dds_parser.h:19-21`;
+the Spec 0038 contract is `mipCount == 1`), and Runtime uploads one level.
+At Bistro's texture resolutions (up to 4096²), base-mip-only sampling
+aliases badly. This workflow passes the source DDS's mip chain through
+the cooker and `.atex` and uploads every level at runtime.
+
+**Dependency:** hard on ⓪ (it extends the BC7 `.atex`/upload path); soft
+on ① (Bistro's DDS files are the real multi-mip test data). **Hard
+downstream dependency:** ⑦.
+
+**ADR obligation:** the `.atex` multi-mip schema bump and the Runtime/RHI
+per-level upload contract (extending
+[ADR-0085](../adr/0085-block-compressed-sampled-texture-format-and-vulkan-mapping.md))
+— decided by this workflow's own future Spec + ADR.
 
 ---
 
@@ -494,6 +556,8 @@ time, not asserted as certain here.
 graph LR
   W0["⓪ Block-Compressed Textures (M)"]
   W1["① glTF Importer (XL)"]
+  W1b["①b RHI Index Type (M)"]
+  W1c["①c Mip-Chain Upload (M)"]
   W2["② Multi-Light (L)"]
   W3["③ Emissive (S)"]
   W4["④ Transparency (M)"]
@@ -502,6 +566,11 @@ graph LR
   W7["⑦ Finale: Assembly + Whitelist + Dual-Platform"]
 
   W0 --> W1
+  W0 --> W1c
+  W1 -. soft .-> W1b
+  W1 -. soft .-> W1c
+  W1b --> W7
+  W1c --> W7
   W1 -. soft .-> W2
   W1 -. soft .-> W3
   W1 -. soft .-> W4
@@ -530,6 +599,11 @@ milestone specifically (①'s own mesh/material/scene-graph mapping are
 unblocked by ⓪, per Spec 0037's own Architectural Impact section); this
 single `W0 --> W1` edge is a simplification of that narrower, milestone-
 scoped reality, not a claim that all of workflow ① waits on ⓪.
+
+*Amendment (2026-09-19):* ①b and ①c add two hard edges into ⑦
+(`W1b --> W7`, `W1c --> W7`) and one hard edge from ⓪ (`W0 --> W1c`).
+Both are only soft on ①. With them, ⓪ is no longer ⑦'s only upstream
+hard prerequisite outside ①–⑥.
 
 ### Non-functional
 
@@ -664,6 +738,8 @@ Spec + ADR, none pre-decided:
 | Workflow | ADR obligation(s) owed by its own future Spec |
 |---|---|
 | ① glTF Importer | Format-mapping decisions (mesh/material/texture/scene-graph/coordinate-system mapping); Tools subsystem boundary and third-party-parser-dependency choice (reopens ADR-0045) |
+| ①b RHI Index Type *(amendment 2026-09-19)* | RHI public-API index-type shape and its Vulkan/Runtime selection |
+| ①c Mip-Chain Upload *(amendment 2026-09-19)* | `.atex` multi-mip schema bump and per-level upload contract (extends ADR-0085) |
 | ② Multi-Light | `FrameLightingData` successor structure (widened-fixed-cap vs. clustered/froxel) and its buffer-binding strategy |
 | ③ Emissive | TBD — likely none, confirmed by its own future Spec against AGENTS.md's "what counts as significant" bar |
 | ④ Transparency | RenderGraph transparent draw-queue/sort-order decision |
@@ -711,6 +787,8 @@ concrete test names — those are each workflow's own Plan-stage detail.
 | Workflow | Verification strategy its own future Spec/Plan must satisfy |
 |---|---|
 | ① glTF Importer | GPU-independent unit tests over the parser/mapping logic (mirroring `atlantis_asset_cooker`'s own existing test shape); at least one real end-to-end cook-and-load test against the actual chosen Bistro glTF file |
+| ①b RHI Index Type *(amendment 2026-09-19)* | GPU-independent tests over index-type selection; a GPU test drawing a >65,535-vertex `uint32_t` mesh; Vulkan Validation Layers clean |
+| ①c Mip-Chain Upload *(amendment 2026-09-19)* | Artifact round-trip tests for multi-mip `.atex`; a GPU test sampling non-base mips of a BC7 texture; Vulkan Validation Layers clean |
 | ② Multi-Light | GPU-independent tests over the new light-count/data-structure logic (mirroring `extractFrameLightingData()`'s own existing unit-test precedent); image-regression goldens proving the widened light count actually reaches the shader; Vulkan Validation Layers clean |
 | ③ Emissive | Image-regression golden(s) proving the emissive term is visually additive and light-independent (dark-scene sanity check, mirroring existing per-BRDF golden precedent) |
 | ④ Transparency | Image-regression golden(s) covering both blend and alpha-test paths; a real back-to-front ordering test if the chosen sort strategy needs one; Vulkan Validation Layers clean (new blend state is a real Pipeline-creation surface) |

@@ -3,13 +3,9 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-16
-- **Related Plan(s):** None yet — Plan drafting may now begin (this
-  Spec and its related ADRs have cleared Human Review, below), and (for
-  the texture-import milestone specifically) once
-  [Spec 0038](0038-block-compressed-textures.md) lands. **Implementation
-  still awaits its own, separate Joint Human Review** of Spec + Plan
-  together, per AGENTS.md's own workflow — this Approval authorizes
-  drafting Plan 0037 only.
+- **Related Plan(s):** [Plan 0037](../plans/0037-gltf-importer.md)
+  (`Approved`). Its Joint Human Review (slmao, 2026-09-19) covered this
+  Spec and that Plan together and authorized Implementation.
 - **Approval:** slmao, 2026-09-17 (chat confirmation, no reviewing PR —
   authorizes drafting Plan 0037; Implementation itself still awaits its
   own, separate Joint Human Review of Spec + Plan together).
@@ -29,6 +25,10 @@
   large-content policy — see this Spec's own Investigation 4/Risks
   sections and ADR-0083 D4 for the current, ruled state; nothing in this
   revision note restates content already correct in the body below.
+  **Correction (2026-09-19, post-Approval, reviewed in this branch's
+  document PR):** Investigation 4's licence wording is corrected to a
+  two-line attribution (MIT repository + CC-BY 4.0 original scene) —
+  Plan 0037 Ruling 1.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 State each requirement once; link ADR rationale and map verification to the
@@ -323,8 +323,14 @@ established granularity, would mean 390+ individual attribution files).
 independently sourced from a different provider, each needing its own
 distinct attribution), the entire Bistro asset tree — every mesh,
 material, and texture this importer touches — comes from **one single
-source, one single license, one single copyright holder**
-(`NVIDIA-RTX/RTXDI-Assets`, MIT). One scene-level provenance file
+source repository** (`NVIDIA-RTX/RTXDI-Assets`), with **one two-line
+attribution**. The repository is licensed MIT; the original scene is
+Amazon Lumberyard Bistro (NVIDIA ORCA), licensed CC-BY 4.0. (Corrected
+2026-09-19, Joint Human Review of Plan 0037, Ruling 1. The original text
+said "one single license, one single copyright holder … MIT", which
+omitted the CC-BY 4.0 upstream that PR #165's own
+`assets/textures/paris_stringlights_diff.provenance.txt` already records.)
+One scene-level provenance file carrying both attribution lines
 (matching this repository's own existing `<name>_source.provenance.txt`
 naming precedent, scoped to the whole imported Bistro asset tree rather
 than one file) is sufficient and avoids 390+ files of pure duplication.
