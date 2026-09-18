@@ -94,6 +94,7 @@ add_subdirectory(src/shader_system)
 # src/platform/, src/vulkan_backend/, src/runtime/, and android/) --
 # reported explicitly in the implementing PR, per AGENTS.md.
 if(NOT ANDROID)
+  include(cmake/AtlantisCgltf.cmake)  # Plan 0037 M1: Cgltf::Cgltf for the host-only glTF importer
   add_subdirectory(src/tools/shader_compiler)
   add_subdirectory(src/tools/asset_cooker)
   # Must come after add_subdirectory(src/asset_system) and
