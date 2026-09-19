@@ -85,6 +85,7 @@ struct GltfImportSummary {
   std::uint32_t nonUniformScaleNodes = 0;
   std::uint32_t primitivesWithoutMaterial = 0;
   std::uint32_t camerasDropped = 0;
+  std::uint32_t declaredAssets = 0;  // lines of asset_list.txt
   std::vector<std::string> reportLines;  // import_report.txt body
 };
 
@@ -97,7 +98,8 @@ struct GltfImportSummary {
 // Output layout: <name>_mesh_<i>_<j>.amesh(.meta.txt) per primitive,
 // <name>/materials/<i>.material.txt per material, the Ruling 7 white
 // fallback texture when needed, <name>/<name>.scene.txt for the default
-// scene, import_report.txt, and cook_manifest.txt -- the
+// scene, import_report.txt, asset_list.txt (every declared logical path, for
+// atlantis_asset_cooker --validate-set), and cook_manifest.txt -- the
 // atlantis_asset_cooker invocations (textures, then materials, then the
 // scene) that turn the generated sources into artifacts.
 [[nodiscard]] atlantis::Result<GltfImportSummary, GltfImportError> importGltf(

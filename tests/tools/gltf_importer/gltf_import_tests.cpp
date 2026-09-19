@@ -201,7 +201,7 @@ TEST_CASE("Importing the same input twice produces byte-identical output", "[glt
     if (entry.is_regular_file()) names.push_back(fs::relative(entry.path(), dir / "a").generic_string());
   }
   std::sort(names.begin(), names.end());
-  CHECK(names == std::vector<std::string>{"cook_manifest.txt", "import_report.txt", "t/t.scene.txt",
+  CHECK(names == std::vector<std::string>{"asset_list.txt", "cook_manifest.txt", "import_report.txt", "t/t.scene.txt",
                                           "t_mesh_0_0.amesh", "t_mesh_0_0.amesh.meta.txt"});
   for (const std::string& name : names) {
     INFO(name);

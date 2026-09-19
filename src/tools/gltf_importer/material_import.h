@@ -24,12 +24,13 @@ namespace atlantis::gltf_importer::detail {
 
 // Writes <stagingDir>/<name>/materials/<i>.material.txt for every glTF
 // material, the white fallback texture when needed, appends
-// cook_manifest.txt lines (textures first, then materials) and
-// import_report.txt lines, and fills the summary's material fields.
+// cook_manifest.txt lines (textures first, then materials),
+// import_report.txt lines and the texture/material logical paths of the
+// declared asset set, and fills the summary's material fields.
 [[nodiscard]] atlantis::Result<std::monostate, GltfImportError> writeMaterials(
     const cgltf_data& data, const std::filesystem::path& contentRoot, const std::filesystem::path& stagingDir,
     const std::string& name, GltfImportSummary& summary, std::vector<std::string>& reportLines,
-    std::vector<std::string>& manifestLines);
+    std::vector<std::string>& manifestLines, std::vector<std::string>& declaredAssets);
 
 // Logical path of material <index>, as the scene slice (Milestone 5) will
 // reference it: "<name>/materials/<index>.material.txt".

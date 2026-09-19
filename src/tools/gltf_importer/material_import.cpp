@@ -288,7 +288,8 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
                                                                  const fs::path& stagingDir, const std::string& name,
                                                                  GltfImportSummary& summary,
                                                                  std::vector<std::string>& reportLines,
-                                                                 std::vector<std::string>& manifestLines) {
+                                                                 std::vector<std::string>& manifestLines,
+                                                                 std::vector<std::string>& declaredAssets) {
   // Textures in first-reference order, deduplicated by logical path.
   struct TextureEntry {
     std::string logicalPath;
@@ -407,6 +408,7 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
     if (!writeFile(stagingDir / logical, text.data(), text.size())) {
       return CheckResult::Err(GltfImportError::OutputWriteFailed);
     }
+    declaredAssets.push_back(logical);
     materialManifest.push_back("--kind=material --source={import_dir}/" + logical +
                                " --asset-root={import_dir} --output-dir={cooked_dir}");
     summary.materialCount += 1;
@@ -441,6 +443,7 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
 
   for (std::size_t i = 0; i < textures.size(); ++i) {
     const TextureEntry& t = textures[i];
+    declaredAssets.push_back(t.logicalPath);
     std::string line = "--kind=texture --source=" + t.source + " --asset-root=" + t.assetRoot +
                        " --output-dir={cooked_dir} --stamp={cooked_dir}/" + stampStem(i, t.logicalPath) + ".stamp";
     if (!t.isDds) line += t.usage == TextureUsage::Color ? " --color-space=srgb" : " --color-space=unorm";
