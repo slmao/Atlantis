@@ -5,6 +5,8 @@
 # the include-scan test in tests/tools/gltf_importer/).
 add_library(atlantis_gltf_importer_lib STATIC
   import_command.cpp
+  material_conversion.cpp
+  material_import.cpp
 )
 
 target_include_directories(atlantis_gltf_importer_lib

@@ -20,18 +20,24 @@ enum class GltfImportError {
   InputUnreadable,
   MalformedGltf,  // cgltf parse or cgltf_validate failure not classified below
   BufferUnreadable,
+  MissingTextureFile,  // a referenced texture's file is absent under the content root
   // 2. Unsupported content (Plan rulings: named, never silently skipped).
   NonTrianglesMode,
   NonIndexedPrimitive,
   MissingPosition,
   MissingRequiredAttribute,  // NORMAL or TEXCOORD_0 absent (Plan 0037 Ruling 9)
   UnsupportedIndexComponentType,
+  UnsupportedMaterialExtension,  // a material extension outside Spec 0037's three
+  UnsupportedTextureFeature,     // texCoord != 0, KHR_texture_transform, or one PNG/JPG as both colour and data
+  UnsupportedSamplerWrap,        // MIRRORED_REPEAT, or wrapS != wrapT (v6 has one address mode)
+  TextureWithoutSource,          // neither an MSFT_texture_dds nor a usable core image URI
   // 3. Value validation.
   OutOfRangeIndex,
   OutOfRangeAccessor,     // accessor reaches past its bufferView, or bufferView past its buffer
   AttributeCountMismatch,  // a primitive's attribute accessors disagree on vertex count
   NonFiniteVertex,
   NonUnitNormal,
+  InvalidMaterialFactor,  // a used material factor is non-finite or outside [0, 1]
   TangentGenerationFailed,  // handedness conflict left after the split (a split defect, never expected)
   // 4. Output I/O.
   OutputDirectoryNotEmpty,
@@ -54,15 +60,30 @@ struct GltfImportSummary {
   // degenerate (parallel to the normal or cancelled) and took the axis fallback.
   std::uint64_t degenerateFallbackVertices = 0;
   std::uint32_t meshesWithDegenerateFallback = 0;
-  std::vector<std::string> reportLines;  // import_report.txt body (mesh slice)
+  // Milestone 4 material slice (Plan 0037 Rulings 2/3/4/7).
+  std::uint32_t materialCount = 0;
+  std::uint32_t materialsSpecGlossFormula = 0;          // D3 Khronos conversion
+  std::uint32_t materialsSpecGlossTextureFallback = 0;  // Ruling 2 dielectric fallback
+  std::uint32_t materialsMetallicRoughness = 0;         // core glTF model, passed through
+  std::uint32_t materialsTransmission = 0;              // subset of the above, reported only
+  std::uint32_t materialsWhiteFallback = 0;             // Ruling 7
+  std::uint32_t texturesReferenced = 0;
+  std::uint32_t colorSpaceWarnings = 0;  // Ruling 4
+  std::vector<std::string> reportLines;  // import_report.txt body
 };
 
 // inputPath: the .gltf file. contentRoot: directory against which relative
 // buffer URIs resolve (Plan's --content-root; Bistro's bistro.bin sits next
-// to the .gltf). All output is written to a sibling staging directory and
+// to the .gltf; texture URIs resolve against it too). All output is written to a sibling staging directory and
 // renamed to outputDir only after every file is written, so a failed import
 // leaves no output behind. outputDir must be absent or empty.
-[[nodiscard]] atlantis::Result<GltfImportSummary, GltfImportError> importGltfMeshes(
+//
+// Output layout: <name>_mesh_<i>_<j>.amesh(.meta.txt) per primitive,
+// <name>/materials/<i>.material.txt per material, the Ruling 7 white
+// fallback texture when needed, import_report.txt, and cook_manifest.txt --
+// the atlantis_asset_cooker invocations (textures, then materials) that turn
+// the generated sources into artifacts.
+[[nodiscard]] atlantis::Result<GltfImportSummary, GltfImportError> importGltf(
     const std::filesystem::path& inputPath, const std::filesystem::path& contentRoot,
     const std::filesystem::path& outputDir, const std::string& name);
 

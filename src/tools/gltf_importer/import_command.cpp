@@ -1,6 +1,8 @@
 #define CGLTF_IMPLEMENTATION
 #include "import_command.h"
 
+#include "material_import.h"
+
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/asset_metadata.h>
 #include <atlantis/asset_system/logical_path.h>
@@ -285,6 +287,8 @@ const char* gltfImportErrorMessage(GltfImportError error) noexcept {
       return "malformed or invalid glTF (cgltf parse/validate failed)";
     case GltfImportError::BufferUnreadable:
       return "buffer URI unreadable";
+    case GltfImportError::MissingTextureFile:
+      return "a referenced texture file is missing under the content root";
     case GltfImportError::NonTrianglesMode:
       return "primitive mode is not TRIANGLES";
     case GltfImportError::NonIndexedPrimitive:
@@ -295,6 +299,14 @@ const char* gltfImportErrorMessage(GltfImportError error) noexcept {
       return "primitive has no NORMAL or no TEXCOORD_0 attribute";
     case GltfImportError::UnsupportedIndexComponentType:
       return "index accessor is not scalar u8/u16/u32";
+    case GltfImportError::UnsupportedMaterialExtension:
+      return "material uses an extension outside the supported set";
+    case GltfImportError::UnsupportedTextureFeature:
+      return "texture uses texCoord != 0, KHR_texture_transform, or one image as both colour and data";
+    case GltfImportError::UnsupportedSamplerWrap:
+      return "sampler uses MIRRORED_REPEAT or different wrapS/wrapT";
+    case GltfImportError::TextureWithoutSource:
+      return "texture has no usable MSFT_texture_dds or image source";
     case GltfImportError::OutOfRangeIndex:
       return "index value >= vertex count";
     case GltfImportError::OutOfRangeAccessor:
@@ -305,6 +317,8 @@ const char* gltfImportErrorMessage(GltfImportError error) noexcept {
       return "non-finite vertex float";
     case GltfImportError::NonUnitNormal:
       return "normal outside unit-length tolerance";
+    case GltfImportError::InvalidMaterialFactor:
+      return "material factor non-finite or outside [0, 1]";
     case GltfImportError::TangentGenerationFailed:
       return "tangent generation failed (handedness conflict left after the vertex split)";
     case GltfImportError::OutputDirectoryNotEmpty:
@@ -315,10 +329,8 @@ const char* gltfImportErrorMessage(GltfImportError error) noexcept {
   return "unknown gltf import error";
 }
 
-atlantis::Result<GltfImportSummary, GltfImportError> importGltfMeshes(const fs::path& inputPath,
-                                                                       const fs::path& contentRoot,
-                                                                       const fs::path& outputDir,
-                                                                       const std::string& name) {
+atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& inputPath, const fs::path& contentRoot,
+                                                                 const fs::path& outputDir, const std::string& name) {
   using ResultT = atlantis::Result<GltfImportSummary, GltfImportError>;
 
   CgltfDataGuard guard;
@@ -346,6 +358,8 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltfMeshes(const fs::
     }
   }
   if (cgltf_validate(guard.data) != cgltf_result_success) return ResultT::Err(GltfImportError::MalformedGltf);
+  const auto materialCheck = detail::checkMaterials(*guard.data, contentRoot);
+  if (materialCheck.isErr()) return ResultT::Err(materialCheck.error());
 
   std::error_code ec;
   if (fs::exists(outputDir, ec) && !fs::is_empty(outputDir, ec)) {
@@ -358,7 +372,7 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltfMeshes(const fs::
 
   GltfImportSummary summary;
   std::vector<std::string> reportLines;
-  reportLines.push_back("gltf_mesh_import: " + name);
+  reportLines.push_back("gltf_import: " + name);
 
   for (cgltf_size meshIndex = 0; meshIndex < guard.data->meshes_count; ++meshIndex) {
     const cgltf_mesh& mesh = guard.data->meshes[meshIndex];
@@ -499,6 +513,21 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltfMeshes(const fs::
                         (summary.maxSplitGrowthMesh.empty() ? "" : " (" + summary.maxSplitGrowthMesh + ")"));
   reportLines.push_back("degenerate_basis_fallback: " + std::to_string(summary.degenerateFallbackVertices) +
                         " vertices in " + std::to_string(summary.meshesWithDegenerateFallback) + " meshes");
+  std::vector<std::string> manifestLines;
+  const auto materials =
+      detail::writeMaterials(*guard.data, contentRoot, staging.path, name, summary, reportLines, manifestLines);
+  if (materials.isErr()) return ResultT::Err(materials.error());
+  std::string manifest =
+      "# atlantis_gltf_importer cook manifest (Plan 0037). One atlantis_asset_cooker invocation per\n"
+      "# non-comment line, in dependency order (textures, then materials). Substitute before running:\n"
+      "#   {content_parent} = parent directory of --content-root\n"
+      "#   {import_dir}     = this import's output directory\n"
+      "#   {cooked_dir}     = the cooked-artifact output directory\n";
+  for (const std::string& line : manifestLines) manifest += line + "\n";
+  if (!writeBytes(staging.path / "cook_manifest.txt", manifest.data(), manifest.size())) {
+    return ResultT::Err(GltfImportError::OutputWriteFailed);
+  }
+
   std::string report;
   for (const std::string& line : reportLines) report += line + "\n";
   if (!writeBytes(staging.path / "import_report.txt", report.data(), report.size())) {

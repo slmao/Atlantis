@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  const auto result = atlantis::gltf_importer::importGltfMeshes(fs::path(input), fs::path(contentRoot),
+  const auto result = atlantis::gltf_importer::importGltf(fs::path(input), fs::path(contentRoot),
                                                                 fs::path(outputDir), name);
   if (result.isErr()) {
     std::cerr << "atlantis_gltf_importer: " << atlantis::gltf_importer::gltfImportErrorMessage(result.error())
@@ -46,6 +46,12 @@ int main(int argc, char** argv) {
             << " vertices, " << summary.totalIndices << " indices (" << summary.meshesOverU16Range
             << " over u16 range); handedness split: " << summary.splitVertices << " vertices duplicated in "
             << summary.meshesSplit << " meshes; degenerate-basis fallback: " << summary.degenerateFallbackVertices
-            << " vertices in " << summary.meshesWithDegenerateFallback << " meshes -> " << outputDir << "\n";
+            << " vertices in " << summary.meshesWithDegenerateFallback << " meshes; " << summary.materialCount
+            << " materials (" << summary.materialsSpecGlossFormula << " spec-gloss formula, "
+            << summary.materialsSpecGlossTextureFallback << " spec-gloss texture fallback, "
+            << summary.materialsMetallicRoughness << " metallic-roughness; " << summary.materialsTransmission
+            << " transmission, " << summary.materialsWhiteFallback << " white fallback), "
+            << summary.texturesReferenced << " textures, " << summary.colorSpaceWarnings
+            << " colour-space warnings -> " << outputDir << "\n";
   return 0;
 }

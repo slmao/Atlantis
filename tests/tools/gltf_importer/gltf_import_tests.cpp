@@ -17,7 +17,7 @@
 
 namespace fs = std::filesystem;
 using atlantis::gltf_importer::GltfImportError;
-using atlantis::gltf_importer::importGltfMeshes;
+using atlantis::gltf_importer::importGltf;
 
 namespace {
 
@@ -34,7 +34,7 @@ ImportRun runImport(const std::string& testName, const gltf_test::PrimitiveSpec&
   const fs::path dir = gltf_test::freshDirectory(testName);
   const fs::path input = gltf_test::writeGltf(dir, spec);
   const fs::path outputDir = dir / outputName;
-  return ImportRun{outputDir, importGltfMeshes(input, dir, outputDir, "t")};
+  return ImportRun{outputDir, importGltf(input, dir, outputDir, "t")};
 }
 
 atlantis::asset_system::DecodedMeshArtifactU32 decodeOnlyMesh(const fs::path& outputDir) {
@@ -194,12 +194,13 @@ TEST_CASE("A failed import leaves no output or staging directory behind", "[gltf
 TEST_CASE("Importing the same input twice produces byte-identical output", "[gltf_importer]") {
   const fs::path dir = gltf_test::freshDirectory("determinism");
   const fs::path input = gltf_test::writeGltf(dir, gltf_test::unitQuad());
-  REQUIRE(importGltfMeshes(input, dir, dir / "a", "t").isOk());
-  REQUIRE(importGltfMeshes(input, dir, dir / "b", "t").isOk());
+  REQUIRE(importGltf(input, dir, dir / "a", "t").isOk());
+  REQUIRE(importGltf(input, dir, dir / "b", "t").isOk());
   std::vector<std::string> names;
   for (const auto& entry : fs::directory_iterator(dir / "a")) names.push_back(entry.path().filename().string());
   std::sort(names.begin(), names.end());
-  CHECK(names == std::vector<std::string>{"import_report.txt", "t_mesh_0_0.amesh", "t_mesh_0_0.amesh.meta.txt"});
+  CHECK(names == std::vector<std::string>{"cook_manifest.txt", "import_report.txt", "t_mesh_0_0.amesh",
+                                          "t_mesh_0_0.amesh.meta.txt"});
   for (const std::string& name : names) {
     INFO(name);
     CHECK(gltf_test::readBytes(dir / "a" / name) == gltf_test::readBytes(dir / "b" / name));
