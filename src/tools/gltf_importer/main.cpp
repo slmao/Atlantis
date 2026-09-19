@@ -44,6 +44,7 @@ int main(int argc, char** argv) {
   const auto& summary = result.value();
   std::cout << "atlantis_gltf_importer: " << summary.meshCount << " meshes, " << summary.totalVertices
             << " vertices, " << summary.totalIndices << " indices (" << summary.meshesOverU16Range
-            << " over u16 range) -> " << outputDir << "\n";
+            << " over u16 range); handedness split: " << summary.splitVertices << " vertices duplicated in "
+            << summary.meshesSplit << " meshes -> " << outputDir << "\n";
   return 0;
 }
