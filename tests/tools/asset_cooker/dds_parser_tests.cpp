@@ -67,6 +67,16 @@ TEST_CASE("parseDdsBc7 accepts a DX10 BC7_UNORM 2D texture and extracts verbatim
   }
 }
 
+TEST_CASE("parseDdsBc7 consumes BC7_TYPELESS as linear data", "[asset_cooker][dds]") {
+  // Plan 0037's census-gate correction (ruled 2026-09-19): Bistro's 119
+  // _ddna normal maps are DXGI 98; they cook as Bc7Unorm.
+  const auto bytes = makeDx10Bc7(4, 4, 98);
+  const auto result = parseDdsBc7(bytes.data(), bytes.size());
+  REQUIRE(result.isOk());
+  CHECK(result.value().srgb == false);
+  CHECK(result.value().baseMipBlockBytes.size() == 16);
+}
+
 TEST_CASE("parseDdsBc7 flags the sRGB variant", "[asset_cooker][dds]") {
   const auto bytes = makeDx10Bc7(4, 4, 100);  // DXGI_BC7_UNORM_SRGB
   const auto result = parseDdsBc7(bytes.data(), bytes.size());
@@ -100,8 +110,10 @@ TEST_CASE("parseDdsBc7 rejects a bad magic", "[asset_cooker][dds]") {
 }
 
 TEST_CASE("parseDdsBc7 rejects unsupported DXGI formats", "[asset_cooker][dds]") {
-  SECTION("BC7_TYPELESS (98)") {
-    const auto bytes = makeDx10Bc7(4, 4, 98);
+  // DXGI 98 (BC7_TYPELESS) is no longer in this list: Plan 0037's census
+  // gate ruled it consumable as linear (see the TYPELESS test above).
+  SECTION("BC6H_UF16 (95)") {
+    const auto bytes = makeDx10Bc7(4, 4, 95);
     const auto result = parseDdsBc7(bytes.data(), bytes.size());
     REQUIRE(result.isErr());
     CHECK(result.error() == DdsParseError::UnsupportedFormat);

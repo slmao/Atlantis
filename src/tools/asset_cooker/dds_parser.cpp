@@ -34,6 +34,13 @@ constexpr std::uint32_t kDDSDMipmapCountFlag = 0x20000;
 constexpr std::uint32_t kDxgiFormatBc7Typeless = 98;
 constexpr std::uint32_t kDxgiFormatBc7Unorm = 99;
 constexpr std::uint32_t kDxgiFormatBc7UnormSrgb = 100;
+// Plan 0037 Milestone 2's census gate correction (human-ruled
+// 2026-09-19): 119 of Bistro's 343 referenced DDS files (every _ddna
+// normal/data map) are DXGI 98, BC7_TYPELESS -- Spec 0038's survey had
+// recorded them as BC7_UNORM. A typeless format carries no view
+// semantics by definition; the consumer chooses. Atlantis consumes them
+// as linear data (Bc7Unorm), the normal-map convention that survey's
+// own classification intended.
 
 constexpr std::uint32_t kD3d10ResourceDimensionTexture2D = 3;
 
@@ -81,13 +88,11 @@ atlantis::Result<DdsBc7Image, DdsParseError> parseDdsBc7(const std::uint8_t* byt
     if (resourceDimension != kD3d10ResourceDimensionTexture2D || arraySize != 1) {
       return ResultT::Err(DdsParseError::MalformedHeader);
     }
-    if (dxgiFormat == kDxgiFormatBc7Unorm) {
-      srgb = false;
+    if (dxgiFormat == kDxgiFormatBc7Unorm || dxgiFormat == kDxgiFormatBc7Typeless) {
+      srgb = false;  // TYPELESS consumed as linear -- see the constants above.
     } else if (dxgiFormat == kDxgiFormatBc7UnormSrgb) {
       srgb = true;
     } else {
-      // Includes BC7_TYPELESS: a typeless block texture has no sampling
-      // semantics this pipeline can preserve.
       return ResultT::Err(DdsParseError::UnsupportedFormat);
     }
     dataOffset = kDx10TotalHeaderBytes;
