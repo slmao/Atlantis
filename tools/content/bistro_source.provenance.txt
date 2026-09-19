@@ -1,0 +1,27 @@
+asset: content/bistro/ (Bistro glTF scene -- fetched, never committed)
+fetch_script: tools/content/fetch_bistro.ps1
+source: https://github.com/NVIDIA-RTX/RTXDI-Assets/tree/1da7b749ef0e3fb606ab46dde8e5bfbacd078a02/bistro
+source_repository: NVIDIA-RTX/RTXDI-Assets
+source_commit: 1da7b749ef0e3fb606ab46dde8e5bfbacd078a02 (upstream main HEAD, 2026-03-10)
+attribution_1: NVIDIA-RTX/RTXDI-Assets, Copyright (c) 2023 NVIDIA GameWorks -- MIT License
+  (verbatim copy: tools/content/bistro_upstream_LICENSE.txt,
+  sha256 e3151c4e72486708e3f1273cb32943467b6f96cd66f3d2f0d89f99b404ef6db9)
+attribution_2: Amazon Lumberyard Bistro, Open Research Content Archive (ORCA), NVIDIA, July 2017,
+  http://developer.nvidia.com/orca/amazon-lumberyard-bistro -- Creative Commons Attribution 4.0
+  International (CC BY 4.0), https://creativecommons.org/licenses/by/4.0/ -- original scene; the
+  glTF/DDS files are NVIDIA's conversion of it, redistributed in the repository above
+license: two-line attribution (Spec 0037 Investigation 4, Plan 0037 Review ruling 1): both lines
+  above must accompany any redistribution or derived render of this content
+files: 345 = bistro.gltf + bistro.bin + the 343 .dds textures referenced through the glTF's
+  MSFT_texture_dds extension (upstream bistro/ has 393 blobs; the 47 unreferenced .dds and
+  bistro_without_paintings.gltf are not fetched)
+bytes: 2152673382 total (bistro.gltf 4740530, bistro.bin 95660264, .dds 2052272588)
+pinning: per file, (path, Git LFS oid, size) embedded in the fetch script; a Git LFS oid is the
+  SHA256 of the file content, so every file is verified by SHA256 and size on download. Manifest
+  generated 2026-09-19 from the LFS pointer files at source_commit; every oid/size confirmed
+  against the upstream LFS batch API. Whole-archive hashing was rejected: GitHub source archives
+  of an LFS repository contain pointer files, not content (Plan 0037 Milestone 2).
+policy: Spec 0037 repository content policy -- collections over 50 MB are fetched into the
+  gitignored content/ directory; this provenance and the licence copy are committed
+fetched_and_verified: 2026-09-19
+purpose: Spec 0037 glTF importer real-asset smoke/end-to-end tests (Plan 0037 Milestones 1 and 6)
