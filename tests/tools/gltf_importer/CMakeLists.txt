@@ -7,6 +7,7 @@ add_executable(atlantis_gltf_importer_tests
   gltf_material_tests.cpp
   gltf_scene_tests.cpp
   bistro_census_tests.cpp
+  bistro_end_to_end_tests.cpp
   module_boundary_tests.cpp
 )
 
@@ -31,7 +32,11 @@ set(ATLANTIS_BISTRO_CONTENT_DIR "${CMAKE_SOURCE_DIR}/content/bistro" CACHE PATH
 target_compile_definitions(atlantis_gltf_importer_tests PRIVATE
   ATLANTIS_BISTRO_CONTENT_DIR="${ATLANTIS_BISTRO_CONTENT_DIR}"
   ATLANTIS_GLTF_IMPORTER_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/tools/gltf_importer"
+  # The end-to-end [bistro] test runs the real cooker binary on a sample of
+  # the import's cook_manifest.txt.
+  ATLANTIS_ASSET_COOKER_EXECUTABLE="$<TARGET_FILE:atlantis_asset_cooker>"
 )
+add_dependencies(atlantis_gltf_importer_tests atlantis_asset_cooker)
 
 catch_discover_tests(atlantis_gltf_importer_tests
   TEST_SPEC "~[bistro]"
