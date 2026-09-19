@@ -4,6 +4,7 @@
 # "content" (Spec 0037 content policy: SKIP, never FAIL, when absent).
 add_executable(atlantis_gltf_importer_tests
   gltf_import_tests.cpp
+  gltf_material_tests.cpp
   bistro_census_tests.cpp
   module_boundary_tests.cpp
 )
@@ -14,6 +15,10 @@ add_executable(atlantis_gltf_importer_tests
 target_link_libraries(atlantis_gltf_importer_tests
   PRIVATE
     atlantis_gltf_importer_lib
+    # Test-only: the fallback-texture test parses the importer's generated
+    # DDS with the cooker's own parser. The importer library itself never
+    # links the cooker (ADR-0084).
+    atlantis_asset_cooker_lib
     Cgltf::Cgltf
     Catch2::Catch2WithMain
     atlantis_compiler_warnings

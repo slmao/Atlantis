@@ -27,6 +27,13 @@ struct PrimitiveSpec {
   // > 0: shrinks the POSITION bufferView by this many bytes so its accessor
   // reaches past the view's end.
   std::uint32_t truncatePositionViewBytes = 0;
+  // Material-slice fixtures: raw JSON spliced into the document. The
+  // primitive references material 0 when materialsJson is non-empty.
+  std::string materialsJson;   // e.g. [{...}]
+  std::string texturesJson;
+  std::string imagesJson;
+  std::string samplersJson;
+  std::string extensionsUsedJson;  // e.g. ["MSFT_texture_dds"]
 };
 
 inline std::string base64(const std::vector<std::uint8_t>& bytes) {
@@ -119,10 +126,18 @@ inline std::string buildGltf(const PrimitiveSpec& spec) {
                     std::to_string(appendAccessor(v, spec.indexComponentType, spec.indices.size(), "SCALAR", false));
   }
 
+  std::string extra;
+  if (!spec.materialsJson.empty()) extra += ",\"materials\":" + spec.materialsJson;
+  if (!spec.texturesJson.empty()) extra += ",\"textures\":" + spec.texturesJson;
+  if (!spec.imagesJson.empty()) extra += ",\"images\":" + spec.imagesJson;
+  if (!spec.samplersJson.empty()) extra += ",\"samplers\":" + spec.samplersJson;
+  if (!spec.extensionsUsedJson.empty()) extra += ",\"extensionsUsed\":" + spec.extensionsUsedJson;
+  const std::string materialMember = spec.materialsJson.empty() ? "" : ",\"material\":0";
+
   return "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],\"nodes\":[{\"mesh\":0}],"
          "\"meshes\":[{\"primitives\":[{\"attributes\":{" +
-         attributes + "}" + indicesMember + ",\"mode\":" + std::to_string(spec.mode) +
-         "}]}],\"accessors\":[" + accessors + "],\"bufferViews\":[" + views +
+         attributes + "}" + indicesMember + materialMember + ",\"mode\":" + std::to_string(spec.mode) +
+         "}]}]" + extra + ",\"accessors\":[" + accessors + "],\"bufferViews\":[" + views +
          "],\"buffers\":[{\"byteLength\":" + std::to_string(buffer.size()) +
          ",\"uri\":\"data:application/octet-stream;base64," + base64(buffer) + "\"}]}";
 }
