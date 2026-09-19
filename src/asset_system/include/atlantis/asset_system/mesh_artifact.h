@@ -84,6 +84,13 @@ struct DecodedMeshArtifactU32 {
 [[nodiscard]] std::vector<std::byte> encodeMeshArtifactU32(AssetId assetId, const ParsedMeshSource& source,
                                                             const std::vector<VertexTangent>& tangents);
 
+// The importer's own entry point: full-fidelity u32 indices without the
+// u16 ParsedMeshSource field in between (Plan 0037 M3). Same v5 byte
+// layout as the overload above.
+[[nodiscard]] std::vector<std::byte> encodeMeshArtifactU32FromIndices(
+    AssetId assetId, const std::vector<MeshSourceVertex>& vertices, const std::vector<std::uint32_t>& indices,
+    const std::vector<VertexTangent>& tangents);
+
 [[nodiscard]] atlantis::Result<DecodedMeshArtifactU32, ArtifactDecodeError> decodeMeshArtifactU32(
     const std::vector<std::byte>& bytes);
 

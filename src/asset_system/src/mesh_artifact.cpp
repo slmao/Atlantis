@@ -219,35 +219,42 @@ atlantis::Result<DecodedMeshArtifact, ArtifactDecodeError> decodeMeshArtifact(co
 
 std::vector<std::byte> encodeMeshArtifactU32(AssetId assetId, const ParsedMeshSource& source,
                                               const std::vector<VertexTangent>& tangents) {
-  ATLANTIS_CHECK(tangents.size() == source.vertices.size());
+  std::vector<std::uint32_t> indices(source.indices.begin(), source.indices.end());
+  return encodeMeshArtifactU32FromIndices(assetId, source.vertices, indices, tangents);
+}
+
+std::vector<std::byte> encodeMeshArtifactU32FromIndices(
+    AssetId assetId, const std::vector<MeshSourceVertex>& vertices, const std::vector<std::uint32_t>& indices,
+    const std::vector<VertexTangent>& tangents) {
+  ATLANTIS_CHECK(tangents.size() == vertices.size());
 
   // A v5 artifact's own u32 offset fields bound its size; the importer's
   // real meshes are far below this, so a violated bound is a programmer
   // error, not a recoverable condition.
-  ATLANTIS_CHECK(kMeshArtifactHeaderSizeBytes + static_cast<std::uint64_t>(source.vertices.size()) *
+  ATLANTIS_CHECK(kMeshArtifactHeaderSizeBytes + static_cast<std::uint64_t>(vertices.size()) *
                                                       kMeshArtifactVertexStrideBytes +
-                         static_cast<std::uint64_t>(source.indices.size()) * 4 <=
+                         static_cast<std::uint64_t>(indices.size()) * 4 <=
                      std::numeric_limits<std::uint32_t>::max());
 
   std::vector<std::byte> out;
-  out.reserve(kMeshArtifactHeaderSizeBytes + source.vertices.size() * kMeshArtifactVertexStrideBytes +
-              source.indices.size() * 4);
+  out.reserve(kMeshArtifactHeaderSizeBytes + vertices.size() * kMeshArtifactVertexStrideBytes +
+              indices.size() * 4);
 
   for (char c : kMagic) out.push_back(static_cast<std::byte>(c));
   appendU32LE(out, kMeshArtifactSchemaVersionU32);  // difference 1: version 5
   appendU32LE(out, kMeshArtifactVertexStrideBytes);
   appendU64LE(out, assetId);
-  appendU32LE(out, static_cast<std::uint32_t>(source.vertices.size()));
-  appendU32LE(out, static_cast<std::uint32_t>(source.indices.size()));
+  appendU32LE(out, static_cast<std::uint32_t>(vertices.size()));
+  appendU32LE(out, static_cast<std::uint32_t>(indices.size()));
 
   const auto vertexBytesOffset = static_cast<std::uint32_t>(kMeshArtifactHeaderSizeBytes);
   const std::uint32_t indexBytesOffset =
-      vertexBytesOffset + static_cast<std::uint32_t>(source.vertices.size()) * kMeshArtifactVertexStrideBytes;
+      vertexBytesOffset + static_cast<std::uint32_t>(vertices.size()) * kMeshArtifactVertexStrideBytes;
   appendU32LE(out, vertexBytesOffset);
   appendU32LE(out, indexBytesOffset);
 
-  for (std::size_t i = 0; i < source.vertices.size(); ++i) {
-    const MeshSourceVertex& v = source.vertices[i];
+  for (std::size_t i = 0; i < vertices.size(); ++i) {
+    const MeshSourceVertex& v = vertices[i];
     const VertexTangent& t = tangents[i];
     appendFloatLE(out, v.positionX);
     appendFloatLE(out, v.positionY);
@@ -268,7 +275,7 @@ std::vector<std::byte> encodeMeshArtifactU32(AssetId assetId, const ParsedMeshSo
 
   // Difference 2: u32 indices (difference 3: no 65,535-vertex cap -- the
   // u64 offset/size checks below are the only ceiling).
-  for (std::uint16_t index : source.indices) appendU32LE(out, index);
+  for (std::uint32_t index : indices) appendU32LE(out, index);
 
   return out;
 }
