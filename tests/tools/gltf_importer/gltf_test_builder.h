@@ -34,6 +34,12 @@ struct PrimitiveSpec {
   std::string imagesJson;
   std::string samplersJson;
   std::string extensionsUsedJson;  // e.g. ["MSFT_texture_dds"]
+  // Scene-slice fixtures: when nodesJson is set it replaces the default
+  // single node [{"mesh":0}], and sceneRootsJson (default [0]) lists roots.
+  std::string nodesJson;
+  std::string sceneRootsJson;
+  std::string camerasJson;
+  std::string topLevelExtensionsJson;  // e.g. {"KHR_lights_punctual":{"lights":[...]}}
 };
 
 inline std::string base64(const std::vector<std::uint8_t>& bytes) {
@@ -132,10 +138,14 @@ inline std::string buildGltf(const PrimitiveSpec& spec) {
   if (!spec.imagesJson.empty()) extra += ",\"images\":" + spec.imagesJson;
   if (!spec.samplersJson.empty()) extra += ",\"samplers\":" + spec.samplersJson;
   if (!spec.extensionsUsedJson.empty()) extra += ",\"extensionsUsed\":" + spec.extensionsUsedJson;
+  if (!spec.camerasJson.empty()) extra += ",\"cameras\":" + spec.camerasJson;
+  if (!spec.topLevelExtensionsJson.empty()) extra += ",\"extensions\":" + spec.topLevelExtensionsJson;
+  const std::string nodes = spec.nodesJson.empty() ? "[{\"mesh\":0}]" : spec.nodesJson;
+  const std::string roots = spec.sceneRootsJson.empty() ? "[0]" : spec.sceneRootsJson;
   const std::string materialMember = spec.materialsJson.empty() ? "" : ",\"material\":0";
 
-  return "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],\"nodes\":[{\"mesh\":0}],"
-         "\"meshes\":[{\"primitives\":[{\"attributes\":{" +
+  return "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":" + roots + "}],\"nodes\":" + nodes +
+         ",\"meshes\":[{\"primitives\":[{\"attributes\":{" +
          attributes + "}" + indicesMember + materialMember + ",\"mode\":" + std::to_string(spec.mode) +
          "}]}]" + extra + ",\"accessors\":[" + accessors + "],\"bufferViews\":[" + views +
          "],\"buffers\":[{\"byteLength\":" + std::to_string(buffer.size()) +

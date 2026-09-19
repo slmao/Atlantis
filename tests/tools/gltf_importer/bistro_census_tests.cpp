@@ -2,13 +2,15 @@
 
 #include <cgltf.h>
 
+#include <algorithm>
 #include <filesystem>
+#include <map>
 #include <set>
 #include <string>
 
 // Plan 0037 Milestone 3: the Milestone 1 census, kept as a standing smoke test
 // over the real fetched Bistro content (ctest label "content"). Mesh and
-// material layers only; the scene-graph layer is added in Milestone 5.
+// material layers, plus the scene layer added in Milestone 5.
 // cgltf's implementation is provided by atlantis_gltf_importer_lib.
 
 namespace {
@@ -76,5 +78,26 @@ TEST_CASE("Real Bistro glTF matches the Spec 0037 Investigation 1 census", "[bis
   CHECK(specGloss == 234);
   CHECK(transmission == 18);
   CHECK(data.nodes_count == 5908);
+
+  // Scene layer (Milestone 5): mesh-referencing nodes, meshes referenced by
+  // more than one node, and hierarchy depth (root = 1).
+  std::size_t meshNodes = 0;
+  std::map<const cgltf_mesh*, std::size_t> references;
+  std::size_t maxDepth = 0;
+  for (cgltf_size i = 0; i < data.nodes_count; ++i) {
+    const cgltf_node& node = data.nodes[i];
+    if (node.mesh != nullptr) {
+      ++meshNodes;
+      ++references[node.mesh];
+    }
+    std::size_t depth = 1;
+    for (const cgltf_node* p = node.parent; p != nullptr; p = p->parent) ++depth;
+    maxDepth = std::max(maxDepth, depth);
+  }
+  std::size_t instancedMeshes = 0;
+  for (const auto& [mesh, count] : references) instancedMeshes += count > 1 ? 1 : 0;
+  CHECK(meshNodes == 2909);
+  CHECK(instancedMeshes == 295);
+  CHECK(maxDepth == 7);
   CHECK(data.textures_count == 343);
 }

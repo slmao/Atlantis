@@ -5,6 +5,7 @@
 add_executable(atlantis_gltf_importer_tests
   gltf_import_tests.cpp
   gltf_material_tests.cpp
+  gltf_scene_tests.cpp
   bistro_census_tests.cpp
   module_boundary_tests.cpp
 )
