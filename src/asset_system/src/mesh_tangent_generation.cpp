@@ -66,7 +66,8 @@ atlantis::Result<std::vector<VertexTangent>, CookError> generateTangents(const P
 }
 
 atlantis::Result<std::vector<VertexTangent>, CookError> generateTangentsU32(
-    const std::vector<MeshSourceVertex>& vertices, const std::vector<std::uint32_t>& indices) {
+    const std::vector<MeshSourceVertex>& vertices, const std::vector<std::uint32_t>& indices,
+    TangentGenerationStats* stats) {
   using ResultT = atlantis::Result<std::vector<VertexTangent>, CookError>;
 
   std::vector<VertexAccumulator> accumulators(vertices.size());
@@ -135,11 +136,28 @@ atlantis::Result<std::vector<VertexTangent>, CookError> generateTangentsU32(
     const VertexAccumulator& accumulator = accumulators[vertexIndex];
     const Vec3 normal = normalOf(vertices[vertexIndex]);
 
-    if (!accumulator.hasContribution) {
+    Vec3 orthoRaw{};
+    double orthoLength = 0.0;
+    if (accumulator.hasContribution) {
+      orthoRaw = sub(accumulator.tangentSum, scale(normal, dot(normal, accumulator.tangentSum)));
+      orthoLength = length(orthoRaw);
+    }
+
+    if (!accumulator.hasContribution || orthoLength < kOrthogonalizationDegeneracyEpsilon) {
       // ADR-0073 Decision item 4a: deterministic fallback for a vertex
       // referenced by zero non-degenerate triangles (minimal_cube's own
       // real case, and pbr_sphere's own two seam-closure duplicates
-      // under the corrected geometric-degeneracy check).
+      // under the corrected geometric-degeneracy check). ADR-0073
+      // Amendment 2026-09-19: also taken by a vertex whose accumulated
+      // tangent orthogonalizes to (near) zero -- parallel to its normal
+      // or cancelled out -- instead of failing the whole mesh.
+      if (stats != nullptr) {
+        if (accumulator.hasContribution) {
+          ++stats->degenerateBasisFallbacks;
+        } else {
+          ++stats->zeroContributionFallbacks;
+        }
+      }
       std::size_t bestAxis = 0;
       double bestAbsDot = std::abs(dot(normal, kFallbackAxes[0]));
       for (std::size_t axis = 1; axis < kFallbackAxes.size(); ++axis) {
@@ -155,10 +173,6 @@ atlantis::Result<std::vector<VertexTangent>, CookError> generateTangentsU32(
                                              static_cast<float>(tUnit.z), 1.0f};
       continue;
     }
-
-    const Vec3 orthoRaw = sub(accumulator.tangentSum, scale(normal, dot(normal, accumulator.tangentSum)));
-    const double orthoLength = length(orthoRaw);
-    if (orthoLength < kOrthogonalizationDegeneracyEpsilon) return ResultT::Err(CookError::DegenerateTangentBasis);
 
     const Vec3 orthoUnit = scale(orthoRaw, 1.0 / orthoLength);
     const double handedness = *accumulator.firstHandedness;

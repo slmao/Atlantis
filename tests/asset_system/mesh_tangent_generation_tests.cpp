@@ -148,19 +148,29 @@ TEST_CASE("generateTangents rejects a real handedness conflict between two valid
   CHECK(result.error() == CookError::TangentHandednessConflict);
 }
 
-TEST_CASE("generateTangents rejects a real, non-degenerate tangent basis that is parallel to its own normal",
+namespace {
+
+// ADR-0073 Amendment 2026-09-19: a degenerate-basis vertex gets item 4a's
+// fallback -- unit length, orthogonal to its normal, w = +1.
+void checkIsAxisFallback(const VertexTangent& t, const MeshSourceVertex& v) {
+  const double len = std::sqrt(double(t.x) * t.x + double(t.y) * t.y + double(t.z) * t.z);
+  CHECK(std::abs(len - 1.0) < 1e-6);
+  CHECK(std::abs(double(t.x) * v.normalX + double(t.y) * v.normalY + double(t.z) * v.normalZ) < 1e-6);
+  CHECK(t.w == 1.0f);
+}
+
+}  // namespace
+
+TEST_CASE("generateTangents gives a single-face tangent parallel to its normal the axis fallback",
           "[asset_system][mesh_tangent_generation]") {
-  // ADR-0073 Decision item 5's own narrowed DegenerateTangentBasis
-  // trigger: a real safety net for a pathological geometric case, not
-  // observed in any of the 5 currently-committed meshes. This
-  // triangle is neither geometrically nor UV degenerate (edgeScale =
-  // sqrt(2), geometricRatio = 0.5; UV det = 1), and contributes a
-  // real T_face = (1,0,0), B_face = (0,0,1) to vertex 0 -- but vertex
-  // 0's own authored normal is (1,0,0), exactly parallel to T_face,
-  // so the post-accumulation Gram-Schmidt step
-  // (T_ortho = T_accumulated - N * dot(N, T_accumulated)) yields the
-  // exact zero vector, well below the 1e-6 orthogonalization-
-  // degeneracy epsilon.
+  // Previously ADR-0073 item 5's DegenerateTangentBasis trigger; since the
+  // 2026-09-19 Amendment it takes item 4a's fallback. The triangle is
+  // neither geometrically nor UV degenerate (edgeScale = sqrt(2),
+  // geometricRatio = 0.5; UV det = 1) and contributes T_face = (1,0,0),
+  // B_face = (0,0,1) to vertex 0 -- whose authored normal is (1,0,0),
+  // exactly parallel to T_face, so Gram-Schmidt yields the exact zero
+  // vector. Normal (1,0,0): Y and Z tie at |dot| 0, the fixed tie-break
+  // (X before Y before Z) picks Y, so T = (0,1,0), w = +1.
   ParsedMeshSource source;
   source.vertices = {
       makeVertex(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f),  // 0: normal parallel to T_face
@@ -170,8 +180,70 @@ TEST_CASE("generateTangents rejects a real, non-degenerate tangent basis that is
   source.indices = {0, 1, 2};
 
   const auto result = generateTangents(source);
-  REQUIRE(result.isErr());
-  CHECK(result.error() == CookError::DegenerateTangentBasis);
+  REQUIRE(result.isOk());
+  CHECK(tangentApproxEquals(result.value()[0], 0.0f, 1.0f, 0.0f, 1.0f));
+  checkIsAxisFallback(result.value()[0], source.vertices[0]);
+}
+
+TEST_CASE("generateTangents gives the axis fallback when two faces' tangents sum parallel to the normal",
+          "[asset_system][mesh_tangent_generation]") {
+  // Vertex 0 (normal +Z) gets T_face = (1,0,1) from triangle (0,1,2) and
+  // T_face = (-1,0,1) from triangle (0,3,4); both have handedness +1 (no
+  // conflict) and sum to (0,0,2), parallel to the normal, so the
+  // orthogonalized tangent is the exact zero vector. Fallback for normal
+  // +Z: X and Y tie at |dot| 0, X wins -> T = (1,0,0), w = +1. The other
+  // vertices keep ordinary tangents.
+  std::vector<MeshSourceVertex> vertices = {
+      makeVertex(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f),
+      makeVertex(1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f),
+      makeVertex(0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f),
+      makeVertex(-1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f),
+      makeVertex(0.0f, -1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f),
+  };
+  const std::vector<std::uint32_t> indices = {0, 1, 2, 0, 3, 4};
+
+  TangentGenerationStats stats;
+  const auto result = generateTangentsU32(vertices, indices, &stats);
+  REQUIRE(result.isOk());
+  CHECK(tangentApproxEquals(result.value()[0], 1.0f, 0.0f, 0.0f, 1.0f));
+  checkIsAxisFallback(result.value()[0], vertices[0]);
+  CHECK(stats.degenerateBasisFallbacks == 1);
+  CHECK(stats.zeroContributionFallbacks == 0);
+  CHECK(tangentApproxEquals(result.value()[1], 1.0f, 0.0f, 0.0f, 1.0f));
+
+  const auto again = generateTangentsU32(vertices, indices);
+  REQUIRE(again.isOk());
+  for (std::size_t v = 0; v < vertices.size(); ++v) {
+    CHECK(again.value()[v].x == result.value()[v].x);
+    CHECK(again.value()[v].y == result.value()[v].y);
+    CHECK(again.value()[v].z == result.value()[v].z);
+    CHECK(again.value()[v].w == result.value()[v].w);
+  }
+}
+
+TEST_CASE("generateTangents gives the axis fallback when two faces' tangents cancel exactly",
+          "[asset_system][mesh_tangent_generation]") {
+  // Vertex 0 (normal +Z) gets T_face = (1,0,0) from triangle (0,1,2) and
+  // T_face = (-1,0,0) from triangle (0,3,4) -- point-mirrored geometry with
+  // identical UVs, so B_face flips too and both faces keep handedness +1.
+  // The tangent sum is exactly (0,0,0). Fallback for normal +Z picks X:
+  // T = (1,0,0), w = +1.
+  std::vector<MeshSourceVertex> vertices = {
+      makeVertex(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f),
+      makeVertex(1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f),
+      makeVertex(0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f),
+      makeVertex(-1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f),
+      makeVertex(0.0f, -1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f),
+  };
+  const std::vector<std::uint32_t> indices = {0, 1, 2, 0, 3, 4};
+
+  TangentGenerationStats stats;
+  const auto result = generateTangentsU32(vertices, indices, &stats);
+  REQUIRE(result.isOk());
+  CHECK(tangentApproxEquals(result.value()[0], 1.0f, 0.0f, 0.0f, 1.0f));
+  checkIsAxisFallback(result.value()[0], vertices[0]);
+  CHECK(stats.degenerateBasisFallbacks == 1);
+  CHECK(tangentApproxEquals(result.value()[3], -1.0f, 0.0f, 0.0f, 1.0f));
 }
 
 namespace {

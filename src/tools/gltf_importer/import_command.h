@@ -32,7 +32,7 @@ enum class GltfImportError {
   AttributeCountMismatch,  // a primitive's attribute accessors disagree on vertex count
   NonFiniteVertex,
   NonUnitNormal,
-  TangentGenerationFailed,  // degenerate tangent basis (ADR-0073), after the handedness split
+  TangentGenerationFailed,  // handedness conflict left after the split (a split defect, never expected)
   // 4. Output I/O.
   OutputDirectoryNotEmpty,
   OutputWriteFailed,
@@ -50,6 +50,10 @@ struct GltfImportSummary {
   std::uint32_t meshesSplit = 0;
   double maxSplitGrowth = 0.0;  // largest splitVertices / source vertex count of one primitive
   std::string maxSplitGrowthMesh;
+  // ADR-0073 Amendment 2026-09-19: vertices whose accumulated tangent was
+  // degenerate (parallel to the normal or cancelled) and took the axis fallback.
+  std::uint64_t degenerateFallbackVertices = 0;
+  std::uint32_t meshesWithDegenerateFallback = 0;
   std::vector<std::string> reportLines;  // import_report.txt body (mesh slice)
 };
 

@@ -306,7 +306,7 @@ const char* gltfImportErrorMessage(GltfImportError error) noexcept {
     case GltfImportError::NonUnitNormal:
       return "normal outside unit-length tolerance";
     case GltfImportError::TangentGenerationFailed:
-      return "tangent generation failed (degenerate tangent basis)";
+      return "tangent generation failed (handedness conflict left after the vertex split)";
     case GltfImportError::OutputDirectoryNotEmpty:
       return "output directory exists and is not empty";
     case GltfImportError::OutputWriteFailed:
@@ -449,8 +449,15 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltfMeshes(const fs::
                               std::to_string(vertexCount) + " vertices (+" + formatPercent(growth) + ")");
       }
 
-      const auto tangents = atlantis::asset_system::generateTangentsU32(vertices, indices);
+      atlantis::asset_system::TangentGenerationStats tangentStats;
+      const auto tangents = atlantis::asset_system::generateTangentsU32(vertices, indices, &tangentStats);
       if (tangents.isErr()) return ResultT::Err(GltfImportError::TangentGenerationFailed);
+      if (tangentStats.degenerateBasisFallbacks > 0) {
+        summary.degenerateFallbackVertices += tangentStats.degenerateBasisFallbacks;
+        summary.meshesWithDegenerateFallback += 1;
+        reportLines.push_back(base + ": " + std::to_string(tangentStats.degenerateBasisFallbacks) +
+                              " vertices took the degenerate-basis axis fallback (ADR-0073 Amendment 2026-09-19)");
+      }
 
       // The u32-indices entry point encodes the real payload directly
       // (Plan 0037 M3) -- no u16 field in between, no >65535 special case.
@@ -490,6 +497,8 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltfMeshes(const fs::
                         std::to_string(summary.meshesSplit) + " meshes; max growth " +
                         formatPercent(summary.maxSplitGrowth) +
                         (summary.maxSplitGrowthMesh.empty() ? "" : " (" + summary.maxSplitGrowthMesh + ")"));
+  reportLines.push_back("degenerate_basis_fallback: " + std::to_string(summary.degenerateFallbackVertices) +
+                        " vertices in " + std::to_string(summary.meshesWithDegenerateFallback) + " meshes");
   std::string report;
   for (const std::string& line : reportLines) report += line + "\n";
   if (!writeBytes(staging.path / "import_report.txt", report.data(), report.size())) {

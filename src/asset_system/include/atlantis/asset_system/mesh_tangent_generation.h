@@ -4,6 +4,8 @@
 #include <atlantis/asset_system/mesh_source.h>
 #include <atlantis/result.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace atlantis::asset_system {
@@ -22,9 +24,12 @@ struct VertexTangent {
 };
 
 // Returns CookError directly (the same enum cookStaticMesh() already
-// returns) -- CookError::DegenerateTangentBasis/TangentHandednessConflict
-// are themselves CookError values per ADR-0073's own Decision. A whole-
-// mesh failure never yields a partial result.
+// returns). The one whole-mesh failure is CookError::
+// TangentHandednessConflict (ADR-0073 item 5); a whole-mesh failure never
+// yields a partial result. Since ADR-0073's Amendment of 2026-09-19 a vertex
+// whose accumulated tangent orthogonalizes to (near) zero takes the item 4a
+// axis fallback instead, so CookError::DegenerateTangentBasis is no longer
+// returned.
 [[nodiscard]] atlantis::Result<std::vector<VertexTangent>, CookError> generateTangents(
     const ParsedMeshSource& source);
 
@@ -34,7 +39,16 @@ struct VertexTangent {
 // behavior is byte-identical by construction; the existing
 // generateTangents(ParsedMeshSource) keeps serving the existing cooker
 // unchanged.
+//
+// stats, when non-null, receives how many vertices took the item 4a axis
+// fallback, split by cause (the glTF importer reports these per mesh).
+struct TangentGenerationStats {
+  std::size_t zeroContributionFallbacks = 0;  // no non-degenerate contributing triangle
+  std::size_t degenerateBasisFallbacks = 0;   // contributions that orthogonalize to (near) zero
+};
+
 [[nodiscard]] atlantis::Result<std::vector<VertexTangent>, CookError> generateTangentsU32(
-    const std::vector<MeshSourceVertex>& vertices, const std::vector<std::uint32_t>& indices);
+    const std::vector<MeshSourceVertex>& vertices, const std::vector<std::uint32_t>& indices,
+    TangentGenerationStats* stats = nullptr);
 
 }  // namespace atlantis::asset_system

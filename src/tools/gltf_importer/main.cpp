@@ -45,6 +45,7 @@ int main(int argc, char** argv) {
   std::cout << "atlantis_gltf_importer: " << summary.meshCount << " meshes, " << summary.totalVertices
             << " vertices, " << summary.totalIndices << " indices (" << summary.meshesOverU16Range
             << " over u16 range); handedness split: " << summary.splitVertices << " vertices duplicated in "
-            << summary.meshesSplit << " meshes -> " << outputDir << "\n";
+            << summary.meshesSplit << " meshes; degenerate-basis fallback: " << summary.degenerateFallbackVertices
+            << " vertices in " << summary.meshesWithDegenerateFallback << " meshes -> " << outputDir << "\n";
   return 0;
 }
