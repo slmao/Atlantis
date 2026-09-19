@@ -427,7 +427,10 @@ function Receive-File([string]$Url, [string]$Partial, [long]$Size) {
   $response = $request.GetResponse()
   try {
     $mode = [IO.FileMode]::Create
-    if ($offset -gt 0 -and [int]$response.StatusCode -eq 206) { $mode = [IO.FileMode]::Append }
+    if ($offset -gt 0 -and [int]$response.StatusCode -eq 206) {
+      $mode = [IO.FileMode]::Append
+      Write-Host "  resuming at byte $offset"
+    }
     $in = $response.GetResponseStream()
     $out = [IO.File]::Open($Partial, $mode, [IO.FileAccess]::Write)
     try { $in.CopyTo($out, 1MB) } finally { $out.Dispose(); $in.Dispose() }
@@ -444,6 +447,15 @@ if ($entries.Count -ne $ExpectedCount) { throw "manifest has $($entries.Count) e
 
 $root = [IO.Path]::GetFullPath($Destination)
 New-Item -ItemType Directory -Force -Path $root | Out-Null
+# Single instance per destination: two concurrent runs would fight over the
+# same .partial files (observed during Milestone 2's first full fetch).
+try {
+  $lock = [IO.File]::Open((Join-Path $root '.fetch_bistro.lock'), [IO.FileMode]::OpenOrCreate,
+    [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+} catch {
+  Write-Host "fetch_bistro: another fetch is already running into $root"
+  exit 1
+}
 Write-Host "fetch_bistro: $($entries.Count) files -> $root"
 
 $clock = [Diagnostics.Stopwatch]::StartNew()

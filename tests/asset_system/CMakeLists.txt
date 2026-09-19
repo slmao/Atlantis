@@ -5,6 +5,7 @@ add_executable(atlantis_asset_system_tests
   asset_id_tests.cpp
   asset_set_validation_tests.cpp
   mesh_source_tests.cpp
+  mesh_artifact_u32_tests.cpp
   asset_metadata_tests.cpp
   mesh_artifact_tests.cpp
   mesh_uv_round_trip_tests.cpp

@@ -28,4 +28,13 @@ struct VertexTangent {
 [[nodiscard]] atlantis::Result<std::vector<VertexTangent>, CookError> generateTangents(
     const ParsedMeshSource& source);
 
+// Plan 0037 (D8): the uint32_t-index overload for schema-5 (.amesh v5)
+// import paths. One algorithm, two entry points -- both delegate to the
+// same Lengfel-body core (ADR-0073), so the existing u16 entry point's
+// behavior is byte-identical by construction; the existing
+// generateTangents(ParsedMeshSource) keeps serving the existing cooker
+// unchanged.
+[[nodiscard]] atlantis::Result<std::vector<VertexTangent>, CookError> generateTangentsU32(
+    const std::vector<MeshSourceVertex>& vertices, const std::vector<std::uint32_t>& indices);
+
 }  // namespace atlantis::asset_system
