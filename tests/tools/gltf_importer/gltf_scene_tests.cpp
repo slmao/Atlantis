@@ -295,7 +295,7 @@ TEST_CASE("KHR_lights_punctual point and directional lights become light lines; 
   const GltfImportSummary& summary = run.result.value();
   CHECK(summary.sceneLightLines == 2);
   CHECK(summary.syntheticNodes == 1);
-  CHECK(reportContains(summary, "glTF range 7 discarded, range= set to kImportedPointLightRangePlaceholder = 1"));
+  CHECK(reportContains(summary, "glTF range 7 discarded, range= set to kImportedPointLightRangePlaceholder = 10000 (approximately infinite"));
   CHECK(reportContains(summary, "directional, intensity 3 recorded as the raw glTF value"));
 
   const auto scene = parsedScene(run.outputDir);

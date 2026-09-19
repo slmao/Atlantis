@@ -18,10 +18,11 @@ namespace atlantis::gltf_importer::detail {
 
 // Point lights need a positive range= in .scene.txt v4 (scene_source.cpp),
 // but glTF's range is discarded by Plan 0037 Ruling 8; every imported point
-// light gets this placeholder, and import_report.txt says so. Deliberately
-// the smallest round positive value the grammar accepts -- up for review in
-// the implementing PR (Atlantis attenuates to zero at `range`).
-inline constexpr float kImportedPointLightRangePlaceholder = 1.0f;
+// light gets this placeholder, and import_report.txt says so. glTF's own
+// default range is infinite, so a large value approximates "no cutoff"
+// (human ruling 2026-09-20); the real attenuation model belongs to Spec 0036
+// workflow 2. Atlantis attenuates linearly to zero at `range`.
+inline constexpr float kImportedPointLightRangePlaceholder = 10000.0f;
 
 // Everything that can make the scene slice fail, checked before any output
 // exists: node transforms, light types and values, and the light caps.

@@ -246,7 +246,9 @@ atlantis::Result<std::monostate, GltfImportError> writeScene(const cgltf_data& d
         reportLines.push_back("light: " + label + " point, intensity " + formatFloat(l.intensity) +
                               " recorded as the raw glTF value (candela; Ruling 8); glTF range " + glTFRange +
                               " discarded, range= set to kImportedPointLightRangePlaceholder = " +
-                              formatFloat(kImportedPointLightRangePlaceholder));
+                              formatFloat(kImportedPointLightRangePlaceholder) +
+                              " (approximately infinite, glTF's default; real attenuation model belongs to Spec 0036 "
+                              "workflow 2)");
       }
       if (line.mesh) {
         SceneLine child = syntheticChild();
