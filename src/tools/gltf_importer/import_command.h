@@ -31,6 +31,7 @@ enum class GltfImportError {
   UnsupportedTextureFeature,     // texCoord != 0, KHR_texture_transform, or one PNG/JPG as both colour and data
   UnsupportedSamplerWrap,        // MIRRORED_REPEAT, or wrapS != wrapT (v6 has one address mode)
   TextureWithoutSource,          // neither an MSFT_texture_dds nor a usable core image URI
+  UnsupportedLightType,          // KHR_lights_punctual spot light (Plan 0037 Ruling 8)
   // 3. Value validation.
   OutOfRangeIndex,
   OutOfRangeAccessor,     // accessor reaches past its bufferView, or bufferView past its buffer
@@ -38,6 +39,11 @@ enum class GltfImportError {
   NonFiniteVertex,
   NonUnitNormal,
   InvalidMaterialFactor,  // a used material factor is non-finite or outside [0, 1]
+  InvalidNodeTransform,   // non-finite TRS value or a zero-length rotation quaternion
+  NonDecomposableMatrix,  // node matrix non-finite, non-affine, zero-scale or sheared
+  NegativeDeterminant,    // node transform mirrors (odd number of negative scale factors)
+  InvalidLightValue,      // light colour outside [0, 1] or negative/non-finite intensity
+  TooManyLights,          // more than 1 directional or 4 point lights (Spec 0019 cap)
   TangentGenerationFailed,  // handedness conflict left after the split (a split defect, never expected)
   // 4. Output I/O.
   OutputDirectoryNotEmpty,
@@ -69,6 +75,16 @@ struct GltfImportSummary {
   std::uint32_t materialsWhiteFallback = 0;             // Ruling 7
   std::uint32_t texturesReferenced = 0;
   std::uint32_t colorSpaceWarnings = 0;  // Ruling 4
+  // Milestone 5 scene slice (ADR-0083 D5/D6).
+  std::uint32_t sceneNodeLines = 0;
+  std::uint32_t sceneMeshLines = 0;
+  std::uint32_t sceneLightLines = 0;
+  std::uint32_t syntheticNodes = 0;  // extra primitives, or a light beside a mesh
+  std::uint32_t sceneMaxDepth = 0;   // root = 1
+  std::uint32_t meshesInstancedMoreThanOnce = 0;
+  std::uint32_t nonUniformScaleNodes = 0;
+  std::uint32_t primitivesWithoutMaterial = 0;
+  std::uint32_t camerasDropped = 0;
   std::vector<std::string> reportLines;  // import_report.txt body
 };
 
@@ -80,9 +96,10 @@ struct GltfImportSummary {
 //
 // Output layout: <name>_mesh_<i>_<j>.amesh(.meta.txt) per primitive,
 // <name>/materials/<i>.material.txt per material, the Ruling 7 white
-// fallback texture when needed, import_report.txt, and cook_manifest.txt --
-// the atlantis_asset_cooker invocations (textures, then materials) that turn
-// the generated sources into artifacts.
+// fallback texture when needed, <name>/<name>.scene.txt for the default
+// scene, import_report.txt, and cook_manifest.txt -- the
+// atlantis_asset_cooker invocations (textures, then materials, then the
+// scene) that turn the generated sources into artifacts.
 [[nodiscard]] atlantis::Result<GltfImportSummary, GltfImportError> importGltf(
     const std::filesystem::path& inputPath, const std::filesystem::path& contentRoot,
     const std::filesystem::path& outputDir, const std::string& name);

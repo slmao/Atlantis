@@ -2,6 +2,7 @@
 #include "import_command.h"
 
 #include "material_import.h"
+#include "scene_import.h"
 
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/asset_metadata.h>
@@ -307,6 +308,8 @@ const char* gltfImportErrorMessage(GltfImportError error) noexcept {
       return "sampler uses MIRRORED_REPEAT or different wrapS/wrapT";
     case GltfImportError::TextureWithoutSource:
       return "texture has no usable MSFT_texture_dds or image source";
+    case GltfImportError::UnsupportedLightType:
+      return "KHR_lights_punctual spot lights are not supported";
     case GltfImportError::OutOfRangeIndex:
       return "index value >= vertex count";
     case GltfImportError::OutOfRangeAccessor:
@@ -319,6 +322,16 @@ const char* gltfImportErrorMessage(GltfImportError error) noexcept {
       return "normal outside unit-length tolerance";
     case GltfImportError::InvalidMaterialFactor:
       return "material factor non-finite or outside [0, 1]";
+    case GltfImportError::InvalidNodeTransform:
+      return "node transform non-finite or rotation quaternion zero";
+    case GltfImportError::NonDecomposableMatrix:
+      return "node matrix is non-finite, non-affine, zero-scale or sheared";
+    case GltfImportError::NegativeDeterminant:
+      return "node transform mirrors (negative determinant)";
+    case GltfImportError::InvalidLightValue:
+      return "light colour outside [0, 1] or intensity negative/non-finite";
+    case GltfImportError::TooManyLights:
+      return "more than 1 directional or 4 point lights";
     case GltfImportError::TangentGenerationFailed:
       return "tangent generation failed (handedness conflict left after the vertex split)";
     case GltfImportError::OutputDirectoryNotEmpty:
@@ -360,6 +373,8 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
   if (cgltf_validate(guard.data) != cgltf_result_success) return ResultT::Err(GltfImportError::MalformedGltf);
   const auto materialCheck = detail::checkMaterials(*guard.data, contentRoot);
   if (materialCheck.isErr()) return ResultT::Err(materialCheck.error());
+  const auto sceneCheck = detail::checkScene(*guard.data);
+  if (sceneCheck.isErr()) return ResultT::Err(sceneCheck.error());
 
   std::error_code ec;
   if (fs::exists(outputDir, ec) && !fs::is_empty(outputDir, ec)) {
@@ -386,8 +401,7 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
       // Mesh names are not unique across the file (Bistro's three
       // >65535-vertex meshes are all named "subset_1"), so the logical
       // path is index-based -- always a valid logical path by construction.
-      const std::string logicalPath = "meshes/" + name + "/mesh_" + std::to_string(meshIndex) + "_" +
-                                      std::to_string(primitiveIndex);
+      const std::string logicalPath = detail::meshLogicalPath(name, meshIndex, primitiveIndex);
       const auto normalizedResult = atlantis::asset_system::normalizeLogicalPath(logicalPath);
       if (normalizedResult.isErr()) return ResultT::Err(GltfImportError::OutputWriteFailed);
       const std::string& normalized = normalizedResult.value();
@@ -517,9 +531,11 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
   const auto materials =
       detail::writeMaterials(*guard.data, contentRoot, staging.path, name, summary, reportLines, manifestLines);
   if (materials.isErr()) return ResultT::Err(materials.error());
+  const auto scene = detail::writeScene(*guard.data, staging.path, name, summary, reportLines, manifestLines);
+  if (scene.isErr()) return ResultT::Err(scene.error());
   std::string manifest =
       "# atlantis_gltf_importer cook manifest (Plan 0037). One atlantis_asset_cooker invocation per\n"
-      "# non-comment line, in dependency order (textures, then materials). Substitute before running:\n"
+      "# non-comment line, in dependency order (textures, materials, scene). Substitute before running:\n"
       "#   {content_parent} = parent directory of --content-root\n"
       "#   {import_dir}     = this import's output directory\n"
       "#   {cooked_dir}     = the cooked-artifact output directory\n";

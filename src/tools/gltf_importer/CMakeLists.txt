@@ -7,6 +7,8 @@ add_library(atlantis_gltf_importer_lib STATIC
   import_command.cpp
   material_conversion.cpp
   material_import.cpp
+  scene_import.cpp
+  scene_transform.cpp
 )
 
 target_include_directories(atlantis_gltf_importer_lib

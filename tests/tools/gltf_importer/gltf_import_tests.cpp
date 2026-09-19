@@ -197,10 +197,12 @@ TEST_CASE("Importing the same input twice produces byte-identical output", "[glt
   REQUIRE(importGltf(input, dir, dir / "a", "t").isOk());
   REQUIRE(importGltf(input, dir, dir / "b", "t").isOk());
   std::vector<std::string> names;
-  for (const auto& entry : fs::directory_iterator(dir / "a")) names.push_back(entry.path().filename().string());
+  for (const auto& entry : fs::recursive_directory_iterator(dir / "a")) {
+    if (entry.is_regular_file()) names.push_back(fs::relative(entry.path(), dir / "a").generic_string());
+  }
   std::sort(names.begin(), names.end());
-  CHECK(names == std::vector<std::string>{"cook_manifest.txt", "import_report.txt", "t_mesh_0_0.amesh",
-                                          "t_mesh_0_0.amesh.meta.txt"});
+  CHECK(names == std::vector<std::string>{"cook_manifest.txt", "import_report.txt", "t/t.scene.txt",
+                                          "t_mesh_0_0.amesh", "t_mesh_0_0.amesh.meta.txt"});
   for (const std::string& name : names) {
     INFO(name);
     CHECK(gltf_test::readBytes(dir / "a" / name) == gltf_test::readBytes(dir / "b" / name));
