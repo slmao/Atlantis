@@ -57,6 +57,10 @@ add_executable(atlantis_image_regression_gpu_tests
   pbr_anisotropic_demo_gpu_tests.cpp
   pbr_materials_showcase_gpu_tests.cpp
   bc7_dual_quad_gpu_tests.cpp
+  # Spec 0039 T2/T3: the v4-vs-v5 equivalence comparison and the
+  # 362x362 uint32 grid. Needs Atlantis::RHI for the index Buffer's
+  # own indexType()/sizeBytes() assertions.
+  index_type_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_image_regression_gpu_tests
@@ -66,6 +70,9 @@ target_link_libraries(atlantis_image_regression_gpu_tests
     # Plan 0014 Section D10: world_scene_gpu_tests.cpp names World-scene
     # fixture types directly.
     Atlantis::World
+    # Spec 0039: index_type_gpu_tests.cpp names rhi::IndexType and
+    # reads rhi::Buffer::indexType() directly.
+    Atlantis::RHI
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )
@@ -429,3 +436,78 @@ add_custom_command(TARGET atlantis_image_regression_gpu_tests POST_BUILD
       "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.refl.json"
       "$<TARGET_FILE_DIR:atlantis_image_regression_gpu_tests>/shaders/"
 )
+
+# Spec 0039 T6 / Plan 0039 Milestone 3.7: the real-Bistro mesh 246 render.
+# Its own binary, not a file in atlantis_image_regression_gpu_tests, for
+# two reasons: it needs the glTF importer library, which only exists on
+# non-Android builds, and it must carry the "content" label so it SKIPs
+# rather than FAILs on a machine without the fetched content.
+if(NOT ANDROID)
+  # Declared here too, not only in tests/tools/gltf_importer/CMakeLists.txt:
+  # this directory is configured first (root CMakeLists.txt), and a
+  # repeated set(... CACHE ...) of the same variable is a no-op.
+  set(ATLANTIS_BISTRO_CONTENT_DIR "${CMAKE_SOURCE_DIR}/content/bistro" CACHE PATH
+    "Fetched Bistro content (tools/content/fetch_bistro.ps1); [bistro] tests SKIP when absent")
+
+  add_executable(atlantis_image_regression_content_gpu_tests
+    bistro_large_mesh_gpu_tests.cpp
+  )
+
+  target_link_libraries(atlantis_image_regression_content_gpu_tests
+    PRIVATE
+      Atlantis::ImageRegressionFixture
+      Atlantis::ImageRegressionSupport
+      Atlantis::RHI
+      atlantis_gltf_importer_lib
+      Catch2::Catch2WithMain
+      atlantis_compiler_warnings
+  )
+
+  target_compile_definitions(atlantis_image_regression_content_gpu_tests PRIVATE
+    ATLANTIS_BISTRO_CONTENT_DIR="${ATLANTIS_BISTRO_CONTENT_DIR}"
+  )
+
+  # The same shader set the minimal-cube fixture needs, copied the same
+  # way every other consumer of that fixture copies it.
+  add_dependencies(atlantis_image_regression_content_gpu_tests
+    minimal_mesh_shaders output_transform_unorm_shaders shadow_cast_shaders)
+  add_custom_command(TARGET atlantis_image_regression_content_gpu_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:atlantis_image_regression_content_gpu_tests>/shaders"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.vert.spv"
+        "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.vert.refl.json"
+        "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.spv"
+        "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.refl.json"
+        "$<TARGET_FILE_DIR:atlantis_image_regression_content_gpu_tests>/shaders/"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.spv"
+        "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.refl.json"
+        "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.spv"
+        "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.refl.json"
+        "$<TARGET_FILE_DIR:atlantis_image_regression_content_gpu_tests>/shaders/"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.spv"
+        "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.refl.json"
+        "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.spv"
+        "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.refl.json"
+        "$<TARGET_FILE_DIR:atlantis_image_regression_content_gpu_tests>/shaders/"
+  )
+
+  # Labelled "content" only, not "gpu", even though it needs both: the
+  # "gpu" label selects tests expected to RUN on a GPU-capable machine,
+  # and this one additionally needs a ~2.2 GB fetch it must SKIP without.
+  # Putting it in the gpu set would make `ctest -L gpu` report a skip on
+  # every machine that has not fetched the content. Single label plus
+  # SKIP_RETURN_CODE 4 is exactly the shape
+  # tests/tools/gltf_importer/CMakeLists.txt already uses; a two-value
+  # LABELS list does not survive catch_discover_tests' own argument
+  # forwarding (it re-splits the list and silently corrupts the
+  # following property pairs -- verified against the generated
+  # ...tests-Debug.cmake).
+  catch_discover_tests(atlantis_image_regression_content_gpu_tests
+    DISCOVERY_MODE PRE_TEST
+    PROPERTIES LABELS "content" SKIP_RETURN_CODE 4
+    WORKING_DIRECTORY "$<TARGET_FILE_DIR:atlantis_image_regression_content_gpu_tests>"
+  )
+endif()

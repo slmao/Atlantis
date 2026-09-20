@@ -108,9 +108,20 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
     const atlantis::asset_system::StaticMeshAssetData& meshAssetData = meshAssetResult.value();
     ATLANTIS_CHECK_MSG(device != nullptr, "loadAndInstantiateScene(): a real Device is required once a scene has "
                                            "at least one distinct mesh dependency to load");
-    auto createResult = createMesh(*device, vertexInputLayout, meshAssetData.vertexBytes().data(),
-                                    meshAssetData.vertexBytes().size(), meshAssetData.indices().data(),
-                                    static_cast<std::uint32_t>(meshAssetData.indices().size()));
+    // Spec 0039 Requirement 6 / ADR-0087: the composition-root
+    // translation between the Asset System's own MeshIndexType and the
+    // RHI's IndexType, which ADR-0043 forbids those two modules from
+    // sharing. Reading the wrong accessor for the asset's own width is
+    // a precondition violation, so this branch is what keeps a
+    // schema-5 dependency from aborting here -- one scene may mix both
+    // widths freely.
+    auto createResult = meshAssetData.indexType() == atlantis::asset_system::MeshIndexType::Uint32
+                             ? createMesh(*device, vertexInputLayout, meshAssetData.vertexBytes().data(),
+                                          meshAssetData.vertexBytes().size(), meshAssetData.indices32().data(),
+                                          static_cast<std::uint32_t>(meshAssetData.indices32().size()))
+                             : createMesh(*device, vertexInputLayout, meshAssetData.vertexBytes().data(),
+                                          meshAssetData.vertexBytes().size(), meshAssetData.indices().data(),
+                                          static_cast<std::uint32_t>(meshAssetData.indices().size()));
     if (createResult.isErr()) {
       ATLANTIS_LOG_ERROR("createMesh() failed for a scene dependency");
       return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);

@@ -14,6 +14,9 @@ add_library(atlantis_image_regression_fixture STATIC
   pbr_sheen_demo_fixture.cpp
   pbr_anisotropic_demo_fixture.cpp
   pbr_materials_showcase_fixture.cpp
+  # Spec 0039/Plan 0039 Milestone 3: the equivalence pair and the
+  # large-index grid, shared by the GPU test and the golden generator.
+  index_type_meshes.cpp
 )
 
 target_include_directories(atlantis_image_regression_fixture
