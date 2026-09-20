@@ -1,9 +1,10 @@
 # ADR 0088: FrameLightingData Successor Structure, Binding Strategy and Point-Light Capacity
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-21
 - **Deciders:** slmao
-- **Acceptance:** pending
+- **Acceptance:** slmao, 2026-09-21 (chat confirmation; reviewed in this
+  branch's own PR, alongside Spec 0040's Approval)
 - **Related Spec:** [Spec 0040](../specs/0040-multi-light-architecture.md)
 
 Record one decision and its rationale. Follow the
@@ -99,8 +100,40 @@ buffer, with the existing dynamic shader loop unchanged.**
    further.
 
 This ADR does **not** decide what a light's intensity value means physically,
-nor the attenuation model — see Spec 0040 Open Question O5, which asks for
-that obligation (assigned here by Plan 0037 Ruling 8) to be reassigned.
+nor the attenuation model — see the reassignment recorded immediately below.
+
+## Declined-and-reassigned — 2026-09-21
+
+[Plan 0037](../plans/0037-gltf-importer.md) Ruling 8 (2026-09-19) assigned
+one further question to this ADR: "Intensity is recorded as the raw glTF
+value; what it means belongs to workflow ②'s ADR" (`:712-713`). This ADR is
+that ADR, and it **declines** the question.
+
+**Ruled with this ADR's acceptance (slmao, 2026-09-21):** light-intensity
+units and the attenuation model are a *photometric* decision — what a value
+means physically and how it falls off — while this ADR is a *capacity*
+decision about how many such values fit and where they live. The two share
+a subject but not an argument, and answering the photometric one here would
+change the appearance of every existing lit scene and its golden, which is
+a far larger change than widening an array. The same reasoning covers the
+imported point-light `range` placeholder
+(`kImportedPointLightRangePlaceholder`, 10000.0), which exists only because
+the `.scene.txt` grammar demands a positive range.
+
+The obligation is therefore **reassigned to a future, separate photometric
+Spec** — not to workflow ③, and not to this one. The reason for deferring
+rather than drafting it now is substantive, not administrative: the real
+requirements for a light-unit and attenuation model will be forced out
+concretely during workflow ⑦'s own hand-authored lighting pass, when
+someone is placing lights against the reference image and discovering what
+the current `clamp(1 - d/range, 0, 1)` falloff and raw-value intensities
+cannot express. A Spec drafted before that evidence exists would be
+guessing at its own requirements.
+
+Plan 0037 Ruling 8's intent is preserved in full — the question is still
+owed an ADR, and is still recorded as owed. Only its owner moves. Spec 0040
+Open Question O5 and Spec 0036's own ② section each carry the same dated
+pointer, so Ruling 8 is not left referring to an ADR that declined it.
 
 ## Consequences
 

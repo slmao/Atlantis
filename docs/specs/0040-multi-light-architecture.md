@@ -1,18 +1,24 @@
 # Spec: Multi-Light Architecture
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-21
-- **Related Plan(s):** None yet — Plan drafting begins after this Spec and
-  its ADR clear Human Review.
-- **Approval:** pending
+- **Related Plan(s):** None yet — Plan drafting may now begin (this Spec and
+  its ADR have cleared Human Review, below).
+  **Implementation still awaits its own, separate Joint Human Review** of
+  Spec + Plan together, per AGENTS.md's own workflow — this Approval
+  authorizes drafting Plan 0040 only.
+- **Approval:** slmao, 2026-09-21 (chat confirmation, no reviewing PR —
+  authorizes drafting Plan 0040; Implementation itself still awaits its own,
+  separate Joint Human Review of Spec + Plan together). The same review ruled
+  all five open questions; see Risks & Open Questions below.
 - **Related ADR(s):**
   [ADR-0088](../adr/0088-frame-lighting-data-successor-structure-and-binding-strategy.md)
-  (`Proposed`) — `FrameLightingData`'s successor structure
+  (`Accepted`) — `FrameLightingData`'s successor structure
   (widened-fixed-cap vs. clustered/froxel), its buffer-binding strategy
   (uniform vs. storage), the chosen capacity and its basis, and the
-  resulting shader-side iteration cost. Drafted alongside this Spec; must
-  be `Accepted` before implementation approval.
+  resulting shader-side iteration cost. Drafted alongside this Spec and
+  accepted 2026-09-21 alongside this Spec's own Approval.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 State each requirement once; link ADR rationale and map verification to the
@@ -460,48 +466,65 @@ disclosed emulator Validation-Layer gap.
 
 ## Risks & Open Questions
 
+**All five open questions were ruled by Human Review on 2026-09-21 (chat
+confirmation), alongside this Spec's own Approval.** Each ruling below is
+binding on Plan 0040; the reasoning that led to it stays in ADR-0088 and in
+the Investigations above.
+
 - **O1 — should the 464/592 buffer-size defect be fixed ahead of this Spec?**
-  It is pre-existing, latent, and Runtime-only. Fixing it inside this Spec's
-  Plan is natural (the layout is being touched anyway, Requirement 4) but
-  mixes an unrelated correctness fix into a capacity feature. Fixing it first,
-  as its own small change with T3 as its test, keeps both diffs honest and
-  gives the fix its own bisectable commit. **Recommendation: fix it first,
-  separately**, then let this Spec's Plan build on a correct baseline. Open
-  for review.
+  It is pre-existing, latent, and Runtime-only: `runtime_application.cpp:790`
+  allocates 464 bytes for a layout its own shaders declare as 592, and the
+  light-space tail write at `:1419-1421` lands past the end every frame.
+  **Ruled 2026-09-21: fix it first, as Plan 0040's own Milestone 0
+  prerequisite** — a standalone, independently bisectable commit carrying the
+  buffer-size test (T3), landing before any capacity work touches the layout.
+  The capacity milestones then build on a correct baseline, and the fix stays
+  reviewable as the correctness change it is rather than disappearing into a
+  feature diff.
 - **O2 — is N = 64 the right number?** It rests on an estimate of a
   hand-authored light count for a scene nobody has authored yet, because the
-  asset defines zero lights (Investigation 6). The estimate could be wrong in
-  either direction. Mitigation: N is one constant, raising it later costs 32
-  bytes per added light, and the ceiling under the Vulkan guarantee is 497.
-- **O3 — does anything besides the roadmap want more than 64?** Not in Phase
-  1, as far as this Spec can see. If workflow ⑦'s authoring finds 64
-  insufficient, the reopening path is O2's constant, then (b).
+  asset defines zero lights (Investigation 6). **Ruled 2026-09-21: N = 64 as
+  proposed.** The estimate is accepted with its stated basis; the mitigation
+  stands on the record — N is one constant, each further light costs 32
+  bytes, and the single-UBO ceiling under the Vulkan guarantee is 497.
+- **O3 — does anything besides the roadmap want more than 64?** **Ruled
+  2026-09-21: accepted** — nothing in Phase 1 does. If workflow ⑦'s own
+  authoring finds 64 short, the reopening path is O2's constant first, then
+  option (b).
 - **O4 — `_shadowPad[9]` and the hand-kept layout duplication.** Eleven
   shaders and one C++ header describe the same buffer independently, kept in
   sync by hand (the same disclosed class of duplication
   `kPointLightDistanceEpsilon` already carries,
-  `scene_extraction.h:182-189`). Widening the array multiplies the cost of a
-  mistake here. This Spec does not propose solving it — a generated shared
-  layout header is its own decision — but the Plan should state how it
-  verifies all twelve agree, most cheaply via the existing Slang reflection
-  JSON cross-check Plan 0019 P7 used.
+  `scene_extraction.h:182-189`). **Ruled 2026-09-21: the Slang reflection
+  JSON cross-check is a mandatory verification item, not a suggestion** —
+  Plan 0040 must verify that all twelve descriptions of the block agree,
+  via the mechanism Plan 0019 P7 established, and record the result. A
+  generated shared layout header remains a separate, undecided question;
+  this ruling closes the verification gap, not the duplication itself.
 - **O5 — this Spec declines an obligation Plan 0037 assigned to it.** Plan
   0037 Ruling 8 (2026-09-19) states: "Intensity is recorded as the raw glTF
   value; **what it means belongs to workflow ②'s ADR**"
   (`docs/plans/0037-gltf-importer.md:712-713`). ADR-0088 is that ADR, and this
-  Spec's Non-Goals decline the question. The reasoning: light-intensity units
-  and the attenuation model are a *photometric* decision — what a value means
+  Spec's Non-Goals decline the question: light-intensity units and the
+  attenuation model are a *photometric* decision — what a value means
   physically, and how it falls off — while this workflow is a *capacity*
   decision about how many such values fit. Bundling them would put two
   unrelated arguments in one ADR and would silently change the appearance of
-  every existing lit scene and its golden, which is a far larger change than
-  widening an array. The same applies to the imported point-light `range`
-  placeholder (Plan 0037's `kImportedPointLightRangePlaceholder`, 10000.0),
-  which exists only because the grammar demands a positive range.
-  **Recommendation: reassign the obligation** — either to workflow ③, which
-  already touches light-adjacent material output, or to its own small Spec,
-  and record the reassignment so Ruling 8 is not left pointing at an ADR that
-  declined it. This needs a ruling; it is not mine to make unilaterally.
+  every existing lit scene and its golden. The same applies to the imported
+  point-light `range` placeholder (Plan 0037's
+  `kImportedPointLightRangePlaceholder`, 10000.0), which exists only because
+  the grammar demands a positive range.
+  **Ruled 2026-09-21: the obligation is reassigned to a future, separate
+  photometric Spec** — not to workflow ③, and not to this ADR. The reasoning
+  recorded with the ruling: the real requirements for a light-unit and
+  attenuation model will be forced out concretely during workflow ⑦'s own
+  hand-authored lighting pass, when someone is actually placing lights against
+  the reference image, and a Spec drafted before that would be guessing. Plan
+  0037 Ruling 8's intent is preserved — the question is still owed an ADR —
+  only its owner moves. ADR-0088 records the same reassignment in its own
+  "Declined-and-reassigned" note, and Spec 0036's ② section carries the dated
+  pointer, so Ruling 8 is not left pointing at an ADR that declined it.
+
 - **R1 — golden drift from an unrelated layout slip.** If any of the eleven
   shaders is missed, its block silently misaligns and its scenes render wrong.
   T5 is the gate, and every affected kind has an existing golden.
@@ -523,7 +546,8 @@ disclosed emulator Validation-Layer gap.
   roadmap).
 - **Physically based light units and a real attenuation model**, including
   what glTF's raw intensity values should mean and whether the imported
-  `range` placeholder should survive — declined here and pending the
-  reassignment Open Question O5 asks for.
+  `range` placeholder should survive — declined here and, per O5's ruling,
+  reassigned to a future separate photometric Spec, to be drafted once
+  workflow ⑦'s own hand-authored lighting pass forces out its requirements.
 - **A generated single-source layout header** shared by C++ and Slang (O4).
 - **A second directional light** and spot lights.
