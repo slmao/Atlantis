@@ -11,7 +11,10 @@ bool operator==(const ClearColorValue& lhs, const ClearColorValue& rhs) {
 }
 
 bool operator==(const BufferCreateParams& lhs, const BufferCreateParams& rhs) {
-  return lhs.purpose == rhs.purpose && lhs.sizeBytes == rhs.sizeBytes;
+  // indexType participates unconditionally, not only for Index-purpose
+  // params (Spec 0039/ADR-0086): a comparison that silently ignored a
+  // member for some purposes would be a second, undocumented rule.
+  return lhs.purpose == rhs.purpose && lhs.sizeBytes == rhs.sizeBytes && lhs.indexType == rhs.indexType;
 }
 
 bool operator==(const TextureCreateParams& lhs, const TextureCreateParams& rhs) {

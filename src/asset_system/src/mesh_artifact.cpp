@@ -377,5 +377,25 @@ atlantis::Result<DecodedMeshArtifactU32, ArtifactDecodeError> decodeMeshArtifact
   return ResultT::Ok(std::move(decoded));
 }
 
+atlantis::Result<MeshArtifactHeaderPeek, ArtifactDecodeError> peekMeshArtifactHeader(
+    const std::vector<std::byte>& bytes) {
+  using ResultT = atlantis::Result<MeshArtifactHeaderPeek, ArtifactDecodeError>;
+
+  if (bytes.size() < kMeshArtifactHeaderSizeBytes) return ResultT::Err(ArtifactDecodeError::TooSmallForHeader);
+
+  for (std::size_t i = 0; i < kMagic.size(); ++i) {
+    if (bytes[i] != static_cast<std::byte>(kMagic[i])) return ResultT::Err(ArtifactDecodeError::BadMagic);
+  }
+
+  // Byte offsets 8 and 24, the same two fields both decoders read
+  // through the same readU32LE() helper (see their own header preambles
+  // above) -- not a second parse of the format, just the two fields a
+  // version dispatch and a pre-decode size bound need.
+  MeshArtifactHeaderPeek peek;
+  peek.schemaVersion = readU32LE(bytes.data() + 8);
+  peek.vertexCount = readU32LE(bytes.data() + 24);
+  return ResultT::Ok(peek);
+}
+
 }  // namespace atlantis::asset_system
 

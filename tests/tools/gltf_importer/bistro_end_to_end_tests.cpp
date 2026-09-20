@@ -28,9 +28,14 @@
 // this standing test keeps the whole chain honest without re-asserting them.
 //
 // Deliberately NOT exercised: loading the imported scene through Runtime.
-// Imported meshes are .amesh schema 5 (uint32 indices), which Runtime/RHI
-// cannot draw until Spec 0036 workflow 1b parameterizes the index type
-// (Plan 0037 Ruling 5); validation stops at the Asset System decoders.
+// This test's validation stops at the Asset System decoders because that
+// is its own scope, not because the meshes cannot be drawn -- Spec 0039
+// (Spec 0036 workflow 1b) parameterized the index type, so imported
+// .amesh schema-5 meshes now load through loadStaticMeshAsset() and
+// render, which tests/image_regression/bistro_large_mesh_gpu_tests.cpp
+// proves on the largest of them. Plan 0037 Ruling 5's disclosure is
+// therefore closed; drawing the whole imported *scene* remains Spec 0036
+// workflow 7's job.
 
 namespace fs = std::filesystem;
 namespace as = atlantis::asset_system;

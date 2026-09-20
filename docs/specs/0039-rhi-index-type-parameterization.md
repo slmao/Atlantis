@@ -4,11 +4,9 @@
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-20
 - **Related Plan(s):** [Plan 0039](../plans/0039-rhi-index-type-parameterization.md)
-  (Approved 2026-09-20 with the Joint Human Review recorded in its header;
-  linked 2026-09-20). This Spec and
-  **Implementation still awaits its own, separate Joint Human Review** of
-  Spec + Plan together, per AGENTS.md's own workflow — this Approval
-  authorizes drafting Plan 0039 only.
+  (Approved 2026-09-20; its Joint Human Review — recorded in the Plan's own
+  header — reviewed this Spec and that Plan together and authorized
+  Implementation; linked 2026-09-20).
 - **Approval:** slmao, 2026-09-20 (chat confirmation, no reviewing PR —
   authorizes drafting Plan 0039; Implementation itself still awaits its own,
   separate Joint Human Review of Spec + Plan together). The same review ruled

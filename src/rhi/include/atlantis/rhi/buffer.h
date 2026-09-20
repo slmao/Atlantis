@@ -21,6 +21,16 @@ class Buffer {
   [[nodiscard]] virtual BufferPurpose purpose() const = 0;
   [[nodiscard]] virtual std::size_t sizeBytes() const = 0;
 
+  // Spec 0039/ADR-0086: the index width this Buffer's contents were
+  // written at, fixed at creation via BufferCreateParams::indexType --
+  // the one thing CommandList::bindIndexBuffer() needs that a Buffer did
+  // not previously carry. Precondition: purpose() ==
+  // BufferPurpose::Index. Calling this on any other purpose is a
+  // programmer error (ATLANTIS_CHECK), not a recoverable outcome and not
+  // a silently meaningful default -- the same treatment bindIndexBuffer()
+  // already gives a wrong purpose (Spec 0039 ruling O2).
+  [[nodiscard]] virtual IndexType indexType() const = 0;
+
   // A pointer to this Buffer's host-visible, host-coherent memory, valid
   // for this Buffer's whole lifetime (mapped once, at construction --
   // never remapped). The caller may write directly at any time; no

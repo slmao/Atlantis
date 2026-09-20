@@ -35,7 +35,7 @@ struct VertexTangent {
 
 // Plan 0037 (D8): the uint32_t-index overload for schema-5 (.amesh v5)
 // import paths. One algorithm, two entry points -- both delegate to the
-// same Lengfel-body core (ADR-0073), so the existing u16 entry point's
+// same Lengyel-body core (ADR-0073), so the existing u16 entry point's
 // behavior is byte-identical by construction; the existing
 // generateTangents(ParsedMeshSource) keeps serving the existing cooker
 // unchanged.

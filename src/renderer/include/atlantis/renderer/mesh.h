@@ -51,4 +51,21 @@ enum class CreateMeshError {
                                                                   const std::uint16_t* indices,
                                                                   std::uint32_t indexCount);
 
+// Spec 0039/ADR-0086: the 32-bit-index sibling, for .amesh schema-5
+// meshes (the glTF importer's own). An overload rather than a widened
+// signature, so all 17 existing createMesh() calls compile and behave
+// exactly as before. Mesh itself is identical either way -- the width
+// lives in the index Buffer this creates, which is why Mesh gains no
+// new state and ADR-0022's ownership model is untouched.
+//
+// Index values must be at or below the drawable ceiling the Asset
+// System's loader already enforces (kMaxDrawableIndexValue, ruling O1);
+// this function does not re-scan them.
+[[nodiscard]] atlantis::Result<Mesh, CreateMeshError> createMesh(atlantis::rhi::Device& device,
+                                                                  atlantis::rhi::VertexInputLayout layout,
+                                                                  const void* vertexData,
+                                                                  std::size_t vertexDataSizeBytes,
+                                                                  const std::uint32_t* indices,
+                                                                  std::uint32_t indexCount);
+
 }  // namespace atlantis::renderer

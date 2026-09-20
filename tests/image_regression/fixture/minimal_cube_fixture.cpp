@@ -515,9 +515,19 @@ Result<MinimalCubeFixture, FixtureSetupError> setUpMinimalCubeFixtureFromAsset(c
   MinimalCubeFixture fixture;
   fixture.device = std::move(deviceResult.value());
 
-  auto meshResult = createMesh(*fixture.device, *vertexInputLayout, meshData.vertexBytes().data(),
-                                meshData.vertexBytes().size(), meshData.indices().data(),
-                                static_cast<std::uint32_t>(meshData.indices().size()));
+  // Spec 0039/ADR-0087: this fixture is a composition root, so it owns
+  // the translation from the Asset System's own MeshIndexType to the
+  // matching createMesh() overload -- exactly as scene_load.cpp does.
+  // Reading the wrong width is a precondition violation, so this
+  // branch is what lets the fixture load a schema-5 artifact at all.
+  auto meshResult =
+      meshData.indexType() == atlantis::asset_system::MeshIndexType::Uint32
+          ? createMesh(*fixture.device, *vertexInputLayout, meshData.vertexBytes().data(),
+                       meshData.vertexBytes().size(), meshData.indices32().data(),
+                       static_cast<std::uint32_t>(meshData.indices32().size()))
+          : createMesh(*fixture.device, *vertexInputLayout, meshData.vertexBytes().data(),
+                       meshData.vertexBytes().size(), meshData.indices().data(),
+                       static_cast<std::uint32_t>(meshData.indices().size()));
   if (meshResult.isErr()) {
     return Result<MinimalCubeFixture, FixtureSetupError>::Err(FixtureSetupError::ResourceCreationFailed);
   }

@@ -384,7 +384,23 @@ void VulkanCommandList::bindVertexBuffer(atlantis::rhi::Buffer& buffer) {
 void VulkanCommandList::bindIndexBuffer(atlantis::rhi::Buffer& buffer) {
   ATLANTIS_CHECK(buffer.purpose() == atlantis::rhi::BufferPurpose::Index);
   auto& vulkanBuffer = static_cast<VulkanBuffer&>(buffer);
-  vkCmdBindIndexBuffer(commandBuffer_, vulkanBuffer.vkBuffer(), 0, VK_INDEX_TYPE_UINT16);
+
+  // Spec 0039/ADR-0086: the whole of this backend's index-width surface.
+  // The type is a property of the Buffer, fixed when its bytes were
+  // written, so this call site cannot disagree with its own contents. No
+  // default label, deliberately -- /w14062 then fails the build if
+  // rhi::IndexType ever gains a third enumerator.
+  VkIndexType vkIndexType = VK_INDEX_TYPE_UINT16;
+  switch (vulkanBuffer.indexType()) {
+    case atlantis::rhi::IndexType::Uint16:
+      vkIndexType = VK_INDEX_TYPE_UINT16;
+      break;
+    case atlantis::rhi::IndexType::Uint32:
+      vkIndexType = VK_INDEX_TYPE_UINT32;
+      break;
+  }
+
+  vkCmdBindIndexBuffer(commandBuffer_, vulkanBuffer.vkBuffer(), 0, vkIndexType);
 }
 
 void VulkanCommandList::bindUniformBuffer(atlantis::rhi::Buffer& buffer) {

@@ -79,6 +79,13 @@ enum class AssetLoadError {
   ArtifactDecodeFailed,
   MetadataParseFailed,
   MetadataArtifactMismatch,
+  // Spec 0039 ruling O1 / ADR-0086 Decision item 6: a schema-5 artifact
+  // whose vertex count would allow an index value above
+  // kMaxDrawableVertexCount's ceiling. Named, not folded into
+  // ArtifactDecodeFailed, because the artifact is perfectly well-formed
+  // -- it is simply larger than the index range the engine guarantees it
+  // can draw, and a caller should be able to tell those apart.
+  IndexValueExceedsDrawableRange,
 };
 
 enum class CookError {

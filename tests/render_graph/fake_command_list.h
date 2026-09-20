@@ -2,6 +2,8 @@
 
 #include <atlantis/rhi/command_list.h>
 
+#include <atlantis/assert.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -194,7 +196,12 @@ class FakeSampler final : public atlantis::rhi::Sampler {
 // stand-ins never need a real backing allocation.
 class FakeBuffer final : public atlantis::rhi::Buffer {
  public:
-  FakeBuffer(atlantis::rhi::BufferPurpose purpose, std::size_t sizeBytes) : purpose_(purpose), sizeBytes_(sizeBytes) {
+  // Spec 0039/ADR-0086: indexType defaults, so every existing
+  // FakeBuffer(purpose, sizeBytes) construction -- all of them, here and
+  // in tests/renderer/renderer_ownership_tests.cpp -- is unchanged.
+  FakeBuffer(atlantis::rhi::BufferPurpose purpose, std::size_t sizeBytes,
+             atlantis::rhi::IndexType indexType = atlantis::rhi::IndexType::Uint16)
+      : purpose_(purpose), sizeBytes_(sizeBytes), indexType_(indexType) {
     storage_.resize(sizeBytes);
   }
 
@@ -202,9 +209,18 @@ class FakeBuffer final : public atlantis::rhi::Buffer {
   [[nodiscard]] std::size_t sizeBytes() const override { return sizeBytes_; }
   [[nodiscard]] void* mappedData() override { return storage_.data(); }
 
+  // Same precondition as the real VulkanBuffer's own accessor -- a fake
+  // that answered where the real one aborts would hide exactly the
+  // misuse ruling O2 exists to surface.
+  [[nodiscard]] atlantis::rhi::IndexType indexType() const override {
+    ATLANTIS_CHECK(purpose_ == atlantis::rhi::BufferPurpose::Index);
+    return indexType_;
+  }
+
  private:
   atlantis::rhi::BufferPurpose purpose_;
   std::size_t sizeBytes_;
+  atlantis::rhi::IndexType indexType_;
   std::vector<std::byte> storage_;
 };
 

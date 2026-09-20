@@ -744,3 +744,48 @@ add_dependencies(atlantis_image_regression_pbr_materials_showcase_golden_generat
 # this file -- the concrete enforcement of "never registered with
 # CTest." Deliberately no run_... convenience custom target: this tool
 # requires a positional argument that varies per invocation.
+
+# Spec 0039 T3 / Plan 0039 Milestone 3: the large-index-grid golden's own
+# standalone generator. Renders through the same minimal-cube fixture and
+# the same writeLargeIndexGridV5() the GPU test uses, so the captured
+# image cannot drift from the compared one. Same shader set as the base
+# generator above (minimal_mesh + output_transform_unorm + shadow_cast),
+# because it is the same fixture.
+add_executable(atlantis_image_regression_index_type_large_grid_golden_generator index_type_large_grid_main.cpp)
+
+target_link_libraries(atlantis_image_regression_index_type_large_grid_golden_generator
+  PRIVATE
+    Atlantis::ImageRegressionFixture
+    Atlantis::ImageRegressionSupport
+    atlantis_compiler_warnings
+)
+
+target_compile_definitions(atlantis_image_regression_index_type_large_grid_golden_generator PRIVATE
+  ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+  ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
+)
+
+add_dependencies(atlantis_image_regression_index_type_large_grid_golden_generator
+  minimal_mesh_shaders output_transform_unorm_shaders shadow_cast_shaders)
+add_custom_command(TARGET atlantis_image_regression_index_type_large_grid_golden_generator POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+      "$<TARGET_FILE_DIR:atlantis_image_regression_index_type_large_grid_golden_generator>/shaders"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.vert.spv"
+      "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.vert.refl.json"
+      "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.spv"
+      "${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}/minimal_mesh.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_index_type_large_grid_golden_generator>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.spv"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.refl.json"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.spv"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_index_type_large_grid_golden_generator>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.refl.json"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_index_type_large_grid_golden_generator>/shaders/"
+)

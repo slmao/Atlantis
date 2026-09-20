@@ -25,7 +25,8 @@ namespace atlantis::vulkan_backend::detail {
 class VulkanBuffer final : public atlantis::rhi::Buffer {
  public:
   VulkanBuffer(VkDevice device, VkBuffer buffer, VkDeviceMemory memory, void* mappedData,
-               atlantis::rhi::BufferPurpose purpose, std::size_t sizeBytes);
+               atlantis::rhi::BufferPurpose purpose, std::size_t sizeBytes,
+               atlantis::rhi::IndexType indexType);
   ~VulkanBuffer() override;
 
   VulkanBuffer(const VulkanBuffer&) = delete;
@@ -36,6 +37,7 @@ class VulkanBuffer final : public atlantis::rhi::Buffer {
   [[nodiscard]] atlantis::rhi::BufferPurpose purpose() const override { return purpose_; }
   [[nodiscard]] std::size_t sizeBytes() const override { return sizeBytes_; }
   [[nodiscard]] void* mappedData() override { return mappedData_; }
+  [[nodiscard]] atlantis::rhi::IndexType indexType() const override;
 
   // Exists solely for VulkanCommandList's bind*Buffer() bodies -- never
   // reached from RHI's public surface.
@@ -48,6 +50,9 @@ class VulkanBuffer final : public atlantis::rhi::Buffer {
   void* mappedData_;
   atlantis::rhi::BufferPurpose purpose_;
   std::size_t sizeBytes_;
+  // Spec 0039/ADR-0086: only meaningful for BufferPurpose::Index; see
+  // indexType()'s own precondition in vulkan_buffer.cpp.
+  atlantis::rhi::IndexType indexType_;
 };
 
 }  // namespace atlantis::vulkan_backend::detail
