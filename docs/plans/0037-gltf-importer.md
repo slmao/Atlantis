@@ -273,7 +273,10 @@ in-file. It is a disclosed adaptation (Ruling 3).
   differing wrapS/wrapT, is a named error.
 
 **Scene graph (D5).** Only the default scene is imported (`scene`, else `scenes[0]`).
-Its nodes are flattened depth-first. `node_id` = glTF node index + 1, and synthetic
+Its nodes are flattened depth-first. *(As-built correction, 2026-09-20: the importer
+writes the `.scene.txt` v4 grammar itself with shortest round-trip floats
+(`std::to_chars`), which the existing parser accepts (`from_chars`, general format);
+`serializeSceneSource()` would have rounded every value to six fixed decimals.)* `node_id` = glTF node index + 1, and synthetic
 nodes are numbered after the last glTF id, deterministically. Three cases produce a
 synthetic identity-transform child:
 
@@ -319,15 +322,19 @@ this default (Ruling 9).
 (`isNormalLengthSquaredInTolerance`). Failures are a named error; there is no silent
 renormalization. This is the "归一化校验" (normalization check) requirement.
 
-**Logical-path namespace.** All generated identities live under `<import-name>/`
-(default: the glTF file stem, so `bistro/`). This namespace keeps a future second
+**Logical-path namespace.** All generated identities are namespaced by `<import-name>`
+(default: the glTF file stem, so `bistro`). This namespace keeps a future second
 import from colliding.
 
-- Meshes: `bistro/meshes/m<mesh>_p<prim>`. The names are built only from glTF array
+- Meshes: `meshes/<name>/mesh_<mesh>_<prim>`. The names are built only from glTF array
   indices, so they are always valid logical paths. glTF names are not used because
-  they are neither unique nor path-safe.
-- Materials: `bistro/materials/<index>.material.txt`.
-- Scene: `bistro/bistro.scene.txt`.
+  they are neither unique nor path-safe. *(As-built correction, 2026-09-20, human
+  ruling 2026-09-19: this Plan originally said `bistro/meshes/m<mesh>_p<prim>`;
+  Milestone 3 shipped `meshes/<name>/mesh_<i>_<j>` and the ruling kept it. Mesh
+  paths are therefore namespaced under `meshes/`, not under `<name>/`.)*
+- Materials: `<name>/materials/<index>.material.txt`.
+- Scene: `<name>/<name>.scene.txt` (so `bistro/bistro.scene.txt`). *(As-built
+  correction, 2026-09-20: generalized from the Bistro example, no change.)*
 - Textures: `bistro/<upstream-relative .dds path>`. The cooker is run with
   `--asset-root=content/`, so the relative path it hashes is the same string the
   materials reference.

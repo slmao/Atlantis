@@ -76,3 +76,9 @@ android/app/src/main/assets/
 # committed once a future Milestone sources it (it ships prebuilt;
 # there is no source to build it from here).
 !android/app/src/main/jniLibs/**/*.so
+
+# Spec 0037 repository content policy (Plan 0037 Milestone 2): large external
+# content collections (>50 MB) are fetched by a pinned, SHA256-verifying
+# script (tools/content/fetch_*.ps1), never committed. Their provenance and
+# licence files live in tools/content/ and ARE committed.
+/content/

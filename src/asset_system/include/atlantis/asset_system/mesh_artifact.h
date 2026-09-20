@@ -64,4 +64,34 @@ struct DecodedMeshArtifact {
 [[nodiscard]] atlantis::Result<DecodedMeshArtifact, ArtifactDecodeError> decodeMeshArtifact(
     const std::vector<std::byte>& bytes);
 
+// Plan 0037 (D2, Spec 0036 workflow 1b): schema version 5 -- the exact
+// same 40-byte header and 60-byte vertex layout as version 4 above, but
+// std::uint32_t indices, removing version 4's 65,535-vertex ceiling. The
+// glTF importer is the only producer; a v5 artifact cannot be rendered
+// until workflow 1b parameterizes the RHI's index type (disclosed there,
+// not silently worked around). Separate encode/decode siblings, never a
+// unified reader: encodeMeshArtifact()/decodeMeshArtifact() keep
+// rejecting every version but 4, byte-for-byte unchanged.
+inline constexpr std::uint32_t kMeshArtifactSchemaVersionU32 = 5;
+
+struct DecodedMeshArtifactU32 {
+  AssetId assetId = 0;
+  std::uint32_t vertexStrideBytes = 0;
+  std::vector<std::byte> vertexBytes;
+  std::vector<std::uint32_t> indices;
+};
+
+[[nodiscard]] std::vector<std::byte> encodeMeshArtifactU32(AssetId assetId, const ParsedMeshSource& source,
+                                                            const std::vector<VertexTangent>& tangents);
+
+// The importer's own entry point: full-fidelity u32 indices without the
+// u16 ParsedMeshSource field in between (Plan 0037 M3). Same v5 byte
+// layout as the overload above.
+[[nodiscard]] std::vector<std::byte> encodeMeshArtifactU32FromIndices(
+    AssetId assetId, const std::vector<MeshSourceVertex>& vertices, const std::vector<std::uint32_t>& indices,
+    const std::vector<VertexTangent>& tangents);
+
+[[nodiscard]] atlantis::Result<DecodedMeshArtifactU32, ArtifactDecodeError> decodeMeshArtifactU32(
+    const std::vector<std::byte>& bytes);
+
 }  // namespace atlantis::asset_system

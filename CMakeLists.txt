@@ -94,8 +94,12 @@ add_subdirectory(src/shader_system)
 # src/platform/, src/vulkan_backend/, src/runtime/, and android/) --
 # reported explicitly in the implementing PR, per AGENTS.md.
 if(NOT ANDROID)
+  include(cmake/AtlantisCgltf.cmake)  # Plan 0037 M1: Cgltf::Cgltf for the host-only glTF importer
   add_subdirectory(src/tools/shader_compiler)
   add_subdirectory(src/tools/asset_cooker)
+  # Plan 0037 (ADR-0084, as-built correction 2026-09-19): the glTF
+  # importer registers alongside the cooker, host-only.
+  add_subdirectory(src/tools/gltf_importer)
   # Must come after add_subdirectory(src/asset_system) and
   # add_subdirectory(src/tools/asset_cooker) (Plan 0012 Section D4):
   # atlantis_add_static_mesh_asset() is defined in the former and this
@@ -242,5 +246,6 @@ if(ATLANTIS_BUILD_TESTS)
   add_subdirectory(tests/shader_system)
   add_subdirectory(tests/tools/shader_compiler)
   add_subdirectory(tests/tools/asset_cooker)
+  add_subdirectory(tests/tools/gltf_importer)
   add_subdirectory(tests/runtime)
 endif()

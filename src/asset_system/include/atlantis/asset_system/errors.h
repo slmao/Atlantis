@@ -88,9 +88,11 @@ enum class CookError {
   ArtifactWriteFailed,
   MetadataWriteFailed,
   // Plan 0029 Section P2/ADR-0073 Decision items 4a/5: generateTangents()'s
-  // own two whole-mesh failure causes. DegenerateTangentBasis fires when
-  // a vertex has at least one non-degenerate contributing triangle yet
-  // its accumulated tangent still fails the orthogonalization epsilon.
+  // whole-mesh failure causes. DegenerateTangentBasis is no longer
+  // returned: since ADR-0073's Amendment of 2026-09-19 a vertex whose
+  // accumulated tangent fails the orthogonalization epsilon takes the
+  // item 4a axis fallback instead. The enumerator is kept so existing
+  // exhaustive switches (the cooker's message table) stay unchanged.
   // TangentHandednessConflict fires when two valid (geometrically- and
   // UV-non-degenerate) contributions at the same vertex disagree in
   // h_face sign -- a real chirality conflict, never an artifact of a

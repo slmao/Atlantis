@@ -59,18 +59,27 @@ struct VertexAccumulator {
 }  // namespace
 
 atlantis::Result<std::vector<VertexTangent>, CookError> generateTangents(const ParsedMeshSource& source) {
+  // Plan 0037 (D8): thin adapter -- the algorithm itself lives in the
+  // shared u32-index core below, byte-identical for every existing input.
+  std::vector<std::uint32_t> indicesU32(source.indices.begin(), source.indices.end());
+  return generateTangentsU32(source.vertices, indicesU32);
+}
+
+atlantis::Result<std::vector<VertexTangent>, CookError> generateTangentsU32(
+    const std::vector<MeshSourceVertex>& vertices, const std::vector<std::uint32_t>& indices,
+    TangentGenerationStats* stats) {
   using ResultT = atlantis::Result<std::vector<VertexTangent>, CookError>;
 
-  std::vector<VertexAccumulator> accumulators(source.vertices.size());
+  std::vector<VertexAccumulator> accumulators(vertices.size());
 
-  for (std::size_t i = 0; i + 2 < source.indices.size(); i += 3) {
-    const std::uint16_t v0 = source.indices[i];
-    const std::uint16_t v1 = source.indices[i + 1];
-    const std::uint16_t v2 = source.indices[i + 2];
+  for (std::size_t i = 0; i + 2 < indices.size(); i += 3) {
+    const std::uint32_t v0 = indices[i];
+    const std::uint32_t v1 = indices[i + 1];
+    const std::uint32_t v2 = indices[i + 2];
 
-    const Vec3 p0 = positionOf(source.vertices[v0]);
-    const Vec3 p1 = positionOf(source.vertices[v1]);
-    const Vec3 p2 = positionOf(source.vertices[v2]);
+    const Vec3 p0 = positionOf(vertices[v0]);
+    const Vec3 p1 = positionOf(vertices[v1]);
+    const Vec3 p2 = positionOf(vertices[v2]);
 
     const Vec3 e1 = sub(p1, p0);
     const Vec3 e2 = sub(p2, p0);
@@ -88,10 +97,10 @@ atlantis::Result<std::vector<VertexTangent>, CookError> generateTangents(const P
     const double geometricRatio = area2 / (edgeScale * edgeScale);
     if (geometricRatio < kGeometricDegeneracyRatioEpsilon) continue;
 
-    const double d1u = static_cast<double>(source.vertices[v1].uvU) - static_cast<double>(source.vertices[v0].uvU);
-    const double d1v = static_cast<double>(source.vertices[v1].uvV) - static_cast<double>(source.vertices[v0].uvV);
-    const double d2u = static_cast<double>(source.vertices[v2].uvU) - static_cast<double>(source.vertices[v0].uvU);
-    const double d2v = static_cast<double>(source.vertices[v2].uvV) - static_cast<double>(source.vertices[v0].uvV);
+    const double d1u = static_cast<double>(vertices[v1].uvU) - static_cast<double>(vertices[v0].uvU);
+    const double d1v = static_cast<double>(vertices[v1].uvV) - static_cast<double>(vertices[v0].uvV);
+    const double d2u = static_cast<double>(vertices[v2].uvU) - static_cast<double>(vertices[v0].uvU);
+    const double d2v = static_cast<double>(vertices[v2].uvV) - static_cast<double>(vertices[v0].uvV);
 
     const double det = d1u * d2v - d2u * d1v;
     if (std::abs(det) < kUvDegeneracyEpsilon) continue;
@@ -99,10 +108,10 @@ atlantis::Result<std::vector<VertexTangent>, CookError> generateTangents(const P
     const Vec3 tFace = scale(sub(scale(e1, d2v), scale(e2, d1v)), 1.0 / det);
     const Vec3 bFace = scale(sub(scale(e2, d1u), scale(e1, d2u)), 1.0 / det);
 
-    const std::array<std::uint16_t, 3> corners = {v0, v1, v2};
-    for (std::uint16_t vertexIndex : corners) {
+    const std::array<std::uint32_t, 3> corners = {v0, v1, v2};
+    for (std::uint32_t vertexIndex : corners) {
       VertexAccumulator& accumulator = accumulators[vertexIndex];
-      const Vec3 normal = normalOf(source.vertices[vertexIndex]);
+      const Vec3 normal = normalOf(vertices[vertexIndex]);
       const double hFace = signWithTiebreak(dot(cross(normal, tFace), bFace));
 
       if (!accumulator.hasContribution) {
@@ -122,16 +131,33 @@ atlantis::Result<std::vector<VertexTangent>, CookError> generateTangents(const P
     if (accumulator.hasConflict) return ResultT::Err(CookError::TangentHandednessConflict);
   }
 
-  std::vector<VertexTangent> tangents(source.vertices.size());
-  for (std::size_t vertexIndex = 0; vertexIndex < source.vertices.size(); ++vertexIndex) {
+  std::vector<VertexTangent> tangents(vertices.size());
+  for (std::size_t vertexIndex = 0; vertexIndex < vertices.size(); ++vertexIndex) {
     const VertexAccumulator& accumulator = accumulators[vertexIndex];
-    const Vec3 normal = normalOf(source.vertices[vertexIndex]);
+    const Vec3 normal = normalOf(vertices[vertexIndex]);
 
-    if (!accumulator.hasContribution) {
+    Vec3 orthoRaw{};
+    double orthoLength = 0.0;
+    if (accumulator.hasContribution) {
+      orthoRaw = sub(accumulator.tangentSum, scale(normal, dot(normal, accumulator.tangentSum)));
+      orthoLength = length(orthoRaw);
+    }
+
+    if (!accumulator.hasContribution || orthoLength < kOrthogonalizationDegeneracyEpsilon) {
       // ADR-0073 Decision item 4a: deterministic fallback for a vertex
       // referenced by zero non-degenerate triangles (minimal_cube's own
       // real case, and pbr_sphere's own two seam-closure duplicates
-      // under the corrected geometric-degeneracy check).
+      // under the corrected geometric-degeneracy check). ADR-0073
+      // Amendment 2026-09-19: also taken by a vertex whose accumulated
+      // tangent orthogonalizes to (near) zero -- parallel to its normal
+      // or cancelled out -- instead of failing the whole mesh.
+      if (stats != nullptr) {
+        if (accumulator.hasContribution) {
+          ++stats->degenerateBasisFallbacks;
+        } else {
+          ++stats->zeroContributionFallbacks;
+        }
+      }
       std::size_t bestAxis = 0;
       double bestAbsDot = std::abs(dot(normal, kFallbackAxes[0]));
       for (std::size_t axis = 1; axis < kFallbackAxes.size(); ++axis) {
@@ -147,10 +173,6 @@ atlantis::Result<std::vector<VertexTangent>, CookError> generateTangents(const P
                                              static_cast<float>(tUnit.z), 1.0f};
       continue;
     }
-
-    const Vec3 orthoRaw = sub(accumulator.tangentSum, scale(normal, dot(normal, accumulator.tangentSum)));
-    const double orthoLength = length(orthoRaw);
-    if (orthoLength < kOrthogonalizationDegeneracyEpsilon) return ResultT::Err(CookError::DegenerateTangentBasis);
 
     const Vec3 orthoUnit = scale(orthoRaw, 1.0 / orthoLength);
     const double handedness = *accumulator.firstHandedness;

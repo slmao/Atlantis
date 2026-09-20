@@ -4,6 +4,7 @@
 #include <bit>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 
 namespace atlantis::asset_system {
 
@@ -206,4 +207,175 @@ atlantis::Result<DecodedMeshArtifact, ArtifactDecodeError> decodeMeshArtifact(co
   return ResultT::Ok(std::move(decoded));
 }
 
+
+// ---------------------------------------------------------------------------
+// Plan 0037 (D2): schema version 5 -- u32-index siblings. Deliberately a
+// separate code path mirroring the v4 pair above, not a unified reader
+// (the Plan's own explicit decision); the vertex-serialization loop and
+// every decode validation are restated here, with the three real
+// differences named inline: version field, index byte width, and the
+// absent 65,535-vertex cap.
+// ---------------------------------------------------------------------------
+
+std::vector<std::byte> encodeMeshArtifactU32(AssetId assetId, const ParsedMeshSource& source,
+                                              const std::vector<VertexTangent>& tangents) {
+  std::vector<std::uint32_t> indices(source.indices.begin(), source.indices.end());
+  return encodeMeshArtifactU32FromIndices(assetId, source.vertices, indices, tangents);
+}
+
+std::vector<std::byte> encodeMeshArtifactU32FromIndices(
+    AssetId assetId, const std::vector<MeshSourceVertex>& vertices, const std::vector<std::uint32_t>& indices,
+    const std::vector<VertexTangent>& tangents) {
+  ATLANTIS_CHECK(tangents.size() == vertices.size());
+
+  // A v5 artifact's own u32 offset fields bound its size; the importer's
+  // real meshes are far below this, so a violated bound is a programmer
+  // error, not a recoverable condition.
+  ATLANTIS_CHECK(kMeshArtifactHeaderSizeBytes + static_cast<std::uint64_t>(vertices.size()) *
+                                                      kMeshArtifactVertexStrideBytes +
+                         static_cast<std::uint64_t>(indices.size()) * 4 <=
+                     std::numeric_limits<std::uint32_t>::max());
+
+  std::vector<std::byte> out;
+  out.reserve(kMeshArtifactHeaderSizeBytes + vertices.size() * kMeshArtifactVertexStrideBytes +
+              indices.size() * 4);
+
+  for (char c : kMagic) out.push_back(static_cast<std::byte>(c));
+  appendU32LE(out, kMeshArtifactSchemaVersionU32);  // difference 1: version 5
+  appendU32LE(out, kMeshArtifactVertexStrideBytes);
+  appendU64LE(out, assetId);
+  appendU32LE(out, static_cast<std::uint32_t>(vertices.size()));
+  appendU32LE(out, static_cast<std::uint32_t>(indices.size()));
+
+  const auto vertexBytesOffset = static_cast<std::uint32_t>(kMeshArtifactHeaderSizeBytes);
+  const std::uint32_t indexBytesOffset =
+      vertexBytesOffset + static_cast<std::uint32_t>(vertices.size()) * kMeshArtifactVertexStrideBytes;
+  appendU32LE(out, vertexBytesOffset);
+  appendU32LE(out, indexBytesOffset);
+
+  for (std::size_t i = 0; i < vertices.size(); ++i) {
+    const MeshSourceVertex& v = vertices[i];
+    const VertexTangent& t = tangents[i];
+    appendFloatLE(out, v.positionX);
+    appendFloatLE(out, v.positionY);
+    appendFloatLE(out, v.positionZ);
+    appendFloatLE(out, v.colorR);
+    appendFloatLE(out, v.colorG);
+    appendFloatLE(out, v.colorB);
+    appendFloatLE(out, v.uvU);
+    appendFloatLE(out, v.uvV);
+    appendFloatLE(out, v.normalX);
+    appendFloatLE(out, v.normalY);
+    appendFloatLE(out, v.normalZ);
+    appendFloatLE(out, t.x);
+    appendFloatLE(out, t.y);
+    appendFloatLE(out, t.z);
+    appendFloatLE(out, t.w);
+  }
+
+  // Difference 2: u32 indices (difference 3: no 65,535-vertex cap -- the
+  // u64 offset/size checks below are the only ceiling).
+  for (std::uint32_t index : indices) appendU32LE(out, index);
+
+  return out;
+}
+
+atlantis::Result<DecodedMeshArtifactU32, ArtifactDecodeError> decodeMeshArtifactU32(
+    const std::vector<std::byte>& bytes) {
+  using ResultT = atlantis::Result<DecodedMeshArtifactU32, ArtifactDecodeError>;
+
+  if (bytes.size() < kMeshArtifactHeaderSizeBytes) return ResultT::Err(ArtifactDecodeError::TooSmallForHeader);
+
+  for (std::size_t i = 0; i < kMagic.size(); ++i) {
+    if (bytes[i] != static_cast<std::byte>(kMagic[i])) return ResultT::Err(ArtifactDecodeError::BadMagic);
+  }
+
+  const std::uint32_t schemaVersion = readU32LE(bytes.data() + 8);
+  if (schemaVersion != kMeshArtifactSchemaVersionU32) return ResultT::Err(ArtifactDecodeError::UnknownSchemaVersion);
+
+  const std::uint32_t vertexStrideBytes = readU32LE(bytes.data() + 12);
+  if (vertexStrideBytes != kMeshArtifactVertexStrideBytes) {
+    return ResultT::Err(ArtifactDecodeError::UnsupportedVertexStride);
+  }
+
+  const AssetId assetId = readU64LE(bytes.data() + 16);
+  const std::uint32_t vertexCount = readU32LE(bytes.data() + 24);
+  const std::uint32_t indexCount = readU32LE(bytes.data() + 28);
+  const std::uint32_t vertexBytesOffset = readU32LE(bytes.data() + 32);
+  const std::uint32_t indexBytesOffset = readU32LE(bytes.data() + 36);
+
+  if (vertexCount == 0) return ResultT::Err(ArtifactDecodeError::VertexCountOutOfRange);
+  if (indexCount == 0 || indexCount % 3 != 0) return ResultT::Err(ArtifactDecodeError::IndexCountNotMultipleOfThree);
+
+  // Every size computed in uint64_t before comparison/allocation, so a
+  // header crafted to overflow the u32 offset fields cannot drive an
+  // oversized or wrapped-around allocation.
+  const std::uint64_t expectedVertexBytesOffset = kMeshArtifactHeaderSizeBytes;
+  const std::uint64_t expectedIndexBytesOffset =
+      expectedVertexBytesOffset + static_cast<std::uint64_t>(vertexCount) * vertexStrideBytes;
+  const std::uint64_t expectedTotalSize = expectedIndexBytesOffset + static_cast<std::uint64_t>(indexCount) * 4;
+
+  if (vertexBytesOffset != expectedVertexBytesOffset || indexBytesOffset != expectedIndexBytesOffset) {
+    return ResultT::Err(ArtifactDecodeError::InconsistentOffsets);
+  }
+  if (static_cast<std::uint64_t>(bytes.size()) != expectedTotalSize) {
+    return ResultT::Err(ArtifactDecodeError::SizeMismatch);
+  }
+
+  DecodedMeshArtifactU32 decoded;
+  decoded.assetId = assetId;
+  decoded.vertexStrideBytes = vertexStrideBytes;
+  decoded.vertexBytes.assign(bytes.begin() + static_cast<std::ptrdiff_t>(vertexBytesOffset),
+                             bytes.begin() + static_cast<std::ptrdiff_t>(indexBytesOffset));
+
+  // The identical per-vertex well-formedness battery as v4 (finite
+  // floats, unit normal, unit/orthogonal/+-1-handed tangent), restated
+  // rather than shared per the Plan's separate-code-paths decision.
+  for (std::uint32_t v = 0; v < vertexCount; ++v) {
+    const std::byte* vertexStart = decoded.vertexBytes.data() + static_cast<std::size_t>(v) * vertexStrideBytes;
+    for (std::size_t floatIndex = 0; floatIndex < 15; ++floatIndex) {
+      const float value = readFloatLE(vertexStart + floatIndex * 4);
+      if (!std::isfinite(value)) return ResultT::Err(ArtifactDecodeError::NonFiniteFloat);
+    }
+
+    const float normalX = readFloatLE(vertexStart + kMeshArtifactNormalOffsetBytes);
+    const float normalY = readFloatLE(vertexStart + kMeshArtifactNormalOffsetBytes + 4);
+    const float normalZ = readFloatLE(vertexStart + kMeshArtifactNormalOffsetBytes + 8);
+    const double lengthSquared = detail::computeNormalLengthSquared(normalX, normalY, normalZ);
+    if (!detail::isNormalLengthSquaredInTolerance(lengthSquared)) {
+      return ResultT::Err(ArtifactDecodeError::NonUnitNormal);
+    }
+
+    const float tangentX = readFloatLE(vertexStart + kMeshArtifactTangentOffsetBytes);
+    const float tangentY = readFloatLE(vertexStart + kMeshArtifactTangentOffsetBytes + 4);
+    const float tangentZ = readFloatLE(vertexStart + kMeshArtifactTangentOffsetBytes + 8);
+    const float tangentW = readFloatLE(vertexStart + kMeshArtifactTangentOffsetBytes + 12);
+
+    const double tangentLengthSquared = detail::computeNormalLengthSquared(tangentX, tangentY, tangentZ);
+    if (!detail::isNormalLengthSquaredInTolerance(tangentLengthSquared)) {
+      return ResultT::Err(ArtifactDecodeError::NonUnitTangent);
+    }
+
+    const double dotNT = static_cast<double>(normalX) * static_cast<double>(tangentX) +
+                          static_cast<double>(normalY) * static_cast<double>(tangentY) +
+                          static_cast<double>(normalZ) * static_cast<double>(tangentZ);
+    if (std::abs(dotNT) >= 1e-3) return ResultT::Err(ArtifactDecodeError::NonOrthogonalTangent);
+
+    if (tangentW != 1.0f && tangentW != -1.0f) {
+      return ResultT::Err(ArtifactDecodeError::InvalidTangentHandedness);
+    }
+  }
+
+  decoded.indices.reserve(indexCount);
+  for (std::uint32_t i = 0; i < indexCount; ++i) {
+    const std::byte* indexStart = bytes.data() + indexBytesOffset + static_cast<std::size_t>(i) * 4;
+    const std::uint32_t value = readU32LE(indexStart);
+    if (value >= vertexCount) return ResultT::Err(ArtifactDecodeError::IndexOutOfRange);
+    decoded.indices.push_back(value);
+  }
+
+  return ResultT::Ok(std::move(decoded));
+}
+
 }  // namespace atlantis::asset_system
+

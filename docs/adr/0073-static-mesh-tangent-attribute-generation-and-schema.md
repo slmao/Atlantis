@@ -682,3 +682,52 @@ source edit), the removal of the `425→473`/sign-split migration this
 ADR's own first Accepted Correction had introduced, and the Required
 verification list above, in the same review pass that approved the
 matching Spec 0029 and Plan 0029 corrections.
+
+## Amendment — 2026-09-19 (degenerate tangent basis takes the item 4a fallback)
+
+**Amendment (2026-09-19, human-ruled, Plan 0037 M3 real-data gate):** a
+vertex whose accumulated tangent sum orthogonalizes below
+`kOrthogonalizationDegeneracyEpsilon` (including exact cancellation) now
+takes the same deterministic axis fallback as a zero-contribution
+vertex, instead of failing the whole mesh with `DegenerateTangentBasis`.
+`TangentHandednessConflict` remains whole-mesh fatal (the glTF importer
+resolves it by vertex splitting). Core decision unchanged.
+
+**Why.** Decision item 5 kept `DegenerateTangentBasis` as a safety net
+for "a pathological geometric case, not observed in any of the 5
+currently-committed meshes." Real production content does contain it.
+Importing the Bistro glTF scene
+([Plan 0037](../plans/0037-gltf-importer.md) Milestone 3), with
+handedness conflicts already removed by the importer's vertex split, 26
+of 551 meshes still failed on 2,403 vertices: 2,374 whose accumulated
+tangent is parallel to the vertex normal and 29 whose face tangents
+cancel. Four of the 26 needed no split at all, so the failures are a
+property of the data, not of the split. Failing a whole mesh over a few
+such vertices would make the asset unimportable.
+
+**What changes.**
+
+- Item 4a's fallback now covers both causes: no non-degenerate
+  contributing triangle (unchanged), or contributions whose
+  orthogonalized sum is shorter than `kOrthogonalizationDegeneracyEpsilon`
+  (new). Its output is unchanged in every respect: the normal's
+  least-aligned axis (tie-break X, then Y, then Z), made orthogonal to
+  the normal, unit length, `w = +1`. The vertex's own accumulated
+  handedness is not used, consistent with item 4a's stated purpose: a
+  well-defined artifact, not a claim of UV-derived tangent quality.
+- `generateTangents()`/`generateTangentsU32()` no longer return
+  `CookError::DegenerateTangentBasis`. The enumerator stays, so the
+  existing exhaustive `CookError` message switch is unchanged.
+- The generator can report fallback counts by cause through an optional
+  `TangentGenerationStats` out-parameter; the glTF importer records the
+  degenerate-basis count per mesh in its `import_report.txt`.
+
+**What does not change.** The Lengyel accumulation, the degeneracy
+epsilons, the geometric-then-UV degeneracy checks, and item 5's
+whole-mesh rejection of `TangentHandednessConflict`. Every committed
+authored mesh cooks without reaching the new path, so its cooked
+`.amesh` bytes are identical, confirmed by the cooker determinism tests
+and a full rebuild.
+
+**Deciders:** slmao, 2026-09-19 (human ruling, disclosed in the Plan 0037
+implementation PR).
