@@ -349,7 +349,7 @@ atlantis::Result<PbrNormalMapDemoFixture, PbrNormalMapDemoSetupError> setUpPbrNo
     fixture.environmentData.emplace(std::move(environmentResult.value()));
   }
 
-  auto cameraBufferResult = fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
+  auto cameraBufferResult = fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
   if (cameraBufferResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
   fixture.cameraBuffer = std::move(cameraBufferResult.value());
 

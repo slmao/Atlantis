@@ -292,7 +292,7 @@ setUpIntegratedShowcaseDemoFixture(const atlantis::runtime::BootstrapConfig& con
   // Matches runtime_application.cpp's own current camera buffer sizing
   // exactly (32 floats view+projection + 176-byte FrameLightingData +
   // 16-byte CameraWorldPositionData + 128-byte light-space tail = 592).
-  auto cameraBufferResult = fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
+  auto cameraBufferResult = fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
   if (cameraBufferResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ResourceCreationFailed);
   fixture.cameraBuffer = std::move(cameraBufferResult.value());
 

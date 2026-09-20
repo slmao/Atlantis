@@ -353,7 +353,7 @@ atlantis::Result<PbrAnisotropicDemoFixture, PbrAnisotropicDemoSetupError> setUpP
   // fixture's own identical, current sizing.
   auto cameraBufferResult = fixture.device->createBuffer(
       {.purpose = BufferPurpose::Uniform,
-       .sizeBytes = 592});
+       .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
   if (cameraBufferResult.isErr()) return ResultT::Err(PbrAnisotropicDemoSetupError::ResourceCreationFailed);
   fixture.cameraBuffer = std::move(cameraBufferResult.value());
 

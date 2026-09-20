@@ -141,6 +141,20 @@ static_assert(offsetof(CameraWorldPositionData, z) == 8);
 static_assert(offsetof(CameraWorldPositionData, _pad) == 12);
 static_assert(sizeof(CameraWorldPositionData) == 16);
 
+// Plan 0040 Milestone 0 (human-ruled O1): the camera/lighting uniform
+// Buffer's total byte size, derived from its named parts -- the value the
+// eleven .slang CameraUniform declarations describe and
+// pbr_reflection_cross_check_tests.cpp proves against live slangc
+// reflection. The two trailing regions are shader-side-only (no C++
+// struct in this header): 144 = the 9-float4 irradiance SH9 tail, 128 =
+// the light-space view+projection pair. runtime_application.cpp allocated
+// only 464 here from Plan 0027 M9 until 2026-09-21 -- a 128-byte
+// every-frame overrun this constant exists to make unrepresentable.
+inline constexpr std::size_t kCameraUniformBufferSizeBytes =
+    sizeof(CameraMatrices) + sizeof(FrameLightingData) + sizeof(CameraWorldPositionData) + 144 /* SH9 */ +
+    128 /* light-space pair */;
+static_assert(kCameraUniformBufferSizeBytes == 592);
+
 // Plan 0019 Section P8: a deliberate, disclosed, narrow break from this
 // file's own "raw values only, no atlantis::world:: type" style --
 // atlantis::runtime (Runtime) already depends on Atlantis::World

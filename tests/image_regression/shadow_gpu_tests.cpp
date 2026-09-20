@@ -362,7 +362,7 @@ struct ShadowTestRig {
       std::array<float, 4>{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 0.8f, MaterialEnvironmentBinding::None);
   if (materialResult.isErr()) return std::nullopt;
 
-  auto cameraBufferResult = device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
+  auto cameraBufferResult = device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
   if (cameraBufferResult.isErr()) return std::nullopt;
 
   auto depthTextureResult = device->createTexture({.extent = kExtent, .format = DepthFormat::D32Sfloat});

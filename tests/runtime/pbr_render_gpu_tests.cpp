@@ -501,7 +501,7 @@ TEST_CASE("PbrDirectLit parameter transmission: two draws differing only in meta
       // Plan 0027 Milestone 9 (ADR-0072 D-9/P9d): widened from 320 to the new 592-byte PBR camera-buffer
       // tail (light-space view+projection, P5) -- CameraMatrices/FrameLightingData/CameraWorldPositionData
       // themselves stay byte-for-byte unmodified (writeCameraBuffer()'s own offsets below are untouched).
-      rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
+      rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
   REQUIRE(cameraBufferResult.isOk());
   std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer = std::move(cameraBufferResult.value());
   const FrameLightingData lighting = oneDirectionalLight(2.0f);
@@ -637,7 +637,7 @@ TEST_CASE("A mixed UnlitTextured+LitTextured+PbrDirectLit scene renders all thre
       // Plan 0027 Milestone 9 (ADR-0072 D-9/P9d): widened from 320 to the new 592-byte PBR camera-buffer
       // tail (light-space view+projection, P5) -- CameraMatrices/FrameLightingData/CameraWorldPositionData
       // themselves stay byte-for-byte unmodified (writeCameraBuffer()'s own offsets below are untouched).
-      rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
+      rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
   REQUIRE(cameraBufferResult.isOk());
   std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer = std::move(cameraBufferResult.value());
   const FrameLightingData lighting = oneDirectionalLight(2.0f);
@@ -734,7 +734,7 @@ TEST_CASE("Above-1.0 PBR radiance survives the HDR intermediate and follows Rein
       // Plan 0027 Milestone 9 (ADR-0072 D-9/P9d): widened from 320 to the new 592-byte PBR camera-buffer
       // tail (light-space view+projection, P5) -- CameraMatrices/FrameLightingData/CameraWorldPositionData
       // themselves stay byte-for-byte unmodified (writeCameraBuffer()'s own offsets below are untouched).
-      rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
+      rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
   REQUIRE(cameraBufferResult.isOk());
   std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer = std::move(cameraBufferResult.value());
 
@@ -807,7 +807,7 @@ TEST_CASE("Real-GPU: exposureCompensationEv = -1/0/+1 produces a strictly bright
       std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.5f);
   REQUIRE(materialResult.isOk());
 
-  auto cameraBufferResult = rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
+  auto cameraBufferResult = rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
   REQUIRE(cameraBufferResult.isOk());
   std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer = std::move(cameraBufferResult.value());
 
@@ -879,7 +879,7 @@ TEST_CASE("PbrDirectLit reflects a runtime Light intensity change on the next fr
       // Plan 0027 Milestone 9 (ADR-0072 D-9/P9d): widened from 320 to the new 592-byte PBR camera-buffer
       // tail (light-space view+projection, P5) -- CameraMatrices/FrameLightingData/CameraWorldPositionData
       // themselves stay byte-for-byte unmodified (writeCameraBuffer()'s own offsets below are untouched).
-      rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
+      rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
   REQUIRE(cameraBufferResult.isOk());
   std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer = std::move(cameraBufferResult.value());
 
@@ -1055,7 +1055,7 @@ TEST_CASE("A Pipeline with sampledTextureBindingCount == 5 (pbr_ibl_normal_map) 
   REQUIRE(shadowLightSpaceBufferResult.isOk());
   std::unique_ptr<atlantis::rhi::Buffer> shadowLightSpaceBuffer = std::move(shadowLightSpaceBufferResult.value());
 
-  auto cameraBufferResult = device.createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
+  auto cameraBufferResult = device.createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
   REQUIRE(cameraBufferResult.isOk());
   std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer = std::move(cameraBufferResult.value());
   const FrameLightingData lighting = oneDirectionalLight(2.0f);

@@ -787,7 +787,8 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // tail-only CameraWorldPositionData (16 bytes) appended after
   // FrameLightingData, at absolute byte offset 304 -- CameraMatrices
   // and FrameLightingData themselves stay byte-for-byte unmodified.
-  auto cameraBufferResult = device_->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 464});
+  auto cameraBufferResult =
+      device_->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = kCameraUniformBufferSizeBytes});
   if (cameraBufferResult.isErr()) {
     ATLANTIS_LOG_ERROR("createBuffer() (camera uniform) failed");
     lifecycle_.markFailed();
