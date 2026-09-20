@@ -106,6 +106,24 @@ enum class BufferPurpose {
   Staging,   // new (Spec 0016) -- host-visible source for CommandList::copyBufferToTexture() (ADR-0056)
 };
 
+// Spec 0039/ADR-0086: the width of one element of a BufferPurpose::Index
+// Buffer, fixed when that Buffer is created (never at bind time), read
+// back through Buffer::indexType() and mapped to the backend's own index
+// type by CommandList::bindIndexBuffer(). Backend-independent by
+// construction -- a standard uint16/uint32 distinction, not a VkIndexType
+// in disguise (AGENTS.md Phase 1). Uint16 is the default everywhere, so
+// every index-buffer creation site written before this enum existed keeps
+// its exact prior meaning.
+//
+// Index *values* must not exceed 2^24-1: fullDrawIndexUint32 is
+// deliberately left disabled (Spec 0039 ruling O1), so that is the only
+// ceiling the Vulkan specification guarantees. The Asset System's own
+// loader enforces it (kMaxDrawableIndexValue, ADR-0087).
+enum class IndexType {
+  Uint16,
+  Uint32,  // new (Spec 0039) -- .amesh schema 5, the glTF importer's own meshes
+};
+
 // Spec 0016/ADR-0055: sampled-texture color-space contract, independent
 // of the swapchain/offscreen-shaped Format enum above (whose own BGRA
 // variants are meaningless for an authored texture). First two values
@@ -150,6 +168,11 @@ enum class AddressMode {
 struct BufferCreateParams {
   BufferPurpose purpose = BufferPurpose::Vertex;
   std::size_t sizeBytes = 0;
+  // Spec 0039/ADR-0086: meaningful only when purpose ==
+  // BufferPurpose::Index; ignored for every other purpose. Defaulted, so
+  // a designated initializer that names only purpose/sizeBytes -- every
+  // such site written before Spec 0039 -- still means 16-bit indices.
+  IndexType indexType = IndexType::Uint16;
 };
 
 [[nodiscard]] bool operator==(const BufferCreateParams& lhs, const BufferCreateParams& rhs);

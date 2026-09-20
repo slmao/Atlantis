@@ -868,7 +868,8 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Buffer>, atlantis::rhi::BufferCr
   }
 
   return ResultT::Ok(
-      std::make_unique<VulkanBuffer>(device_, buffer, memory, mappedData, params.purpose, params.sizeBytes));
+      std::make_unique<VulkanBuffer>(device_, buffer, memory, mappedData, params.purpose, params.sizeBytes,
+                                      params.indexType));
 }
 
 atlantis::Result<std::unique_ptr<atlantis::rhi::Texture>, atlantis::rhi::TextureCreateError>

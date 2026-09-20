@@ -11,7 +11,9 @@ using atlantis::rhi::ClearColorValue;
 using atlantis::rhi::DepthFormat;
 using atlantis::rhi::Extent2D;
 using atlantis::rhi::Filter;
+using atlantis::rhi::BufferCreateParams;
 using atlantis::rhi::Format;
+using atlantis::rhi::IndexType;
 using atlantis::rhi::MipFilter;
 using atlantis::rhi::OffscreenTargetCreateParams;
 using atlantis::rhi::PipelineCreateParams;
@@ -101,6 +103,44 @@ TEST_CASE("BufferPurpose enumerators are all distinct and usable", "[rhi][buffer
       REQUIRE((purposes[i] == purposes[j]) == (i == j));
     }
   }
+}
+
+// Spec 0039/ADR-0086: index width is a Buffer-creation property, and its
+// default is what keeps every pre-Spec-0039 index-buffer creation site
+// meaning exactly what it meant before.
+TEST_CASE("IndexType enumerators are distinct", "[rhi][index_type]") {
+  const IndexType types[] = {IndexType::Uint16, IndexType::Uint32};
+  for (std::size_t i = 0; i < std::size(types); ++i) {
+    for (std::size_t j = 0; j < std::size(types); ++j) {
+      REQUIRE((types[i] == types[j]) == (i == j));
+    }
+  }
+}
+
+TEST_CASE("BufferCreateParams defaults indexType to Uint16", "[rhi][buffer_create_params]") {
+  const BufferCreateParams defaulted;
+  REQUIRE(defaulted.indexType == IndexType::Uint16);
+
+  // The shape every existing call site uses: purpose and sizeBytes only.
+  const BufferCreateParams indexParams{.purpose = BufferPurpose::Index, .sizeBytes = 12};
+  REQUIRE(indexParams.indexType == IndexType::Uint16);
+}
+
+TEST_CASE("BufferCreateParams equality separates two params differing only in indexType",
+          "[rhi][buffer_create_params]") {
+  const BufferCreateParams u16{.purpose = BufferPurpose::Index, .sizeBytes = 64, .indexType = IndexType::Uint16};
+  const BufferCreateParams u32{.purpose = BufferPurpose::Index, .sizeBytes = 64, .indexType = IndexType::Uint32};
+
+  REQUIRE(u16 == u16);
+  REQUIRE(u32 == u32);
+  REQUIRE_FALSE(u16 == u32);
+
+  // And it still separates the two members it always did.
+  const BufferCreateParams otherPurpose{
+      .purpose = BufferPurpose::Vertex, .sizeBytes = 64, .indexType = IndexType::Uint32};
+  const BufferCreateParams otherSize{.purpose = BufferPurpose::Index, .sizeBytes = 32, .indexType = IndexType::Uint32};
+  REQUIRE_FALSE(u32 == otherPurpose);
+  REQUIRE_FALSE(u32 == otherSize);
 }
 
 TEST_CASE("ClearColorValue defaults to opaque black", "[rhi][clear_color_value]") {
