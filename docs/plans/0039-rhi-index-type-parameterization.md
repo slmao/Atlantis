@@ -6,10 +6,17 @@
   (`Accepted`),
   [ADR-0087](../adr/0087-asset-system-index-width-representation-and-artifact-version-dispatch.md)
   (`Accepted`)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending — this Plan and Spec 0039 must be reviewed
-  together and Implementation explicitly authorized before Milestone 1 begins.
+- **Joint Human Review:** slmao, 2026-09-20 — reviewed this Plan and
+  [Spec 0039](../specs/0039-rhi-index-type-parameterization.md) together
+  (chat confirmation; document set carried by this branch's PR) and
+  explicitly authorized Implementation from Milestone 1. The four open
+  points were ruled in the same review: Q1 no importer-side duplicate
+  gate; Q2 the >65,535 golden grid is 362x362 (131,044 vertices -- half
+  the rows above the ceiling, an unmissable truncation signal); Q3 names
+  are implementation freedom; Q4 the Lengyel comment typo is authorized
+  as a drive-by fix in Milestone 1.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
