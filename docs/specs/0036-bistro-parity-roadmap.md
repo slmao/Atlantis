@@ -386,6 +386,21 @@ vs. storage buffer — a fixed array this size may outgrow the uniform-
 buffer-friendly shape ADR-0062 chose), and the resulting shader-side
 light-iteration cost.
 
+*Now drafted (linked 2026-09-21):* [Spec 0040](0040-multi-light-architecture.md)
+(`Approved`), with the three ADR obligations above discharged by
+[ADR-0088](../adr/0088-frame-lighting-data-successor-structure-and-binding-strategy.md)
+(`Accepted`) — a widened fixed cap of 64 point lights in the existing
+single uniform buffer; froxel/clustered rejected for this round with its
+reopening condition recorded. Two further notes confirmed by that same
+approval: [Spec 0037](0037-gltf-importer.md)'s own measurement that the
+recommended Bistro glTF defines **zero** lights closes this Spec's
+disclosed "real light count is unmeasured" risk (Risks, below) — every
+Bistro light in ⑦ is hand-authored; and [Plan 0037](../plans/0037-gltf-importer.md)
+Ruling 8's photometric obligation (what a light's intensity value means,
+and the attenuation model), which that Ruling assigned to ②'s ADR, is
+**reassigned to a future separate photometric Spec**, to be drafted once
+⑦'s own hand-authored lighting pass forces out its real requirements.
+
 ---
 
 **③ Emissive Materials** — Size: **S**
