@@ -1,20 +1,26 @@
 # Spec: RHI Index-Type Parameterization (uint16/uint32)
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-20
-- **Related Plan(s):** None yet — Plan drafting begins after this Spec and
-  its two ADRs clear Human Review.
-- **Approval:** pending
+- **Related Plan(s):** None yet — Plan drafting may now begin (this Spec and
+  both of its ADRs have cleared Human Review, below).
+  **Implementation still awaits its own, separate Joint Human Review** of
+  Spec + Plan together, per AGENTS.md's own workflow — this Approval
+  authorizes drafting Plan 0039 only.
+- **Approval:** slmao, 2026-09-20 (chat confirmation, no reviewing PR —
+  authorizes drafting Plan 0039; Implementation itself still awaits its own,
+  separate Joint Human Review of Spec + Plan together). The same review ruled
+  all five open questions; see Risks & Open Questions below.
 - **Related ADR(s):**
   [ADR-0086](../adr/0086-rhi-index-type-public-expression-and-backward-compatibility.md)
-  (`Proposed`) — the RHI public-API shape for index type, its
+  (`Accepted`) — the RHI public-API shape for index type, its
   backward-compatibility strategy, and the Vulkan mapping;
   [ADR-0087](../adr/0087-asset-system-index-width-representation-and-artifact-version-dispatch.md)
-  (`Proposed`) — the Asset System's own CPU-side index-width representation
+  (`Accepted`) — the Asset System's own CPU-side index-width representation
   and `loadStaticMeshAsset()`'s schema-version dispatch. Both drafted
-  alongside this Spec; both must be `Accepted` before implementation
-  approval.
+  alongside this Spec and accepted 2026-09-20 alongside this Spec's own
+  Approval.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 State each requirement once; link ADR rationale and map verification to the
@@ -461,32 +467,43 @@ that test's `30-33` header comment once the gap is gone.
 
 ## Risks & Open Questions
 
+**All five open questions were ruled by Human Review on 2026-09-20 (chat
+confirmation), alongside this Spec's own Approval.** Each ruling below is
+binding on Plan 0039; the reasoning that led to it stays in the two ADRs.
+
 - **O1 — `fullDrawIndexUint32` and `maxDrawIndexedIndexValue`.** The Device
   enables no features today (`vulkan_device.cpp:1836-1842`), so the guaranteed
   ceiling on a 32-bit index *value* is 2^24−1, not 2^32−1.
-  **Recommendation:** do not enable the feature and do not add a runtime query.
-  State the 2^24−1 floor in ADR-0086, and have the importer or the loader
-  reject a mesh with an index value at or above 2^24 as a named error — Bistro's
-  largest primitive is 127,104 vertices, 131× inside the limit, and enabling an
-  optional device feature to buy range nothing needs would add a
-  device-selection failure mode for free. **Open for review**; the alternative
-  (enable it, and require it during physical-device selection) is a one-line
-  change if review prefers a hard guarantee.
-- **O2 — `Buffer::indexType()` on a non-Index Buffer.** Recommended:
-  `ATLANTIS_CHECK(purpose() == BufferPurpose::Index)`, matching
-  `bindIndexBuffer()`'s own precondition style. The alternative, silently
-  returning `Uint16`, would make a meaningless value look meaningful.
+  **Ruled 2026-09-20: do not enable `fullDrawIndexUint32`, and do not add a
+  runtime limit query.** The engine relies on the specification's guaranteed
+  2^24−1 floor, and a mesh carrying an index value at or above 2^24 is
+  rejected with a **named error** by the producing or loading layer, never
+  bound and hoped for. Bistro's largest primitive is 127,104 vertices, 131×
+  inside the limit; requiring an optional device feature would add a
+  device-selection failure mode for range nothing needs. Raising the ceiling
+  later is a new decision and therefore a new ADR (ADR-0086 Decision item 6).
+- **O2 — `Buffer::indexType()` on a non-Index Buffer.**
+  **Ruled 2026-09-20: `ATLANTIS_CHECK(purpose() == BufferPurpose::Index)`**,
+  matching `bindIndexBuffer()`'s own precondition style. Silently returning
+  `Uint16` would make a meaningless value look meaningful, and
+  `ATLANTIS_CHECK` is evaluated in Release as well as Debug
+  (`assert.h:35-37`).
 - **O3 — adding a pure virtual to `rhi::Buffer`** breaks any implementation
   outside this repository. There are exactly two in-tree (`vulkan_buffer.h:25`,
-  `fake_command_list.h:195`), and Atlantis ships no external RHI implementer,
-  so the cost is two files.
-- **O4 — Android Validation-Layer gap.** The dual-platform verification
-  inherits the emulator's disclosed Validation-Layer limitation from Plan
-  0034/0035; Android evidence is a build-and-run check, not a second golden.
+  `fake_command_list.h:195`), and Atlantis ships no external RHI implementer.
+  **Ruled 2026-09-20: accepted as a disclosed cost, inherited not mitigated** —
+  the two in-tree implementations are updated, no compatibility shim or
+  non-pure default implementation is added, and the PR discloses the change to
+  the `rhi::Buffer` interface.
+- **O4 — Android Validation-Layer gap.**
+  **Ruled 2026-09-20: inherited and disclosed, not re-litigated here.** The
+  dual-platform verification carries the emulator's Validation-Layer
+  limitation forward from Plan 0034/0035 under the same disclosure wording;
+  Android evidence is a build-and-run check, not a second golden.
 - **O5 — should the scene dependency manifest record the index width?**
-  Recommended: no. The artifact header already answers it, and a second source
-  of truth would need its own mismatch error. Recorded here so review can
-  overrule it rather than discover it.
+  **Ruled 2026-09-20: no.** The artifact header is the single authority, and a
+  manifest field would be a second source of truth needing its own mismatch
+  error and its own test. The manifest schema is unchanged by this Spec.
 - **R1 — an accidental regression in the `uint16_t` path** would show up as
   moved golden pixels. The defaulted-at-creation shape is what keeps that risk
   low: no existing line changes meaning. T5 is the gate.

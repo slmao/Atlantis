@@ -311,6 +311,12 @@ dependency:** ⑦, which cannot render Bistro without it.
 type chosen when a buffer is bound or when it is created, and how Runtime
 selects it per mesh) — decided by this workflow's own future Spec + ADR.
 
+*Now drafted (linked 2026-09-20):* [Spec 0039](0039-rhi-index-type-parameterization.md)
+(`Approved`), with the ADR obligation above discharged by
+[ADR-0086](../adr/0086-rhi-index-type-public-expression-and-backward-compatibility.md)
+and [ADR-0087](../adr/0087-asset-system-index-width-representation-and-artifact-version-dispatch.md)
+(both `Accepted`).
+
 ---
 
 **①c Static-Texture Mip-Chain Passthrough Upload** — Size: **M** (rough)

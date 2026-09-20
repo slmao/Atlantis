@@ -1,9 +1,10 @@
 # ADR 0087: Asset System CPU-Side Index-Width Representation and Mesh-Artifact Version Dispatch
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-20
 - **Deciders:** slmao
-- **Acceptance:** pending
+- **Acceptance:** slmao, 2026-09-20 (chat confirmation; reviewed in this
+  branch's own PR, alongside Spec 0039's Approval)
 - **Related Spec:** [Spec 0039](../specs/0039-rhi-index-type-parameterization.md)
 
 Record one decision and its rationale. Follow the
