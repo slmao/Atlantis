@@ -3,7 +3,7 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-21
-- **Related Plan(s):** None yet — Plan drafting may now begin (this Spec and
+- **Related Plan(s):** [Plan 0040](../plans/0040-multi-light-architecture.md) (Approved 2026-09-20 with the Joint Human Review recorded in its header; linked 2026-09-21). Plan drafting (this Spec and
   its ADR have cleared Human Review, below).
   **Implementation still awaits its own, separate Joint Human Review** of
   Spec + Plan together, per AGENTS.md's own workflow — this Approval

@@ -4,10 +4,19 @@
   (`Approved`, 2026-09-21) —
   [ADR-0088](../adr/0088-frame-lighting-data-successor-structure-and-binding-strategy.md)
   (`Accepted`)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending — this Plan and Spec 0040 must be reviewed
-  together and Implementation explicitly authorized before Milestone 0 begins.
+- **Joint Human Review:** slmao, 2026-09-21 — reviewed this Plan and
+  [Spec 0040](../specs/0040-multi-light-architecture.md) together (chat
+  confirmation; document set carried by this branch's PR) and explicitly
+  authorized Implementation from Milestone 0. The four open points were
+  ruled in the same review: Q1 the multi-light golden models on
+  lighting_demo_fixture (constrained, not fixed); Q2 two constants
+  (Asset-System kMaxPointLightsPerScene + Runtime kMaxPointLights) tied by
+  static_assert; Q3 Milestone 2 stays whole; Q4 the 14 hardcoded-592
+  conversions move into Milestone 0 with the constant's birth. P1
+  (over-capacity is a named error, never truncation) and P2 (the derived
+  buffer-size constant with static_assert) confirmed.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
