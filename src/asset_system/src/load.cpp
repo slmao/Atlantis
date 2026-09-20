@@ -35,6 +35,32 @@ namespace {
   return true;
 }
 
+// Spec 0039/ADR-0087: the artifact/metadata cross-check both schema
+// paths run, identically. Counts are passed in because each decoder
+// yields its own index vector type; everything else is version-agnostic.
+[[nodiscard]] bool metadataAgreesWithArtifact(const AssetMetadata& metadata, AssetId artifactAssetId,
+                                                std::uint32_t artifactVertexStrideBytes,
+                                                std::uint32_t artifactVertexCount,
+                                                std::uint32_t artifactIndexCount) {
+  if (artifactAssetId != metadata.assetId || artifactVertexStrideBytes != metadata.vertexStrideBytes ||
+      artifactVertexCount != metadata.vertexCount || artifactIndexCount != metadata.indexCount) {
+    return false;
+  }
+
+  // Self-consistency, not just artifact-vs-metadata agreement: the
+  // metadata sidecar's own two fields (its recorded Asset ID and its
+  // recorded source path) must agree with each other too. Without this,
+  // a metadata file whose assetId happens to match the artifact's own
+  // header (checked above) but whose sourceLogicalPath does not
+  // actually hash to that assetId -- individually parseable, internally
+  // contradictory -- would be silently accepted.
+  return metadata.assetId == computeAssetId(metadata.sourceLogicalPath);
+}
+
+[[nodiscard]] std::uint32_t vertexCountOf(std::uint32_t vertexStrideBytes, std::size_t vertexByteCount) {
+  return vertexStrideBytes != 0 ? static_cast<std::uint32_t>(vertexByteCount / vertexStrideBytes) : 0;
+}
+
 }  // namespace
 
 atlantis::Result<StaticMeshAssetData, AssetLoadError> loadStaticMeshAsset(const std::string& artifactPath,
@@ -47,34 +73,56 @@ atlantis::Result<StaticMeshAssetData, AssetLoadError> loadStaticMeshAsset(const 
   std::string metadataText;
   if (!readFileText(metadataPath, metadataText)) return ResultT::Err(AssetLoadError::MetadataFileUnreadable);
 
-  auto artifactResult = decodeMeshArtifact(artifactBytes);
-  if (artifactResult.isErr()) return ResultT::Err(AssetLoadError::ArtifactDecodeFailed);
-
   const auto metadataResult = parseAssetMetadata(metadataText);
   if (metadataResult.isErr()) return ResultT::Err(AssetLoadError::MetadataParseFailed);
-
-  DecodedMeshArtifact& artifact = artifactResult.value();
   const AssetMetadata& metadata = metadataResult.value();
 
-  const std::uint32_t artifactVertexCount =
-      artifact.vertexStrideBytes != 0
-          ? static_cast<std::uint32_t>(artifact.vertexBytes.size() / artifact.vertexStrideBytes)
-          : 0;
-  const auto artifactIndexCount = static_cast<std::uint32_t>(artifact.indices.size());
+  // Spec 0039 Requirement 4 / ADR-0087 Decision item 3: the artifact's
+  // own header decides which decoder runs. Not a caller-supplied hint,
+  // not the filename, not a manifest field -- the scene dependency
+  // manifest records paths and AssetIds and deliberately never records a
+  // schema version (ruling O5), so this is the only place that knows.
+  const auto headerResult = peekMeshArtifactHeader(artifactBytes);
+  if (headerResult.isErr()) return ResultT::Err(AssetLoadError::ArtifactDecodeFailed);
 
-  if (artifact.assetId != metadata.assetId || artifact.vertexStrideBytes != metadata.vertexStrideBytes ||
-      artifactVertexCount != metadata.vertexCount || artifactIndexCount != metadata.indexCount) {
-    return ResultT::Err(AssetLoadError::MetadataArtifactMismatch);
+  if (headerResult.value().schemaVersion == kMeshArtifactSchemaVersionU32) {
+    // Spec 0039 ruling O1 / Plan 0039 P2, applied to the header before
+    // the decode, not after it: decodeMeshArtifactU32() rejects every
+    // index >= vertex_count, so bounding the vertex count bounds every
+    // index value in the artifact exactly. One comparison, no per-index
+    // pass, and no gigabyte decoded only to be thrown away.
+    if (headerResult.value().vertexCount > kMaxDrawableVertexCount) {
+      return ResultT::Err(AssetLoadError::IndexValueExceedsDrawableRange);
+    }
+
+    auto artifactResult = decodeMeshArtifactU32(artifactBytes);
+    if (artifactResult.isErr()) return ResultT::Err(AssetLoadError::ArtifactDecodeFailed);
+    DecodedMeshArtifactU32& artifact = artifactResult.value();
+
+    const std::uint32_t artifactVertexCount =
+        vertexCountOf(artifact.vertexStrideBytes, artifact.vertexBytes.size());
+
+    if (!metadataAgreesWithArtifact(metadata, artifact.assetId, artifact.vertexStrideBytes, artifactVertexCount,
+                                    static_cast<std::uint32_t>(artifact.indices.size()))) {
+      return ResultT::Err(AssetLoadError::MetadataArtifactMismatch);
+    }
+
+    return ResultT::Ok(
+        StaticMeshAssetData(std::move(artifact.vertexBytes), std::move(artifact.indices), artifact.vertexStrideBytes));
   }
 
-  // Self-consistency, not just artifact-vs-metadata agreement: the
-  // metadata sidecar's own two fields (its recorded Asset ID and its
-  // recorded source path) must agree with each other too. Without this,
-  // a metadata file whose assetId happens to match the artifact's own
-  // header (checked above) but whose sourceLogicalPath does not
-  // actually hash to that assetId -- individually parseable, internally
-  // contradictory -- would be silently accepted.
-  if (metadata.assetId != computeAssetId(metadata.sourceLogicalPath)) {
+  // Every other version, including an unknown one, goes to the schema-4
+  // decoder, which rejects anything but 4 exactly as it always has.
+  auto artifactResult = decodeMeshArtifact(artifactBytes);
+  if (artifactResult.isErr()) return ResultT::Err(AssetLoadError::ArtifactDecodeFailed);
+  DecodedMeshArtifact& artifact = artifactResult.value();
+
+  const std::uint32_t artifactVertexCount = vertexCountOf(artifact.vertexStrideBytes, artifact.vertexBytes.size());
+
+  // No drawable-range check on this path: a schema-4 index is a
+  // std::uint16_t, so it cannot reach kMaxDrawableIndexValue.
+  if (!metadataAgreesWithArtifact(metadata, artifact.assetId, artifact.vertexStrideBytes, artifactVertexCount,
+                                  static_cast<std::uint32_t>(artifact.indices.size()))) {
     return ResultT::Err(AssetLoadError::MetadataArtifactMismatch);
   }
 

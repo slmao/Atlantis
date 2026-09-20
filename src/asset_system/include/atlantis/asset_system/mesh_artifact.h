@@ -94,4 +94,28 @@ struct DecodedMeshArtifactU32 {
 [[nodiscard]] atlantis::Result<DecodedMeshArtifactU32, ArtifactDecodeError> decodeMeshArtifactU32(
     const std::vector<std::byte>& bytes);
 
+// Spec 0039/ADR-0087: reads two header fields and nothing else, so a
+// caller serving more than one schema can pick a decoder instead of
+// guessing, trying one and reading an error, or inventing a second
+// source of truth (a filename convention, a manifest field). Added
+// beside the two decoders rather than inside either: Plan 0037 D2's
+// "separate code paths, not one unified reader" holds -- this sits above
+// both, and neither decoder changes.
+//
+// vertexCount is reported unvalidated, straight from the header, so a
+// caller can apply a cheap bound before paying for a full decode (Plan
+// 0039 P2's drawable-index-range gate). A header that understates it is
+// still caught by the decoder's own offset/size cross-checks.
+struct MeshArtifactHeaderPeek {
+  std::uint32_t schemaVersion = 0;
+  std::uint32_t vertexCount = 0;
+};
+
+// Errors are the same two the decoders already return for a malformed
+// prefix: TooSmallForHeader, BadMagic. An unrecognized schemaVersion is
+// NOT an error here -- it is returned verbatim, and rejecting it belongs
+// to the caller that knows which versions it serves.
+[[nodiscard]] atlantis::Result<MeshArtifactHeaderPeek, ArtifactDecodeError> peekMeshArtifactHeader(
+    const std::vector<std::byte>& bytes);
+
 }  // namespace atlantis::asset_system
