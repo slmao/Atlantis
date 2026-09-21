@@ -36,7 +36,8 @@ struct CameraUniform {
     uint pointLightCount;
     uint2 _pad1;
     DirectionalLightGpu directionalLights[1];
-    PointLightGpu pointLights[4];
+    // Plan 0040 (ADR-0088): 4 -> 64 point lights (kMaxPointLights).
+    PointLightGpu pointLights[64];
 };
 
 [[vk::binding(0, 0)]]

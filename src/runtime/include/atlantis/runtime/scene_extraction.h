@@ -136,10 +136,10 @@ static_assert(alignof(FrameLightingData::PointLightGpu) == 16);
 // DirectionalLightGpu's own identical _pad0 convention -- never
 // compiler-implicit.
 struct alignas(16) CameraWorldPositionData {
-  float x = 0.0f;  // offset 0 (buffer offset 304)
+  float x = 0.0f;  // offset 0 (buffer offset 2224 since Plan 0040; 304 before)
   float y = 0.0f;
   float z = 0.0f;
-  float _pad = 0.0f;  // offset 12 (buffer offset 316) -- explicit, not implicit
+  float _pad = 0.0f;  // offset 12 (buffer offset 2236) -- explicit, not implicit
 };
 static_assert(std::is_standard_layout_v<CameraWorldPositionData>);
 static_assert(alignof(CameraWorldPositionData) == 16);
@@ -158,13 +158,27 @@ static_assert(sizeof(CameraWorldPositionData) == 16);
 // the light-space view+projection pair. runtime_application.cpp allocated
 // only 464 here from Plan 0027 M9 until 2026-09-21 -- a 128-byte
 // every-frame overrun this constant exists to make unrepresentable.
+//
+// Plan 0040 Milestone 2: the region offsets are derived the same way, so
+// no writer carries a hand-computed float index (the Runtime and the PBR
+// fixtures wrote at cameraData + 32 + 44 / + 80 / + 116 until the
+// 4 -> 64 widening moved every one of them by 1920 bytes).
+inline constexpr std::size_t kCameraUniformLightingOffsetBytes = sizeof(CameraMatrices);
+inline constexpr std::size_t kCameraUniformWorldPositionOffsetBytes =
+    kCameraUniformLightingOffsetBytes + sizeof(FrameLightingData);
+inline constexpr std::size_t kCameraUniformIrradianceShOffsetBytes =
+    kCameraUniformWorldPositionOffsetBytes + sizeof(CameraWorldPositionData);
+inline constexpr std::size_t kCameraUniformLightSpaceOffsetBytes =
+    kCameraUniformIrradianceShOffsetBytes + 144 /* SH9: float4[9] */;
 inline constexpr std::size_t kCameraUniformBufferSizeBytes =
-    sizeof(CameraMatrices) + sizeof(FrameLightingData) + sizeof(CameraWorldPositionData) + 144 /* SH9 */ +
-    128 /* light-space pair */;
-// Plan 0040 M1: the derivation above now yields 2512 (176 -> 2096); the
-// lit_textured twin (no tail regions) is 2224. Milestone 2's slangc
-// reflection cross-check (11/11 shaders) is the binding confirmation of
-// the shader-side twins of both numbers.
+    kCameraUniformLightSpaceOffsetBytes + 128 /* light-space view + projection */;
+// Plan 0040: 128 / 2224 / 2240 / 2384 / 2512 at N = 64 (lit_textured's
+// shorter block ends at 2224). pbr_reflection_cross_check_tests.cpp proves
+// each against live slangc reflection of all eleven shaders.
+static_assert(kCameraUniformLightingOffsetBytes == 128);
+static_assert(kCameraUniformWorldPositionOffsetBytes == 2224);
+static_assert(kCameraUniformIrradianceShOffsetBytes == 2240);
+static_assert(kCameraUniformLightSpaceOffsetBytes == 2384);
 static_assert(kCameraUniformBufferSizeBytes == 2512);
 
 // Plan 0019 Section P8: a deliberate, disclosed, narrow break from this

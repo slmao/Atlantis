@@ -212,8 +212,10 @@ void writeCameraBuffer(atlantis::rhi::Buffer& buffer, const std::array<float, 16
   // always cleared to its own maximum depth (1.0) and computeShadowFactor()
   // must therefore always evaluate to "fully lit," matching every one
   // of this file's existing, unmodified pixel expectations.
-  std::memcpy(data + 464, kIdentityMatrix.data(), sizeof(float) * 16);
-  std::memcpy(data + 464 + sizeof(float) * 16, kIdentityMatrix.data(), sizeof(float) * 16);
+  std::memcpy(data + atlantis::runtime::kCameraUniformLightSpaceOffsetBytes, kIdentityMatrix.data(),
+              sizeof(float) * 16);
+  std::memcpy(data + atlantis::runtime::kCameraUniformLightSpaceOffsetBytes + sizeof(float) * 16, kIdentityMatrix.data(),
+              sizeof(float) * 16);
 }
 
 [[nodiscard]] FrameLightingData oneDirectionalLight(float intensity) {

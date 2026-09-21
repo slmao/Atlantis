@@ -47,6 +47,9 @@ target_compile_definitions(atlantis_runtime_tests PRIVATE
   ATLANTIS_SLANGC_EXECUTABLE="${ATLANTIS_SLANGC_EXECUTABLE}"
   ATLANTIS_PBR_DIRECT_LIT_SLANG_SOURCE="${CMAKE_SOURCE_DIR}/shaders/pbr_direct_lit/pbr_direct_lit.slang"
   ATLANTIS_PBR_IBL_SLANG_SOURCE="${CMAKE_SOURCE_DIR}/shaders/pbr_ibl/pbr_ibl.slang"
+  # Plan 0040 Milestone 2 (Spec 0040 ruling O4): the 11/11 CameraUniform
+  # cross-check reflects every declaring shader from its own source.
+  ATLANTIS_SHADER_SOURCE_ROOT="${CMAKE_SOURCE_DIR}/shaders"
 )
 add_dependencies(atlantis_runtime_tests pbr_direct_lit_shaders pbr_ibl_shaders)
 

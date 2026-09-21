@@ -518,7 +518,8 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
   *lightingData = lightingResult.value();
 
-  auto* cameraWorldPositionData = reinterpret_cast<CameraWorldPositionData*>(cameraData + 32 + 44);
+  auto* cameraWorldPositionData = reinterpret_cast<CameraWorldPositionData*>(
+      cameraData + atlantis::runtime::kCameraUniformWorldPositionOffsetBytes / sizeof(float));
   *cameraWorldPositionData = extractCameraWorldPosition(cameraWorldMatrixResult.value());
   const std::array<float, 36>* irradianceShSource = nullptr;
   if (fixture.environmentData.has_value()) {
@@ -526,7 +527,9 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   } else if (fixture.environmentLightingResources.has_value()) {
     irradianceShSource = &fixture.environmentLightingResources->irradianceSh;
   }
-  atlantis::runtime::writeEnvironmentIrradianceSh(std::span<float, 36>(cameraData + 80, 36), irradianceShSource);
+  atlantis::runtime::writeEnvironmentIrradianceSh(
+      std::span<float, 36>(cameraData + atlantis::runtime::kCameraUniformIrradianceShOffsetBytes / sizeof(float), 36),
+      irradianceShSource);
 
   const bool hasDirectionalLight = lightingResult.value().directionalLightCount > 0;
   Mat4 lightSpaceView = identityMatrix();
@@ -538,7 +541,7 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
     lightSpaceView = lightSpaceMatrices.view;
     lightSpaceProjection = lightSpaceMatrices.projection;
   }
-  float* lightSpaceTail = cameraData + 116;
+  float* lightSpaceTail = cameraData + atlantis::runtime::kCameraUniformLightSpaceOffsetBytes / sizeof(float);
   std::memcpy(lightSpaceTail, lightSpaceView.data(), sizeof(float) * 16);
   std::memcpy(lightSpaceTail + 16, lightSpaceProjection.data(), sizeof(float) * 16);
   auto* shadowLightSpaceData = static_cast<float*>(fixture.shadowLightSpaceBuffer->mappedData());
