@@ -297,14 +297,14 @@ atlantis::Result<FrameLightingData, SceneExtractionError> extractFrameLightingDa
       gpu.intensity = input.light.intensity;
       data.directionalLightCount = 1;
     } else {
-      if (data.pointLightCount >= 4) {
+      if (data.pointLightCount >= kMaxPointLights) {
         // Identical reasoning to the Directional branch above, applied
-        // to the four-element pointLights[] bound.
+        // to the pointLights[kMaxPointLights] bound (Plan 0040: 64).
         ATLANTIS_CHECK_MSG(false,
-                            "extractFrameLightingData(): a fifth Point light reached this function -- both "
-                            "parseSceneSource() (P3) and decodeSceneArtifact() (P4) already cap this at four; "
-                            "this is a programmer error (e.g. World::setLight() called directly, bypassing "
-                            "both gates), not a recoverable runtime condition");
+                            "extractFrameLightingData(): a 65th Point light reached this function -- both "
+                            "parseSceneSource() (P3) and decodeSceneArtifact() (P4) already cap this at "
+                            "sixty-four; this is a programmer error (e.g. World::setLight() called directly, "
+                            "bypassing both gates), not a recoverable runtime condition");
         continue;
       }
       const Mat4& m = input.worldMatrix;

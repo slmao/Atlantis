@@ -45,6 +45,7 @@ add_executable(atlantis_image_regression_gpu_tests
   textured_quad_gpu_tests.cpp
   material_demo_gpu_tests.cpp
   lighting_demo_gpu_tests.cpp
+  multi_light_demo_gpu_tests.cpp
   pbr_material_demo_gpu_tests.cpp
   hdr_roll_off_demo_gpu_tests.cpp
   ibl_material_demo_gpu_tests.cpp
@@ -156,6 +157,11 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   # Pipeline -- mirrors ATLANTIS_MATERIAL_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR's
   # own identical need above.
   ATLANTIS_LIGHTING_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  # Plan 0040 Milestone 3: multi_light_demo reuses LightingDemoFixture
+  # unchanged (scene paths only; every shader dir is the ATLANTIS_LIGHTING_DEMO_* set).
+  ATLANTIS_multi_light_demo_scene_ARTIFACT_PATH="${ATLANTIS_multi_light_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_multi_light_demo_scene_METADATA_PATH="${ATLANTIS_multi_light_demo_scene_METADATA_PATH}"
+  ATLANTIS_multi_light_demo_scene_MANIFEST_PATH="${ATLANTIS_multi_light_demo_scene_MANIFEST_PATH}"
   # Plan 0023 Milestone 8: the pbr_material_demo fixture's own real,
   # cooked scene artifact/metadata/manifest paths and all three built-in
   # shader pairs' own output directories, mirroring
@@ -381,7 +387,8 @@ add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TAR
   ${ATLANTIS_pbr_clearcoat_demo_scene_TARGET} ${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_TARGET}
   ${ATLANTIS_pbr_sheen_demo_scene_TARGET} ${ATLANTIS_pbr_sheen_normal_map_demo_scene_TARGET}
   ${ATLANTIS_pbr_anisotropic_demo_scene_TARGET} ${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_TARGET}
-  ${ATLANTIS_pbr_materials_showcase_scene_TARGET} ${ATLANTIS_warehouse_interior_TARGET})
+  ${ATLANTIS_pbr_materials_showcase_scene_TARGET} ${ATLANTIS_warehouse_interior_TARGET}
+  ${ATLANTIS_multi_light_demo_scene_TARGET})
 
 # Same build-tree shader artifact set as the golden generator -- this
 # executable renders the identical fixture. WORKING_DIRECTORY above

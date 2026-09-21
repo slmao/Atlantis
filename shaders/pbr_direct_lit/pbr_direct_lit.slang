@@ -47,7 +47,10 @@ struct CameraUniform {
     uint pointLightCount;
     uint2 _pad1;
     DirectionalLightGpu directionalLights[1];
-    PointLightGpu pointLights[4];
+    // Plan 0040 (ADR-0088): 4 -> 64 point lights (kMaxPointLights); every
+    // offset after this array moves +1920 bytes (cameraWorldPosition
+    // 304 -> 2224, light-space pair 464 -> 2384, block 592 -> 2512).
+    PointLightGpu pointLights[64];
     // ADR-0062's own Accepted Amendment (Milestone 2): tail-only,
     // appended after the unchanged 304-byte Camera+Lighting region.
     // Explicit tail pad, matching CameraWorldPositionData's own C++

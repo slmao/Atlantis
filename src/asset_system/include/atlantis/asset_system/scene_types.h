@@ -2,6 +2,7 @@
 
 #include <atlantis/asset_system/asset_id.h>
 
+#include <cstdint>
 #include <optional>
 
 namespace atlantis::asset_system {
@@ -28,6 +29,13 @@ struct DecodedCamera {
   float farZ = 0.0f;
   float exposureCompensationEv = 0.0f;
 };
+
+// Plan 0040 (Q2 ruling): the scene grammar's own point-light capacity.
+// Runtime's kMaxPointLights (scene_extraction.h) carries the same value;
+// tests/runtime ties them by static_assert because ADR-0043 forbids this
+// module from including a Runtime header. Deliberately not a Runtime
+// constant: the grammar gate must work in cooker-side decode too.
+inline constexpr std::uint32_t kMaxPointLightsPerScene = 64;
 
 // Plan 0031 (Spec 0031 Requirement 6/7, ADR-0075 Decision 4): the
 // fixed, finite authoring-domain policy for exposureCompensationEv --

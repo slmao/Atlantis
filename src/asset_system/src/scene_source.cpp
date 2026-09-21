@@ -353,7 +353,7 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
       ++pointCount;
     }
   }
-  if (directionalCount > 1 || pointCount > 4) {
+  if (directionalCount > 1 || pointCount > kMaxPointLightsPerScene) {
     return ResultT::Err(SceneSourceParseError::TooManyLights);
   }
 

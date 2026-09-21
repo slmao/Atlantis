@@ -276,6 +276,34 @@ target_compile_definitions(atlantis_image_regression_lighting_demo_golden_genera
 add_dependencies(atlantis_image_regression_lighting_demo_golden_generator textured_quad_shaders lit_textured_shaders
   pbr_direct_lit_shaders output_transform_unorm_shaders shadow_cast_shaders ${ATLANTIS_lighting_demo_scene_TARGET})
 
+# Plan 0040 Milestone 3: the multi_light_demo golden generator --
+# lighting_demo_main.cpp's structure over the multi_light_demo scene
+# (LightingDemoFixture reused unchanged).
+add_executable(atlantis_image_regression_multi_light_demo_golden_generator multi_light_demo_main.cpp)
+
+target_link_libraries(atlantis_image_regression_multi_light_demo_golden_generator
+  PRIVATE
+    Atlantis::ImageRegressionFixture
+    Atlantis::ImageRegressionSupport
+    atlantis_compiler_warnings
+)
+
+target_compile_definitions(atlantis_image_regression_multi_light_demo_golden_generator PRIVATE
+  ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+  ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
+  ATLANTIS_multi_light_demo_scene_ARTIFACT_PATH="${ATLANTIS_multi_light_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_multi_light_demo_scene_METADATA_PATH="${ATLANTIS_multi_light_demo_scene_METADATA_PATH}"
+  ATLANTIS_multi_light_demo_scene_MANIFEST_PATH="${ATLANTIS_multi_light_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_LIGHTING_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+  ATLANTIS_LIGHTING_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  ATLANTIS_LIGHTING_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  ATLANTIS_LIGHTING_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  ATLANTIS_LIGHTING_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+)
+
+add_dependencies(atlantis_image_regression_multi_light_demo_golden_generator textured_quad_shaders lit_textured_shaders
+  pbr_direct_lit_shaders output_transform_unorm_shaders shadow_cast_shaders ${ATLANTIS_multi_light_demo_scene_TARGET})
+
 # Plan 0023 Milestone 8: a sixth, standalone golden-generator executable
 # for the pbr_material_demo fixture -- same reused git/provenance/PNG
 # steps, "render one frame" replaced with renderPbrMaterialDemoFrame().

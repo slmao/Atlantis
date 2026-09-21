@@ -278,7 +278,9 @@ atlantis::Result<DecodedSceneArtifact, SceneArtifactDecodeError> decodeSceneArti
         ++pointCount;
       }
     }
-    if (directionalCount > 1 || pointCount > 4) return ResultT::Err(SceneArtifactDecodeError::TooManyLights);
+    if (directionalCount > 1 || pointCount > kMaxPointLightsPerScene) {
+      return ResultT::Err(SceneArtifactDecodeError::TooManyLights);
+    }
   }
 
   // Step 6: cycle re-check, array-index-based -- safe now that every

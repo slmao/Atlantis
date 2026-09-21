@@ -787,7 +787,8 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // tail-only CameraWorldPositionData (16 bytes) appended after
   // FrameLightingData, at absolute byte offset 304 -- CameraMatrices
   // and FrameLightingData themselves stay byte-for-byte unmodified.
-  auto cameraBufferResult = device_->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 464});
+  auto cameraBufferResult =
+      device_->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = kCameraUniformBufferSizeBytes});
   if (cameraBufferResult.isErr()) {
     ATLANTIS_LOG_ERROR("createBuffer() (camera uniform) failed");
     lifecycle_.markFailed();
@@ -1376,14 +1377,15 @@ void RuntimeApplication::runFrame() {
   // absolute byte offset 304 (32 + 44 = 76 floats in). Derived from the
   // same cameraWorldMatrix already extracted above for
   // extractCameraMatrices(), independently, via extractCameraWorldPosition().
-  auto* cameraWorldPositionData = reinterpret_cast<CameraWorldPositionData*>(cameraData + 32 + 44);
+  auto* cameraWorldPositionData =
+      reinterpret_cast<CameraWorldPositionData*>(cameraData + kCameraUniformWorldPositionOffsetBytes / sizeof(float));
   *cameraWorldPositionData = extractCameraWorldPosition(cameraWorldMatrixResult.value());
 
   // Plan 0025/P3: the final 144 bytes are SH9 float4 coefficients. During
   // first-frame realization they come from the still-owned CPU payload; on
   // later frames the persistent environment aggregate retains the small
   // uniform payload after the large CPU texture arrays have been released.
-  float* irradianceSh = cameraData + 80;
+  float* irradianceSh = cameraData + kCameraUniformIrradianceShOffsetBytes / sizeof(float);
   const std::array<float, 36>* irradianceShSource = nullptr;
   if (environmentData_.has_value()) {
     irradianceShSource = &environmentData_->irradianceSh;
@@ -1416,7 +1418,7 @@ void RuntimeApplication::runFrame() {
     lightSpaceView = lightSpaceMatrices.view;
     lightSpaceProjection = lightSpaceMatrices.projection;
   }
-  float* lightSpaceTail = cameraData + 116;  // byte offset 464 / sizeof(float)
+  float* lightSpaceTail = cameraData + kCameraUniformLightSpaceOffsetBytes / sizeof(float);
   std::memcpy(lightSpaceTail, lightSpaceView.data(), sizeof(float) * 16);
   std::memcpy(lightSpaceTail + 16, lightSpaceProjection.data(), sizeof(float) * 16);
   auto* shadowLightSpaceData = static_cast<float*>(shadowLightSpaceBuffer_->mappedData());

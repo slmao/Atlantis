@@ -292,7 +292,7 @@ setUpIntegratedShowcaseDemoFixture(const atlantis::runtime::BootstrapConfig& con
   // Matches runtime_application.cpp's own current camera buffer sizing
   // exactly (32 floats view+projection + 176-byte FrameLightingData +
   // 16-byte CameraWorldPositionData + 128-byte light-space tail = 592).
-  auto cameraBufferResult = fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
+  auto cameraBufferResult = fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
   if (cameraBufferResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::ResourceCreationFailed);
   fixture.cameraBuffer = std::move(cameraBufferResult.value());
 
@@ -447,7 +447,8 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
   auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
   *lightingData = lightingResult.value();
 
-  auto* cameraWorldPositionData = reinterpret_cast<CameraWorldPositionData*>(cameraData + 32 + 44);
+  auto* cameraWorldPositionData = reinterpret_cast<CameraWorldPositionData*>(
+      cameraData + atlantis::runtime::kCameraUniformWorldPositionOffsetBytes / sizeof(float));
   *cameraWorldPositionData = extractCameraWorldPosition(cameraWorldMatrixResult.value());
   const std::array<float, 36>* irradianceShSource = nullptr;
   if (fixture.environmentData.has_value()) {
@@ -455,7 +456,9 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
   } else if (fixture.environmentLightingResources.has_value()) {
     irradianceShSource = &fixture.environmentLightingResources->irradianceSh;
   }
-  atlantis::runtime::writeEnvironmentIrradianceSh(std::span<float, 36>(cameraData + 80, 36), irradianceShSource);
+  atlantis::runtime::writeEnvironmentIrradianceSh(
+      std::span<float, 36>(cameraData + atlantis::runtime::kCameraUniformIrradianceShOffsetBytes / sizeof(float), 36),
+      irradianceShSource);
 
   // Plan 0028 Milestone 3 (Spec 0028 FR6): the real light-space view/
   // projection, computed by the production computeShadowLightSpaceMatrices()
@@ -474,7 +477,7 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
     lightSpaceView = lightSpaceMatrices.view;
     lightSpaceProjection = lightSpaceMatrices.projection;
   }
-  float* lightSpaceTail = cameraData + 116;
+  float* lightSpaceTail = cameraData + atlantis::runtime::kCameraUniformLightSpaceOffsetBytes / sizeof(float);
   std::memcpy(lightSpaceTail, lightSpaceView.data(), sizeof(float) * 16);
   std::memcpy(lightSpaceTail + 16, lightSpaceProjection.data(), sizeof(float) * 16);
   auto* shadowLightSpaceData = static_cast<float*>(fixture.shadowLightSpaceBuffer->mappedData());

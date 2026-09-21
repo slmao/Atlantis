@@ -4,6 +4,7 @@
 #include <atlantis/asset_system/cook_scene.h>
 #include <atlantis/asset_system/logical_path.h>
 #include <atlantis/asset_system/scene_artifact.h>
+#include <atlantis/asset_system/scene_types.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -534,20 +535,34 @@ TEST_CASE("decodeSceneArtifact rejects a scene declaring a second directional li
   CHECK(result.error() == SceneArtifactDecodeError::TooManyLights);
 }
 
-TEST_CASE("decodeSceneArtifact rejects a scene declaring a fifth point light (TooManyLights)",
-          "[asset_system][scene][light]") {
+// Plan 0040 Milestone 1: the cap is kMaxPointLightsPerScene (64, was 4).
+// Both sides of the boundary are asserted against the shared constant, so
+// this gate cannot drift from parseSceneSource()'s.
+namespace {
+[[nodiscard]] std::vector<std::byte> encodePointLightScene(std::uint32_t pointLightCount) {
   std::vector<ValidatedSceneNode> nodes;
   std::vector<std::optional<std::size_t>> parents;
-  for (int i = 0; i < 5; ++i) {
+  for (std::uint32_t i = 0; i < pointLightCount; ++i) {
     ValidatedSceneNode node;
     node.light = DecodedLight{DecodedLightKind::Point, 1.0f, 1.0f, 1.0f, 1.0f, 5.0f};
     nodes.push_back(node);
     parents.push_back(std::nullopt);
   }
-  const auto bytes = encodeSceneArtifact(nodes, parents, std::nullopt);
-  const auto result = decodeSceneArtifact(bytes);
+  return encodeSceneArtifact(nodes, parents, std::nullopt);
+}
+}  // namespace
+
+TEST_CASE("decodeSceneArtifact rejects kMaxPointLightsPerScene + 1 point lights (TooManyLights)",
+          "[asset_system][scene][light]") {
+  const auto result = decodeSceneArtifact(encodePointLightScene(kMaxPointLightsPerScene + 1));
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneArtifactDecodeError::TooManyLights);
+}
+
+TEST_CASE("decodeSceneArtifact accepts exactly kMaxPointLightsPerScene point lights", "[asset_system][scene][light]") {
+  const auto result = decodeSceneArtifact(encodePointLightScene(kMaxPointLightsPerScene));
+  REQUIRE(result.isOk());
+  CHECK(result.value().nodes.size() == kMaxPointLightsPerScene);
 }
 
 TEST_CASE("decodeSceneArtifact independently re-validates a light's own out-of-range color, never trusting the "

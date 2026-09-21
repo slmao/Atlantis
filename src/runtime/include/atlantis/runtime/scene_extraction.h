@@ -63,6 +63,14 @@ struct CameraMatrices {
   Mat4 projection;
 };
 
+// Plan 0040 (Q2 ruling): Runtime-side capacity constant. The Asset
+// System's own kMaxPointLightsPerScene (scene grammar gates) carries the
+// same value; tests/runtime ties them by static_assert because ADR-0043
+// forbids Asset System including this (Runtime) header. ADR-0088:
+// N = 64 (ruling O2), one uniform buffer, 15.3% of the guaranteed
+// maxUniformBufferRange floor.
+inline constexpr std::uint32_t kMaxPointLights = 64;
+
 // Plan 0019 Section P7: the single authoritative field table's own
 // direct C++ transcription -- see docs/plans/0019-lighting-foundation.md P7
 // for the full, offset-by-offset rationale. Appended immediately after
@@ -96,7 +104,7 @@ struct alignas(16) FrameLightingData {
     float range = 0.0f;       // offset 12
     float color[3] = {};      // offset 16
     float intensity = 0.0f;   // offset 28
-  } pointLights[4]{};  // offset 48, 128 bytes total, array stride 32
+  } pointLights[kMaxPointLights]{};  // offset 48, 2048 bytes total (Plan 0040: was 4), array stride 32
 };
 static_assert(std::is_standard_layout_v<FrameLightingData>);
 static_assert(std::is_standard_layout_v<FrameLightingData::DirectionalLightGpu>);
@@ -117,7 +125,7 @@ static_assert(offsetof(FrameLightingData::PointLightGpu, color) == 16);
 static_assert(offsetof(FrameLightingData::PointLightGpu, intensity) == 28);
 static_assert(sizeof(FrameLightingData::DirectionalLightGpu) == 32);
 static_assert(sizeof(FrameLightingData::PointLightGpu) == 32);
-static_assert(sizeof(FrameLightingData) == 176);
+static_assert(sizeof(FrameLightingData) == 2096);  // Plan 0040: 48 + 64 * 32 (was 176)
 static_assert(alignof(FrameLightingData::DirectionalLightGpu) == 16);
 static_assert(alignof(FrameLightingData::PointLightGpu) == 16);
 
@@ -128,10 +136,10 @@ static_assert(alignof(FrameLightingData::PointLightGpu) == 16);
 // DirectionalLightGpu's own identical _pad0 convention -- never
 // compiler-implicit.
 struct alignas(16) CameraWorldPositionData {
-  float x = 0.0f;  // offset 0 (buffer offset 304)
+  float x = 0.0f;  // offset 0 (buffer offset 2224 since Plan 0040; 304 before)
   float y = 0.0f;
   float z = 0.0f;
-  float _pad = 0.0f;  // offset 12 (buffer offset 316) -- explicit, not implicit
+  float _pad = 0.0f;  // offset 12 (buffer offset 2236) -- explicit, not implicit
 };
 static_assert(std::is_standard_layout_v<CameraWorldPositionData>);
 static_assert(alignof(CameraWorldPositionData) == 16);
@@ -140,6 +148,38 @@ static_assert(offsetof(CameraWorldPositionData, y) == 4);
 static_assert(offsetof(CameraWorldPositionData, z) == 8);
 static_assert(offsetof(CameraWorldPositionData, _pad) == 12);
 static_assert(sizeof(CameraWorldPositionData) == 16);
+
+// Plan 0040 Milestone 0 (human-ruled O1): the camera/lighting uniform
+// Buffer's total byte size, derived from its named parts -- the value the
+// eleven .slang CameraUniform declarations describe and
+// pbr_reflection_cross_check_tests.cpp proves against live slangc
+// reflection. The two trailing regions are shader-side-only (no C++
+// struct in this header): 144 = the 9-float4 irradiance SH9 tail, 128 =
+// the light-space view+projection pair. runtime_application.cpp allocated
+// only 464 here from Plan 0027 M9 until 2026-09-21 -- a 128-byte
+// every-frame overrun this constant exists to make unrepresentable.
+//
+// Plan 0040 Milestone 2: the region offsets are derived the same way, so
+// no writer carries a hand-computed float index (the Runtime and the PBR
+// fixtures wrote at cameraData + 32 + 44 / + 80 / + 116 until the
+// 4 -> 64 widening moved every one of them by 1920 bytes).
+inline constexpr std::size_t kCameraUniformLightingOffsetBytes = sizeof(CameraMatrices);
+inline constexpr std::size_t kCameraUniformWorldPositionOffsetBytes =
+    kCameraUniformLightingOffsetBytes + sizeof(FrameLightingData);
+inline constexpr std::size_t kCameraUniformIrradianceShOffsetBytes =
+    kCameraUniformWorldPositionOffsetBytes + sizeof(CameraWorldPositionData);
+inline constexpr std::size_t kCameraUniformLightSpaceOffsetBytes =
+    kCameraUniformIrradianceShOffsetBytes + 144 /* SH9: float4[9] */;
+inline constexpr std::size_t kCameraUniformBufferSizeBytes =
+    kCameraUniformLightSpaceOffsetBytes + 128 /* light-space view + projection */;
+// Plan 0040: 128 / 2224 / 2240 / 2384 / 2512 at N = 64 (lit_textured's
+// shorter block ends at 2224). pbr_reflection_cross_check_tests.cpp proves
+// each against live slangc reflection of all eleven shaders.
+static_assert(kCameraUniformLightingOffsetBytes == 128);
+static_assert(kCameraUniformWorldPositionOffsetBytes == 2224);
+static_assert(kCameraUniformIrradianceShOffsetBytes == 2240);
+static_assert(kCameraUniformLightSpaceOffsetBytes == 2384);
+static_assert(kCameraUniformBufferSizeBytes == 2512);
 
 // Plan 0019 Section P8: a deliberate, disclosed, narrow break from this
 // file's own "raw values only, no atlantis::world:: type" style --

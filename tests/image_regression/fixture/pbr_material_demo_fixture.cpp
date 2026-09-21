@@ -311,7 +311,7 @@ atlantis::Result<PbrMaterialDemoFixture, PbrMaterialDemoSetupError> setUpPbrMate
   // every byte below 464 stays unmodified.
   auto cameraBufferResult = fixture.device->createBuffer(
       {.purpose = BufferPurpose::Uniform,
-       .sizeBytes = 592});
+       .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
   if (cameraBufferResult.isErr()) return ResultT::Err(PbrMaterialDemoSetupError::ResourceCreationFailed);
   fixture.cameraBuffer = std::move(cameraBufferResult.value());
 
@@ -486,7 +486,8 @@ atlantis::Result<PixelBuffer, PbrMaterialDemoRenderError> renderPbrMaterialDemoF
   // unconditional every frame like the camera-matrix and lighting
   // writes above -- matches runtime_application.cpp's own identical
   // write exactly (byte offset 304 / float offset 76 = 32 + 44).
-  auto* cameraWorldPositionData = reinterpret_cast<CameraWorldPositionData*>(cameraData + 32 + 44);
+  auto* cameraWorldPositionData = reinterpret_cast<CameraWorldPositionData*>(
+      cameraData + atlantis::runtime::kCameraUniformWorldPositionOffsetBytes / sizeof(float));
   *cameraWorldPositionData = extractCameraWorldPosition(cameraWorldMatrixResult.value());
   const std::array<float, 36>* irradianceShSource = nullptr;
   if (fixture.environmentData.has_value()) {
@@ -494,14 +495,18 @@ atlantis::Result<PixelBuffer, PbrMaterialDemoRenderError> renderPbrMaterialDemoF
   } else if (fixture.environmentLightingResources.has_value()) {
     irradianceShSource = &fixture.environmentLightingResources->irradianceSh;
   }
-  atlantis::runtime::writeEnvironmentIrradianceSh(std::span<float, 36>(cameraData + 80, 36), irradianceShSource);
+  atlantis::runtime::writeEnvironmentIrradianceSh(
+      std::span<float, 36>(cameraData + atlantis::runtime::kCameraUniformIrradianceShOffsetBytes / sizeof(float), 36),
+      irradianceShSource);
 
   // Plan 0027 Milestone 9 (ADR-0072 D-1/P5): the light-space view/
   // projection tail (byte offset 464, float index 116) -- identity
   // sentinel, written unconditionally, matching runtime_application.cpp's
   // own identical write.
-  std::memcpy(cameraData + 116, kIdentityMatrix, sizeof(float) * 16);
-  std::memcpy(cameraData + 116 + 16, kIdentityMatrix, sizeof(float) * 16);
+  std::memcpy(cameraData + atlantis::runtime::kCameraUniformLightSpaceOffsetBytes / sizeof(float), kIdentityMatrix,
+              sizeof(float) * 16);
+  std::memcpy(cameraData + atlantis::runtime::kCameraUniformLightSpaceOffsetBytes / sizeof(float) + 16, kIdentityMatrix,
+              sizeof(float) * 16);
 
   std::vector<atlantis::asset_system::AssetId> referencedMaterialIds;
   for (const auto& id : fixture.world->renderableEntities()) {

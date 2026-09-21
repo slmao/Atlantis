@@ -362,7 +362,7 @@ struct ShadowTestRig {
       std::array<float, 4>{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 0.8f, MaterialEnvironmentBinding::None);
   if (materialResult.isErr()) return std::nullopt;
 
-  auto cameraBufferResult = device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 592});
+  auto cameraBufferResult = device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
   if (cameraBufferResult.isErr()) return std::nullopt;
 
   auto depthTextureResult = device->createTexture({.extent = kExtent, .format = DepthFormat::D32Sfloat});
@@ -521,7 +521,7 @@ void writeDirectionalLight(ShadowTestRig& rig, const Vec3& direction) {
   const CameraMatrices lightSpaceMatrices = computeShadowLightSpaceMatrices(direction);
   const Mat4& lightSpaceView = lightSpaceMatrices.view;
   const Mat4& lightSpaceProjection = lightSpaceMatrices.projection;
-  float* lightSpaceTail = cameraData + 116;  // byte offset 464 / sizeof(float)
+  float* lightSpaceTail = cameraData + atlantis::runtime::kCameraUniformLightSpaceOffsetBytes / sizeof(float);
   std::memcpy(lightSpaceTail, lightSpaceView.data(), sizeof(float) * 16);
   std::memcpy(lightSpaceTail + 16, lightSpaceProjection.data(), sizeof(float) * 16);
 
@@ -906,7 +906,7 @@ TEST_CASE("Directional shadow leaves the IBL/ambient term untouched: shadowed vs
       const CameraMatrices lightSpaceMatrices = computeShadowLightSpaceMatrices(direction);
       const Mat4& lightSpaceView = lightSpaceMatrices.view;
       const Mat4& lightSpaceProjection = lightSpaceMatrices.projection;
-      float* lightSpaceTail = cameraData + 116;
+      float* lightSpaceTail = cameraData + atlantis::runtime::kCameraUniformLightSpaceOffsetBytes / sizeof(float);
       std::memcpy(lightSpaceTail, lightSpaceView.data(), sizeof(float) * 16);
       std::memcpy(lightSpaceTail + 16, lightSpaceProjection.data(), sizeof(float) * 16);
       auto* shadowLightSpaceData = static_cast<float*>(fixture.shadowLightSpaceBuffer->mappedData());
@@ -917,7 +917,8 @@ TEST_CASE("Directional shadow leaves the IBL/ambient term untouched: shadowed vs
       // already-realized environment SH coefficients, unconditionally
       // (R3's own IBL/ambient reference needs this regardless of
       // directional-light state).
-      std::memcpy(cameraData + 80, fixture.environmentLightingResources->irradianceSh.data(), sizeof(float) * 36);
+      std::memcpy(cameraData + atlantis::runtime::kCameraUniformIrradianceShOffsetBytes / sizeof(float),
+                  fixture.environmentLightingResources->irradianceSh.data(), sizeof(float) * 36);
     }
 
     DrawItem groundItem;

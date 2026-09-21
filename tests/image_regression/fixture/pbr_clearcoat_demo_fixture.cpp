@@ -342,7 +342,7 @@ atlantis::Result<PbrClearcoatDemoFixture, PbrClearcoatDemoSetupError> setUpPbrCl
   // fixture's own identical, current sizing.
   auto cameraBufferResult = fixture.device->createBuffer(
       {.purpose = BufferPurpose::Uniform,
-       .sizeBytes = 592});
+       .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
   if (cameraBufferResult.isErr()) return ResultT::Err(PbrClearcoatDemoSetupError::ResourceCreationFailed);
   fixture.cameraBuffer = std::move(cameraBufferResult.value());
 
@@ -491,7 +491,8 @@ atlantis::Result<PixelBuffer, PbrClearcoatDemoRenderError> renderPbrClearcoatDem
   auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
   *lightingData = lightingResult.value();
 
-  auto* cameraWorldPositionData = reinterpret_cast<CameraWorldPositionData*>(cameraData + 32 + 44);
+  auto* cameraWorldPositionData = reinterpret_cast<CameraWorldPositionData*>(
+      cameraData + atlantis::runtime::kCameraUniformWorldPositionOffsetBytes / sizeof(float));
   *cameraWorldPositionData = extractCameraWorldPosition(cameraWorldMatrixResult.value());
   const std::array<float, 36>* irradianceShSource = nullptr;
   if (fixture.environmentData.has_value()) {
@@ -499,10 +500,14 @@ atlantis::Result<PixelBuffer, PbrClearcoatDemoRenderError> renderPbrClearcoatDem
   } else if (fixture.environmentLightingResources.has_value()) {
     irradianceShSource = &fixture.environmentLightingResources->irradianceSh;
   }
-  atlantis::runtime::writeEnvironmentIrradianceSh(std::span<float, 36>(cameraData + 80, 36), irradianceShSource);
+  atlantis::runtime::writeEnvironmentIrradianceSh(
+      std::span<float, 36>(cameraData + atlantis::runtime::kCameraUniformIrradianceShOffsetBytes / sizeof(float), 36),
+      irradianceShSource);
 
-  std::memcpy(cameraData + 116, kIdentityMatrix, sizeof(float) * 16);
-  std::memcpy(cameraData + 116 + 16, kIdentityMatrix, sizeof(float) * 16);
+  std::memcpy(cameraData + atlantis::runtime::kCameraUniformLightSpaceOffsetBytes / sizeof(float), kIdentityMatrix,
+              sizeof(float) * 16);
+  std::memcpy(cameraData + atlantis::runtime::kCameraUniformLightSpaceOffsetBytes / sizeof(float) + 16, kIdentityMatrix,
+              sizeof(float) * 16);
 
   std::vector<atlantis::asset_system::AssetId> referencedMaterialIds;
   for (const auto& id : fixture.world->renderableEntities()) {
