@@ -1,3 +1,4 @@
+#include <atlantis/asset_system/scene_types.h>
 #include <atlantis/runtime/scene_extraction.h>
 
 #include <atlantis/assert.h>
@@ -457,9 +458,11 @@ TEST_CASE("extractFrameLightingData(): a second Directional light fails fast via
   REQUIRE(std::abs(result.value().directionalLights[0].intensity - 1.0f) < kEpsilon);
 }
 
-TEST_CASE("extractFrameLightingData(): a fifth Point light fails fast via ATLANTIS_CHECK_MSG, never writing "
-          "past pointLights[3]",
+TEST_CASE("extractFrameLightingData(): a 65th Point light fails fast via ATLANTIS_CHECK_MSG, never writing "
+          "past pointLights[kMaxPointLights - 1]",
           "[runtime][scene_extraction][light]") {
+  // Plan 0040 M1: widened 4 -> 64; the abort boundary moved with the
+  // capacity constant, and this test moved with it.
   int failureCount = 0;
   auto previous = atlantis::assertions::setFailureHandler([&failureCount](const atlantis::AssertFailureInfo&) {
     ++failureCount;
@@ -467,7 +470,7 @@ TEST_CASE("extractFrameLightingData(): a fifth Point light fails fast via ATLANT
 
   const Mat4 identity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
   std::vector<LightExtractionInput> inputs;
-  for (int i = 0; i < 5; ++i) {
+  for (std::uint32_t i = 0; i < atlantis::runtime::kMaxPointLights + 1; ++i) {
     Light point;
     point.kind = LightKind::Point;
     point.intensity = static_cast<float>(i) + 1.0f;
@@ -480,8 +483,9 @@ TEST_CASE("extractFrameLightingData(): a fifth Point light fails fast via ATLANT
 
   REQUIRE(failureCount == 1);
   REQUIRE(result.isOk());
-  REQUIRE(result.value().pointLightCount == 4);
-  REQUIRE(std::abs(result.value().pointLights[3].intensity - 4.0f) < kEpsilon);
+  REQUIRE(result.value().pointLightCount == atlantis::runtime::kMaxPointLights);
+  REQUIRE(std::abs(result.value().pointLights[atlantis::runtime::kMaxPointLights - 1].intensity -
+                   static_cast<float>(atlantis::runtime::kMaxPointLights)) < kEpsilon);
 }
 
 // ---------------------------------------------------------------------
@@ -1051,8 +1055,13 @@ TEST_CASE("FrameLightingData: a populated instance's own byte layout matches Pla
   data.pointLights[1].intensity = 2.8f;
   // pointLights[2]/[3] deliberately left at their value-initialized zero.
 
-  static_assert(sizeof(FrameLightingData) == 176);
-  std::array<std::byte, 176> bytes{};
+  // Plan 0040 M1 tripwire: widened 4 -> 64 point lights.
+  static_assert(sizeof(FrameLightingData) == 2096);
+  // Plan 0040 Q2 ruling: the two module-owned capacity constants are tied
+  // here (tests may include both; ADR-0043 forbids the modules including
+  // each other).
+  static_assert(atlantis::runtime::kMaxPointLights == atlantis::asset_system::kMaxPointLightsPerScene);
+  std::array<std::byte, sizeof(FrameLightingData)> bytes{};
   std::memcpy(bytes.data(), &data, sizeof(data));
 
   REQUIRE(readU32(bytes.data(), 0) == 1);   // directionalLightCount
@@ -1090,4 +1099,42 @@ TEST_CASE("FrameLightingData: a populated instance's own byte layout matches Pla
   // populated above, proving value-initialization actually zeroed them,
   // not merely that the struct compiles.
   REQUIRE(isZeroRange(bytes.data(), 112, 64));
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0040 Milestone 1: capacity boundary tests at the widened gate.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("extractFrameLightingData(): exactly kMaxPointLights Point lights all extract, in order, with no check "
+          "firing",
+          "[runtime][scene_extraction][light]") {
+  int failureCount = 0;
+  auto previous = atlantis::assertions::setFailureHandler([&failureCount](const atlantis::AssertFailureInfo&) {
+    ++failureCount;
+  });
+
+  std::vector<LightExtractionInput> inputs;
+  for (std::uint32_t i = 0; i < atlantis::runtime::kMaxPointLights; ++i) {
+    Light light;
+    light.kind = LightKind::Point;
+    light.color = {1.0f, 1.0f, 1.0f};
+    light.intensity = static_cast<float>(i) + 1.0f;
+    light.range = 8.0f;
+    // A distinct translation per light, so a slot written twice or skipped
+    // shows up as a wrong position, not just a wrong count.
+    const Mat4 translated{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, static_cast<float>(i), 0, 0, 1};
+    inputs.push_back(LightExtractionInput{light, translated});
+  }
+  const auto result = extractFrameLightingData(inputs);
+  atlantis::assertions::setFailureHandler(std::move(previous));
+
+  REQUIRE(failureCount == 0);
+  REQUIRE(result.isOk());
+  REQUIRE(result.value().pointLightCount == atlantis::runtime::kMaxPointLights);
+  for (std::uint32_t i = 0; i < atlantis::runtime::kMaxPointLights; ++i) {
+    const auto& gpu = result.value().pointLights[i];
+    REQUIRE(std::abs(gpu.intensity - (static_cast<float>(i) + 1.0f)) < kEpsilon);
+    REQUIRE(std::abs(gpu.position[0] - static_cast<float>(i)) < kEpsilon);
+    REQUIRE(std::abs(gpu.range - 8.0f) < kEpsilon);
+  }
 }

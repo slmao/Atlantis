@@ -1,4 +1,5 @@
 #include <atlantis/asset_system/scene_source.h>
+#include <atlantis/asset_system/scene_types.h>
 
 #include <cmath>
 
@@ -570,12 +571,13 @@ TEST_CASE("parseSceneSource rejects a scene declaring a second directional light
   CHECK(result.error() == SceneSourceParseError::TooManyLights);
 }
 
-TEST_CASE("parseSceneSource rejects a scene declaring a fifth point light", "[asset_system][scene][light]") {
-  std::string source =
-      "atlantis_scene_source_version: 4\n"
-      "node_count: 5\n"
-      "active_camera: none\n";
-  for (int i = 1; i <= 5; ++i) {
+// Plan 0040 Milestone 1: the cap is kMaxPointLightsPerScene (64, was 4).
+TEST_CASE("parseSceneSource rejects a scene declaring kMaxPointLightsPerScene + 1 point lights",
+          "[asset_system][scene][light]") {
+  constexpr std::uint32_t kCount = kMaxPointLightsPerScene + 1;
+  std::string source = "atlantis_scene_source_version: 4\nnode_count: " + std::to_string(kCount) +
+                       "\nactive_camera: none\n";
+  for (std::uint32_t i = 1; i <= kCount; ++i) {
     source += "node: node_id=" + std::to_string(i) +
                " parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
                "light=point color=1.0 1.0 1.0 intensity=1.0 range=5.0\n";
@@ -585,20 +587,19 @@ TEST_CASE("parseSceneSource rejects a scene declaring a fifth point light", "[as
   CHECK(result.error() == SceneSourceParseError::TooManyLights);
 }
 
-TEST_CASE("parseSceneSource accepts exactly the fixed cap: 1 directional + 4 point lights",
+TEST_CASE("parseSceneSource accepts exactly the fixed cap: 1 directional + kMaxPointLightsPerScene point lights",
           "[asset_system][scene][light]") {
-  std::string source =
-      "atlantis_scene_source_version: 4\n"
-      "node_count: 5\n"
-      "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
-      "light=directional color=1.0 1.0 1.0 intensity=1.0\n";
-  for (int i = 2; i <= 5; ++i) {
+  constexpr std::uint32_t kCount = 1 + kMaxPointLightsPerScene;
+  std::string source = "atlantis_scene_source_version: 4\nnode_count: " + std::to_string(kCount) +
+                       "\nactive_camera: none\n"
+                       "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+                       "light=directional color=1.0 1.0 1.0 intensity=1.0\n";
+  for (std::uint32_t i = 2; i <= kCount; ++i) {
     source += "node: node_id=" + std::to_string(i) +
                " parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
                "light=point color=1.0 1.0 1.0 intensity=1.0 range=5.0\n";
   }
   const auto result = parseSceneSource(source);
   REQUIRE(result.isOk());
-  REQUIRE(result.value().nodes.size() == 5);
+  REQUIRE(result.value().nodes.size() == kCount);
 }

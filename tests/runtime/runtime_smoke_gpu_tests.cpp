@@ -81,7 +81,9 @@ static_assert(kLightingByteOffset == sizeof(float) * 32, "must match runtime_app
 // bytes (the light-space tail, ADR-0072 D-1/P5), unaffected here since
 // CameraMatrices/FrameLightingData/CameraWorldPositionData themselves
 // stay byte-for-byte unmodified.
-static_assert(kLightingByteOffset + sizeof(FrameLightingData) == 304);
+// Plan 0040 M1 window: 304 -> 2224 (4 -> 64 point lights); the shader
+// side catches up in Milestone 2.
+static_assert(kLightingByteOffset + sizeof(FrameLightingData) == 2224);
 
 // Plan 0023 Milestone 2 (ADR-0062's own Accepted Amendment): independently
 // pins the new tail region's own real byte offset -- derived here from
@@ -90,11 +92,12 @@ static_assert(kLightingByteOffset + sizeof(FrameLightingData) == 304);
 // runtime_application.cpp's own `cameraData + 32 + 44` expression, so a
 // real drift between the two fails to *compile* here.
 constexpr std::size_t kCameraWorldPositionByteOffset = kLightingByteOffset + sizeof(FrameLightingData);
-static_assert(kCameraWorldPositionByteOffset == 304);
+static_assert(kCameraWorldPositionByteOffset == 2224);
 // Plan 0027 Milestone 9 fix: 320 is CameraWorldPositionData's own end
 // offset, not cameraBuffer_'s own total size any more -- see the
 // identical note on kLightingByteOffset's own static_assert above.
-static_assert(kCameraWorldPositionByteOffset + sizeof(CameraWorldPositionData) == 320);
+// Plan 0040 M1: 320 -> 2240.
+static_assert(kCameraWorldPositionByteOffset + sizeof(CameraWorldPositionData) == 2240);
 
 struct RuntimeSmokeTestAccess {
   static std::size_t renderableEntityCount(const RuntimeApplication& app) {

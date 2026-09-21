@@ -76,7 +76,8 @@ constexpr std::size_t kFloatsPerMatrix = 16;   // one 4x4 matrix
 constexpr std::size_t kLightingByteOffset = kCameraMatrixCount * kFloatsPerMatrix * sizeof(float);
 static_assert(kLightingByteOffset == 128);
 static_assert(kLightingByteOffset == sizeof(float) * 32, "must match lighting_demo_fixture.cpp's own real offset");
-static_assert(kLightingByteOffset + sizeof(atlantis::runtime::FrameLightingData) == 304,
+// Plan 0040 M1: 304 -> 2224 (4 -> 64 point lights).
+static_assert(kLightingByteOffset + sizeof(atlantis::runtime::FrameLightingData) == 2224,
               "must match the shared Buffer's own real, constructed size");
 
 [[nodiscard]] BootstrapConfig buildTestConfig() {

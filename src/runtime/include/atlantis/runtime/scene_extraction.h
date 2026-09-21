@@ -63,6 +63,14 @@ struct CameraMatrices {
   Mat4 projection;
 };
 
+// Plan 0040 (Q2 ruling): Runtime-side capacity constant. The Asset
+// System's own kMaxPointLightsPerScene (scene grammar gates) carries the
+// same value; tests/runtime ties them by static_assert because ADR-0043
+// forbids Asset System including this (Runtime) header. ADR-0088:
+// N = 64 (ruling O2), one uniform buffer, 15.3% of the guaranteed
+// maxUniformBufferRange floor.
+inline constexpr std::uint32_t kMaxPointLights = 64;
+
 // Plan 0019 Section P7: the single authoritative field table's own
 // direct C++ transcription -- see docs/plans/0019-lighting-foundation.md P7
 // for the full, offset-by-offset rationale. Appended immediately after
@@ -96,7 +104,7 @@ struct alignas(16) FrameLightingData {
     float range = 0.0f;       // offset 12
     float color[3] = {};      // offset 16
     float intensity = 0.0f;   // offset 28
-  } pointLights[4]{};  // offset 48, 128 bytes total, array stride 32
+  } pointLights[kMaxPointLights]{};  // offset 48, 2048 bytes total (Plan 0040: was 4), array stride 32
 };
 static_assert(std::is_standard_layout_v<FrameLightingData>);
 static_assert(std::is_standard_layout_v<FrameLightingData::DirectionalLightGpu>);
@@ -117,7 +125,7 @@ static_assert(offsetof(FrameLightingData::PointLightGpu, color) == 16);
 static_assert(offsetof(FrameLightingData::PointLightGpu, intensity) == 28);
 static_assert(sizeof(FrameLightingData::DirectionalLightGpu) == 32);
 static_assert(sizeof(FrameLightingData::PointLightGpu) == 32);
-static_assert(sizeof(FrameLightingData) == 176);
+static_assert(sizeof(FrameLightingData) == 2096);  // Plan 0040: 48 + 64 * 32 (was 176)
 static_assert(alignof(FrameLightingData::DirectionalLightGpu) == 16);
 static_assert(alignof(FrameLightingData::PointLightGpu) == 16);
 
@@ -153,7 +161,11 @@ static_assert(sizeof(CameraWorldPositionData) == 16);
 inline constexpr std::size_t kCameraUniformBufferSizeBytes =
     sizeof(CameraMatrices) + sizeof(FrameLightingData) + sizeof(CameraWorldPositionData) + 144 /* SH9 */ +
     128 /* light-space pair */;
-static_assert(kCameraUniformBufferSizeBytes == 592);
+// Plan 0040 M1: the derivation above now yields 2512 (176 -> 2096); the
+// lit_textured twin (no tail regions) is 2224. Milestone 2's slangc
+// reflection cross-check (11/11 shaders) is the binding confirmation of
+// the shader-side twins of both numbers.
+static_assert(kCameraUniformBufferSizeBytes == 2512);
 
 // Plan 0019 Section P8: a deliberate, disclosed, narrow break from this
 // file's own "raw values only, no atlantis::world:: type" style --

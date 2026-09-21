@@ -136,11 +136,14 @@ TEST_CASE("Camera/Lighting/CameraWorldPosition buffer: a real, freshly-generated
   // (never trusting Milestone 2's own literal) -- matching
   // runtime_smoke_gpu_tests.cpp's own kCameraWorldPositionByteOffset
   // precedent.
-  constexpr long kExpectedCameraWorldPositionOffset = 2 * 16 * 4 + sizeof(FrameLightingData);  // 304
+  // Plan 0040 M1 window: the C++ side is widened (304 -> 2224); the live
+  // reflection comparison below stays red against the still-4-light shader
+  // until Milestone 2 widens it -- that red is this window's designed signal.
+  constexpr long kExpectedCameraWorldPositionOffset = 2 * 16 * 4 + sizeof(FrameLightingData);  // 2224
   constexpr long kExpectedTotalSize =
-      kExpectedCameraWorldPositionOffset + sizeof(CameraWorldPositionData);  // 320
-  static_assert(kExpectedCameraWorldPositionOffset == 304);
-  static_assert(kExpectedTotalSize == 320);
+      kExpectedCameraWorldPositionOffset + sizeof(CameraWorldPositionData);  // 2240
+  static_assert(kExpectedCameraWorldPositionOffset == 2224);
+  static_assert(kExpectedTotalSize == 2240);
 
   const fs::path outputDir = fs::temp_directory_path() / "atlantis_pbr_reflection_cross_check_tests";
   std::error_code ec;
