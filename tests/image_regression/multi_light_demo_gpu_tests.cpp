@@ -1,4 +1,5 @@
 #include "fixture/lighting_demo_fixture.h"
+#include "support/golden_validity.h"
 #include "support/pixel_diff.h"
 
 #include <atlantis/runtime/bootstrap_config.h>
@@ -14,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -35,10 +37,13 @@
 // tell "eight lights work" from "one light and a lucky image"; the tests
 // below can.
 
+using atlantis::image_regression::compareBuffers;
 using atlantis::image_regression::LightingDemoFixture;
+using atlantis::image_regression::loadAndValidateGolden;
 using atlantis::image_regression::PixelBuffer;
 using atlantis::image_regression::renderLightingDemoFrame;
 using atlantis::image_regression::setUpLightingDemoFixture;
+using atlantis::image_regression::writeFailureArtifacts;
 using atlantis::runtime::BootstrapConfig;
 using atlantis::runtime::FrameLightingData;
 using atlantis::runtime::kCameraUniformLightingOffsetBytes;
@@ -250,6 +255,84 @@ TEST_CASE("multi_light_demo: destroying the lights in slots 5-8 darkens exactly 
     checkPoolLit(before, kPools[slot]);
     checkRgbDark(rgbAt(after, kPools[slot].x, kPools[slot].z));
   }
+
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0040 Milestone 3, golden commit (ADR-0042 Initial baseline
+// bootstrap): the golden was captured by
+// atlantis_image_regression_multi_light_demo_golden_generator against the
+// clean, already-committed tree at its recorded source_revision; these two
+// TEST_CASEs land with it.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr const char* kMultiLightDemoGoldenName = "multi_light_demo/multi_light_demo_512x512_rgba8unorm";
+constexpr const char* kMultiLightDemoGoldenSlug = "multi_light_demo_512x512_rgba8unorm";
+
+}  // namespace
+
+TEST_CASE("Full capture-compare cycle against the committed multi_light_demo golden passes",
+          "[image_regression][gpu][lighting][multi_light]") {
+  const std::filesystem::path outputDir = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
+  std::filesystem::remove(outputDir / (std::string(kMultiLightDemoGoldenSlug) + "_actual.png"));
+  std::filesystem::remove(outputDir / (std::string(kMultiLightDemoGoldenSlug) + "_diff.png"));
+
+  auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  LightingDemoFixture& fixture = fixtureResult.value();
+  auto renderResult = renderLightingDemoFrame(fixture);
+  REQUIRE(renderResult.isOk());
+  const PixelBuffer& actual = renderResult.value();
+
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult =
+      loadAndValidateGolden(goldensDir / (std::string(kMultiLightDemoGoldenName) + ".png"),
+                            goldensDir / (std::string(kMultiLightDemoGoldenName) + ".sidecar.txt"));
+  {
+    INFO("INVALID GOLDEN: the committed multi_light_demo golden must load and validate cleanly");
+    REQUIRE(goldenResult.isOk());
+  }
+  const auto& validatedGolden = goldenResult.value();
+  REQUIRE(actual.width == validatedGolden.pixels.width);
+  REQUIRE(actual.height == validatedGolden.pixels.height);
+
+  const auto report = compareBuffers(actual, validatedGolden.pixels);
+  if (!report.passed) {
+    (void)writeFailureArtifacts(outputDir, kMultiLightDemoGoldenSlug, actual, validatedGolden.pixels);
+  }
+  REQUIRE(report.passed);
+
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+TEST_CASE("The multi_light_demo frame cut back to the former four-light cap fails comparison against the "
+          "real multi_light_demo golden",
+          "[image_regression][gpu][lighting][multi_light]") {
+  // The capacity discriminator for the golden itself: slots 1-4 alone --
+  // exactly what the pre-Plan-0040 layout could carry -- must not pass
+  // for the eight-light image.
+  auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  LightingDemoFixture& fixture = fixtureResult.value();
+  const std::vector<EntityId> lights = fixture.world->lightEntities();
+  REQUIRE(lights.size() == 8);
+  for (std::size_t slot = 4; slot < 8; ++slot) REQUIRE(fixture.world->destroyEntity(lights[slot]).isOk());
+
+  auto renderResult = renderLightingDemoFrame(fixture);
+  REQUIRE(renderResult.isOk());
+
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult =
+      loadAndValidateGolden(goldensDir / (std::string(kMultiLightDemoGoldenName) + ".png"),
+                            goldensDir / (std::string(kMultiLightDemoGoldenName) + ".sidecar.txt"));
+  REQUIRE(goldenResult.isOk());
+
+  const auto report = compareBuffers(renderResult.value(), goldenResult.value().pixels);
+  CHECK_FALSE(report.passed);
+  CHECK(report.maxChannelDiff > 100);  // a vanished pool centre is a 175-level drop
 
   REQUIRE(fixture.device->waitIdle().isOk());
 }
