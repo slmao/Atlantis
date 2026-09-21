@@ -368,6 +368,27 @@ set(ATLANTIS_integrated_showcase_demo_scene_METADATA_PATH "${ATLANTIS_integrated
 set(ATLANTIS_integrated_showcase_demo_scene_MANIFEST_PATH "${ATLANTIS_integrated_showcase_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
 set(ATLANTIS_integrated_showcase_demo_scene_TARGET "${ATLANTIS_integrated_showcase_demo_scene_TARGET}" PARENT_SCOPE)
 
+# Plan 0040 Milestone 3 (Spec 0040 Req 7): the multi-light verification
+# scene -- eight Point lights, more than the former four-light cap, on
+# the lit_textured path (one of the five point-light-iterating shaders,
+# P4). ground_plane under lit_textured_quad shows the texture's 4x4
+# red/white checker; each light sits 0.3 above the centre of one of the
+# eight WHITE cells with range 1.2, so its pool (radius ~1.16) stays
+# inside its own 2.5-unit cell: eight pure, non-overlapping, individually
+# identifiable contributions, and lit_textured has no ambient term, so
+# the eight red cells stay black. No directional light.
+atlantis_add_scene_asset(
+  NAME multi_light_demo_scene
+  SOURCE scenes/multi_light_demo.scene.txt
+  MESH_DEPENDENCIES ground_plane
+  MATERIAL_DEPENDENCIES lit_textured_quad
+  TEXTURE_DEPENDENCIES textured_quad_unorm
+)
+set(ATLANTIS_multi_light_demo_scene_ARTIFACT_PATH "${ATLANTIS_multi_light_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_multi_light_demo_scene_METADATA_PATH "${ATLANTIS_multi_light_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_multi_light_demo_scene_MANIFEST_PATH "${ATLANTIS_multi_light_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_multi_light_demo_scene_TARGET "${ATLANTIS_multi_light_demo_scene_TARGET}" PARENT_SCOPE)
+
 # Plan 0029 Section P19 (ADR-0074): the fixed 4x4 RGB8 Unorm normal-map
 # source texture -- all 16 pixels exactly (204,128,230), generated via a
 # temporary, uncommitted stb_image_write helper (never a permanent

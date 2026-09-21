@@ -1,0 +1,13 @@
+atlantis_scene_source_version: 4
+node_count: 10
+active_camera: 2
+node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=1.5707963 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/ground_plane.mesh.txt material=materials/lit_textured_quad.material.txt
+node: node_id=2 parent=none position=0.0 0.0 9.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0
+node: node_id=3 parent=1 position=-3.75 0.3 -1.25 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=1.0 0.0 0.0 intensity=1.0 range=1.2
+node: node_id=4 parent=1 position=-3.75 0.3 3.75 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=0.0 1.0 0.0 intensity=1.0 range=1.2
+node: node_id=5 parent=1 position=-1.25 0.3 -3.75 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=0.0 0.0 1.0 intensity=1.0 range=1.2
+node: node_id=6 parent=1 position=-1.25 0.3 1.25 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=1.0 1.0 0.0 intensity=1.0 range=1.2
+node: node_id=7 parent=1 position=1.25 0.3 -1.25 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=0.0 1.0 1.0 intensity=1.0 range=1.2
+node: node_id=8 parent=1 position=1.25 0.3 3.75 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=1.0 0.0 1.0 intensity=1.0 range=1.2
+node: node_id=9 parent=1 position=3.75 0.3 -3.75 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=1.0 1.0 1.0 intensity=1.0 range=1.2
+node: node_id=10 parent=1 position=3.75 0.3 1.25 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=1.0 0.4 0.0 intensity=1.0 range=1.2
