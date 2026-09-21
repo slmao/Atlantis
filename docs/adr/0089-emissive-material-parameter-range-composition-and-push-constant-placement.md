@@ -1,8 +1,10 @@
 # ADR 0089: Emissive Material Parameter — Range, Composition Point and Push-Constant Placement
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-22
 - **Deciders:** slmao
+- **Acceptance:** slmao, 2026-09-22 (chat confirmation; reviewed in this
+  branch's own PR, alongside Spec 0041's Approval)
 - **Related Spec:** [Spec 0041](../specs/0041-emissive-materials.md)
 
 Record one decision and its rationale. Follow the

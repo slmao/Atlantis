@@ -433,6 +433,21 @@ addition following established precedent may not clear AGENTS.md's own
 "what counts as significant" bar for a new ADR. Left as **TBD, decided
 by its own future Spec**, not asserted either way here.
 
+*Now drafted (linked 2026-09-22):* [Spec 0041](0041-emissive-materials.md)
+(`Approved`), with this section's ADR question answered **yes** by
+[ADR-0089](../adr/0089-emissive-material-parameter-range-composition-and-push-constant-placement.md)
+(`Accepted`): Bistro's measured emissive factors reach 100, so emissive
+takes a `[0, 65504]` range unlike every other `[0, 1]` material factor, and
+its composition point (after all lighting, before the output transform) is
+the contract workflow ⑥ builds on. Scope is **factor-only**: the emissive
+texture waits for workflow ⑦'s measured need. Deferral basis, quantified in
+Spec 0041: factor-only renders 10 of Bistro's 21 emissive materials exactly;
+the texture would add either a variant dimension (10 → 20 shader pairs) or an
+always-bound slot with a default texture across every binding-count arm, to
+serve 11 textured materials whose right treatment ⑦'s assembled scene can
+judge. The ② coordination question above is closed: workflow ② changed no
+material format, so ③ takes its own schema bump.
+
 ---
 
 **④ Transparency** — Size: **M**

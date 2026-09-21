@@ -1,13 +1,18 @@
 # Spec: Emissive Materials
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-22
-- **Related Plan(s):** none yet — Plan 0041 is drafted only after this Spec
-  is Approved.
-- **Approval:** pending
+- **Related Plan(s):** none yet — Plan 0041 drafting is authorized by the
+  Approval below. **Implementation still awaits its own, separate Joint Human
+  Review** of Spec + Plan together, per AGENTS.md's own workflow.
+- **Approval:** slmao, 2026-09-22 (chat confirmation, no reviewing PR —
+  authorizes drafting Plan 0041; Implementation itself still awaits its own,
+  separate Joint Human Review of Spec + Plan together). The same review ruled
+  all five open questions; see Risks & Open Questions below.
 - **Related ADR(s):** [ADR-0089](../adr/0089-emissive-material-parameter-range-composition-and-push-constant-placement.md)
-  (Proposed, on this branch)
+  (`Accepted` 2026-09-22, alongside this Spec's own Approval) — emissive's
+  range, its composition point, and its per-kind push-constant placement.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
@@ -93,8 +98,8 @@ uniform block but touched no material format, so there is nothing to share —
    rejected at cook time with a new, named error. The upper bound is the
    largest finite value of the `Rgba16Float` HDR target
    (`src/rhi/include/atlantis/rhi/types.h:45`); anything above it would write
-   `inf` into the target that workflow ⑥'s bright-pass will read. This is
-   deliberately **not** `isValidFactor()`'s `[0, 1]`
+   `inf` into the target that workflow ⑥'s bright-pass will read (ruling
+   O2). This is deliberately **not** `isValidFactor()`'s `[0, 1]`
    (`src/asset_system/src/cook_material.cpp:62`) — see Investigation 4.
 3. **Legal kinds.** The field is legal on the four PBR kinds only. A material
    source that sets it on `unlit_textured` or `lit_textured` is rejected with a
@@ -103,7 +108,7 @@ uniform block but touched no material format, so there is nothing to share —
    together, with no dual-version reader (the ADR-0066 precedent every prior
    bump followed):
    - source grammar `atlantis_material_source_version` 6 → 7, with an optional
-     `emissive_factor: r g b` line (grammar shape: open question O1);
+     `emissive_factor: r g b` line, identified by its prefix (ruling O1);
    - artifact schema 6 → 7, header 96 → 108 bytes, `emissive_factor` appended
      at offset 96 (12 bytes, little-endian, byte-by-byte as today);
    - metadata `atlantis_material_metadata_version` 5 → 6, with an
@@ -123,6 +128,14 @@ uniform block but touched no material format, so there is nothing to share —
    constructor parameter and an accessor, as every ADR-0081 factor did
    (`src/renderer/include/atlantis/renderer/material.h:88-90`); material
    realization passes it; the draw path pushes it per kind.
+8. **Importer (ruling O3).** The glTF importer maps `emissiveFactor` for
+   materials that have **no** `emissiveTexture` — in Bistro, the 10 string
+   lights and bare bulbs — and continues to drop and report the factor of
+   every material that has one (Bistro's 11), because applying their factor
+   without the texture would light whole signs uniformly. Materials with a
+   texture and a zero factor stay inert, as today. The report names both
+   cases distinctly, and its "no v6 destination" wording is updated to the v7
+   reality.
 
 ### Non-functional
 
@@ -267,8 +280,9 @@ Spec 0036's "S". The textured half is better decided by workflow ⑦, when the
 real assembled scene shows whether uniformly glowing signage is acceptable,
 or whether it is better left dark, than by guessing now.
 
-Importer consequence: whether the importer should *map* the 10 texture-less
-factors now is open question O3.
+Importer consequence, ruled by O3: the importer maps the 10 texture-less
+factors now and keeps dropping, and reporting, the 11 textured ones
+(Requirement 8).
 
 ### Investigation 5 — impact on existing goldens
 
@@ -292,11 +306,12 @@ push-constant payload in the draw path → the fragment shader's final add.
 The shader change is one line per file. The C++ change is additive
 everywhere: a field, a parse line, a validator, a serializer line, a decoder
 field, a constructor parameter, a payload copy. The only removal is the
-importer's "emissive dropped" report line, and only if O3 is ruled in.
+importer's "emissive dropped" report line for the 10 texture-less materials
+(Requirement 8, ruling O3); the 11 textured ones keep it.
 
 ## Architectural Impact
 
-**Yes — ADR-0089 (Proposed, on this branch).** The field addition and the
+**Yes — ADR-0089 (`Accepted` 2026-09-22).** The field addition and the
 push-constant extension would, on their own, be a straight application of the
 ADR-0081 precedent (a new material field, a schema bump, per-kind push-constant
 structs grown and double-confirmed). Two things are not precedent, and those
@@ -334,8 +349,7 @@ RHI, RenderGraph, Platform and World are untouched.
 - **Reuse the `[0, 1]` factor validator.** Rejects every Bistro bulb and
   string light (factors 8–100). Rejected.
 - **No upper bound (finite only).** Allows values that overflow the
-  `Rgba16Float` target to `inf`. Rejected in favour of 65,504 (O2 asks for the
-  ruling).
+  `Rgba16Float` target to `inf`. Rejected in favour of 65,504 (ruling O2).
 - **An emissive *strength* scalar alongside a `[0, 1]` colour** (the
   `KHR_materials_emissive_strength` shape). Keeps the ADR-0066 convention for
   the colour and would even fit (4 bytes; Sheen's spare 4 bytes at 124 would
@@ -382,9 +396,13 @@ Mapped to the Requirements:
   - **Coverage of all ten variants.** Every shader variant is exercised by at
     least one GPU test in which a non-zero emissive visibly changes the frame
     in the expected direction; the IBL-only kinds need an environment, so
-    their mechanism is O5.
+    their mechanism is the on/off differential of ruling O5.
 - **R7:** covered by the GPU tests above, which drive the real realization
   and draw path.
+- **R8, GPU-independent:** an importer test over a small glTF fixture with
+  three emissive materials — factor only (mapped), factor + texture (dropped
+  and reported), texture only with a zero factor (inert) — asserting the
+  emitted material source and the report lines.
 - **Golden neutrality:** all 20 existing golden directories compare
   byte-identical at zero tolerance, in both Debug and Release.
 - **Vulkan Validation Layers:** zero warnings or errors in Debug, where they
@@ -394,6 +412,11 @@ Mapped to the Requirements:
 
 ## Risks & Open Questions
 
+**All five open questions were ruled by Human Review on 2026-09-22 (chat
+confirmation), alongside this Spec's own Approval.** Each ruling below is
+binding on Plan 0041; the reasoning that led to it stays in ADR-0089 and in
+the Investigations above.
+
 - **O1 — source grammar shape.** The parser counts lines, so an optional line
   collides with existing shapes. (a) An optional `emissive_factor:` line at a
   fixed position — after the kind-specific pair, before `normal_map` —
@@ -402,9 +425,11 @@ Mapped to the Requirements:
   editing all 48 PBR sources beyond their version line. **Recommend (a):**
   existing sources change only their version line, and the parser already
   peeks at prefixes (`material_source.cpp:205-212`).
+  **Ruled 2026-09-22: (a), the optional prefix-identified line.**
 - **O2 — the upper bound.** 65,504 (the `Rgba16Float` finite maximum) versus
   finite-only. **Recommend 65,504**, because ⑥'s bright-pass should never read
   `inf` out of a material.
+  **Ruled 2026-09-22: 65,504.**
 - **O3 — does this Spec change the importer?** With the field in place, the
   importer could map Bistro's factors instead of dropping them. **Recommend
   mapping only the 10 texture-less materials**, and continuing to drop and
@@ -412,11 +437,14 @@ Mapped to the Requirements:
   would light whole signs uniformly — a visible regression from "dark" to
   "wrong". This is roughly a ten-line importer change plus its report line;
   the alternative is leaving the importer entirely to ⑦.
+  **Ruled 2026-09-22: the 10/11 split, in this Spec** — now Requirement 8.
 - **O4 — accept `PbrSheen` at exactly 128.** It is within the guarantee, and
   Slang and MSVC agree. The cost is that Sheen's next vector parameter forces
   the uniform-buffer decision. **Recommend accept**, with the consequence
   recorded in ADR-0089 — the alternative of moving Sheen's own fields into a
   uniform buffer now is the larger change, made ahead of any need.
+  **Ruled 2026-09-22: accepted at exactly 128**, with the consequence
+  recorded in ADR-0089.
 - **O5 — GPU coverage for the IBL-only kinds.** A true dark scene needs no
   environment, but Clearcoat, Sheen, Anisotropic and `pbr_ibl*` always sample
   one. Options: (a) a differential test — the same scene with emissive zero
@@ -425,11 +453,10 @@ Mapped to the Requirements:
   asset for a true dark scene on every kind. **Recommend (a):** it needs no new
   asset, and the dark-scene golden already proves additivity on the shared
   code path.
+  **Ruled 2026-09-22: (a), the on/off differential** — no new environment
+  asset.
 - **Risk — golden movement from compiler behaviour.** Treated as a gate
   (Investigation 5).
-- **Risk — the importer's report is stale if O3 is ruled out.** Its "no v6
-  destination" wording would become inaccurate once v7 has the field; at
-  minimum the wording changes.
 
 ## Out of Scope / Future Work
 
