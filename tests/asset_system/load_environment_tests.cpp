@@ -9,17 +9,22 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <random>
+#include <string>
 
 using namespace atlantis::asset_system;
 
 namespace {
 
 namespace fs = std::filesystem;
+// Per-process tag: catch_discover_tests runs each TEST_CASE in its own
+// process under ctest -j, and the counter below restarts at 0 in each.
+const std::string gProcessTag = std::to_string(std::random_device{}());
 std::atomic<int> gCounter{0};
 
 struct TempDir {
   fs::path path = fs::temp_directory_path() / "atlantis_load_environment_tests" /
-                  std::to_string(gCounter.fetch_add(1));
+                  (gProcessTag + "_" + std::to_string(gCounter.fetch_add(1)));
   TempDir() { fs::create_directories(path); }
   ~TempDir() {
     std::error_code error;
