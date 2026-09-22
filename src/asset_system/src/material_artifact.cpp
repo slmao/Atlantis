@@ -86,7 +86,8 @@ std::vector<std::byte> encodeMaterialArtifact(MaterialKind kind, AssetId texture
                                                float roughnessFactor, AssetId normalMapTexture,
                                                float clearcoatFactor, float clearcoatRoughness,
                                                const float (&sheenColor)[3], float sheenRoughness,
-                                               float anisotropyFactor, float anisotropyRotation) {
+                                               float anisotropyFactor, float anisotropyRotation,
+                                               const float (&emissiveFactor)[3]) {
   std::vector<std::byte> out;
   out.reserve(kMaterialArtifactHeaderSizeBytes);
 
@@ -106,6 +107,7 @@ std::vector<std::byte> encodeMaterialArtifact(MaterialKind kind, AssetId texture
   appendFloatLE(out, sheenRoughness);
   appendFloatLE(out, anisotropyFactor);
   appendFloatLE(out, anisotropyRotation);
+  for (float component : emissiveFactor) appendFloatLE(out, component);
 
   return out;
 }
@@ -254,6 +256,17 @@ atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMat
     return ResultT::Err(MaterialArtifactDecodeError::MaterialFactorOutOfRange);
   }
   decoded.anisotropyRotation = anisotropyRotation;
+
+  // Plan 0041 Milestone 1 (ADR-0089 Decision 2): independently re-validated
+  // against the decoded bytes, like every field above -- but against its
+  // own [0, 65504] range, not [0, 1].
+  for (std::size_t i = 0; i < 3; ++i) {
+    const float component = readFloatLE(bytes.data() + 96 + (i * 4));
+    if (!std::isfinite(component) || component < 0.0f || component > 65504.0f) {
+      return ResultT::Err(MaterialArtifactDecodeError::EmissiveFactorOutOfRange);
+    }
+    decoded.emissiveFactor[i] = component;
+  }
 
   return ResultT::Ok(std::move(decoded));
 }

@@ -48,6 +48,9 @@ struct MaterialMetadata {
   float sheenRoughness = 0.0f;
   float anisotropyFactor = 0.0f;
   float anisotropyRotation = 0.0f;
+  // Plan 0041 Milestone 1 (Plan 0041 P2): always written, never optional
+  // in this machine-written sidecar -- cross-validated identically.
+  float emissiveFactor[3] = {0.0f, 0.0f, 0.0f};
 };
 
 [[nodiscard]] atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std::string_view text);

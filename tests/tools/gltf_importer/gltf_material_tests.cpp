@@ -202,7 +202,7 @@ TEST_CASE("A transmission material imports as pbr_direct_lit with a report line"
   CHECK(summary.materialsTransmission == 1);
   CHECK(summary.materialsMetallicRoughness == 1);
   CHECK(reportContains(summary, "KHR_materials_transmission factor 0.95 recorded only; imported as pbr_direct_lit"));
-  CHECK(reportContains(summary, "no v6 destination, dropped (Ruling 3): alphaMode=BLEND doubleSided"));
+  CHECK(reportContains(summary, "no v7 destination, dropped (Ruling 3): alphaMode=BLEND doubleSided"));
   const auto material = parsedMaterial0(run.outputDir);
   CHECK(material.kind == atlantis::asset_system::MaterialKind::PbrDirectLit);
   CHECK(material.metallicFactor == 0.0f);
@@ -271,4 +271,66 @@ TEST_CASE("Out-of-scope material content fails with distinct named errors and le
     CHECK(run.result.error() == GltfImportError::MissingTextureFile);
     CHECK_FALSE(fs::exists(run.outputDir));
   }
+}
+
+// Spec 0041 Requirement 8 (rulings O3, Q3): the importer maps an emissive
+// factor only when the material has no emissive texture and the factor is
+// inside [0, 65504]; every other case is dropped with its own report line.
+// Material 0 carries an HDR factor (Bistro's string lights reach 20), so
+// the mapping must not clamp it to [0, 1].
+TEST_CASE("Emissive factors are mapped without a texture, dropped with one, and dropped when out of range",
+          "[gltf_importer][material][emissive]") {
+  auto spec = gltf_test::unitQuad();
+  addDdsTexture(spec, "sign_em.dds");
+  spec.materialsJson =
+      "[{\"emissiveFactor\":[20.0,0.8,0.0]},"
+      "{\"emissiveFactor\":[0.5,1.0,0.5],\"emissiveTexture\":{\"index\":0}},"
+      "{\"emissiveTexture\":{\"index\":0}},"
+      "{\"emissiveFactor\":[70000.0,1.0,1.0]}]";
+  const MaterialRun run = runMaterialImport("material_emissive", spec, {"sign_em.dds"});
+  REQUIRE(run.result.isOk());
+  const GltfImportSummary& summary = run.result.value();
+
+  const auto parsedMaterial = [&](int index) {
+    const auto parsed = atlantis::asset_system::parseMaterialSource(
+        readText(run.outputDir / ("t/materials/" + std::to_string(index) + ".material.txt")));
+    REQUIRE(parsed.isOk());
+    return parsed.value();
+  };
+
+  // Factor only: mapped, HDR value intact.
+  const auto mapped = parsedMaterial(0);
+  CHECK(mapped.emissiveFactor[0] == 20.0f);
+  CHECK(mapped.emissiveFactor[1] == 0.8f);
+  CHECK(mapped.emissiveFactor[2] == 0.0f);
+  CHECK(reportContains(summary, "material_0: emissiveFactor=(20,0.8,0) mapped (Spec 0041 R8)"));
+
+  // Factor + texture: the factor is not applied without its texture.
+  const auto withTexture = parsedMaterial(1);
+  CHECK(withTexture.emissiveFactor[0] == 0.0f);
+  CHECK(withTexture.emissiveFactor[1] == 0.0f);
+  CHECK(withTexture.emissiveFactor[2] == 0.0f);
+  CHECK(reportContains(summary, "material_1: emissiveFactor=(0.5,1,0.5) dropped, emissiveTexture present"));
+  CHECK(reportContains(summary, "material_1: no v7 destination, dropped (Ruling 3): emissiveTexture"));
+
+  // Texture with a zero factor: inert, reported only as an undestined texture.
+  const auto textureOnly = parsedMaterial(2);
+  CHECK(textureOnly.emissiveFactor[0] == 0.0f);
+  CHECK(reportContains(summary, "material_2: no v7 destination, dropped (Ruling 3): emissiveTexture"));
+  CHECK_FALSE(reportContains(summary, "material_2: emissiveFactor"));
+
+  // Out of range (Q3): dropped and reported; the import still succeeds. The
+  // report uses the importer's shortest round-trip format, so 70000 prints
+  // as 7e+04.
+  const auto outOfRange = parsedMaterial(3);
+  CHECK(outOfRange.emissiveFactor[0] == 0.0f);
+  CHECK(reportContains(summary,
+                       "material_3: emissiveFactor=(7e+04,1,1) dropped, outside the emissive range [0, 65504]"));
+
+  // The mapped source cooks: its HDR factor passes cookMaterial()'s own
+  // [0, 65504] check rather than the [0, 1] one.
+  const auto cookResult = atlantis::asset_system::cookMaterial(
+      (run.outputDir / "t/materials/0.material.txt").string(), "t/materials/0.material.txt",
+      (run.dir / "cooked/0.amaterial").string(), (run.dir / "cooked/0.amaterial.meta.txt").string());
+  CHECK(cookResult.isOk());
 }

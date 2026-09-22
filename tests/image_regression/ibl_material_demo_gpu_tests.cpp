@@ -1,4 +1,5 @@
 #include "fixture/ibl_material_demo_fixture.h"
+#include "support/emissive_differential.h"
 #include "support/golden_validity.h"
 
 #include <atlantis/renderer/material.h>
@@ -138,4 +139,18 @@ TEST_CASE("Full capture-compare cycle against the committed IBL material demo go
         golden.value().pixels));
   }
   REQUIRE(report.passed);
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0041 Milestone 3 (Spec 0041 R6, rulings O5/Q4): the emissive on/off
+// differential over this file's own existing scene -- no new asset.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Emissive on/off (pbr_ibl): setting one material's emissiveFactor only brightens its own sphere",
+          "[image_regression][gpu][emissive]") {
+  // Environment-lit (the IBL path).
+  const auto result = atlantis::image_regression::runEmissiveOnOff(
+      [] { return atlantis::image_regression::setUpIblMaterialDemoFixture(buildIblConfig()); }, [](auto& fixture) { return atlantis::image_regression::renderIblMaterialDemoFrame(fixture); },
+      "materials/pbr_dielectric_rough.material.txt");
+  atlantis::image_regression::checkEmissiveOnlyBrightensItsSphere(result);
 }

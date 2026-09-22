@@ -81,6 +81,8 @@ struct PushConstants {
     float metallicFactor;
     float roughnessFactor;
     float2 _pad;
+    // Plan 0041 Milestone 2 (Spec 0041 R5): last field, as in the C++ struct.
+    float3 emissiveFactor;
 };
 
 [[vk::push_constant]]
@@ -240,5 +242,8 @@ float4 fragmentMain(Varying input) : SV_Target {
     // the HDR intermediate: a bright highlight above 1.0 must survive
     // to reach the output-transform pass's own tone-mapping curve, not
     // be pre-clipped away. No other line in this function changes.
-    return float4(accumulated, alphaOut);
+    // Plan 0041 Milestone 2 (Spec 0041 R6, ADR-0089 Decision 3): self-lit
+    // colour, added after every lighting term and before the output
+    // transform -- in the return expression, so nothing can follow it.
+    return float4(accumulated + pushConstants.emissiveFactor, alphaOut);
 }

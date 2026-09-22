@@ -103,6 +103,13 @@ struct MaterialAssetData {
   // correct inert default for every other kind.
   float anisotropyFactor = 0.0f;
   float anisotropyRotation = 0.0f;
+  // Plan 0041 Milestone 1 (Spec 0041 R1, ADR-0089 Decision 1/2): the
+  // self-lit colour, linear-space RGB, default (0, 0, 0). Unlike every
+  // other factor here its range is [0, 65504] (the Rgba16Float finite
+  // maximum), not [0, 1] -- Bistro's measured factors reach 100. Honoured
+  // by the four PBR kinds; always (0, 0, 0) for UnlitTextured/LitTextured,
+  // whose source grammar rejects the field.
+  float emissiveFactor[3] = {0.0f, 0.0f, 0.0f};
 };
 
 }  // namespace atlantis::asset_system

@@ -32,6 +32,12 @@ struct alignas(16) PbrPushConstants {
   float metallicFactor = 0.0f;     // offset 80,  4 bytes
   float roughnessFactor = 0.0f;    // offset 84,  4 bytes
   float _pad[2] = {0.0f, 0.0f};    // offset 88,  8 bytes, explicit -- not compiler-implicit
+  // Plan 0041 Milestone 2 (Spec 0041 R5, ADR-0089 Decision 4): appended
+  // after every existing field (none moves); the explicit tail pad makes
+  // sizeof a provable sum (Plan 0041 P3). The shader declares no pad --
+  // its block reaches the same size by float3 alignment.
+  float emissiveFactor[3] = {};    // offset 96, 12 bytes
+  float _padEmissive = 0.0f;       // offset 108, 4 bytes, explicit
 };
 
 static_assert(std::is_standard_layout_v<PbrPushConstants>);
@@ -41,6 +47,7 @@ static_assert(offsetof(PbrPushConstants, baseColorFactor) == 64);
 static_assert(offsetof(PbrPushConstants, metallicFactor) == 80);
 static_assert(offsetof(PbrPushConstants, roughnessFactor) == 84);
 static_assert(offsetof(PbrPushConstants, _pad) == 88);
-static_assert(sizeof(PbrPushConstants) == 96);
+static_assert(offsetof(PbrPushConstants, emissiveFactor) == 96);
+static_assert(sizeof(PbrPushConstants) == 112);
 
 }  // namespace atlantis::renderer

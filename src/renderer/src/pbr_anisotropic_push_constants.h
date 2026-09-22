@@ -26,14 +26,21 @@ struct alignas(16) PbrAnisotropicPushConstants {
   float roughnessFactor = 0.0f;    // offset 84,  4 bytes
   float anisotropyFactor = 0.0f;   // offset 88,  4 bytes
   float anisotropyRotation = 0.0f; // offset 92,  4 bytes
+  // Plan 0041 Milestone 2 (Spec 0041 R5, ADR-0089 Decision 4): appended
+  // after every existing field (none moves); the explicit tail pad makes
+  // sizeof a provable sum (Plan 0041 P3). The shader declares no pad --
+  // its block reaches the same size by float3 alignment.
+  float emissiveFactor[3] = {};    // offset 96, 12 bytes
+  float _padEmissive = 0.0f;       // offset 108, 4 bytes, explicit
 };
 
-static_assert(sizeof(PbrAnisotropicPushConstants) == 96);
+static_assert(sizeof(PbrAnisotropicPushConstants) == 112);
 static_assert(offsetof(PbrAnisotropicPushConstants, objectToWorld) == 0);
 static_assert(offsetof(PbrAnisotropicPushConstants, baseColorFactor) == 64);
 static_assert(offsetof(PbrAnisotropicPushConstants, metallicFactor) == 80);
 static_assert(offsetof(PbrAnisotropicPushConstants, roughnessFactor) == 84);
 static_assert(offsetof(PbrAnisotropicPushConstants, anisotropyFactor) == 88);
 static_assert(offsetof(PbrAnisotropicPushConstants, anisotropyRotation) == 92);
+static_assert(offsetof(PbrAnisotropicPushConstants, emissiveFactor) == 96);
 
 }  // namespace atlantis::renderer

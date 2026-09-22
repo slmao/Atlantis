@@ -189,6 +189,8 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
           std::copy(baseColorFactor.begin(), baseColorFactor.end(), std::begin(payload.baseColorFactor));
           payload.metallicFactor = item.material->metallicFactor();
           payload.roughnessFactor = item.material->roughnessFactor();
+          const auto& emissiveFactor = item.material->emissiveFactor();  // Plan 0041 Milestone 2
+          std::copy(emissiveFactor.begin(), emissiveFactor.end(), std::begin(payload.emissiveFactor));
           cmd.pushConstant(&payload, sizeof(payload));
           break;
         }
@@ -205,6 +207,8 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
           payload.roughnessFactor = item.material->roughnessFactor();
           payload.clearcoatFactor = item.material->clearcoatFactor();
           payload.clearcoatRoughness = item.material->clearcoatRoughness();
+          const auto& emissiveFactor = item.material->emissiveFactor();
+          std::copy(emissiveFactor.begin(), emissiveFactor.end(), std::begin(payload.emissiveFactor));
           cmd.pushConstant(&payload, sizeof(payload));
           break;
         }
@@ -222,6 +226,8 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
           const auto& sheenColor = item.material->sheenColor();
           std::copy(sheenColor.begin(), sheenColor.end(), std::begin(payload.sheenColor));
           payload.sheenRoughness = item.material->sheenRoughness();
+          const auto& emissiveFactor = item.material->emissiveFactor();
+          std::copy(emissiveFactor.begin(), emissiveFactor.end(), std::begin(payload.emissiveFactor));
           cmd.pushConstant(&payload, sizeof(payload));
           break;
         }
@@ -239,6 +245,8 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
           payload.roughnessFactor = item.material->roughnessFactor();
           payload.anisotropyFactor = item.material->anisotropyFactor();
           payload.anisotropyRotation = item.material->anisotropyRotation();
+          const auto& emissiveFactor = item.material->emissiveFactor();
+          std::copy(emissiveFactor.begin(), emissiveFactor.end(), std::begin(payload.emissiveFactor));
           cmd.pushConstant(&payload, sizeof(payload));
           break;
         }

@@ -10,7 +10,7 @@ Material::Material(std::unique_ptr<atlantis::rhi::Pipeline> pipeline, MaterialPu
                     MaterialEnvironmentBinding environmentBinding,
                     const atlantis::rhi::SampledTexture* normalMapTexture, float clearcoatFactor,
                     float clearcoatRoughness, std::array<float, 3> sheenColor, float sheenRoughness,
-                    float anisotropyFactor, float anisotropyRotation) noexcept
+                    float anisotropyFactor, float anisotropyRotation, std::array<float, 3> emissiveFactor) noexcept
     : pipeline_(std::move(pipeline)),
       sampledTexture_(sampledTexture),
       sampler_(sampler),
@@ -25,7 +25,8 @@ Material::Material(std::unique_ptr<atlantis::rhi::Pipeline> pipeline, MaterialPu
       sheenColor_(sheenColor),
       sheenRoughness_(sheenRoughness),
       anisotropyFactor_(anisotropyFactor),
-      anisotropyRotation_(anisotropyRotation) {
+      anisotropyRotation_(anisotropyRotation),
+      emissiveFactor_(emissiveFactor) {
   ATLANTIS_CHECK((sampledTexture_ == nullptr) == (sampler_ == nullptr));
   // Plan 0029 Section P14 (ADR-0074 Section 2): a normal map may never
   // be constructed without the base-color pair also present -- both
@@ -47,7 +48,8 @@ atlantis::Result<Material, CreateMaterialError> createMaterial(
     MaterialPushConstantLayout pushConstantLayout, std::array<float, 4> baseColorFactor, float metallicFactor,
     float roughnessFactor, MaterialEnvironmentBinding environmentBinding,
     const atlantis::rhi::SampledTexture* normalMapTexture, float clearcoatFactor, float clearcoatRoughness,
-    std::array<float, 3> sheenColor, float sheenRoughness, float anisotropyFactor, float anisotropyRotation) {
+    std::array<float, 3> sheenColor, float sheenRoughness, float anisotropyFactor, float anisotropyRotation,
+    std::array<float, 3> emissiveFactor) {
   using ResultT = atlantis::Result<Material, CreateMaterialError>;
 
   auto pipelineResult = device.createPipeline(params);
@@ -57,7 +59,7 @@ atlantis::Result<Material, CreateMaterialError> createMaterial(
   return ResultT::Ok(Material(std::move(pipelineResult.value()), pushConstantLayout, sampledTexture, sampler,
                                baseColorFactor, metallicFactor, roughnessFactor, environmentBinding, normalMapTexture,
                                clearcoatFactor, clearcoatRoughness, sheenColor, sheenRoughness, anisotropyFactor,
-                               anisotropyRotation));
+                               anisotropyRotation, emissiveFactor));
 }
 
 }  // namespace atlantis::renderer

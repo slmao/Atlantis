@@ -384,21 +384,49 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
     if (sampler == nullptr) samplerDefaulted += 1;
     applySampler(sampler, source);
 
-    // Ruling 3: properties v6 has no destination for.
+    // Spec 0041 Requirement 8 (rulings O3, Q3): emissive has a v7
+    // destination, emissiveFactor, but no emissive texture. A factor with
+    // no texture is mapped; a factor with a texture is dropped, because
+    // applying it without its texture would light the whole surface
+    // uniformly; a factor outside [0, 65504] (or non-finite) is dropped
+    // here rather than failing the whole cook later. A texture with a zero
+    // factor is inert under glTF's factor x texture rule, so it only joins
+    // the Ruling 3 list below. Each case gets its own report line.
+    const bool hasEmissiveFactor =
+        m.emissive_factor[0] != 0.0f || m.emissive_factor[1] != 0.0f || m.emissive_factor[2] != 0.0f;
+    const bool hasEmissiveTexture = m.emissive_texture.texture != nullptr;
+    if (hasEmissiveFactor) {
+      const std::string factorText = "emissiveFactor=(" + formatFloat(m.emissive_factor[0]) + "," +
+                                     formatFloat(m.emissive_factor[1]) + "," + formatFloat(m.emissive_factor[2]) + ")";
+      bool inRange = true;
+      for (int c = 0; c < 3; ++c) {
+        const float component = m.emissive_factor[c];
+        if (!std::isfinite(component) || component < 0.0f || component > 65504.0f) inRange = false;
+      }
+      if (hasEmissiveTexture) {
+        reportLines.push_back(label + ": " + factorText +
+                              " dropped, emissiveTexture present -- a factor is not applied without its texture "
+                              "(Spec 0041 R8)");
+      } else if (!inRange) {
+        reportLines.push_back(label + ": " + factorText +
+                              " dropped, outside the emissive range [0, 65504] (Spec 0041 R8)");
+      } else {
+        for (int c = 0; c < 3; ++c) source.emissiveFactor[c] = m.emissive_factor[c];
+        reportLines.push_back(label + ": " + factorText + " mapped (Spec 0041 R8)");
+      }
+    }
+
+    // Ruling 3: properties v7 has no destination for.
     if (m.alpha_mode == cgltf_alpha_mode_mask) {
       dropped.push_back("alphaMode=MASK alphaCutoff=" + formatFloat(m.alpha_cutoff));
     } else if (m.alpha_mode == cgltf_alpha_mode_blend) {
       dropped.push_back("alphaMode=BLEND");
     }
     if (m.double_sided) dropped.push_back("doubleSided");
-    if (m.emissive_factor[0] != 0.0f || m.emissive_factor[1] != 0.0f || m.emissive_factor[2] != 0.0f) {
-      dropped.push_back("emissiveFactor=(" + formatFloat(m.emissive_factor[0]) + "," + formatFloat(m.emissive_factor[1]) +
-                        "," + formatFloat(m.emissive_factor[2]) + ")");
-    }
-    if (m.emissive_texture.texture != nullptr) dropped.push_back("emissiveTexture");
+    if (hasEmissiveTexture) dropped.push_back("emissiveTexture");
     if (m.occlusion_texture.texture != nullptr) dropped.push_back("occlusionTexture");
     if (!dropped.empty()) {
-      std::string line = label + ": no v6 destination, dropped (Ruling 3):";
+      std::string line = label + ": no v7 destination, dropped (Ruling 3):";
       for (const std::string& d : dropped) line += " " + d;
       reportLines.push_back(line);
     }

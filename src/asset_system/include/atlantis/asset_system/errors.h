@@ -273,6 +273,10 @@ enum class MaterialCookError {
   AtomicWriteFailed,
   BaseColorFactorOutOfRange,
   MaterialFactorOutOfRange,
+  // Plan 0041 Milestone 1 (Spec 0041 R2, ADR-0089 Decision 2): an
+  // emissive_factor component that is not finite or lies outside
+  // [0, 65504] -- its own error because its range is not [0, 1].
+  EmissiveFactorOutOfRange,
 };
 
 // decodeMaterialArtifact()'s own conditions -- never assumes a
@@ -296,6 +300,9 @@ enum class MaterialArtifactDecodeError {
   UnknownAddressMode,
   BaseColorFactorOutOfRange,
   MaterialFactorOutOfRange,
+  // Plan 0041 Milestone 1: mirrors MaterialCookError::EmissiveFactorOutOfRange,
+  // independently re-checked against the decoded bytes.
+  EmissiveFactorOutOfRange,
 };
 
 enum class MaterialLoadError {

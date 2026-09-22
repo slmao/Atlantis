@@ -88,7 +88,8 @@ class Material {
                      const atlantis::rhi::SampledTexture* normalMapTexture = nullptr, float clearcoatFactor = 0.0f,
                      float clearcoatRoughness = 0.0f, std::array<float, 3> sheenColor = {0.0f, 0.0f, 0.0f},
                      float sheenRoughness = 0.0f, float anisotropyFactor = 0.0f,
-                     float anisotropyRotation = 0.0f) noexcept;
+                     float anisotropyRotation = 0.0f,
+                     std::array<float, 3> emissiveFactor = {0.0f, 0.0f, 0.0f}) noexcept;
   ~Material() = default;
 
   Material(const Material&) = delete;
@@ -124,6 +125,10 @@ class Material {
   // meaningful only when pushConstantLayout() == PbrAnisotropic.
   [[nodiscard]] float anisotropyFactor() const noexcept { return anisotropyFactor_; }
   [[nodiscard]] float anisotropyRotation() const noexcept { return anisotropyRotation_; }
+  // Plan 0041 Milestone 2 (Spec 0041 R7): meaningful for all four PBR
+  // layouts; always (0, 0, 0) for ObjectToWorldOnly, whose shaders have
+  // no emissive term.
+  [[nodiscard]] const std::array<float, 3>& emissiveFactor() const noexcept { return emissiveFactor_; }
 
  private:
   std::unique_ptr<atlantis::rhi::Pipeline> pipeline_;
@@ -141,6 +146,7 @@ class Material {
   float sheenRoughness_ = 0.0f;
   float anisotropyFactor_ = 0.0f;
   float anisotropyRotation_ = 0.0f;
+  std::array<float, 3> emissiveFactor_{0.0f, 0.0f, 0.0f};
 };
 
 enum class CreateMaterialError {
@@ -168,7 +174,8 @@ enum class CreateMaterialError {
 // compile and behave unchanged, defaulting to nullptr. Plan 0035
 // Milestone 2/ADR-0081: clearcoatFactor/clearcoatRoughness are now the
 // final trailing parameters, same compatibility shape, defaulting to
-// 0.0f.
+// 0.0f. Plan 0041 Milestone 2: emissiveFactor is now the final trailing
+// parameter, same compatibility shape, defaulting to (0, 0, 0).
 [[nodiscard]] atlantis::Result<Material, CreateMaterialError> createMaterial(
     atlantis::rhi::Device& device, const atlantis::rhi::PipelineCreateParams& params,
     const atlantis::rhi::SampledTexture* sampledTexture = nullptr, const atlantis::rhi::Sampler* sampler = nullptr,
@@ -177,6 +184,7 @@ enum class CreateMaterialError {
     float roughnessFactor = 1.0f, MaterialEnvironmentBinding environmentBinding = MaterialEnvironmentBinding::None,
     const atlantis::rhi::SampledTexture* normalMapTexture = nullptr, float clearcoatFactor = 0.0f,
     float clearcoatRoughness = 0.0f, std::array<float, 3> sheenColor = {0.0f, 0.0f, 0.0f},
-    float sheenRoughness = 0.0f, float anisotropyFactor = 0.0f, float anisotropyRotation = 0.0f);
+    float sheenRoughness = 0.0f, float anisotropyFactor = 0.0f, float anisotropyRotation = 0.0f,
+    std::array<float, 3> emissiveFactor = {0.0f, 0.0f, 0.0f});
 
 }  // namespace atlantis::renderer

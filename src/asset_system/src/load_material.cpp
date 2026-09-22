@@ -100,6 +100,12 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(const s
       artifact.anisotropyRotation != metadata.anisotropyRotation) {
     return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
   }
+  // Plan 0041 Milestone 1: emissiveFactor cross-validated identically.
+  for (std::size_t i = 0; i < 3; ++i) {
+    if (artifact.emissiveFactor[i] != metadata.emissiveFactor[i]) {
+      return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
+    }
+  }
 
   // Self-consistency, not just artifact-vs-metadata agreement: the
   // metadata sidecar's own two fields (its recorded Asset ID and its
@@ -123,6 +129,7 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(const s
   for (std::size_t i = 0; i < 3; ++i) data.sheenColor[i] = artifact.sheenColor[i];
   data.sheenRoughness = artifact.sheenRoughness;
   data.anisotropyFactor = artifact.anisotropyFactor;
+  for (std::size_t i = 0; i < 3; ++i) data.emissiveFactor[i] = artifact.emissiveFactor[i];
   data.anisotropyRotation = artifact.anisotropyRotation;
   return ResultT::Ok(std::move(data));
 }

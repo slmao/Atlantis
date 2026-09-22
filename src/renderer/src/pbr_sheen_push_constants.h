@@ -29,14 +29,24 @@ struct alignas(16) PbrSheenPushConstants {
   float _padding0[2] = {};          // offset 88,   8 bytes (aligns sheenColor to its own 16-byte boundary)
   float sheenColor[3] = {};         // offset 96,  12 bytes
   float sheenRoughness = 0.0f;      // offset 108,  4 bytes
+  // Plan 0041 Milestone 2 (Spec 0041 R5, ADR-0089 Decision 4): appended
+  // after every existing field (none moves); the explicit tail pad makes
+  // sizeof a provable sum (Plan 0041 P3). The shader declares no pad --
+  // its block reaches the same size by float3 alignment.
+  // PbrSheen reaches exactly Vulkan's guaranteed 128-byte
+  // maxPushConstantsSize here (Spec 0041 ruling O4): the next vector
+  // parameter on this kind forces ADR-0081's per-material uniform buffer.
+  float emissiveFactor[3] = {};     // offset 112, 12 bytes
+  float _padEmissive = 0.0f;        // offset 124,  4 bytes, explicit
 };
 
-static_assert(sizeof(PbrSheenPushConstants) == 112);
+static_assert(sizeof(PbrSheenPushConstants) == 128);
 static_assert(offsetof(PbrSheenPushConstants, objectToWorld) == 0);
 static_assert(offsetof(PbrSheenPushConstants, baseColorFactor) == 64);
 static_assert(offsetof(PbrSheenPushConstants, metallicFactor) == 80);
 static_assert(offsetof(PbrSheenPushConstants, roughnessFactor) == 84);
 static_assert(offsetof(PbrSheenPushConstants, sheenColor) == 96);
 static_assert(offsetof(PbrSheenPushConstants, sheenRoughness) == 108);
+static_assert(offsetof(PbrSheenPushConstants, emissiveFactor) == 112);
 
 }  // namespace atlantis::renderer

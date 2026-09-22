@@ -9,7 +9,7 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_material_metadata_version: 5";
+constexpr std::string_view kVersionLine = "atlantis_material_metadata_version: 6";
 constexpr std::string_view kAssetIdPrefix = "asset_id: ";
 constexpr std::string_view kSourceLogicalPathPrefix = "source_logical_path: ";
 constexpr std::string_view kKindPrefix = "kind: ";
@@ -32,6 +32,7 @@ constexpr std::string_view kSheenRoughnessPrefix = "sheen_roughness: ";
 // fields, same "no optional field" discipline as sheen_color/
 // sheen_roughness above.
 constexpr std::string_view kAnisotropyFactorPrefix = "anisotropy_factor: ";
+constexpr std::string_view kEmissiveFactorPrefix = "emissive_factor: ";
 constexpr std::string_view kAnisotropyRotationPrefix = "anisotropy_rotation: ";
 // Plan 0023 Milestone 1: widened from 5 to 8. Plan 0029 Section P6/
 // ADR-0074 Section 1: widened again to 9 -- the normal-map-texture
@@ -44,8 +45,9 @@ constexpr std::string_view kAnisotropyRotationPrefix = "anisotropy_rotation: ";
 // 0035 Milestone 3/ADR-0081: widened again to 13 -- sheen_color/
 // sheen_roughness, same discipline. Plan 0035 Milestone 4/ADR-0081:
 // widened again to 15 -- anisotropy_factor/anisotropy_rotation, same
-// discipline.
-constexpr std::size_t kExpectedLineCount = 15;
+// discipline. Plan 0041 Milestone 1 (Plan 0041 P2): widened again to 16
+// -- emissive_factor, same unconditional-presence discipline.
+constexpr std::size_t kExpectedLineCount = 16;
 
 constexpr std::string_view kKindUnlitTextured = "unlit_textured";
 constexpr std::string_view kKindPbrDirectLit = "pbr_direct_lit";
@@ -242,6 +244,15 @@ atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std
   }
   if (!parseFloatToken(value, metadata.anisotropyRotation)) return ResultT::Err(MetadataParseError::MalformedValue);
 
+  if (!matchField(lines[15], kEmissiveFactorPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  const std::vector<std::string_view> emissiveTokens = splitOnSpace(value);
+  if (emissiveTokens.size() != 3) return ResultT::Err(MetadataParseError::MalformedValue);
+  for (std::size_t i = 0; i < 3; ++i) {
+    if (!parseFloatToken(emissiveTokens[i], metadata.emissiveFactor[i])) {
+      return ResultT::Err(MetadataParseError::MalformedValue);
+    }
+  }
+
   return ResultT::Ok(std::move(metadata));
 }
 
@@ -308,6 +319,12 @@ std::string serializeMaterialMetadata(const MaterialMetadata& metadata) {
   out += '\n';
   out += kAnisotropyRotationPrefix;
   out += formatFloat(metadata.anisotropyRotation);
+  out += '\n';
+  out += kEmissiveFactorPrefix;
+  for (std::size_t i = 0; i < 3; ++i) {
+    if (i != 0) out += ' ';
+    out += formatFloat(metadata.emissiveFactor[i]);
+  }
   out += '\n';
   return out;
 }

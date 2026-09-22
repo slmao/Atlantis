@@ -250,8 +250,13 @@ struct ShaderPairRef {
     case atlantis::asset_system::MaterialKind::UnlitTextured:
     case atlantis::asset_system::MaterialKind::LitTextured:
       return sizeof(float) * 16;
+    // Plan 0041 Milestone 2 (Spec 0041 R5): every PBR size below grew by 16
+    // with emissiveFactor (PbrSheen reaching the 128-byte guarantee
+    // exactly). One of three hand-kept copies -- see
+    // compile_and_validate.cpp's own note; Runtime may not include a
+    // Renderer private header.
     case atlantis::asset_system::MaterialKind::PbrDirectLit:
-      return 96;
+      return 112;
     // Plan 0035 Milestone 2 (ADR-0081): PbrClearcoat's own independent
     // 96-byte layout (PbrClearcoatPushConstants,
     // src/renderer/src/pbr_clearcoat_push_constants.h) -- numerically
@@ -261,7 +266,7 @@ struct ShaderPairRef {
     // struct's own static_asserts confirm this), not a coincidence to
     // collapse into one case label.
     case atlantis::asset_system::MaterialKind::PbrClearcoat:
-      return 96;
+      return 112;
     // Plan 0035 Milestone 3 (ADR-0081): PbrSheen's own independent
     // 112-byte layout (PbrSheenPushConstants,
     // src/renderer/src/pbr_sheen_push_constants.h) -- NOT 96, unlike
@@ -273,7 +278,7 @@ struct ShaderPairRef {
     // pbr_sheen_ibl_normal_map.slang (compile_and_validate.cpp), not
     // assumed here.
     case atlantis::asset_system::MaterialKind::PbrSheen:
-      return 112;
+      return 128;
     // Plan 0035 Milestone 4 (ADR-0081): PbrAnisotropic's own independent
     // 96-byte layout (PbrAnisotropicPushConstants,
     // src/renderer/src/pbr_anisotropic_push_constants.h) -- two plain
@@ -284,7 +289,7 @@ struct ShaderPairRef {
     // pbr_anisotropic_ibl.slang/pbr_anisotropic_ibl_normal_map.slang
     // (compile_and_validate.cpp), not assumed here.
     case atlantis::asset_system::MaterialKind::PbrAnisotropic:
-      return 96;
+      return 112;
   }
   ATLANTIS_CHECK_MSG(false,
                       "pushConstantSizeBytesFor(): unreachable -- MaterialKind's own closed switch above is exhaustive");
@@ -478,7 +483,8 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
           : atlantis::renderer::MaterialEnvironmentBinding::None,
       normalMapTexturePtr, materialData.clearcoatFactor, materialData.clearcoatRoughness,
       {materialData.sheenColor[0], materialData.sheenColor[1], materialData.sheenColor[2]},
-      materialData.sheenRoughness, materialData.anisotropyFactor, materialData.anisotropyRotation);
+      materialData.sheenRoughness, materialData.anisotropyFactor, materialData.anisotropyRotation,
+      {materialData.emissiveFactor[0], materialData.emissiveFactor[1], materialData.emissiveFactor[2]});
   if (materialResult.isErr()) return ResultT::Err(MaterialRealizationError::MaterialCreateFailed);
   candidate.material = std::make_unique<atlantis::renderer::Material>(std::move(materialResult.value()));
 

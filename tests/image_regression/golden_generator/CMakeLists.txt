@@ -479,6 +479,42 @@ add_dependencies(atlantis_image_regression_pbr_normal_map_demo_golden_generator 
   ${ATLANTIS_pbr_normal_map_demo_scene_TARGET} ${ATLANTIS_pbr_normal_mapped_control_TARGET}
   ${ATLANTIS_ibl_studio_TARGET})
 
+# Plan 0041 Milestone 3: the emissive_demo golden generator --
+# pbr_normal_map_demo_main.cpp's structure over the emissive dark scene,
+# no environment (PbrNormalMapDemoFixture reused by alias).
+add_executable(atlantis_image_regression_emissive_demo_golden_generator emissive_demo_main.cpp)
+
+target_link_libraries(atlantis_image_regression_emissive_demo_golden_generator
+  PRIVATE
+    Atlantis::ImageRegressionFixture
+    Atlantis::ImageRegressionSupport
+    atlantis_compiler_warnings
+)
+
+target_compile_definitions(atlantis_image_regression_emissive_demo_golden_generator PRIVATE
+  ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+  ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
+  ATLANTIS_emissive_demo_scene_ARTIFACT_PATH="${ATLANTIS_emissive_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_emissive_demo_scene_METADATA_PATH="${ATLANTIS_emissive_demo_scene_METADATA_PATH}"
+  ATLANTIS_emissive_demo_scene_MANIFEST_PATH="${ATLANTIS_emissive_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH="${ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH}"
+  ATLANTIS_pbr_normal_mapped_control_METADATA_PATH="${ATLANTIS_pbr_normal_mapped_control_METADATA_PATH}"
+  ATLANTIS_PBR_NORMAL_MAP_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_NORMAL_MAP_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_NORMAL_MAP_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_NORMAL_MAP_DEMO_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_direct_lit_normal_map_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_NORMAL_MAP_DEMO_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_NORMAL_MAP_DEMO_PBR_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_ibl_normal_map_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_NORMAL_MAP_DEMO_SKY_SHADER_DIR="${ATLANTIS_sky_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_NORMAL_MAP_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PBR_NORMAL_MAP_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+)
+
+add_dependencies(atlantis_image_regression_emissive_demo_golden_generator textured_quad_shaders
+  lit_textured_shaders pbr_direct_lit_shaders pbr_direct_lit_normal_map_shaders pbr_ibl_shaders
+  pbr_ibl_normal_map_shaders output_transform_unorm_shaders sky_shaders shadow_cast_shaders
+  ${ATLANTIS_emissive_demo_scene_TARGET} ${ATLANTIS_pbr_normal_mapped_control_TARGET})
+
 # Plan 0035 Milestone 2 (ADR-0081/ADR-0042): two more standalone
 # golden-generator executables, both built from the same
 # pbr_clearcoat_demo_main.cpp (mirroring the
