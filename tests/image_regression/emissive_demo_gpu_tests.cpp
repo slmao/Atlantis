@@ -1,4 +1,5 @@
 #include "fixture/emissive_demo_fixture.h"
+#include "support/golden_validity.h"
 #include "support/emissive_differential.h"
 #include "support/pixel_diff.h"
 #include "support/tone_mapping_reference.h"
@@ -13,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 
 // Plan 0041 Milestone 3 (Spec 0041 R6, rulings Q1/Q4): the emissive dark
@@ -182,6 +184,86 @@ TEST_CASE("emissive_demo: each sphere is exactly tonemap(emissiveFactor) with no
       }
     }
   }
+
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0041 Milestone 3, golden commit (ADR-0042 Initial baseline
+// bootstrap): the golden was captured by
+// atlantis_image_regression_emissive_demo_golden_generator against the
+// clean, already-committed tree at its recorded source_revision; these two
+// TEST_CASEs land with it.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr const char* kEmissiveDemoGoldenName = "emissive_demo/emissive_demo_512x512_rgba8unorm";
+constexpr const char* kEmissiveDemoGoldenSlug = "emissive_demo_512x512_rgba8unorm";
+
+}  // namespace
+
+TEST_CASE("Full capture-compare cycle against the committed emissive_demo golden passes",
+          "[image_regression][gpu][emissive]") {
+  const std::filesystem::path outputDir = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
+  std::filesystem::remove(outputDir / (std::string(kEmissiveDemoGoldenSlug) + "_actual.png"));
+  std::filesystem::remove(outputDir / (std::string(kEmissiveDemoGoldenSlug) + "_diff.png"));
+
+  auto fixtureResult = setUpEmissiveDemoFixture(buildConfig(), ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH,
+                                                ATLANTIS_pbr_normal_mapped_control_METADATA_PATH);
+  REQUIRE(fixtureResult.isOk());
+  EmissiveDemoFixture& fixture = fixtureResult.value();
+  auto renderResult = renderEmissiveDemoFrame(fixture);
+  REQUIRE(renderResult.isOk());
+  const PixelBuffer& actual = renderResult.value();
+
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult =
+      atlantis::image_regression::loadAndValidateGolden(goldensDir / (std::string(kEmissiveDemoGoldenName) + ".png"),
+                                                        goldensDir / (std::string(kEmissiveDemoGoldenName) + ".sidecar.txt"));
+  {
+    INFO("INVALID GOLDEN: the committed emissive_demo golden must load and validate cleanly");
+    REQUIRE(goldenResult.isOk());
+  }
+  const auto& validatedGolden = goldenResult.value();
+  REQUIRE(actual.width == validatedGolden.pixels.width);
+  REQUIRE(actual.height == validatedGolden.pixels.height);
+
+  const auto report = atlantis::image_regression::compareBuffers(actual, validatedGolden.pixels);
+  if (!report.passed) {
+    (void)atlantis::image_regression::writeFailureArtifacts(outputDir, kEmissiveDemoGoldenSlug, actual,
+                                                            validatedGolden.pixels);
+  }
+  REQUIRE(report.passed);
+
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+TEST_CASE("The emissive_demo frame with every emissiveFactor zeroed fails comparison against the real "
+          "emissive_demo golden",
+          "[image_regression][gpu][emissive]") {
+  // The discriminator for the golden itself: with no emissive, the four
+  // emissive discs collapse to the control's black, so the image the
+  // golden records cannot be produced without the emissive term.
+  auto fixtureResult = setUpEmissiveDemoFixture(buildConfig(), ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH,
+                                                ATLANTIS_pbr_normal_mapped_control_METADATA_PATH);
+  REQUIRE(fixtureResult.isOk());
+  EmissiveDemoFixture& fixture = fixtureResult.value();
+  for (auto& [id, material] : fixture.materialDataMap) {
+    for (float& component : material.emissiveFactor) component = 0.0f;
+  }
+  auto renderResult = renderEmissiveDemoFrame(fixture);
+  REQUIRE(renderResult.isOk());
+
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult =
+      atlantis::image_regression::loadAndValidateGolden(goldensDir / (std::string(kEmissiveDemoGoldenName) + ".png"),
+                                                        goldensDir / (std::string(kEmissiveDemoGoldenName) + ".sidecar.txt"));
+  REQUIRE(goldenResult.isOk());
+
+  const auto report = atlantis::image_regression::compareBuffers(renderResult.value(), goldenResult.value().pixels);
+  CHECK_FALSE(report.passed);
+  CHECK(report.maxChannelDiff > 200);  // orange's red channel: 231 -> 0
 
   REQUIRE(fixture.device->waitIdle().isOk());
 }
