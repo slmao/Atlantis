@@ -4,9 +4,18 @@
   (`Approved`, 2026-09-22) —
   [ADR-0089](../adr/0089-emissive-material-parameter-range-composition-and-push-constant-placement.md)
   (`Accepted`)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending
+- **Joint Human Review:** slmao, 2026-09-22 — reviewed this Plan and
+  [Spec 0041](../specs/0041-emissive-materials.md) together (chat
+  confirmation; document set carried by this branch's PR) and explicitly
+  authorized Implementation from Milestone 1. The five open points were
+  ruled in the same review: Q1 the dark-scene golden reuses
+  PbrNormalMapDemoFixture (covers both direct-lit variants); Q2 explicit
+  C++ tail pad confirmed; Q3 the importer checks, drops and reports
+  out-of-range glTF emissive values; Q4 independence proved by the
+  dark-scene exact + return-line position + on/off brightness-only
+  combination, no new HDR readback path; Q5 three milestones confirmed.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
