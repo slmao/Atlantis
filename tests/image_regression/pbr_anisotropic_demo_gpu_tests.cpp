@@ -1,4 +1,5 @@
 #include "fixture/pbr_anisotropic_demo_fixture.h"
+#include "support/emissive_differential.h"
 #include "support/golden_validity.h"
 
 #include <atlantis/renderer/material.h>
@@ -239,4 +240,27 @@ TEST_CASE("Full capture-compare cycle against the committed PBR anisotropic norm
         golden.value().pixels));
   }
   REQUIRE(report.passed);
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0041 Milestone 3 (Spec 0041 R6, rulings O5/Q4): the emissive on/off
+// differential over this file's own existing scene -- no new asset.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Emissive on/off (pbr_anisotropic_ibl): setting one material's emissiveFactor only brightens its own sphere",
+          "[image_regression][gpu][emissive]") {
+  // The anisotropic demo scene.
+  const auto result = atlantis::image_regression::runEmissiveOnOff(
+      [] { return atlantis::image_regression::setUpPbrAnisotropicDemoFixture(buildAnisotropicConfig()); }, [](auto& fixture) { return atlantis::image_regression::renderPbrAnisotropicDemoFrame(fixture); },
+      "materials/pbr_anisotropic_rotation_45.material.txt");
+  atlantis::image_regression::checkEmissiveOnlyBrightensItsSphere(result);
+}
+
+TEST_CASE("Emissive on/off (pbr_anisotropic_ibl_normal_map): setting one material's emissiveFactor only brightens its own sphere",
+          "[image_regression][gpu][emissive]") {
+  // The anisotropic normal-map demo scene.
+  const auto result = atlantis::image_regression::runEmissiveOnOff(
+      [] { return atlantis::image_regression::setUpPbrAnisotropicDemoFixture(buildAnisotropicNormalMapConfig()); }, [](auto& fixture) { return atlantis::image_regression::renderPbrAnisotropicDemoFrame(fixture); },
+      "materials/pbr_anisotropic_normal_mapped.material.txt");
+  atlantis::image_regression::checkEmissiveOnlyBrightensItsSphere(result);
 }

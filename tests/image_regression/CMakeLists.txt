@@ -46,6 +46,7 @@ add_executable(atlantis_image_regression_gpu_tests
   material_demo_gpu_tests.cpp
   lighting_demo_gpu_tests.cpp
   multi_light_demo_gpu_tests.cpp
+  emissive_demo_gpu_tests.cpp
   pbr_material_demo_gpu_tests.cpp
   hdr_roll_off_demo_gpu_tests.cpp
   ibl_material_demo_gpu_tests.cpp
@@ -251,6 +252,11 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_pbr_normal_map_demo_scene_ARTIFACT_PATH="${ATLANTIS_pbr_normal_map_demo_scene_ARTIFACT_PATH}"
   ATLANTIS_pbr_normal_map_demo_scene_METADATA_PATH="${ATLANTIS_pbr_normal_map_demo_scene_METADATA_PATH}"
   ATLANTIS_pbr_normal_map_demo_scene_MANIFEST_PATH="${ATLANTIS_pbr_normal_map_demo_scene_MANIFEST_PATH}"
+  # Plan 0041 Milestone 3: the emissive dark scene, rendered by
+  # PbrNormalMapDemoFixture (ATLANTIS_PBR_NORMAL_MAP_DEMO_* shader dirs, above).
+  ATLANTIS_emissive_demo_scene_ARTIFACT_PATH="${ATLANTIS_emissive_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_emissive_demo_scene_METADATA_PATH="${ATLANTIS_emissive_demo_scene_METADATA_PATH}"
+  ATLANTIS_emissive_demo_scene_MANIFEST_PATH="${ATLANTIS_emissive_demo_scene_MANIFEST_PATH}"
   ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH="${ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH}"
   ATLANTIS_pbr_normal_mapped_control_METADATA_PATH="${ATLANTIS_pbr_normal_mapped_control_METADATA_PATH}"
   ATLANTIS_PBR_NORMAL_MAP_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
@@ -388,7 +394,7 @@ add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TAR
   ${ATLANTIS_pbr_sheen_demo_scene_TARGET} ${ATLANTIS_pbr_sheen_normal_map_demo_scene_TARGET}
   ${ATLANTIS_pbr_anisotropic_demo_scene_TARGET} ${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_TARGET}
   ${ATLANTIS_pbr_materials_showcase_scene_TARGET} ${ATLANTIS_warehouse_interior_TARGET}
-  ${ATLANTIS_multi_light_demo_scene_TARGET})
+  ${ATLANTIS_multi_light_demo_scene_TARGET} ${ATLANTIS_emissive_demo_scene_TARGET})
 
 # Same build-tree shader artifact set as the golden generator -- this
 # executable renders the identical fixture. WORKING_DIRECTORY above

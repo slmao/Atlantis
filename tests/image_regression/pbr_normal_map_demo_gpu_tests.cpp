@@ -1,4 +1,5 @@
 #include "fixture/pbr_normal_map_demo_fixture.h"
+#include "support/emissive_differential.h"
 #include "support/golden_validity.h"
 
 #include <atlantis/result.h>
@@ -134,6 +135,17 @@ namespace {
 setUpFixture() {
   return setUpPbrNormalMapDemoFixture(buildTestConfig(), ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH,
                                        ATLANTIS_pbr_normal_mapped_control_METADATA_PATH);
+}
+
+// Plan 0041 Milestone 3: the same scene with no environment -- the
+// fixture treats an empty environment path as "none"
+// (pbr_normal_map_demo_fixture.cpp), so the normal-mapped sphere takes
+// the direct-lit normal-map shader variant instead of the IBL one.
+[[nodiscard]] BootstrapConfig buildDirectLitConfig() {
+  BootstrapConfig config = buildTestConfig();
+  config.environmentArtifactPath.clear();
+  config.environmentMetadataPath.clear();
+  return config;
 }
 
 // File-local, mirroring integrated_showcase_demo_gpu_tests.cpp's own
@@ -319,4 +331,27 @@ TEST_CASE("Full capture-compare cycle against the committed pbr_normal_map_demo 
   REQUIRE(report.passed);
 
   REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0041 Milestone 3 (Spec 0041 R6, rulings O5/Q4): the emissive on/off
+// differential over this file's own existing scene -- no new asset.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Emissive on/off (pbr_direct_lit_normal_map): setting one material's emissiveFactor only brightens its own sphere",
+          "[image_regression][gpu][emissive]") {
+  // This file's scene with its environment removed, so the normal-mapped sphere takes the direct-lit normal-map variant under the scene's directional light.
+  const auto result = atlantis::image_regression::runEmissiveOnOff(
+      [] { return setUpPbrNormalMapDemoFixture(buildDirectLitConfig(), ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH, ATLANTIS_pbr_normal_mapped_control_METADATA_PATH); }, [](auto& fixture) { return renderPbrNormalMapDemoFrame(fixture); },
+      "materials/pbr_normal_mapped.material.txt");
+  atlantis::image_regression::checkEmissiveOnlyBrightensItsSphere(result);
+}
+
+TEST_CASE("Emissive on/off (pbr_ibl_normal_map): setting one material's emissiveFactor only brightens its own sphere",
+          "[image_regression][gpu][emissive]") {
+  // This file's scene as authored, environment on: the IBL normal-map variant.
+  const auto result = atlantis::image_regression::runEmissiveOnOff(
+      [] { return setUpFixture(); }, [](auto& fixture) { return renderPbrNormalMapDemoFrame(fixture); },
+      "materials/pbr_normal_mapped.material.txt");
+  atlantis::image_regression::checkEmissiveOnlyBrightensItsSphere(result);
 }

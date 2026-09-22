@@ -451,6 +451,66 @@ set(ATLANTIS_pbr_normal_map_demo_scene_METADATA_PATH "${ATLANTIS_pbr_normal_map_
 set(ATLANTIS_pbr_normal_map_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_normal_map_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_normal_map_demo_scene_TARGET "${ATLANTIS_pbr_normal_map_demo_scene_TARGET}" PARENT_SCOPE)
 
+# Plan 0041 Milestone 3 (Spec 0041 R6): the emissive dark-scene golden --
+# four emissive PbrDirectLit materials (three plain, one normal-mapped, so
+# both direct-lit shader variants are covered; orange carries a component
+# above 1 so HDR input reaches the tonemap) and the existing, non-emissive
+# pbr_normal_mapped_control as the black control sphere. No light, no
+# environment: the PBR shader output is then exactly emissiveFactor
+# (pbr_direct_lit has no ambient term). Rendered by PbrNormalMapDemoFixture
+# reused by alias (Plan 0041 P5/Q1); the control material doubles as that
+# fixture's own required control, and every material shares its
+# textured_quad_srgb base texture.
+atlantis_add_material_asset(
+  NAME emissive_demo_orange
+  SOURCE materials/emissive_demo_orange.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_emissive_demo_orange_ARTIFACT_PATH "${ATLANTIS_emissive_demo_orange_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_emissive_demo_orange_METADATA_PATH "${ATLANTIS_emissive_demo_orange_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_emissive_demo_orange_TARGET "${ATLANTIS_emissive_demo_orange_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_emissive_demo_orange_LOGICAL_PATH "${ATLANTIS_emissive_demo_orange_LOGICAL_PATH}" PARENT_SCOPE)
+atlantis_add_material_asset(
+  NAME emissive_demo_green
+  SOURCE materials/emissive_demo_green.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_emissive_demo_green_ARTIFACT_PATH "${ATLANTIS_emissive_demo_green_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_emissive_demo_green_METADATA_PATH "${ATLANTIS_emissive_demo_green_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_emissive_demo_green_TARGET "${ATLANTIS_emissive_demo_green_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_emissive_demo_green_LOGICAL_PATH "${ATLANTIS_emissive_demo_green_LOGICAL_PATH}" PARENT_SCOPE)
+atlantis_add_material_asset(
+  NAME emissive_demo_blue
+  SOURCE materials/emissive_demo_blue.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_emissive_demo_blue_ARTIFACT_PATH "${ATLANTIS_emissive_demo_blue_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_emissive_demo_blue_METADATA_PATH "${ATLANTIS_emissive_demo_blue_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_emissive_demo_blue_TARGET "${ATLANTIS_emissive_demo_blue_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_emissive_demo_blue_LOGICAL_PATH "${ATLANTIS_emissive_demo_blue_LOGICAL_PATH}" PARENT_SCOPE)
+atlantis_add_material_asset(
+  NAME emissive_demo_normal_mapped
+  SOURCE materials/emissive_demo_normal_mapped.material.txt
+  TEXTURE textured_quad_srgb
+  NORMAL_MAP normal_map_tilted
+)
+set(ATLANTIS_emissive_demo_normal_mapped_ARTIFACT_PATH "${ATLANTIS_emissive_demo_normal_mapped_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_emissive_demo_normal_mapped_METADATA_PATH "${ATLANTIS_emissive_demo_normal_mapped_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_emissive_demo_normal_mapped_TARGET "${ATLANTIS_emissive_demo_normal_mapped_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_emissive_demo_normal_mapped_LOGICAL_PATH "${ATLANTIS_emissive_demo_normal_mapped_LOGICAL_PATH}" PARENT_SCOPE)
+atlantis_add_scene_asset(
+  NAME emissive_demo_scene
+  SOURCE scenes/emissive_demo.scene.txt
+  MESH_DEPENDENCIES pbr_sphere
+  MATERIAL_DEPENDENCIES emissive_demo_orange emissive_demo_green emissive_demo_blue emissive_demo_normal_mapped
+    pbr_normal_mapped_control
+  TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
+)
+set(ATLANTIS_emissive_demo_scene_ARTIFACT_PATH "${ATLANTIS_emissive_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_emissive_demo_scene_METADATA_PATH "${ATLANTIS_emissive_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_emissive_demo_scene_MANIFEST_PATH "${ATLANTIS_emissive_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_emissive_demo_scene_TARGET "${ATLANTIS_emissive_demo_scene_TARGET}" PARENT_SCOPE)
+
 # Plan 0035 Milestone 1 (Spec 0035 Requirement 6): two new meshes for the
 # showcase scene -- a dimpled test sphere (a concave spherical-cap dent
 # at the +Y pole, smoothstep-blended so the transition has zero slope at

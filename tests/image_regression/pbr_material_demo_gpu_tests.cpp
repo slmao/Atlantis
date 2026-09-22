@@ -1,4 +1,5 @@
 #include "fixture/pbr_material_demo_fixture.h"
+#include "support/emissive_differential.h"
 #include "support/golden_validity.h"
 
 #include <atlantis/runtime/bootstrap_config.h>
@@ -230,4 +231,18 @@ TEST_CASE("Full capture-compare cycle against the committed pbr_material_demo go
   REQUIRE(report.passed);
 
   REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0041 Milestone 3 (Spec 0041 R6, rulings O5/Q4): the emissive on/off
+// differential over this file's own existing scene -- no new asset.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Emissive on/off (pbr_direct_lit): setting one material's emissiveFactor only brightens its own sphere",
+          "[image_regression][gpu][emissive]") {
+  // Lit by the scene's directional and point lights, no environment.
+  const auto result = atlantis::image_regression::runEmissiveOnOff(
+      [] { return atlantis::image_regression::setUpPbrMaterialDemoFixture(buildTestConfig()); }, [](auto& fixture) { return atlantis::image_regression::renderPbrMaterialDemoFrame(fixture); },
+      "materials/pbr_dielectric_rough.material.txt");
+  atlantis::image_regression::checkEmissiveOnlyBrightensItsSphere(result);
 }
