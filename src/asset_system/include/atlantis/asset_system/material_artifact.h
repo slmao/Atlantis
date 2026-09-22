@@ -31,8 +31,9 @@ namespace atlantis::asset_system {
 // base_color_factor(32,16) metallic_factor(48,4) roughness_factor(52,4)
 // normal_map_texture_asset_id(56,8) clearcoat_factor(64,4)
 // clearcoat_roughness(68,4) sheen_color(72,12) sheen_roughness(84,4)
-// anisotropy_factor(88,4) anisotropy_rotation(92,4) -- total 96, a
-// provable sum (88 existing + 8), never a struct with implicit padding.
+// anisotropy_factor(88,4) anisotropy_rotation(92,4) emissive_factor(96,12)
+// -- total 108, a provable sum (96 existing + 12, Plan 0041 Milestone 1),
+// never a struct with implicit padding.
 //
 // Unlike the mesh artifact, this format embeds no AssetId of its own --
 // loadMaterialAsset()'s own self-consistency check is entirely
@@ -41,10 +42,11 @@ namespace atlantis::asset_system {
 // Section P3's own closure of Spec 0018 D6's open embedding question).
 //
 // Unlike the texture artifact, this format has NO variable-length
-// payload -- the entire record is a fixed 96 bytes for schema version 6,
-// so decodeMaterialArtifact() rejects any size other than exactly 96
+// payload -- the entire record is a fixed 108 bytes for schema version 7,
+// so decodeMaterialArtifact() rejects any size other than exactly 108
 // bytes (UnexpectedSize), not merely "too small" (TruncatedHeader) --
-// including a real, old, 88-byte schema-version-5 (or 72-byte
+// including a real, old, 96-byte schema-version-6 (or 88-byte
+// schema-version-5, or 72-byte
 // schema-version-4, or 64-byte schema-version-3, or 56-byte
 // schema-version-2, or 32-byte schema-version-1) artifact, all rejected
 // outright (no dual-version reader).
@@ -57,10 +59,18 @@ namespace atlantis::asset_system {
 // rationale as every prior bump: no dual-version reader, every existing
 // artifact at the old version/size is rejected outright, not silently
 // accepted.
-inline constexpr std::uint32_t kMaterialArtifactSchemaVersion = 6;
-inline constexpr std::size_t kMaterialArtifactHeaderSizeBytes = 96;
+// Plan 0041 Milestone 1 (Spec 0041 R4, ADR-0089 Decision 5): schema
+// bumped 6 -> 7, header 96 -> 108 -- emissive_factor, three floats (12
+// bytes), appended at the existing tail, offset 96-107. Same rationale as
+// every prior bump: no dual-version reader.
+inline constexpr std::uint32_t kMaterialArtifactSchemaVersion = 7;
+inline constexpr std::size_t kMaterialArtifactHeaderSizeBytes = 108;
 
-// Every MaterialKind uses this identical 96-byte layout -- never a
+// The value encodeMaterialArtifact()'s trailing emissive argument
+// defaults to, so every pre-existing caller encodes "no emissive".
+inline constexpr float kNoEmissiveFactor[3] = {0.0f, 0.0f, 0.0f};
+
+// Every MaterialKind uses this identical 108-byte layout -- never a
 // per-kind-length record (ADR-0066 item 3). baseColorFactor/
 // metallicFactor/roughnessFactor/clearcoatFactor/clearcoatRoughness/
 // sheenColor/sheenRoughness/anisotropyFactor/anisotropyRotation are
@@ -92,6 +102,8 @@ struct DecodedMaterialArtifact {
   // header's own top comment for the full byte table.
   float anisotropyFactor = 0.0f;
   float anisotropyRotation = 0.0f;
+  // Plan 0041 Milestone 1 (ADR-0089): offset 96(12), range [0, 65504].
+  float emissiveFactor[3] = {0.0f, 0.0f, 0.0f};
 };
 
 // kind/textureAsset/filter/addressMode/baseColorFactor/metallicFactor/
@@ -109,7 +121,8 @@ struct DecodedMaterialArtifact {
                                                              AssetId normalMapTexture, float clearcoatFactor,
                                                              float clearcoatRoughness,
                                                              const float (&sheenColor)[3], float sheenRoughness,
-                                                             float anisotropyFactor, float anisotropyRotation);
+                                                             float anisotropyFactor, float anisotropyRotation,
+                                                             const float (&emissiveFactor)[3] = kNoEmissiveFactor);
 
 [[nodiscard]] atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMaterialArtifact(
     const std::vector<std::byte>& bytes);

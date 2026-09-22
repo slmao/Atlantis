@@ -41,7 +41,7 @@ void writeFile(const fs::path& path, const std::string& content) {
 }
 
 constexpr std::string_view kValidSource =
-    "atlantis_material_source_version: 6\n"
+    "atlantis_material_source_version: 7\n"
     "kind: unlit_textured\n"
     "texture: textures/textured_quad_source_unorm.png\n"
     "filter: linear\n"
@@ -81,7 +81,7 @@ TEST_CASE("loadMaterialAsset loads a well-formed PbrDirectLit material with its 
   TempDirGuard dir("pbr_success");
   const fs::path sourcePath = dir.path / "pbr_dielectric_rough.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 6\n"
+            "atlantis_material_source_version: 7\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -123,7 +123,7 @@ TEST_CASE("loadMaterialAsset round-trips a metallic_factor value that std::to_st
   TempDirGuard dir("pbr_precise_float_roundtrip");
   const fs::path sourcePath = dir.path / "pbr_precise.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 6\n"
+            "atlantis_material_source_version: 7\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -157,7 +157,7 @@ TEST_CASE("loadMaterialAsset detects a metadata/artifact mismatch scoped to meta
   TempDirGuard dir("metallic_mismatch");
   const fs::path sourcePath = dir.path / "pbr.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 6\n"
+            "atlantis_material_source_version: 7\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -243,7 +243,7 @@ TEST_CASE("loadMaterialAsset detects a deliberate artifact/metadata mismatch", "
   // now disagrees with the artifact's own decoded texture_asset_id.
   const fs::path otherSourcePath = dir.path / "other.material.txt";
   writeFile(otherSourcePath,
-            "atlantis_material_source_version: 6\n"
+            "atlantis_material_source_version: 7\n"
             "kind: unlit_textured\n"
             "texture: textures/other.png\n"
             "filter: linear\n"
@@ -280,6 +280,67 @@ TEST_CASE(
   const auto pos = metadataText.find(oldLine);
   REQUIRE(pos != std::string::npos);
   metadataText.replace(pos, oldLine.size(), newLine);
+  writeFile(metadataPath, metadataText);
+
+  const auto result = loadMaterialAsset(artifactPath, metadataPath);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == MaterialLoadError::MetadataArtifactMismatch);
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0041 Milestone 1: emissive_factor survives load, and the
+// metadata/artifact agreement check covers it.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] std::pair<fs::path, fs::path> cookEmissiveMaterial(const fs::path& dir) {
+  const fs::path sourcePath = dir / "emissive.material.txt";
+  writeFile(sourcePath,
+            "atlantis_material_source_version: 7\n"
+            "kind: pbr_direct_lit\n"
+            "texture: textures/textured_quad_source_srgb.png\n"
+            "filter: linear\n"
+            "address_mode: repeat\n"
+            "base_color_factor: 1.0 1.0 1.0 1.0\n"
+            "metallic_factor: 0.0\n"
+            "roughness_factor: 0.5\n"
+            "emissive_factor: 8 0.13 0.13\n");
+  const fs::path artifactPath = dir / "emissive.amaterial";
+  const fs::path metadataPath = dir / "emissive.amaterial.meta.txt";
+  REQUIRE(cookMaterial(sourcePath.string(), "materials/emissive.material.txt", artifactPath.string(),
+                       metadataPath.string())
+              .isOk());
+  return {artifactPath, metadataPath};
+}
+
+}  // namespace
+
+TEST_CASE("loadMaterialAsset carries emissive_factor into MaterialAssetData", "[asset_system][material][emissive]") {
+  TempDirGuard dir("emissive_load");
+  const auto [artifactPath, metadataPath] = cookEmissiveMaterial(dir.path);
+  const auto result = loadMaterialAsset(artifactPath, metadataPath);
+  REQUIRE(result.isOk());
+  CHECK(result.value().emissiveFactor[0] == 8.0f);
+  CHECK(result.value().emissiveFactor[1] == 0.13f);
+  CHECK(result.value().emissiveFactor[2] == 0.13f);
+}
+
+TEST_CASE("loadMaterialAsset detects a metadata/artifact mismatch scoped to emissiveFactor alone",
+          "[asset_system][material][emissive]") {
+  TempDirGuard dir("emissive_mismatch");
+  const auto [artifactPath, metadataPath] = cookEmissiveMaterial(dir.path);
+  std::string metadataText;
+  {
+    std::ifstream in(metadataPath, std::ios::binary);
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    metadataText = buffer.str();
+  }
+  const std::string oldLine = "emissive_factor: 8 0.13 0.13";
+  const auto pos = metadataText.find(oldLine);
+  REQUIRE(pos != std::string::npos);
+  metadataText.replace(pos, oldLine.size(), "emissive_factor: 9 0.13 0.13");
   writeFile(metadataPath, metadataText);
 
   const auto result = loadMaterialAsset(artifactPath, metadataPath);

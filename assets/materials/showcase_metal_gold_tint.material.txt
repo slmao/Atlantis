@@ -1,4 +1,4 @@
-atlantis_material_source_version: 6
+atlantis_material_source_version: 7
 kind: pbr_direct_lit
 texture: textures/metal_rust_source_srgb.png
 filter: linear

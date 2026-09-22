@@ -8,7 +8,7 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_material_source_version: 6";
+constexpr std::string_view kVersionLine = "atlantis_material_source_version: 7";
 constexpr std::string_view kKindPrefix = "kind: ";
 constexpr std::string_view kTexturePrefix = "texture: ";
 constexpr std::string_view kFilterPrefix = "filter: ";
@@ -38,6 +38,10 @@ constexpr std::string_view kSheenRoughnessPrefix = "sheen_roughness: ";
 // combine two or more of {clearcoat, sheen, anisotropy}" rule).
 constexpr std::string_view kAnisotropyFactorPrefix = "anisotropy_factor: ";
 constexpr std::string_view kAnisotropyRotationPrefix = "anisotropy_rotation: ";
+// Plan 0041 Milestone 1 (Spec 0041 R4, ruling O1): the v7 grammar's one
+// optional, prefix-identified line -- after the kind-specific pair (if
+// any), before the optional normal_map line.
+constexpr std::string_view kEmissiveFactorPrefix = "emissive_factor: ";
 
 constexpr std::string_view kKindUnlitTextured = "unlit_textured";
 constexpr std::string_view kKindLitTextured = "lit_textured";
@@ -122,10 +126,79 @@ constexpr std::string_view kAddressModeClampToEdge = "clamp_to_edge";
 
 }  // namespace
 
+// Plan 0041 Milestone 1 (Plan 0041 P1): the kind vocabulary, used only by
+// the emissive pre-pass below to learn where the optional line belongs.
+// The main parse keeps its own, unchanged kind dispatch.
+[[nodiscard]] bool kindFromValue(std::string_view value, MaterialKind& out) {
+  if (value == kKindUnlitTextured) {
+    out = MaterialKind::UnlitTextured;
+  } else if (value == kKindLitTextured) {
+    out = MaterialKind::LitTextured;
+  } else if (value == kKindPbrDirectLit) {
+    out = MaterialKind::PbrDirectLit;
+  } else if (value == kKindPbrClearcoat) {
+    out = MaterialKind::PbrClearcoat;
+  } else if (value == kKindPbrSheen) {
+    out = MaterialKind::PbrSheen;
+  } else if (value == kKindPbrAnisotropic) {
+    out = MaterialKind::PbrAnisotropic;
+  } else {
+    return false;
+  }
+  return true;
+}
+
 atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSource(std::string_view text) {
   using ResultT = atlantis::Result<ParsedMaterialSource, MaterialSourceParseError>;
 
-  const std::vector<std::string_view> lines = splitLines(text);
+  std::vector<std::string_view> lines = splitLines(text);
+
+  // Plan 0041 Milestone 1 (Plan 0041 P1, Spec 0041 ruling O1): the
+  // optional `emissive_factor:` line is recognised by its prefix, parsed,
+  // and REMOVED here, before the line-count shape machine below runs --
+  // so that machine, and every error it returns, is byte-for-byte the v6
+  // one for every input that carries no such line. It is taken only when
+  // the version line and kind are already valid (otherwise the main
+  // parse reports those errors exactly as before), and only at its one
+  // legal slot: index 8 (directly after the three factor lines), or 10
+  // for the kinds whose REQUIRED pair occupies 8-9 -- i.e. after the
+  // kind-specific pair and before normal_map. The line count therefore
+  // gains exactly one more legal value (12).
+  constexpr std::size_t kMaxLineCountWithEmissive = 12;
+  if (lines.size() > kMaxLineCountWithEmissive) return ResultT::Err(MaterialSourceParseError::TrailingContent);
+  float emissiveFactor[3] = {0.0f, 0.0f, 0.0f};
+  std::string_view kindValue;
+  MaterialKind prepassKind{};
+  if (lines.size() > 8 && lines[0] == kVersionLine && matchField(lines[1], kKindPrefix, kindValue) &&
+      kindFromValue(kindValue, prepassKind)) {
+    std::size_t emissiveIndex = lines.size();
+    for (std::size_t i = 8; i < lines.size(); ++i) {
+      std::string_view ignored;
+      if (matchField(lines[i], kEmissiveFactorPrefix, ignored)) {
+        emissiveIndex = i;
+        break;
+      }
+    }
+    if (emissiveIndex != lines.size()) {
+      if (prepassKind == MaterialKind::UnlitTextured || prepassKind == MaterialKind::LitTextured) {
+        return ResultT::Err(MaterialSourceParseError::EmissiveNotSupportedForKind);
+      }
+      const bool hasKindPair = prepassKind == MaterialKind::PbrClearcoat || prepassKind == MaterialKind::PbrSheen ||
+                               prepassKind == MaterialKind::PbrAnisotropic;
+      const std::size_t legalIndex = hasKindPair ? 10 : 8;
+      if (emissiveIndex != legalIndex) return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+      std::string_view emissiveValue;
+      (void)matchField(lines[emissiveIndex], kEmissiveFactorPrefix, emissiveValue);
+      const std::vector<std::string_view> emissiveTokens = splitOnSpace(emissiveValue);
+      if (emissiveTokens.size() != 3) return ResultT::Err(MaterialSourceParseError::MalformedNumber);
+      for (std::size_t i = 0; i < 3; ++i) {
+        if (!parseFloatToken(emissiveTokens[i], emissiveFactor[i])) {
+          return ResultT::Err(MaterialSourceParseError::MalformedNumber);
+        }
+      }
+      lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(emissiveIndex));
+    }
+  }
 
   // Plan 0023 Milestone 1 (ADR-0066 item 2): version-2 grammar was
   // either exactly 5 lines (the three new numeric fields absent,
@@ -340,6 +413,7 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
     parsed.normalMapLogicalPath = std::string(value);
   }
 
+  for (std::size_t i = 0; i < 3; ++i) parsed.emissiveFactor[i] = emissiveFactor[i];
   return ResultT::Ok(std::move(parsed));
 }
 
@@ -419,6 +493,17 @@ std::string serializeMaterialSource(const ParsedMaterialSource& source) {
     out += '\n';
     out += kAnisotropyRotationPrefix;
     out += formatFloat(source.anisotropyRotation);
+    out += '\n';
+  }
+  // Plan 0041 Milestone 1 (Plan 0041 P1): emitted only when a component
+  // is non-zero -- the normal_map line's own symmetry below -- so every
+  // existing source round-trips with only its version line changed.
+  if (source.emissiveFactor[0] != 0.0f || source.emissiveFactor[1] != 0.0f || source.emissiveFactor[2] != 0.0f) {
+    out += kEmissiveFactorPrefix;
+    for (std::size_t i = 0; i < 3; ++i) {
+      if (i != 0) out += ' ';
+      out += formatFloat(source.emissiveFactor[i]);
+    }
     out += '\n';
   }
   // Plan 0029 Section P5/ADR-0074 Section 1: the trailing normal_map

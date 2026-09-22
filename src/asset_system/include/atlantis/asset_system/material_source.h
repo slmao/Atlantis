@@ -66,6 +66,11 @@ struct ParsedMaterialSource {
   // other kind.
   float anisotropyFactor = 0.0f;
   float anisotropyRotation = 0.0f;
+  // Plan 0041 Milestone 1 (Spec 0041 R1/R4, ruling O1): the one OPTIONAL
+  // field of the v7 grammar -- an `emissive_factor: r g b` line
+  // identified by its prefix, absent meaning (0, 0, 0). Never
+  // range-validated here (cookMaterial()'s own job, [0, 65504]).
+  float emissiveFactor[3] = {0.0f, 0.0f, 0.0f};
 };
 
 // Plan 0018 Section P2/P4: parse/decode-error conditions specific to the
@@ -121,6 +126,11 @@ enum class MaterialSourceParseError {
   // source) -- mirrors MissingClearcoatFields's/MissingSheenFields's own
   // reasoning exactly.
   MissingAnisotropyFields,
+  // Plan 0041 Milestone 1 (Spec 0041 R3): an `emissive_factor:` line on
+  // `kind: unlit_textured`/`kind: lit_textured` -- neither shader reads
+  // it (Spec 0041 Investigation 3), so it is rejected rather than
+  // silently ignored, mirroring NormalMapNotSupportedForKind.
+  EmissiveNotSupportedForKind,
 };
 
 // Strict, fixed-field-order, plain-text grammar extending

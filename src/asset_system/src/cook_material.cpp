@@ -61,6 +61,15 @@ namespace fs = std::filesystem;
 // scalar factors.
 [[nodiscard]] bool isValidFactor(float value) { return std::isfinite(value) && value >= 0.0f && value <= 1.0f; }
 
+// Plan 0041 Milestone 1 (Spec 0041 R2, ADR-0089 Decision 2, ruling O2):
+// deliberately NOT isValidFactor() -- emissive carries HDR energy
+// (Bistro's factors reach 100), bounded above only by the Rgba16Float
+// finite maximum so no material can write inf into the HDR target.
+constexpr float kMaxEmissiveComponent = 65504.0f;
+[[nodiscard]] bool isValidEmissiveComponent(float value) {
+  return std::isfinite(value) && value >= 0.0f && value <= kMaxEmissiveComponent;
+}
+
 // Plan 0035 Milestone 4 (ADR-0081): anisotropyFactor's own valid range
 // is [-1, 1] (Spec 0035's own field definition), NOT [0, 1] like every
 // other factor isValidFactor() above checks -- a real, deliberate
@@ -152,12 +161,19 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   if (!std::isfinite(parsed.anisotropyRotation)) {
     return ResultT::Err(MaterialCookError::MaterialFactorOutOfRange);
   }
+  // Plan 0041 Milestone 1 (Spec 0041 R2): its own error, because its own
+  // range -- parseMaterialSource() already guarantees it is (0, 0, 0) for
+  // UnlitTextured/LitTextured.
+  for (float component : parsed.emissiveFactor) {
+    if (!isValidEmissiveComponent(component)) return ResultT::Err(MaterialCookError::EmissiveFactorOutOfRange);
+  }
 
   // Step 4: encode + atomic write.
   const std::vector<std::byte> artifactBytes = encodeMaterialArtifact(
       parsed.kind, textureAssetId, parsed.filter, parsed.addressMode, parsed.baseColorFactor, parsed.metallicFactor,
       parsed.roughnessFactor, normalMapTextureAssetId, parsed.clearcoatFactor, parsed.clearcoatRoughness,
-      parsed.sheenColor, parsed.sheenRoughness, parsed.anisotropyFactor, parsed.anisotropyRotation);
+      parsed.sheenColor, parsed.sheenRoughness, parsed.anisotropyFactor, parsed.anisotropyRotation,
+      parsed.emissiveFactor);
 
   MaterialMetadata metadata;
   metadata.assetId = selfAssetId;
@@ -174,6 +190,7 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   metadata.sheenRoughness = parsed.sheenRoughness;
   metadata.anisotropyFactor = parsed.anisotropyFactor;
   metadata.anisotropyRotation = parsed.anisotropyRotation;
+  for (std::size_t i = 0; i < 3; ++i) metadata.emissiveFactor[i] = parsed.emissiveFactor[i];
   const std::string metadataText = serializeMaterialMetadata(metadata);
 
   if (!writeBytesAtomically(artifactOutputPath, reinterpret_cast<const char*>(artifactBytes.data()),
