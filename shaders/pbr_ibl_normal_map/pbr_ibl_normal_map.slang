@@ -54,6 +54,8 @@ struct PushConstants {
     float metallicFactor;
     float roughnessFactor;
     float2 _pad;
+    // Plan 0041 Milestone 2 (Spec 0041 R5): last field, as in the C++ struct.
+    float3 emissiveFactor;
 };
 
 [[vk::push_constant]]
@@ -231,5 +233,8 @@ float4 fragmentMain(Varying input) : SV_Target {
     float3 specularIbl = prefiltered * (F0 * dfg.x + dfg.y);
     accumulated += diffuseIbl + specularIbl;
 
-    return float4(accumulated, alphaOut);
+    // Plan 0041 Milestone 2 (Spec 0041 R6, ADR-0089 Decision 3): self-lit
+    // colour, added after every lighting term and before the output
+    // transform -- in the return expression, so nothing can follow it.
+    return float4(accumulated + pushConstants.emissiveFactor, alphaOut);
 }

@@ -27,9 +27,15 @@
 // shader_system's own private json_parser.h: a relative path, never a
 // new target_include_directories() entry and never promoting it to
 // Renderer's own public include/.
+#include "../../src/renderer/src/pbr_anisotropic_push_constants.h"
+#include "../../src/renderer/src/pbr_clearcoat_push_constants.h"
 #include "../../src/renderer/src/pbr_push_constants.h"
+#include "../../src/renderer/src/pbr_sheen_push_constants.h"
 
+using atlantis::renderer::PbrAnisotropicPushConstants;
+using atlantis::renderer::PbrClearcoatPushConstants;
 using atlantis::renderer::PbrPushConstants;
+using atlantis::renderer::PbrSheenPushConstants;
 using atlantis::runtime::CameraWorldPositionData;
 using atlantis::runtime::FrameLightingData;
 using atlantis::runtime::kCameraUniformBufferSizeBytes;
@@ -79,9 +85,15 @@ struct FieldLayout {
 // skipped by brace matching before its binding is read; for the scalar,
 // vector and matrix fields the earlier tests read, the result is
 // unchanged.
-[[nodiscard]] std::optional<FieldLayout> findFieldLayout(const std::string& json, const std::string& fieldName) {
+//
+// Plan 0041 Milestone 2: searchFrom starts the search inside one
+// parameter (e.g. just after "pushConstants"), so a field name that also
+// occurs earlier in the document -- elementVarLayout, which every
+// constant buffer has -- resolves to that parameter's own.
+[[nodiscard]] std::optional<FieldLayout> findFieldLayout(const std::string& json, const std::string& fieldName,
+                                                         std::size_t searchFrom = 0) {
   const std::string key = "\"" + fieldName + "\"";
-  const std::size_t namePos = json.find(key);
+  const std::size_t namePos = json.find(key, searchFrom);
   if (namePos == std::string::npos) return std::nullopt;
 
   const std::size_t typeKeyPos = json.find("\"type\"", namePos);
@@ -143,9 +155,9 @@ struct FieldLayout {
 }  // namespace
 
 TEST_CASE("PbrPushConstants: real Slang reflection (both stages, ATLANTIS's own transformed schema) reports "
-          "exactly {offset:0, size:96}, matching sizeof(PbrPushConstants)",
+          "exactly {offset:0, size:112}, matching sizeof(PbrPushConstants)",
           "[shader_system][runtime][pbr][reflection]") {
-  static_assert(sizeof(PbrPushConstants) == 96);
+  static_assert(sizeof(PbrPushConstants) == 112);  // Plan 0041 Milestone 2: 96 + emissiveFactor
 
   auto vertexResult = loadReflectionMetadata(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) +
                                               "/pbr_direct_lit.vert.refl.json");
@@ -395,6 +407,75 @@ TEST_CASE("CameraUniform: a real slangc reflection of every one of the eleven de
     ++shadersChecked;
   }
   CHECK(shadersChecked == 11);
+
+  fs::remove_all(outputDir, ec);
+}
+
+// Plan 0041 Milestone 2 (Spec 0041 R5, ADR-0089 Decision 4): the push-
+// constant block of all ten PBR shaders, reflected fresh from each
+// shader's own source by a real slangc run, against the C++ struct its
+// Renderer payload pushes -- emissiveFactor's offset and the whole
+// block's size. The block size here IS the pipeline range the engine
+// declares (slang_json_transform.cpp takes elementVarLayout's own size),
+// so this ties together all three hand-kept copies of it: the Renderer's
+// static_asserts (sizeof below), atlantis_shader_compiler's expectation
+// (compile_and_validate.cpp), and Runtime's pushConstantSizeBytesFor()
+// -- any one drifting from the shader fails a build, this test, or a
+// Layers-fatal draw.
+TEST_CASE("PBR push constants: a real slangc reflection of every one of the ten PBR shaders places emissiveFactor "
+          "and sizes the block exactly as its C++ struct does (Plan 0041, 10/10)",
+          "[shader_system][runtime][pbr][reflection][emissive]") {
+  struct ShaderCase {
+    const char* name;
+    long emissiveOffset;
+    long blockSize;
+  };
+  const ShaderCase cases[] = {
+      {"pbr_direct_lit", offsetof(PbrPushConstants, emissiveFactor), sizeof(PbrPushConstants)},
+      {"pbr_direct_lit_normal_map", offsetof(PbrPushConstants, emissiveFactor), sizeof(PbrPushConstants)},
+      {"pbr_ibl", offsetof(PbrPushConstants, emissiveFactor), sizeof(PbrPushConstants)},
+      {"pbr_ibl_normal_map", offsetof(PbrPushConstants, emissiveFactor), sizeof(PbrPushConstants)},
+      {"pbr_clearcoat_ibl", offsetof(PbrClearcoatPushConstants, emissiveFactor), sizeof(PbrClearcoatPushConstants)},
+      {"pbr_clearcoat_ibl_normal_map", offsetof(PbrClearcoatPushConstants, emissiveFactor),
+       sizeof(PbrClearcoatPushConstants)},
+      {"pbr_sheen_ibl", offsetof(PbrSheenPushConstants, emissiveFactor), sizeof(PbrSheenPushConstants)},
+      {"pbr_sheen_ibl_normal_map", offsetof(PbrSheenPushConstants, emissiveFactor), sizeof(PbrSheenPushConstants)},
+      {"pbr_anisotropic_ibl", offsetof(PbrAnisotropicPushConstants, emissiveFactor),
+       sizeof(PbrAnisotropicPushConstants)},
+      {"pbr_anisotropic_ibl_normal_map", offsetof(PbrAnisotropicPushConstants, emissiveFactor),
+       sizeof(PbrAnisotropicPushConstants)},
+  };
+  static_assert(std::size(cases) == 10);
+  static_assert(sizeof(PbrSheenPushConstants) == 128);  // exactly the Vulkan-guaranteed maxPushConstantsSize
+
+  const fs::path outputDir = fs::temp_directory_path() / "atlantis_push_constant_10_of_10_cross_check_tests";
+  std::error_code ec;
+  fs::create_directories(outputDir, ec);
+
+  int shadersChecked = 0;
+  for (const ShaderCase& shader : cases) {
+    INFO("shader: " << shader.name);
+    const fs::path source =
+        fs::path(ATLANTIS_SHADER_SOURCE_ROOT) / shader.name / (std::string(shader.name) + ".slang");
+    const fs::path jsonPath = outputDir / (std::string(shader.name) + "_vert_raw_refl.json");
+    const fs::path spirvPath = outputDir / (std::string(shader.name) + "_vert_raw.spv");
+    REQUIRE(runSlangcReflectionJson(source, "vertexMain", "vertex", jsonPath, spirvPath));
+    const auto jsonText = readWholeFile(jsonPath);
+    REQUIRE(jsonText.has_value());
+
+    const std::size_t pushConstantsPos = jsonText->find("\"pushConstants\"");
+    REQUIRE(pushConstantsPos != std::string::npos);
+    const auto block = findFieldLayout(*jsonText, "elementVarLayout", pushConstantsPos);
+    const auto emissive = findFieldLayout(*jsonText, "emissiveFactor", pushConstantsPos);
+    REQUIRE(block.has_value());
+    REQUIRE(emissive.has_value());
+    CHECK(emissive->offset == shader.emissiveOffset);
+    CHECK(emissive->size == 12);  // float3
+    CHECK(block->size == shader.blockSize);
+    CHECK(block->size <= 128);  // Vulkan's guaranteed maxPushConstantsSize
+    ++shadersChecked;
+  }
+  CHECK(shadersChecked == 10);
 
   fs::remove_all(outputDir, ec);
 }

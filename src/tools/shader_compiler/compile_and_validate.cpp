@@ -263,7 +263,14 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     // cross-checked against PbrSheenPushConstants's own MSVC
     // static_assert (src/renderer/src/pbr_sheen_push_constants.h).
     const bool isPbrSheen = expectedContract == "pbr-sheen-ibl" || expectedContract == "pbr-sheen-ibl-normal-map";
-    const std::uint32_t expectedSizeBytes = isPbr ? 96 : (isPbrSheen ? 112 : sizeof(float) * 16);
+    // Plan 0041 Milestone 2 (Spec 0041 R5): 96 -> 112 and 112 -> 128 with
+    // emissiveFactor. One of three hand-kept copies of these sizes -- the
+    // others are the Renderer's static_asserts (src/renderer/src/
+    // pbr*_push_constants.h) and Runtime's pushConstantSizeBytesFor()
+    // (material_realization.cpp); this tool may not include a Renderer
+    // private header. pbr_reflection_cross_check_tests.cpp ties all three
+    // to live slangc reflection.
+    const std::uint32_t expectedSizeBytes = isPbr ? 112 : (isPbrSheen ? 128 : sizeof(float) * 16);
     expected = {PushConstantRange{.offsetBytes = 0, .sizeBytes = expectedSizeBytes, .stage = ShaderStage::Vertex}};
   }
   if (vertexMetadata.pushConstantRanges != expected) {
@@ -446,12 +453,16 @@ int compileAndValidate(const CompileAndValidateRequest& request) {
                        request.expectedContract == "pbr-clearcoat-ibl-normal-map" ||
                        request.expectedContract == "pbr-anisotropic-ibl" ||
                        request.expectedContract == "pbr-anisotropic-ibl-normal-map")) {
-    validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata, 96);
+    // Plan 0041 Milestone 2: 96 -> 112 with emissiveFactor -- the fragment
+    // stage reads it, so this second, fragment-stage copy of the size moves
+    // with validatePushConstantsForVertexStage()'s own.
+    validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata, 112);
   } else if (validationOk && (request.expectedContract == "pbr-sheen-ibl" ||
                               request.expectedContract == "pbr-sheen-ibl-normal-map")) {
     // Plan 0035 Milestone 3 (ADR-0081 D-3/D-4): 112 bytes, not 96 -- see
-    // validatePushConstantsForVertexStage()'s own identical comment.
-    validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata, 112);
+    // validatePushConstantsForVertexStage()'s own identical comment. Plan
+    // 0041 Milestone 2: 112 -> 128, exactly the 128-byte guarantee.
+    validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata, 128);
   } else if (validationOk && (request.expectedContract == "output-transform-unorm" ||
                               request.expectedContract == "output-transform-srgb")) {
     validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata, 4);

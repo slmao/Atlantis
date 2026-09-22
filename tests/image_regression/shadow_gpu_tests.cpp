@@ -15,6 +15,12 @@
 
 #include <atlantis/asset_system/mesh_artifact.h>
 #include <atlantis/renderer/draw_item.h>
+// Plan 0041 Milestone 2 (Plan 0041 P4): PbrPushConstants is a PRIVATE
+// Renderer header, reached by relative path exactly as
+// tests/runtime/pbr_reflection_cross_check_tests.cpp already does -- so
+// the pipeline push-constant size below is derived, never a second
+// hand-kept literal.
+#include "../../src/renderer/src/pbr_push_constants.h"
 #include <atlantis/renderer/material.h>
 #include <atlantis/renderer/mesh.h>
 #include <atlantis/renderer/renderer.h>
@@ -356,7 +362,7 @@ struct ShadowTestRig {
        .vertexInputLayout = *pbrLayout,
        .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
-       .pushConstantSizeBytes = 96,
+       .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
        .sampledTextureBindingCount = 2},
       textureResult.value().get(), samplerResult.value().get(), MaterialPushConstantLayout::PbrDirectLit,
       std::array<float, 4>{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 0.8f, MaterialEnvironmentBinding::None);
@@ -860,7 +866,7 @@ TEST_CASE("Directional shadow leaves the IBL/ambient term untouched: shadowed vs
        .vertexInputLayout = fixture.pbrIblVertexInputLayout,
        .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
-       .pushConstantSizeBytes = 96,
+       .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
        .sampledTextureBindingCount = 4},
       textureResult.value().get(), samplerResult.value().get(), MaterialPushConstantLayout::PbrDirectLit,
       std::array<float, 4>{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 0.8f, MaterialEnvironmentBinding::Ibl);

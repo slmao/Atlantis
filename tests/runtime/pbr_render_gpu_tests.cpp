@@ -11,6 +11,12 @@
 #include <atlantis/renderer/material.h>
 #include <atlantis/renderer/mesh.h>
 #include <atlantis/renderer/renderer.h>
+// Plan 0041 Milestone 2 (Plan 0041 P4): PbrPushConstants is a PRIVATE
+// Renderer header, reached by relative path exactly as
+// tests/runtime/pbr_reflection_cross_check_tests.cpp already does -- so
+// the pipeline push-constant size below is derived, never a second
+// hand-kept literal.
+#include "../../src/renderer/src/pbr_push_constants.h"
 #include <atlantis/render_graph/execution.h>
 #include <atlantis/render_graph/render_graph_builder.h>
 #include <atlantis/rhi/buffer.h>
@@ -517,7 +523,7 @@ TEST_CASE("PbrDirectLit parameter transmission: two draws differing only in meta
          .vertexInputLayout = rig.pbrLayout,
          .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
          .depthFormat = DepthFormat::D32Sfloat,
-         .pushConstantSizeBytes = 96,
+         .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
          .sampledTextureBindingCount = 2},
         rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
         std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, metallicFactor, roughnessFactor);
@@ -629,7 +635,7 @@ TEST_CASE("A mixed UnlitTextured+LitTextured+PbrDirectLit scene renders all thre
        .vertexInputLayout = rig.pbrLayout,
        .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
        .depthFormat = DepthFormat::D32Sfloat,
-       .pushConstantSizeBytes = 96,
+       .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
        .sampledTextureBindingCount = 2},
       rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
       std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 0.3f);
@@ -726,7 +732,7 @@ TEST_CASE("Above-1.0 PBR radiance survives the HDR intermediate and follows Rein
        .vertexInputLayout = rig.pbrLayout,
        .colorFormat = HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
-       .pushConstantSizeBytes = 96,
+       .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
        .sampledTextureBindingCount = 2},
       rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
       std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.5f);
@@ -803,7 +809,7 @@ TEST_CASE("Real-GPU: exposureCompensationEv = -1/0/+1 produces a strictly bright
        .vertexInputLayout = rig.pbrLayout,
        .colorFormat = HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
-       .pushConstantSizeBytes = 96,
+       .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
        .sampledTextureBindingCount = 2},
       rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
       std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.5f);
@@ -871,7 +877,7 @@ TEST_CASE("PbrDirectLit reflects a runtime Light intensity change on the next fr
        .vertexInputLayout = rig.pbrLayout,
        .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
        .depthFormat = DepthFormat::D32Sfloat,
-       .pushConstantSizeBytes = 96,
+       .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
        .sampledTextureBindingCount = 2},
       rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
       std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.5f);
@@ -950,7 +956,7 @@ TEST_CASE("A Pipeline with sampledTextureBindingCount == 5 (pbr_ibl_normal_map) 
        .vertexInputLayout = *normalMapLayout,
        .colorFormat = kColorFormat,
        .depthFormat = DepthFormat::D32Sfloat,
-       .pushConstantSizeBytes = 96,
+       .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
        .sampledTextureBindingCount = 5});
   REQUIRE(pipelineResult.isOk());
   std::unique_ptr<Pipeline> pipeline = std::move(pipelineResult.value());

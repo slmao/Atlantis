@@ -2,6 +2,13 @@
 #include <atlantis/shader_system/reflection_loader.h>
 #include <atlantis/shader_system/reflection_metadata.h>
 
+// Plan 0041 Milestone 2 (Plan 0041 P4): PbrPushConstants is a PRIVATE
+// Renderer header, reached by relative path exactly as
+// tests/runtime/pbr_reflection_cross_check_tests.cpp already does -- so
+// the pipeline push-constant size below is derived, never a second
+// hand-kept literal.
+#include "../../src/renderer/src/pbr_push_constants.h"
+
 #include <string>
 #include <vector>
 
@@ -11,7 +18,7 @@
 // five) -- the assertions below derive entirely from
 // pbrIblExpectedDescriptorContract() itself, so the new binding-4
 // (shadow map) entry is already covered with no further edit here.
-TEST_CASE("pbr_ibl real reflection matches its six-entry descriptor and 96-byte push-constant contract",
+TEST_CASE("pbr_ibl real reflection matches its six-entry descriptor and sizeof(PbrPushConstants)-byte push-constant contract",
           "[shader_system][pbr_ibl][reflection]") {
   using namespace atlantis::shader_system;
   const auto vertex = loadReflectionMetadata(std::string(ATLANTIS_PBR_IBL_SHADER_DIR) + "/pbr_ibl.vert.refl.json");
@@ -25,7 +32,11 @@ TEST_CASE("pbr_ibl real reflection matches its six-entry descriptor and 96-byte 
   CHECK(vertex.value().descriptorBindings == expectedVertex);
   CHECK(fragment.value().descriptorBindings == expectedFragment);
   CHECK((vertex.value().pushConstantRanges ==
-         std::vector<PushConstantRange>{{.offsetBytes = 0, .sizeBytes = 96, .stage = ShaderStage::Vertex}}));
+         std::vector<PushConstantRange>{{.offsetBytes = 0,
+                                           .sizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
+                                           .stage = ShaderStage::Vertex}}));
   CHECK((fragment.value().pushConstantRanges ==
-         std::vector<PushConstantRange>{{.offsetBytes = 0, .sizeBytes = 96, .stage = ShaderStage::Fragment}}));
+         std::vector<PushConstantRange>{{.offsetBytes = 0,
+                                           .sizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
+                                           .stage = ShaderStage::Fragment}}));
 }
