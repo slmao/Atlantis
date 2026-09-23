@@ -489,6 +489,10 @@ atlantis::Result<PixelBuffer, PbrMaterialDemoRenderError> renderPbrMaterialDemoF
   auto* cameraWorldPositionData = reinterpret_cast<CameraWorldPositionData*>(
       cameraData + atlantis::runtime::kCameraUniformWorldPositionOffsetBytes / sizeof(float));
   *cameraWorldPositionData = extractCameraWorldPosition(cameraWorldMatrixResult.value());
+  // Plan 0042 Milestone 3: the same position, for drawFrame()'s ordering
+  // of blended draws (the transparency_demo scenes).
+  const std::array<float, 3> cameraWorldPosition{cameraWorldPositionData->x, cameraWorldPositionData->y,
+                                                 cameraWorldPositionData->z};
   const std::array<float, 36>* irradianceShSource = nullptr;
   if (fixture.environmentData.has_value()) {
     irradianceShSource = &fixture.environmentData->irradianceSh;
@@ -642,7 +646,7 @@ atlantis::Result<PixelBuffer, PbrMaterialDemoRenderError> renderPbrMaterialDemoF
                       *fixture.outputTransformPipeline, *fixture.outputTransformSampler, 0.0f,
                       environmentLightingView.has_value() ? &*environmentLightingView : nullptr,
                       fixture.skyPipeline.get(), *fixture.shadowMap, *fixture.shadowMapSampler,
-                      *fixture.shadowCastPipeline, *fixture.shadowLightSpaceBuffer, {});
+                      *fixture.shadowCastPipeline, *fixture.shadowLightSpaceBuffer, {}, cameraWorldPosition);
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");

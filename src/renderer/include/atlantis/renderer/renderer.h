@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <optional>
 #include <span>
 
 #include <atlantis/render_graph/render_graph_builder.h>
@@ -117,6 +119,16 @@ class Renderer {
   // (src/renderer/src/exposure.h). This is the only real gate for
   // direct/non-asset callers (examples, fixtures, tests) -- Runtime's
   // own caller goes through cook/decode's own independent check first.
+  //
+  // Plan 0042 Milestone 3 (Spec 0042 R7/R8, ADR-0090 Decision 2): the draw
+  // pass issues the sky, then every non-Blend item in drawItems' order,
+  // then every Blend item back-to-front -- the order computeDrawOrder()
+  // (draw_order.h) returns, each item sorted by objectToWorld applied to
+  // its Mesh's localBoundsCentre(). cameraWorldPosition is optional and
+  // trailing, so opaque-only callers are unchanged; it is required
+  // (ATLANTIS_CHECK_MSG) once any draw item's Material is Blend. The shadow
+  // pass skips Blend items in shadowCasterDrawItems: a blended surface
+  // casts no shadow (Mask items still do, solidly).
   void drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& colorTarget,
                  atlantis::rhi::Texture& depthTarget, atlantis::rhi::Buffer& cameraUniformBuffer,
                  std::span<const DrawItem> drawItems, atlantis::rhi::ResourceState finalColorState,
@@ -128,7 +140,8 @@ class Renderer {
                  atlantis::rhi::Pipeline* skyPipeline,
                  atlantis::rhi::ShadowMap& shadowMap, atlantis::rhi::Sampler& shadowMapSampler,
                  atlantis::rhi::Pipeline& shadowCastPipeline, atlantis::rhi::Buffer& shadowLightSpaceBuffer,
-                 std::span<const DrawItem> shadowCasterDrawItems);
+                 std::span<const DrawItem> shadowCasterDrawItems,
+                 const std::optional<std::array<float, 3>>& cameraWorldPosition = std::nullopt);
 };
 
 }  // namespace atlantis::renderer

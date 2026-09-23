@@ -130,6 +130,18 @@ constexpr Vertex kTriangleVertices[3] = {
     {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
 };
 constexpr std::uint16_t kTriangleIndices[3] = {0, 1, 2};
+
+// Plan 0042 Milestone 3 (Plan 0042 Q2, option A, human-ruled 2026-09-24):
+// createMesh() now reads a layout's stride and location-0 position offset
+// once, to compute the Mesh's bounds centre -- an empty layout is a checked
+// programmer error, so these meshes describe their own Vertex bytes.
+[[nodiscard]] VertexInputLayout meshPositionLayout() {
+  return VertexInputLayout{
+      .strideBytes = sizeof(Vertex),
+      .attributes = {{.location = 0,
+                      .offsetBytes = static_cast<std::uint32_t>(offsetof(Vertex, position)),
+                      .format = atlantis::rhi::VertexAttributeFormat::Float3}}};
+}
 constexpr std::array<float, 16> kIdentityMatrix = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
 
 [[nodiscard]] std::optional<VertexInputLayout> unlitTexturedLayout(const ReflectionMetadata& vertexMetadata) {
@@ -256,7 +268,7 @@ struct PbrTestRig {
   if (deviceResult.isErr()) return std::nullopt;
   std::unique_ptr<Device> device = std::move(deviceResult.value());
 
-  auto meshResult = createMesh(*device, VertexInputLayout{}, kTriangleVertices, sizeof(kTriangleVertices),
+  auto meshResult = createMesh(*device, meshPositionLayout(), kTriangleVertices, sizeof(kTriangleVertices),
                                 kTriangleIndices, 3);
   if (meshResult.isErr()) return std::nullopt;
 

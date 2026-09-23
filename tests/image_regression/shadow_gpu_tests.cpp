@@ -118,6 +118,18 @@ static_assert(offsetof(Vertex, normal) == atlantis::asset_system::kMeshArtifactN
 static_assert(offsetof(Vertex, tangent) == atlantis::asset_system::kMeshArtifactTangentOffsetBytes);
 static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrideBytes);
 
+// Plan 0042 Milestone 3 (Plan 0042 Q2, option A, human-ruled 2026-09-24):
+// createMesh() now reads a layout's stride and location-0 position offset
+// once, to compute the Mesh's bounds centre -- an empty layout is a checked
+// programmer error, so these meshes describe their own Vertex bytes.
+[[nodiscard]] VertexInputLayout meshPositionLayout() {
+  return VertexInputLayout{
+      .strideBytes = sizeof(Vertex),
+      .attributes = {{.location = 0,
+                      .offsetBytes = static_cast<std::uint32_t>(offsetof(Vertex, position)),
+                      .format = atlantis::rhi::VertexAttributeFormat::Float3}}};
+}
+
 [[nodiscard]] std::optional<std::vector<std::uint32_t>> loadSpirvFile(const std::string& path) {
   std::ifstream file(path, std::ios::binary | std::ios::ate);
   if (!file.is_open()) return std::nullopt;
@@ -240,7 +252,7 @@ static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrid
       quadVertex(centerX - halfExtent, centerZ + halfExtent, 0.0f, 1.0f),
   };
   const std::uint16_t indices[6] = {0, 1, 2, 2, 3, 0};
-  return createMesh(device, VertexInputLayout{}, vertices.data(), sizeof(vertices), indices, 6);
+  return createMesh(device, meshPositionLayout(), vertices.data(), sizeof(vertices), indices, 6);
 }
 
 // A unit cube, [-0.5,0.5]^3, position-only correctness matters (this
@@ -302,7 +314,7 @@ struct ShadowTestRig {
   auto probeMeshResult = makeQuadMesh(*device, 7.765f, -11.647f, 1.0f);
   if (probeMeshResult.isErr()) return std::nullopt;
   auto occluderMeshResult =
-      createMesh(*device, VertexInputLayout{}, kCubeVertices, sizeof(kCubeVertices), kCubeIndices, 36);
+      createMesh(*device, meshPositionLayout(), kCubeVertices, sizeof(kCubeVertices), kCubeIndices, 36);
   if (occluderMeshResult.isErr()) return std::nullopt;
 
   constexpr std::uint32_t kTexExtent = 2;
@@ -813,7 +825,7 @@ TEST_CASE("Directional shadow leaves the IBL/ambient term untouched: shadowed vs
   REQUIRE(groundMeshResult.isOk());
   Mesh groundMesh = std::move(groundMeshResult.value());
   auto occluderMeshResult =
-      createMesh(*fixture.device, VertexInputLayout{}, kCubeVertices, sizeof(kCubeVertices), kCubeIndices, 36);
+      createMesh(*fixture.device, meshPositionLayout(), kCubeVertices, sizeof(kCubeVertices), kCubeIndices, 36);
   REQUIRE(occluderMeshResult.isOk());
   Mesh occluderMesh = std::move(occluderMeshResult.value());
 

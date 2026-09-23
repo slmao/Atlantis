@@ -241,9 +241,10 @@ atlantis::Result<MaterialDemoFixture, MaterialDemoSetupError> setUpMaterialDemoF
 
   // Phase 1: the real, Runtime-private CPU load/instantiate pipeline --
   // never duplicated here. loadAndInstantiateScene()'s own vertexInputLayout
-  // parameter is used only by createMesh(), which never actually inspects
-  // it (mesh.cpp's own "layout is not otherwise inspected" comment) -- so
-  // passing the unlitTextured layout here (rather than loading a second,
+  // parameter is used only by createMesh(), which reads nothing from it
+  // but the stride and the location-0 position offset (Plan 0042 M3) --
+  // both of which the unlitTextured layout states correctly for every
+  // mesh artifact -- so passing it here (rather than loading a second,
   // unused minimal_mesh shader pair just to build a fallback layout this
   // scene never references) is correct, not a shortcut.
   auto sceneLoadResult = loadAndInstantiateScene(config, fixture.device.get(), *vertexInputLayout);
