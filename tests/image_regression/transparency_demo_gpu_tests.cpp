@@ -6,6 +6,8 @@
 // order; everything else is identical.
 
 #include "fixture/transparency_demo_fixture.h"
+#include "support/golden_validity.h"
+#include "support/pixel_diff.h"
 
 #include <atlantis/asset_system/material_types.h>
 #include <atlantis/runtime/bootstrap_config.h>
@@ -14,6 +16,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -168,5 +171,79 @@ TEST_CASE("transparency_demo: the blended spheres really blend -- forcing them O
   // Both spheres' full screen coverage changes (see-through vs solid): far
   // more than a stray edge.
   CHECK(countDifferingPixels(blended, frameResult.value()) > 10000);
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0042 Milestone 3, golden commit (ADR-0042 Initial baseline
+// bootstrap): the golden was captured by
+// atlantis_image_regression_transparency_demo_golden_generator against the
+// clean, already-committed tree at its recorded source_revision; these
+// TEST_CASEs land with it.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr const char* kTransparencyDemoGoldenName = "transparency_demo/transparency_demo_512x512_rgba8unorm";
+constexpr const char* kTransparencyDemoGoldenSlug = "transparency_demo_512x512_rgba8unorm";
+
+[[nodiscard]] atlantis::image_regression::ComparisonReport compareAgainstGolden(const PixelBuffer& actual,
+                                                                                const char* failureSlug) {
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult = atlantis::image_regression::loadAndValidateGolden(
+      goldensDir / (std::string(kTransparencyDemoGoldenName) + ".png"),
+      goldensDir / (std::string(kTransparencyDemoGoldenName) + ".sidecar.txt"));
+  {
+    INFO("INVALID GOLDEN: the committed transparency_demo golden must load and validate cleanly");
+    REQUIRE(goldenResult.isOk());
+  }
+  const auto& golden = goldenResult.value().pixels;
+  REQUIRE(actual.width == golden.width);
+  REQUIRE(actual.height == golden.height);
+  const auto report = atlantis::image_regression::compareBuffers(actual, golden);
+  if (!report.passed && failureSlug != nullptr) {
+    (void)atlantis::image_regression::writeFailureArtifacts(ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR, failureSlug, actual,
+                                                            golden);
+  }
+  return report;
+}
+
+}  // namespace
+
+TEST_CASE("Full capture-compare cycle against the committed transparency_demo golden passes",
+          "[image_regression][gpu][transparency]") {
+  const std::filesystem::path outputDir = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
+  std::filesystem::remove(outputDir / (std::string(kTransparencyDemoGoldenSlug) + "_actual.png"));
+  std::filesystem::remove(outputDir / (std::string(kTransparencyDemoGoldenSlug) + "_diff.png"));
+  const auto report = compareAgainstGolden(renderScene(false), kTransparencyDemoGoldenSlug);
+  REQUIRE(report.passed);
+}
+
+TEST_CASE("The swapped-declaration transparency scene also passes against the transparency_demo golden (Q5)",
+          "[image_regression][gpu][transparency]") {
+  const auto report = compareAgainstGolden(renderScene(true), "transparency_demo_swapped_512x512_rgba8unorm");
+  REQUIRE(report.passed);
+}
+
+TEST_CASE("The transparency_demo frame with both spheres forced Opaque fails comparison against the real "
+          "transparency_demo golden",
+          "[image_regression][gpu][transparency]") {
+  // The discriminator for the golden itself: without blending, both
+  // spheres are solid and hide the floor behind them, so the image the
+  // golden records cannot be produced unless the spheres are composited.
+  auto fixtureResult = setUpTransparencyDemoFixture(buildTestConfig(false));
+  REQUIRE(fixtureResult.isOk());
+  TransparencyDemoFixture& fixture = fixtureResult.value();
+  for (auto& [id, data] : fixture.materialDataMap) {
+    if (data.alphaMode == atlantis::asset_system::MaterialAlphaMode::Blend) {
+      data.alphaMode = atlantis::asset_system::MaterialAlphaMode::Opaque;
+    }
+  }
+  auto frameResult = renderTransparencyDemoFrame(fixture);
+  REQUIRE(frameResult.isOk());
+  const auto report = compareAgainstGolden(frameResult.value(), nullptr);
+  INFO("maxChannelDiff " << report.maxChannelDiff << ", out-of-tolerance pixels " << report.outOfToleranceCount);
+  CHECK_FALSE(report.passed);
+  CHECK(report.outOfToleranceCount > 10000);
   REQUIRE(fixture.device->waitIdle().isOk());
 }
