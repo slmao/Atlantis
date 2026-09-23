@@ -489,7 +489,10 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
       {materialData.sheenColor[0], materialData.sheenColor[1], materialData.sheenColor[2]},
       materialData.sheenRoughness, materialData.anisotropyFactor, materialData.anisotropyRotation,
       {materialData.emissiveFactor[0], materialData.emissiveFactor[1], materialData.emissiveFactor[2]},
-      alphaRealization.rendererAlphaMode);
+      alphaRealization.rendererAlphaMode,
+      // Plan 0042 Milestone 2 (Spec 0042 R6): pushed as 0 unless Mask, so
+      // Opaque/Blend never discard.
+      materialData.alphaMode == atlantis::asset_system::MaterialAlphaMode::Mask ? materialData.alphaCutoff : 0.0f);
   if (materialResult.isErr()) return ResultT::Err(MaterialRealizationError::MaterialCreateFailed);
   candidate.material = std::make_unique<atlantis::renderer::Material>(std::move(materialResult.value()));
 

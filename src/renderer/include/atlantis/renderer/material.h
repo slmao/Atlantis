@@ -98,7 +98,7 @@ class Material {
                      float sheenRoughness = 0.0f, float anisotropyFactor = 0.0f,
                      float anisotropyRotation = 0.0f,
                      std::array<float, 3> emissiveFactor = {0.0f, 0.0f, 0.0f},
-                     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque) noexcept;
+                     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque, float alphaCutoff = 0.0f) noexcept;
   ~Material() = default;
 
   Material(const Material&) = delete;
@@ -141,6 +141,11 @@ class Material {
   // Plan 0042 Milestone 1: Mask/Blend only on the four PBR layouts
   // (checked at construction); always Opaque for ObjectToWorldOnly.
   [[nodiscard]] MaterialAlphaMode alphaMode() const noexcept { return alphaMode_; }
+  // Plan 0042 Milestone 2 (Spec 0042 R6): the PBR shaders discard a
+  // fragment whose alpha is below this. In [0, 1], and exactly 0 unless
+  // alphaMode() == Mask (checked at construction) -- alpha >= 0 always, so
+  // a 0 cutoff never discards and Opaque/Blend output is unchanged.
+  [[nodiscard]] float alphaCutoff() const noexcept { return alphaCutoff_; }
 
  private:
   std::unique_ptr<atlantis::rhi::Pipeline> pipeline_;
@@ -160,6 +165,7 @@ class Material {
   float anisotropyRotation_ = 0.0f;
   std::array<float, 3> emissiveFactor_{0.0f, 0.0f, 0.0f};
   MaterialAlphaMode alphaMode_ = MaterialAlphaMode::Opaque;
+  float alphaCutoff_ = 0.0f;
 };
 
 enum class CreateMaterialError {
@@ -199,6 +205,6 @@ enum class CreateMaterialError {
     float clearcoatRoughness = 0.0f, std::array<float, 3> sheenColor = {0.0f, 0.0f, 0.0f},
     float sheenRoughness = 0.0f, float anisotropyFactor = 0.0f, float anisotropyRotation = 0.0f,
     std::array<float, 3> emissiveFactor = {0.0f, 0.0f, 0.0f},
-    MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque);
+    MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque, float alphaCutoff = 0.0f);
 
 }  // namespace atlantis::renderer

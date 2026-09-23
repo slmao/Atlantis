@@ -191,6 +191,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
           payload.roughnessFactor = item.material->roughnessFactor();
           const auto& emissiveFactor = item.material->emissiveFactor();  // Plan 0041 Milestone 2
           std::copy(emissiveFactor.begin(), emissiveFactor.end(), std::begin(payload.emissiveFactor));
+          payload.alphaCutoff = item.material->alphaCutoff();  // Plan 0042 Milestone 2
           cmd.pushConstant(&payload, sizeof(payload));
           break;
         }
@@ -209,6 +210,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
           payload.clearcoatRoughness = item.material->clearcoatRoughness();
           const auto& emissiveFactor = item.material->emissiveFactor();
           std::copy(emissiveFactor.begin(), emissiveFactor.end(), std::begin(payload.emissiveFactor));
+          payload.alphaCutoff = item.material->alphaCutoff();
           cmd.pushConstant(&payload, sizeof(payload));
           break;
         }
@@ -228,6 +230,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
           payload.sheenRoughness = item.material->sheenRoughness();
           const auto& emissiveFactor = item.material->emissiveFactor();
           std::copy(emissiveFactor.begin(), emissiveFactor.end(), std::begin(payload.emissiveFactor));
+          payload.alphaCutoff = item.material->alphaCutoff();
           cmd.pushConstant(&payload, sizeof(payload));
           break;
         }
@@ -247,6 +250,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
           payload.anisotropyRotation = item.material->anisotropyRotation();
           const auto& emissiveFactor = item.material->emissiveFactor();
           std::copy(emissiveFactor.begin(), emissiveFactor.end(), std::begin(payload.emissiveFactor));
+          payload.alphaCutoff = item.material->alphaCutoff();
           cmd.pushConstant(&payload, sizeof(payload));
           break;
         }

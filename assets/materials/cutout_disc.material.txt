@@ -1,0 +1,10 @@
+atlantis_material_source_version: 8
+kind: pbr_direct_lit
+texture: textures/cutout_disc_source_srgb.png
+filter: linear
+address_mode: clamp_to_edge
+base_color_factor: 1.0 1.0 1.0 1.0
+metallic_factor: 0.0
+roughness_factor: 0.6
+alpha_mode: mask
+alpha_cutoff: 0.5
