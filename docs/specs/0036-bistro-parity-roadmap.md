@@ -482,6 +482,27 @@ pass-level concern) — explicitly named, explicitly deferred to that
 workflow's own ADR, per this roadmap's own instruction not to resolve
 it here.
 
+*Now drafted (linked 2026-09-23):* [Spec 0042](0042-transparency.md)
+(`Approved`), with this section's ADR obligation discharged by
+[ADR-0090](../adr/0090-transparency-blend-state-draw-order-and-depth-write.md)
+(`Accepted`) — and with two further decision surfaces the obligation did
+not anticipate, closed in the same ADR because they are inseparable from
+it: the RHI Pipeline's own blend expression (a new `ColorBlendMode` enum
+on `PipelineCreateParams`, since none existed) and the depth-write policy
+(blended draws test but never write depth; `MASK` is opaque and writes).
+**The sort-order question this section deferred is answered: opaque first
+in caller order, then blended draws back-to-front, sorted per object on
+the CPU inside `Renderer::drawFrame()`'s existing draw pass** — not at
+RenderGraph pass level, which would add a pass sharing the same
+attachments for no benefit — keyed on the squared distance from the camera
+to each mesh's own bounds centre. One correction to this section's own
+premise, measured against the asset: **Bistro's glass is not
+alpha-blended** (18 materials, 339 instances, `KHR_materials_transmission`
+with `alphaMode: OPAQUE`); its only three `BLEND` materials are wall
+decals, and what this workflow delivers Bistro directly is its 20 cutout
+`MASK` materials (163 instances, foliage and signage). Whether that glass
+is approximated as blending is left to ⑦ (Spec 0042 ruling O3).
+
 ---
 
 **⑤ Height Fog** — Size: **M**

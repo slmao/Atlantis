@@ -1,8 +1,10 @@
 # ADR 0090: Transparency — Pipeline Blend State, Draw Order and Depth Write
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-23
 - **Deciders:** slmao
+- **Acceptance:** slmao, 2026-09-23 (chat confirmation; reviewed in this
+  branch's own PR, alongside Spec 0042's Approval)
 - **Related Spec:** [Spec 0042](../specs/0042-transparency.md)
 
 Record one decision and its rationale. Follow the

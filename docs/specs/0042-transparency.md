@@ -1,13 +1,22 @@
 # Spec: Transparency
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-23
-- **Related Plan(s):** none yet — Plan 0042 is drafted only after this Spec
-  is Approved.
-- **Approval:** pending
+- **Related Plan(s):** none yet — Plan 0042 drafting is authorized by the
+  Approval below. **Implementation still awaits its own, separate Joint Human
+  Review** of Spec + Plan together, per AGENTS.md's own workflow.
+- **Approval:** slmao, 2026-09-23 (chat confirmation, no reviewing PR —
+  authorizes drafting Plan 0042; Implementation itself still awaits its own,
+  separate Joint Human Review of Spec + Plan together). The same review ruled
+  all five open questions, and confirmed all three of ADR-0090's decision
+  surfaces: the `ColorBlendMode` enum, CPU-side ordering inside
+  `drawFrame()`, and depth-write off for blended draws with `MASK` writing
+  depth. See Risks & Open Questions below.
 - **Related ADR(s):** [ADR-0090](../adr/0090-transparency-blend-state-draw-order-and-depth-write.md)
-  (Proposed, on this branch)
+  (`Accepted` 2026-09-23, alongside this Spec's own Approval) — the Pipeline
+  blend expression, the draw order and its sort key, the depth-write policy,
+  and the material expression that drives them.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
@@ -295,7 +304,7 @@ barriers and graph surface for nothing.
 
 ## Architectural Impact
 
-**Yes — ADR-0090 (Proposed, on this branch).** It covers three decisions
+**Yes — ADR-0090 (`Accepted` 2026-09-23).** It covers three decisions
 that cannot be taken separately:
 1. the RHI Pipeline blend expression (a public-API change);
 2. the draw-queue order and sort key, and where sorting lives;
@@ -364,10 +373,16 @@ The three decision surfaces' alternatives are in ADR-0090. At Spec level:
 
 ## Risks & Open Questions
 
+**All five open questions were ruled by Human Review on 2026-09-23 (chat
+confirmation), alongside this Spec's own Approval.** Each ruling below is
+binding on Plan 0042; the reasoning that led to it stays in ADR-0090 and in
+the Investigations above.
+
 - **O1 — importer mapping in this Spec?** **Recommend yes** for `MASK` and
   `BLEND`: it is small (the Spec 0041 R8 precedent), it replaces the current
   drop-and-report with a real destination, and it gives ⑦ real data. The
   alternative is leaving all importer work to ⑦.
+  **Ruled 2026-09-23: in this Spec** — Requirement 9 stands.
 - **O2 — `discard` in every PBR shader, or `MASK`-only shader variants?**
   A `discard` anywhere in a fragment shader can make some GPUs disable early
   depth testing for that Pipeline, even when it never fires, so every opaque
@@ -375,24 +390,31 @@ The three decision surfaces' alternatives are in ADR-0090. At Spec level:
   and a `hasAlphaTest` dimension to shader selection. **Recommend the single
   guarded `discard` now:** correctness first, no variant explosion. Measure
   in ⑦, where Bistro's opaque load is real, and split then if it costs.
+  **Ruled 2026-09-23: the single guarded `discard`, with the measurement
+  owed by ⑦.**
 - **O3 — Bistro's glass (transmission, 339 instances).** It is `OPAQUE` in
   glTF. Making it see-through means approximating transmission as `Blend`
   with alpha = 1 − `transmissionFactor` (0.05–0.34 in Bistro). That is an
   appearance decision, not a correctness one. **Recommend deciding it in ⑦**,
   with this Spec's blend path as its prerequisite, rather than baking an
   approximation into the importer now.
+  **Ruled 2026-09-23: left to ⑦** — this Spec ships the blend path it needs,
+  and the 339 glass instances stay `Opaque` until ⑦ decides.
 - **O4 — the sort point: node origin, or mesh bounds centre?** The origin
   costs nothing, but a mesh whose geometry sits away from its node origin
   sorts by the wrong point. A local-space AABB centre, computed once in
   `createMesh()` from the positions it already receives (no asset-format
   change), fixes that for 12 bytes per Mesh. **Recommend the bounds
   centre.**
+  **Ruled 2026-09-23: the mesh bounds centre** — ADR-0090 Decision 2's sort
+  point.
 - **O5 — decal z-fighting.** All three Bistro `BLEND` materials are decals.
   If their geometry is coplanar with the wall, `LESS` depth testing will
   make them flicker or vanish. This Spec does not measure the offset;
   **recommend** deciding depth bias (or `LESS_OR_EQUAL` for blended
   Pipelines) in ⑦ against the real mesh, since a guess now could hide
   genuinely offset decals behind the wall.
+  **Ruled 2026-09-23: left to ⑦**, decided against the real decal meshes.
 - **Risk — golden movement.** Treated as a stop-and-report gate. A moved
   golden would mean an `Opaque` material discarded a fragment, or opaque
   order changed.
