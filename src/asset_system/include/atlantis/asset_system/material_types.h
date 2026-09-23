@@ -50,6 +50,17 @@ enum class MaterialKind {
   PbrAnisotropic,
 };
 
+// Plan 0042 Milestone 1 (Spec 0042 R1, ADR-0090 Decision 4): glTF's three
+// alpha modes, explicit rather than inferred from alpha values (Spec 0042
+// Investigation 3). Mask/Blend are honoured by the four PBR kinds only;
+// UnlitTextured/LitTextured are always Opaque, their source grammar
+// rejecting the field.
+enum class MaterialAlphaMode {
+  Opaque,
+  Mask,
+  Blend,
+};
+
 // CPU-side result of loadMaterialAsset() -- names no RHI type, matching
 // TextureAssetData's own discipline exactly. A composition root outside
 // Asset System is responsible for resolving textureAsset to real pixel
@@ -110,6 +121,10 @@ struct MaterialAssetData {
   // by the four PBR kinds; always (0, 0, 0) for UnlitTextured/LitTextured,
   // whose source grammar rejects the field.
   float emissiveFactor[3] = {0.0f, 0.0f, 0.0f};
+  // Plan 0042 Milestone 1 (Spec 0042 R1): alphaCutoff defaults to the
+  // glTF default 0.5, in [0, 1], and is meaningful only for Mask.
+  MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
+  float alphaCutoff = 0.5f;
 };
 
 }  // namespace atlantis::asset_system

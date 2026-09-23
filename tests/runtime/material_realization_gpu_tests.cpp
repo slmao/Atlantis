@@ -4,6 +4,7 @@
 #include <atlantis/asset_system/cook_scene.h>
 #include <atlantis/asset_system/cook_texture.h>
 #include <atlantis/asset_system/material_types.h>
+#include <atlantis/asset_system/mesh_artifact.h>
 #include <atlantis/asset_system/texture_types.h>
 #include <atlantis/render_graph/execution.h>
 #include <atlantis/renderer/material.h>
@@ -584,6 +585,22 @@ TEST_CASE("A PbrDirectLit material with a normal map uploads base color and norm
   REQUIRE(device->waitIdle().isOk());
 }
 
+// Plan 0042 Milestone 3 (Plan 0042 Q2, option A, human-ruled 2026-09-24):
+// createMesh() -- reached here through loadAndInstantiateScene()'s mesh
+// loop -- now reads a layout's stride and location-0 position offset once,
+// to compute the Mesh's bounds centre, and an empty layout is a checked
+// programmer error. The meshes these tests load are cooked mesh
+// artifacts, so the layout states the artifact's own vertex format.
+namespace {
+[[nodiscard]] atlantis::rhi::VertexInputLayout meshArtifactPositionLayout() {
+  return atlantis::rhi::VertexInputLayout{
+      .strideBytes = atlantis::asset_system::kMeshArtifactVertexStrideBytes,
+      .attributes = {{.location = 0,
+                      .offsetBytes = atlantis::asset_system::kMeshArtifactPositionOffsetBytes,
+                      .format = atlantis::rhi::VertexAttributeFormat::Float3}}};
+}
+}  // namespace
+
 // ---------------------------------------------------------------------
 // Plan 0018 Milestone 11 regression coverage (PR #88 final review round):
 // the three loadAndInstantiateScene() material-loop cases the Approved
@@ -693,7 +710,7 @@ struct CookedMaterialFixture {
 [[nodiscard]] CookedMaterialFixture cookFixtureMaterial(const fs::path& dir, const std::string& logicalPath,
                                                           const std::string& textureLogicalPath) {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 7\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 8\n"
                         "kind: unlit_textured\n"
                         "texture: " + textureLogicalPath + "\n"
                         "filter: linear\n"
@@ -712,7 +729,7 @@ struct CookedMaterialFixture {
 [[nodiscard]] CookedMaterialFixture cookFixturePbrMaterial(const fs::path& dir, const std::string& logicalPath,
                                                             const std::string& textureLogicalPath) {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 7\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 8\n"
                         "kind: pbr_direct_lit\n"
                         "texture: " + textureLogicalPath + "\n"
                         "filter: linear\n"
@@ -791,7 +808,7 @@ TEST_CASE("loadAndInstantiateScene: a material that resolves and loads but whose
   writeFile(dir.path / "manifest.txt", manifest);
   const BootstrapConfig config = makeSceneConfig(scene.artifactPath, scene.metadataPath, dir.path / "manifest.txt");
 
-  const auto result = loadAndInstantiateScene(config, device.get(), atlantis::rhi::VertexInputLayout{});
+  const auto result = loadAndInstantiateScene(config, device.get(), meshArtifactPositionLayout());
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneDependencyUnresolved);
 }
@@ -822,7 +839,7 @@ TEST_CASE("loadAndInstantiateScene: a resolvable but unloadable material with a 
   writeFile(dir.path / "manifest.txt", manifest);
   const BootstrapConfig config = makeSceneConfig(scene.artifactPath, scene.metadataPath, dir.path / "manifest.txt");
 
-  const auto result = loadAndInstantiateScene(config, device.get(), atlantis::rhi::VertexInputLayout{});
+  const auto result = loadAndInstantiateScene(config, device.get(), meshArtifactPositionLayout());
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneDependencyLoadFailed);
 }
@@ -852,7 +869,7 @@ TEST_CASE("loadAndInstantiateScene: two entities referencing the same material A
   writeFile(dir.path / "manifest.txt", manifest);
   const BootstrapConfig config = makeSceneConfig(scene.artifactPath, scene.metadataPath, dir.path / "manifest.txt");
 
-  const auto result = loadAndInstantiateScene(config, device.get(), atlantis::rhi::VertexInputLayout{});
+  const auto result = loadAndInstantiateScene(config, device.get(), meshArtifactPositionLayout());
   REQUIRE(result.isOk());
   CHECK(result.value().meshResourceMap.size() == 2);   // two distinct meshes, not deduped
   CHECK(result.value().materialDataMap.size() == 1);   // one distinct material, deduped
@@ -887,7 +904,7 @@ TEST_CASE("loadAndInstantiateScene: a PbrDirectLit material whose own resolved b
   writeFile(dir.path / "manifest.txt", manifest);
   const BootstrapConfig config = makeSceneConfig(scene.artifactPath, scene.metadataPath, dir.path / "manifest.txt");
 
-  const auto result = loadAndInstantiateScene(config, device.get(), atlantis::rhi::VertexInputLayout{});
+  const auto result = loadAndInstantiateScene(config, device.get(), meshArtifactPositionLayout());
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::PbrBaseColorTextureNotSrgb);
 }

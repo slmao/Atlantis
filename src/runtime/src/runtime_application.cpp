@@ -1380,6 +1380,10 @@ void RuntimeApplication::runFrame() {
   auto* cameraWorldPositionData =
       reinterpret_cast<CameraWorldPositionData*>(cameraData + kCameraUniformWorldPositionOffsetBytes / sizeof(float));
   *cameraWorldPositionData = extractCameraWorldPosition(cameraWorldMatrixResult.value());
+  // Plan 0042 Milestone 3 (Spec 0042 R7): the same position, for
+  // drawFrame()'s back-to-front ordering of blended draws.
+  const std::array<float, 3> cameraWorldPosition{cameraWorldPositionData->x, cameraWorldPositionData->y,
+                                                 cameraWorldPositionData->z};
 
   // Plan 0025/P3: the final 144 bytes are SH9 float4 coefficients. During
   // first-frame realization they come from the still-owned CPU payload; on
@@ -1656,7 +1660,8 @@ void RuntimeApplication::runFrame() {
                        // frame, an empty span otherwise -- hasDirectionalLight was already
                        // computed above, alongside the light-space buffer writes it also
                        // gates.
-                       hasDirectionalLight ? std::span<const DrawItem>(drawItems) : std::span<const DrawItem>());
+                       hasDirectionalLight ? std::span<const DrawItem>(drawItems) : std::span<const DrawItem>(),
+                       cameraWorldPosition);
 
   auto submitResult = device_->submit(std::move(commandList), *target);
   if (submitResult.isErr()) {

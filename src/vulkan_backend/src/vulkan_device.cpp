@@ -1228,7 +1228,26 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   VkPipelineColorBlendAttachmentState colorBlendAttachment{};
   colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-  colorBlendAttachment.blendEnable = VK_FALSE;
+  // Plan 0042 Milestone 1 (ADR-0090 Decision 1): no default case, so a
+  // future ColorBlendMode enumerator is a compiler warning here, not a
+  // silently-unblended Pipeline. Blending into the HDR target
+  // (R16G16B16A16_SFLOAT) is a mandatory format capability in core Vulkan.
+  switch (params.colorBlendMode) {
+    case atlantis::rhi::ColorBlendMode::Disabled:
+      colorBlendAttachment.blendEnable = VK_FALSE;
+      break;
+    case atlantis::rhi::ColorBlendMode::AlphaBlend:
+      // Straight-alpha "over": colour src * srcA + dst * (1 - srcA),
+      // alpha src * 1 + dst * (1 - srcA).
+      colorBlendAttachment.blendEnable = VK_TRUE;
+      colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+      colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+      colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+      colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+      colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+      colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+      break;
+  }
 
   VkPipelineColorBlendStateCreateInfo colorBlendState{};
   colorBlendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;

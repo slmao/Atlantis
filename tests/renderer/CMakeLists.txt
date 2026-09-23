@@ -1,4 +1,5 @@
 add_executable(atlantis_renderer_tests
+  draw_order_tests.cpp
   exposure_multiplier_tests.cpp
   renderer_ownership_tests.cpp
 )

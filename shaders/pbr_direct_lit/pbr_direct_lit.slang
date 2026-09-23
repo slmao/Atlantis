@@ -83,6 +83,8 @@ struct PushConstants {
     float2 _pad;
     // Plan 0041 Milestone 2 (Spec 0041 R5): last field, as in the C++ struct.
     float3 emissiveFactor;
+    // Plan 0042 Milestone 2 (Spec 0042 R6): the C++ struct's former tail pad.
+    float alphaCutoff;
 };
 
 [[vk::push_constant]]
@@ -157,7 +159,11 @@ float4 fragmentMain(Varying input) : SV_Target {
     // is linear-space throughout, matching every other MaterialKind's
     // own lighting math in this engine.
     float3 baseColor = texColor.rgb * pushConstants.baseColorFactor.rgb;
-    float alphaOut = texColor.a * pushConstants.baseColorFactor.a;  // stored, currently inert -- no blending anywhere
+    float alphaOut = texColor.a * pushConstants.baseColorFactor.a;
+    // Plan 0042 Milestone 2 (Spec 0042 R6): alpha test, before any lighting
+    // work. The cutoff is 0 unless the material is Mask, and alpha >= 0,
+    // so Opaque/Blend materials never discard.
+    if (alphaOut < pushConstants.alphaCutoff) discard;
 
     float metallic = clamp(pushConstants.metallicFactor, 0.0, 1.0);
     float roughness = clamp(pushConstants.roughnessFactor, 0.0, 1.0);

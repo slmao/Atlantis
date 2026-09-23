@@ -84,7 +84,7 @@ TEST_CASE("encodeMaterialArtifact matches an independently-computed expected byt
   const std::vector<std::byte> expected = {
       std::byte{0x41}, std::byte{0x54}, std::byte{0x4C}, std::byte{0x4D}, std::byte{0x41}, std::byte{0x54},
       std::byte{0x00}, std::byte{0x00},                                        // magic "ATLMAT\0\0"
-      std::byte{0x07}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // schemaVersion = 7
+      std::byte{0x08}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // schemaVersion = 8
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // kind = 0 (UnlitTextured)
       std::byte{0x08}, std::byte{0x07}, std::byte{0x06}, std::byte{0x05}, std::byte{0x04}, std::byte{0x03},
       std::byte{0x02}, std::byte{0x01},                                        // texture_asset_id = 0x0102030405060708
@@ -109,8 +109,10 @@ TEST_CASE("encodeMaterialArtifact matches an independently-computed expected byt
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // emissive_factor[0] = 0.0f
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // emissive_factor[1] = 0.0f
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // emissive_factor[2] = 0.0f
+      std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // alpha_mode = 0 (Opaque)
+      std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x3F},      // alpha_cutoff = 0.5f (0x3F000000)
   };
-  REQUIRE(expected.size() == 108);
+  REQUIRE(expected.size() == 116);
   CHECK(encoded == expected);
 }
 
@@ -137,7 +139,7 @@ TEST_CASE("decodeMaterialArtifact rejects a real, old, 32-byte schema-version-1 
   CHECK(result.error() == MaterialArtifactDecodeError::TruncatedHeader);
 }
 
-TEST_CASE("decodeMaterialArtifact rejects a buffer larger than the fixed 108-byte record",
+TEST_CASE("decodeMaterialArtifact rejects a buffer larger than the fixed 116-byte record",
           "[asset_system][material]") {
   auto bytes =
       encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
@@ -162,10 +164,10 @@ TEST_CASE("decodeMaterialArtifact rejects an unsupported schema version", "[asse
   auto bytes =
       encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
                               MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
-  // Plan 0041 Milestone 1: this literal must name a value still
-  // genuinely unsupported now that 7 (this round's own bump) is valid --
-  // 8 here, not 7.
-  bytes[8] = std::byte{0x08};  // schemaVersion's low byte, offset 8: 7 -> 8 (unsupported)
+  // Plan 0042 Milestone 1: this literal must name a value still
+  // genuinely unsupported now that 8 (this round's own bump) is valid --
+  // 9 here, not 8.
+  bytes[8] = std::byte{0x09};  // schemaVersion's low byte, offset 8: 8 -> 9 (unsupported)
   const auto result = decodeMaterialArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialArtifactDecodeError::UnsupportedSchemaVersion);
@@ -308,7 +310,7 @@ TEST_CASE("encode/decodeMaterialArtifact round-trips emissive_factor at offset 9
       encodeMaterialArtifact(MaterialKind::PbrDirectLit, 1ULL, MaterialSamplerFilter::Linear,
                               MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 0.0f, 0.5f, 0ULL, 0.0f,
                               0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f, emissive);
-  REQUIRE(bytes.size() == 108);
+  REQUIRE(bytes.size() == 116);
   // 40.0f = 0x42200000, little-endian 00 00 20 42 -- independently computed.
   CHECK(bytes[96] == std::byte{0x00});
   CHECK(bytes[97] == std::byte{0x00});
@@ -345,4 +347,75 @@ TEST_CASE("decodeMaterialArtifact re-validates emissive_factor against [0, 65504
   const auto result = decodeMaterialArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialArtifactDecodeError::EmissiveFactorOutOfRange);
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0042 Milestone 1 (Spec 0042 R3, ADR-0090 Decision 4): schema 8,
+// 116 bytes, alpha_mode at offset 108, alpha_cutoff at 112.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("encode/decodeMaterialArtifact round-trips alpha_mode and alpha_cutoff at offsets 108/112",
+          "[asset_system][material][transparency]") {
+  const float noEmissive[3] = {0.0f, 0.0f, 0.0f};
+  const auto bytes = encodeMaterialArtifact(MaterialKind::PbrDirectLit, 1ULL, MaterialSamplerFilter::Linear,
+                                            MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 0.0f, 0.5f,
+                                            0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f, noEmissive,
+                                            MaterialAlphaMode::Mask, 0.25f);
+  REQUIRE(bytes.size() == 116);
+  // alpha_mode = 1 (Mask); 0.25f = 0x3E800000, little-endian 00 00 80 3E.
+  CHECK(bytes[108] == std::byte{0x01});
+  CHECK(bytes[109] == std::byte{0x00});
+  CHECK(bytes[112] == std::byte{0x00});
+  CHECK(bytes[113] == std::byte{0x00});
+  CHECK(bytes[114] == std::byte{0x80});
+  CHECK(bytes[115] == std::byte{0x3E});
+  const auto decoded = decodeMaterialArtifact(bytes);
+  REQUIRE(decoded.isOk());
+  CHECK(decoded.value().alphaMode == MaterialAlphaMode::Mask);
+  CHECK(decoded.value().alphaCutoff == 0.25f);
+
+  const auto blendBytes = encodeMaterialArtifact(
+      MaterialKind::PbrSheen, 1ULL, MaterialSamplerFilter::Linear, MaterialSamplerAddressMode::Repeat,
+      kDefaultBaseColorFactor, 0.0f, 0.5f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f, noEmissive,
+      MaterialAlphaMode::Blend, 0.5f);
+  CHECK(blendBytes[108] == std::byte{0x02});
+  const auto blendDecoded = decodeMaterialArtifact(blendBytes);
+  REQUIRE(blendDecoded.isOk());
+  CHECK(blendDecoded.value().alphaMode == MaterialAlphaMode::Blend);
+}
+
+TEST_CASE("decodeMaterialArtifact rejects a real-size, 108-byte schema-version-7 artifact",
+          "[asset_system][material][transparency]") {
+  auto bytes = encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
+                                      MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL,
+                                      0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
+  bytes.resize(108);
+  bytes[8] = std::byte{0x07};
+  const auto result = decodeMaterialArtifact(bytes);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == MaterialArtifactDecodeError::TruncatedHeader);
+}
+
+TEST_CASE("decodeMaterialArtifact rejects an unknown alpha_mode value", "[asset_system][material][transparency]") {
+  auto bytes = encodeMaterialArtifact(MaterialKind::PbrDirectLit, 1ULL, MaterialSamplerFilter::Linear,
+                                      MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 0.0f, 0.5f, 0ULL,
+                                      0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
+  bytes[108] = std::byte{0x03};
+  const auto result = decodeMaterialArtifact(bytes);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == MaterialArtifactDecodeError::UnknownAlphaMode);
+}
+
+TEST_CASE("decodeMaterialArtifact re-validates alpha_cutoff against [0, 1]", "[asset_system][material][transparency]") {
+  auto bytes = encodeMaterialArtifact(MaterialKind::PbrDirectLit, 1ULL, MaterialSamplerFilter::Linear,
+                                      MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 0.0f, 0.5f, 0ULL,
+                                      0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
+  // 1.5f = 0x3FC00000, little-endian 00 00 C0 3F.
+  bytes[112] = std::byte{0x00};
+  bytes[113] = std::byte{0x00};
+  bytes[114] = std::byte{0xC0};
+  bytes[115] = std::byte{0x3F};
+  const auto result = decodeMaterialArtifact(bytes);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == MaterialArtifactDecodeError::MaterialFactorOutOfRange);
 }

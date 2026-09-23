@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 #include <atlantis/assert.h>
 #include <atlantis/render_graph/execution.h>
+#include <atlantis/renderer/draw_order.h>
 
 #include "exposure.h"
 #include "pbr_anisotropic_push_constants.h"
@@ -22,6 +24,29 @@ namespace {
 // future spec may expose it).
 constexpr atlantis::rhi::ClearColorValue kBackgroundClearColor{0.05f, 0.05f, 0.08f, 1.0f};
 
+[[nodiscard]] bool isBlended(const DrawItem& item) { return item.material->alphaMode() == MaterialAlphaMode::Blend; }
+
+// objectToWorld is column-major (translation at [12..14]), the layout
+// every caller writes it in.
+[[nodiscard]] std::array<float, 3> transformPoint(const std::array<float, 16>& m, const std::array<float, 3>& p) {
+  return {m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12], m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13],
+          m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14]};
+}
+
+// Plan 0042 Milestone 3 (Plan 0042 P3): the projection of drawItems that
+// computeDrawOrder() sorts. The sort point is only computed for blended
+// items -- nothing else reads it.
+[[nodiscard]] std::vector<std::uint32_t> drawOrderFor(std::span<const DrawItem> drawItems,
+                                                      const std::optional<std::array<float, 3>>& cameraWorldPosition) {
+  std::vector<DrawSortInput> sortInputs(drawItems.size());
+  for (std::size_t i = 0; i < drawItems.size(); ++i) {
+    if (!isBlended(drawItems[i])) continue;
+    sortInputs[i].blended = true;
+    sortInputs[i].worldSortPoint = transformPoint(drawItems[i].objectToWorld, drawItems[i].mesh->localBoundsCentre());
+  }
+  return computeDrawOrder(sortInputs, cameraWorldPosition);
+}
+
 }  // namespace
 
 void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& colorTarget,
@@ -36,7 +61,8 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
                           const EnvironmentLighting* environmentLighting, atlantis::rhi::Pipeline* skyPipeline,
                           atlantis::rhi::ShadowMap& shadowMap, atlantis::rhi::Sampler& shadowMapSampler,
                           atlantis::rhi::Pipeline& shadowCastPipeline, atlantis::rhi::Buffer& shadowLightSpaceBuffer,
-                          std::span<const DrawItem> shadowCasterDrawItems) {
+                          std::span<const DrawItem> shadowCasterDrawItems,
+                          const std::optional<std::array<float, 3>>& cameraWorldPosition) {
   // Plan 0031 (Spec 0031 Requirement 7): the one real gate for direct/
   // non-asset callers, which bypass cook/decode's own independent
   // check entirely.
@@ -46,6 +72,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
                       "outputTransformExposureCompensationEv must be finite and within "
                       "[kExposureCompensationEvMin, kExposureCompensationEvMax]");
   const float exposureMultiplier = computeExposureMultiplier(outputTransformExposureCompensationEv);
+  std::vector<std::uint32_t> drawOrder = drawOrderFor(drawItems, cameraWorldPosition);
 
   atlantis::render_graph::RenderGraphBuilder builder;
   // Plan 0024 Milestone 5 (ADR-0068 D-1/D-3): the existing single "draw"
@@ -76,6 +103,8 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
     cmd.bindPipeline(shadowCastPipeline);
     cmd.bindUniformBuffer(shadowLightSpaceBuffer);
     for (const DrawItem& item : shadowCasterDrawItems) {
+      // Plan 0042 Milestone 3 (Spec 0042 R8): a blended surface casts no shadow.
+      if (isBlended(item)) continue;
       cmd.bindVertexBuffer(item.mesh->vertexBuffer());
       cmd.bindIndexBuffer(item.mesh->indexBuffer());
       cmd.pushConstant(item.objectToWorld.data(), item.objectToWorld.size() * sizeof(float));
@@ -87,8 +116,9 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
   builder.writes(drawPass, hdrResource, atlantis::rhi::ResourceState::ColorAttachmentOutput);
   builder.writes(drawPass, depthResource, atlantis::rhi::ResourceState::DepthAttachmentReadWrite);
   builder.reads(drawPass, shadowMapResource, atlantis::rhi::ResourceState::ShaderRead);
-  builder.setExecute(drawPass, [&cameraUniformBuffer, drawItems, environmentLighting, skyPipeline,
-                                &fullscreenTriangleVertexBuffer, &fullscreenTriangleIndexBuffer, &shadowMap,
+  builder.setExecute(drawPass, [&cameraUniformBuffer, drawItems, drawOrder = std::move(drawOrder),
+                                environmentLighting, skyPipeline, &fullscreenTriangleVertexBuffer,
+                                &fullscreenTriangleIndexBuffer, &shadowMap,
                                 &shadowMapSampler](atlantis::rhi::CommandList& cmd) {
     // Plan 0026 Milestone 2 (ADR-0071 P5, Proposed Correction): the sky
     // draws strictly before every DrawItem below -- a correctness
@@ -110,7 +140,10 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
       }
     }
 
-    for (const DrawItem& item : drawItems) {
+    // Plan 0042 Milestone 3 (ADR-0090 Decision 2): non-blended items in
+    // caller order, then blended items back-to-front.
+    for (const std::uint32_t index : drawOrder) {
+      const DrawItem& item = drawItems[index];
       cmd.bindPipeline(item.material->pipeline());
       cmd.bindVertexBuffer(item.mesh->vertexBuffer());
       cmd.bindIndexBuffer(item.mesh->indexBuffer());
@@ -191,6 +224,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
           payload.roughnessFactor = item.material->roughnessFactor();
           const auto& emissiveFactor = item.material->emissiveFactor();  // Plan 0041 Milestone 2
           std::copy(emissiveFactor.begin(), emissiveFactor.end(), std::begin(payload.emissiveFactor));
+          payload.alphaCutoff = item.material->alphaCutoff();  // Plan 0042 Milestone 2
           cmd.pushConstant(&payload, sizeof(payload));
           break;
         }
@@ -209,6 +243,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
           payload.clearcoatRoughness = item.material->clearcoatRoughness();
           const auto& emissiveFactor = item.material->emissiveFactor();
           std::copy(emissiveFactor.begin(), emissiveFactor.end(), std::begin(payload.emissiveFactor));
+          payload.alphaCutoff = item.material->alphaCutoff();
           cmd.pushConstant(&payload, sizeof(payload));
           break;
         }
@@ -228,6 +263,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
           payload.sheenRoughness = item.material->sheenRoughness();
           const auto& emissiveFactor = item.material->emissiveFactor();
           std::copy(emissiveFactor.begin(), emissiveFactor.end(), std::begin(payload.emissiveFactor));
+          payload.alphaCutoff = item.material->alphaCutoff();
           cmd.pushConstant(&payload, sizeof(payload));
           break;
         }
@@ -247,6 +283,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
           payload.anisotropyRotation = item.material->anisotropyRotation();
           const auto& emissiveFactor = item.material->emissiveFactor();
           std::copy(emissiveFactor.begin(), emissiveFactor.end(), std::begin(payload.emissiveFactor));
+          payload.alphaCutoff = item.material->alphaCutoff();
           cmd.pushConstant(&payload, sizeof(payload));
           break;
         }

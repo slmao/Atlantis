@@ -55,3 +55,36 @@ TEST_CASE("sampledTextureBindingCountFor(): PbrDirectLit is 5 with both an envir
           "[runtime][material_realization]") {
   CHECK(sampledTextureBindingCountFor(MaterialKind::PbrDirectLit, true, true) == 5U);
 }
+
+// Plan 0042 Milestone 1 (Spec 0042 R4/R5, ADR-0090 Decisions 1/3): each
+// material alpha mode realizes to its Pipeline blend/depth-write pair and
+// the Renderer's own mode.
+TEST_CASE("alphaModeRealizationFor(): Opaque and Mask keep blending off and depth write on; Blend blends without "
+          "writing depth",
+          "[runtime][material_realization][transparency]") {
+  using atlantis::asset_system::MaterialAlphaMode;
+  using atlantis::rhi::ColorBlendMode;
+  using atlantis::runtime::alphaModeRealizationFor;
+  using RendererAlphaMode = atlantis::renderer::MaterialAlphaMode;
+
+  const auto opaque = alphaModeRealizationFor(MaterialAlphaMode::Opaque);
+  CHECK(opaque.colorBlendMode == ColorBlendMode::Disabled);
+  CHECK(opaque.depthWriteEnabled);
+  CHECK(opaque.rendererAlphaMode == RendererAlphaMode::Opaque);
+
+  const auto mask = alphaModeRealizationFor(MaterialAlphaMode::Mask);
+  CHECK(mask.colorBlendMode == ColorBlendMode::Disabled);
+  CHECK(mask.depthWriteEnabled);
+  CHECK(mask.rendererAlphaMode == RendererAlphaMode::Mask);
+
+  const auto blend = alphaModeRealizationFor(MaterialAlphaMode::Blend);
+  CHECK(blend.colorBlendMode == ColorBlendMode::AlphaBlend);
+  CHECK_FALSE(blend.depthWriteEnabled);
+  CHECK(blend.rendererAlphaMode == RendererAlphaMode::Blend);
+
+  // Opaque reproduces PipelineCreateParams' own defaults exactly -- the
+  // M1 zero-rendering-change guarantee for every existing material.
+  const atlantis::rhi::PipelineCreateParams defaults{};
+  CHECK(opaque.colorBlendMode == defaults.colorBlendMode);
+  CHECK(opaque.depthWriteEnabled == defaults.depthWriteEnabled);
+}

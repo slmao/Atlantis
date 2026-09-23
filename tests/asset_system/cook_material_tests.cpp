@@ -53,14 +53,14 @@ void writeFile(const fs::path& path, const std::string& content) {
 }
 
 constexpr std::string_view kValidSource =
-    "atlantis_material_source_version: 7\n"
+    "atlantis_material_source_version: 8\n"
     "kind: unlit_textured\n"
     "texture: textures/textured_quad_source_unorm.png\n"
     "filter: linear\n"
     "address_mode: repeat\n";
 
 constexpr std::string_view kValidPbrSource =
-    "atlantis_material_source_version: 7\n"
+    "atlantis_material_source_version: 8\n"
     "kind: pbr_direct_lit\n"
     "texture: textures/textured_quad_source_srgb.png\n"
     "filter: linear\n"
@@ -149,7 +149,7 @@ TEST_CASE("cookMaterial rejects a source naming a texture with a malformed logic
   TempDirGuard dir("texture_logical_path_invalid");
   const fs::path sourcePath = dir.path / "bad_texture_ref.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 7\n"
+            "atlantis_material_source_version: 8\n"
             "kind: unlit_textured\n"
             "texture: /absolute/not/allowed.png\n"
             "filter: linear\n"
@@ -236,7 +236,7 @@ TEST_CASE("cookMaterial reports BaseColorFactorOutOfRange for a baseColorFactor 
   TempDirGuard dir("base_color_out_of_range");
   const fs::path sourcePath = dir.path / "bad.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 7\n"
+            "atlantis_material_source_version: 8\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -257,7 +257,7 @@ TEST_CASE("cookMaterial reports MaterialFactorOutOfRange for a negative metallic
   TempDirGuard dir("metallic_out_of_range");
   const fs::path sourcePath = dir.path / "bad.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 7\n"
+            "atlantis_material_source_version: 8\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -278,7 +278,7 @@ TEST_CASE("cookMaterial reports MaterialFactorOutOfRange for a roughness_factor 
   TempDirGuard dir("roughness_out_of_range");
   const fs::path sourcePath = dir.path / "bad.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 7\n"
+            "atlantis_material_source_version: 8\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -305,7 +305,7 @@ namespace {
                                                                                   const std::string& emissive) {
   const fs::path sourcePath = dir / "emissive.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 7\n"
+            "atlantis_material_source_version: 8\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -361,4 +361,77 @@ TEST_CASE("cookMaterial carries emissive_factor into both the artifact and the m
   REQUIRE(metadata.isOk());
   CHECK(metadata.value().emissiveFactor[0] == 20.0f);
   CHECK(metadata.value().emissiveFactor[1] == 0.8f);
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0042 Milestone 1 (Spec 0042 R1): alpha_cutoff is an ordinary [0, 1]
+// factor; alpha_mode/alpha_cutoff reach both outputs.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] atlantis::Result<std::monostate, MaterialCookError> cookWithAlpha(const fs::path& dir,
+                                                                               const std::string& alphaLines) {
+  const fs::path sourcePath = dir / "alpha.material.txt";
+  writeFile(sourcePath,
+            "atlantis_material_source_version: 8\n"
+            "kind: pbr_direct_lit\n"
+            "texture: textures/textured_quad_source_srgb.png\n"
+            "filter: linear\n"
+            "address_mode: repeat\n"
+            "base_color_factor: 1.0 1.0 1.0 1.0\n"
+            "metallic_factor: 0.0\n"
+            "roughness_factor: 0.5\n" +
+                alphaLines);
+  return cookMaterial(sourcePath.string(), "materials/alpha.material.txt", (dir / "a.amaterial").string(),
+                      (dir / "a.amaterial.meta.txt").string());
+}
+
+}  // namespace
+
+TEST_CASE("cookMaterial accepts alpha_cutoff across [0, 1]", "[asset_system][material][transparency]") {
+  for (const std::string cutoff : {"0", "0.5", "1"}) {
+    INFO("alpha_cutoff: " << cutoff);
+    TempDirGuard dir("alpha_cutoff_in_range");
+    CHECK(cookWithAlpha(dir.path, "alpha_mode: mask\nalpha_cutoff: " + cutoff + "\n").isOk());
+  }
+}
+
+TEST_CASE("cookMaterial reports MaterialFactorOutOfRange for an alpha_cutoff outside [0, 1] or non-finite",
+          "[asset_system][material][transparency]") {
+  for (const std::string cutoff : {"-0.1", "1.01", "nan", "inf"}) {
+    INFO("alpha_cutoff: " << cutoff);
+    TempDirGuard dir("alpha_cutoff_out_of_range");
+    const auto result = cookWithAlpha(dir.path, "alpha_mode: mask\nalpha_cutoff: " + cutoff + "\n");
+    REQUIRE(result.isErr());
+    CHECK(result.error() == MaterialCookError::MaterialFactorOutOfRange);
+    CHECK_FALSE(fs::exists(dir.path / "a.amaterial"));
+  }
+}
+
+TEST_CASE("cookMaterial carries alpha_mode and alpha_cutoff into both the artifact and the metadata",
+          "[asset_system][material][transparency]") {
+  TempDirGuard dir("alpha_both_outputs");
+  REQUIRE(cookWithAlpha(dir.path, "alpha_mode: mask\nalpha_cutoff: 0.3\n").isOk());
+
+  const std::string artifactText = readFile(dir.path / "a.amaterial");
+  const std::vector<std::byte> artifactBytes(reinterpret_cast<const std::byte*>(artifactText.data()),
+                                             reinterpret_cast<const std::byte*>(artifactText.data()) +
+                                                 artifactText.size());
+  const auto decoded = decodeMaterialArtifact(artifactBytes);
+  REQUIRE(decoded.isOk());
+  CHECK(decoded.value().alphaMode == MaterialAlphaMode::Mask);
+  CHECK(decoded.value().alphaCutoff == 0.3f);
+
+  const auto metadata = parseMaterialMetadata(readFile(dir.path / "a.amaterial.meta.txt"));
+  REQUIRE(metadata.isOk());
+  CHECK(metadata.value().alphaMode == MaterialAlphaMode::Mask);
+  CHECK(metadata.value().alphaCutoff == 0.3f);
+
+  TempDirGuard blendDir("alpha_blend_outputs");
+  REQUIRE(cookWithAlpha(blendDir.path, "alpha_mode: blend\n").isOk());
+  const auto blendMetadata = parseMaterialMetadata(readFile(blendDir.path / "a.amaterial.meta.txt"));
+  REQUIRE(blendMetadata.isOk());
+  CHECK(blendMetadata.value().alphaMode == MaterialAlphaMode::Blend);
+  CHECK(blendMetadata.value().alphaCutoff == 0.5f);
 }

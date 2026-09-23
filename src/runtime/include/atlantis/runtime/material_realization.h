@@ -396,4 +396,17 @@ realizePendingMaterials(
 [[nodiscard]] std::uint32_t sampledTextureBindingCountFor(atlantis::asset_system::MaterialKind kind,
                                                            bool environmentEnabled, bool hasNormalMap);
 
+// Plan 0042 Milestone 1 (Spec 0042 R4/R5, ADR-0090 Decisions 1/3): the
+// Pipeline state and Renderer-side mode one material alpha mode realizes
+// to -- exposed, like sampledTextureBindingCountFor() above, for direct
+// GPU-independent testing. Opaque and Mask: blending off, depth write on
+// (today's state; a Mask surface is opaque with holes). Blend: AlphaBlend,
+// depth write off (depth test stays on).
+struct AlphaModeRealization {
+  atlantis::rhi::ColorBlendMode colorBlendMode = atlantis::rhi::ColorBlendMode::Disabled;
+  bool depthWriteEnabled = true;
+  atlantis::renderer::MaterialAlphaMode rendererAlphaMode = atlantis::renderer::MaterialAlphaMode::Opaque;
+};
+[[nodiscard]] AlphaModeRealization alphaModeRealizationFor(atlantis::asset_system::MaterialAlphaMode alphaMode);
+
 }  // namespace atlantis::runtime

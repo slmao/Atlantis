@@ -9,7 +9,7 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_material_metadata_version: 6";
+constexpr std::string_view kVersionLine = "atlantis_material_metadata_version: 7";
 constexpr std::string_view kAssetIdPrefix = "asset_id: ";
 constexpr std::string_view kSourceLogicalPathPrefix = "source_logical_path: ";
 constexpr std::string_view kKindPrefix = "kind: ";
@@ -34,6 +34,13 @@ constexpr std::string_view kSheenRoughnessPrefix = "sheen_roughness: ";
 constexpr std::string_view kAnisotropyFactorPrefix = "anisotropy_factor: ";
 constexpr std::string_view kEmissiveFactorPrefix = "emissive_factor: ";
 constexpr std::string_view kAnisotropyRotationPrefix = "anisotropy_rotation: ";
+// Plan 0042 Milestone 1 (Spec 0042 R3): metadata 6 -> 7, two more
+// mandatory lines after emissive_factor.
+constexpr std::string_view kAlphaModePrefix = "alpha_mode: ";
+constexpr std::string_view kAlphaCutoffPrefix = "alpha_cutoff: ";
+constexpr std::string_view kAlphaModeOpaque = "opaque";
+constexpr std::string_view kAlphaModeMask = "mask";
+constexpr std::string_view kAlphaModeBlend = "blend";
 // Plan 0023 Milestone 1: widened from 5 to 8. Plan 0029 Section P6/
 // ADR-0074 Section 1: widened again to 9 -- the normal-map-texture
 // field is always present, unconditionally (`0000000000000000` when
@@ -47,7 +54,7 @@ constexpr std::string_view kAnisotropyRotationPrefix = "anisotropy_rotation: ";
 // widened again to 15 -- anisotropy_factor/anisotropy_rotation, same
 // discipline. Plan 0041 Milestone 1 (Plan 0041 P2): widened again to 16
 // -- emissive_factor, same unconditional-presence discipline.
-constexpr std::size_t kExpectedLineCount = 16;
+constexpr std::size_t kExpectedLineCount = 18;
 
 constexpr std::string_view kKindUnlitTextured = "unlit_textured";
 constexpr std::string_view kKindPbrDirectLit = "pbr_direct_lit";
@@ -253,6 +260,20 @@ atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std
     }
   }
 
+  if (!matchField(lines[16], kAlphaModePrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (value == kAlphaModeOpaque) {
+    metadata.alphaMode = MaterialAlphaMode::Opaque;
+  } else if (value == kAlphaModeMask) {
+    metadata.alphaMode = MaterialAlphaMode::Mask;
+  } else if (value == kAlphaModeBlend) {
+    metadata.alphaMode = MaterialAlphaMode::Blend;
+  } else {
+    return ResultT::Err(MetadataParseError::MalformedValue);
+  }
+
+  if (!matchField(lines[17], kAlphaCutoffPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!parseFloatToken(value, metadata.alphaCutoff)) return ResultT::Err(MetadataParseError::MalformedValue);
+
   return ResultT::Ok(std::move(metadata));
 }
 
@@ -325,6 +346,18 @@ std::string serializeMaterialMetadata(const MaterialMetadata& metadata) {
     if (i != 0) out += ' ';
     out += formatFloat(metadata.emissiveFactor[i]);
   }
+  out += '\n';
+  out += kAlphaModePrefix;
+  if (metadata.alphaMode == MaterialAlphaMode::Opaque) {
+    out += kAlphaModeOpaque;
+  } else if (metadata.alphaMode == MaterialAlphaMode::Mask) {
+    out += kAlphaModeMask;
+  } else {
+    out += kAlphaModeBlend;
+  }
+  out += '\n';
+  out += kAlphaCutoffPrefix;
+  out += formatFloat(metadata.alphaCutoff);
   out += '\n';
   return out;
 }

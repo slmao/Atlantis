@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <memory>
 
@@ -16,7 +17,7 @@ namespace atlantis::renderer {
 class Mesh {
  public:
   Mesh(std::unique_ptr<atlantis::rhi::Buffer> vertexBuffer, std::unique_ptr<atlantis::rhi::Buffer> indexBuffer,
-       std::uint32_t indexCount) noexcept;
+       std::uint32_t indexCount, std::array<float, 3> localBoundsCentre = {0.0f, 0.0f, 0.0f}) noexcept;
   ~Mesh() = default;
 
   Mesh(const Mesh&) = delete;
@@ -27,11 +28,16 @@ class Mesh {
   [[nodiscard]] atlantis::rhi::Buffer& vertexBuffer() const noexcept { return *vertexBuffer_; }
   [[nodiscard]] atlantis::rhi::Buffer& indexBuffer() const noexcept { return *indexBuffer_; }
   [[nodiscard]] std::uint32_t indexCount() const noexcept { return indexCount_; }
+  // Plan 0042 Milestone 3 (ADR-0090 Decision 2): the local-space bounds
+  // centre createMesh() computed from the vertex positions -- the point a
+  // blended draw is sorted by, after objectToWorld. Immutable.
+  [[nodiscard]] const std::array<float, 3>& localBoundsCentre() const noexcept { return localBoundsCentre_; }
 
  private:
   std::unique_ptr<atlantis::rhi::Buffer> vertexBuffer_;
   std::unique_ptr<atlantis::rhi::Buffer> indexBuffer_;
   std::uint32_t indexCount_;
+  std::array<float, 3> localBoundsCentre_;
 };
 
 enum class CreateMeshError {

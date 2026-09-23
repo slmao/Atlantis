@@ -303,6 +303,10 @@ enum class MaterialArtifactDecodeError {
   // Plan 0041 Milestone 1: mirrors MaterialCookError::EmissiveFactorOutOfRange,
   // independently re-checked against the decoded bytes.
   EmissiveFactorOutOfRange,
+  // Plan 0042 Milestone 1: an alpha_mode field that is not 0/1/2
+  // (Opaque/Mask/Blend), mirroring UnknownMaterialKind. An out-of-range
+  // alpha_cutoff is MaterialFactorOutOfRange.
+  UnknownAlphaMode,
 };
 
 enum class MaterialLoadError {

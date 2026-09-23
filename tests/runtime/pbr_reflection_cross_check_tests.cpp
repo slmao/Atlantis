@@ -422,31 +422,45 @@ TEST_CASE("CameraUniform: a real slangc reflection of every one of the eleven de
 // (compile_and_validate.cpp), and Runtime's pushConstantSizeBytesFor()
 // -- any one drifting from the shader fails a build, this test, or a
 // Layers-fatal draw.
+// Plan 0042 Milestone 2 (Spec 0042 R6): extended to alphaCutoff, which
+// takes the former tail pad -- its offset (108 / 124 for Sheen) and size,
+// with every block size unchanged (112 / 128).
 TEST_CASE("PBR push constants: a real slangc reflection of every one of the ten PBR shaders places emissiveFactor "
-          "and sizes the block exactly as its C++ struct does (Plan 0041, 10/10)",
-          "[shader_system][runtime][pbr][reflection][emissive]") {
+          "and alphaCutoff and sizes the block exactly as its C++ struct does (Plans 0041/0042, 10/10)",
+          "[shader_system][runtime][pbr][reflection][emissive][transparency]") {
   struct ShaderCase {
     const char* name;
     long emissiveOffset;
+    long alphaCutoffOffset;
     long blockSize;
   };
   const ShaderCase cases[] = {
-      {"pbr_direct_lit", offsetof(PbrPushConstants, emissiveFactor), sizeof(PbrPushConstants)},
-      {"pbr_direct_lit_normal_map", offsetof(PbrPushConstants, emissiveFactor), sizeof(PbrPushConstants)},
-      {"pbr_ibl", offsetof(PbrPushConstants, emissiveFactor), sizeof(PbrPushConstants)},
-      {"pbr_ibl_normal_map", offsetof(PbrPushConstants, emissiveFactor), sizeof(PbrPushConstants)},
-      {"pbr_clearcoat_ibl", offsetof(PbrClearcoatPushConstants, emissiveFactor), sizeof(PbrClearcoatPushConstants)},
-      {"pbr_clearcoat_ibl_normal_map", offsetof(PbrClearcoatPushConstants, emissiveFactor),
+      {"pbr_direct_lit", offsetof(PbrPushConstants, emissiveFactor), offsetof(PbrPushConstants, alphaCutoff),
+       sizeof(PbrPushConstants)},
+      {"pbr_direct_lit_normal_map", offsetof(PbrPushConstants, emissiveFactor), offsetof(PbrPushConstants, alphaCutoff),
+       sizeof(PbrPushConstants)},
+      {"pbr_ibl", offsetof(PbrPushConstants, emissiveFactor), offsetof(PbrPushConstants, alphaCutoff),
+       sizeof(PbrPushConstants)},
+      {"pbr_ibl_normal_map", offsetof(PbrPushConstants, emissiveFactor), offsetof(PbrPushConstants, alphaCutoff),
+       sizeof(PbrPushConstants)},
+      {"pbr_clearcoat_ibl", offsetof(PbrClearcoatPushConstants, emissiveFactor), offsetof(PbrClearcoatPushConstants, alphaCutoff),
        sizeof(PbrClearcoatPushConstants)},
-      {"pbr_sheen_ibl", offsetof(PbrSheenPushConstants, emissiveFactor), sizeof(PbrSheenPushConstants)},
-      {"pbr_sheen_ibl_normal_map", offsetof(PbrSheenPushConstants, emissiveFactor), sizeof(PbrSheenPushConstants)},
-      {"pbr_anisotropic_ibl", offsetof(PbrAnisotropicPushConstants, emissiveFactor),
+      {"pbr_clearcoat_ibl_normal_map", offsetof(PbrClearcoatPushConstants, emissiveFactor), offsetof(PbrClearcoatPushConstants, alphaCutoff),
+       sizeof(PbrClearcoatPushConstants)},
+      {"pbr_sheen_ibl", offsetof(PbrSheenPushConstants, emissiveFactor), offsetof(PbrSheenPushConstants, alphaCutoff),
+       sizeof(PbrSheenPushConstants)},
+      {"pbr_sheen_ibl_normal_map", offsetof(PbrSheenPushConstants, emissiveFactor), offsetof(PbrSheenPushConstants, alphaCutoff),
+       sizeof(PbrSheenPushConstants)},
+      {"pbr_anisotropic_ibl", offsetof(PbrAnisotropicPushConstants, emissiveFactor), offsetof(PbrAnisotropicPushConstants, alphaCutoff),
        sizeof(PbrAnisotropicPushConstants)},
-      {"pbr_anisotropic_ibl_normal_map", offsetof(PbrAnisotropicPushConstants, emissiveFactor),
+      {"pbr_anisotropic_ibl_normal_map", offsetof(PbrAnisotropicPushConstants, emissiveFactor), offsetof(PbrAnisotropicPushConstants, alphaCutoff),
        sizeof(PbrAnisotropicPushConstants)},
   };
   static_assert(std::size(cases) == 10);
   static_assert(sizeof(PbrSheenPushConstants) == 128);  // exactly the Vulkan-guaranteed maxPushConstantsSize
+  // Plan 0042 Milestone 2: the rename grew nothing.
+  static_assert(sizeof(PbrPushConstants) == 112 && sizeof(PbrClearcoatPushConstants) == 112 &&
+                sizeof(PbrAnisotropicPushConstants) == 112);
 
   const fs::path outputDir = fs::temp_directory_path() / "atlantis_push_constant_10_of_10_cross_check_tests";
   std::error_code ec;
@@ -471,6 +485,10 @@ TEST_CASE("PBR push constants: a real slangc reflection of every one of the ten 
     REQUIRE(emissive.has_value());
     CHECK(emissive->offset == shader.emissiveOffset);
     CHECK(emissive->size == 12);  // float3
+    const auto alphaCutoff = findFieldLayout(*jsonText, "alphaCutoff", pushConstantsPos);
+    REQUIRE(alphaCutoff.has_value());
+    CHECK(alphaCutoff->offset == shader.alphaCutoffOffset);
+    CHECK(alphaCutoff->size == 4);  // float
     CHECK(block->size == shader.blockSize);
     CHECK(block->size <= 128);  // Vulkan's guaranteed maxPushConstantsSize
     ++shadersChecked;

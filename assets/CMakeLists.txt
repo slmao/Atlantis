@@ -511,6 +511,88 @@ set(ATLANTIS_emissive_demo_scene_METADATA_PATH "${ATLANTIS_emissive_demo_scene_M
 set(ATLANTIS_emissive_demo_scene_MANIFEST_PATH "${ATLANTIS_emissive_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_scene_TARGET "${ATLANTIS_emissive_demo_scene_TARGET}" PARENT_SCOPE)
 
+# Plan 0042 Milestone 2 (Spec 0042 R6, Plan 0042 P5/Q4): the cutout golden --
+# a 3x3 ground_plane facing the camera, textured with the first committed
+# texture carrying real alpha (a hard-edged opaque disc, transparent
+# outside), alpha_mode: mask at cutoff 0.5, in front of the existing
+# pbr_dielectric_rough sphere as an opaque backdrop. Rendered by
+# PbrMaterialDemoFixture reused by alias (the hdr_roll_off precedent).
+atlantis_add_texture_asset(
+  NAME cutout_disc_srgb
+  SOURCE textures/cutout_disc_source_srgb.png
+  COLOR_SPACE Srgb
+)
+set(ATLANTIS_cutout_disc_srgb_ARTIFACT_PATH "${ATLANTIS_cutout_disc_srgb_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_cutout_disc_srgb_METADATA_PATH "${ATLANTIS_cutout_disc_srgb_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_cutout_disc_srgb_TARGET "${ATLANTIS_cutout_disc_srgb_TARGET}" PARENT_SCOPE)
+atlantis_add_material_asset(
+  NAME cutout_disc
+  SOURCE materials/cutout_disc.material.txt
+  TEXTURE cutout_disc_srgb
+)
+set(ATLANTIS_cutout_disc_ARTIFACT_PATH "${ATLANTIS_cutout_disc_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_cutout_disc_METADATA_PATH "${ATLANTIS_cutout_disc_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_cutout_disc_TARGET "${ATLANTIS_cutout_disc_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_cutout_disc_LOGICAL_PATH "${ATLANTIS_cutout_disc_LOGICAL_PATH}" PARENT_SCOPE)
+atlantis_add_scene_asset(
+  NAME cutout_demo_scene
+  SOURCE scenes/cutout_demo.scene.txt
+  MESH_DEPENDENCIES ground_plane pbr_sphere
+  MATERIAL_DEPENDENCIES cutout_disc pbr_dielectric_rough
+  TEXTURE_DEPENDENCIES cutout_disc_srgb textured_quad_srgb
+)
+set(ATLANTIS_cutout_demo_scene_ARTIFACT_PATH "${ATLANTIS_cutout_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_cutout_demo_scene_METADATA_PATH "${ATLANTIS_cutout_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_cutout_demo_scene_MANIFEST_PATH "${ATLANTIS_cutout_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_cutout_demo_scene_TARGET "${ATLANTIS_cutout_demo_scene_TARGET}" PARENT_SCOPE)
+
+# Plan 0042 Milestone 3 (Spec 0042 R7, ruling Q5): the transparency golden
+# -- two overlapping alpha_mode: blend spheres of different colour and
+# alpha (green 0.45, blue 0.7) over the opaque pbr_dielectric_rough
+# ground_plane -- and its swap-order twin, identical except that the two
+# translucent nodes are declared in the opposite order. Both rendered by
+# PbrMaterialDemoFixture reused by alias.
+atlantis_add_material_asset(
+  NAME transparency_green
+  SOURCE materials/transparency_green.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_transparency_green_ARTIFACT_PATH "${ATLANTIS_transparency_green_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_transparency_green_METADATA_PATH "${ATLANTIS_transparency_green_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_transparency_green_TARGET "${ATLANTIS_transparency_green_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_transparency_green_LOGICAL_PATH "${ATLANTIS_transparency_green_LOGICAL_PATH}" PARENT_SCOPE)
+atlantis_add_material_asset(
+  NAME transparency_blue
+  SOURCE materials/transparency_blue.material.txt
+  TEXTURE textured_quad_srgb
+)
+set(ATLANTIS_transparency_blue_ARTIFACT_PATH "${ATLANTIS_transparency_blue_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_transparency_blue_METADATA_PATH "${ATLANTIS_transparency_blue_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_transparency_blue_TARGET "${ATLANTIS_transparency_blue_TARGET}" PARENT_SCOPE)
+set(ATLANTIS_transparency_blue_LOGICAL_PATH "${ATLANTIS_transparency_blue_LOGICAL_PATH}" PARENT_SCOPE)
+atlantis_add_scene_asset(
+  NAME transparency_demo_scene
+  SOURCE scenes/transparency_demo.scene.txt
+  MESH_DEPENDENCIES ground_plane pbr_sphere
+  MATERIAL_DEPENDENCIES pbr_dielectric_rough transparency_green transparency_blue
+  TEXTURE_DEPENDENCIES textured_quad_srgb
+)
+set(ATLANTIS_transparency_demo_scene_ARTIFACT_PATH "${ATLANTIS_transparency_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_transparency_demo_scene_METADATA_PATH "${ATLANTIS_transparency_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_transparency_demo_scene_MANIFEST_PATH "${ATLANTIS_transparency_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_transparency_demo_scene_TARGET "${ATLANTIS_transparency_demo_scene_TARGET}" PARENT_SCOPE)
+atlantis_add_scene_asset(
+  NAME transparency_demo_swapped_scene
+  SOURCE scenes/transparency_demo_swapped.scene.txt
+  MESH_DEPENDENCIES ground_plane pbr_sphere
+  MATERIAL_DEPENDENCIES pbr_dielectric_rough transparency_green transparency_blue
+  TEXTURE_DEPENDENCIES textured_quad_srgb
+)
+set(ATLANTIS_transparency_demo_swapped_scene_ARTIFACT_PATH "${ATLANTIS_transparency_demo_swapped_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_transparency_demo_swapped_scene_METADATA_PATH "${ATLANTIS_transparency_demo_swapped_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_transparency_demo_swapped_scene_MANIFEST_PATH "${ATLANTIS_transparency_demo_swapped_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_transparency_demo_swapped_scene_TARGET "${ATLANTIS_transparency_demo_swapped_scene_TARGET}" PARENT_SCOPE)
+
 # Plan 0035 Milestone 1 (Spec 0035 Requirement 6): two new meshes for the
 # showcase scene -- a dimpled test sphere (a concave spherical-cap dent
 # at the +Y pole, smoothstep-blended so the transition has zero slope at
