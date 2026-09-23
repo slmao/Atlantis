@@ -9,6 +9,8 @@
 // 89 px.
 
 #include "fixture/cutout_demo_fixture.h"
+#include "support/golden_validity.h"
+#include "support/pixel_diff.h"
 #include "support/tone_mapping_reference.h"
 
 #include <atlantis/runtime/bootstrap_config.h>
@@ -20,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <utility>
 
@@ -221,5 +224,83 @@ TEST_CASE("Cutout demo: the same scene with the material forced Opaque fills eve
     CHECK_FALSE(near(pixel, clearColour(), 8));
     CHECK(pixel[0] > pixel[2] + 40);
   }
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0042 Milestone 2, golden commit (ADR-0042 Initial baseline
+// bootstrap): the golden was captured by
+// atlantis_image_regression_cutout_demo_golden_generator against the clean,
+// already-committed tree at its recorded source_revision; these two
+// TEST_CASEs land with it.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr const char* kCutoutDemoGoldenName = "cutout_demo/cutout_demo_512x512_rgba8unorm";
+constexpr const char* kCutoutDemoGoldenSlug = "cutout_demo_512x512_rgba8unorm";
+
+}  // namespace
+
+TEST_CASE("Full capture-compare cycle against the committed cutout_demo golden passes",
+          "[image_regression][gpu][transparency][cutout]") {
+  const std::filesystem::path outputDir = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
+  std::filesystem::remove(outputDir / (std::string(kCutoutDemoGoldenSlug) + "_actual.png"));
+  std::filesystem::remove(outputDir / (std::string(kCutoutDemoGoldenSlug) + "_diff.png"));
+
+  auto fixtureResult = setUpCutoutDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  CutoutDemoFixture& fixture = fixtureResult.value();
+  auto renderResult = renderCutoutDemoFrame(fixture);
+  REQUIRE(renderResult.isOk());
+  const PixelBuffer& actual = renderResult.value();
+
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult =
+      atlantis::image_regression::loadAndValidateGolden(goldensDir / (std::string(kCutoutDemoGoldenName) + ".png"),
+                                                        goldensDir / (std::string(kCutoutDemoGoldenName) + ".sidecar.txt"));
+  {
+    INFO("INVALID GOLDEN: the committed cutout_demo golden must load and validate cleanly");
+    REQUIRE(goldenResult.isOk());
+  }
+  const auto& validatedGolden = goldenResult.value();
+  REQUIRE(actual.width == validatedGolden.pixels.width);
+  REQUIRE(actual.height == validatedGolden.pixels.height);
+
+  const auto report = atlantis::image_regression::compareBuffers(actual, validatedGolden.pixels);
+  if (!report.passed) {
+    (void)atlantis::image_regression::writeFailureArtifacts(outputDir, kCutoutDemoGoldenSlug, actual,
+                                                            validatedGolden.pixels);
+  }
+  REQUIRE(report.passed);
+
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+TEST_CASE("The cutout_demo frame with the material forced Opaque fails comparison against the real cutout_demo "
+          "golden",
+          "[image_regression][gpu][transparency][cutout]") {
+  // The discriminator for the golden itself (Plan 0042 M2 item 5): without
+  // the alpha test the whole 3x3 plane is drawn, so the image the golden
+  // records cannot be produced unless transparent texels are discarded.
+  auto fixtureResult = setUpCutoutDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  CutoutDemoFixture& fixture = fixtureResult.value();
+  forceMaskMaterialsOpaque(fixture);
+  auto renderResult = renderCutoutDemoFrame(fixture);
+  REQUIRE(renderResult.isOk());
+
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult =
+      atlantis::image_regression::loadAndValidateGolden(goldensDir / (std::string(kCutoutDemoGoldenName) + ".png"),
+                                                        goldensDir / (std::string(kCutoutDemoGoldenName) + ".sidecar.txt"));
+  REQUIRE(goldenResult.isOk());
+
+  const auto report = atlantis::image_regression::compareBuffers(renderResult.value(), goldenResult.value().pixels);
+  INFO("maxChannelDiff " << report.maxChannelDiff << ", out-of-tolerance pixels " << report.outOfToleranceCount);
+  CHECK_FALSE(report.passed);
+  CHECK(report.maxChannelDiff > 200);           // a hole's alpha: 255 -> 0
+  CHECK(report.outOfToleranceCount > 50000);    // the plane outside the disc: about 380^2 - pi * 119^2 px
+
   REQUIRE(fixture.device->waitIdle().isOk());
 }
