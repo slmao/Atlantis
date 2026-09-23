@@ -4,9 +4,19 @@
   (`Approved`, 2026-09-23) —
   [ADR-0090](../adr/0090-transparency-blend-state-draw-order-and-depth-write.md)
   (`Accepted`)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending
+- **Joint Human Review:** slmao, 2026-09-23 — reviewed this Plan and
+  [Spec 0042](../specs/0042-transparency.md) together (chat confirmation;
+  document set carried by this branch's PR) and explicitly authorized
+  Implementation from Milestone 1. The five open points were ruled in
+  the same review: Q1 three milestones confirmed; Q2 the sort point
+  inside createMesh() accepted WITH the mesh.cpp invariant-correction
+  authorized in the same commit (narrow ADR-0027-adjacent invariant
+  change, disclosed — stop if the scan needs anything beyond
+  stride+position-offset); Q3 non-PBR kinds reject alpha lines;
+  Q4 PbrMaterialDemoFixture hosts the cutout golden; Q5 the swap-order
+  test is a second committed scene.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
