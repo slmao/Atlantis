@@ -87,6 +87,17 @@ enum class DepthFormat {
               // per the Vulkan spec's mandatory format support table; no capability query needed.
 };
 
+// Plan 0042 Milestone 1 (ADR-0090 Decision 1): a Pipeline's colour-blend
+// expression. Closed, extended only by a future decision (the
+// BufferPurpose/IndexType discipline, ADR-0086). Disabled is every
+// Pipeline's state before this enum existed. AlphaBlend is the
+// straight-alpha "over" operator: colour src * srcAlpha + dst * (1 -
+// srcAlpha), alpha src * 1 + dst * (1 - srcAlpha).
+enum class ColorBlendMode {
+  Disabled,
+  AlphaBlend,
+};
+
 // Spec 0007's vertex attributes (position, one per-vertex color attribute
 // -- Spec 0007 Risks & Open Questions) are both a 3-float vector; this
 // enum exists so VertexInputLayout (below) does not silently assume a
@@ -358,6 +369,12 @@ struct PipelineCreateParams {
   // at any existing call site; when false, no color attachment is
   // declared and colorFormat is ignored.
   bool hasColorAttachment = true;
+  // Plan 0042 Milestone 1 (ADR-0090 Decision 1): meaningful only when
+  // hasColorAttachment == true. Disabled (default) reproduces every
+  // existing Pipeline's blend state exactly -- zero source change at any
+  // existing call site. A transparent (Blend) material's Pipeline pairs
+  // AlphaBlend with depthWriteEnabled == false (ADR-0090 Decision 3).
+  ColorBlendMode colorBlendMode = ColorBlendMode::Disabled;
 };
 
 struct SampledTextureUploadRegion {

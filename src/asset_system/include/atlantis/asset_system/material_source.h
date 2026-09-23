@@ -71,6 +71,12 @@ struct ParsedMaterialSource {
   // identified by its prefix, absent meaning (0, 0, 0). Never
   // range-validated here (cookMaterial()'s own job, [0, 65504]).
   float emissiveFactor[3] = {0.0f, 0.0f, 0.0f};
+  // Plan 0042 Milestone 1 (Spec 0042 R3, Plan 0042 P1): two more OPTIONAL
+  // prefix-identified lines, `alpha_mode: opaque|mask|blend` and
+  // `alpha_cutoff: x`, after emissive_factor. alphaCutoff is never
+  // range-validated here (cookMaterial()'s own job, [0, 1]).
+  MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
+  float alphaCutoff = 0.5f;
 };
 
 // Plan 0018 Section P2/P4: parse/decode-error conditions specific to the
@@ -131,6 +137,13 @@ enum class MaterialSourceParseError {
   // it (Spec 0041 Investigation 3), so it is rejected rather than
   // silently ignored, mirroring NormalMapNotSupportedForKind.
   EmissiveNotSupportedForKind,
+  // Plan 0042 Milestone 1 (Plan 0042 P2, ruling Q3): an `alpha_mode:` or
+  // `alpha_cutoff:` line on `kind: unlit_textured`/`kind: lit_textured`
+  // -- neither shader can honour it, mirroring EmissiveNotSupportedForKind.
+  AlphaModeNotSupportedForKind,
+  // Plan 0042 Milestone 1: an `alpha_mode:` value other than opaque/mask/
+  // blend, mirroring UnknownFilter/UnknownAddressMode.
+  UnknownAlphaMode,
 };
 
 // Strict, fixed-field-order, plain-text grammar extending

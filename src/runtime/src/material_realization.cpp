@@ -446,6 +446,7 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
   // Milestone 1) are forwarded to createMaterial() unconditionally --
   // harmless for a kind whose own Renderer-side switch (renderer.cpp)
   // never reads them.
+  const AlphaModeRealization alphaRealization = alphaModeRealizationFor(materialData.alphaMode);
   auto materialResult = createMaterial(
       device,
       {.vertexShader = {.spirvWords = shaderPair.vertexSpirv->data(), .wordCount = shaderPair.vertexSpirv->size()},
@@ -460,7 +461,10 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = pushConstantSizeBytesFor(materialData.kind),
        .sampledTextureBindingCount =
-           sampledTextureBindingCountFor(materialData.kind, environmentEnabled, hasNormalMap)},
+           sampledTextureBindingCountFor(materialData.kind, environmentEnabled, hasNormalMap),
+       // Plan 0042 Milestone 1 (ADR-0090 Decisions 1/3).
+       .depthWriteEnabled = alphaRealization.depthWriteEnabled,
+       .colorBlendMode = alphaRealization.colorBlendMode},
       sampledTexturePtr, candidate.sampler.get(), pushConstantLayoutFor(materialData.kind),
       {materialData.baseColorFactor[0], materialData.baseColorFactor[1], materialData.baseColorFactor[2],
        materialData.baseColorFactor[3]},
@@ -484,7 +488,8 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
       normalMapTexturePtr, materialData.clearcoatFactor, materialData.clearcoatRoughness,
       {materialData.sheenColor[0], materialData.sheenColor[1], materialData.sheenColor[2]},
       materialData.sheenRoughness, materialData.anisotropyFactor, materialData.anisotropyRotation,
-      {materialData.emissiveFactor[0], materialData.emissiveFactor[1], materialData.emissiveFactor[2]});
+      {materialData.emissiveFactor[0], materialData.emissiveFactor[1], materialData.emissiveFactor[2]},
+      alphaRealization.rendererAlphaMode);
   if (materialResult.isErr()) return ResultT::Err(MaterialRealizationError::MaterialCreateFailed);
   candidate.material = std::make_unique<atlantis::renderer::Material>(std::move(materialResult.value()));
 
@@ -656,6 +661,25 @@ bool isSrgbFormat(atlantis::rhi::Format format) {
   }
   ATLANTIS_CHECK_MSG(false, "isSrgbFormat(): unreachable -- Format's own closed switch above is exhaustive");
   return false;  // never reached
+}
+
+AlphaModeRealization alphaModeRealizationFor(atlantis::asset_system::MaterialAlphaMode alphaMode) {
+  switch (alphaMode) {
+    case atlantis::asset_system::MaterialAlphaMode::Opaque:
+      return {.colorBlendMode = atlantis::rhi::ColorBlendMode::Disabled,
+              .depthWriteEnabled = true,
+              .rendererAlphaMode = atlantis::renderer::MaterialAlphaMode::Opaque};
+    case atlantis::asset_system::MaterialAlphaMode::Mask:
+      return {.colorBlendMode = atlantis::rhi::ColorBlendMode::Disabled,
+              .depthWriteEnabled = true,
+              .rendererAlphaMode = atlantis::renderer::MaterialAlphaMode::Mask};
+    case atlantis::asset_system::MaterialAlphaMode::Blend:
+      return {.colorBlendMode = atlantis::rhi::ColorBlendMode::AlphaBlend,
+              .depthWriteEnabled = false,
+              .rendererAlphaMode = atlantis::renderer::MaterialAlphaMode::Blend};
+  }
+  ATLANTIS_CHECK_MSG(false, "alphaModeRealizationFor(): unreachable -- MaterialAlphaMode's closed switch is exhaustive");
+  return {};
 }
 
 std::uint32_t sampledTextureBindingCountFor(atlantis::asset_system::MaterialKind kind, bool environmentEnabled,

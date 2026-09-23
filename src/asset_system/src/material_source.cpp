@@ -2,13 +2,15 @@
 
 #include <charconv>
 #include <cstddef>
+#include <iterator>
+#include <optional>
 #include <vector>
 
 namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_material_source_version: 7";
+constexpr std::string_view kVersionLine = "atlantis_material_source_version: 8";
 constexpr std::string_view kKindPrefix = "kind: ";
 constexpr std::string_view kTexturePrefix = "texture: ";
 constexpr std::string_view kFilterPrefix = "filter: ";
@@ -42,6 +44,10 @@ constexpr std::string_view kAnisotropyRotationPrefix = "anisotropy_rotation: ";
 // optional, prefix-identified line -- after the kind-specific pair (if
 // any), before the optional normal_map line.
 constexpr std::string_view kEmissiveFactorPrefix = "emissive_factor: ";
+// Plan 0042 Milestone 1 (Spec 0042 R3): two more optional lines, after
+// emissive_factor.
+constexpr std::string_view kAlphaModePrefix = "alpha_mode: ";
+constexpr std::string_view kAlphaCutoffPrefix = "alpha_cutoff: ";
 
 constexpr std::string_view kKindUnlitTextured = "unlit_textured";
 constexpr std::string_view kKindLitTextured = "lit_textured";
@@ -56,6 +62,9 @@ constexpr std::string_view kFilterNearest = "nearest";
 constexpr std::string_view kFilterLinear = "linear";
 constexpr std::string_view kAddressModeRepeat = "repeat";
 constexpr std::string_view kAddressModeClampToEdge = "clamp_to_edge";
+constexpr std::string_view kAlphaModeOpaque = "opaque";
+constexpr std::string_view kAlphaModeMask = "mask";
+constexpr std::string_view kAlphaModeBlend = "blend";
 
 // Duplicated from scene_source.cpp's/mesh_source.cpp's own identical
 // helpers rather than shared, matching those files' own established
@@ -124,10 +133,74 @@ constexpr std::string_view kAddressModeClampToEdge = "clamp_to_edge";
   return std::string(buffer, result.ptr);
 }
 
+// Plan 0042 Milestone 1 (Plan 0042 P1): the values the optional lines
+// carry, at their defaults until a line sets them.
+struct OptionalLineValues {
+  float emissiveFactor[3] = {0.0f, 0.0f, 0.0f};
+  MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
+  float alphaCutoff = 0.5f;
+};
+
+using OptionalLineParser = std::optional<MaterialSourceParseError> (*)(std::string_view, OptionalLineValues&);
+
+[[nodiscard]] std::optional<MaterialSourceParseError> parseEmissiveFactorLine(std::string_view value,
+                                                                            OptionalLineValues& out) {
+  const std::vector<std::string_view> tokens = splitOnSpace(value);
+  if (tokens.size() != 3) return MaterialSourceParseError::MalformedNumber;
+  for (std::size_t i = 0; i < 3; ++i) {
+    if (!parseFloatToken(tokens[i], out.emissiveFactor[i])) return MaterialSourceParseError::MalformedNumber;
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] std::optional<MaterialSourceParseError> parseAlphaModeLine(std::string_view value,
+                                                                       OptionalLineValues& out) {
+  if (value == kAlphaModeOpaque) {
+    out.alphaMode = MaterialAlphaMode::Opaque;
+  } else if (value == kAlphaModeMask) {
+    out.alphaMode = MaterialAlphaMode::Mask;
+  } else if (value == kAlphaModeBlend) {
+    out.alphaMode = MaterialAlphaMode::Blend;
+  } else {
+    return MaterialSourceParseError::UnknownAlphaMode;
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] std::optional<MaterialSourceParseError> parseAlphaCutoffLine(std::string_view value,
+                                                                         OptionalLineValues& out) {
+  if (!parseFloatToken(value, out.alphaCutoff)) return MaterialSourceParseError::MalformedNumber;
+  return std::nullopt;
+}
+
+struct OptionalLine {
+  std::string_view prefix;
+  MaterialSourceParseError notSupportedForKind;
+  OptionalLineParser parse;
+};
+
+// In the order the lines must appear. Every entry is illegal on
+// UnlitTextured/LitTextured, reported with its own error.
+constexpr OptionalLine kOptionalLines[] = {
+    {kEmissiveFactorPrefix, MaterialSourceParseError::EmissiveNotSupportedForKind, &parseEmissiveFactorLine},
+    {kAlphaModePrefix, MaterialSourceParseError::AlphaModeNotSupportedForKind, &parseAlphaModeLine},
+    {kAlphaCutoffPrefix, MaterialSourceParseError::AlphaModeNotSupportedForKind, &parseAlphaCutoffLine},
+};
+constexpr std::size_t kOptionalLineCount = std::size(kOptionalLines);
+
+// The kOptionalLines index whose prefix `line` starts with, or
+// kOptionalLineCount for none.
+[[nodiscard]] std::size_t findOptionalLine(std::string_view line) {
+  for (std::size_t i = 0; i < kOptionalLineCount; ++i) {
+    if (line.substr(0, kOptionalLines[i].prefix.size()) == kOptionalLines[i].prefix) return i;
+  }
+  return kOptionalLineCount;
+}
+
 }  // namespace
 
 // Plan 0041 Milestone 1 (Plan 0041 P1): the kind vocabulary, used only by
-// the emissive pre-pass below to learn where the optional line belongs.
+// the optional-line pre-pass below to learn where the optional line belongs.
 // The main parse keeps its own, unchanged kind dispatch.
 [[nodiscard]] bool kindFromValue(std::string_view value, MaterialKind& out) {
   if (value == kKindUnlitTextured) {
@@ -153,50 +226,51 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
 
   std::vector<std::string_view> lines = splitLines(text);
 
-  // Plan 0041 Milestone 1 (Plan 0041 P1, Spec 0041 ruling O1): the
-  // optional `emissive_factor:` line is recognised by its prefix, parsed,
-  // and REMOVED here, before the line-count shape machine below runs --
-  // so that machine, and every error it returns, is byte-for-byte the v6
-  // one for every input that carries no such line. It is taken only when
-  // the version line and kind are already valid (otherwise the main
-  // parse reports those errors exactly as before), and only at its one
-  // legal slot: index 8 (directly after the three factor lines), or 10
-  // for the kinds whose REQUIRED pair occupies 8-9 -- i.e. after the
-  // kind-specific pair and before normal_map. The line count therefore
-  // gains exactly one more legal value (12).
-  constexpr std::size_t kMaxLineCountWithEmissive = 12;
-  if (lines.size() > kMaxLineCountWithEmissive) return ResultT::Err(MaterialSourceParseError::TrailingContent);
-  float emissiveFactor[3] = {0.0f, 0.0f, 0.0f};
+  // Plan 0042 Milestone 1 (Plan 0042 P1), generalizing Plan 0041 P1: the
+  // optional lines are recognised by their prefixes, parsed, and REMOVED
+  // here, before the line-count shape machine below runs -- so that
+  // machine, and every error it returns, is byte-for-byte the v6 one for
+  // every input that carries none of them. They are taken only when the
+  // version line and kind are already valid (otherwise the main parse
+  // reports those errors exactly as before), and only as one run starting
+  // at the legal slot: index 8 (directly after the three factor lines),
+  // or 10 for the kinds whose REQUIRED pair occupies 8-9 -- i.e. after the
+  // kind-specific pair and before normal_map. Within the run the lines
+  // follow kOptionalLines' order, each at most once (a cursor that only
+  // moves forward through the table); a recognised prefix anywhere else
+  // is FieldOrderMismatch.
+  constexpr std::size_t kMaxLineCountWithOptionalLines = 11 + kOptionalLineCount;
+  if (lines.size() > kMaxLineCountWithOptionalLines) return ResultT::Err(MaterialSourceParseError::TrailingContent);
+  OptionalLineValues optionalValues;
   std::string_view kindValue;
   MaterialKind prepassKind{};
   if (lines.size() > 8 && lines[0] == kVersionLine && matchField(lines[1], kKindPrefix, kindValue) &&
       kindFromValue(kindValue, prepassKind)) {
-    std::size_t emissiveIndex = lines.size();
-    for (std::size_t i = 8; i < lines.size(); ++i) {
-      std::string_view ignored;
-      if (matchField(lines[i], kEmissiveFactorPrefix, ignored)) {
-        emissiveIndex = i;
-        break;
+    if (prepassKind == MaterialKind::UnlitTextured || prepassKind == MaterialKind::LitTextured) {
+      for (std::size_t i = 8; i < lines.size(); ++i) {
+        const std::size_t entry = findOptionalLine(lines[i]);
+        if (entry != kOptionalLineCount) return ResultT::Err(kOptionalLines[entry].notSupportedForKind);
       }
-    }
-    if (emissiveIndex != lines.size()) {
-      if (prepassKind == MaterialKind::UnlitTextured || prepassKind == MaterialKind::LitTextured) {
-        return ResultT::Err(MaterialSourceParseError::EmissiveNotSupportedForKind);
-      }
+    } else {
       const bool hasKindPair = prepassKind == MaterialKind::PbrClearcoat || prepassKind == MaterialKind::PbrSheen ||
                                prepassKind == MaterialKind::PbrAnisotropic;
-      const std::size_t legalIndex = hasKindPair ? 10 : 8;
-      if (emissiveIndex != legalIndex) return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
-      std::string_view emissiveValue;
-      (void)matchField(lines[emissiveIndex], kEmissiveFactorPrefix, emissiveValue);
-      const std::vector<std::string_view> emissiveTokens = splitOnSpace(emissiveValue);
-      if (emissiveTokens.size() != 3) return ResultT::Err(MaterialSourceParseError::MalformedNumber);
-      for (std::size_t i = 0; i < 3; ++i) {
-        if (!parseFloatToken(emissiveTokens[i], emissiveFactor[i])) {
-          return ResultT::Err(MaterialSourceParseError::MalformedNumber);
+      const std::size_t slot = hasKindPair ? 10 : 8;
+      std::size_t nextEntry = 0;
+      while (slot < lines.size()) {
+        const std::size_t entry = findOptionalLine(lines[slot]);
+        if (entry == kOptionalLineCount) break;
+        if (entry < nextEntry) return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+        const std::string_view optionalValue = lines[slot].substr(kOptionalLines[entry].prefix.size());
+        const std::optional<MaterialSourceParseError> lineError = kOptionalLines[entry].parse(optionalValue, optionalValues);
+        if (lineError.has_value()) return ResultT::Err(*lineError);
+        lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(slot));
+        nextEntry = entry + 1;
+      }
+      for (std::size_t i = 8; i < lines.size(); ++i) {
+        if (findOptionalLine(lines[i]) != kOptionalLineCount) {
+          return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
         }
       }
-      lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(emissiveIndex));
     }
   }
 
@@ -413,7 +487,9 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
     parsed.normalMapLogicalPath = std::string(value);
   }
 
-  for (std::size_t i = 0; i < 3; ++i) parsed.emissiveFactor[i] = emissiveFactor[i];
+  for (std::size_t i = 0; i < 3; ++i) parsed.emissiveFactor[i] = optionalValues.emissiveFactor[i];
+  parsed.alphaMode = optionalValues.alphaMode;
+  parsed.alphaCutoff = optionalValues.alphaCutoff;
   return ResultT::Ok(std::move(parsed));
 }
 
@@ -504,6 +580,18 @@ std::string serializeMaterialSource(const ParsedMaterialSource& source) {
       if (i != 0) out += ' ';
       out += formatFloat(source.emissiveFactor[i]);
     }
+    out += '\n';
+  }
+  // Plan 0042 Milestone 1 (Plan 0042 P1): the same only-when-non-default
+  // rule, so every existing source round-trips unchanged.
+  if (source.alphaMode != MaterialAlphaMode::Opaque) {
+    out += kAlphaModePrefix;
+    out += (source.alphaMode == MaterialAlphaMode::Mask ? kAlphaModeMask : kAlphaModeBlend);
+    out += '\n';
+  }
+  if (source.alphaCutoff != 0.5f) {
+    out += kAlphaCutoffPrefix;
+    out += formatFloat(source.alphaCutoff);
     out += '\n';
   }
   // Plan 0029 Section P5/ADR-0074 Section 1: the trailing normal_map

@@ -29,6 +29,14 @@ enum class MaterialPushConstantLayout { ObjectToWorldOnly, PbrDirectLit, PbrClea
 
 enum class MaterialEnvironmentBinding { None, Ibl };
 
+// Plan 0042 Milestone 1 (ADR-0090 Decision 4): the Renderer's own copy of a
+// material's alpha mode -- Renderer never names an Asset System type; the
+// Runtime translates at realization. drawFrame() orders and filters by it
+// (Blend draws last, back-to-front, and never into the shadow map). The
+// Pipeline's blend/depth-write state is chosen by the caller to match; this
+// value does not configure the Pipeline itself.
+enum class MaterialAlphaMode { Opaque, Mask, Blend };
+
 // Owns exactly one Pipeline (ADR-0022). Move-only, single-owner.
 // Constructed once; the caller's own resize/format-change contract
 // (Plan 0007 Section 13) is responsible for destroying and recreating a
@@ -89,7 +97,8 @@ class Material {
                      float clearcoatRoughness = 0.0f, std::array<float, 3> sheenColor = {0.0f, 0.0f, 0.0f},
                      float sheenRoughness = 0.0f, float anisotropyFactor = 0.0f,
                      float anisotropyRotation = 0.0f,
-                     std::array<float, 3> emissiveFactor = {0.0f, 0.0f, 0.0f}) noexcept;
+                     std::array<float, 3> emissiveFactor = {0.0f, 0.0f, 0.0f},
+                     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque) noexcept;
   ~Material() = default;
 
   Material(const Material&) = delete;
@@ -129,6 +138,9 @@ class Material {
   // layouts; always (0, 0, 0) for ObjectToWorldOnly, whose shaders have
   // no emissive term.
   [[nodiscard]] const std::array<float, 3>& emissiveFactor() const noexcept { return emissiveFactor_; }
+  // Plan 0042 Milestone 1: Mask/Blend only on the four PBR layouts
+  // (checked at construction); always Opaque for ObjectToWorldOnly.
+  [[nodiscard]] MaterialAlphaMode alphaMode() const noexcept { return alphaMode_; }
 
  private:
   std::unique_ptr<atlantis::rhi::Pipeline> pipeline_;
@@ -147,6 +159,7 @@ class Material {
   float anisotropyFactor_ = 0.0f;
   float anisotropyRotation_ = 0.0f;
   std::array<float, 3> emissiveFactor_{0.0f, 0.0f, 0.0f};
+  MaterialAlphaMode alphaMode_ = MaterialAlphaMode::Opaque;
 };
 
 enum class CreateMaterialError {
@@ -185,6 +198,7 @@ enum class CreateMaterialError {
     const atlantis::rhi::SampledTexture* normalMapTexture = nullptr, float clearcoatFactor = 0.0f,
     float clearcoatRoughness = 0.0f, std::array<float, 3> sheenColor = {0.0f, 0.0f, 0.0f},
     float sheenRoughness = 0.0f, float anisotropyFactor = 0.0f, float anisotropyRotation = 0.0f,
-    std::array<float, 3> emissiveFactor = {0.0f, 0.0f, 0.0f});
+    std::array<float, 3> emissiveFactor = {0.0f, 0.0f, 0.0f},
+    MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque);
 
 }  // namespace atlantis::renderer

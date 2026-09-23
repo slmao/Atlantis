@@ -202,9 +202,13 @@ TEST_CASE("A transmission material imports as pbr_direct_lit with a report line"
   CHECK(summary.materialsTransmission == 1);
   CHECK(summary.materialsMetallicRoughness == 1);
   CHECK(reportContains(summary, "KHR_materials_transmission factor 0.95 recorded only; imported as pbr_direct_lit"));
-  CHECK(reportContains(summary, "no v7 destination, dropped (Ruling 3): alphaMode=BLEND doubleSided"));
+  // Spec 0042 R9 / ruling O3: a transmission material stays opaque even
+  // when it declares BLEND.
+  CHECK(reportContains(summary, "alphaMode=BLEND not mapped, transmission material stays opaque (Spec 0042 O3)"));
+  CHECK(reportContains(summary, "no v8 destination, dropped (Ruling 3): doubleSided"));
   const auto material = parsedMaterial0(run.outputDir);
   CHECK(material.kind == atlantis::asset_system::MaterialKind::PbrDirectLit);
+  CHECK(material.alphaMode == atlantis::asset_system::MaterialAlphaMode::Opaque);
   CHECK(material.metallicFactor == 0.0f);
   CHECK(material.roughnessFactor == Catch::Approx(0.1f));
 }
@@ -311,12 +315,12 @@ TEST_CASE("Emissive factors are mapped without a texture, dropped with one, and 
   CHECK(withTexture.emissiveFactor[1] == 0.0f);
   CHECK(withTexture.emissiveFactor[2] == 0.0f);
   CHECK(reportContains(summary, "material_1: emissiveFactor=(0.5,1,0.5) dropped, emissiveTexture present"));
-  CHECK(reportContains(summary, "material_1: no v7 destination, dropped (Ruling 3): emissiveTexture"));
+  CHECK(reportContains(summary, "material_1: no v8 destination, dropped (Ruling 3): emissiveTexture"));
 
   // Texture with a zero factor: inert, reported only as an undestined texture.
   const auto textureOnly = parsedMaterial(2);
   CHECK(textureOnly.emissiveFactor[0] == 0.0f);
-  CHECK(reportContains(summary, "material_2: no v7 destination, dropped (Ruling 3): emissiveTexture"));
+  CHECK(reportContains(summary, "material_2: no v8 destination, dropped (Ruling 3): emissiveTexture"));
   CHECK_FALSE(reportContains(summary, "material_2: emissiveFactor"));
 
   // Out of range (Q3): dropped and reported; the import still succeeds. The
@@ -333,4 +337,63 @@ TEST_CASE("Emissive factors are mapped without a texture, dropped with one, and 
       (run.outputDir / "t/materials/0.material.txt").string(), "t/materials/0.material.txt",
       (run.dir / "cooked/0.amaterial").string(), (run.dir / "cooked/0.amaterial.meta.txt").string());
   CHECK(cookResult.isOk());
+}
+
+// Spec 0042 Requirement 9 (ruling O1): MASK maps to Mask plus its cutoff
+// (glTF's 0.5 default when omitted), BLEND to Blend, OPAQUE stays Opaque; a
+// MASK cutoff outside [0, 1] keeps 0.5 and is reported.
+TEST_CASE("alphaMode MASK and BLEND map to the v8 alpha fields", "[gltf_importer][material][transparency]") {
+  auto spec = gltf_test::unitQuad();
+  spec.materialsJson =
+      "[{\"alphaMode\":\"MASK\",\"alphaCutoff\":0.3},"
+      "{\"alphaMode\":\"MASK\"},"
+      "{\"alphaMode\":\"BLEND\"},"
+      "{\"alphaMode\":\"OPAQUE\"},"
+      "{\"alphaMode\":\"MASK\",\"alphaCutoff\":1.5}]";
+  const MaterialRun run = runMaterialImport("material_alpha", spec);
+  REQUIRE(run.result.isOk());
+  const GltfImportSummary& summary = run.result.value();
+
+  const auto parsedMaterial = [&](int index) {
+    const auto parsed = atlantis::asset_system::parseMaterialSource(
+        readText(run.outputDir / ("t/materials/" + std::to_string(index) + ".material.txt")));
+    REQUIRE(parsed.isOk());
+    return parsed.value();
+  };
+  using atlantis::asset_system::MaterialAlphaMode;
+
+  const auto maskExplicit = parsedMaterial(0);
+  CHECK(maskExplicit.alphaMode == MaterialAlphaMode::Mask);
+  CHECK(maskExplicit.alphaCutoff == 0.3f);
+  CHECK(reportContains(summary, "material_0: alphaMode=MASK alphaCutoff=0.3 mapped (Spec 0042 R9)"));
+
+  const auto maskDefault = parsedMaterial(1);
+  CHECK(maskDefault.alphaMode == MaterialAlphaMode::Mask);
+  CHECK(maskDefault.alphaCutoff == 0.5f);
+
+  const auto blend = parsedMaterial(2);
+  CHECK(blend.alphaMode == MaterialAlphaMode::Blend);
+  CHECK(reportContains(summary, "material_2: alphaMode=BLEND mapped (Spec 0042 R9)"));
+
+  const auto opaque = parsedMaterial(3);
+  CHECK(opaque.alphaMode == MaterialAlphaMode::Opaque);
+  CHECK_FALSE(reportContains(summary, "material_3: alphaMode"));
+
+  const auto maskOutOfRange = parsedMaterial(4);
+  CHECK(maskOutOfRange.alphaMode == MaterialAlphaMode::Mask);
+  CHECK(maskOutOfRange.alphaCutoff == 0.5f);
+  CHECK(reportContains(summary, "material_4: alphaMode=MASK alphaCutoff=1.5 mapped as MASK, cutoff outside [0, 1] "
+                                "replaced by 0.5"));
+  CHECK_FALSE(reportContains(summary, "Ruling 3): alphaMode"));
+
+  // Every mapped source cooks.
+  for (int index : {0, 2, 4}) {
+    INFO("material " << index);
+    const std::string name = std::to_string(index);
+    const auto cookResult = atlantis::asset_system::cookMaterial(
+        (run.outputDir / ("t/materials/" + name + ".material.txt")).string(), "t/materials/" + name + ".material.txt",
+        (run.dir / ("cooked/" + name + ".amaterial")).string(),
+        (run.dir / ("cooked/" + name + ".amaterial.meta.txt")).string());
+    CHECK(cookResult.isOk());
+  }
 }

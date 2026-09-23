@@ -167,13 +167,16 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   for (float component : parsed.emissiveFactor) {
     if (!isValidEmissiveComponent(component)) return ResultT::Err(MaterialCookError::EmissiveFactorOutOfRange);
   }
+  // Plan 0042 Milestone 1 (Spec 0042 R1): the cutoff is an ordinary [0, 1]
+  // factor, validated whatever the mode (its 0.5 default is in range).
+  if (!isValidFactor(parsed.alphaCutoff)) return ResultT::Err(MaterialCookError::MaterialFactorOutOfRange);
 
   // Step 4: encode + atomic write.
   const std::vector<std::byte> artifactBytes = encodeMaterialArtifact(
       parsed.kind, textureAssetId, parsed.filter, parsed.addressMode, parsed.baseColorFactor, parsed.metallicFactor,
       parsed.roughnessFactor, normalMapTextureAssetId, parsed.clearcoatFactor, parsed.clearcoatRoughness,
       parsed.sheenColor, parsed.sheenRoughness, parsed.anisotropyFactor, parsed.anisotropyRotation,
-      parsed.emissiveFactor);
+      parsed.emissiveFactor, parsed.alphaMode, parsed.alphaCutoff);
 
   MaterialMetadata metadata;
   metadata.assetId = selfAssetId;
@@ -191,6 +194,8 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   metadata.anisotropyFactor = parsed.anisotropyFactor;
   metadata.anisotropyRotation = parsed.anisotropyRotation;
   for (std::size_t i = 0; i < 3; ++i) metadata.emissiveFactor[i] = parsed.emissiveFactor[i];
+  metadata.alphaMode = parsed.alphaMode;
+  metadata.alphaCutoff = parsed.alphaCutoff;
   const std::string metadataText = serializeMaterialMetadata(metadata);
 
   if (!writeBytesAtomically(artifactOutputPath, reinterpret_cast<const char*>(artifactBytes.data()),

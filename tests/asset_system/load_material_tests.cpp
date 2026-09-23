@@ -45,7 +45,7 @@ void writeFile(const fs::path& path, const std::string& content) {
 }
 
 constexpr std::string_view kValidSource =
-    "atlantis_material_source_version: 7\n"
+    "atlantis_material_source_version: 8\n"
     "kind: unlit_textured\n"
     "texture: textures/textured_quad_source_unorm.png\n"
     "filter: linear\n"
@@ -85,7 +85,7 @@ TEST_CASE("loadMaterialAsset loads a well-formed PbrDirectLit material with its 
   TempDirGuard dir("pbr_success");
   const fs::path sourcePath = dir.path / "pbr_dielectric_rough.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 7\n"
+            "atlantis_material_source_version: 8\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -127,7 +127,7 @@ TEST_CASE("loadMaterialAsset round-trips a metallic_factor value that std::to_st
   TempDirGuard dir("pbr_precise_float_roundtrip");
   const fs::path sourcePath = dir.path / "pbr_precise.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 7\n"
+            "atlantis_material_source_version: 8\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -161,7 +161,7 @@ TEST_CASE("loadMaterialAsset detects a metadata/artifact mismatch scoped to meta
   TempDirGuard dir("metallic_mismatch");
   const fs::path sourcePath = dir.path / "pbr.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 7\n"
+            "atlantis_material_source_version: 8\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -247,7 +247,7 @@ TEST_CASE("loadMaterialAsset detects a deliberate artifact/metadata mismatch", "
   // now disagrees with the artifact's own decoded texture_asset_id.
   const fs::path otherSourcePath = dir.path / "other.material.txt";
   writeFile(otherSourcePath,
-            "atlantis_material_source_version: 7\n"
+            "atlantis_material_source_version: 8\n"
             "kind: unlit_textured\n"
             "texture: textures/other.png\n"
             "filter: linear\n"
@@ -301,7 +301,7 @@ namespace {
 [[nodiscard]] std::pair<fs::path, fs::path> cookEmissiveMaterial(const fs::path& dir) {
   const fs::path sourcePath = dir / "emissive.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 7\n"
+            "atlantis_material_source_version: 8\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -347,6 +347,80 @@ TEST_CASE("loadMaterialAsset detects a metadata/artifact mismatch scoped to emis
   metadataText.replace(pos, oldLine.size(), "emissive_factor: 9 0.13 0.13");
   writeFile(metadataPath, metadataText);
 
+  const auto result = loadMaterialAsset(artifactPath, metadataPath);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == MaterialLoadError::MetadataArtifactMismatch);
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0042 Milestone 1: alpha_mode/alpha_cutoff survive load, and the
+// metadata/artifact agreement check covers each.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] std::pair<fs::path, fs::path> cookMaskedMaterial(const fs::path& dir) {
+  const fs::path sourcePath = dir / "masked.material.txt";
+  writeFile(sourcePath,
+            "atlantis_material_source_version: 8\n"
+            "kind: pbr_direct_lit\n"
+            "texture: textures/textured_quad_source_srgb.png\n"
+            "filter: linear\n"
+            "address_mode: repeat\n"
+            "base_color_factor: 1.0 1.0 1.0 1.0\n"
+            "metallic_factor: 0.0\n"
+            "roughness_factor: 0.5\n"
+            "alpha_mode: mask\n"
+            "alpha_cutoff: 0.25\n");
+  const fs::path artifactPath = dir / "masked.amaterial";
+  const fs::path metadataPath = dir / "masked.amaterial.meta.txt";
+  REQUIRE(cookMaterial(sourcePath.string(), "materials/masked.material.txt", artifactPath.string(),
+                       metadataPath.string())
+              .isOk());
+  return {artifactPath, metadataPath};
+}
+
+void replaceMetadataLine(const fs::path& metadataPath, const std::string& oldLine, const std::string& newLine) {
+  std::string metadataText;
+  {
+    std::ifstream in(metadataPath, std::ios::binary);
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    metadataText = buffer.str();
+  }
+  const auto pos = metadataText.find(oldLine);
+  REQUIRE(pos != std::string::npos);
+  metadataText.replace(pos, oldLine.size(), newLine);
+  writeFile(metadataPath, metadataText);
+}
+
+}  // namespace
+
+TEST_CASE("loadMaterialAsset carries alpha_mode and alpha_cutoff into MaterialAssetData",
+          "[asset_system][material][transparency]") {
+  TempDirGuard dir("alpha_load");
+  const auto [artifactPath, metadataPath] = cookMaskedMaterial(dir.path);
+  const auto result = loadMaterialAsset(artifactPath, metadataPath);
+  REQUIRE(result.isOk());
+  CHECK(result.value().alphaMode == MaterialAlphaMode::Mask);
+  CHECK(result.value().alphaCutoff == 0.25f);
+}
+
+TEST_CASE("loadMaterialAsset detects a metadata/artifact mismatch scoped to alphaMode alone",
+          "[asset_system][material][transparency]") {
+  TempDirGuard dir("alpha_mode_mismatch");
+  const auto [artifactPath, metadataPath] = cookMaskedMaterial(dir.path);
+  replaceMetadataLine(metadataPath, "alpha_mode: mask", "alpha_mode: blend");
+  const auto result = loadMaterialAsset(artifactPath, metadataPath);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == MaterialLoadError::MetadataArtifactMismatch);
+}
+
+TEST_CASE("loadMaterialAsset detects a metadata/artifact mismatch scoped to alphaCutoff alone",
+          "[asset_system][material][transparency]") {
+  TempDirGuard dir("alpha_cutoff_mismatch");
+  const auto [artifactPath, metadataPath] = cookMaskedMaterial(dir.path);
+  replaceMetadataLine(metadataPath, "alpha_cutoff: 0.25", "alpha_cutoff: 0.5");
   const auto result = loadMaterialAsset(artifactPath, metadataPath);
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialLoadError::MetadataArtifactMismatch);

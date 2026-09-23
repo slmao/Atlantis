@@ -58,6 +58,18 @@ void appendFloatLE(std::vector<std::byte>& out, float value) { appendU32LE(out, 
   return 0;
 }
 
+[[nodiscard]] std::uint32_t alphaModeToField(MaterialAlphaMode alphaMode) {
+  switch (alphaMode) {
+    case MaterialAlphaMode::Opaque:
+      return 0;
+    case MaterialAlphaMode::Mask:
+      return 1;
+    case MaterialAlphaMode::Blend:
+      return 2;
+  }
+  return 0;
+}
+
 [[nodiscard]] std::uint32_t filterToField(MaterialSamplerFilter filter) {
   switch (filter) {
     case MaterialSamplerFilter::Nearest:
@@ -87,7 +99,8 @@ std::vector<std::byte> encodeMaterialArtifact(MaterialKind kind, AssetId texture
                                                float clearcoatFactor, float clearcoatRoughness,
                                                const float (&sheenColor)[3], float sheenRoughness,
                                                float anisotropyFactor, float anisotropyRotation,
-                                               const float (&emissiveFactor)[3]) {
+                                               const float (&emissiveFactor)[3], MaterialAlphaMode alphaMode,
+                                               float alphaCutoff) {
   std::vector<std::byte> out;
   out.reserve(kMaterialArtifactHeaderSizeBytes);
 
@@ -108,6 +121,8 @@ std::vector<std::byte> encodeMaterialArtifact(MaterialKind kind, AssetId texture
   appendFloatLE(out, anisotropyFactor);
   appendFloatLE(out, anisotropyRotation);
   for (float component : emissiveFactor) appendFloatLE(out, component);
+  appendU32LE(out, alphaModeToField(alphaMode));
+  appendFloatLE(out, alphaCutoff);
 
   return out;
 }
@@ -267,6 +282,26 @@ atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMat
     }
     decoded.emissiveFactor[i] = component;
   }
+
+  // Plan 0042 Milestone 1 (ADR-0090 Decision 4): the mode byte is a closed
+  // enumerator, like kind; the cutoff is re-validated against [0, 1], the
+  // cook-time factor range.
+  const std::uint32_t alphaModeField = readU32LE(bytes.data() + 108);
+  if (alphaModeField == 0) {
+    decoded.alphaMode = MaterialAlphaMode::Opaque;
+  } else if (alphaModeField == 1) {
+    decoded.alphaMode = MaterialAlphaMode::Mask;
+  } else if (alphaModeField == 2) {
+    decoded.alphaMode = MaterialAlphaMode::Blend;
+  } else {
+    return ResultT::Err(MaterialArtifactDecodeError::UnknownAlphaMode);
+  }
+
+  const float alphaCutoff = readFloatLE(bytes.data() + 112);
+  if (!std::isfinite(alphaCutoff) || alphaCutoff < 0.0f || alphaCutoff > 1.0f) {
+    return ResultT::Err(MaterialArtifactDecodeError::MaterialFactorOutOfRange);
+  }
+  decoded.alphaCutoff = alphaCutoff;
 
   return ResultT::Ok(std::move(decoded));
 }

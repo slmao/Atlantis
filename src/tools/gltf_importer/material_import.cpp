@@ -30,6 +30,7 @@ namespace atlantis::gltf_importer::detail {
 namespace {
 
 namespace fs = std::filesystem;
+using atlantis::asset_system::MaterialAlphaMode;
 using atlantis::asset_system::MaterialKind;
 using atlantis::asset_system::MaterialSamplerAddressMode;
 using atlantis::asset_system::MaterialSamplerFilter;
@@ -416,17 +417,41 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
       }
     }
 
-    // Ruling 3: properties v7 has no destination for.
-    if (m.alpha_mode == cgltf_alpha_mode_mask) {
-      dropped.push_back("alphaMode=MASK alphaCutoff=" + formatFloat(m.alpha_cutoff));
-    } else if (m.alpha_mode == cgltf_alpha_mode_blend) {
-      dropped.push_back("alphaMode=BLEND");
+    // Spec 0042 Requirement 9 (ruling O1): MASK -> Mask + alphaCutoff
+    // (cgltf fills glTF's 0.5 default when the file omits it), BLEND ->
+    // Blend. Transmission materials stay Opaque whatever their alphaMode
+    // (ruling O3: whether glass renders as Blend is Spec 0036 (7)'s
+    // decision), and a cutoff outside [0, 1] keeps the 0.5 default rather
+    // than failing the whole cook later. Each case gets its own report line.
+    if (m.alpha_mode == cgltf_alpha_mode_mask || m.alpha_mode == cgltf_alpha_mode_blend) {
+      const bool isMask = m.alpha_mode == cgltf_alpha_mode_mask;
+      const std::string modeText = isMask ? "alphaMode=MASK alphaCutoff=" + formatFloat(m.alpha_cutoff)
+                                          : std::string("alphaMode=BLEND");
+      if (m.has_transmission) {
+        reportLines.push_back(label + ": " + modeText +
+                              " not mapped, transmission material stays opaque (Spec 0042 O3)");
+      } else if (!isMask) {
+        source.alphaMode = MaterialAlphaMode::Blend;
+        reportLines.push_back(label + ": " + modeText + " mapped (Spec 0042 R9)");
+      } else {
+        source.alphaMode = MaterialAlphaMode::Mask;
+        const float cutoff = m.alpha_cutoff;
+        if (std::isfinite(cutoff) && cutoff >= 0.0f && cutoff <= 1.0f) {
+          source.alphaCutoff = cutoff;
+          reportLines.push_back(label + ": " + modeText + " mapped (Spec 0042 R9)");
+        } else {
+          reportLines.push_back(label + ": " + modeText +
+                                " mapped as MASK, cutoff outside [0, 1] replaced by 0.5 (Spec 0042 R9)");
+        }
+      }
     }
+
+    // Ruling 3: properties v8 has no destination for.
     if (m.double_sided) dropped.push_back("doubleSided");
     if (hasEmissiveTexture) dropped.push_back("emissiveTexture");
     if (m.occlusion_texture.texture != nullptr) dropped.push_back("occlusionTexture");
     if (!dropped.empty()) {
-      std::string line = label + ": no v7 destination, dropped (Ruling 3):";
+      std::string line = label + ": no v8 destination, dropped (Ruling 3):";
       for (const std::string& d : dropped) line += " " + d;
       reportLines.push_back(line);
     }
