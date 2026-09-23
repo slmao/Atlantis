@@ -9,6 +9,7 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <sstream>
 #include <string>
 
@@ -18,13 +19,16 @@ namespace {
 
 namespace fs = std::filesystem;
 
+// Per-process tag: catch_discover_tests runs each TEST_CASE in its own
+// process under ctest -j, and the counter below restarts at 0 in each.
+const std::string gProcessTag = std::to_string(std::random_device{}());
 std::atomic<int> gScratchCounter{0};
 
 struct TempDirGuard {
   fs::path path;
   explicit TempDirGuard(const std::string& label)
       : path(fs::temp_directory_path() / "atlantis_cook_material_tests" /
-              (label + "_" + std::to_string(gScratchCounter.fetch_add(1)))) {
+              (label + "_" + gProcessTag + "_" + std::to_string(gScratchCounter.fetch_add(1)))) {
     fs::create_directories(path);
   }
   ~TempDirGuard() {

@@ -6,6 +6,7 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -55,6 +56,9 @@ TEST_CASE("ValidatedSceneData's own default-constructibility is rejected at comp
 
 namespace {
 
+// Per-process tag: catch_discover_tests runs each TEST_CASE in its own
+// process under ctest -j, and the counter below restarts at 0 in each.
+const std::string gProcessTag = std::to_string(std::random_device{}());
 std::atomic<int> gScratchCounter{0};
 
 // Deferred from Step 1 (this file's own prior commit): copy/move
@@ -65,7 +69,7 @@ std::atomic<int> gScratchCounter{0};
 [[nodiscard]] atlantis::asset_system::ValidatedSceneData makeDecodedOneNodeScene() {
   namespace fs = std::filesystem;
   const fs::path dir = fs::temp_directory_path() / "atlantis_validated_scene_data_tests" /
-                        std::to_string(gScratchCounter.fetch_add(1));
+                        (gProcessTag + "_" + std::to_string(gScratchCounter.fetch_add(1)));
   fs::create_directories(dir);
   const fs::path sourcePath = dir / "scene.scene.txt";
   const fs::path artifactPath = dir / "scene.ascene";
