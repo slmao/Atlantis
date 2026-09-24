@@ -1,9 +1,10 @@
 # ADR 0092: Bloom — Pass Insertion, Blur Strategy, Intermediate Targets and Parameter Source
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-24
 - **Deciders:** slmao
-- **Acceptance:** pending
+- **Acceptance:** slmao, 2026-09-24 (chat confirmation; reviewed in this
+  branch's own PR, alongside Spec 0044's Approval)
 - **Related Spec:** [Spec 0044](../specs/0044-bloom.md)
 
 Record one decision and its rationale. Follow the
@@ -76,6 +77,8 @@ ADR-0091 did for fog. Facts, measured by Spec 0044's investigations:
      caller creates it from a `Device` and the HDR extent, and recreates
      it where the `HdrColorTarget` is recreated. The Renderer stays a
      stateless orchestrator (ADR-0068 D-1).
+   - The three bloom Pipelines are created by the caller (the composition
+     root), like every other Pipeline, and borrowed per frame.
    - `drawFrame()` gains one trailing, defaulted parameter: the bundle, the
      bloom Pipelines and `{strength, threshold}`. Absent (or
      `strength == 0`) means off. No existing call site changes.

@@ -1,13 +1,19 @@
 # Spec: Bloom
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-24
-- **Related Plan(s):** none yet
-- **Approval:** pending
+- **Related Plan(s):** none yet — Plan 0044 drafting is authorized by the
+  Approval below. **Implementation still awaits its own, separate Joint Human
+  Review** of Spec + Plan together, per AGENTS.md's own workflow.
+- **Approval:** slmao, 2026-09-24 (chat confirmation, no reviewing PR —
+  authorizes drafting Plan 0044; Implementation itself still awaits its own,
+  separate Joint Human Review of Spec + Plan together). The same review ruled
+  all five open questions. See Risks & Open Questions below.
 - **Related ADR(s):** [ADR-0092](../adr/0092-bloom-pass-insertion-blur-strategy-targets-and-parameter-source.md)
-  (`Proposed`) — the pass insertion point, the blur strategy, the
-  intermediate targets and the parameter source.
+  (`Accepted` 2026-09-24, alongside this Spec's own Approval) — the pass
+  insertion point, the blur strategy, the intermediate targets and the
+  parameter source.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
@@ -59,7 +65,7 @@ Spec 0043 recorded at `0043:256-270`).
 - **Bloom on the sky or clear colour as a special case.** They are HDR
   pixels like any other: bloomed if above the threshold, not otherwise.
 - **An authored level count, resolution, or highlight clamp.** Fixed in
-  the Renderer (Q3).
+  the Renderer (ruling Q3).
 - **Compute-shader blur.** The RHI has no compute path; adding one is its
   own Spec.
 
@@ -97,8 +103,8 @@ Spec 0043 recorded at `0043:256-270`).
 4. **Parameters (ADR-0092 Decision 4).**
    - Two, on the camera node in `.scene.txt`: `strength` and `threshold`.
    - Absent means bloom off. `strength == 0` also means off.
-   - They sit after the fog group; the grammar (a prefixed group, like
-     `fog=`) is the Plan's, within Q1's ruling.
+   - They sit after the fog group, as one prefixed group in the `fog=`
+     style (ruling Q1); the exact token spelling is the Plan's.
    - They travel as plain data through the scene source/artifact (v5 →
      v6), World's `Camera`, and the Runtime, to `drawFrame()`.
 5. **Validation, at cook time and again on decode.**
@@ -106,7 +112,8 @@ Spec 0043 recorded at `0043:256-270`).
    - `threshold`: finite, `≥ 0`.
 6. **Exposure.** The output transform's exposure multiply (Spec 0031)
    applies after the composite, so bloom scales with the scene. The
-   threshold is therefore in scene-referred units, before exposure (Q4).
+   threshold is therefore in scene-referred units, before exposure
+   (ruling Q4).
 7. **Exact off, and exact below-threshold.**
    - Bloom off declares no bloom pass; the graph and every pixel equal
      today's.
@@ -270,8 +277,9 @@ Bistro values; not adopted: dirt, lens flare, fixed 384 resolution,
 ## Proposed Design
 
 1. **Renderer.** A caller-owned RAII bundle, `renderer::BloomResources`
-   (name the Plan's), holds the 12 targets, the three Pipelines' borrowed
-   references or ownership (the Plan's), and a linear clamp sampler. It
+   (name the Plan's), holds the 12 targets and a linear clamp sampler,
+   and borrows the three bloom Pipelines, which the composition root
+   creates like every other Pipeline (ruling Q5). It
    is created from a `Device`, an extent and the three shader pairs, and
    recreated on resize.
 2. **`drawFrame()`** gains one trailing optional parameter carrying the
@@ -296,7 +304,7 @@ Bistro values; not adopted: dirt, lens flare, fixed 384 resolution,
 ## Architectural Impact
 
 **Yes — [ADR-0092](../adr/0092-bloom-pass-insertion-blur-strategy-targets-and-parameter-source.md)
-(`Proposed`).** It records four coupled decisions:
+(`Accepted` 2026-09-24).** It records four coupled decisions:
 
 1. **Insertion:** separate passes between draw and output transform,
    with a separate composite pass; the output transform reads the
@@ -366,23 +374,34 @@ visible halo; Validation Layers clean.
 
 ## Risks & Open Questions
 
+**All five open questions were ruled by Human Review on 2026-09-24 (chat
+confirmation), alongside this Spec's own Approval.** Each ruling below is
+binding on Plan 0044; the reasoning that led to it stays in ADR-0092 and in
+the Investigations above.
+
 - **Q1 — the grammar.** Recommend one prefixed group after the fog group,
   `bloom=<strength> <threshold>`, all-or-nothing, found by prefix before
   the token-count gate (Plan 0043 P1). The alternative is two separate
   tokens.
+  **Ruled 2026-09-24: a `bloom=` group following the `fog=` precedent.**
 - **Q2 — composite placement.** Recommend a separate composite pass
   (D-10 untouched, +16.6 MB at 1080p). The alternative is compositing in
   the output transform via a superseding ADR for D-10.
+  **Ruled 2026-09-24: a separate composite pass**; D-10 untouched.
 - **Q3 — fixed or authored level count and resolution.** Recommend fixed:
   `L = 6`, `D1` at half resolution. The alternatives are an authored
   level count (1–11, as Filament) or Filament's fixed 384-px first level.
+  **Ruled 2026-09-24: fixed six levels**, `D1` at half resolution.
 - **Q4 — threshold before or after exposure.** Recommend before
   (scene-referred), so the knee means "radiance above X" in every scene.
   The alternative multiplies by the exposure first, making the knee
   display-relative.
+  **Ruled 2026-09-24: the threshold applies before exposure.**
 - **Q5 — Pipelines in the bundle or at the composition root.** Recommend
   the composition root creates them (every other Pipeline's precedent)
-  and the bundle borrows them. Settled in the Plan unless ruled here.
+  and the bundle borrows them.
+  **Ruled 2026-09-24: the caller (composition root) creates the bloom
+  Pipelines.**
 - **Risk — memory on Android.** ≈ 1.67× the HDR target when on; off by
   default. ⑦ measures it on the real device.
 - **Risk — golden sensitivity.** Twelve filtered passes accumulate

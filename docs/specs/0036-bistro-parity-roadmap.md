@@ -585,6 +585,19 @@ intermediate HDR target(s) for bright-pass extraction and blur,
 mip-chain-vs-fixed-resolution blur strategy — Filament's own real
 mip-chain precedent is cited above, not adopted) — named, deferred.
 
+*Now drafted (linked 2026-09-24):* [Spec 0044](0044-bloom.md)
+(`Approved`), with this section's ADR obligation discharged by
+[ADR-0092](../adr/0092-bloom-pass-insertion-blur-strategy-targets-and-parameter-source.md)
+(`Accepted`). **The blur strategy is resolved for option (a), a
+downsample/upsample chain:** a fixed six levels from half resolution, the
+bright-pass in the first downsample, each level its own `HdrColorTarget`
+— with no RHI, Vulkan Backend or RenderGraph change. **The ⑤ → ⑥ ordering
+constraint is honoured structurally:** bloom reads the draw pass's
+already-fogged HDR, and a separate composite pass runs before the output
+transform, which reads the composite in place of `hdr_color` (ADR-0068
+D-10 untouched). Parameters come from an optional camera-node `bloom=`
+group; absent means no bloom pass is declared.
+
 ---
 
 **⑦ Finale: Bistro Scene Assembly + Whitelist + Dual-Platform
