@@ -1,4 +1,4 @@
-atlantis_scene_source_version: 4
+atlantis_scene_source_version: 5
 node_count: 58
 active_camera: 58
 node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=8.0 8.0 8.0 mesh=meshes/ground_plane.mesh.txt material=materials/worn_concrete_floor.material.txt

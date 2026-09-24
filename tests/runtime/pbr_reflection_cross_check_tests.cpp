@@ -39,6 +39,7 @@ using atlantis::renderer::PbrSheenPushConstants;
 using atlantis::runtime::CameraWorldPositionData;
 using atlantis::runtime::FrameLightingData;
 using atlantis::runtime::kCameraUniformBufferSizeBytes;
+using atlantis::runtime::kCameraUniformFogOffsetBytes;
 using atlantis::runtime::kCameraUniformIrradianceShOffsetBytes;
 using atlantis::runtime::kCameraUniformLightingOffsetBytes;
 using atlantis::runtime::kCameraUniformLightSpaceOffsetBytes;
@@ -276,8 +277,10 @@ TEST_CASE("pbr_direct_lit CameraUniform: an explicit 144-byte pad plus the 128-b
   REQUIRE(lightSpaceProjection.has_value());
   CHECK(lightSpaceProjection->offset == static_cast<long>(kCameraUniformLightSpaceOffsetBytes) + 64);
   CHECK(lightSpaceProjection->size == 64);
+  // Plan 0043: the pair ends where the FogData tail begins (2512); the
+  // buffer itself is 2544 since M1, the shaders' block from M2.
   CHECK(lightSpaceProjection->offset + lightSpaceProjection->size ==
-        static_cast<long>(kCameraUniformBufferSizeBytes));  // 2512
+        static_cast<long>(kCameraUniformFogOffsetBytes));  // 2512
 
   fs::remove_all(outputDir, ec);
 }
@@ -305,7 +308,7 @@ TEST_CASE("pbr_ibl CameraUniform: the light-space pair follows irradianceSh, tot
   CHECK(lightSpaceProjection->offset == static_cast<long>(kCameraUniformLightSpaceOffsetBytes) + 64);
   CHECK(lightSpaceProjection->size == 64);
   CHECK(lightSpaceProjection->offset + lightSpaceProjection->size ==
-        static_cast<long>(kCameraUniformBufferSizeBytes));
+        static_cast<long>(kCameraUniformFogOffsetBytes));  // Plan 0043: 2512
 
   fs::remove_all(outputDir, ec);
 }
@@ -402,7 +405,7 @@ TEST_CASE("CameraUniform: a real slangc reflection of every one of the eleven de
       CHECK(shRegion->size == 9 * 4 * 4);
       CHECK(lightSpaceView->offset == static_cast<long>(kCameraUniformLightSpaceOffsetBytes));         // 2384
       CHECK(lightSpaceProjection->offset + lightSpaceProjection->size ==
-            static_cast<long>(kCameraUniformBufferSizeBytes));  // 2512
+            static_cast<long>(kCameraUniformFogOffsetBytes));  // 2512 (Plan 0043: FogData follows)
     }
     ++shadersChecked;
   }

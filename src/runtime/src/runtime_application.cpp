@@ -1429,6 +1429,12 @@ void RuntimeApplication::runFrame() {
   std::memcpy(shadowLightSpaceData, lightSpaceView.data(), sizeof(float) * 16);
   std::memcpy(shadowLightSpaceData + 16, lightSpaceProjection.data(), sizeof(float) * 16);
 
+  // Plan 0043 P5 (Spec 0043 R5): the FogData tail, from the active
+  // camera, written unconditionally every frame -- density 0 (off) when
+  // the scene declares no fog.
+  auto* fogData = reinterpret_cast<FogData*>(cameraData + kCameraUniformFogOffsetBytes / sizeof(float));
+  *fogData = extractFogData(cameraComponent.fog);
+
   // Plan 0015 Section D10: knownMeshAssetIds is meshResourceMap_'s own
   // key set, collected once per frame (not once per entity) -- passed
   // to resolveMeshAsset() for the membership check; meshResourceMap_

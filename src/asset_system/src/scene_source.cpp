@@ -10,10 +10,11 @@ namespace atlantis::asset_system {
 namespace {
 
 // Plan 0031: version 4 adds the optional camera_exposure_ev= token
-// (15-token node case, below). Versions 1-3 are all rejected outright
-// by the version-line check immediately below -- no dual-version
-// reader.
-constexpr std::string_view kVersionLine = "atlantis_scene_source_version: 4";
+// (15-token node case, below). Plan 0043: version 5 adds the optional
+// camera fog group (kFogPrefix, below). Versions 1-4 are all rejected
+// outright by the version-line check immediately below -- no
+// dual-version reader.
+constexpr std::string_view kVersionLine = "atlantis_scene_source_version: 5";
 constexpr std::string_view kNodeCountPrefix = "node_count: ";
 constexpr std::string_view kActiveCameraPrefix = "active_camera: ";
 constexpr std::string_view kNodePrefix = "node: ";
@@ -43,6 +44,18 @@ constexpr std::string_view kCameraFarZPrefix = "camera_far_z=";
 // Plan 0031: optional 4th camera field, a 15th token -- absent means
 // exposureCompensationEv stays its own default 0.0f (Requirement 3).
 constexpr std::string_view kCameraExposureEvPrefix = "camera_exposure_ev=";
+
+// Plan 0043 P1: the optional camera fog group, seven tokens, all or
+// nothing, trailing the camera fields (and exposure, when present):
+//   fog=<density> <height> <height_falloff> <max_opacity> fog_color=<r> <g> <b>
+// It is found by its fog= prefix and removed BEFORE the token-count
+// dispatch below, which tells a camera (14/15) from a light (16/17) by
+// count alone -- so a line without the group parses, and fails,
+// exactly as in v4. Only non-numbers are rejected here; the value
+// domain is checked at cook and decode (P2).
+constexpr std::string_view kFogPrefix = "fog=";
+constexpr std::string_view kFogColorPrefix = "fog_color=";
+constexpr std::size_t kFogGroupTokenCount = 7;
 
 // Spec 0019 D3/P2: light=<directional|point> color=<r> <g> <b>
 // intensity=<f> [range=<f>] -- a fifth, disjoint trailing-group shape,
@@ -163,7 +176,19 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
     if (line.substr(0, kNodePrefix.size()) != kNodePrefix) {
       return ResultT::Err(SceneSourceParseError::FieldOrderMismatch);
     }
-    const auto tokens = splitOnSpace(line.substr(kNodePrefix.size()));
+    auto tokens = splitOnSpace(line.substr(kNodePrefix.size()));
+
+    // Plan 0043 P1: the fog pre-pass. The base 11 tokens are never
+    // scanned, so their own prefix errors keep their v4 precedence.
+    std::vector<std::string_view> fogTokens;
+    for (std::size_t t = 11; t < tokens.size(); ++t) {
+      if (tokens[t].substr(0, kFogPrefix.size()) != kFogPrefix) continue;
+      if (tokens.size() - t != kFogGroupTokenCount) return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
+      fogTokens.assign(tokens.begin() + static_cast<std::ptrdiff_t>(t), tokens.end());
+      tokens.resize(t);
+      break;
+    }
+
     if (tokens.size() != 11 && tokens.size() != 12 && tokens.size() != 13 && tokens.size() != 14 &&
         tokens.size() != 15 && tokens.size() != 16 && tokens.size() != 17) {
       return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
@@ -333,6 +358,20 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
       node.light = light;
     }
 
+    if (!fogTokens.empty()) {
+      if (!node.camera.has_value()) return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
+      if (fogTokens[4].substr(0, kFogColorPrefix.size()) != kFogColorPrefix) {
+        return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
+      }
+      DecodedCameraFog& fog = node.camera->fog;
+      if (!consumePrefixedFloat(fogTokens[0], kFogPrefix, fog.density) || !parseFloatToken(fogTokens[1], fog.height) ||
+          !parseFloatToken(fogTokens[2], fog.heightFalloff) || !parseFloatToken(fogTokens[3], fog.maxOpacity) ||
+          !consumePrefixedFloat(fogTokens[4], kFogColorPrefix, fog.colorR) ||
+          !parseFloatToken(fogTokens[5], fog.colorG) || !parseFloatToken(fogTokens[6], fog.colorB)) {
+        return ResultT::Err(SceneSourceParseError::MalformedNumber);
+      }
+    }
+
     parsed.nodes.push_back(std::move(node));
     ++lineIndex;
   }
@@ -403,6 +442,16 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
              std::string(kCameraNearZPrefix) + std::to_string(node.camera->nearZ) + ' ' +
              std::string(kCameraFarZPrefix) + std::to_string(node.camera->farZ) + ' ' +
              std::string(kCameraExposureEvPrefix) + std::to_string(node.camera->exposureCompensationEv);
+      // Plan 0043 P1: written only when fog is on -- density 0 is the
+      // same value as no group.
+      const DecodedCameraFog& fog = node.camera->fog;
+      if (fog.density != 0.0f) {
+        out += ' ';
+        out += std::string(kFogPrefix) + std::to_string(fog.density) + ' ' + std::to_string(fog.height) + ' ' +
+               std::to_string(fog.heightFalloff) + ' ' + std::to_string(fog.maxOpacity) + ' ' +
+               std::string(kFogColorPrefix) + std::to_string(fog.colorR) + ' ' + std::to_string(fog.colorG) + ' ' +
+               std::to_string(fog.colorB);
+      }
     } else if (node.light.has_value()) {
       out += ' ';
       out += std::string(kLightPrefix) +

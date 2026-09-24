@@ -21,17 +21,23 @@ namespace atlantis::asset_system {
 // light_kind u32 + color_r/g/b f32x3 + intensity f32 + range f32) at
 // the identical insertion point -- after material, before parent.
 // Plan 0031: schema version 4 inserts a 4-byte exposure_compensation_ev
-// f32 immediately after far_z, before has_renderable. Versions 1-3 are
-// all rejected outright, no dual-version reader.
-inline constexpr std::uint32_t kSceneArtifactSchemaVersion = 4;
+// f32 immediately after far_z, before has_renderable. Plan 0043 P4:
+// schema version 5 inserts the 28-byte camera fog slot (fog_color
+// f32x3, fog_density, fog_height, fog_height_falloff, fog_max_opacity)
+// immediately after exposure_compensation_ev, before has_renderable;
+// a node with no camera writes the DecodedCameraFog defaults there.
+// Versions 1-4 are all rejected outright, no dual-version reader.
+inline constexpr std::uint32_t kSceneArtifactSchemaVersion = 5;
 inline constexpr std::size_t kSceneArtifactHeaderSizeBytes = 24;
 // position(12) + rotation(12) + scale(12) + has_camera(4) +
 // fov_y/near_z/far_z(12) + exposure_compensation_ev(4) +
+// fog_color_r/g/b(12) + fog_density(4) + fog_height(4) +
+// fog_height_falloff(4) + fog_max_opacity(4) +
 // has_renderable(4) + mesh_asset_id(8) + has_material(4) +
 // material_asset_id(8) + has_light(4) + light_kind(4) +
 // color_r/g/b(12) + intensity(4) + range(4) + has_parent(4) +
-// parent_index(4) = 116 bytes.
-inline constexpr std::size_t kSceneArtifactNodeRecordSizeBytes = 116;
+// parent_index(4) = 144 bytes.
+inline constexpr std::size_t kSceneArtifactNodeRecordSizeBytes = 144;
 // "Implausibly large" upper bound (D6 step 4) -- this format is hand-
 // authored text at import time, never a high-poly runtime asset;
 // mirrors kMaxVertexCount's own order of magnitude and role exactly

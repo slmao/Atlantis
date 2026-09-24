@@ -514,6 +514,10 @@ void writeCamera(ShadowTestRig& rig) {
   auto* cameraData = static_cast<float*>(rig.cameraBuffer->mappedData());
   for (std::size_t i = 0; i < 16; ++i) cameraData[i] = view[i];
   for (std::size_t i = 0; i < 16; ++i) cameraData[16 + i] = projection[i];
+  // Plan 0043 P5 (Spec 0043 R5): no World here, so fog is off -- the
+  // tail must still be written, as the buffer is not zero-initialised.
+  *reinterpret_cast<atlantis::runtime::FogData*>(cameraData + atlantis::runtime::kCameraUniformFogOffsetBytes /
+                                                                   sizeof(float)) = atlantis::runtime::FogData{};
 }
 
 // Writes one Directional light (P10's own fixed color/intensity, caller-
