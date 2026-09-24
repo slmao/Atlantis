@@ -1,3 +1,4 @@
+#include <atlantis/renderer/bloom.h>
 #include <atlantis/renderer/renderer.h>
 
 #include <algorithm>
@@ -73,11 +74,18 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
                       "outputTransformExposureCompensationEv must be finite and within "
                       "[kExposureCompensationEvMin, kExposureCompensationEvMax]");
   const float exposureMultiplier = computeExposureMultiplier(outputTransformExposureCompensationEv);
-  // Plan 0044 Milestone 1: the bloom input is plumbed but no pass is
-  // recorded yet (Milestone 2), so only "off" is accepted.
-  ATLANTIS_CHECK_MSG(bloom == nullptr || bloom->strength == 0.0f,
-                      "drawFrame(): bloom passes arrive in Plan 0044 Milestone 2; Milestone 1 accepts only a null or "
-                      "strength-0 BloomInput");
+  // Plan 0044 Milestone 2 (ADR-0092 / Plan P5): full BloomInput
+  // validation. strength == 0 means off -- no bloom pass is declared.
+  if (bloom != nullptr) {
+    ATLANTIS_CHECK_MSG(std::isfinite(bloom->strength) && bloom->strength >= 0.0f && bloom->strength <= 1.0f,
+                        "BloomInput::strength must be finite and in [0, 1]");
+    ATLANTIS_CHECK_MSG(std::isfinite(bloom->threshold) && bloom->threshold >= 0.0f,
+                        "BloomInput::threshold must be finite and >= 0");
+    ATLANTIS_CHECK_MSG(bloom->targets.extent().width == hdrColorTarget.extent().width &&
+                            bloom->targets.extent().height == hdrColorTarget.extent().height,
+                        "BloomInput::targets' extent must equal the HdrColorTarget's extent");
+  }
+  const bool bloomOn = bloom != nullptr && bloom->strength > 0.0f;
   std::vector<std::uint32_t> drawOrder = drawOrderFor(drawItems, cameraWorldPosition);
 
   atlantis::render_graph::RenderGraphBuilder builder;
@@ -298,34 +306,140 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
     }
   });
 
+  // Plan 0044 Milestone 2 (ADR-0092): bloom's twelve-pass chain --
+  // D1..D6 (downsample, D1 carries bright-pass + firefly weight), then
+  // U5..U1 (upsample, tent + add), then composite. With bloom off,
+  // none of these exists and the output transform reads the HDR target
+  // directly (the existing-golden path). P7: the output transform
+  // pipeline is the same in both cases; only what it reads changes.
+  std::vector<atlantis::render_graph::ResourceHandle> bloomDownRes;
+  std::vector<atlantis::render_graph::ResourceHandle> bloomUpRes;
+  atlantis::render_graph::ResourceHandle bloomCompositeRes{};
+  if (bloomOn) {
+    const auto levelExtents = bloomLevelExtents(hdrColorTarget.extent());
+    for (std::size_t i = 0; i < kBloomLevelCount; ++i)
+      bloomDownRes.push_back(builder.declareResource("bloom_d" + std::to_string(i + 1)));
+    for (std::size_t i = 0; i < kBloomLevelCount - 1; ++i)
+      bloomUpRes.push_back(builder.declareResource("bloom_u" + std::to_string(i + 1)));
+    bloomCompositeRes = builder.declareResource("bloom_composite");
+
+    // Downsample: D1 reads hdr; Dk reads D(k-1).
+    for (std::size_t level = 0; level < kBloomLevelCount; ++level) {
+      const auto pass = builder.declarePass("bloom_down_" + std::to_string(level + 1));
+      if (level == 0)
+        builder.reads(pass, hdrResource, atlantis::rhi::ResourceState::ShaderRead);
+      else
+        builder.reads(pass, bloomDownRes[level - 1], atlantis::rhi::ResourceState::ShaderRead);
+      builder.writes(pass, bloomDownRes[level], atlantis::rhi::ResourceState::ColorAttachmentOutput);
+      const bool isFirst = level == 0;
+      const float thresholdValue = bloom->threshold;
+      builder.setExecute(pass, [bloom, level, isFirst, thresholdValue, &hdrColorTarget,
+                                &fullscreenTriangleVertexBuffer,
+                                &fullscreenTriangleIndexBuffer](atlantis::rhi::CommandList& cmd) {
+        cmd.bindPipeline(bloom->downsamplePipeline);
+        cmd.bindVertexBuffer(fullscreenTriangleVertexBuffer);
+        cmd.bindIndexBuffer(fullscreenTriangleIndexBuffer);
+        // Source texel size: D1 reads the HDR extent; Dk reads D(k-1)'s.
+        const float srcW = static_cast<float>(
+            level == 0 ? bloom->targets.extent().width : bloomLevelExtents(bloom->targets.extent())[level - 1].width);
+        const float srcH = static_cast<float>(
+            level == 0 ? bloom->targets.extent().height : bloomLevelExtents(bloom->targets.extent())[level - 1].height);
+        const BloomDownsamplePushConstants payload{{1.0f / srcW, 1.0f / srcH}, thresholdValue,
+                                                    isFirst ? 1.0f : 0.0f};
+        cmd.pushConstant(&payload, sizeof(payload));
+        // Binding 0: the source texture. D1 reads the HDR target; Dk reads D(k-1).
+        if (level == 0)
+          cmd.bindTexture(0, hdrColorTarget, bloom->targets.sampler());
+        else
+          cmd.bindTexture(0, bloom->targets.downsampleTarget(level - 1), bloom->targets.sampler());
+        cmd.drawIndexed(3);
+      });
+    }
+
+    // Upsample: U(k) reads D(k) + U(k+1); U5 reads D6 + D6 (bottom).
+    for (std::size_t level = kBloomLevelCount - 1; level >= 1; --level) {
+      const std::size_t uIdx = level - 1;
+      const auto pass = builder.declarePass("bloom_up_" + std::to_string(level));
+      builder.reads(pass, bloomDownRes[level - 1], atlantis::rhi::ResourceState::ShaderRead);
+      if (level < kBloomLevelCount - 1)
+        builder.reads(pass, bloomUpRes[uIdx + 1], atlantis::rhi::ResourceState::ShaderRead);
+      else
+        builder.reads(pass, bloomDownRes[level], atlantis::rhi::ResourceState::ShaderRead);
+      builder.writes(pass, bloomUpRes[uIdx], atlantis::rhi::ResourceState::ColorAttachmentOutput);
+      const float lowerW = static_cast<float>(bloomLevelExtents(bloom->targets.extent())[level].width);
+      const float lowerH = static_cast<float>(bloomLevelExtents(bloom->targets.extent())[level].height);
+      builder.setExecute(pass, [bloom, level, uIdx, lowerW, lowerH, &fullscreenTriangleVertexBuffer,
+                                &fullscreenTriangleIndexBuffer](atlantis::rhi::CommandList& cmd) {
+        cmd.bindPipeline(bloom->upsamplePipeline);
+        cmd.bindVertexBuffer(fullscreenTriangleVertexBuffer);
+        cmd.bindIndexBuffer(fullscreenTriangleIndexBuffer);
+        const BloomUpsamplePushConstants payload{{1.0f / lowerW, 1.0f / lowerH}, {0.0f, 0.0f}};
+        cmd.pushConstant(&payload, sizeof(payload));
+        cmd.bindTexture(0, bloom->targets.downsampleTarget(level - 1), bloom->targets.sampler());
+        if (level < kBloomLevelCount - 1)
+          cmd.bindTexture(1, bloom->targets.upsampleTarget(uIdx + 1), bloom->targets.sampler());
+        else
+          cmd.bindTexture(1, bloom->targets.downsampleTarget(level), bloom->targets.sampler());
+        cmd.drawIndexed(3);
+      });
+    }
+
+    // Composite: hdr + strength * tent(U1) / 6.
+    {
+      const auto pass = builder.declarePass("bloom_composite");
+      builder.reads(pass, hdrResource, atlantis::rhi::ResourceState::ShaderRead);
+      builder.reads(pass, bloomUpRes[0], atlantis::rhi::ResourceState::ShaderRead);
+      builder.writes(pass, bloomCompositeRes, atlantis::rhi::ResourceState::ColorAttachmentOutput);
+      const float u1W = static_cast<float>(bloomLevelExtents(bloom->targets.extent())[0].width);
+      const float u1H = static_cast<float>(bloomLevelExtents(bloom->targets.extent())[0].height);
+      const float strengthValue = bloom->strength;
+      builder.setExecute(pass, [bloom, u1W, u1H, strengthValue, &hdrColorTarget,
+                                &fullscreenTriangleVertexBuffer,
+                                &fullscreenTriangleIndexBuffer](atlantis::rhi::CommandList& cmd) {
+        cmd.bindPipeline(bloom->compositePipeline);
+        cmd.bindVertexBuffer(fullscreenTriangleVertexBuffer);
+        cmd.bindIndexBuffer(fullscreenTriangleIndexBuffer);
+        const BloomCompositePushConstants payload{{1.0f / u1W, 1.0f / u1H}, strengthValue,
+                                                    1.0f / static_cast<float>(kBloomLevelCount)};
+        cmd.pushConstant(&payload, sizeof(payload));
+        cmd.bindTexture(0, hdrColorTarget, bloom->targets.sampler());
+        cmd.bindTexture(1, bloom->targets.upsampleTarget(0), bloom->targets.sampler());
+        cmd.drawIndexed(3);
+      });
+    }
+  }
+
   const auto outputTransformPass = builder.declarePass("output_transform");
-  builder.reads(outputTransformPass, hdrResource, atlantis::rhi::ResourceState::ShaderRead);
+  if (bloomOn)
+    builder.reads(outputTransformPass, bloomCompositeRes, atlantis::rhi::ResourceState::ShaderRead);
+  else
+    builder.reads(outputTransformPass, hdrResource, atlantis::rhi::ResourceState::ShaderRead);
   builder.writes(outputTransformPass, finalColorResource, atlantis::rhi::ResourceState::ColorAttachmentOutput);
   builder.setExecute(outputTransformPass, [&hdrColorTarget, &fullscreenTriangleVertexBuffer,
                                             &fullscreenTriangleIndexBuffer, &outputTransformPipeline,
-                                            &outputTransformSampler,
-                                            exposureMultiplier](atlantis::rhi::CommandList& cmd) {
+                                            &outputTransformSampler, exposureMultiplier, bloom, bloomOn](
+                                               atlantis::rhi::CommandList& cmd) {
     cmd.bindPipeline(outputTransformPipeline);
-    // Plan 0031 (ADR-0075 Decision 7/ADR-0068's own D-10 Amendment):
-    // the already-computed multiplier, never the raw EV -- the shader
-    // performs one multiply and nothing else.
     const ExposurePushConstants payload{exposureMultiplier};
     cmd.pushConstant(&payload, sizeof(payload));
     cmd.bindVertexBuffer(fullscreenTriangleVertexBuffer);
     cmd.bindIndexBuffer(fullscreenTriangleIndexBuffer);
-    cmd.bindTexture(0, hdrColorTarget, outputTransformSampler);
+    if (bloomOn)
+      cmd.bindTexture(0, bloom->targets.compositeTarget(), outputTransformSampler);
+    else
+      cmd.bindTexture(0, hdrColorTarget, outputTransformSampler);
     cmd.drawIndexed(3);
   });
 
   auto compileResult = builder.compile();
-  ATLANTIS_CHECK_MSG(compileResult.isOk(), "Renderer's fixed three-pass graph never fails to compile");
+  ATLANTIS_CHECK_MSG(compileResult.isOk(), "Renderer's fixed pass graph never fails to compile");
 
   // Plan 0027 Milestone 9 (ADR-0072 D-4): 1.0f (max depth) is what makes
   // an empty shadowCasterDrawItems list and the first frame identical --
   // both leave the shadow map at its cleared, maximum-depth value, which
   // computeShadowFactor() (pbr_direct_lit.slang/pbr_ibl.slang) always
   // reads as "not occluded."
-  const std::vector<atlantis::render_graph::ResourceBinding> bindings{
+  std::vector<atlantis::render_graph::ResourceBinding> bindings{
       {.resource = compileResult.value().resourceAt(0),
        .colorClear = kBackgroundClearColor,
        .hdrColorTarget = &hdrColorTarget,
@@ -343,6 +457,27 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
        .shadowMap = &shadowMap,
        .finalState = std::nullopt},
   };
+  // Plan 0044 M2: bloom resource bindings (each is an HdrColorTarget; no
+  // clear -- bloom passes write over every pixel of their small targets).
+  // Plan 0044 M2: bloom resource bindings by declaration index -- the four
+  // fixed resources are always 0..3; bloom's D1..D6, U1..U5 and composite
+  // follow at 4..15 when bloomOn. Each is an HdrColorTarget; no clear
+  // value -- every bloom pass writes every pixel of its small target.
+  if (bloomOn) {
+    for (std::size_t i = 0; i < kBloomLevelCount; ++i) {
+      bindings.push_back({.resource = compileResult.value().resourceAt(4 + i),
+                          .hdrColorTarget = &bloom->targets.downsampleTarget(i),
+                          .finalState = std::nullopt});
+    }
+    for (std::size_t i = 0; i < kBloomLevelCount - 1; ++i) {
+      bindings.push_back({.resource = compileResult.value().resourceAt(4 + kBloomLevelCount + i),
+                          .hdrColorTarget = &bloom->targets.upsampleTarget(i),
+                          .finalState = std::nullopt});
+    }
+    bindings.push_back({.resource = compileResult.value().resourceAt(4 + 2 * kBloomLevelCount - 1),
+                        .hdrColorTarget = &bloom->targets.compositeTarget(),
+                        .finalState = std::nullopt});
+  }
   atlantis::render_graph::execute(compileResult.value(), bindings, commandList);
 }
 
