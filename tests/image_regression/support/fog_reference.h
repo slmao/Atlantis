@@ -33,7 +33,11 @@ inline constexpr float kFogSeriesThreshold = 1e-3f;
 // along the ray, normalised so that a horizontal ray (x = 0) gives 1.
 [[nodiscard]] inline float fogHeightIntegral(float x) {
   if (std::abs(x) < kFogSeriesThreshold) return 1.0f - x / 2.0f + x * x / 6.0f;
-  return (1.0f - std::exp(-x)) / x;
+  // Here |x| >= kFogSeriesThreshold, so this divisor is exactly x; spelling
+  // it as a clamp keeps MSVC's Release optimizer from flagging a divide by
+  // a constant 0 it propagates into this (unreachable) branch (C4723).
+  const float divisor = std::copysign(std::max(std::abs(x), kFogSeriesThreshold), x);
+  return (1.0f - std::exp(-x)) / divisor;
 }
 
 // tau = density * d * e^(-heightFalloff * h) * g(heightFalloff * dy), with

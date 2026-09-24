@@ -1,4 +1,5 @@
 #include "fixture/pbr_normal_map_demo_fixture.h"
+#include "support/fog_differential.h"
 #include "support/emissive_differential.h"
 #include "support/golden_validity.h"
 
@@ -354,4 +355,28 @@ TEST_CASE("Emissive on/off (pbr_ibl_normal_map): setting one material's emissive
       [] { return setUpFixture(); }, [](auto& fixture) { return renderPbrNormalMapDemoFrame(fixture); },
       "materials/pbr_normal_mapped.material.txt");
   atlantis::image_regression::checkEmissiveOnlyBrightensItsSphere(result);
+}
+
+// Plan 0043 Milestone 2 (Spec 0043 R2-R3, P9): the saturating-fog differential
+// for the shader variant(s) this file's config realizes -- see
+// support/fog_differential.h.
+
+TEST_CASE("Height fog (Plan 0043 P9): pbr_direct_lit_normal_map fogs its surfaces, and every other pixel stays byte-identical",
+          "[image_regression][gpu][fog]") {
+  auto fixtureResult = setUpPbrNormalMapDemoFixture(buildDirectLitConfig(), ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH, ATLANTIS_pbr_normal_mapped_control_METADATA_PATH);
+  REQUIRE(fixtureResult.isOk());
+  auto& fixture = fixtureResult.value();
+  atlantis::image_regression::checkSaturatedFogDifferential(
+      fixture, [](auto& f) { return renderPbrNormalMapDemoFrame(f); }, "materials/pbr_normal_mapped.material.txt");
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+TEST_CASE("Height fog (Plan 0043 P9): pbr_ibl_normal_map fogs its surfaces, and every other pixel stays byte-identical",
+          "[image_regression][gpu][fog]") {
+  auto fixtureResult = setUpPbrNormalMapDemoFixture(buildTestConfig(), ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH, ATLANTIS_pbr_normal_mapped_control_METADATA_PATH);
+  REQUIRE(fixtureResult.isOk());
+  auto& fixture = fixtureResult.value();
+  atlantis::image_regression::checkSaturatedFogDifferential(
+      fixture, [](auto& f) { return renderPbrNormalMapDemoFrame(f); }, "materials/pbr_normal_mapped.material.txt");
+  REQUIRE(fixture.device->waitIdle().isOk());
 }

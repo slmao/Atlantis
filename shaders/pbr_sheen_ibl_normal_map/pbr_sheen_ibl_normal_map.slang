@@ -31,6 +31,18 @@ struct PointLightGpu {
     float intensity;
 };
 
+// Plan 0043 Milestone 2 (Spec 0043 R4, ADR-0091 Decision 3): the camera
+// uniform's last region, mirroring scene_extraction.h's FogData --
+// density shares color's 16-byte slot; 32 bytes at offset 2512.
+struct FogData {
+    float3 color;
+    float density;
+    float height;
+    float heightFalloff;
+    float maxOpacity;
+    float _pad;
+};
+
 struct CameraUniform {
     float4x4 view;
     float4x4 projection;
@@ -47,6 +59,8 @@ struct CameraUniform {
     float4 irradianceSh[9];
     float4x4 lightSpaceView;
     float4x4 lightSpaceProjection;
+    // Plan 0043: density 0 means fog off (every writer writes this tail).
+    FogData fog;
 };
 
 [[vk::binding(0, 0)]]
@@ -130,6 +144,32 @@ float3 evaluateIrradianceSH(float3 direction) {
     return result;
 }
 
+// Plan 0043 Milestone 2 (Spec 0043 R1, ADR-0091 Decision 2): analytic
+// exponential height fog. Duplicated verbatim in all ten PBR shaders
+// (ruling Q5) and mirrored by tests/image_regression/support/
+// fog_reference.h, which the GPU tests check these shaders against.
+// Below kFogSeriesThreshold, g(x) = (1 - e^-x) / x uses its Taylor
+// series: the closed form cancels near 0 and is 0/0 at 0 (Plan 0043 P6).
+static const float kFogSeriesThreshold = 1e-3;
+
+float fogHeightIntegral(float x) {
+    if (abs(x) < kFogSeriesThreshold) {
+        return 1.0 - x / 2.0 + x * x / 6.0;
+    }
+    return (1.0 - exp(-x)) / x;
+}
+
+// tau = density * d * e^(-heightFalloff * h) * g(heightFalloff * dy);
+// f = min(1 - e^-tau, maxOpacity); rgb = lit * (1 - f) + color * f.
+float3 applyHeightFog(float3 lit, float3 worldPosition) {
+    float3 toPoint = worldPosition - camera.cameraWorldPosition;
+    float h = camera.cameraWorldPosition.y - camera.fog.height;
+    float tau = camera.fog.density * length(toPoint) * exp(-camera.fog.heightFalloff * h) *
+                fogHeightIntegral(camera.fog.heightFalloff * toPoint.y);
+    float f = min(1.0 - exp(-tau), camera.fog.maxOpacity);
+    return lit * (1.0 - f) + camera.fog.color * f;
+}
+
 [shader("fragment")]
 float4 fragmentMain(Varying input) : SV_Target {
     float4 texColor = baseColorSampler.Sample(input.uv);
@@ -178,6 +218,13 @@ float4 fragmentMain(Varying input) : SV_Target {
 
     // Plan 0041 Milestone 2 (Spec 0041 R6, ADR-0089 Decision 3): self-lit
     // colour, added after every lighting term and before the output
-    // transform -- in the return expression, so nothing can follow it.
-    return float4(accumulated + pushConstants.emissiveFactor, alphaOut);
+    // transform. Plan 0043 (Spec 0043 R2-R3): height fog is the one term
+    // after it, on RGB only, behind a dynamically uniform branch rather
+    // than a zero multiply -- density 0 must skip the exp()s entirely
+    // (0 * inf would be NaN), so fog off is the unfogged value bit for bit.
+    float3 color = accumulated + pushConstants.emissiveFactor;
+    if (camera.fog.density > 0.0) {
+        color = applyHeightFog(color, input.worldPosition);
+    }
+    return float4(color, alphaOut);
 }

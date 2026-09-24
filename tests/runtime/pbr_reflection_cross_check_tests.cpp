@@ -37,6 +37,7 @@ using atlantis::renderer::PbrClearcoatPushConstants;
 using atlantis::renderer::PbrPushConstants;
 using atlantis::renderer::PbrSheenPushConstants;
 using atlantis::runtime::CameraWorldPositionData;
+using atlantis::runtime::FogData;
 using atlantis::runtime::FrameLightingData;
 using atlantis::runtime::kCameraUniformBufferSizeBytes;
 using atlantis::runtime::kCameraUniformFogOffsetBytes;
@@ -277,10 +278,14 @@ TEST_CASE("pbr_direct_lit CameraUniform: an explicit 144-byte pad plus the 128-b
   REQUIRE(lightSpaceProjection.has_value());
   CHECK(lightSpaceProjection->offset == static_cast<long>(kCameraUniformLightSpaceOffsetBytes) + 64);
   CHECK(lightSpaceProjection->size == 64);
-  // Plan 0043: the pair ends where the FogData tail begins (2512); the
-  // buffer itself is 2544 since M1, the shaders' block from M2.
+  // Plan 0043: the pair ends where the FogData tail begins (2512), and
+  // FogData completes the block at kCameraUniformBufferSizeBytes (2544).
   CHECK(lightSpaceProjection->offset + lightSpaceProjection->size ==
         static_cast<long>(kCameraUniformFogOffsetBytes));  // 2512
+  const auto fog = findFieldLayout(*jsonText, "fog");
+  REQUIRE(fog.has_value());
+  CHECK(fog->offset == static_cast<long>(kCameraUniformFogOffsetBytes));
+  CHECK(fog->offset + fog->size == static_cast<long>(kCameraUniformBufferSizeBytes));  // 2544
 
   fs::remove_all(outputDir, ec);
 }
@@ -309,6 +314,10 @@ TEST_CASE("pbr_ibl CameraUniform: the light-space pair follows irradianceSh, tot
   CHECK(lightSpaceProjection->size == 64);
   CHECK(lightSpaceProjection->offset + lightSpaceProjection->size ==
         static_cast<long>(kCameraUniformFogOffsetBytes));  // Plan 0043: 2512
+  const auto fog = findFieldLayout(*jsonText, "fog");
+  REQUIRE(fog.has_value());
+  CHECK(fog->offset == static_cast<long>(kCameraUniformFogOffsetBytes));
+  CHECK(fog->offset + fog->size == static_cast<long>(kCameraUniformBufferSizeBytes));  // 2544
 
   fs::remove_all(outputDir, ec);
 }
@@ -356,6 +365,7 @@ TEST_CASE("CameraUniform: a real slangc reflection of every one of the eleven de
   fs::create_directories(outputDir, ec);
 
   int shadersChecked = 0;
+  int fogBlocksChecked = 0;
   for (const ShaderCase& shader : cases) {
     INFO("shader: " << shader.name);
     const fs::path source =
@@ -391,6 +401,7 @@ TEST_CASE("CameraUniform: a real slangc reflection of every one of the eleven de
       // merely unchecked.
       CHECK_FALSE(findFieldLayout(*jsonText, "cameraWorldPosition").has_value());
       CHECK_FALSE(findFieldLayout(*jsonText, "lightSpaceProjection").has_value());
+      CHECK_FALSE(findFieldLayout(*jsonText, "fog").has_value());  // Plan 0043: non-PBR, unfogged (Q6)
     } else {
       const auto cameraWorldPosition = findFieldLayout(*jsonText, "cameraWorldPosition");
       const auto shRegion = findFieldLayout(*jsonText, shader.shRegionField);
@@ -405,11 +416,45 @@ TEST_CASE("CameraUniform: a real slangc reflection of every one of the eleven de
       CHECK(shRegion->size == 9 * 4 * 4);
       CHECK(lightSpaceView->offset == static_cast<long>(kCameraUniformLightSpaceOffsetBytes));         // 2384
       CHECK(lightSpaceProjection->offset + lightSpaceProjection->size ==
-            static_cast<long>(kCameraUniformFogOffsetBytes));  // 2512 (Plan 0043: FogData follows)
+            static_cast<long>(kCameraUniformFogOffsetBytes));  // 2512
+
+      // Plan 0043 Milestone 2 (Spec 0043 R4): the FogData tail, field by
+      // field against scene_extraction.h's C++ FogData. Its member names
+      // are searched from the "fog" key onward -- "color" also names
+      // both light structs' fields earlier in the document -- and their
+      // offsets are relative to the struct.
+      const std::size_t fogKey = jsonText->find("\"fog\"");
+      REQUIRE(fogKey != std::string::npos);
+      const auto fog = findFieldLayout(*jsonText, "fog");
+      REQUIRE(fog.has_value());
+      CHECK(fog->offset == static_cast<long>(kCameraUniformFogOffsetBytes));  // 2512
+      CHECK(fog->size == static_cast<long>(sizeof(FogData)));                  // 32
+      CHECK(fog->offset + fog->size == static_cast<long>(kCameraUniformBufferSizeBytes));  // 2544
+      const struct {
+        const char* name;
+        long offset;
+        long size;
+      } fogFields[] = {
+          {"color", static_cast<long>(offsetof(FogData, color)), 12},
+          {"density", static_cast<long>(offsetof(FogData, density)), 4},
+          {"height", static_cast<long>(offsetof(FogData, height)), 4},
+          {"heightFalloff", static_cast<long>(offsetof(FogData, heightFalloff)), 4},
+          {"maxOpacity", static_cast<long>(offsetof(FogData, maxOpacity)), 4},
+          {"_pad", static_cast<long>(offsetof(FogData, _pad)), 4},
+      };
+      for (const auto& field : fogFields) {
+        INFO("FogData field: " << field.name);
+        const auto layout = findFieldLayout(*jsonText, field.name, fogKey);
+        REQUIRE(layout.has_value());
+        CHECK(layout->offset == field.offset);
+        CHECK(layout->size == field.size);
+      }
+      ++fogBlocksChecked;
     }
     ++shadersChecked;
   }
   CHECK(shadersChecked == 11);
+  CHECK(fogBlocksChecked == 10);  // Plan 0043: every PBR variant, none else
 
   fs::remove_all(outputDir, ec);
 }
