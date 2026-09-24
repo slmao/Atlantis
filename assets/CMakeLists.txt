@@ -517,6 +517,10 @@ atlantis_add_scene_asset(
     emissive_demo_normal_mapped pbr_normal_mapped_control
   TEXTURE_DEPENDENCIES textured_quad_srgb
 )
+set(ATLANTIS_bloom_demo_scene_ARTIFACT_PATH "${ATLANTIS_bloom_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_bloom_demo_scene_METADATA_PATH "${ATLANTIS_bloom_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_bloom_demo_scene_MANIFEST_PATH "${ATLANTIS_bloom_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_bloom_demo_scene_TARGET "${ATLANTIS_bloom_demo_scene_TARGET}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_scene_ARTIFACT_PATH "${ATLANTIS_emissive_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_scene_METADATA_PATH "${ATLANTIS_emissive_demo_scene_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_scene_MANIFEST_PATH "${ATLANTIS_emissive_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
