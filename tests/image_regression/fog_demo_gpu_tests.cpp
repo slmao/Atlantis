@@ -424,3 +424,138 @@ TEST_CASE("fog_distance_demo and fog_height_demo: fog is on, and switching it of
     REQUIRE(fixture.device->waitIdle().isOk());
   }
 }
+
+// ---------------------------------------------------------------------------
+// Plan 0043 Milestone 2, golden commit (ADR-0042 Initial baseline
+// bootstrap, ruling Q1: one test: commit for all three): the goldens were
+// captured by atlantis_image_regression_fog_demo_golden_generator against
+// the clean, already-committed tree at their recorded source_revision;
+// these TEST_CASEs land with them. Each golden has a fog-off discriminator:
+// the same scene with the camera's density set to 0 must fail against it.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct FogGolden {
+  const char* name;  // path under goldens/, no extension
+  const char* slug;
+};
+
+constexpr FogGolden kFogDistanceGolden{"fog_distance_demo/fog_distance_demo_512x512_rgba8unorm",
+                                       "fog_distance_demo_512x512_rgba8unorm"};
+constexpr FogGolden kFogHeightGolden{"fog_height_demo/fog_height_demo_512x512_rgba8unorm",
+                                     "fog_height_demo_512x512_rgba8unorm"};
+constexpr FogGolden kFogDarkGolden{"fog_dark_demo/fog_dark_demo_512x512_rgba8unorm",
+                                   "fog_dark_demo_512x512_rgba8unorm"};
+
+[[nodiscard]] atlantis::image_regression::ComparisonReport compareToGolden(const FogGolden& golden,
+                                                                           const PixelBuffer& actual,
+                                                                           bool writeArtifactsOnFailure) {
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult =
+      atlantis::image_regression::loadAndValidateGolden(goldensDir / (std::string(golden.name) + ".png"),
+                                                        goldensDir / (std::string(golden.name) + ".sidecar.txt"));
+  {
+    INFO("INVALID GOLDEN: " << golden.name << " must load and validate cleanly");
+    REQUIRE(goldenResult.isOk());
+  }
+  const auto& validated = goldenResult.value();
+  REQUIRE(actual.width == validated.pixels.width);
+  REQUIRE(actual.height == validated.pixels.height);
+  const auto report = atlantis::image_regression::compareBuffers(actual, validated.pixels);
+  if (!report.passed && writeArtifactsOnFailure) {
+    (void)atlantis::image_regression::writeFailureArtifacts(ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR, golden.slug,
+                                                            actual, validated.pixels);
+  }
+  return report;
+}
+
+void removeStaleArtifacts(const FogGolden& golden) {
+  const std::filesystem::path outputDir = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
+  std::filesystem::remove(outputDir / (std::string(golden.slug) + "_actual.png"));
+  std::filesystem::remove(outputDir / (std::string(golden.slug) + "_diff.png"));
+}
+
+template <typename Fixture>
+void switchFogOff(Fixture& fixture) {
+  atlantis::world::CameraFog fog = activeCameraFog(fixture);
+  REQUIRE(fog.density > 0.0f);
+  fog.density = 0.0f;
+  setActiveCameraFog(fixture, fog);
+}
+
+}  // namespace
+
+TEST_CASE("Full capture-compare cycle against the committed fog_distance_demo golden passes",
+          "[image_regression][gpu][fog]") {
+  removeStaleArtifacts(kFogDistanceGolden);
+  FogLitDemoFixture fixture = setUpLit(kFogDistanceScene);
+  auto frame = renderFogLitDemoFrame(fixture);
+  REQUIRE(frame.isOk());
+  REQUIRE(compareToGolden(kFogDistanceGolden, frame.value(), true).passed);
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+TEST_CASE("The fog_distance_demo frame with fog off fails comparison against the real fog_distance_demo golden",
+          "[image_regression][gpu][fog]") {
+  FogLitDemoFixture fixture = setUpLit(kFogDistanceScene);
+  switchFogOff(fixture);
+  auto frame = renderFogLitDemoFrame(fixture);
+  REQUIRE(frame.isOk());
+  const auto report = compareToGolden(kFogDistanceGolden, frame.value(), false);
+  INFO("maxChannelDiff " << report.maxChannelDiff << ", out-of-tolerance pixels " << report.outOfToleranceCount);
+  CHECK_FALSE(report.passed);
+  CHECK(report.maxChannelDiff > 60);           // the farthest sphere and floor: most of the haze
+  CHECK(report.outOfToleranceCount > 100000);  // every sphere and the whole floor
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+TEST_CASE("Full capture-compare cycle against the committed fog_height_demo golden passes",
+          "[image_regression][gpu][fog]") {
+  removeStaleArtifacts(kFogHeightGolden);
+  FogLitDemoFixture fixture = setUpLit(kFogHeightScene);
+  auto frame = renderFogLitDemoFrame(fixture);
+  REQUIRE(frame.isOk());
+  REQUIRE(compareToGolden(kFogHeightGolden, frame.value(), true).passed);
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+TEST_CASE("The fog_height_demo frame with fog off fails comparison against the real fog_height_demo golden",
+          "[image_regression][gpu][fog]") {
+  FogLitDemoFixture fixture = setUpLit(kFogHeightScene);
+  switchFogOff(fixture);
+  auto frame = renderFogLitDemoFrame(fixture);
+  REQUIRE(frame.isOk());
+  const auto report = compareToGolden(kFogHeightGolden, frame.value(), false);
+  INFO("maxChannelDiff " << report.maxChannelDiff << ", out-of-tolerance pixels " << report.outOfToleranceCount);
+  CHECK_FALSE(report.passed);
+  CHECK(report.maxChannelDiff > 60);          // the low spheres and the floor sit in the dense layer
+  CHECK(report.outOfToleranceCount > 40000);
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+TEST_CASE("Full capture-compare cycle against the committed fog_dark_demo golden passes",
+          "[image_regression][gpu][fog]") {
+  removeStaleArtifacts(kFogDarkGolden);
+  FogDarkDemoFixture fixture = setUpDark();
+  auto frame = renderFogDarkDemoFrame(fixture);
+  REQUIRE(frame.isOk());
+  REQUIRE(compareToGolden(kFogDarkGolden, frame.value(), true).passed);
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+TEST_CASE("The fog_dark_demo frame with fog off fails comparison against the real fog_dark_demo golden",
+          "[image_regression][gpu][fog]") {
+  // Without fog the control sphere is black again, and every emissive
+  // sphere returns to its own tonemap(E).
+  FogDarkDemoFixture fixture = setUpDark();
+  switchFogOff(fixture);
+  auto frame = renderFogDarkDemoFrame(fixture);
+  REQUIRE(frame.isOk());
+  const auto report = compareToGolden(kFogDarkGolden, frame.value(), false);
+  INFO("maxChannelDiff " << report.maxChannelDiff << ", out-of-tolerance pixels " << report.outOfToleranceCount);
+  CHECK_FALSE(report.passed);
+  CHECK(report.maxChannelDiff > 60);         // the control: C * f -> 0
+  CHECK(report.outOfToleranceCount > 20000);  // all five discs
+  REQUIRE(fixture.device->waitIdle().isOk());
+}
