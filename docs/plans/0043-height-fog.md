@@ -4,9 +4,18 @@
   (`Approved`, 2026-09-24; rulings Q1–Q7 binding) —
   [ADR-0091](../adr/0091-height-fog-insertion-point-uniform-layout-and-parameter-source.md)
   (`Accepted`)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending
+- **Joint Human Review:** slmao, 2026-09-24 — reviewed this Plan and
+  [Spec 0043](../specs/0043-height-fog.md) together (chat confirmation;
+  document set carried by this branch's PR) and explicitly authorized
+  Implementation from Milestone 1. The five open points were ruled in
+  the same review: Q1 the three goldens land in one commit (ADR-0042
+  precedent); Q2 the P1 grammar confirmed; Q3 NonFiniteValue reused;
+  Q4 the two count corrections recorded here and in the implementation
+  PR, not by revising the approved Spec; Q5 the fog function is copied
+  into all ten shaders (emissive/alpha-test precedent, no shared Slang
+  module).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
