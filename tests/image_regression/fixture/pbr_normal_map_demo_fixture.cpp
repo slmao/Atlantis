@@ -542,7 +542,8 @@ atlantis::Result<PbrNormalMapDemoFixture, PbrNormalMapDemoSetupError> setUpPbrNo
 }
 
 atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDemoFrame(
-    PbrNormalMapDemoFixture& fixture, bool includeShadowCasters, bool useControlMaterial) {
+    PbrNormalMapDemoFixture& fixture, bool includeShadowCasters, bool useControlMaterial,
+    const atlantis::renderer::BloomInput* bloom) {
   namespace rhi = atlantis::rhi;
   namespace render_graph = atlantis::render_graph;
   using ResultT = atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError>;
@@ -817,7 +818,8 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
                       *fixture.outputTransformPipeline, *fixture.outputTransformSampler, 0.0f,
                       environmentLightingView.has_value() ? &*environmentLightingView : nullptr,
                       fixture.skyPipeline.get(), *fixture.shadowMap, *fixture.shadowMapSampler,
-                      *fixture.shadowCastPipeline, *fixture.shadowLightSpaceBuffer, shadowCasterDrawItems);
+                      *fixture.shadowCastPipeline, *fixture.shadowLightSpaceBuffer, shadowCasterDrawItems,
+                      std::nullopt, bloom);
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");

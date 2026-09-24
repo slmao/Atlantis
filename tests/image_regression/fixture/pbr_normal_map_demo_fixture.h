@@ -202,6 +202,10 @@ enum class PbrNormalMapDemoRenderError {
 // -- mesh, transform, camera, lighting, environment, and shadow
 // resources are all identical to R1.
 [[nodiscard]] atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDemoFrame(
-    PbrNormalMapDemoFixture& fixture, bool includeShadowCasters = true, bool useControlMaterial = false);
+    PbrNormalMapDemoFixture& fixture, bool includeShadowCasters = true, bool useControlMaterial = false,
+    const atlantis::renderer::BloomInput* bloom = nullptr);
+// Plan 0044 M2: the trailing bloom pointer forwards to drawFrame()'s own
+// optional bloom parameter (nullptr = bloom off = the M1 path, byte-
+// identical to every pre-0044 frame).
 
 }  // namespace atlantis::image_regression

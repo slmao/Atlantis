@@ -31,4 +31,11 @@ inline constexpr std::uint32_t kEmissiveDemoExtentPixels = kPbrNormalMapDemoExte
   return renderPbrNormalMapDemoFrame(fixture);
 }
 
+// Plan 0044 M2: bloom-forwarding overload.
+[[nodiscard]] inline atlantis::Result<PixelBuffer, EmissiveDemoRenderError> renderEmissiveDemoFrame(
+    EmissiveDemoFixture& fixture, bool includeShadowCasters, bool useControlMaterial,
+    const atlantis::renderer::BloomInput* bloom) {
+  return renderPbrNormalMapDemoFrame(fixture, includeShadowCasters, useControlMaterial, bloom);
+}
+
 }  // namespace atlantis::image_regression
