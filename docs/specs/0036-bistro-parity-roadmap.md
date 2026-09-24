@@ -537,6 +537,19 @@ shader footprint, but needs a linear/reconstructable depth resource this
 engine may not currently expose within Spec 0021's own descriptor-pool
 scope) — named as a real, open architectural fork, not resolved here.
 
+*Now drafted (linked 2026-09-24):* [Spec 0043](0043-height-fog.md)
+(`Approved`), with this section's ADR obligation discharged by
+[ADR-0091](../adr/0091-height-fog-insertion-point-uniform-layout-and-parameter-source.md)
+(`Accepted`). **The fork is resolved for the per-pixel shader term
+(option a):** an analytic exponential height-fog term in the ten PBR
+fragment shaders, in HDR space, with no RenderGraph or RHI change — the
+scene depth is not sampleable today, and a depth-based pass would also
+fog blended surfaces at the depth behind them. Parameters come from
+optional camera-node scene tokens into a `FogData` tail on the camera
+uniform. **Ordering constraint on ⑥:** fog is already in the draw pass's
+HDR output, so bloom's pass(es) insert after the draw pass and read
+already-fogged radiance; ⑥ does not move fog.
+
 ---
 
 **⑥ Bloom** — Size: **M**
