@@ -515,7 +515,7 @@ atlantis_add_scene_asset(
   MESH_DEPENDENCIES pbr_sphere
   MATERIAL_DEPENDENCIES emissive_demo_orange emissive_demo_green emissive_demo_blue
     emissive_demo_normal_mapped pbr_normal_mapped_control
-  TEXTURE_DEPENDENCIES textured_quad_srgb
+  TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
 )
 set(ATLANTIS_bloom_demo_scene_ARTIFACT_PATH "${ATLANTIS_bloom_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_bloom_demo_scene_METADATA_PATH "${ATLANTIS_bloom_demo_scene_METADATA_PATH}" PARENT_SCOPE)
