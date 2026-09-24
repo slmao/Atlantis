@@ -68,7 +68,7 @@ void writeFile(const fs::path& path, const std::string& content) {
 }
 
 constexpr std::string_view kValidThreeNodeSource =
-    "atlantis_scene_source_version: 4\n"
+    "atlantis_scene_source_version: 5\n"
     "node_count: 3\n"
     "active_camera: 3\n"
     "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -100,7 +100,7 @@ TEST_CASE("cookScene resolves a node's material= reference to an AssetId (Plan 0
   const fs::path artifactPath = dir.path / "scene.ascene";
   const fs::path metadataPath = dir.path / "scene.ascene.meta.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 4\n"
+            "atlantis_scene_source_version: 5\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -137,7 +137,7 @@ TEST_CASE("cookScene V28: rejects an empty scene (node_count: 0), writing no art
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   const fs::path artifactPath = dir.path / "scene.ascene";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 4\n"
+            "atlantis_scene_source_version: 5\n"
             "node_count: 0\n"
             "active_camera: none\n");
 
@@ -152,7 +152,7 @@ TEST_CASE("cookScene V2: rejects a duplicate node_id, writing no artifact", "[as
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   const fs::path artifactPath = dir.path / "scene.ascene";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 4\n"
+            "atlantis_scene_source_version: 5\n"
             "node_count: 2\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n"
@@ -168,7 +168,7 @@ TEST_CASE("cookScene V3: rejects a parent naming an undeclared node_id", "[asset
   TempDirGuard dir("undeclared_parent");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 4\n"
+            "atlantis_scene_source_version: 5\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=99 position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
@@ -183,7 +183,7 @@ TEST_CASE("cookScene V4: rejects a direct self-parent cycle", "[asset_system][sc
   TempDirGuard dir("self_cycle");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 4\n"
+            "atlantis_scene_source_version: 5\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=1 position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
@@ -198,7 +198,7 @@ TEST_CASE("cookScene V4: rejects a multi-hop (4-node) parent cycle", "[asset_sys
   TempDirGuard dir("multi_hop_cycle");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 4\n"
+            "atlantis_scene_source_version: 5\n"
             "node_count: 4\n"
             "active_camera: none\n"
             "node: node_id=1 parent=4 position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n"
@@ -216,7 +216,7 @@ TEST_CASE("cookScene V5: rejects active_camera naming an undeclared node_id", "[
   TempDirGuard dir("undeclared_camera");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 4\n"
+            "atlantis_scene_source_version: 5\n"
             "node_count: 1\n"
             "active_camera: 99\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
@@ -231,7 +231,7 @@ TEST_CASE("cookScene V6: rejects active_camera naming a node with no camera_* fi
   TempDirGuard dir("camera_missing_camera");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 4\n"
+            "atlantis_scene_source_version: 5\n"
             "node_count: 1\n"
             "active_camera: 1\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
@@ -246,7 +246,7 @@ TEST_CASE("cookScene V7: rejects a non-finite authored float", "[asset_system][s
   TempDirGuard dir("non_finite");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 4\n"
+            "atlantis_scene_source_version: 5\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=nan 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
@@ -261,7 +261,7 @@ TEST_CASE("cookScene V7: rejects a non-finite camera field", "[asset_system][sce
   TempDirGuard dir("non_finite_camera");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 4\n"
+            "atlantis_scene_source_version: 5\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -277,7 +277,7 @@ TEST_CASE("cookScene Plan 0031: rejects a non-finite exposure field", "[asset_sy
   TempDirGuard dir("non_finite_exposure");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 4\n"
+            "atlantis_scene_source_version: 5\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -294,7 +294,7 @@ TEST_CASE("cookScene Plan 0031: rejects an exposure field below kExposureCompens
   TempDirGuard dir("exposure_below_min");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 4\n"
+            "atlantis_scene_source_version: 5\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -311,7 +311,7 @@ TEST_CASE("cookScene Plan 0031: rejects an exposure field above kExposureCompens
   TempDirGuard dir("exposure_above_max");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 4\n"
+            "atlantis_scene_source_version: 5\n"
             "node_count: 1\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -328,7 +328,7 @@ TEST_CASE("cookScene Plan 0031: accepts an exposure field at exactly the closed 
   TempDirGuard dir("exposure_at_boundary");
   const fs::path sourcePath = dir.path / "scene.scene.txt";
   writeFile(sourcePath,
-            "atlantis_scene_source_version: 4\n"
+            "atlantis_scene_source_version: 5\n"
             "node_count: 2\n"
             "active_camera: none\n"
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -396,4 +396,61 @@ TEST_CASE("cookScene V12: reports a genuine rename failure cleanly, with no left
   CHECK(result.error() == SceneCookError::ArtifactWriteFailed);
   CHECK(fs::is_directory(artifactPath));
   CHECK(findTempFiles(dir.path, "scene.ascene").empty());
+}
+
+// ---------------------------------------------------------------------
+// Plan 0043 P2 (Spec 0043 R8): the camera fog group's value domain,
+// checked at cook time, reusing NonFiniteValue like exposure.
+// ---------------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] atlantis::Result<std::monostate, SceneCookError> cookOneFogCamera(const std::string& label,
+                                                                                const std::string& fogGroup) {
+  TempDirGuard dir(label);
+  const fs::path sourcePath = dir.path / "scene.scene.txt";
+  writeFile(sourcePath,
+            "atlantis_scene_source_version: 5\n"
+            "node_count: 1\n"
+            "active_camera: 1\n"
+            "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+            "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0 " +
+                fogGroup + "\n");
+  return cookScene(sourcePath.string(), (dir.path / "scene.ascene").string(),
+                   (dir.path / "scene.ascene.meta.txt").string());
+}
+
+}  // namespace
+
+TEST_CASE("cookScene Plan 0043: rejects an out-of-domain fog field with NonFiniteValue", "[asset_system][scene][fog]") {
+  const char* groups[] = {
+      "fog=-0.001 0 0 1 fog_color=1 1 1",      // density < 0
+      "fog=inf 0 0 1 fog_color=1 1 1",         // density non-finite
+      "fog=0.1 nan 0 1 fog_color=1 1 1",       // height non-finite
+      "fog=0.1 0 -0.5 1 fog_color=1 1 1",      // falloff < 0
+      "fog=0.1 0 inf 1 fog_color=1 1 1",       // falloff non-finite
+      "fog=0.1 0 0 1.0001 fog_color=1 1 1",    // maxOpacity > 1
+      "fog=0.1 0 0 -0.0001 fog_color=1 1 1",   // maxOpacity < 0
+      "fog=0.1 0 0 1 fog_color=-0.01 1 1",     // colour < 0
+      "fog=0.1 0 0 1 fog_color=1 65504.01 1",  // colour > 65504 (rounds to 65504.0078)
+      "fog=0.1 0 0 1 fog_color=1 1 inf",       // colour non-finite
+      "fog=0 0 0 1 fog_color=nan 1 1",         // checked even when density is 0
+  };
+  for (const char* group : groups) {
+    DYNAMIC_SECTION(group) {
+      const auto result = cookOneFogCamera("fog_out_of_domain", group);
+      REQUIRE(result.isErr());
+      CHECK(result.error() == SceneCookError::NonFiniteValue);
+    }
+  }
+}
+
+TEST_CASE("cookScene Plan 0043: accepts fog fields at their closed boundaries", "[asset_system][scene][fog]") {
+  const char* groups[] = {
+      "fog=0 -1000 0 0 fog_color=0 0 0",
+      "fog=1000 1000 50 1 fog_color=65504 65504 65504",
+  };
+  for (const char* group : groups) {
+    DYNAMIC_SECTION(group) { CHECK(cookOneFogCamera("fog_at_boundary", group).isOk()); }
+  }
 }

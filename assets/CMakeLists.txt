@@ -593,6 +593,61 @@ set(ATLANTIS_transparency_demo_swapped_scene_METADATA_PATH "${ATLANTIS_transpare
 set(ATLANTIS_transparency_demo_swapped_scene_MANIFEST_PATH "${ATLANTIS_transparency_demo_swapped_scene_MANIFEST_PATH}" PARENT_SCOPE)
 set(ATLANTIS_transparency_demo_swapped_scene_TARGET "${ATLANTIS_transparency_demo_swapped_scene_TARGET}" PARENT_SCOPE)
 
+# Plan 0043 Milestone 2 (Spec 0043 R1-R3, P8/P9): the height-fog scenes.
+# fog_distance_demo (a row of spheres receding over a floor, homogeneous
+# fog -- the density sweep) and fog_height_demo (a column of spheres,
+# height-falling fog -- the falloff sweep) are lit and rendered by
+# PbrMaterialDemoFixture; fog_dark_demo is the emissive dark scene (no
+# light) rendered by PbrNormalMapDemoFixture, whose spheres are exactly
+# E * (1 - f) + C * f. fog_zero_neutrality is pbr_material_demo with a
+# density-0 fog group, which must render byte-identically to it. Every
+# material is an existing one.
+atlantis_add_scene_asset(
+  NAME fog_distance_demo_scene
+  SOURCE scenes/fog_distance_demo.scene.txt
+  MESH_DEPENDENCIES ground_plane pbr_sphere
+  MATERIAL_DEPENDENCIES pbr_dielectric_rough pbr_dielectric_smooth
+  TEXTURE_DEPENDENCIES textured_quad_srgb
+)
+set(ATLANTIS_fog_distance_demo_scene_ARTIFACT_PATH "${ATLANTIS_fog_distance_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_fog_distance_demo_scene_METADATA_PATH "${ATLANTIS_fog_distance_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_fog_distance_demo_scene_MANIFEST_PATH "${ATLANTIS_fog_distance_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_fog_distance_demo_scene_TARGET "${ATLANTIS_fog_distance_demo_scene_TARGET}" PARENT_SCOPE)
+atlantis_add_scene_asset(
+  NAME fog_height_demo_scene
+  SOURCE scenes/fog_height_demo.scene.txt
+  MESH_DEPENDENCIES ground_plane pbr_sphere
+  MATERIAL_DEPENDENCIES pbr_dielectric_rough pbr_dielectric_smooth
+  TEXTURE_DEPENDENCIES textured_quad_srgb
+)
+set(ATLANTIS_fog_height_demo_scene_ARTIFACT_PATH "${ATLANTIS_fog_height_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_fog_height_demo_scene_METADATA_PATH "${ATLANTIS_fog_height_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_fog_height_demo_scene_MANIFEST_PATH "${ATLANTIS_fog_height_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_fog_height_demo_scene_TARGET "${ATLANTIS_fog_height_demo_scene_TARGET}" PARENT_SCOPE)
+atlantis_add_scene_asset(
+  NAME fog_dark_demo_scene
+  SOURCE scenes/fog_dark_demo.scene.txt
+  MESH_DEPENDENCIES pbr_sphere
+  MATERIAL_DEPENDENCIES emissive_demo_orange emissive_demo_green emissive_demo_blue emissive_demo_normal_mapped
+    pbr_normal_mapped_control
+  TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
+)
+set(ATLANTIS_fog_dark_demo_scene_ARTIFACT_PATH "${ATLANTIS_fog_dark_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_fog_dark_demo_scene_METADATA_PATH "${ATLANTIS_fog_dark_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_fog_dark_demo_scene_MANIFEST_PATH "${ATLANTIS_fog_dark_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_fog_dark_demo_scene_TARGET "${ATLANTIS_fog_dark_demo_scene_TARGET}" PARENT_SCOPE)
+atlantis_add_scene_asset(
+  NAME fog_zero_neutrality_scene
+  SOURCE scenes/fog_zero_neutrality.scene.txt
+  MESH_DEPENDENCIES pbr_sphere
+  MATERIAL_DEPENDENCIES pbr_dielectric_rough pbr_dielectric_smooth pbr_metallic_rough pbr_metallic_smooth
+  TEXTURE_DEPENDENCIES textured_quad_srgb
+)
+set(ATLANTIS_fog_zero_neutrality_scene_ARTIFACT_PATH "${ATLANTIS_fog_zero_neutrality_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_fog_zero_neutrality_scene_METADATA_PATH "${ATLANTIS_fog_zero_neutrality_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_fog_zero_neutrality_scene_MANIFEST_PATH "${ATLANTIS_fog_zero_neutrality_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_fog_zero_neutrality_scene_TARGET "${ATLANTIS_fog_zero_neutrality_scene_TARGET}" PARENT_SCOPE)
+
 # Plan 0035 Milestone 1 (Spec 0035 Requirement 6): two new meshes for the
 # showcase scene -- a dimpled test sphere (a concave spherical-cap dent
 # at the +Y pole, smoothstep-blended so the transition has zero slope at

@@ -1,4 +1,4 @@
-atlantis_scene_source_version: 4
+atlantis_scene_source_version: 5
 node_count: 10
 active_camera: 2
 node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=1.5707963 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/ground_plane.mesh.txt material=materials/lit_textured_quad.material.txt

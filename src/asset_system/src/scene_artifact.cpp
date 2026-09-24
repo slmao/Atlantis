@@ -112,6 +112,16 @@ std::vector<std::byte> encodeSceneArtifact(const std::vector<ValidatedSceneNode>
     appendFloatLE(out, node.camera.has_value() ? node.camera->farZ : 0.0f);
     appendFloatLE(out, node.camera.has_value() ? node.camera->exposureCompensationEv : 0.0f);
 
+    // Plan 0043 P4: the fog slot, record offsets 56-83.
+    const DecodedCameraFog fog = node.camera.has_value() ? node.camera->fog : DecodedCameraFog{};
+    appendFloatLE(out, fog.colorR);
+    appendFloatLE(out, fog.colorG);
+    appendFloatLE(out, fog.colorB);
+    appendFloatLE(out, fog.density);
+    appendFloatLE(out, fog.height);
+    appendFloatLE(out, fog.heightFalloff);
+    appendFloatLE(out, fog.maxOpacity);
+
     appendU32LE(out, node.renderable.has_value() ? 1U : 0U);
     appendU64LE(out, node.renderable.has_value() ? node.renderable->meshAsset : 0U);
 
@@ -202,19 +212,36 @@ atlantis::Result<DecodedSceneArtifact, SceneArtifactDecodeError> decodeSceneArti
     const float nearZ = readFloatLE(record + 44);
     const float farZ = readFloatLE(record + 48);
     const float exposureEv = readFloatLE(record + 52);
+    // Plan 0043 P4: the fog slot (56-83), re-checked here like exposure,
+    // never trusting the cooker; ignored when there is no camera.
+    DecodedCameraFog fog;
+    fog.colorR = readFloatLE(record + 56);
+    fog.colorG = readFloatLE(record + 60);
+    fog.colorB = readFloatLE(record + 64);
+    fog.density = readFloatLE(record + 68);
+    fog.height = readFloatLE(record + 72);
+    fog.heightFalloff = readFloatLE(record + 76);
+    fog.maxOpacity = readFloatLE(record + 80);
     if (hasCameraFlag != 0) {
       if (!std::isfinite(fovY) || !std::isfinite(nearZ) || !std::isfinite(farZ) || !std::isfinite(exposureEv) ||
-          exposureEv < kExposureCompensationEvMin || exposureEv > kExposureCompensationEvMax) {
+          exposureEv < kExposureCompensationEvMin || exposureEv > kExposureCompensationEvMax ||
+          !isValidCameraFog(fog)) {
         return ResultT::Err(SceneArtifactDecodeError::NonFiniteValue);
       }
-      node.camera = DecodedCamera{fovY, nearZ, farZ, exposureEv};
+      DecodedCamera camera;
+      camera.fovYRadians = fovY;
+      camera.nearZ = nearZ;
+      camera.farZ = farZ;
+      camera.exposureCompensationEv = exposureEv;
+      camera.fog = fog;
+      node.camera = camera;
     }
 
-    const std::uint32_t hasRenderableFlag = readU32LE(record + 56);
-    const std::uint64_t meshAssetId = readU64LE(record + 60);
+    const std::uint32_t hasRenderableFlag = readU32LE(record + 84);
+    const std::uint64_t meshAssetId = readU64LE(record + 88);
 
-    const std::uint32_t hasMaterialFlag = readU32LE(record + 68);
-    const std::uint64_t materialAssetId = readU64LE(record + 72);
+    const std::uint32_t hasMaterialFlag = readU32LE(record + 96);
+    const std::uint64_t materialAssetId = readU64LE(record + 100);
     // Plan 0018 Section P7: independent, never-trust-the-cooker check --
     // a material reference with no renderable is a structurally
     // impossible combination this grammar can never author, but decode
@@ -232,13 +259,13 @@ atlantis::Result<DecodedSceneArtifact, SceneArtifactDecodeError> decodeSceneArti
     // Spec 0019 D3/P4: light slot, inserted after material, before
     // parent -- independently re-validated here, never trusting the
     // cooker (parseSceneSource()'s own already-performed check).
-    const std::uint32_t hasLightFlag = readU32LE(record + 80);
-    const std::uint32_t lightKindRaw = readU32LE(record + 84);
-    const float colorR = readFloatLE(record + 88);
-    const float colorG = readFloatLE(record + 92);
-    const float colorB = readFloatLE(record + 96);
-    const float intensity = readFloatLE(record + 100);
-    const float range = readFloatLE(record + 104);
+    const std::uint32_t hasLightFlag = readU32LE(record + 108);
+    const std::uint32_t lightKindRaw = readU32LE(record + 112);
+    const float colorR = readFloatLE(record + 116);
+    const float colorG = readFloatLE(record + 120);
+    const float colorB = readFloatLE(record + 124);
+    const float intensity = readFloatLE(record + 128);
+    const float range = readFloatLE(record + 132);
     if (hasLightFlag != 0) {
       if (lightKindRaw != 0 && lightKindRaw != 1) return ResultT::Err(SceneArtifactDecodeError::NonFiniteValue);
       const bool isPoint = lightKindRaw == 1;
@@ -252,8 +279,8 @@ atlantis::Result<DecodedSceneArtifact, SceneArtifactDecodeError> decodeSceneArti
                                  colorB, intensity, isPoint ? range : 0.0f};
     }
 
-    const std::uint32_t hasParentFlag = readU32LE(record + 108);
-    const std::uint32_t parentIndex = readU32LE(record + 112);
+    const std::uint32_t hasParentFlag = readU32LE(record + 136);
+    const std::uint32_t parentIndex = readU32LE(record + 140);
     std::optional<std::size_t> parent;
     if (hasParentFlag != 0) {
       if (parentIndex >= nodeCount) return ResultT::Err(SceneArtifactDecodeError::OutOfRangeParentIndex);

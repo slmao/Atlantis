@@ -224,6 +224,18 @@ CameraWorldPositionData extractCameraWorldPosition(const Mat4& cameraWorldMatrix
   return result;
 }
 
+FogData extractFogData(const atlantis::world::CameraFog& fog) {
+  FogData result;
+  result.color[0] = fog.color.x;
+  result.color[1] = fog.color.y;
+  result.color[2] = fog.color.z;
+  result.density = fog.density;
+  result.height = fog.height;
+  result.heightFalloff = fog.heightFalloff;
+  result.maxOpacity = fog.maxOpacity;
+  return result;
+}
+
 atlantis::Result<std::monostate, SceneExtractionError> resolveMeshAsset(
     atlantis::asset_system::AssetId requested, const std::vector<atlantis::asset_system::AssetId>& knownIds) {
   if (std::find(knownIds.begin(), knownIds.end(), requested) == knownIds.end()) {

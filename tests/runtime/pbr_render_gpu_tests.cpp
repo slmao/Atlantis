@@ -234,6 +234,10 @@ void writeCameraBuffer(atlantis::rhi::Buffer& buffer, const std::array<float, 16
               sizeof(float) * 16);
   std::memcpy(data + atlantis::runtime::kCameraUniformLightSpaceOffsetBytes + sizeof(float) * 16, kIdentityMatrix.data(),
               sizeof(float) * 16);
+  // Plan 0043 P5 (Spec 0043 R5): no World here, so fog is off -- the
+  // tail must still be written, as the buffer is not zero-initialised.
+  const atlantis::runtime::FogData fogOff{};
+  std::memcpy(data + atlantis::runtime::kCameraUniformFogOffsetBytes, &fogOff, sizeof(atlantis::runtime::FogData));
 }
 
 [[nodiscard]] FrameLightingData oneDirectionalLight(float intensity) {

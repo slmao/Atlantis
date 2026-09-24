@@ -24,12 +24,20 @@ World fromValidatedSceneData(const atlantis::asset_system::ValidatedSceneData& s
                         "fromValidatedSceneData(): setLocalTransform() failed for a freshly-created entity");
 
     if (n.camera.has_value()) {
-      ATLANTIS_CHECK_MSG(
-          world
-              .setCamera(id, Camera{n.camera->fovYRadians, n.camera->nearZ, n.camera->farZ,
-                                     n.camera->exposureCompensationEv})
-              .isOk(),
-          "fromValidatedSceneData(): setCamera() failed for a freshly-created entity");
+      Camera camera;
+      camera.fovYRadians = n.camera->fovYRadians;
+      camera.nearZ = n.camera->nearZ;
+      camera.farZ = n.camera->farZ;
+      camera.exposureCompensationEv = n.camera->exposureCompensationEv;
+      // Plan 0043 P3: the fog group, carried through as plain data.
+      const atlantis::asset_system::DecodedCameraFog& fog = n.camera->fog;
+      camera.fog.color = {fog.colorR, fog.colorG, fog.colorB};
+      camera.fog.density = fog.density;
+      camera.fog.height = fog.height;
+      camera.fog.heightFalloff = fog.heightFalloff;
+      camera.fog.maxOpacity = fog.maxOpacity;
+      ATLANTIS_CHECK_MSG(world.setCamera(id, camera).isOk(),
+                          "fromValidatedSceneData(): setCamera() failed for a freshly-created entity");
     }
     if (n.renderable.has_value()) {
       ATLANTIS_CHECK_MSG(

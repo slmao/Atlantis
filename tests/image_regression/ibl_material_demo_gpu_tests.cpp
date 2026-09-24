@@ -1,4 +1,5 @@
 #include "fixture/ibl_material_demo_fixture.h"
+#include "support/fog_differential.h"
 #include "support/emissive_differential.h"
 #include "support/golden_validity.h"
 
@@ -153,4 +154,18 @@ TEST_CASE("Emissive on/off (pbr_ibl): setting one material's emissiveFactor only
       [] { return atlantis::image_regression::setUpIblMaterialDemoFixture(buildIblConfig()); }, [](auto& fixture) { return atlantis::image_regression::renderIblMaterialDemoFrame(fixture); },
       "materials/pbr_dielectric_rough.material.txt");
   atlantis::image_regression::checkEmissiveOnlyBrightensItsSphere(result);
+}
+
+// Plan 0043 Milestone 2 (Spec 0043 R2-R3, P9): the saturating-fog differential
+// for the shader variant(s) this file's config realizes -- see
+// support/fog_differential.h.
+
+TEST_CASE("Height fog (Plan 0043 P9): pbr_ibl fogs its surfaces, and every other pixel stays byte-identical",
+          "[image_regression][gpu][fog]") {
+  auto fixtureResult = atlantis::image_regression::setUpIblMaterialDemoFixture(buildIblConfig());
+  REQUIRE(fixtureResult.isOk());
+  auto& fixture = fixtureResult.value();
+  atlantis::image_regression::checkSaturatedFogDifferential(
+      fixture, [](auto& f) { return atlantis::image_regression::renderIblMaterialDemoFrame(f); }, "materials/pbr_dielectric_rough.material.txt");
+  REQUIRE(fixture.device->waitIdle().isOk());
 }

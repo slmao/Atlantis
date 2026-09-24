@@ -14,6 +14,7 @@ add_executable(atlantis_image_regression_tests
   provenance_tests.cpp
   golden_validity_tests.cpp
   tone_mapping_reference_tests.cpp
+  fog_reference_tests.cpp
 )
 
 target_link_libraries(atlantis_image_regression_tests
@@ -49,6 +50,7 @@ add_executable(atlantis_image_regression_gpu_tests
   emissive_demo_gpu_tests.cpp
   cutout_demo_gpu_tests.cpp
   transparency_demo_gpu_tests.cpp
+  fog_demo_gpu_tests.cpp
   pbr_material_demo_gpu_tests.cpp
   hdr_roll_off_demo_gpu_tests.cpp
   ibl_material_demo_gpu_tests.cpp
@@ -282,6 +284,22 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_emissive_demo_scene_ARTIFACT_PATH="${ATLANTIS_emissive_demo_scene_ARTIFACT_PATH}"
   ATLANTIS_emissive_demo_scene_METADATA_PATH="${ATLANTIS_emissive_demo_scene_METADATA_PATH}"
   ATLANTIS_emissive_demo_scene_MANIFEST_PATH="${ATLANTIS_emissive_demo_scene_MANIFEST_PATH}"
+  # Plan 0043 Milestone 2: the height-fog scenes -- the lit two and the
+  # neutrality twin via PbrMaterialDemoFixture (ATLANTIS_PBR_MATERIAL_DEMO_*
+  # shader dirs), the dark one via PbrNormalMapDemoFixture
+  # (ATLANTIS_PBR_NORMAL_MAP_DEMO_* shader dirs).
+  ATLANTIS_fog_distance_demo_scene_ARTIFACT_PATH="${ATLANTIS_fog_distance_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_fog_distance_demo_scene_METADATA_PATH="${ATLANTIS_fog_distance_demo_scene_METADATA_PATH}"
+  ATLANTIS_fog_distance_demo_scene_MANIFEST_PATH="${ATLANTIS_fog_distance_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_fog_height_demo_scene_ARTIFACT_PATH="${ATLANTIS_fog_height_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_fog_height_demo_scene_METADATA_PATH="${ATLANTIS_fog_height_demo_scene_METADATA_PATH}"
+  ATLANTIS_fog_height_demo_scene_MANIFEST_PATH="${ATLANTIS_fog_height_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_fog_dark_demo_scene_ARTIFACT_PATH="${ATLANTIS_fog_dark_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_fog_dark_demo_scene_METADATA_PATH="${ATLANTIS_fog_dark_demo_scene_METADATA_PATH}"
+  ATLANTIS_fog_dark_demo_scene_MANIFEST_PATH="${ATLANTIS_fog_dark_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_fog_zero_neutrality_scene_ARTIFACT_PATH="${ATLANTIS_fog_zero_neutrality_scene_ARTIFACT_PATH}"
+  ATLANTIS_fog_zero_neutrality_scene_METADATA_PATH="${ATLANTIS_fog_zero_neutrality_scene_METADATA_PATH}"
+  ATLANTIS_fog_zero_neutrality_scene_MANIFEST_PATH="${ATLANTIS_fog_zero_neutrality_scene_MANIFEST_PATH}"
   ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH="${ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH}"
   ATLANTIS_pbr_normal_mapped_control_METADATA_PATH="${ATLANTIS_pbr_normal_mapped_control_METADATA_PATH}"
   ATLANTIS_PBR_NORMAL_MAP_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
@@ -421,7 +439,9 @@ add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TAR
   ${ATLANTIS_pbr_materials_showcase_scene_TARGET} ${ATLANTIS_warehouse_interior_TARGET}
   ${ATLANTIS_multi_light_demo_scene_TARGET} ${ATLANTIS_emissive_demo_scene_TARGET}
   ${ATLANTIS_cutout_demo_scene_TARGET} ${ATLANTIS_transparency_demo_scene_TARGET}
-  ${ATLANTIS_transparency_demo_swapped_scene_TARGET})
+  ${ATLANTIS_transparency_demo_swapped_scene_TARGET}
+  ${ATLANTIS_fog_distance_demo_scene_TARGET} ${ATLANTIS_fog_height_demo_scene_TARGET}
+  ${ATLANTIS_fog_dark_demo_scene_TARGET} ${ATLANTIS_fog_zero_neutrality_scene_TARGET})
 
 # Same build-tree shader artifact set as the golden generator -- this
 # executable renders the identical fixture. WORKING_DIRECTORY above

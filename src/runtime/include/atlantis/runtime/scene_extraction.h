@@ -2,6 +2,7 @@
 
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/result.h>
+#include <atlantis/world/camera.h>
 #include <atlantis/world/light.h>
 
 #include <array>
@@ -149,15 +150,40 @@ static_assert(offsetof(CameraWorldPositionData, z) == 8);
 static_assert(offsetof(CameraWorldPositionData, _pad) == 12);
 static_assert(sizeof(CameraWorldPositionData) == 16);
 
+// Plan 0043 P5 (Spec 0043 R4, ADR-0091 Decision 3): the height-fog tail,
+// the camera uniform's last region. HLSL/Slang constant-buffer packing
+// puts `density` in the same 16-byte slot as the float3 `color`, and
+// the explicit `_pad` rounds the region to 32 bytes. density == 0 is
+// fog off, and every writer writes this region every frame -- the
+// buffer is not zero-initialised, so an unwritten tail is garbage.
+struct alignas(16) FogData {
+  float color[3] = {1.0f, 1.0f, 1.0f};  // offset 0 (buffer offset 2512)
+  float density = 0.0f;                 // offset 12
+  float height = 0.0f;                  // offset 16
+  float heightFalloff = 0.0f;           // offset 20
+  float maxOpacity = 1.0f;              // offset 24
+  float _pad = 0.0f;                    // offset 28 -- explicit, not implicit
+};
+static_assert(std::is_standard_layout_v<FogData>);
+static_assert(alignof(FogData) == 16);
+static_assert(offsetof(FogData, color) == 0);
+static_assert(offsetof(FogData, density) == 12);
+static_assert(offsetof(FogData, height) == 16);
+static_assert(offsetof(FogData, heightFalloff) == 20);
+static_assert(offsetof(FogData, maxOpacity) == 24);
+static_assert(offsetof(FogData, _pad) == 28);
+static_assert(sizeof(FogData) == 32);
+
 // Plan 0040 Milestone 0 (human-ruled O1): the camera/lighting uniform
 // Buffer's total byte size, derived from its named parts -- the value the
 // eleven .slang CameraUniform declarations describe and
 // pbr_reflection_cross_check_tests.cpp proves against live slangc
-// reflection. The two trailing regions are shader-side-only (no C++
-// struct in this header): 144 = the 9-float4 irradiance SH9 tail, 128 =
-// the light-space view+projection pair. runtime_application.cpp allocated
-// only 464 here from Plan 0027 M9 until 2026-09-21 -- a 128-byte
-// every-frame overrun this constant exists to make unrepresentable.
+// reflection. Two regions are shader-side-only (no C++ struct in this
+// header): 144 = the 9-float4 irradiance SH9 tail, 128 = the light-space
+// view+projection pair; Plan 0043 appends FogData after them.
+// runtime_application.cpp allocated only 464 here from Plan 0027 M9
+// until 2026-09-21 -- a 128-byte every-frame overrun this constant
+// exists to make unrepresentable.
 //
 // Plan 0040 Milestone 2: the region offsets are derived the same way, so
 // no writer carries a hand-computed float index (the Runtime and the PBR
@@ -170,16 +196,19 @@ inline constexpr std::size_t kCameraUniformIrradianceShOffsetBytes =
     kCameraUniformWorldPositionOffsetBytes + sizeof(CameraWorldPositionData);
 inline constexpr std::size_t kCameraUniformLightSpaceOffsetBytes =
     kCameraUniformIrradianceShOffsetBytes + 144 /* SH9: float4[9] */;
-inline constexpr std::size_t kCameraUniformBufferSizeBytes =
+inline constexpr std::size_t kCameraUniformFogOffsetBytes =
     kCameraUniformLightSpaceOffsetBytes + 128 /* light-space view + projection */;
-// Plan 0040: 128 / 2224 / 2240 / 2384 / 2512 at N = 64 (lit_textured's
-// shorter block ends at 2224). pbr_reflection_cross_check_tests.cpp proves
-// each against live slangc reflection of all eleven shaders.
+inline constexpr std::size_t kCameraUniformBufferSizeBytes = kCameraUniformFogOffsetBytes + sizeof(FogData);
+// Plan 0040: 128 / 2224 / 2240 / 2384 at N = 64 (lit_textured's shorter
+// block ends at 2224); Plan 0043: FogData at 2512, total 2544.
+// pbr_reflection_cross_check_tests.cpp proves each against live slangc
+// reflection of the shaders.
 static_assert(kCameraUniformLightingOffsetBytes == 128);
 static_assert(kCameraUniformWorldPositionOffsetBytes == 2224);
 static_assert(kCameraUniformIrradianceShOffsetBytes == 2240);
 static_assert(kCameraUniformLightSpaceOffsetBytes == 2384);
-static_assert(kCameraUniformBufferSizeBytes == 2512);
+static_assert(kCameraUniformFogOffsetBytes == 2512);
+static_assert(kCameraUniformBufferSizeBytes == 2544);
 
 // Plan 0019 Section P8: a deliberate, disclosed, narrow break from this
 // file's own "raw values only, no atlantis::world:: type" style --
@@ -317,6 +346,12 @@ inline constexpr float kMinDot = 1e-4f;
 // cameraWorldMatrix extractCameraMatrices() itself validates), so this
 // function never fails.
 [[nodiscard]] CameraWorldPositionData extractCameraWorldPosition(const Mat4& cameraWorldMatrix);
+
+// Plan 0043 P5 (Spec 0043 R7): the active camera's fog parameters as the
+// FogData tail, a plain field copy -- the same narrow atlantis::world::
+// type exception LightExtractionInput discloses above. Infallible: the
+// values were range-checked at cook and decode time.
+[[nodiscard]] FogData extractFogData(const atlantis::world::CameraFog& fog);
 
 // Trivial by design (ADR-0051's own Decision step 4 fixes only the
 // existence and input/output shape of asset resolution, not a

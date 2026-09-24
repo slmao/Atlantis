@@ -503,6 +503,13 @@ atlantis::Result<PixelBuffer, PbrSheenDemoRenderError> renderPbrSheenDemoFrame(P
   std::memcpy(cameraData + atlantis::runtime::kCameraUniformLightSpaceOffsetBytes / sizeof(float) + 16, kIdentityMatrix,
               sizeof(float) * 16);
 
+  // Plan 0043 P5 (Spec 0043 R5): the FogData tail, from the World's active
+  // camera, written unconditionally every frame like the Runtime's --
+  // density 0 (off) unless the camera carries fog.
+  *reinterpret_cast<atlantis::runtime::FogData*>(cameraData + atlantis::runtime::kCameraUniformFogOffsetBytes /
+                                                                   sizeof(float)) =
+      atlantis::runtime::extractFogData(cameraComponent.fog);
+
   std::vector<atlantis::asset_system::AssetId> referencedMaterialIds;
   for (const auto& id : fixture.world->renderableEntities()) {
     const auto renderableResult = fixture.world->getRenderable(id);

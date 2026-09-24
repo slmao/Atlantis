@@ -2,6 +2,7 @@
 
 #include <atlantis/asset_system/asset_id.h>
 
+#include <cmath>
 #include <cstdint>
 #include <optional>
 
@@ -23,12 +24,40 @@ struct DecodedTransform {
   float scaleX = 1.0f, scaleY = 1.0f, scaleZ = 1.0f;
 };
 
+// Plan 0043 P3 (Spec 0043 R6-R8, ADR-0091 Decision 4): the camera
+// node's optional fog group. The defaults are the "no group" value --
+// density 0 means fog off. Flat colour fields, the DecodedLight
+// convention.
+struct DecodedCameraFog {
+  float colorR = 1.0f, colorG = 1.0f, colorB = 1.0f;
+  float density = 0.0f;
+  float height = 0.0f;
+  float heightFalloff = 0.0f;
+  float maxOpacity = 1.0f;
+};
+
 struct DecodedCamera {
   float fovYRadians = 0.0f;
   float nearZ = 0.0f;
   float farZ = 0.0f;
   float exposureCompensationEv = 0.0f;
+  DecodedCameraFog fog;  // Plan 0043: trailing, so positional inits above stay valid
 };
+
+// Plan 0043 P2 (Spec 0043 R8): the fog group's value domain, checked at
+// cook time and again on decode (both reuse NonFiniteValue, the
+// exposure precedent). Density and falloff are finite and >= 0, height
+// is finite, maxOpacity is in [0, 1], colour is finite and in
+// [0, kFogColorMax] -- HDR, the emissive precedent (ruling Q7).
+inline constexpr float kFogColorMax = 65504.0f;
+
+[[nodiscard]] inline bool isValidCameraFog(const DecodedCameraFog& fog) {
+  const auto colorOk = [](float c) { return std::isfinite(c) && c >= 0.0f && c <= kFogColorMax; };
+  return colorOk(fog.colorR) && colorOk(fog.colorG) && colorOk(fog.colorB) && std::isfinite(fog.density) &&
+         fog.density >= 0.0f && std::isfinite(fog.height) && std::isfinite(fog.heightFalloff) &&
+         fog.heightFalloff >= 0.0f && std::isfinite(fog.maxOpacity) && fog.maxOpacity >= 0.0f &&
+         fog.maxOpacity <= 1.0f;
+}
 
 // Plan 0040 (Q2 ruling): the scene grammar's own point-light capacity.
 // Runtime's kMaxPointLights (scene_extraction.h) carries the same value;

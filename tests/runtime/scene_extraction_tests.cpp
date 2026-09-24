@@ -1138,3 +1138,45 @@ TEST_CASE("extractFrameLightingData(): exactly kMaxPointLights Point lights all 
     REQUIRE(std::abs(gpu.range - 8.0f) < kEpsilon);
   }
 }
+
+// Plan 0043 P5 (Spec 0043 R4-R5): extractFogData() -- a plain field
+// copy of the active camera's fog into the FogData tail, whose layout
+// the static_asserts in scene_extraction.h pin (offsets 0/12/16/20/24/28,
+// 32 bytes, at buffer offset 2512 of 2544).
+TEST_CASE("extractFogData(): copies every fog field into FogData, leaving the explicit pad at 0",
+          "[runtime][scene_extraction][fog]") {
+  atlantis::world::CameraFog fog;
+  fog.color = {0.5f, 0.75f, 3.0f};
+  fog.density = 0.05f;
+  fog.height = -1.5f;
+  fog.heightFalloff = 0.25f;
+  fog.maxOpacity = 0.9f;
+
+  const atlantis::runtime::FogData result = atlantis::runtime::extractFogData(fog);
+  CHECK(result.color[0] == 0.5f);
+  CHECK(result.color[1] == 0.75f);
+  CHECK(result.color[2] == 3.0f);
+  CHECK(result.density == 0.05f);
+  CHECK(result.height == -1.5f);
+  CHECK(result.heightFalloff == 0.25f);
+  CHECK(result.maxOpacity == 0.9f);
+  CHECK(result._pad == 0.0f);
+}
+
+TEST_CASE("extractFogData(): a default camera gives FogData{} -- density 0, fog off",
+          "[runtime][scene_extraction][fog]") {
+  const atlantis::runtime::FogData fromDefault = atlantis::runtime::extractFogData(atlantis::world::CameraFog{});
+  const atlantis::runtime::FogData defaults{};
+  CHECK(fromDefault.density == 0.0f);
+  CHECK(std::memcmp(&fromDefault, &defaults, sizeof(atlantis::runtime::FogData)) == 0);
+}
+
+TEST_CASE("FogData: the camera uniform grows by exactly one 32-byte FogData tail, after the light-space pair",
+          "[runtime][scene_extraction][fog]") {
+  STATIC_REQUIRE(atlantis::runtime::kCameraUniformFogOffsetBytes ==
+                 atlantis::runtime::kCameraUniformLightSpaceOffsetBytes + 128);
+  STATIC_REQUIRE(atlantis::runtime::kCameraUniformFogOffsetBytes % 16 == 0);
+  STATIC_REQUIRE(atlantis::runtime::kCameraUniformBufferSizeBytes ==
+                 atlantis::runtime::kCameraUniformFogOffsetBytes + sizeof(atlantis::runtime::FogData));
+  STATIC_REQUIRE(atlantis::runtime::kCameraUniformBufferSizeBytes == 2544);
+}
