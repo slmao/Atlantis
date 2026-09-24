@@ -1,13 +1,19 @@
 # Spec: Height Fog
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-24
-- **Related Plan(s):** none yet
-- **Approval:** pending
+- **Related Plan(s):** none yet — Plan 0043 drafting is authorized by the
+  Approval below. **Implementation still awaits its own, separate Joint Human
+  Review** of Spec + Plan together, per AGENTS.md's own workflow.
+- **Approval:** slmao, 2026-09-24 (chat confirmation, no reviewing PR —
+  authorizes drafting Plan 0043; Implementation itself still awaits its own,
+  separate Joint Human Review of Spec + Plan together). The same review ruled
+  all seven open questions. See Risks & Open Questions below.
 - **Related ADR(s):** [ADR-0091](../adr/0091-height-fog-insertion-point-uniform-layout-and-parameter-source.md)
-  (`Proposed`) — the insertion point, the fog model, the uniform layout and
-  the parameter source.
+  (`Accepted` 2026-09-24, alongside this Spec's own Approval) — the
+  insertion point, the fog model, the uniform layout and the parameter
+  source.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
@@ -109,7 +115,7 @@ comes before ⑥, whose bloom should see fogged radiance.
    - They sit after the optional `camera_exposure_ev=` (Spec 0031).
    - All of them absent means density 0, which is off. The exact grammar
      (one prefixed group or separate tokens, and which may be omitted) is
-     Q2.
+     the Plan's, within ruling Q2.
 7. **Formats and data path.**
    - Scene source v4 → v5, with the matching artifact and metadata bumps
      and no dual-version reader (the ADR-0066 discipline).
@@ -123,7 +129,7 @@ comes before ⑥, whose bloom should see fogged radiance.
    - Height: finite.
    - Maximum opacity: in `[0, 1]`.
    - Colour: finite and in `[0, 65504]` — HDR, the emissive precedent
-     (Q7).
+     (ruling Q7).
 
 ### Non-functional
 
@@ -307,7 +313,7 @@ artifact → metadata → World `Camera`, exactly like
 ## Architectural Impact
 
 **Yes — [ADR-0091](../adr/0091-height-fog-insertion-point-uniform-layout-and-parameter-source.md)
-(`Proposed`).** It records four coupled decisions:
+(`Accepted` 2026-09-24).** It records four coupled decisions:
 1. the insertion point — a per-fragment PBR term in HDR, not a pass;
 2. the fog model and its exact disable at density 0;
 3. the uniform layout — the `FogData` tail at 2512, not push constants;
@@ -377,39 +383,53 @@ falloff, plus a GPU-independent test of the fog-factor maths.
   heights and distances, a warm fog colour) captured at three parameter
   sets — reference, higher density, lower falloff — each in its own
   Initial-baseline commit (ADR-0042). Each has a discriminator: the same
-  frame with fog off fails against it. Whether the sweep is three goldens
-  or one golden plus the analytic checks is Q3.
+  frame with fog off fails against it. Three goldens plus the analytic
+  sweep, per ruling Q3.
 - **Validation Layers:** zero warnings or errors (Debug, fatal).
 - **Full regression:** Debug and Release; Android `assembleDebug`.
 
 ## Risks & Open Questions
 
+**All seven open questions were ruled by Human Review on 2026-09-24 (chat
+confirmation), alongside this Spec's own Approval.** Each ruling below is
+binding on Plan 0043; the reasoning that led to it stays in ADR-0091 and in
+the Investigations above.
+
 - **Q1 — the insertion point.** Recommend (a), per-fragment in the ten PBR
   shaders (ADR-0091 Decision 1). The alternatives are (b), a depth-based
   post pass, and (c), a term in the output transform; Investigation 1
   quantifies all three.
+  **Ruled 2026-09-24: (a) confirmed** — a per-fragment term in the ten PBR
+  shaders; RenderGraph and RHI untouched.
 - **Q2 — the token shape and home.** Recommend optional tokens on the
   camera node (Filament's per-view model, the `camera_exposure_ev=`
   precedent). The alternative is a scene-level fog line or a new World
   component. The Plan also fixes the grammar: one prefixed group, e.g.
   `fog=<density> <height> <falloff> <maxOpacity> fog_color=<r> <g> <b>`,
   or separate tokens, and which may be omitted.
+  **Ruled 2026-09-24: camera-node tokens, scene source v5** — the grammar
+  itself is fixed by Plan 0043.
 - **Q3 — how many goldens.** Spec 0036 asks for goldens "sweeping
   density/height-falloff". Recommend three goldens of one scene, plus the
   exact analytic sweep. The cheaper alternative is one golden plus the
   analytic sweep.
+  **Ruled 2026-09-24: three goldens plus the analytic sweep.**
 - **Q4 — the sky stays unfogged.** Under (a) the sky pass and the clear
   colour get no fog, so a fogged street meets a clear horizon. Recommend
   leaving it to ⑦, which can judge against Bistro's own reference image;
   fogging the sky shader later is a small, separate change.
+  **Ruled 2026-09-24: the sky stays unfogged; left to ⑦.**
 - **Q5 — the parameter set.** Recommend density, height, falloff, colour
   and maximum opacity. Filament's start and cut-off distances,
   in-scattering and IBL colour are left out as unneeded for Bistro.
+  **Ruled 2026-09-24: these five parameters.**
 - **Q6 — non-PBR shaders unfogged.** Recommend yes. No Bistro material
   imports as `lit_textured` or `unlit_textured`.
+  **Ruled 2026-09-24: non-PBR shaders are not fogged.**
 - **Q7 — the colour range.** Recommend HDR `[0, 65504]`, like emissive, so
   a lamp-lit haze can exceed 1 and reach ⑥'s bright-pass. The
   alternative is `[0, 1]`, a pure tint.
+  **Ruled 2026-09-24: HDR `[0, 65504]`.**
 - **Risk — golden movement.** Treated as a stop-and-report gate (R3).
 - **Risk — uninitialised tail.** A writer that forgets `FogData` would
   read garbage density. R5 makes writing it mandatory; the Plan

@@ -1,9 +1,10 @@
 # ADR 0091: Height Fog — Insertion Point, Uniform Layout and Parameter Source
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-24
 - **Deciders:** slmao
-- **Acceptance:** pending
+- **Acceptance:** slmao, 2026-09-24 (chat confirmation; reviewed in this
+  branch's own PR, alongside Spec 0043's Approval)
 - **Related Spec:** [Spec 0043](../specs/0043-height-fog.md)
 
 Record one decision and its rationale. Follow the
