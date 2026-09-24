@@ -11,10 +11,11 @@ namespace {
 
 // Plan 0031: version 4 adds the optional camera_exposure_ev= token
 // (15-token node case, below). Plan 0043: version 5 adds the optional
-// camera fog group (kFogPrefix, below). Versions 1-4 are all rejected
-// outright by the version-line check immediately below -- no
+// camera fog group (kFogPrefix, below). Plan 0044: version 6 adds the
+// optional camera bloom group (kBloomPrefix, below). Versions 1-5 are all
+// rejected outright by the version-line check immediately below -- no
 // dual-version reader.
-constexpr std::string_view kVersionLine = "atlantis_scene_source_version: 5";
+constexpr std::string_view kVersionLine = "atlantis_scene_source_version: 6";
 constexpr std::string_view kNodeCountPrefix = "node_count: ";
 constexpr std::string_view kActiveCameraPrefix = "active_camera: ";
 constexpr std::string_view kNodePrefix = "node: ";
@@ -56,6 +57,15 @@ constexpr std::string_view kCameraExposureEvPrefix = "camera_exposure_ev=";
 constexpr std::string_view kFogPrefix = "fog=";
 constexpr std::string_view kFogColorPrefix = "fog_color=";
 constexpr std::size_t kFogGroupTokenCount = 7;
+
+// Plan 0044 P1: the optional camera bloom group, two tokens, all or
+// nothing, after the fog group when both are present:
+//   bloom=<strength> <threshold>
+// The trailing groups come in the fixed order [fog][bloom] and end the
+// line; the pre-pass below strips them before the count dispatch, as
+// Plan 0043 P1 did for fog alone.
+constexpr std::string_view kBloomPrefix = "bloom=";
+constexpr std::size_t kBloomGroupTokenCount = 2;
 
 // Spec 0019 D3/P2: light=<directional|point> color=<r> <g> <b>
 // intensity=<f> [range=<f>] -- a fifth, disjoint trailing-group shape,
@@ -178,13 +188,37 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
     }
     auto tokens = splitOnSpace(line.substr(kNodePrefix.size()));
 
-    // Plan 0043 P1: the fog pre-pass. The base 11 tokens are never
-    // scanned, so their own prefix errors keep their v4 precedence.
+    // Plan 0043 P1 / Plan 0044 P1: the trailing-group pre-pass. The base
+    // 11 tokens are never scanned, so their own prefix errors keep their
+    // v4 precedence. From the first fog= or bloom= token, the fog group
+    // (if there) then the bloom group (if there) must exactly reach the
+    // end of the line; anything else -- out of order, truncated, or
+    // trailing tokens -- is InvalidComponentGroup.
+    const auto hasPrefix = [](std::string_view token, std::string_view prefix) {
+      return token.substr(0, prefix.size()) == prefix;
+    };
     std::vector<std::string_view> fogTokens;
+    std::vector<std::string_view> bloomTokens;
     for (std::size_t t = 11; t < tokens.size(); ++t) {
-      if (tokens[t].substr(0, kFogPrefix.size()) != kFogPrefix) continue;
-      if (tokens.size() - t != kFogGroupTokenCount) return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
-      fogTokens.assign(tokens.begin() + static_cast<std::ptrdiff_t>(t), tokens.end());
+      if (!hasPrefix(tokens[t], kFogPrefix) && !hasPrefix(tokens[t], kBloomPrefix)) continue;
+      std::size_t cursor = t;
+      if (hasPrefix(tokens[cursor], kFogPrefix)) {
+        if (tokens.size() - cursor < kFogGroupTokenCount) {
+          return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
+        }
+        const auto first = tokens.begin() + static_cast<std::ptrdiff_t>(cursor);
+        fogTokens.assign(first, first + static_cast<std::ptrdiff_t>(kFogGroupTokenCount));
+        cursor += kFogGroupTokenCount;
+      }
+      if (cursor < tokens.size() && hasPrefix(tokens[cursor], kBloomPrefix)) {
+        if (tokens.size() - cursor < kBloomGroupTokenCount) {
+          return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
+        }
+        const auto first = tokens.begin() + static_cast<std::ptrdiff_t>(cursor);
+        bloomTokens.assign(first, first + static_cast<std::ptrdiff_t>(kBloomGroupTokenCount));
+        cursor += kBloomGroupTokenCount;
+      }
+      if (cursor != tokens.size()) return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
       tokens.resize(t);
       break;
     }
@@ -372,6 +406,15 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
       }
     }
 
+    if (!bloomTokens.empty()) {
+      if (!node.camera.has_value()) return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
+      DecodedCameraBloom& bloom = node.camera->bloom;
+      if (!consumePrefixedFloat(bloomTokens[0], kBloomPrefix, bloom.strength) ||
+          !parseFloatToken(bloomTokens[1], bloom.threshold)) {
+        return ResultT::Err(SceneSourceParseError::MalformedNumber);
+      }
+    }
+
     parsed.nodes.push_back(std::move(node));
     ++lineIndex;
   }
@@ -451,6 +494,12 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
                std::to_string(fog.heightFalloff) + ' ' + std::to_string(fog.maxOpacity) + ' ' +
                std::string(kFogColorPrefix) + std::to_string(fog.colorR) + ' ' + std::to_string(fog.colorG) + ' ' +
                std::to_string(fog.colorB);
+      }
+      // Plan 0044 P1: likewise, written only when bloom is on.
+      const DecodedCameraBloom& bloom = node.camera->bloom;
+      if (bloom.strength != 0.0f) {
+        out += ' ';
+        out += std::string(kBloomPrefix) + std::to_string(bloom.strength) + ' ' + std::to_string(bloom.threshold);
       }
     } else if (node.light.has_value()) {
       out += ' ';

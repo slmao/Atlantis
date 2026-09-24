@@ -4,6 +4,7 @@
 #include <atlantis/asset_system/environment_types.h>
 #include <atlantis/asset_system/material_types.h>
 #include <atlantis/asset_system/texture_types.h>
+#include <atlantis/renderer/bloom.h>
 #include <atlantis/renderer/material.h>
 #include <atlantis/renderer/mesh.h>
 #include <atlantis/result.h>
@@ -124,6 +125,15 @@ struct PbrNormalMapDemoFixture {
   std::unique_ptr<atlantis::rhi::Sampler> shadowMapSampler;
   std::unique_ptr<atlantis::rhi::Pipeline> shadowCastPipeline;
   std::unique_ptr<atlantis::rhi::Buffer> shadowLightSpaceBuffer;
+
+  // Plan 0044 P10 (ruling O4): optional bloom -- the three Pipelines and
+  // the twelve-target bundle, created in setup only when the config sets
+  // all twelve bloom shader paths (atlantis::runtime::hasBloomShaderPaths());
+  // null/empty for every existing use of this fixture.
+  std::unique_ptr<atlantis::rhi::Pipeline> bloomDownsamplePipeline;
+  std::unique_ptr<atlantis::rhi::Pipeline> bloomUpsamplePipeline;
+  std::unique_ptr<atlantis::rhi::Pipeline> bloomCompositePipeline;
+  std::optional<atlantis::renderer::BloomTargets> bloomTargets;
 
   std::optional<atlantis::world::World> world;
 

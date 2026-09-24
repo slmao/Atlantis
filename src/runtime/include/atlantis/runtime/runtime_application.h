@@ -203,6 +203,19 @@ class RuntimeApplication {
   std::unique_ptr<atlantis::rhi::Pipeline> shadowCastPipeline_;
   std::unique_ptr<atlantis::rhi::Buffer> shadowLightSpaceBuffer_;
 
+  // Plan 0044 P9 (Spec 0044, ADR-0092 Decision 3, ruling Q5): the three
+  // bloom Pipelines, created once at startup when the bloom shader paths
+  // are configured (no Format/extent dependency: they target
+  // HdrFormat::Rgba16Float). bloomTargets_ follows hdrColorTarget_'s
+  // extent, created and replaced in the same resize branch, and only when
+  // the scene's active camera turns bloom on (sceneWantsBloom_). Milestone
+  // 1 builds them; no frame reads them until Milestone 2.
+  std::unique_ptr<atlantis::rhi::Pipeline> bloomDownsamplePipeline_;
+  std::unique_ptr<atlantis::rhi::Pipeline> bloomUpsamplePipeline_;
+  std::unique_ptr<atlantis::rhi::Pipeline> bloomCompositePipeline_;
+  std::optional<atlantis::renderer::BloomTargets> bloomTargets_;
+  bool sceneWantsBloom_ = false;
+
   // Plan 0024 Milestone 6 (ADR-0068 D-1/D-3/D-6): the output-transform
   // pass's own fixed, never-scene-content geometry -- created once at
   // startup, alongside cameraBuffer_'s own existing startup sequence,

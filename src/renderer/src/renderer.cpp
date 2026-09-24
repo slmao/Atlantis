@@ -62,7 +62,8 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
                           atlantis::rhi::ShadowMap& shadowMap, atlantis::rhi::Sampler& shadowMapSampler,
                           atlantis::rhi::Pipeline& shadowCastPipeline, atlantis::rhi::Buffer& shadowLightSpaceBuffer,
                           std::span<const DrawItem> shadowCasterDrawItems,
-                          const std::optional<std::array<float, 3>>& cameraWorldPosition) {
+                          const std::optional<std::array<float, 3>>& cameraWorldPosition,
+                          const BloomInput* bloom) {
   // Plan 0031 (Spec 0031 Requirement 7): the one real gate for direct/
   // non-asset callers, which bypass cook/decode's own independent
   // check entirely.
@@ -72,6 +73,11 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
                       "outputTransformExposureCompensationEv must be finite and within "
                       "[kExposureCompensationEvMin, kExposureCompensationEvMax]");
   const float exposureMultiplier = computeExposureMultiplier(outputTransformExposureCompensationEv);
+  // Plan 0044 Milestone 1: the bloom input is plumbed but no pass is
+  // recorded yet (Milestone 2), so only "off" is accepted.
+  ATLANTIS_CHECK_MSG(bloom == nullptr || bloom->strength == 0.0f,
+                      "drawFrame(): bloom passes arrive in Plan 0044 Milestone 2; Milestone 1 accepts only a null or "
+                      "strength-0 BloomInput");
   std::vector<std::uint32_t> drawOrder = drawOrderFor(drawItems, cameraWorldPosition);
 
   atlantis::render_graph::RenderGraphBuilder builder;

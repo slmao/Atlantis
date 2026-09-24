@@ -1,6 +1,45 @@
 #include <atlantis/runtime/bootstrap_config.h>
 
+#include <cstddef>
+#include <string>
+
 namespace atlantis::runtime {
+
+namespace {
+
+[[nodiscard]] std::size_t bloomShaderPathsSet(const BootstrapConfig& config) {
+  const std::string* const paths[] = {
+      &config.bloomDownsampleVertexShaderSpirvPath,
+      &config.bloomDownsampleVertexShaderReflectionPath,
+      &config.bloomDownsampleFragmentShaderSpirvPath,
+      &config.bloomDownsampleFragmentShaderReflectionPath,
+      &config.bloomUpsampleVertexShaderSpirvPath,
+      &config.bloomUpsampleVertexShaderReflectionPath,
+      &config.bloomUpsampleFragmentShaderSpirvPath,
+      &config.bloomUpsampleFragmentShaderReflectionPath,
+      &config.bloomCompositeVertexShaderSpirvPath,
+      &config.bloomCompositeVertexShaderReflectionPath,
+      &config.bloomCompositeFragmentShaderSpirvPath,
+      &config.bloomCompositeFragmentShaderReflectionPath};
+  std::size_t set = 0;
+  for (const std::string* path : paths) set += path->empty() ? 0 : 1;
+  return set;
+}
+
+constexpr std::size_t kBloomShaderPathCount = 12;
+
+}  // namespace
+
+bool hasBloomShaderPaths(const BootstrapConfig& config) {
+  return bloomShaderPathsSet(config) == kBloomShaderPathCount;
+}
+
+atlantis::Result<std::monostate, RuntimeInitError> validateBloomBootstrapConfig(const BootstrapConfig& config) {
+  using ResultT = atlantis::Result<std::monostate, RuntimeInitError>;
+  const std::size_t set = bloomShaderPathsSet(config);
+  if (set != 0 && set != kBloomShaderPathCount) return ResultT::Err(RuntimeInitError::BloomConfigInvalid);
+  return ResultT::Ok(std::monostate{});
+}
 
 atlantis::Result<std::monostate, RuntimeInitError> validateEnvironmentBootstrapConfig(
     const BootstrapConfig& config) {

@@ -297,6 +297,41 @@ atlantis::Result<PbrNormalMapDemoFixture, PbrNormalMapDemoSetupError> setUpPbrNo
     return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
   }
 
+  // Plan 0044 P10: the three bloom shader pairs, only when configured --
+  // the output transform's fullscreen-triangle schema, as in the Runtime.
+  struct FullscreenShaderPair {
+    std::vector<std::uint32_t> vertexSpirv;
+    std::vector<std::uint32_t> fragmentSpirv;
+    VertexInputLayout vertexInputLayout;
+  };
+  const auto loadFullscreenShaderPair = [](const std::string& vertexSpirvPath, const std::string& vertexReflectionPath,
+                                           const std::string& fragmentSpirvPath) -> std::optional<FullscreenShaderPair> {
+    auto vertexSpirv = loadSpirvFile(vertexSpirvPath.c_str());
+    auto fragmentSpirv = loadSpirvFile(fragmentSpirvPath.c_str());
+    auto vertexReflection = loadReflectionMetadata(vertexReflectionPath.c_str());
+    if (!vertexSpirv.has_value() || !fragmentSpirv.has_value() || vertexReflection.isErr()) return std::nullopt;
+    auto layout = outputTransformVertexLayout(vertexReflection.value());
+    if (!layout.has_value()) return std::nullopt;
+    return FullscreenShaderPair{std::move(*vertexSpirv), std::move(*fragmentSpirv), std::move(*layout)};
+  };
+  std::optional<FullscreenShaderPair> bloomDownsampleShaders;
+  std::optional<FullscreenShaderPair> bloomUpsampleShaders;
+  std::optional<FullscreenShaderPair> bloomCompositeShaders;
+  if (atlantis::runtime::hasBloomShaderPaths(config)) {
+    bloomDownsampleShaders =
+        loadFullscreenShaderPair(config.bloomDownsampleVertexShaderSpirvPath,
+                                 config.bloomDownsampleVertexShaderReflectionPath, config.bloomDownsampleFragmentShaderSpirvPath);
+    bloomUpsampleShaders =
+        loadFullscreenShaderPair(config.bloomUpsampleVertexShaderSpirvPath,
+                                 config.bloomUpsampleVertexShaderReflectionPath, config.bloomUpsampleFragmentShaderSpirvPath);
+    bloomCompositeShaders = loadFullscreenShaderPair(config.bloomCompositeVertexShaderSpirvPath,
+                                                     config.bloomCompositeVertexShaderReflectionPath,
+                                                     config.bloomCompositeFragmentShaderSpirvPath);
+    if (!bloomDownsampleShaders || !bloomUpsampleShaders || !bloomCompositeShaders) {
+      return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+    }
+  }
+
   auto deviceResult = atlantis::vulkan_backend::createDevice(
       {.applicationName = "Atlantis Image Regression Fixture (PBR Normal Map Demo)", .enableValidationLayers = true});
   if (deviceResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::DeviceCreationFailed);
@@ -458,6 +493,36 @@ atlantis::Result<PbrNormalMapDemoFixture, PbrNormalMapDemoSetupError> setUpPbrNo
       fixture.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 128});
   if (shadowLightSpaceBufferResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
   fixture.shadowLightSpaceBuffer = std::move(shadowLightSpaceBufferResult.value());
+
+  // Plan 0044 P10: the bloom Pipelines (the Runtime's parameters exactly)
+  // and the bundle at this fixture's fixed extent.
+  if (bloomDownsampleShaders.has_value()) {
+    const auto createBloomPipeline = [&fixture](const FullscreenShaderPair& shaders, std::uint32_t samplerCount) {
+      return fixture.device->createPipeline(
+          {.vertexShader = {.spirvWords = shaders.vertexSpirv.data(), .wordCount = shaders.vertexSpirv.size()},
+           .fragmentShader = {.spirvWords = shaders.fragmentSpirv.data(), .wordCount = shaders.fragmentSpirv.size()},
+           .vertexInputLayout = shaders.vertexInputLayout,
+           .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
+           .pushConstantSizeBytes = 16,
+           .sampledTextureBindingCount = samplerCount,
+           .hasCameraUniformBinding = false,
+           .hasDepthAttachment = false});
+    };
+    auto downsampleResult = createBloomPipeline(*bloomDownsampleShaders, 1);
+    auto upsampleResult = createBloomPipeline(*bloomUpsampleShaders, 2);
+    auto compositeResult = createBloomPipeline(*bloomCompositeShaders, 2);
+    if (downsampleResult.isErr() || upsampleResult.isErr() || compositeResult.isErr()) {
+      return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
+    }
+    fixture.bloomDownsamplePipeline = std::move(downsampleResult.value());
+    fixture.bloomUpsamplePipeline = std::move(upsampleResult.value());
+    fixture.bloomCompositePipeline = std::move(compositeResult.value());
+
+    auto bloomTargetsResult = atlantis::renderer::createBloomTargets(
+        *fixture.device, Extent2D{kPbrNormalMapDemoExtentPixels, kPbrNormalMapDemoExtentPixels});
+    if (bloomTargetsResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
+    fixture.bloomTargets.emplace(std::move(bloomTargetsResult.value()));
+  }
 
   // Plan 0029 Section P19 (Fixture A/B mechanism, step 3): resolve the
   // control material's own CPU-side data now (no GPU work, no

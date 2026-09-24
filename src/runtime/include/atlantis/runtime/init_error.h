@@ -91,6 +91,13 @@ enum class RuntimeInitError {
   // Unorm -- mirrors PbrBaseColorTextureNotSrgb's own precedent
   // exactly, checked at the same scene-dependency-resolution point.
   PbrNormalMapTextureNotUnorm,
+  // Plan 0044 P9 (ruling O2): the twelve bloom shader paths are partly set,
+  // or the scene's active camera turns bloom on while none are.
+  BloomConfigInvalid,
+  // Plan 0044 Milestone 1: any of the three bloom Pipelines, created once
+  // at startup when the bloom shader paths are set -- one enumerator for
+  // the one new resource kind, the SkyPipelineCreateFailed precedent.
+  BloomPipelineCreateFailed,
 };
 
 // For logging only -- not part of any Result/error contract.

@@ -31,6 +31,9 @@ using atlantis::shader_system::DescriptorBinding;
 using atlantis::shader_system::litTexturedExpectedDescriptorContract;
 using atlantis::shader_system::minimalRendererExpectedDescriptorContract;
 using atlantis::shader_system::outputTransformExpectedDescriptorContract;
+using atlantis::shader_system::bloomCompositeExpectedDescriptorContract;
+using atlantis::shader_system::bloomDownsampleExpectedDescriptorContract;
+using atlantis::shader_system::bloomUpsampleExpectedDescriptorContract;
 using atlantis::shader_system::pbrClearcoatIblExpectedDescriptorContract;
 using atlantis::shader_system::pbrClearcoatIblNormalMapExpectedDescriptorContract;
 using atlantis::shader_system::pbrDirectLitExpectedDescriptorContract;
@@ -176,6 +179,13 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     // variants share the identical descriptor contract -- one function,
     // not two.
     fullContract = outputTransformExpectedDescriptorContract();
+  } else if (expectedContract == "bloom-downsample") {
+    // Plan 0044 Milestone 1 (ADR-0092 Decision 3).
+    fullContract = bloomDownsampleExpectedDescriptorContract();
+  } else if (expectedContract == "bloom-upsample") {
+    fullContract = bloomUpsampleExpectedDescriptorContract();
+  } else if (expectedContract == "bloom-composite") {
+    fullContract = bloomCompositeExpectedDescriptorContract();
   } else if (expectedContract == "sky") {
     fullContract = skyExpectedDescriptorContract();
   } else if (expectedContract == "shadow-cast") {
@@ -232,6 +242,10 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     // per-draw transform either (Plan 0026 Milestone 4).
   } else if (expectedContract == "output-transform-unorm" || expectedContract == "output-transform-srgb") {
     expected = {PushConstantRange{.offsetBytes = 0, .sizeBytes = 4, .stage = ShaderStage::Vertex}};
+  } else if (expectedContract == "bloom-downsample" || expectedContract == "bloom-upsample" ||
+             expectedContract == "bloom-composite") {
+    // Plan 0044 Milestone 1: renderer::Bloom*PushConstants, 16 bytes each.
+    expected = {PushConstantRange{.offsetBytes = 0, .sizeBytes = 16, .stage = ShaderStage::Vertex}};
   } else {
     // Plan 0035 Milestone 2 (ADR-0081): pbr-clearcoat-ibl/pbr-clearcoat-
     // ibl-normal-map share this same 96-byte expectation -- a real

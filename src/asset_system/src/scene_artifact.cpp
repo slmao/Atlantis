@@ -122,6 +122,11 @@ std::vector<std::byte> encodeSceneArtifact(const std::vector<ValidatedSceneNode>
     appendFloatLE(out, fog.heightFalloff);
     appendFloatLE(out, fog.maxOpacity);
 
+    // Plan 0044 P4: the bloom slot, record offsets 84-91.
+    const DecodedCameraBloom bloom = node.camera.has_value() ? node.camera->bloom : DecodedCameraBloom{};
+    appendFloatLE(out, bloom.strength);
+    appendFloatLE(out, bloom.threshold);
+
     appendU32LE(out, node.renderable.has_value() ? 1U : 0U);
     appendU64LE(out, node.renderable.has_value() ? node.renderable->meshAsset : 0U);
 
@@ -222,10 +227,14 @@ atlantis::Result<DecodedSceneArtifact, SceneArtifactDecodeError> decodeSceneArti
     fog.height = readFloatLE(record + 72);
     fog.heightFalloff = readFloatLE(record + 76);
     fog.maxOpacity = readFloatLE(record + 80);
+    // Plan 0044 P4: the bloom slot (84-91), re-checked the same way.
+    DecodedCameraBloom bloom;
+    bloom.strength = readFloatLE(record + 84);
+    bloom.threshold = readFloatLE(record + 88);
     if (hasCameraFlag != 0) {
       if (!std::isfinite(fovY) || !std::isfinite(nearZ) || !std::isfinite(farZ) || !std::isfinite(exposureEv) ||
           exposureEv < kExposureCompensationEvMin || exposureEv > kExposureCompensationEvMax ||
-          !isValidCameraFog(fog)) {
+          !isValidCameraFog(fog) || !isValidCameraBloom(bloom)) {
         return ResultT::Err(SceneArtifactDecodeError::NonFiniteValue);
       }
       DecodedCamera camera;
@@ -234,14 +243,15 @@ atlantis::Result<DecodedSceneArtifact, SceneArtifactDecodeError> decodeSceneArti
       camera.farZ = farZ;
       camera.exposureCompensationEv = exposureEv;
       camera.fog = fog;
+      camera.bloom = bloom;
       node.camera = camera;
     }
 
-    const std::uint32_t hasRenderableFlag = readU32LE(record + 84);
-    const std::uint64_t meshAssetId = readU64LE(record + 88);
+    const std::uint32_t hasRenderableFlag = readU32LE(record + 92);
+    const std::uint64_t meshAssetId = readU64LE(record + 96);
 
-    const std::uint32_t hasMaterialFlag = readU32LE(record + 96);
-    const std::uint64_t materialAssetId = readU64LE(record + 100);
+    const std::uint32_t hasMaterialFlag = readU32LE(record + 104);
+    const std::uint64_t materialAssetId = readU64LE(record + 108);
     // Plan 0018 Section P7: independent, never-trust-the-cooker check --
     // a material reference with no renderable is a structurally
     // impossible combination this grammar can never author, but decode
@@ -259,13 +269,13 @@ atlantis::Result<DecodedSceneArtifact, SceneArtifactDecodeError> decodeSceneArti
     // Spec 0019 D3/P4: light slot, inserted after material, before
     // parent -- independently re-validated here, never trusting the
     // cooker (parseSceneSource()'s own already-performed check).
-    const std::uint32_t hasLightFlag = readU32LE(record + 108);
-    const std::uint32_t lightKindRaw = readU32LE(record + 112);
-    const float colorR = readFloatLE(record + 116);
-    const float colorG = readFloatLE(record + 120);
-    const float colorB = readFloatLE(record + 124);
-    const float intensity = readFloatLE(record + 128);
-    const float range = readFloatLE(record + 132);
+    const std::uint32_t hasLightFlag = readU32LE(record + 116);
+    const std::uint32_t lightKindRaw = readU32LE(record + 120);
+    const float colorR = readFloatLE(record + 124);
+    const float colorG = readFloatLE(record + 128);
+    const float colorB = readFloatLE(record + 132);
+    const float intensity = readFloatLE(record + 136);
+    const float range = readFloatLE(record + 140);
     if (hasLightFlag != 0) {
       if (lightKindRaw != 0 && lightKindRaw != 1) return ResultT::Err(SceneArtifactDecodeError::NonFiniteValue);
       const bool isPoint = lightKindRaw == 1;
@@ -279,8 +289,8 @@ atlantis::Result<DecodedSceneArtifact, SceneArtifactDecodeError> decodeSceneArti
                                  colorB, intensity, isPoint ? range : 0.0f};
     }
 
-    const std::uint32_t hasParentFlag = readU32LE(record + 136);
-    const std::uint32_t parentIndex = readU32LE(record + 140);
+    const std::uint32_t hasParentFlag = readU32LE(record + 144);
+    const std::uint32_t parentIndex = readU32LE(record + 148);
     std::optional<std::size_t> parent;
     if (hasParentFlag != 0) {
       if (parentIndex >= nodeCount) return ResultT::Err(SceneArtifactDecodeError::OutOfRangeParentIndex);

@@ -112,6 +112,13 @@ struct RuntimeSmokeTestAccess {
 
   [[nodiscard]] static World& world(RuntimeApplication& app) { return *app.world_; }
 
+  // Plan 0044 Milestone 1: the three bloom Pipelines, built at startup when
+  // the bloom shader paths are set; sceneWantsBloom_ from the active camera.
+  [[nodiscard]] static bool hasBloomPipelines(const RuntimeApplication& app) {
+    return app.bloomDownsamplePipeline_ && app.bloomUpsamplePipeline_ && app.bloomCompositePipeline_;
+  }
+  [[nodiscard]] static bool sceneWantsBloom(const RuntimeApplication& app) { return app.sceneWantsBloom_; }
+
   [[nodiscard]] static FrameLightingData lightingPayloadBytes(const RuntimeApplication& app) {
     const auto* cameraBytes = static_cast<const std::byte*>(app.cameraBuffer_->mappedData());
     FrameLightingData lighting{};
@@ -235,11 +242,30 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
       std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.spv";
   config.shadowCastFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.refl.json";
+  // Plan 0044 Milestone 1 (P9): the three bloom shader pairs, as main.cpp
+  // sets them -- so the Runtime's bloom Pipelines are created here, under
+  // Validation Layers, even though this scene does not turn bloom on.
+  config.bloomDownsampleVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_BLOOM_DOWNSAMPLE_SHADER_DIR) + "/bloom_downsample.vert.spv";
+  config.bloomDownsampleVertexShaderReflectionPath = std::string(ATLANTIS_RUNTIME_BLOOM_DOWNSAMPLE_SHADER_DIR) + "/bloom_downsample.vert.refl.json";
+  config.bloomDownsampleFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_BLOOM_DOWNSAMPLE_SHADER_DIR) + "/bloom_downsample.frag.spv";
+  config.bloomDownsampleFragmentShaderReflectionPath = std::string(ATLANTIS_RUNTIME_BLOOM_DOWNSAMPLE_SHADER_DIR) + "/bloom_downsample.frag.refl.json";
+  config.bloomUpsampleVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_BLOOM_UPSAMPLE_SHADER_DIR) + "/bloom_upsample.vert.spv";
+  config.bloomUpsampleVertexShaderReflectionPath = std::string(ATLANTIS_RUNTIME_BLOOM_UPSAMPLE_SHADER_DIR) + "/bloom_upsample.vert.refl.json";
+  config.bloomUpsampleFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_BLOOM_UPSAMPLE_SHADER_DIR) + "/bloom_upsample.frag.spv";
+  config.bloomUpsampleFragmentShaderReflectionPath = std::string(ATLANTIS_RUNTIME_BLOOM_UPSAMPLE_SHADER_DIR) + "/bloom_upsample.frag.refl.json";
+  config.bloomCompositeVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR) + "/bloom_composite.vert.spv";
+  config.bloomCompositeVertexShaderReflectionPath = std::string(ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR) + "/bloom_composite.vert.refl.json";
+  config.bloomCompositeFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR) + "/bloom_composite.frag.spv";
+  config.bloomCompositeFragmentShaderReflectionPath = std::string(ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR) + "/bloom_composite.frag.refl.json";
   config.enableValidationLayers = true;
 
   auto appResult = createRuntimeApplication(config);
   REQUIRE(appResult.isOk());
   RuntimeApplication app = std::move(appResult.value());
+  // Plan 0044 Milestone 1: the bloom Pipelines exist; the scene does not
+  // turn bloom on, so no bloom targets are built.
+  CHECK(atlantis::runtime::RuntimeSmokeTestAccess::hasBloomPipelines(app));
+  CHECK_FALSE(atlantis::runtime::RuntimeSmokeTestAccess::sceneWantsBloom(app));
 
   // Matches this repository's own existing kCycleCount precedent
   // (frame_execution_demo, headless_rendering_demo,

@@ -153,10 +153,35 @@ struct BootstrapConfig {
   std::string outputTransformSrgbVertexShaderReflectionPath;
   std::string outputTransformSrgbFragmentShaderSpirvPath;
   std::string outputTransformSrgbFragmentShaderReflectionPath;
+  // Plan 0044 P9 (ruling O2): the three bloom shader pairs -- optional as
+  // a group, all twelve set or none (validateBloomBootstrapConfig()).
+  // Required only when the loaded scene's active camera turns bloom on;
+  // Runtime then reports BloomConfigInvalid instead of rendering without it.
+  std::string bloomDownsampleVertexShaderSpirvPath;
+  std::string bloomDownsampleVertexShaderReflectionPath;
+  std::string bloomDownsampleFragmentShaderSpirvPath;
+  std::string bloomDownsampleFragmentShaderReflectionPath;
+  std::string bloomUpsampleVertexShaderSpirvPath;
+  std::string bloomUpsampleVertexShaderReflectionPath;
+  std::string bloomUpsampleFragmentShaderSpirvPath;
+  std::string bloomUpsampleFragmentShaderReflectionPath;
+  std::string bloomCompositeVertexShaderSpirvPath;
+  std::string bloomCompositeVertexShaderReflectionPath;
+  std::string bloomCompositeFragmentShaderSpirvPath;
+  std::string bloomCompositeFragmentShaderReflectionPath;
   bool enableValidationLayers = true;
 };
 
 // GPU/window-independent validation for the optional environment portion.
+// Plan 0044 P9: true when all twelve bloom shader paths are set.
+[[nodiscard]] bool hasBloomShaderPaths(const BootstrapConfig& config);
+
+// Plan 0044 P9 (ruling O2): Err(BloomConfigInvalid) when only some of the
+// twelve bloom shader paths are set; Ok when all or none are. Whether a
+// scene needs them is checked by RuntimeApplication once the scene loads.
+[[nodiscard]] atlantis::Result<std::monostate, RuntimeInitError> validateBloomBootstrapConfig(
+    const BootstrapConfig& config);
+
 [[nodiscard]] atlantis::Result<std::monostate, RuntimeInitError> validateEnvironmentBootstrapConfig(
     const BootstrapConfig& config);
 

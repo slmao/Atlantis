@@ -1,4 +1,5 @@
 add_library(atlantis_renderer STATIC
+  src/bloom.cpp
   src/draw_order.cpp
   src/mesh.cpp
   src/material.cpp

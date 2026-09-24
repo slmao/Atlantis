@@ -75,6 +75,15 @@ namespace atlantis::shader_system {
 // identical shape; only their own fragment-stage math differs.
 [[nodiscard]] std::vector<DescriptorBinding> outputTransformExpectedDescriptorContract();
 
+// Plan 0044 Milestone 1 (ADR-0092 Decision 3): the bloom shader pairs'
+// contracts -- no uniform buffer, Fragment-only combined image samplers
+// from binding 0 (one for the downsample's source; two for the upsample's
+// current + lower level and the composite's hdr_color + U1), and a
+// 16-byte push-constant block each (checked by atlantis_shader_compiler).
+[[nodiscard]] std::vector<DescriptorBinding> bloomDownsampleExpectedDescriptorContract();
+[[nodiscard]] std::vector<DescriptorBinding> bloomUpsampleExpectedDescriptorContract();
+[[nodiscard]] std::vector<DescriptorBinding> bloomCompositeExpectedDescriptorContract();
+
 // Plan 0026 Milestone 4 (ADR-0071 P3): the sky's own fixed, expected
 // descriptor contract -- two bindings, both Fragment-only: {set 0,
 // binding 0, UniformBuffer, Fragment} (the existing frame uniform,

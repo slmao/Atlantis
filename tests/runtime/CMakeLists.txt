@@ -137,11 +137,17 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   # shader pair's own output directory, mirroring
   # ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR's own sourcing exactly.
   ATLANTIS_RUNTIME_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_direct_lit_normal_map_SHADER_OUTPUT_DIR}"
+  # Plan 0044 Milestone 1: runtime_smoke_gpu_tests.cpp creates the Runtime's
+  # bloom Pipelines, as main.cpp configures them.
+  ATLANTIS_RUNTIME_BLOOM_DOWNSAMPLE_SHADER_DIR="${ATLANTIS_bloom_downsample_SHADER_OUTPUT_DIR}"
+  ATLANTIS_RUNTIME_BLOOM_UPSAMPLE_SHADER_DIR="${ATLANTIS_bloom_upsample_SHADER_OUTPUT_DIR}"
+  ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR="${ATLANTIS_bloom_composite_SHADER_OUTPUT_DIR}"
 )
 
 add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
   pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders output_transform_srgb_shaders sky_shaders
   shadow_cast_shaders pbr_direct_lit_normal_map_shaders pbr_ibl_normal_map_shaders
+  bloom_downsample_shaders bloom_upsample_shaders bloom_composite_shaders
   ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
   ${ATLANTIS_ibl_studio_TARGET})
 

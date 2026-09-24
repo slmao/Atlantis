@@ -296,6 +296,12 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
     lifecycle_.markFailed();
     return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::EnvironmentConfigInvalid);
   }
+  // Plan 0044 P9 (ruling O2): the bloom shader paths are all set or none.
+  if (validateBloomBootstrapConfig(config).isErr()) {
+    ATLANTIS_LOG_ERROR("Invalid bloom bootstrap configuration: set all twelve bloom shader paths or none");
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::BloomConfigInvalid);
+  }
   // Plan 0027 Milestone 8 (ADR-0072 D-1/P1): unconditionally checked,
   // unlike validateEnvironmentBootstrapConfig() above -- shadow
   // infrastructure has no environment dependency.
@@ -768,6 +774,46 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   const std::vector<std::uint32_t> shadowCastFragmentSpirv = std::move(shadowCastFragmentSpirvOpt.value());
   const VertexInputLayout shadowCastVertexInputLayout = std::move(shadowCastLayoutOpt.value());
 
+  // Step 2h (Plan 0044 P9): the three bloom shader pairs -- only when
+  // configured (all twelve paths; validateBloomBootstrapConfig() above
+  // ruled out a partial set), each on the fullscreen-triangle schema the
+  // output-transform pairs use. Local, like the shadow-casting pair: the
+  // Pipelines are built once, below, and never rebuilt.
+  struct FullscreenShaderPair {
+    std::vector<std::uint32_t> vertexSpirv;
+    std::vector<std::uint32_t> fragmentSpirv;
+    VertexInputLayout vertexInputLayout;
+  };
+  const auto loadFullscreenShaderPair = [](const std::string& vertexSpirvPath, const std::string& vertexReflectionPath,
+                                           const std::string& fragmentSpirvPath) -> std::optional<FullscreenShaderPair> {
+    auto vertexSpirv = loadSpirvFile(vertexSpirvPath);
+    auto fragmentSpirv = loadSpirvFile(fragmentSpirvPath);
+    auto vertexReflection = loadReflectionMetadata(vertexReflectionPath);
+    if (!vertexSpirv.has_value() || !fragmentSpirv.has_value() || vertexReflection.isErr()) return std::nullopt;
+    auto layout = outputTransformVertexLayout(vertexReflection.value());
+    if (!layout.has_value()) return std::nullopt;
+    return FullscreenShaderPair{std::move(*vertexSpirv), std::move(*fragmentSpirv), std::move(*layout)};
+  };
+  std::optional<FullscreenShaderPair> bloomDownsampleShaders;
+  std::optional<FullscreenShaderPair> bloomUpsampleShaders;
+  std::optional<FullscreenShaderPair> bloomCompositeShaders;
+  if (hasBloomShaderPaths(config)) {
+    bloomDownsampleShaders =
+        loadFullscreenShaderPair(config.bloomDownsampleVertexShaderSpirvPath,
+                                 config.bloomDownsampleVertexShaderReflectionPath, config.bloomDownsampleFragmentShaderSpirvPath);
+    bloomUpsampleShaders =
+        loadFullscreenShaderPair(config.bloomUpsampleVertexShaderSpirvPath,
+                                 config.bloomUpsampleVertexShaderReflectionPath, config.bloomUpsampleFragmentShaderSpirvPath);
+    bloomCompositeShaders = loadFullscreenShaderPair(config.bloomCompositeVertexShaderSpirvPath,
+                                                     config.bloomCompositeVertexShaderReflectionPath,
+                                                     config.bloomCompositeFragmentShaderSpirvPath);
+    if (!bloomDownsampleShaders || !bloomUpsampleShaders || !bloomCompositeShaders) {
+      ATLANTIS_LOG_ERROR("Failed to load the configured bloom shader pairs");
+      lifecycle_.markFailed();
+      return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+    }
+  }
+
   // Step 3: Device.
   auto deviceResult = atlantis::vulkan_backend::createDevice(
       {.applicationName = config.applicationName, .enableValidationLayers = config.enableValidationLayers});
@@ -939,6 +985,36 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   }
   shadowCastPipeline_ = std::move(shadowCastPipelineResult.value());
 
+  // Step 4f (Plan 0044 P9, ruling Q5): the three bloom Pipelines, created
+  // by this composition root like every other Pipeline -- no camera
+  // uniform, no depth attachment, HdrFormat::Rgba16Float color, a 16-byte
+  // push-constant block (renderer::Bloom*PushConstants), and one sampler
+  // (downsample) or two (upsample, composite) from binding 0.
+  if (bloomDownsampleShaders.has_value()) {
+    const auto createBloomPipeline = [this](const FullscreenShaderPair& shaders, std::uint32_t samplerCount) {
+      return device_->createPipeline(
+          {.vertexShader = {.spirvWords = shaders.vertexSpirv.data(), .wordCount = shaders.vertexSpirv.size()},
+           .fragmentShader = {.spirvWords = shaders.fragmentSpirv.data(), .wordCount = shaders.fragmentSpirv.size()},
+           .vertexInputLayout = shaders.vertexInputLayout,
+           .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
+           .pushConstantSizeBytes = 16,
+           .sampledTextureBindingCount = samplerCount,
+           .hasCameraUniformBinding = false,
+           .hasDepthAttachment = false});
+    };
+    auto downsampleResult = createBloomPipeline(*bloomDownsampleShaders, 1);
+    auto upsampleResult = createBloomPipeline(*bloomUpsampleShaders, 2);
+    auto compositeResult = createBloomPipeline(*bloomCompositeShaders, 2);
+    if (downsampleResult.isErr() || upsampleResult.isErr() || compositeResult.isErr()) {
+      ATLANTIS_LOG_ERROR("createPipeline() (bloom) failed");
+      lifecycle_.markFailed();
+      return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::BloomPipelineCreateFailed);
+    }
+    bloomDownsamplePipeline_ = std::move(downsampleResult.value());
+    bloomUpsamplePipeline_ = std::move(upsampleResult.value());
+    bloomCompositePipeline_ = std::move(compositeResult.value());
+  }
+
   // The shadow-casting pass's own dedicated light-space uniform Buffer
   // (P5): 128 bytes (view + projection only) -- deliberately NOT the
   // main cameraBuffer_ above (shadow_cast.slang never reads the
@@ -1009,6 +1085,19 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   materialDataMap_ = std::move(outcome.materialDataMap);
   textureDataMap_ = std::move(outcome.textureDataMap);
   environmentData_ = std::move(loadedEnvironment);
+
+  // Plan 0044 P9 (ruling O2): a scene whose active camera turns bloom on
+  // needs the bloom Pipelines; without them, fail by name rather than
+  // silently rendering the scene without its bloom.
+  if (const auto activeCamera = world_->activeCamera(); activeCamera.has_value()) {
+    const auto camera = world_->getCamera(*activeCamera);
+    sceneWantsBloom_ = camera.isOk() && camera.value().bloom.strength > 0.0f;
+  }
+  if (sceneWantsBloom_ && !bloomDownsamplePipeline_) {
+    ATLANTIS_LOG_ERROR("The scene's camera turns bloom on, but no bloom shader paths are configured");
+    lifecycle_.markFailed();
+    return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::BloomConfigInvalid);
+  }
 
   lifecycle_.markRunning();
   return atlantis::Result<std::monostate, RuntimeInitError>::Ok(std::monostate{});
@@ -1204,7 +1293,18 @@ void RuntimeApplication::runFrame() {
   if (!lastSeenExtent_.has_value() || !(currentExtent == *lastSeenExtent_)) {
     auto newTextureResult = device_->createTexture({.extent = currentExtent, .format = DepthFormat::D32Sfloat});
     auto newHdrColorTargetResult = device_->createHdrColorTarget({.extent = currentExtent});
-    if (newTextureResult.isErr() || newHdrColorTargetResult.isErr()) {
+    // Plan 0044 P9: the bloom targets follow the HDR target's extent,
+    // under the same all-or-nothing adoption -- only when the scene wants
+    // bloom.
+    std::optional<atlantis::Result<atlantis::renderer::BloomTargets, atlantis::renderer::CreateBloomTargetsError>>
+        newBloomTargetsResult;
+    if (sceneWantsBloom_) newBloomTargetsResult.emplace(atlantis::renderer::createBloomTargets(*device_, currentExtent));
+    const bool bloomTargetsFailed = newBloomTargetsResult.has_value() && newBloomTargetsResult->isErr();
+    if (newTextureResult.isErr() || newHdrColorTargetResult.isErr() || bloomTargetsFailed) {
+      if (bloomTargetsFailed) {
+        ATLANTIS_LOG_ERROR(
+            "createBloomTargets() failed during resize -- keeping the existing bloom targets and retrying next frame");
+      }
       if (newTextureResult.isErr()) {
         ATLANTIS_LOG_ERROR(
             "createTexture() (depth) failed during resize -- keeping the existing depth Texture and retrying next "
@@ -1219,6 +1319,10 @@ void RuntimeApplication::runFrame() {
     } else {
       depthTexture_ = std::move(newTextureResult.value());
       hdrColorTarget_ = std::move(newHdrColorTargetResult.value());
+      if (newBloomTargetsResult.has_value()) {
+        bloomTargets_.reset();  // BloomTargets is move-only and not default-constructible
+        bloomTargets_.emplace(std::move(newBloomTargetsResult->value()));
+      }
       lastSeenExtent_ = currentExtent;
     }
   }
@@ -1785,6 +1889,11 @@ RuntimeExitReason RuntimeApplication::shutdown() {
   // member, each reset in the exact reverse order of its own
   // declaration (runtime_application.h) -- the same, no-new-rule
   // discipline this whole sequence already follows.
+  // Plan 0044 P9: the bloom resources, before the HDR target and Device.
+  bloomTargets_.reset();
+  bloomCompositePipeline_.reset();
+  bloomUpsamplePipeline_.reset();
+  bloomDownsamplePipeline_.reset();
   outputTransformSrgbPipeline_.reset();
   outputTransformUnormPipeline_.reset();
   outputTransformSampler_.reset();
