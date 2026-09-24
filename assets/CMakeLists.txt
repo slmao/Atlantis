@@ -506,6 +506,17 @@ atlantis_add_scene_asset(
     pbr_normal_mapped_control
   TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
 )
+
+# Plan 0044 Milestone 2: the bloom golden's scene. Same meshes and
+# materials as emissive_demo; the camera declares bloom=0.8 1.0.
+atlantis_add_scene_asset(
+  NAME bloom_demo_scene
+  SOURCE scenes/bloom_demo.scene.txt
+  MESH_DEPENDENCIES pbr_sphere
+  MATERIAL_DEPENDENCIES emissive_demo_orange emissive_demo_green emissive_demo_blue
+    emissive_demo_normal_mapped pbr_normal_mapped_control
+  TEXTURE_DEPENDENCIES textured_quad_srgb
+)
 set(ATLANTIS_emissive_demo_scene_ARTIFACT_PATH "${ATLANTIS_emissive_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_scene_METADATA_PATH "${ATLANTIS_emissive_demo_scene_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_scene_MANIFEST_PATH "${ATLANTIS_emissive_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
