@@ -4,9 +4,17 @@
   2026-09-24; rulings Q1–Q5 binding) —
   [ADR-0092](../adr/0092-bloom-pass-insertion-blur-strategy-targets-and-parameter-source.md)
   (`Accepted`)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending
+- **Joint Human Review:** slmao, 2026-09-25 — reviewed this Plan and
+  [Spec 0044](../specs/0044-bloom.md) together (chat confirmation;
+  document set carried by this branch's PR) and explicitly authorized
+  Implementation from Milestone 1. The five open points were ruled in
+  the same review: O1 the nullable-pointer input (EnvironmentLighting
+  pattern); O2 bloom shader paths optional with a scene-demand error;
+  O3 the firefly weight on D1 confirmed; O4 PbrNormalMapDemoFixture
+  extended; O5 Android packaging in Milestone 1. The shader relocation
+  to M1 (pipelines require compiled shaders) confirmed.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
