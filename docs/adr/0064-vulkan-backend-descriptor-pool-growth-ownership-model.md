@@ -198,3 +198,39 @@ established (`runtime_application.cpp:419-484,766-780`).
   descriptor arrays, shader-side indirection, or a newer, extension-gated
   Vulkan feature) for a real N that stays small and content-bounded —
   see Spec 0021's own Non-Goals for the full reasoning.
+
+## Accepted Amendment — 2026-09-26
+
+**Status: Accepted.** Human ruling 2026-09-26 (option A), during
+[Plan 0046](../plans/0046-bistro-finale.md) Milestone 3 of
+[Spec 0046](../specs/0046-bistro-finale.md). Everything above remains this
+ADR's original `Accepted` Decision; this amendment changes only item 5's
+Plan-time constant.
+
+**Finding.** The four-generation table (4, 8, 16, 32) caps concurrent
+descriptor sets at 60, and the backend allocates one set per Pipeline.
+Bistro realizes 254 materials — one Pipeline each — beside the frame's
+own pipelines (output transform, shadow cast, twelve bloom passes, …):
+about 270 sets. At 60, 208 of the 254 materials fail `createPipeline()`
+with `DescriptorSetAllocationFailed`. Item 5's ceiling, meant as a leak
+safety net ("never a content-scaling ceiling"), had become one.
+
+**Decision.** The growth table gains three generations, continuing the
+same geometric doubling: `kMaxDescriptorPoolCount` 4 → 7 and
+`kDescriptorPoolMaxSetsByGeneration` = {4, 8, 16, 32, 64, 128, 256} —
+508 concurrent sets, room for Bistro with headroom, still a finite
+ceiling that turns a genuine leak into
+`PipelineCreateError::DescriptorSetAllocationFailed`. Pools are still
+created only on demand (scan existing pools first), so no scene below 60
+sets allocates anything new. The per-set pool sizing
+(`createDescriptorPoolOfSize()`, ADR-0072 D-7 and its amendments) is
+unchanged. No RHI public change.
+
+**Consequences.** The GPU-independent table tests and the GPU ceiling
+tests that asserted 60 now assert 508, read from the same constants.
+The Bistro-scale descriptor count is the first real content to reach
+past the original ceiling; a scene beyond 508 Pipelines is a new
+decision (pipeline sharing or per-material descriptor sets, which this
+amendment does not take).
+
+**Deciders:** slmao — chat ruling 2026-09-26.
