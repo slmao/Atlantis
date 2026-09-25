@@ -4,9 +4,18 @@
   (`Approved`, 2026-09-25; rulings Q1–Q5 binding) —
   [ADR-0093](../adr/0093-static-texture-mip-chain-atex-v3-layout-data-shape-and-per-level-upload.md)
   (`Accepted`)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending
+- **Joint Human Review:** slmao, 2026-09-25 — reviewed this Plan and
+  [Spec 0045](../specs/0045-mip-chain-passthrough.md) together (chat
+  confirmation; document set carried by this branch's PR) and explicitly
+  authorized Implementation from Milestone 1. The five open points were
+  ruled in the same review: O1 textured_quad_fixture follows the
+  Runtime's upload and sampler; O2 synthetic mip chains built at test
+  time; O3 mip_count metadata line after data_layout; O4 mipFilter
+  switches to Linear only when maxLod > 0 (single-mip samplers stay
+  identical in every field); O5 the minification golden uses the
+  synthetic checker, not string-lights (which only reaches LOD 0.32).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
