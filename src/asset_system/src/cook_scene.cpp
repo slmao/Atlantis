@@ -189,7 +189,8 @@ atlantis::Result<std::monostate, SceneCookError> cookScene(const std::string& so
           !std::isfinite(parsedNode.camera->exposureCompensationEv) ||
           parsedNode.camera->exposureCompensationEv < kExposureCompensationEvMin ||
           parsedNode.camera->exposureCompensationEv > kExposureCompensationEvMax ||
-          !isValidCameraFog(parsedNode.camera->fog)) {  // Plan 0043 P2: NonFiniteValue reused, like exposure
+          !isValidCameraFog(parsedNode.camera->fog) ||  // Plan 0043 P2: NonFiniteValue reused, like exposure
+          !isValidCameraBloom(parsedNode.camera->bloom)) {  // Plan 0044 P2: likewise
         return ResultT::Err(SceneCookError::NonFiniteValue);
       }
       node.camera = parsedNode.camera;

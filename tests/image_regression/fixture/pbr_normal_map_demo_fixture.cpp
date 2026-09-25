@@ -297,6 +297,41 @@ atlantis::Result<PbrNormalMapDemoFixture, PbrNormalMapDemoSetupError> setUpPbrNo
     return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
   }
 
+  // Plan 0044 P10: the three bloom shader pairs, only when configured --
+  // the output transform's fullscreen-triangle schema, as in the Runtime.
+  struct FullscreenShaderPair {
+    std::vector<std::uint32_t> vertexSpirv;
+    std::vector<std::uint32_t> fragmentSpirv;
+    VertexInputLayout vertexInputLayout;
+  };
+  const auto loadFullscreenShaderPair = [](const std::string& vertexSpirvPath, const std::string& vertexReflectionPath,
+                                           const std::string& fragmentSpirvPath) -> std::optional<FullscreenShaderPair> {
+    auto vertexSpirv = loadSpirvFile(vertexSpirvPath.c_str());
+    auto fragmentSpirv = loadSpirvFile(fragmentSpirvPath.c_str());
+    auto vertexReflection = loadReflectionMetadata(vertexReflectionPath.c_str());
+    if (!vertexSpirv.has_value() || !fragmentSpirv.has_value() || vertexReflection.isErr()) return std::nullopt;
+    auto layout = outputTransformVertexLayout(vertexReflection.value());
+    if (!layout.has_value()) return std::nullopt;
+    return FullscreenShaderPair{std::move(*vertexSpirv), std::move(*fragmentSpirv), std::move(*layout)};
+  };
+  std::optional<FullscreenShaderPair> bloomDownsampleShaders;
+  std::optional<FullscreenShaderPair> bloomUpsampleShaders;
+  std::optional<FullscreenShaderPair> bloomCompositeShaders;
+  if (atlantis::runtime::hasBloomShaderPaths(config)) {
+    bloomDownsampleShaders =
+        loadFullscreenShaderPair(config.bloomDownsampleVertexShaderSpirvPath,
+                                 config.bloomDownsampleVertexShaderReflectionPath, config.bloomDownsampleFragmentShaderSpirvPath);
+    bloomUpsampleShaders =
+        loadFullscreenShaderPair(config.bloomUpsampleVertexShaderSpirvPath,
+                                 config.bloomUpsampleVertexShaderReflectionPath, config.bloomUpsampleFragmentShaderSpirvPath);
+    bloomCompositeShaders = loadFullscreenShaderPair(config.bloomCompositeVertexShaderSpirvPath,
+                                                     config.bloomCompositeVertexShaderReflectionPath,
+                                                     config.bloomCompositeFragmentShaderSpirvPath);
+    if (!bloomDownsampleShaders || !bloomUpsampleShaders || !bloomCompositeShaders) {
+      return ResultT::Err(PbrNormalMapDemoSetupError::ShaderLoadFailed);
+    }
+  }
+
   auto deviceResult = atlantis::vulkan_backend::createDevice(
       {.applicationName = "Atlantis Image Regression Fixture (PBR Normal Map Demo)", .enableValidationLayers = true});
   if (deviceResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::DeviceCreationFailed);
@@ -459,6 +494,39 @@ atlantis::Result<PbrNormalMapDemoFixture, PbrNormalMapDemoSetupError> setUpPbrNo
   if (shadowLightSpaceBufferResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
   fixture.shadowLightSpaceBuffer = std::move(shadowLightSpaceBufferResult.value());
 
+  // Plan 0044 P10: the bloom Pipelines (the Runtime's parameters exactly)
+  // and the bundle at this fixture's fixed extent.
+  if (bloomDownsampleShaders.has_value()) {
+    const auto createBloomPipeline = [&fixture](const FullscreenShaderPair& shaders, std::uint32_t samplerCount) {
+      return fixture.device->createPipeline(
+          {.vertexShader = {.spirvWords = shaders.vertexSpirv.data(), .wordCount = shaders.vertexSpirv.size()},
+           .fragmentShader = {.spirvWords = shaders.fragmentSpirv.data(), .wordCount = shaders.fragmentSpirv.size()},
+           .vertexInputLayout = shaders.vertexInputLayout,
+           .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
+           .pushConstantSizeBytes = 16,
+           .sampledTextureBindingCount = samplerCount,
+           .hasCameraUniformBinding = false,
+           .hasDepthAttachment = false});
+    };
+    // ADR-0092 Accepted Correction 2026-09-25: twelve instances, one per pass.
+    for (std::size_t i = 0; i < atlantis::renderer::kBloomPipelineCount; ++i) {
+      const auto pair = atlantis::renderer::bloomPipelineShaderPair(i);
+      const FullscreenShaderPair& shaders = pair == atlantis::renderer::BloomShaderPair::Downsample
+                                                ? *bloomDownsampleShaders
+                                                : (pair == atlantis::renderer::BloomShaderPair::Upsample
+                                                       ? *bloomUpsampleShaders
+                                                       : *bloomCompositeShaders);
+      auto result = createBloomPipeline(shaders, atlantis::renderer::bloomPipelineSamplerCount(i));
+      if (result.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
+      fixture.bloomPipelines[i] = std::move(result.value());
+    }
+
+    auto bloomTargetsResult = atlantis::renderer::createBloomTargets(
+        *fixture.device, Extent2D{kPbrNormalMapDemoExtentPixels, kPbrNormalMapDemoExtentPixels});
+    if (bloomTargetsResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::ResourceCreationFailed);
+    fixture.bloomTargets.emplace(std::move(bloomTargetsResult.value()));
+  }
+
   // Plan 0029 Section P19 (Fixture A/B mechanism, step 3): resolve the
   // control material's own CPU-side data now (no GPU work, no
   // dependency on a CommandList) -- its own GPU realization (which DOES
@@ -476,8 +544,16 @@ atlantis::Result<PbrNormalMapDemoFixture, PbrNormalMapDemoSetupError> setUpPbrNo
   return ResultT::Ok(std::move(fixture));
 }
 
+atlantis::renderer::BloomInput makeFixtureBloomInput(PbrNormalMapDemoFixture& fixture, float strength,
+                                                     float threshold) {
+  atlantis::renderer::BloomInput input{.targets = *fixture.bloomTargets, .strength = strength, .threshold = threshold};
+  for (std::size_t i = 0; i < fixture.bloomPipelines.size(); ++i) input.pipelines[i] = fixture.bloomPipelines[i].get();
+  return input;
+}
+
 atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDemoFrame(
-    PbrNormalMapDemoFixture& fixture, bool includeShadowCasters, bool useControlMaterial) {
+    PbrNormalMapDemoFixture& fixture, bool includeShadowCasters, bool useControlMaterial,
+    const atlantis::renderer::BloomInput* bloom) {
   namespace rhi = atlantis::rhi;
   namespace render_graph = atlantis::render_graph;
   using ResultT = atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError>;
@@ -746,13 +822,25 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   } else if (fixture.environmentLightingResources.has_value()) {
     environmentLightingView.emplace(fixture.environmentLightingResources->borrowedView());
   }
+  // Plan 0044 P10: with no explicit BloomInput, the World camera's own
+  // bloom= group drives the chain when its strength is above 0 and the
+  // fixture was set up with the bloom paths -- what the Runtime does for
+  // the same scene (P9). An explicit pointer overrides the camera.
+  std::optional<atlantis::renderer::BloomInput> cameraBloom;
+  if (bloom == nullptr && cameraComponent.bloom.strength > 0.0f && fixture.bloomTargets.has_value()) {
+    cameraBloom.emplace(
+        makeFixtureBloomInput(fixture, cameraComponent.bloom.strength, cameraComponent.bloom.threshold));
+  }
+  const atlantis::renderer::BloomInput* effectiveBloom =
+      bloom != nullptr ? bloom : (cameraBloom.has_value() ? &*cameraBloom : nullptr);
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, renderDrawItems,
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
                       *fixture.outputTransformPipeline, *fixture.outputTransformSampler, 0.0f,
                       environmentLightingView.has_value() ? &*environmentLightingView : nullptr,
                       fixture.skyPipeline.get(), *fixture.shadowMap, *fixture.shadowMapSampler,
-                      *fixture.shadowCastPipeline, *fixture.shadowLightSpaceBuffer, shadowCasterDrawItems);
+                      *fixture.shadowCastPipeline, *fixture.shadowLightSpaceBuffer, shadowCasterDrawItems,
+                      std::nullopt, effectiveBloom);
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");

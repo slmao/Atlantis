@@ -110,7 +110,7 @@ constexpr const char* kNode1MeshPath = "meshes/scene_instantiation_node1.mesh.tx
 // camera. Values match the prior revision's own hand-built fixture
 // exactly, just authored as real scene source text instead.
 constexpr const char* kThreeNodeSceneSource =
-    "atlantis_scene_source_version: 5\n"
+    "atlantis_scene_source_version: 6\n"
     "node_count: 3\n"
     "active_camera: 3\n"
     "node: node_id=1 parent=none position=1.0 2.0 3.0 rotation=0.1 0.2 0.3 scale=1.0 1.0 1.0 "
@@ -127,7 +127,7 @@ constexpr const char* kThreeNodeSceneSource =
 // with a real, non-zero, non-default value (1.0), not merely that it
 // parses.
 constexpr const char* kThreeNodeSceneSourceWithExposure =
-    "atlantis_scene_source_version: 5\n"
+    "atlantis_scene_source_version: 6\n"
     "node_count: 3\n"
     "active_camera: 3\n"
     "node: node_id=1 parent=none position=1.0 2.0 3.0 rotation=0.1 0.2 0.3 scale=1.0 1.0 1.0 "
@@ -230,7 +230,7 @@ TEST_CASE("fromValidatedSceneData() carries a node's material= reference into Re
   // and material= instantiates into a World entity whose Renderable
   // carries both AssetIds.
   const ValidatedSceneData scene = cookAndDecodeScene(
-      "atlantis_scene_source_version: 5\n"
+      "atlantis_scene_source_version: 6\n"
       "node_count: 1\n"
       "active_camera: none\n"
       "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -267,7 +267,7 @@ TEST_CASE("fromValidatedSceneData() leaves Renderable::materialAsset absent when
 TEST_CASE("fromValidatedSceneData() carries a node's light= declaration into World::Light",
           "[world][scene][light]") {
   const ValidatedSceneData scene = cookAndDecodeScene(
-      "atlantis_scene_source_version: 5\n"
+      "atlantis_scene_source_version: 6\n"
       "node_count: 2\n"
       "active_camera: none\n"
       "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -356,7 +356,7 @@ TEST_CASE("fromValidatedSceneData() produces deterministic, repeatable EntityId 
 
 TEST_CASE("fromValidatedSceneData() leaves an empty active camera when the scene declares none", "[world][scene]") {
   constexpr const char* kPlainSceneSource =
-      "atlantis_scene_source_version: 5\n"
+      "atlantis_scene_source_version: 6\n"
       "node_count: 1\n"
       "active_camera: none\n"
       "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";
@@ -371,7 +371,7 @@ TEST_CASE("A camera fog group survives the complete source->cook->artifact->deco
   // parameters -- every one non-default, so a field dropped at any
   // layer falls back to its default and fails here.
   const ValidatedSceneData scene = cookAndDecodeScene(
-      "atlantis_scene_source_version: 5\n"
+      "atlantis_scene_source_version: 6\n"
       "node_count: 1\n"
       "active_camera: 1\n"
       "node: node_id=1 parent=none position=0.0 2.2 7.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
@@ -405,4 +405,32 @@ TEST_CASE("A camera with no fog group instantiates with fog off (Plan 0043)", "[
   CHECK(camera.value().fog.heightFalloff == defaults.heightFalloff);
   CHECK(camera.value().fog.maxOpacity == defaults.maxOpacity);
   CHECK(camera.value().fog.color.x == defaults.color.x);
+}
+
+TEST_CASE("A camera bloom group survives the complete source->cook->artifact->decode->World chain (Plan 0044)",
+          "[world][scene][bloom]") {
+  const ValidatedSceneData scene = cookAndDecodeScene(
+      "atlantis_scene_source_version: 6\n"
+      "node_count: 1\n"
+      "active_camera: 1\n"
+      "node: node_id=1 parent=none position=0.0 2.2 7.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0 "
+      "fog=0.05 -1.5 0.25 0.9 fog_color=0.5 0.75 3.0 bloom=0.3 2.5\n");
+  World world = fromValidatedSceneData(scene);
+  REQUIRE(world.activeCamera().has_value());
+  const auto camera = world.getCamera(*world.activeCamera());
+  REQUIRE(camera.isOk());
+  CHECK(camera.value().bloom.strength == 0.3f);
+  CHECK(camera.value().bloom.threshold == 2.5f);
+  CHECK(camera.value().fog.density == 0.05f);
+}
+
+TEST_CASE("A camera with no bloom group instantiates with bloom off (Plan 0044)", "[world][scene][bloom]") {
+  const ValidatedSceneData scene = cookAndDecodeScene(kThreeNodeSceneSource);
+  World world = fromValidatedSceneData(scene);
+  REQUIRE(world.activeCamera().has_value());
+  const auto camera = world.getCamera(*world.activeCamera());
+  REQUIRE(camera.isOk());
+  CHECK(camera.value().bloom.strength == 0.0f);
+  CHECK(camera.value().bloom.threshold == 1.0f);
 }

@@ -4,6 +4,7 @@
 #include <atlantis/asset_system/environment_types.h>
 #include <atlantis/asset_system/material_types.h>
 #include <atlantis/asset_system/texture_types.h>
+#include <atlantis/renderer/bloom.h>
 #include <atlantis/renderer/material.h>
 #include <atlantis/renderer/mesh.h>
 #include <atlantis/result.h>
@@ -23,6 +24,7 @@
 
 #include "../support/pixel_diff.h"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -125,6 +127,15 @@ struct PbrNormalMapDemoFixture {
   std::unique_ptr<atlantis::rhi::Pipeline> shadowCastPipeline;
   std::unique_ptr<atlantis::rhi::Buffer> shadowLightSpaceBuffer;
 
+  // Plan 0044 P10 (ruling O4): optional bloom -- the three Pipelines and
+  // the twelve-target bundle, created in setup only when the config sets
+  // all twelve bloom shader paths (atlantis::runtime::hasBloomShaderPaths());
+  // null/empty for every existing use of this fixture.
+  // ADR-0092 Accepted Correction 2026-09-25: one Pipeline per bloom pass,
+  // indexed as renderer::BloomInput::pipelines.
+  std::array<std::unique_ptr<atlantis::rhi::Pipeline>, atlantis::renderer::kBloomPipelineCount> bloomPipelines;
+  std::optional<atlantis::renderer::BloomTargets> bloomTargets;
+
   std::optional<atlantis::world::World> world;
 
   std::size_t lastDrawItemCount = 0;
@@ -192,6 +203,17 @@ enum class PbrNormalMapDemoRenderError {
 // -- mesh, transform, camera, lighting, environment, and shadow
 // resources are all identical to R1.
 [[nodiscard]] atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDemoFrame(
-    PbrNormalMapDemoFixture& fixture, bool includeShadowCasters = true, bool useControlMaterial = false);
+    PbrNormalMapDemoFixture& fixture, bool includeShadowCasters = true, bool useControlMaterial = false,
+    const atlantis::renderer::BloomInput* bloom = nullptr);
+// Plan 0044 M2: a BloomInput over this fixture's own bloom targets and
+// twelve Pipelines. Requires a fixture set up with the bloom paths.
+[[nodiscard]] atlantis::renderer::BloomInput makeFixtureBloomInput(PbrNormalMapDemoFixture& fixture, float strength,
+                                                                   float threshold);
+
+// Plan 0044 M2: the trailing bloom pointer forwards to drawFrame()'s own
+// optional bloom parameter. When it is nullptr, the World camera's bloom=
+// group decides (Plan 0044 P10): strength > 0 on a fixture set up with the
+// bloom paths renders the chain; otherwise bloom is off -- byte-identical
+// to every pre-0044 frame, as for every scene that declares no bloom.
 
 }  // namespace atlantis::image_regression

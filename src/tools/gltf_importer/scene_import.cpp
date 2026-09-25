@@ -100,7 +100,7 @@ struct SceneLine {
 // round-trip floats: serializeSceneSource() prints std::to_string's fixed
 // six decimals, which would lose precision on imported transforms.
 [[nodiscard]] std::string serialize(const std::vector<SceneLine>& lines) {
-  std::string out = "atlantis_scene_source_version: 5\nnode_count: " + std::to_string(lines.size()) +
+  std::string out = "atlantis_scene_source_version: 6\nnode_count: " + std::to_string(lines.size()) +
                     "\nactive_camera: none\n";
   for (const SceneLine& l : lines) {
     out += "node: node_id=" + std::to_string(l.id) + " parent=" + (l.parent ? std::to_string(*l.parent) : "none") +

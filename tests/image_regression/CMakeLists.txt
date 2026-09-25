@@ -15,6 +15,7 @@ add_executable(atlantis_image_regression_tests
   golden_validity_tests.cpp
   tone_mapping_reference_tests.cpp
   fog_reference_tests.cpp
+  bloom_reference_tests.cpp
 )
 
 target_link_libraries(atlantis_image_regression_tests
@@ -51,6 +52,8 @@ add_executable(atlantis_image_regression_gpu_tests
   cutout_demo_gpu_tests.cpp
   transparency_demo_gpu_tests.cpp
   fog_demo_gpu_tests.cpp
+  bloom_demo_gpu_tests.cpp
+  bloom_on_tests.cpp
   pbr_material_demo_gpu_tests.cpp
   hdr_roll_off_demo_gpu_tests.cpp
   ibl_material_demo_gpu_tests.cpp
@@ -284,6 +287,17 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_emissive_demo_scene_ARTIFACT_PATH="${ATLANTIS_emissive_demo_scene_ARTIFACT_PATH}"
   ATLANTIS_emissive_demo_scene_METADATA_PATH="${ATLANTIS_emissive_demo_scene_METADATA_PATH}"
   ATLANTIS_emissive_demo_scene_MANIFEST_PATH="${ATLANTIS_emissive_demo_scene_MANIFEST_PATH}"
+  # Plan 0044 Milestone 1: the three bloom shader pairs' output directories.
+  ATLANTIS_BLOOM_DOWNSAMPLE_SHADER_DIR="${ATLANTIS_bloom_downsample_SHADER_OUTPUT_DIR}"
+  ATLANTIS_BLOOM_UPSAMPLE_SHADER_DIR="${ATLANTIS_bloom_upsample_SHADER_OUTPUT_DIR}"
+  ATLANTIS_BLOOM_COMPOSITE_SHADER_DIR="${ATLANTIS_bloom_composite_SHADER_OUTPUT_DIR}"
+  # Plan 0044 Milestone 2: the two bloom scenes (bloom_on_tests.cpp).
+  ATLANTIS_bloom_demo_scene_ARTIFACT_PATH="${ATLANTIS_bloom_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_bloom_demo_scene_METADATA_PATH="${ATLANTIS_bloom_demo_scene_METADATA_PATH}"
+  ATLANTIS_bloom_demo_scene_MANIFEST_PATH="${ATLANTIS_bloom_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_bloom_fog_demo_scene_ARTIFACT_PATH="${ATLANTIS_bloom_fog_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_bloom_fog_demo_scene_METADATA_PATH="${ATLANTIS_bloom_fog_demo_scene_METADATA_PATH}"
+  ATLANTIS_bloom_fog_demo_scene_MANIFEST_PATH="${ATLANTIS_bloom_fog_demo_scene_MANIFEST_PATH}"
   # Plan 0043 Milestone 2: the height-fog scenes -- the lit two and the
   # neutrality twin via PbrMaterialDemoFixture (ATLANTIS_PBR_MATERIAL_DEMO_*
   # shader dirs), the dark one via PbrNormalMapDemoFixture
@@ -441,6 +455,7 @@ add_dependencies(atlantis_image_regression_gpu_tests ${ATLANTIS_minimal_cube_TAR
   ${ATLANTIS_cutout_demo_scene_TARGET} ${ATLANTIS_transparency_demo_scene_TARGET}
   ${ATLANTIS_transparency_demo_swapped_scene_TARGET}
   ${ATLANTIS_fog_distance_demo_scene_TARGET} ${ATLANTIS_fog_height_demo_scene_TARGET}
+  ${ATLANTIS_bloom_demo_scene_TARGET} ${ATLANTIS_bloom_fog_demo_scene_TARGET}
   ${ATLANTIS_fog_dark_demo_scene_TARGET} ${ATLANTIS_fog_zero_neutrality_scene_TARGET})
 
 # Same build-tree shader artifact set as the golden generator -- this
@@ -456,6 +471,7 @@ add_dependencies(atlantis_image_regression_gpu_tests minimal_mesh_shaders textur
   pbr_ibl_normal_map_shaders pbr_direct_lit_normal_map_shaders pbr_clearcoat_ibl_shaders
   pbr_clearcoat_ibl_normal_map_shaders pbr_sheen_ibl_shaders pbr_sheen_ibl_normal_map_shaders
   pbr_anisotropic_ibl_shaders pbr_anisotropic_ibl_normal_map_shaders
+  bloom_downsample_shaders bloom_upsample_shaders bloom_composite_shaders
   ${ATLANTIS_bc7_stringlights_unorm_TARGET} ${ATLANTIS_bc7_stringlights_srgb_TARGET})
 add_custom_command(TARGET atlantis_image_regression_gpu_tests POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory

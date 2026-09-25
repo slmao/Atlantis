@@ -16,12 +16,21 @@ struct CameraFog {
   float maxOpacity = 1.0f;        // in [0, 1]
 };
 
+// Plan 0044 P3 (Spec 0044 R4, ADR-0092 Decision 4): the camera's bloom
+// parameters, plain data like CameraFog. strength 0 means bloom off; the
+// value domain is the Asset System's cook/decode check, not World's.
+struct CameraBloom {
+  float strength = 0.0f;   // in [0, 1]; 0 = off
+  float threshold = 1.0f;  // scene-referred knee, >= 0
+};
+
 struct Camera {
   float fovYRadians = 0.0f;
   float nearZ = 0.0f;
   float farZ = 0.0f;
   float exposureCompensationEv = 0.0f;
-  CameraFog fog;  // Plan 0043: trailing, so existing Camera{...} inits stay valid
+  CameraFog fog;      // Plan 0043: trailing, so existing Camera{...} inits stay valid
+  CameraBloom bloom;  // Plan 0044: trailing, likewise
 };
 
 }  // namespace atlantis::world

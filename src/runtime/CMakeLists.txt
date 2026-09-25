@@ -179,6 +179,10 @@ target_compile_definitions(atlantis_runtime PRIVATE
   # exactly.
   ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
   ATLANTIS_RUNTIME_OUTPUT_TRANSFORM_SRGB_SHADER_DIR="${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}"
+  # Plan 0044 Milestone 1: the three bloom shader pairs' output directories.
+  ATLANTIS_RUNTIME_BLOOM_DOWNSAMPLE_SHADER_DIR="${ATLANTIS_bloom_downsample_SHADER_OUTPUT_DIR}"
+  ATLANTIS_RUNTIME_BLOOM_UPSAMPLE_SHADER_DIR="${ATLANTIS_bloom_upsample_SHADER_OUTPUT_DIR}"
+  ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR="${ATLANTIS_bloom_composite_SHADER_OUTPUT_DIR}"
   # Plan 0032 M2 (Spec 0032 Requirement 5/6): the two scenes --scene
   # can additionally select, beyond the default (ATLANTIS_RUNTIME_SCENE_*
   # above, unrenamed). Same real, already-exported CMake variables
@@ -220,6 +224,7 @@ add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit
   pbr_clearcoat_ibl_shaders pbr_clearcoat_ibl_normal_map_shaders
   pbr_sheen_ibl_shaders pbr_sheen_ibl_normal_map_shaders
   pbr_anisotropic_ibl_shaders pbr_anisotropic_ibl_normal_map_shaders
+  bloom_downsample_shaders bloom_upsample_shaders bloom_composite_shaders
   ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
   ${ATLANTIS_ibl_studio_TARGET} ${ATLANTIS_ibl_material_demo_scene_TARGET} ${ATLANTIS_pbr_normal_map_demo_scene_TARGET}
   # Plan 0035 Milestone 5 (Spec 0035 Requirement 7): closes the same

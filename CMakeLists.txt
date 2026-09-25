@@ -202,6 +202,12 @@ add_subdirectory(shaders/sky)
 # immediately after sky and before src/runtime, for the same
 # add_dependencies()-ordering reason documented below.
 add_subdirectory(shaders/shadow_cast)
+# Plan 0044 Milestone 1 (ADR-0092): the three bloom shader pairs --
+# unconditional production content, declared before src/runtime for the
+# same add_dependencies()-ordering reason.
+add_subdirectory(shaders/bloom_downsample)
+add_subdirectory(shaders/bloom_upsample)
+add_subdirectory(shaders/bloom_composite)
 endif()
 # Plan 0013 Section D1: must come after add_subdirectory(assets),
 # add_subdirectory(shaders/minimal_renderer), (Plan 0018 Section P10)

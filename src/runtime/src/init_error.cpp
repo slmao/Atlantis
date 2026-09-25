@@ -62,6 +62,10 @@ const char* toString(RuntimeInitError error) noexcept {
       return "ShadowLightSpaceBufferCreateFailed";
     case RuntimeInitError::PbrNormalMapTextureNotUnorm:
       return "PbrNormalMapTextureNotUnorm";
+    case RuntimeInitError::BloomConfigInvalid:
+      return "BloomConfigInvalid";
+    case RuntimeInitError::BloomPipelineCreateFailed:
+      return "BloomPipelineCreateFailed";
   }
   // Reached only if a future RuntimeInitError value is added without a
   // corresponding case above -- see exit_reason.cpp's identical comment

@@ -36,6 +36,9 @@ World fromValidatedSceneData(const atlantis::asset_system::ValidatedSceneData& s
       camera.fog.height = fog.height;
       camera.fog.heightFalloff = fog.heightFalloff;
       camera.fog.maxOpacity = fog.maxOpacity;
+      // Plan 0044 P3: the bloom group, likewise.
+      camera.bloom.strength = n.camera->bloom.strength;
+      camera.bloom.threshold = n.camera->bloom.threshold;
       ATLANTIS_CHECK_MSG(world.setCamera(id, camera).isOk(),
                           "fromValidatedSceneData(): setCamera() failed for a freshly-created entity");
     }

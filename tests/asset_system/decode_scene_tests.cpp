@@ -70,7 +70,7 @@ void writeFile(const fs::path& path, const std::string& content) {
 }
 
 constexpr std::string_view kValidTwoNodeTextSource =
-    "atlantis_scene_source_version: 5\n"
+    "atlantis_scene_source_version: 6\n"
     "node_count: 2\n"
     "active_camera: 2\n"
     "node: node_id=1 parent=none position=1.0 2.0 3.0 rotation=0.1 0.2 0.3 scale=1.0 1.0 1.0 "
@@ -146,12 +146,12 @@ TEST_CASE("decodeSceneArtifact rejects a bad magic", "[asset_system][scene]") {
 }
 
 TEST_CASE("decodeSceneArtifact rejects an unknown schema version", "[asset_system][scene]") {
-  // Plan 0043: this literal must name a value still genuinely
-  // unrecognized now that version 5 is the real, accepted version -- 6
-  // here, not 5 (matching Plan 0031/Plan 0020/Plan 0019's own identical
-  // precedent).
+  // Plan 0044: this literal must name a value still genuinely
+  // unrecognized now that version 6 is the real, accepted version -- 7
+  // here, not 6 (matching Plan 0043/Plan 0031/Plan 0020/Plan 0019's own
+  // identical precedent).
   auto bytes = encodeSceneArtifact(makeTwoNodes(), {std::nullopt, 0}, 1);
-  bytes[4] = std::byte{0x06};  // schema_version's low byte, offset 4
+  bytes[4] = std::byte{0x07};  // schema_version's low byte, offset 4
   const auto result = decodeSceneArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneArtifactDecodeError::UnknownSchemaVersion);
@@ -195,6 +195,16 @@ TEST_CASE("decodeSceneArtifact rejects the superseded schema version 4 outright"
   // rejected outright, exactly like versions 1-3 already were.
   auto bytes = encodeSceneArtifact(makeTwoNodes(), {std::nullopt, 0}, 1);
   bytes[4] = std::byte{0x04};
+  const auto result = decodeSceneArtifact(bytes);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == SceneArtifactDecodeError::UnknownSchemaVersion);
+}
+
+TEST_CASE("decodeSceneArtifact rejects the superseded schema version 5 outright", "[asset_system][scene][bloom]") {
+  // Plan 0044: version 5 (pre-bloom, 144-byte records) is now also
+  // rejected outright, exactly like versions 1-4 already were.
+  auto bytes = encodeSceneArtifact(makeTwoNodes(), {std::nullopt, 0}, 1);
+  bytes[4] = std::byte{0x05};
   const auto result = decodeSceneArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneArtifactDecodeError::UnknownSchemaVersion);
@@ -324,7 +334,7 @@ TEST_CASE("decodeSceneArtifact rejects an implausibly large node_count before al
   bytes[1] = std::byte{'S'};
   bytes[2] = std::byte{'C'};
   bytes[3] = std::byte{'N'};
-  bytes[4] = std::byte{0x05};  // schema_version = 5 (Plan 0043)
+  bytes[4] = std::byte{0x06};  // schema_version = 6 (Plan 0044)
   // node_count at offset 8, a huge value: 0xFFFFFFFF.
   bytes[8] = std::byte{0xFF};
   bytes[9] = std::byte{0xFF};
@@ -381,10 +391,10 @@ TEST_CASE("decodeSceneArtifact rejects a hand-crafted material-without-renderabl
   // No renderable set -- has_renderable will encode as 0.
   auto bytes = encodeSceneArtifact({node}, {std::nullopt}, std::nullopt);
 
-  // Corrupt: set has_material (Plan 0043: record offset 96, i.e.
-  // kSceneArtifactHeaderSizeBytes + 96) to 1, leaving has_renderable
-  // (record offset 84) at 0.
-  const std::size_t hasMaterialOffset = kSceneArtifactHeaderSizeBytes + 96;
+  // Corrupt: set has_material (Plan 0044: record offset 104, i.e.
+  // kSceneArtifactHeaderSizeBytes + 104) to 1, leaving has_renderable
+  // (record offset 92) at 0.
+  const std::size_t hasMaterialOffset = kSceneArtifactHeaderSizeBytes + 104;
   bytes[hasMaterialOffset] = std::byte{0x01};
 
   const auto result = decodeSceneArtifact(bytes);
@@ -412,10 +422,11 @@ TEST_CASE("decodeSceneArtifact rejects a hand-crafted empty artifact (V28, decod
 TEST_CASE("encodeSceneArtifact matches an independently-computed expected byte vector for a one-node, "
           "light-bearing scene",
           "[asset_system][scene][light]") {
-  // Pins the little-endian contract at the new 144-byte node stride
+  // Pins the little-endian contract at the new 152-byte node stride
   // (Plan 0031: an exposure_compensation_ev slot inserted after
   // far_z, before has_renderable; Plan 0043: the 28-byte fog slot
-  // after it, holding the fog-off defaults for a camera-less node).
+  // after it, holding the fog-off defaults for a camera-less node;
+  // Plan 0044: the 8-byte bloom slot after that, likewise defaulted).
   // Independently computed (.NET's own
   // BitConverter.GetBytes(), not transcribed from memory), matching
   // mesh_artifact_tests.cpp's own established discipline exactly --
@@ -428,8 +439,8 @@ TEST_CASE("encodeSceneArtifact matches an independently-computed expected byte v
   const std::vector<std::byte> expected = {
       // Magic "ASCN"
       std::byte{0x41}, std::byte{0x53}, std::byte{0x43}, std::byte{0x4E},
-      // schema_version = 5
-      std::byte{0x05}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
+      // schema_version = 6
+      std::byte{0x06}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
       // node_count = 1
       std::byte{0x01}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
       // has_active_camera = 0
@@ -461,6 +472,9 @@ TEST_CASE("encodeSceneArtifact matches an independently-computed expected byte v
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
       // fog_max_opacity = 1.0
       std::byte{0x00}, std::byte{0x00}, std::byte{0x80}, std::byte{0x3F},
+      // bloom_strength = 0.0, bloom_threshold = 1.0 -- the defaults, no camera
+      std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
+      std::byte{0x80}, std::byte{0x3F},
       // has_renderable = 0, mesh_asset_id = 0 (u64)
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
@@ -482,7 +496,7 @@ TEST_CASE("encodeSceneArtifact matches an independently-computed expected byte v
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
       std::byte{0x00}, std::byte{0x00},
   };
-  REQUIRE(expected.size() == 168);  // 24-byte header + 144-byte node record
+  REQUIRE(expected.size() == 176);  // 24-byte header + 152-byte node record
 
   const std::vector<std::byte> actual = encodeSceneArtifact({node}, {std::nullopt}, std::nullopt);
   CHECK(actual == expected);
@@ -597,10 +611,10 @@ TEST_CASE("decodeSceneArtifact independently re-validates a light's own out-of-r
   ValidatedSceneNode node;
   node.light = DecodedLight{DecodedLightKind::Directional, 0.5f, 0.5f, 0.5f, 1.0f, 0.0f};
   auto bytes = encodeSceneArtifact({node}, {std::nullopt}, std::nullopt);
-  // color_r at record offset 116, absolute offset 24 + 116 = 140. Corrupt
+  // color_r at record offset 124, absolute offset 24 + 124 = 148. Corrupt
   // to 2.0f (out of [0, 1]).
   const auto colorRBytes = std::bit_cast<std::array<std::byte, 4>>(2.0f);
-  for (std::size_t i = 0; i < 4; ++i) bytes[140 + i] = colorRBytes[i];
+  for (std::size_t i = 0; i < 4; ++i) bytes[148 + i] = colorRBytes[i];
 
   const auto result = decodeSceneArtifact(bytes);
   REQUIRE(result.isErr());
@@ -613,9 +627,9 @@ TEST_CASE("decodeSceneArtifact independently re-validates a light's own negative
   ValidatedSceneNode node;
   node.light = DecodedLight{DecodedLightKind::Directional, 0.5f, 0.5f, 0.5f, 1.0f, 0.0f};
   auto bytes = encodeSceneArtifact({node}, {std::nullopt}, std::nullopt);
-  // intensity at record offset 128, absolute offset 24 + 128 = 152.
+  // intensity at record offset 136, absolute offset 24 + 136 = 160.
   const auto intensityBytes = std::bit_cast<std::array<std::byte, 4>>(-1.0f);
-  for (std::size_t i = 0; i < 4; ++i) bytes[152 + i] = intensityBytes[i];
+  for (std::size_t i = 0; i < 4; ++i) bytes[160 + i] = intensityBytes[i];
 
   const auto result = decodeSceneArtifact(bytes);
   REQUIRE(result.isErr());
@@ -628,27 +642,28 @@ TEST_CASE("decodeSceneArtifact independently re-validates a point light's own no
   ValidatedSceneNode node;
   node.light = DecodedLight{DecodedLightKind::Point, 0.5f, 0.5f, 0.5f, 1.0f, 5.0f};
   auto bytes = encodeSceneArtifact({node}, {std::nullopt}, std::nullopt);
-  // range at record offset 132, absolute offset 24 + 132 = 156.
+  // range at record offset 140, absolute offset 24 + 140 = 164.
   const auto rangeBytes = std::bit_cast<std::array<std::byte, 4>>(0.0f);
-  for (std::size_t i = 0; i < 4; ++i) bytes[156 + i] = rangeBytes[i];
+  for (std::size_t i = 0; i < 4; ++i) bytes[164 + i] = rangeBytes[i];
 
   const auto result = decodeSceneArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneArtifactDecodeError::NonFiniteValue);
 }
 
-TEST_CASE("decodeSceneArtifact rejects an out-of-range index for the moved parent slot (offset 136/140)",
+TEST_CASE("decodeSceneArtifact rejects an out-of-range index for the moved parent slot (offset 144/148)",
           "[asset_system][scene][light]") {
   // Confirms the moved parent-slot offset (Plan 0019 P4: 76/80 -> 104/108;
-  // Plan 0031: 104/108 -> 108/112; Plan 0043: 108/112 -> 136/140) is the
-  // real, current one this decoder actually reads -- not a stale offset.
+  // Plan 0031: 104/108 -> 108/112; Plan 0043: 108/112 -> 136/140;
+  // Plan 0044: 136/140 -> 144/148) is the real, current one this decoder
+  // actually reads -- not a stale offset.
   ValidatedSceneNode node0;
   ValidatedSceneNode node1;
   auto bytes = encodeSceneArtifact({node0, node1}, {std::nullopt, std::size_t{0}}, std::nullopt);
-  // node1's own record starts at 24 + 144 = 168; its own has_parent/
-  // parent_index are at relative 136/140, absolute 304/308.
+  // node1's own record starts at 24 + 152 = 176; its own has_parent/
+  // parent_index are at relative 144/148, absolute 320/324.
   const auto outOfRangeIndex = std::bit_cast<std::array<std::byte, 4>>(std::uint32_t{99});
-  for (std::size_t i = 0; i < 4; ++i) bytes[308 + i] = outOfRangeIndex[i];
+  for (std::size_t i = 0; i < 4; ++i) bytes[324 + i] = outOfRangeIndex[i];
 
   const auto result = decodeSceneArtifact(bytes);
   REQUIRE(result.isErr());
@@ -689,7 +704,7 @@ TEST_CASE("encodeSceneArtifact then decodeSceneArtifact round-trips a camera's f
           "[asset_system][scene][fog]") {
   const auto bytes = encodeSceneArtifact({fogCameraNode()}, {std::nullopt}, 0);
   REQUIRE(bytes.size() == kSceneArtifactHeaderSizeBytes + kSceneArtifactNodeRecordSizeBytes);
-  REQUIRE(kSceneArtifactNodeRecordSizeBytes == 144);
+  REQUIRE(kSceneArtifactNodeRecordSizeBytes == 152);
   // The slot sits at record offset 56, right after exposure (52):
   // fog_color_r there, fog_max_opacity at 80.
   CHECK(std::bit_cast<float>(std::array<std::byte, 4>{bytes[24 + 56], bytes[24 + 57], bytes[24 + 58],
@@ -745,4 +760,52 @@ TEST_CASE("decodeSceneArtifact ignores the fog slot of a node without a camera",
   const auto result = decodeSceneArtifact(bytes);
   REQUIRE(result.isOk());
   CHECK_FALSE(result.value().nodes[0].camera.has_value());
+}
+
+// ---------------------------------------------------------------------
+// Plan 0044 P4: the 8-byte camera bloom slot (artifact schema 6).
+// ---------------------------------------------------------------------
+
+TEST_CASE("encodeSceneArtifact then decodeSceneArtifact round-trips a camera's bloom slot at record offsets 84/88",
+          "[asset_system][scene][bloom]") {
+  ValidatedSceneNode node = fogCameraNode();
+  node.camera->bloom.strength = 0.25f;
+  node.camera->bloom.threshold = 2.5f;
+  const auto bytes = encodeSceneArtifact({node}, {std::nullopt}, 0);
+  REQUIRE(bytes.size() == kSceneArtifactHeaderSizeBytes + 152);
+  CHECK(std::bit_cast<float>(std::array<std::byte, 4>{bytes[24 + 84], bytes[24 + 85], bytes[24 + 86],
+                                                      bytes[24 + 87]}) == 0.25f);
+  CHECK(std::bit_cast<float>(std::array<std::byte, 4>{bytes[24 + 88], bytes[24 + 89], bytes[24 + 90],
+                                                      bytes[24 + 91]}) == 2.5f);
+
+  const auto result = decodeSceneArtifact(bytes);
+  REQUIRE(result.isOk());
+  REQUIRE(result.value().nodes[0].camera.has_value());
+  CHECK(result.value().nodes[0].camera->bloom.strength == 0.25f);
+  CHECK(result.value().nodes[0].camera->bloom.threshold == 2.5f);
+  CHECK(result.value().nodes[0].camera->fog.density == 0.05f);  // the fog slot before it is intact
+}
+
+TEST_CASE("decodeSceneArtifact independently re-validates a camera's bloom slot, never trusting the cooker",
+          "[asset_system][scene][bloom]") {
+  struct Corruption {
+    std::size_t recordOffset;
+    float value;
+  };
+  const Corruption corruptions[] = {
+      {84, -0.5f},
+      {84, 1.5f},
+      {84, std::numeric_limits<float>::quiet_NaN()},
+      {88, -1.0f},
+      {88, std::numeric_limits<float>::infinity()},
+  };
+  for (const Corruption& c : corruptions) {
+    DYNAMIC_SECTION("record offset " << c.recordOffset << " = " << c.value) {
+      auto bytes = encodeSceneArtifact({fogCameraNode()}, {std::nullopt}, 0);
+      writeFloatAt(bytes, kSceneArtifactHeaderSizeBytes + c.recordOffset, c.value);
+      const auto result = decodeSceneArtifact(bytes);
+      REQUIRE(result.isErr());
+      CHECK(result.error() == SceneArtifactDecodeError::NonFiniteValue);
+    }
+  }
 }

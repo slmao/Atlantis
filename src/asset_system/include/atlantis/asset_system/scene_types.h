@@ -36,12 +36,21 @@ struct DecodedCameraFog {
   float maxOpacity = 1.0f;
 };
 
+// Plan 0044 P3 (Spec 0044 R4, ADR-0092 Decision 4): the camera node's
+// optional bloom group. strength 0 (the default) means bloom off; the
+// default threshold is inert while strength is 0, and is Filament's knee.
+struct DecodedCameraBloom {
+  float strength = 0.0f;
+  float threshold = 1.0f;
+};
+
 struct DecodedCamera {
   float fovYRadians = 0.0f;
   float nearZ = 0.0f;
   float farZ = 0.0f;
   float exposureCompensationEv = 0.0f;
-  DecodedCameraFog fog;  // Plan 0043: trailing, so positional inits above stay valid
+  DecodedCameraFog fog;      // Plan 0043: trailing, so positional inits above stay valid
+  DecodedCameraBloom bloom;  // Plan 0044: trailing, likewise
 };
 
 // Plan 0043 P2 (Spec 0043 R8): the fog group's value domain, checked at
@@ -50,6 +59,13 @@ struct DecodedCamera {
 // is finite, maxOpacity is in [0, 1], colour is finite and in
 // [0, kFogColorMax] -- HDR, the emissive precedent (ruling Q7).
 inline constexpr float kFogColorMax = 65504.0f;
+
+// Plan 0044 P2 (Spec 0044 R5): checked beside isValidCameraFog(), at cook
+// time and again on decode, reusing NonFiniteValue.
+[[nodiscard]] inline bool isValidCameraBloom(const DecodedCameraBloom& bloom) {
+  return std::isfinite(bloom.strength) && bloom.strength >= 0.0f && bloom.strength <= 1.0f &&
+         std::isfinite(bloom.threshold) && bloom.threshold >= 0.0f;
+}
 
 [[nodiscard]] inline bool isValidCameraFog(const DecodedCameraFog& fog) {
   const auto colorOk = [](float c) { return std::isfinite(c) && c >= 0.0f && c <= kFogColorMax; };

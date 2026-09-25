@@ -1,0 +1,6 @@
+atlantis_scene_source_version: 6
+node_count: 3
+active_camera: 3
+node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/emissive_demo_orange.material.txt
+node: node_id=2 parent=none position=0.0 0.0 -8.0 rotation=1.5707963 0.0 0.0 scale=3.0 3.0 3.0 mesh=meshes/ground_plane.mesh.txt material=materials/pbr_normal_mapped_control.material.txt
+node: node_id=3 parent=none position=0.0 0.0 10.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0 fog=0.05 0.0 0.0 0.9 fog_color=3.0 2.4 1.5 bloom=0.8 1.0

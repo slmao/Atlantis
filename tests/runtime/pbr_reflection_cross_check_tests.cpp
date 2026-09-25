@@ -5,6 +5,7 @@
 // GPU, no real window -- only a real slangc invocation (a build tool,
 // already required, ADR-0025/Plan 0008) and file I/O.
 
+#include <atlantis/renderer/bloom.h>
 #include <atlantis/runtime/scene_extraction.h>
 #include <atlantis/shader_system/reflection_loader.h>
 #include <atlantis/shader_system/reflection_metadata.h>
@@ -17,6 +18,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -542,6 +544,73 @@ TEST_CASE("PBR push constants: a real slangc reflection of every one of the ten 
     ++shadersChecked;
   }
   CHECK(shadersChecked == 10);
+
+  fs::remove_all(outputDir, ec);
+}
+
+// Plan 0044 Milestone 1 (P6/P8): each bloom shader's push-constant block,
+// reflected fresh from its own source by a real slangc run, field by field
+// against the renderer::Bloom*PushConstants struct drawFrame() will push.
+// (Their sampler bindings -- one, or two from binding 0 -- are checked at
+// build time by atlantis_shader_compiler's bloom-* contracts.)
+TEST_CASE("Bloom shaders: every push-constant field matches renderer::Bloom*PushConstants (Plan 0044, 3/3)",
+          "[shader_system][runtime][bloom][reflection]") {
+  struct Field {
+    const char* name;
+    long offset;
+    long size;
+  };
+  struct ShaderCase {
+    const char* name;
+    std::size_t blockSize;
+    std::vector<Field> fields;
+  };
+  using atlantis::renderer::BloomCompositePushConstants;
+  using atlantis::renderer::BloomDownsamplePushConstants;
+  using atlantis::renderer::BloomUpsamplePushConstants;
+  const ShaderCase cases[] = {
+      {"bloom_downsample", sizeof(BloomDownsamplePushConstants),
+       {{"sourceTexelSize", static_cast<long>(offsetof(BloomDownsamplePushConstants, sourceTexelSize)), 8},
+        {"threshold", static_cast<long>(offsetof(BloomDownsamplePushConstants, threshold)), 4},
+        {"brightPass", static_cast<long>(offsetof(BloomDownsamplePushConstants, brightPass)), 4}}},
+      {"bloom_upsample", sizeof(BloomUpsamplePushConstants),
+       {{"lowerTexelSize", static_cast<long>(offsetof(BloomUpsamplePushConstants, lowerTexelSize)), 8}}},
+      {"bloom_composite", sizeof(BloomCompositePushConstants),
+       {{"bloomTexelSize", static_cast<long>(offsetof(BloomCompositePushConstants, bloomTexelSize)), 8},
+        {"strength", static_cast<long>(offsetof(BloomCompositePushConstants, strength)), 4},
+        {"inverseLevelCount", static_cast<long>(offsetof(BloomCompositePushConstants, inverseLevelCount)), 4}}},
+  };
+
+  const fs::path outputDir = fs::temp_directory_path() / "atlantis_bloom_push_constant_cross_check_tests";
+  std::error_code ec;
+  fs::create_directories(outputDir, ec);
+
+  int shadersChecked = 0;
+  for (const ShaderCase& shader : cases) {
+    INFO("shader: " << shader.name);
+    const fs::path source =
+        fs::path(ATLANTIS_SHADER_SOURCE_ROOT) / shader.name / (std::string(shader.name) + ".slang");
+    const fs::path jsonPath = outputDir / (std::string(shader.name) + "_frag_raw_refl.json");
+    const fs::path spirvPath = outputDir / (std::string(shader.name) + "_frag_raw.spv");
+    REQUIRE(runSlangcReflectionJson(source, "fragmentMain", "fragment", jsonPath, spirvPath));
+    const auto jsonText = readWholeFile(jsonPath);
+    REQUIRE(jsonText.has_value());
+
+    const std::size_t pushConstantsPos = jsonText->find("\"pushConstants\"");
+    REQUIRE(pushConstantsPos != std::string::npos);
+    const auto block = findFieldLayout(*jsonText, "elementVarLayout", pushConstantsPos);
+    REQUIRE(block.has_value());
+    CHECK(block->size == static_cast<long>(shader.blockSize));  // 16
+    for (const Field& field : shader.fields) {
+      INFO("field: " << field.name);
+      const auto layout = findFieldLayout(*jsonText, field.name, pushConstantsPos);
+      REQUIRE(layout.has_value());
+      CHECK(layout->offset == field.offset);
+      CHECK(layout->size == field.size);
+    }
+    ++shadersChecked;
+  }
+  CHECK(shadersChecked == 3);
 
   fs::remove_all(outputDir, ec);
 }

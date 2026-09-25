@@ -5,6 +5,7 @@
 #include <span>
 
 #include <atlantis/render_graph/render_graph_builder.h>
+#include <atlantis/renderer/bloom.h>
 #include <atlantis/renderer/draw_item.h>
 #include <atlantis/renderer/environment_lighting.h>
 #include <atlantis/rhi/buffer.h>
@@ -129,6 +130,12 @@ class Renderer {
   // (ATLANTIS_CHECK_MSG) once any draw item's Material is Blend. The shadow
   // pass skips Blend items in shadowCasterDrawItems: a blended surface
   // casts no shadow (Mask items still do, solidly).
+  //
+  // Plan 0044 (Spec 0044, ADR-0092): bloom is optional and trailing too.
+  // A null bloom, or bloom->strength == 0, declares no bloom pass -- the
+  // frame is exactly what it was without the parameter. Milestone 1 of
+  // Plan 0044 records no bloom pass yet: a non-null bloom with
+  // strength > 0 fails an ATLANTIS_CHECK_MSG until Milestone 2.
   void drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& colorTarget,
                  atlantis::rhi::Texture& depthTarget, atlantis::rhi::Buffer& cameraUniformBuffer,
                  std::span<const DrawItem> drawItems, atlantis::rhi::ResourceState finalColorState,
@@ -141,7 +148,8 @@ class Renderer {
                  atlantis::rhi::ShadowMap& shadowMap, atlantis::rhi::Sampler& shadowMapSampler,
                  atlantis::rhi::Pipeline& shadowCastPipeline, atlantis::rhi::Buffer& shadowLightSpaceBuffer,
                  std::span<const DrawItem> shadowCasterDrawItems,
-                 const std::optional<std::array<float, 3>>& cameraWorldPosition = std::nullopt);
+                 const std::optional<std::array<float, 3>>& cameraWorldPosition = std::nullopt,
+                 const BloomInput* bloom = nullptr);
 };
 
 }  // namespace atlantis::renderer

@@ -2,8 +2,13 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
+#include <iterator>
+#include <string>
+
 using atlantis::runtime::BootstrapConfig;
 using atlantis::runtime::RuntimeInitError;
+using atlantis::runtime::validateBloomBootstrapConfig;
 using atlantis::runtime::validateEnvironmentBootstrapConfig;
 
 namespace {
@@ -98,4 +103,35 @@ TEST_CASE("Environment bootstrap requires the pbrIblNormalMap shader paths too, 
 
   config.pbrIblNormalMapFragmentShaderReflectionPath.clear();
   REQUIRE(validateEnvironmentBootstrapConfig(config).isErr());
+}
+
+// Plan 0044 P9 (ruling O2): the twelve bloom shader paths are optional as a
+// group -- none or all, anything between is BloomConfigInvalid.
+TEST_CASE("Bloom bootstrap shader paths are absent or complete", "[runtime][bootstrap][bloom]") {
+  BootstrapConfig config;
+  REQUIRE(validateBloomBootstrapConfig(config).isOk());
+  CHECK_FALSE(atlantis::runtime::hasBloomShaderPaths(config));
+
+  std::string* const paths[] = {
+      &config.bloomDownsampleVertexShaderSpirvPath,      &config.bloomDownsampleVertexShaderReflectionPath,
+      &config.bloomDownsampleFragmentShaderSpirvPath,    &config.bloomDownsampleFragmentShaderReflectionPath,
+      &config.bloomUpsampleVertexShaderSpirvPath,        &config.bloomUpsampleVertexShaderReflectionPath,
+      &config.bloomUpsampleFragmentShaderSpirvPath,      &config.bloomUpsampleFragmentShaderReflectionPath,
+      &config.bloomCompositeVertexShaderSpirvPath,       &config.bloomCompositeVertexShaderReflectionPath,
+      &config.bloomCompositeFragmentShaderSpirvPath,     &config.bloomCompositeFragmentShaderReflectionPath,
+  };
+  for (std::size_t i = 0; i < std::size(paths); ++i) {
+    *paths[i] = "bloom_" + std::to_string(i);
+    INFO(i + 1 << " of 12 set");
+    if (i + 1 < std::size(paths)) {
+      REQUIRE(validateBloomBootstrapConfig(config).isErr());
+      CHECK(validateBloomBootstrapConfig(config).error() == RuntimeInitError::BloomConfigInvalid);
+      CHECK_FALSE(atlantis::runtime::hasBloomShaderPaths(config));
+    }
+  }
+  REQUIRE(validateBloomBootstrapConfig(config).isOk());
+  CHECK(atlantis::runtime::hasBloomShaderPaths(config));
+
+  config.bloomUpsampleFragmentShaderSpirvPath.clear();
+  CHECK(validateBloomBootstrapConfig(config).isErr());
 }

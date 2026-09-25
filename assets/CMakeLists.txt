@@ -506,6 +506,35 @@ atlantis_add_scene_asset(
     pbr_normal_mapped_control
   TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
 )
+
+# Plan 0044 Milestone 2: the bloom golden's scene. Same meshes and
+# materials as emissive_demo; the camera declares bloom=0.8 1.0.
+atlantis_add_scene_asset(
+  NAME bloom_demo_scene
+  SOURCE scenes/bloom_demo.scene.txt
+  MESH_DEPENDENCIES pbr_sphere
+  MATERIAL_DEPENDENCIES emissive_demo_orange emissive_demo_green emissive_demo_blue
+    emissive_demo_normal_mapped pbr_normal_mapped_control
+  TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
+)
+set(ATLANTIS_bloom_demo_scene_ARTIFACT_PATH "${ATLANTIS_bloom_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_bloom_demo_scene_METADATA_PATH "${ATLANTIS_bloom_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_bloom_demo_scene_MANIFEST_PATH "${ATLANTIS_bloom_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_bloom_demo_scene_TARGET "${ATLANTIS_bloom_demo_scene_TARGET}" PARENT_SCOPE)
+# Plan 0044 P12: the fog + bloom golden's scene -- one emissive lamp and a
+# large backdrop wall (the control material, black without fog) in HDR fog
+# whose colour (3, 2.4, 1.5) exceeds the 1.0 knee, so the fogged wall glows.
+atlantis_add_scene_asset(
+  NAME bloom_fog_demo_scene
+  SOURCE scenes/bloom_fog_demo.scene.txt
+  MESH_DEPENDENCIES pbr_sphere ground_plane
+  MATERIAL_DEPENDENCIES emissive_demo_orange pbr_normal_mapped_control
+  TEXTURE_DEPENDENCIES textured_quad_srgb
+)
+set(ATLANTIS_bloom_fog_demo_scene_ARTIFACT_PATH "${ATLANTIS_bloom_fog_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
+set(ATLANTIS_bloom_fog_demo_scene_METADATA_PATH "${ATLANTIS_bloom_fog_demo_scene_METADATA_PATH}" PARENT_SCOPE)
+set(ATLANTIS_bloom_fog_demo_scene_MANIFEST_PATH "${ATLANTIS_bloom_fog_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_bloom_fog_demo_scene_TARGET "${ATLANTIS_bloom_fog_demo_scene_TARGET}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_scene_ARTIFACT_PATH "${ATLANTIS_emissive_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_scene_METADATA_PATH "${ATLANTIS_emissive_demo_scene_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_scene_MANIFEST_PATH "${ATLANTIS_emissive_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)

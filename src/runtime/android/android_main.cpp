@@ -169,6 +169,31 @@ void android_main(struct android_app* app) {
       assetManager, internalDataPath, "shaders/output_transform_srgb/output_transform_srgb.frag.spv");
   config.outputTransformSrgbFragmentShaderReflectionPath = extractAsset(
       assetManager, internalDataPath, "shaders/output_transform_srgb/output_transform_srgb.frag.refl.json");
+  // Plan 0044 P9 (ruling O5): the three bloom shader pairs, set as a group.
+  config.bloomDownsampleVertexShaderSpirvPath =
+      extractAsset(assetManager, internalDataPath, "shaders/bloom_downsample/bloom_downsample.vert.spv");
+  config.bloomDownsampleVertexShaderReflectionPath =
+      extractAsset(assetManager, internalDataPath, "shaders/bloom_downsample/bloom_downsample.vert.refl.json");
+  config.bloomDownsampleFragmentShaderSpirvPath =
+      extractAsset(assetManager, internalDataPath, "shaders/bloom_downsample/bloom_downsample.frag.spv");
+  config.bloomDownsampleFragmentShaderReflectionPath =
+      extractAsset(assetManager, internalDataPath, "shaders/bloom_downsample/bloom_downsample.frag.refl.json");
+  config.bloomUpsampleVertexShaderSpirvPath =
+      extractAsset(assetManager, internalDataPath, "shaders/bloom_upsample/bloom_upsample.vert.spv");
+  config.bloomUpsampleVertexShaderReflectionPath =
+      extractAsset(assetManager, internalDataPath, "shaders/bloom_upsample/bloom_upsample.vert.refl.json");
+  config.bloomUpsampleFragmentShaderSpirvPath =
+      extractAsset(assetManager, internalDataPath, "shaders/bloom_upsample/bloom_upsample.frag.spv");
+  config.bloomUpsampleFragmentShaderReflectionPath =
+      extractAsset(assetManager, internalDataPath, "shaders/bloom_upsample/bloom_upsample.frag.refl.json");
+  config.bloomCompositeVertexShaderSpirvPath =
+      extractAsset(assetManager, internalDataPath, "shaders/bloom_composite/bloom_composite.vert.spv");
+  config.bloomCompositeVertexShaderReflectionPath =
+      extractAsset(assetManager, internalDataPath, "shaders/bloom_composite/bloom_composite.vert.refl.json");
+  config.bloomCompositeFragmentShaderSpirvPath =
+      extractAsset(assetManager, internalDataPath, "shaders/bloom_composite/bloom_composite.frag.spv");
+  config.bloomCompositeFragmentShaderReflectionPath =
+      extractAsset(assetManager, internalDataPath, "shaders/bloom_composite/bloom_composite.frag.refl.json");
   // Plan 0035 Milestone 6 (asset lock-step): PbrClearcoat/PbrSheen/
   // PbrAnisotropic's own six IBL-lit shader pairs -- populated
   // unconditionally here, same shape as every shader pair above and

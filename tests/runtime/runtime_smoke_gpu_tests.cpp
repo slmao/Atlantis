@@ -112,6 +112,18 @@ struct RuntimeSmokeTestAccess {
 
   [[nodiscard]] static World& world(RuntimeApplication& app) { return *app.world_; }
 
+  // Plan 0044 Milestone 1: the three bloom Pipelines, built at startup when
+  // the bloom shader paths are set; sceneWantsBloom_ from the active camera.
+  [[nodiscard]] static bool hasBloomPipelines(const RuntimeApplication& app) {
+    for (const auto& pipeline : app.bloomPipelines_) {
+      if (!pipeline) return false;
+    }
+    return true;
+  }
+  [[nodiscard]] static bool sceneWantsBloom(const RuntimeApplication& app) { return app.sceneWantsBloom_; }
+  // Plan 0044 M2: the twelve bloom targets, built in the resize branch.
+  [[nodiscard]] static bool hasBloomTargets(const RuntimeApplication& app) { return app.bloomTargets_.has_value(); }
+
   [[nodiscard]] static FrameLightingData lightingPayloadBytes(const RuntimeApplication& app) {
     const auto* cameraBytes = static_cast<const std::byte*>(app.cameraBuffer_->mappedData());
     FrameLightingData lighting{};
@@ -121,8 +133,12 @@ struct RuntimeSmokeTestAccess {
 };
 }  // namespace atlantis::runtime
 
-TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/submit/present frames",
-          "[runtime][gpu]") {
+namespace {
+
+// The windowed smoke config, as main.cpp populates it. Plan 0044 M2
+// follow-up: shared by the bloom smoke TEST_CASE below, which swaps only
+// the scene paths.
+[[nodiscard]] BootstrapConfig buildSmokeConfig() {
   BootstrapConfig config;
   config.applicationName = "Atlantis Runtime GPU Smoke Test";
   config.vertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.vert.spv";
@@ -235,11 +251,38 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
       std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.spv";
   config.shadowCastFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_SHADOW_CAST_SHADER_DIR) + "/shadow_cast.frag.refl.json";
+  // Plan 0044 Milestone 1 (P9): the three bloom shader pairs, as main.cpp
+  // sets them -- so the Runtime's bloom Pipelines are created here, under
+  // Validation Layers, even when the scene does not turn bloom on.
+  config.bloomDownsampleVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_BLOOM_DOWNSAMPLE_SHADER_DIR) + "/bloom_downsample.vert.spv";
+  config.bloomDownsampleVertexShaderReflectionPath = std::string(ATLANTIS_RUNTIME_BLOOM_DOWNSAMPLE_SHADER_DIR) + "/bloom_downsample.vert.refl.json";
+  config.bloomDownsampleFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_BLOOM_DOWNSAMPLE_SHADER_DIR) + "/bloom_downsample.frag.spv";
+  config.bloomDownsampleFragmentShaderReflectionPath = std::string(ATLANTIS_RUNTIME_BLOOM_DOWNSAMPLE_SHADER_DIR) + "/bloom_downsample.frag.refl.json";
+  config.bloomUpsampleVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_BLOOM_UPSAMPLE_SHADER_DIR) + "/bloom_upsample.vert.spv";
+  config.bloomUpsampleVertexShaderReflectionPath = std::string(ATLANTIS_RUNTIME_BLOOM_UPSAMPLE_SHADER_DIR) + "/bloom_upsample.vert.refl.json";
+  config.bloomUpsampleFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_BLOOM_UPSAMPLE_SHADER_DIR) + "/bloom_upsample.frag.spv";
+  config.bloomUpsampleFragmentShaderReflectionPath = std::string(ATLANTIS_RUNTIME_BLOOM_UPSAMPLE_SHADER_DIR) + "/bloom_upsample.frag.refl.json";
+  config.bloomCompositeVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR) + "/bloom_composite.vert.spv";
+  config.bloomCompositeVertexShaderReflectionPath = std::string(ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR) + "/bloom_composite.vert.refl.json";
+  config.bloomCompositeFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR) + "/bloom_composite.frag.spv";
+  config.bloomCompositeFragmentShaderReflectionPath = std::string(ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR) + "/bloom_composite.frag.refl.json";
   config.enableValidationLayers = true;
+  return config;
+}
+
+}  // namespace
+
+TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/submit/present frames",
+          "[runtime][gpu]") {
+  BootstrapConfig config = buildSmokeConfig();
 
   auto appResult = createRuntimeApplication(config);
   REQUIRE(appResult.isOk());
   RuntimeApplication app = std::move(appResult.value());
+  // Plan 0044 Milestone 1: the bloom Pipelines exist; the scene does not
+  // turn bloom on, so no bloom targets are built.
+  CHECK(atlantis::runtime::RuntimeSmokeTestAccess::hasBloomPipelines(app));
+  CHECK_FALSE(atlantis::runtime::RuntimeSmokeTestAccess::sceneWantsBloom(app));
 
   // Matches this repository's own existing kCycleCount precedent
   // (frame_execution_demo, headless_rendering_demo,
@@ -376,6 +419,38 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   CHECK(afterTransformMoved.pointLights[0].position[0] == -2.0f);
   CHECK(afterTransformMoved.pointLights[0].position[1] == 3.0f);
   CHECK(afterTransformMoved.pointLights[0].position[2] == 0.5f);
+
+  const RuntimeExitReason reason = app.shutdown();
+  REQUIRE(reason == RuntimeExitReason::Success);
+}
+
+// Plan 0044 Milestone 2 item 3: the full Runtime bloom path -- a scene
+// whose active camera turns bloom on (bloom_demo, bloom=0.8 1.0), so the
+// Runtime builds the twelve bloom targets in its resize branch and hands
+// drawFrame() a BloomInput from the camera every frame, through the real
+// windowed acquire/submit/present path, under fatal Validation Layers. A
+// separate TEST_CASE: catch_discover_tests runs each in its own process,
+// so the same-process multiple-windowed-lifecycle limitation noted above
+// does not apply under ctest.
+TEST_CASE("Runtime renders real windowed frames with bloom on when the scene's camera turns it on",
+          "[runtime][gpu][bloom]") {
+  BootstrapConfig config = buildSmokeConfig();
+  config.sceneArtifactPath = ATLANTIS_RUNTIME_BLOOM_SCENE_ARTIFACT_PATH;
+  config.sceneMetadataPath = ATLANTIS_RUNTIME_BLOOM_SCENE_METADATA_PATH;
+  config.sceneDependencyManifestPath = ATLANTIS_RUNTIME_BLOOM_SCENE_MANIFEST_PATH;
+
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  CHECK(atlantis::runtime::RuntimeSmokeTestAccess::hasBloomPipelines(app));
+  CHECK(atlantis::runtime::RuntimeSmokeTestAccess::sceneWantsBloom(app));
+
+  constexpr int kSmokeTestFrameCount = 3;
+  for (int i = 0; i < kSmokeTestFrameCount && app.shouldContinue(); ++i) {
+    app.runFrame();
+  }
+  REQUIRE(app.shouldContinue());  // no frame failed; no validation hit aborted
+  CHECK(atlantis::runtime::RuntimeSmokeTestAccess::hasBloomTargets(app));
 
   const RuntimeExitReason reason = app.shutdown();
   REQUIRE(reason == RuntimeExitReason::Success);
