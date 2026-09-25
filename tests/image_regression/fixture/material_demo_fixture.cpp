@@ -416,6 +416,15 @@ atlantis::Result<PixelBuffer, MaterialDemoRenderError> renderMaterialDemoFrame(M
   // Phase 2 (Spec 0018 D8 steps 2-3): the real realization call -- records
   // any pending materials' own upload passes into commandList before the
   // draw graph below, never duplicated here.
+  // Plan 0046 Milestone 1 (ADR-0096): the default emissive texture, created
+  // once like the Runtime's, its upload recorded ahead of the materials'.
+  std::unique_ptr<rhi::Buffer> defaultEmissiveStagingBuffer;
+  if (!fixture.defaultEmissiveTexture) {
+    auto defaultEmissiveResult = atlantis::runtime::createDefaultEmissiveTexture(*fixture.device, *commandList);
+    if (defaultEmissiveResult.isErr()) return ResultT::Err(MaterialDemoRenderError::CommandListCreationFailed);
+    fixture.defaultEmissiveTexture = std::move(defaultEmissiveResult.value().texture);
+    defaultEmissiveStagingBuffer = std::move(defaultEmissiveResult.value().stagingBuffer);
+  }
   std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
       realizePendingMaterials(*fixture.device, *commandList, fixture.unlitTexturedVertexInputLayout,
                                fixture.unlitTexturedVertexSpirv, fixture.unlitTexturedFragmentSpirv,
@@ -423,7 +432,8 @@ atlantis::Result<PixelBuffer, MaterialDemoRenderError> renderMaterialDemoFrame(M
                                fixture.litTexturedVertexSpirv, fixture.litTexturedFragmentSpirv,
                                fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv,
                                fixture.pbrDirectLitFragmentSpirv, pendingMaterialIds,
-                               fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);
+                               fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap,
+                               *fixture.defaultEmissiveTexture);
 
   std::vector<atlantis::asset_system::AssetId> knownMaterialIds = alreadyRealizedMaterialIds;
   for (const auto& [assetId, candidate] : realizedCandidates) knownMaterialIds.push_back(assetId);
@@ -516,6 +526,10 @@ atlantis::Result<PixelBuffer, MaterialDemoRenderError> renderMaterialDemoFrame(M
     if (candidate.newNormalMapTexture) {
       fixture.sampledTextureResourceMap.emplace(candidate.normalMapTextureAssetId,
                                                   std::move(candidate.newNormalMapTexture));
+    }
+    if (candidate.newEmissiveTexture) {  // Plan 0046 Milestone 1
+      fixture.sampledTextureResourceMap.emplace(candidate.emissiveTextureAssetId,
+                                                std::move(candidate.newEmissiveTexture));
     }
     fixture.samplerResourceMap.emplace(assetId, std::move(candidate.sampler));
     fixture.materialResourceMap.emplace(assetId, std::move(candidate.material));

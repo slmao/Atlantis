@@ -110,6 +110,11 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(const s
   if (artifact.alphaMode != metadata.alphaMode || artifact.alphaCutoff != metadata.alphaCutoff) {
     return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
   }
+  // Plan 0046 Milestone 1 (ADR-0096): emissiveTexture cross-validated
+  // identically.
+  if (artifact.emissiveTexture != metadata.emissiveTexture) {
+    return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
+  }
 
   // Self-consistency, not just artifact-vs-metadata agreement: the
   // metadata sidecar's own two fields (its recorded Asset ID and its
@@ -137,6 +142,7 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(const s
   data.anisotropyRotation = artifact.anisotropyRotation;
   data.alphaMode = artifact.alphaMode;
   data.alphaCutoff = artifact.alphaCutoff;
+  data.emissiveTexture = artifact.emissiveTexture;
   return ResultT::Ok(std::move(data));
 }
 

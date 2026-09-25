@@ -203,8 +203,10 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   // ATLANTIS_CHECK(binding < kMaxTextureBindingSlots) in bindTexture()
   // at the old size. ADR-0072 D-7's own Accepted Amendment, 2026-09-06
   // (Plan 0029 Section P10): widened again to 6 -- pbr_ibl_normal_map's
-  // own new normal-map slot is binding 5.
-  static constexpr std::size_t kMaxTextureBindingSlots = 6;
+  // own new normal-map slot is binding 5. ADR-0096 (Plan 0046 Milestone 1,
+  // the ADR-0072 D-7 precedent): widened again to 7 -- pbr_ibl_normal_map's
+  // emissive-texture slot is binding 6.
+  static constexpr std::size_t kMaxTextureBindingSlots = 7;
   // Outer key: the VkDescriptorSet itself (2026-09-14 fix, see
   // uniformBufferMemo_'s own comment above for the full reasoning) --
   // default-constructed to an all-nullptr array of kMaxTextureBindingSlots

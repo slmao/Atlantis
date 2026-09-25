@@ -11,7 +11,8 @@ Material::Material(std::unique_ptr<atlantis::rhi::Pipeline> pipeline, MaterialPu
                     const atlantis::rhi::SampledTexture* normalMapTexture, float clearcoatFactor,
                     float clearcoatRoughness, std::array<float, 3> sheenColor, float sheenRoughness,
                     float anisotropyFactor, float anisotropyRotation, std::array<float, 3> emissiveFactor,
-                    MaterialAlphaMode alphaMode, float alphaCutoff) noexcept
+                    MaterialAlphaMode alphaMode, float alphaCutoff,
+                    const atlantis::rhi::SampledTexture* emissiveTexture) noexcept
     : pipeline_(std::move(pipeline)),
       sampledTexture_(sampledTexture),
       sampler_(sampler),
@@ -29,7 +30,8 @@ Material::Material(std::unique_ptr<atlantis::rhi::Pipeline> pipeline, MaterialPu
       anisotropyRotation_(anisotropyRotation),
       emissiveFactor_(emissiveFactor),
       alphaMode_(alphaMode),
-      alphaCutoff_(alphaCutoff) {
+      alphaCutoff_(alphaCutoff),
+      emissiveTexture_(emissiveTexture) {
   ATLANTIS_CHECK((sampledTexture_ == nullptr) == (sampler_ == nullptr));
   // Plan 0029 Section P14 (ADR-0074 Section 2): a normal map may never
   // be constructed without the base-color pair also present -- both
@@ -51,6 +53,10 @@ Material::Material(std::unique_ptr<atlantis::rhi::Pipeline> pipeline, MaterialPu
   // only a Mask material may push a non-zero cutoff.
   ATLANTIS_CHECK(alphaCutoff_ >= 0.0f && alphaCutoff_ <= 1.0f);
   ATLANTIS_CHECK(alphaMode_ == MaterialAlphaMode::Mask || alphaCutoff_ == 0.0f);
+  // Plan 0046 Milestone 1 (ADR-0096): the normal map's two invariants --
+  // sampled through sampler_, and only the PBR shaders declare the slot.
+  ATLANTIS_CHECK(emissiveTexture_ == nullptr || sampledTexture_ != nullptr);
+  ATLANTIS_CHECK(emissiveTexture_ == nullptr || pushConstantLayout_ != MaterialPushConstantLayout::ObjectToWorldOnly);
 }
 
 atlantis::Result<Material, CreateMaterialError> createMaterial(
@@ -60,7 +66,8 @@ atlantis::Result<Material, CreateMaterialError> createMaterial(
     float roughnessFactor, MaterialEnvironmentBinding environmentBinding,
     const atlantis::rhi::SampledTexture* normalMapTexture, float clearcoatFactor, float clearcoatRoughness,
     std::array<float, 3> sheenColor, float sheenRoughness, float anisotropyFactor, float anisotropyRotation,
-    std::array<float, 3> emissiveFactor, MaterialAlphaMode alphaMode, float alphaCutoff) {
+    std::array<float, 3> emissiveFactor, MaterialAlphaMode alphaMode, float alphaCutoff,
+    const atlantis::rhi::SampledTexture* emissiveTexture) {
   using ResultT = atlantis::Result<Material, CreateMaterialError>;
 
   auto pipelineResult = device.createPipeline(params);
@@ -70,7 +77,7 @@ atlantis::Result<Material, CreateMaterialError> createMaterial(
   return ResultT::Ok(Material(std::move(pipelineResult.value()), pushConstantLayout, sampledTexture, sampler,
                                baseColorFactor, metallicFactor, roughnessFactor, environmentBinding, normalMapTexture,
                                clearcoatFactor, clearcoatRoughness, sheenColor, sheenRoughness, anisotropyFactor,
-                               anisotropyRotation, emissiveFactor, alphaMode, alphaCutoff));
+                               anisotropyRotation, emissiveFactor, alphaMode, alphaCutoff, emissiveTexture));
 }
 
 }  // namespace atlantis::renderer

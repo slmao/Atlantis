@@ -32,9 +32,9 @@ namespace atlantis::asset_system {
 // normal_map_texture_asset_id(56,8) clearcoat_factor(64,4)
 // clearcoat_roughness(68,4) sheen_color(72,12) sheen_roughness(84,4)
 // anisotropy_factor(88,4) anisotropy_rotation(92,4) emissive_factor(96,12)
-// alpha_mode(108,4) alpha_cutoff(112,4) -- total 116, a provable sum (108
-// existing + 8, Plan 0042 Milestone 1), never a struct with implicit
-// padding. alpha_mode is a uint32 enumerator (kind's own encoding shape):
+// alpha_mode(108,4) alpha_cutoff(112,4) emissive_texture_asset_id(116,8)
+// -- total 124, a provable sum (116 existing + 8, Plan 0046 Milestone 1),
+// never a struct with implicit padding. alpha_mode is a uint32 enumerator (kind's own encoding shape):
 // 0 Opaque, 1 Mask, 2 Blend.
 //
 // Unlike the mesh artifact, this format embeds no AssetId of its own --
@@ -44,10 +44,11 @@ namespace atlantis::asset_system {
 // Section P3's own closure of Spec 0018 D6's open embedding question).
 //
 // Unlike the texture artifact, this format has NO variable-length
-// payload -- the entire record is a fixed 116 bytes for schema version 8,
-// so decodeMaterialArtifact() rejects any size other than exactly 116
+// payload -- the entire record is a fixed 124 bytes for schema version 9,
+// so decodeMaterialArtifact() rejects any size other than exactly 124
 // bytes (UnexpectedSize), not merely "too small" (TruncatedHeader) --
-// including a real, old, 108-byte schema-version-7 (or 96-byte
+// including a real, old, 116-byte schema-version-8 (or 108-byte
+// schema-version-7, or 96-byte
 // schema-version-6, or 88-byte
 // schema-version-5, or 72-byte
 // schema-version-4, or 64-byte schema-version-3, or 56-byte
@@ -70,14 +71,18 @@ namespace atlantis::asset_system {
 // 7 -> 8, header 108 -> 116 -- alpha_mode (uint32) and alpha_cutoff
 // (float) appended at the existing tail, offset 108-115. No dual-version
 // reader.
-inline constexpr std::uint32_t kMaterialArtifactSchemaVersion = 8;
-inline constexpr std::size_t kMaterialArtifactHeaderSizeBytes = 116;
+// Plan 0046 Milestone 1 (ADR-0096): schema bumped 8 -> 9, header 116 ->
+// 124 -- emissive_texture_asset_id (uint64, 0 = none) appended at the
+// existing tail, offset 116-123, the normal_map_texture_asset_id
+// precedent. No dual-version reader.
+inline constexpr std::uint32_t kMaterialArtifactSchemaVersion = 9;
+inline constexpr std::size_t kMaterialArtifactHeaderSizeBytes = 124;
 
 // The value encodeMaterialArtifact()'s trailing emissive argument
 // defaults to, so every pre-existing caller encodes "no emissive".
 inline constexpr float kNoEmissiveFactor[3] = {0.0f, 0.0f, 0.0f};
 
-// Every MaterialKind uses this identical 116-byte layout -- never a
+// Every MaterialKind uses this identical 124-byte layout -- never a
 // per-kind-length record (ADR-0066 item 3). baseColorFactor/
 // metallicFactor/roughnessFactor/clearcoatFactor/clearcoatRoughness/
 // sheenColor/sheenRoughness/anisotropyFactor/anisotropyRotation are
@@ -115,6 +120,9 @@ struct DecodedMaterialArtifact {
   // range is [0, 1].
   MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
   float alphaCutoff = 0.5f;
+  // Plan 0046 Milestone 1 (ADR-0096): offset 116(8), `0` = none. Legal
+  // (non-zero) only for the PBR kinds -- enforced at parse time, not here.
+  AssetId emissiveTexture = 0;
 };
 
 // kind/textureAsset/filter/addressMode/baseColorFactor/metallicFactor/
@@ -135,7 +143,8 @@ struct DecodedMaterialArtifact {
                                                              float anisotropyFactor, float anisotropyRotation,
                                                              const float (&emissiveFactor)[3] = kNoEmissiveFactor,
                                                              MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque,
-                                                             float alphaCutoff = 0.5f);
+                                                             float alphaCutoff = 0.5f,
+                                                             AssetId emissiveTexture = 0);
 
 [[nodiscard]] atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMaterialArtifact(
     const std::vector<std::byte>& bytes);

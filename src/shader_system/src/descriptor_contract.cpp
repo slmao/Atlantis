@@ -48,7 +48,9 @@ std::vector<DescriptorBinding> pbrDirectLitExpectedDescriptorContract() {
           DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
           // Plan 0027 Milestone 5 (ADR-0072 D-7): the shadow map, at the
           // next free binding.
-          DescriptorBinding{.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+          DescriptorBinding{.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          // Plan 0046 Milestone 1 (ADR-0096): the emissive texture.
+          DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
 std::vector<DescriptorBinding> pbrIblExpectedDescriptorContract() {
@@ -59,7 +61,9 @@ std::vector<DescriptorBinding> pbrIblExpectedDescriptorContract() {
           DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
           // Plan 0027 Milestone 5 (ADR-0072 D-7): the shadow map, at the
           // next free binding.
-          DescriptorBinding{.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+          DescriptorBinding{.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          // Plan 0046 Milestone 1 (ADR-0096): the emissive texture.
+          DescriptorBinding{.set = 0, .binding = 5, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
 // Plan 0029 Section P11 (ADR-0074 Section 4): identical to
@@ -70,7 +74,9 @@ std::vector<DescriptorBinding> pbrDirectLitNormalMapExpectedDescriptorContract()
           DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
-          DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+          DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          // Plan 0046 Milestone 1 (ADR-0096): the emissive texture.
+          DescriptorBinding{.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
 // Plan 0029 Section P11 (ADR-0074 Section 4): identical to
@@ -83,7 +89,9 @@ std::vector<DescriptorBinding> pbrIblNormalMapExpectedDescriptorContract() {
           DescriptorBinding{.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
-          DescriptorBinding{.set = 0, .binding = 5, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+          DescriptorBinding{.set = 0, .binding = 5, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          // Plan 0046 Milestone 1 (ADR-0096): the emissive texture.
+          DescriptorBinding{.set = 0, .binding = 6, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
 // Plan 0035 Milestone 2 (ADR-0081): identical shape to
@@ -94,7 +102,9 @@ std::vector<DescriptorBinding> pbrClearcoatIblExpectedDescriptorContract() {
           DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
-          DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+          DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          // Plan 0046 Milestone 1 (ADR-0096): the emissive texture.
+          DescriptorBinding{.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
 // Plan 0035 Milestone 2 (ADR-0081): identical to
@@ -107,7 +117,9 @@ std::vector<DescriptorBinding> pbrClearcoatIblNormalMapExpectedDescriptorContrac
           DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
-          DescriptorBinding{.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+          DescriptorBinding{.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          // Plan 0046 Milestone 1 (ADR-0096): the emissive texture.
+          DescriptorBinding{.set = 0, .binding = 5, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
 // Plan 0035 Milestone 3 (ADR-0081): identical shape to
@@ -118,7 +130,9 @@ std::vector<DescriptorBinding> pbrSheenIblExpectedDescriptorContract() {
           DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
-          DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+          DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          // Plan 0046 Milestone 1 (ADR-0096): the emissive texture.
+          DescriptorBinding{.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
 // Plan 0035 Milestone 3 (ADR-0081): identical to
@@ -130,7 +144,9 @@ std::vector<DescriptorBinding> pbrSheenIblNormalMapExpectedDescriptorContract() 
           DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
-          DescriptorBinding{.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+          DescriptorBinding{.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          // Plan 0046 Milestone 1 (ADR-0096): the emissive texture.
+          DescriptorBinding{.set = 0, .binding = 5, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
 // Plan 0035 Milestone 4 (ADR-0081): identical shape to
@@ -141,7 +157,9 @@ std::vector<DescriptorBinding> pbrAnisotropicIblExpectedDescriptorContract() {
           DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
-          DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+          DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          // Plan 0046 Milestone 1 (ADR-0096): the emissive texture.
+          DescriptorBinding{.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
 // Plan 0035 Milestone 4 (ADR-0081): identical to
@@ -153,7 +171,9 @@ std::vector<DescriptorBinding> pbrAnisotropicIblNormalMapExpectedDescriptorContr
           DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
           DescriptorBinding{.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
-          DescriptorBinding{.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+          DescriptorBinding{.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          // Plan 0046 Milestone 1 (ADR-0096): the emissive texture.
+          DescriptorBinding{.set = 0, .binding = 5, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
 }
 
 // Plan 0024 Milestone 3 (ADR-0068 D-10): a genuinely smaller contract

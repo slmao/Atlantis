@@ -221,6 +221,21 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
         }
         cmd.bindTexture(normalMapBinding, *item.material->normalMapTexture(), *item.material->sampler());
       }
+      // Plan 0046 Milestone 1 (ADR-0096): the emissive texture, one binding
+      // past the normal map (or where the normal map would be) -- the
+      // same conditional-index pattern, through the same sampler.
+      if (item.material->emissiveTexture() != nullptr) {
+        std::uint32_t emissiveBinding = 0;
+        if (item.material->pushConstantLayout() == MaterialPushConstantLayout::PbrClearcoat ||
+            item.material->pushConstantLayout() == MaterialPushConstantLayout::PbrSheen ||
+            item.material->pushConstantLayout() == MaterialPushConstantLayout::PbrAnisotropic) {
+          emissiveBinding = 4U;
+        } else {
+          emissiveBinding = item.material->environmentBinding() == MaterialEnvironmentBinding::Ibl ? 5U : 3U;
+        }
+        if (item.material->normalMapTexture() != nullptr) ++emissiveBinding;
+        cmd.bindTexture(emissiveBinding, *item.material->emissiveTexture(), *item.material->sampler());
+      }
       // Plan 0023 Milestone 5 (Spec 0023 D9's own Accepted Correction):
       // an exhaustive switch, no default: label -- this repository's own
       // /w14062 /WX already makes a missed MaterialPushConstantLayout

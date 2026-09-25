@@ -118,6 +118,12 @@ Sampler2D baseColorSampler;
 [[vk::binding(2, 0)]]
 Sampler2D shadowMapSampler;
 
+// Plan 0046 Milestone 1 (ADR-0096): the emissive texture, always bound
+// (the Runtime's 1x1 white default when the material names none), at the
+// next free binding; sampled through the base-colour sampler state.
+[[vk::binding(3, 0)]]
+Sampler2D emissiveSampler;
+
 // Spec 0019 D6's own precedent, reused verbatim for the point-light
 // distance floor. ADR-0067 D-1/D-2's own new constants for the BRDF
 // itself.
@@ -294,7 +300,9 @@ float4 fragmentMain(Varying input) : SV_Target {
     // after it, on RGB only, behind a dynamically uniform branch rather
     // than a zero multiply -- density 0 must skip the exp()s entirely
     // (0 * inf would be NaN), so fog off is the unfogged value bit for bit.
-    float3 color = accumulated + pushConstants.emissiveFactor;
+    // Plan 0046 Milestone 1 (ADR-0096): the factor scaled by the emissive
+    // texture -- white x factor is the factor exactly.
+    float3 color = accumulated + pushConstants.emissiveFactor * emissiveSampler.Sample(input.uv).rgb;
     if (camera.fog.density > 0.0) {
         color = applyHeightFog(color, input.worldPosition);
     }

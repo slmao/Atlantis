@@ -206,6 +206,17 @@ struct Vertex {
   return result.value();
 }
 
+// Plan 0046 Milestone 1 (ADR-0096): a stand-in for the Runtime's default
+// emissive texture -- nothing in this file draws, so it is never sampled
+// and needs no upload.
+[[nodiscard]] std::unique_ptr<atlantis::rhi::SampledTexture> makeDefaultEmissiveStandIn(atlantis::rhi::Device& device) {
+  auto result = device.createSampledTexture(atlantis::rhi::SampledTextureCreateParams{
+      .extent = atlantis::rhi::Extent2D{1, 1}, .format = atlantis::rhi::SampledTextureFormat::Rgba8Unorm,
+      .mipLevelCount = 1});
+  REQUIRE(result.isOk());
+  return std::move(result.value());
+}
+
 }  // namespace
 
 TEST_CASE("A second material that dedups its texture against an EARLIER frame's already-realized texture is still "
@@ -216,6 +227,7 @@ TEST_CASE("A second material that dedups its texture against an EARLIER frame's 
                                                .enableValidationLayers = true});
   REQUIRE(deviceResult.isOk());
   std::unique_ptr<atlantis::rhi::Device> device = std::move(deviceResult.value());
+  const std::unique_ptr<atlantis::rhi::SampledTexture> defaultEmissive = makeDefaultEmissiveStandIn(*device);
 
   auto vertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv");
   auto fragmentSpirv =
@@ -293,7 +305,7 @@ TEST_CASE("A second material that dedups its texture against an EARLIER frame's 
     std::unordered_map<AssetId, RealizedMaterialCandidate> realized =
         realizePendingMaterials(*device, *commandList, *vertexInputLayout, *vertexSpirv, *fragmentSpirv,
                                  *litLayout, *litVertexSpirv, *litFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, pendingIds,
-                                 sampledTextureResourceMap, materialDataMap, textureDataMap);
+                                 sampledTextureResourceMap, materialDataMap, textureDataMap, *defaultEmissive);
     REQUIRE(realized.size() == 1);
     REQUIRE(realized.at(kMaterialA).newSampledTexture != nullptr);
     REQUIRE(realized.at(kMaterialA).sampler != nullptr);
@@ -332,7 +344,7 @@ TEST_CASE("A second material that dedups its texture against an EARLIER frame's 
     std::unordered_map<AssetId, RealizedMaterialCandidate> realized =
         realizePendingMaterials(*device, *commandList, *vertexInputLayout, *vertexSpirv, *fragmentSpirv,
                                  *litLayout, *litVertexSpirv, *litFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, pendingIds,
-                                 sampledTextureResourceMap, materialDataMap, textureDataMap);
+                                 sampledTextureResourceMap, materialDataMap, textureDataMap, *defaultEmissive);
 
     // The exact invariant the fix restores: a cross-frame dedup candidate
     // still comes back non-empty, with a real Sampler/Material, even though
@@ -409,6 +421,7 @@ TEST_CASE("A PbrDirectLit material with a normal map uploads base color and norm
                                                .enableValidationLayers = true});
   REQUIRE(deviceResult.isOk());
   std::unique_ptr<atlantis::rhi::Device> device = std::move(deviceResult.value());
+  const std::unique_ptr<atlantis::rhi::SampledTexture> defaultEmissive = makeDefaultEmissiveStandIn(*device);
 
   auto pbrVertexSpirv =
       loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.vert.spv");
@@ -490,7 +503,7 @@ TEST_CASE("A PbrDirectLit material with a normal map uploads base color and norm
         // Plan 0035 Milestone 4 (ADR-0081): the two new anisotropic trios
         // are dead-path filler for the identical reason.
         *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv,
-        /*environmentEnabled=*/false, pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap);
+        /*environmentEnabled=*/false, pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap, *defaultEmissive);
 
     REQUIRE(realized.size() == 1);
     const RealizedMaterialCandidate& candidateA = realized.at(kMaterialA);
@@ -550,7 +563,7 @@ TEST_CASE("A PbrDirectLit material with a normal map uploads base color and norm
         // Plan 0035 Milestone 4 (ADR-0081): same dead-path anisotropic
         // filler as the call above.
         *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv,
-        /*environmentEnabled=*/false, pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap);
+        /*environmentEnabled=*/false, pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap, *defaultEmissive);
 
     REQUIRE(realized.size() == 1);
     const RealizedMaterialCandidate& candidateB = realized.at(kMaterialB);
@@ -710,7 +723,7 @@ struct CookedMaterialFixture {
 [[nodiscard]] CookedMaterialFixture cookFixtureMaterial(const fs::path& dir, const std::string& logicalPath,
                                                           const std::string& textureLogicalPath) {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 8\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 9\n"
                         "kind: unlit_textured\n"
                         "texture: " + textureLogicalPath + "\n"
                         "filter: linear\n"
@@ -729,7 +742,7 @@ struct CookedMaterialFixture {
 [[nodiscard]] CookedMaterialFixture cookFixturePbrMaterial(const fs::path& dir, const std::string& logicalPath,
                                                             const std::string& textureLogicalPath) {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 8\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 9\n"
                         "kind: pbr_direct_lit\n"
                         "texture: " + textureLogicalPath + "\n"
                         "filter: linear\n"

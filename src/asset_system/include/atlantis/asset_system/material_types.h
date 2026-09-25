@@ -125,6 +125,10 @@ struct MaterialAssetData {
   // glTF default 0.5, in [0, 1], and is meaningful only for Mask.
   MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
   float alphaCutoff = 0.5f;
+  // Plan 0046 Milestone 1 (ADR-0096): the emissive texture, `0` = none (the
+  // Runtime then binds its 1x1 white default). Legal (non-zero) only for
+  // the four PBR kinds -- enforced at parse time, never here.
+  AssetId emissiveTexture = 0;
 };
 
 }  // namespace atlantis::asset_system

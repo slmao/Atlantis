@@ -114,9 +114,11 @@ TEST_CASE("Real Bistro imports, validates and cooks end to end through the real 
   REQUIRE(imported.isOk());
   CHECK(imported.value().meshCount == 551);
   CHECK(imported.value().materialCount == 254);
-  CHECK(imported.value().texturesReferenced == 257);
+  // Plan 0046 Milestone 1 (ADR-0096): 257 + the 8 distinct emissive masks
+  // the 11 textured-emissive materials now map.
+  CHECK(imported.value().texturesReferenced == 265);
   CHECK(imported.value().sceneNodeLines == 5908);
-  CHECK(imported.value().declaredAssets == 551 + 254 + 257);
+  CHECK(imported.value().declaredAssets == 551 + 254 + 265);
 
   // 2. The whole declared asset set passes the cooker's own set validation
   //    (AssetId collisions, case-only path conflicts).

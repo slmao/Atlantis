@@ -106,8 +106,9 @@ TEST_CASE("validateDescriptorContract() rejects a UniformBuffer where the textur
 }
 
 // Plan 0027 Milestone 5 (ADR-0072 D-7): a fourth contiguous fragment
-// sampler at binding 4 (the shadow map) -- was three.
-TEST_CASE("pbrIblExpectedDescriptorContract declares uniform visibility and four contiguous fragment samplers",
+// sampler at binding 4 (the shadow map) -- was three. Plan 0046
+// Milestone 1 (ADR-0096): a fifth, the emissive texture at binding 5.
+TEST_CASE("pbrIblExpectedDescriptorContract declares uniform visibility and five contiguous fragment samplers",
           "[shader_system][descriptor_contract][pbr_ibl]") {
   const std::vector<DescriptorBinding> expected = {
       {.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
@@ -116,6 +117,7 @@ TEST_CASE("pbrIblExpectedDescriptorContract declares uniform visibility and four
       {.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
       {.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
       {.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 5, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
   };
   CHECK(pbrIblExpectedDescriptorContract() == expected);
 }
@@ -223,8 +225,10 @@ TEST_CASE("validateDescriptorContract() rejects a fragment reflection whose unif
 
 // Plan 0029 Section P11 (ADR-0074 Section 4): identical shape to
 // pbrDirectLitExpectedDescriptorContract() plus a fifth entry, the
-// normal-map sampler at the next free binding.
-TEST_CASE("pbrDirectLitNormalMapExpectedDescriptorContract declares the normal-map sampler at binding 3",
+// normal-map sampler at the next free binding. Plan 0046 Milestone 1
+// (ADR-0096): the emissive texture follows it, at binding 4.
+TEST_CASE("pbrDirectLitNormalMapExpectedDescriptorContract declares the normal-map sampler at binding 3 and the "
+          "emissive texture at 4",
           "[shader_system][descriptor_contract][pbr_direct_lit_normal_map]") {
   const std::vector<DescriptorBinding> expected = {
       {.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
@@ -232,14 +236,17 @@ TEST_CASE("pbrDirectLitNormalMapExpectedDescriptorContract declares the normal-m
       {.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
       {.set = 0, .binding = 2, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
       {.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
   };
   CHECK(pbrDirectLitNormalMapExpectedDescriptorContract() == expected);
 }
 
 // Plan 0029 Section P11 (ADR-0074 Section 4): identical shape to
 // pbrIblExpectedDescriptorContract() plus a seventh entry, the
-// normal-map sampler at the next free binding.
-TEST_CASE("pbrIblNormalMapExpectedDescriptorContract declares the normal-map sampler at binding 5",
+// normal-map sampler at the next free binding. Plan 0046 Milestone 1
+// (ADR-0096): the emissive texture follows it, at binding 6.
+TEST_CASE("pbrIblNormalMapExpectedDescriptorContract declares the normal-map sampler at binding 5 and the emissive "
+          "texture at 6",
           "[shader_system][descriptor_contract][pbr_ibl_normal_map]") {
   const std::vector<DescriptorBinding> expected = {
       {.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex},
@@ -249,6 +256,7 @@ TEST_CASE("pbrIblNormalMapExpectedDescriptorContract declares the normal-map sam
       {.set = 0, .binding = 3, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
       {.set = 0, .binding = 4, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
       {.set = 0, .binding = 5, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+      {.set = 0, .binding = 6, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
   };
   CHECK(pbrIblNormalMapExpectedDescriptorContract() == expected);
 }

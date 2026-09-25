@@ -522,6 +522,15 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
   const bool environmentEnabled =
       fixture.environmentData.has_value() || fixture.environmentLightingResources.has_value();
 
+  // Plan 0046 Milestone 1 (ADR-0096): the default emissive texture, created
+  // once like the Runtime's, its upload recorded ahead of the materials'.
+  std::unique_ptr<rhi::Buffer> defaultEmissiveStagingBuffer;
+  if (!fixture.defaultEmissiveTexture) {
+    auto defaultEmissiveResult = atlantis::runtime::createDefaultEmissiveTexture(*fixture.device, *commandList);
+    if (defaultEmissiveResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoRenderError::CommandListCreationFailed);
+    fixture.defaultEmissiveTexture = std::move(defaultEmissiveResult.value().texture);
+    defaultEmissiveStagingBuffer = std::move(defaultEmissiveResult.value().stagingBuffer);
+  }
   std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
       // Plan 0029 Section P15: this fixture's own scene never realizes a
       // normal-mapped material (hasNormalMap stays false for every
@@ -562,7 +571,8 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
                                fixture.pbrDirectLitFragmentSpirv, fixture.pbrIblVertexInputLayout,
                                fixture.pbrIblVertexSpirv, fixture.pbrIblFragmentSpirv, environmentEnabled,
                                pendingMaterialIds,
-                               fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);
+                               fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap,
+                               *fixture.defaultEmissiveTexture);
 
   std::vector<atlantis::asset_system::AssetId> knownMaterialIds = alreadyRealizedMaterialIds;
   for (const auto& [assetId, candidate] : realizedCandidates) knownMaterialIds.push_back(assetId);
@@ -666,6 +676,10 @@ atlantis::Result<PixelBuffer, IntegratedShowcaseDemoRenderError> renderIntegrate
     if (candidate.newNormalMapTexture) {
       fixture.sampledTextureResourceMap.emplace(candidate.normalMapTextureAssetId,
                                                   std::move(candidate.newNormalMapTexture));
+    }
+    if (candidate.newEmissiveTexture) {  // Plan 0046 Milestone 1
+      fixture.sampledTextureResourceMap.emplace(candidate.emissiveTextureAssetId,
+                                                std::move(candidate.newEmissiveTexture));
     }
     fixture.samplerResourceMap.emplace(assetId, std::move(candidate.sampler));
     fixture.materialResourceMap.emplace(assetId, std::move(candidate.material));

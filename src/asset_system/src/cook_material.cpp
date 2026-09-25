@@ -122,6 +122,15 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
     normalMapTextureAssetId = computeAssetId(normalizedNormalMapResult.value());
   }
 
+  // Step 3.4b (Plan 0046 Milestone 1, ADR-0096): the optional emissive
+  // texture's identity, the normal map's discipline exactly.
+  AssetId emissiveTextureAssetId = 0;
+  if (!parsed.emissiveTextureLogicalPath.empty()) {
+    const auto normalizedEmissiveResult = normalizeLogicalPath(parsed.emissiveTextureLogicalPath);
+    if (normalizedEmissiveResult.isErr()) return ResultT::Err(MaterialCookError::LogicalPathInvalid);
+    emissiveTextureAssetId = computeAssetId(normalizedEmissiveResult.value());
+  }
+
   // Step 3.5 (Plan 0023 Milestone 1, ADR-0066 item 5; Plan 0035
   // Milestone 2/ADR-0081 widening): value-range validation, both
   // directions -- never a naive parse-and-trust. clearcoatFactor/
@@ -176,7 +185,7 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
       parsed.kind, textureAssetId, parsed.filter, parsed.addressMode, parsed.baseColorFactor, parsed.metallicFactor,
       parsed.roughnessFactor, normalMapTextureAssetId, parsed.clearcoatFactor, parsed.clearcoatRoughness,
       parsed.sheenColor, parsed.sheenRoughness, parsed.anisotropyFactor, parsed.anisotropyRotation,
-      parsed.emissiveFactor, parsed.alphaMode, parsed.alphaCutoff);
+      parsed.emissiveFactor, parsed.alphaMode, parsed.alphaCutoff, emissiveTextureAssetId);
 
   MaterialMetadata metadata;
   metadata.assetId = selfAssetId;
@@ -196,6 +205,7 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   for (std::size_t i = 0; i < 3; ++i) metadata.emissiveFactor[i] = parsed.emissiveFactor[i];
   metadata.alphaMode = parsed.alphaMode;
   metadata.alphaCutoff = parsed.alphaCutoff;
+  metadata.emissiveTexture = emissiveTextureAssetId;
   const std::string metadataText = serializeMaterialMetadata(metadata);
 
   if (!writeBytesAtomically(artifactOutputPath, reinterpret_cast<const char*>(artifactBytes.data()),

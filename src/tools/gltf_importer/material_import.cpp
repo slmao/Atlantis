@@ -116,7 +116,29 @@ struct ResolvedTexture {
 struct MaterialTextures {
   const cgltf_texture_view* baseColor = nullptr;
   const cgltf_texture_view* normal = nullptr;
+  // Plan 0046 Milestone 1 (ADR-0096): set only when the texture is mapped --
+  // a non-zero, in-range emissiveFactor beside it (mapsEmissiveTexture()).
+  const cgltf_texture_view* emissive = nullptr;
 };
+
+// Plan 0046 Milestone 1 (ADR-0096, Plan 0046 P5): glTF's emissive is
+// factor x texture, so a texture maps exactly when its factor does -- a
+// non-zero factor inside [0, 65504]. A zero factor leaves it inert.
+[[nodiscard]] bool emissiveFactorInRange(const cgltf_material& m) {
+  for (int c = 0; c < 3; ++c) {
+    const float component = m.emissive_factor[c];
+    if (!std::isfinite(component) || component < 0.0f || component > 65504.0f) return false;
+  }
+  return true;
+}
+
+[[nodiscard]] bool hasNonZeroEmissiveFactor(const cgltf_material& m) {
+  return m.emissive_factor[0] != 0.0f || m.emissive_factor[1] != 0.0f || m.emissive_factor[2] != 0.0f;
+}
+
+[[nodiscard]] bool mapsEmissiveTexture(const cgltf_material& m) {
+  return m.emissive_texture.texture != nullptr && hasNonZeroEmissiveFactor(m) && emissiveFactorInRange(m);
+}
 
 [[nodiscard]] MaterialTextures usedTextures(const cgltf_material& m) {
   MaterialTextures used;
@@ -124,6 +146,7 @@ struct MaterialTextures {
       m.has_pbr_specular_glossiness ? m.pbr_specular_glossiness.diffuse_texture : m.pbr_metallic_roughness.base_color_texture;
   if (base.texture != nullptr) used.baseColor = &base;
   if (m.normal_texture.texture != nullptr) used.normal = &m.normal_texture;
+  if (mapsEmissiveTexture(m)) used.emissive = &m.emissive_texture;
   return used;
 }
 
@@ -269,7 +292,8 @@ atlantis::Result<std::monostate, GltfImportError> checkMaterials(const cgltf_dat
     }
 
     const MaterialTextures used = usedTextures(m);
-    for (const auto& [view, usage] : {std::pair{used.baseColor, TextureUsage::Color}, std::pair{used.normal, TextureUsage::Data}}) {
+    for (const auto& [view, usage] : {std::pair{used.baseColor, TextureUsage::Color}, std::pair{used.normal, TextureUsage::Data},
+                                      std::pair{used.emissive, TextureUsage::Color}}) {
       if (view == nullptr) continue;
       const auto check = checkTextureView(data, *view, contentRoot);
       if (check.isErr()) return check;
@@ -385,36 +409,38 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
     if (sampler == nullptr) samplerDefaulted += 1;
     applySampler(sampler, source);
 
-    // Spec 0041 Requirement 8 (rulings O3, Q3): emissive has a v7
-    // destination, emissiveFactor, but no emissive texture. A factor with
-    // no texture is mapped; a factor with a texture is dropped, because
-    // applying it without its texture would light the whole surface
-    // uniformly; a factor outside [0, 65504] (or non-finite) is dropped
-    // here rather than failing the whole cook later. A texture with a zero
-    // factor is inert under glTF's factor x texture rule, so it only joins
-    // the Ruling 3 list below. Each case gets its own report line.
-    const bool hasEmissiveFactor =
-        m.emissive_factor[0] != 0.0f || m.emissive_factor[1] != 0.0f || m.emissive_factor[2] != 0.0f;
+    // Spec 0041 Requirement 8 (rulings O3, Q3), widened by Plan 0046
+    // Milestone 1 (ADR-0096, Plan 0046 P5): material v9 has both
+    // destinations, emissiveFactor and emissive_texture. An in-range factor
+    // is mapped, with its texture when it has one; a factor outside
+    // [0, 65504] (or non-finite) is dropped with its texture rather than
+    // failing the whole cook later. A texture with a zero factor is inert
+    // under glTF's factor x texture rule and is not mapped. Each case gets
+    // its own report line.
+    const bool hasEmissiveFactor = hasNonZeroEmissiveFactor(m);
     const bool hasEmissiveTexture = m.emissive_texture.texture != nullptr;
     if (hasEmissiveFactor) {
       const std::string factorText = "emissiveFactor=(" + formatFloat(m.emissive_factor[0]) + "," +
                                      formatFloat(m.emissive_factor[1]) + "," + formatFloat(m.emissive_factor[2]) + ")";
-      bool inRange = true;
-      for (int c = 0; c < 3; ++c) {
-        const float component = m.emissive_factor[c];
-        if (!std::isfinite(component) || component < 0.0f || component > 65504.0f) inRange = false;
-      }
-      if (hasEmissiveTexture) {
-        reportLines.push_back(label + ": " + factorText +
-                              " dropped, emissiveTexture present -- a factor is not applied without its texture "
-                              "(Spec 0041 R8)");
-      } else if (!inRange) {
-        reportLines.push_back(label + ": " + factorText +
-                              " dropped, outside the emissive range [0, 65504] (Spec 0041 R8)");
+      if (!emissiveFactorInRange(m)) {
+        reportLines.push_back(label + ": " + factorText + " dropped" +
+                              (hasEmissiveTexture ? std::string(" with its emissiveTexture") : std::string()) +
+                              ", outside the emissive range [0, 65504] (Spec 0041 R8)");
       } else {
         for (int c = 0; c < 3; ++c) source.emissiveFactor[c] = m.emissive_factor[c];
-        reportLines.push_back(label + ": " + factorText + " mapped (Spec 0041 R8)");
+        if (used.emissive != nullptr) {
+          const ResolvedTexture resolved = *resolveTexture(data, *used.emissive->texture);
+          source.emissiveTextureLogicalPath = textureLogicalPath(contentRoot, resolved.uri);
+          addTexture({source.emissiveTextureLogicalPath, "{content_parent}/" + source.emissiveTextureLogicalPath,
+                      "{content_parent}", resolved.isDds, TextureUsage::Color});
+          reportLines.push_back(label + ": " + factorText + " mapped with emissiveTexture " +
+                                source.emissiveTextureLogicalPath + " (ADR-0096)");
+        } else {
+          reportLines.push_back(label + ": " + factorText + " mapped (Spec 0041 R8)");
+        }
       }
+    } else if (hasEmissiveTexture) {
+      reportLines.push_back(label + ": emissiveTexture inert (emissiveFactor 0), not mapped (ADR-0096)");
     }
 
     // Spec 0042 Requirement 9 (ruling O1): MASK -> Mask + alphaCutoff
@@ -446,12 +472,11 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
       }
     }
 
-    // Ruling 3: properties v8 has no destination for.
+    // Ruling 3: properties v9 has no destination for.
     if (m.double_sided) dropped.push_back("doubleSided");
-    if (hasEmissiveTexture) dropped.push_back("emissiveTexture");
     if (m.occlusion_texture.texture != nullptr) dropped.push_back("occlusionTexture");
     if (!dropped.empty()) {
-      std::string line = label + ": no v8 destination, dropped (Ruling 3):";
+      std::string line = label + ": no v9 destination, dropped (Ruling 3):";
       for (const std::string& d : dropped) line += " " + d;
       reportLines.push_back(line);
     }

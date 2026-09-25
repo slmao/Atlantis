@@ -98,7 +98,8 @@ class Material {
                      float sheenRoughness = 0.0f, float anisotropyFactor = 0.0f,
                      float anisotropyRotation = 0.0f,
                      std::array<float, 3> emissiveFactor = {0.0f, 0.0f, 0.0f},
-                     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque, float alphaCutoff = 0.0f) noexcept;
+                     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque, float alphaCutoff = 0.0f,
+                     const atlantis::rhi::SampledTexture* emissiveTexture = nullptr) noexcept;
   ~Material() = default;
 
   Material(const Material&) = delete;
@@ -146,6 +147,12 @@ class Material {
   // alphaMode() == Mask (checked at construction) -- alpha >= 0 always, so
   // a 0 cutoff never discards and Opaque/Blend output is unchanged.
   [[nodiscard]] float alphaCutoff() const noexcept { return alphaCutoff_; }
+  // Plan 0046 Milestone 1 (ADR-0096, Plan 0046 P2): borrowed, sampled
+  // through sampler() like the normal map. Material realization passes a
+  // non-null one for every PBR material (the material's own, or the
+  // caller's 1x1 white default); null only on the non-PBR layouts
+  // (checked at construction) and on renderer-only test doubles.
+  [[nodiscard]] const atlantis::rhi::SampledTexture* emissiveTexture() const noexcept { return emissiveTexture_; }
 
  private:
   std::unique_ptr<atlantis::rhi::Pipeline> pipeline_;
@@ -166,6 +173,7 @@ class Material {
   std::array<float, 3> emissiveFactor_{0.0f, 0.0f, 0.0f};
   MaterialAlphaMode alphaMode_ = MaterialAlphaMode::Opaque;
   float alphaCutoff_ = 0.0f;
+  const atlantis::rhi::SampledTexture* emissiveTexture_ = nullptr;  // borrowed, never owned
 };
 
 enum class CreateMaterialError {
@@ -194,7 +202,9 @@ enum class CreateMaterialError {
 // Milestone 2/ADR-0081: clearcoatFactor/clearcoatRoughness are now the
 // final trailing parameters, same compatibility shape, defaulting to
 // 0.0f. Plan 0041 Milestone 2: emissiveFactor is now the final trailing
-// parameter, same compatibility shape, defaulting to (0, 0, 0).
+// parameter, same compatibility shape, defaulting to (0, 0, 0). Plan 0046
+// Milestone 1: emissiveTexture is now the final trailing parameter,
+// defaulting to nullptr.
 [[nodiscard]] atlantis::Result<Material, CreateMaterialError> createMaterial(
     atlantis::rhi::Device& device, const atlantis::rhi::PipelineCreateParams& params,
     const atlantis::rhi::SampledTexture* sampledTexture = nullptr, const atlantis::rhi::Sampler* sampler = nullptr,
@@ -205,6 +215,7 @@ enum class CreateMaterialError {
     float clearcoatRoughness = 0.0f, std::array<float, 3> sheenColor = {0.0f, 0.0f, 0.0f},
     float sheenRoughness = 0.0f, float anisotropyFactor = 0.0f, float anisotropyRotation = 0.0f,
     std::array<float, 3> emissiveFactor = {0.0f, 0.0f, 0.0f},
-    MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque, float alphaCutoff = 0.0f);
+    MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque, float alphaCutoff = 0.0f,
+    const atlantis::rhi::SampledTexture* emissiveTexture = nullptr);
 
 }  // namespace atlantis::renderer

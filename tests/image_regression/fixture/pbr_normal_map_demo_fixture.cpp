@@ -669,6 +669,15 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   // realizes a PbrClearcoat material, reusing pbrDirectLit*'s own
   // values, mirroring every other no-clearcoat composition root's
   // identical reuse.
+  // Plan 0046 Milestone 1 (ADR-0096): the default emissive texture, created
+  // once like the Runtime's, its upload recorded ahead of the materials'.
+  std::unique_ptr<rhi::Buffer> defaultEmissiveStagingBuffer;
+  if (!fixture.defaultEmissiveTexture) {
+    auto defaultEmissiveResult = atlantis::runtime::createDefaultEmissiveTexture(*fixture.device, *commandList);
+    if (defaultEmissiveResult.isErr()) return ResultT::Err(PbrNormalMapDemoRenderError::CommandListCreationFailed);
+    fixture.defaultEmissiveTexture = std::move(defaultEmissiveResult.value().texture);
+    defaultEmissiveStagingBuffer = std::move(defaultEmissiveResult.value().stagingBuffer);
+  }
   std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
       realizePendingMaterials(*fixture.device, *commandList, fixture.unlitTexturedVertexInputLayout,
                                fixture.unlitTexturedVertexSpirv, fixture.unlitTexturedFragmentSpirv,
@@ -696,7 +705,8 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
                                fixture.pbrDirectLitFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
                                fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv, environmentEnabled,
                                pendingMaterialIds,
-                               fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);
+                               fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap,
+                               *fixture.defaultEmissiveTexture);
 
   // Plan 0029 Section P19 (Fixture A/B mechanism, step 3): the control
   // material's own one-time GPU realization -- deferred to here (not
@@ -737,7 +747,8 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
         fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
         fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
         environmentEnabled, fixture.controlMaterialAssetId, *fixture.controlMaterialData, controlTextureIt->second,
-        /*normalMapTextureData=*/nullptr, effectiveSampledTextures);
+        /*normalMapTextureData=*/nullptr, /*emissiveTextureData=*/nullptr, effectiveSampledTextures,
+        *fixture.defaultEmissiveTexture);
     if (controlCandidateResult.isErr()) {
       return ResultT::Err(PbrNormalMapDemoRenderError::ControlMaterialRealizationFailed);
     }
@@ -876,6 +887,10 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
     if (candidate.newNormalMapTexture) {
       fixture.sampledTextureResourceMap.emplace(candidate.normalMapTextureAssetId,
                                                  std::move(candidate.newNormalMapTexture));
+    }
+    if (candidate.newEmissiveTexture) {  // Plan 0046 Milestone 1
+      fixture.sampledTextureResourceMap.emplace(candidate.emissiveTextureAssetId,
+                                                std::move(candidate.newEmissiveTexture));
     }
     fixture.samplerResourceMap.emplace(assetId, std::move(candidate.sampler));
     fixture.materialResourceMap.emplace(assetId, std::move(candidate.material));

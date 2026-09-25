@@ -10,7 +10,7 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_material_source_version: 8";
+constexpr std::string_view kVersionLine = "atlantis_material_source_version: 9";
 constexpr std::string_view kKindPrefix = "kind: ";
 constexpr std::string_view kTexturePrefix = "texture: ";
 constexpr std::string_view kFilterPrefix = "filter: ";
@@ -48,6 +48,9 @@ constexpr std::string_view kEmissiveFactorPrefix = "emissive_factor: ";
 // emissive_factor.
 constexpr std::string_view kAlphaModePrefix = "alpha_mode: ";
 constexpr std::string_view kAlphaCutoffPrefix = "alpha_cutoff: ";
+// Plan 0046 Milestone 1 (ADR-0096): the v9 grammar's one new optional
+// line, after alpha_cutoff -- a logical path, like normal_map.
+constexpr std::string_view kEmissiveTexturePrefix = "emissive_texture: ";
 
 constexpr std::string_view kKindUnlitTextured = "unlit_textured";
 constexpr std::string_view kKindLitTextured = "lit_textured";
@@ -139,6 +142,7 @@ struct OptionalLineValues {
   float emissiveFactor[3] = {0.0f, 0.0f, 0.0f};
   MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
   float alphaCutoff = 0.5f;
+  std::string_view emissiveTexture;
 };
 
 using OptionalLineParser = std::optional<MaterialSourceParseError> (*)(std::string_view, OptionalLineValues&);
@@ -173,6 +177,13 @@ using OptionalLineParser = std::optional<MaterialSourceParseError> (*)(std::stri
   return std::nullopt;
 }
 
+[[nodiscard]] std::optional<MaterialSourceParseError> parseEmissiveTextureLine(std::string_view value,
+                                                                             OptionalLineValues& out) {
+  if (value.empty()) return MaterialSourceParseError::MissingField;
+  out.emissiveTexture = value;
+  return std::nullopt;
+}
+
 struct OptionalLine {
   std::string_view prefix;
   MaterialSourceParseError notSupportedForKind;
@@ -185,6 +196,7 @@ constexpr OptionalLine kOptionalLines[] = {
     {kEmissiveFactorPrefix, MaterialSourceParseError::EmissiveNotSupportedForKind, &parseEmissiveFactorLine},
     {kAlphaModePrefix, MaterialSourceParseError::AlphaModeNotSupportedForKind, &parseAlphaModeLine},
     {kAlphaCutoffPrefix, MaterialSourceParseError::AlphaModeNotSupportedForKind, &parseAlphaCutoffLine},
+    {kEmissiveTexturePrefix, MaterialSourceParseError::EmissiveNotSupportedForKind, &parseEmissiveTextureLine},
 };
 constexpr std::size_t kOptionalLineCount = std::size(kOptionalLines);
 
@@ -490,6 +502,7 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
   for (std::size_t i = 0; i < 3; ++i) parsed.emissiveFactor[i] = optionalValues.emissiveFactor[i];
   parsed.alphaMode = optionalValues.alphaMode;
   parsed.alphaCutoff = optionalValues.alphaCutoff;
+  parsed.emissiveTextureLogicalPath = std::string(optionalValues.emissiveTexture);
   return ResultT::Ok(std::move(parsed));
 }
 
@@ -592,6 +605,12 @@ std::string serializeMaterialSource(const ParsedMaterialSource& source) {
   if (source.alphaCutoff != 0.5f) {
     out += kAlphaCutoffPrefix;
     out += formatFloat(source.alphaCutoff);
+    out += '\n';
+  }
+  // Plan 0046 Milestone 1 (ADR-0096): the same only-when-present rule.
+  if (!source.emissiveTextureLogicalPath.empty()) {
+    out += kEmissiveTexturePrefix;
+    out += source.emissiveTextureLogicalPath;
     out += '\n';
   }
   // Plan 0029 Section P5/ADR-0074 Section 1: the trailing normal_map
