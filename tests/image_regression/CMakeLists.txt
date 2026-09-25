@@ -1,3 +1,13 @@
+# Plan 0046 Milestone 5 (ADR-0095 Decision 2): the Bistro content pin --
+# the fetch script's SHA-256, line endings normalized to LF so it does not
+# depend on core.autocrlf, recomputed whenever the script changes. The
+# bistro_demo generator records it; the golden test checks it.
+set(ATLANTIS_BISTRO_FETCH_SCRIPT "${CMAKE_SOURCE_DIR}/tools/content/fetch_bistro.ps1")
+file(READ "${ATLANTIS_BISTRO_FETCH_SCRIPT}" atlantis_bistro_fetch_script_text)
+string(REPLACE "\r" "" atlantis_bistro_fetch_script_text "${atlantis_bistro_fetch_script_text}")
+string(SHA256 ATLANTIS_BISTRO_FETCH_SCRIPT_SHA256 "${atlantis_bistro_fetch_script_text}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${ATLANTIS_BISTRO_FETCH_SCRIPT}")
+
 add_subdirectory(support)
 add_subdirectory(fixture)
 add_subdirectory(golden_generator)
@@ -565,6 +575,10 @@ if(NOT ANDROID)
     ATLANTIS_BLOOM_COMPOSITE_SHADER_DIR="${ATLANTIS_bloom_composite_SHADER_OUTPUT_DIR}"
     ATLANTIS_ASSET_COOKER_EXECUTABLE="$<TARGET_FILE:atlantis_asset_cooker>"
     ATLANTIS_BISTRO_REVIEW_OUTPUT_DIR="${CMAKE_BINARY_DIR}/bistro/review"
+    # Plan 0046 Milestone 5: the bistro_demo golden (ADR-0095).
+    ATLANTIS_BISTRO_FETCH_SCRIPT_SHA256="${ATLANTIS_BISTRO_FETCH_SCRIPT_SHA256}"
+    ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+    ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR="${CMAKE_BINARY_DIR}/image_regression_failures"
   )
   # Plan 0046 Milestone 3: the assembled scene exists only when assets/
   # declared its build step (content present at configure time); the test

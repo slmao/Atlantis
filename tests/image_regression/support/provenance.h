@@ -28,6 +28,13 @@ struct Provenance {
   std::string environmentArtifactSha256;
   std::string environmentCookerSettings;
   std::string goldenUpdateReason;
+  // Plan 0046 Milestone 5 (ADR-0095 Decision 2): schema 3 -- a golden over
+  // fetched, SHA-256-pinned content records the pin: the fetch script's
+  // last commit and its SHA-256 (LF-normalized), beside goldenUpdateReason.
+  // Both empty for schemas 1 and 2; schema 3 never carries the schema-2
+  // environment fields.
+  std::string contentSourceCommit;
+  std::string contentFetchScriptSha256;
 };
 
 // The narrower schema tests/image_regression/current_environment.sidecar.txt

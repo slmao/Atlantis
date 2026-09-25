@@ -92,7 +92,9 @@ TEST_CASE("parseGoldenProvenance: an unknown schema_version is rejected", "[imag
   std::string text = wellFormedGoldenSidecar();
   const std::size_t pos = text.find("schema_version: 1\n");
   REQUIRE(pos != std::string::npos);
-  text.replace(pos, std::string("schema_version: 1\n").size(), "schema_version: 3\n");
+  // Plan 0046 Milestone 5: 3 is now schema 3 (the content pin) -- moved
+  // by hand to 4, still genuinely unknown.
+  text.replace(pos, std::string("schema_version: 1\n").size(), "schema_version: 4\n");
 
   const auto result = parseGoldenProvenance(text);
   REQUIRE(result.isErr());
@@ -203,4 +205,50 @@ TEST_CASE("compareProvenanceEnvironment: names every differing field, not just t
   }
   REQUIRE(foundGpuModel);
   REQUIRE(foundDriverVersion);
+}
+
+// Plan 0046 Milestone 5 (ADR-0095 Decision 2): schema 3 -- the schema-1
+// fields plus the content pin (fetch-script commit and SHA-256) and the
+// golden update reason.
+TEST_CASE("content-pinned golden provenance schema v3 round-trips its pin fields",
+          "[image_regression][provenance][content]") {
+  auto parsedV1 = parseGoldenProvenance(wellFormedGoldenSidecar());
+  REQUIRE(parsedV1.isOk());
+  auto provenance = parsedV1.value();
+  provenance.contentSourceCommit = "0123456789abcdef0123456789abcdef01234567";
+  provenance.contentFetchScriptSha256 = std::string(64, 'a');
+  provenance.goldenUpdateReason = "Initial baseline bootstrap, Spec 0046 bistro_demo";
+  const std::string serialized = serializeGoldenProvenance(provenance);
+  CHECK(serialized.starts_with("schema_version: 3\n"));
+  CHECK(serialized.find("environment_source_sha256") == std::string::npos);
+  auto reparsed = parseGoldenProvenance(serialized);
+  REQUIRE(reparsed.isOk());
+  CHECK(reparsed.value().contentSourceCommit == provenance.contentSourceCommit);
+  CHECK(reparsed.value().contentFetchScriptSha256 == provenance.contentFetchScriptSha256);
+  CHECK(reparsed.value().goldenUpdateReason == provenance.goldenUpdateReason);
+  CHECK(reparsed.value().environmentSourceSha256.empty());
+  CHECK(serializeGoldenProvenance(reparsed.value()) == serialized);
+}
+
+TEST_CASE("parseGoldenProvenance: schema v3 rejects a missing pin line, a malformed commit or SHA-256",
+          "[image_regression][provenance][content]") {
+  auto provenance = parseGoldenProvenance(wellFormedGoldenSidecar()).value();
+  provenance.contentSourceCommit = "0123456789abcdef0123456789abcdef01234567";
+  provenance.contentFetchScriptSha256 = std::string(64, 'b');
+  provenance.goldenUpdateReason = "reason";
+  const std::string good = serializeGoldenProvenance(provenance);
+
+  const std::string truncated = good.substr(0, good.rfind("golden_update_reason"));
+  REQUIRE(parseGoldenProvenance(truncated).isErr());
+  CHECK(parseGoldenProvenance(truncated).error() == ProvenanceParseError::WrongLineCount);
+
+  std::string badCommit = good;
+  badCommit.replace(badCommit.find("0123456789abcdef0123"), 4, "XYZ1");
+  REQUIRE(parseGoldenProvenance(badCommit).isErr());
+  CHECK(parseGoldenProvenance(badCommit).error() == ProvenanceParseError::MalformedValue);
+
+  std::string shortSha = good;
+  shortSha.replace(shortSha.find(std::string(64, 'b')), 64, std::string(63, 'b'));
+  REQUIRE(parseGoldenProvenance(shortSha).isErr());
+  CHECK(parseGoldenProvenance(shortSha).error() == ProvenanceParseError::MalformedValue);
 }

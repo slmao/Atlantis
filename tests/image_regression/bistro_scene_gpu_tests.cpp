@@ -1,10 +1,16 @@
 #include "bloom_test_config.h"
 #include "fixture/emissive_demo_fixture.h"
+#include "support/golden_validity.h"
+#include "support/pixel_diff.h"
 #include "support/png_codec.h"
+#include "support/provenance.h"
 
 #include <atlantis/asset_system/logical_path.h>
 #include <atlantis/renderer/bloom.h>
 #include <atlantis/runtime/bootstrap_config.h>
+#include <atlantis/world/camera.h>
+#include <atlantis/world/light.h>
+#include <atlantis/world/world.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -13,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -171,5 +178,132 @@ TEST_CASE("The assembled Bistro scene validates, loads through the Runtime path,
                        << " GiB, peak commit " << peak.commitGiB << " GiB of " << peak.physicalGiB
                        << " GiB physical (Spec estimate ~4.4 GiB)");
   if (peak.physicalGiB > 0.0) CHECK(peak.commitGiB < peak.physicalGiB * 0.5);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0046 Milestone 5 (Spec 0046 R6, ADR-0095, Plan 0046 P12): the
+// bistro_demo golden -- the frame atlantis_image_regression_bistro_demo_
+// golden_generator captures (the overlay camera, its fog and bloom, no
+// environment), compared at zero tolerance (ADR-0042), with three
+// discriminators that must fail: fog off, bloom off, every point light off
+// (each a World edit on the loaded scene). Content-gated like the test
+// above; the sidecar's content pin (schema 3) must match the fetch script.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr const char* kBistroGolden = "bistro_demo/bistro_demo_512x512_rgba8unorm";
+constexpr const char* kBistroGoldenSlug = "bistro_demo_512x512_rgba8unorm";
+
+enum class BistroVariant { Golden, FogOff, BloomOff, PointLightsOff };
+
+#if defined(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)
+[[nodiscard]] atlantis::image_regression::ComparisonReport renderBistroAndCompare(BistroVariant variant) {
+  const BloomTestSceneFiles scene{ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH, ATLANTIS_BISTRO_SCENE_METADATA_PATH,
+                                  ATLANTIS_BISTRO_SCENE_MANIFEST_PATH};
+  auto config = buildDarkEmissiveConfig(scene);
+  addBloomShaderPaths(config);
+  auto fixtureResult = atlantis::image_regression::setUpEmissiveDemoFixture(
+      config, ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH, ATLANTIS_pbr_normal_mapped_control_METADATA_PATH);
+  REQUIRE(fixtureResult.isOk());
+  EmissiveDemoFixture fixture = std::move(fixtureResult.value());
+  atlantis::world::World& world = *fixture.world;
+  const auto cameraId = world.activeCamera();
+  REQUIRE(cameraId.has_value());
+  atlantis::world::Camera camera = world.getCamera(*cameraId).value();
+  if (variant == BistroVariant::FogOff) camera.fog.density = 0.0f;
+  if (variant == BistroVariant::BloomOff) camera.bloom.strength = 0.0f;
+  REQUIRE(world.setCamera(*cameraId, camera).isOk());
+  if (variant == BistroVariant::PointLightsOff) {
+    std::size_t pointLights = 0;
+    for (const auto& id : world.lightEntities()) {
+      atlantis::world::Light light = world.getLight(id).value();
+      if (light.kind != atlantis::world::LightKind::Point) continue;
+      light.intensity = 0.0f;
+      REQUIRE(world.setLight(id, light).isOk());
+      ++pointLights;
+    }
+    REQUIRE(pointLights == 59);
+  }
+
+  // Exactly the generator's call: no explicit BloomInput, the camera's
+  // bloom= group drives the chain.
+  auto frame = atlantis::image_regression::renderEmissiveDemoFrame(fixture);
+  REQUIRE(frame.isOk());
+  REQUIRE(fixture.device->waitIdle().isOk());
+  const PixelBuffer actual = std::move(frame.value());
+
+  const fs::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto golden = atlantis::image_regression::loadAndValidateGolden(goldensDir / (std::string(kBistroGolden) + ".png"),
+                                                                  goldensDir /
+                                                                      (std::string(kBistroGolden) + ".sidecar.txt"));
+  {
+    INFO("INVALID GOLDEN: the committed " << kBistroGolden << " golden must load and validate cleanly");
+    REQUIRE(golden.isOk());
+  }
+  REQUIRE(actual.width == golden.value().pixels.width);
+  REQUIRE(actual.height == golden.value().pixels.height);
+  const auto report = atlantis::image_regression::compareBuffers(actual, golden.value().pixels);
+  if (!report.passed && variant == BistroVariant::Golden) {
+    (void)atlantis::image_regression::writeFailureArtifacts(ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR, kBistroGoldenSlug,
+                                                            actual, golden.value().pixels);
+  }
+  return report;
+}
+#endif
+
+}  // namespace
+
+TEST_CASE("Full capture-compare cycle against the committed bistro_demo golden passes, and its sidecar's content "
+          "pin matches the fetch script (ADR-0095)",
+          "[bistro]") {
+#if !defined(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)
+  SKIP("No Bistro build step: content/bistro was absent at configure time");
+#else
+  if (!fs::exists(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)) SKIP("Bistro build step has not run");
+  const fs::path outputDir = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
+  fs::remove(outputDir / (std::string(kBistroGoldenSlug) + "_actual.png"));
+  fs::remove(outputDir / (std::string(kBistroGoldenSlug) + "_diff.png"));
+
+  std::ifstream sidecarFile(fs::path(ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR) /
+                                (std::string(kBistroGolden) + ".sidecar.txt"),
+                            std::ios::binary);
+  const std::string sidecarText((std::istreambuf_iterator<char>(sidecarFile)), std::istreambuf_iterator<char>());
+  const auto provenance = atlantis::image_regression::parseGoldenProvenance(sidecarText);
+  REQUIRE(provenance.isOk());
+  CHECK(sidecarText.rfind("schema_version: 3\n", 0) == 0);
+  CHECK(provenance.value().contentFetchScriptSha256 == ATLANTIS_BISTRO_FETCH_SCRIPT_SHA256);
+  CHECK(provenance.value().contentSourceCommit.size() == 40);
+
+  CHECK(renderBistroAndCompare(BistroVariant::Golden).passed);
+#endif
+}
+
+TEST_CASE("The bistro_demo frame with fog off fails comparison against the real bistro_demo golden", "[bistro]") {
+#if !defined(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)
+  SKIP("No Bistro build step: content/bistro was absent at configure time");
+#else
+  if (!fs::exists(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)) SKIP("Bistro build step has not run");
+  CHECK_FALSE(renderBistroAndCompare(BistroVariant::FogOff).passed);
+#endif
+}
+
+TEST_CASE("The bistro_demo frame with bloom off fails comparison against the real bistro_demo golden", "[bistro]") {
+#if !defined(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)
+  SKIP("No Bistro build step: content/bistro was absent at configure time");
+#else
+  if (!fs::exists(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)) SKIP("Bistro build step has not run");
+  CHECK_FALSE(renderBistroAndCompare(BistroVariant::BloomOff).passed);
+#endif
+}
+
+TEST_CASE("The bistro_demo frame with every point light off fails comparison against the real bistro_demo golden",
+          "[bistro]") {
+#if !defined(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)
+  SKIP("No Bistro build step: content/bistro was absent at configure time");
+#else
+  if (!fs::exists(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)) SKIP("Bistro build step has not run");
+  CHECK_FALSE(renderBistroAndCompare(BistroVariant::PointLightsOff).passed);
 #endif
 }

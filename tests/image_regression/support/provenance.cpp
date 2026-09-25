@@ -30,6 +30,14 @@ constexpr std::array<const char*, 4> kEnvironmentCaptureFieldNames = {
     "golden_update_reason",
 };
 
+// Plan 0046 Milestone 5 (ADR-0095 Decision 2): schema 3's additive tail,
+// after the schema-1 fields (the schema-2 tail's own precedent).
+constexpr std::array<const char*, 3> kContentPinFieldNames = {
+    "content_source_commit",
+    "content_fetch_script_sha256",
+    "golden_update_reason",
+};
+
 constexpr std::array<const char*, 7> kEnvironmentFieldNames = {
     "gpu_vendor",
     "gpu_model",
@@ -116,12 +124,15 @@ Result<Provenance, ProvenanceParseError> parseGoldenProvenance(const std::string
   }
 
   std::string schemaValue;
-  if (!matchesField(lines[0], "schema_version", schemaValue) || (schemaValue != "1" && schemaValue != "2")) {
+  if (!matchesField(lines[0], "schema_version", schemaValue) ||
+      (schemaValue != "1" && schemaValue != "2" && schemaValue != "3")) {
     return Result<Provenance, ProvenanceParseError>::Err(ProvenanceParseError::UnknownSchemaVersion);
   }
   const bool hasEnvironmentCapture = schemaValue == "2";
-  const std::size_t expectedLineCount =
-      1 + kGoldenFieldNamesAfterSchema.size() + (hasEnvironmentCapture ? kEnvironmentCaptureFieldNames.size() : 0);
+  const bool hasContentPin = schemaValue == "3";
+  const std::size_t expectedLineCount = 1 + kGoldenFieldNamesAfterSchema.size() +
+                                        (hasEnvironmentCapture ? kEnvironmentCaptureFieldNames.size() : 0) +
+                                        (hasContentPin ? kContentPinFieldNames.size() : 0);
   if (lines.size() != expectedLineCount) {
     return Result<Provenance, ProvenanceParseError>::Err(ProvenanceParseError::WrongLineCount);
   }
@@ -173,13 +184,37 @@ Result<Provenance, ProvenanceParseError> parseGoldenProvenance(const std::string
     provenance.goldenUpdateReason = environmentValues[3];
   }
 
+  if (hasContentPin) {
+    std::array<std::string, kContentPinFieldNames.size()> pinValues;
+    for (std::size_t i = 0; i < kContentPinFieldNames.size(); ++i) {
+      if (!matchesField(lines[1 + kGoldenFieldNamesAfterSchema.size() + i], kContentPinFieldNames[i],
+                        pinValues[i])) {
+        return Result<Provenance, ProvenanceParseError>::Err(ProvenanceParseError::FieldNameMismatch);
+      }
+      if (pinValues[i].empty()) {
+        return Result<Provenance, ProvenanceParseError>::Err(ProvenanceParseError::MalformedValue);
+      }
+    }
+    static const std::regex kCommitPattern(R"(^[0-9a-f]{40}$)");
+    static const std::regex kSha256Pattern(R"(^[0-9a-f]{64}$)");
+    if (!std::regex_match(pinValues[0], kCommitPattern) || !std::regex_match(pinValues[1], kSha256Pattern)) {
+      return Result<Provenance, ProvenanceParseError>::Err(ProvenanceParseError::MalformedValue);
+    }
+    provenance.contentSourceCommit = pinValues[0];
+    provenance.contentFetchScriptSha256 = pinValues[1];
+    provenance.goldenUpdateReason = pinValues[2];
+  }
+
   return Result<Provenance, ProvenanceParseError>::Ok(std::move(provenance));
 }
 
 std::string serializeGoldenProvenance(const Provenance& provenance) {
   std::ostringstream out;
   const bool hasEnvironmentCapture = !provenance.environmentSourceSha256.empty();
-  out << "schema_version: " << (hasEnvironmentCapture ? 2 : 1) << "\n";
+  // Plan 0046 Milestone 5: a content pin selects schema 3 (never together
+  // with the schema-2 environment fields).
+  const bool hasContentPin = !provenance.contentSourceCommit.empty();
+  out << "schema_version: " << (hasContentPin ? 3 : (hasEnvironmentCapture ? 2 : 1)) << "\n";
   out << "capture_date: " << provenance.captureDate << "\n";
   out << "source_revision: " << provenance.sourceRevision << "\n";
   out << "gpu_vendor: " << provenance.gpuVendor << "\n";
@@ -196,6 +231,11 @@ std::string serializeGoldenProvenance(const Provenance& provenance) {
     out << "environment_source_sha256: " << provenance.environmentSourceSha256 << "\n";
     out << "environment_artifact_sha256: " << provenance.environmentArtifactSha256 << "\n";
     out << "environment_cooker_settings: " << provenance.environmentCookerSettings << "\n";
+    out << "golden_update_reason: " << provenance.goldenUpdateReason << "\n";
+  }
+  if (hasContentPin) {
+    out << "content_source_commit: " << provenance.contentSourceCommit << "\n";
+    out << "content_fetch_script_sha256: " << provenance.contentFetchScriptSha256 << "\n";
     out << "golden_update_reason: " << provenance.goldenUpdateReason << "\n";
   }
   return out.str();
