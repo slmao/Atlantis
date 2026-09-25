@@ -81,6 +81,9 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
                         "BloomInput::strength must be finite and in [0, 1]");
     ATLANTIS_CHECK_MSG(std::isfinite(bloom->threshold) && bloom->threshold >= 0.0f,
                         "BloomInput::threshold must be finite and >= 0");
+    ATLANTIS_CHECK_MSG(std::all_of(bloom->pipelines.begin(), bloom->pipelines.end(),
+                                    [](const atlantis::rhi::Pipeline* pipeline) { return pipeline != nullptr; }),
+                        "BloomInput::pipelines must all be non-null");
     ATLANTIS_CHECK_MSG(bloom->targets.extent().width == hdrColorTarget.extent().width &&
                             bloom->targets.extent().height == hdrColorTarget.extent().height,
                         "BloomInput::targets' extent must equal the HdrColorTarget's extent");
@@ -316,7 +319,6 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
   std::vector<atlantis::render_graph::ResourceHandle> bloomUpRes;
   atlantis::render_graph::ResourceHandle bloomCompositeRes{};
   if (bloomOn) {
-    const auto levelExtents = bloomLevelExtents(hdrColorTarget.extent());
     for (std::size_t i = 0; i < kBloomLevelCount; ++i)
       bloomDownRes.push_back(builder.declareResource("bloom_d" + std::to_string(i + 1)));
     for (std::size_t i = 0; i < kBloomLevelCount - 1; ++i)
@@ -336,7 +338,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
       builder.setExecute(pass, [bloom, level, isFirst, thresholdValue, &hdrColorTarget,
                                 &fullscreenTriangleVertexBuffer,
                                 &fullscreenTriangleIndexBuffer](atlantis::rhi::CommandList& cmd) {
-        cmd.bindPipeline(bloom->downsamplePipeline);
+        cmd.bindPipeline(*bloom->pipelines[kBloomFirstDownsamplePipeline + level]);
         cmd.bindVertexBuffer(fullscreenTriangleVertexBuffer);
         cmd.bindIndexBuffer(fullscreenTriangleIndexBuffer);
         // Source texel size: D1 reads the HDR extent; Dk reads D(k-1)'s.
@@ -370,7 +372,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
       const float lowerH = static_cast<float>(bloomLevelExtents(bloom->targets.extent())[level].height);
       builder.setExecute(pass, [bloom, level, uIdx, lowerW, lowerH, &fullscreenTriangleVertexBuffer,
                                 &fullscreenTriangleIndexBuffer](atlantis::rhi::CommandList& cmd) {
-        cmd.bindPipeline(bloom->upsamplePipeline);
+        cmd.bindPipeline(*bloom->pipelines[kBloomFirstUpsamplePipeline + uIdx]);
         cmd.bindVertexBuffer(fullscreenTriangleVertexBuffer);
         cmd.bindIndexBuffer(fullscreenTriangleIndexBuffer);
         const BloomUpsamplePushConstants payload{{1.0f / lowerW, 1.0f / lowerH}, {0.0f, 0.0f}};
@@ -396,7 +398,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
       builder.setExecute(pass, [bloom, u1W, u1H, strengthValue, &hdrColorTarget,
                                 &fullscreenTriangleVertexBuffer,
                                 &fullscreenTriangleIndexBuffer](atlantis::rhi::CommandList& cmd) {
-        cmd.bindPipeline(bloom->compositePipeline);
+        cmd.bindPipeline(*bloom->pipelines[kBloomCompositePipeline]);
         cmd.bindVertexBuffer(fullscreenTriangleVertexBuffer);
         cmd.bindIndexBuffer(fullscreenTriangleIndexBuffer);
         const BloomCompositePushConstants payload{{1.0f / u1W, 1.0f / u1H}, strengthValue,

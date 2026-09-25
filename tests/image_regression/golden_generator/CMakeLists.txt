@@ -637,6 +637,9 @@ target_compile_definitions(atlantis_image_regression_bloom_demo_golden_generator
   ATLANTIS_bloom_demo_scene_ARTIFACT_PATH="${ATLANTIS_bloom_demo_scene_ARTIFACT_PATH}"
   ATLANTIS_bloom_demo_scene_METADATA_PATH="${ATLANTIS_bloom_demo_scene_METADATA_PATH}"
   ATLANTIS_bloom_demo_scene_MANIFEST_PATH="${ATLANTIS_bloom_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_bloom_fog_demo_scene_ARTIFACT_PATH="${ATLANTIS_bloom_fog_demo_scene_ARTIFACT_PATH}"
+  ATLANTIS_bloom_fog_demo_scene_METADATA_PATH="${ATLANTIS_bloom_fog_demo_scene_METADATA_PATH}"
+  ATLANTIS_bloom_fog_demo_scene_MANIFEST_PATH="${ATLANTIS_bloom_fog_demo_scene_MANIFEST_PATH}"
   ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH="${ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH}"
   ATLANTIS_pbr_normal_mapped_control_METADATA_PATH="${ATLANTIS_pbr_normal_mapped_control_METADATA_PATH}"
   ATLANTIS_PBR_NORMAL_MAP_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
@@ -657,7 +660,9 @@ target_compile_definitions(atlantis_image_regression_bloom_demo_golden_generator
 add_dependencies(atlantis_image_regression_bloom_demo_golden_generator textured_quad_shaders
   lit_textured_shaders pbr_direct_lit_shaders pbr_direct_lit_normal_map_shaders pbr_ibl_shaders
   pbr_ibl_normal_map_shaders output_transform_unorm_shaders sky_shaders shadow_cast_shaders
-  ${ATLANTIS_bloom_demo_scene_TARGET} ${ATLANTIS_pbr_normal_mapped_control_TARGET})
+  bloom_downsample_shaders bloom_upsample_shaders bloom_composite_shaders
+  ${ATLANTIS_bloom_demo_scene_TARGET} ${ATLANTIS_bloom_fog_demo_scene_TARGET}
+  ${ATLANTIS_pbr_normal_mapped_control_TARGET})
 
 # Plan 0035 Milestone 2 (ADR-0081/ADR-0042): two more standalone
 # golden-generator executables, both built from the same

@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 
 namespace atlantis::renderer {
@@ -19,6 +20,28 @@ namespace atlantis::renderer {
 // authored.
 inline constexpr std::size_t kBloomLevelCount = 6;
 inline constexpr float kBloomHighlight = 1000.0f;
+
+// ADR-0092 Accepted Correction 2026-09-25: one Pipeline instance per bloom
+// pass -- the Vulkan Backend gives each Pipeline one descriptor set, which
+// cannot be rebound to different textures within one command buffer. The
+// twelve are indexed D1..D6 at 0..5, U1..U5 at 6..10, the composite at 11.
+inline constexpr std::size_t kBloomPipelineCount = 12;
+inline constexpr std::size_t kBloomFirstDownsamplePipeline = 0;
+inline constexpr std::size_t kBloomFirstUpsamplePipeline = kBloomLevelCount;
+inline constexpr std::size_t kBloomCompositePipeline = kBloomPipelineCount - 1;
+
+// Which of the three shader pairs pipeline index i is created from, and
+// how many samplers (from binding 0) it binds: downsample 1, upsample and
+// composite 2. For callers that create the twelve Pipelines.
+enum class BloomShaderPair { Downsample, Upsample, Composite };
+[[nodiscard]] constexpr BloomShaderPair bloomPipelineShaderPair(std::size_t index) noexcept {
+  if (index < kBloomFirstUpsamplePipeline) return BloomShaderPair::Downsample;
+  if (index < kBloomCompositePipeline) return BloomShaderPair::Upsample;
+  return BloomShaderPair::Composite;
+}
+[[nodiscard]] constexpr std::uint32_t bloomPipelineSamplerCount(std::size_t index) noexcept {
+  return bloomPipelineShaderPair(index) == BloomShaderPair::Downsample ? 1u : 2u;
+}
 
 // The extents of D1..D6 for an HDR target of hdrExtent: each dimension
 // max(1, floor(previous / 2)), starting from the HDR extent itself. U1..U5
@@ -84,19 +107,20 @@ class BloomTargets {
 // drawFrame()'s optional bloom input (Plan 0044 P5, ruling O1: a nullable
 // pointer to a struct of borrowed references -- the EnvironmentLighting
 // shape). Everything is borrowed for the duration of one drawFrame() call.
-// The three Pipelines are created by the caller (ruling Q5) from the
-// bloom_downsample / bloom_upsample / bloom_composite shader pairs, each
-// with hasCameraUniformBinding = false, no depth attachment and an
-// HdrFormat::Rgba16Float color format.
+// The twelve Pipelines (ADR-0092 Accepted Correction 2026-09-25) are
+// created by the caller (ruling Q5), index i from
+// bloomPipelineShaderPair(i) with bloomPipelineSamplerCount(i) samplers,
+// hasCameraUniformBinding = false, no depth attachment and an
+// HdrFormat::Rgba16Float color format -- twelve distinct instances, none
+// shared between two indices.
 //
 // Preconditions, enforced by ATLANTIS_CHECK_MSG in drawFrame():
-// targets.extent() equals the HdrColorTarget's extent; strength finite
-// and in [0, 1]; threshold finite and >= 0. strength == 0 means off.
+// targets.extent() equals the HdrColorTarget's extent; every pipeline
+// non-null; strength finite and in [0, 1]; threshold finite and >= 0.
+// strength == 0 means off.
 struct BloomInput {
   BloomTargets& targets;
-  atlantis::rhi::Pipeline& downsamplePipeline;
-  atlantis::rhi::Pipeline& upsamplePipeline;
-  atlantis::rhi::Pipeline& compositePipeline;
+  std::array<atlantis::rhi::Pipeline*, kBloomPipelineCount> pipelines{};
   float strength = 0.0f;
   float threshold = 1.0f;
 };

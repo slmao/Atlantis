@@ -24,10 +24,12 @@
 // Milestone. Always uses the default R1 (real, normal-mapped material;
 // real shadow casters) render path -- never the R2 comparison variants.
 
-// Plan 0041 Milestone 3: the emissive_demo golden generator -- a copy of
-// pbr_normal_map_demo_main.cpp with only the scene paths, the golden name
-// and the environment (none: the dark scene) changed; emissive_demo reuses
-// PbrNormalMapDemoFixture by alias (fixture/emissive_demo_fixture.h).
+// Plan 0044 Milestone 2: the bloom golden generator -- a copy of the
+// emissive_demo generator over the two bloom scenes (Plan 0044 P12), with
+// the twelve bloom shader paths set. The golden name picks the scene
+// (bloom_demo/... or bloom_fog_demo/...); the scene's camera bloom= group
+// turns bloom on, and PbrNormalMapDemoFixture follows it (P10) -- no
+// explicit BloomInput, so the golden is exactly what the Runtime renders.
 namespace {
 
 using atlantis::image_regression::encodePng;
@@ -93,11 +95,14 @@ void printProvenanceFieldIfDifferent(const char* fieldName, const std::string& o
   }
 }
 
-[[nodiscard]] BootstrapConfig buildConfig() {
+[[nodiscard]] BootstrapConfig buildConfig(bool fogScene) {
   BootstrapConfig config;
-  config.sceneArtifactPath = ATLANTIS_bloom_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_bloom_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_bloom_demo_scene_MANIFEST_PATH;
+  config.sceneArtifactPath =
+      fogScene ? ATLANTIS_bloom_fog_demo_scene_ARTIFACT_PATH : ATLANTIS_bloom_demo_scene_ARTIFACT_PATH;
+  config.sceneMetadataPath =
+      fogScene ? ATLANTIS_bloom_fog_demo_scene_METADATA_PATH : ATLANTIS_bloom_demo_scene_METADATA_PATH;
+  config.sceneDependencyManifestPath =
+      fogScene ? ATLANTIS_bloom_fog_demo_scene_MANIFEST_PATH : ATLANTIS_bloom_demo_scene_MANIFEST_PATH;
   // Plan 0044 Milestone 2: the three bloom shader pairs -- the fixture
   // creates the bloom Pipelines/bundle only when these paths are set, and
   // this generator drives the bloom passes through the camera node's
@@ -214,13 +219,19 @@ int main(int argc, char** argv) {
   atlantis::log::setMinLevel(atlantis::LogLevel::Info);
 
   if (argc != 2) {
-    ATLANTIS_LOG_ERROR("usage: atlantis_image_regression_emissive_demo_golden_generator <golden-name>");
+    ATLANTIS_LOG_ERROR("usage: atlantis_image_regression_bloom_demo_golden_generator <golden-name>");
     ATLANTIS_LOG_ERROR(
-        "  e.g.: atlantis_image_regression_emissive_demo_golden_generator "
+        "  e.g.: atlantis_image_regression_bloom_demo_golden_generator "
         "bloom_demo/bloom_demo_512x512_rgba8unorm");
+    ATLANTIS_LOG_ERROR("   or: bloom_fog_demo/bloom_fog_demo_512x512_rgba8unorm");
     return 2;
   }
   const std::string goldenName = argv[1];
+  const bool fogScene = goldenName.rfind("bloom_fog_demo/", 0) == 0;
+  if (!fogScene && goldenName.rfind("bloom_demo/", 0) != 0) {
+    ATLANTIS_LOG_ERROR("golden name must start with bloom_demo/ or bloom_fog_demo/");
+    return 2;
+  }
 
   const auto statusResult = runGitCommand("git status --porcelain");
   if (!statusResult.has_value()) {
@@ -274,7 +285,7 @@ int main(int argc, char** argv) {
   }
   const auto& environmentProvenance = environmentProvenanceResult.value();
 
-  auto fixtureResult = setUpPbrNormalMapDemoFixture(buildConfig(), ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH,
+  auto fixtureResult = setUpPbrNormalMapDemoFixture(buildConfig(fogScene), ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH,
                                                       ATLANTIS_pbr_normal_mapped_control_METADATA_PATH);
   if (fixtureResult.isErr()) {
     ATLANTIS_LOG_ERROR("setUpPbrNormalMapDemoFixture() failed");
@@ -283,8 +294,8 @@ int main(int argc, char** argv) {
   PbrNormalMapDemoFixture fixture = std::move(fixtureResult.value());
 
   // R1 only (Plan 0029 Section P19): the real, normal-mapped material,
-  // real shadow casters -- the only render path this generator ever
-  // uses (never R2's shadow or normal-map comparison variants).
+  // real shadow casters, and no explicit BloomInput -- the camera's
+  // bloom= group drives the chain (Plan 0044 P10).
   auto renderResult = renderPbrNormalMapDemoFrame(fixture);
   const auto finalWaitResult = fixture.device->waitIdle();
   if (renderResult.isErr()) {
@@ -310,7 +321,7 @@ int main(int argc, char** argv) {
   provenance.extentWidth = kPbrNormalMapDemoExtentPixels;
   provenance.extentHeight = kPbrNormalMapDemoExtentPixels;
   provenance.format = "Rgba8Unorm";
-  provenance.goldenUpdateReason = "new golden, Spec 0029 tangent-space normal mapping foundation";
+  provenance.goldenUpdateReason = "new golden, Spec 0044 bloom";
 
   const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
   const std::filesystem::path pngPath = goldensDir / (goldenName + ".png");

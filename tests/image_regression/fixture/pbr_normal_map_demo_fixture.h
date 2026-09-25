@@ -24,6 +24,7 @@
 
 #include "../support/pixel_diff.h"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -130,9 +131,9 @@ struct PbrNormalMapDemoFixture {
   // the twelve-target bundle, created in setup only when the config sets
   // all twelve bloom shader paths (atlantis::runtime::hasBloomShaderPaths());
   // null/empty for every existing use of this fixture.
-  std::unique_ptr<atlantis::rhi::Pipeline> bloomDownsamplePipeline;
-  std::unique_ptr<atlantis::rhi::Pipeline> bloomUpsamplePipeline;
-  std::unique_ptr<atlantis::rhi::Pipeline> bloomCompositePipeline;
+  // ADR-0092 Accepted Correction 2026-09-25: one Pipeline per bloom pass,
+  // indexed as renderer::BloomInput::pipelines.
+  std::array<std::unique_ptr<atlantis::rhi::Pipeline>, atlantis::renderer::kBloomPipelineCount> bloomPipelines;
   std::optional<atlantis::renderer::BloomTargets> bloomTargets;
 
   std::optional<atlantis::world::World> world;
@@ -204,8 +205,15 @@ enum class PbrNormalMapDemoRenderError {
 [[nodiscard]] atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDemoFrame(
     PbrNormalMapDemoFixture& fixture, bool includeShadowCasters = true, bool useControlMaterial = false,
     const atlantis::renderer::BloomInput* bloom = nullptr);
+// Plan 0044 M2: a BloomInput over this fixture's own bloom targets and
+// twelve Pipelines. Requires a fixture set up with the bloom paths.
+[[nodiscard]] atlantis::renderer::BloomInput makeFixtureBloomInput(PbrNormalMapDemoFixture& fixture, float strength,
+                                                                   float threshold);
+
 // Plan 0044 M2: the trailing bloom pointer forwards to drawFrame()'s own
-// optional bloom parameter (nullptr = bloom off = the M1 path, byte-
-// identical to every pre-0044 frame).
+// optional bloom parameter. When it is nullptr, the World camera's bloom=
+// group decides (Plan 0044 P10): strength > 0 on a fixture set up with the
+// bloom paths renders the chain; otherwise bloom is off -- byte-identical
+// to every pre-0044 frame, as for every scene that declares no bloom.
 
 }  // namespace atlantis::image_regression

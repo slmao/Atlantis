@@ -4,6 +4,7 @@
 #include <atlantis/asset_system/environment_types.h>
 #include <atlantis/asset_system/material_types.h>
 #include <atlantis/asset_system/texture_types.h>
+#include <atlantis/renderer/bloom.h>
 #include <atlantis/renderer/material.h>
 #include <atlantis/renderer/mesh.h>
 #include <atlantis/renderer/renderer.h>
@@ -27,6 +28,7 @@
 #include <atlantis/world/entity_id.h>
 #include <atlantis/world/world.h>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -203,16 +205,16 @@ class RuntimeApplication {
   std::unique_ptr<atlantis::rhi::Pipeline> shadowCastPipeline_;
   std::unique_ptr<atlantis::rhi::Buffer> shadowLightSpaceBuffer_;
 
-  // Plan 0044 P9 (Spec 0044, ADR-0092 Decision 3, ruling Q5): the three
-  // bloom Pipelines, created once at startup when the bloom shader paths
-  // are configured (no Format/extent dependency: they target
-  // HdrFormat::Rgba16Float). bloomTargets_ follows hdrColorTarget_'s
-  // extent, created and replaced in the same resize branch, and only when
-  // the scene's active camera turns bloom on (sceneWantsBloom_). Milestone
-  // 1 builds them; no frame reads them until Milestone 2.
-  std::unique_ptr<atlantis::rhi::Pipeline> bloomDownsamplePipeline_;
-  std::unique_ptr<atlantis::rhi::Pipeline> bloomUpsamplePipeline_;
-  std::unique_ptr<atlantis::rhi::Pipeline> bloomCompositePipeline_;
+  // Plan 0044 P9 (Spec 0044, ADR-0092 Decision 3 and its Accepted
+  // Correction 2026-09-25, ruling Q5): the twelve bloom Pipelines, one per
+  // pass, indexed as renderer::BloomInput::pipelines and created once at
+  // startup when the bloom shader paths are configured (no Format/extent
+  // dependency: they target HdrFormat::Rgba16Float); all empty otherwise.
+  // bloomTargets_ follows hdrColorTarget_'s extent, created and replaced in
+  // the same resize branch, and only when the scene's active camera turns
+  // bloom on (sceneWantsBloom_). runFrame() passes both to drawFrame() while
+  // the active camera's strength is above 0.
+  std::array<std::unique_ptr<atlantis::rhi::Pipeline>, atlantis::renderer::kBloomPipelineCount> bloomPipelines_;
   std::optional<atlantis::renderer::BloomTargets> bloomTargets_;
   bool sceneWantsBloom_ = false;
 

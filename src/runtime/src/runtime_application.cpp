@@ -985,7 +985,7 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   }
   shadowCastPipeline_ = std::move(shadowCastPipelineResult.value());
 
-  // Step 4f (Plan 0044 P9, ruling Q5): the three bloom Pipelines, created
+  // Step 4f (Plan 0044 P9, ruling Q5): the bloom Pipelines, created
   // by this composition root like every other Pipeline -- no camera
   // uniform, no depth attachment, HdrFormat::Rgba16Float color, a 16-byte
   // push-constant block (renderer::Bloom*PushConstants), and one sampler
@@ -1002,17 +1002,23 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
            .hasCameraUniformBinding = false,
            .hasDepthAttachment = false});
     };
-    auto downsampleResult = createBloomPipeline(*bloomDownsampleShaders, 1);
-    auto upsampleResult = createBloomPipeline(*bloomUpsampleShaders, 2);
-    auto compositeResult = createBloomPipeline(*bloomCompositeShaders, 2);
-    if (downsampleResult.isErr() || upsampleResult.isErr() || compositeResult.isErr()) {
-      ATLANTIS_LOG_ERROR("createPipeline() (bloom) failed");
-      lifecycle_.markFailed();
-      return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::BloomPipelineCreateFailed);
+    // ADR-0092 Accepted Correction 2026-09-25: twelve instances, one per
+    // pass, from the three shader pairs.
+    for (std::size_t i = 0; i < atlantis::renderer::kBloomPipelineCount; ++i) {
+      const auto pair = atlantis::renderer::bloomPipelineShaderPair(i);
+      const FullscreenShaderPair& shaders = pair == atlantis::renderer::BloomShaderPair::Downsample
+                                                ? *bloomDownsampleShaders
+                                                : (pair == atlantis::renderer::BloomShaderPair::Upsample
+                                                       ? *bloomUpsampleShaders
+                                                       : *bloomCompositeShaders);
+      auto result = createBloomPipeline(shaders, atlantis::renderer::bloomPipelineSamplerCount(i));
+      if (result.isErr()) {
+        ATLANTIS_LOG_ERROR("createPipeline() (bloom, instance {}) failed", i);
+        lifecycle_.markFailed();
+        return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::BloomPipelineCreateFailed);
+      }
+      bloomPipelines_[i] = std::move(result.value());
     }
-    bloomDownsamplePipeline_ = std::move(downsampleResult.value());
-    bloomUpsamplePipeline_ = std::move(upsampleResult.value());
-    bloomCompositePipeline_ = std::move(compositeResult.value());
   }
 
   // The shadow-casting pass's own dedicated light-space uniform Buffer
@@ -1093,7 +1099,7 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
     const auto camera = world_->getCamera(*activeCamera);
     sceneWantsBloom_ = camera.isOk() && camera.value().bloom.strength > 0.0f;
   }
-  if (sceneWantsBloom_ && !bloomDownsamplePipeline_) {
+  if (sceneWantsBloom_ && !bloomPipelines_[0]) {
     ATLANTIS_LOG_ERROR("The scene's camera turns bloom on, but no bloom shader paths are configured");
     lifecycle_.markFailed();
     return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::BloomConfigInvalid);
@@ -1750,6 +1756,18 @@ void RuntimeApplication::runFrame() {
     environmentLightingView.emplace(environmentLightingResources_->borrowedView());
   }
 
+  // Plan 0044 P9: a BloomInput built from the active camera each frame --
+  // only while its strength is above 0 and the bloom targets exist (they
+  // do whenever the loaded scene asked for bloom, sceneWantsBloom_). With
+  // bloom off, drawFrame() declares no bloom pass at all.
+  std::optional<atlantis::renderer::BloomInput> bloomInput;
+  if (cameraComponent.bloom.strength > 0.0f && bloomTargets_.has_value() && bloomPipelines_[0]) {
+    bloomInput.emplace(atlantis::renderer::BloomInput{.targets = *bloomTargets_,
+                                                      .strength = cameraComponent.bloom.strength,
+                                                      .threshold = cameraComponent.bloom.threshold});
+    for (std::size_t i = 0; i < bloomPipelines_.size(); ++i) bloomInput->pipelines[i] = bloomPipelines_[i].get();
+  }
+
   renderer_.drawFrame(*commandList, *target, *depthTexture_, *cameraBuffer_, drawItems,
                        atlantis::rhi::ResourceState::PresentSource, *hdrColorTarget_, *fullscreenTriangleVertexBuffer_,
                        *fullscreenTriangleIndexBuffer_, *effectiveOutputTransformPipeline, *outputTransformSampler_,
@@ -1771,7 +1789,7 @@ void RuntimeApplication::runFrame() {
                        // computed above, alongside the light-space buffer writes it also
                        // gates.
                        hasDirectionalLight ? std::span<const DrawItem>(drawItems) : std::span<const DrawItem>(),
-                       cameraWorldPosition);
+                       cameraWorldPosition, bloomInput.has_value() ? &*bloomInput : nullptr);
 
   auto submitResult = device_->submit(std::move(commandList), *target);
   if (submitResult.isErr()) {
@@ -1891,9 +1909,7 @@ RuntimeExitReason RuntimeApplication::shutdown() {
   // discipline this whole sequence already follows.
   // Plan 0044 P9: the bloom resources, before the HDR target and Device.
   bloomTargets_.reset();
-  bloomCompositePipeline_.reset();
-  bloomUpsamplePipeline_.reset();
-  bloomDownsamplePipeline_.reset();
+  for (auto& pipeline : bloomPipelines_) pipeline.reset();
   outputTransformSrgbPipeline_.reset();
   outputTransformUnormPipeline_.reset();
   outputTransformSampler_.reset();
