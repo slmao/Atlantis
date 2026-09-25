@@ -1,5 +1,6 @@
 #include "fixture/mip_test_textures.h"
 #include "fixture/textured_quad_fixture.h"
+#include "support/golden_validity.h"
 #include "support/pixel_diff.h"
 
 #include <atlantis/rhi/types.h>
@@ -9,6 +10,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <utility>
@@ -118,4 +120,74 @@ TEST_CASE("With the sampler clamped to maxLod 0, a BC7 chain samples only its ba
   const PixelBuffer expected = renderOnBothQuads(*reference);
   CHECK(pixelAt(clamped, kLeftCentreX, kCentreY) == pixelAt(expected, kLeftCentreX, kCentreY));
   CHECK(pixelAt(clamped, kRightCentreX, kCentreY) == pixelAt(expected, kRightCentreX, kCentreY));
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0045 Milestone 2, golden commit (ADR-0042 Initial baseline
+// bootstrap): mip_chain_demo was captured by
+// atlantis_image_regression_mip_chain_demo_golden_generator against the
+// clean, already-committed tree at its recorded source_revision; these two
+// TEST_CASEs land with it. The golden is the 1024^2 checker chain on both
+// quads at LOD ~2.32: uniform average grey. Its discriminator renders the
+// same chain base-mip only (sampler maxLod 0) -- the 1-texel checker
+// point-sampled every ~5 texels, a moire -- and must fail.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr const char* kMipChainDemoGoldenName = "mip_chain_demo/mip_chain_demo_512x512_rgba8unorm";
+constexpr const char* kMipChainDemoGoldenSlug = "mip_chain_demo_512x512_rgba8unorm";
+
+[[nodiscard]] PixelBuffer renderMipChainDemo(std::optional<float> samplerMaxLodOverride) {
+  const auto checker = cookMipTestTexture(
+      "mip_chain_demo_checker", atlantis::image_regression::kMipChainDemoTextureSize,
+      atlantis::image_regression::checkerChain(atlantis::image_regression::kMipChainDemoTextureSize));
+  REQUIRE(checker.has_value());
+  return renderOnBothQuads(*checker, samplerMaxLodOverride);
+}
+
+[[nodiscard]] atlantis::image_regression::ValidatedGolden loadMipChainDemoGolden() {
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult = atlantis::image_regression::loadAndValidateGolden(
+      goldensDir / (std::string(kMipChainDemoGoldenName) + ".png"),
+      goldensDir / (std::string(kMipChainDemoGoldenName) + ".sidecar.txt"));
+  INFO("INVALID GOLDEN: the committed mip_chain_demo golden must load and validate cleanly");
+  REQUIRE(goldenResult.isOk());
+  return std::move(goldenResult.value());
+}
+
+}  // namespace
+
+TEST_CASE("Full capture-compare cycle against the committed mip_chain_demo golden passes",
+          "[image_regression][gpu][mip]") {
+  const std::filesystem::path outputDir = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
+  std::filesystem::remove(outputDir / (std::string(kMipChainDemoGoldenSlug) + "_actual.png"));
+  std::filesystem::remove(outputDir / (std::string(kMipChainDemoGoldenSlug) + "_diff.png"));
+
+  const PixelBuffer actual = renderMipChainDemo(std::nullopt);
+  const auto golden = loadMipChainDemoGolden();
+  REQUIRE(actual.width == golden.pixels.width);
+  REQUIRE(actual.height == golden.pixels.height);
+  const auto report = atlantis::image_regression::compareBuffers(actual, golden.pixels);
+  if (!report.passed) {
+    (void)atlantis::image_regression::writeFailureArtifacts(outputDir, kMipChainDemoGoldenSlug, actual,
+                                                            golden.pixels);
+  }
+  REQUIRE(report.passed);
+}
+
+TEST_CASE("The mip_chain_demo frame sampled base-mip only (maxLod 0) fails comparison against the real golden",
+          "[image_regression][gpu][mip]") {
+  const PixelBuffer baseMipOnly = renderMipChainDemo(0.0f);
+  const auto golden = loadMipChainDemoGolden();
+  const auto report = atlantis::image_regression::compareBuffers(baseMipOnly, golden.pixels);
+  CHECK_FALSE(report.passed);
+  // The checker's dark and light texels (1 and 253) against the average
+  // grey: the moire moves channels far from the golden's uniform grey.
+  CHECK(report.maxChannelDiff > 60);
+  // Kept as review evidence under the build tree's failure-artifact
+  // directory (never committed): the aliased frame and its diff.
+  (void)atlantis::image_regression::writeFailureArtifacts(
+      ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR, std::string(kMipChainDemoGoldenSlug) + "_base_mip_only", baseMipOnly,
+      golden.pixels);
 }
