@@ -2,6 +2,7 @@
 
 #include "import_command.h"
 
+#include <atlantis/asset_system/scene_source.h>
 #include <atlantis/result.h>
 
 #include <filesystem>
@@ -26,14 +27,19 @@ inline constexpr float kImportedPointLightRangePlaceholder = 10000.0f;
 
 // Everything that can make the scene slice fail, checked before any output
 // exists: node transforms, light types and values, and the light caps.
-[[nodiscard]] atlantis::Result<std::monostate, GltfImportError> checkScene(const cgltf_data& data);
+// Plan 0046 Milestone 2 (ADR-0094 Decision 3): with an overlay, also its
+// own rules (no renderable node, at most one camera, parents only inside
+// it), and the light caps over both together.
+[[nodiscard]] atlantis::Result<std::monostate, GltfImportError> checkScene(
+    const cgltf_data& data, const atlantis::asset_system::ParsedSceneSource* overlay);
 
 // Writes <stagingDir>/<name>/<name>.scene.txt (the default scene, else
 // scenes[0]), appends its cook_manifest.txt line and import_report.txt
 // lines, and fills the summary's scene fields.
 [[nodiscard]] atlantis::Result<std::monostate, GltfImportError> writeScene(
     const cgltf_data& data, const std::filesystem::path& stagingDir, const std::string& name,
-    GltfImportSummary& summary, std::vector<std::string>& reportLines, std::vector<std::string>& manifestLines);
+    GltfImportSummary& summary, std::vector<std::string>& reportLines, std::vector<std::string>& manifestLines,
+    const atlantis::asset_system::ParsedSceneSource* overlay);
 
 // Logical path of mesh primitive (meshIndex, primitiveIndex) -- the one
 // definition both the mesh slice and the scene slice use (human ruling

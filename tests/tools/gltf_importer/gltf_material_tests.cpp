@@ -190,28 +190,68 @@ TEST_CASE("A spec-gloss material with a specularGlossinessTexture takes the Ruli
                       "--asset-root={content_parent}") != std::string::npos);
 }
 
-TEST_CASE("A transmission material imports as pbr_direct_lit with a report line", "[gltf_importer][material]") {
+// Spec 0046 ruling Q3 (Plan 0046 P6): transmission is blend at alpha
+// baseColorFactor.a x (1 - transmissionFactor), decided by the transmission
+// block whatever glTF's alphaMode says -- Bistro's glass is OPAQUE (material
+// 0 here), and a BLEND or MASK declaration is superseded, not mapped
+// (material 1). A zero factor is no transmission (material 2).
+TEST_CASE("A transmission material imports as BLEND at alpha x (1 - transmission), whatever its alphaMode",
+          "[gltf_importer][material][transparency]") {
   auto spec = gltf_test::unitQuad();
   spec.materialsJson =
       "[{\"pbrMetallicRoughness\":{\"baseColorFactor\":[0.9,0.9,0.9,1.0],\"metallicFactor\":0.0,"
-      "\"roughnessFactor\":0.1},\"alphaMode\":\"BLEND\",\"doubleSided\":true,"
-      "\"extensions\":{\"KHR_materials_transmission\":{\"transmissionFactor\":0.95}}}]";
+      "\"roughnessFactor\":0.1},\"doubleSided\":true,"
+      "\"extensions\":{\"KHR_materials_transmission\":{\"transmissionFactor\":0.75}}},"
+      "{\"pbrMetallicRoughness\":{\"baseColorFactor\":[1.0,1.0,1.0,0.5]},\"alphaMode\":\"MASK\","
+      "\"extensions\":{\"KHR_materials_transmission\":{\"transmissionFactor\":0.5}}},"
+      "{\"extensions\":{\"KHR_materials_transmission\":{\"transmissionFactor\":0.0}}}]";
   spec.extensionsUsedJson = "[\"KHR_materials_transmission\"]";
   const MaterialRun run = runMaterialImport("material_transmission", spec);
   REQUIRE(run.result.isOk());
   const GltfImportSummary& summary = run.result.value();
-  CHECK(summary.materialsTransmission == 1);
-  CHECK(summary.materialsMetallicRoughness == 1);
-  CHECK(reportContains(summary, "KHR_materials_transmission factor 0.95 recorded only; imported as pbr_direct_lit"));
-  // Spec 0042 R9 / ruling O3: a transmission material stays opaque even
-  // when it declares BLEND.
-  CHECK(reportContains(summary, "alphaMode=BLEND not mapped, transmission material stays opaque (Spec 0042 O3)"));
+  CHECK(summary.materialsTransmission == 3);
+  CHECK(summary.materialsMetallicRoughness == 3);
+  using atlantis::asset_system::MaterialAlphaMode;
+  const auto parsedMaterial = [&](int index) {
+    const auto parsed = atlantis::asset_system::parseMaterialSource(
+        readText(run.outputDir / ("t/materials/" + std::to_string(index) + ".material.txt")));
+    REQUIRE(parsed.isOk());
+    return parsed.value();
+  };
+
+  const auto glass = parsedMaterial(0);
+  CHECK(glass.kind == atlantis::asset_system::MaterialKind::PbrDirectLit);
+  CHECK(glass.alphaMode == MaterialAlphaMode::Blend);
+  CHECK(glass.baseColorFactor[3] == 0.25f);  // 1.0 x (1 - 0.75)
+  CHECK(glass.baseColorFactor[0] == 0.9f);
+  CHECK(glass.metallicFactor == 0.0f);
+  CHECK(glass.roughnessFactor == Catch::Approx(0.1f));
+  CHECK(reportContains(summary, "material_0: KHR_materials_transmission factor 0.75 mapped to BLEND, baseColorFactor "
+                                "alpha 0.25 (alpha x (1 - transmission), Spec 0046 Q3)"));
   CHECK(reportContains(summary, "no v9 destination, dropped (Ruling 3): doubleSided"));
-  const auto material = parsedMaterial0(run.outputDir);
-  CHECK(material.kind == atlantis::asset_system::MaterialKind::PbrDirectLit);
-  CHECK(material.alphaMode == atlantis::asset_system::MaterialAlphaMode::Opaque);
-  CHECK(material.metallicFactor == 0.0f);
-  CHECK(material.roughnessFactor == Catch::Approx(0.1f));
+
+  const auto masked = parsedMaterial(1);
+  CHECK(masked.alphaMode == MaterialAlphaMode::Blend);
+  CHECK(masked.baseColorFactor[3] == 0.25f);  // 0.5 x (1 - 0.5)
+  CHECK(masked.alphaCutoff == 0.5f);
+  CHECK(reportContains(summary, "material_1: alphaMode=MASK alphaCutoff=0.5 not mapped, transmission decides the "
+                                "mode (Spec 0046 Q3)"));
+
+  const auto zero = parsedMaterial(2);
+  CHECK(zero.alphaMode == MaterialAlphaMode::Opaque);
+  CHECK(zero.baseColorFactor[3] == 1.0f);
+  CHECK(reportContains(summary, "material_2: KHR_materials_transmission factor 0 not mapped"));
+
+  // Every source cooks: the blended alpha is an ordinary [0, 1] factor.
+  for (int index : {0, 1, 2}) {
+    INFO("material " << index);
+    const std::string n = std::to_string(index);
+    CHECK(atlantis::asset_system::cookMaterial(
+              (run.outputDir / ("t/materials/" + n + ".material.txt")).string(), "t/materials/" + n + ".material.txt",
+              (run.dir / ("cooked/" + n + ".amaterial")).string(),
+              (run.dir / ("cooked/" + n + ".amaterial.meta.txt")).string())
+              .isOk());
+  }
 }
 
 TEST_CASE("Generated .material.txt round-trips through parseMaterialSource and cooks through cookMaterial",

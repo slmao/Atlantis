@@ -376,11 +376,24 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
       if (mr.metallic_roughness_texture.texture != nullptr) dropped.push_back("metallicRoughnessTexture");
     }
 
+    // Spec 0046 ruling Q3 (Plan 0046 P6): transmission renders as blend at
+    // alpha 1 - transmissionFactor -- ADR-0083 D3's mapping with its value
+    // supplied, closing Spec 0042 O3. Bistro's glass is glTF OPAQUE, so this
+    // is decided here, not by the alphaMode block below. A zero factor is
+    // no transmission and changes nothing; the texture stays dropped.
     if (m.has_transmission) {
       summary.materialsTransmission += 1;
-      reportLines.push_back(label + ": KHR_materials_transmission factor " +
-                            formatFloat(m.transmission.transmission_factor) +
-                            " recorded only; imported as pbr_direct_lit (ADR-0083 D3)");
+      const float transmission = m.transmission.transmission_factor;
+      if (std::isfinite(transmission) && transmission > 0.0f && transmission <= 1.0f) {
+        source.alphaMode = MaterialAlphaMode::Blend;
+        source.baseColorFactor[3] *= 1.0f - transmission;
+        reportLines.push_back(label + ": KHR_materials_transmission factor " + formatFloat(transmission) +
+                              " mapped to BLEND, baseColorFactor alpha " + formatFloat(source.baseColorFactor[3]) +
+                              " (alpha x (1 - transmission), Spec 0046 Q3)");
+      } else {
+        reportLines.push_back(label + ": KHR_materials_transmission factor " + formatFloat(transmission) +
+                              " not mapped (outside (0, 1]); imported opaque (Spec 0046 Q3)");
+      }
       if (m.transmission.transmission_texture.texture != nullptr) dropped.push_back("transmissionTexture");
     }
 
@@ -445,17 +458,16 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
 
     // Spec 0042 Requirement 9 (ruling O1): MASK -> Mask + alphaCutoff
     // (cgltf fills glTF's 0.5 default when the file omits it), BLEND ->
-    // Blend. Transmission materials stay Opaque whatever their alphaMode
-    // (ruling O3: whether glass renders as Blend is Spec 0036 (7)'s
-    // decision), and a cutoff outside [0, 1] keeps the 0.5 default rather
-    // than failing the whole cook later. Each case gets its own report line.
+    // Blend, and a cutoff outside [0, 1] keeps the 0.5 default rather than
+    // failing the whole cook later. A transmission material's mode was
+    // already decided above (Spec 0046 Q3), so its alphaMode is not mapped.
+    // Each case gets its own report line.
     if (m.alpha_mode == cgltf_alpha_mode_mask || m.alpha_mode == cgltf_alpha_mode_blend) {
       const bool isMask = m.alpha_mode == cgltf_alpha_mode_mask;
       const std::string modeText = isMask ? "alphaMode=MASK alphaCutoff=" + formatFloat(m.alpha_cutoff)
                                           : std::string("alphaMode=BLEND");
       if (m.has_transmission) {
-        reportLines.push_back(label + ": " + modeText +
-                              " not mapped, transmission material stays opaque (Spec 0042 O3)");
+        reportLines.push_back(label + ": " + modeText + " not mapped, transmission decides the mode (Spec 0046 Q3)");
       } else if (!isMask) {
         source.alphaMode = MaterialAlphaMode::Blend;
         reportLines.push_back(label + ": " + modeText + " mapped (Spec 0042 R9)");

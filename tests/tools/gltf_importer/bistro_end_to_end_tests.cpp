@@ -11,6 +11,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -63,10 +64,6 @@ std::vector<std::string> lines(const std::string& text) {
     out.push_back(line);
   }
   return out;
-}
-
-void replaceAll(std::string& s, const std::string& from, const std::string& to) {
-  for (std::size_t p = s.find(from); p != std::string::npos; p = s.find(from, p + to.size())) s.replace(p, from.size(), to);
 }
 
 std::string valueOf(const std::string& manifestLine, const std::string& key) {
@@ -131,9 +128,33 @@ TEST_CASE("Real Bistro imports, validates and cooks end to end through the real 
     if (path.find(".material.txt") != std::string::npos) materialIds.insert(idOf(path));
   }
 
-  // 3. Sample: material 0 (Ruling 2 fallback with a normal map), the first
-  //    material using the white fallback texture (Ruling 7), their textures,
-  //    and the scene -- cooked through the real cooker.
+  // 3. The whole set -- every texture, material and the scene -- cooked in
+  //    one process by the cooker's cook-manifest mode (Plan 0046 Milestone 2,
+  //    ADR-0094 Decision 2), which also writes the dependency manifest; the
+  //    wall-clock time is the build-time measurement Plan 0046's M2 gate
+  //    reports. Then samples are decoded: material 0 (Ruling 2 fallback with
+  //    a normal map), the first material using the white fallback texture
+  //    (Ruling 7), their textures, and the scene.
+  const fs::path dependencyManifest = cookedDir / "bistro.ascene.manifest.txt";
+  const auto cookStart = std::chrono::steady_clock::now();
+  REQUIRE(runCooker("--kind=cook-manifest --import-dir=" + importDir.generic_string() +
+                    " --cooked-dir=" + cookedDir.generic_string() +
+                    " --content-parent=" + content.parent_path().generic_string() +
+                    " --manifest-out=" + dependencyManifest.generic_string()) == 0);
+  const double cookSeconds =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - cookStart).count();
+  WARN("full Bistro cook through --kind=cook-manifest: " << cookSeconds << " s");
+  {
+    std::size_t entries = 0;
+    std::set<std::string> logicalPaths;
+    for (const std::string& line : lines(readText(dependencyManifest))) {
+      if (line.empty()) continue;
+      ++entries;
+      logicalPaths.insert(line.substr(0, line.find('\t')));
+    }
+    CHECK(entries == 551 + 254 + 265);
+    CHECK(logicalPaths.size() == entries);  // each declared asset exactly once
+  }
   std::vector<std::size_t> sampleMaterials = {0};
   for (std::size_t i = 1; i < 254 && sampleMaterials.size() < 2; ++i) {
     const auto source = as::parseMaterialSource(readText(importDir / ("bistro/materials/" + std::to_string(i) + ".material.txt")));
@@ -153,26 +174,15 @@ TEST_CASE("Real Bistro imports, validates and cooks end to end through the real 
   }
 
   std::vector<std::string> textureStems;
-  std::size_t cooked = 0;
-  for (std::string line : lines(readText(importDir / "cook_manifest.txt"))) {
-    if (line.empty() || line[0] == '#') continue;
+  for (const std::string& line : lines(readText(importDir / "cook_manifest.txt"))) {
+    if (line.rfind("--kind=texture", 0) != 0) continue;
     const std::string source = valueOf(line, "--source=");
-    bool wanted = line.rfind("--kind=scene", 0) == 0;
-    for (const std::string& t : sampleTextures) wanted |= line.rfind("--kind=texture", 0) == 0 && source.size() >= t.size() &&
-                                                            source.compare(source.size() - t.size(), t.size(), t) == 0;
-    for (const std::size_t i : sampleMaterials) {
-      wanted |= source == "{import_dir}/bistro/materials/" + std::to_string(i) + ".material.txt";
+    for (const std::string& t : sampleTextures) {
+      if (source.size() >= t.size() && source.compare(source.size() - t.size(), t.size(), t) == 0) {
+        textureStems.push_back(fs::path(valueOf(line, "--stamp=")).stem().string());
+      }
     }
-    if (!wanted) continue;
-    if (line.rfind("--kind=texture", 0) == 0) textureStems.push_back(fs::path(valueOf(line, "--stamp=")).stem().string());
-    replaceAll(line, "{content_parent}", content.parent_path().generic_string());
-    replaceAll(line, "{import_dir}", importDir.generic_string());
-    replaceAll(line, "{cooked_dir}", cookedDir.generic_string());
-    INFO(line);
-    REQUIRE(runCooker(line) == 0);
-    ++cooked;
   }
-  CHECK(cooked == sampleTextures.size() + sampleMaterials.size() + 1);
 
   // 4. Decode. Meshes: a plain one, one with degenerate-basis fallbacks
   //    (#224) and the largest, over the uint16 range (#246).

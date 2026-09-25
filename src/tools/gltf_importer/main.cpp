@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <string>
 
 namespace fs = std::filesystem;
@@ -30,12 +31,16 @@ int main(int argc, char** argv) {
   if (!parseArgumentValue(argc, argv, "input", input) || !parseArgumentValue(argc, argv, "output-dir", outputDir) ||
       !parseArgumentValue(argc, argv, "name", name) || !parseArgumentValue(argc, argv, "content-root", contentRoot)) {
     std::cerr << "usage: atlantis_gltf_importer --input=<file.gltf> --output-dir=<dir> --name=<slug>"
-                 " --content-root=<dir>\n";
+                 " --content-root=<dir> [--overlay=<file.scene.txt>]\n";
     return 2;
   }
+  // Plan 0046 Milestone 2 (ADR-0094 Decision 3): optional.
+  std::string overlay;
+  std::optional<fs::path> overlayPath;
+  if (parseArgumentValue(argc, argv, "overlay", overlay)) overlayPath = fs::path(overlay);
 
   const auto result = atlantis::gltf_importer::importGltf(fs::path(input), fs::path(contentRoot),
-                                                                fs::path(outputDir), name);
+                                                                fs::path(outputDir), name, overlayPath);
   if (result.isErr()) {
     std::cerr << "atlantis_gltf_importer: " << atlantis::gltf_importer::gltfImportErrorMessage(result.error())
               << "\n";
@@ -53,7 +58,7 @@ int main(int argc, char** argv) {
             << " transmission, " << summary.materialsWhiteFallback << " white fallback), "
             << summary.texturesReferenced << " textures, " << summary.colorSpaceWarnings
             << " colour-space warnings; scene: " << summary.sceneNodeLines << " node lines (" << summary.sceneMeshLines
-            << " mesh, " << summary.sceneLightLines << " light), depth " << summary.sceneMaxDepth << " -> " << outputDir
+            << " mesh, " << summary.sceneLightLines << " light, " << summary.overlayNodeLines << " overlay), depth " << summary.sceneMaxDepth << " -> " << outputDir
             << "\n";
   return 0;
 }

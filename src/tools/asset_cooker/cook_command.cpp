@@ -8,6 +8,7 @@
 #include <atlantis/asset_system/cook_material.h>
 #include <atlantis/asset_system/cook_scene.h>
 #include <atlantis/asset_system/cook_texture.h>
+#include <atlantis/asset_system/asset_metadata.h>
 #include <atlantis/asset_system/logical_path.h>
 #include <atlantis/asset_system/texture_types.h>
 
@@ -16,7 +17,11 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <map>
+#include <optional>
+#include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Plan 0016 Section D9, extended by Plan 0025 Milestone 2: the one and only
@@ -508,7 +513,241 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
   return 0;
 }
 
+// Plan 0046 Milestone 2 (ADR-0094 Decision 2, Plan 0046 P8): the
+// cook-manifest mode. Validates the import's asset list, runs every line of
+// its cook_manifest.txt through the same per-kind modes a command line
+// would (in-process, no std::system), then writes the Runtime dependency
+// manifest -- one "logicalPath\tartifactPath\tmetadataPath" line per asset
+// of the asset list, in its order: meshes at their artifacts in the import
+// directory (found through each .amesh.meta.txt's own source_logical_path),
+// textures and materials at their cooked artifacts. The scene is cooked
+// but, having no AssetId, is not a manifest entry. Any failing line fails
+// the whole mode.
+[[nodiscard]] std::string substitutePlaceholders(std::string token, const CookCommandRequest& request) {
+  const std::pair<std::string_view, const std::string*> placeholders[] = {
+      {"{content_parent}", &request.contentParent},
+      {"{import_dir}", &request.importDir},
+      {"{cooked_dir}", &request.cookedDir},
+  };
+  for (const auto& [placeholder, value] : placeholders) {
+    for (std::size_t at = token.find(placeholder); at != std::string::npos; at = token.find(placeholder, at)) {
+      token.replace(at, placeholder.size(), *value);
+      at += value->size();
+    }
+  }
+  return token;
+}
+
+[[nodiscard]] std::optional<std::string> normalizedOrNull(const std::string& path) {
+  const auto normalized = normalizeLogicalPath(path);
+  if (normalized.isErr()) return std::nullopt;
+  return normalized.value();
+}
+
+struct ManifestEntry {
+  std::string artifactPath;
+  std::string metadataPath;
+};
+
+[[nodiscard]] int runCookManifestMode(const CookCommandRequest& request) {
+  const fs::path importDir(request.importDir);
+  const fs::path cookedDir(request.cookedDir);
+
+  CookCommandRequest validate;
+  validate.isValidateSet = true;
+  validate.assetListPath = (importDir / "asset_list.txt").string();
+  if (runValidateSetMode(validate) != 0) return 1;
+
+  std::ifstream manifestFile(importDir / "cook_manifest.txt");
+  if (!manifestFile.is_open()) {
+    std::cerr << "atlantis_asset_cooker: cannot open cook manifest: " << (importDir / "cook_manifest.txt").string()
+              << "\n";
+    return 1;
+  }
+  std::map<std::string, ManifestEntry> entries;  // normalized logical path -> artifact/metadata
+  std::string line;
+  std::size_t lineNumber = 0;
+  std::size_t cooked = 0;
+  while (std::getline(manifestFile, line)) {
+    ++lineNumber;
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (line.empty() || line[0] == '#') continue;
+    // Split before substituting, so a substituted path may hold spaces.
+    std::vector<std::string> args;
+    std::istringstream tokens(line);
+    for (std::string token; tokens >> token;) args.push_back(substitutePlaceholders(token, request));
+    CookCommandRequest lineRequest;
+    if (!parseCookArguments(args, lineRequest, std::cerr) || lineRequest.isValidateSet ||
+        lineRequest.kind == AssetKind::CookManifest || lineRequest.kind == AssetKind::Environment) {
+      std::cerr << "atlantis_asset_cooker: cook manifest line " << lineNumber << " is not a texture/material/"
+                << "scene/mesh cook: " << line << "\n";
+      return 1;
+    }
+    if (runCookCommand(lineRequest) != 0) {
+      std::cerr << "atlantis_asset_cooker: cook manifest line " << lineNumber << " failed: " << line << "\n";
+      return 1;
+    }
+    ++cooked;
+
+    const std::string relativePath = computeRelativePathString(lineRequest.sourcePath, lineRequest.assetRoot);
+    const auto logical = normalizedOrNull(relativePath);
+    if (!logical) continue;
+    const fs::path outputDir(lineRequest.outputDir);
+    if (lineRequest.kind == AssetKind::Texture) {
+      const std::string base = fs::path(lineRequest.stampPath).stem().string();
+      entries[*logical] = {(outputDir / (base + ".atex")).generic_string(),
+                           (outputDir / (base + ".atex.meta.txt")).generic_string()};
+    } else if (lineRequest.kind == AssetKind::Material) {
+      const std::string base = stripAuthoringExtension(relativePath, kMaterialAuthoringExtension);
+      entries[*logical] = {(outputDir / (base + ".amaterial")).generic_string(),
+                           (outputDir / (base + ".amaterial.meta.txt")).generic_string()};
+    } else if (lineRequest.kind == AssetKind::StaticMesh) {
+      const std::string base = stripAuthoringExtension(relativePath, kAuthoringExtension);
+      entries[*logical] = {(outputDir / (base + ".amesh")).generic_string(),
+                           (outputDir / (base + ".amesh.meta.txt")).generic_string()};
+    }
+  }
+
+  // Meshes are written by the importer itself, never cooked: each artifact's
+  // metadata names its own logical path.
+  std::error_code ec;
+  for (const auto& file : fs::directory_iterator(importDir, ec)) {
+    const std::string filename = file.path().filename().string();
+    if (!filename.ends_with(".amesh.meta.txt")) continue;
+    std::ifstream in(file.path(), std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const auto metadata = parseAssetMetadata(text);
+    if (metadata.isErr()) {
+      std::cerr << "atlantis_asset_cooker: unreadable mesh metadata: " << file.path().string() << "\n";
+      return 1;
+    }
+    const auto logical = normalizedOrNull(metadata.value().sourceLogicalPath);
+    if (!logical) continue;
+    const std::string stem = filename.substr(0, filename.size() - std::string_view(".meta.txt").size());
+    entries[*logical] = {(importDir / stem).generic_string(), file.path().generic_string()};
+  }
+  if (ec) {
+    std::cerr << "atlantis_asset_cooker: cannot list import directory: " << importDir.string() << "\n";
+    return 1;
+  }
+
+  std::ifstream listFile(validate.assetListPath);
+  std::string manifestText;
+  std::size_t listed = 0;
+  while (std::getline(listFile, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (line.empty()) continue;
+    const auto logical = normalizedOrNull(line);
+    const auto entry = logical ? entries.find(*logical) : entries.end();
+    if (entry == entries.end()) {
+      std::cerr << "atlantis_asset_cooker: declared asset has no cooked or imported artifact: " << line << "\n";
+      return 1;
+    }
+    manifestText += line + "\t" + entry->second.artifactPath + "\t" + entry->second.metadataPath + "\n";
+    ++listed;
+  }
+  // Temp-then-rename, so a consumer never reads a half-written manifest.
+  const fs::path manifestOut(request.manifestOutPath);
+  const fs::path manifestTemp = manifestOut.string() + ".tmp";
+  bool manifestWritten = false;
+  {
+    std::error_code dirEc;
+    fs::create_directories(manifestOut.parent_path(), dirEc);
+    std::ofstream out(manifestTemp, std::ios::binary | std::ios::trunc);
+    out << manifestText;
+    out.flush();
+    manifestWritten = out.good();
+  }
+  if (manifestWritten) {
+    std::error_code renameEc;
+    fs::rename(manifestTemp, manifestOut, renameEc);
+    manifestWritten = !renameEc;
+  }
+  if (!manifestWritten) {
+    std::cerr << "atlantis_asset_cooker: failed to write dependency manifest: " << request.manifestOutPath << "\n";
+    return 1;
+  }
+  std::cout << "atlantis_asset_cooker: cook manifest: " << cooked << " cooks, " << listed
+            << " dependency-manifest entries -> " << request.manifestOutPath << "\n";
+  if (!writeStamp(request.stampPath)) {
+    std::cerr << "atlantis_asset_cooker: failed to write stamp file: " << request.stampPath << "\n";
+    return 1;
+  }
+  return 0;
+}
+
 }  // namespace
+
+bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest& request, std::ostream& err) {
+  bool sawSource = false, sawAssetRoot = false, sawOutputDir = false, sawAssetList = false;
+  bool sawUnrecognized = false;
+  const auto valueAfterEquals = [](std::string_view arg, std::string_view flag) -> std::optional<std::string> {
+    if (arg.substr(0, flag.size()) != flag) return std::nullopt;
+    return std::string(arg.substr(flag.size()));
+  };
+
+  for (const std::string& argString : args) {
+    const std::string_view arg = argString;
+    if (arg == "--validate-set") {
+      request.isValidateSet = true;
+    } else if (auto source = valueAfterEquals(arg, "--source=")) {
+      request.sourcePath = *source;
+      sawSource = true;
+    } else if (auto assetRoot = valueAfterEquals(arg, "--asset-root=")) {
+      request.assetRoot = *assetRoot;
+      sawAssetRoot = true;
+    } else if (auto outputDir = valueAfterEquals(arg, "--output-dir=")) {
+      request.outputDir = *outputDir;
+      sawOutputDir = true;
+    } else if (auto stamp = valueAfterEquals(arg, "--stamp=")) {
+      request.stampPath = *stamp;
+    } else if (auto assetList = valueAfterEquals(arg, "--asset-list=")) {
+      request.assetListPath = *assetList;
+      sawAssetList = true;
+    } else if (auto importDir = valueAfterEquals(arg, "--import-dir=")) {
+      request.importDir = *importDir;
+    } else if (auto cookedDir = valueAfterEquals(arg, "--cooked-dir=")) {
+      request.cookedDir = *cookedDir;
+    } else if (auto contentParent = valueAfterEquals(arg, "--content-parent=")) {
+      request.contentParent = *contentParent;
+    } else if (auto manifestOut = valueAfterEquals(arg, "--manifest-out=")) {
+      request.manifestOutPath = *manifestOut;
+    } else if (auto kind = valueAfterEquals(arg, "--kind=")) {
+      if (*kind == "mesh") {
+        request.kind = AssetKind::StaticMesh;
+      } else if (*kind == "scene") {
+        request.kind = AssetKind::Scene;
+      } else if (*kind == "texture") {
+        request.kind = AssetKind::Texture;
+      } else if (*kind == "material") {
+        request.kind = AssetKind::Material;
+      } else if (*kind == "environment") {
+        request.kind = AssetKind::Environment;
+      } else if (*kind == "cook-manifest") {
+        request.kind = AssetKind::CookManifest;
+      } else {
+        err << "atlantis_asset_cooker: unrecognized --kind value: " << *kind << "\n";
+        sawUnrecognized = true;
+      }
+    } else if (auto colorSpace = valueAfterEquals(arg, "--color-space=")) {
+      request.colorSpace = *colorSpace;
+    } else {
+      err << "atlantis_asset_cooker: unrecognized argument: " << arg << "\n";
+      sawUnrecognized = true;
+    }
+  }
+
+  bool haveRequiredFlags = false;
+  if (request.isValidateSet) {
+    haveRequiredFlags = sawAssetList;
+  } else if (request.kind == AssetKind::CookManifest) {
+    haveRequiredFlags = !request.importDir.empty() && !request.cookedDir.empty() && !request.contentParent.empty() &&
+                        !request.manifestOutPath.empty();
+  } else {
+    haveRequiredFlags = sawSource && sawAssetRoot && sawOutputDir;
+  }
+  return !sawUnrecognized && haveRequiredFlags;
+}
 
 int runCookCommand(const CookCommandRequest& request) {
   if (request.isValidateSet) return runValidateSetMode(request);
@@ -523,6 +762,8 @@ int runCookCommand(const CookCommandRequest& request) {
       return runCookMaterialMode(request);
     case AssetKind::Environment:
       return runCookEnvironmentMode(request);
+    case AssetKind::CookManifest:
+      return runCookManifestMode(request);
   }
   return runCookMeshMode(request);
 }

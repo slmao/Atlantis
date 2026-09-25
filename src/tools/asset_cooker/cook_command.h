@@ -1,6 +1,8 @@
 #pragma once
 
+#include <ostream>
 #include <string>
+#include <vector>
 
 namespace atlantis::tools::asset_cooker {
 
@@ -8,7 +10,11 @@ namespace atlantis::tools::asset_cooker {
 // which cook-mode pipeline to run -- StaticMesh (the original, default
 // behavior, unchanged), Scene, Texture, Material, or Environment. Never affects
 // validate-set mode.
-enum class AssetKind { StaticMesh, Scene, Texture, Material, Environment };
+// Plan 0046 Milestone 2 (ADR-0094 Decision 2, Plan 0046 P8): CookManifest
+// runs a glTF import's whole cook_manifest.txt in-process and writes the
+// Runtime dependency manifest -- not an asset kind of its own, but selected
+// through the same --kind= flag.
+enum class AssetKind { StaticMesh, Scene, Texture, Material, Environment, CookManifest };
 
 // Plan 0012 Section D4: two modes. Cook mode (isValidateSet == false)
 // cooks exactly one asset from sourcePath (relative to assetRoot) into
@@ -42,7 +48,21 @@ struct CookCommandRequest {
 
   // Validate-set mode.
   std::string assetListPath;
+
+  // Plan 0046 Milestone 2 (Plan 0046 P8): --kind=cook-manifest's inputs.
+  std::string importDir;
+  std::string cookedDir;
+  std::string contentParent;
+  std::string manifestOutPath;
 };
+
+// Parses one cooker argument vector (argv without the program name) into
+// request -- the CLI's grammar, shared by main() and by the cook-manifest
+// mode's per-line cooks so a manifest line means exactly what the same
+// command line would. Returns false (after writing a diagnostic to err) on
+// an unrecognized argument or a missing required flag.
+[[nodiscard]] bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest& request,
+                                      std::ostream& err);
 
 // Returns the process exit code (0 success, non-zero failure). Kept
 // separate from main() so tests can invoke it directly with a
