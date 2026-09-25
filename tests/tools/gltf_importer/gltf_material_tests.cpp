@@ -42,7 +42,10 @@ struct MaterialRun {
 MaterialRun runMaterialImport(const std::string& testName, gltf_test::PrimitiveSpec spec,
                               const std::vector<std::string>& ddsNames = {}) {
   const fs::path dir = gltf_test::freshDirectory(testName);
-  const std::vector<unsigned char> dds = atlantis::gltf_importer::detail::whiteFallbackDds();
+  // Test inputs are tagged BC7_UNORM (DXGI 99), like Bistro's own files; the
+  // importer's fallback itself is DXGI 100 (Spec 0046 Q8).
+  std::vector<unsigned char> dds = atlantis::gltf_importer::detail::whiteFallbackDds();
+  dds[128] = 99;
   for (const std::string& file : ddsNames) {
     std::ofstream(dir / file, std::ios::binary).write(reinterpret_cast<const char*>(dds.data()),
                                                       static_cast<std::streamsize>(dds.size()));
@@ -146,12 +149,13 @@ TEST_CASE("A factor-only spec-gloss material converts via D3 and gets the white 
   REQUIRE(parsed.isOk());
   CHECK(parsed.value().width == 4);
   CHECK(parsed.value().height == 4);
-  CHECK_FALSE(parsed.value().srgb);
+  CHECK(parsed.value().srgb);  // DXGI 100: a base-colour stand-in (Spec 0046 Q8)
   CHECK(parsed.value().blockBytes.size() == 16);
   CHECK(parsed.value().mipCount == 1);  // no DDSD_MIPMAPCOUNT: one level (Spec 0045)
   const std::string manifest = readText(run.outputDir / "cook_manifest.txt");
   CHECK(manifest.find("--kind=texture --source={import_dir}/t/_importer/white_4x4_bc7.dds --asset-root={import_dir}") !=
         std::string::npos);
+  CHECK(manifest.find("white_4x4_bc7.stamp --color-space=srgb") != std::string::npos);
   CHECK(manifest.find("--kind=material --source={import_dir}/t/materials/0.material.txt --asset-root={import_dir}") !=
         std::string::npos);
   CHECK(manifest.find("--kind=texture") < manifest.find("--kind=material"));
@@ -182,12 +186,15 @@ TEST_CASE("A spec-gloss material with a specularGlossinessTexture takes the Ruli
   CHECK(material.filter == atlantis::asset_system::MaterialSamplerFilter::Linear);
   CHECK(material.addressMode == atlantis::asset_system::MaterialSamplerAddressMode::Repeat);
 
-  // Ruling 4: *_diff* stored as BC7_UNORM (DXGI 99) is reported, not changed.
+  // Plan 0037 Ruling 4 narrowed by Spec 0046 Q8: a colour-used DDS tagged
+  // BC7_UNORM (DXGI 99) is reported and flagged for an sRGB cook.
   CHECK(summary.colorSpaceWarnings == 1);
-  CHECK(reportContains(summary, "colour-space warning (Ruling 4): material_sg_texture_fallback/brick_diff.dds"));
+  CHECK(reportContains(summary, "colour-space override (Spec 0046 Q8): material_sg_texture_fallback/brick_diff.dds "
+                                "is DXGI 99"));
   const std::string manifest = readText(run.outputDir / "cook_manifest.txt");
   CHECK(manifest.find("--source={content_parent}/material_sg_texture_fallback/brick_diff.dds "
                       "--asset-root={content_parent}") != std::string::npos);
+  CHECK(manifest.find("brick_diff.stamp --color-space=srgb") != std::string::npos);
 }
 
 // Spec 0046 ruling Q3 (Plan 0046 P6): transmission is blend at alpha

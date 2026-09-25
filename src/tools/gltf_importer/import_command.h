@@ -81,7 +81,7 @@ struct GltfImportSummary {
   std::uint32_t materialsTransmission = 0;              // subset of the above, reported only
   std::uint32_t materialsWhiteFallback = 0;             // Ruling 7
   std::uint32_t texturesReferenced = 0;
-  std::uint32_t colorSpaceWarnings = 0;  // Ruling 4
+  std::uint32_t colorSpaceWarnings = 0;  // colour-used DDS tagged DXGI 99, cooked as sRGB (Spec 0046 Q8)
   // Milestone 5 scene slice (ADR-0083 D5/D6).
   std::uint32_t sceneNodeLines = 0;
   std::uint32_t sceneMeshLines = 0;

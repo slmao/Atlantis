@@ -240,3 +240,38 @@ TEST_CASE("runCookCommand writes mip_count 1 for a PNG source (no mip is generat
   REQUIRE(metadata.isOk());
   CHECK(metadata.value().mipCount == 1);
 }
+
+// Spec 0046 Q8 (ruled 2026-09-26, narrowing Plan 0037 Ruling 4): for a DDS,
+// --color-space=srgb cooks a BC7_UNORM (DXGI 99) file as sRGB, blocks
+// untouched; any other value, or none, leaves the file's own DXGI tag in
+// force. The string-lights fixture is tagged DXGI 99.
+TEST_CASE("runCookCommand: --color-space=srgb overrides a DDS's DXGI 99 tag; unorm or no flag keeps the file's tag",
+          "[asset_cooker][texture]") {
+  const fs::path source = ATLANTIS_STRINGLIGHTS_DDS_PATH;
+  const std::string ddsText = readFileText(source);
+  REQUIRE(static_cast<unsigned char>(ddsText[128]) == 99);  // BC7_UNORM
+  const auto cookAs = [&](const std::string& label, const std::string& colorSpace) {
+    TempDirGuard dir("dds_color_space_" + label);
+    const auto request = makeTextureRequest(source, dir.path / "out", "stringlights", colorSpace);
+    REQUIRE(runCookCommand(request) == 0);
+    const std::string artifactText = readFileText(dir.path / "out" / "stringlights.atex");
+    std::vector<std::byte> bytes(artifactText.size());
+    for (std::size_t i = 0; i < artifactText.size(); ++i) {
+      bytes[i] = static_cast<std::byte>(static_cast<unsigned char>(artifactText[i]));
+    }
+    const auto decoded = atlantis::asset_system::decodeTextureArtifact(bytes);
+    REQUIRE(decoded.isOk());
+    const auto metadata =
+        atlantis::asset_system::parseTextureMetadata(readFileText(dir.path / "out" / "stringlights.atex.meta.txt"));
+    REQUIRE(metadata.isOk());
+    CHECK(metadata.value().format == decoded.value().colorSpace);
+    return decoded.value();
+  };
+  const auto srgb = cookAs("srgb", "srgb");
+  const auto unorm = cookAs("unorm", "unorm");
+  const auto none = cookAs("none", "");
+  CHECK(srgb.colorSpace == atlantis::asset_system::TextureColorSpace::Srgb);
+  CHECK(unorm.colorSpace == atlantis::asset_system::TextureColorSpace::Unorm);
+  CHECK(none.colorSpace == atlantis::asset_system::TextureColorSpace::Unorm);
+  CHECK(srgb.pixelBytes == none.pixelBytes);  // only the tag changes
+}

@@ -6,6 +6,7 @@
 #include <atlantis/asset_system/scene_artifact.h>
 #include <atlantis/asset_system/logical_path.h>
 #include <atlantis/asset_system/material_artifact.h>
+#include <atlantis/asset_system/texture_artifact.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -75,7 +76,10 @@ struct ImportedFixture {
 ImportedFixture importFixture(const std::string& testName) {
   ImportedFixture fixture;
   fixture.dir = gltf_test::freshDirectory(testName);
-  const std::vector<unsigned char> dds = atlantis::gltf_importer::detail::whiteFallbackDds();
+  // Tagged BC7_UNORM (DXGI 99), like Bistro's files: the colour-used ones
+  // must still cook as sRGB (Spec 0046 Q8).
+  std::vector<unsigned char> dds = atlantis::gltf_importer::detail::whiteFallbackDds();
+  dds[128] = 99;
   for (const char* file : {"quad_diff.dds", "quad_em.dds"}) {
     std::ofstream(fixture.dir / file, std::ios::binary)
         .write(reinterpret_cast<const char*>(dds.data()), static_cast<std::streamsize>(dds.size()));
@@ -151,6 +155,18 @@ TEST_CASE("cook-manifest mode cooks every manifest line in one process and write
   CHECK(listedIds.count(material.value().textureAsset) == 1);
   CHECK(material.value().emissiveTexture != 0);
   CHECK(listedIds.count(material.value().emissiveTexture) == 1);
+
+  // Spec 0046 Q8: both colour-used DXGI 99 textures cooked as sRGB.
+  std::size_t srgbTextures = 0;
+  for (const std::string& entry : entries) {
+    const std::size_t tab1 = entry.find('\t');
+    const std::string artifact = entry.substr(tab1 + 1, entry.find('\t', tab1 + 1) - tab1 - 1);
+    if (!artifact.ends_with(".atex")) continue;
+    const auto texture = as::decodeTextureArtifact(readBytes(artifact));
+    REQUIRE(texture.isOk());
+    srgbTextures += texture.value().colorSpace == as::TextureColorSpace::Srgb ? 1 : 0;
+  }
+  CHECK(srgbTextures == 2);
 }
 
 TEST_CASE("cook-manifest mode fails the whole step on one failing line, and on a missing required flag",

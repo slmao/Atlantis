@@ -203,11 +203,6 @@ void applySampler(const cgltf_sampler* sampler, ParsedMaterialSource& source) {
          (static_cast<std::uint32_t>(header[130]) << 16) | (static_cast<std::uint32_t>(header[131]) << 24);
 }
 
-[[nodiscard]] std::string toLower(std::string text) {
-  std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return text;
-}
-
 [[nodiscard]] std::string formatFloat(double value) {
   char buffer[32];
   std::snprintf(buffer, sizeof buffer, "%.4g", value);
@@ -258,7 +253,7 @@ std::vector<unsigned char> whiteFallbackDds() {
   put32(80, 0x4);         // DDPF_FOURCC
   std::memcpy(bytes.data() + 84, "DX10", 4);
   put32(108, 0x1000);     // DDSCAPS_TEXTURE
-  put32(128, 99);         // DXGI_FORMAT_BC7_UNORM
+  put32(128, 100);        // DXGI_FORMAT_BC7_UNORM_SRGB: a base-colour stand-in (Spec 0046 Q8)
   put32(132, 3);          // D3D10_RESOURCE_DIMENSION_TEXTURE2D
   put32(140, 1);          // arraySize
   // One BC7 mode-6 block: all eight 7-bit endpoints 127 with both p-bits 1
@@ -517,18 +512,20 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
                           "(implementation-defined in glTF), address repeat");
   }
 
-  // Ruling 4: the DDS file's own DXGI format decides the colour space; a
-  // base-colour-named (*_diff*) file stored linear is reported, not changed.
+  // Plan 0037 Ruling 4, narrowed by Spec 0046 Q8 (ruled 2026-09-26): a DDS
+  // mapped as colour (base colour or emissive) holds sRGB-encoded colour
+  // whatever its DXGI tag, so its cook line carries --color-space=srgb; one
+  // tagged BC7_UNORM (99) is reported as overridden. A normal map keeps its
+  // file's tag (no flag).
   const fs::path contentParent = contentRootDirectory(contentRoot).parent_path();
   for (const TextureEntry& t : textures) {
-    if (!t.isDds || t.assetRoot != "{content_parent}") continue;
-    if (toLower(t.logicalPath).find("_diff") == std::string::npos) continue;
+    if (!t.isDds || t.usage != TextureUsage::Color || t.assetRoot != "{content_parent}") continue;
     const auto dxgi = ddsDxgiFormat(contentParent / t.logicalPath);
     if (dxgi && *dxgi == 100) continue;
     summary.colorSpaceWarnings += 1;
-    reportLines.push_back("colour-space warning (Ruling 4): " + t.logicalPath + " is named *_diff* but DXGI " +
+    reportLines.push_back("colour-space override (Spec 0046 Q8): " + t.logicalPath + " is DXGI " +
                           (dxgi ? std::to_string(*dxgi) : std::string("unknown")) +
-                          " is not BC7_UNORM_SRGB (100); it will be sampled as linear (file wins)");
+                          ", not BC7_UNORM_SRGB (100); used as colour, so cooked as sRGB");
   }
 
   for (std::size_t i = 0; i < textures.size(); ++i) {
@@ -536,7 +533,11 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
     declaredAssets.push_back(t.logicalPath);
     std::string line = "--kind=texture --source=" + t.source + " --asset-root=" + t.assetRoot +
                        " --output-dir={cooked_dir} --stamp={cooked_dir}/" + stampStem(i, t.logicalPath) + ".stamp";
-    if (!t.isDds) line += t.usage == TextureUsage::Color ? " --color-space=srgb" : " --color-space=unorm";
+    if (!t.isDds) {
+      line += t.usage == TextureUsage::Color ? " --color-space=srgb" : " --color-space=unorm";
+    } else if (t.usage == TextureUsage::Color) {
+      line += " --color-space=srgb";  // Spec 0046 Q8: overrides a DXGI 99 tag
+    }
     manifestLines.push_back(line);
   }
   summary.texturesReferenced += static_cast<std::uint32_t>(textures.size());

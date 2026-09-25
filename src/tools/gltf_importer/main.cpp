@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
             << summary.materialsMetallicRoughness << " metallic-roughness; " << summary.materialsTransmission
             << " transmission, " << summary.materialsWhiteFallback << " white fallback), "
             << summary.texturesReferenced << " textures, " << summary.colorSpaceWarnings
-            << " colour-space warnings; scene: " << summary.sceneNodeLines << " node lines (" << summary.sceneMeshLines
+            << " colour-space overrides; scene: " << summary.sceneNodeLines << " node lines (" << summary.sceneMeshLines
             << " mesh, " << summary.sceneLightLines << " light, " << summary.overlayNodeLines << " overlay), depth " << summary.sceneMaxDepth << " -> " << outputDir
             << "\n";
   return 0;

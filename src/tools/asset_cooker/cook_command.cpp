@@ -275,9 +275,12 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
 
 // Spec 0038/Plan 0038 Milestone 2: the BC7 cook path -- a .dds source is
 // parsed (header only, blocks passed through verbatim, never decoded) and
-// funneled into cookTextureBc7(). The DDS file's own DXGI format is the
-// sole color-space authority here: --color-space is ignored for .dds
-// sources (it exists for the stb-decoded PNG path below only).
+// funneled into cookTextureBc7(). The DDS file's own DXGI format decides
+// the color space, with one exception (Spec 0046 Q8, ruled 2026-09-26):
+// --color-space=srgb cooks a BC7_UNORM (DXGI 99) file as sRGB -- the
+// importer's flag for a texture used as colour; the blocks are identical,
+// only the view format changes. Any other value, or none, leaves the file's
+// own tag in force.
 [[nodiscard]] int runCookTextureDdsMode(const CookCommandRequest& request) {
   using atlantis::asset_system::cookTextureBc7;
 
@@ -306,10 +309,11 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
   const fs::path metadataPath = fs::path(request.outputDir) / (base + ".atex.meta.txt");
 
   // Spec 0045: the whole chain the DDS carries, passed through verbatim.
+  const bool srgb = image.srgb || request.colorSpace == "srgb";
   const auto result = cookTextureBc7(image.blockBytes.data(), image.blockBytes.size(), image.width, image.height,
                                      image.mipCount,
-                                     image.srgb ? atlantis::asset_system::TextureColorSpace::Srgb
-                                                : atlantis::asset_system::TextureColorSpace::Unorm,
+                                     srgb ? atlantis::asset_system::TextureColorSpace::Srgb
+                                          : atlantis::asset_system::TextureColorSpace::Unorm,
                                      relativePath, artifactPath, metadataPath);
   if (result.isErr()) {
     std::cerr << "atlantis_asset_cooker: cook failed: " << textureCookErrorMessage(result.error()) << "\n";
