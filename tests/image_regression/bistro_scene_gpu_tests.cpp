@@ -272,7 +272,7 @@ TEST_CASE("Full capture-compare cycle against the committed bistro_demo golden p
   const std::string sidecarText((std::istreambuf_iterator<char>(sidecarFile)), std::istreambuf_iterator<char>());
   const auto provenance = atlantis::image_regression::parseGoldenProvenance(sidecarText);
   REQUIRE(provenance.isOk());
-  CHECK(sidecarText.rfind("schema_version: 3\n", 0) == 0);
+  CHECK(sidecarText.rfind("schema_version: 3", 0) == 0);  // LF or CRLF (core.autocrlf) checkout
   CHECK(provenance.value().contentFetchScriptSha256 == ATLANTIS_BISTRO_FETCH_SCRIPT_SHA256);
   CHECK(provenance.value().contentSourceCommit.size() == 40);
 
