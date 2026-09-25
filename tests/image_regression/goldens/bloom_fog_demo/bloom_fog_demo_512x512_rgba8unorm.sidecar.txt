@@ -1,5 +1,5 @@
 schema_version: 1
-capture_date: 2026-09-25T05:41:30Z
+capture_date: 2026-09-25T05:41:31Z
 source_revision: 498deb42d23336e8e806e7c251f0e75df1ccd79e
 gpu_vendor: Intel
 gpu_model: Intel(R) Arc(TM) B370 GPU

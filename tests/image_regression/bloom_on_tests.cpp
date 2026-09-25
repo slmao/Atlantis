@@ -2,6 +2,7 @@
 #include "fixture/emissive_demo_fixture.h"
 #include "support/emissive_differential.h"
 #include "support/fog_differential.h"
+#include "support/golden_validity.h"
 #include "support/pixel_diff.h"
 
 #include <atlantis/assert.h>
@@ -17,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <utility>
@@ -41,7 +43,7 @@
 // - the drawFrame() gates (Plan 0044 P5): a bad strength, a bad threshold
 //   and a mismatched target extent each report exactly one check failure.
 // The two goldens (bloom_demo, bloom_fog_demo) and their discriminators
-// land with the goldens themselves, at the end of this file.
+// are at the end of this file.
 
 using atlantis::image_regression::activeCameraFog;
 using atlantis::image_regression::addBloomShaderPaths;
@@ -60,6 +62,9 @@ namespace {
 constexpr BloomTestSceneFiles kEmissiveDemoScene{ATLANTIS_emissive_demo_scene_ARTIFACT_PATH,
                                                  ATLANTIS_emissive_demo_scene_METADATA_PATH,
                                                  ATLANTIS_emissive_demo_scene_MANIFEST_PATH};
+constexpr BloomTestSceneFiles kBloomDemoScene{ATLANTIS_bloom_demo_scene_ARTIFACT_PATH,
+                                              ATLANTIS_bloom_demo_scene_METADATA_PATH,
+                                              ATLANTIS_bloom_demo_scene_MANIFEST_PATH};
 constexpr BloomTestSceneFiles kBloomFogDemoScene{ATLANTIS_bloom_fog_demo_scene_ARTIFACT_PATH,
                                                  ATLANTIS_bloom_fog_demo_scene_METADATA_PATH,
                                                  ATLANTIS_bloom_fog_demo_scene_MANIFEST_PATH};
@@ -336,4 +341,84 @@ TEST_CASE("drawFrame() bloom gates: a bad strength, a bad threshold and a mismat
   REQUIRE(failures.size() == 1);
   CHECK(failures[0] == "BloomInput::targets' extent must equal the HdrColorTarget's extent");
   REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0044 Milestone 2, golden commit (ADR-0042 Initial baseline bootstrap):
+// both goldens were captured by atlantis_image_regression_bloom_demo_golden_
+// generator against the clean, already-committed tree at their recorded
+// source_revision, with the scene camera's bloom= group driving the chain
+// (no explicit BloomInput -- what the Runtime renders). Each has a
+// discriminator: the same scene with the camera's strength set to 0 (bloom
+// off) must fail against it (Plan 0044 P12).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct BloomGolden {
+  const char* name;
+  const char* slug;
+  BloomTestSceneFiles scene;
+};
+
+constexpr BloomGolden kBloomDemoGolden{"bloom_demo/bloom_demo_512x512_rgba8unorm", "bloom_demo_512x512_rgba8unorm",
+                                       kBloomDemoScene};
+constexpr BloomGolden kBloomFogDemoGolden{"bloom_fog_demo/bloom_fog_demo_512x512_rgba8unorm",
+                                          "bloom_fog_demo_512x512_rgba8unorm", kBloomFogDemoScene};
+
+// Renders golden's scene (bloom from its camera unless bloomOff) and
+// compares it against the committed golden at zero tolerance.
+[[nodiscard]] atlantis::image_regression::ComparisonReport renderAndCompare(const BloomGolden& golden, bool bloomOff) {
+  EmissiveDemoFixture fixture = setUpBloomFixture(golden.scene);
+  if (bloomOff) setActiveCameraBloomStrength(fixture, 0.0f);
+  const PixelBuffer actual = render(fixture);
+  REQUIRE(fixture.device->waitIdle().isOk());
+
+  const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;
+  auto goldenResult =
+      atlantis::image_regression::loadAndValidateGolden(goldensDir / (std::string(golden.name) + ".png"),
+                                                        goldensDir / (std::string(golden.name) + ".sidecar.txt"));
+  {
+    INFO("INVALID GOLDEN: the committed " << golden.name << " golden must load and validate cleanly");
+    REQUIRE(goldenResult.isOk());
+  }
+  const auto& validatedGolden = goldenResult.value();
+  REQUIRE(actual.width == validatedGolden.pixels.width);
+  REQUIRE(actual.height == validatedGolden.pixels.height);
+  const auto report = atlantis::image_regression::compareBuffers(actual, validatedGolden.pixels);
+  if (!report.passed && !bloomOff) {
+    (void)atlantis::image_regression::writeFailureArtifacts(ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR, golden.slug, actual,
+                                                            validatedGolden.pixels);
+  }
+  return report;
+}
+
+void removeStaleArtifacts(const BloomGolden& golden) {
+  const std::filesystem::path outputDir = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
+  std::filesystem::remove(outputDir / (std::string(golden.slug) + "_actual.png"));
+  std::filesystem::remove(outputDir / (std::string(golden.slug) + "_diff.png"));
+}
+
+}  // namespace
+
+TEST_CASE("Full capture-compare cycle against the committed bloom_demo golden passes",
+          "[image_regression][gpu][bloom]") {
+  removeStaleArtifacts(kBloomDemoGolden);
+  CHECK(renderAndCompare(kBloomDemoGolden, false).passed);
+}
+
+TEST_CASE("The bloom_demo frame with bloom off fails comparison against the real bloom_demo golden",
+          "[image_regression][gpu][bloom]") {
+  CHECK_FALSE(renderAndCompare(kBloomDemoGolden, true).passed);
+}
+
+TEST_CASE("Full capture-compare cycle against the committed bloom_fog_demo golden passes",
+          "[image_regression][gpu][bloom][fog]") {
+  removeStaleArtifacts(kBloomFogDemoGolden);
+  CHECK(renderAndCompare(kBloomFogDemoGolden, false).passed);
+}
+
+TEST_CASE("The bloom_fog_demo frame with bloom off fails comparison against the real bloom_fog_demo golden",
+          "[image_regression][gpu][bloom][fog]") {
+  CHECK_FALSE(renderAndCompare(kBloomFogDemoGolden, true).passed);
 }
