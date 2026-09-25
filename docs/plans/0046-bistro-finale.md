@@ -5,9 +5,17 @@
   [ADR-0094](../adr/0094-imported-scene-assembly-build-step-and-authored-overlay.md),
   [ADR-0095](../adr/0095-goldens-over-pinned-fetched-content.md),
   [ADR-0096](../adr/0096-emissive-texture-always-bound-slot.md) (all `Accepted`)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending
+- **Joint Human Review:** slmao, 2026-09-25 — reviewed this Plan and
+  [Spec 0046](../specs/0046-bistro-finale.md) together (chat
+  confirmation; document set carried by this branch's PR) and explicitly
+  authorized Implementation from Milestone 1. The five open points were
+  ruled in the same review: O1 a per-entry whitelist flag disables the
+  global environment light for Bistro; O2 the 1x1 white default texture
+  is Runtime-held; O3 the visual review runs before the golden capture;
+  O4 memory mitigation only if M3's measurement exceeds budget; O5
+  Android uses a host-side dependency-manifest rewrite.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
