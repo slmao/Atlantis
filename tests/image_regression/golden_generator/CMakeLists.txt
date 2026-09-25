@@ -206,6 +206,53 @@ add_custom_command(TARGET atlantis_image_regression_bc7_dual_quad_golden_generat
       "$<TARGET_FILE_DIR:atlantis_image_regression_bc7_dual_quad_golden_generator>/shaders/"
 )
 
+# Plan 0045 Milestone 2: the mip_chain_demo golden generator -- the BC7
+# dual-quad generator's block with the synthetic checker chain (cooked at
+# run time, fixture/mip_test_textures.h) in place of the two BC7 assets.
+add_executable(atlantis_image_regression_mip_chain_demo_golden_generator mip_chain_demo_main.cpp)
+
+target_link_libraries(atlantis_image_regression_mip_chain_demo_golden_generator
+  PRIVATE
+    Atlantis::ImageRegressionFixture
+    Atlantis::ImageRegressionSupport
+    atlantis_compiler_warnings
+)
+
+target_compile_definitions(atlantis_image_regression_mip_chain_demo_golden_generator PRIVATE
+  ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+  ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
+  ATLANTIS_textured_quad_left_ARTIFACT_PATH="${ATLANTIS_textured_quad_left_ARTIFACT_PATH}"
+  ATLANTIS_textured_quad_left_METADATA_PATH="${ATLANTIS_textured_quad_left_METADATA_PATH}"
+  ATLANTIS_textured_quad_right_ARTIFACT_PATH="${ATLANTIS_textured_quad_right_ARTIFACT_PATH}"
+  ATLANTIS_textured_quad_right_METADATA_PATH="${ATLANTIS_textured_quad_right_METADATA_PATH}"
+)
+
+add_dependencies(atlantis_image_regression_mip_chain_demo_golden_generator textured_quad_shaders
+  output_transform_unorm_shaders shadow_cast_shaders
+  ${ATLANTIS_textured_quad_left_TARGET} ${ATLANTIS_textured_quad_right_TARGET})
+add_custom_command(TARGET atlantis_image_regression_mip_chain_demo_golden_generator POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+      "$<TARGET_FILE_DIR:atlantis_image_regression_mip_chain_demo_golden_generator>/shaders"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.vert.spv"
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.vert.refl.json"
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.frag.spv"
+      "${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}/textured_quad.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_mip_chain_demo_golden_generator>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.spv"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.vert.refl.json"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.spv"
+      "${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}/output_transform_unorm.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_mip_chain_demo_golden_generator>/shaders/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.vert.refl.json"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.spv"
+      "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_image_regression_mip_chain_demo_golden_generator>/shaders/"
+)
+
 # Plan 0018 Milestone 16: a fourth, standalone golden-generator executable
 # for the material_demo fixture -- same reused git/provenance/PNG steps,
 # "render one frame" replaced with renderMaterialDemoFrame(). Unlike the

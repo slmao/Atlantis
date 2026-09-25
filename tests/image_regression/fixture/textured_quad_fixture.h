@@ -118,7 +118,12 @@ enum class TexturedQuadSetupError {
     const char* srgbMetadataPath, const char* leftMeshArtifactPath, const char* leftMeshMetadataPath,
     const char* rightMeshArtifactPath, const char* rightMeshMetadataPath,
     atlantis::rhi::SampledTextureFormat leftTextureFormat = atlantis::rhi::SampledTextureFormat::Rgba8Unorm,
-    atlantis::rhi::SampledTextureFormat rightTextureFormat = atlantis::rhi::SampledTextureFormat::Rgba8Srgb);
+    atlantis::rhi::SampledTextureFormat rightTextureFormat = atlantis::rhi::SampledTextureFormat::Rgba8Srgb,
+    std::optional<float> samplerMaxLodOverride = std::nullopt);
+// Plan 0045 P8/P11: samplerMaxLodOverride is a test-only knob -- when set,
+// it replaces the derived maxLod of the shared sampler. mip_chain_demo's
+// discriminator passes 0.0f to render its chain base-mip only (the
+// pre-0045 behaviour); every other caller leaves it unset.
 // Spec 0038/Plan 0038 Milestone 3b: the two trailing format parameters
 // default to the original Rgba8 pair, byte-identically preserving every
 // pre-existing caller; the BC7 dual-quad golden passes Bc7Unorm/Bc7Srgb

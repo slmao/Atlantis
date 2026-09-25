@@ -66,6 +66,8 @@ add_executable(atlantis_image_regression_gpu_tests
   pbr_anisotropic_demo_gpu_tests.cpp
   pbr_materials_showcase_gpu_tests.cpp
   bc7_dual_quad_gpu_tests.cpp
+  # Plan 0045 Milestone 2: BC7 mip-chain level selection and mip_chain_demo.
+  mip_chain_gpu_tests.cpp
   # Spec 0039 T2/T3: the v4-vs-v5 equivalence comparison and the
   # 362x362 uint32 grid. Needs Atlantis::RHI for the index Buffer's
   # own indexType()/sizeBytes() assertions.

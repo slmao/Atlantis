@@ -190,7 +190,8 @@ Result<TexturedQuadFixture, TexturedQuadSetupError> setUpTexturedQuadFixture(con
                                                                               const char* rightMeshArtifactPath,
                                                                               const char* rightMeshMetadataPath,
                                                                               SampledTextureFormat leftTextureFormat,
-                                                                              SampledTextureFormat rightTextureFormat) {
+                                                                              SampledTextureFormat rightTextureFormat,
+                                                                              std::optional<float> samplerMaxLodOverride) {
   using ResultT = Result<TexturedQuadFixture, TexturedQuadSetupError>;
 
   const auto vertexSpirv = loadSpirvFile("shaders/textured_quad.vert.spv");
@@ -267,7 +268,7 @@ Result<TexturedQuadFixture, TexturedQuadSetupError> setUpTexturedQuadFixture(con
       SamplerCreateParams{.filter = Filter::Nearest,
                           .addressMode = AddressMode::ClampToEdge,
                           .mipFilter = atlantis::rhi::MipFilter::Nearest,
-                          .maxLod = static_cast<float>(deepestMipLevel)});
+                          .maxLod = samplerMaxLodOverride.value_or(static_cast<float>(deepestMipLevel))});
   if (samplerResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);
   fixture.sampler = std::move(samplerResult.value());
 
