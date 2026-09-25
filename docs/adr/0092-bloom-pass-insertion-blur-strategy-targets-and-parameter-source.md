@@ -149,3 +149,56 @@ ADR-0091 did for fog. Facts, measured by Spec 0044's investigations:
   scene would get Bistro's bloom. Rejected.
 - **Bloom on by default.** Would move every golden and every scene's look.
   Rejected; absent means off.
+
+## Accepted Correction — 2026-09-25 (Decision 3: one Pipeline per bloom pass)
+
+**Status:** Accepted. Approved by Human Review, slmao, 2026-09-25 (chat
+confirmation, ruling "option A"; reviewed with this branch's implementation
+PR). It supersedes only
+Decision 3's "three bloom Pipelines … borrowed per frame" and the matching
+shape of the `drawFrame()` input. The Decision's core is unchanged: option
+(a), separate RenderGraph passes ending in a separate composite pass; the
+six-level chain from half resolution; the twelve-target bundle; the three
+shader pairs and their descriptor contracts; the camera-node parameters;
+no RHI, Vulkan Backend or RenderGraph change. This ADR's top-level
+`Status: Accepted` is unaffected.
+
+**What does not hold.** Decision 3 has the caller create three Pipelines
+(downsample, upsample, composite) and the chain reuse them: downsample for
+all six `D` passes, upsample for all five `U` passes, each pass binding
+different textures. The Vulkan Backend gives each Pipeline exactly one
+`VkDescriptorSet`, which `bindPipeline()` adopts
+(`vulkan_command_list.cpp:371`). Rebinding a texture on a set that is
+already bound in the same command buffer means `vkUpdateDescriptorSets`
+without `UPDATE_AFTER_BIND`, which invalidates the command buffer. The
+first real execution of the chain hit exactly that under fatal Validation
+Layers (`VUID-vkCmdBindDescriptorSets-commandBuffer-recording`, "VkDescriptorSet
+… was destroyed or updated without UPDATE_AFTER_BIND"), in the fixture and
+in the Runtime alike. Three Pipelines cannot carry twelve different binding
+sets in one frame without an RHI change, which this ADR rules out.
+
+**Correction.** One Pipeline instance per bloom pass: **twelve** — six
+downsample (`D1…D6`), five upsample (`U5…U1`) and one composite — created
+by the caller (the composition root) from the same three shader pairs,
+with the same creation parameters as before (no camera uniform, no depth
+attachment, `Rgba16Float`, a 16-byte push-constant block, one or two
+samplers from binding 0). Each instance's descriptor set is then written
+with one fixed binding set per frame, never rebound. This is the existing
+Material-per-Pipeline precedent: every PBR Material owns its own Pipeline
+for the same reason.
+
+- `BloomInput`'s three Pipeline references become one
+  `std::array<rhi::Pipeline*, 12>`, indexed `D1…D6` at 0–5, `U1…U5` at
+  6–10 and the composite at 11 (named Renderer constants), all non-null.
+  It stays the nullable-pointer input ruled in Plan 0044 O1; absent or
+  `strength == 0` still means off.
+- The Runtime (Plan 0044 P9) and `PbrNormalMapDemoFixture` (P10) create
+  the twelve at startup/setup when the bloom shader paths are set; nothing
+  about when they exist changes. Pipelines have no extent dependency, so
+  resize still recreates only the targets.
+- `RuntimeInitError::BloomPipelineCreateFailed` covers any of the twelve.
+
+**Consequences.** Nine more `VkPipeline`s and descriptor sets per bloom
+caller, created once and not per frame — well inside the descriptor pool's
+growth policy. No change to the shaders, the passes, their order, the
+targets, the scene format or any golden.

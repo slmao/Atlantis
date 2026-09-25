@@ -195,6 +195,10 @@ ruling Q1:
 - `struct BloomInput { BloomTargets& targets; const rhi::Pipeline&
   downsample, upsample, composite; float strength, threshold; }` — the
   `EnvironmentLighting` shape.
+  - *Correction (2026-09-25, Human Review approved):* the three Pipeline
+    references become `std::array<rhi::Pipeline*, 12>`, one instance per
+    pass (`D1…D6`, `U1…U5`, composite) — see
+    [ADR-0092's Accepted Correction](../adr/0092-bloom-pass-insertion-blur-strategy-targets-and-parameter-source.md#accepted-correction--2026-09-25-decision-3-one-pipeline-per-bloom-pass).
 - `drawFrame(..., cameraWorldPosition = std::nullopt, const BloomInput*
   bloom = nullptr)`.
 - A null `bloom`, or `strength == 0`, declares no bloom pass.
@@ -251,6 +255,9 @@ keeping `resourceAt(i)` in declaration order.
   active camera has `strength > 0` when the paths are absent.
 - The Runtime creates the three Pipelines at startup when the paths are
   present.
+  - *Correction (2026-09-25, Human Review approved):* twelve Pipeline instances
+    from the three shader pairs, not three — see
+    [ADR-0092's Accepted Correction](../adr/0092-bloom-pass-insertion-blur-strategy-targets-and-parameter-source.md#accepted-correction--2026-09-25-decision-3-one-pipeline-per-bloom-pass).
 - It creates and replaces `BloomTargets` in the resize branch only when
   the active camera has `strength > 0`.
 - It passes a `BloomInput` built from the active camera each frame.
