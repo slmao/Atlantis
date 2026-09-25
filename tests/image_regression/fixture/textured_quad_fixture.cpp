@@ -2,6 +2,7 @@
 
 #include <atlantis/asset_system/load.h>
 #include <atlantis/asset_system/load_texture.h>
+#include <atlantis/asset_system/texture_artifact.h>
 #include <atlantis/asset_system/mesh_artifact.h>
 #include <atlantis/render_graph/execution.h>
 #include <atlantis/render_graph/render_graph_builder.h>
@@ -12,10 +13,12 @@
 #include <atlantis/shader_system/rhi_integration/vertex_input_mapping.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstring>
 #include <fstream>
+#include <span>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -151,13 +154,29 @@ using Mat4 = std::array<float, 16>;
 // than shared (Plan 0016/D4's own disclosed scope: this test target and
 // tests/vulkan_backend/ share no existing private-header dependency).
 void buildTextureUploadPass(atlantis::render_graph::RenderGraphBuilder& builder, atlantis::rhi::Buffer& stagingBuffer,
-                             atlantis::rhi::SampledTexture& destination) {
+                             atlantis::rhi::SampledTexture& destination,
+                             std::span<const atlantis::rhi::SampledTextureUploadRegion> regions) {
   const auto resource = builder.declareResource("texture-upload");
   const auto pass = builder.declarePass("TextureUpload");
   builder.writes(pass, resource, atlantis::rhi::ResourceState::TransferDestination);
-  builder.setExecute(pass, [&stagingBuffer, &destination](atlantis::rhi::CommandList& cmd) {
-    cmd.copyBufferToTexture(stagingBuffer, destination);
+  builder.setExecute(pass, [&stagingBuffer, &destination, regions](atlantis::rhi::CommandList& cmd) {
+    cmd.copyBufferToTexture(stagingBuffer, destination, regions);
   });
+}
+
+// Spec 0045 / Plan 0045 P8: the Runtime's per-level regions
+// (material_realization.cpp's textureUploadRegions()), duplicated here
+// under this file's existing no-shared-private-header scope note.
+[[nodiscard]] std::vector<atlantis::rhi::SampledTextureUploadRegion> textureUploadRegions(
+    const atlantis::asset_system::TextureAssetData& data) {
+  std::vector<atlantis::rhi::SampledTextureUploadRegion> regions;
+  for (const auto& level : atlantis::asset_system::textureMipLevels(data.width, data.height, data.layout,
+                                                                     data.mipCount)) {
+    regions.push_back({.bufferOffsetBytes = static_cast<std::size_t>(level.offsetBytes),
+                       .mipLevel = static_cast<std::uint32_t>(regions.size()),
+                       .extent = Extent2D{level.width, level.height}});
+  }
+  return regions;
 }
 
 }  // namespace
@@ -171,7 +190,8 @@ Result<TexturedQuadFixture, TexturedQuadSetupError> setUpTexturedQuadFixture(con
                                                                               const char* rightMeshArtifactPath,
                                                                               const char* rightMeshMetadataPath,
                                                                               SampledTextureFormat leftTextureFormat,
-                                                                              SampledTextureFormat rightTextureFormat) {
+                                                                              SampledTextureFormat rightTextureFormat,
+                                                                              std::optional<float> samplerMaxLodOverride) {
   using ResultT = Result<TexturedQuadFixture, TexturedQuadSetupError>;
 
   const auto vertexSpirv = loadSpirvFile("shaders/textured_quad.vert.spv");
@@ -221,24 +241,34 @@ Result<TexturedQuadFixture, TexturedQuadSetupError> setUpTexturedQuadFixture(con
   // module-boundary note).
   auto unormTextureResult = fixture.device->createSampledTexture(
       SampledTextureCreateParams{.extent = Extent2D{unormData.width, unormData.height},
-                                  .format = leftTextureFormat});
+                                  .format = leftTextureFormat,
+                                  .mipLevelCount = unormData.mipCount});
   if (unormTextureResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);
   fixture.sampledTextureUnorm = std::move(unormTextureResult.value());
 
   auto srgbTextureResult = fixture.device->createSampledTexture(
       SampledTextureCreateParams{.extent = Extent2D{srgbData.width, srgbData.height},
-                                  .format = rightTextureFormat});
+                                  .format = rightTextureFormat,
+                                  .mipLevelCount = srgbData.mipCount});
   if (srgbTextureResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);
   fixture.sampledTextureSrgb = std::move(srgbTextureResult.value());
 
   fixture.unormPixelBytes = unormData.pixelBytes;
   fixture.srgbPixelBytes = srgbData.pixelBytes;
+  fixture.unormUploadRegions = textureUploadRegions(unormData);
+  fixture.srgbUploadRegions = textureUploadRegions(srgbData);
 
   // Filter::Nearest keeps the checkerboard's own block edges crisp in
   // the captured golden, avoiding filtering-interpolation ambiguity at
-  // block boundaries (Spec 0016/D11).
+  // block boundaries (Spec 0016/D11). Spec 0045 R5 (ruling O4): maxLod
+  // reaches the deeper of the two textures' last levels; with a Nearest
+  // filter the mip filter stays Nearest either way.
+  const std::uint32_t deepestMipLevel = std::max(unormData.mipCount, srgbData.mipCount) - 1;
   auto samplerResult = fixture.device->createSampler(
-      SamplerCreateParams{.filter = Filter::Nearest, .addressMode = AddressMode::ClampToEdge});
+      SamplerCreateParams{.filter = Filter::Nearest,
+                          .addressMode = AddressMode::ClampToEdge,
+                          .mipFilter = atlantis::rhi::MipFilter::Nearest,
+                          .maxLod = samplerMaxLodOverride.value_or(static_cast<float>(deepestMipLevel))});
   if (samplerResult.isErr()) return ResultT::Err(TexturedQuadSetupError::ResourceCreationFailed);
   fixture.sampler = std::move(samplerResult.value());
 
@@ -453,8 +483,9 @@ Result<PixelBuffer, TexturedQuadRenderError> renderTexturedQuadFrame(TexturedQua
   // Step 1-2: two independent texture uploads, one RenderGraphBuilder,
   // recorded into commandList first.
   render_graph::RenderGraphBuilder uploadBuilder;
-  buildTextureUploadPass(uploadBuilder, *stagingBufferUnorm, *fixture.sampledTextureUnorm);
-  buildTextureUploadPass(uploadBuilder, *stagingBufferSrgb, *fixture.sampledTextureSrgb);
+  buildTextureUploadPass(uploadBuilder, *stagingBufferUnorm, *fixture.sampledTextureUnorm,
+                         fixture.unormUploadRegions);
+  buildTextureUploadPass(uploadBuilder, *stagingBufferSrgb, *fixture.sampledTextureSrgb, fixture.srgbUploadRegions);
   auto uploadCompileResult = uploadBuilder.compile();
   if (uploadCompileResult.isErr()) return ResultT::Err(TexturedQuadRenderError::CommandListCreationFailed);
   const std::vector<render_graph::ResourceBinding> uploadBindings{

@@ -77,6 +77,14 @@ struct TexturedQuadFixture {
   // staging Buffer -- never re-read from disk per call.
   std::vector<std::uint8_t> unormPixelBytes;
   std::vector<std::uint8_t> srgbPixelBytes;
+  // Spec 0045 / Plan 0045 P8 (ruling O1): this fixture mirrors the
+  // Runtime's material realization -- each texture is created with its
+  // artifact's mip count and uploaded one region per level (from
+  // asset_system::textureMipLevels()), and the shared sampler gets the
+  // derived maxLod/mipFilter rule. Single-mip (PNG) textures: one region,
+  // maxLod 0, MipFilter::Nearest -- exactly the pre-0045 fixture.
+  std::vector<atlantis::rhi::SampledTextureUploadRegion> unormUploadRegions;
+  std::vector<atlantis::rhi::SampledTextureUploadRegion> srgbUploadRegions;
 };
 
 inline constexpr std::uint32_t kTexturedQuadExtentPixels = 512;
@@ -110,7 +118,12 @@ enum class TexturedQuadSetupError {
     const char* srgbMetadataPath, const char* leftMeshArtifactPath, const char* leftMeshMetadataPath,
     const char* rightMeshArtifactPath, const char* rightMeshMetadataPath,
     atlantis::rhi::SampledTextureFormat leftTextureFormat = atlantis::rhi::SampledTextureFormat::Rgba8Unorm,
-    atlantis::rhi::SampledTextureFormat rightTextureFormat = atlantis::rhi::SampledTextureFormat::Rgba8Srgb);
+    atlantis::rhi::SampledTextureFormat rightTextureFormat = atlantis::rhi::SampledTextureFormat::Rgba8Srgb,
+    std::optional<float> samplerMaxLodOverride = std::nullopt);
+// Plan 0045 P8/P11: samplerMaxLodOverride is a test-only knob -- when set,
+// it replaces the derived maxLod of the shared sampler. mip_chain_demo's
+// discriminator passes 0.0f to render its chain base-mip only (the
+// pre-0045 behaviour); every other caller leaves it unset.
 // Spec 0038/Plan 0038 Milestone 3b: the two trailing format parameters
 // default to the original Rgba8 pair, byte-identically preserving every
 // pre-existing caller; the BC7 dual-quad golden passes Bc7Unorm/Bc7Srgb

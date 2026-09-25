@@ -79,12 +79,18 @@ bool isValidSampledTextureUploadRegion(
   if (region.extent.width > mipWidth || region.extent.height > mipHeight) return false;
   const ElementLayout layout = elementLayout(format);
   if (layout.bytesPerElement == 0 || region.bufferOffsetBytes % layout.bytesPerElement != 0) return false;
-  // A block-compressed copy region must itself be block-aligned in both
-  // dimensions (VkBufferImageCopy block-compressed constraints): partial
-  // blocks cannot be expressed.
-  if (layout.blockExtent != 1 &&
-      (region.extent.width % layout.blockExtent != 0 || region.extent.height % layout.blockExtent != 0)) {
-    return false;
+  // A block-compressed copy region must be block-aligned in each dimension
+  // unless it reaches that dimension's edge of the mip level -- Vulkan's
+  // own rule for vkCmdCopyBufferToImage into a block-compressed image
+  // (imageExtent a multiple of the block extent, or imageOffset +
+  // imageExtent equal to the subresource's extent). Every region here
+  // starts at offset 0, so an unaligned dimension is valid exactly when it
+  // spans the whole level -- which is what a mip chain's sub-block tail
+  // levels (2x2, 1x1, 4x2, 2x1, ...) need (Spec 0045, ADR-0093 Decision 3).
+  if (layout.blockExtent != 1) {
+    const bool widthOk = region.extent.width % layout.blockExtent == 0 || region.extent.width == mipWidth;
+    const bool heightOk = region.extent.height % layout.blockExtent == 0 || region.extent.height == mipHeight;
+    if (!widthOk || !heightOk) return false;
   }
   const std::size_t elementCountWidth = blockCount(region.extent.width, layout.blockExtent);
   const std::size_t elementCountHeight = blockCount(region.extent.height, layout.blockExtent);

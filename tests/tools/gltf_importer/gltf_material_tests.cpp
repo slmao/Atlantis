@@ -147,7 +147,8 @@ TEST_CASE("A factor-only spec-gloss material converts via D3 and gets the white 
   CHECK(parsed.value().width == 4);
   CHECK(parsed.value().height == 4);
   CHECK_FALSE(parsed.value().srgb);
-  CHECK(parsed.value().baseMipBlockBytes.size() == 16);
+  CHECK(parsed.value().blockBytes.size() == 16);
+  CHECK(parsed.value().mipCount == 1);  // no DDSD_MIPMAPCOUNT: one level (Spec 0045)
   const std::string manifest = readText(run.outputDir / "cook_manifest.txt");
   CHECK(manifest.find("--kind=texture --source={import_dir}/t/_importer/white_4x4_bc7.dds --asset-root={import_dir}") !=
         std::string::npos);

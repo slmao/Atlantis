@@ -134,7 +134,9 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
     case TextureCookError::NonAlignedDimensions:
       return "BC7 base-mip width/height not a multiple of 4";
     case TextureCookError::BlockDataSizeMismatch:
-      return "BC7 block byte count does not match ceil(w/4)*ceil(h/4)*16";
+      return "BC7 block byte count does not match the mip chain's byte count";
+    case TextureCookError::InvalidMipCount:
+      return "mip count is 0 or exceeds the dimensions' full mip chain";
   }
   return "unknown texture cook error";
 }
@@ -298,9 +300,11 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
   const fs::path artifactPath = fs::path(request.outputDir) / (base + ".atex");
   const fs::path metadataPath = fs::path(request.outputDir) / (base + ".atex.meta.txt");
 
-  const auto result = cookTextureBc7(image.baseMipBlockBytes.data(), image.baseMipBlockBytes.size(), image.width,
-                                     image.height, image.srgb ? atlantis::asset_system::TextureColorSpace::Srgb
-                                                              : atlantis::asset_system::TextureColorSpace::Unorm,
+  // Spec 0045: the whole chain the DDS carries, passed through verbatim.
+  const auto result = cookTextureBc7(image.blockBytes.data(), image.blockBytes.size(), image.width, image.height,
+                                     image.mipCount,
+                                     image.srgb ? atlantis::asset_system::TextureColorSpace::Srgb
+                                                : atlantis::asset_system::TextureColorSpace::Unorm,
                                      relativePath, artifactPath, metadataPath);
   if (result.isErr()) {
     std::cerr << "atlantis_asset_cooker: cook failed: " << textureCookErrorMessage(result.error()) << "\n";

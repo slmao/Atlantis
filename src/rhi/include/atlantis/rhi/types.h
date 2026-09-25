@@ -141,7 +141,8 @@ enum class IndexType {
 // only -- see ADR-0057.
 // Spec 0038/ADR-0085: the two BC7 block-compressed variants -- 16 bytes
 // per 4x4-texel block, uploaded verbatim (never CPU-decoded); base-mip
-// dimensions must be multiples of 4. Android real-device BC7 coverage is
+// dimensions must be multiples of 4 (levels below it need not be, Spec
+// 0045). Android real-device BC7 coverage is
 // a disclosed portability gap (Spec 0038 Portability).
 enum class SampledTextureFormat {
   Rgba8Unorm,  // linear

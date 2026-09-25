@@ -1,5 +1,6 @@
 #include <atlantis/asset_system/texture_artifact.h>
 
+#include <algorithm>
 #include <array>
 
 namespace atlantis::asset_system {
@@ -46,9 +47,42 @@ std::uint64_t bc7BlockByteCount(std::uint32_t width, std::uint32_t height) noexc
   return blocksWide * blocksHigh * 16ULL;
 }
 
+std::uint32_t fullMipChainLength(std::uint32_t width, std::uint32_t height) noexcept {
+  if (width == 0 || height == 0) return 0;
+  std::uint32_t levels = 0;
+  for (std::uint32_t size = std::max(width, height); size != 0; size >>= 1U) ++levels;
+  return levels;
+}
+
+std::vector<TextureMipLevel> textureMipLevels(std::uint32_t width, std::uint32_t height, TextureDataLayout layout,
+                                              std::uint32_t mipCount) {
+  std::vector<TextureMipLevel> levels;
+  levels.reserve(mipCount);
+  std::uint64_t offset = 0;
+  for (std::uint32_t i = 0; i < mipCount; ++i) {
+    TextureMipLevel level;
+    level.width = std::max(1U, width >> i);
+    level.height = std::max(1U, height >> i);
+    level.offsetBytes = offset;
+    level.sizeBytes = layout == TextureDataLayout::Bc7
+                          ? bc7BlockByteCount(level.width, level.height)
+                          : static_cast<std::uint64_t>(level.width) * level.height * 4ULL;
+    offset += level.sizeBytes;
+    levels.push_back(level);
+  }
+  return levels;
+}
+
+std::uint64_t textureMipChainByteCount(std::uint32_t width, std::uint32_t height, TextureDataLayout layout,
+                                       std::uint32_t mipCount) {
+  std::uint64_t total = 0;
+  for (const TextureMipLevel& level : textureMipLevels(width, height, layout, mipCount)) total += level.sizeBytes;
+  return total;
+}
+
 std::vector<std::byte> encodeTextureArtifact(std::uint32_t width, std::uint32_t height, TextureColorSpace colorSpace,
-                                              TextureDataLayout layout, const std::uint8_t* pixelBytes,
-                                              std::size_t pixelByteCount) {
+                                              TextureDataLayout layout, std::uint32_t mipCount,
+                                              const std::uint8_t* pixelBytes, std::size_t pixelByteCount) {
   std::vector<std::byte> out;
   out.reserve(kTextureArtifactHeaderSizeBytes + pixelByteCount);
 
@@ -57,7 +91,7 @@ std::vector<std::byte> encodeTextureArtifact(std::uint32_t width, std::uint32_t 
   appendU32LE(out, width);
   appendU32LE(out, height);
   appendU32LE(out, colorSpaceToFormatField(colorSpace));
-  appendU32LE(out, 1);  // mipCount -- always 1 this round
+  appendU32LE(out, mipCount);
   appendU32LE(out, static_cast<std::uint32_t>(kTextureArtifactHeaderSizeBytes));
   appendU32LE(out, static_cast<std::uint32_t>(pixelByteCount));
   appendU32LE(out, layoutToDataLayoutField(layout));
@@ -98,8 +132,11 @@ atlantis::Result<DecodedTextureArtifact, TextureArtifactDecodeError> decodeTextu
     return ResultT::Err(TextureArtifactDecodeError::UnknownFormat);
   }
 
+  // Spec 0045: 1..fullMipChainLength levels (width/height already bounded).
   const std::uint32_t mipCount = readU32LE(bytes.data() + 24);
-  if (mipCount != 1) return ResultT::Err(TextureArtifactDecodeError::UnsupportedMipCount);
+  if (mipCount == 0 || mipCount > fullMipChainLength(width, height)) {
+    return ResultT::Err(TextureArtifactDecodeError::UnsupportedMipCount);
+  }
 
   const std::uint32_t pixelDataOffset = readU32LE(bytes.data() + 28);
   const std::uint32_t pixelDataSizeBytes = readU32LE(bytes.data() + 32);
@@ -124,12 +161,10 @@ atlantis::Result<DecodedTextureArtifact, TextureArtifactDecodeError> decodeTextu
   // Every size computed in uint64_t before comparison, so a header
   // crafted to overflow a 32-bit product cannot drive an oversized or
   // wrapped-around allocation -- width/height are already bounded above,
-  // so these products cannot themselves overflow uint64_t.
+  // so these products cannot themselves overflow uint64_t. The expected
+  // size is the whole chain (Spec 0045), from the one layout authority.
   const auto expectedPixelDataOffset = static_cast<std::uint64_t>(kTextureArtifactHeaderSizeBytes);
-  const std::uint64_t expectedPixelDataSizeBytes =
-      layout == TextureDataLayout::Bc7
-          ? bc7BlockByteCount(width, height)
-          : static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height) * 4ULL;
+  const std::uint64_t expectedPixelDataSizeBytes = textureMipChainByteCount(width, height, layout, mipCount);
 
   if (static_cast<std::uint64_t>(pixelDataOffset) != expectedPixelDataOffset ||
       static_cast<std::uint64_t>(pixelDataSizeBytes) != expectedPixelDataSizeBytes) {
@@ -146,6 +181,7 @@ atlantis::Result<DecodedTextureArtifact, TextureArtifactDecodeError> decodeTextu
   decoded.height = height;
   decoded.colorSpace = colorSpace;
   decoded.layout = layout;
+  decoded.mipCount = mipCount;
   decoded.pixelBytes.reserve(pixelDataSizeBytes);
   for (std::uint32_t i = 0; i < pixelDataSizeBytes; ++i) {
     decoded.pixelBytes.push_back(static_cast<std::uint8_t>(bytes[pixelDataOffset + i]));

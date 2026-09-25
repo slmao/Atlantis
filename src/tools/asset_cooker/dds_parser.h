@@ -16,14 +16,19 @@ namespace atlantis::asset_cooker {
 // inputs (matching the repository's established pure-classification
 // precedent).
 //
-// Only the base mip's block bytes are extracted (the .atex artifact's
-// own mipCount==1 contract, Spec 0038); any additional mip levels an
-// input file carries are validated for presence but not returned.
+// Spec 0045 (ADR-0093 Decision 2): every level the file declares is
+// returned -- dwMipMapCount levels when DDSD_MIPMAPCOUNT is set, else one
+// -- as one contiguous chain, level 0 first, exactly as DDS stores it (no
+// padding between levels). Ruling Q5: the payload after the header must
+// be exactly that chain's byte count (texture_artifact.h's
+// textureMipChainByteCount()) -- fewer bytes are Truncated, more are
+// MalformedHeader, and so is a declared count of 0 or one beyond the
+// dimensions' full chain.
 
 enum class DdsParseError {
-  MalformedHeader,        // bad magic, wrong header sizes, bad flags combination, non-2D, array
+  MalformedHeader,        // bad magic/sizes/flags, non-2D, array, bad mip count, trailing bytes
   UnsupportedFormat,      // valid DDS, but not a BC7 2D texture (Spec's survey-finalized scope)
-  Truncated,              // header claims more base-mip bytes than the buffer holds
+  Truncated,              // the header's declared chain needs more bytes than the buffer holds
   NonAlignedDimensions,   // BC7 base mip width/height not a multiple of 4
 };
 
@@ -31,7 +36,8 @@ struct DdsBc7Image {
   std::uint32_t width = 0;
   std::uint32_t height = 0;
   bool srgb = false;  // DXGI_BC7_UNORM_SRGB vs DXGI_BC7_UNORM
-  std::vector<std::uint8_t> baseMipBlockBytes;
+  std::uint32_t mipCount = 1;
+  std::vector<std::uint8_t> blockBytes;  // the whole chain, level 0 first
 };
 
 [[nodiscard]] atlantis::Result<DdsBc7Image, DdsParseError> parseDdsBc7(const std::uint8_t* bytes,
