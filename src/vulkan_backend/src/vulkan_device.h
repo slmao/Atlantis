@@ -65,7 +65,8 @@ struct DescriptorPoolEntry {
 // allocateDescriptorSet() grows it -- one additional pool at a time,
 // geometric doubling per the fixed kDescriptorPoolMaxSetsByGeneration
 // table -- only on real, observed exhaustion, up to
-// kMaxDescriptorPoolCount pools total (60 concurrent descriptor sets).
+// kMaxDescriptorPoolCount pools total (508 concurrent descriptor sets
+// since ADR-0064's Accepted Amendment of 2026-09-26).
 // Never exposed on this class's own public accessor surface beyond the
 // narrow, Vulkan-Backend-internal accessors VulkanCommandList/
 // VulkanPipeline need.

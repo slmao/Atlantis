@@ -174,7 +174,7 @@ struct MinimalMeshFixture {
 }  // namespace
 
 TEST_CASE(
-    "The hard four-pool ceiling is enforced exactly at the real, production capacity total, and freed capacity "
+    "The hard seven-pool ceiling is enforced exactly at the real, production capacity total, and freed capacity "
     "is reused rather than triggering further growth (Spec 0021 D6/D3/D7, V10)",
     "[vulkan_backend][gpu][descriptor_pool_growth]") {
   // The real, current capacity total -- computed from the same
@@ -183,7 +183,7 @@ TEST_CASE(
   // this target's own new CMakeLists.txt include path).
   const auto kTotalCapacity =
       std::accumulate(kDescriptorPoolMaxSetsByGeneration.begin(), kDescriptorPoolMaxSetsByGeneration.end(), 0u);
-  REQUIRE(kTotalCapacity == 60);
+  REQUIRE(kTotalCapacity == 508);  // ADR-0064 Accepted Amendment 2026-09-26: 7 generations
 
   auto deviceResult = createDevice(
       DeviceCreateParams{.applicationName = "Atlantis Descriptor Pool Growth GPU Tests (ceiling+reuse)",
@@ -221,7 +221,7 @@ TEST_CASE(
   REQUIRE(pipelines.size() == kTotalCapacity);
 
   // The (kTotalCapacity + 1)th allocation must fail -- the hard ceiling
-  // (4 pools) is reached; no 5th pool is ever created.
+  // (7 pools) is reached; no 8th pool is ever created.
   {
     auto overflowResult = device->createPipeline(
         {.vertexShader = {.spirvWords = fixture->vertexSpirv.data(), .wordCount = fixture->vertexSpirv.size()},
@@ -236,24 +236,24 @@ TEST_CASE(
     CHECK(overflowResult.error() == PipelineCreateError::DescriptorSetAllocationFailed);
   }
 
-  // Phase 2: destroy the LAST 10 of the 60 created (pop_back(), reverse
-  // of creation order). Because Phase 1 filled all 60 slots exactly (no
+  // Phase 2: destroy the LAST 10 of the 508 created (pop_back(), reverse
+  // of creation order). Because Phase 1 filled all 508 slots exactly (no
   // pool had any spare capacity at any point), and the creation-order
-  // scan always fills pool0 (generation 0, 4 slots), then pool1 (8),
-  // then pool2 (16), before ever touching pool3 (generation 3, 32
-  // slots, holding creation indices 28-59), the last 10 created are
-  // provably all in pool3 -- pool0/pool1/pool2 stay 100% full and
-  // untouched by this destruction, never gaining any spare capacity.
+  // scan always fills pool0 (generation 0, 4 slots) through pool5 (128)
+  // before ever touching pool6 (generation 6, 256 slots, holding
+  // creation indices 252-507), the last 10 created are provably all in
+  // pool6 -- pool0-pool5 stay 100% full and untouched by this
+  // destruction, never gaining any spare capacity.
   for (int i = 0; i < 10; ++i) {
     pipelines.pop_back();
   }
   REQUIRE(pipelines.size() == kTotalCapacity - 10);
 
   // Create 10 new Pipelines. Since the pool set is ALREADY at its own
-  // hard ceiling (4 pools) -- unchanged by the destructions above, which
-  // only free capacity WITHIN pool3, never remove a pool -- a 5th pool
-  // cannot legally be created, and pool0/pool1/pool2 remain full with
-  // nothing to offer. Success here is only possible if the freed pool3
+  // hard ceiling (7 pools) -- unchanged by the destructions above, which
+  // only free capacity WITHIN pool6, never remove a pool -- an 8th pool
+  // cannot legally be created, and pool0-pool5 remain full with
+  // nothing to offer. Success here is only possible if the freed pool6
   // capacity was found and reused by the creation-order scan:
   // definitive, indirect proof of reuse-before-growth (Spec 0021
   // D3/D7), with no new production introspection API.

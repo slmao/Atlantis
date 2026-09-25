@@ -938,8 +938,8 @@ TEST_CASE("loadAndInstantiateScene: a PbrDirectLit material whose own resolved b
 // Fixed by Spec 0021/ADR-0064: VulkanDevice now owns a growable set of
 // descriptor pools (a fixed std::array<DescriptorPoolEntry, 4>, never a
 // std::vector), scanning every existing pool in creation order before
-// growing (geometric doubling: 4, 8, 16, 32 -- 60 concurrent descriptor
-// sets total) on real, observed VK_ERROR_OUT_OF_POOL_MEMORY/
+// growing (geometric doubling: 4, 8, 16, 32, 64, 128, 256 -- 508 concurrent
+// descriptor sets total since the ADR-0064 amendment of 2026-09-26) on real, observed VK_ERROR_OUT_OF_POOL_MEMORY/
 // VK_ERROR_FRAGMENTED_POOL exhaustion. No RHI/Renderer/Material public
 // API changed.
 //
@@ -962,7 +962,7 @@ TEST_CASE("loadAndInstantiateScene: a PbrDirectLit material whose own resolved b
 // "N=6 HDR pipeline descriptor-set peak is exactly N+4 with an
 // environment/sky Pipeline present" TEST_CASE below for the
 // environment-enabled re-derivation.
-TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+3 and succeeds against the real 60-set ceiling",
+TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+3 and succeeds against the real 508-set ceiling",
           "[runtime][gpu][material_realization][descriptor_pool_growth][hdr]") {
   using atlantis::vulkan_backend::detail::kDescriptorPoolMaxSetsByGeneration;
 
@@ -980,7 +980,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+3 and succeeds agai
   const std::size_t totalDescriptorSetCapacity =
       std::accumulate(kDescriptorPoolMaxSetsByGeneration.begin(), kDescriptorPoolMaxSetsByGeneration.end(),
                       std::size_t{0});
-  REQUIRE(totalDescriptorSetCapacity == 60);
+  REQUIRE(totalDescriptorSetCapacity == 508);
   REQUIRE(kExpectedPeakSetCount < totalDescriptorSetCapacity);
 
   auto deviceResult = atlantis::vulkan_backend::createDevice(
@@ -1086,7 +1086,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+3 and succeeds agai
 // runtime_application.cpp Step 4d -- never participates in format-change
 // rebuild, exactly like fallbackMaterial_ itself) -- proving the real,
 // environment-enabled steady-state/peak formula against the same real
-// 60-set ceiling.
+// 508-set ceiling.
 TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4 with an environment/sky Pipeline present",
           "[runtime][gpu][material_realization][descriptor_pool_growth][hdr][sky]") {
   using atlantis::vulkan_backend::detail::kDescriptorPoolMaxSetsByGeneration;
@@ -1105,7 +1105,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4 with an environme
   const std::size_t totalDescriptorSetCapacity =
       std::accumulate(kDescriptorPoolMaxSetsByGeneration.begin(), kDescriptorPoolMaxSetsByGeneration.end(),
                       std::size_t{0});
-  REQUIRE(totalDescriptorSetCapacity == 60);
+  REQUIRE(totalDescriptorSetCapacity == 508);
   REQUIRE(kExpectedPeakSetCount < totalDescriptorSetCapacity);
 
   auto deviceResult = atlantis::vulkan_backend::createDevice(
@@ -1260,7 +1260,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4/N+5 with both a s
 
   const std::size_t totalDescriptorSetCapacity = std::accumulate(
       kDescriptorPoolMaxSetsByGeneration.begin(), kDescriptorPoolMaxSetsByGeneration.end(), std::size_t{0});
-  REQUIRE(totalDescriptorSetCapacity == 60);
+  REQUIRE(totalDescriptorSetCapacity == 508);
   REQUIRE(kExpectedPeakSetCount < totalDescriptorSetCapacity);
 
   auto deviceResult = atlantis::vulkan_backend::createDevice(

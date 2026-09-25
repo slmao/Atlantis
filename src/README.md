@@ -127,13 +127,15 @@ real GPU regression test, disclosed during Spec 0019's own final review
 — [PR #96](https://github.com/slmao/Atlantis/pull/96)'s own review
 record has the full root-cause trace), **has since been fixed**:
 `VulkanDevice` now privately owns a fixed-size
-`std::array<DescriptorPoolEntry, 4>` descriptor-pool set (never a
+`std::array<DescriptorPoolEntry, kMaxDescriptorPoolCount>` descriptor-pool set (never a
 `std::vector` — a deliberate exception-safety choice, see
 [ADR-0064](../docs/adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md)),
 starting with one pool (`maxSets = 4`) and growing — one pool at a time,
-geometric doubling (`4, 8, 16, 32`), only on a real, observed
+geometric doubling (`4, 8, 16, 32, 64, 128, 256`), only on a real, observed
 `VK_ERROR_OUT_OF_POOL_MEMORY`/`VK_ERROR_FRAGMENTED_POOL` — up to a hard
-ceiling of 4 pools (60 concurrent descriptor sets total); every
+ceiling of 7 pools (508 concurrent descriptor sets total; 4 pools/60 sets
+until ADR-0064's Accepted Amendment of 2026-09-26, for Bistro's ~270
+Pipelines); every
 allocation scans existing pools in creation order first, naturally
 reusing capacity an earlier `VulkanPipeline` destructor already freed,
 before ever creating a new pool; `VK_ERROR_DEVICE_LOST`/host-or-device
@@ -145,7 +147,7 @@ and
 [ADR-0064](../docs/adr/0064-vulkan-backend-descriptor-pool-growth-ownership-model.md),
 merged via [PR #100](https://github.com/slmao/Atlantis/pull/100) — zero
 RHI/Renderer/Material public API change; `VulkanPipeline` itself needed
-no modification at all. **The four-pool/60-concurrent-descriptor-set
+no modification at all. **The seven-pool/508-concurrent-descriptor-set
 hard ceiling remains a real, disclosed, deliberate limit** — this is
 not bindless rendering, not descriptor indexing, and does not support
 an unbounded number of concurrent materials; see that Spec's own
