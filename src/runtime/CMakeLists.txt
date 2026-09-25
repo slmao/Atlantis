@@ -241,6 +241,20 @@ add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit
   # constraint, not a gap this Milestone's own Requirement 7 scope
   # extends to fixing.)
   ${ATLANTIS_pbr_materials_showcase_scene_TARGET})
+
+# Plan 0046 Milestone 3 (Spec 0046 Q7, Plan 0046 P10): the fifth --scene
+# entry, `bistro`, compiled in only when assets/ declared the Bistro build
+# step -- i.e. the fetched content was present at configure time. Its
+# three paths come from atlantis_add_imported_scene(), and the build step
+# runs before this executable, like every other whitelisted scene.
+if(DEFINED ATLANTIS_bistro_scene_TARGET)
+  target_compile_definitions(atlantis_runtime PRIVATE
+    ATLANTIS_RUNTIME_BISTRO_SCENE_ARTIFACT_PATH="${ATLANTIS_bistro_scene_ARTIFACT_PATH}"
+    ATLANTIS_RUNTIME_BISTRO_SCENE_METADATA_PATH="${ATLANTIS_bistro_scene_METADATA_PATH}"
+    ATLANTIS_RUNTIME_BISTRO_SCENE_MANIFEST_PATH="${ATLANTIS_bistro_scene_MANIFEST_PATH}"
+  )
+  add_dependencies(atlantis_runtime ${ATLANTIS_bistro_scene_TARGET})
+endif()
 endif()
 
 # Plan 0034 Milestone 5 (ADR-0077/ADR-0080): atlantis_runtime_android is

@@ -715,7 +715,11 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   // just uploaded THIS SAME frame (frame 1) or already published in an
   // earlier frame. Reuses the exact same effectiveSampledTextures
   // dedup shape realizePendingMaterials() itself builds internally.
-  if (!fixture.controlMaterial) {
+  // Plan 0046 Milestone 3: a scene that never loads the control's texture
+  // (Bistro) skips it until a frame actually asks for the control -- every
+  // scene that loads it realizes it on frame 1 exactly as before.
+  const bool controlTextureLoaded = fixture.textureDataMap.contains(fixture.controlMaterialData->textureAsset);
+  if (!fixture.controlMaterial && (controlTextureLoaded || useControlMaterial)) {
     std::unordered_map<atlantis::asset_system::AssetId, const rhi::SampledTexture*> effectiveSampledTextures;
     for (const auto& [id, texture] : fixture.sampledTextureResourceMap) effectiveSampledTextures.emplace(id, texture.get());
     for (const auto& [materialId, candidate] : realizedCandidates) {
@@ -847,11 +851,18 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, renderDrawItems,
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
-                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, 0.0f,
+                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler,
+                      // Plan 0046 Milestone 3: the active camera's own exposure
+                      // (Bistro's overlay sets -1 EV; 0 for every scene before it).
+                      cameraComponent.exposureCompensationEv,
                       environmentLightingView.has_value() ? &*environmentLightingView : nullptr,
                       fixture.skyPipeline.get(), *fixture.shadowMap, *fixture.shadowMapSampler,
                       *fixture.shadowCastPipeline, *fixture.shadowLightSpaceBuffer, shadowCasterDrawItems,
-                      std::nullopt, effectiveBloom);
+                      // Plan 0046 Milestone 3: the camera position blended items are
+                      // sorted by (Bistro's glass) -- inert for a scene with none.
+                      std::array<float, 3>{cameraWorldPositionData->x, cameraWorldPositionData->y,
+                                           cameraWorldPositionData->z},
+                      effectiveBloom);
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");

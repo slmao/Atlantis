@@ -1361,3 +1361,28 @@ set(ATLANTIS_pbr_materials_showcase_scene_ARTIFACT_PATH "${ATLANTIS_pbr_material
 set(ATLANTIS_pbr_materials_showcase_scene_METADATA_PATH "${ATLANTIS_pbr_materials_showcase_scene_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_materials_showcase_scene_MANIFEST_PATH "${ATLANTIS_pbr_materials_showcase_scene_MANIFEST_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_materials_showcase_scene_TARGET "${ATLANTIS_pbr_materials_showcase_scene_TARGET}" PARENT_SCOPE)
+
+# Plan 0046 Milestone 3 (Spec 0046 Q1/Q7, ADR-0094, Plan 0046 P9): the
+# Bistro street-at-night scene, assembled in one build step from the
+# fetched, SHA-256-pinned content (tools/content/fetch_bistro.ps1) plus the
+# committed overlay (camera, exposure, fog, bloom, moon and point lights).
+# Declared only when the content is present at configure time; otherwise
+# nothing -- no target, no variables, so the Runtime lists no `bistro`
+# entry. The same cache variable the [bistro]/content tests use.
+set(ATLANTIS_BISTRO_CONTENT_DIR "${CMAKE_SOURCE_DIR}/content/bistro" CACHE PATH
+  "Fetched Bistro content (tools/content/fetch_bistro.ps1); [bistro] tests SKIP when absent")
+if(EXISTS "${ATLANTIS_BISTRO_CONTENT_DIR}/bistro.gltf")
+  atlantis_add_imported_scene(
+    NAME bistro
+    GLTF "${ATLANTIS_BISTRO_CONTENT_DIR}/bistro.gltf"
+    CONTENT_ROOT "${ATLANTIS_BISTRO_CONTENT_DIR}"
+    OVERLAY "${CMAKE_CURRENT_SOURCE_DIR}/bistro/bistro_overlay.scene.txt"
+  )
+  foreach(suffix ARTIFACT_PATH METADATA_PATH MANIFEST_PATH TARGET IMPORT_DIR)
+    set(ATLANTIS_bistro_scene_${suffix} "${ATLANTIS_bistro_scene_${suffix}}" PARENT_SCOPE)
+  endforeach()
+  message(STATUS "Bistro content found at ${ATLANTIS_BISTRO_CONTENT_DIR}: declaring the bistro scene build step")
+else()
+  message(STATUS "Bistro content not found at ${ATLANTIS_BISTRO_CONTENT_DIR}: no bistro scene (run "
+                 "tools/content/fetch_bistro.ps1)")
+endif()
