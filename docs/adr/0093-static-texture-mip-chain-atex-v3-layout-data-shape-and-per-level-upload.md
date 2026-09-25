@@ -1,10 +1,11 @@
 # ADR 0093: Static-Texture Mip Chains — `.atex` v3 Layout, Data Shape and Per-Level Upload
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-25
 - **Deciders:** slmao
-- **Acceptance:** pending
-- **Related Spec:** [Spec 0045: Static-Texture Mip-Chain Passthrough](../specs/0045-mip-chain-passthrough.md) (`Draft`)
+- **Acceptance:** slmao, 2026-09-25 (chat confirmation; reviewed in this
+  branch's own PR, alongside Spec 0045's Approval)
+- **Related Spec:** [Spec 0045: Static-Texture Mip-Chain Passthrough](../specs/0045-mip-chain-passthrough.md) (`Approved`)
 - **Related ADR(s):** extends [ADR-0085](0085-block-compressed-sampled-texture-format-and-vulkan-mapping.md)
   (`Accepted`; its D5 put BC7 into `.atex` base-mip only) and reuses
   [ADR-0056](0056-texture-upload-resource-state-and-descriptor-binding.md)'s

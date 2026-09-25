@@ -342,6 +342,14 @@ per-level upload contract (extending
 [ADR-0085](../adr/0085-block-compressed-sampled-texture-format-and-vulkan-mapping.md))
 — decided by this workflow's own future Spec + ADR.
 
+*Now drafted (linked 2026-09-25):* [Spec 0045](0045-mip-chain-passthrough.md)
+(`Approved`), with the ADR obligation above discharged by
+[ADR-0093](../adr/0093-static-texture-mip-chain-atex-v3-layout-data-shape-and-per-level-upload.md)
+(`Accepted`): `.atex` schema v3 carrying the DDS's full chain, the Vulkan
+Backend's BC7 upload-region alignment check relaxed to Vulkan's own rule
+(a whole sub-block level is a valid region), and a derived-`maxLod`
+sampling policy (single-mip materials keep today's sampler exactly).
+
 ---
 
 **② Multi-Light Architecture** — Size: **L**

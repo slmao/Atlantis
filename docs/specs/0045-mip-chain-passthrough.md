@@ -1,12 +1,18 @@
 # Spec: Static-Texture Mip-Chain Passthrough
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-25
-- **Related Plan(s):** none yet
-- **Approval:** pending
+- **Related Plan(s):** none yet — Plan 0045 drafting is authorized by the
+  Approval below. **Implementation still awaits its own, separate Joint Human
+  Review** of Spec + Plan together, per AGENTS.md's own workflow.
+- **Approval:** slmao, 2026-09-25 (chat confirmation, no reviewing PR —
+  authorizes drafting Plan 0045; Implementation itself still awaits its own,
+  separate Joint Human Review of Spec + Plan together). The same review ruled
+  all five open questions. See Risks & Open Questions below.
 - **Related ADR(s):** [ADR-0093](../adr/0093-static-texture-mip-chain-atex-v3-layout-data-shape-and-per-level-upload.md)
-  (`Proposed`) — the `.atex` v3 multi-mip layout, the `TextureAssetData`
+  (`Accepted` 2026-09-25, alongside this Spec's own Approval) — the `.atex`
+  v3 multi-mip layout, the `TextureAssetData`
   shape, and the per-level upload and sampling contract (extends
   [ADR-0085](../adr/0085-block-compressed-sampled-texture-format-and-vulkan-mapping.md)).
 
@@ -255,7 +261,7 @@ public Asset System data-shape change (`TextureAssetData`, the cook and
 DDS-parse signatures), and a Runtime/RHI upload and sampling contract
 extending ADR-0085. Recorded in
 [ADR-0093](../adr/0093-static-texture-mip-chain-atex-v3-layout-data-shape-and-per-level-upload.md)
-(`Proposed`). No new module, dependency, threading or ownership model;
+(`Accepted`). No new module, dependency, threading or ownership model;
 no RHI public API, RenderGraph or shader change.
 
 ## Alternatives Considered
@@ -300,24 +306,29 @@ Mapped to Spec 0036 ①c's row (`:877`) and to the requirements:
 
 ## Risks & Open Questions
 
-- **Q1 — `.atex` v3 vs. v2 extended in place.** Recommend v3 (a).
-- **Q2 — Texture metadata v3 with a `mip_count` line.** Recommend yes:
-  the sidecar already mirrors width/height/format/layout for the
-  loader's cross-check (Spec 0038 added `data_layout` the same way).
-- **Q3 — Sampler policy.** Recommend R5 (derived `maxLod`, `mipFilter`
-  follows `filter`), which leaves every single-mip material's sampler
-  bit-identical. The alternative, a material field, is a schema change
-  for no Phase 1 need.
+- **Q1 — `.atex` v3 vs. v2 extended in place.** **Ruled (2026-09-25): a
+  new schema version, v3** (a).
+- **Q2 — Texture metadata v3 with a `mip_count` line.** **Ruled
+  (2026-09-25): yes** — the sidecar already mirrors width/height/format/
+  layout for the loader's cross-check (Spec 0038 added `data_layout` the
+  same way).
+- **Q3 — Sampler policy.** **Ruled (2026-09-25): R5's derived rule** —
+  `maxLod` is the largest `mipCount − 1` among the material's textures and
+  `mipFilter` follows `filter`, so every single-mip material's sampler
+  stays bit-identical. No material field.
 - **Q4 — `bc7_dual_quad` golden.** Its DDS carries 9 levels; with
   passthrough, a minified quad would now sample lower levels and the
   golden could move. Options: (i) re-baseline it as an ADR-0042
   intentional change in the implementation PR; (ii) keep it base-only by
-  cooking that fixture with a truncated count. Recommend (i) if the Plan
-  measures a change (the golden should show what the engine does); the
-  Plan measures first.
-- **Q5 — DDS payload strictness.** Recommend exact equality (payload ==
-  declared chain); the census found no padded or short file. Trailing
-  bytes are then `MalformedHeader`.
+  cooking that fixture with a truncated count. **Ruled (2026-09-25):
+  (i)** — the fixture cooks its full chain like every DDS, and if the
+  golden moves it is re-baselined as it actually renders (ADR-0042
+  intentional change, with evidence, in the implementation PR). The Plan
+  measures first.
+- **Q5 — DDS payload strictness.** **Ruled (2026-09-25): the payload
+  must equal the declared chain exactly** (the census found no padded or
+  short file). Fewer bytes are `Truncated`; trailing bytes are
+  `MalformedHeader`.
 - **Risk — staging peak.** Realizing all of Bistro in one frame stages
   1.911 GiB instead of 1.433 GiB of host-visible memory at once. The
   per-frame upload budgeting is ⑦'s concern; recorded, not solved here.
