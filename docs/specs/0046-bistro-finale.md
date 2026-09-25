@@ -1,18 +1,25 @@
 # Spec: Bistro Finale — Scene Assembly, Whitelist and Dual-Platform Verification
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-25
-- **Related Plan(s):** none yet
-- **Approval:** pending
-- **Related ADR(s):**
-  [ADR-0094](../adr/0094-imported-scene-assembly-build-step-and-authored-overlay.md) (`Proposed`) —
+- **Related Plan(s):** none yet — Plan 0046 drafting is authorized by the
+  Approval below. **Implementation still awaits its own, separate Joint Human
+  Review** of Spec + Plan together, per AGENTS.md's own workflow.
+- **Approval:** slmao, 2026-09-25 (chat confirmation, no reviewing PR —
+  authorizes drafting Plan 0046; Implementation itself still awaits its own,
+  separate Joint Human Review of Spec + Plan together). The same review ruled
+  all seven open questions. See Risks & Open Questions below.
+- **Related ADR(s):** all `Accepted` 2026-09-25, alongside this Spec's own
+  Approval —
+  [ADR-0094](../adr/0094-imported-scene-assembly-build-step-and-authored-overlay.md) —
   how an imported, fetched-content scene becomes a cooked, whitelisted,
   runnable scene, and how its hand-authored nodes are merged in;
-  [ADR-0095](../adr/0095-goldens-over-pinned-fetched-content.md) (`Proposed`) —
-  an ADR-0042 golden over SHA-256-pinned, fetched, never-committed content.
-  A third ADR (the emissive texture binding, extending ADR-0089) is owed
-  only if Q4 is ruled "add it"; see Risks & Open Questions.
+  [ADR-0095](../adr/0095-goldens-over-pinned-fetched-content.md) —
+  an ADR-0042 golden over SHA-256-pinned, fetched, never-committed content;
+  [ADR-0096](../adr/0096-emissive-texture-always-bound-slot.md) —
+  the emissive texture as one always-bound PBR slot (ruling Q4; extends
+  ADR-0089).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
@@ -126,7 +133,7 @@ against `example_bistro1.jpg`/`example_bistro2.jpg`. Its ADR obligation is
 | Textures bound by materials | 256 DDS + 1 fallback |
 | Their BC7 bytes, base mips | 1,114.4 MiB (1.169 GB) |
 | … with full mip chains (Spec 0045) | **1,485.9 MiB (1.558 GB)** |
-| Emissive masks (only if Q4 = add) | +9 textures, +21.8 MiB |
+| Emissive masks (Q4, ADR-0096) | +9 textures, +21.8 MiB |
 | Peak process memory at realization (CPU copy + staging + device) | ≈ 3 × 1.45 GiB, all at once (Phase 1 loads synchronously) |
 
 ## Goals
@@ -173,9 +180,9 @@ against `example_bistro1.jpg`/`example_bistro2.jpg`. Its ADR obligation is
 - **R4 — Transmission (Q3).** A transmission material imports as `Blend`
   with alpha `1 − transmissionFactor` (times base-colour alpha) —
   ADR-0083's accepted mapping, with its missing value supplied.
-- **R5 — Emissive textures (Q4).** Per the ruling: either the 11 textured
-  emissive materials sample their mask (`factor × texture`), or they keep
-  Spec 0041's drop and the look relies on R2's lights.
+- **R5 — Emissive textures (Q4, ADR-0096).** The 11 textured emissive
+  materials sample their mask: `factor × texture`, through one always-bound
+  PBR slot whose default is 1×1 white; material schema v9.
 - **R6 — Verification** as in Testing & Verification Plan.
 
 ### Non-functional
@@ -213,7 +220,7 @@ against `example_bistro1.jpg`/`example_bistro2.jpg`. Its ADR obligation is
   reviewable line.
 - **(c) Transmission as blend (R4).** Makes the streetlight globes, window
   glass and bottles see-through with a faint tint; no refraction.
-- **(d) Emissive textures (R5, Q4).** Recommended: add — one always-bound
+- **(d) Emissive textures (R5, Q4 ruled "add", ADR-0096).** One always-bound
   emissive slot in the PBR pipelines with a 1×1 white default, so
   `factor × texture` reproduces every existing factor-only material
   exactly; a material schema v9 field; importer maps the 11. The
@@ -253,8 +260,10 @@ Yes — beyond Spec 0036's expectation of none:
 - **ADR-0095** — extends ADR-0042: a golden may rest on fetched content
   that is pinned per file by SHA-256, provided the test SKIPs when the
   content is absent and the sidecar records the content pin.
-- **Conditional (Q4 = add):** an emissive-texture ADR extending ADR-0089
-  (material schema v9, one always-bound slot in ten PBR pipelines).
+- **ADR-0096** (ruling Q4) — extends ADR-0089: material schema v9, one
+  always-bound emissive slot in the ten PBR pipelines with a 1×1 white
+  default, and the Vulkan Backend's per-set sampler limits widened by one
+  (the ADR-0072 D-7 precedent).
 
 R4 needs no ADR: it applies ADR-0083's accepted transmission decision and
 fills in the value it left open.
@@ -283,8 +292,8 @@ patterns.
 - **GPU-independent:** overlay merge (node renumbering, active camera,
   light cap 64, rejection past it); the cooker's manifest mode (every line
   executed, placeholders substituted, the dependency manifest lists every
-  declared asset exactly once); transmission alpha mapping; (Q4 = add)
-  emissive texture schema round-trip and importer mapping.
+  declared asset exactly once); transmission alpha mapping; the emissive
+  texture's schema v9 round-trip and importer mapping (ADR-0096).
 - **GPU (content-gated `[bistro]`):** the assembled scene loads through the
   Runtime path, every renderable resolves, Validation Layers clean; the
   Bistro golden (Initial baseline) with discriminators — fog off, bloom
@@ -300,26 +309,30 @@ patterns.
 
 ## Risks & Open Questions
 
-- **Q1 — The declaration mechanism.** Recommend (a): one build step, a
-  cooker manifest mode, the dependency manifest generated.
-- **Q2 — Lights by committed overlay, merged by the importer.** Recommend
-  (b), ≈ 60 point lights + 1 directional, with the importer cap raised to
-  the grammar's 64.
-- **Q3 — Transmission as blend, alpha `1 − transmissionFactor`.**
-  Recommend yes: ADR-0083 already chose blend; without it every
-  streetlight bulb is hidden.
-- **Q4 — Emissive textures.** Recommend **add** (d): 55 of 118 emissive
-  instances need it, including the scene's most numerous light source.
-  Size M; owes one ADR (extends ADR-0089), drafted with the approval if
-  ruled so. Fallback if not: factor-only for the textured 11.
-- **Q5 — A golden over pinned fetched content (ADR-0095).** Recommend yes,
-  content-gated; `bistro_large_mesh`'s comment is superseded.
-- **Q6 — Android content and BC7.** Recommend `adb push` + temporary
-  switch. The emulator's BC7 support is unmeasured: the Plan probes it
-  first; if unsupported, the Android run records the failure mode and the
-  gap stays Spec 0038's, not closed here.
-- **Q7 — Whitelist entry only when content is present.** Recommend yes,
-  so `--list-scenes` never offers a scene that cannot load.
+- **Q1 — The declaration mechanism.** **Ruled (2026-09-25): (a)** — one
+  build step, a cooker cook-manifest mode, the dependency manifest
+  generated (ADR-0094).
+- **Q2 — Lights by committed overlay, merged by the importer.** **Ruled
+  (2026-09-25): (b)** — the overlay file, ≈ 60 point lights + 1
+  directional, the importer cap raised to the grammar's 64 (ADR-0094).
+- **Q3 — Transmission as blend, alpha `1 − transmissionFactor`.** **Ruled
+  (2026-09-25): yes** — ADR-0083's accepted blend mapping, with the value
+  supplied (R4).
+- **Q4 — Emissive textures.** **Ruled (2026-09-25): add** (d) — 55 of 118
+  emissive instances need it, including the scene's most numerous light
+  source. Size M; recorded in ADR-0096 (drafted and accepted with this
+  approval).
+- **Q5 — A golden over pinned fetched content (ADR-0095).** **Ruled
+  (2026-09-25): yes**, content-gated; `bistro_large_mesh`'s comment is
+  superseded.
+- **Q6 — Android content and BC7.** **Ruled (2026-09-25): probe BC7
+  first**, then `adb push` + temporary switch. The emulator's BC7 support
+  is unmeasured: the Plan's first Android step probes it; if unsupported,
+  the Android run records the failure mode and the gap stays Spec 0038's,
+  not closed here.
+- **Q7 — Whitelist entry only when content is present.** **Ruled
+  (2026-09-25): yes** — `--list-scenes` never offers a scene that cannot
+  load (R3).
 - **Risk — memory.** ≈ 4.4 GiB peak on a shared-memory iGPU; if it fails,
   the fallback is freeing CPU texture copies after upload (a Plan-level
   change, no format impact).

@@ -1,10 +1,11 @@
 # ADR 0094: Imported-Scene Assembly — One Build Step, a Cook-Manifest Mode, and an Authored Overlay
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-25
 - **Deciders:** slmao
-- **Acceptance:** pending
-- **Related Spec:** [Spec 0046: Bistro Finale](../specs/0046-bistro-finale.md) (`Draft`)
+- **Acceptance:** slmao, 2026-09-25 (chat confirmation; reviewed in this
+  branch's own PR, alongside Spec 0046's Approval)
+- **Related Spec:** [Spec 0046: Bistro Finale](../specs/0046-bistro-finale.md) (`Approved`)
 - **Related ADR(s):** builds on [ADR-0083](0083-gltf-to-atlantis-asset-format-mapping.md)
   and [ADR-0084](0084-gltf-importer-tools-subsystem-boundary.md) (the importer's
   outputs and its Tools boundary); extends the scene-asset declaration of

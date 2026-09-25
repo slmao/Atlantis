@@ -639,6 +639,19 @@ matching how Spec 0028 itself needed no new ADR and Spec 0035's own
 Milestone 5/6 needed none either. Confirmed at that Spec's own drafting
 time, not asserted as certain here.
 
+*Now drafted (linked 2026-09-25):* [Spec 0046](0046-bistro-finale.md)
+(`Approved`) — the capstone Spec assembling every workflow above. Its
+drafting found the "expected none" above does not hold: three ADRs, all
+`Accepted` — [ADR-0094](../adr/0094-imported-scene-assembly-build-step-and-authored-overlay.md)
+(one build step per imported scene, with a committed authored overlay for
+the camera, fog, bloom and lights), [ADR-0095](../adr/0095-goldens-over-pinned-fetched-content.md)
+(a golden over SHA-256-pinned fetched content, content-gated) and
+[ADR-0096](../adr/0096-emissive-texture-always-bound-slot.md)
+(the emissive texture as one always-bound PBR slot — workflow ③'s deferred
+texture, ruled in, Q4). It also closes Spec 0042's ruling O3: transmission
+glass renders as blend at alpha `1 − transmissionFactor` (Q3), ADR-0083's
+mapping with its value supplied.
+
 ---
 
 ### Dependency graph

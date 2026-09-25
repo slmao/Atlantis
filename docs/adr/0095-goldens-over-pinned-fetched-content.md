@@ -1,10 +1,11 @@
 # ADR 0095: Goldens over Pinned, Fetched Content
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-25
 - **Deciders:** slmao
-- **Acceptance:** pending
-- **Related Spec:** [Spec 0046: Bistro Finale](../specs/0046-bistro-finale.md) (`Draft`)
+- **Acceptance:** slmao, 2026-09-25 (chat confirmation; reviewed in this
+  branch's own PR, alongside Spec 0046's Approval)
+- **Related Spec:** [Spec 0046: Bistro Finale](../specs/0046-bistro-finale.md) (`Approved`)
 - **Related ADR(s):** extends [ADR-0042](0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
   (the golden workflow; its capture, tolerance and evidence rules are
   unchanged).
