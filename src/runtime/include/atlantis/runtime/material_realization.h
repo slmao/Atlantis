@@ -68,6 +68,11 @@ struct RealizedMaterialCandidate {
   atlantis::asset_system::AssetId textureAssetId = 0;
   std::unique_ptr<atlantis::rhi::SampledTexture> newSampledTexture;  // nullptr if textureAssetId is already realized
   std::optional<std::unique_ptr<atlantis::rhi::Buffer>> stagingBuffer;  // present iff newSampledTexture is non-null
+  // Spec 0045 (ADR-0093 Decision 3): one region per mip level into
+  // stagingBuffer, from asset_system::textureMipLevels(); empty iff
+  // newSampledTexture is null. The upload pass borrows this vector's
+  // storage, which a move of this struct does not relocate.
+  std::vector<atlantis::rhi::SampledTextureUploadRegion> uploadRegions;
   // Plan 0029 Section P15 (ADR-0074): identical in kind to
   // textureAssetId/newSampledTexture/stagingBuffer above, keyed by
   // materialData.normalMapTexture -- 0 (and both members below left
@@ -75,6 +80,7 @@ struct RealizedMaterialCandidate {
   atlantis::asset_system::AssetId normalMapTextureAssetId = 0;
   std::unique_ptr<atlantis::rhi::SampledTexture> newNormalMapTexture;
   std::optional<std::unique_ptr<atlantis::rhi::Buffer>> normalMapStagingBuffer;
+  std::vector<atlantis::rhi::SampledTextureUploadRegion> normalMapUploadRegions;
   std::unique_ptr<atlantis::rhi::Sampler> sampler;                       // always new -- keyed per material
   std::unique_ptr<atlantis::renderer::Material> material;                // always new -- keyed per material
 };

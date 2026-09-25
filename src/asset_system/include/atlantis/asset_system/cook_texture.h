@@ -42,15 +42,18 @@ namespace atlantis::asset_system {
 // Spec 0038: the BC7 sibling of cookTexture() above -- takes VERBATIM
 // BC7 block bytes (never decoded; the DDS header parse lives only in the
 // Tools cooker's own runCookTextureMode(), exactly the same module
-// boundary split as stbi_load() above). blockByteCount must equal
-// ceil(width/4) * ceil(height/4) * 16 exactly, and width/height must be
-// multiples of 4 -- both checked here as recoverable TextureCookError
-// rejections (NonAlignedDimensions / BlockDataSizeMismatch), never
-// silently padded. channelsInFile is recorded as 4 (BC7 is always RGBA)
-// by this entry point, not a caller parameter.
+// boundary split as stbi_load() above). Spec 0045: blockBytes is a mip
+// chain of mipCount levels, level 0 first (1 <= mipCount <=
+// fullMipChainLength(), else InvalidMipCount); blockByteCount must equal
+// textureMipChainByteCount() exactly, and width/height must be multiples
+// of 4 -- both checked here as recoverable TextureCookError rejections
+// (NonAlignedDimensions / BlockDataSizeMismatch), never silently padded.
+// channelsInFile is recorded as 4 (BC7 is always RGBA) by this entry
+// point, not a caller parameter. cookTexture() above always cooks one
+// level (no mip is generated, Spec 0045 R6).
 [[nodiscard]] atlantis::Result<std::monostate, TextureCookError> cookTextureBc7(
     const std::uint8_t* blockBytes, std::size_t blockByteCount, std::uint32_t width, std::uint32_t height,
-    TextureColorSpace colorSpace, const std::string& logicalPathInput,
+    std::uint32_t mipCount, TextureColorSpace colorSpace, const std::string& logicalPathInput,
     const std::filesystem::path& artifactOutputPath, const std::filesystem::path& metadataOutputPath);
 
 }  // namespace atlantis::asset_system

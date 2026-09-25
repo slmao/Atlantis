@@ -201,12 +201,12 @@ TEST_CASE("cookTexture accepts a not-yet-normalized logical path, cooking under 
 // BC7-specific rejections the Spec's Requirement 5 names.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("cookTextureBc7 writes a well-formed v2 artifact/metadata pair", "[asset_system]") {
+TEST_CASE("cookTextureBc7 writes a well-formed v3 artifact/metadata pair", "[asset_system]") {
   TempDirGuard dir("bc7_success");
   std::vector<std::uint8_t> blocks(static_cast<std::size_t>(bc7BlockByteCount(8, 8)));
   for (std::size_t i = 0; i < blocks.size(); ++i) blocks[i] = static_cast<std::uint8_t>((i * 11 + 5) % 256);
 
-  const auto result = cookTextureBc7(blocks.data(), blocks.size(), 8, 8, TextureColorSpace::Srgb,
+  const auto result = cookTextureBc7(blocks.data(), blocks.size(), 8, 8, 1, TextureColorSpace::Srgb,
                                      "textures/rust.dds", dir.path / "rust.atex", dir.path / "rust.atex.meta.txt");
   REQUIRE(result.isOk());
 
@@ -228,6 +228,8 @@ TEST_CASE("cookTextureBc7 writes a well-formed v2 artifact/metadata pair", "[ass
   CHECK(metadata.value().layout == TextureDataLayout::Bc7);
   CHECK(metadata.value().channelsInFile == 4);  // BC7 is always RGBA
   CHECK(metadata.value().assetId == computeAssetId("textures/rust.dds"));
+  CHECK(metadata.value().mipCount == 1);
+  CHECK(decoded.value().mipCount == 1);
 }
 
 TEST_CASE("cookTextureBc7 rejects non-4-aligned dimensions", "[asset_system]") {
@@ -235,14 +237,14 @@ TEST_CASE("cookTextureBc7 rejects non-4-aligned dimensions", "[asset_system]") {
   std::vector<std::uint8_t> blocks(16);
 
   SECTION("width not a multiple of 4") {
-    const auto result = cookTextureBc7(blocks.data(), blocks.size(), 6, 4, TextureColorSpace::Unorm, "a.dds",
+    const auto result = cookTextureBc7(blocks.data(), blocks.size(), 6, 4, 1, TextureColorSpace::Unorm, "a.dds",
                                        dir.path / "a.atex", dir.path / "a.atex.meta.txt");
     REQUIRE(result.isErr());
     CHECK(result.error() == TextureCookError::NonAlignedDimensions);
   }
 
   SECTION("height not a multiple of 4") {
-    const auto result = cookTextureBc7(blocks.data(), blocks.size(), 4, 5, TextureColorSpace::Unorm, "a.dds",
+    const auto result = cookTextureBc7(blocks.data(), blocks.size(), 4, 5, 1, TextureColorSpace::Unorm, "a.dds",
                                        dir.path / "a.atex", dir.path / "a.atex.meta.txt");
     REQUIRE(result.isErr());
     CHECK(result.error() == TextureCookError::NonAlignedDimensions);
@@ -253,7 +255,7 @@ TEST_CASE("cookTextureBc7 rejects a block byte count that does not match the dim
   TempDirGuard dir("bc7_size_mismatch");
   std::vector<std::uint8_t> blocks(32);  // 8x8 needs 64, not 32
 
-  const auto result = cookTextureBc7(blocks.data(), blocks.size(), 8, 8, TextureColorSpace::Unorm, "a.dds",
+  const auto result = cookTextureBc7(blocks.data(), blocks.size(), 8, 8, 1, TextureColorSpace::Unorm, "a.dds",
                                      dir.path / "a.atex", dir.path / "a.atex.meta.txt");
   REQUIRE(result.isErr());
   CHECK(result.error() == TextureCookError::BlockDataSizeMismatch);
@@ -264,8 +266,52 @@ TEST_CASE("cookTextureBc7 rejects a malformed logical path like cookTexture does
   TempDirGuard dir("bc7_logical_path");
   std::vector<std::uint8_t> blocks(16);
 
-  const auto result = cookTextureBc7(blocks.data(), blocks.size(), 4, 4, TextureColorSpace::Unorm,
+  const auto result = cookTextureBc7(blocks.data(), blocks.size(), 4, 4, 1, TextureColorSpace::Unorm,
                                      "../escape.dds", dir.path / "a.atex", dir.path / "a.atex.meta.txt");
   REQUIRE(result.isErr());
   CHECK(result.error() == TextureCookError::LogicalPathInvalid);
+}
+
+// Spec 0045: cookTextureBc7() takes a whole mip chain.
+TEST_CASE("cookTextureBc7 writes a full mip chain verbatim, with its count in artifact and metadata",
+          "[asset_system][mip]") {
+  TempDirGuard dir("bc7_chain");
+  // 16x8: levels 16x8, 8x4, 4x2, 2x1, 1x1 -> 128 + 32 + 16 + 16 + 16 bytes.
+  std::vector<std::uint8_t> chain(static_cast<std::size_t>(textureMipChainByteCount(16, 8, TextureDataLayout::Bc7, 5)));
+  REQUIRE(chain.size() == 208);
+  for (std::size_t i = 0; i < chain.size(); ++i) chain[i] = static_cast<std::uint8_t>((i * 5 + 1) % 256);
+
+  const auto result = cookTextureBc7(chain.data(), chain.size(), 16, 8, 5, TextureColorSpace::Unorm, "t/chain.dds",
+                                     dir.path / "chain.atex", dir.path / "chain.atex.meta.txt");
+  REQUIRE(result.isOk());
+  const std::string artifactText = readFile(dir.path / "chain.atex");
+  std::vector<std::byte> artifactBytes(artifactText.size());
+  for (std::size_t i = 0; i < artifactText.size(); ++i) {
+    artifactBytes[i] = static_cast<std::byte>(static_cast<unsigned char>(artifactText[i]));
+  }
+  const auto decoded = decodeTextureArtifact(artifactBytes);
+  REQUIRE(decoded.isOk());
+  CHECK(decoded.value().mipCount == 5);
+  CHECK(decoded.value().pixelBytes == chain);
+  const auto metadata = parseTextureMetadata(readFile(dir.path / "chain.atex.meta.txt"));
+  REQUIRE(metadata.isOk());
+  CHECK(metadata.value().mipCount == 5);
+}
+
+TEST_CASE("cookTextureBc7 rejects a mip count of 0 or beyond the full chain, and a chain of the wrong size",
+          "[asset_system][mip]") {
+  TempDirGuard dir("bc7_chain_reject");
+  std::vector<std::uint8_t> chain(static_cast<std::size_t>(textureMipChainByteCount(8, 8, TextureDataLayout::Bc7, 4)));
+  for (const std::uint32_t count : {0U, 5U}) {  // an 8x8 texture has 4 levels
+    const auto result = cookTextureBc7(chain.data(), chain.size(), 8, 8, count, TextureColorSpace::Unorm, "a.dds",
+                                       dir.path / "a.atex", dir.path / "a.atex.meta.txt");
+    REQUIRE(result.isErr());
+    CHECK(result.error() == TextureCookError::InvalidMipCount);
+  }
+  // A 4-level payload declared as 3 levels.
+  const auto result = cookTextureBc7(chain.data(), chain.size(), 8, 8, 3, TextureColorSpace::Unorm, "a.dds",
+                                     dir.path / "a.atex", dir.path / "a.atex.meta.txt");
+  REQUIRE(result.isErr());
+  CHECK(result.error() == TextureCookError::BlockDataSizeMismatch);
+  CHECK_FALSE(fs::exists(dir.path / "a.atex"));
 }

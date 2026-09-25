@@ -201,3 +201,42 @@ TEST_CASE("runCookCommand cooking the same source PNG twice under two names/colo
   CHECK(unormMetadata.value().assetId == srgbMetadata.value().assetId);
   CHECK(unormMetadata.value().sourceLogicalPath == srgbMetadata.value().sourceLogicalPath);
 }
+
+// Spec 0045: a DDS source cooks its whole mip chain, verbatim, into .atex v3.
+TEST_CASE("runCookCommand cooks the string-lights DDS with all 9 levels, byte for byte", "[asset_cooker][texture]") {
+  TempDirGuard dir("dds_chain");
+  const fs::path source = ATLANTIS_STRINGLIGHTS_DDS_PATH;
+  const auto request = makeTextureRequest(source, dir.path / "out", "stringlights", "unorm");
+  REQUIRE(runCookCommand(request) == 0);
+
+  const std::string ddsText = readFileText(source);
+  REQUIRE(ddsText.size() == 43876);
+  const std::string artifactText = readFileText(dir.path / "out" / "stringlights.atex");
+  std::vector<std::byte> bytes(artifactText.size());
+  for (std::size_t i = 0; i < artifactText.size(); ++i) {
+    bytes[i] = static_cast<std::byte>(static_cast<unsigned char>(artifactText[i]));
+  }
+  const auto decoded = atlantis::asset_system::decodeTextureArtifact(bytes);
+  REQUIRE(decoded.isOk());
+  CHECK(decoded.value().mipCount == 9);
+  REQUIRE(decoded.value().pixelBytes.size() == 43728);
+  for (std::size_t i = 0; i < decoded.value().pixelBytes.size(); ++i) {
+    if (decoded.value().pixelBytes[i] != static_cast<std::uint8_t>(ddsText[148 + i])) {
+      FAIL("chain byte " << i << " differs from the DDS payload");
+    }
+  }
+  const auto metadata =
+      atlantis::asset_system::parseTextureMetadata(readFileText(dir.path / "out" / "stringlights.atex.meta.txt"));
+  REQUIRE(metadata.isOk());
+  CHECK(metadata.value().mipCount == 9);
+}
+
+TEST_CASE("runCookCommand writes mip_count 1 for a PNG source (no mip is generated)", "[asset_cooker][texture]") {
+  TempDirGuard dir("png_single_level");
+  const auto request = makeTextureRequest(fixturePath("tiny_rgba.png"), dir.path / "out", "checker", "srgb");
+  REQUIRE(runCookCommand(request) == 0);
+  const auto metadata =
+      atlantis::asset_system::parseTextureMetadata(readFileText(dir.path / "out" / "checker.atex.meta.txt"));
+  REQUIRE(metadata.isOk());
+  CHECK(metadata.value().mipCount == 1);
+}

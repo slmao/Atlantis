@@ -186,7 +186,9 @@ enum class TextureCookError {
   AtomicWriteFailed,
   // Spec 0038: BC7 block-compressed texture cooking (cookTextureBc7()).
   NonAlignedDimensions,   // base mip width/height not a multiple of 4
-  BlockDataSizeMismatch,  // blockByteCount != ceil(w/4)*ceil(h/4)*16
+  BlockDataSizeMismatch,  // blockByteCount != the mip chain's byte count
+  // Spec 0045: mipCount 0, or more levels than the dimensions have.
+  InvalidMipCount,
 };
 
 // decodeTextureArtifact()'s own conditions -- never assumes a
@@ -199,7 +201,7 @@ enum class TextureArtifactDecodeError {
   InconsistentPixelDataSize,
   DimensionExceedsMaximum,
   UnknownFormat,
-  UnsupportedMipCount,  // must equal 1
+  UnsupportedMipCount,  // 0, or more levels than the dimensions have (Spec 0045)
   // Spec 0038 (schema v2's appended data_layout field).
   UnknownDataLayout,
   NonAlignedDimensions,  // Bc7 layout with a non-4-aligned base mip

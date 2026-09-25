@@ -103,7 +103,8 @@ TEST_CASE("BC7 upload regions use 16 bytes per 4x4 block", "[vulkan][sampled-tex
   CHECK_FALSE(isValidSampledTextureUploadRegion(Extent2D{8, 8}, format, SampledTextureDimension::Texture2D, 1, 80,
                                                 SampledTextureUploadRegion{.bufferOffsetBytes = 8,
                                                                            .extent = {8, 8}}));
-  // Partial-block region extents are rejected (5 is not a multiple of 4).
+  // A partial-block region extent that stops short of the level's edge is
+  // rejected (5 is not a multiple of 4, and not the level's width 8).
   CHECK_FALSE(isValidSampledTextureUploadRegion(Extent2D{8, 8}, format, SampledTextureDimension::Texture2D, 1, 64,
                                                 SampledTextureUploadRegion{.extent = {5, 4}}));
 }
@@ -116,4 +117,45 @@ TEST_CASE("BC7 mip-shifted regions size against the mip extent", "[vulkan][sampl
   // A full-extent region cannot exceed its mip's own dimensions.
   CHECK_FALSE(isValidSampledTextureUploadRegion(Extent2D{16, 16}, format, SampledTextureDimension::Texture2D, 2,
                                                 256, SampledTextureUploadRegion{.mipLevel = 1, .extent = {16, 16}}));
+}
+
+// Spec 0045 (ADR-0093 Decision 3): Vulkan's own rule -- an unaligned
+// dimension is valid exactly when the region spans that whole dimension
+// of the mip level. A BC7 chain's sub-block tail levels need it.
+TEST_CASE("BC7 sub-block mip levels are valid whole-level regions", "[vulkan][sampled-texture]") {
+  const auto format = SampledTextureFormat::Bc7Unorm;
+  const auto dim = SampledTextureDimension::Texture2D;
+  // 8x8, 4 levels: level 2 is 2x2, level 3 is 1x1 -- one block each.
+  CHECK(isValidSampledTextureUploadRegion(Extent2D{8, 8}, format, dim, 4, 16,
+                                          SampledTextureUploadRegion{.mipLevel = 2, .extent = {2, 2}}));
+  CHECK(isValidSampledTextureUploadRegion(Extent2D{8, 8}, format, dim, 4, 16,
+                                          SampledTextureUploadRegion{.mipLevel = 3, .extent = {1, 1}}));
+  // 256x128 (the string-lights texture), 9 levels: level 6 is 4x2, level 7
+  // is 2x1 -- one aligned and one unaligned dimension, and two unaligned.
+  CHECK(isValidSampledTextureUploadRegion(Extent2D{256, 128}, format, dim, 9, 16,
+                                          SampledTextureUploadRegion{.mipLevel = 6, .extent = {4, 2}}));
+  CHECK(isValidSampledTextureUploadRegion(Extent2D{256, 128}, format, dim, 9, 16,
+                                          SampledTextureUploadRegion{.mipLevel = 7, .extent = {2, 1}}));
+  // The 16-byte offsets a chain produces are block-aligned.
+  CHECK(isValidSampledTextureUploadRegion(Extent2D{8, 8}, format, dim, 4, 112,
+                                          SampledTextureUploadRegion{.bufferOffsetBytes = 96,
+                                                                     .mipLevel = 3,
+                                                                     .extent = {1, 1}}));
+}
+
+TEST_CASE("BC7 unaligned regions short of the level's edge stay rejected", "[vulkan][sampled-texture]") {
+  const auto format = SampledTextureFormat::Bc7Srgb;
+  const auto dim = SampledTextureDimension::Texture2D;
+  // 16x16, level 2 is 4x4: a 2x2 region of it is a partial block that does
+  // not reach the level's edge.
+  CHECK_FALSE(isValidSampledTextureUploadRegion(Extent2D{16, 16}, format, dim, 5, 16,
+                                                SampledTextureUploadRegion{.mipLevel = 2, .extent = {2, 2}}));
+  // 256x128, level 6 is 4x2: a 4x1 region reaches the width edge but not
+  // the height edge.
+  CHECK_FALSE(isValidSampledTextureUploadRegion(Extent2D{256, 128}, format, dim, 9, 16,
+                                                SampledTextureUploadRegion{.mipLevel = 6, .extent = {4, 1}}));
+  // A whole-level extent is still bounded by the level: 2x2 is not level 3
+  // (1x1) of an 8x8 texture.
+  CHECK_FALSE(isValidSampledTextureUploadRegion(Extent2D{8, 8}, format, dim, 4, 16,
+                                                SampledTextureUploadRegion{.mipLevel = 3, .extent = {2, 2}}));
 }

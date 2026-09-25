@@ -23,6 +23,9 @@ target_link_libraries(atlantis_asset_cooker_command_tests
 # directory ctest invokes this executable from.
 target_compile_definitions(atlantis_asset_cooker_command_tests PRIVATE
   ATLANTIS_ASSET_COOKER_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+  # Spec 0045: the committed 9-level BC7 DDS (256x128, 43,876 bytes) the
+  # full-chain parse and cook tests read.
+  ATLANTIS_STRINGLIGHTS_DDS_PATH="${CMAKE_SOURCE_DIR}/assets/textures/paris_stringlights_diff.dds"
 )
 
 catch_discover_tests(atlantis_asset_cooker_command_tests DISCOVERY_MODE PRE_TEST)

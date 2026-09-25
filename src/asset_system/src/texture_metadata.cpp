@@ -9,18 +9,19 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_texture_metadata_version: 2";
+constexpr std::string_view kVersionLine = "atlantis_texture_metadata_version: 3";
 constexpr std::string_view kAssetIdPrefix = "asset_id: ";
 constexpr std::string_view kSourceLogicalPathPrefix = "source_logical_path: ";
 constexpr std::string_view kWidthPrefix = "width: ";
 constexpr std::string_view kHeightPrefix = "height: ";
 constexpr std::string_view kFormatPrefix = "format: ";
 constexpr std::string_view kChannelsInFilePrefix = "channels_in_file: ";
-constexpr std::size_t kExpectedLineCount = 8;
+constexpr std::size_t kExpectedLineCount = 9;
 
 constexpr std::string_view kDataLayoutPrefix = "data_layout: ";
 constexpr std::string_view kLayoutRgba8 = "rgba8";
 constexpr std::string_view kLayoutBc7 = "bc7";
+constexpr std::string_view kMipCountPrefix = "mip_count: ";  // Spec 0045 (v3)
 
 constexpr std::string_view kFormatUnorm = "unorm";
 constexpr std::string_view kFormatSrgb = "srgb";
@@ -122,7 +123,10 @@ atlantis::Result<TextureMetadata, MetadataParseError> parseTextureMetadata(std::
     return ResultT::Err(MetadataParseError::MalformedValue);
   }
 
-  if (!matchField(lines[7], kChannelsInFilePrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[7], kMipCountPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!parseUnsigned(value, metadata.mipCount)) return ResultT::Err(MetadataParseError::MalformedValue);
+
+  if (!matchField(lines[8], kChannelsInFilePrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseSigned(value, metadata.channelsInFile)) return ResultT::Err(MetadataParseError::MalformedValue);
 
   return ResultT::Ok(std::move(metadata));
@@ -149,6 +153,9 @@ std::string serializeTextureMetadata(const TextureMetadata& metadata) {
   out += '\n';
   out += kDataLayoutPrefix;
   out += (metadata.layout == TextureDataLayout::Bc7 ? kLayoutBc7 : kLayoutRgba8);
+  out += '\n';
+  out += kMipCountPrefix;
+  out += std::to_string(metadata.mipCount);
   out += '\n';
   out += kChannelsInFilePrefix;
   out += std::to_string(metadata.channelsInFile);

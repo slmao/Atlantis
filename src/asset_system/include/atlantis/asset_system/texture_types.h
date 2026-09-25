@@ -29,8 +29,11 @@ enum class TextureDataLayout {
 // CPU-side result of loadTextureAsset() -- pixelBytes' packing depends
 // on layout (Spec 0038): tightly-packed RGBA8, row-major, width * 4
 // bytes per row, no padding for Rgba8; verbatim BC7 block bytes,
-// ceil(width/4) * ceil(height/4) * 16 bytes total, for Bc7 (matching the
-// artifact's own on-disk contract, texture_artifact.h). No RHI type is
+// ceil(width/4) * ceil(height/4) * 16 bytes per level, for Bc7 (matching
+// the artifact's own on-disk contract, texture_artifact.h). Spec 0045 /
+// ADR-0093 Decision 2: pixelBytes is the whole mip chain, mipCount levels,
+// level 0 first; textureMipLevels() (texture_artifact.h) gives each
+// level's extent, offset and size -- never re-derived elsewhere. No RHI type is
 // named, included, or constructed anywhere in this file. A composition
 // root outside Asset System is responsible for passing this into
 // atlantis::rhi::Device::createSampledTexture()/copyBufferToTexture().
@@ -39,6 +42,7 @@ struct TextureAssetData {
   std::uint32_t height = 0;
   TextureColorSpace colorSpace = TextureColorSpace::Unorm;
   TextureDataLayout layout = TextureDataLayout::Rgba8;
+  std::uint32_t mipCount = 1;
   std::vector<std::uint8_t> pixelBytes;
 };
 

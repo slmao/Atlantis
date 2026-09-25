@@ -204,6 +204,15 @@ TEST_CASE("Real Bistro imports, validates and cooks end to end through the real 
     CHECK(decoded.value().layout == as::TextureDataLayout::Bc7);
     CHECK(decoded.value().width % 4 == 0);
     CHECK(decoded.value().height % 4 == 0);
+    // Spec 0045: every Bistro DDS carries its full chain to 1x1 (the
+    // 2026-09-25 census), and the cook passes all of it through. The
+    // importer's own white fallback is a single-level 4x4 DDS by
+    // construction (material_import.cpp's whiteFallbackDds()).
+    const std::uint32_t expectedLevels =
+        stem.find("white_4x4_bc7") != std::string::npos
+            ? 1U
+            : as::fullMipChainLength(decoded.value().width, decoded.value().height);
+    CHECK(decoded.value().mipCount == expectedLevels);
   }
 
   // Materials: the cooked artifact references exactly the textures its

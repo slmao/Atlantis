@@ -57,7 +57,8 @@ atlantis::Result<TextureAssetData, TextureLoadError> loadTextureAsset(const std:
   const TextureMetadata& metadata = metadataResult.value();
 
   if (artifact.width != metadata.width || artifact.height != metadata.height ||
-      artifact.colorSpace != metadata.format || artifact.layout != metadata.layout) {
+      artifact.colorSpace != metadata.format || artifact.layout != metadata.layout ||
+      artifact.mipCount != metadata.mipCount) {
     return ResultT::Err(TextureLoadError::MetadataArtifactMismatch);
   }
 
@@ -74,6 +75,7 @@ atlantis::Result<TextureAssetData, TextureLoadError> loadTextureAsset(const std:
   data.height = artifact.height;
   data.colorSpace = artifact.colorSpace;
   data.layout = artifact.layout;
+  data.mipCount = artifact.mipCount;
   data.pixelBytes = std::move(artifact.pixelBytes);
   return ResultT::Ok(std::move(data));
 }

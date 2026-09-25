@@ -1,5 +1,7 @@
 #include "dds_parser.h"
 
+#include <atlantis/asset_system/texture_artifact.h>
+
 #include <array>
 #include <cstring>
 
@@ -47,10 +49,6 @@ constexpr std::uint32_t kD3d10ResourceDimensionTexture2D = 3;
 [[nodiscard]] std::uint32_t readU32LE(const std::uint8_t* bytes) noexcept {
   return static_cast<std::uint32_t>(bytes[0]) | (static_cast<std::uint32_t>(bytes[1]) << 8U) |
          (static_cast<std::uint32_t>(bytes[2]) << 16U) | (static_cast<std::uint32_t>(bytes[3]) << 24U);
-}
-
-[[nodiscard]] std::uint64_t blockCountFor(std::uint32_t dimension) noexcept {
-  return (static_cast<std::uint64_t>(dimension) + 3ULL) / 4ULL;
 }
 
 }  // namespace
@@ -109,25 +107,31 @@ atlantis::Result<DdsBc7Image, DdsParseError> parseDdsBc7(const std::uint8_t* byt
 
   if (width % 4 != 0 || height % 4 != 0) return ResultT::Err(DdsParseError::NonAlignedDimensions);
 
-  const std::uint64_t baseMipBytes = blockCountFor(width) * blockCountFor(height) * 16ULL;
-  const std::uint64_t availableFromData = static_cast<std::uint64_t>(byteCount) - dataOffset;
-  if (availableFromData < baseMipBytes) return ResultT::Err(DdsParseError::Truncated);
-
-  // Mip-count sanity only: a declared count beyond what the buffer could
-  // hold is a malformed file, but extra mips beyond the base are simply
-  // not returned (the artifact contract is base-mip-only this round) --
-  // no validation of their contents.
+  // Spec 0045: the declared level count -- 1 without DDSD_MIPMAPCOUNT --
+  // bounded by the dimensions' full chain (a width/height of 0 was
+  // rejected above, so the chain length is at least 1).
+  std::uint32_t mipCount = 1;
   if (const std::uint32_t flags = readU32LE(header + 4); (flags & kDDSDMipmapCountFlag) != 0) {
-    const std::uint32_t mipCount = readU32LE(header + kHeaderMipMapCountOffset);
-    if (mipCount == 0) return ResultT::Err(DdsParseError::MalformedHeader);
+    mipCount = readU32LE(header + kHeaderMipMapCountOffset);
+    if (mipCount == 0 || mipCount > atlantis::asset_system::fullMipChainLength(width, height)) {
+      return ResultT::Err(DdsParseError::MalformedHeader);
+    }
   }
+
+  // Ruling Q5: the payload is exactly the declared chain.
+  const std::uint64_t chainBytes = atlantis::asset_system::textureMipChainByteCount(
+      width, height, atlantis::asset_system::TextureDataLayout::Bc7, mipCount);
+  const std::uint64_t availableFromData = static_cast<std::uint64_t>(byteCount) - dataOffset;
+  if (availableFromData < chainBytes) return ResultT::Err(DdsParseError::Truncated);
+  if (availableFromData > chainBytes) return ResultT::Err(DdsParseError::MalformedHeader);
 
   DdsBc7Image image;
   image.width = width;
   image.height = height;
   image.srgb = srgb;
-  image.baseMipBlockBytes.resize(static_cast<std::size_t>(baseMipBytes));
-  std::memcpy(image.baseMipBlockBytes.data(), bytes + dataOffset, static_cast<std::size_t>(baseMipBytes));
+  image.mipCount = mipCount;
+  image.blockBytes.resize(static_cast<std::size_t>(chainBytes));
+  std::memcpy(image.blockBytes.data(), bytes + dataOffset, static_cast<std::size_t>(chainBytes));
   return ResultT::Ok(std::move(image));
 }
 

@@ -1,6 +1,7 @@
 #include <atlantis/asset_system/load_texture.h>
 
 #include <atlantis/asset_system/cook_texture.h>
+#include <atlantis/asset_system/texture_artifact.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -152,6 +153,59 @@ TEST_CASE(
   const auto pos = metadataText.find(oldLine);
   REQUIRE(pos != std::string::npos);
   metadataText.replace(pos, oldLine.size(), newLine);
+  writeFile(metadataPath, metadataText);
+
+  const auto result = loadTextureAsset(artifactPath, metadataPath);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == TextureLoadError::MetadataArtifactMismatch);
+}
+
+// Spec 0045: the loaded shape carries the chain and its count, and the
+// loader cross-checks the count against the metadata sidecar.
+TEST_CASE("loadTextureAsset returns a BC7 mip chain with its count", "[asset_system][mip]") {
+  TempDirGuard dir("bc7_chain");
+  std::vector<std::uint8_t> chain(static_cast<std::size_t>(textureMipChainByteCount(8, 8, TextureDataLayout::Bc7, 4)));
+  for (std::size_t i = 0; i < chain.size(); ++i) chain[i] = static_cast<std::uint8_t>(i % 251);
+  const fs::path artifactPath = dir.path / "chain.atex";
+  const fs::path metadataPath = dir.path / "chain.atex.meta.txt";
+  REQUIRE(cookTextureBc7(chain.data(), chain.size(), 8, 8, 4, TextureColorSpace::Srgb, "textures/chain.dds",
+                         artifactPath, metadataPath)
+              .isOk());
+
+  const auto result = loadTextureAsset(artifactPath, metadataPath);
+  REQUIRE(result.isOk());
+  CHECK(result.value().mipCount == 4);
+  CHECK(result.value().layout == TextureDataLayout::Bc7);
+  CHECK(result.value().pixelBytes == chain);
+
+  // A PNG-sourced texture is always one level (Spec 0045 R6).
+  TempDirGuard pngDir("png_single_level");
+  const auto [pngArtifact, pngMetadata] = cookValidChecker(pngDir.path);
+  const auto png = loadTextureAsset(pngArtifact, pngMetadata);
+  REQUIRE(png.isOk());
+  CHECK(png.value().mipCount == 1);
+}
+
+TEST_CASE("loadTextureAsset rejects a metadata mip_count that disagrees with the artifact", "[asset_system][mip]") {
+  TempDirGuard dir("mip_mismatch");
+  std::vector<std::uint8_t> chain(static_cast<std::size_t>(textureMipChainByteCount(8, 8, TextureDataLayout::Bc7, 4)));
+  const fs::path artifactPath = dir.path / "chain.atex";
+  const fs::path metadataPath = dir.path / "chain.atex.meta.txt";
+  REQUIRE(cookTextureBc7(chain.data(), chain.size(), 8, 8, 4, TextureColorSpace::Unorm, "textures/chain.dds",
+                         artifactPath, metadataPath)
+              .isOk());
+
+  std::string metadataText;
+  {
+    std::ifstream in(metadataPath, std::ios::binary);
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    metadataText = buffer.str();
+  }
+  const std::string oldLine = "mip_count: 4";
+  const auto pos = metadataText.find(oldLine);
+  REQUIRE(pos != std::string::npos);
+  metadataText.replace(pos, oldLine.size(), "mip_count: 3");
   writeFile(metadataPath, metadataText);
 
   const auto result = loadTextureAsset(artifactPath, metadataPath);

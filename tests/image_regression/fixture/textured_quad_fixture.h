@@ -77,6 +77,14 @@ struct TexturedQuadFixture {
   // staging Buffer -- never re-read from disk per call.
   std::vector<std::uint8_t> unormPixelBytes;
   std::vector<std::uint8_t> srgbPixelBytes;
+  // Spec 0045 / Plan 0045 P8 (ruling O1): this fixture mirrors the
+  // Runtime's material realization -- each texture is created with its
+  // artifact's mip count and uploaded one region per level (from
+  // asset_system::textureMipLevels()), and the shared sampler gets the
+  // derived maxLod/mipFilter rule. Single-mip (PNG) textures: one region,
+  // maxLod 0, MipFilter::Nearest -- exactly the pre-0045 fixture.
+  std::vector<atlantis::rhi::SampledTextureUploadRegion> unormUploadRegions;
+  std::vector<atlantis::rhi::SampledTextureUploadRegion> srgbUploadRegions;
 };
 
 inline constexpr std::uint32_t kTexturedQuadExtentPixels = 512;

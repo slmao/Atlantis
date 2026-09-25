@@ -63,7 +63,7 @@ namespace fs = std::filesystem;
 // names are reachable from the enclosing namespace).
 [[nodiscard]] atlantis::Result<std::monostate, TextureCookError> cookTextureInternal(
     const std::uint8_t* pixelBytes, std::size_t pixelByteCount, std::uint32_t width, std::uint32_t height,
-    std::int32_t channelsInFile, TextureColorSpace colorSpace, TextureDataLayout layout,
+    std::uint32_t mipCount, std::int32_t channelsInFile, TextureColorSpace colorSpace, TextureDataLayout layout,
     const std::string& normalizedLogicalPath, const fs::path& artifactOutputPath,
     const fs::path& metadataOutputPath);
 
@@ -96,14 +96,14 @@ atlantis::Result<std::monostate, TextureCookError> cookTexture(const std::uint8_
   }
   const auto pixelByteCount = static_cast<std::size_t>(pixelByteCount64);
 
-  return cookTextureInternal(pixelBytes, pixelByteCount, width, height, channelsInFile, colorSpace,
+  return cookTextureInternal(pixelBytes, pixelByteCount, width, height, 1, channelsInFile, colorSpace,
                               TextureDataLayout::Rgba8, normalizedLogicalPath, artifactOutputPath,
                               metadataOutputPath);
 }
 
 atlantis::Result<std::monostate, TextureCookError> cookTextureBc7(
     const std::uint8_t* blockBytes, std::size_t blockByteCount, std::uint32_t width, std::uint32_t height,
-    TextureColorSpace colorSpace, const std::string& logicalPathInput,
+    std::uint32_t mipCount, TextureColorSpace colorSpace, const std::string& logicalPathInput,
     const std::filesystem::path& artifactOutputPath, const std::filesystem::path& metadataOutputPath) {
   using ResultT = atlantis::Result<std::monostate, TextureCookError>;
 
@@ -118,25 +118,29 @@ atlantis::Result<std::monostate, TextureCookError> cookTextureBc7(
   // Spec 0038 Requirement 5: non-4-aligned BC7 base mips are a
   // recoverable rejection, never a silent pad.
   if (width % 4 != 0 || height % 4 != 0) return ResultT::Err(TextureCookError::NonAlignedDimensions);
-  if (static_cast<std::uint64_t>(blockByteCount) != bc7BlockByteCount(width, height)) {
+  if (mipCount == 0 || mipCount > fullMipChainLength(width, height)) {
+    return ResultT::Err(TextureCookError::InvalidMipCount);
+  }
+  if (static_cast<std::uint64_t>(blockByteCount) !=
+      textureMipChainByteCount(width, height, TextureDataLayout::Bc7, mipCount)) {
     return ResultT::Err(TextureCookError::BlockDataSizeMismatch);
   }
 
-  return cookTextureInternal(blockBytes, blockByteCount, width, height, 4, colorSpace,
+  return cookTextureInternal(blockBytes, blockByteCount, width, height, mipCount, 4, colorSpace,
                              TextureDataLayout::Bc7, normalizedLogicalPath, artifactOutputPath,
                              metadataOutputPath);
 }
 
 atlantis::Result<std::monostate, TextureCookError> cookTextureInternal(
     const std::uint8_t* pixelBytes, std::size_t pixelByteCount, std::uint32_t width, std::uint32_t height,
-    std::int32_t channelsInFile, TextureColorSpace colorSpace, TextureDataLayout layout,
+    std::uint32_t mipCount, std::int32_t channelsInFile, TextureColorSpace colorSpace, TextureDataLayout layout,
     const std::string& normalizedLogicalPath, const fs::path& artifactOutputPath,
     const fs::path& metadataOutputPath) {
   using ResultT = atlantis::Result<std::monostate, TextureCookError>;
 
   const AssetId assetId = computeAssetId(normalizedLogicalPath);
   const std::vector<std::byte> artifactBytes =
-      encodeTextureArtifact(width, height, colorSpace, layout, pixelBytes, pixelByteCount);
+      encodeTextureArtifact(width, height, colorSpace, layout, mipCount, pixelBytes, pixelByteCount);
 
   TextureMetadata metadata;
   metadata.assetId = assetId;
@@ -145,6 +149,7 @@ atlantis::Result<std::monostate, TextureCookError> cookTextureInternal(
   metadata.height = height;
   metadata.format = colorSpace;
   metadata.layout = layout;
+  metadata.mipCount = mipCount;
   metadata.channelsInFile = channelsInFile;
   const std::string metadataText = serializeTextureMetadata(metadata);
 

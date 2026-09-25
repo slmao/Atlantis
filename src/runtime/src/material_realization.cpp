@@ -1,5 +1,6 @@
 #include <atlantis/runtime/material_realization.h>
 
+#include <atlantis/asset_system/texture_artifact.h>
 #include <atlantis/assert.h>
 #include <atlantis/log.h>
 #include <atlantis/render_graph/execution.h>
@@ -10,6 +11,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <span>
+#include <vector>
 
 namespace atlantis::runtime {
 
@@ -68,6 +71,21 @@ using atlantis::rhi::SamplerCreateParams;
   return AddressMode::Repeat;
 }
 
+// Spec 0045 (ADR-0093 Decision 3): one upload region per mip level of
+// data, at the offsets asset_system::textureMipLevels() -- the single
+// layout authority -- gives for the chain in pixelBytes.
+[[nodiscard]] std::vector<atlantis::rhi::SampledTextureUploadRegion> textureUploadRegions(
+    const atlantis::asset_system::TextureAssetData& data) {
+  std::vector<atlantis::rhi::SampledTextureUploadRegion> regions;
+  for (const auto& level : atlantis::asset_system::textureMipLevels(data.width, data.height, data.layout,
+                                                                     data.mipCount)) {
+    regions.push_back({.bufferOffsetBytes = static_cast<std::size_t>(level.offsetBytes),
+                       .mipLevel = static_cast<std::uint32_t>(regions.size()),
+                       .extent = Extent2D{level.width, level.height}});
+  }
+  return regions;
+}
+
 // Mirrors textured_quad_fixture.cpp's own buildTextureUploadPass()
 // exactly -- duplicated, not shared, matching that file's own disclosed
 // scope note (this module and tests/image_regression/ share no
@@ -76,13 +94,16 @@ using atlantis::rhi::SamplerCreateParams;
 // this pass; the trailing TransferDestination -> ShaderRead transition
 // is reached via the caller's own ResourceBinding::finalState, not a
 // second usage on this same pass.
+// Spec 0045: every mip level in one copy -- regions borrows the
+// candidate's own region vector, alive until the graph executes.
 void buildTextureUploadPass(atlantis::render_graph::RenderGraphBuilder& builder, atlantis::rhi::Buffer& stagingBuffer,
-                             atlantis::rhi::SampledTexture& destination) {
+                             atlantis::rhi::SampledTexture& destination,
+                             std::span<const atlantis::rhi::SampledTextureUploadRegion> regions) {
   const auto resource = builder.declareResource("material-texture-upload");
   const auto pass = builder.declarePass("MaterialTextureUpload");
   builder.writes(pass, resource, atlantis::rhi::ResourceState::TransferDestination);
-  builder.setExecute(pass, [&stagingBuffer, &destination](atlantis::rhi::CommandList& cmd) {
-    cmd.copyBufferToTexture(stagingBuffer, destination);
+  builder.setExecute(pass, [&stagingBuffer, &destination, regions](atlantis::rhi::CommandList& cmd) {
+    cmd.copyBufferToTexture(stagingBuffer, destination, regions);
   });
 }
 
@@ -369,7 +390,8 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
   } else {
     auto textureResult = device.createSampledTexture(SampledTextureCreateParams{
         .extent = Extent2D{textureData.width, textureData.height},
-        .format = toSampledTextureFormat(textureData.colorSpace, textureData.layout)});
+        .format = toSampledTextureFormat(textureData.colorSpace, textureData.layout),
+        .mipLevelCount = textureData.mipCount});
     if (textureResult.isErr()) return ResultT::Err(MaterialRealizationError::SampledTextureCreateFailed);
     candidate.newSampledTexture = std::move(textureResult.value());
 
@@ -381,6 +403,7 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
     if (stagingResult.isErr()) return ResultT::Err(MaterialRealizationError::StagingBufferCreateFailed);
     std::memcpy(stagingResult.value()->mappedData(), textureData.pixelBytes.data(), stagingBytes);
     candidate.stagingBuffer = std::move(stagingResult.value());
+    candidate.uploadRegions = textureUploadRegions(textureData);
 
     sampledTexturePtr = candidate.newSampledTexture.get();
   }
@@ -401,7 +424,8 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
     } else {
       auto normalMapTextureResult = device.createSampledTexture(SampledTextureCreateParams{
           .extent = Extent2D{normalMapTextureData->width, normalMapTextureData->height},
-          .format = toSampledTextureFormat(normalMapTextureData->colorSpace, normalMapTextureData->layout)});
+          .format = toSampledTextureFormat(normalMapTextureData->colorSpace, normalMapTextureData->layout),
+          .mipLevelCount = normalMapTextureData->mipCount});
       if (normalMapTextureResult.isErr()) return ResultT::Err(MaterialRealizationError::SampledTextureCreateFailed);
       candidate.newNormalMapTexture = std::move(normalMapTextureResult.value());
 
@@ -412,13 +436,30 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
       std::memcpy(normalMapStagingResult.value()->mappedData(), normalMapTextureData->pixelBytes.data(),
                   normalMapStagingBytes);
       candidate.normalMapStagingBuffer = std::move(normalMapStagingResult.value());
+      candidate.normalMapUploadRegions = textureUploadRegions(*normalMapTextureData);
 
       normalMapTexturePtr = candidate.newNormalMapTexture.get();
     }
   }
 
-  auto samplerResult = device.createSampler(
-      SamplerCreateParams{.filter = toFilter(materialData.filter), .addressMode = toAddressMode(materialData.addressMode)});
+  // Spec 0045 R5 / ADR-0093 Decision 4, ruling O4: maxLod reaches the
+  // deepest level of the textures this sampler serves (the created
+  // resources are the authority, deduplicated ones included); mipFilter
+  // follows filter only when there is a level to filter towards. A
+  // material whose textures are all single-mip gets maxLod 0 and
+  // MipFilter::Nearest -- today's sampler, field for field.
+  std::uint32_t deepestMipLevel = sampledTexturePtr->mipLevelCount() - 1;
+  if (normalMapTexturePtr != nullptr) {
+    deepestMipLevel = std::max(deepestMipLevel, normalMapTexturePtr->mipLevelCount() - 1);
+  }
+  const atlantis::rhi::Filter samplerFilter = toFilter(materialData.filter);
+  auto samplerResult = device.createSampler(SamplerCreateParams{
+      .filter = samplerFilter,
+      .addressMode = toAddressMode(materialData.addressMode),
+      .mipFilter = deepestMipLevel > 0 && samplerFilter == atlantis::rhi::Filter::Linear
+                       ? atlantis::rhi::MipFilter::Linear
+                       : atlantis::rhi::MipFilter::Nearest,
+      .maxLod = static_cast<float>(deepestMipLevel)});
   if (samplerResult.isErr()) return ResultT::Err(MaterialRealizationError::SamplerCreateFailed);
   candidate.sampler = std::move(samplerResult.value());
 
@@ -622,12 +663,14 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
 
     RealizedMaterialCandidate candidate = std::move(candidateResult.value());
     if (candidate.newSampledTexture) {
-      buildTextureUploadPass(uploadBuilder, **candidate.stagingBuffer, *candidate.newSampledTexture);
+      buildTextureUploadPass(uploadBuilder, **candidate.stagingBuffer, *candidate.newSampledTexture,
+                             candidate.uploadRegions);
       effectiveSampledTextures.emplace(candidate.textureAssetId, candidate.newSampledTexture.get());
       uploadedTextures.push_back(candidate.newSampledTexture.get());
     }
     if (candidate.newNormalMapTexture) {
-      buildTextureUploadPass(uploadBuilder, **candidate.normalMapStagingBuffer, *candidate.newNormalMapTexture);
+      buildTextureUploadPass(uploadBuilder, **candidate.normalMapStagingBuffer, *candidate.newNormalMapTexture,
+                             candidate.normalMapUploadRegions);
       effectiveSampledTextures.emplace(candidate.normalMapTextureAssetId, candidate.newNormalMapTexture.get());
       uploadedTextures.push_back(candidate.newNormalMapTexture.get());
     }
