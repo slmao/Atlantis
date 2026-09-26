@@ -53,14 +53,14 @@ void writeFile(const fs::path& path, const std::string& content) {
 }
 
 constexpr std::string_view kValidSource =
-    "atlantis_material_source_version: 8\n"
+    "atlantis_material_source_version: 9\n"
     "kind: unlit_textured\n"
     "texture: textures/textured_quad_source_unorm.png\n"
     "filter: linear\n"
     "address_mode: repeat\n";
 
 constexpr std::string_view kValidPbrSource =
-    "atlantis_material_source_version: 8\n"
+    "atlantis_material_source_version: 9\n"
     "kind: pbr_direct_lit\n"
     "texture: textures/textured_quad_source_srgb.png\n"
     "filter: linear\n"
@@ -149,7 +149,7 @@ TEST_CASE("cookMaterial rejects a source naming a texture with a malformed logic
   TempDirGuard dir("texture_logical_path_invalid");
   const fs::path sourcePath = dir.path / "bad_texture_ref.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 8\n"
+            "atlantis_material_source_version: 9\n"
             "kind: unlit_textured\n"
             "texture: /absolute/not/allowed.png\n"
             "filter: linear\n"
@@ -236,7 +236,7 @@ TEST_CASE("cookMaterial reports BaseColorFactorOutOfRange for a baseColorFactor 
   TempDirGuard dir("base_color_out_of_range");
   const fs::path sourcePath = dir.path / "bad.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 8\n"
+            "atlantis_material_source_version: 9\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -257,7 +257,7 @@ TEST_CASE("cookMaterial reports MaterialFactorOutOfRange for a negative metallic
   TempDirGuard dir("metallic_out_of_range");
   const fs::path sourcePath = dir.path / "bad.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 8\n"
+            "atlantis_material_source_version: 9\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -278,7 +278,7 @@ TEST_CASE("cookMaterial reports MaterialFactorOutOfRange for a roughness_factor 
   TempDirGuard dir("roughness_out_of_range");
   const fs::path sourcePath = dir.path / "bad.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 8\n"
+            "atlantis_material_source_version: 9\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -305,7 +305,7 @@ namespace {
                                                                                   const std::string& emissive) {
   const fs::path sourcePath = dir / "emissive.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 8\n"
+            "atlantis_material_source_version: 9\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -374,7 +374,7 @@ namespace {
                                                                                const std::string& alphaLines) {
   const fs::path sourcePath = dir / "alpha.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 8\n"
+            "atlantis_material_source_version: 9\n"
             "kind: pbr_direct_lit\n"
             "texture: textures/textured_quad_source_srgb.png\n"
             "filter: linear\n"
@@ -434,4 +434,43 @@ TEST_CASE("cookMaterial carries alpha_mode and alpha_cutoff into both the artifa
   REQUIRE(blendMetadata.isOk());
   CHECK(blendMetadata.value().alphaMode == MaterialAlphaMode::Blend);
   CHECK(blendMetadata.value().alphaCutoff == 0.5f);
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0046 Milestone 1 (ADR-0096): emissive_texture resolves to an AssetId
+// in both outputs, `0` when absent; a malformed path is LogicalPathInvalid.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("cookMaterial carries emissive_texture's AssetId into both the artifact and the metadata",
+          "[asset_system][material][emissive]") {
+  TempDirGuard dir("emissive_texture_outputs");
+  REQUIRE(cookWithAlpha(dir.path, "emissive_factor: 100 100 100\nemissive_texture: textures/glow.dds\n").isOk());
+  const AssetId expected = computeAssetId("textures/glow.dds");
+
+  const std::string artifactText = readFile(dir.path / "a.amaterial");
+  const std::vector<std::byte> artifactBytes(reinterpret_cast<const std::byte*>(artifactText.data()),
+                                             reinterpret_cast<const std::byte*>(artifactText.data()) +
+                                                 artifactText.size());
+  const auto decoded = decodeMaterialArtifact(artifactBytes);
+  REQUIRE(decoded.isOk());
+  CHECK(decoded.value().emissiveTexture == expected);
+
+  const auto metadata = parseMaterialMetadata(readFile(dir.path / "a.amaterial.meta.txt"));
+  REQUIRE(metadata.isOk());
+  CHECK(metadata.value().emissiveTexture == expected);
+
+  TempDirGuard noneDir("emissive_texture_absent");
+  REQUIRE(cookWithAlpha(noneDir.path, "").isOk());
+  const auto noneMetadata = parseMaterialMetadata(readFile(noneDir.path / "a.amaterial.meta.txt"));
+  REQUIRE(noneMetadata.isOk());
+  CHECK(noneMetadata.value().emissiveTexture == 0);
+}
+
+TEST_CASE("cookMaterial reports LogicalPathInvalid for a malformed emissive_texture path",
+          "[asset_system][material][emissive]") {
+  TempDirGuard dir("emissive_texture_bad_path");
+  const auto result = cookWithAlpha(dir.path, "emissive_texture: ../escape.dds\n");
+  REQUIRE(result.isErr());
+  CHECK(result.error() == MaterialCookError::LogicalPathInvalid);
+  CHECK_FALSE(fs::exists(dir.path / "a.amaterial"));
 }

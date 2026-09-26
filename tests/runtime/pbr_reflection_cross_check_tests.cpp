@@ -548,6 +548,65 @@ TEST_CASE("PBR push constants: a real slangc reflection of every one of the ten 
   fs::remove_all(outputDir, ec);
 }
 
+// Plan 0046 Milestone 1 (ADR-0096): the emissive texture slot, reflected
+// fresh from every one of the ten PBR fragment shaders -- at the binding
+// the descriptor contracts, sampledTextureBindingCountFor() and the
+// Renderer's bind index all assume (one past the last pre-existing
+// sampler), and statically used by fragmentMain.
+TEST_CASE("PBR emissive texture: a real slangc reflection of every one of the ten PBR fragment shaders places "
+          "emissiveSampler at its contract binding and uses it (Plan 0046, 10/10)",
+          "[shader_system][runtime][pbr][reflection][emissive]") {
+  struct ShaderCase {
+    const char* name;
+    int emissiveBinding;
+  };
+  const ShaderCase cases[] = {
+      {"pbr_direct_lit", 3},      {"pbr_direct_lit_normal_map", 4},    {"pbr_ibl", 5},
+      {"pbr_ibl_normal_map", 6},  {"pbr_clearcoat_ibl", 4},            {"pbr_clearcoat_ibl_normal_map", 5},
+      {"pbr_sheen_ibl", 4},       {"pbr_sheen_ibl_normal_map", 5},     {"pbr_anisotropic_ibl", 4},
+      {"pbr_anisotropic_ibl_normal_map", 5},
+  };
+  static_assert(std::size(cases) == 10);
+
+  const fs::path outputDir = fs::temp_directory_path() / "atlantis_emissive_slot_10_of_10_cross_check_tests";
+  std::error_code ec;
+  fs::create_directories(outputDir, ec);
+
+  const std::string nameKey = "\"name\": \"emissiveSampler\"";
+  int shadersChecked = 0;
+  for (const ShaderCase& shader : cases) {
+    INFO("shader: " << shader.name);
+    const fs::path source =
+        fs::path(ATLANTIS_SHADER_SOURCE_ROOT) / shader.name / (std::string(shader.name) + ".slang");
+    const fs::path jsonPath = outputDir / (std::string(shader.name) + "_frag_raw_refl.json");
+    const fs::path spirvPath = outputDir / (std::string(shader.name) + "_frag_raw.spv");
+    REQUIRE(runSlangcReflectionJson(source, "fragmentMain", "fragment", jsonPath, spirvPath));
+    const auto jsonText = readWholeFile(jsonPath);
+    REQUIRE(jsonText.has_value());
+
+    // The global parameter: its descriptor-table slot is the binding.
+    const std::size_t globalPos = jsonText->find(nameKey);
+    REQUIRE(globalPos != std::string::npos);
+    const std::string expectedBinding =
+        "{\"kind\": \"descriptorTableSlot\", \"index\": " + std::to_string(shader.emissiveBinding);
+    CHECK(jsonText->find(expectedBinding, globalPos) == jsonText->find("\"binding\"", globalPos) + 11);
+    // No sampler sits past it: the next binding would be emissive + 1.
+    const std::string nextBinding =
+        "\"index\": " + std::to_string(shader.emissiveBinding + 1) + "}";
+    CHECK(jsonText->find("\"kind\": \"descriptorTableSlot\", " + nextBinding) == std::string::npos);
+    // The entry point's own parameter list marks it used.
+    const std::size_t entryPos = jsonText->rfind(nameKey);
+    REQUIRE(entryPos != globalPos);
+    const std::size_t usedPos = jsonText->find("\"used\": 1", entryPos);
+    CHECK(usedPos != std::string::npos);
+    CHECK(usedPos < jsonText->find('}', jsonText->find("\"binding\"", entryPos)));
+    ++shadersChecked;
+  }
+  CHECK(shadersChecked == 10);
+
+  fs::remove_all(outputDir, ec);
+}
+
 // Plan 0044 Milestone 1 (P6/P8): each bloom shader's push-constant block,
 // reflected fresh from its own source by a real slangc run, field by field
 // against the renderer::Bloom*PushConstants struct drawFrame() will push.

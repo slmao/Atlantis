@@ -32,28 +32,39 @@ TEST_CASE("sampledTextureBindingCountFor(): LitTextured is always 1, regardless 
   CHECK(sampledTextureBindingCountFor(MaterialKind::LitTextured, true, true) == 1U);
 }
 
-TEST_CASE("sampledTextureBindingCountFor(): PbrDirectLit is 2 without an environment or normal map (base-color@1, "
-          "shadow-map@2)",
+TEST_CASE("sampledTextureBindingCountFor(): PbrDirectLit is 3 without an environment or normal map (base-color@1, "
+          "shadow-map@2, emissive@3)",
           "[runtime][material_realization]") {
-  CHECK(sampledTextureBindingCountFor(MaterialKind::PbrDirectLit, false, false) == 2U);
+  CHECK(sampledTextureBindingCountFor(MaterialKind::PbrDirectLit, false, false) == 3U);
 }
 
-TEST_CASE("sampledTextureBindingCountFor(): PbrDirectLit is 4 with an environment and no normal map (base-color@1, "
-          "environment@2, DFG LUT@3, shadow-map@4)",
+TEST_CASE("sampledTextureBindingCountFor(): PbrDirectLit is 5 with an environment and no normal map (base-color@1, "
+          "environment@2, DFG LUT@3, shadow-map@4, emissive@5)",
           "[runtime][material_realization]") {
-  CHECK(sampledTextureBindingCountFor(MaterialKind::PbrDirectLit, true, false) == 4U);
+  CHECK(sampledTextureBindingCountFor(MaterialKind::PbrDirectLit, true, false) == 5U);
 }
 
-TEST_CASE("sampledTextureBindingCountFor(): PbrDirectLit is 3 with a normal map and no environment (base-color@1, "
-          "shadow-map@2, normal-map@3)",
+TEST_CASE("sampledTextureBindingCountFor(): PbrDirectLit is 4 with a normal map and no environment (base-color@1, "
+          "shadow-map@2, normal-map@3, emissive@4)",
           "[runtime][material_realization]") {
-  CHECK(sampledTextureBindingCountFor(MaterialKind::PbrDirectLit, false, true) == 3U);
+  CHECK(sampledTextureBindingCountFor(MaterialKind::PbrDirectLit, false, true) == 4U);
 }
 
-TEST_CASE("sampledTextureBindingCountFor(): PbrDirectLit is 5 with both an environment and a normal map "
-          "(base-color@1, environment@2, DFG LUT@3, shadow-map@4, normal-map@5)",
+TEST_CASE("sampledTextureBindingCountFor(): PbrDirectLit is 6 with both an environment and a normal map "
+          "(base-color@1, environment@2, DFG LUT@3, shadow-map@4, normal-map@5, emissive@6)",
           "[runtime][material_realization]") {
-  CHECK(sampledTextureBindingCountFor(MaterialKind::PbrDirectLit, true, true) == 5U);
+  CHECK(sampledTextureBindingCountFor(MaterialKind::PbrDirectLit, true, true) == 6U);
+}
+
+// Plan 0046 Milestone 1 (ADR-0096): the three IBL-only kinds carry the
+// emissive slot one past the normal map (or where it would be).
+TEST_CASE("sampledTextureBindingCountFor(): PbrClearcoat/PbrSheen/PbrAnisotropic are 4 with an environment (emissive@4) "
+          "and 5 with a normal map too (normal-map@4, emissive@5)",
+          "[runtime][material_realization][emissive]") {
+  for (const MaterialKind kind : {MaterialKind::PbrClearcoat, MaterialKind::PbrSheen, MaterialKind::PbrAnisotropic}) {
+    CHECK(sampledTextureBindingCountFor(kind, true, false) == 4U);
+    CHECK(sampledTextureBindingCountFor(kind, true, true) == 5U);
+  }
 }
 
 // Plan 0042 Milestone 1 (Spec 0042 R4/R5, ADR-0090 Decisions 1/3): each

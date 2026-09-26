@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -43,11 +44,17 @@ enum class GltfImportError {
   NonDecomposableMatrix,  // node matrix non-finite, non-affine, zero-scale or sheared
   NegativeDeterminant,    // node transform mirrors (odd number of negative scale factors)
   InvalidLightValue,      // light colour outside [0, 1] or negative/non-finite intensity
-  TooManyLights,          // more than 1 directional or 4 point lights (Spec 0019 cap)
+  TooManyLights,          // more than 1 directional or 64 point lights, overlay included (Plan 0046 P7)
   TangentGenerationFailed,  // handedness conflict left after the split (a split defect, never expected)
   // 4. Output I/O.
   OutputDirectoryNotEmpty,
   OutputWriteFailed,
+  // Plan 0046 Milestone 2 (ADR-0094 Decision 3, Plan 0046 P7): --overlay.
+  OverlayUnreadable,            // the overlay file cannot be read
+  OverlayMalformed,             // not a valid scene source, or the merged scene is not
+  OverlayRenderableNode,        // an overlay node names a mesh
+  OverlayParentOutsideOverlay,  // an overlay node parents to a node the overlay does not declare
+  OverlaySecondCamera,          // the overlay declares more than one camera
 };
 
 struct GltfImportSummary {
@@ -74,7 +81,7 @@ struct GltfImportSummary {
   std::uint32_t materialsTransmission = 0;              // subset of the above, reported only
   std::uint32_t materialsWhiteFallback = 0;             // Ruling 7
   std::uint32_t texturesReferenced = 0;
-  std::uint32_t colorSpaceWarnings = 0;  // Ruling 4
+  std::uint32_t colorSpaceWarnings = 0;  // colour-used DDS tagged DXGI 99, cooked as sRGB (Spec 0046 Q8)
   // Milestone 5 scene slice (ADR-0083 D5/D6).
   std::uint32_t sceneNodeLines = 0;
   std::uint32_t sceneMeshLines = 0;
@@ -85,6 +92,7 @@ struct GltfImportSummary {
   std::uint32_t nonUniformScaleNodes = 0;
   std::uint32_t primitivesWithoutMaterial = 0;
   std::uint32_t camerasDropped = 0;
+  std::uint32_t overlayNodeLines = 0;  // Plan 0046 Milestone 2: appended by --overlay
   std::uint32_t declaredAssets = 0;  // lines of asset_list.txt
   std::vector<std::string> reportLines;  // import_report.txt body
 };
@@ -102,9 +110,14 @@ struct GltfImportSummary {
 // atlantis_asset_cooker --validate-set), and cook_manifest.txt -- the
 // atlantis_asset_cooker invocations (textures, then materials, then the
 // scene) that turn the generated sources into artifacts.
+// Plan 0046 Milestone 2 (ADR-0094 Decision 3): overlayPath, when given,
+// names a scene-v6 source of non-renderable nodes (camera, lights) merged
+// into the imported scene -- appended after every imported id, its camera
+// made active.
 [[nodiscard]] atlantis::Result<GltfImportSummary, GltfImportError> importGltf(
     const std::filesystem::path& inputPath, const std::filesystem::path& contentRoot,
-    const std::filesystem::path& outputDir, const std::string& name);
+    const std::filesystem::path& outputDir, const std::string& name,
+    const std::optional<std::filesystem::path>& overlayPath = std::nullopt);
 
 [[nodiscard]] const char* gltfImportErrorMessage(GltfImportError error) noexcept;
 

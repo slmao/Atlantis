@@ -26,6 +26,10 @@ struct SceneBootstrapPaths {
   std::string sceneArtifactPath;
   std::string sceneMetadataPath;
   std::string sceneDependencyManifestPath;
+  // Plan 0046 Milestone 3 (ruling O1, Plan 0046 P10): the entry renders
+  // without the global environment (no IBL, no sky) -- lit by its own
+  // lights only. Travels with the selected paths so main() can act on it.
+  bool disableEnvironmentLight = false;
 };
 
 // One whitelist entry. `name` is a non-owning view: every real caller

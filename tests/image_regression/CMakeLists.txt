@@ -1,3 +1,13 @@
+# Plan 0046 Milestone 5 (ADR-0095 Decision 2): the Bistro content pin --
+# the fetch script's SHA-256, line endings normalized to LF so it does not
+# depend on core.autocrlf, recomputed whenever the script changes. The
+# bistro_demo generator records it; the golden test checks it.
+set(ATLANTIS_BISTRO_FETCH_SCRIPT "${CMAKE_SOURCE_DIR}/tools/content/fetch_bistro.ps1")
+file(READ "${ATLANTIS_BISTRO_FETCH_SCRIPT}" atlantis_bistro_fetch_script_text)
+string(REPLACE "\r" "" atlantis_bistro_fetch_script_text "${atlantis_bistro_fetch_script_text}")
+string(SHA256 ATLANTIS_BISTRO_FETCH_SCRIPT_SHA256 "${atlantis_bistro_fetch_script_text}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${ATLANTIS_BISTRO_FETCH_SCRIPT}")
+
 add_subdirectory(support)
 add_subdirectory(fixture)
 add_subdirectory(golden_generator)
@@ -529,6 +539,9 @@ if(NOT ANDROID)
 
   add_executable(atlantis_image_regression_content_gpu_tests
     bistro_large_mesh_gpu_tests.cpp
+    # Plan 0046 Milestone 3: the assembled Bistro scene, through
+    # PbrNormalMapDemoFixture (no environment, bloom on).
+    bistro_scene_gpu_tests.cpp
   )
 
   target_link_libraries(atlantis_image_regression_content_gpu_tests
@@ -543,7 +556,46 @@ if(NOT ANDROID)
 
   target_compile_definitions(atlantis_image_regression_content_gpu_tests PRIVATE
     ATLANTIS_BISTRO_CONTENT_DIR="${ATLANTIS_BISTRO_CONTENT_DIR}"
+    # Plan 0046 Milestone 3: PbrNormalMapDemoFixture's shader set and
+    # control material, and the bloom shaders (bloom_test_config.h) --
+    # the same values atlantis_image_regression_gpu_tests passes.
+    ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH="${ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH}"
+    ATLANTIS_pbr_normal_mapped_control_METADATA_PATH="${ATLANTIS_pbr_normal_mapped_control_METADATA_PATH}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_direct_lit_normal_map_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_PBR_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_ibl_normal_map_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_SKY_SHADER_DIR="${ATLANTIS_sky_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+    ATLANTIS_BLOOM_DOWNSAMPLE_SHADER_DIR="${ATLANTIS_bloom_downsample_SHADER_OUTPUT_DIR}"
+    ATLANTIS_BLOOM_UPSAMPLE_SHADER_DIR="${ATLANTIS_bloom_upsample_SHADER_OUTPUT_DIR}"
+    ATLANTIS_BLOOM_COMPOSITE_SHADER_DIR="${ATLANTIS_bloom_composite_SHADER_OUTPUT_DIR}"
+    ATLANTIS_ASSET_COOKER_EXECUTABLE="$<TARGET_FILE:atlantis_asset_cooker>"
+    ATLANTIS_BISTRO_REVIEW_OUTPUT_DIR="${CMAKE_BINARY_DIR}/bistro/review"
+    # Plan 0046 Milestone 5: the bistro_demo golden (ADR-0095).
+    ATLANTIS_BISTRO_FETCH_SCRIPT_SHA256="${ATLANTIS_BISTRO_FETCH_SCRIPT_SHA256}"
+    ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+    ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR="${CMAKE_BINARY_DIR}/image_regression_failures"
   )
+  # Plan 0046 Milestone 3: the assembled scene exists only when assets/
+  # declared its build step (content present at configure time); the test
+  # SKIPs otherwise.
+  if(DEFINED ATLANTIS_bistro_scene_TARGET)
+    target_compile_definitions(atlantis_image_regression_content_gpu_tests PRIVATE
+      ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH="${ATLANTIS_bistro_scene_ARTIFACT_PATH}"
+      ATLANTIS_BISTRO_SCENE_METADATA_PATH="${ATLANTIS_bistro_scene_METADATA_PATH}"
+      ATLANTIS_BISTRO_SCENE_MANIFEST_PATH="${ATLANTIS_bistro_scene_MANIFEST_PATH}"
+      ATLANTIS_BISTRO_SCENE_IMPORT_DIR="${ATLANTIS_bistro_scene_IMPORT_DIR}"
+    )
+    add_dependencies(atlantis_image_regression_content_gpu_tests ${ATLANTIS_bistro_scene_TARGET})
+  endif()
+  add_dependencies(atlantis_image_regression_content_gpu_tests atlantis_asset_cooker
+    ${ATLANTIS_pbr_normal_mapped_control_TARGET} textured_quad_shaders lit_textured_shaders pbr_direct_lit_shaders
+    pbr_direct_lit_normal_map_shaders pbr_ibl_shaders pbr_ibl_normal_map_shaders sky_shaders
+    bloom_downsample_shaders bloom_upsample_shaders bloom_composite_shaders)
 
   # The same shader set the minimal-cube fixture needs, copied the same
   # way every other consumer of that fixture copies it.

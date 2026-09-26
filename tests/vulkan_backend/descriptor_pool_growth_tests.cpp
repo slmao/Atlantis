@@ -14,16 +14,20 @@ using atlantis::vulkan_backend::detail::kMaxDescriptorPoolCount;
 // vulkan_result_tests.cpp's own established "pure classification"
 // precedent for this module.
 
-TEST_CASE("kDescriptorPoolMaxSetsByGeneration matches the exact, Approved four-value sequence",
+TEST_CASE("kDescriptorPoolMaxSetsByGeneration matches the exact, Approved seven-value sequence",
           "[vulkan_backend][descriptor_pool_growth]") {
   // V1: a direct, literal confirmation the fixed table matches Spec
-  // 0021 D5/D6's own approved four-value sequence exactly.
-  REQUIRE(kMaxDescriptorPoolCount == 4);
+  // 0021 D5/D6's approved sequence, as widened by the ADR-0064 Accepted
+  // Amendment of 2026-09-26 (4 -> 7 generations).
+  REQUIRE(kMaxDescriptorPoolCount == 7);
   REQUIRE(kDescriptorPoolMaxSetsByGeneration.size() == kMaxDescriptorPoolCount);
   REQUIRE(kDescriptorPoolMaxSetsByGeneration[0] == 4);
   REQUIRE(kDescriptorPoolMaxSetsByGeneration[1] == 8);
   REQUIRE(kDescriptorPoolMaxSetsByGeneration[2] == 16);
   REQUIRE(kDescriptorPoolMaxSetsByGeneration[3] == 32);
+  REQUIRE(kDescriptorPoolMaxSetsByGeneration[4] == 64);
+  REQUIRE(kDescriptorPoolMaxSetsByGeneration[5] == 128);
+  REQUIRE(kDescriptorPoolMaxSetsByGeneration[6] == 256);
 }
 
 TEST_CASE("descriptorPoolMaxSetsForGeneration returns the table's own value for every legal generation",
@@ -34,9 +38,12 @@ TEST_CASE("descriptorPoolMaxSetsForGeneration returns the table's own value for 
   REQUIRE(descriptorPoolMaxSetsForGeneration(1) == 8);
   REQUIRE(descriptorPoolMaxSetsForGeneration(2) == 16);
   REQUIRE(descriptorPoolMaxSetsForGeneration(3) == 32);
+  REQUIRE(descriptorPoolMaxSetsForGeneration(4) == 64);
+  REQUIRE(descriptorPoolMaxSetsForGeneration(5) == 128);
+  REQUIRE(descriptorPoolMaxSetsForGeneration(6) == 256);
 }
 
-TEST_CASE("The four generations sum to the real, current hard ceiling on concurrent descriptor sets",
+TEST_CASE("The seven generations sum to the real, current hard ceiling on concurrent descriptor sets",
           "[vulkan_backend][descriptor_pool_growth]") {
   // V3: computed from the same constants Milestone 3's own GPU tests
   // read directly -- never a separately-hardcoded "60" anywhere in this
@@ -49,5 +56,5 @@ TEST_CASE("The four generations sum to the real, current hard ceiling on concurr
   // failure path).
   const auto total = std::accumulate(kDescriptorPoolMaxSetsByGeneration.begin(),
                                       kDescriptorPoolMaxSetsByGeneration.end(), 0u);
-  REQUIRE(total == 60);
+  REQUIRE(total == 508);
 }

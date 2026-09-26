@@ -17,6 +17,8 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <iterator>
+#include <optional>
 #include <system_error>
 #include <variant>
 
@@ -331,20 +333,48 @@ const char* gltfImportErrorMessage(GltfImportError error) noexcept {
     case GltfImportError::InvalidLightValue:
       return "light colour outside [0, 1] or intensity negative/non-finite";
     case GltfImportError::TooManyLights:
-      return "more than 1 directional or 4 point lights";
+      return "more than 1 directional or 64 point lights (overlay included)";
     case GltfImportError::TangentGenerationFailed:
       return "tangent generation failed (handedness conflict left after the vertex split)";
     case GltfImportError::OutputDirectoryNotEmpty:
       return "output directory exists and is not empty";
     case GltfImportError::OutputWriteFailed:
       return "output write failed";
+    case GltfImportError::OverlayUnreadable:
+      return "overlay file unreadable";
+    case GltfImportError::OverlayMalformed:
+      return "overlay is not a valid scene source, or the merged scene is not";
+    case GltfImportError::OverlayRenderableNode:
+      return "overlay node names a mesh (an overlay holds only cameras and lights)";
+    case GltfImportError::OverlayParentOutsideOverlay:
+      return "overlay node parents to a node outside the overlay";
+    case GltfImportError::OverlaySecondCamera:
+      return "overlay declares more than one camera";
   }
   return "unknown gltf import error";
 }
 
 atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& inputPath, const fs::path& contentRoot,
-                                                                 const fs::path& outputDir, const std::string& name) {
+                                                                 const fs::path& outputDir, const std::string& name,
+                                                                 const std::optional<fs::path>& overlayPath) {
   using ResultT = atlantis::Result<GltfImportSummary, GltfImportError>;
+
+  // Plan 0046 Milestone 2 (ADR-0094 Decision 3): the overlay is read and
+  // parsed first, so every overlay rule fails before any output exists.
+  std::optional<atlantis::asset_system::ParsedSceneSource> overlay;
+  if (overlayPath) {
+    std::ifstream in(*overlayPath, std::ios::binary);
+    if (!in.is_open()) return ResultT::Err(GltfImportError::OverlayUnreadable);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    auto parsed = atlantis::asset_system::parseSceneSource(text);
+    if (parsed.isErr()) {
+      return ResultT::Err(parsed.error() == atlantis::asset_system::SceneSourceParseError::TooManyLights
+                              ? GltfImportError::TooManyLights
+                              : GltfImportError::OverlayMalformed);
+    }
+    overlay = std::move(parsed.value());
+  }
+  const atlantis::asset_system::ParsedSceneSource* overlayPtr = overlay ? &*overlay : nullptr;
 
   CgltfDataGuard guard;
   cgltf_options options{};
@@ -373,7 +403,7 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
   if (cgltf_validate(guard.data) != cgltf_result_success) return ResultT::Err(GltfImportError::MalformedGltf);
   const auto materialCheck = detail::checkMaterials(*guard.data, contentRoot);
   if (materialCheck.isErr()) return ResultT::Err(materialCheck.error());
-  const auto sceneCheck = detail::checkScene(*guard.data);
+  const auto sceneCheck = detail::checkScene(*guard.data, overlayPtr);
   if (sceneCheck.isErr()) return ResultT::Err(sceneCheck.error());
 
   std::error_code ec;
@@ -537,7 +567,8 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
       detail::writeMaterials(*guard.data, contentRoot, staging.path, name, summary, reportLines, manifestLines,
                              declaredAssets);
   if (materials.isErr()) return ResultT::Err(materials.error());
-  const auto scene = detail::writeScene(*guard.data, staging.path, name, summary, reportLines, manifestLines);
+  const auto scene =
+      detail::writeScene(*guard.data, staging.path, name, summary, reportLines, manifestLines, overlayPtr);
   if (scene.isErr()) return ResultT::Err(scene.error());
   std::string manifest =
       "# atlantis_gltf_importer cook manifest (Plan 0037). One atlantis_asset_cooker invocation per\n"

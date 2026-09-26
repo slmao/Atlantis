@@ -29,6 +29,7 @@
 #include <atlantis/rhi/sampler.h>
 #include <atlantis/rhi/shadow_map.h>
 #include <atlantis/rhi/types.h>
+#include <atlantis/runtime/material_realization.h>
 #include <atlantis/runtime/scene_extraction.h>
 #include <atlantis/shader_system/reflection_loader.h>
 #include <atlantis/shader_system/rhi_integration/vertex_input_mapping.h>
@@ -540,9 +541,12 @@ TEST_CASE("PbrDirectLit parameter transmission: two draws differing only in meta
          .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
          .depthFormat = DepthFormat::D32Sfloat,
          .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
-         .sampledTextureBindingCount = 2},
+         .sampledTextureBindingCount = 3},
         rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
-        std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, metallicFactor, roughnessFactor);
+        std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, metallicFactor, roughnessFactor, atlantis::renderer::MaterialEnvironmentBinding::None,
+        /*normalMapTexture=*/nullptr, 0.0f, 0.0f, std::array<float, 3>{0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f,
+        std::array<float, 3>{0.0f, 0.0f, 0.0f}, atlantis::renderer::MaterialAlphaMode::Opaque, 0.0f,
+        /*emissiveTexture=*/rig.texture.get());
     if (materialResult.isErr()) return std::nullopt;
     return std::move(materialResult.value());
   };
@@ -652,9 +656,12 @@ TEST_CASE("A mixed UnlitTextured+LitTextured+PbrDirectLit scene renders all thre
        .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
-       .sampledTextureBindingCount = 2},
+       .sampledTextureBindingCount = 3},
       rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
-      std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 0.3f);
+      std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 0.3f, atlantis::renderer::MaterialEnvironmentBinding::None,
+      /*normalMapTexture=*/nullptr, 0.0f, 0.0f, std::array<float, 3>{0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f,
+      std::array<float, 3>{0.0f, 0.0f, 0.0f}, atlantis::renderer::MaterialAlphaMode::Opaque, 0.0f,
+      /*emissiveTexture=*/rig.texture.get());
   REQUIRE(pbrMaterialResult.isOk());
 
   auto cameraBufferResult =
@@ -749,9 +756,12 @@ TEST_CASE("Above-1.0 PBR radiance survives the HDR intermediate and follows Rein
        .colorFormat = HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
-       .sampledTextureBindingCount = 2},
+       .sampledTextureBindingCount = 3},
       rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
-      std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.5f);
+      std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.5f, atlantis::renderer::MaterialEnvironmentBinding::None,
+      /*normalMapTexture=*/nullptr, 0.0f, 0.0f, std::array<float, 3>{0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f,
+      std::array<float, 3>{0.0f, 0.0f, 0.0f}, atlantis::renderer::MaterialAlphaMode::Opaque, 0.0f,
+      /*emissiveTexture=*/rig.texture.get());
   REQUIRE(materialResult.isOk());
 
   auto cameraBufferResult =
@@ -826,9 +836,12 @@ TEST_CASE("Real-GPU: exposureCompensationEv = -1/0/+1 produces a strictly bright
        .colorFormat = HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
-       .sampledTextureBindingCount = 2},
+       .sampledTextureBindingCount = 3},
       rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
-      std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.5f);
+      std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.5f, atlantis::renderer::MaterialEnvironmentBinding::None,
+      /*normalMapTexture=*/nullptr, 0.0f, 0.0f, std::array<float, 3>{0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f,
+      std::array<float, 3>{0.0f, 0.0f, 0.0f}, atlantis::renderer::MaterialAlphaMode::Opaque, 0.0f,
+      /*emissiveTexture=*/rig.texture.get());
   REQUIRE(materialResult.isOk());
 
   auto cameraBufferResult = rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
@@ -894,9 +907,12 @@ TEST_CASE("PbrDirectLit reflects a runtime Light intensity change on the next fr
        .colorFormat = HdrFormat::Rgba16Float,  // Plan 0024 Milestone 6/7: geometry Pipeline, not the final target.
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
-       .sampledTextureBindingCount = 2},
+       .sampledTextureBindingCount = 3},
       rig.texture.get(), rig.sampler.get(), MaterialPushConstantLayout::PbrDirectLit,
-      std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.5f);
+      std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.5f, atlantis::renderer::MaterialEnvironmentBinding::None,
+      /*normalMapTexture=*/nullptr, 0.0f, 0.0f, std::array<float, 3>{0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f,
+      std::array<float, 3>{0.0f, 0.0f, 0.0f}, atlantis::renderer::MaterialAlphaMode::Opaque, 0.0f,
+      /*emissiveTexture=*/rig.texture.get());
   REQUIRE(materialResult.isOk());
 
   auto cameraBufferResult =
@@ -946,8 +962,8 @@ TEST_CASE("PbrDirectLit reflects a runtime Light intensity change on the next fr
 // 0072 D-7's own Accepted Amendment) before a real draw+submit. This
 // bypasses Material/RealizedMaterialCandidate entirely -- confirmed
 // necessary since Milestone 4 (their own widening) has not landed yet.
-TEST_CASE("A Pipeline with sampledTextureBindingCount == 5 (pbr_ibl_normal_map) allocates, binds every one of "
-          "bindings 1-5 including bindTexture(5, ...), and draws cleanly",
+TEST_CASE("A Pipeline with sampledTextureBindingCount == 6 (pbr_ibl_normal_map) allocates, binds every one of "
+          "bindings 1-6 including bindTexture(6, ...), and draws cleanly",
           "[runtime][gpu][pbr][render][normal_map]") {
   auto rigOpt = setUpPbrTestRig("Atlantis PBR Render GPU Tests (binding-5 normal-map Pipeline)");
   REQUIRE(rigOpt.has_value());
@@ -973,7 +989,7 @@ TEST_CASE("A Pipeline with sampledTextureBindingCount == 5 (pbr_ibl_normal_map) 
        .colorFormat = kColorFormat,
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
-       .sampledTextureBindingCount = 5});
+       .sampledTextureBindingCount = 6});
   REQUIRE(pipelineResult.isOk());
   std::unique_ptr<Pipeline> pipeline = std::move(pipelineResult.value());
 
@@ -1152,6 +1168,10 @@ TEST_CASE("A Pipeline with sampledTextureBindingCount == 5 (pbr_ibl_normal_map) 
     // array size regardless of whether the Pipeline/descriptor-set
     // creation above already succeeded.
     cmd.bindTexture(5, *normalMap, *rig.sampler);
+    // Plan 0046 Milestone 1 (ADR-0096): the emissive slot, binding 6 -- the
+    // call that exercises the memo's widening to 7 (the base-colour
+    // texture stands in; this test is binding mechanics only).
+    cmd.bindTexture(6, *rig.texture, *rig.sampler);
     cmd.drawIndexed(3);
   });
 
@@ -1178,4 +1198,149 @@ TEST_CASE("A Pipeline with sampledTextureBindingCount == 5 (pbr_ibl_normal_map) 
   auto submitResult = device.submit(std::move(commandList), *target);
   REQUIRE(submitResult.isOk());
   REQUIRE(device.waitIdle().isOk());
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0046 Milestone 1 (ADR-0096, Plan 0046 Verification "the 11 materials
+// sample their masks"): a synthetic emissive mask -- a 2x1 texture, white
+// left texel, black right, sampled Nearest -- scales emissiveFactor per
+// pixel. With no light in the frame the emissive term is the whole colour:
+// the white half renders exactly as the Runtime's 1x1 white default does
+// (factor x 1.0 is the factor), the black half exactly as a zero factor.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// One Rgba8 texture uploaded through a one-pass RenderGraph and waited on,
+// the rig's own upload pattern.
+[[nodiscard]] std::unique_ptr<atlantis::rhi::SampledTexture> uploadRgba8Texture(Device& device, std::uint32_t width,
+                                                                                std::uint32_t height,
+                                                                                const std::vector<std::uint8_t>& bytes) {
+  auto textureResult = device.createSampledTexture(
+      SampledTextureCreateParams{.extent = {width, height}, .format = SampledTextureFormat::Rgba8Unorm});
+  REQUIRE(textureResult.isOk());
+  auto stagingResult = device.createBuffer({.purpose = BufferPurpose::Staging, .sizeBytes = bytes.size()});
+  REQUIRE(stagingResult.isOk());
+  std::memcpy(stagingResult.value()->mappedData(), bytes.data(), bytes.size());
+  auto commandListResult = device.createCommandList();
+  REQUIRE(commandListResult.isOk());
+  atlantis::render_graph::RenderGraphBuilder builder;
+  const auto resource = builder.declareResource("emissive-mask-upload");
+  const auto pass = builder.declarePass("EmissiveMaskUpload");
+  builder.writes(pass, resource, atlantis::rhi::ResourceState::TransferDestination);
+  builder.setExecute(pass, [&stagingResult, &textureResult](CommandList& cmd) {
+    cmd.copyBufferToTexture(*stagingResult.value(), *textureResult.value());
+  });
+  auto compileResult = builder.compile();
+  REQUIRE(compileResult.isOk());
+  const std::vector<atlantis::render_graph::ResourceBinding> bindings{
+      {.resource = compileResult.value().resourceAt(0),
+       .sampledTexture = textureResult.value().get(),
+       .finalState = atlantis::rhi::ResourceState::ShaderRead}};
+  atlantis::render_graph::execute(compileResult.value(), bindings, *commandListResult.value());
+  auto offscreen = device.createOffscreenTarget({.extent = kExtent, .format = kColorFormat});
+  REQUIRE(offscreen.isOk());
+  auto target = offscreen.value()->acquireTarget();
+  REQUIRE(target.isOk());
+  REQUIRE(device.submit(std::move(commandListResult.value()), *target.value()).isOk());
+  REQUIRE(device.waitIdle().isOk());
+  return std::move(textureResult.value());
+}
+
+[[nodiscard]] std::array<std::uint8_t, 4> readPixel(const std::vector<std::uint8_t>& rgba8, std::uint32_t x,
+                                                     std::uint32_t y) {
+  const std::size_t offset = (static_cast<std::size_t>(y) * kExtent.width + x) * 4;
+  return {rgba8[offset], rgba8[offset + 1], rgba8[offset + 2], rgba8[offset + 3]};
+}
+
+}  // namespace
+
+TEST_CASE("Emissive texture (ADR-0096): a synthetic mask scales emissiveFactor per pixel -- white is the factor "
+          "exactly (the 1x1 default's result), black is a zero factor",
+          "[runtime][gpu][pbr][render][emissive]") {
+  auto rigOpt = setUpPbrTestRig("Atlantis PBR Render GPU Tests (emissive mask)");
+  REQUIRE(rigOpt.has_value());
+  PbrTestRig& rig = *rigOpt;
+
+  // The Runtime's own default, created and uploaded by the function the
+  // Runtime and every PBR fixture call.
+  auto defaultCommandList = rig.device->createCommandList();
+  REQUIRE(defaultCommandList.isOk());
+  auto defaultResult = atlantis::runtime::createDefaultEmissiveTexture(*rig.device, *defaultCommandList.value());
+  REQUIRE(defaultResult.isOk());
+  {
+    auto offscreen = rig.device->createOffscreenTarget({.extent = kExtent, .format = kColorFormat});
+    REQUIRE(offscreen.isOk());
+    auto target = offscreen.value()->acquireTarget();
+    REQUIRE(target.isOk());
+    REQUIRE(rig.device->submit(std::move(defaultCommandList.value()), *target.value()).isOk());
+    REQUIRE(rig.device->waitIdle().isOk());
+  }
+  const std::unique_ptr<atlantis::rhi::SampledTexture> defaultEmissive = std::move(defaultResult.value().texture);
+  CHECK(defaultEmissive->mipLevelCount() == 1);
+
+  // Left texel white, right texel black; u = x + 0.5 across the triangle.
+  const std::unique_ptr<atlantis::rhi::SampledTexture> mask =
+      uploadRgba8Texture(*rig.device, 2, 1, {255, 255, 255, 255, 0, 0, 0, 255});
+  auto nearestResult =
+      rig.device->createSampler(SamplerCreateParams{.filter = Filter::Nearest, .addressMode = AddressMode::ClampToEdge});
+  REQUIRE(nearestResult.isOk());
+  const std::unique_ptr<atlantis::rhi::Sampler> nearest = std::move(nearestResult.value());
+
+  auto cameraBufferResult =
+      rig.device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
+  REQUIRE(cameraBufferResult.isOk());
+  std::unique_ptr<atlantis::rhi::Buffer> cameraBuffer = std::move(cameraBufferResult.value());
+  writeCameraBuffer(*cameraBuffer, kIdentityMatrix, kIdentityMatrix, FrameLightingData{},
+                    CameraWorldPositionData{0, 0, 5, 0});
+
+  const auto makeMaterial = [&](std::array<float, 3> emissiveFactor,
+                                const atlantis::rhi::SampledTexture& emissiveTexture) -> Material {
+    auto materialResult = createMaterial(
+        *rig.device,
+        {.vertexShader = {.spirvWords = rig.pbrVertexSpirv.data(), .wordCount = rig.pbrVertexSpirv.size()},
+         .fragmentShader = {.spirvWords = rig.pbrFragmentSpirv.data(), .wordCount = rig.pbrFragmentSpirv.size()},
+         .vertexInputLayout = rig.pbrLayout,
+         .colorFormat = HdrFormat::Rgba16Float,
+         .depthFormat = DepthFormat::D32Sfloat,
+         .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
+         .sampledTextureBindingCount = 3},
+        rig.texture.get(), nearest.get(), MaterialPushConstantLayout::PbrDirectLit,
+        std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.5f, atlantis::renderer::MaterialEnvironmentBinding::None,
+        /*normalMapTexture=*/nullptr, 0.0f, 0.0f, std::array<float, 3>{0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f,
+        emissiveFactor, atlantis::renderer::MaterialAlphaMode::Opaque, 0.0f, &emissiveTexture);
+    REQUIRE(materialResult.isOk());
+    return std::move(materialResult.value());
+  };
+  const std::array<float, 3> kFactor{0.75f, 0.5f, 0.25f};
+  Material masked = makeMaterial(kFactor, *mask);
+  Material factorOnly = makeMaterial(kFactor, *defaultEmissive);
+  Material unlit = makeMaterial({0.0f, 0.0f, 0.0f}, *defaultEmissive);
+
+  const auto render = [&](Material& material) {
+    DrawItem item;
+    item.mesh = &rig.mesh;
+    item.material = &material;
+    item.objectToWorld = kIdentityMatrix;
+    auto pixels = renderOneFrame(*rig.device, *cameraBuffer, {item});
+    REQUIRE(pixels.has_value());
+    return std::move(*pixels);
+  };
+  const std::vector<std::uint8_t> maskedPixels = render(masked);
+  const std::vector<std::uint8_t> factorPixels = render(factorOnly);
+  const std::vector<std::uint8_t> unlitPixels = render(unlit);
+
+  // Row 32 is the triangle's mid-height (x in [-0.25, 0.25], columns 24-40);
+  // column 27 samples the white texel, column 37 the black one.
+  constexpr std::uint32_t kRow = 32;
+  const auto whiteSide = readPixel(maskedPixels, 27, kRow);
+  const auto blackSide = readPixel(maskedPixels, 37, kRow);
+  INFO("white side " << int(whiteSide[0]) << "," << int(whiteSide[1]) << "," << int(whiteSide[2]) << "; black side "
+                     << int(blackSide[0]) << "," << int(blackSide[1]) << "," << int(blackSide[2]));
+  CHECK(whiteSide[0] > whiteSide[1]);  // the factor's own hue survives: 0.75 > 0.5 > 0.25
+  CHECK(whiteSide[1] > whiteSide[2]);
+  CHECK(whiteSide == readPixel(factorPixels, 27, kRow));   // white x factor == the default's factor x 1.0
+  CHECK(blackSide == readPixel(unlitPixels, 37, kRow));    // black x factor == no emissive at all
+  CHECK(readPixel(factorPixels, 37, kRow) == readPixel(factorPixels, 27, kRow));  // the default is uniform
+  CHECK(blackSide != whiteSide);
 }

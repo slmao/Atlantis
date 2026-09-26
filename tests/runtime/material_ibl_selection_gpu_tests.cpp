@@ -27,6 +27,17 @@ std::optional<std::vector<std::uint32_t>> loadSpirv(const std::string& path) {
   return words;
 }
 
+// Plan 0046 Milestone 1 (ADR-0096): a stand-in for the Runtime's default
+// emissive texture -- nothing in this file draws, so it is never sampled
+// and needs no upload.
+[[nodiscard]] std::unique_ptr<atlantis::rhi::SampledTexture> makeDefaultEmissiveStandIn(atlantis::rhi::Device& device) {
+  auto result = device.createSampledTexture(atlantis::rhi::SampledTextureCreateParams{
+      .extent = atlantis::rhi::Extent2D{1, 1}, .format = atlantis::rhi::SampledTextureFormat::Rgba8Unorm,
+      .mipLevelCount = 1});
+  REQUIRE(result.isOk());
+  return std::move(result.value());
+}
+
 }  // namespace
 
 TEST_CASE("PBR material realization selects the IBL pipeline only when an environment is enabled",
@@ -35,6 +46,7 @@ TEST_CASE("PBR material realization selects the IBL pipeline only when an enviro
       {.applicationName = "Atlantis IBL Material Selection Tests", .enableValidationLayers = true});
   REQUIRE(deviceResult.isOk());
   auto device = std::move(deviceResult.value());
+  const std::unique_ptr<atlantis::rhi::SampledTexture> defaultEmissive = makeDefaultEmissiveStandIn(*device);
 
   const auto directVertex =
       loadSpirv(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.vert.spv");
@@ -84,7 +96,8 @@ TEST_CASE("PBR material realization selects the IBL pipeline only when an enviro
       // filler as the clearcoat/sheen trios above -- neither call
       // realizes a PbrAnisotropic material either.
       layout, *directVertex, *directFragment, layout, *directVertex, *directFragment, false, 1, materialData,
-      textureData, /*normalMapTextureData=*/nullptr, noTextures);
+      textureData, /*normalMapTextureData=*/nullptr, /*emissiveTextureData=*/nullptr, noTextures,
+      *defaultEmissive);
   REQUIRE(direct.isOk());
   CHECK(direct.value().material->environmentBinding() == atlantis::renderer::MaterialEnvironmentBinding::None);
 
@@ -94,7 +107,8 @@ TEST_CASE("PBR material realization selects the IBL pipeline only when an enviro
       layout, *directVertex, *directFragment, layout, *directVertex, *directFragment, layout, *directVertex,
       *directFragment, layout, *directVertex, *directFragment, layout, *directVertex, *directFragment,
       layout, *directVertex, *directFragment, layout, *directVertex, *directFragment, true, 2,
-      materialData, textureData, /*normalMapTextureData=*/nullptr, noTextures);
+      materialData, textureData, /*normalMapTextureData=*/nullptr, /*emissiveTextureData=*/nullptr, noTextures,
+      *defaultEmissive);
   REQUIRE(ibl.isOk());
   CHECK(ibl.value().material->environmentBinding() == atlantis::renderer::MaterialEnvironmentBinding::Ibl);
   REQUIRE(device->waitIdle().isOk());

@@ -77,6 +77,11 @@ struct ParsedMaterialSource {
   // range-validated here (cookMaterial()'s own job, [0, 1]).
   MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
   float alphaCutoff = 0.5f;
+  // Plan 0046 Milestone 1 (ADR-0096): the v9 grammar's OPTIONAL
+  // `emissive_texture: <logical path>` line, after alpha_cutoff; empty =
+  // none. PBR kinds only (EmissiveNotSupportedForKind otherwise), resolved
+  // to an AssetId by cookMaterial(), like normalMapLogicalPath.
+  std::string emissiveTextureLogicalPath;
 };
 
 // Plan 0018 Section P2/P4: parse/decode-error conditions specific to the
@@ -135,7 +140,9 @@ enum class MaterialSourceParseError {
   // Plan 0041 Milestone 1 (Spec 0041 R3): an `emissive_factor:` line on
   // `kind: unlit_textured`/`kind: lit_textured` -- neither shader reads
   // it (Spec 0041 Investigation 3), so it is rejected rather than
-  // silently ignored, mirroring NormalMapNotSupportedForKind.
+  // silently ignored, mirroring NormalMapNotSupportedForKind. Plan 0046
+  // Milestone 1 (ADR-0096): also the error for an `emissive_texture:` line
+  // on those kinds.
   EmissiveNotSupportedForKind,
   // Plan 0042 Milestone 1 (Plan 0042 P2, ruling Q3): an `alpha_mode:` or
   // `alpha_cutoff:` line on `kind: unlit_textured`/`kind: lit_textured`

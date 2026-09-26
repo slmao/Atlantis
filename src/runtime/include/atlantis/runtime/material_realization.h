@@ -81,6 +81,14 @@ struct RealizedMaterialCandidate {
   std::unique_ptr<atlantis::rhi::SampledTexture> newNormalMapTexture;
   std::optional<std::unique_ptr<atlantis::rhi::Buffer>> normalMapStagingBuffer;
   std::vector<atlantis::rhi::SampledTextureUploadRegion> normalMapUploadRegions;
+  // Plan 0046 Milestone 1 (ADR-0096): identical in kind to the normal-map
+  // members above, keyed by materialData.emissiveTexture -- 0 (and the
+  // members below left null) when the material names no emissive texture;
+  // its Material then borrows the caller's default texture instead.
+  atlantis::asset_system::AssetId emissiveTextureAssetId = 0;
+  std::unique_ptr<atlantis::rhi::SampledTexture> newEmissiveTexture;
+  std::optional<std::unique_ptr<atlantis::rhi::Buffer>> emissiveStagingBuffer;
+  std::vector<atlantis::rhi::SampledTextureUploadRegion> emissiveUploadRegions;
   std::unique_ptr<atlantis::rhi::Sampler> sampler;                       // always new -- keyed per material
   std::unique_ptr<atlantis::renderer::Material> material;                // always new -- keyed per material
 };
@@ -204,8 +212,16 @@ struct RealizedMaterialCandidate {
     // materialData.normalMapTexture -- null iff that id is 0 (no
     // normal map declared for this material).
     const atlantis::asset_system::TextureAssetData* normalMapTextureData,
+    // Plan 0046 Milestone 1 (ADR-0096): the emissive texture's own
+    // TextureAssetData, resolved exactly like normalMapTextureData above --
+    // null iff materialData.emissiveTexture is 0.
+    const atlantis::asset_system::TextureAssetData* emissiveTextureData,
     const std::unordered_map<atlantis::asset_system::AssetId, const atlantis::rhi::SampledTexture*>&
-        effectiveSampledTextures);
+        effectiveSampledTextures,
+    // Plan 0046 Milestone 1 (ADR-0096, Plan 0046 P3): the caller-held 1x1
+    // white texture every PBR material without an emissive texture binds --
+    // borrowed, and it must outlive the returned Material.
+    const atlantis::rhi::SampledTexture& defaultEmissiveTexture);
 
 // Step 1 of Spec 0018 D8: the pending set is a pure function of current
 // state, recomputed every frame -- never a persisted queue. Returns a
@@ -300,7 +316,10 @@ struct RealizedMaterialCandidate {
     const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData>&
         materialDataMap,
     const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData>&
-        textureDataMap);
+        textureDataMap,
+    // Plan 0046 Milestone 1 (ADR-0096): forwarded to every
+    // realizeOneMaterialCandidate() call.
+    const atlantis::rhi::SampledTexture& defaultEmissiveTexture);
 
 // Compatibility overload for every no-environment composition root. It keeps
 // the pre-Spec-0025 call shape and selects pbr_direct_lit exactly.
@@ -322,7 +341,8 @@ realizePendingMaterials(
     const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData>&
         materialDataMap,
     const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData>&
-        textureDataMap) {
+        textureDataMap,
+    const atlantis::rhi::SampledTexture& defaultEmissiveTexture) {
   // Plan 0029 Section P15: this overload's own callers never declare a
   // normal map on any material they realize, so the two new trio
   // slots below are dead code paths, reusing pbrDirectLit*'s own
@@ -350,8 +370,21 @@ realizePendingMaterials(
       pbrDirectLitFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,
       pbrDirectLitFragmentSpirv, pbrDirectLitVertexInputLayout, pbrDirectLitVertexSpirv,
       pbrDirectLitFragmentSpirv, false, pendingIds, sampledTextureResourceMap, materialDataMap,
-      textureDataMap);
+      textureDataMap, defaultEmissiveTexture);
 }
+
+// Plan 0046 Milestone 1 (ADR-0096, Plan 0046 P3/O2): the shared 1x1 white
+// emissive default -- one Rgba8Unorm (255, 255, 255, 255) texel, so the
+// shaders' factor x texture is the factor exactly. Created once by its
+// owner (the Runtime, or a fixture realizing PBR materials); the upload is
+// recorded into commandList, and stagingBuffer must outlive that command
+// list's submission (the caller's frame-local staging discipline).
+struct DefaultEmissiveTexture {
+  std::unique_ptr<atlantis::rhi::SampledTexture> texture;
+  std::unique_ptr<atlantis::rhi::Buffer> stagingBuffer;
+};
+[[nodiscard]] atlantis::Result<DefaultEmissiveTexture, MaterialRealizationError> createDefaultEmissiveTexture(
+    atlantis::rhi::Device& device, atlantis::rhi::CommandList& commandList);
 
 // Plan 0024 Milestone 6 (correction, ADR-0068 D-4, discovered during
 // Implementation -- Human Review direction, chat, 2026-09-01): every
@@ -399,6 +432,8 @@ realizePendingMaterials(
 // Plan 0029 Section P15 (ADR-0074): hasNormalMap adds one more binding
 // to the PbrDirectLit case only (3 without an environment, 5 with one --
 // pbr_direct_lit_normal_map.slang/pbr_ibl_normal_map.slang, Milestone 3).
+// Plan 0046 Milestone 1 (ADR-0096): every PBR arm gains one more, the
+// always-bound emissive texture at the last binding.
 [[nodiscard]] std::uint32_t sampledTextureBindingCountFor(atlantis::asset_system::MaterialKind kind,
                                                            bool environmentEnabled, bool hasNormalMap);
 

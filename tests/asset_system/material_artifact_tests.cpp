@@ -84,7 +84,7 @@ TEST_CASE("encodeMaterialArtifact matches an independently-computed expected byt
   const std::vector<std::byte> expected = {
       std::byte{0x41}, std::byte{0x54}, std::byte{0x4C}, std::byte{0x4D}, std::byte{0x41}, std::byte{0x54},
       std::byte{0x00}, std::byte{0x00},                                        // magic "ATLMAT\0\0"
-      std::byte{0x08}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // schemaVersion = 8
+      std::byte{0x09}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // schemaVersion = 9
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // kind = 0 (UnlitTextured)
       std::byte{0x08}, std::byte{0x07}, std::byte{0x06}, std::byte{0x05}, std::byte{0x04}, std::byte{0x03},
       std::byte{0x02}, std::byte{0x01},                                        // texture_asset_id = 0x0102030405060708
@@ -111,8 +111,10 @@ TEST_CASE("encodeMaterialArtifact matches an independently-computed expected byt
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // emissive_factor[2] = 0.0f
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},      // alpha_mode = 0 (Opaque)
       std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x3F},      // alpha_cutoff = 0.5f (0x3F000000)
+      std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
+      std::byte{0x00}, std::byte{0x00},                                        // emissive_texture_asset_id = 0
   };
-  REQUIRE(expected.size() == 116);
+  REQUIRE(expected.size() == 124);
   CHECK(encoded == expected);
 }
 
@@ -139,7 +141,7 @@ TEST_CASE("decodeMaterialArtifact rejects a real, old, 32-byte schema-version-1 
   CHECK(result.error() == MaterialArtifactDecodeError::TruncatedHeader);
 }
 
-TEST_CASE("decodeMaterialArtifact rejects a buffer larger than the fixed 116-byte record",
+TEST_CASE("decodeMaterialArtifact rejects a buffer larger than the fixed 124-byte record",
           "[asset_system][material]") {
   auto bytes =
       encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
@@ -164,10 +166,10 @@ TEST_CASE("decodeMaterialArtifact rejects an unsupported schema version", "[asse
   auto bytes =
       encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
                               MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
-  // Plan 0042 Milestone 1: this literal must name a value still
-  // genuinely unsupported now that 8 (this round's own bump) is valid --
-  // 9 here, not 8.
-  bytes[8] = std::byte{0x09};  // schemaVersion's low byte, offset 8: 8 -> 9 (unsupported)
+  // Plan 0042 Milestone 1, moved by Plan 0046 Milestone 1: this literal
+  // must name a value still genuinely unsupported now that 9 (this round's
+  // own bump) is valid -- 10 here, not 9.
+  bytes[8] = std::byte{0x0A};  // schemaVersion's low byte, offset 8: 9 -> 10 (unsupported)
   const auto result = decodeMaterialArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialArtifactDecodeError::UnsupportedSchemaVersion);
@@ -310,7 +312,7 @@ TEST_CASE("encode/decodeMaterialArtifact round-trips emissive_factor at offset 9
       encodeMaterialArtifact(MaterialKind::PbrDirectLit, 1ULL, MaterialSamplerFilter::Linear,
                               MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 0.0f, 0.5f, 0ULL, 0.0f,
                               0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f, emissive);
-  REQUIRE(bytes.size() == 116);
+  REQUIRE(bytes.size() == kMaterialArtifactHeaderSizeBytes);
   // 40.0f = 0x42200000, little-endian 00 00 20 42 -- independently computed.
   CHECK(bytes[96] == std::byte{0x00});
   CHECK(bytes[97] == std::byte{0x00});
@@ -361,7 +363,7 @@ TEST_CASE("encode/decodeMaterialArtifact round-trips alpha_mode and alpha_cutoff
                                             MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 0.0f, 0.5f,
                                             0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f, noEmissive,
                                             MaterialAlphaMode::Mask, 0.25f);
-  REQUIRE(bytes.size() == 116);
+  REQUIRE(bytes.size() == kMaterialArtifactHeaderSizeBytes);
   // alpha_mode = 1 (Mask); 0.25f = 0x3E800000, little-endian 00 00 80 3E.
   CHECK(bytes[108] == std::byte{0x01});
   CHECK(bytes[109] == std::byte{0x00});
@@ -418,4 +420,39 @@ TEST_CASE("decodeMaterialArtifact re-validates alpha_cutoff against [0, 1]", "[a
   const auto result = decodeMaterialArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialArtifactDecodeError::MaterialFactorOutOfRange);
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0046 Milestone 1 (ADR-0096): schema 9, 124 bytes,
+// emissive_texture_asset_id at offset 116.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("encode/decodeMaterialArtifact round-trips emissive_texture_asset_id at offset 116",
+          "[asset_system][material][emissive]") {
+  const float emissive[3] = {100.0f, 100.0f, 100.0f};
+  const auto bytes = encodeMaterialArtifact(MaterialKind::PbrDirectLit, 1ULL, MaterialSamplerFilter::Linear,
+                                            MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 0.0f, 0.5f,
+                                            0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f, emissive,
+                                            MaterialAlphaMode::Opaque, 0.5f, 0x1122334455667788ULL);
+  REQUIRE(bytes.size() == 124);
+  CHECK(bytes[116] == std::byte{0x88});
+  CHECK(bytes[117] == std::byte{0x77});
+  CHECK(bytes[122] == std::byte{0x22});
+  CHECK(bytes[123] == std::byte{0x11});
+  const auto decoded = decodeMaterialArtifact(bytes);
+  REQUIRE(decoded.isOk());
+  CHECK(decoded.value().emissiveTexture == 0x1122334455667788ULL);
+  CHECK(decoded.value().emissiveFactor[0] == 100.0f);
+}
+
+TEST_CASE("decodeMaterialArtifact rejects a real-size, 116-byte schema-version-8 artifact",
+          "[asset_system][material][emissive]") {
+  auto bytes = encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
+                                      MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL,
+                                      0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
+  bytes.resize(116);
+  bytes[8] = std::byte{0x08};
+  const auto result = decodeMaterialArtifact(bytes);
+  REQUIRE(result.isErr());
+  CHECK(result.error() == MaterialArtifactDecodeError::TruncatedHeader);
 }

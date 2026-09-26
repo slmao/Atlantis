@@ -111,6 +111,10 @@ struct PbrMaterialsShowcaseFixture {
   std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::SampledTexture>>
       sampledTextureResourceMap;
   std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::Sampler>> samplerResourceMap;
+  // Plan 0046 Milestone 1 (ADR-0096): the 1x1 white emissive default every
+  // realized PBR material without its own emissive texture borrows --
+  // declared before materialResourceMap, so those Materials go first.
+  std::unique_ptr<atlantis::rhi::SampledTexture> defaultEmissiveTexture;
   std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::renderer::Material>>
       materialResourceMap;
 

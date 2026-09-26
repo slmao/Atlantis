@@ -8,78 +8,26 @@
 
 #include <exception>
 #include <iostream>
-#include <optional>
 #include <string>
-#include <string_view>
+#include <vector>
 
 #include "cook_command.h"
 
-namespace {
-
-[[nodiscard]] std::optional<std::string> valueAfterEquals(std::string_view arg, std::string_view flag) {
-  if (arg.substr(0, flag.size()) != flag) return std::nullopt;
-  return std::string(arg.substr(flag.size()));
-}
-
-}  // namespace
-
 int main(int argc, char** argv) {
   using atlantis::tools::asset_cooker::CookCommandRequest;
+  using atlantis::tools::asset_cooker::parseCookArguments;
   using atlantis::tools::asset_cooker::runCookCommand;
 
+  // Plan 0046 Milestone 2: the grammar lives in parseCookArguments()
+  // (cook_command.cpp), shared with the cook-manifest mode.
   CookCommandRequest request;
-  bool sawSource = false, sawAssetRoot = false, sawOutputDir = false, sawAssetList = false;
-  bool sawUnrecognized = false;
-
-  for (int i = 1; i < argc; ++i) {
-    const std::string_view arg = argv[i];
-    if (arg == "--validate-set") {
-      request.isValidateSet = true;
-    } else if (auto source = valueAfterEquals(arg, "--source=")) {
-      request.sourcePath = *source;
-      sawSource = true;
-    } else if (auto assetRoot = valueAfterEquals(arg, "--asset-root=")) {
-      request.assetRoot = *assetRoot;
-      sawAssetRoot = true;
-    } else if (auto outputDir = valueAfterEquals(arg, "--output-dir=")) {
-      request.outputDir = *outputDir;
-      sawOutputDir = true;
-    } else if (auto stamp = valueAfterEquals(arg, "--stamp=")) {
-      request.stampPath = *stamp;
-    } else if (auto assetList = valueAfterEquals(arg, "--asset-list=")) {
-      request.assetListPath = *assetList;
-      sawAssetList = true;
-    } else if (auto kind = valueAfterEquals(arg, "--kind=")) {
-      if (*kind == "mesh") {
-        request.kind = atlantis::tools::asset_cooker::AssetKind::StaticMesh;
-      } else if (*kind == "scene") {
-        request.kind = atlantis::tools::asset_cooker::AssetKind::Scene;
-      } else if (*kind == "texture") {
-        request.kind = atlantis::tools::asset_cooker::AssetKind::Texture;
-      } else if (*kind == "material") {
-        request.kind = atlantis::tools::asset_cooker::AssetKind::Material;
-      } else if (*kind == "environment") {
-        request.kind = atlantis::tools::asset_cooker::AssetKind::Environment;
-      } else {
-        std::cerr << "atlantis_asset_cooker: unrecognized --kind value: " << *kind << "\n";
-        sawUnrecognized = true;
-      }
-    } else if (auto colorSpace = valueAfterEquals(arg, "--color-space=")) {
-      request.colorSpace = *colorSpace;
-    } else {
-      std::cerr << "atlantis_asset_cooker: unrecognized argument: " << arg << "\n";
-      sawUnrecognized = true;
-    }
-  }
-
-  const bool haveRequiredFlags =
-      request.isValidateSet ? sawAssetList : (sawSource && sawAssetRoot && sawOutputDir);
-
-  if (sawUnrecognized || !haveRequiredFlags) {
+  if (!parseCookArguments(std::vector<std::string>(argv + 1, argv + argc), request, std::cerr)) {
     std::cerr << "usage: atlantis_asset_cooker [--kind=mesh|scene|texture|material|environment] --source=<path> "
                  "--asset-root=<dir> "
                  "--output-dir=<dir> [--stamp=<path>] [--color-space=unorm|srgb]\n"
-                 "       atlantis_asset_cooker --validate-set --asset-list=<path>\n";
+                 "       atlantis_asset_cooker --validate-set --asset-list=<path>\n"
+                 "       atlantis_asset_cooker --kind=cook-manifest --import-dir=<dir> --cooked-dir=<dir> "
+                 "--content-parent=<dir> --manifest-out=<path> [--stamp=<path>]\n";
     return 1;
   }
 

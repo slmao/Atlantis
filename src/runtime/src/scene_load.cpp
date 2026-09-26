@@ -211,6 +211,25 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
       }
     }
 
+    // Plan 0046 Milestone 1 (ADR-0096): the optional emissive texture,
+    // resolved/loaded/deduplicated through the same textureDataMap. No
+    // colour-space requirement: glTF's emissive is sRGB colour, and a
+    // Unorm mask samples just as well.
+    if (materialAssetData.emissiveTexture != 0 && !textureDataMap.contains(materialAssetData.emissiveTexture)) {
+      const auto* emissiveEntry = resolver.find(materialAssetData.emissiveTexture);
+      if (!emissiveEntry) {
+        ATLANTIS_LOG_ERROR("a material's own referenced emissive texture AssetId has no manifest entry");
+        return ResultT::Err(RuntimeInitError::SceneDependencyUnresolved);
+      }
+      auto emissiveResult =
+          atlantis::asset_system::loadTextureAsset(emissiveEntry->artifactPath, emissiveEntry->metadataPath);
+      if (emissiveResult.isErr()) {
+        ATLANTIS_LOG_ERROR("loadTextureAsset() failed for a material's own referenced emissive texture");
+        return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
+      }
+      textureDataMap.emplace(materialAssetData.emissiveTexture, std::move(emissiveResult.value()));
+    }
+
     materialDataMap.emplace(distinctMaterialIds[i], materialAssetData);
   }
 

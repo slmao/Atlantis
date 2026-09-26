@@ -42,7 +42,10 @@ struct MaterialRun {
 MaterialRun runMaterialImport(const std::string& testName, gltf_test::PrimitiveSpec spec,
                               const std::vector<std::string>& ddsNames = {}) {
   const fs::path dir = gltf_test::freshDirectory(testName);
-  const std::vector<unsigned char> dds = atlantis::gltf_importer::detail::whiteFallbackDds();
+  // Test inputs are tagged BC7_UNORM (DXGI 99), like Bistro's own files; the
+  // importer's fallback itself is DXGI 100 (Spec 0046 Q8).
+  std::vector<unsigned char> dds = atlantis::gltf_importer::detail::whiteFallbackDds();
+  dds[128] = 99;
   for (const std::string& file : ddsNames) {
     std::ofstream(dir / file, std::ios::binary).write(reinterpret_cast<const char*>(dds.data()),
                                                       static_cast<std::streamsize>(dds.size()));
@@ -146,12 +149,13 @@ TEST_CASE("A factor-only spec-gloss material converts via D3 and gets the white 
   REQUIRE(parsed.isOk());
   CHECK(parsed.value().width == 4);
   CHECK(parsed.value().height == 4);
-  CHECK_FALSE(parsed.value().srgb);
+  CHECK(parsed.value().srgb);  // DXGI 100: a base-colour stand-in (Spec 0046 Q8)
   CHECK(parsed.value().blockBytes.size() == 16);
   CHECK(parsed.value().mipCount == 1);  // no DDSD_MIPMAPCOUNT: one level (Spec 0045)
   const std::string manifest = readText(run.outputDir / "cook_manifest.txt");
   CHECK(manifest.find("--kind=texture --source={import_dir}/t/_importer/white_4x4_bc7.dds --asset-root={import_dir}") !=
         std::string::npos);
+  CHECK(manifest.find("white_4x4_bc7.stamp --color-space=srgb") != std::string::npos);
   CHECK(manifest.find("--kind=material --source={import_dir}/t/materials/0.material.txt --asset-root={import_dir}") !=
         std::string::npos);
   CHECK(manifest.find("--kind=texture") < manifest.find("--kind=material"));
@@ -182,36 +186,79 @@ TEST_CASE("A spec-gloss material with a specularGlossinessTexture takes the Ruli
   CHECK(material.filter == atlantis::asset_system::MaterialSamplerFilter::Linear);
   CHECK(material.addressMode == atlantis::asset_system::MaterialSamplerAddressMode::Repeat);
 
-  // Ruling 4: *_diff* stored as BC7_UNORM (DXGI 99) is reported, not changed.
+  // Plan 0037 Ruling 4 narrowed by Spec 0046 Q8: a colour-used DDS tagged
+  // BC7_UNORM (DXGI 99) is reported and flagged for an sRGB cook.
   CHECK(summary.colorSpaceWarnings == 1);
-  CHECK(reportContains(summary, "colour-space warning (Ruling 4): material_sg_texture_fallback/brick_diff.dds"));
+  CHECK(reportContains(summary, "colour-space override (Spec 0046 Q8): material_sg_texture_fallback/brick_diff.dds "
+                                "is DXGI 99"));
   const std::string manifest = readText(run.outputDir / "cook_manifest.txt");
   CHECK(manifest.find("--source={content_parent}/material_sg_texture_fallback/brick_diff.dds "
                       "--asset-root={content_parent}") != std::string::npos);
+  CHECK(manifest.find("brick_diff.stamp --color-space=srgb") != std::string::npos);
 }
 
-TEST_CASE("A transmission material imports as pbr_direct_lit with a report line", "[gltf_importer][material]") {
+// Spec 0046 ruling Q3 (Plan 0046 P6): transmission is blend at alpha
+// baseColorFactor.a x (1 - transmissionFactor), decided by the transmission
+// block whatever glTF's alphaMode says -- Bistro's glass is OPAQUE (material
+// 0 here), and a BLEND or MASK declaration is superseded, not mapped
+// (material 1). A zero factor is no transmission (material 2).
+TEST_CASE("A transmission material imports as BLEND at alpha x (1 - transmission), whatever its alphaMode",
+          "[gltf_importer][material][transparency]") {
   auto spec = gltf_test::unitQuad();
   spec.materialsJson =
       "[{\"pbrMetallicRoughness\":{\"baseColorFactor\":[0.9,0.9,0.9,1.0],\"metallicFactor\":0.0,"
-      "\"roughnessFactor\":0.1},\"alphaMode\":\"BLEND\",\"doubleSided\":true,"
-      "\"extensions\":{\"KHR_materials_transmission\":{\"transmissionFactor\":0.95}}}]";
+      "\"roughnessFactor\":0.1},\"doubleSided\":true,"
+      "\"extensions\":{\"KHR_materials_transmission\":{\"transmissionFactor\":0.75}}},"
+      "{\"pbrMetallicRoughness\":{\"baseColorFactor\":[1.0,1.0,1.0,0.5]},\"alphaMode\":\"MASK\","
+      "\"extensions\":{\"KHR_materials_transmission\":{\"transmissionFactor\":0.5}}},"
+      "{\"extensions\":{\"KHR_materials_transmission\":{\"transmissionFactor\":0.0}}}]";
   spec.extensionsUsedJson = "[\"KHR_materials_transmission\"]";
   const MaterialRun run = runMaterialImport("material_transmission", spec);
   REQUIRE(run.result.isOk());
   const GltfImportSummary& summary = run.result.value();
-  CHECK(summary.materialsTransmission == 1);
-  CHECK(summary.materialsMetallicRoughness == 1);
-  CHECK(reportContains(summary, "KHR_materials_transmission factor 0.95 recorded only; imported as pbr_direct_lit"));
-  // Spec 0042 R9 / ruling O3: a transmission material stays opaque even
-  // when it declares BLEND.
-  CHECK(reportContains(summary, "alphaMode=BLEND not mapped, transmission material stays opaque (Spec 0042 O3)"));
-  CHECK(reportContains(summary, "no v8 destination, dropped (Ruling 3): doubleSided"));
-  const auto material = parsedMaterial0(run.outputDir);
-  CHECK(material.kind == atlantis::asset_system::MaterialKind::PbrDirectLit);
-  CHECK(material.alphaMode == atlantis::asset_system::MaterialAlphaMode::Opaque);
-  CHECK(material.metallicFactor == 0.0f);
-  CHECK(material.roughnessFactor == Catch::Approx(0.1f));
+  CHECK(summary.materialsTransmission == 3);
+  CHECK(summary.materialsMetallicRoughness == 3);
+  using atlantis::asset_system::MaterialAlphaMode;
+  const auto parsedMaterial = [&](int index) {
+    const auto parsed = atlantis::asset_system::parseMaterialSource(
+        readText(run.outputDir / ("t/materials/" + std::to_string(index) + ".material.txt")));
+    REQUIRE(parsed.isOk());
+    return parsed.value();
+  };
+
+  const auto glass = parsedMaterial(0);
+  CHECK(glass.kind == atlantis::asset_system::MaterialKind::PbrDirectLit);
+  CHECK(glass.alphaMode == MaterialAlphaMode::Blend);
+  CHECK(glass.baseColorFactor[3] == 0.25f);  // 1.0 x (1 - 0.75)
+  CHECK(glass.baseColorFactor[0] == 0.9f);
+  CHECK(glass.metallicFactor == 0.0f);
+  CHECK(glass.roughnessFactor == Catch::Approx(0.1f));
+  CHECK(reportContains(summary, "material_0: KHR_materials_transmission factor 0.75 mapped to BLEND, baseColorFactor "
+                                "alpha 0.25 (alpha x (1 - transmission), Spec 0046 Q3)"));
+  CHECK(reportContains(summary, "no v9 destination, dropped (Ruling 3): doubleSided"));
+
+  const auto masked = parsedMaterial(1);
+  CHECK(masked.alphaMode == MaterialAlphaMode::Blend);
+  CHECK(masked.baseColorFactor[3] == 0.25f);  // 0.5 x (1 - 0.5)
+  CHECK(masked.alphaCutoff == 0.5f);
+  CHECK(reportContains(summary, "material_1: alphaMode=MASK alphaCutoff=0.5 not mapped, transmission decides the "
+                                "mode (Spec 0046 Q3)"));
+
+  const auto zero = parsedMaterial(2);
+  CHECK(zero.alphaMode == MaterialAlphaMode::Opaque);
+  CHECK(zero.baseColorFactor[3] == 1.0f);
+  CHECK(reportContains(summary, "material_2: KHR_materials_transmission factor 0 not mapped"));
+
+  // Every source cooks: the blended alpha is an ordinary [0, 1] factor.
+  for (int index : {0, 1, 2}) {
+    INFO("material " << index);
+    const std::string n = std::to_string(index);
+    CHECK(atlantis::asset_system::cookMaterial(
+              (run.outputDir / ("t/materials/" + n + ".material.txt")).string(), "t/materials/" + n + ".material.txt",
+              (run.dir / ("cooked/" + n + ".amaterial")).string(),
+              (run.dir / ("cooked/" + n + ".amaterial.meta.txt")).string())
+              .isOk());
+  }
 }
 
 TEST_CASE("Generated .material.txt round-trips through parseMaterialSource and cooks through cookMaterial",
@@ -278,12 +325,14 @@ TEST_CASE("Out-of-scope material content fails with distinct named errors and le
   }
 }
 
-// Spec 0041 Requirement 8 (rulings O3, Q3): the importer maps an emissive
-// factor only when the material has no emissive texture and the factor is
-// inside [0, 65504]; every other case is dropped with its own report line.
-// Material 0 carries an HDR factor (Bistro's string lights reach 20), so
-// the mapping must not clamp it to [0, 1].
-TEST_CASE("Emissive factors are mapped without a texture, dropped with one, and dropped when out of range",
+// Spec 0041 Requirement 8 (rulings O3, Q3), widened by Plan 0046
+// Milestone 1 (ADR-0096): the importer maps an in-range emissive factor,
+// with its emissive texture when it has one; a texture with a zero factor
+// is inert and not mapped; an out-of-range factor is dropped with its
+// texture. Material 0 carries an HDR factor (Bistro's string lights reach
+// 20), so the mapping must not clamp it to [0, 1].
+TEST_CASE("Emissive factors are mapped with or without a texture, a zero-factor texture stays inert, and an "
+          "out-of-range factor is dropped with its texture",
           "[gltf_importer][material][emissive]") {
   auto spec = gltf_test::unitQuad();
   addDdsTexture(spec, "sign_em.dds");
@@ -291,7 +340,7 @@ TEST_CASE("Emissive factors are mapped without a texture, dropped with one, and 
       "[{\"emissiveFactor\":[20.0,0.8,0.0]},"
       "{\"emissiveFactor\":[0.5,1.0,0.5],\"emissiveTexture\":{\"index\":0}},"
       "{\"emissiveTexture\":{\"index\":0}},"
-      "{\"emissiveFactor\":[70000.0,1.0,1.0]}]";
+      "{\"emissiveFactor\":[70000.0,1.0,1.0],\"emissiveTexture\":{\"index\":0}}]";
   const MaterialRun run = runMaterialImport("material_emissive", spec, {"sign_em.dds"});
   REQUIRE(run.result.isOk());
   const GltfImportSummary& summary = run.result.value();
@@ -310,18 +359,24 @@ TEST_CASE("Emissive factors are mapped without a texture, dropped with one, and 
   CHECK(mapped.emissiveFactor[2] == 0.0f);
   CHECK(reportContains(summary, "material_0: emissiveFactor=(20,0.8,0) mapped (Spec 0041 R8)"));
 
-  // Factor + texture: the factor is not applied without its texture.
-  const auto withTexture = parsedMaterial(1);
-  CHECK(withTexture.emissiveFactor[0] == 0.0f);
-  CHECK(withTexture.emissiveFactor[1] == 0.0f);
-  CHECK(withTexture.emissiveFactor[2] == 0.0f);
-  CHECK(reportContains(summary, "material_1: emissiveFactor=(0.5,1,0.5) dropped, emissiveTexture present"));
-  CHECK(reportContains(summary, "material_1: no v8 destination, dropped (Ruling 3): emissiveTexture"));
+  CHECK(mapped.emissiveTextureLogicalPath.empty());
 
-  // Texture with a zero factor: inert, reported only as an undestined texture.
+  // Factor + texture (ADR-0096): both mapped, the texture declared for cooking.
+  const auto withTexture = parsedMaterial(1);
+  CHECK(withTexture.emissiveFactor[0] == 0.5f);
+  CHECK(withTexture.emissiveFactor[1] == 1.0f);
+  CHECK(withTexture.emissiveFactor[2] == 0.5f);
+  CHECK(withTexture.emissiveTextureLogicalPath == "material_emissive/sign_em.dds");
+  CHECK(reportContains(summary, "material_1: emissiveFactor=(0.5,1,0.5) mapped with emissiveTexture "
+                                "material_emissive/sign_em.dds (ADR-0096)"));
+  CHECK(readText(run.outputDir / "cook_manifest.txt").find("material_emissive/sign_em.dds") != std::string::npos);
+  CHECK_FALSE(reportContains(summary, "Ruling 3): emissiveTexture"));
+
+  // Texture with a zero factor: inert, not mapped.
   const auto textureOnly = parsedMaterial(2);
   CHECK(textureOnly.emissiveFactor[0] == 0.0f);
-  CHECK(reportContains(summary, "material_2: no v8 destination, dropped (Ruling 3): emissiveTexture"));
+  CHECK(textureOnly.emissiveTextureLogicalPath.empty());
+  CHECK(reportContains(summary, "material_2: emissiveTexture inert (emissiveFactor 0), not mapped (ADR-0096)"));
   CHECK_FALSE(reportContains(summary, "material_2: emissiveFactor"));
 
   // Out of range (Q3): dropped and reported; the import still succeeds. The
@@ -329,21 +384,27 @@ TEST_CASE("Emissive factors are mapped without a texture, dropped with one, and 
   // as 7e+04.
   const auto outOfRange = parsedMaterial(3);
   CHECK(outOfRange.emissiveFactor[0] == 0.0f);
-  CHECK(reportContains(summary,
-                       "material_3: emissiveFactor=(7e+04,1,1) dropped, outside the emissive range [0, 65504]"));
+  CHECK(outOfRange.emissiveTextureLogicalPath.empty());
+  CHECK(reportContains(summary, "material_3: emissiveFactor=(7e+04,1,1) dropped with its emissiveTexture, outside "
+                                "the emissive range [0, 65504]"));
 
-  // The mapped source cooks: its HDR factor passes cookMaterial()'s own
-  // [0, 65504] check rather than the [0, 1] one.
-  const auto cookResult = atlantis::asset_system::cookMaterial(
-      (run.outputDir / "t/materials/0.material.txt").string(), "t/materials/0.material.txt",
-      (run.dir / "cooked/0.amaterial").string(), (run.dir / "cooked/0.amaterial.meta.txt").string());
-  CHECK(cookResult.isOk());
+  // The mapped sources cook: the HDR factor passes cookMaterial()'s own
+  // [0, 65504] check rather than the [0, 1] one, and the v9 emissive_texture
+  // line resolves.
+  for (int index : {0, 1}) {
+    INFO("material " << index);
+    const std::string n = std::to_string(index);
+    const auto cookResult = atlantis::asset_system::cookMaterial(
+        (run.outputDir / ("t/materials/" + n + ".material.txt")).string(), "t/materials/" + n + ".material.txt",
+        (run.dir / ("cooked/" + n + ".amaterial")).string(), (run.dir / ("cooked/" + n + ".amaterial.meta.txt")).string());
+    CHECK(cookResult.isOk());
+  }
 }
 
 // Spec 0042 Requirement 9 (ruling O1): MASK maps to Mask plus its cutoff
 // (glTF's 0.5 default when omitted), BLEND to Blend, OPAQUE stays Opaque; a
 // MASK cutoff outside [0, 1] keeps 0.5 and is reported.
-TEST_CASE("alphaMode MASK and BLEND map to the v8 alpha fields", "[gltf_importer][material][transparency]") {
+TEST_CASE("alphaMode MASK and BLEND map to the material alpha fields", "[gltf_importer][material][transparency]") {
   auto spec = gltf_test::unitQuad();
   spec.materialsJson =
       "[{\"alphaMode\":\"MASK\",\"alphaCutoff\":0.3},"

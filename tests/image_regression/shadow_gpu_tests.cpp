@@ -375,9 +375,12 @@ struct ShadowTestRig {
        .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
-       .sampledTextureBindingCount = 2},
+       .sampledTextureBindingCount = 3},
       textureResult.value().get(), samplerResult.value().get(), MaterialPushConstantLayout::PbrDirectLit,
-      std::array<float, 4>{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 0.8f, MaterialEnvironmentBinding::None);
+      std::array<float, 4>{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 0.8f, MaterialEnvironmentBinding::None,
+      /*normalMapTexture=*/nullptr, 0.0f, 0.0f, std::array<float, 3>{0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f,
+      std::array<float, 3>{0.0f, 0.0f, 0.0f}, atlantis::renderer::MaterialAlphaMode::Opaque, 0.0f,
+      /*emissiveTexture=*/textureResult.value().get());
   if (materialResult.isErr()) return std::nullopt;
 
   auto cameraBufferResult = device->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = atlantis::runtime::kCameraUniformBufferSizeBytes});
@@ -883,9 +886,12 @@ TEST_CASE("Directional shadow leaves the IBL/ambient term untouched: shadowed vs
        .colorFormat = atlantis::rhi::HdrFormat::Rgba16Float,
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = sizeof(atlantis::renderer::PbrPushConstants),
-       .sampledTextureBindingCount = 4},
+       .sampledTextureBindingCount = 5},
       textureResult.value().get(), samplerResult.value().get(), MaterialPushConstantLayout::PbrDirectLit,
-      std::array<float, 4>{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 0.8f, MaterialEnvironmentBinding::Ibl);
+      std::array<float, 4>{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 0.8f, MaterialEnvironmentBinding::Ibl,
+      /*normalMapTexture=*/nullptr, 0.0f, 0.0f, std::array<float, 3>{0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f,
+      std::array<float, 3>{0.0f, 0.0f, 0.0f}, atlantis::renderer::MaterialAlphaMode::Opaque, 0.0f,
+      /*emissiveTexture=*/textureResult.value().get());
   REQUIRE(materialResult.isOk());
   Material material = std::move(materialResult.value());
 

@@ -7,6 +7,7 @@
 #include "cli.h"
 
 #include <array>
+#include <cstddef>
 #include <iostream>
 #include <string>
 #include <utility>
@@ -45,7 +46,16 @@ int main(int argc, char** argv) {
   // whitelist entry -- purely appended, no change to the existing three
   // entries' own behavior (Spec 0032's own established "closed
   // whitelist, additive-only" design).
-  const std::array<SceneWhitelistEntry, 4> whitelist{{
+  // Plan 0046 Milestone 3 (Spec 0046 Q7, ruling O1): the 5th entry,
+  // `bistro`, exists only when the Bistro build step was declared (the
+  // content present at configure time), and renders without the global
+  // environment -- a night street lit by its own lights, not a studio IBL.
+#if defined(ATLANTIS_RUNTIME_BISTRO_SCENE_ARTIFACT_PATH)
+  constexpr std::size_t kWhitelistSize = 5;
+#else
+  constexpr std::size_t kWhitelistSize = 4;
+#endif
+  const std::array<SceneWhitelistEntry, kWhitelistSize> whitelist{{
       {"integrated_showcase_demo",
        SceneBootstrapPaths{ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH, ATLANTIS_RUNTIME_SCENE_METADATA_PATH,
                             ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH}},
@@ -61,6 +71,11 @@ int main(int argc, char** argv) {
        SceneBootstrapPaths{ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_ARTIFACT_PATH,
                             ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_METADATA_PATH,
                             ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_MANIFEST_PATH}},
+#if defined(ATLANTIS_RUNTIME_BISTRO_SCENE_ARTIFACT_PATH)
+      {"bistro",
+       SceneBootstrapPaths{ATLANTIS_RUNTIME_BISTRO_SCENE_ARTIFACT_PATH, ATLANTIS_RUNTIME_BISTRO_SCENE_METADATA_PATH,
+                            ATLANTIS_RUNTIME_BISTRO_SCENE_MANIFEST_PATH, /*disableEnvironmentLight=*/true}},
+#endif
   }};
 
   const CommandLineResult cliResult = parseCommandLine(argc, argv, whitelist);
@@ -122,8 +137,13 @@ int main(int argc, char** argv) {
   config.pbrDirectLitNormalMapFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR) +
       "/pbr_direct_lit_normal_map.frag.refl.json";
-  config.environmentArtifactPath = ATLANTIS_RUNTIME_ENVIRONMENT_ARTIFACT_PATH;
-  config.environmentMetadataPath = ATLANTIS_RUNTIME_ENVIRONMENT_METADATA_PATH;
+  // Plan 0046 Milestone 3 (ruling O1): an entry flagged disableEnvironmentLight
+  // leaves the environment unconfigured -- BootstrapConfig's own "no
+  // environment" case (no IBL shaders selected, no sky).
+  if (!cliResult.selectedScene->disableEnvironmentLight) {
+    config.environmentArtifactPath = ATLANTIS_RUNTIME_ENVIRONMENT_ARTIFACT_PATH;
+    config.environmentMetadataPath = ATLANTIS_RUNTIME_ENVIRONMENT_METADATA_PATH;
+  }
   config.pbrIblVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl.vert.spv";
   config.pbrIblVertexShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl.vert.refl.json";

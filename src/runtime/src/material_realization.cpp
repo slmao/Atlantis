@@ -372,8 +372,10 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
     const atlantis::asset_system::MaterialAssetData& materialData,
     const atlantis::asset_system::TextureAssetData& textureData,
     const atlantis::asset_system::TextureAssetData* normalMapTextureData,
+    const atlantis::asset_system::TextureAssetData* emissiveTextureData,
     const std::unordered_map<atlantis::asset_system::AssetId, const atlantis::rhi::SampledTexture*>&
-        effectiveSampledTextures) {
+        effectiveSampledTextures,
+    const atlantis::rhi::SampledTexture& defaultEmissiveTexture) {
   using ResultT = atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError>;
   const bool hasNormalMap = materialData.normalMapTexture != 0;
 
@@ -442,6 +444,51 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
     }
   }
 
+  // Plan 0046 Milestone 1 (ADR-0096): the emissive texture, the same
+  // dedup-then-create sequence again -- also deduplicated against this
+  // candidate's own base-colour/normal-map textures (a material may name
+  // one texture for two slots). A PBR material naming none binds the
+  // caller's default; the non-PBR kinds bind nothing (their shaders
+  // declare no emissive slot).
+  const bool isPbrKind = materialData.kind == atlantis::asset_system::MaterialKind::PbrDirectLit ||
+                         materialData.kind == atlantis::asset_system::MaterialKind::PbrClearcoat ||
+                         materialData.kind == atlantis::asset_system::MaterialKind::PbrSheen ||
+                         materialData.kind == atlantis::asset_system::MaterialKind::PbrAnisotropic;
+  const atlantis::rhi::SampledTexture* emissiveTexturePtr = isPbrKind ? &defaultEmissiveTexture : nullptr;
+  if (materialData.emissiveTexture != 0) {
+    ATLANTIS_CHECK_MSG(isPbrKind, "realizeOneMaterialCandidate(): only a PBR material may name an emissive texture");
+    ATLANTIS_CHECK_MSG(emissiveTextureData != nullptr,
+                        "realizeOneMaterialCandidate(): a material declaring emissiveTexture must be called with "
+                        "its own emissiveTextureData already resolved by the caller");
+    candidate.emissiveTextureAssetId = materialData.emissiveTexture;
+    const auto existingEmissive = effectiveSampledTextures.find(materialData.emissiveTexture);
+    if (existingEmissive != effectiveSampledTextures.end()) {
+      emissiveTexturePtr = existingEmissive->second;
+    } else if (materialData.emissiveTexture == materialData.textureAsset) {
+      emissiveTexturePtr = sampledTexturePtr;
+    } else if (hasNormalMap && materialData.emissiveTexture == materialData.normalMapTexture) {
+      emissiveTexturePtr = normalMapTexturePtr;
+    } else {
+      auto emissiveTextureResult = device.createSampledTexture(SampledTextureCreateParams{
+          .extent = Extent2D{emissiveTextureData->width, emissiveTextureData->height},
+          .format = toSampledTextureFormat(emissiveTextureData->colorSpace, emissiveTextureData->layout),
+          .mipLevelCount = emissiveTextureData->mipCount});
+      if (emissiveTextureResult.isErr()) return ResultT::Err(MaterialRealizationError::SampledTextureCreateFailed);
+      candidate.newEmissiveTexture = std::move(emissiveTextureResult.value());
+
+      const std::size_t emissiveStagingBytes = emissiveTextureData->pixelBytes.size();
+      auto emissiveStagingResult =
+          device.createBuffer({.purpose = BufferPurpose::Staging, .sizeBytes = emissiveStagingBytes});
+      if (emissiveStagingResult.isErr()) return ResultT::Err(MaterialRealizationError::StagingBufferCreateFailed);
+      std::memcpy(emissiveStagingResult.value()->mappedData(), emissiveTextureData->pixelBytes.data(),
+                  emissiveStagingBytes);
+      candidate.emissiveStagingBuffer = std::move(emissiveStagingResult.value());
+      candidate.emissiveUploadRegions = textureUploadRegions(*emissiveTextureData);
+
+      emissiveTexturePtr = candidate.newEmissiveTexture.get();
+    }
+  }
+
   // Spec 0045 R5 / ADR-0093 Decision 4, ruling O4: maxLod reaches the
   // deepest level of the textures this sampler serves (the created
   // resources are the authority, deduplicated ones included); mipFilter
@@ -451,6 +498,10 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
   std::uint32_t deepestMipLevel = sampledTexturePtr->mipLevelCount() - 1;
   if (normalMapTexturePtr != nullptr) {
     deepestMipLevel = std::max(deepestMipLevel, normalMapTexturePtr->mipLevelCount() - 1);
+  }
+  // Plan 0046 P3: the emissive texture joins; the 1x1 default adds 0.
+  if (emissiveTexturePtr != nullptr) {
+    deepestMipLevel = std::max(deepestMipLevel, emissiveTexturePtr->mipLevelCount() - 1);
   }
   const atlantis::rhi::Filter samplerFilter = toFilter(materialData.filter);
   auto samplerResult = device.createSampler(SamplerCreateParams{
@@ -533,7 +584,8 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
       alphaRealization.rendererAlphaMode,
       // Plan 0042 Milestone 2 (Spec 0042 R6): pushed as 0 unless Mask, so
       // Opaque/Blend never discard.
-      materialData.alphaMode == atlantis::asset_system::MaterialAlphaMode::Mask ? materialData.alphaCutoff : 0.0f);
+      materialData.alphaMode == atlantis::asset_system::MaterialAlphaMode::Mask ? materialData.alphaCutoff : 0.0f,
+      emissiveTexturePtr);
   if (materialResult.isErr()) return ResultT::Err(MaterialRealizationError::MaterialCreateFailed);
   candidate.material = std::make_unique<atlantis::renderer::Material>(std::move(materialResult.value()));
 
@@ -602,7 +654,8 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
     const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData>&
         materialDataMap,
     const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData>&
-        textureDataMap) {
+        textureDataMap,
+    const atlantis::rhi::SampledTexture& defaultEmissiveTexture) {
   namespace render_graph = atlantis::render_graph;
 
   // Seeded from the persistent map; extended below with each new
@@ -641,6 +694,15 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
                           "into textureDataMap by Phase 1");
       normalMapTextureData = &normalMapTextureIt->second;
     }
+    // Plan 0046 Milestone 1 (ADR-0096): resolved exactly like the normal map.
+    const atlantis::asset_system::TextureAssetData* emissiveTextureData = nullptr;
+    if (materialIt->second.emissiveTexture != 0) {
+      const auto emissiveTextureIt = textureDataMap.find(materialIt->second.emissiveTexture);
+      ATLANTIS_CHECK_MSG(emissiveTextureIt != textureDataMap.end(),
+                          "realizePendingMaterials(): a material's own emissiveTexture must already be loaded into "
+                          "textureDataMap by Phase 1");
+      emissiveTextureData = &emissiveTextureIt->second;
+    }
 
     auto candidateResult = realizeOneMaterialCandidate(
         device, unlitTexturedVertexInputLayout, unlitTexturedVertexSpirv, unlitTexturedFragmentSpirv,
@@ -655,7 +717,8 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
         pbrSheenIblNormalMapFragmentSpirv, pbrAnisotropicIblVertexInputLayout, pbrAnisotropicIblVertexSpirv,
         pbrAnisotropicIblFragmentSpirv, pbrAnisotropicIblNormalMapVertexInputLayout,
         pbrAnisotropicIblNormalMapVertexSpirv, pbrAnisotropicIblNormalMapFragmentSpirv, environmentEnabled, id,
-        materialIt->second, textureIt->second, normalMapTextureData, effectiveSampledTextures);
+        materialIt->second, textureIt->second, normalMapTextureData, emissiveTextureData, effectiveSampledTextures,
+        defaultEmissiveTexture);
     if (candidateResult.isErr()) {
       ATLANTIS_LOG_ERROR("realizeOneMaterialCandidate() failed -- material stays pending, retried next frame");
       continue;
@@ -673,6 +736,12 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
                              candidate.normalMapUploadRegions);
       effectiveSampledTextures.emplace(candidate.normalMapTextureAssetId, candidate.newNormalMapTexture.get());
       uploadedTextures.push_back(candidate.newNormalMapTexture.get());
+    }
+    if (candidate.newEmissiveTexture) {
+      buildTextureUploadPass(uploadBuilder, **candidate.emissiveStagingBuffer, *candidate.newEmissiveTexture,
+                             candidate.emissiveUploadRegions);
+      effectiveSampledTextures.emplace(candidate.emissiveTextureAssetId, candidate.newEmissiveTexture.get());
+      uploadedTextures.push_back(candidate.newEmissiveTexture.get());
     }
     realized.emplace(id, std::move(candidate));
   }
@@ -693,6 +762,37 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
   }
 
   return realized;
+}
+
+atlantis::Result<DefaultEmissiveTexture, MaterialRealizationError> createDefaultEmissiveTexture(
+    atlantis::rhi::Device& device, atlantis::rhi::CommandList& commandList) {
+  using ResultT = atlantis::Result<DefaultEmissiveTexture, MaterialRealizationError>;
+  namespace render_graph = atlantis::render_graph;
+
+  DefaultEmissiveTexture result;
+  auto textureResult = device.createSampledTexture(SampledTextureCreateParams{
+      .extent = Extent2D{1, 1}, .format = SampledTextureFormat::Rgba8Unorm, .mipLevelCount = 1});
+  if (textureResult.isErr()) return ResultT::Err(MaterialRealizationError::SampledTextureCreateFailed);
+  result.texture = std::move(textureResult.value());
+
+  constexpr std::uint8_t kWhiteTexel[4] = {255, 255, 255, 255};
+  auto stagingResult = device.createBuffer({.purpose = BufferPurpose::Staging, .sizeBytes = sizeof(kWhiteTexel)});
+  if (stagingResult.isErr()) return ResultT::Err(MaterialRealizationError::StagingBufferCreateFailed);
+  std::memcpy(stagingResult.value()->mappedData(), kWhiteTexel, sizeof(kWhiteTexel));
+  result.stagingBuffer = std::move(stagingResult.value());
+
+  const std::vector<atlantis::rhi::SampledTextureUploadRegion> regions = {
+      {.bufferOffsetBytes = 0, .mipLevel = 0, .extent = Extent2D{1, 1}}};
+  render_graph::RenderGraphBuilder uploadBuilder;
+  buildTextureUploadPass(uploadBuilder, *result.stagingBuffer, *result.texture, regions);
+  auto compileResult = uploadBuilder.compile();
+  ATLANTIS_CHECK_MSG(compileResult.isOk(), "createDefaultEmissiveTexture(): a one-pass upload graph always compiles");
+  const std::vector<render_graph::ResourceBinding> bindings = {
+      {.resource = compileResult.value().resourceAt(0),
+       .sampledTexture = result.texture.get(),
+       .finalState = atlantis::rhi::ResourceState::ShaderRead}};
+  render_graph::execute(compileResult.value(), bindings, commandList);
+  return ResultT::Ok(std::move(result));
 }
 
 bool isSrgbFormat(atlantis::rhi::Format format) {
@@ -734,9 +834,11 @@ std::uint32_t sampledTextureBindingCountFor(atlantis::asset_system::MaterialKind
     case atlantis::asset_system::MaterialKind::UnlitTextured:
     case atlantis::asset_system::MaterialKind::LitTextured:
       return 1U;
+    // Plan 0046 Milestone 1 (ADR-0096): every PBR count below is one more
+    // than before -- the emissive texture at the last binding.
     case atlantis::asset_system::MaterialKind::PbrDirectLit:
-      if (hasNormalMap) return environmentEnabled ? 5U : 3U;
-      return environmentEnabled ? 4U : 2U;
+      if (hasNormalMap) return environmentEnabled ? 6U : 4U;
+      return environmentEnabled ? 5U : 3U;
     // Plan 0035 Milestone 2 (ADR-0081): PbrClearcoat's own binding
     // layout has no shadow-map slot (this Milestone's own disclosed
     // IBL-only, no-shadow scope) -- base-color@1, environment
@@ -748,15 +850,15 @@ std::uint32_t sampledTextureBindingCountFor(atlantis::asset_system::MaterialKind
     // function over its own parameter domain, never called in that
     // configuration in practice.
     case atlantis::asset_system::MaterialKind::PbrClearcoat:
-      if (hasNormalMap) return environmentEnabled ? 4U : 3U;
-      return environmentEnabled ? 3U : 2U;
+      if (hasNormalMap) return environmentEnabled ? 5U : 4U;
+      return environmentEnabled ? 4U : 3U;
     // Plan 0035 Milestone 3 (ADR-0081): PbrSheen's own binding layout is
     // identical in shape to PbrClearcoat's own immediately above --
     // pbr_sheen_ibl.slang/pbr_sheen_ibl_normal_map.slang declare the
     // same base-color@1/environment@2/DFG-LUT@3(/normal-map@4) bindings.
     case atlantis::asset_system::MaterialKind::PbrSheen:
-      if (hasNormalMap) return environmentEnabled ? 4U : 3U;
-      return environmentEnabled ? 3U : 2U;
+      if (hasNormalMap) return environmentEnabled ? 5U : 4U;
+      return environmentEnabled ? 4U : 3U;
     // Plan 0035 Milestone 4 (ADR-0081): PbrAnisotropic's own binding
     // layout is identical in shape to PbrClearcoat/PbrSheen's own
     // immediately above -- pbr_anisotropic_ibl.slang/
@@ -765,8 +867,8 @@ std::uint32_t sampledTextureBindingCountFor(atlantis::asset_system::MaterialKind
     // extra tangent vertex attribute both variants need is orthogonal
     // to this descriptor-binding count -- no new binding for it.
     case atlantis::asset_system::MaterialKind::PbrAnisotropic:
-      if (hasNormalMap) return environmentEnabled ? 4U : 3U;
-      return environmentEnabled ? 3U : 2U;
+      if (hasNormalMap) return environmentEnabled ? 5U : 4U;
+      return environmentEnabled ? 4U : 3U;
   }
   ATLANTIS_CHECK_MSG(
       false, "sampledTextureBindingCountFor(): unreachable -- MaterialKind's own closed switch above is exhaustive");

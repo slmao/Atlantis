@@ -669,6 +669,15 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   // realizes a PbrClearcoat material, reusing pbrDirectLit*'s own
   // values, mirroring every other no-clearcoat composition root's
   // identical reuse.
+  // Plan 0046 Milestone 1 (ADR-0096): the default emissive texture, created
+  // once like the Runtime's, its upload recorded ahead of the materials'.
+  std::unique_ptr<rhi::Buffer> defaultEmissiveStagingBuffer;
+  if (!fixture.defaultEmissiveTexture) {
+    auto defaultEmissiveResult = atlantis::runtime::createDefaultEmissiveTexture(*fixture.device, *commandList);
+    if (defaultEmissiveResult.isErr()) return ResultT::Err(PbrNormalMapDemoRenderError::CommandListCreationFailed);
+    fixture.defaultEmissiveTexture = std::move(defaultEmissiveResult.value().texture);
+    defaultEmissiveStagingBuffer = std::move(defaultEmissiveResult.value().stagingBuffer);
+  }
   std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
       realizePendingMaterials(*fixture.device, *commandList, fixture.unlitTexturedVertexInputLayout,
                                fixture.unlitTexturedVertexSpirv, fixture.unlitTexturedFragmentSpirv,
@@ -696,7 +705,8 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
                                fixture.pbrDirectLitFragmentSpirv, fixture.pbrDirectLitVertexInputLayout,
                                fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv, environmentEnabled,
                                pendingMaterialIds,
-                               fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap);
+                               fixture.sampledTextureResourceMap, fixture.materialDataMap, fixture.textureDataMap,
+                               *fixture.defaultEmissiveTexture);
 
   // Plan 0029 Section P19 (Fixture A/B mechanism, step 3): the control
   // material's own one-time GPU realization -- deferred to here (not
@@ -705,7 +715,11 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   // just uploaded THIS SAME frame (frame 1) or already published in an
   // earlier frame. Reuses the exact same effectiveSampledTextures
   // dedup shape realizePendingMaterials() itself builds internally.
-  if (!fixture.controlMaterial) {
+  // Plan 0046 Milestone 3: a scene that never loads the control's texture
+  // (Bistro) skips it until a frame actually asks for the control -- every
+  // scene that loads it realizes it on frame 1 exactly as before.
+  const bool controlTextureLoaded = fixture.textureDataMap.contains(fixture.controlMaterialData->textureAsset);
+  if (!fixture.controlMaterial && (controlTextureLoaded || useControlMaterial)) {
     std::unordered_map<atlantis::asset_system::AssetId, const rhi::SampledTexture*> effectiveSampledTextures;
     for (const auto& [id, texture] : fixture.sampledTextureResourceMap) effectiveSampledTextures.emplace(id, texture.get());
     for (const auto& [materialId, candidate] : realizedCandidates) {
@@ -737,7 +751,8 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
         fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
         fixture.pbrDirectLitVertexInputLayout, fixture.pbrDirectLitVertexSpirv, fixture.pbrDirectLitFragmentSpirv,
         environmentEnabled, fixture.controlMaterialAssetId, *fixture.controlMaterialData, controlTextureIt->second,
-        /*normalMapTextureData=*/nullptr, effectiveSampledTextures);
+        /*normalMapTextureData=*/nullptr, /*emissiveTextureData=*/nullptr, effectiveSampledTextures,
+        *fixture.defaultEmissiveTexture);
     if (controlCandidateResult.isErr()) {
       return ResultT::Err(PbrNormalMapDemoRenderError::ControlMaterialRealizationFailed);
     }
@@ -836,11 +851,18 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   renderer.drawFrame(*commandList, *target, *fixture.depthTexture, *fixture.cameraBuffer, renderDrawItems,
                       rhi::ResourceState::TransferSource, *fixture.hdrColorTarget,
                       *fixture.fullscreenTriangleVertexBuffer, *fixture.fullscreenTriangleIndexBuffer,
-                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler, 0.0f,
+                      *fixture.outputTransformPipeline, *fixture.outputTransformSampler,
+                      // Plan 0046 Milestone 3: the active camera's own exposure
+                      // (Bistro's overlay sets -1 EV; 0 for every scene before it).
+                      cameraComponent.exposureCompensationEv,
                       environmentLightingView.has_value() ? &*environmentLightingView : nullptr,
                       fixture.skyPipeline.get(), *fixture.shadowMap, *fixture.shadowMapSampler,
                       *fixture.shadowCastPipeline, *fixture.shadowLightSpaceBuffer, shadowCasterDrawItems,
-                      std::nullopt, effectiveBloom);
+                      // Plan 0046 Milestone 3: the camera position blended items are
+                      // sorted by (Bistro's glass) -- inert for a scene with none.
+                      std::array<float, 3>{cameraWorldPositionData->x, cameraWorldPositionData->y,
+                                           cameraWorldPositionData->z},
+                      effectiveBloom);
 
   render_graph::RenderGraphBuilder copyBuilder;
   const auto copyResource = copyBuilder.declareResource("color-copy");
@@ -876,6 +898,10 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
     if (candidate.newNormalMapTexture) {
       fixture.sampledTextureResourceMap.emplace(candidate.normalMapTextureAssetId,
                                                  std::move(candidate.newNormalMapTexture));
+    }
+    if (candidate.newEmissiveTexture) {  // Plan 0046 Milestone 1
+      fixture.sampledTextureResourceMap.emplace(candidate.emissiveTextureAssetId,
+                                                std::move(candidate.newEmissiveTexture));
     }
     fixture.samplerResourceMap.emplace(assetId, std::move(candidate.sampler));
     fixture.materialResourceMap.emplace(assetId, std::move(candidate.material));

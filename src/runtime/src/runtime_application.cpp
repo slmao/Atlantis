@@ -1607,27 +1607,46 @@ void RuntimeApplication::runFrame() {
   // Plan 0018 Section P12 (Spec 0018 D8 steps 2-3): records any pending
   // materials' own upload passes into commandList BEFORE the draw graph
   // below -- exactly one CommandList, exactly one submit() covers both
-  // (Pre-draft verification [Claim a]). Safe to call unconditionally,
-  // even with an empty pendingMaterialIds (records nothing).
-  std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates =
-      realizePendingMaterials(*device_, *commandList, unlitTexturedVertexInputLayout_, unlitTexturedVertexSpirv_,
-                               unlitTexturedFragmentSpirv_, litTexturedVertexInputLayout_,
-                               litTexturedVertexSpirv_, litTexturedFragmentSpirv_, pbrDirectLitVertexInputLayout_,
-                               pbrDirectLitVertexSpirv_, pbrDirectLitFragmentSpirv_, pbrIblVertexInputLayout_,
-                               pbrIblVertexSpirv_, pbrIblFragmentSpirv_, pbrDirectLitNormalMapVertexInputLayout_,
-                               pbrDirectLitNormalMapVertexSpirv_, pbrDirectLitNormalMapFragmentSpirv_,
-                               pbrIblNormalMapVertexInputLayout_, pbrIblNormalMapVertexSpirv_,
-                               pbrIblNormalMapFragmentSpirv_, pbrClearcoatIblVertexInputLayout_,
-                               pbrClearcoatIblVertexSpirv_, pbrClearcoatIblFragmentSpirv_,
-                               pbrClearcoatIblNormalMapVertexInputLayout_, pbrClearcoatIblNormalMapVertexSpirv_,
-                               pbrClearcoatIblNormalMapFragmentSpirv_, pbrSheenIblVertexInputLayout_,
-                               pbrSheenIblVertexSpirv_, pbrSheenIblFragmentSpirv_,
-                               pbrSheenIblNormalMapVertexInputLayout_, pbrSheenIblNormalMapVertexSpirv_,
-                               pbrSheenIblNormalMapFragmentSpirv_, pbrAnisotropicIblVertexInputLayout_,
-                               pbrAnisotropicIblVertexSpirv_, pbrAnisotropicIblFragmentSpirv_,
-                               pbrAnisotropicIblNormalMapVertexInputLayout_, pbrAnisotropicIblNormalMapVertexSpirv_,
-                               pbrAnisotropicIblNormalMapFragmentSpirv_, environmentEnabled, pendingMaterialIds,
-                               sampledTextureResourceMap_, materialDataMap_, textureDataMap_);
+  // (Pre-draft verification [Claim a]). Plan 0046 Milestone 1: skipped
+  // when nothing is pending (it would record nothing).
+  // Plan 0046 Milestone 1 (ADR-0096, Plan 0046 P3): the default emissive
+  // texture is created on the first frame with materials to realize, its
+  // upload recorded ahead of theirs in this same CommandList; its staging
+  // buffer lives to this function's end, past the waitIdle() below.
+  std::unique_ptr<atlantis::rhi::Buffer> defaultEmissiveStagingBuffer;
+  std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> realizedCandidates;
+  if (!pendingMaterialIds.empty()) {
+    if (!defaultEmissiveTexture_) {
+      auto defaultEmissiveResult = createDefaultEmissiveTexture(*device_, *commandList);
+      if (defaultEmissiveResult.isErr()) {
+        ATLANTIS_LOG_ERROR("createDefaultEmissiveTexture() failed");
+        lifecycle_.markFailed();
+        return;
+      }
+      defaultEmissiveTexture_ = std::move(defaultEmissiveResult.value().texture);
+      defaultEmissiveStagingBuffer = std::move(defaultEmissiveResult.value().stagingBuffer);
+    }
+    realizedCandidates =
+        realizePendingMaterials(*device_, *commandList, unlitTexturedVertexInputLayout_, unlitTexturedVertexSpirv_,
+                                 unlitTexturedFragmentSpirv_, litTexturedVertexInputLayout_,
+                                 litTexturedVertexSpirv_, litTexturedFragmentSpirv_, pbrDirectLitVertexInputLayout_,
+                                 pbrDirectLitVertexSpirv_, pbrDirectLitFragmentSpirv_, pbrIblVertexInputLayout_,
+                                 pbrIblVertexSpirv_, pbrIblFragmentSpirv_, pbrDirectLitNormalMapVertexInputLayout_,
+                                 pbrDirectLitNormalMapVertexSpirv_, pbrDirectLitNormalMapFragmentSpirv_,
+                                 pbrIblNormalMapVertexInputLayout_, pbrIblNormalMapVertexSpirv_,
+                                 pbrIblNormalMapFragmentSpirv_, pbrClearcoatIblVertexInputLayout_,
+                                 pbrClearcoatIblVertexSpirv_, pbrClearcoatIblFragmentSpirv_,
+                                 pbrClearcoatIblNormalMapVertexInputLayout_, pbrClearcoatIblNormalMapVertexSpirv_,
+                                 pbrClearcoatIblNormalMapFragmentSpirv_, pbrSheenIblVertexInputLayout_,
+                                 pbrSheenIblVertexSpirv_, pbrSheenIblFragmentSpirv_,
+                                 pbrSheenIblNormalMapVertexInputLayout_, pbrSheenIblNormalMapVertexSpirv_,
+                                 pbrSheenIblNormalMapFragmentSpirv_, pbrAnisotropicIblVertexInputLayout_,
+                                 pbrAnisotropicIblVertexSpirv_, pbrAnisotropicIblFragmentSpirv_,
+                                 pbrAnisotropicIblNormalMapVertexInputLayout_, pbrAnisotropicIblNormalMapVertexSpirv_,
+                                 pbrAnisotropicIblNormalMapFragmentSpirv_, environmentEnabled, pendingMaterialIds,
+                                 sampledTextureResourceMap_, materialDataMap_, textureDataMap_,
+                                 *defaultEmissiveTexture_);
+  }
   // Plan 0018 Section P12 (Spec 0018 D8 step 5): gated on "at least one
   // material was newly realized this frame" -- NOT narrowed to "at least
   // one NEW TEXTURE was uploaded this frame". A realized candidate whose
@@ -1834,7 +1853,7 @@ void RuntimeApplication::runFrame() {
   // function) and the SubmissionSignal present() receives below already
   // wraps an already-signaled VkSemaphore (Pre-draft verification
   // [Claim d]).
-  if (anyMaterialRealizedThisFrame || environmentCandidate.has_value()) {
+  if (anyMaterialRealizedThisFrame || environmentCandidate.has_value() || defaultEmissiveStagingBuffer) {
     auto waitResult = device_->waitIdle();
     if (waitResult.isErr()) {
       ATLANTIS_LOG_ERROR("waitIdle() failed after a realization frame's own submit() -- treated as fatal, matching "
@@ -1861,6 +1880,12 @@ void RuntimeApplication::runFrame() {
       if (candidate.newNormalMapTexture) {
         sampledTextureResourceMap_.emplace(candidate.normalMapTextureAssetId,
                                             std::move(candidate.newNormalMapTexture));
+      }
+      // Plan 0046 Milestone 1: the emissive texture publishes the same way,
+      // for the same dangling-pointer reason.
+      if (candidate.newEmissiveTexture) {
+        sampledTextureResourceMap_.emplace(candidate.emissiveTextureAssetId,
+                                            std::move(candidate.newEmissiveTexture));
       }
       samplerResourceMap_.emplace(assetId, std::move(candidate.sampler));
       materialResourceMap_.emplace(assetId, std::move(candidate.material));
@@ -1922,6 +1947,7 @@ RuntimeExitReason RuntimeApplication::shutdown() {
   shadowMap_.reset();
   skyPipeline_.reset();
   materialResourceMap_.clear();
+  defaultEmissiveTexture_.reset();  // Plan 0046 Milestone 1: after the Materials borrowing it
   samplerResourceMap_.clear();
   sampledTextureResourceMap_.clear();
   hdrColorTarget_.reset();

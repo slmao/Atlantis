@@ -161,6 +161,12 @@ class RuntimeApplication {
   // distinct AssetIds," extended here to Sampler for the same reason).
   // Keyed by MATERIAL AssetId.
   std::unordered_map<atlantis::asset_system::AssetId, std::unique_ptr<atlantis::rhi::Sampler>> samplerResourceMap_;
+  // Plan 0046 Milestone 1 (ADR-0096, Plan 0046 P3, ruling O2): the one 1x1
+  // white emissive texture every PBR material without its own binds --
+  // Runtime-held, created and uploaded once, on the first frame that
+  // realizes materials (createDefaultEmissiveTexture()). Declared before
+  // materialResourceMap_ so the Materials borrowing it are destroyed first.
+  std::unique_ptr<atlantis::rhi::SampledTexture> defaultEmissiveTexture_;
   // Layer 2 -- Plan 0024 Milestone 6 (correction, ADR-0068 D-4, Human
   // Review direction 2026-09-01): NO LONGER format-dependent -- every
   // Pipeline here targets the fixed HdrFormat::Rgba16Float

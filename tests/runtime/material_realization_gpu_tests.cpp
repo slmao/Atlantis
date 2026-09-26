@@ -206,6 +206,17 @@ struct Vertex {
   return result.value();
 }
 
+// Plan 0046 Milestone 1 (ADR-0096): a stand-in for the Runtime's default
+// emissive texture -- nothing in this file draws, so it is never sampled
+// and needs no upload.
+[[nodiscard]] std::unique_ptr<atlantis::rhi::SampledTexture> makeDefaultEmissiveStandIn(atlantis::rhi::Device& device) {
+  auto result = device.createSampledTexture(atlantis::rhi::SampledTextureCreateParams{
+      .extent = atlantis::rhi::Extent2D{1, 1}, .format = atlantis::rhi::SampledTextureFormat::Rgba8Unorm,
+      .mipLevelCount = 1});
+  REQUIRE(result.isOk());
+  return std::move(result.value());
+}
+
 }  // namespace
 
 TEST_CASE("A second material that dedups its texture against an EARLIER frame's already-realized texture is still "
@@ -216,6 +227,7 @@ TEST_CASE("A second material that dedups its texture against an EARLIER frame's 
                                                .enableValidationLayers = true});
   REQUIRE(deviceResult.isOk());
   std::unique_ptr<atlantis::rhi::Device> device = std::move(deviceResult.value());
+  const std::unique_ptr<atlantis::rhi::SampledTexture> defaultEmissive = makeDefaultEmissiveStandIn(*device);
 
   auto vertexSpirv = loadSpirvFile(std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv");
   auto fragmentSpirv =
@@ -293,7 +305,7 @@ TEST_CASE("A second material that dedups its texture against an EARLIER frame's 
     std::unordered_map<AssetId, RealizedMaterialCandidate> realized =
         realizePendingMaterials(*device, *commandList, *vertexInputLayout, *vertexSpirv, *fragmentSpirv,
                                  *litLayout, *litVertexSpirv, *litFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, pendingIds,
-                                 sampledTextureResourceMap, materialDataMap, textureDataMap);
+                                 sampledTextureResourceMap, materialDataMap, textureDataMap, *defaultEmissive);
     REQUIRE(realized.size() == 1);
     REQUIRE(realized.at(kMaterialA).newSampledTexture != nullptr);
     REQUIRE(realized.at(kMaterialA).sampler != nullptr);
@@ -332,7 +344,7 @@ TEST_CASE("A second material that dedups its texture against an EARLIER frame's 
     std::unordered_map<AssetId, RealizedMaterialCandidate> realized =
         realizePendingMaterials(*device, *commandList, *vertexInputLayout, *vertexSpirv, *fragmentSpirv,
                                  *litLayout, *litVertexSpirv, *litFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, pendingIds,
-                                 sampledTextureResourceMap, materialDataMap, textureDataMap);
+                                 sampledTextureResourceMap, materialDataMap, textureDataMap, *defaultEmissive);
 
     // The exact invariant the fix restores: a cross-frame dedup candidate
     // still comes back non-empty, with a real Sampler/Material, even though
@@ -409,6 +421,7 @@ TEST_CASE("A PbrDirectLit material with a normal map uploads base color and norm
                                                .enableValidationLayers = true});
   REQUIRE(deviceResult.isOk());
   std::unique_ptr<atlantis::rhi::Device> device = std::move(deviceResult.value());
+  const std::unique_ptr<atlantis::rhi::SampledTexture> defaultEmissive = makeDefaultEmissiveStandIn(*device);
 
   auto pbrVertexSpirv =
       loadSpirvFile(std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR) + "/pbr_direct_lit.vert.spv");
@@ -490,7 +503,7 @@ TEST_CASE("A PbrDirectLit material with a normal map uploads base color and norm
         // Plan 0035 Milestone 4 (ADR-0081): the two new anisotropic trios
         // are dead-path filler for the identical reason.
         *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv,
-        /*environmentEnabled=*/false, pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap);
+        /*environmentEnabled=*/false, pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap, *defaultEmissive);
 
     REQUIRE(realized.size() == 1);
     const RealizedMaterialCandidate& candidateA = realized.at(kMaterialA);
@@ -550,7 +563,7 @@ TEST_CASE("A PbrDirectLit material with a normal map uploads base color and norm
         // Plan 0035 Milestone 4 (ADR-0081): same dead-path anisotropic
         // filler as the call above.
         *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv, *pbrLayout, *pbrVertexSpirv, *pbrFragmentSpirv,
-        /*environmentEnabled=*/false, pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap);
+        /*environmentEnabled=*/false, pendingIds, sampledTextureResourceMap, materialDataMap, textureDataMap, *defaultEmissive);
 
     REQUIRE(realized.size() == 1);
     const RealizedMaterialCandidate& candidateB = realized.at(kMaterialB);
@@ -710,7 +723,7 @@ struct CookedMaterialFixture {
 [[nodiscard]] CookedMaterialFixture cookFixtureMaterial(const fs::path& dir, const std::string& logicalPath,
                                                           const std::string& textureLogicalPath) {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 8\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 9\n"
                         "kind: unlit_textured\n"
                         "texture: " + textureLogicalPath + "\n"
                         "filter: linear\n"
@@ -729,7 +742,7 @@ struct CookedMaterialFixture {
 [[nodiscard]] CookedMaterialFixture cookFixturePbrMaterial(const fs::path& dir, const std::string& logicalPath,
                                                             const std::string& textureLogicalPath) {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 8\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 9\n"
                         "kind: pbr_direct_lit\n"
                         "texture: " + textureLogicalPath + "\n"
                         "filter: linear\n"
@@ -925,8 +938,8 @@ TEST_CASE("loadAndInstantiateScene: a PbrDirectLit material whose own resolved b
 // Fixed by Spec 0021/ADR-0064: VulkanDevice now owns a growable set of
 // descriptor pools (a fixed std::array<DescriptorPoolEntry, 4>, never a
 // std::vector), scanning every existing pool in creation order before
-// growing (geometric doubling: 4, 8, 16, 32 -- 60 concurrent descriptor
-// sets total) on real, observed VK_ERROR_OUT_OF_POOL_MEMORY/
+// growing (geometric doubling: 4, 8, 16, 32, 64, 128, 256 -- 508 concurrent
+// descriptor sets total since the ADR-0064 amendment of 2026-09-26) on real, observed VK_ERROR_OUT_OF_POOL_MEMORY/
 // VK_ERROR_FRAGMENTED_POOL exhaustion. No RHI/Renderer/Material public
 // API changed.
 //
@@ -949,7 +962,7 @@ TEST_CASE("loadAndInstantiateScene: a PbrDirectLit material whose own resolved b
 // "N=6 HDR pipeline descriptor-set peak is exactly N+4 with an
 // environment/sky Pipeline present" TEST_CASE below for the
 // environment-enabled re-derivation.
-TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+3 and succeeds against the real 60-set ceiling",
+TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+3 and succeeds against the real 508-set ceiling",
           "[runtime][gpu][material_realization][descriptor_pool_growth][hdr]") {
   using atlantis::vulkan_backend::detail::kDescriptorPoolMaxSetsByGeneration;
 
@@ -967,7 +980,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+3 and succeeds agai
   const std::size_t totalDescriptorSetCapacity =
       std::accumulate(kDescriptorPoolMaxSetsByGeneration.begin(), kDescriptorPoolMaxSetsByGeneration.end(),
                       std::size_t{0});
-  REQUIRE(totalDescriptorSetCapacity == 60);
+  REQUIRE(totalDescriptorSetCapacity == 508);
   REQUIRE(kExpectedPeakSetCount < totalDescriptorSetCapacity);
 
   auto deviceResult = atlantis::vulkan_backend::createDevice(
@@ -1073,7 +1086,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+3 and succeeds agai
 // runtime_application.cpp Step 4d -- never participates in format-change
 // rebuild, exactly like fallbackMaterial_ itself) -- proving the real,
 // environment-enabled steady-state/peak formula against the same real
-// 60-set ceiling.
+// 508-set ceiling.
 TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4 with an environment/sky Pipeline present",
           "[runtime][gpu][material_realization][descriptor_pool_growth][hdr][sky]") {
   using atlantis::vulkan_backend::detail::kDescriptorPoolMaxSetsByGeneration;
@@ -1092,7 +1105,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4 with an environme
   const std::size_t totalDescriptorSetCapacity =
       std::accumulate(kDescriptorPoolMaxSetsByGeneration.begin(), kDescriptorPoolMaxSetsByGeneration.end(),
                       std::size_t{0});
-  REQUIRE(totalDescriptorSetCapacity == 60);
+  REQUIRE(totalDescriptorSetCapacity == 508);
   REQUIRE(kExpectedPeakSetCount < totalDescriptorSetCapacity);
 
   auto deviceResult = atlantis::vulkan_backend::createDevice(
@@ -1247,7 +1260,7 @@ TEST_CASE("N=6 HDR pipeline descriptor-set peak is exactly N+4/N+5 with both a s
 
   const std::size_t totalDescriptorSetCapacity = std::accumulate(
       kDescriptorPoolMaxSetsByGeneration.begin(), kDescriptorPoolMaxSetsByGeneration.end(), std::size_t{0});
-  REQUIRE(totalDescriptorSetCapacity == 60);
+  REQUIRE(totalDescriptorSetCapacity == 508);
   REQUIRE(kExpectedPeakSetCount < totalDescriptorSetCapacity);
 
   auto deviceResult = atlantis::vulkan_backend::createDevice(

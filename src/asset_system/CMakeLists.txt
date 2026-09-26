@@ -235,6 +235,58 @@ function(atlantis_add_scene_asset)
   set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
 endfunction()
 
+# Plan 0046 Milestone 3 (ADR-0094 Decision 1, Plan 0046 P9): one build step
+# for one imported glTF scene -- one custom command, one stamp. It runs
+# atlantis_gltf_importer (with the authored OVERLAY merged, ADR-0094
+# Decision 3) into <build>/<NAME>/import, then atlantis_asset_cooker
+# --kind=cook-manifest over that import into <build>/<NAME>/cooked, which
+# also writes the dependency manifest. Its only inputs are the glTF, the
+# overlay and the two tools -- a changed texture or buffer file under
+# CONTENT_ROOT does not re-trigger it (the content is SHA-256 pinned).
+# Exports the same ATLANTIS_<NAME>_scene_{ARTIFACT,METADATA,MANIFEST}_PATH
+# and _TARGET variables atlantis_add_scene_asset() exports, so consumers
+# are unchanged. The import's asset set is validated by the cook-manifest
+# mode itself, never fed to atlantis_finalize_asset_validation().
+function(atlantis_add_imported_scene)
+  set(oneValueArgs NAME GLTF CONTENT_ROOT OVERLAY)
+  cmake_parse_arguments(ARG "" "${oneValueArgs}" "" ${ARGN})
+
+  set(work_dir "${CMAKE_BINARY_DIR}/${ARG_NAME}")
+  set(import_dir "${work_dir}/import")
+  set(cooked_dir "${work_dir}/cooked")
+  set(artifact_path "${cooked_dir}/${ARG_NAME}/${ARG_NAME}.ascene")
+  set(metadata_path "${cooked_dir}/${ARG_NAME}/${ARG_NAME}.ascene.meta.txt")
+  set(manifest_path "${cooked_dir}/${ARG_NAME}.ascene.manifest.txt")
+  set(stamp "${work_dir}/${ARG_NAME}.stamp")
+  get_filename_component(content_parent "${ARG_CONTENT_ROOT}" DIRECTORY)
+
+  add_custom_command(
+    OUTPUT "${stamp}"
+    BYPRODUCTS "${artifact_path}" "${metadata_path}" "${manifest_path}"
+    # The importer refuses a non-empty output directory; the cooked
+    # directory is rewritten in place.
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${import_dir}"
+    COMMAND atlantis_gltf_importer
+      --input=${ARG_GLTF} --content-root=${ARG_CONTENT_ROOT} --overlay=${ARG_OVERLAY}
+      --output-dir=${import_dir} --name=${ARG_NAME}
+    COMMAND atlantis_asset_cooker
+      --kind=cook-manifest --import-dir=${import_dir} --cooked-dir=${cooked_dir}
+      --content-parent=${content_parent} --manifest-out=${manifest_path} --stamp=${stamp}
+    DEPENDS "${ARG_GLTF}" "${ARG_OVERLAY}" atlantis_gltf_importer atlantis_asset_cooker
+    COMMENT "Importing and cooking imported scene: ${ARG_NAME}"
+    VERBATIM
+  )
+  add_custom_target(atlantis_${ARG_NAME}_scene ALL DEPENDS "${stamp}")
+
+  set(ATLANTIS_${ARG_NAME}_scene_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
+  set(ATLANTIS_${ARG_NAME}_scene_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
+  set(ATLANTIS_${ARG_NAME}_scene_MANIFEST_PATH "${manifest_path}" PARENT_SCOPE)
+  set(ATLANTIS_${ARG_NAME}_scene_TARGET "atlantis_${ARG_NAME}_scene" PARENT_SCOPE)
+  # Plan 0046 M3: the import directory, for the content-gated load test's
+  # --validate-set over the whole declared set.
+  set(ATLANTIS_${ARG_NAME}_scene_IMPORT_DIR "${import_dir}" PARENT_SCOPE)
+endfunction()
+
 # Plan 0016 Section D8, corrected by the Plan's own "Human Review
 # Correction -- 2026-08-24": declares one texture asset for
 # atlantis_asset_cooker to process at build time, mirroring

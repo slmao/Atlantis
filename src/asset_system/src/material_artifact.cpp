@@ -100,7 +100,7 @@ std::vector<std::byte> encodeMaterialArtifact(MaterialKind kind, AssetId texture
                                                const float (&sheenColor)[3], float sheenRoughness,
                                                float anisotropyFactor, float anisotropyRotation,
                                                const float (&emissiveFactor)[3], MaterialAlphaMode alphaMode,
-                                               float alphaCutoff) {
+                                               float alphaCutoff, AssetId emissiveTexture) {
   std::vector<std::byte> out;
   out.reserve(kMaterialArtifactHeaderSizeBytes);
 
@@ -123,6 +123,7 @@ std::vector<std::byte> encodeMaterialArtifact(MaterialKind kind, AssetId texture
   for (float component : emissiveFactor) appendFloatLE(out, component);
   appendU32LE(out, alphaModeToField(alphaMode));
   appendFloatLE(out, alphaCutoff);
+  appendU64LE(out, emissiveTexture);
 
   return out;
 }
@@ -302,6 +303,10 @@ atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMat
     return ResultT::Err(MaterialArtifactDecodeError::MaterialFactorOutOfRange);
   }
   decoded.alphaCutoff = alphaCutoff;
+
+  // Plan 0046 Milestone 1 (ADR-0096): no range check -- `0` (none), the
+  // normalMapTexture convention.
+  decoded.emissiveTexture = readU64LE(bytes.data() + 116);
 
   return ResultT::Ok(std::move(decoded));
 }

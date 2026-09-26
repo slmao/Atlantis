@@ -1049,3 +1049,42 @@ add_custom_command(TARGET atlantis_image_regression_index_type_large_grid_golden
       "${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}/shadow_cast.frag.refl.json"
       "$<TARGET_FILE_DIR:atlantis_image_regression_index_type_large_grid_golden_generator>/shaders/"
 )
+
+# Plan 0046 Milestone 5 (Spec 0046 R6, ADR-0095, Plan 0046 P12): the
+# bistro_demo golden generator -- content-gated: declared only when
+# assets/ declared the Bistro build step (content present at configure
+# time). Its sidecar (schema 3) records the content pin,
+# ATLANTIS_BISTRO_FETCH_SCRIPT_SHA256 (computed in the parent directory).
+if(DEFINED ATLANTIS_bistro_scene_TARGET)
+  add_executable(atlantis_image_regression_bistro_demo_golden_generator bistro_demo_main.cpp)
+  target_link_libraries(atlantis_image_regression_bistro_demo_golden_generator PRIVATE
+    Atlantis::ImageRegressionFixture Atlantis::ImageRegressionSupport atlantis_compiler_warnings)
+  target_compile_definitions(atlantis_image_regression_bistro_demo_golden_generator PRIVATE
+    ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR="${CMAKE_SOURCE_DIR}/tests/image_regression/goldens"
+    ATLANTIS_IMAGE_REGRESSION_ENVIRONMENT_FILE="${CMAKE_SOURCE_DIR}/tests/image_regression/current_environment.sidecar.txt"
+    ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH="${ATLANTIS_bistro_scene_ARTIFACT_PATH}"
+    ATLANTIS_BISTRO_SCENE_METADATA_PATH="${ATLANTIS_bistro_scene_METADATA_PATH}"
+    ATLANTIS_BISTRO_SCENE_MANIFEST_PATH="${ATLANTIS_bistro_scene_MANIFEST_PATH}"
+    ATLANTIS_BISTRO_FETCH_SCRIPT_PATH="${ATLANTIS_BISTRO_FETCH_SCRIPT}"
+    ATLANTIS_BISTRO_FETCH_SCRIPT_SHA256="${ATLANTIS_BISTRO_FETCH_SCRIPT_SHA256}"
+    ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH="${ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH}"
+    ATLANTIS_pbr_normal_mapped_control_METADATA_PATH="${ATLANTIS_pbr_normal_mapped_control_METADATA_PATH}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_direct_lit_normal_map_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_PBR_IBL_SHADER_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_PBR_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_ibl_normal_map_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_SKY_SHADER_DIR="${ATLANTIS_sky_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
+    ATLANTIS_PBR_NORMAL_MAP_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+    ATLANTIS_BLOOM_DOWNSAMPLE_SHADER_DIR="${ATLANTIS_bloom_downsample_SHADER_OUTPUT_DIR}"
+    ATLANTIS_BLOOM_UPSAMPLE_SHADER_DIR="${ATLANTIS_bloom_upsample_SHADER_OUTPUT_DIR}"
+    ATLANTIS_BLOOM_COMPOSITE_SHADER_DIR="${ATLANTIS_bloom_composite_SHADER_OUTPUT_DIR}"
+  )
+  add_dependencies(atlantis_image_regression_bistro_demo_golden_generator textured_quad_shaders
+    lit_textured_shaders pbr_direct_lit_shaders pbr_direct_lit_normal_map_shaders pbr_ibl_shaders
+    pbr_ibl_normal_map_shaders output_transform_unorm_shaders sky_shaders shadow_cast_shaders
+    bloom_downsample_shaders bloom_upsample_shaders bloom_composite_shaders
+    ${ATLANTIS_bistro_scene_TARGET} ${ATLANTIS_pbr_normal_mapped_control_TARGET})
+endif()

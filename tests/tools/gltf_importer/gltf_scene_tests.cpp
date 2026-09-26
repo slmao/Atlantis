@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -41,11 +42,17 @@ struct SceneRun {
   atlantis::Result<GltfImportSummary, GltfImportError> result;
 };
 
-SceneRun runSceneImport(const std::string& testName, const gltf_test::PrimitiveSpec& spec) {
+SceneRun runSceneImport(const std::string& testName, const gltf_test::PrimitiveSpec& spec,
+                        const std::optional<std::string>& overlayText = std::nullopt) {
   const fs::path dir = gltf_test::freshDirectory(testName);
   const fs::path input = gltf_test::writeGltf(dir, spec);
   const fs::path outputDir = dir / "out";
-  return SceneRun{dir, outputDir, importGltf(input, dir, outputDir, "t")};
+  std::optional<fs::path> overlayPath;
+  if (overlayText) {
+    overlayPath = dir / "overlay.scene.txt";
+    std::ofstream(*overlayPath, std::ios::binary) << *overlayText;
+  }
+  return SceneRun{dir, outputDir, importGltf(input, dir, outputDir, "t", overlayPath)};
 }
 
 atlantis::asset_system::ParsedSceneSource parsedScene(const fs::path& outputDir) {
@@ -354,4 +361,155 @@ TEST_CASE("A camera node imports as a plain transform node and the camera is rep
   CHECK_FALSE(scene.nodes[1].light.has_value());
   CHECK(scene.nodes[1].transform.positionZ == 5.0f);
   CHECK_FALSE(scene.activeCameraNodeId.has_value());
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0046 Milestone 2 (Plan 0046 P7, ADR-0094 Decision 3): the importer's
+// light cap is the grammar's (1 directional + 64 point), and --overlay
+// merges a scene source of cameras and lights into the imported scene.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// n point-light nodes as children of the quad's node, all sharing light 0.
+gltf_test::PrimitiveSpec quadWithPointLights(std::size_t n) {
+  auto spec = gltf_test::unitQuad();
+  spec.extensionsUsedJson = "[\"KHR_lights_punctual\"]";
+  spec.topLevelExtensionsJson = "{\"KHR_lights_punctual\":{\"lights\":[{\"type\":\"point\"}]}}";
+  std::string children;
+  std::string lightNodes;
+  for (std::size_t i = 0; i < n; ++i) {
+    children += (i == 0 ? "" : ",") + std::to_string(i + 1);
+    lightNodes += ",{\"extensions\":{\"KHR_lights_punctual\":{\"light\":0}}}";
+  }
+  spec.nodesJson = "[{\"mesh\":0,\"children\":[" + children + "]}" + lightNodes + "]";
+  return spec;
+}
+
+std::string overlayScene(const std::vector<std::string>& nodeLines, const std::string& activeCamera) {
+  std::string text = "atlantis_scene_source_version: 6\nnode_count: " + std::to_string(nodeLines.size()) +
+                     "\nactive_camera: " + activeCamera + "\n";
+  for (const std::string& line : nodeLines) text += line + "\n";
+  return text;
+}
+
+const std::string kCameraNode =
+    "node: node_id=10 parent=none position=8 1.7 24 rotation=0.05 0.785 0 scale=1 1 1 camera_fov_y=1.0472 "
+    "camera_near_z=0.1 camera_far_z=200 camera_exposure_ev=-1 fog=0.015 0 0.15 0.7 fog_color=0.25 0.2 0.14 "
+    "bloom=0.15 1.5";
+const std::string kPointNode =
+    "node: node_id=20 parent=none position=-39.61 3.26 -5.03 rotation=0 0 0 scale=1 1 1 light=point "
+    "color=1 0.8 0.55 intensity=8 range=12";
+const std::string kChildPointNode =
+    "node: node_id=21 parent=20 position=0 1 0 rotation=0 0 0 scale=1 1 1 light=point color=1 0.85 0.6 "
+    "intensity=3 range=5";
+const std::string kMoonNode =
+    "node: node_id=30 parent=none position=0 0 0 rotation=-1 2.4 0 scale=1 1 1 light=directional "
+    "color=0.6 0.7 1 intensity=0.1";
+
+}  // namespace
+
+TEST_CASE("The importer's light cap is the grammar's: 64 point lights import, 65 are TooManyLights",
+          "[gltf_importer][scene]") {
+  {
+    const SceneRun run = runSceneImport("scene_64_point_lights", quadWithPointLights(64));
+    REQUIRE(run.result.isOk());
+    CHECK(run.result.value().sceneLightLines == 64);
+  }
+  {
+    const SceneRun run = runSceneImport("scene_65_point_lights", quadWithPointLights(65));
+    REQUIRE(run.result.isErr());
+    CHECK(run.result.error() == GltfImportError::TooManyLights);
+    CHECK_FALSE(fs::exists(run.outputDir));
+  }
+}
+
+TEST_CASE("The importer's overlay appends its camera and lights after every imported id, renumbered, and "
+          "activates the camera",
+          "[gltf_importer][scene][overlay]") {
+  auto spec = gltf_test::unitQuad();
+  spec.nodesJson = "[{\"mesh\":0,\"children\":[1]},{\"translation\":[0,1,0]}]";
+  const SceneRun run =
+      runSceneImport("scene_overlay_merge", spec, overlayScene({kCameraNode, kPointNode, kChildPointNode, kMoonNode}, "10"));
+  REQUIRE(run.result.isOk());
+  CHECK(run.result.value().overlayNodeLines == 4);
+  CHECK(run.result.value().sceneNodeLines == 6);
+  CHECK(run.result.value().sceneLightLines == 3);
+  CHECK(reportContains(run.result.value(), "overlay: 4 node lines appended from id 3 (3 light), active_camera 3"));
+
+  const auto scene = parsedScene(run.outputDir);
+  REQUIRE(scene.nodes.size() == 6);
+  // Imported ids 1-2 untouched; overlay 10/20/21/30 -> 3/4/5/6 in order.
+  CHECK(scene.nodes[0].nodeId == 1);
+  CHECK(scene.nodes[1].nodeId == 2);
+  CHECK(scene.nodes[2].nodeId == 3);
+  REQUIRE(scene.nodes[2].camera.has_value());
+  CHECK(scene.nodes[2].camera->fovYRadians == Catch::Approx(1.0472f));
+  CHECK(scene.nodes[2].camera->exposureCompensationEv == -1.0f);
+  CHECK(scene.nodes[2].camera->fog.density == Catch::Approx(0.015f));
+  CHECK(scene.nodes[2].camera->bloom.threshold == 1.5f);
+  CHECK(scene.nodes[3].nodeId == 4);
+  REQUIRE(scene.nodes[3].light.has_value());
+  CHECK(scene.nodes[3].light->range == 12.0f);
+  CHECK(scene.nodes[3].transform.positionX == Catch::Approx(-39.61f));
+  CHECK(scene.nodes[4].nodeId == 5);
+  CHECK(scene.nodes[4].parentNodeId == 4u);  // the parent renumbered with its child
+  CHECK(scene.nodes[5].nodeId == 6);
+  CHECK(scene.nodes[5].light->kind == atlantis::asset_system::DecodedLightKind::Directional);
+  CHECK(scene.activeCameraNodeId == 3u);
+
+  // The merged scene cooks.
+  const auto cooked = atlantis::asset_system::cookScene((run.outputDir / "t/t.scene.txt").string(),
+                                                        (run.dir / "t.ascene").string(),
+                                                        (run.dir / "t.ascene.meta.txt").string());
+  CHECK(cooked.isOk());
+}
+
+TEST_CASE("The importer's overlay rejects a renderable node, a parent outside it, a second camera, an unreadable or malformed "
+          "file, and a merged light count past the cap -- each by name, leaving no output",
+          "[gltf_importer][scene][overlay]") {
+  auto spec = gltf_test::unitQuad();
+  const auto expectError = [&](const std::string& name, const std::optional<std::string>& overlay,
+                               GltfImportError expected) {
+    INFO(name);
+    const SceneRun run = runSceneImport(name, spec, overlay);
+    REQUIRE(run.result.isErr());
+    CHECK(run.result.error() == expected);
+    CHECK_FALSE(fs::exists(run.outputDir));
+  };
+  expectError("overlay_renderable",
+              overlayScene({"node: node_id=1 parent=none position=0 0 0 rotation=0 0 0 scale=1 1 1 "
+                            "mesh=meshes/t/mesh_0_0 material=t/materials/0.material.txt"},
+                           "none"),
+              GltfImportError::OverlayRenderableNode);
+  expectError("overlay_parent_outside",
+              overlayScene({"node: node_id=5 parent=1 position=0 0 0 rotation=0 0 0 scale=1 1 1 light=point "
+                            "color=1 1 1 intensity=1 range=1"},
+                           "none"),
+              GltfImportError::OverlayParentOutsideOverlay);
+  std::string secondCamera = kCameraNode;
+  secondCamera.replace(secondCamera.find("node_id=10"), 10, "node_id=11");
+  expectError("overlay_second_camera", overlayScene({kCameraNode, secondCamera}, "10"),
+              GltfImportError::OverlaySecondCamera);
+  expectError("overlay_malformed", std::string("atlantis_scene_source_version: 6\nnode_count: 1\n"),
+              GltfImportError::OverlayMalformed);
+  std::string secondMoon = kMoonNode;
+  secondMoon.replace(secondMoon.find("node_id=30"), 10, "node_id=31");
+  expectError("overlay_two_directional", overlayScene({kMoonNode, secondMoon}, "none"),
+              GltfImportError::TooManyLights);
+
+  // The glTF's own lights count toward the cap with the overlay's: 64
+  // imported + 1 overlay point light is 65.
+  {
+    const SceneRun run = runSceneImport("overlay_cap_combined", quadWithPointLights(64), overlayScene({kPointNode}, "none"));
+    REQUIRE(run.result.isErr());
+    CHECK(run.result.error() == GltfImportError::TooManyLights);
+  }
+  {
+    const fs::path dir = gltf_test::freshDirectory("overlay_unreadable");
+    const fs::path input = gltf_test::writeGltf(dir, spec);
+    const auto result = importGltf(input, dir, dir / "out", "t", dir / "absent.scene.txt");
+    REQUIRE(result.isErr());
+    CHECK(result.error() == GltfImportError::OverlayUnreadable);
+  }
 }

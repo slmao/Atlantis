@@ -116,7 +116,29 @@ struct ResolvedTexture {
 struct MaterialTextures {
   const cgltf_texture_view* baseColor = nullptr;
   const cgltf_texture_view* normal = nullptr;
+  // Plan 0046 Milestone 1 (ADR-0096): set only when the texture is mapped --
+  // a non-zero, in-range emissiveFactor beside it (mapsEmissiveTexture()).
+  const cgltf_texture_view* emissive = nullptr;
 };
+
+// Plan 0046 Milestone 1 (ADR-0096, Plan 0046 P5): glTF's emissive is
+// factor x texture, so a texture maps exactly when its factor does -- a
+// non-zero factor inside [0, 65504]. A zero factor leaves it inert.
+[[nodiscard]] bool emissiveFactorInRange(const cgltf_material& m) {
+  for (int c = 0; c < 3; ++c) {
+    const float component = m.emissive_factor[c];
+    if (!std::isfinite(component) || component < 0.0f || component > 65504.0f) return false;
+  }
+  return true;
+}
+
+[[nodiscard]] bool hasNonZeroEmissiveFactor(const cgltf_material& m) {
+  return m.emissive_factor[0] != 0.0f || m.emissive_factor[1] != 0.0f || m.emissive_factor[2] != 0.0f;
+}
+
+[[nodiscard]] bool mapsEmissiveTexture(const cgltf_material& m) {
+  return m.emissive_texture.texture != nullptr && hasNonZeroEmissiveFactor(m) && emissiveFactorInRange(m);
+}
 
 [[nodiscard]] MaterialTextures usedTextures(const cgltf_material& m) {
   MaterialTextures used;
@@ -124,6 +146,7 @@ struct MaterialTextures {
       m.has_pbr_specular_glossiness ? m.pbr_specular_glossiness.diffuse_texture : m.pbr_metallic_roughness.base_color_texture;
   if (base.texture != nullptr) used.baseColor = &base;
   if (m.normal_texture.texture != nullptr) used.normal = &m.normal_texture;
+  if (mapsEmissiveTexture(m)) used.emissive = &m.emissive_texture;
   return used;
 }
 
@@ -180,11 +203,6 @@ void applySampler(const cgltf_sampler* sampler, ParsedMaterialSource& source) {
          (static_cast<std::uint32_t>(header[130]) << 16) | (static_cast<std::uint32_t>(header[131]) << 24);
 }
 
-[[nodiscard]] std::string toLower(std::string text) {
-  std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return text;
-}
-
 [[nodiscard]] std::string formatFloat(double value) {
   char buffer[32];
   std::snprintf(buffer, sizeof buffer, "%.4g", value);
@@ -235,7 +253,7 @@ std::vector<unsigned char> whiteFallbackDds() {
   put32(80, 0x4);         // DDPF_FOURCC
   std::memcpy(bytes.data() + 84, "DX10", 4);
   put32(108, 0x1000);     // DDSCAPS_TEXTURE
-  put32(128, 99);         // DXGI_FORMAT_BC7_UNORM
+  put32(128, 100);        // DXGI_FORMAT_BC7_UNORM_SRGB: a base-colour stand-in (Spec 0046 Q8)
   put32(132, 3);          // D3D10_RESOURCE_DIMENSION_TEXTURE2D
   put32(140, 1);          // arraySize
   // One BC7 mode-6 block: all eight 7-bit endpoints 127 with both p-bits 1
@@ -269,7 +287,8 @@ atlantis::Result<std::monostate, GltfImportError> checkMaterials(const cgltf_dat
     }
 
     const MaterialTextures used = usedTextures(m);
-    for (const auto& [view, usage] : {std::pair{used.baseColor, TextureUsage::Color}, std::pair{used.normal, TextureUsage::Data}}) {
+    for (const auto& [view, usage] : {std::pair{used.baseColor, TextureUsage::Color}, std::pair{used.normal, TextureUsage::Data},
+                                      std::pair{used.emissive, TextureUsage::Color}}) {
       if (view == nullptr) continue;
       const auto check = checkTextureView(data, *view, contentRoot);
       if (check.isErr()) return check;
@@ -352,11 +371,24 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
       if (mr.metallic_roughness_texture.texture != nullptr) dropped.push_back("metallicRoughnessTexture");
     }
 
+    // Spec 0046 ruling Q3 (Plan 0046 P6): transmission renders as blend at
+    // alpha 1 - transmissionFactor -- ADR-0083 D3's mapping with its value
+    // supplied, closing Spec 0042 O3. Bistro's glass is glTF OPAQUE, so this
+    // is decided here, not by the alphaMode block below. A zero factor is
+    // no transmission and changes nothing; the texture stays dropped.
     if (m.has_transmission) {
       summary.materialsTransmission += 1;
-      reportLines.push_back(label + ": KHR_materials_transmission factor " +
-                            formatFloat(m.transmission.transmission_factor) +
-                            " recorded only; imported as pbr_direct_lit (ADR-0083 D3)");
+      const float transmission = m.transmission.transmission_factor;
+      if (std::isfinite(transmission) && transmission > 0.0f && transmission <= 1.0f) {
+        source.alphaMode = MaterialAlphaMode::Blend;
+        source.baseColorFactor[3] *= 1.0f - transmission;
+        reportLines.push_back(label + ": KHR_materials_transmission factor " + formatFloat(transmission) +
+                              " mapped to BLEND, baseColorFactor alpha " + formatFloat(source.baseColorFactor[3]) +
+                              " (alpha x (1 - transmission), Spec 0046 Q3)");
+      } else {
+        reportLines.push_back(label + ": KHR_materials_transmission factor " + formatFloat(transmission) +
+                              " not mapped (outside (0, 1]); imported opaque (Spec 0046 Q3)");
+      }
       if (m.transmission.transmission_texture.texture != nullptr) dropped.push_back("transmissionTexture");
     }
 
@@ -385,51 +417,52 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
     if (sampler == nullptr) samplerDefaulted += 1;
     applySampler(sampler, source);
 
-    // Spec 0041 Requirement 8 (rulings O3, Q3): emissive has a v7
-    // destination, emissiveFactor, but no emissive texture. A factor with
-    // no texture is mapped; a factor with a texture is dropped, because
-    // applying it without its texture would light the whole surface
-    // uniformly; a factor outside [0, 65504] (or non-finite) is dropped
-    // here rather than failing the whole cook later. A texture with a zero
-    // factor is inert under glTF's factor x texture rule, so it only joins
-    // the Ruling 3 list below. Each case gets its own report line.
-    const bool hasEmissiveFactor =
-        m.emissive_factor[0] != 0.0f || m.emissive_factor[1] != 0.0f || m.emissive_factor[2] != 0.0f;
+    // Spec 0041 Requirement 8 (rulings O3, Q3), widened by Plan 0046
+    // Milestone 1 (ADR-0096, Plan 0046 P5): material v9 has both
+    // destinations, emissiveFactor and emissive_texture. An in-range factor
+    // is mapped, with its texture when it has one; a factor outside
+    // [0, 65504] (or non-finite) is dropped with its texture rather than
+    // failing the whole cook later. A texture with a zero factor is inert
+    // under glTF's factor x texture rule and is not mapped. Each case gets
+    // its own report line.
+    const bool hasEmissiveFactor = hasNonZeroEmissiveFactor(m);
     const bool hasEmissiveTexture = m.emissive_texture.texture != nullptr;
     if (hasEmissiveFactor) {
       const std::string factorText = "emissiveFactor=(" + formatFloat(m.emissive_factor[0]) + "," +
                                      formatFloat(m.emissive_factor[1]) + "," + formatFloat(m.emissive_factor[2]) + ")";
-      bool inRange = true;
-      for (int c = 0; c < 3; ++c) {
-        const float component = m.emissive_factor[c];
-        if (!std::isfinite(component) || component < 0.0f || component > 65504.0f) inRange = false;
-      }
-      if (hasEmissiveTexture) {
-        reportLines.push_back(label + ": " + factorText +
-                              " dropped, emissiveTexture present -- a factor is not applied without its texture "
-                              "(Spec 0041 R8)");
-      } else if (!inRange) {
-        reportLines.push_back(label + ": " + factorText +
-                              " dropped, outside the emissive range [0, 65504] (Spec 0041 R8)");
+      if (!emissiveFactorInRange(m)) {
+        reportLines.push_back(label + ": " + factorText + " dropped" +
+                              (hasEmissiveTexture ? std::string(" with its emissiveTexture") : std::string()) +
+                              ", outside the emissive range [0, 65504] (Spec 0041 R8)");
       } else {
         for (int c = 0; c < 3; ++c) source.emissiveFactor[c] = m.emissive_factor[c];
-        reportLines.push_back(label + ": " + factorText + " mapped (Spec 0041 R8)");
+        if (used.emissive != nullptr) {
+          const ResolvedTexture resolved = *resolveTexture(data, *used.emissive->texture);
+          source.emissiveTextureLogicalPath = textureLogicalPath(contentRoot, resolved.uri);
+          addTexture({source.emissiveTextureLogicalPath, "{content_parent}/" + source.emissiveTextureLogicalPath,
+                      "{content_parent}", resolved.isDds, TextureUsage::Color});
+          reportLines.push_back(label + ": " + factorText + " mapped with emissiveTexture " +
+                                source.emissiveTextureLogicalPath + " (ADR-0096)");
+        } else {
+          reportLines.push_back(label + ": " + factorText + " mapped (Spec 0041 R8)");
+        }
       }
+    } else if (hasEmissiveTexture) {
+      reportLines.push_back(label + ": emissiveTexture inert (emissiveFactor 0), not mapped (ADR-0096)");
     }
 
     // Spec 0042 Requirement 9 (ruling O1): MASK -> Mask + alphaCutoff
     // (cgltf fills glTF's 0.5 default when the file omits it), BLEND ->
-    // Blend. Transmission materials stay Opaque whatever their alphaMode
-    // (ruling O3: whether glass renders as Blend is Spec 0036 (7)'s
-    // decision), and a cutoff outside [0, 1] keeps the 0.5 default rather
-    // than failing the whole cook later. Each case gets its own report line.
+    // Blend, and a cutoff outside [0, 1] keeps the 0.5 default rather than
+    // failing the whole cook later. A transmission material's mode was
+    // already decided above (Spec 0046 Q3), so its alphaMode is not mapped.
+    // Each case gets its own report line.
     if (m.alpha_mode == cgltf_alpha_mode_mask || m.alpha_mode == cgltf_alpha_mode_blend) {
       const bool isMask = m.alpha_mode == cgltf_alpha_mode_mask;
       const std::string modeText = isMask ? "alphaMode=MASK alphaCutoff=" + formatFloat(m.alpha_cutoff)
                                           : std::string("alphaMode=BLEND");
       if (m.has_transmission) {
-        reportLines.push_back(label + ": " + modeText +
-                              " not mapped, transmission material stays opaque (Spec 0042 O3)");
+        reportLines.push_back(label + ": " + modeText + " not mapped, transmission decides the mode (Spec 0046 Q3)");
       } else if (!isMask) {
         source.alphaMode = MaterialAlphaMode::Blend;
         reportLines.push_back(label + ": " + modeText + " mapped (Spec 0042 R9)");
@@ -446,12 +479,11 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
       }
     }
 
-    // Ruling 3: properties v8 has no destination for.
+    // Ruling 3: properties v9 has no destination for.
     if (m.double_sided) dropped.push_back("doubleSided");
-    if (hasEmissiveTexture) dropped.push_back("emissiveTexture");
     if (m.occlusion_texture.texture != nullptr) dropped.push_back("occlusionTexture");
     if (!dropped.empty()) {
-      std::string line = label + ": no v8 destination, dropped (Ruling 3):";
+      std::string line = label + ": no v9 destination, dropped (Ruling 3):";
       for (const std::string& d : dropped) line += " " + d;
       reportLines.push_back(line);
     }
@@ -480,18 +512,20 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
                           "(implementation-defined in glTF), address repeat");
   }
 
-  // Ruling 4: the DDS file's own DXGI format decides the colour space; a
-  // base-colour-named (*_diff*) file stored linear is reported, not changed.
+  // Plan 0037 Ruling 4, narrowed by Spec 0046 Q8 (ruled 2026-09-26): a DDS
+  // mapped as colour (base colour or emissive) holds sRGB-encoded colour
+  // whatever its DXGI tag, so its cook line carries --color-space=srgb; one
+  // tagged BC7_UNORM (99) is reported as overridden. A normal map keeps its
+  // file's tag (no flag).
   const fs::path contentParent = contentRootDirectory(contentRoot).parent_path();
   for (const TextureEntry& t : textures) {
-    if (!t.isDds || t.assetRoot != "{content_parent}") continue;
-    if (toLower(t.logicalPath).find("_diff") == std::string::npos) continue;
+    if (!t.isDds || t.usage != TextureUsage::Color || t.assetRoot != "{content_parent}") continue;
     const auto dxgi = ddsDxgiFormat(contentParent / t.logicalPath);
     if (dxgi && *dxgi == 100) continue;
     summary.colorSpaceWarnings += 1;
-    reportLines.push_back("colour-space warning (Ruling 4): " + t.logicalPath + " is named *_diff* but DXGI " +
+    reportLines.push_back("colour-space override (Spec 0046 Q8): " + t.logicalPath + " is DXGI " +
                           (dxgi ? std::to_string(*dxgi) : std::string("unknown")) +
-                          " is not BC7_UNORM_SRGB (100); it will be sampled as linear (file wins)");
+                          ", not BC7_UNORM_SRGB (100); used as colour, so cooked as sRGB");
   }
 
   for (std::size_t i = 0; i < textures.size(); ++i) {
@@ -499,7 +533,11 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
     declaredAssets.push_back(t.logicalPath);
     std::string line = "--kind=texture --source=" + t.source + " --asset-root=" + t.assetRoot +
                        " --output-dir={cooked_dir} --stamp={cooked_dir}/" + stampStem(i, t.logicalPath) + ".stamp";
-    if (!t.isDds) line += t.usage == TextureUsage::Color ? " --color-space=srgb" : " --color-space=unorm";
+    if (!t.isDds) {
+      line += t.usage == TextureUsage::Color ? " --color-space=srgb" : " --color-space=unorm";
+    } else if (t.usage == TextureUsage::Color) {
+      line += " --color-space=srgb";  // Spec 0046 Q8: overrides a DXGI 99 tag
+    }
     manifestLines.push_back(line);
   }
   summary.texturesReferenced += static_cast<std::uint32_t>(textures.size());

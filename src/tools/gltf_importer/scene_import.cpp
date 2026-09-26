@@ -3,6 +3,8 @@
 #include "material_import.h"
 #include "scene_transform.h"
 
+#include <atlantis/asset_system/scene_source.h>
+#include <atlantis/asset_system/scene_types.h>
 #include <cgltf.h>
 
 #include <algorithm>
@@ -98,10 +100,16 @@ struct SceneLine {
 
 // The .scene.txt v4 grammar (scene_source.cpp), written with shortest
 // round-trip floats: serializeSceneSource() prints std::to_string's fixed
-// six decimals, which would lose precision on imported transforms.
-[[nodiscard]] std::string serialize(const std::vector<SceneLine>& lines) {
-  std::string out = "atlantis_scene_source_version: 6\nnode_count: " + std::to_string(lines.size()) +
-                    "\nactive_camera: none\n";
+// six decimals, which would lose precision on imported transforms. Plan
+// 0046 Milestone 2 (ADR-0094 Decision 3): the overlay's node lines are
+// appended verbatim after the imported ones (serializeSceneSource()'s own
+// lines -- six decimals is exact enough for hand-authored values) and its
+// camera becomes the active one.
+[[nodiscard]] std::string serialize(const std::vector<SceneLine>& lines, const std::vector<std::string>& overlayLines,
+                                    std::optional<std::uint32_t> activeCamera) {
+  std::string out = "atlantis_scene_source_version: 6\nnode_count: " +
+                    std::to_string(lines.size() + overlayLines.size()) + "\nactive_camera: " +
+                    (activeCamera ? std::to_string(*activeCamera) : std::string("none")) + "\n";
   for (const SceneLine& l : lines) {
     out += "node: node_id=" + std::to_string(l.id) + " parent=" + (l.parent ? std::to_string(*l.parent) : "none") +
            " position=" + formatTriple(l.transform.translation) + " rotation=" + formatTriple(l.transform.eulerRadians) +
@@ -117,6 +125,44 @@ struct SceneLine {
     }
     out += '\n';
   }
+  for (const std::string& line : overlayLines) out += line + '\n';
+  return out;
+}
+
+// Plan 0046 Milestone 2 (ADR-0094 Decision 3): the overlay's node lines,
+// renumbered from firstId in declaration order (parents inside the overlay
+// with them), and its active camera under the new numbering.
+struct RenumberedOverlay {
+  std::vector<std::string> nodeLines;
+  std::optional<std::uint32_t> activeCamera;
+};
+
+[[nodiscard]] RenumberedOverlay renumberOverlay(const atlantis::asset_system::ParsedSceneSource& overlay,
+                                                std::uint32_t firstId) {
+  std::map<std::uint32_t, std::uint32_t> newId;
+  for (std::size_t i = 0; i < overlay.nodes.size(); ++i) {
+    newId.emplace(overlay.nodes[i].nodeId, firstId + static_cast<std::uint32_t>(i));
+  }
+  atlantis::asset_system::ParsedSceneSource renumbered;
+  for (const atlantis::asset_system::ParsedSceneNode& node : overlay.nodes) {
+    atlantis::asset_system::ParsedSceneNode copy = node;
+    copy.nodeId = newId.at(node.nodeId);
+    if (node.parentNodeId) copy.parentNodeId = newId.at(*node.parentNodeId);  // checked by checkScene()
+    renumbered.nodes.push_back(std::move(copy));
+  }
+  RenumberedOverlay out;
+  for (const atlantis::asset_system::ParsedSceneNode& node : renumbered.nodes) {
+    if (node.camera) out.activeCamera = node.nodeId;
+  }
+  const std::string text = atlantis::asset_system::serializeSceneSource(renumbered);
+  std::size_t start = 0;
+  while (start < text.size()) {
+    std::size_t end = text.find('\n', start);
+    if (end == std::string::npos) end = text.size();
+    const std::string line = text.substr(start, end - start);
+    if (line.rfind("node: ", 0) == 0) out.nodeLines.push_back(line);
+    start = end + 1;
+  }
   return out;
 }
 
@@ -126,14 +172,35 @@ std::string meshLogicalPath(const std::string& name, std::size_t meshIndex, std:
   return "meshes/" + name + "/mesh_" + std::to_string(meshIndex) + "_" + std::to_string(primitiveIndex);
 }
 
-atlantis::Result<std::monostate, GltfImportError> checkScene(const cgltf_data& data) {
+atlantis::Result<std::monostate, GltfImportError> checkScene(const cgltf_data& data,
+                                                             const atlantis::asset_system::ParsedSceneSource* overlay) {
   const cgltf_scene* scene = defaultScene(data);
   if (scene == nullptr) return CheckResult::Ok(std::monostate{});
 
-  std::set<const cgltf_node*> visited;
-  std::vector<const cgltf_node*> stack(scene->nodes, scene->nodes + scene->nodes_count);
+  // Plan 0046 Milestone 2 (ADR-0094 Decision 3, Plan 0046 P7): the overlay
+  // holds only non-renderable nodes (the camera and lights), at most one
+  // camera, and parents only inside itself.
   std::size_t directional = 0;
   std::size_t point = 0;
+  if (overlay != nullptr) {
+    std::set<std::uint32_t> overlayIds;
+    for (const auto& node : overlay->nodes) overlayIds.insert(node.nodeId);
+    std::size_t cameras = 0;
+    for (const auto& node : overlay->nodes) {
+      if (node.meshLogicalPath) return CheckResult::Err(GltfImportError::OverlayRenderableNode);
+      if (node.parentNodeId && !overlayIds.contains(*node.parentNodeId)) {
+        return CheckResult::Err(GltfImportError::OverlayParentOutsideOverlay);
+      }
+      if (node.camera) cameras += 1;
+      if (node.light) {
+        (node.light->kind == atlantis::asset_system::DecodedLightKind::Directional ? directional : point) += 1;
+      }
+    }
+    if (cameras > 1) return CheckResult::Err(GltfImportError::OverlaySecondCamera);
+  }
+
+  std::set<const cgltf_node*> visited;
+  std::vector<const cgltf_node*> stack(scene->nodes, scene->nodes + scene->nodes_count);
   while (!stack.empty()) {
     const cgltf_node* node = stack.back();
     stack.pop_back();
@@ -151,19 +218,25 @@ atlantis::Result<std::monostate, GltfImportError> checkScene(const cgltf_data& d
     }
     for (cgltf_size c = 0; c < node->children_count; ++c) stack.push_back(node->children[c]);
   }
-  // Atlantis's current cap (Spec 0019: 1 directional, 4 point), checked
-  // here so it surfaces as a named import error, not a cook failure.
-  if (directional > 1 || point > 4) return CheckResult::Err(GltfImportError::TooManyLights);
+  // The grammar's cap -- 1 directional, kMaxPointLightsPerScene (64) point
+  // since Spec 0040, not Spec 0019's stale 1 + 4 (Plan 0046 P7) -- over the
+  // imported and overlay lights together, checked here so it surfaces as a
+  // named import error, not a cook failure.
+  if (directional > 1 || point > atlantis::asset_system::kMaxPointLightsPerScene) {
+    return CheckResult::Err(GltfImportError::TooManyLights);
+  }
   return CheckResult::Ok(std::monostate{});
 }
 
 atlantis::Result<std::monostate, GltfImportError> writeScene(const cgltf_data& data, const fs::path& stagingDir,
                                                              const std::string& name, GltfImportSummary& summary,
                                                              std::vector<std::string>& reportLines,
-                                                             std::vector<std::string>& manifestLines) {
+                                                             std::vector<std::string>& manifestLines,
+                                                             const atlantis::asset_system::ParsedSceneSource* overlay) {
   const cgltf_scene* scene = defaultScene(data);
   if (scene == nullptr) {
-    reportLines.push_back("scene: the glTF defines no scene; no .scene.txt written");
+    reportLines.push_back("scene: the glTF defines no scene; no .scene.txt written" +
+                          std::string(overlay != nullptr ? " (the overlay is not applied)" : ""));
     return CheckResult::Ok(std::monostate{});
   }
 
@@ -277,10 +350,30 @@ atlantis::Result<std::monostate, GltfImportError> writeScene(const cgltf_data& d
   for (const auto& [mesh, count] : meshInstances) {
     if (count > 1) summary.meshesInstancedMoreThanOnce += 1;
   }
-  summary.sceneNodeLines = static_cast<std::uint32_t>(lines.size());
+  // Plan 0046 Milestone 2 (ADR-0094 Decision 3): the overlay's nodes follow
+  // every imported and synthetic id.
+  RenumberedOverlay merged;
+  if (overlay != nullptr) {
+    merged = renumberOverlay(*overlay, nextSyntheticId);
+    std::size_t overlayLights = 0;
+    for (const auto& node : overlay->nodes) overlayLights += node.light ? 1 : 0;
+    summary.overlayNodeLines = static_cast<std::uint32_t>(merged.nodeLines.size());
+    summary.sceneLightLines += static_cast<std::uint32_t>(overlayLights);
+    reportLines.push_back("overlay: " + std::to_string(merged.nodeLines.size()) + " node lines appended from id " +
+                          std::to_string(nextSyntheticId) + " (" + std::to_string(overlayLights) + " light)" +
+                          (merged.activeCamera ? ", active_camera " + std::to_string(*merged.activeCamera)
+                                               : std::string(", no camera")) +
+                          " (ADR-0094)");
+  }
+  summary.sceneNodeLines = static_cast<std::uint32_t>(lines.size() + merged.nodeLines.size());
 
   const std::string logical = name + "/" + name + ".scene.txt";
-  const std::string text = serialize(lines);
+  const std::string text = serialize(lines, merged.nodeLines, merged.activeCamera);
+  // The merged scene against the grammar itself (ADR-0094 Decision 3) --
+  // checkScene() already enforced every rule it can fail on.
+  if (overlay != nullptr && atlantis::asset_system::parseSceneSource(text).isErr()) {
+    return CheckResult::Err(GltfImportError::OverlayMalformed);
+  }
   std::error_code ec;
   fs::create_directories((stagingDir / logical).parent_path(), ec);
   std::ofstream out(stagingDir / logical, std::ios::binary | std::ios::trunc);

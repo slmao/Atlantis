@@ -699,6 +699,10 @@ already reflects every ruling.
 4. **DDS colour space versus usage (ruled 2026-09-19).** The file wins: the DXGI
    format stays authoritative and nothing is overridden. A heuristic warning goes to
    `import_report.txt`: a `*_diff*` texture is expected to be `BC7_UNORM_SRGB`.
+   *Narrowed 2026-09-26* by [Spec 0046](../specs/0046-bistro-finale.md) Q8: a DDS the
+   importer maps as base colour or emissive is cooked as sRGB whatever its DXGI label
+   (the label is the file's tag, not its texels' encoding); normal maps keep the
+   file's label.
 5. **uint32 rendering gap (ruled 2026-09-19).** Recorded as a Spec 0036 addition,
    workflow ①b (RHI index-type parameterization), which must land before ⑦. The review
    left the Plan's uniform-v5 decision in place.

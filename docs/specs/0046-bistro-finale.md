@@ -333,6 +333,28 @@ patterns.
 - **Q7 — Whitelist entry only when content is present.** **Ruled
   (2026-09-25): yes** — `--list-scenes` never offers a scene that cannot
   load (R3).
+- **Q8 — DDS colour space for colour-used textures (Plan 0037 Ruling 4
+  revised).** Found in Plan 0046 Milestone 3: every one of Bistro's 254
+  materials names a base-colour DDS stored `BC7_UNORM` (DXGI 99) — 137
+  distinct `*_Diff`-style files plus the importer's own white fallback — so
+  under Plan 0037 Ruling 4 ("the file wins") every material fails the
+  Runtime's PbrDirectLit base-colour sRGB check (ADR-0066 item 6,
+  `RuntimeInitError::PbrBaseColorTextureNotSrgb`) and the scene cannot load.
+  **Ruled (2026-09-26): option B** — Ruling 4 is narrowed, not reversed: a
+  DDS's DXGI label says how the file is tagged, not how its texels are
+  encoded, and a texture used as colour holds sRGB-encoded colour. So:
+  - the importer marks every DDS it maps as **base colour or emissive** with
+    `--color-space=srgb` on its cook-manifest line; normal maps (`*_ddna`)
+    get no flag and keep the file's own label;
+  - the cooker's DDS path honours `--color-space=srgb` for a DXGI 99 file
+    (cooked as sRGB — the BC7 blocks are identical, only the view format
+    changes); a DXGI 100 file is already sRGB; with no flag the file still
+    wins;
+  - the importer's white fallback is written as DXGI 100 (`BC7_UNORM_SRGB`).
+
+  Textures declared through `atlantis_add_texture_asset()` (e.g. the
+  `bc7_dual_quad` golden's) never pass through the importer and keep the
+  file-wins rule. The ADR-0066 item 6 check and the Runtime are unchanged.
 - **Risk — memory.** ≈ 4.4 GiB peak on a shared-memory iGPU; if it fails,
   the fallback is freeing CPU texture copies after upload (a Plan-level
   change, no format impact).

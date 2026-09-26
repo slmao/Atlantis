@@ -55,6 +55,9 @@ struct MaterialMetadata {
   // optional in this machine-written sidecar -- cross-validated identically.
   MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
   float alphaCutoff = 0.5f;
+  // Plan 0046 Milestone 1 (ADR-0096): always written (`0` = none), the
+  // normalMapTexture discipline -- cross-validated identically.
+  AssetId emissiveTexture = 0;
 };
 
 [[nodiscard]] atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std::string_view text);

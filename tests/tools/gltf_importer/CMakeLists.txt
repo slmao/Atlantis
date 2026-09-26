@@ -8,6 +8,8 @@ add_executable(atlantis_gltf_importer_tests
   gltf_scene_tests.cpp
   bistro_census_tests.cpp
   bistro_end_to_end_tests.cpp
+  # Plan 0046 Milestone 2: the cooker's cook-manifest mode over a synthetic import.
+  cook_manifest_mode_tests.cpp
   module_boundary_tests.cpp
 )
 

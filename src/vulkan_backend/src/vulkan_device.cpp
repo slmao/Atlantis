@@ -466,8 +466,10 @@ class DescriptorPoolGuard {
   poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   // ADR-0072 D-7's own Accepted Amendment, 2026-09-06 (Plan 0029
   // Section P10): widened from 4U to 5U -- pbr_ibl_normal_map's own
-  // new normal-map sampler slot, binding 5.
-  poolSizes[1].descriptorCount = 5U * maxSets;
+  // new normal-map sampler slot, binding 5. ADR-0096 (Plan 0046
+  // Milestone 1): widened again to 6U -- pbr_ibl_normal_map's emissive
+  // slot, binding 6.
+  poolSizes[1].descriptorCount = 6U * maxSets;
 
   VkDescriptorPoolCreateInfo createInfo{};
   createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1019,10 +1021,14 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   // include 2 (pbr_direct_lit + shadow-map sampler) and 4 (pbr_ibl +
   // shadow-map sampler) -- 3 stays legal, harmless to keep even though
   // no current consumer uses it after this Plan, avoiding an unrelated,
-  // unreviewed removal.
+  // unreviewed removal. ADR-0096 (Plan 0046 Milestone 1): widened to 6 --
+  // pbr_ibl_normal_map's emissive slot, binding 6, the third of the
+  // Backend's per-set sampler limits (beside the bind memo and the pool
+  // budget).
   ATLANTIS_CHECK(params.sampledTextureBindingCount == 0 || params.sampledTextureBindingCount == 1 ||
                  params.sampledTextureBindingCount == 2 || params.sampledTextureBindingCount == 3 ||
-                 params.sampledTextureBindingCount == 4 || params.sampledTextureBindingCount == 5);
+                 params.sampledTextureBindingCount == 4 || params.sampledTextureBindingCount == 5 ||
+                 params.sampledTextureBindingCount == 6);
 
   auto createShaderModule = [this](const atlantis::rhi::ShaderStageBytecode& bytecode,
                                     VkShaderModule& outModule) -> VkResult {
