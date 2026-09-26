@@ -4,31 +4,55 @@
   <img src="assets/branding/Atlantis_Logo.png" alt="Atlantis Logo" width="400"/>
 </p>
 
+<p align="center">
+  <img src="docs/images/bistro_finale.png" alt="Atlantis rendering the Amazon Bistro reference scene" width="512"/>
+</p>
+
+<p align="center"><em>Atlantis rendering the <a href="https://developer.nvidia.com/orca/amazon-lumberyard-bistro">Amazon Bistro</a> reference scene —
+glTF import, 64 point lights, emissive materials, alpha cutout, height fog, and bloom, in one frame.</em></p>
+
 Atlantis is a long-term, real-time rendering engine written in C++20,
-built on a backend-independent RHI (currently Vulkan) and a RenderGraph.
-It is in active development; see [docs/specs/README.md](docs/specs/README.md) for
-the current, authoritative status of every module.
+built on a backend-independent RHI (currently Vulkan) and a RenderGraph,
+targeting **Windows and Android**. It is in active development; see
+[docs/specs/README.md](docs/specs/README.md) for the current, authoritative
+status of every module.
 
 ## Features
 
-- Backend-independent RHI, with Vulkan as the first implemented backend
-- A RenderGraph for pass/resource dependency management
-- Windowed and headless rendering through the same Renderer/RHI/
-  RenderGraph stack
-- A build-time Slang → SPIR-V shader pipeline (Shader System)
-- A deterministic authoring-source → runtime-artifact Asset System
-  (meshes, materials, textures, scenes)
-- Physically based rendering: metallic-roughness direct lighting,
-  image-based lighting (SH irradiance, prefiltered specular, DFG LUT),
-  tangent-space normal mapping
-- A visible sky background and a single directional light's shadow
-- An HDR color pipeline with manual camera exposure control
-- Image-regression testing against human-reviewed golden images
-- A real Windows windowed Runtime with a sample-scene selector
+**Platform**
+- Windows and Android, sharing one Renderer/RHI/RenderGraph stack
+  (Android via Vulkan WSI + NDK; APK packaging with Gradle)
+- Windowed and headless rendering through the same code path
 
-Android is a planned target (Vulkan, not yet implemented). iOS is a
-future target — backend undecided (MoltenVK vs. a native Metal RHI
-backend). Linux is not a target platform.
+**Rendering**
+- Physically based rendering: metallic-roughness BRDF, image-based
+  lighting (SH irradiance, prefiltered specular, DFG LUT), tangent-space
+  normal mapping
+- Clearcoat, sheen (cloth), and anisotropy BRDF extensions
+- Up to 64 concurrent point lights + 1 directional light with shadow
+- Emissive materials (factor + texture)
+- Alpha blending and alpha testing (cutout) with back-to-front CPU
+  draw-order sorting
+- Height-based exponential fog (HDR colour, per-scene parameters)
+- Bloom (downsample/upsample chain, 6 levels, threshold + strength)
+- BC7 block-compressed textures with full mip-chain passthrough
+- HDR color pipeline with tone mapping and manual camera exposure
+
+**Assets & Tooling**
+- glTF 2.0 scene importer (meshes, materials, textures, scene graphs,
+  64-bit index meshes)
+- A build-time Slang → SPIR-V shader pipeline
+- A deterministic authoring-source → runtime-artifact Asset System
+- Image-regression testing against human-reviewed golden images
+  (30+ goldens, zero tolerance)
+
+**Sample scenes** — `--list-scenes` in the Runtime binary:
+integrated showcase (multi-object PBR), IBL material demo, normal-map
+demo, clearcoat/sheen/anisotropy showcase, transparency demo, fog demo,
+bloom demo, and the full Bistro reference scene.
+
+iOS is a future target — backend undecided (MoltenVK vs. a native Metal
+RHI backend). Linux is not a target platform.
 
 ## Spec-Driven Development
 
