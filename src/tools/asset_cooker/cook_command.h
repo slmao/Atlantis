@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -14,7 +15,10 @@ namespace atlantis::tools::asset_cooker {
 // runs a glTF import's whole cook_manifest.txt in-process and writes the
 // Runtime dependency manifest -- not an asset kind of its own, but selected
 // through the same --kind= flag.
-enum class AssetKind { StaticMesh, Scene, Texture, Material, Environment, CookManifest };
+// Plan 0047 P4: MintGuid prints --count= new version-4 GUIDs to stdout --
+// an authoring command, never run by the build and rejected on cook
+// manifest lines.
+enum class AssetKind { StaticMesh, Scene, Texture, Material, Environment, CookManifest, MintGuid };
 
 // Plan 0012 Section D4: two modes. Cook mode (isValidateSet == false)
 // cooks exactly one asset from sourcePath (relative to assetRoot) into
@@ -54,6 +58,9 @@ struct CookCommandRequest {
   std::string cookedDir;
   std::string contentParent;
   std::string manifestOutPath;
+
+  // Plan 0047 P4: --kind=mint-guid's --count= (default 1, must be >= 1).
+  std::uint32_t mintCount = 1;
 };
 
 // Parses one cooker argument vector (argv without the program name) into

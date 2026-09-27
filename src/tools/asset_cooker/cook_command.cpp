@@ -1,6 +1,8 @@
 #include "cook_command.h"
 #include "dds_parser.h"
+#include "guid_mint.h"
 
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/asset_set_validation.h>
 #include <atlantis/asset_system/cook.h>
@@ -12,6 +14,7 @@
 #include <atlantis/asset_system/logical_path.h>
 #include <atlantis/asset_system/texture_types.h>
 
+#include <charconv>
 #include <filesystem>
 
 #include <fstream>
@@ -582,7 +585,8 @@ struct ManifestEntry {
     for (std::string token; tokens >> token;) args.push_back(substitutePlaceholders(token, request));
     CookCommandRequest lineRequest;
     if (!parseCookArguments(args, lineRequest, std::cerr) || lineRequest.isValidateSet ||
-        lineRequest.kind == AssetKind::CookManifest || lineRequest.kind == AssetKind::Environment) {
+        lineRequest.kind == AssetKind::CookManifest || lineRequest.kind == AssetKind::Environment ||
+        lineRequest.kind == AssetKind::MintGuid) {
       std::cerr << "atlantis_asset_cooker: cook manifest line " << lineNumber << " is not a texture/material/"
                 << "scene/mesh cook: " << line << "\n";
       return 1;
@@ -680,6 +684,14 @@ struct ManifestEntry {
   return 0;
 }
 
+// Plan 0047 P4: one canonical-text GUID per line on stdout.
+[[nodiscard]] int runMintGuidMode(const CookCommandRequest& request) {
+  for (const atlantis::asset_system::AssetGuid& guid : mintAssetGuids(request.mintCount)) {
+    std::cout << atlantis::asset_system::toString(guid) << "\n";
+  }
+  return 0;
+}
+
 }  // namespace
 
 bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest& request, std::ostream& err) {
@@ -729,12 +741,24 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
         request.kind = AssetKind::Environment;
       } else if (*kind == "cook-manifest") {
         request.kind = AssetKind::CookManifest;
+      } else if (*kind == "mint-guid") {
+        request.kind = AssetKind::MintGuid;
       } else {
         err << "atlantis_asset_cooker: unrecognized --kind value: " << *kind << "\n";
         sawUnrecognized = true;
       }
     } else if (auto colorSpace = valueAfterEquals(arg, "--color-space=")) {
       request.colorSpace = *colorSpace;
+    } else if (auto count = valueAfterEquals(arg, "--count=")) {
+      std::uint32_t parsedCount = 0;
+      const char* end = count->data() + count->size();
+      const auto [ptr, ec] = std::from_chars(count->data(), end, parsedCount);
+      if (ec != std::errc{} || ptr != end || parsedCount == 0) {
+        err << "atlantis_asset_cooker: --count must be a positive integer: " << *count << "\n";
+        sawUnrecognized = true;
+      } else {
+        request.mintCount = parsedCount;
+      }
     } else {
       err << "atlantis_asset_cooker: unrecognized argument: " << arg << "\n";
       sawUnrecognized = true;
@@ -744,6 +768,8 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
   bool haveRequiredFlags = false;
   if (request.isValidateSet) {
     haveRequiredFlags = sawAssetList;
+  } else if (request.kind == AssetKind::MintGuid) {
+    haveRequiredFlags = true;
   } else if (request.kind == AssetKind::CookManifest) {
     haveRequiredFlags = !request.importDir.empty() && !request.cookedDir.empty() && !request.contentParent.empty() &&
                         !request.manifestOutPath.empty();
@@ -768,6 +794,8 @@ int runCookCommand(const CookCommandRequest& request) {
       return runCookEnvironmentMode(request);
     case AssetKind::CookManifest:
       return runCookManifestMode(request);
+    case AssetKind::MintGuid:
+      return runMintGuidMode(request);
   }
   return runCookMeshMode(request);
 }
