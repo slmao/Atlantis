@@ -1,11 +1,12 @@
 # ADR 0098: Asset Catalog and Catalog-Based Resolution
 
-- **Status:** Proposed
-- **Date:** 2026-09-28 (split from ADR-0097's combined draft of 2026-09-27)
-- **Deciders:** slmao (pending)
-- **Acceptance:** pending — Human Review of
-  [Spec 0047](../specs/0047-stable-identity-asset-catalog.md)
-- **Related Spec:** [Spec 0047: Cross-Session Stable Identity and Asset Catalog](../specs/0047-stable-identity-asset-catalog.md) (`Draft`)
+- **Status:** Accepted
+- **Date:** 2026-09-28 (split from ADR-0097's combined draft of 2026-09-27;
+  accepted 2026-09-28)
+- **Deciders:** slmao
+- **Acceptance:** slmao, 2026-09-28 (chat confirmation; reviewed in this
+  branch's own PR, alongside Spec 0047's Approval)
+- **Related Spec:** [Spec 0047: Cross-Session Stable Identity and Asset Catalog](../specs/0047-stable-identity-asset-catalog.md) (`Approved`)
 - **Related ADR(s):** supersedes in part
   [ADR-0054](0054-scene-loading-transactional-instantiation-contract.md)
   Decision 1 (location mechanism) and

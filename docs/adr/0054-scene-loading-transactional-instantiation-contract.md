@@ -1,6 +1,9 @@
 # ADR 0054: Scene Loading Transactional Instantiation Contract
 
 - **Status:** Accepted
+- **Superseded in part by:** [ADR-0098](0098-asset-catalog-and-catalog-based-resolution.md)
+  (2026-09-28) — Decision 1's location mechanism (per-scene manifest,
+  CMake dependency lists). Every other decision below stands, unedited.
 - **Date:** 2026-08-23
 - **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
   approved 2026-08-23 as part of Spec 0015's Human Review Approval

@@ -1,11 +1,12 @@
 # ADR 0097: GUID-Keyed Asset and Entity Identity
 
-- **Status:** Proposed
-- **Date:** 2026-09-27 (split from the combined draft 2026-09-28)
-- **Deciders:** slmao (pending)
-- **Acceptance:** pending — Human Review of
-  [Spec 0047](../specs/0047-stable-identity-asset-catalog.md)
-- **Related Spec:** [Spec 0047: Cross-Session Stable Identity and Asset Catalog](../specs/0047-stable-identity-asset-catalog.md) (`Draft`)
+- **Status:** Accepted
+- **Date:** 2026-09-27 (split from the combined draft 2026-09-28; accepted
+  2026-09-28)
+- **Deciders:** slmao
+- **Acceptance:** slmao, 2026-09-28 (chat confirmation; reviewed in this
+  branch's own PR, alongside Spec 0047's Approval)
+- **Related Spec:** [Spec 0047: Cross-Session Stable Identity and Asset Catalog](../specs/0047-stable-identity-asset-catalog.md) (`Approved`)
 - **Related ADR(s):** supersedes in part
   [ADR-0044](0044-asset-system-identity-provenance-and-import-methodology.md)
   ("Asset ID: path-derived" and "Collision detection"). Sibling of

@@ -1,14 +1,19 @@
 # Spec: Cross-Session Stable Identity and Asset Catalog
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-09-27
-- **Related Plan(s):** none yet — Plan drafting awaits this Spec's Approval.
-- **Approval:** pending. Scope was fixed by the maintainer before drafting
-  (2026-09-27, chat; see Goals / Non-Goals); Q10 (the ADR split) was ruled
-  2026-09-28 (chat); every other open design question below carries a
-  recommendation awaiting Human Review.
-- **Related ADR(s):** both `Proposed` —
+- **Related Plan(s):** none yet — Plan 0047 drafting is authorized by the
+  Approval below. **Implementation still awaits its own, separate Joint Human
+  Review** of Spec + Plan together, per AGENTS.md's own workflow.
+- **Approval:** slmao, 2026-09-28 (chat confirmation; reviewed in this
+  Spec's own branch PR) — authorizes drafting Plan 0047; Implementation itself
+  still awaits its own, separate Joint Human Review of Spec + Plan together.
+  Scope was fixed by the maintainer before drafting (2026-09-27, chat; see
+  Goals / Non-Goals); the same review ruled all eleven open questions (Q10,
+  the ADR split, earlier the same day). See Risks & Open Questions below.
+- **Related ADR(s):** both `Accepted` 2026-09-28, alongside this Spec's own
+  Approval —
   [ADR-0097](../adr/0097-guid-keyed-asset-and-entity-identity.md) — asset
   and entity identity (AssetGuid, the `AssetId` key, derived import identity,
   EntityGuid and `SceneEntityMap`, `EntityRef`, and the reference-carrying
@@ -296,7 +301,7 @@ overlay (scene v7) ────────┘            assemble ──► <bu
 Yes — two ADRs, split by ruling Q10:
 
 - **[ADR-0097](../adr/0097-guid-keyed-asset-and-entity-identity.md)
-  (`Proposed`) — identity.** D1 AssetGuid; D2 `AssetId` as the GUID's 64-bit
+  (`Accepted`) — identity.** D1 AssetGuid; D2 `AssetId` as the GUID's 64-bit
   key (its uniqueness enforced by ADR-0098 D2); D3 GUID references and the
   reference-carrying format changes — scene source v6 → v7, scene artifact
   6 → 7 (node record 152 → 168 bytes), material source 9 → 10, an
@@ -307,7 +312,7 @@ Yes — two ADRs, split by ruling Q10:
   sections**; ADR-0044's re-import, metadata-provenance and determinism
   decisions stand.
 - **[ADR-0098](../adr/0098-asset-catalog-and-catalog-based-resolution.md)
-  (`Proposed`) — catalog and resolution.** D1 the catalog source
+  (`Accepted`) — catalog and resolution.** D1 the catalog source
   `assets/asset_catalog.txt` as sole home of root GUIDs; D2 the
   build-assembled catalog, its record fields, validation, relative locations
   and closure catalogs; D3 Runtime resolution through the catalog (including
@@ -392,37 +397,39 @@ maps to the requirements it proves.
 
 ## Risks & Open Questions
 
-All recommendations await Human Review.
+All eleven questions were ruled by Human Review (slmao, 2026-09-28, chat
+confirmation): Q10 as recorded below, every other one as its recommendation.
 
-- **Q1 — Home of asset GUIDs.** *Recommended:* one committed catalog source
-  (R3). Alternatives: per-source sidecars; CMake arguments. Reopen if
-  concurrent multi-author edits make the one file a merge hotspot.
-- **Q2 — GUID form.** *Recommended:* 128-bit, RFC 9562 text, v4 minted /
-  v8 derived. Alternative: 64-bit random (smaller, but no room for
+- **Q1 — Home of asset GUIDs.** **Ruled (2026-09-28):** one committed
+  catalog source (R3). Alternatives: per-source sidecars; CMake arguments.
+  Reopen if concurrent multi-author edits make the one file a merge hotspot.
+- **Q2 — GUID form.** **Ruled (2026-09-28):** 128-bit, RFC 9562 text, v4
+  minted / v8 derived. Alternative: 64-bit random (smaller, but no room for
   coordination-free minting once packages or UGC exist).
-- **Q3 — Runtime reference key.** *Recommended:* keep 64-bit `AssetId`,
-  redefined as FNV-1a-64 of the GUID bytes (R2). Alternative: 128-bit
-  everywhere.
-- **Q4 — Authored references.** *Recommended:* GUID only (R5), with a lookup
-  tool. Alternative: keep paths in sources, resolved through the catalog
-  source at cook time — readable, but a rename again means editing every
-  referencing source. This is the main readability cost of the Spec.
-- **Q5 — Imported identity.** *Recommended:* derived from root GUID +
-  positional sub-key (R6). Alternative: a committed lock file of minted
-  GUIDs.
-- **Q6 — Per-scene manifests and CMake `*_DEPENDENCIES`.** *Recommended:*
-  retire both; dependencies come from cooked content, checked at assembly
-  (R9, R11) — which also closes Spec 0015's stale-list gap.
-- **Q7 — Runtime configuration.** *Recommended:* `BootstrapConfig` carries
-  a catalog path and a scene GUID; whitelist entries map a name to a GUID;
-  locations relative to the catalog (R10, R11).
-- **Q8 — Cross-scene entity references.** *Recommended:* the `EntityRef`
-  form, codec and resolution rule only, no grammar field (R13).
+- **Q3 — Runtime reference key.** **Ruled (2026-09-28):** keep 64-bit
+  `AssetId`, redefined as FNV-1a-64 of the GUID bytes (R2). Alternative:
+  128-bit everywhere.
+- **Q4 — Authored references.** **Ruled (2026-09-28):** GUID only (R5), with
+  a lookup tool. Alternative: keep paths in sources, resolved through the
+  catalog source at cook time — readable, but a rename again means editing
+  every referencing source. This is the main readability cost of the Spec.
+- **Q5 — Imported identity.** **Ruled (2026-09-28):** derived from the root
+  GUID and a positional sub-key (R6). Alternative: a committed lock file of
+  minted GUIDs.
+- **Q6 — Per-scene manifests and CMake `*_DEPENDENCIES`.** **Ruled
+  (2026-09-28):** retire both; dependencies come from cooked content,
+  checked at assembly (R9, R11) — which also closes Spec 0015's stale-list
+  gap.
+- **Q7 — Runtime configuration.** **Ruled (2026-09-28):** `BootstrapConfig`
+  carries a catalog path and a scene GUID; whitelist entries map a name to a
+  GUID; locations relative to the catalog (R10, R11).
+- **Q8 — Cross-scene entity references.** **Ruled (2026-09-28):** the
+  `EntityRef` form, codec and resolution rule only, no grammar field (R13).
   Alternatives: defer entirely; or let the overlay parent to imported nodes
   by EntityGuid (a real consumer, but it changes ADR-0094 D3 — a separate
   decision).
-- **Q9 — `fromValidatedSceneData()`.** *Recommended:* keep it beside the new
-  entry point to avoid unrelated churn (R12).
+- **Q9 — `fromValidatedSceneData()`.** **Ruled (2026-09-28):** keep it
+  beside the new entry point to avoid unrelated churn (R12).
 - **Q10 — One ADR or two.** **Ruled (2026-09-28): two.** Identity is
   [ADR-0097](../adr/0097-guid-keyed-asset-and-entity-identity.md) (with the
   reference-carrying format changes); catalog and resolution are
@@ -430,11 +437,13 @@ All recommendations await Human Review.
   dependency between them — ADR-0097 D2's key uniqueness rests on ADR-0098
   D2's assembly check — is stated by cross-links in both, not by merging
   them.
-- **Q11 — Pointers in superseded ADRs.** *Recommended:* on each ADR's
-  acceptance, add a one-line "superseded in part by" pointer (metadata only,
-  decisions untouched) to the superseded ADR's header — ADR-0044 ← ADR-0097;
-  ADR-0054 and ADR-0094 ← ADR-0098 — and update AGENTS.md's World-dependency
-  sentence in the implementation PR.
+- **Q11 — Pointers in superseded ADRs.** **Ruled (2026-09-28):** on each
+  ADR's acceptance, add a one-line "superseded in part by" pointer (metadata
+  only, decisions untouched) to the superseded ADR's header — ADR-0044 ←
+  ADR-0097; ADR-0054 and ADR-0094 ← ADR-0098 — and update AGENTS.md's
+  World-dependency sentence in the implementation PR. The three pointers
+  were added with this Approval; the AGENTS.md sentence remains for the
+  implementation PR.
 - **Risk — positional import keys.** A re-exported glTF that reorders meshes,
   materials or nodes changes derived GUIDs. So does one that **inserts** an
   element before existing ones: every index after the insertion point
