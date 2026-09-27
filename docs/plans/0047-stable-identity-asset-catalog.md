@@ -5,10 +5,14 @@
   [ADR-0097](../adr/0097-guid-keyed-asset-and-entity-identity.md) (identity) and
   [ADR-0098](../adr/0098-asset-catalog-and-catalog-based-resolution.md)
   (catalog and resolution), both `Accepted`
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending — this Plan and Spec 0047 are reviewed
-  together; Implementation is not authorized until that review approves both.
+- **Joint Human Review:** slmao, 2026-09-28 — reviewed this Plan and
+  [Spec 0047](../specs/0047-stable-identity-asset-catalog.md) together and
+  explicitly authorized Implementation from Milestone 1 (chat confirmation;
+  document set carried by this branch's PR). All four open points were ruled
+  as recommended, O4 with an added measurement requirement; see Open points
+  below.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -105,7 +109,8 @@ manifest has exactly two consumers and retiring it for one would leave the
 Android build broken until M8. M8 keeps the brief's final position for the
 emulator closure-catalog verification.
 
-Both moves are for the Joint Review to confirm (see Open points).
+Both moves were confirmed by the Joint Human Review (rulings O1 and O2,
+2026-09-28).
 
 ## Plan-stage decisions
 
@@ -530,7 +535,9 @@ emulator Validation-Layer gap is inherited and recorded.
    `[bistro]`/`content` tests, Android `assembleDebug`.
 
 *Gate:* all of the above; the PR records build-time before/after for a
-clean build and for a one-line catalog-source edit.
+clean build and for a one-line catalog-source edit, each measured both
+without and with `content/bistro/` present — including whether the one-line
+edit re-triggers the full Bistro import, and its time (ruling O4).
 
 ## Files / Modules Touched (expected)
 
@@ -636,24 +643,32 @@ Maps to Spec 0047's Testing & Verification Plan.
 - [ ] **Android:** `assembleDebug` at every gate from M3; emulator run from
   the closure catalog (M8) with screencap + logcat.
 - [ ] **Build time:** clean build and catalog-source-edit rebuild, before and
-  after, reported in the PR.
+  after, each without and with `content/bistro/` present (whether the edit
+  re-triggers the full Bistro import, and its cost), reported in the PR
+  (ruling O4).
 
-## Open points (for Joint Human Review)
+## Open points — ruled (Joint Human Review, slmao, 2026-09-28, chat)
 
-- **O1 — Content migration at the end of M3** (Order note). This is
-  recommended over keeping the brief's late slot, which would need either
-  red gates or two readable versions per format.
+- **O1 — Content migration at the end of M3** (Order note). **Ruled
+  (2026-09-28): as recommended** — over keeping the brief's late slot, which
+  would need either red gates or two readable versions per format.
 - **O2 — Android code switch in M5, emulator verification in M8** (Order
-  note). This is recommended over leaving `assembleDebug` broken between M5
-  and M8.
+  note). **Ruled (2026-09-28): as recommended** — over leaving
+  `assembleDebug` broken between M5 and M8.
 - **O3 — Material `TEXTURE`/`NORMAL_MAP` CMake arguments retired with the
-  `*_DEPENDENCIES` lists** (P16). They are the same hand-maintained
-  dependency fact R9 replaces; keeping them would leave a second, stale-able
-  source.
-- **O4 — Every cook depends on the catalog source** (M3 step 5). A
-  catalog-source edit re-cooks all hand-authored assets. This is correct by
-  construction, and the cost is measured (M9). The alternative is a stale
-  GUID in a sidecar until the next clean build.
+  `*_DEPENDENCIES` lists** (P16). **Ruled (2026-09-28): as recommended** —
+  they are the same hand-maintained dependency fact R9 replaces; keeping them
+  would leave a second, stale-able source.
+- **O4 — Every cook depends on the catalog source** (M3 step 5). **Ruled
+  (2026-09-28): as recommended**, with one addition. A catalog-source edit
+  re-cooks all hand-authored assets; this is correct by construction, and the
+  alternative is a stale GUID in a sidecar until the next clean build.
+  - **Addition:** M9's build-time measurement must include `content/bistro/`
+    present. It records whether a one-line catalog-source edit re-triggers
+    the full Bistro import, and the numbers go in the implementation PR.
+  - If the measured cost is too high, narrowing the importer step's stamp
+    input to its own catalog-source line is an implementation detail, not a
+    Plan change.
 
 ## Rollback Plan
 
