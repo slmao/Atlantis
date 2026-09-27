@@ -5,17 +5,22 @@
 - **Created:** 2026-09-27
 - **Related Plan(s):** none yet — Plan drafting awaits this Spec's Approval.
 - **Approval:** pending. Scope was fixed by the maintainer before drafting
-  (2026-09-27, chat; see Goals / Non-Goals); every open design question below
-  carries a recommendation awaiting Human Review.
-- **Related ADR(s):**
-  [ADR-0097](../adr/0097-guid-keyed-asset-identity-and-build-generated-catalog.md)
-  (`Proposed`) — GUID-keyed asset identity, persistent entity identity, and
-  the build-generated asset catalog. Supersedes, in part,
-  [ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md),
+  (2026-09-27, chat; see Goals / Non-Goals); Q10 (the ADR split) was ruled
+  2026-09-28 (chat); every other open design question below carries a
+  recommendation awaiting Human Review.
+- **Related ADR(s):** both `Proposed` —
+  [ADR-0097](../adr/0097-guid-keyed-asset-and-entity-identity.md) — asset
+  and entity identity (AssetGuid, the `AssetId` key, derived import identity,
+  EntityGuid and `SceneEntityMap`, `EntityRef`, and the reference-carrying
+  format changes); supersedes, in part,
+  [ADR-0044](../adr/0044-asset-system-identity-provenance-and-import-methodology.md).
+  [ADR-0098](../adr/0098-asset-catalog-and-catalog-based-resolution.md) —
+  the catalog source, the build-assembled catalog and its validation, and
+  Runtime resolution through it; supersedes, in part,
   [ADR-0054](../adr/0054-scene-loading-transactional-instantiation-contract.md)
   Decision 1 and
   [ADR-0094](../adr/0094-imported-scene-assembly-build-step-and-authored-overlay.md)
-  Decision 2's manifest output (see Architectural Impact).
+  Decision 2's manifest output. See Architectural Impact.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
@@ -137,25 +142,25 @@ Scope as fixed by the maintainer (not to be widened):
   A **minted** GUID is RFC 9562 version 4 from `std::random_device`,
   produced only by an explicit authoring-tool command — never by a build,
   cook or import. A **derived** GUID (R6) is version 8.
-- **R2 — AssetId redefined (ADR-0097 D2).** `AssetId` stays a 64-bit value
-  with its current binary encodings, redefined as FNV-1a-64 over the
-  GUID's 16 bytes. Logical paths no longer participate in identity. `0`
-  stays reserved ("none"); a GUID whose key is `0` or collides with another
-  record's key fails catalog assembly (R9).
-- **R3 — Catalog source (ADR-0097 D3).** A committed, strict, versioned flat
+- **R2 — AssetId redefined (ADR-0097 D2; uniqueness authority ADR-0098
+  D2).** `AssetId` stays a 64-bit value with its current binary encodings,
+  redefined as FNV-1a-64 over the GUID's 16 bytes. Logical paths no longer
+  participate in identity. `0` stays reserved ("none"); a GUID whose key is
+  `0` or collides with another record's key fails catalog assembly (R9).
+- **R3 — Catalog source (ADR-0098 D1).** A committed, strict, versioned flat
   text file `assets/asset_catalog.txt` is the only home of root-asset GUIDs:
   one line per asset — GUID, type (`mesh`, `texture`, `material`, `scene`,
   `environment`, `gltf_import`), root (`assets` or `content`), logical path —
   in ascending (root, path) order. GUIDs are not duplicated into CMake,
   sidecars or sources.
-- **R4 — Cooks and imports take identity from the catalog source.** Every
-  cook and the importer look up their input's GUID by (root, logical path).
-  A declared asset with no entry, or an entry of another type, is a named
-  error — never an automatically minted GUID.
-- **R5 — Authored references by GUID.** Scene source v7 references meshes and
-  materials by AssetGuid; material source v10 references textures by
-  AssetGuid. Paths no longer appear in references. The importer writes GUIDs
-  into what it generates.
+- **R4 — Cooks and imports take identity from the catalog source (ADR-0098
+  D1).** Every cook and the importer look up their input's GUID by (root,
+  logical path). A declared asset with no entry, or an entry of another
+  type, is a named error — never an automatically minted GUID.
+- **R5 — Authored references by GUID (ADR-0097 D3).** Scene source v7
+  references meshes and materials by AssetGuid; material source v10
+  references textures by AssetGuid. Paths no longer appear in references.
+  The importer writes GUIDs into what it generates.
 - **R6 — Derived identity for imports (ADR-0097 D4).** An imported sub-asset's
   GUID is derived from its import root's GUID and a sub-key
   (`mesh/<i>/<j>`, `material/<i>`, `texture/<uri>`, `fallback/white`,
@@ -163,18 +168,19 @@ Scope as fixed by the maintainer (not to be widened):
   bytes followed by the sub-key's ASCII bytes, version/variant bits set to 8.
   Imported nodes' EntityGuids are derived the same way from the scene's GUID
   and `node/<glTF index>` or a synthetic key. Import stays byte-deterministic.
-- **R7 — EntityGuid persistence (ADR-0097 D5).** Every scene node carries a
-  mandatory EntityGuid: authored as `guid=` in scene source v7 (the overlay
-  included), written into scene artifact schema 7 (16 bytes per node record),
-  exposed read-only by `ValidatedSceneData`. `node_id` stays a file-local
-  structural label. Cook and decode each reject a nil or duplicate EntityGuid
-  within one scene. `EntityGuid` is a distinct type from `AssetGuid`.
-- **R8 — Metadata sidecars carry the GUID.** Mesh, texture, material,
-  environment and scene sidecars gain an `asset_guid` line (each sidecar's
-  version bumps). Loaders check `assetId == key(asset_guid)` in place of
-  `assetId == computeAssetId(sourceLogicalPath)`; the source path becomes
-  provenance only.
-- **R9 — Cooked catalog (ADR-0097 D6).** Every cook writes a one-record
+- **R7 — EntityGuid persistence (ADR-0097 D5; formats D3).** Every scene
+  node carries a mandatory EntityGuid: authored as `guid=` in scene source
+  v7 (the overlay included), written into scene artifact schema 7 (16 bytes
+  per node record), exposed read-only by `ValidatedSceneData`. `node_id`
+  stays a file-local structural label. Cook and decode each reject a nil or
+  duplicate EntityGuid within one scene. `EntityGuid` is a distinct type
+  from `AssetGuid`.
+- **R8 — Metadata sidecars carry the GUID (ADR-0097 D3).** Mesh, texture,
+  material, environment and scene sidecars gain an `asset_guid` line (each
+  sidecar's version bumps). Loaders check `assetId == key(asset_guid)` in
+  place of `assetId == computeAssetId(sourceLogicalPath)`; the source path
+  becomes provenance only.
+- **R9 — Cooked catalog (ADR-0098 D2).** Every cook writes a one-record
   catalog fragment; the importer's cook-manifest mode writes one fragment for
   its whole import (replacing its dependency manifest). One assembly step per
   build — replacing `atlantis_finalize_asset_validation()`'s `--validate-set`
@@ -191,11 +197,11 @@ Scope as fixed by the maintainer (not to be widened):
   declaration in this build (content-gated) are counted, not errors.
   Dependencies come from what the cook actually wrote, never from a
   hand-maintained list.
-- **R10 — Location.** Record locations are `/`-separated paths relative to
-  the catalog file's directory, never escaping it. A **closure catalog** — the
-  same format restricted to one scene's transitive dependencies — can be
-  written for packaging (Android).
-- **R11 — Runtime resolves through the catalog (ADR-0097 D7).** The catalog
+- **R10 — Location (ADR-0098 D2).** Record locations are `/`-separated paths
+  relative to the catalog file's directory, never escaping it. A **closure
+  catalog** — the same format restricted to one scene's transitive
+  dependencies — can be written for packaging (Android).
+- **R11 — Runtime resolves through the catalog (ADR-0098 D3).** The catalog
   parser is a public Asset System API producing an immutable value (safe for
   concurrent reads; no global). The Runtime is configured with a catalog path
   and a scene GUID, loads the catalog once, and resolves the scene and every
@@ -208,25 +214,27 @@ Scope as fixed by the maintainer (not to be widened):
   `SceneEntityMap` (`EntityGuid → EntityId`, one entry per node, a snapshot
   taken at instantiation). `World`, `EntityId` and every component are
   unchanged. `fromValidatedSceneData()` remains, returning `World` alone.
-- **R13 — Cross-scene reference (ADR-0097 D8).**
-  - *Assets:* any scene may reference any cataloged asset, including another
-    import's sub-asset; one asset has one record however many scenes use it.
-  - *Entities:* the persisted form is `EntityRef { AssetGuid scene;
-    EntityGuid entity; }` (text `<scene guid>/<entity guid>`, binary 32
-    bytes). It resolves only against a loaded instance of that scene, through
+- **R13 — Cross-scene reference.**
+  - *Assets (ADR-0098 D3):* any scene may reference any cataloged asset,
+    including another import's sub-asset; one asset has one record however
+    many scenes use it.
+  - *Entities (ADR-0097 D6):* the persisted form is `EntityRef { AssetGuid
+    scene; EntityGuid entity; }` (text `<scene guid>/<entity guid>`, binary
+    32 bytes). It resolves only against a loaded instance of that scene, through
     its `SceneEntityMap` and `World` liveness; an unknown scene, unknown
     entity or dead entity is an explicit error, never a null. No scene-grammar
     field stores an `EntityRef` in this Spec.
-- **R14 — Rename/move stability (the acceptance property).** Renaming or
-  moving any source (with its one catalog-source line updated) leaves every
-  artifact byte-identical; only sidecar source-path lines and catalog
-  `source`/location fields change. Moving the glTF or the content root
-  changes no imported GUID. Moving a source without updating the catalog
-  source fails the build by name; copying a source without minting a new
-  GUID fails as a duplicate.
-- **R15 — Migration.** Every committed source, the overlay and the catalog
-  source are migrated in one reviewed, mechanical change; old source,
-  artifact and sidecar versions are rejected afterwards.
+- **R14 — Rename/move stability (the acceptance property; ADR-0097 D1–D3,
+  ADR-0098 D1–D2).** Renaming or moving any source (with its one
+  catalog-source line updated) leaves every artifact byte-identical; only
+  sidecar source-path lines and catalog `source`/location fields change.
+  Moving the glTF or the content root changes no imported GUID. Moving a
+  source without updating the catalog source fails the build by name;
+  copying a source without minting a new GUID fails as a duplicate.
+- **R15 — Migration (ADR-0097 D3, ADR-0098 D1).** Every committed source,
+  the overlay and the catalog source are migrated in one reviewed,
+  mechanical change; old source, artifact and sidecar versions are rejected
+  afterwards.
 
 ### Non-functional
 
@@ -285,31 +293,36 @@ overlay (scene v7) ────────┘            assemble ──► <bu
 
 ## Architectural Impact
 
-Yes. **ADR-0097** (`Proposed`) records:
+Yes — two ADRs, split by ruling Q10:
 
-- D1–D2: the AssetGuid scheme and `AssetId`'s redefinition — **supersedes
-  ADR-0044's "Asset ID: path-derived" and invocation-scoped "Collision
-  detection" sections**; ADR-0044's re-import, metadata-provenance and
-  determinism decisions stand.
-- D3–D4: the catalog source as sole GUID home; derived identity for imports.
-- D5: EntityGuid in scene source/artifact/`ValidatedSceneData`, and the
-  instantiation-side `SceneEntityMap` (World unchanged; extends ADR-0053).
-- D6–D7: the cooked catalog as a public Asset System format and API, and the
-  Runtime's catalog-based resolution — **supersedes ADR-0054 Decision 1's
+- **[ADR-0097](../adr/0097-guid-keyed-asset-and-entity-identity.md)
+  (`Proposed`) — identity.** D1 AssetGuid; D2 `AssetId` as the GUID's 64-bit
+  key (its uniqueness enforced by ADR-0098 D2); D3 GUID references and the
+  reference-carrying format changes — scene source v6 → v7, scene artifact
+  6 → 7 (node record 152 → 168 bytes), material source 9 → 10, an
+  `asset_guid` line in every metadata sidecar (+1 each); D4 derived import
+  identity; D5 EntityGuid and the instantiation-side `SceneEntityMap` (World
+  unchanged; extends ADR-0053); D6 `EntityRef`. **Supersedes ADR-0044's
+  "Asset ID: path-derived" and invocation-scoped "Collision detection"
+  sections**; ADR-0044's re-import, metadata-provenance and determinism
+  decisions stand.
+- **[ADR-0098](../adr/0098-asset-catalog-and-catalog-based-resolution.md)
+  (`Proposed`) — catalog and resolution.** D1 the catalog source
+  `assets/asset_catalog.txt` as sole home of root GUIDs; D2 the
+  build-assembled catalog, its record fields, validation, relative locations
+  and closure catalogs; D3 Runtime resolution through the catalog (including
+  asset-level cross-scene references). **Supersedes ADR-0054 Decision 1's
   location mechanism** (per-scene manifest, CMake dependency lists, "never a
-  global catalog") and **ADR-0094 Decision 2's dependency-manifest output**
+  global catalog") **and ADR-0094 Decision 2's dependency-manifest output**
   (now a catalog fragment); ADR-0054's transactional load and ADR-0094's
   build step otherwise stand.
-- D8: the `EntityRef` persisted form and its resolution rule.
 
-Format changes that follow (no separate ADR, per the ADR-0045 amendment
-precedent, but listed for review): scene source v6 → v7, scene artifact
-6 → 7 (record 152 → 168 bytes), material source 9 → 10, every metadata
-sidecar +1. Public API changes: new `asset_guid.h`, `asset_catalog.h`,
-`entity_ref.h` (Asset System); `instantiateScene()`/`SceneEntityMap`
-(World); `BootstrapConfig` and the scene whitelist (Runtime); new cooker and
-importer options. No RHI, Renderer, RenderGraph, Shader System or Platform
-change; the AssetSystem → World include ban (ADR-0053) holds.
+Public API changes: new `asset_guid.h`, `entity_ref.h` (ADR-0097) and
+`asset_catalog.h` (ADR-0098) in Asset System; `instantiateScene()`/
+`SceneEntityMap` in World (ADR-0097 D5); `BootstrapConfig` and the scene
+whitelist in Runtime (ADR-0098 D3); new cooker and importer options. No RHI,
+Renderer, RenderGraph, Shader System or Platform change; the AssetSystem →
+World include ban (ADR-0053) holds.
 
 ## Alternatives Considered
 
@@ -410,17 +423,24 @@ All recommendations await Human Review.
   decision).
 - **Q9 — `fromValidatedSceneData()`.** *Recommended:* keep it beside the new
   entry point to avoid unrelated churn (R12).
-- **Q10 — One ADR or two.** *Recommended:* one ADR-0097 — the key
-  redefinition (D2) relies on the catalog (D6) as its uniqueness authority.
-  Alternative: split identity (0097) from catalog/location (0098).
-- **Q11 — Pointers in superseded ADRs.** *Recommended:* on ADR-0097's
-  acceptance, add a one-line "superseded in part by ADR-0097" pointer to the
-  headers of ADR-0044, ADR-0054 and ADR-0094 (metadata only, decisions
-  untouched), and update AGENTS.md's World-dependency sentence in the
-  implementation PR.
+- **Q10 — One ADR or two.** **Ruled (2026-09-28): two.** Identity is
+  [ADR-0097](../adr/0097-guid-keyed-asset-and-entity-identity.md) (with the
+  reference-carrying format changes); catalog and resolution are
+  [ADR-0098](../adr/0098-asset-catalog-and-catalog-based-resolution.md). The
+  dependency between them — ADR-0097 D2's key uniqueness rests on ADR-0098
+  D2's assembly check — is stated by cross-links in both, not by merging
+  them.
+- **Q11 — Pointers in superseded ADRs.** *Recommended:* on each ADR's
+  acceptance, add a one-line "superseded in part by" pointer (metadata only,
+  decisions untouched) to the superseded ADR's header — ADR-0044 ← ADR-0097;
+  ADR-0054 and ADR-0094 ← ADR-0098 — and update AGENTS.md's World-dependency
+  sentence in the implementation PR.
 - **Risk — positional import keys.** A re-exported glTF that reorders meshes,
-  materials or nodes changes derived GUIDs. Harmless for SHA-256-pinned
-  content; a name- or content-matching key is future work.
+  materials or nodes changes derived GUIDs. So does one that **inserts** an
+  element before existing ones: every index after the insertion point
+  shifts, so every derived GUID after it changes even though those assets
+  did not. Harmless for SHA-256-pinned content; a name- or content-matching
+  key is future work.
 - **Risk — migration size.** 109 catalog entries, 246 node GUIDs, all scene
   and material references, 66 manifest-consuming files. Mechanical, but one
   large diff; the byte-identical goldens are its safety net.
