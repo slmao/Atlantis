@@ -51,7 +51,7 @@ TEST_CASE("An all-zero draw is retried", "[guid_mint]") {
   CHECK(isVersion4(guid));
 }
 
-TEST_CASE("--kind=mint-guid parses with and without --count", "[guid_mint]") {
+TEST_CASE("The mint-guid kind parses with and without a count", "[guid_mint]") {
   std::ostringstream err;
   CookCommandRequest one;
   REQUIRE(parseCookArguments({"--kind=mint-guid"}, one, err));
@@ -63,7 +63,7 @@ TEST_CASE("--kind=mint-guid parses with and without --count", "[guid_mint]") {
   CHECK(three.mintCount == 3);
 }
 
-TEST_CASE("--count must be a positive integer", "[guid_mint]") {
+TEST_CASE("The mint count must be a positive integer", "[guid_mint]") {
   for (const char* bad : {"--count=0", "--count=-1", "--count=3x", "--count="}) {
     std::ostringstream err;
     CookCommandRequest request;
