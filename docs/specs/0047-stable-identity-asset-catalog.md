@@ -128,8 +128,8 @@ Scope as fixed by the maintainer (not to be widened):
   policy continues).
 - **Sub-scene / prefab instancing, loading several scenes at once**, or an
   Editor. The Runtime still loads one scene.
-- **Name-based import keys** that survive a re-export which reorders the glTF
-  (see Risks).
+- **Name-based import keys** that survive a re-export which reorders or
+  inserts into the glTF (see Risks).
 - **New third-party dependencies**, non-ASCII paths, packages/UGC namespaces.
 
 ## Requirements
