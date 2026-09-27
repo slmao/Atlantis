@@ -1,6 +1,9 @@
 # ADR 0044: Asset System — Identity, Provenance, and Import Methodology
 
 - **Status:** Accepted
+- **Superseded in part by:** [ADR-0097](0097-guid-keyed-asset-and-entity-identity.md)
+  (2026-09-28) — the "Asset ID: path-derived" and "Collision detection"
+  sections. Every other decision below stands, unedited.
 - **Date:** 2026-08-18 (accepted 2026-08-19 — see Revision History)
 - **Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`) — Human Review,
   approved 2026-08-19 as part of Spec 0012's Human Review Approval; see

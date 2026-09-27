@@ -1,6 +1,9 @@
 # ADR 0094: Imported-Scene Assembly — One Build Step, a Cook-Manifest Mode, and an Authored Overlay
 
 - **Status:** Accepted
+- **Superseded in part by:** [ADR-0098](0098-asset-catalog-and-catalog-based-resolution.md)
+  (2026-09-28) — Decision 2's dependency-manifest output (now a catalog
+  fragment). Every other decision below stands, unedited.
 - **Date:** 2026-09-25
 - **Deciders:** slmao
 - **Acceptance:** slmao, 2026-09-25 (chat confirmation; reviewed in this
