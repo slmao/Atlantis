@@ -1,5 +1,6 @@
 #include "index_type_meshes.h"
 
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/asset_metadata.h>
 #include <atlantis/asset_system/logical_path.h>
@@ -22,10 +23,20 @@ void writeArtifact(const std::filesystem::path& path, const std::vector<std::byt
   out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
 }
 
-void writeSidecar(const std::filesystem::path& path, as::AssetId assetId, const std::string& logicalPath,
+// Plan 0047 M3: these fixture meshes are not catalog assets, so each takes
+// a GUID derived from a fixed fixture owner and its own logical path --
+// stable across runs, and its assetKey() is the Asset ID the artifact and
+// sidecar both carry.
+[[nodiscard]] as::AssetGuid fixtureMeshGuid(const std::string& logicalPath) {
+  const auto owner = as::parseAssetGuid("00390039-0039-4039-8039-003900390039");
+  return as::deriveAssetGuid(owner.value(), logicalPath);
+}
+
+void writeSidecar(const std::filesystem::path& path, const as::AssetGuid& assetGuid, const std::string& logicalPath,
                   std::uint32_t vertexCount, std::uint32_t indexCount) {
   as::AssetMetadata metadata;
-  metadata.assetId = assetId;
+  metadata.assetId = as::assetKey(assetGuid);
+  metadata.assetGuid = assetGuid;
   metadata.sourceLogicalPath = logicalPath;
   metadata.importerVersion = "spec_0039_fixture";
   metadata.assetType = "static_mesh";
@@ -63,12 +74,13 @@ MeshArtifactPaths writeEquivalenceCubeV4(const std::filesystem::path& directory)
   const as::ParsedMeshSource source = equivalenceCubeSource();
   const auto tangents = as::generateTangents(source);
   const std::string logicalPath = "spec_0039/equivalence_cube_v4.mesh.txt";
-  const as::AssetId assetId = as::computeAssetId(logicalPath);
+  const as::AssetGuid assetGuid = fixtureMeshGuid(logicalPath);
+  const as::AssetId assetId = as::assetKey(assetGuid);
 
   const std::filesystem::path artifactPath = directory / "equivalence_cube_v4.amesh";
   const std::filesystem::path metadataPath = directory / "equivalence_cube_v4.amesh.meta.txt";
   writeArtifact(artifactPath, as::encodeMeshArtifact(assetId, source, tangents.value()));
-  writeSidecar(metadataPath, assetId, logicalPath, static_cast<std::uint32_t>(source.vertices.size()),
+  writeSidecar(metadataPath, assetGuid, logicalPath, static_cast<std::uint32_t>(source.vertices.size()),
                static_cast<std::uint32_t>(source.indices.size()));
   return {artifactPath.string(), metadataPath.string()};
 }
@@ -81,12 +93,13 @@ MeshArtifactPaths writeEquivalenceCubeV5(const std::filesystem::path& directory)
   // than merely similar.
   const auto tangents = as::generateTangents(source);
   const std::string logicalPath = "spec_0039/equivalence_cube_v5.mesh.txt";
-  const as::AssetId assetId = as::computeAssetId(logicalPath);
+  const as::AssetGuid assetGuid = fixtureMeshGuid(logicalPath);
+  const as::AssetId assetId = as::assetKey(assetGuid);
 
   const std::filesystem::path artifactPath = directory / "equivalence_cube_v5.amesh";
   const std::filesystem::path metadataPath = directory / "equivalence_cube_v5.amesh.meta.txt";
   writeArtifact(artifactPath, as::encodeMeshArtifactU32(assetId, source, tangents.value()));
-  writeSidecar(metadataPath, assetId, logicalPath, static_cast<std::uint32_t>(source.vertices.size()),
+  writeSidecar(metadataPath, assetGuid, logicalPath, static_cast<std::uint32_t>(source.vertices.size()),
                static_cast<std::uint32_t>(source.indices.size()));
   return {artifactPath.string(), metadataPath.string()};
 }
@@ -141,12 +154,13 @@ MeshArtifactPaths writeLargeIndexGridV5(const std::filesystem::path& directory) 
   }
 
   const std::string logicalPath = "spec_0039/large_index_grid.mesh.txt";
-  const as::AssetId assetId = as::computeAssetId(logicalPath);
+  const as::AssetGuid assetGuid = fixtureMeshGuid(logicalPath);
+  const as::AssetId assetId = as::assetKey(assetGuid);
 
   const std::filesystem::path artifactPath = directory / "large_index_grid.amesh";
   const std::filesystem::path metadataPath = directory / "large_index_grid.amesh.meta.txt";
   writeArtifact(artifactPath, as::encodeMeshArtifactU32FromIndices(assetId, vertices, indices, tangents));
-  writeSidecar(metadataPath, assetId, logicalPath, static_cast<std::uint32_t>(vertices.size()),
+  writeSidecar(metadataPath, assetGuid, logicalPath, static_cast<std::uint32_t>(vertices.size()),
                static_cast<std::uint32_t>(indices.size()));
   return {artifactPath.string(), metadataPath.string()};
 }

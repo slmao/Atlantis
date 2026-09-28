@@ -20,6 +20,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "catalog_asset_id.h"
 // Plan 0043 Milestone 2 (Spec 0043 R1-R3, P8/P9): shared helpers for the
 // height-fog GPU tests. Header-only and templated on the fixture, like
 // emissive_differential.h -- every PBR fixture exposes the same
@@ -153,7 +154,7 @@ void checkSaturatedFogDifferential(Fixture& fixture, RenderFn render, const char
   CHECK(report.unchangedPixels > 1000);  // clear colour / sky pixels, byte-identical
 
   const auto sphere =
-      projectMaterialSphere(fixture, atlantis::asset_system::computeAssetId(materialLogicalPath), 1.0f, on.width);
+      projectMaterialSphere(fixture, atlantis::image_regression::catalogAssetId(materialLogicalPath), 1.0f, on.width);
   REQUIRE(sphere.has_value());
   const auto x = static_cast<std::uint32_t>(sphere->centerX);
   const auto y = static_cast<std::uint32_t>(sphere->centerY);

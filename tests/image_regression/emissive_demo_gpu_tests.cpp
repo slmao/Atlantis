@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <string>
 
+#include "catalog_asset_id.h"
 // Plan 0041 Milestone 3 (Spec 0041 R6, rulings Q1/Q4): the emissive dark
 // scene, assets/scenes/emissive_demo.scene.txt -- five pbr_sphere nodes
 // (orange, green and blue emissive PbrDirectLit spheres, the orange one
@@ -161,7 +162,7 @@ TEST_CASE("emissive_demo: each sphere is exactly tonemap(emissiveFactor) with no
 
   for (const EmissiveSphere& sphere : kSpheres) {
     INFO("sphere: " << sphere.materialPath);
-    const auto circle = projectMaterialSphere(fixture, atlantis::asset_system::computeAssetId(sphere.materialPath),
+    const auto circle = projectMaterialSphere(fixture, atlantis::image_regression::catalogAssetId(sphere.materialPath),
                                               1.0f, frame.width);
     REQUIRE(circle.has_value());
     // The centre and four points half a radius away -- the whole disc is

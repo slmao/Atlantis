@@ -217,6 +217,36 @@ struct ManifestEntry {
   std::string metadataPath;
 };
 
+// Plan 0047 P11 (transitional until M5): an entry's AssetId is the
+// asset_id its own metadata sidecar records, no longer a hash of the
+// manifest's logical path. Any sidecar type -- only the asset_id line is
+// read.
+[[nodiscard]] std::optional<atlantis::asset_system::AssetId> readSidecarAssetId(const std::string& metadataPath) {
+  std::ifstream file(metadataPath, std::ios::binary);
+  if (!file.is_open()) return std::nullopt;
+  constexpr std::string_view kPrefix = "asset_id: ";
+  std::string line;
+  while (std::getline(file, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (line.rfind(kPrefix, 0) != 0) continue;
+    const std::string_view hex = std::string_view(line).substr(kPrefix.size());
+    if (hex.size() != 16) return std::nullopt;
+    atlantis::asset_system::AssetId id = 0;
+    for (const char c : hex) {
+      id <<= 4;
+      if (c >= '0' && c <= '9') {
+        id |= static_cast<atlantis::asset_system::AssetId>(c - '0');
+      } else if (c >= 'a' && c <= 'f') {
+        id |= static_cast<atlantis::asset_system::AssetId>(c - 'a' + 10);
+      } else {
+        return std::nullopt;
+      }
+    }
+    return id;
+  }
+  return std::nullopt;
+}
+
 // Deliberately minimal -- see this file's own top-of-file comment.
 // Tolerates a trailing '\r' per line (CMake's own file(GENERATE)
 // writes this toolchain's native \r\n line ending on Windows,
@@ -245,8 +275,9 @@ struct ManifestEntry {
       const std::string_view metadataPath = line.substr(secondTab + 1);
       const auto normalizedResult = atlantis::asset_system::normalizeLogicalPath(logicalPath);
       if (normalizedResult.isErr()) return std::nullopt;
-      entries.push_back(ManifestEntry{atlantis::asset_system::computeAssetId(normalizedResult.value()),
-                                       std::string(artifactPath), std::string(metadataPath)});
+      const auto assetId = readSidecarAssetId(std::string(metadataPath));
+      if (!assetId.has_value()) return std::nullopt;
+      entries.push_back(ManifestEntry{*assetId, std::string(artifactPath), std::string(metadataPath)});
     }
     if (newline == std::string::npos) break;
     start = newline + 1;

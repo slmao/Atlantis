@@ -41,7 +41,6 @@ namespace {
 }  // namespace
 using namespace atlantis::runtime;
 using atlantis::asset_system::AssetId;
-using atlantis::asset_system::computeAssetId;
 using atlantis::asset_system::cookMaterial;
 using atlantis::asset_system::cookScene;
 using atlantis::asset_system::cookStaticMesh;
@@ -130,7 +129,7 @@ struct CookedSceneFixture {
   for (std::size_t i = 0; i < meshLogicalPaths.size(); ++i) {
     source += "node: node_id=" + std::to_string(i + 1) + testNodeGuidToken(static_cast<std::uint32_t>(i + 1)) +
               " parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=" +
-              meshLogicalPaths[i] + "\n";
+              atlantis::asset_system::toString(testAssetGuid(meshLogicalPaths[i])) + "\n";
   }
   const fs::path sourcePath = dir / "scene.scene.txt";
   writeFile(sourcePath, source);
@@ -154,7 +153,8 @@ struct CookedSceneFixture {
   for (std::size_t i = 0; i < meshLogicalPaths.size(); ++i) {
     source += "node: node_id=" + std::to_string(i + 1) + testNodeGuidToken(static_cast<std::uint32_t>(i + 1)) +
               " parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=" +
-              meshLogicalPaths[i] + " material=" + materialLogicalPaths[i] + "\n";
+              atlantis::asset_system::toString(testAssetGuid(meshLogicalPaths[i])) + " material=" +
+              atlantis::asset_system::toString(testAssetGuid(materialLogicalPaths[i])) + "\n";
   }
   const fs::path sourcePath = dir / "scene_with_material.scene.txt";
   writeFile(sourcePath, source);
@@ -328,8 +328,8 @@ TEST_CASE("loadAndInstantiateScene V19: load order follows first-reference order
 
   constexpr const char* kCandidateA = "meshes/candidate_a.mesh.txt";
   constexpr const char* kCandidateB = "meshes/candidate_b.mesh.txt";
-  const AssetId idA = computeAssetId(kCandidateA);
-  const AssetId idB = computeAssetId(kCandidateB);
+  const AssetId idA = atlantis::asset_system::assetKey(testAssetGuid(kCandidateA));
+  const AssetId idB = atlantis::asset_system::assetKey(testAssetGuid(kCandidateB));
   REQUIRE(idA != idB);  // not a collision test; any distinct pair works
 
   const std::string firstReferenced = idA > idB ? kCandidateA : kCandidateB;   // the numerically LARGER one

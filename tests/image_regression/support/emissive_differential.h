@@ -16,6 +16,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "catalog_asset_id.h"
 // Plan 0041 Milestone 3 (Spec 0041 R6, rulings O5/Q4): shared helpers for
 // the emissive tests. Header-only because the projection is templated on
 // the fixture type -- every PBR fixture exposes the same
@@ -147,7 +148,7 @@ inline constexpr float kEmissiveProbe[3] = {0.6f, 0.3f, 0.0f};
 template <typename SetUpFn, typename RenderFn>
 [[nodiscard]] EmissiveOnOffResult runEmissiveOnOff(SetUpFn setUp, RenderFn render,
                                                    std::string_view materialLogicalPath) {
-  const atlantis::asset_system::AssetId material = atlantis::asset_system::computeAssetId(materialLogicalPath);
+  const atlantis::asset_system::AssetId material = atlantis::image_regression::catalogAssetId(materialLogicalPath);
   auto offFixture = setUp();
   auto onFixture = setUp();
   REQUIRE(offFixture.isOk());

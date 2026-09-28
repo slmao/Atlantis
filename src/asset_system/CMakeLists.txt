@@ -64,6 +64,14 @@ target_compile_options(atlantis_asset_system PRIVATE
   $<$<CXX_COMPILER_ID:MSVC>:/w14062>
 )
 
+# Plan 0047 P7 (ADR-0098 D1): the committed catalog source every cook and
+# import resolves its GUID from. Each cook DEPENDS on it (ruling O4): editing
+# it re-cooks every declared asset, so no sidecar keeps a stale GUID.
+# A cache entry, not a directory variable: the functions below expand it in
+# their callers' directories (assets/, tests/).
+set(ATLANTIS_ASSET_CATALOG_SOURCE "${CMAKE_SOURCE_DIR}/assets/asset_catalog.txt" CACHE INTERNAL
+  "The committed catalog source (Plan 0047 P6)")
+
 # Plan 0012 Section D4/D9: declares one static mesh asset for
 # atlantis_asset_cooker to process at build time, mirroring
 # atlantis_add_slang_shader_pair()'s own stamp/BYPRODUCTS pattern
@@ -101,8 +109,8 @@ function(atlantis_add_static_mesh_asset)
     BYPRODUCTS "${artifact_path}" "${metadata_path}"
     COMMAND atlantis_asset_cooker
       --source=${source_path} --asset-root=${asset_root}
-      --output-dir=${output_dir} --stamp=${stamp}
-    DEPENDS ${source_path} atlantis_asset_cooker
+      --output-dir=${output_dir} --stamp=${stamp} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE}
+    DEPENDS ${source_path} "${ATLANTIS_ASSET_CATALOG_SOURCE}" atlantis_asset_cooker
     COMMENT "Cooking static mesh asset: ${ARG_SOURCE}"
     VERBATIM
   )
@@ -213,8 +221,8 @@ function(atlantis_add_scene_asset)
     BYPRODUCTS "${artifact_path}" "${metadata_path}"
     COMMAND atlantis_asset_cooker
       --kind=scene --source=${source_path} --asset-root=${asset_root}
-      --output-dir=${output_dir} --stamp=${stamp}
-    DEPENDS ${source_path} atlantis_asset_cooker
+      --output-dir=${output_dir} --stamp=${stamp} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE}
+    DEPENDS ${source_path} "${ATLANTIS_ASSET_CATALOG_SOURCE}" atlantis_asset_cooker
     COMMENT "Cooking scene asset: ${ARG_SOURCE}"
     VERBATIM
   )
@@ -272,11 +280,12 @@ function(atlantis_add_imported_scene)
     COMMAND ${CMAKE_COMMAND} -E rm -rf "${import_dir}"
     COMMAND atlantis_gltf_importer
       --input=${ARG_GLTF} --content-root=${ARG_CONTENT_ROOT} --overlay=${ARG_OVERLAY}
-      --output-dir=${import_dir} --name=${ARG_NAME}
+      --output-dir=${import_dir} --name=${ARG_NAME} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE}
     COMMAND atlantis_asset_cooker
       --kind=cook-manifest --import-dir=${import_dir} --cooked-dir=${cooked_dir}
       --content-parent=${content_parent} --manifest-out=${manifest_path} --stamp=${stamp}
-    DEPENDS "${ARG_GLTF}" "${ARG_OVERLAY}" atlantis_gltf_importer atlantis_asset_cooker
+    DEPENDS "${ARG_GLTF}" "${ARG_OVERLAY}" "${ATLANTIS_ASSET_CATALOG_SOURCE}" atlantis_gltf_importer
+            atlantis_asset_cooker
     COMMENT "Importing and cooking imported scene: ${ARG_NAME}"
     VERBATIM
   )
@@ -342,8 +351,8 @@ function(atlantis_add_texture_asset)
     BYPRODUCTS "${artifact_path}" "${metadata_path}"
     COMMAND atlantis_asset_cooker
       --kind=texture --source=${source_path} --asset-root=${asset_root}
-      --output-dir=${output_dir} --stamp=${stamp} ${color_space_args}
-    DEPENDS ${source_path} atlantis_asset_cooker
+      --output-dir=${output_dir} --stamp=${stamp} ${color_space_args} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE}
+    DEPENDS ${source_path} "${ATLANTIS_ASSET_CATALOG_SOURCE}" atlantis_asset_cooker
     COMMENT "Cooking texture asset: ${ARG_NAME} (${ARG_SOURCE}, ${ARG_COLOR_SPACE})"
     VERBATIM
   )
@@ -395,8 +404,8 @@ function(atlantis_add_environment_asset)
     BYPRODUCTS "${artifact_path}" "${metadata_path}"
     COMMAND atlantis_asset_cooker
       --kind=environment --source=${source_path} --asset-root=${asset_root}
-      --output-dir=${output_dir} --stamp=${stamp}
-    DEPENDS ${source_path} atlantis_asset_cooker
+      --output-dir=${output_dir} --stamp=${stamp} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE}
+    DEPENDS ${source_path} "${ATLANTIS_ASSET_CATALOG_SOURCE}" atlantis_asset_cooker
     COMMENT "Cooking environment asset: ${ARG_NAME} (${ARG_SOURCE})"
     VERBATIM
   )
@@ -451,8 +460,8 @@ function(atlantis_add_material_asset)
     BYPRODUCTS "${artifact_path}" "${metadata_path}"
     COMMAND atlantis_asset_cooker
       --kind=material --source=${source_path} --asset-root=${asset_root}
-      --output-dir=${output_dir} --stamp=${stamp}
-    DEPENDS ${source_path} atlantis_asset_cooker
+      --output-dir=${output_dir} --stamp=${stamp} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE}
+    DEPENDS ${source_path} "${ATLANTIS_ASSET_CATALOG_SOURCE}" atlantis_asset_cooker
     COMMENT "Cooking material asset: ${ARG_NAME} (${ARG_SOURCE})"
     VERBATIM
   )

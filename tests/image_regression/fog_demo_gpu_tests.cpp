@@ -35,6 +35,7 @@
 #include <string>
 #include <utility>
 
+#include "catalog_asset_id.h"
 using atlantis::image_regression::activeCameraFog;
 using atlantis::image_regression::applyFog;
 using atlantis::image_regression::encodeFogRgb;
@@ -256,7 +257,7 @@ struct DarkSceneComparison {
   DarkSceneComparison result;
   for (const char* materialPath : kDarkSphereMaterials) {
     INFO("sphere: " << materialPath);
-    const auto asset = atlantis::asset_system::computeAssetId(materialPath);
+    const auto asset = atlantis::image_regression::catalogAssetId(materialPath);
     const auto material = fixture.materialDataMap.find(asset);
     REQUIRE(material != fixture.materialDataMap.end());
     const FogVec3 emissive{material->second.emissiveFactor[0], material->second.emissiveFactor[1],
@@ -338,7 +339,7 @@ TEST_CASE("fog_dark_demo: a 3 x 3 density x height-falloff sweep matches the fog
       const DarkSceneComparison comparison = compareDarkSceneToReference(fixture, frameResult.value());
       // The control sphere's centre (C * f alone) doubles as a readable
       // record of the fog factor each cell produced.
-      const auto controlAsset = atlantis::asset_system::computeAssetId(kDarkSphereMaterials[4]);
+      const auto controlAsset = atlantis::image_regression::catalogAssetId(kDarkSphereMaterials[4]);
       const auto control = projectMaterialSphere(fixture, controlAsset, 1.0f, frameResult.value().width);
       REQUIRE(control.has_value());
       const auto cx = static_cast<std::uint32_t>(control->centerX);

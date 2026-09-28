@@ -1,6 +1,7 @@
 #include <atlantis/runtime/scene_manifest.h>
 
 #include <atlantis/assert.h>
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/asset_metadata.h>
 #include <atlantis/asset_system/logical_path.h>
@@ -11,13 +12,15 @@
 #include <fstream>
 #include <optional>
 #include <sstream>
+#include <utility>
 
 namespace atlantis::runtime {
 
 namespace {
 
+using atlantis::asset_system::AssetGuid;
 using atlantis::asset_system::AssetId;
-using atlantis::asset_system::computeAssetId;
+using atlantis::asset_system::assetKey;
 using atlantis::asset_system::normalizeLogicalPath;
 using atlantis::asset_system::parseAssetMetadata;
 using atlantis::asset_system::parseMaterialMetadata;
@@ -37,10 +40,16 @@ using atlantis::asset_system::parseTextureMetadata;
 // ("atlantis_asset_metadata_version: 1" / "atlantis_texture_metadata_version: 1"
 // / "atlantis_material_metadata_version: 1"), so a given metadata text
 // parses successfully under at most one of the three.
-[[nodiscard]] std::optional<AssetId> extractAssetIdFromAnyMetadata(std::string_view metadataText) {
-  if (const auto result = parseAssetMetadata(metadataText); result.isOk()) return result.value().assetId;
-  if (const auto result = parseTextureMetadata(metadataText); result.isOk()) return result.value().assetId;
-  if (const auto result = parseMaterialMetadata(metadataText); result.isOk()) return result.value().assetId;
+// Plan 0047 P11 (transitional, M3 to M5; deleted with this file): the
+// sidecar's recorded GUID and Asset ID -- the entry's identity now comes from
+// here, not from hashing the manifest's logical-path column.
+[[nodiscard]] std::optional<std::pair<AssetGuid, AssetId>> extractIdentityFromAnyMetadata(
+    std::string_view metadataText) {
+  if (const auto r = parseAssetMetadata(metadataText); r.isOk()) return std::pair{r.value().assetGuid, r.value().assetId};
+  if (const auto r = parseTextureMetadata(metadataText); r.isOk()) return std::pair{r.value().assetGuid, r.value().assetId};
+  if (const auto r = parseMaterialMetadata(metadataText); r.isOk()) {
+    return std::pair{r.value().assetGuid, r.value().assetId};
+  }
   return std::nullopt;
 }
 
@@ -165,9 +174,12 @@ atlantis::Result<SceneDependencyResolver, SceneManifestError> loadSceneDependenc
     parsedLines.push_back(std::move(parsed));
   }
 
-  // Step 2: normalizeLogicalPath() + computeAssetId() over each
-  // entry's own logical-path field -- a LogicalPathError here also
-  // folds into MalformedEntry.
+  // Step 2: normalizeLogicalPath() over each entry's own logical-path
+  // field (a LogicalPathError here folds into MalformedEntry); the entry's
+  // AssetId is the key of the GUID its metadata sidecar records (Plan 0047
+  // P11, transitional until M5), checked against the sidecar's own
+  // asset_id -- an unreadable, unparseable or self-inconsistent sidecar is
+  // MetadataArtifactMismatch.
   struct ResolvedEntry {
     std::string normalizedLogicalPath;
     AssetId assetId = 0;
@@ -179,9 +191,16 @@ atlantis::Result<SceneDependencyResolver, SceneManifestError> loadSceneDependenc
   for (const ParsedManifestLine& line : parsedLines) {
     const auto normalizedResult = normalizeLogicalPath(line.logicalPath);
     if (normalizedResult.isErr()) return ResultT::Err(SceneManifestError::MalformedEntry);
-    const std::string& normalizedLogicalPath = normalizedResult.value();
-    resolved.push_back(ResolvedEntry{normalizedLogicalPath, computeAssetId(normalizedLogicalPath), line.artifactPath,
-                                      line.metadataPath});
+    std::string metadataText;
+    if (!readFileText(line.metadataPath, metadataText)) {
+      return ResultT::Err(SceneManifestError::MetadataArtifactMismatch);
+    }
+    const auto identity = extractIdentityFromAnyMetadata(metadataText);
+    if (!identity.has_value() || identity->second != assetKey(identity->first)) {
+      return ResultT::Err(SceneManifestError::MetadataArtifactMismatch);
+    }
+    resolved.push_back(
+        ResolvedEntry{normalizedResult.value(), identity->second, line.artifactPath, line.metadataPath});
   }
 
   // Steps 3-4: duplicate logical path, then AssetId collision --
@@ -196,21 +215,6 @@ atlantis::Result<SceneDependencyResolver, SceneManifestError> loadSceneDependenc
     }
     const auto checkResult = detail::checkForDuplicatesAndCollisions(forCheck);
     if (checkResult.isErr()) return ResultT::Err(checkResult.error());
-  }
-
-  // Step 5: metadata cross-check -- each entry's own metadata sidecar
-  // must record the exact AssetId this manifest's own logical-path
-  // field computes, regardless of which of the three known sidecar
-  // shapes (mesh/texture/material) this particular entry happens to be.
-  for (const ResolvedEntry& entry : resolved) {
-    std::string metadataText;
-    if (!readFileText(entry.metadataPath, metadataText)) {
-      return ResultT::Err(SceneManifestError::MetadataArtifactMismatch);
-    }
-    const auto assetIdResult = extractAssetIdFromAnyMetadata(metadataText);
-    if (!assetIdResult.has_value() || *assetIdResult != entry.assetId) {
-      return ResultT::Err(SceneManifestError::MetadataArtifactMismatch);
-    }
   }
 
   // Step 6: build the AssetId-sorted resolver -- a point-lookup

@@ -27,7 +27,6 @@ namespace {
 }  // namespace
 using namespace atlantis::runtime;
 using atlantis::asset_system::AssetMetadata;
-using atlantis::asset_system::computeAssetId;
 using atlantis::asset_system::cookMaterial;
 using atlantis::asset_system::cookStaticMesh;
 using atlantis::asset_system::serializeAssetMetadata;
@@ -178,7 +177,7 @@ TEST_CASE("detail::checkForDuplicatesAndCollisions V15: rejects two distinct log
 
 TEST_CASE("detail::checkForDuplicatesAndCollisions does not flag the same path/id pair as a collision",
           "[runtime][scene]") {
-  const atlantis::asset_system::AssetId id = computeAssetId("meshes/a.mesh.txt");
+  const atlantis::asset_system::AssetId id = atlantis::asset_system::assetKey(testAssetGuid("meshes/a.mesh.txt"));
   const std::vector<detail::ManifestEntryForCollisionCheck> entries{{id, "meshes/a.mesh.txt"}};
   CHECK(detail::checkForDuplicatesAndCollisions(entries).isOk());
 }
@@ -187,10 +186,11 @@ TEST_CASE("loadSceneDependencyManifest V16: rejects a metadata/artifact AssetId 
   TempDirGuard dir("metadata_mismatch");
   const CookedMeshFixture mesh = cookFixtureMesh(dir.path, "meshes/a.mesh.txt");
 
-  // Overwrite the metadata sidecar with an otherwise well-formed
-  // record whose own assetId does not match what the manifest's own
-  // logical-path field computes.
+  // Overwrite the metadata sidecar with an otherwise well-formed record
+  // whose own assetId is not the key of its own asset_guid (Plan 0047 P11:
+  // the manifest's identity now comes from the sidecar).
   AssetMetadata wrongMetadata;
+  wrongMetadata.assetGuid = testAssetGuid("meshes/a.mesh.txt");
   wrongMetadata.assetId = 0xFFFFFFFFFFFFFFFFULL;
   wrongMetadata.sourceLogicalPath = "meshes/a.mesh.txt";
   wrongMetadata.importerVersion = "atlantis-asset-cooker/1";
@@ -237,7 +237,7 @@ TEST_CASE(
 
   const auto result = loadSceneDependencyManifest(manifestPath.string());
   REQUIRE(result.isOk());
-  const auto* found = result.value().find(computeAssetId(logicalPath));
+  const auto* found = result.value().find(atlantis::asset_system::assetKey(testAssetGuid(logicalPath)));
   REQUIRE(found != nullptr);
   CHECK(found->artifactPath == artifactPath.string());
 }
@@ -258,7 +258,7 @@ TEST_CASE("loadSceneDependencyManifest V18: an unreferenced entry does not fail 
 
   // Only the referenced entry is ever looked up -- the resolver itself
   // places no requirement on the unreferenced one being touched.
-  const auto referencedId = computeAssetId("meshes/referenced.mesh.txt");
+  const auto referencedId = atlantis::asset_system::assetKey(testAssetGuid("meshes/referenced.mesh.txt"));
   const auto* found = result.value().find(referencedId);
   REQUIRE(found != nullptr);
   CHECK(found->artifactPath == referenced.artifactPath.string());
@@ -275,5 +275,5 @@ TEST_CASE("SceneDependencyResolver::find is a point lookup -- not found for an u
   const auto result = loadSceneDependencyManifest(manifestPath.string());
   REQUIRE(result.isOk());
   CHECK(result.value().find(0xDEADBEEFDEADBEEFULL) == nullptr);
-  CHECK(result.value().find(computeAssetId("meshes/a.mesh.txt")) != nullptr);
+  CHECK(result.value().find(atlantis::asset_system::assetKey(testAssetGuid("meshes/a.mesh.txt"))) != nullptr);
 }
