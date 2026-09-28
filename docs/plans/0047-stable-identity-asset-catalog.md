@@ -66,8 +66,10 @@ Re-walked at `origin/main` `dab6f4a` (PR #194 merged).
    per-scene manifests from `MESH_/MATERIAL_/TEXTURE_DEPENDENCIES`
    (`:137-236`); material `TEXTURE`/`NORMAL_MAP` arguments used only for
    ordering (`:407-465`); `atlantis_add_imported_scene()` (`:250-288`).
-   109 declarations in `assets/CMakeLists.txt`, plus 2 in
-   `tests/asset_system/CMakeLists.txt:118-150` (the `_test_fixtures` pair).
+   108 declarations: 106 in `assets/CMakeLists.txt` plus 2 in
+   `tests/asset_system/CMakeLists.txt:118-150` (the `_test_fixtures` pair) —
+   7 mesh, 13 texture, 58 material, 27 scene, 2 environment, 1 gltf_import,
+   as the generated `declarations.txt` (P10) lists them.
 5. **Runtime.** `BootstrapConfig::scene{Artifact,Metadata,DependencyManifest}Path`
    (`bootstrap_config.h:31-33`); whitelist from compile definitions
    (`main.cpp:54-77`, `src/runtime/CMakeLists.txt:104-106`, `:191-202`,

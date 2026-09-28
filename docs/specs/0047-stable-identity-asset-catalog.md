@@ -95,7 +95,7 @@ format that was designed for one hand-declared scene.
 
 | Quantity | Value |
 |---|---|
-| Asset declarations in `assets/CMakeLists.txt` | 109 (8 mesh, 14 texture, 57 material, 27 scene, 2 environment, 1 imported scene) |
+| Asset declarations (the generated `declarations.txt`) | 108: 106 in `assets/CMakeLists.txt` + 2 test fixtures — 7 mesh, 13 texture, 58 material, 27 scene, 2 environment, 1 gltf_import |
 | Hand-authored scene nodes (incl. the 61-node Bistro overlay, fixtures) | 246 |
 | Bistro import (content-gated) | 1062 assets, 5908 nodes + 61 overlay |
 | Files referencing a dependency manifest (src, tests, Android build) | 66 |
@@ -450,7 +450,7 @@ confirmation): Q10 as recorded below, every other one as its recommendation.
   shifts, so every derived GUID after it changes even though those assets
   did not. Harmless for SHA-256-pinned content; a name- or content-matching
   key is future work.
-- **Risk — migration size.** 109 catalog entries, 246 node GUIDs, all scene
+- **Risk — migration size.** 108 catalog entries, 246 node GUIDs, all scene
   and material references, 66 manifest-consuming files. Mechanical, but one
   large diff; the byte-identical goldens are its safety net.
 - **Risk — `std::random_device` quality.** Minting runs only in a Windows
