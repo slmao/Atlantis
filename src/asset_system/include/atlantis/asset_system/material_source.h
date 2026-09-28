@@ -1,8 +1,10 @@
 #pragma once
 
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/material_types.h>
 #include <atlantis/result.h>
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -21,7 +23,7 @@ namespace atlantis::asset_system {
 // carries whatever finite/non-finite float value was parsed.
 struct ParsedMaterialSource {
   MaterialKind kind = MaterialKind::UnlitTextured;
-  std::string textureLogicalPath;
+  AssetGuid textureAsset;  // Plan 0047 P9 (material source v10): a GUID reference
   MaterialSamplerFilter filter = MaterialSamplerFilter::Linear;
   MaterialSamplerAddressMode addressMode = MaterialSamplerAddressMode::Repeat;
   float baseColorFactor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -31,7 +33,7 @@ struct ParsedMaterialSource {
   // field, distinct type, matching textureLogicalPath's own precedent
   // exactly -- a logical path, not yet resolved to an AssetId
   // (cookMaterial()'s own job).
-  std::string normalMapLogicalPath;
+  std::optional<AssetGuid> normalMapAsset;
   // Plan 0035 Milestone 2/ADR-0081: two new, REQUIRED (not optional)
   // trailing fields whenever kind == PbrClearcoat -- unlike
   // baseColorFactor/metallicFactor/roughnessFactor (optional for every
@@ -81,7 +83,7 @@ struct ParsedMaterialSource {
   // `emissive_texture: <logical path>` line, after alpha_cutoff; empty =
   // none. PBR kinds only (EmissiveNotSupportedForKind otherwise), resolved
   // to an AssetId by cookMaterial(), like normalMapLogicalPath.
-  std::string emissiveTextureLogicalPath;
+  std::optional<AssetGuid> emissiveTextureAsset;
 };
 
 // Plan 0018 Section P2/P4: parse/decode-error conditions specific to the
@@ -151,6 +153,9 @@ enum class MaterialSourceParseError {
   // Plan 0042 Milestone 1: an `alpha_mode:` value other than opaque/mask/
   // blend, mirroring UnknownFilter/UnknownAddressMode.
   UnknownAlphaMode,
+  // Plan 0047 P9: a texture:, normal_map: or emissive_texture: value that
+  // is not a canonical, non-nil GUID.
+  MalformedGuid,
 };
 
 // Strict, fixed-field-order, plain-text grammar extending

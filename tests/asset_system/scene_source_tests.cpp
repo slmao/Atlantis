@@ -7,17 +7,37 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <atlantis/asset_system/asset_guid.h>
+
+namespace {
+
+// Plan 0047 M3: the GUID a test's references name (matches the literals,
+// which were written with the same derivation).
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+// Plan 0047 P9: the guid= a generated node line carries -- the same
+// derivation the literal node lines use, keyed by node_id.
+[[nodiscard]] std::string testNodeGuidToken(std::uint32_t nodeId) {
+  return " guid=" + atlantis::asset_system::toString(atlantis::asset_system::deriveEntityGuid(
+                        atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(),
+                        "node/" + std::to_string(nodeId)));
+}
+
+}  // namespace
 using namespace atlantis::asset_system;
 
 namespace {
 
 constexpr std::string_view kValidTwoNodeSource =
-    "atlantis_scene_source_version: 6\n"
+    "atlantis_scene_source_version: 7\n"
     "node_count: 2\n"
     "active_camera: 2\n"
-    "node: node_id=1 parent=none position=-2.5 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
-    "mesh=meshes/minimal_cube.mesh.txt\n"
-    "node: node_id=2 parent=none position=0.0 2.2 7.0 rotation=-0.3054 0.0 0.0 scale=1.0 1.0 1.0 "
+    "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=-2.5 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+    "mesh=d27e38e4-1121-88bf-817e-97f8b83724a5\n"
+    "node: node_id=2 guid=e68122c6-18b2-8f1f-b185-358f58780754 parent=none position=0.0 2.2 7.0 rotation=-0.3054 0.0 0.0 scale=1.0 1.0 1.0 "
     "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0\n";
 
 }  // namespace
@@ -35,8 +55,8 @@ TEST_CASE("parseSceneSource parses a well-formed two-node scene", "[asset_system
   CHECK(parsed.nodes[0].transform.positionX == -2.5f);
   CHECK(parsed.nodes[0].transform.positionY == 0.0f);
   CHECK(parsed.nodes[0].transform.scaleZ == 1.0f);
-  REQUIRE(parsed.nodes[0].meshLogicalPath.has_value());
-  CHECK(*parsed.nodes[0].meshLogicalPath == "meshes/minimal_cube.mesh.txt");
+  REQUIRE(parsed.nodes[0].meshAsset.has_value());
+  CHECK(*parsed.nodes[0].meshAsset == testAssetGuid("meshes/minimal_cube.mesh.txt"));
   CHECK_FALSE(parsed.nodes[0].camera.has_value());
 
   CHECK(parsed.nodes[1].nodeId == 2);
@@ -47,16 +67,16 @@ TEST_CASE("parseSceneSource parses a well-formed two-node scene", "[asset_system
   CHECK(parsed.nodes[1].camera->nearZ == 0.1f);
   CHECK(parsed.nodes[1].camera->farZ == 100.0f);
   CHECK(parsed.nodes[1].camera->exposureCompensationEv == 0.0f);  // 14-token line, no camera_exposure_ev= token
-  CHECK_FALSE(parsed.nodes[1].meshLogicalPath.has_value());
+  CHECK_FALSE(parsed.nodes[1].meshAsset.has_value());
 }
 
 TEST_CASE("parseSceneSource parses a camera node's optional 15th camera_exposure_ev= token",
           "[asset_system][scene]") {
   constexpr std::string_view source =
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: 1\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
       "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0 camera_exposure_ev=1.5\n";
   const auto result = parseSceneSource(source);
   REQUIRE(result.isOk());
@@ -66,10 +86,10 @@ TEST_CASE("parseSceneSource parses a camera node's optional 15th camera_exposure
 
 TEST_CASE("parseSceneSource rejects a camera node's 15th token with the wrong prefix", "[asset_system][scene]") {
   constexpr std::string_view source =
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: 1\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
       "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0 camera_wrong_prefix=1.5\n";
   const auto result = parseSceneSource(source);
   REQUIRE(result.isErr());
@@ -78,14 +98,14 @@ TEST_CASE("parseSceneSource rejects a camera node's 15th token with the wrong pr
 
 TEST_CASE("parseSceneSource parses a plain node with neither mesh nor camera", "[asset_system][scene]") {
   const std::string_view plainNode =
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";
   const auto result = parseSceneSource(plainNode);
   REQUIRE(result.isOk());
   REQUIRE(result.value().nodes.size() == 1);
-  CHECK_FALSE(result.value().nodes[0].meshLogicalPath.has_value());
+  CHECK_FALSE(result.value().nodes[0].meshAsset.has_value());
   CHECK_FALSE(result.value().nodes[0].camera.has_value());
   CHECK_FALSE(result.value().activeCameraNodeId.has_value());
 }
@@ -93,7 +113,7 @@ TEST_CASE("parseSceneSource parses a plain node with neither mesh nor camera", "
 TEST_CASE("parseSceneSource parses node_count of zero (EmptyScene is a cook-time policy, not a grammar rule)",
           "[asset_system][scene]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 0\n"
       "active_camera: none\n");
   REQUIRE(result.isOk());
@@ -102,11 +122,11 @@ TEST_CASE("parseSceneSource parses node_count of zero (EmptyScene is a cook-time
 
 TEST_CASE("parseSceneSource parses a parent reference", "[asset_system][scene]") {
   const std::string_view withParent =
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 2\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n"
-      "node: node_id=2 parent=1 position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n"
+      "node: node_id=2 guid=e68122c6-18b2-8f1f-b185-358f58780754 parent=1 position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";
   const auto result = parseSceneSource(withParent);
   REQUIRE(result.isOk());
   REQUIRE(result.value().nodes[1].parentNodeId.has_value());
@@ -133,7 +153,7 @@ TEST_CASE("serializeSceneSource then parseSceneSource round-trips exactly-repres
     CHECK(a.transform.positionY == b.transform.positionY);
     CHECK(a.transform.positionZ == b.transform.positionZ);
     CHECK(a.transform.eulerXRadians == b.transform.eulerXRadians);
-    CHECK(a.meshLogicalPath == b.meshLogicalPath);
+    CHECK(a.meshAsset == b.meshAsset);
     if (a.camera.has_value()) {
       REQUIRE(b.camera.has_value());
       CHECK(a.camera->fovYRadians == b.camera->fovYRadians);
@@ -167,11 +187,10 @@ TEST_CASE("parseSceneSource rejects the superseded version 2 outright, with no d
 }
 
 TEST_CASE("parseSceneSource rejects an unrecognized future version line", "[asset_system][scene]") {
-  // Plan 0044: this literal must name a value still genuinely
-  // unrecognized now that version 6 is the real, accepted version -- 7
-  // here, not 6 (matching Plan 0043/Plan 0031/Plan 0020/Plan 0019's own
-  // identical precedent).
-  const auto result = parseSceneSource("atlantis_scene_source_version: 7\n");
+  // Plan 0047: this literal must name a value still genuinely
+  // unrecognized now that version 7 is the real, accepted version -- 8
+  // here (the Plan 0044/0043/0031/0020/0019 precedent).
+  const auto result = parseSceneSource("atlantis_scene_source_version: 8\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::UnknownSourceVersion);
 }
@@ -184,7 +203,7 @@ TEST_CASE("parseSceneSource rejects the superseded version 5 outright, with no d
       "atlantis_scene_source_version: 5\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=0 parent=none position=0 0 0 rotation=0 0 0 scale=1 1 1\n");
+      "node: node_id=0 guid=e68122c6-1ab2-8f1f-b185-358f587809ca parent=none position=0 0 0 rotation=0 0 0 scale=1 1 1\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::UnknownSourceVersion);
 }
@@ -197,7 +216,7 @@ TEST_CASE("parseSceneSource rejects the superseded version 4 outright, with no d
       "atlantis_scene_source_version: 4\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=0 parent=none position=0 0 0 rotation=0 0 0 scale=1 1 1\n");
+      "node: node_id=0 guid=e68122c6-1ab2-8f1f-b185-358f587809ca parent=none position=0 0 0 rotation=0 0 0 scale=1 1 1\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::UnknownSourceVersion);
 }
@@ -220,7 +239,7 @@ TEST_CASE("parseSceneSource rejects an empty file", "[asset_system][scene]") {
 
 TEST_CASE("parseSceneSource rejects a truncated file (missing a declared node line)", "[asset_system][scene]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n");
   REQUIRE(result.isErr());
@@ -229,7 +248,7 @@ TEST_CASE("parseSceneSource rejects a truncated file (missing a declared node li
 
 TEST_CASE("parseSceneSource rejects a wrong field-order line", "[asset_system][scene]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "active_camera: none\n"
       "node_count: 1\n");
   REQUIRE(result.isErr());
@@ -238,10 +257,10 @@ TEST_CASE("parseSceneSource rejects a wrong field-order line", "[asset_system][s
 
 TEST_CASE("parseSceneSource rejects a malformed numeric token", "[asset_system][scene]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=not_a_number parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
+      "node: node_id=not_a_number guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::MalformedNumber);
 }
@@ -249,10 +268,10 @@ TEST_CASE("parseSceneSource rejects a malformed numeric token", "[asset_system][
 TEST_CASE("parseSceneSource rejects a malformed number within a position/rotation/scale group",
           "[asset_system][scene]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 not_a_number 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 not_a_number 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::MalformedNumber);
 }
@@ -264,27 +283,27 @@ TEST_CASE("parseSceneSource accepts a non-finite float (Plan 0015 D4's own step 
   // (SceneCookError::NonFiniteValue), covered by cook_scene_tests.cpp
   // in Step 3, not here.
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=nan 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=nan 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
   REQUIRE(result.isOk());
   CHECK(std::isnan(result.value().nodes[0].transform.positionX));
 }
 
 TEST_CASE("parseSceneSource rejects an invalid parent token", "[asset_system][scene]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=not_a_number_or_none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=not_a_number_or_none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::InvalidParentToken);
 }
 
 TEST_CASE("parseSceneSource rejects an invalid active_camera token", "[asset_system][scene]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 0\n"
       "active_camera: not_a_number_or_none\n");
   REQUIRE(result.isErr());
@@ -293,20 +312,20 @@ TEST_CASE("parseSceneSource rejects an invalid active_camera token", "[asset_sys
 
 TEST_CASE("parseSceneSource rejects a node line with a wrong token count", "[asset_system][scene]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0\n");
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::InvalidComponentGroup);
 }
 
 TEST_CASE("parseSceneSource rejects a node line with both mesh and camera groups", "[asset_system][scene]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=a.mesh.txt "
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=6d89031d-aa70-8ebc-aff2-2cf69a2fdc69 "
       "camera_fov_y=1.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::InvalidComponentGroup);
@@ -314,10 +333,10 @@ TEST_CASE("parseSceneSource rejects a node line with both mesh and camera groups
 
 TEST_CASE("parseSceneSource rejects a mismatched trailing-group prefix", "[asset_system][scene]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
       "not_mesh=a.mesh.txt\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::InvalidComponentGroup);
@@ -327,7 +346,7 @@ TEST_CASE("parseSceneSource rejects a huge node_count unsupported by the file's 
           "attempting a huge allocation",
           "[asset_system][scene]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 4000000000\n"
       "active_camera: none\n");
   REQUIRE(result.isErr());
@@ -336,49 +355,49 @@ TEST_CASE("parseSceneSource rejects a huge node_count unsupported by the file's 
 
 TEST_CASE("parseSceneSource parses a node with mesh and material", "[asset_system][scene]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
-      "mesh=meshes/textured_quad_left.mesh.txt material=materials/unlit_textured_quad.material.txt\n");
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "mesh=27af59de-0d4a-8df8-be15-826a2d29bc2f material=872a03e2-463b-82e3-9498-2566388634dd\n");
   REQUIRE(result.isOk());
-  REQUIRE(result.value().nodes[0].meshLogicalPath.has_value());
-  CHECK(*result.value().nodes[0].meshLogicalPath == "meshes/textured_quad_left.mesh.txt");
-  REQUIRE(result.value().nodes[0].materialLogicalPath.has_value());
-  CHECK(*result.value().nodes[0].materialLogicalPath == "materials/unlit_textured_quad.material.txt");
+  REQUIRE(result.value().nodes[0].meshAsset.has_value());
+  CHECK(*result.value().nodes[0].meshAsset == testAssetGuid("meshes/textured_quad_left.mesh.txt"));
+  REQUIRE(result.value().nodes[0].materialAsset.has_value());
+  CHECK(*result.value().nodes[0].materialAsset == testAssetGuid("materials/unlit_textured_quad.material.txt"));
 }
 
-TEST_CASE("parseSceneSource parses a node with mesh but no material (materialLogicalPath absent)",
+TEST_CASE("parseSceneSource parses a node with mesh but no material (materialAsset absent)",
           "[asset_system][scene]") {
   const auto result = parseSceneSource(kValidTwoNodeSource);
   REQUIRE(result.isOk());
-  CHECK_FALSE(result.value().nodes[0].materialLogicalPath.has_value());
+  CHECK_FALSE(result.value().nodes[0].materialAsset.has_value());
 }
 
 TEST_CASE("parseSceneSource round-trips a node with mesh and material through serializeSceneSource",
           "[asset_system][scene]") {
   const auto parsedResult = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
-      "mesh=meshes/a.mesh.txt material=materials/a.material.txt\n");
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "mesh=a256357f-0ad1-851b-baf3-a0aac6a9e491 material=b09ded7e-cad9-8712-a2b2-974ae43ef5d6\n");
   REQUIRE(parsedResult.isOk());
 
   const std::string serialized = serializeSceneSource(parsedResult.value());
   const auto reparsedResult = parseSceneSource(serialized);
   REQUIRE(reparsedResult.isOk());
-  CHECK(reparsedResult.value().nodes[0].meshLogicalPath == parsedResult.value().nodes[0].meshLogicalPath);
-  CHECK(reparsedResult.value().nodes[0].materialLogicalPath == parsedResult.value().nodes[0].materialLogicalPath);
+  CHECK(reparsedResult.value().nodes[0].meshAsset == parsedResult.value().nodes[0].meshAsset);
+  CHECK(reparsedResult.value().nodes[0].materialAsset == parsedResult.value().nodes[0].materialAsset);
 }
 
 TEST_CASE("parseSceneSource rejects an empty material logical path", "[asset_system][scene]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
-      "mesh=meshes/a.mesh.txt material=\n");
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "mesh=a256357f-0ad1-851b-baf3-a0aac6a9e491 material=\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::MissingField);
 }
@@ -386,11 +405,11 @@ TEST_CASE("parseSceneSource rejects an empty material logical path", "[asset_sys
 TEST_CASE("parseSceneSource rejects a mismatched 13th-token prefix (material without the material= prefix)",
           "[asset_system][scene]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
-      "mesh=meshes/a.mesh.txt not_material=materials/a.material.txt\n");
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "mesh=a256357f-0ad1-851b-baf3-a0aac6a9e491 not_material=materials/a.material.txt\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::InvalidComponentGroup);
 }
@@ -407,10 +426,10 @@ TEST_CASE("parseSceneSource rejects trailing content after the final node line",
 // grammar's own well-formed shapes.
 TEST_CASE("parseSceneSource parses a well-formed directional light node", "[asset_system][scene][light]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
       "light=directional color=0.2 0.4 0.6 intensity=1.5\n");
   REQUIRE(result.isOk());
   const ParsedSceneSource& parsed = result.value();
@@ -423,15 +442,15 @@ TEST_CASE("parseSceneSource parses a well-formed directional light node", "[asse
   CHECK(parsed.nodes[0].light->intensity == 1.5f);
   CHECK(parsed.nodes[0].light->range == 0.0f);
   CHECK_FALSE(parsed.nodes[0].camera.has_value());
-  CHECK_FALSE(parsed.nodes[0].meshLogicalPath.has_value());
+  CHECK_FALSE(parsed.nodes[0].meshAsset.has_value());
 }
 
 TEST_CASE("parseSceneSource parses a well-formed point light node", "[asset_system][scene][light]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=1.0 2.0 3.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=1.0 2.0 3.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
       "light=point color=1.0 1.0 1.0 intensity=3.0 range=5.0\n");
   REQUIRE(result.isOk());
   const ParsedSceneSource& parsed = result.value();
@@ -471,10 +490,10 @@ TEST_CASE("serializeSceneSource then parseSceneSource round-trips a light node",
 
 TEST_CASE("parseSceneSource rejects an unrecognized light kind token", "[asset_system][scene][light]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
       "light=spot color=1.0 1.0 1.0 intensity=1.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::InvalidComponentGroup);
@@ -485,10 +504,10 @@ TEST_CASE("parseSceneSource rejects range= present on a directional light line",
   // the point-shaped branch, whose own kindToken == "directional" check
   // then rejects it -- a real, exercised path, not merely inspected.
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
       "light=directional color=1.0 1.0 1.0 intensity=1.0 range=5.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::InvalidComponentGroup);
@@ -496,10 +515,10 @@ TEST_CASE("parseSceneSource rejects range= present on a directional light line",
 
 TEST_CASE("parseSceneSource rejects range= missing on a point light line", "[asset_system][scene][light]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
       "light=point color=1.0 1.0 1.0 intensity=1.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::InvalidComponentGroup);
@@ -507,10 +526,10 @@ TEST_CASE("parseSceneSource rejects range= missing on a point light line", "[ass
 
 TEST_CASE("parseSceneSource rejects an out-of-[0,1] color component", "[asset_system][scene][light]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
       "light=directional color=1.5 0.0 0.0 intensity=1.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::InvalidComponentGroup);
@@ -518,10 +537,10 @@ TEST_CASE("parseSceneSource rejects an out-of-[0,1] color component", "[asset_sy
 
 TEST_CASE("parseSceneSource rejects a negative color component", "[asset_system][scene][light]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
       "light=directional color=0.0 -0.1 0.0 intensity=1.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::InvalidComponentGroup);
@@ -529,10 +548,10 @@ TEST_CASE("parseSceneSource rejects a negative color component", "[asset_system]
 
 TEST_CASE("parseSceneSource rejects a negative intensity", "[asset_system][scene][light]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
       "light=directional color=1.0 1.0 1.0 intensity=-1.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::InvalidComponentGroup);
@@ -541,20 +560,20 @@ TEST_CASE("parseSceneSource rejects a negative intensity", "[asset_system][scene
 TEST_CASE("parseSceneSource accepts intensity of exactly zero (a disable-without-delete convenience)",
           "[asset_system][scene][light]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
       "light=directional color=1.0 1.0 1.0 intensity=0.0\n");
   REQUIRE(result.isOk());
 }
 
 TEST_CASE("parseSceneSource rejects a non-positive range on a point light", "[asset_system][scene][light]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
       "light=point color=1.0 1.0 1.0 intensity=1.0 range=0.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::InvalidComponentGroup);
@@ -562,24 +581,24 @@ TEST_CASE("parseSceneSource rejects a non-positive range on a point light", "[as
 
 TEST_CASE("parseSceneSource rejects a non-finite color/intensity/range component", "[asset_system][scene][light]") {
   CHECK(parseSceneSource(
-            "atlantis_scene_source_version: 6\n"
+            "atlantis_scene_source_version: 7\n"
             "node_count: 1\n"
             "active_camera: none\n"
-            "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+            "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
             "light=directional color=nan 0.0 0.0 intensity=1.0\n")
             .error() == SceneSourceParseError::InvalidComponentGroup);
   CHECK(parseSceneSource(
-            "atlantis_scene_source_version: 6\n"
+            "atlantis_scene_source_version: 7\n"
             "node_count: 1\n"
             "active_camera: none\n"
-            "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+            "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
             "light=directional color=1.0 1.0 1.0 intensity=inf\n")
             .error() == SceneSourceParseError::InvalidComponentGroup);
   CHECK(parseSceneSource(
-            "atlantis_scene_source_version: 6\n"
+            "atlantis_scene_source_version: 7\n"
             "node_count: 1\n"
             "active_camera: none\n"
-            "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+            "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
             "light=point color=1.0 1.0 1.0 intensity=1.0 range=inf\n")
             .error() == SceneSourceParseError::InvalidComponentGroup);
 }
@@ -588,12 +607,12 @@ TEST_CASE("parseSceneSource rejects a non-finite color/intensity/range component
 // never a silent, deterministic truncation.
 TEST_CASE("parseSceneSource rejects a scene declaring a second directional light", "[asset_system][scene][light]") {
   const auto result = parseSceneSource(
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 2\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
       "light=directional color=1.0 1.0 1.0 intensity=1.0\n"
-      "node: node_id=2 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+      "node: node_id=2 guid=e68122c6-18b2-8f1f-b185-358f58780754 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
       "light=directional color=1.0 1.0 1.0 intensity=1.0\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::TooManyLights);
@@ -603,10 +622,10 @@ TEST_CASE("parseSceneSource rejects a scene declaring a second directional light
 TEST_CASE("parseSceneSource rejects a scene declaring kMaxPointLightsPerScene + 1 point lights",
           "[asset_system][scene][light]") {
   constexpr std::uint32_t kCount = kMaxPointLightsPerScene + 1;
-  std::string source = "atlantis_scene_source_version: 6\nnode_count: " + std::to_string(kCount) +
+  std::string source = "atlantis_scene_source_version: 7\nnode_count: " + std::to_string(kCount) +
                        "\nactive_camera: none\n";
   for (std::uint32_t i = 1; i <= kCount; ++i) {
-    source += "node: node_id=" + std::to_string(i) +
+    source += "node: node_id=" + std::to_string(i) + testNodeGuidToken(static_cast<std::uint32_t>(i)) +
                " parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
                "light=point color=1.0 1.0 1.0 intensity=1.0 range=5.0\n";
   }
@@ -618,12 +637,12 @@ TEST_CASE("parseSceneSource rejects a scene declaring kMaxPointLightsPerScene + 
 TEST_CASE("parseSceneSource accepts exactly the fixed cap: 1 directional + kMaxPointLightsPerScene point lights",
           "[asset_system][scene][light]") {
   constexpr std::uint32_t kCount = 1 + kMaxPointLightsPerScene;
-  std::string source = "atlantis_scene_source_version: 6\nnode_count: " + std::to_string(kCount) +
+  std::string source = "atlantis_scene_source_version: 7\nnode_count: " + std::to_string(kCount) +
                        "\nactive_camera: none\n"
-                       "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+                       "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
                        "light=directional color=1.0 1.0 1.0 intensity=1.0\n";
   for (std::uint32_t i = 2; i <= kCount; ++i) {
-    source += "node: node_id=" + std::to_string(i) +
+    source += "node: node_id=" + std::to_string(i) + testNodeGuidToken(static_cast<std::uint32_t>(i)) +
                " parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
                "light=point color=1.0 1.0 1.0 intensity=1.0 range=5.0\n";
   }
@@ -640,10 +659,10 @@ namespace {
 
 [[nodiscard]] std::string oneCameraNodeSource(std::string_view cameraSuffix) {
   return std::string(
-             "atlantis_scene_source_version: 6\n"
+             "atlantis_scene_source_version: 7\n"
              "node_count: 1\n"
              "active_camera: 1\n"
-             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+             "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
              "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0") +
          std::string(cameraSuffix) + "\n";
 }
@@ -738,13 +757,13 @@ TEST_CASE("parseSceneSource rejects a malformed fog group", "[asset_system][scen
 
 TEST_CASE("parseSceneSource rejects a fog group on a non-camera node", "[asset_system][scene][fog]") {
   const std::string base =
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0";
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0";
   const char* nodeSuffixes[] = {
       "",                                                     // plain node
-      " mesh=meshes/minimal_cube.mesh.txt",                   // mesh
+      " mesh=d27e38e4-1121-88bf-817e-97f8b83724a5",                   // mesh
       " light=directional color=1 1 1 intensity=1",           // light, 16 + 7
       " light=point color=1 1 1 intensity=1 range=5",         // light, 17 + 7
   };
@@ -855,13 +874,13 @@ TEST_CASE("parseSceneSource rejects a malformed or misplaced bloom group", "[ass
 
 TEST_CASE("parseSceneSource rejects a bloom group on a non-camera node", "[asset_system][scene][bloom]") {
   const std::string base =
-      "atlantis_scene_source_version: 6\n"
+      "atlantis_scene_source_version: 7\n"
       "node_count: 1\n"
       "active_camera: none\n"
-      "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0";
+      "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0";
   const char* nodeSuffixes[] = {
       "",
-      " mesh=meshes/minimal_cube.mesh.txt",
+      " mesh=d27e38e4-1121-88bf-817e-97f8b83724a5",
       " light=directional color=1 1 1 intensity=1",
       " light=point color=1 1 1 intensity=1 range=5",
   };

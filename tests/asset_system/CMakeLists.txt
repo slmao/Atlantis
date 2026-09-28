@@ -7,6 +7,7 @@ add_executable(atlantis_asset_system_tests
   asset_catalog_source_tests.cpp
   asset_declarations_tests.cpp
   sidecar_asset_guid_tests.cpp
+  guid_reference_tests.cpp
   asset_set_validation_tests.cpp
   mesh_source_tests.cpp
   mesh_artifact_u32_tests.cpp

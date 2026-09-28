@@ -50,6 +50,14 @@ namespace {
       atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
 }
 
+// Plan 0047 P9: the guid= a generated node line carries -- the same
+// derivation the literal node lines use, keyed by node_id.
+[[nodiscard]] std::string testNodeGuidToken(std::uint32_t nodeId) {
+  return " guid=" + atlantis::asset_system::toString(atlantis::asset_system::deriveEntityGuid(
+                        atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(),
+                        "node/" + std::to_string(nodeId)));
+}
+
 }  // namespace
 // Regression coverage for a real, previously-undisclosed gap found during
 // this PR's own final centralized review: RuntimeApplication::runFrame()'s
@@ -736,7 +744,7 @@ struct CookedMaterialFixture {
 [[nodiscard]] CookedMaterialFixture cookFixtureMaterial(const fs::path& dir, const std::string& logicalPath,
                                                           const std::string& textureLogicalPath) {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 9\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 10\n"
                         "kind: unlit_textured\n"
                         "texture: " + textureLogicalPath + "\n"
                         "filter: linear\n"
@@ -755,7 +763,7 @@ struct CookedMaterialFixture {
 [[nodiscard]] CookedMaterialFixture cookFixturePbrMaterial(const fs::path& dir, const std::string& logicalPath,
                                                             const std::string& textureLogicalPath) {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 9\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 10\n"
                         "kind: pbr_direct_lit\n"
                         "texture: " + textureLogicalPath + "\n"
                         "filter: linear\n"
@@ -781,11 +789,11 @@ struct CookedSceneFixture {
     const fs::path& dir, const std::vector<std::string>& meshLogicalPaths,
     const std::vector<std::string>& materialLogicalPaths) {
   REQUIRE(meshLogicalPaths.size() == materialLogicalPaths.size());
-  std::string source = "atlantis_scene_source_version: 6\n";
+  std::string source = "atlantis_scene_source_version: 7\n";
   source += "node_count: " + std::to_string(meshLogicalPaths.size()) + "\n";
   source += "active_camera: none\n";
   for (std::size_t i = 0; i < meshLogicalPaths.size(); ++i) {
-    source += "node: node_id=" + std::to_string(i + 1) +
+    source += "node: node_id=" + std::to_string(i + 1) + testNodeGuidToken(static_cast<std::uint32_t>(i + 1)) +
               " parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=" +
               meshLogicalPaths[i] + " material=" + materialLogicalPaths[i] + "\n";
   }

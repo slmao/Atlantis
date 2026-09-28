@@ -136,6 +136,21 @@ atlantis::Result<std::monostate, SceneCookError> cookScene(const std::string& so
     }
   }
 
+  // Step 3b (Plan 0047 P9, ADR-0097 D5): every EntityGuid non-nil and
+  // unique within the scene.
+  {
+    std::vector<EntityGuid> guids;
+    guids.reserve(parsed.nodes.size());
+    for (const ParsedSceneNode& node : parsed.nodes) {
+      if (node.entityGuid == EntityGuid{}) return ResultT::Err(SceneCookError::NilEntityGuid);
+      guids.push_back(node.entityGuid);
+    }
+    std::sort(guids.begin(), guids.end());
+    if (std::adjacent_find(guids.begin(), guids.end()) != guids.end()) {
+      return ResultT::Err(SceneCookError::DuplicateEntityGuid);
+    }
+  }
+
   // node_id -> declaration-order array index, and node_id -> its own
   // parent node_id -- built once duplicates are ruled out, reused by
   // steps 4-6 and step 9's own remapping below.
@@ -170,8 +185,10 @@ atlantis::Result<std::monostate, SceneCookError> cookScene(const std::string& so
   // same declaration-order array parseSceneSource() already produced.
   std::vector<ValidatedSceneNode> nodes;
   std::vector<std::optional<std::size_t>> parents;
+  std::vector<EntityGuid> entityGuids;
   nodes.reserve(parsed.nodes.size());
   parents.reserve(parsed.nodes.size());
+  entityGuids.reserve(parsed.nodes.size());
 
   for (const ParsedSceneNode& parsedNode : parsed.nodes) {
     const float transformFloats[9] = {
@@ -213,26 +230,18 @@ atlantis::Result<std::monostate, SceneCookError> cookScene(const std::string& so
       node.light = parsedNode.light;
     }
 
-    if (parsedNode.meshLogicalPath.has_value()) {
-      const auto normalizedResult = normalizeLogicalPath(*parsedNode.meshLogicalPath);
-      if (normalizedResult.isErr()) return ResultT::Err(SceneCookError::SourceParseFailed);
+    // Plan 0047 P9 (ADR-0097 D2/D3): references are GUIDs; the artifact
+    // carries their 64-bit keys. Value-level only, never an existence
+    // check (ADR-0059 D6/D7). materialAsset is only ever set alongside
+    // meshAsset (Plan 0018 Section P6's grammar-structural guarantee).
+    if (parsedNode.meshAsset.has_value()) {
       DecodedRenderable renderable;
-      renderable.meshAsset = computeAssetId(normalizedResult.value());
-
-      // Plan 0018 Section P6: materialLogicalPath is only ever set
-      // alongside meshLogicalPath (a grammar-structural guarantee, see
-      // scene_source.h's own note) -- resolved to an AssetId the exact
-      // same value-level-only way the mesh reference already is (no
-      // existence check, ADR-0059 D6/D7).
-      if (parsedNode.materialLogicalPath.has_value()) {
-        const auto normalizedMaterialResult = normalizeLogicalPath(*parsedNode.materialLogicalPath);
-        if (normalizedMaterialResult.isErr()) return ResultT::Err(SceneCookError::SourceParseFailed);
-        renderable.materialAsset = computeAssetId(normalizedMaterialResult.value());
-      }
-
+      renderable.meshAsset = assetKey(*parsedNode.meshAsset);
+      if (parsedNode.materialAsset.has_value()) renderable.materialAsset = assetKey(*parsedNode.materialAsset);
       node.renderable = renderable;
     }
 
+    entityGuids.push_back(parsedNode.entityGuid);
     nodes.push_back(std::move(node));
     parents.push_back(parsedNode.parentNodeId.has_value() ? std::optional<std::size_t>(idToIndex[*parsedNode.parentNodeId])
                                                             : std::nullopt);
@@ -246,7 +255,7 @@ atlantis::Result<std::monostate, SceneCookError> cookScene(const std::string& so
   }
 
   // Step 10: encode + atomic write.
-  const std::vector<std::byte> artifactBytes = encodeSceneArtifact(nodes, parents, activeCameraIndex);
+  const std::vector<std::byte> artifactBytes = encodeSceneArtifact(nodes, parents, activeCameraIndex, entityGuids);
 
   SceneMetadata metadata;
   metadata.assetGuid = assetGuid;

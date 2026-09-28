@@ -127,6 +127,10 @@ enum class SceneCookError {
   NonFiniteValue,
   ArtifactWriteFailed,
   MetadataWriteFailed,
+  // Plan 0047 P9 (ADR-0097 D5): a node's EntityGuid is nil, or two nodes
+  // of one scene share one.
+  NilEntityGuid,
+  DuplicateEntityGuid,
 };
 
 // decodeScene()'s own conditions -- never assumes a well-formed cooker
@@ -160,6 +164,10 @@ enum class SceneArtifactDecodeError {
   // must never trust a well-formed producer -- mirrors
   // hasCycleByIndex()'s own "never trust the cooker" ethos.
   MaterialWithoutRenderable,
+  // Plan 0047 P9 (ADR-0097 D5): every node's EntityGuid is non-nil and
+  // unique within its scene, re-checked from the artifact's own bytes.
+  NilEntityGuid,
+  DuplicateEntityGuid,
   // Spec 0019 D3/D11: the decode-time twin of
   // SceneSourceParseError::TooManyLights above -- independently
   // re-derived from the artifact's own bytes, never trusting a

@@ -89,10 +89,10 @@ std::atomic<int> gScratchCounter{0};
   const fs::path metadataPath = dir / "scene.ascene.meta.txt";
   {
     std::ofstream out(sourcePath, std::ios::binary | std::ios::trunc);
-    out << "atlantis_scene_source_version: 6\n"
+    out << "atlantis_scene_source_version: 7\n"
            "node_count: 1\n"
            "active_camera: none\n"
-           "node: node_id=1 parent=none position=1.0 2.0 3.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";
+           "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=1.0 2.0 3.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";
   }
   auto cookResult = atlantis::asset_system::cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string());
   REQUIRE(cookResult.isOk());

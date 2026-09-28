@@ -1,5 +1,6 @@
 #include <atlantis/asset_system/scene_artifact.h>
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
@@ -83,7 +84,8 @@ void appendFloatLE(std::vector<std::byte>& out, float value) { appendU32LE(out, 
 
 std::vector<std::byte> encodeSceneArtifact(const std::vector<ValidatedSceneNode>& nodes,
                                             const std::vector<std::optional<std::size_t>>& parents,
-                                            std::optional<std::size_t> activeCameraIndex) {
+                                            std::optional<std::size_t> activeCameraIndex,
+                                            const std::vector<EntityGuid>& entityGuids) {
   std::vector<std::byte> out;
   out.reserve(kSceneArtifactHeaderSizeBytes + nodes.size() * kSceneArtifactNodeRecordSizeBytes);
 
@@ -144,6 +146,9 @@ std::vector<std::byte> encodeSceneArtifact(const std::vector<ValidatedSceneNode>
 
     appendU32LE(out, parents[i].has_value() ? 1U : 0U);
     appendU32LE(out, parents[i].has_value() ? static_cast<std::uint32_t>(*parents[i]) : 0U);
+
+    // Plan 0047 P9: the node's EntityGuid, offsets 152-167, text byte order.
+    out.insert(out.end(), entityGuids[i].bytes.begin(), entityGuids[i].bytes.end());
   }
 
   return out;
@@ -297,8 +302,24 @@ atlantis::Result<DecodedSceneArtifact, SceneArtifactDecodeError> decodeSceneArti
       parent = parentIndex;
     }
 
+    // Plan 0047 P9: the node's EntityGuid, never trusting the cooker's own
+    // nil/duplicate checks.
+    GuidBytes entityGuidBytes{};
+    std::copy(record + 152, record + 168, entityGuidBytes.begin());
+    const auto entityGuid = entityGuidFromBytes(entityGuidBytes);
+    if (entityGuid.isErr()) return ResultT::Err(SceneArtifactDecodeError::NilEntityGuid);
+
     decoded.nodes.push_back(std::move(node));
     decoded.parents.push_back(parent);
+    decoded.entityGuids.push_back(entityGuid.value());
+  }
+
+  {
+    std::vector<EntityGuid> sorted = decoded.entityGuids;
+    std::sort(sorted.begin(), sorted.end());
+    if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end()) {
+      return ResultT::Err(SceneArtifactDecodeError::DuplicateEntityGuid);
+    }
   }
 
   // Spec 0019 D3/finding 4: the light-count cap, independently

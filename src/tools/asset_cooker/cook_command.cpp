@@ -227,6 +227,10 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
       return "active_camera node has no camera fields";
     case SceneCookError::NonFiniteValue:
       return "non-finite authored value";
+    case SceneCookError::NilEntityGuid:
+      return "a node's guid= is nil";
+    case SceneCookError::DuplicateEntityGuid:
+      return "two nodes share one guid=";
     case SceneCookError::ArtifactWriteFailed:
       return "artifact write failed";
     case SceneCookError::MetadataWriteFailed:

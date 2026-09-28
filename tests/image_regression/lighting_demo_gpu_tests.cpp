@@ -1135,16 +1135,16 @@ void writeFile(const fs::path& path, const std::string& content) {
 // negative test below changes exactly the one value its own name
 // describes, nothing else.
 constexpr std::string_view kLightingDemoSourceTemplate =
-    "atlantis_scene_source_version: 6\n"
+    "atlantis_scene_source_version: 7\n"
     "node_count: 4\n"
     "active_camera: 2\n"
-    "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
-    "mesh=meshes/minimal_cube.mesh.txt material=materials/lit_textured_quad.material.txt\n"
-    "node: node_id=2 parent=none position=0.0 0.0 5.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+    "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+    "mesh=d27e38e4-1121-88bf-817e-97f8b83724a5 material=be9a84e1-fb50-83ed-b00c-90e71df5b82a\n"
+    "node: node_id=2 guid=e68122c6-18b2-8f1f-b185-358f58780754 parent=none position=0.0 0.0 5.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
     "camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0\n"
-    "node: node_id=3 parent=none position=0.0 0.0 0.0 rotation=0.5 {DIRECTIONAL_YAW} 0.0 scale=1.0 1.0 1.0 "
+    "node: node_id=3 guid=e68122c6-19b2-8f1f-b185-358f5878088f parent=none position=0.0 0.0 0.0 rotation=0.5 {DIRECTIONAL_YAW} 0.0 scale=1.0 1.0 1.0 "
     "light=directional color=0.6 0.7 1.0 intensity=1.2\n"
-    "node: node_id=4 parent=none position=0.8 0.3 0.5 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
+    "node: node_id=4 guid=e68122c6-16b2-8f1f-b185-358f587804de parent=none position=0.8 0.3 0.5 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 "
     "light=point color=1.0 0.6 0.3 intensity=3.0 range={POINT_RANGE}\n";
 
 [[nodiscard]] std::string replaceOnce(std::string text, std::string_view token, const std::string& value) {

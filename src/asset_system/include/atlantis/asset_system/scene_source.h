@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/errors.h>
 #include <atlantis/asset_system/scene_types.h>
 #include <atlantis/result.h>
@@ -24,13 +25,18 @@ namespace atlantis::asset_system {
 // invariant at the binary level, since it must never trust a
 // well-formed producer -- see scene_artifact.cpp's own
 // MaterialWithoutRenderable check).
+// Plan 0047 P9 (scene source v7): entityGuid is the node's persistent
+// identity (guid=, right after node_id=); it may be nil here -- the parser
+// checks syntax only, and cookScene() rejects a nil or duplicate one. The
+// mesh=/material= references are AssetGuids (ADR-0097 D3).
 struct ParsedSceneNode {
   std::uint32_t nodeId = 0;
+  EntityGuid entityGuid;
   std::optional<std::uint32_t> parentNodeId;  // std::nullopt for "parent=none"
   DecodedTransform transform;
   std::optional<DecodedCamera> camera;
-  std::optional<std::string> meshLogicalPath;
-  std::optional<std::string> materialLogicalPath;
+  std::optional<AssetGuid> meshAsset;
+  std::optional<AssetGuid> materialAsset;
   std::optional<DecodedLight> light;  // Spec 0019 D3: standalone -- never
                                         // co-present with camera/mesh on the
                                         // same node, a structural grammar
@@ -61,6 +67,9 @@ enum class SceneSourceParseError {
   // collection check, never a per-node one. A hard, structural error,
   // never a silent, deterministic truncation.
   TooManyLights,
+  // Plan 0047 P9: a guid=, mesh= or material= value that is not a
+  // canonical GUID (a nil mesh/material reference included).
+  MalformedGuid,
 };
 
 // Strict, fixed-field-order, plain-text grammar extending
