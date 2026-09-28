@@ -11,6 +11,17 @@
 #include <string>
 #include <vector>
 
+#include <atlantis/asset_system/asset_guid.h>
+
+namespace {
+
+// Plan 0047 P7: the GUID a test import's root takes in place of a catalog
+// lookup.
+[[nodiscard]] atlantis::asset_system::AssetGuid testImportRoot() {
+  return atlantis::asset_system::parseAssetGuid("0047eeee-0000-4000-8000-000000000001").value();
+}
+
+}  // namespace
 // Plan 0037 Milestone 3: GPU-independent importer tests over tiny glTF files
 // built in memory (gltf_test_builder.h). Offsets are .amesh's 60-byte vertex
 // layout (mesh_artifact.h): color at 12, tangent at 44.
@@ -34,7 +45,7 @@ ImportRun runImport(const std::string& testName, const gltf_test::PrimitiveSpec&
   const fs::path dir = gltf_test::freshDirectory(testName);
   const fs::path input = gltf_test::writeGltf(dir, spec);
   const fs::path outputDir = dir / outputName;
-  return ImportRun{outputDir, importGltf(input, dir, outputDir, "t")};
+  return ImportRun{outputDir, importGltf(input, dir, outputDir, "t", testImportRoot())};
 }
 
 atlantis::asset_system::DecodedMeshArtifactU32 decodeOnlyMesh(const fs::path& outputDir) {
@@ -194,8 +205,8 @@ TEST_CASE("A failed import leaves no output or staging directory behind", "[gltf
 TEST_CASE("Importing the same input twice produces byte-identical output", "[gltf_importer]") {
   const fs::path dir = gltf_test::freshDirectory("determinism");
   const fs::path input = gltf_test::writeGltf(dir, gltf_test::unitQuad());
-  REQUIRE(importGltf(input, dir, dir / "a", "t").isOk());
-  REQUIRE(importGltf(input, dir, dir / "b", "t").isOk());
+  REQUIRE(importGltf(input, dir, dir / "a", "t", testImportRoot()).isOk());
+  REQUIRE(importGltf(input, dir, dir / "b", "t", testImportRoot()).isOk());
   std::vector<std::string> names;
   for (const auto& entry : fs::recursive_directory_iterator(dir / "a")) {
     if (entry.is_regular_file()) names.push_back(fs::relative(entry.path(), dir / "a").generic_string());

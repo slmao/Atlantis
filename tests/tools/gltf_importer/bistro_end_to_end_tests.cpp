@@ -88,8 +88,9 @@ int runCooker(const std::string& arguments) {
   return std::system(("\"" + command + "\"").c_str());
 }
 
-as::AssetId idOf(const std::string& logicalPath) {
-  return as::computeAssetId(as::normalizeLogicalPath(logicalPath).value());
+// Plan 0047 P5: the key of an import sub-asset's derived GUID.
+as::AssetId keyOf(const as::AssetGuid& root, const std::string& subKey) {
+  return as::assetKey(as::deriveAssetGuid(root, subKey));
 }
 
 }  // namespace
@@ -107,7 +108,11 @@ TEST_CASE("Real Bistro imports, validates and cooks end to end through the real 
   const fs::path cookedDir = work / "cooked";
 
   // 1. Import (meshes are written as artifacts directly, ADR-0083 D1).
-  const auto imported = atlantis::gltf_importer::importGltf(content / "bistro.gltf", content, importDir, "bistro");
+  const auto rootResult =
+      atlantis::gltf_importer::resolveImportRoot(ATLANTIS_ASSET_CATALOG_SOURCE_PATH, content / "bistro.gltf", content);
+  REQUIRE(rootResult.isOk());
+  const as::AssetGuid root = rootResult.value();
+  const auto imported = atlantis::gltf_importer::importGltf(content / "bistro.gltf", content, importDir, "bistro", root);
   REQUIRE(imported.isOk());
   CHECK(imported.value().meshCount == 551);
   CHECK(imported.value().materialCount == 254);
@@ -124,8 +129,17 @@ TEST_CASE("Real Bistro imports, validates and cooks end to end through the real 
   std::set<as::AssetId> meshIds;
   std::set<as::AssetId> materialIds;
   for (const std::string& path : lines(readText(importDir / "asset_list.txt"))) {
-    if (path.rfind("meshes/", 0) == 0) meshIds.insert(idOf(path));
-    if (path.find(".material.txt") != std::string::npos) materialIds.insert(idOf(path));
+    // meshes/bistro/mesh_<i>_<j> and bistro/materials/<i>.material.txt carry
+    // the indices their GUIDs derive from (Plan 0047 P5).
+    if (path.rfind("meshes/bistro/mesh_", 0) == 0) {
+      const std::string indices = path.substr(std::string("meshes/bistro/mesh_").size());
+      const std::size_t underscore = indices.find('_');
+      meshIds.insert(keyOf(root, "mesh/" + indices.substr(0, underscore) + "/" + indices.substr(underscore + 1)));
+    }
+    if (path.rfind("bistro/materials/", 0) == 0) {
+      const std::string index = path.substr(std::string("bistro/materials/").size());
+      materialIds.insert(keyOf(root, "material/" + index.substr(0, index.find('.'))));
+    }
   }
 
   // 3. The whole set -- every texture, material and the scene -- cooked in
@@ -159,28 +173,25 @@ TEST_CASE("Real Bistro imports, validates and cooks end to end through the real 
   for (std::size_t i = 1; i < 254 && sampleMaterials.size() < 2; ++i) {
     const auto source = as::parseMaterialSource(readText(importDir / ("bistro/materials/" + std::to_string(i) + ".material.txt")));
     REQUIRE(source.isOk());
-    if (source.value().textureLogicalPath.find("_importer/white") != std::string::npos) sampleMaterials.push_back(i);
+    if (source.value().textureAsset == as::deriveAssetGuid(root, "fallback/white")) sampleMaterials.push_back(i);
   }
   REQUIRE(sampleMaterials.size() == 2);
 
-  std::set<std::string> sampleTextures;
+  std::set<std::string> sampleTextures;  // Plan 0047: texture GUIDs, as the cook manifest's --guid= names them
   std::vector<as::ParsedMaterialSource> sampleSources;
   for (const std::size_t i : sampleMaterials) {
     const auto source = as::parseMaterialSource(readText(importDir / ("bistro/materials/" + std::to_string(i) + ".material.txt")));
     REQUIRE(source.isOk());
-    sampleTextures.insert(source.value().textureLogicalPath);
-    if (!source.value().normalMapLogicalPath.empty()) sampleTextures.insert(source.value().normalMapLogicalPath);
+    sampleTextures.insert(as::toString(source.value().textureAsset));
+    if (source.value().normalMapAsset) sampleTextures.insert(as::toString(*source.value().normalMapAsset));
     sampleSources.push_back(source.value());
   }
 
   std::vector<std::string> textureStems;
   for (const std::string& line : lines(readText(importDir / "cook_manifest.txt"))) {
     if (line.rfind("--kind=texture", 0) != 0) continue;
-    const std::string source = valueOf(line, "--source=");
-    for (const std::string& t : sampleTextures) {
-      if (source.size() >= t.size() && source.compare(source.size() - t.size(), t.size(), t) == 0) {
-        textureStems.push_back(fs::path(valueOf(line, "--stamp=")).stem().string());
-      }
+    if (sampleTextures.contains(valueOf(line, "--guid="))) {
+      textureStems.push_back(fs::path(valueOf(line, "--stamp=")).stem().string());
     }
   }
 
@@ -234,9 +245,9 @@ TEST_CASE("Real Bistro imports, validates and cooks end to end through the real 
         readBytes(cookedDir / ("bistro/materials/" + std::to_string(sampleMaterials[k]) + ".amaterial")));
     REQUIRE(decoded.isOk());
     CHECK(decoded.value().kind == as::MaterialKind::PbrDirectLit);
-    CHECK(decoded.value().textureAsset == idOf(sampleSources[k].textureLogicalPath));
-    if (!sampleSources[k].normalMapLogicalPath.empty()) {
-      CHECK(decoded.value().normalMapTexture == idOf(sampleSources[k].normalMapLogicalPath));
+    CHECK(decoded.value().textureAsset == as::assetKey(sampleSources[k].textureAsset));
+    if (sampleSources[k].normalMapAsset) {
+      CHECK(decoded.value().normalMapTexture == as::assetKey(*sampleSources[k].normalMapAsset));
     }
   }
 

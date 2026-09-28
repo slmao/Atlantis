@@ -29,8 +29,9 @@ namespace atlantis::gltf_importer::detail {
 // declared asset set, and fills the summary's material fields.
 [[nodiscard]] atlantis::Result<std::monostate, GltfImportError> writeMaterials(
     const cgltf_data& data, const std::filesystem::path& contentRoot, const std::filesystem::path& stagingDir,
-    const std::string& name, GltfImportSummary& summary, std::vector<std::string>& reportLines,
-    std::vector<std::string>& manifestLines, std::vector<std::string>& declaredAssets);
+    const std::string& name, const atlantis::asset_system::AssetGuid& importRoot, GltfImportSummary& summary,
+    std::vector<std::string>& reportLines, std::vector<std::string>& manifestLines,
+    std::vector<std::string>& declaredAssets);
 
 // Logical path of material <index>, as the scene slice (Milestone 5) will
 // reference it: "<name>/materials/<index>.material.txt".

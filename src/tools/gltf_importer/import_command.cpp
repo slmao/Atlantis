@@ -4,6 +4,8 @@
 #include "material_import.h"
 #include "scene_import.h"
 
+#include <atlantis/asset_system/asset_catalog_source.h>
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/asset_metadata.h>
 #include <atlantis/asset_system/logical_path.h>
@@ -350,12 +352,64 @@ const char* gltfImportErrorMessage(GltfImportError error) noexcept {
       return "overlay node parents to a node outside the overlay";
     case GltfImportError::OverlaySecondCamera:
       return "overlay declares more than one camera";
+    case GltfImportError::CatalogSourceUnreadable:
+      return "catalog source unreadable";
+    case GltfImportError::CatalogSourceInvalid:
+      return "catalog source invalid";
+    case GltfImportError::SourceNotInCatalog:
+      return "SourceNotInCatalog: the glTF has no catalog-source entry (content:<content-root name>/<glTF name>)";
+    case GltfImportError::CatalogTypeMismatch:
+      return "CatalogTypeMismatch: the glTF's catalog-source entry is not a gltf_import";
+    case GltfImportError::InvalidAssetSubKey:
+      return "a derivation sub-key is empty or not ASCII (Plan 0047 ruling I2)";
   }
   return "unknown gltf import error";
 }
 
+namespace detail {
+
+atlantis::Result<atlantis::asset_system::AssetGuid, GltfImportError> deriveImportAssetGuid(
+    const atlantis::asset_system::AssetGuid& owner, std::string_view subKey) {
+  using ResultT = atlantis::Result<atlantis::asset_system::AssetGuid, GltfImportError>;
+  const bool ascii = std::all_of(subKey.begin(), subKey.end(), [](char c) { return static_cast<unsigned char>(c) < 0x80; });
+  if (subKey.empty() || !ascii) return ResultT::Err(GltfImportError::InvalidAssetSubKey);
+  return ResultT::Ok(atlantis::asset_system::deriveAssetGuid(owner, subKey));
+}
+
+atlantis::Result<atlantis::asset_system::EntityGuid, GltfImportError> deriveImportEntityGuid(
+    const atlantis::asset_system::AssetGuid& scene, std::string_view subKey) {
+  using ResultT = atlantis::Result<atlantis::asset_system::EntityGuid, GltfImportError>;
+  const auto checked = deriveImportAssetGuid(scene, subKey);
+  if (checked.isErr()) return ResultT::Err(checked.error());
+  return ResultT::Ok(atlantis::asset_system::deriveEntityGuid(scene, subKey));
+}
+
+}  // namespace detail
+
+atlantis::Result<atlantis::asset_system::AssetGuid, GltfImportError> resolveImportRoot(
+    const fs::path& catalogSourcePath, const fs::path& inputPath, const fs::path& contentRoot) {
+  using ResultT = atlantis::Result<atlantis::asset_system::AssetGuid, GltfImportError>;
+  std::ifstream in(catalogSourcePath, std::ios::binary);
+  if (!in.is_open()) return ResultT::Err(GltfImportError::CatalogSourceUnreadable);
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  const auto catalog = atlantis::asset_system::parseAssetCatalogSource(text);
+  if (catalog.isErr()) return ResultT::Err(GltfImportError::CatalogSourceInvalid);
+
+  fs::path root = contentRoot.lexically_normal();
+  if (root.filename().empty()) root = root.parent_path();
+  const std::string path = root.filename().string() + "/" + inputPath.filename().string();
+  const atlantis::asset_system::CatalogSourceEntry* entry =
+      catalog.value().find(atlantis::asset_system::CatalogRoot::Content, path);
+  if (entry == nullptr) return ResultT::Err(GltfImportError::SourceNotInCatalog);
+  if (entry->type != atlantis::asset_system::CatalogAssetType::GltfImport) {
+    return ResultT::Err(GltfImportError::CatalogTypeMismatch);
+  }
+  return ResultT::Ok(entry->guid);
+}
+
 atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& inputPath, const fs::path& contentRoot,
                                                                  const fs::path& outputDir, const std::string& name,
+                                                                 const atlantis::asset_system::AssetGuid& importRoot,
                                                                  const std::optional<fs::path>& overlayPath) {
   using ResultT = atlantis::Result<GltfImportSummary, GltfImportError>;
 
@@ -439,7 +493,10 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
       const auto normalizedResult = atlantis::asset_system::normalizeLogicalPath(logicalPath);
       if (normalizedResult.isErr()) return ResultT::Err(GltfImportError::OutputWriteFailed);
       const std::string& normalized = normalizedResult.value();
-      const atlantis::asset_system::AssetId assetId = atlantis::asset_system::computeAssetId(normalized);
+      const auto meshGuid = detail::deriveImportAssetGuid(
+          importRoot, "mesh/" + std::to_string(meshIndex) + "/" + std::to_string(primitiveIndex));
+      if (meshGuid.isErr()) return ResultT::Err(meshGuid.error());
+      const atlantis::asset_system::AssetId assetId = atlantis::asset_system::assetKey(meshGuid.value());
       declaredAssets.push_back(normalized);
 
       if (accessors.tangent != nullptr) reportLines.push_back(base + ": upstream TANGENT discarded (D8)");
@@ -528,9 +585,10 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
           atlantis::asset_system::encodeMeshArtifactU32FromIndices(assetId, vertices, indices, tangents.value());
 
       atlantis::asset_system::AssetMetadata metadata;
+      metadata.assetGuid = meshGuid.value();
       metadata.assetId = assetId;
       metadata.sourceLogicalPath = normalized;
-      metadata.importerVersion = "atlantis_gltf_importer 1.0";
+      metadata.importerVersion = std::string(detail::kImporterToolVersion);
       metadata.assetType = "static_mesh";
       metadata.vertexCount = static_cast<std::uint32_t>(vertices.size());
       metadata.indexCount = static_cast<std::uint32_t>(indices.size());
@@ -564,11 +622,12 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
                         " vertices in " + std::to_string(summary.meshesWithDegenerateFallback) + " meshes");
   std::vector<std::string> manifestLines;
   const auto materials =
-      detail::writeMaterials(*guard.data, contentRoot, staging.path, name, summary, reportLines, manifestLines,
-                             declaredAssets);
+      detail::writeMaterials(*guard.data, contentRoot, staging.path, name, importRoot, summary, reportLines,
+                             manifestLines, declaredAssets);
   if (materials.isErr()) return ResultT::Err(materials.error());
   const auto scene =
-      detail::writeScene(*guard.data, staging.path, name, summary, reportLines, manifestLines, overlayPtr);
+      detail::writeScene(*guard.data, staging.path, name, importRoot, summary, reportLines, manifestLines,
+                         overlayPtr);
   if (scene.isErr()) return ResultT::Err(scene.error());
   std::string manifest =
       "# atlantis_gltf_importer cook manifest (Plan 0037). One atlantis_asset_cooker invocation per\n"

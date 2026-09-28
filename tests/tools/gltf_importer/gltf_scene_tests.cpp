@@ -23,6 +23,16 @@
 #include <atlantis/asset_system/asset_guid.h>
 #include <string_view>
 
+
+namespace {
+
+// Plan 0047 P7: the GUID a test import's root takes in place of a catalog
+// lookup.
+[[nodiscard]] atlantis::asset_system::AssetGuid testImportRoot() {
+  return atlantis::asset_system::parseAssetGuid("0047eeee-0000-4000-8000-000000000001").value();
+}
+
+}  // namespace
 namespace {
 
 // Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
@@ -65,7 +75,7 @@ SceneRun runSceneImport(const std::string& testName, const gltf_test::PrimitiveS
     overlayPath = dir / "overlay.scene.txt";
     std::ofstream(*overlayPath, std::ios::binary) << *overlayText;
   }
-  return SceneRun{dir, outputDir, importGltf(input, dir, outputDir, "t", overlayPath)};
+  return SceneRun{dir, outputDir, importGltf(input, dir, outputDir, "t", testImportRoot(), overlayPath)};
 }
 
 atlantis::asset_system::ParsedSceneSource parsedScene(const fs::path& outputDir) {
@@ -214,9 +224,9 @@ TEST_CASE("A node hierarchy becomes parent-linked node lines with local transfor
   CHECK(scene.nodes[2].parentNodeId == 1u);
   CHECK(scene.nodes[3].nodeId == 4);
   CHECK(scene.nodes[3].parentNodeId == 3u);
-  CHECK(scene.nodes[1].meshLogicalPath == std::string("meshes/t/mesh_0_0"));
-  CHECK(scene.nodes[3].meshLogicalPath == std::string("meshes/t/mesh_0_0"));
-  CHECK_FALSE(scene.nodes[1].materialLogicalPath.has_value());
+  CHECK(scene.nodes[1].meshAsset == atlantis::asset_system::deriveAssetGuid(testImportRoot(), "mesh/0/0"));
+  CHECK(scene.nodes[3].meshAsset == atlantis::asset_system::deriveAssetGuid(testImportRoot(), "mesh/0/0"));
+  CHECK_FALSE(scene.nodes[1].materialAsset.has_value());
   CHECK(scene.nodes[0].transform.positionY == 2.0f);
   CHECK(scene.nodes[0].transform.eulerYRadians == Catch::Approx(kPi / 2).margin(1e-6));
   CHECK(scene.nodes[1].transform.scaleY == 2.0f);
@@ -321,7 +331,7 @@ TEST_CASE("KHR_lights_punctual point and directional lights become light lines; 
   const auto scene = parsedScene(run.outputDir);
   REQUIRE(scene.nodes.size() == 3);
   CHECK(scene.nodes[0].nodeId == 1);
-  CHECK(scene.nodes[0].meshLogicalPath.has_value());
+  CHECK(scene.nodes[0].meshAsset.has_value());
   CHECK(scene.nodes[1].nodeId == 3);  // synthetic: numbered after the 2 glTF nodes
   CHECK(scene.nodes[1].parentNodeId == 1u);
   REQUIRE(scene.nodes[1].light.has_value());
@@ -400,24 +410,24 @@ gltf_test::PrimitiveSpec quadWithPointLights(std::size_t n) {
 }
 
 std::string overlayScene(const std::vector<std::string>& nodeLines, const std::string& activeCamera) {
-  std::string text = "atlantis_scene_source_version: 6\nnode_count: " + std::to_string(nodeLines.size()) +
+  std::string text = "atlantis_scene_source_version: 7\nnode_count: " + std::to_string(nodeLines.size()) +
                      "\nactive_camera: " + activeCamera + "\n";
   for (const std::string& line : nodeLines) text += line + "\n";
   return text;
 }
 
 const std::string kCameraNode =
-    "node: node_id=10 parent=none position=8 1.7 24 rotation=0.05 0.785 0 scale=1 1 1 camera_fov_y=1.0472 "
+    "node: node_id=10 guid=303e41cf-49a2-8c4e-aee8-e761dbb5ca37 parent=none position=8 1.7 24 rotation=0.05 0.785 0 scale=1 1 1 camera_fov_y=1.0472 "
     "camera_near_z=0.1 camera_far_z=200 camera_exposure_ev=-1 fog=0.015 0 0.15 0.7 fog_color=0.25 0.2 0.14 "
     "bloom=0.15 1.5";
 const std::string kPointNode =
-    "node: node_id=20 parent=none position=-39.61 3.26 -5.03 rotation=0 0 0 scale=1 1 1 light=point "
+    "node: node_id=20 guid=303e41c7-c7a2-8c4e-aee8-e761dbb1180c parent=none position=-39.61 3.26 -5.03 rotation=0 0 0 scale=1 1 1 light=point "
     "color=1 0.8 0.55 intensity=8 range=12";
 const std::string kChildPointNode =
-    "node: node_id=21 parent=20 position=0 1 0 rotation=0 0 0 scale=1 1 1 light=point color=1 0.85 0.6 "
+    "node: node_id=21 guid=303e41c7-c8a2-8c4e-aee8-e761dbb11947 parent=20 position=0 1 0 rotation=0 0 0 scale=1 1 1 light=point color=1 0.85 0.6 "
     "intensity=3 range=5";
 const std::string kMoonNode =
-    "node: node_id=30 parent=none position=0 0 0 rotation=-1 2.4 0 scale=1 1 1 light=directional "
+    "node: node_id=30 guid=303e41ca-5da2-8c4e-aee8-e761dbb2c305 parent=none position=0 0 0 rotation=-1 2.4 0 scale=1 1 1 light=directional "
     "color=0.6 0.7 1 intensity=0.1";
 
 }  // namespace
@@ -492,12 +502,12 @@ TEST_CASE("The importer's overlay rejects a renderable node, a parent outside it
     CHECK_FALSE(fs::exists(run.outputDir));
   };
   expectError("overlay_renderable",
-              overlayScene({"node: node_id=1 parent=none position=0 0 0 rotation=0 0 0 scale=1 1 1 "
-                            "mesh=meshes/t/mesh_0_0 material=t/materials/0.material.txt"},
+              overlayScene({"node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0 0 0 rotation=0 0 0 scale=1 1 1 "
+                            "mesh=056f3769-9238-866c-99f8-e2f2bfdbfc31 material=81a9ef20-fa1c-8e19-b7a8-a99df29ebb1a"},
                            "none"),
               GltfImportError::OverlayRenderableNode);
   expectError("overlay_parent_outside",
-              overlayScene({"node: node_id=5 parent=1 position=0 0 0 rotation=0 0 0 scale=1 1 1 light=point "
+              overlayScene({"node: node_id=5 guid=e68122c6-17b2-8f1f-b185-358f58780619 parent=1 position=0 0 0 rotation=0 0 0 scale=1 1 1 light=point "
                             "color=1 1 1 intensity=1 range=1"},
                            "none"),
               GltfImportError::OverlayParentOutsideOverlay);
@@ -505,7 +515,7 @@ TEST_CASE("The importer's overlay rejects a renderable node, a parent outside it
   secondCamera.replace(secondCamera.find("node_id=10"), 10, "node_id=11");
   expectError("overlay_second_camera", overlayScene({kCameraNode, secondCamera}, "10"),
               GltfImportError::OverlaySecondCamera);
-  expectError("overlay_malformed", std::string("atlantis_scene_source_version: 6\nnode_count: 1\n"),
+  expectError("overlay_malformed", std::string("atlantis_scene_source_version: 7\nnode_count: 1\n"),
               GltfImportError::OverlayMalformed);
   std::string secondMoon = kMoonNode;
   secondMoon.replace(secondMoon.find("node_id=30"), 10, "node_id=31");
@@ -522,7 +532,7 @@ TEST_CASE("The importer's overlay rejects a renderable node, a parent outside it
   {
     const fs::path dir = gltf_test::freshDirectory("overlay_unreadable");
     const fs::path input = gltf_test::writeGltf(dir, spec);
-    const auto result = importGltf(input, dir, dir / "out", "t", dir / "absent.scene.txt");
+    const auto result = importGltf(input, dir, dir / "out", "t", testImportRoot(), dir / "absent.scene.txt");
     REQUIRE(result.isErr());
     CHECK(result.error() == GltfImportError::OverlayUnreadable);
   }

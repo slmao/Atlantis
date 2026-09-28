@@ -556,6 +556,8 @@ if(NOT ANDROID)
 
   target_compile_definitions(atlantis_image_regression_content_gpu_tests PRIVATE
     ATLANTIS_BISTRO_CONTENT_DIR="${ATLANTIS_BISTRO_CONTENT_DIR}"
+    # Plan 0047 P7: the committed catalog source, for the Bistro import root.
+    ATLANTIS_ASSET_CATALOG_SOURCE_PATH="${CMAKE_SOURCE_DIR}/assets/asset_catalog.txt"
     # Plan 0046 Milestone 3: PbrNormalMapDemoFixture's shader set and
     # control material, and the bloom shaders (bloom_test_config.h) --
     # the same values atlantis_image_regression_gpu_tests passes.

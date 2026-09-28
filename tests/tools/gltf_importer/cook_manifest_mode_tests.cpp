@@ -19,6 +19,17 @@
 #include <string>
 #include <vector>
 
+#include <atlantis/asset_system/asset_guid.h>
+
+namespace {
+
+// Plan 0047 P7: the GUID a test import's root takes in place of a catalog
+// lookup.
+[[nodiscard]] atlantis::asset_system::AssetGuid testImportRoot() {
+  return atlantis::asset_system::parseAssetGuid("0047eeee-0000-4000-8000-000000000001").value();
+}
+
+}  // namespace
 // Plan 0046 Milestone 2 (ADR-0094 Decision 2, Plan 0046 P8): atlantis_asset_cooker
 // --kind=cook-manifest over a synthetic import -- the real importer writes
 // the import directory, the real cooker binary executes its cook_manifest.txt
@@ -63,7 +74,16 @@ int runCooker(const std::vector<std::string>& arguments) {
   return std::system(("\"" + command + "\"").c_str());
 }
 
-as::AssetId idOf(const std::string& logicalPath) { return as::computeAssetId(as::normalizeLogicalPath(logicalPath).value()); }
+// Plan 0047 P8: an asset's key, as its own sidecar records it (every
+// sidecar kind carries an asset_id: line).
+as::AssetId idOfSidecar(const fs::path& metadataPath) {
+  std::ifstream in(metadataPath, std::ios::binary);
+  for (std::string line; std::getline(in, line);) {
+    if (line.rfind("asset_id: ", 0) == 0) return std::stoull(line.substr(10, 16), nullptr, 16);
+  }
+  FAIL("no asset_id line in " << metadataPath.string());
+  return 0;
+}
 
 struct ImportedFixture {
   fs::path dir;        // the content root: the glTF and its DDS files
@@ -98,7 +118,7 @@ ImportedFixture importFixture(const std::string& testName) {
   fixture.cookedDir = fixture.dir.parent_path() / (testName + "_cooked");
   fs::remove_all(fixture.importDir);
   fs::remove_all(fixture.cookedDir);
-  const auto result = atlantis::gltf_importer::importGltf(input, fixture.dir, fixture.importDir, "q");
+  const auto result = atlantis::gltf_importer::importGltf(input, fixture.dir, fixture.importDir, "q", testImportRoot());
   REQUIRE(result.isOk());
   return fixture;
 }
@@ -151,7 +171,7 @@ TEST_CASE("cook-manifest mode cooks every manifest line in one process and write
   const auto material = as::decodeMaterialArtifact(readBytes(fixture.cookedDir / "q/materials/0.amaterial"));
   REQUIRE(material.isOk());
   std::set<as::AssetId> listedIds;
-  for (const std::string& entry : entries) listedIds.insert(idOf(entry.substr(0, entry.find('\t'))));
+  for (const std::string& entry : entries) listedIds.insert(idOfSidecar(entry.substr(entry.rfind('\t') + 1)));
   CHECK(listedIds.count(material.value().textureAsset) == 1);
   CHECK(material.value().emissiveTexture != 0);
   CHECK(listedIds.count(material.value().emissiveTexture) == 1);
