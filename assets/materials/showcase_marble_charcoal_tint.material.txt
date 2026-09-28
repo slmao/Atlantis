@@ -1,6 +1,6 @@
-atlantis_material_source_version: 9
+atlantis_material_source_version: 10
 kind: pbr_direct_lit
-texture: textures/marble_source_srgb.png
+texture: c23a9c90-538c-4df8-a77b-bb8743ad2b04
 filter: linear
 address_mode: repeat
 base_color_factor: 0.25 0.25 0.28 1.00

@@ -1,7 +1,7 @@
-atlantis_scene_source_version: 6
+atlantis_scene_source_version: 7
 node_count: 4
 active_camera: 4
-node: node_id=1 parent=none position=-2.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/pbr_sheen_low_roughness.material.txt
-node: node_id=2 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/pbr_sheen_mid_roughness.material.txt
-node: node_id=3 parent=none position=2.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/pbr_sheen_high_roughness.material.txt
-node: node_id=4 parent=none position=0.0 0.0 8.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0
+node: node_id=1 guid=800c561d-986c-4814-9683-c854675d78e6 parent=none position=-2.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=da09198f-d590-44f3-9049-ba5b43fe76cd material=68895dc5-4e74-4ea6-bc5f-0ca8b8aeb126
+node: node_id=2 guid=c8aafcc0-a83e-48f5-ad66-322eb1880160 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=da09198f-d590-44f3-9049-ba5b43fe76cd material=2894a6cd-e050-485c-a4f9-321b66fa3ee5
+node: node_id=3 guid=e503105f-b511-41f3-8672-c30fa689f177 parent=none position=2.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=da09198f-d590-44f3-9049-ba5b43fe76cd material=9790d3c4-ac34-4ad9-a7d2-a9db30713bfd
+node: node_id=4 guid=5133805c-8a9b-4a31-9860-2a7214dacac4 parent=none position=0.0 0.0 8.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0

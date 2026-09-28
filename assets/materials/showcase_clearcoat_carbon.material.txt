@@ -1,6 +1,6 @@
-atlantis_material_source_version: 9
+atlantis_material_source_version: 10
 kind: pbr_clearcoat
-texture: textures/carbon_fiber_source_srgb.png
+texture: b12e5eff-78ea-45d2-ab2e-f8e75e4fd553
 filter: linear
 address_mode: repeat
 base_color_factor: 1.0 1.0 1.0 1.0

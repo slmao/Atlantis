@@ -1,5 +1,5 @@
-atlantis_material_source_version: 9
+atlantis_material_source_version: 10
 kind: unlit_textured
-texture: textures/textured_quad_source_unorm.png
+texture: 600e2e5d-6224-47e2-8942-a6afa50beda7
 filter: linear
 address_mode: repeat

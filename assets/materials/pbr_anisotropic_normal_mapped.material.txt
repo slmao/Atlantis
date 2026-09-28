@@ -1,6 +1,6 @@
-atlantis_material_source_version: 9
+atlantis_material_source_version: 10
 kind: pbr_anisotropic
-texture: textures/textured_quad_source_srgb.png
+texture: 859a82af-a31e-457d-bc46-274c1a80ffba
 filter: linear
 address_mode: repeat
 base_color_factor: 0.7 0.7 0.75 1.0
@@ -8,4 +8,4 @@ metallic_factor: 1.0
 roughness_factor: 0.3
 anisotropy_factor: 0.6
 anisotropy_rotation: 0.5235987756
-normal_map: textures/normal_map_tilted_source_unorm.png
+normal_map: 5e99757a-d524-4aaf-b665-0d308aa7ae99

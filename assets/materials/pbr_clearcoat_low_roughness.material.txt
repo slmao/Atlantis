@@ -1,6 +1,6 @@
-atlantis_material_source_version: 9
+atlantis_material_source_version: 10
 kind: pbr_clearcoat
-texture: textures/textured_quad_source_srgb.png
+texture: 859a82af-a31e-457d-bc46-274c1a80ffba
 filter: linear
 address_mode: repeat
 base_color_factor: 0.8 0.15 0.1 1.0

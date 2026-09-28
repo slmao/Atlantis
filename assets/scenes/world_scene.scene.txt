@@ -1,9 +1,9 @@
-atlantis_scene_source_version: 6
+atlantis_scene_source_version: 7
 node_count: 6
 active_camera: 6
-node: node_id=1 parent=none position=-2.5 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/minimal_cube.mesh.txt
-node: node_id=2 parent=none position=-1.0 0.0 0.0 rotation=0.0 0.5236 0.0 scale=1.0 1.0 1.0 mesh=meshes/minimal_cube.mesh.txt
-node: node_id=3 parent=none position=1.0 -0.5 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/minimal_cube.mesh.txt
-node: node_id=4 parent=3 position=0.0 1.3 0.0 rotation=0.0 0.7854 0.0 scale=1.0 1.0 1.0 mesh=meshes/minimal_cube.mesh.txt
-node: node_id=5 parent=none position=2.5 0.0 0.0 rotation=0.2618 0.3491 0.0 scale=1.0 1.0 1.0 mesh=meshes/minimal_cube.mesh.txt
-node: node_id=6 parent=none position=0.0 2.2 7.0 rotation=-0.3054 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.04719758 camera_near_z=0.1 camera_far_z=100.0
+node: node_id=1 guid=b9c197ee-eca7-4f98-9439-601b0621d4f6 parent=none position=-2.5 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=3b9b8177-eac1-4139-b203-a49d5577eb3b
+node: node_id=2 guid=e49573bd-e3bc-4d8d-972f-72407918e49e parent=none position=-1.0 0.0 0.0 rotation=0.0 0.5236 0.0 scale=1.0 1.0 1.0 mesh=3b9b8177-eac1-4139-b203-a49d5577eb3b
+node: node_id=3 guid=c63c51d7-4cd0-45c2-9777-07a75c953baf parent=none position=1.0 -0.5 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=3b9b8177-eac1-4139-b203-a49d5577eb3b
+node: node_id=4 guid=91e1d0f0-6485-4fd8-a08d-489665d02ac5 parent=3 position=0.0 1.3 0.0 rotation=0.0 0.7854 0.0 scale=1.0 1.0 1.0 mesh=3b9b8177-eac1-4139-b203-a49d5577eb3b
+node: node_id=5 guid=90524d12-9090-4017-b112-57143a03b044 parent=none position=2.5 0.0 0.0 rotation=0.2618 0.3491 0.0 scale=1.0 1.0 1.0 mesh=3b9b8177-eac1-4139-b203-a49d5577eb3b
+node: node_id=6 guid=c7b1ff82-d29c-44a5-97f2-9eeb1c65acfc parent=none position=0.0 2.2 7.0 rotation=-0.3054 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.04719758 camera_near_z=0.1 camera_far_z=100.0

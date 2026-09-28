@@ -1,6 +1,6 @@
-atlantis_material_source_version: 9
+atlantis_material_source_version: 10
 kind: pbr_direct_lit
-texture: textures/mosaic_tile_source_srgb.png
+texture: 90bc25e1-efc1-42be-9a8f-60d96768b412
 filter: linear
 address_mode: repeat
 base_color_factor: 0.90 0.65 0.30 1.00

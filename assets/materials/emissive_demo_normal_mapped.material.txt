@@ -1,10 +1,10 @@
-atlantis_material_source_version: 9
+atlantis_material_source_version: 10
 kind: pbr_direct_lit
-texture: textures/textured_quad_source_srgb.png
+texture: 859a82af-a31e-457d-bc46-274c1a80ffba
 filter: linear
 address_mode: repeat
 base_color_factor: 1.0 1.0 1.0 1.0
 metallic_factor: 0.0
 roughness_factor: 0.5
 emissive_factor: 0.75 0.75 0.75
-normal_map: textures/normal_map_tilted_source_unorm.png
+normal_map: 5e99757a-d524-4aaf-b665-0d308aa7ae99
