@@ -378,6 +378,9 @@ record: guid=<g> asset_id=<16 hex> type=<type> source=<root>:<path>[#<sub-key>] 
   - rewrites every committed scene source (and the overlay) v6 → v7, adding
     minted `guid=` and replacing path references with catalog GUIDs;
   - rewrites every material source v9 → v10 the same way.
+- Scene sources that are not declarations are named explicitly with a
+  repeatable `--scene-source=<assets-relative path>` (ruling I5); the
+  one-time run passes the Bistro overlay this way.
 - It works on text tokens and does not depend on the v7/v10 parsers.
 - It fails on any reference it cannot map.
 - It is removed in M9.
@@ -679,7 +682,7 @@ Maps to Spec 0047's Testing & Verification Plan.
 
 ## Implementation rulings (slmao, 2026-09-29, chat)
 
-Clarifications raised while implementing M1. None changes a Spec
+Clarifications raised while implementing M1 (I1–I4) and M2 (I5). None changes a Spec
 requirement or ADR decision.
 
 - **I1 — `assetKey()` and `computeAssetId()`.** P2's "reusing the existing
@@ -705,6 +708,15 @@ requirement or ADR decision.
 - **I4 — Details accepted on review:**
   - `--count` only requires a value ≥ 1, with no upper bound;
   - `fnv1a128()` is exposed publicly.
+- **I5 — How the migration reaches the overlay** (raised in M2). P20's
+  inputs were only the declarations list, and the overlay is an importer
+  input, not a declaration — the only undeclared scene or material source
+  in `assets/`.
+  - `migrate-0047` gains a repeatable `--scene-source=<assets-relative
+    path>` for scene sources that are not declarations.
+  - The one-time M3 run passes `bistro/bistro_overlay.scene.txt`.
+  - The overlay is rewritten to v7 with a minted `guid=` on each node and
+    gets no catalog entry, since it is not an asset.
 
 ## Rollback Plan
 
