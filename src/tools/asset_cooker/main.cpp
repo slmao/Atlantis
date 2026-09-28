@@ -28,7 +28,9 @@ int main(int argc, char** argv) {
                  "       atlantis_asset_cooker --validate-set --asset-list=<path>\n"
                  "       atlantis_asset_cooker --kind=cook-manifest --import-dir=<dir> --cooked-dir=<dir> "
                  "--content-parent=<dir> --manifest-out=<path> [--stamp=<path>]\n"
-                 "       atlantis_asset_cooker --kind=mint-guid [--count=<n>]\n";
+                 "       atlantis_asset_cooker --kind=mint-guid [--count=<n>]\n"
+                 "       atlantis_asset_cooker --kind=lookup --catalog-source=<path> "
+                 "(--guid=<guid> | --source=<assets|content>:<path>)\n";
     return 1;
   }
 

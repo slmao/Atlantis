@@ -18,7 +18,10 @@ namespace atlantis::tools::asset_cooker {
 // Plan 0047 P4: MintGuid prints --count= new version-4 GUIDs to stdout --
 // an authoring command, never run by the build and rejected on cook
 // manifest lines.
-enum class AssetKind { StaticMesh, Scene, Texture, Material, Environment, CookManifest, MintGuid };
+// Plan 0047 M2: Lookup prints the catalog-source entry for --guid= or for
+// --source=<root>:<path> -- also an authoring command, also rejected on
+// cook manifest lines.
+enum class AssetKind { StaticMesh, Scene, Texture, Material, Environment, CookManifest, MintGuid, Lookup };
 
 // Plan 0012 Section D4: two modes. Cook mode (isValidateSet == false)
 // cooks exactly one asset from sourcePath (relative to assetRoot) into
@@ -61,6 +64,12 @@ struct CookCommandRequest {
 
   // Plan 0047 P4: --kind=mint-guid's --count= (default 1, must be >= 1).
   std::uint32_t mintCount = 1;
+
+  // Plan 0047 M2: --kind=lookup's inputs. --guid= is accepted only with
+  // --kind=lookup; the lookup key is either guid or sourcePath
+  // (<root>:<path>), never both.
+  std::string catalogSourcePath;
+  std::string guid;
 };
 
 // Parses one cooker argument vector (argv without the program name) into

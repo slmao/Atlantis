@@ -2,6 +2,7 @@
 #include "dds_parser.h"
 #include "guid_mint.h"
 
+#include <atlantis/asset_system/asset_catalog_source.h>
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/asset_set_validation.h>
@@ -586,7 +587,7 @@ struct ManifestEntry {
     CookCommandRequest lineRequest;
     if (!parseCookArguments(args, lineRequest, std::cerr) || lineRequest.isValidateSet ||
         lineRequest.kind == AssetKind::CookManifest || lineRequest.kind == AssetKind::Environment ||
-        lineRequest.kind == AssetKind::MintGuid) {
+        lineRequest.kind == AssetKind::MintGuid || lineRequest.kind == AssetKind::Lookup) {
       std::cerr << "atlantis_asset_cooker: cook manifest line " << lineNumber << " is not a texture/material/"
                 << "scene/mesh cook: " << line << "\n";
       return 1;
@@ -692,6 +693,80 @@ struct ManifestEntry {
   return 0;
 }
 
+[[nodiscard]] const char* catalogSourceParseErrorMessage(atlantis::asset_system::CatalogSourceParseError error) {
+  using atlantis::asset_system::CatalogSourceParseError;
+  switch (error) {
+    case CatalogSourceParseError::UnknownVersion:
+      return "unknown catalog source version";
+    case CatalogSourceParseError::EntryCountMismatch:
+      return "entry_count does not match the entries";
+    case CatalogSourceParseError::MalformedEntry:
+      return "malformed entry";
+    case CatalogSourceParseError::NilGuid:
+      return "nil GUID";
+    case CatalogSourceParseError::UnknownType:
+      return "unknown asset type";
+    case CatalogSourceParseError::UnknownRoot:
+      return "unknown root";
+    case CatalogSourceParseError::NonNormalPath:
+      return "path is not in normalized logical-path form";
+    case CatalogSourceParseError::Unsorted:
+      return "entries are not in (root, path) order";
+    case CatalogSourceParseError::DuplicateGuid:
+      return "duplicate GUID";
+    case CatalogSourceParseError::DuplicatePath:
+      return "duplicate (root, path)";
+  }
+  return "unknown error";
+}
+
+// Plan 0047 M2: prints the matching catalog-source entry line, the
+// readability aid Spec 0047 Q4 relies on.
+[[nodiscard]] int runLookupMode(const CookCommandRequest& request) {
+  using atlantis::asset_system::CatalogRoot;
+  using atlantis::asset_system::CatalogSourceEntry;
+
+  std::ifstream file(request.catalogSourcePath, std::ios::binary);
+  if (!file.is_open()) {
+    std::cerr << "atlantis_asset_cooker: cannot open catalog source: " << request.catalogSourcePath << "\n";
+    return 1;
+  }
+  const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+  const auto catalog = atlantis::asset_system::parseAssetCatalogSource(text);
+  if (catalog.isErr()) {
+    std::cerr << "atlantis_asset_cooker: invalid catalog source " << request.catalogSourcePath << ": "
+              << catalogSourceParseErrorMessage(catalog.error()) << "\n";
+    return 1;
+  }
+
+  const CatalogSourceEntry* found = nullptr;
+  if (!request.guid.empty()) {
+    const auto guid = atlantis::asset_system::parseAssetGuid(request.guid);
+    if (guid.isErr()) {
+      std::cerr << "atlantis_asset_cooker: --guid is not a canonical GUID: " << request.guid << "\n";
+      return 1;
+    }
+    found = catalog.value().find(guid.value());
+  } else {
+    const std::size_t colon = request.sourcePath.find(':');
+    const auto root = colon == std::string::npos
+                          ? std::nullopt
+                          : atlantis::asset_system::parseCatalogRoot(std::string_view(request.sourcePath).substr(0, colon));
+    if (!root) {
+      std::cerr << "atlantis_asset_cooker: --source must be <assets|content>:<path>: " << request.sourcePath << "\n";
+      return 1;
+    }
+    found = catalog.value().find(*root, std::string_view(request.sourcePath).substr(colon + 1));
+  }
+  if (found == nullptr) {
+    std::cerr << "atlantis_asset_cooker: no catalog source entry for "
+              << (request.guid.empty() ? request.sourcePath : request.guid) << "\n";
+    return 1;
+  }
+  std::cout << atlantis::asset_system::formatCatalogSourceEntry(*found) << "\n";
+  return 0;
+}
+
 }  // namespace
 
 bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest& request, std::ostream& err) {
@@ -743,12 +818,18 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
         request.kind = AssetKind::CookManifest;
       } else if (*kind == "mint-guid") {
         request.kind = AssetKind::MintGuid;
+      } else if (*kind == "lookup") {
+        request.kind = AssetKind::Lookup;
       } else {
         err << "atlantis_asset_cooker: unrecognized --kind value: " << *kind << "\n";
         sawUnrecognized = true;
       }
     } else if (auto colorSpace = valueAfterEquals(arg, "--color-space=")) {
       request.colorSpace = *colorSpace;
+    } else if (auto catalogSource = valueAfterEquals(arg, "--catalog-source=")) {
+      request.catalogSourcePath = *catalogSource;
+    } else if (auto guid = valueAfterEquals(arg, "--guid=")) {
+      request.guid = *guid;
     } else if (auto count = valueAfterEquals(arg, "--count=")) {
       std::uint32_t parsedCount = 0;
       const char* end = count->data() + count->size();
@@ -770,11 +851,17 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
     haveRequiredFlags = sawAssetList;
   } else if (request.kind == AssetKind::MintGuid) {
     haveRequiredFlags = true;
+  } else if (request.kind == AssetKind::Lookup) {
+    haveRequiredFlags = !request.catalogSourcePath.empty() && (request.guid.empty() != !sawSource);
   } else if (request.kind == AssetKind::CookManifest) {
     haveRequiredFlags = !request.importDir.empty() && !request.cookedDir.empty() && !request.contentParent.empty() &&
                         !request.manifestOutPath.empty();
   } else {
     haveRequiredFlags = sawSource && sawAssetRoot && sawOutputDir;
+  }
+  if (!request.guid.empty() && request.kind != AssetKind::Lookup) {
+    err << "atlantis_asset_cooker: --guid= is accepted only with --kind=lookup\n";
+    return false;
   }
   return !sawUnrecognized && haveRequiredFlags;
 }
@@ -796,6 +883,8 @@ int runCookCommand(const CookCommandRequest& request) {
       return runCookManifestMode(request);
     case AssetKind::MintGuid:
       return runMintGuidMode(request);
+    case AssetKind::Lookup:
+      return runLookupMode(request);
   }
   return runCookMeshMode(request);
 }
