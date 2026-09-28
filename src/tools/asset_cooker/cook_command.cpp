@@ -15,8 +15,12 @@
 #include <atlantis/asset_system/logical_path.h>
 #include <atlantis/asset_system/texture_types.h>
 
+#include <array>
 #include <charconv>
 #include <filesystem>
+#include <functional>
+#include <random>
+#include <set>
 
 #include <fstream>
 #include <iostream>
@@ -587,7 +591,8 @@ struct ManifestEntry {
     CookCommandRequest lineRequest;
     if (!parseCookArguments(args, lineRequest, std::cerr) || lineRequest.isValidateSet ||
         lineRequest.kind == AssetKind::CookManifest || lineRequest.kind == AssetKind::Environment ||
-        lineRequest.kind == AssetKind::MintGuid || lineRequest.kind == AssetKind::Lookup) {
+        lineRequest.kind == AssetKind::MintGuid || lineRequest.kind == AssetKind::Lookup ||
+        lineRequest.kind == AssetKind::Migrate0047) {
       std::cerr << "atlantis_asset_cooker: cook manifest line " << lineNumber << " is not a texture/material/"
                 << "scene/mesh cook: " << line << "\n";
       return 1;
@@ -767,6 +772,313 @@ struct ManifestEntry {
   return 0;
 }
 
+// Plan 0047 P20 (one-off; removed in M9): mints the catalog source from the
+// declarations list and rewrites every declared scene (v6 -> v7) and
+// material (v9 -> v10) source, plus the undeclared scene sources named by
+// --scene-source= (ruling I5), on text tokens. Every rewrite is computed in
+// memory first; any unmappable reference or unexpected version fails the
+// run before a single file is written.
+namespace migrate {
+
+using atlantis::asset_system::AssetGuid;
+using atlantis::asset_system::CatalogAssetType;
+using atlantis::asset_system::CatalogRoot;
+using atlantis::asset_system::CatalogSourceEntry;
+
+constexpr std::string_view kSceneV6 = "atlantis_scene_source_version: 6";
+constexpr std::string_view kSceneV7 = "atlantis_scene_source_version: 7";
+constexpr std::string_view kSceneVersionPrefix = "atlantis_scene_source_version:";
+constexpr std::string_view kMaterialV9 = "atlantis_material_source_version: 9";
+constexpr std::string_view kMaterialV10 = "atlantis_material_source_version: 10";
+constexpr std::string_view kMaterialVersionPrefix = "atlantis_material_source_version:";
+constexpr std::array<std::string_view, 3> kTextureReferencePrefixes = {"texture: ", "normal_map: ",
+                                                                        "emissive_texture: "};
+
+struct Line {
+  std::string_view content;
+  std::string_view terminator;  // "\r\n", "\n", or empty on a final unterminated line
+};
+
+[[nodiscard]] std::vector<Line> splitKeepingTerminators(std::string_view text) {
+  std::vector<Line> lines;
+  std::size_t start = 0;
+  while (start < text.size()) {
+    const std::size_t newline = text.find('\n', start);
+    if (newline == std::string_view::npos) {
+      lines.push_back({text.substr(start), {}});
+      break;
+    }
+    std::size_t contentEnd = newline;
+    if (contentEnd > start && text[contentEnd - 1] == '\r') --contentEnd;
+    lines.push_back({text.substr(start, contentEnd - start), text.substr(contentEnd, newline + 1 - contentEnd)});
+    start = newline + 1;
+  }
+  return lines;
+}
+
+class GuidMinter {
+ public:
+  GuidMinter() = default;
+  GuidMinter(const GuidMinter&) = delete;
+  GuidMinter& operator=(const GuidMinter&) = delete;
+
+  [[nodiscard]] AssetGuid next() {
+    for (;;) {
+      const AssetGuid guid = mintAssetGuid(draw_);
+      if (issued_.insert(guid).second) return guid;
+    }
+  }
+
+ private:
+  std::random_device device_;
+  std::function<std::uint32_t()> draw_ = [this] { return static_cast<std::uint32_t>(device_()); };
+  std::set<AssetGuid> issued_;
+};
+
+class Migration {
+ public:
+  explicit Migration(std::map<std::pair<CatalogRoot, std::string>, CatalogSourceEntry> entries)
+      : entries_(std::move(entries)) {}
+
+  // Returns the rewritten text, or nullopt after reporting the first
+  // failure on stderr.
+  [[nodiscard]] std::optional<std::string> rewriteScene(const std::string& label, std::string_view text,
+                                                        GuidMinter& minter) const {
+    std::string out;
+    bool sawVersion = false;
+    std::size_t lineNumber = 0;
+    for (const Line& line : splitKeepingTerminators(text)) {
+      ++lineNumber;
+      const std::string where = label + ":" + std::to_string(lineNumber);
+      if (line.content.substr(0, kSceneVersionPrefix.size()) == kSceneVersionPrefix) {
+        if (line.content != kSceneV6 || sawVersion) return fail(where, "expected one '" + std::string(kSceneV6) + "'");
+        sawVersion = true;
+        out += kSceneV7;
+      } else if (line.content.substr(0, 6) == "node: ") {
+        auto rewritten = rewriteNodeLine(where, line.content, minter);
+        if (!rewritten) return std::nullopt;
+        out += *rewritten;
+      } else {
+        out += line.content;
+      }
+      out += line.terminator;
+    }
+    if (!sawVersion) return fail(label, "no scene source version line");
+    return out;
+  }
+
+  [[nodiscard]] std::optional<std::string> rewriteMaterial(const std::string& label, std::string_view text) const {
+    std::string out;
+    bool sawVersion = false;
+    std::size_t lineNumber = 0;
+    for (const Line& line : splitKeepingTerminators(text)) {
+      ++lineNumber;
+      const std::string where = label + ":" + std::to_string(lineNumber);
+      std::string_view content = line.content;
+      if (content.substr(0, kMaterialVersionPrefix.size()) == kMaterialVersionPrefix) {
+        if (content != kMaterialV9 || sawVersion) {
+          return fail(where, "expected one '" + std::string(kMaterialV9) + "'");
+        }
+        sawVersion = true;
+        out += kMaterialV10;
+      } else if (const auto prefix = textureReferencePrefix(content)) {
+        const auto guid = resolve(where, content.substr(prefix->size()), CatalogAssetType::Texture);
+        if (!guid) return std::nullopt;
+        out += *prefix;
+        out += atlantis::asset_system::toString(*guid);
+      } else {
+        out += content;
+      }
+      out += line.terminator;
+    }
+    if (!sawVersion) return fail(label, "no material source version line");
+    return out;
+  }
+
+ private:
+  [[nodiscard]] static std::nullopt_t fail(const std::string& where, const std::string& what) {
+    std::cerr << "atlantis_asset_cooker: migrate-0047: " << where << ": " << what << "\n";
+    return std::nullopt;
+  }
+
+  [[nodiscard]] static std::optional<std::string_view> textureReferencePrefix(std::string_view content) {
+    for (std::string_view prefix : kTextureReferencePrefixes) {
+      if (content.substr(0, prefix.size()) == prefix) return prefix;
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] std::optional<AssetGuid> resolve(const std::string& where, std::string_view reference,
+                                                 CatalogAssetType expected) const {
+    const auto normalized = normalizeLogicalPath(reference);
+    if (normalized.isErr()) return fail(where, "reference is not a logical path: " + std::string(reference));
+    const auto it = entries_.find({CatalogRoot::Assets, normalized.value()});
+    if (it == entries_.end()) return fail(where, "reference is not a declared asset: " + std::string(reference));
+    if (it->second.type != expected) {
+      return fail(where, "reference names a " + std::string(atlantis::asset_system::toString(it->second.type)) +
+                             ", expected a " + std::string(atlantis::asset_system::toString(expected)) + ": " +
+                             std::string(reference));
+    }
+    return it->second.guid;
+  }
+
+  // Inserts " guid=<minted>" after the node_id token and replaces the
+  // mesh=/material= values, leaving every other byte of the line as it was.
+  [[nodiscard]] std::optional<std::string> rewriteNodeLine(const std::string& where, std::string_view content,
+                                                           GuidMinter& minter) const {
+    std::string out;
+    bool sawNodeId = false;
+    std::size_t copied = 0;
+    std::size_t pos = 0;
+    while (pos < content.size()) {
+      if (content[pos] == ' ') {
+        ++pos;
+        continue;
+      }
+      std::size_t end = content.find(' ', pos);
+      if (end == std::string_view::npos) end = content.size();
+      const std::string_view token = content.substr(pos, end - pos);
+      std::optional<CatalogAssetType> referenceType;
+      std::size_t valueOffset = 0;
+      if (token.substr(0, 5) == "mesh=") {
+        referenceType = CatalogAssetType::Mesh;
+        valueOffset = 5;
+      } else if (token.substr(0, 9) == "material=") {
+        referenceType = CatalogAssetType::Material;
+        valueOffset = 9;
+      }
+      if (referenceType) {
+        const auto guid = resolve(where, token.substr(valueOffset), *referenceType);
+        if (!guid) return std::nullopt;
+        out += content.substr(copied, pos + valueOffset - copied);
+        out += atlantis::asset_system::toString(*guid);
+        copied = end;
+      } else if (token.substr(0, 8) == "node_id=" && !sawNodeId) {
+        sawNodeId = true;
+        out += content.substr(copied, end - copied);
+        out += " guid=";
+        out += atlantis::asset_system::toString(minter.next());
+        copied = end;
+      }
+      pos = end;
+    }
+    if (!sawNodeId) return fail(where, "node line has no node_id token");
+    out += content.substr(copied);
+    return out;
+  }
+
+  std::map<std::pair<CatalogRoot, std::string>, CatalogSourceEntry> entries_;
+};
+
+[[nodiscard]] std::optional<std::string> readText(const fs::path& path) {
+  std::ifstream file(path, std::ios::binary);
+  if (!file.is_open()) return std::nullopt;
+  return std::string((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+}
+
+}  // namespace migrate
+
+[[nodiscard]] int runMigrate0047Mode(const CookCommandRequest& request) {
+  using atlantis::asset_system::CatalogAssetType;
+  using atlantis::asset_system::CatalogRoot;
+  using atlantis::asset_system::CatalogSourceEntry;
+
+  if (fs::exists(request.catalogSourceOutPath)) {
+    std::cerr << "atlantis_asset_cooker: migrate-0047: refusing to overwrite " << request.catalogSourceOutPath
+              << "\n";
+    return 1;
+  }
+  const auto declarationsText = migrate::readText(request.declarationsPath);
+  if (!declarationsText) {
+    std::cerr << "atlantis_asset_cooker: migrate-0047: cannot read " << request.declarationsPath << "\n";
+    return 1;
+  }
+
+  migrate::GuidMinter minter;
+  std::map<std::pair<CatalogRoot, std::string>, CatalogSourceEntry> entries;
+  std::vector<std::string> scenePaths;
+  std::vector<std::string> materialPaths;
+  std::size_t lineNumber = 0;
+  for (const migrate::Line& line : migrate::splitKeepingTerminators(*declarationsText)) {
+    ++lineNumber;
+    if (line.content.empty()) continue;
+    const std::string where = request.declarationsPath + ":" + std::to_string(lineNumber);
+    const std::size_t first = line.content.find('\t');
+    const std::size_t second = first == std::string_view::npos ? first : line.content.find('\t', first + 1);
+    const auto type = first == std::string_view::npos ? std::nullopt
+                                                     : atlantis::asset_system::parseCatalogAssetType(
+                                                           line.content.substr(0, first));
+    const auto root = second == std::string_view::npos
+                          ? std::nullopt
+                          : atlantis::asset_system::parseCatalogRoot(line.content.substr(first + 1, second - first - 1));
+    if (!type || !root) {
+      std::cerr << "atlantis_asset_cooker: migrate-0047: " << where << ": malformed declaration\n";
+      return 1;
+    }
+    const std::string path(line.content.substr(second + 1));
+    CatalogSourceEntry entry{minter.next(), *type, *root, path};
+    if (!entries.emplace(std::pair{*root, path}, entry).second) {
+      std::cerr << "atlantis_asset_cooker: migrate-0047: " << where << ": duplicate declaration " << path << "\n";
+      return 1;
+    }
+    if (*root == CatalogRoot::Assets && *type == CatalogAssetType::Scene) scenePaths.push_back(path);
+    if (*root == CatalogRoot::Assets && *type == CatalogAssetType::Material) materialPaths.push_back(path);
+  }
+  for (const std::string& extra : request.extraSceneSources) {
+    if (entries.contains({CatalogRoot::Assets, extra})) {
+      std::cerr << "atlantis_asset_cooker: migrate-0047: --scene-source names a declared asset: " << extra << "\n";
+      return 1;
+    }
+    scenePaths.push_back(extra);
+  }
+
+  std::vector<CatalogSourceEntry> catalogEntries;
+  for (const auto& [key, entry] : entries) catalogEntries.push_back(entry);
+  const std::string catalogText = atlantis::asset_system::serializeAssetCatalogSource(catalogEntries);
+  if (atlantis::asset_system::parseAssetCatalogSource(catalogText).isErr()) {
+    std::cerr << "atlantis_asset_cooker: migrate-0047: the declarations do not form a valid catalog source\n";
+    return 1;
+  }
+
+  const migrate::Migration migration(std::move(entries));
+  std::vector<std::pair<fs::path, std::string>> rewrites;
+  const fs::path assetRoot(request.assetRoot);
+  const auto rewriteAll = [&](const std::vector<std::string>& paths, bool scene) {
+    for (const std::string& path : paths) {
+      const auto text = migrate::readText(assetRoot / path);
+      if (!text) {
+        std::cerr << "atlantis_asset_cooker: migrate-0047: cannot read " << (assetRoot / path).string() << "\n";
+        return false;
+      }
+      const auto rewritten =
+          scene ? migration.rewriteScene(path, *text, minter) : migration.rewriteMaterial(path, *text);
+      if (!rewritten) return false;
+      rewrites.emplace_back(assetRoot / path, *rewritten);
+    }
+    return true;
+  };
+  if (!rewriteAll(scenePaths, true) || !rewriteAll(materialPaths, false)) return 1;
+
+  const auto writeAll = [](const fs::path& path, const std::string& text) {
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    file.write(text.data(), static_cast<std::streamsize>(text.size()));
+    return file.good();
+  };
+  if (!writeAll(request.catalogSourceOutPath, catalogText)) {
+    std::cerr << "atlantis_asset_cooker: migrate-0047: cannot write " << request.catalogSourceOutPath << "\n";
+    return 1;
+  }
+  for (const auto& [path, text] : rewrites) {
+    if (!writeAll(path, text)) {
+      std::cerr << "atlantis_asset_cooker: migrate-0047: cannot write " << path.string() << "\n";
+      return 1;
+    }
+  }
+  std::cout << "atlantis_asset_cooker: migrate-0047: " << catalogEntries.size() << " catalog entries, "
+            << scenePaths.size() << " scene sources, " << materialPaths.size() << " material sources\n";
+  return 0;
+}
+
 }  // namespace
 
 bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest& request, std::ostream& err) {
@@ -820,6 +1132,8 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
         request.kind = AssetKind::MintGuid;
       } else if (*kind == "lookup") {
         request.kind = AssetKind::Lookup;
+      } else if (*kind == "migrate-0047") {
+        request.kind = AssetKind::Migrate0047;
       } else {
         err << "atlantis_asset_cooker: unrecognized --kind value: " << *kind << "\n";
         sawUnrecognized = true;
@@ -828,6 +1142,12 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
       request.colorSpace = *colorSpace;
     } else if (auto catalogSource = valueAfterEquals(arg, "--catalog-source=")) {
       request.catalogSourcePath = *catalogSource;
+    } else if (auto declarations = valueAfterEquals(arg, "--declarations=")) {
+      request.declarationsPath = *declarations;
+    } else if (auto catalogSourceOut = valueAfterEquals(arg, "--catalog-source-out=")) {
+      request.catalogSourceOutPath = *catalogSourceOut;
+    } else if (auto sceneSource = valueAfterEquals(arg, "--scene-source=")) {
+      request.extraSceneSources.push_back(*sceneSource);
     } else if (auto guid = valueAfterEquals(arg, "--guid=")) {
       request.guid = *guid;
     } else if (auto count = valueAfterEquals(arg, "--count=")) {
@@ -851,6 +1171,8 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
     haveRequiredFlags = sawAssetList;
   } else if (request.kind == AssetKind::MintGuid) {
     haveRequiredFlags = true;
+  } else if (request.kind == AssetKind::Migrate0047) {
+    haveRequiredFlags = !request.declarationsPath.empty() && sawAssetRoot && !request.catalogSourceOutPath.empty();
   } else if (request.kind == AssetKind::Lookup) {
     haveRequiredFlags = !request.catalogSourcePath.empty() && (request.guid.empty() != !sawSource);
   } else if (request.kind == AssetKind::CookManifest) {
@@ -885,6 +1207,8 @@ int runCookCommand(const CookCommandRequest& request) {
       return runMintGuidMode(request);
     case AssetKind::Lookup:
       return runLookupMode(request);
+    case AssetKind::Migrate0047:
+      return runMigrate0047Mode(request);
   }
   return runCookMeshMode(request);
 }

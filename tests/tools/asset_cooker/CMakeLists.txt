@@ -9,6 +9,7 @@ add_executable(atlantis_asset_cooker_command_tests
   dds_parser_tests.cpp
   guid_mint_tests.cpp
   lookup_command_tests.cpp
+  migrate_0047_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_cooker_command_tests

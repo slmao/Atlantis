@@ -30,7 +30,9 @@ int main(int argc, char** argv) {
                  "--content-parent=<dir> --manifest-out=<path> [--stamp=<path>]\n"
                  "       atlantis_asset_cooker --kind=mint-guid [--count=<n>]\n"
                  "       atlantis_asset_cooker --kind=lookup --catalog-source=<path> "
-                 "(--guid=<guid> | --source=<assets|content>:<path>)\n";
+                 "(--guid=<guid> | --source=<assets|content>:<path>)\n"
+                 "       atlantis_asset_cooker --kind=migrate-0047 --declarations=<path> --asset-root=<dir> "
+                 "--catalog-source-out=<path> [--scene-source=<assets-relative path>]...\n";
     return 1;
   }
 
