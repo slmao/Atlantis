@@ -140,7 +140,10 @@ or ADR decision.
   `NotLowercaseHex` and `NilGuid`.
 - `toString()` produces the canonical text.
 - `assetKey(AssetGuid) -> AssetId` is FNV-1a-64 over the 16 bytes (ADR-0097
-  D2), reusing the existing FNV-1a-64 routine.
+  D2), reusing the existing FNV-1a-64 routine — the algorithm, not the
+  path-hashing public entry point (ruling I1).
+- Binary codec: `assetGuidFromBytes()` / `entityGuidFromBytes()`, rejecting
+  only nil; the byte array is a public member (ruling I3).
 
 **P3 — Derivation (ADR-0097 D4).**
 - FNV-1a-128: offset basis `6c62272e07bb014262b821756295c58d`, prime
@@ -151,6 +154,8 @@ or ADR decision.
 - `deriveAssetGuid(AssetGuid, std::string_view)` and
   `deriveEntityGuid(AssetGuid scene, std::string_view)` are public: the
   importer and the Runtime's Bistro whitelist entry (P15) both call them.
+  They hash the sub-key byte for byte; validating sub-keys is the caller's
+  job (ruling I2).
 
 **P4 — Minting.**
 - `atlantis_asset_cooker --kind=mint-guid [--count=N]` prints N version-4
@@ -451,8 +456,10 @@ never re-baseline.
 3. `atlantis_finalize_asset_catalog()` replaces
    `atlantis_finalize_asset_validation()`. Deleted: `--validate-set`,
    `validateAssetSet()` / `asset_set_validation.*`, `declared_assets.txt`
-   and `computeAssetId()` — which has no callers left once the
-   transitional loader moves to sidecar GUIDs in M3.
+   and the public `computeAssetId(path)` entry point — which has no callers
+   left once the transitional loader moves to sidecar GUIDs in M3. Its
+   byte-wise FNV-1a-64 core becomes an internal helper, and `assetKey()`
+   switches to it (ruling I1).
 4. Tests: every P13 error triggered alone (key collisions and zero keys by
    injected values, as `validateAssetSet` tests do today); closure
    contents; content-gated entries counted, not failed; a real-subprocess
@@ -669,6 +676,35 @@ Maps to Spec 0047's Testing & Verification Plan.
   - If the measured cost is too high, narrowing the importer step's stamp
     input to its own catalog-source line is an implementation detail, not a
     Plan change.
+
+## Implementation rulings (slmao, 2026-09-29, chat)
+
+Clarifications raised while implementing M1. None changes a Spec
+requirement or ADR decision.
+
+- **I1 — `assetKey()` and `computeAssetId()`.** P2's "reusing the existing
+  FNV-1a-64 routine" means reusing the algorithm's implementation, not the
+  path-hashing public entry point.
+  - M1's direct call to `computeAssetId()` stays as it is; it is not
+    reworked now.
+  - M4 step 3 deletes the public `computeAssetId(path)`, extracts its
+    byte-wise core into an internal helper, and points `assetKey()` at that
+    helper.
+- **I2 — Sub-key validation.** The derivation functions stay byte-pure,
+  under the caller contract their header already states. M3's importer
+  validates its own sub-keys:
+  - a URI that still contains non-ASCII bytes after normalization is a
+    named import error;
+  - so is an empty sub-key;
+  - neither is ever hashed silently.
+- **I3 — Binary codec shape.** M1's `assetGuidFromBytes()` /
+  `entityGuidFromBytes()` are P2's binary codec as intended. They reject
+  only nil and reuse `GuidParseError::NilGuid`. The 16 bytes are a public
+  member, and a default-constructed value is nil and documented as not to be
+  relied on.
+- **I4 — Details accepted on review:**
+  - `--count` only requires a value ≥ 1, with no upper bound;
+  - `fnv1a128()` is exposed publicly.
 
 ## Rollback Plan
 
