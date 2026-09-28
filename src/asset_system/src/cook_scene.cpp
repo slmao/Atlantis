@@ -1,5 +1,6 @@
 #include <atlantis/asset_system/cook_scene.h>
 
+#include <atlantis/assert.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/logical_path.h>
 #include <atlantis/asset_system/scene_artifact.h>
@@ -103,9 +104,11 @@ namespace fs = std::filesystem;
 }  // namespace
 
 atlantis::Result<std::monostate, SceneCookError> cookScene(const std::string& sourceFilePath,
+                                                             const AssetGuid& assetGuid,
                                                              const std::string& artifactOutputPath,
                                                              const std::string& metadataOutputPath) {
   using ResultT = atlantis::Result<std::monostate, SceneCookError>;
+  ATLANTIS_CHECK_MSG(assetGuid != AssetGuid{}, "cookScene(): the asset GUID must not be nil");
 
   // Step 1: read + parse.
   std::ifstream sourceFile(sourceFilePath, std::ios::binary);
@@ -246,6 +249,7 @@ atlantis::Result<std::monostate, SceneCookError> cookScene(const std::string& so
   const std::vector<std::byte> artifactBytes = encodeSceneArtifact(nodes, parents, activeCameraIndex);
 
   SceneMetadata metadata;
+  metadata.assetGuid = assetGuid;
   metadata.schemaVersion = kSceneArtifactSchemaVersion;
   metadata.nodeCount = static_cast<std::uint32_t>(nodes.size());
   const std::string metadataText = serializeSceneMetadata(metadata);

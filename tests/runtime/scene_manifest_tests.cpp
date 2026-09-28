@@ -12,6 +12,19 @@
 #include <random>
 #include <string>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 using namespace atlantis::runtime;
 using atlantis::asset_system::AssetMetadata;
 using atlantis::asset_system::computeAssetId;
@@ -86,7 +99,7 @@ struct CookedMeshFixture {
   writeFile(sourcePath, std::string(kValidTriangleSource));
   const fs::path artifactPath = dir / (logicalPath + ".amesh");
   const fs::path metadataPath = dir / (logicalPath + ".amesh.meta.txt");
-  REQUIRE(cookStaticMesh(sourcePath.string(), logicalPath, artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookStaticMesh(sourcePath.string(), logicalPath, testAssetGuid(logicalPath), artifactPath.string(), metadataPath.string()).isOk());
   return CookedMeshFixture{artifactPath, metadataPath};
 }
 
@@ -217,7 +230,7 @@ TEST_CASE(
                         "address_mode: repeat\n");
   const fs::path artifactPath = dir.path / (logicalPath + ".amaterial");
   const fs::path metadataPath = dir.path / (logicalPath + ".amaterial.meta.txt");
-  REQUIRE(cookMaterial(sourcePath.string(), logicalPath, artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookMaterial(sourcePath.string(), logicalPath, testAssetGuid(logicalPath), artifactPath.string(), metadataPath.string()).isOk());
 
   const fs::path manifestPath = dir.path / "material.manifest.txt";
   writeFile(manifestPath, logicalPath + "\t" + artifactPath.string() + "\t" + metadataPath.string() + "\n");

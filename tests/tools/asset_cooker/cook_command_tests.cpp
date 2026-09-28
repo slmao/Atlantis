@@ -1,4 +1,5 @@
 #include <cook_command.h>
+#include "test_catalog_source.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -10,6 +11,7 @@
 #include <string>
 #include <vector>
 
+using atlantis::tools::asset_cooker::test::writeCatalogSourceCovering;
 using atlantis::tools::asset_cooker::CookCommandRequest;
 using atlantis::tools::asset_cooker::runCookCommand;
 
@@ -103,6 +105,7 @@ TEST_CASE("runCookCommand cooks a well-formed asset and writes a stamp", "[asset
   CookCommandRequest request;
   request.sourcePath = (assetRoot / "meshes" / "triangle.mesh.txt").string();
   request.assetRoot = assetRoot.string();
+  request.catalogSourcePath = writeCatalogSourceCovering(assetRoot, dir.path / "asset_catalog.txt").string();
   request.outputDir = outputDir.string();
   request.stampPath = (outputDir / "triangle.stamp").string();
 
@@ -120,6 +123,7 @@ TEST_CASE("runCookCommand fails when the source file does not exist", "[asset_co
   CookCommandRequest request;
   request.sourcePath = (assetRoot / "meshes" / "does_not_exist.mesh.txt").string();
   request.assetRoot = assetRoot.string();
+  request.catalogSourcePath = writeCatalogSourceCovering(assetRoot, dir.path / "asset_catalog.txt").string();
   request.outputDir = (dir.path / "out").string();
 
   CHECK(runCookCommand(request) != 0);
@@ -133,6 +137,7 @@ TEST_CASE("runCookCommand fails on a malformed source", "[asset_cooker]") {
   CookCommandRequest request;
   request.sourcePath = (assetRoot / "meshes" / "bad.mesh.txt").string();
   request.assetRoot = assetRoot.string();
+  request.catalogSourcePath = writeCatalogSourceCovering(assetRoot, dir.path / "asset_catalog.txt").string();
   request.outputDir = (dir.path / "out").string();
 
   CHECK(runCookCommand(request) != 0);
@@ -157,6 +162,7 @@ TEST_CASE("runCookCommand fails on a well-formed but old (pre-UV0), version-1 so
   CookCommandRequest request;
   request.sourcePath = (assetRoot / "meshes" / "old.mesh.txt").string();
   request.assetRoot = assetRoot.string();
+  request.catalogSourcePath = writeCatalogSourceCovering(assetRoot, dir.path / "asset_catalog.txt").string();
   request.outputDir = (dir.path / "out").string();
 
   CHECK(runCookCommand(request) != 0);
@@ -182,6 +188,7 @@ TEST_CASE("runCookCommand fails on a well-formed but old (pre-normal), version-2
   CookCommandRequest request;
   request.sourcePath = (assetRoot / "meshes" / "old_v2.mesh.txt").string();
   request.assetRoot = assetRoot.string();
+  request.catalogSourcePath = writeCatalogSourceCovering(assetRoot, dir.path / "asset_catalog.txt").string();
   request.outputDir = (dir.path / "out").string();
 
   CHECK(runCookCommand(request) != 0);
@@ -198,6 +205,7 @@ TEST_CASE("runCookCommand fails when the source path escapes the asset root", "[
   CookCommandRequest request;
   request.sourcePath = outsideRoot.string();
   request.assetRoot = assetRoot.string();
+  request.catalogSourcePath = writeCatalogSourceCovering(assetRoot, dir.path / "asset_catalog.txt").string();
   request.outputDir = (dir.path / "out").string();
 
   CHECK(runCookCommand(request) != 0);
@@ -219,6 +227,7 @@ TEST_CASE("runCookCommand cooking into an existing valid destination successfull
   CookCommandRequest request;
   request.sourcePath = sourcePath.string();
   request.assetRoot = assetRoot.string();
+  request.catalogSourcePath = writeCatalogSourceCovering(assetRoot, dir.path / "asset_catalog.txt").string();
   request.outputDir = outputDir.string();
   REQUIRE(runCookCommand(request) == 0);
   const std::string firstArtifact = readFileText(artifactPath);
@@ -245,6 +254,7 @@ TEST_CASE("runCookCommand's failed cook leaves no temp file and no partial outpu
   CookCommandRequest request;
   request.sourcePath = sourcePath.string();
   request.assetRoot = assetRoot.string();
+  request.catalogSourcePath = writeCatalogSourceCovering(assetRoot, dir.path / "asset_catalog.txt").string();
   request.outputDir = outputDir.string();
 
   REQUIRE(runCookCommand(request) != 0);
@@ -269,6 +279,7 @@ TEST_CASE("runCookCommand's failed cook after a prior success leaves the existin
   CookCommandRequest request;
   request.sourcePath = sourcePath.string();
   request.assetRoot = assetRoot.string();
+  request.catalogSourcePath = writeCatalogSourceCovering(assetRoot, dir.path / "asset_catalog.txt").string();
   request.outputDir = outputDir.string();
   REQUIRE(runCookCommand(request) == 0);
   const std::string validArtifact = readFileText(artifactPath);
@@ -298,6 +309,7 @@ TEST_CASE("runCookCommand reports a genuine rename failure cleanly, with no left
   CookCommandRequest request;
   request.sourcePath = sourcePath.string();
   request.assetRoot = assetRoot.string();
+  request.catalogSourcePath = writeCatalogSourceCovering(assetRoot, dir.path / "asset_catalog.txt").string();
   request.outputDir = outputDir.string();
 
   REQUIRE(runCookCommand(request) != 0);

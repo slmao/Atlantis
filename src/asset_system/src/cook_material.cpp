@@ -1,5 +1,6 @@
 #include <atlantis/asset_system/cook_material.h>
 
+#include <atlantis/assert.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/logical_path.h>
 #include <atlantis/asset_system/material_artifact.h>
@@ -82,9 +83,11 @@ constexpr float kMaxEmissiveComponent = 65504.0f;
 
 atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::string& sourceFilePath,
                                                                    const std::string& logicalPathInput,
+                                                                   const AssetGuid& assetGuid,
                                                                    const std::string& artifactOutputPath,
                                                                    const std::string& metadataOutputPath) {
   using ResultT = atlantis::Result<std::monostate, MaterialCookError>;
+  ATLANTIS_CHECK_MSG(assetGuid != AssetGuid{}, "cookMaterial(): the asset GUID must not be nil");
 
   // Step 1: read + parse.
   std::ifstream sourceFile(sourceFilePath, std::ios::binary);
@@ -102,7 +105,7 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   const auto normalizedSelfResult = normalizeLogicalPath(logicalPathInput);
   if (normalizedSelfResult.isErr()) return ResultT::Err(MaterialCookError::LogicalPathInvalid);
   const std::string& normalizedSelfPath = normalizedSelfResult.value();
-  const AssetId selfAssetId = computeAssetId(normalizedSelfPath);
+  const AssetId selfAssetId = assetKey(assetGuid);
 
   // Step 3: the referenced texture's own identity -- value-level only,
   // never an existence check (ADR-0059 D6/D7).
@@ -188,6 +191,7 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
       parsed.emissiveFactor, parsed.alphaMode, parsed.alphaCutoff, emissiveTextureAssetId);
 
   MaterialMetadata metadata;
+  metadata.assetGuid = assetGuid;
   metadata.assetId = selfAssetId;
   metadata.sourceLogicalPath = normalizedSelfPath;
   metadata.kind = parsed.kind;

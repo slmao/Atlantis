@@ -9,6 +9,19 @@
 #include <random>
 #include <string>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 // Plan 0020 Section P6/V9: a dedicated CPU round-trip test proving a
 // real, disclosed normal value written in an authoring source reaches
 // loadStaticMeshAsset()'s own returned StaticMeshAssetData bit-for-bit
@@ -102,7 +115,7 @@ TEST_CASE("A normal value written in a real authoring source reaches loadStaticM
   const fs::path artifactPath = dir.path / "out" / "normal_bearing.amesh";
   const fs::path metadataPath = dir.path / "out" / "normal_bearing.amesh.meta.txt";
 
-  const auto cookResult = cookStaticMesh(sourcePath.string(), "meshes/normal_bearing.mesh.txt", artifactPath.string(),
+  const auto cookResult = cookStaticMesh(sourcePath.string(), "meshes/normal_bearing.mesh.txt", testAssetGuid("meshes/normal_bearing.mesh.txt"), artifactPath.string(),
                                           metadataPath.string());
   REQUIRE(cookResult.isOk());
 

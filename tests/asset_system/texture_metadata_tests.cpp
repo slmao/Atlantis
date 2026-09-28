@@ -1,5 +1,7 @@
 #include <atlantis/asset_system/texture_metadata.h>
 
+#include <atlantis/asset_system/asset_guid.h>
+
 #include <catch2/catch_test_macros.hpp>
 
 using namespace atlantis::asset_system;
@@ -11,7 +13,7 @@ namespace {
 // line right after it, ruling O3) with per-test overrides applied by
 // string replacement.
 [[nodiscard]] std::string makeV3Text() {
-  return "atlantis_texture_metadata_version: 3\n"
+  return "atlantis_texture_metadata_version: 4\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
          "asset_id: 0000000000000001\n"
          "source_logical_path: a.png\n"
          "width: 1\n"
@@ -26,6 +28,7 @@ namespace {
 
 TEST_CASE("serializeTextureMetadata then parseTextureMetadata round-trips exactly", "[asset_system]") {
   TextureMetadata original;
+  original.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   original.assetId = 0x0102030405060708ULL;
   original.sourceLogicalPath = "textures/checker.png";
   original.width = 64;
@@ -50,6 +53,7 @@ TEST_CASE("serializeTextureMetadata then parseTextureMetadata round-trips exactl
 
 TEST_CASE("serializeTextureMetadata round-trips the Unorm format value too", "[asset_system]") {
   TextureMetadata original;
+  original.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   original.format = TextureColorSpace::Unorm;
   const auto parsed = parseTextureMetadata(serializeTextureMetadata(original));
   REQUIRE(parsed.isOk());
@@ -58,7 +62,7 @@ TEST_CASE("serializeTextureMetadata round-trips the Unorm format value too", "[a
 }
 
 TEST_CASE("parseTextureMetadata rejects a wrong line count", "[asset_system]") {
-  const auto result = parseTextureMetadata("atlantis_texture_metadata_version: 3\n");
+  const auto result = parseTextureMetadata("atlantis_texture_metadata_version: 4\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::WrongLineCount);
 }
@@ -67,9 +71,9 @@ TEST_CASE("parseTextureMetadata rejects the retired v1 and v2 versions", "[asset
   // Retired-version documents padded to v3's own 9-line count so the
   // version line itself is what rejects them -- matching the repository's
   // established exact-equality version discipline.
-  for (const char* retired : {"version: 1", "version: 2"}) {
+  for (const char* retired : {"version: 1", "version: 2", "version: 3"}) {
     std::string text = makeV3Text();
-    text.replace(text.find("version: 3"), sizeof("version: 3") - 1, retired);
+    text.replace(text.find("version: 4"), sizeof("version: 4") - 1, retired);
     const auto result = parseTextureMetadata(text);
     REQUIRE(result.isErr());
     CHECK(result.error() == MetadataParseError::UnknownMetadataVersion);
@@ -77,7 +81,7 @@ TEST_CASE("parseTextureMetadata rejects the retired v1 and v2 versions", "[asset
   // A literal 8-line v2 document (no mip_count line) fails on its line
   // count first -- also a correct rejection.
   std::string v2 = makeV3Text();
-  v2.replace(v2.find("version: 3"), sizeof("version: 3") - 1, "version: 2");
+  v2.replace(v2.find("version: 4"), sizeof("version: 4") - 1, "version: 2");
   v2.erase(v2.find("mip_count: 1\n"), sizeof("mip_count: 1\n") - 1);
   const auto result = parseTextureMetadata(v2);
   REQUIRE(result.isErr());
@@ -86,7 +90,7 @@ TEST_CASE("parseTextureMetadata rejects the retired v1 and v2 versions", "[asset
 
 TEST_CASE("parseTextureMetadata rejects an unknown metadata version", "[asset_system]") {
   std::string text = makeV3Text();
-  text.replace(text.find("version: 3"), sizeof("version: 3") - 1, "version: 4");
+  text.replace(text.find("version: 4"), sizeof("version: 4") - 1, "version: 5");
   const auto result = parseTextureMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::UnknownMetadataVersion);

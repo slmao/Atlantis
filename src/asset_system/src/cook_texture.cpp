@@ -1,5 +1,6 @@
 #include <atlantis/asset_system/cook_texture.h>
 
+#include <atlantis/assert.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/logical_path.h>
 #include <atlantis/asset_system/texture_artifact.h>
@@ -64,13 +65,14 @@ namespace fs = std::filesystem;
 [[nodiscard]] atlantis::Result<std::monostate, TextureCookError> cookTextureInternal(
     const std::uint8_t* pixelBytes, std::size_t pixelByteCount, std::uint32_t width, std::uint32_t height,
     std::uint32_t mipCount, std::int32_t channelsInFile, TextureColorSpace colorSpace, TextureDataLayout layout,
-    const std::string& normalizedLogicalPath, const fs::path& artifactOutputPath,
+    const std::string& normalizedLogicalPath, const AssetGuid& assetGuid, const fs::path& artifactOutputPath,
     const fs::path& metadataOutputPath);
 
 atlantis::Result<std::monostate, TextureCookError> cookTexture(const std::uint8_t* pixelBytes, std::uint32_t width,
                                                                  std::uint32_t height, std::int32_t channelsInFile,
                                                                  TextureColorSpace colorSpace,
                                                                  const std::string& logicalPathInput,
+                                                                 const AssetGuid& assetGuid,
                                                                  const std::filesystem::path& artifactOutputPath,
                                                                  const std::filesystem::path& metadataOutputPath) {
   using ResultT = atlantis::Result<std::monostate, TextureCookError>;
@@ -97,14 +99,15 @@ atlantis::Result<std::monostate, TextureCookError> cookTexture(const std::uint8_
   const auto pixelByteCount = static_cast<std::size_t>(pixelByteCount64);
 
   return cookTextureInternal(pixelBytes, pixelByteCount, width, height, 1, channelsInFile, colorSpace,
-                              TextureDataLayout::Rgba8, normalizedLogicalPath, artifactOutputPath,
+                              TextureDataLayout::Rgba8, normalizedLogicalPath, assetGuid, artifactOutputPath,
                               metadataOutputPath);
 }
 
 atlantis::Result<std::monostate, TextureCookError> cookTextureBc7(
     const std::uint8_t* blockBytes, std::size_t blockByteCount, std::uint32_t width, std::uint32_t height,
     std::uint32_t mipCount, TextureColorSpace colorSpace, const std::string& logicalPathInput,
-    const std::filesystem::path& artifactOutputPath, const std::filesystem::path& metadataOutputPath) {
+    const AssetGuid& assetGuid, const std::filesystem::path& artifactOutputPath,
+    const std::filesystem::path& metadataOutputPath) {
   using ResultT = atlantis::Result<std::monostate, TextureCookError>;
 
   const auto normalizedResult = normalizeLogicalPath(logicalPathInput);
@@ -127,22 +130,24 @@ atlantis::Result<std::monostate, TextureCookError> cookTextureBc7(
   }
 
   return cookTextureInternal(blockBytes, blockByteCount, width, height, mipCount, 4, colorSpace,
-                             TextureDataLayout::Bc7, normalizedLogicalPath, artifactOutputPath,
+                             TextureDataLayout::Bc7, normalizedLogicalPath, assetGuid, artifactOutputPath,
                              metadataOutputPath);
 }
 
 atlantis::Result<std::monostate, TextureCookError> cookTextureInternal(
     const std::uint8_t* pixelBytes, std::size_t pixelByteCount, std::uint32_t width, std::uint32_t height,
     std::uint32_t mipCount, std::int32_t channelsInFile, TextureColorSpace colorSpace, TextureDataLayout layout,
-    const std::string& normalizedLogicalPath, const fs::path& artifactOutputPath,
+    const std::string& normalizedLogicalPath, const AssetGuid& assetGuid, const fs::path& artifactOutputPath,
     const fs::path& metadataOutputPath) {
   using ResultT = atlantis::Result<std::monostate, TextureCookError>;
+  ATLANTIS_CHECK_MSG(assetGuid != AssetGuid{}, "cookTexture(): the asset GUID must not be nil");
 
-  const AssetId assetId = computeAssetId(normalizedLogicalPath);
+  const AssetId assetId = assetKey(assetGuid);
   const std::vector<std::byte> artifactBytes =
       encodeTextureArtifact(width, height, colorSpace, layout, mipCount, pixelBytes, pixelByteCount);
 
   TextureMetadata metadata;
+  metadata.assetGuid = assetGuid;
   metadata.assetId = assetId;
   metadata.sourceLogicalPath = normalizedLogicalPath;
   metadata.width = width;

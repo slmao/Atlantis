@@ -19,6 +19,19 @@
 #include <string>
 #include <vector>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 // Plan 0037 Milestone 4: the material/texture slice. Fixtures are tiny glTF
 // files built in memory; textures they reference are small DDS files each
 // test writes next to its .gltf.
@@ -255,6 +268,7 @@ TEST_CASE("A transmission material imports as BLEND at alpha x (1 - transmission
     const std::string n = std::to_string(index);
     CHECK(atlantis::asset_system::cookMaterial(
               (run.outputDir / ("t/materials/" + n + ".material.txt")).string(), "t/materials/" + n + ".material.txt",
+              testAssetGuid("t/materials/" + n + ".material.txt"),
               (run.dir / ("cooked/" + n + ".amaterial")).string(),
               (run.dir / ("cooked/" + n + ".amaterial.meta.txt")).string())
               .isOk());
@@ -288,6 +302,7 @@ TEST_CASE("Generated .material.txt round-trips through parseMaterialSource and c
   CHECK(material.normalMapLogicalPath == "material_round_trip/wall_ddna.dds");
 
   const auto cooked = atlantis::asset_system::cookMaterial(sourcePath.string(), "t/materials/0.material.txt",
+                                                           testAssetGuid("t/materials/0.material.txt"),
                                                            (run.dir / "cooked/0.amaterial").string(),
                                                            (run.dir / "cooked/0.amaterial.meta.txt").string());
   CHECK(cooked.isOk());
@@ -396,6 +411,7 @@ TEST_CASE("Emissive factors are mapped with or without a texture, a zero-factor 
     const std::string n = std::to_string(index);
     const auto cookResult = atlantis::asset_system::cookMaterial(
         (run.outputDir / ("t/materials/" + n + ".material.txt")).string(), "t/materials/" + n + ".material.txt",
+        testAssetGuid("t/materials/" + n + ".material.txt"),
         (run.dir / ("cooked/" + n + ".amaterial")).string(), (run.dir / ("cooked/" + n + ".amaterial.meta.txt")).string());
     CHECK(cookResult.isOk());
   }
@@ -454,6 +470,7 @@ TEST_CASE("alphaMode MASK and BLEND map to the material alpha fields", "[gltf_im
     const std::string name = std::to_string(index);
     const auto cookResult = atlantis::asset_system::cookMaterial(
         (run.outputDir / ("t/materials/" + name + ".material.txt")).string(), "t/materials/" + name + ".material.txt",
+        testAssetGuid("t/materials/" + name + ".material.txt"),
         (run.dir / ("cooked/" + name + ".amaterial")).string(),
         (run.dir / ("cooked/" + name + ".amaterial.meta.txt")).string());
     CHECK(cookResult.isOk());

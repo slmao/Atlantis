@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/errors.h>
 #include <atlantis/result.h>
 
@@ -17,6 +18,7 @@ namespace atlantis::asset_system {
 // discipline -- this module's parser is new, independent code, never
 // shared with asset_metadata.cpp's own implementation.
 struct SceneMetadata {
+  AssetGuid assetGuid;  // Plan 0047 P8: line 2 of the sidecar
   std::uint32_t schemaVersion = 0;
   std::uint32_t nodeCount = 0;
 };

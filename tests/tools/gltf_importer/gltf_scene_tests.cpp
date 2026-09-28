@@ -20,6 +20,19 @@
 #include <string>
 #include <vector>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 // Plan 0037 Milestone 5: the scene-graph slice (ADR-0083 D5/D6).
 
 namespace fs = std::filesystem;
@@ -220,7 +233,7 @@ TEST_CASE("A node hierarchy becomes parent-linked node lines with local transfor
   // Cook-level round trip through the real scene cooker and decoder.
   const fs::path artifact = run.dir / "cooked/t.ascene";
   const fs::path metadata = run.dir / "cooked/t.ascene.meta.txt";
-  REQUIRE(atlantis::asset_system::cookScene((run.outputDir / "t/t.scene.txt").string(), artifact.string(),
+  REQUIRE(atlantis::asset_system::cookScene((run.outputDir / "t/t.scene.txt").string(), testAssetGuid("scene"), artifact.string(),
                                             metadata.string())
               .isOk());
   const auto decoded = atlantis::asset_system::decodeScene(artifact.string(), metadata.string());
@@ -460,6 +473,7 @@ TEST_CASE("The importer's overlay appends its camera and lights after every impo
 
   // The merged scene cooks.
   const auto cooked = atlantis::asset_system::cookScene((run.outputDir / "t/t.scene.txt").string(),
+                                                        testAssetGuid("scene"),
                                                         (run.dir / "t.ascene").string(),
                                                         (run.dir / "t.ascene.meta.txt").string());
   CHECK(cooked.isOk());

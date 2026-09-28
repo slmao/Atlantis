@@ -9,7 +9,8 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_asset_metadata_version: 1";
+constexpr std::string_view kVersionLine = "atlantis_asset_metadata_version: 2";
+constexpr std::string_view kAssetGuidPrefix = "asset_guid: ";
 constexpr std::string_view kAssetIdPrefix = "asset_id: ";
 constexpr std::string_view kSourceLogicalPathPrefix = "source_logical_path: ";
 constexpr std::string_view kImporterVersionPrefix = "importer_version: ";
@@ -17,7 +18,7 @@ constexpr std::string_view kAssetTypePrefix = "asset_type: ";
 constexpr std::string_view kVertexCountPrefix = "vertex_count: ";
 constexpr std::string_view kIndexCountPrefix = "index_count: ";
 constexpr std::string_view kVertexStrideBytesPrefix = "vertex_stride_bytes: ";
-constexpr std::size_t kExpectedLineCount = 8;
+constexpr std::size_t kExpectedLineCount = 9;
 
 // Duplicated from mesh_source.cpp's own identical helper rather than
 // shared -- matching this project's own small-helper-duplication
@@ -81,29 +82,35 @@ atlantis::Result<AssetMetadata, MetadataParseError> parseAssetMetadata(std::stri
   AssetMetadata metadata;
   std::string_view value;
 
-  if (!matchField(lines[1], kAssetIdPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  // Plan 0047 P8 (ADR-0097 D3): the asset's persistent identity, line 2.
+  if (!matchField(lines[1], kAssetGuidPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  const auto assetGuid = parseAssetGuid(value);
+  if (assetGuid.isErr()) return ResultT::Err(MetadataParseError::MalformedValue);
+  metadata.assetGuid = assetGuid.value();
+
+  if (!matchField(lines[2], kAssetIdPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseAssetIdHex(value, metadata.assetId)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[2], kSourceLogicalPathPrefix, value)) {
+  if (!matchField(lines[3], kSourceLogicalPathPrefix, value)) {
     return ResultT::Err(MetadataParseError::FieldNameMismatch);
   }
   metadata.sourceLogicalPath = std::string(value);
 
-  if (!matchField(lines[3], kImporterVersionPrefix, value)) {
+  if (!matchField(lines[4], kImporterVersionPrefix, value)) {
     return ResultT::Err(MetadataParseError::FieldNameMismatch);
   }
   metadata.importerVersion = std::string(value);
 
-  if (!matchField(lines[4], kAssetTypePrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[5], kAssetTypePrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   metadata.assetType = std::string(value);
 
-  if (!matchField(lines[5], kVertexCountPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[6], kVertexCountPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseUnsigned(value, metadata.vertexCount)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[6], kIndexCountPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[7], kIndexCountPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseUnsigned(value, metadata.indexCount)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[7], kVertexStrideBytesPrefix, value)) {
+  if (!matchField(lines[8], kVertexStrideBytesPrefix, value)) {
     return ResultT::Err(MetadataParseError::FieldNameMismatch);
   }
   if (!parseUnsigned(value, metadata.vertexStrideBytes)) return ResultT::Err(MetadataParseError::MalformedValue);
@@ -114,6 +121,9 @@ atlantis::Result<AssetMetadata, MetadataParseError> parseAssetMetadata(std::stri
 std::string serializeAssetMetadata(const AssetMetadata& metadata) {
   std::string out;
   out += kVersionLine;
+  out += '\n';
+  out += kAssetGuidPrefix;
+  out += toString(metadata.assetGuid);
   out += '\n';
   out += kAssetIdPrefix;
   out += toHexString(metadata.assetId);

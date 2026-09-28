@@ -6,6 +6,7 @@ add_executable(atlantis_asset_system_tests
   asset_guid_tests.cpp
   asset_catalog_source_tests.cpp
   asset_declarations_tests.cpp
+  sidecar_asset_guid_tests.cpp
   asset_set_validation_tests.cpp
   mesh_source_tests.cpp
   mesh_artifact_u32_tests.cpp
@@ -64,6 +65,8 @@ target_compile_definitions(atlantis_asset_system_tests PRIVATE
   ATLANTIS_ASSET_DECLARATIONS_PATH="${CMAKE_BINARY_DIR}/assets/declarations.txt"
   ATLANTIS_DECLARED_ASSETS_PATH="${CMAKE_BINARY_DIR}/assets/declared_assets.txt"
   ATLANTIS_BISTRO_CONTENT_DIR="${ATLANTIS_BISTRO_CONTENT_DIR}"
+  # Plan 0047 M3: the committed catalog source the cooked fixtures' GUIDs come from.
+  ATLANTIS_ASSET_CATALOG_SOURCE_PATH="${CMAKE_SOURCE_DIR}/assets/asset_catalog.txt"
 )
 
 # Plan 0029 Section P1: an absolute, configure-time path to the real

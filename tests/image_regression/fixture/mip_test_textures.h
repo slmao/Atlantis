@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/cook_texture.h>
 #include <atlantis/asset_system/texture_artifact.h>
 #include <atlantis/asset_system/texture_types.h>
@@ -161,7 +162,12 @@ struct CookedMipTestTexture {
   CookedMipTestTexture cooked{directory / (name + ".atex"), directory / (name + ".atex.meta.txt")};
   const auto result = atlantis::asset_system::cookTextureBc7(
       chain.data(), chain.size(), size, size, mipCount, atlantis::asset_system::TextureColorSpace::Unorm,
-      "mip_test/" + name + ".dds", cooked.artifactPath, cooked.metadataPath);
+      "mip_test/" + name + ".dds",
+      // Plan 0047 P7: a per-name test identity; the texture is loaded by
+      // path, never resolved through a catalog.
+      atlantis::asset_system::deriveAssetGuid(
+          atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), name),
+      cooked.artifactPath, cooked.metadataPath);
   if (result.isErr()) return std::nullopt;
   return cooked;
 }

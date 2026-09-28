@@ -1,4 +1,5 @@
 #include <cook_command.h>
+#include "test_catalog_source.h"
 
 #include <atlantis/asset_system/texture_artifact.h>
 #include <atlantis/asset_system/texture_metadata.h>
@@ -20,6 +21,7 @@
 // (or, for corrupted.png, deliberately invalid) PNG files checked in for
 // this test alone.
 
+using atlantis::tools::asset_cooker::test::writeCatalogSourceCovering;
 using atlantis::tools::asset_cooker::AssetKind;
 using atlantis::tools::asset_cooker::CookCommandRequest;
 using atlantis::tools::asset_cooker::runCookCommand;
@@ -70,6 +72,8 @@ struct TempDirGuard {
   request.kind = AssetKind::Texture;
   request.sourcePath = sourcePng.string();
   request.assetRoot = sourcePng.parent_path().string();
+  request.catalogSourcePath =
+      writeCatalogSourceCovering(sourcePng.parent_path(), outputDir / "asset_catalog.txt").string();
   request.outputDir = outputDir.string();
   request.stampPath = (outputDir / (name + ".stamp")).string();
   request.colorSpace = colorSpace;

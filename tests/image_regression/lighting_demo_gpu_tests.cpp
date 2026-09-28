@@ -29,6 +29,18 @@
 #include <string_view>
 #include <vector>
 
+#include <atlantis/asset_system/asset_guid.h>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 // Plan 0019 Section P10/Milestone 10 (Spec 0019 D10, this Plan's own
 // Milestone 9 requirements, delivered here since they need the real
 // lighting_demo fixture -- see this Plan's own "Milestones / Task
@@ -1154,7 +1166,7 @@ constexpr std::string_view kLightingDemoSourceTemplate =
   const fs::path artifactPath = dir / "lighting_demo_mutated.ascene";
   const fs::path metadataPath = dir / "lighting_demo_mutated.ascene.meta.txt";
   REQUIRE(
-      atlantis::asset_system::cookScene(sourcePath.string(), artifactPath.string(), metadataPath.string()).isOk());
+      atlantis::asset_system::cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string()).isOk());
 
   const fs::path manifestPath = dir / "manifest.txt";
   std::ifstream realManifest(std::string(ATLANTIS_lighting_demo_scene_MANIFEST_PATH), std::ios::binary);

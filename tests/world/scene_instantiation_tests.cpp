@@ -16,6 +16,19 @@
 #include <type_traits>
 #include <vector>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 using atlantis::asset_system::AssetId;
 using atlantis::asset_system::computeAssetId;
 using atlantis::asset_system::cookScene;
@@ -84,7 +97,7 @@ void writeFile(const fs::path& path, const std::string& content) {
   const fs::path metadataPath = dir / "scene.ascene.meta.txt";
   writeFile(sourcePath, sourceText);
 
-  auto cookResult = cookScene(sourcePath.string(), artifactPath.string(), metadataPath.string());
+  auto cookResult = cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string());
   REQUIRE(cookResult.isOk());
   auto decodeResult = decodeScene(artifactPath.string(), metadataPath.string());
   REQUIRE(decodeResult.isOk());

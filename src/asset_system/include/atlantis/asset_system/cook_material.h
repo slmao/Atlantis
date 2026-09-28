@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/errors.h>
 #include <atlantis/result.h>
 
@@ -28,8 +29,14 @@ namespace atlantis::asset_system {
 // LogicalPathInvalid also) and computeAssetId() on it for the artifact's
 // own embedded texture_asset_id -- never an existence check on either
 // (ADR-0059 D6/D7); encode + atomic write (temp-then-rename()).
+// Plan 0047 P7 (ADR-0097 D1/D2): assetGuid is the asset's persistent
+// identity, resolved by the caller (the cooker, from the catalog source or
+// a cook-manifest --guid=); it must not be nil. The Asset ID written into
+// the artifact and sidecar is assetKey(assetGuid); logicalPathInput is
+// normalized and recorded as provenance only.
 [[nodiscard]] atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::string& sourceFilePath,
                                                                                 const std::string& logicalPathInput,
+                                                                                const AssetGuid& assetGuid,
                                                                                 const std::string& artifactOutputPath,
                                                                                 const std::string& metadataOutputPath);
 

@@ -12,6 +12,19 @@
 #include <sstream>
 #include <string>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 using namespace atlantis::asset_system;
 
 namespace {
@@ -49,6 +62,7 @@ struct TempDirGuard {
   const fs::path artifactPath = dir / "checker.atex";
   const fs::path metadataPath = dir / "checker.atex.meta.txt";
   const auto result = cookTexture(pixels.data(), 4, 4, 4, TextureColorSpace::Unorm, "textures/checker.png",
+                                   testAssetGuid("textures/checker.png"),
                                    artifactPath, metadataPath);
   REQUIRE(result.isOk());
   return {artifactPath, metadataPath};
@@ -124,6 +138,7 @@ TEST_CASE("loadTextureAsset detects a deliberate artifact/metadata mismatch", "[
   const fs::path otherArtifactPath = dir.path / "other.atex";
   const fs::path otherMetadataPath = dir.path / "other.atex.meta.txt";
   const auto otherResult = cookTexture(otherPixels.data(), 2, 2, 4, TextureColorSpace::Unorm, "textures/other.png",
+                                        testAssetGuid("textures/other.png"),
                                         otherArtifactPath, otherMetadataPath);
   REQUIRE(otherResult.isOk());
 
@@ -135,8 +150,8 @@ TEST_CASE("loadTextureAsset detects a deliberate artifact/metadata mismatch", "[
 }
 
 TEST_CASE(
-    "loadTextureAsset detects a metadata file whose own recorded asset_id and source_logical_path disagree with "
-    "each other, even when width/height/format still match the artifact",
+    "loadTextureAsset detects a metadata file whose asset_id is not the key of its asset_guid, even when "
+    "width/height/format still match the artifact",
     "[asset_system]") {
   TempDirGuard dir("self_inconsistent_metadata");
   const auto [artifactPath, metadataPath] = cookValidChecker(dir.path);
@@ -148,11 +163,23 @@ TEST_CASE(
     buffer << in.rdbuf();
     metadataText = buffer.str();
   }
+
+  // Plan 0047 P8 (ADR-0097 D2/D3): the source path is provenance only, so a
+  // different one still loads...
   const std::string oldLine = "source_logical_path: textures/checker.png";
   const std::string newLine = "source_logical_path: some/other/path.png";
-  const auto pos = metadataText.find(oldLine);
-  REQUIRE(pos != std::string::npos);
-  metadataText.replace(pos, oldLine.size(), newLine);
+  const auto pathPos = metadataText.find(oldLine);
+  REQUIRE(pathPos != std::string::npos);
+  metadataText.replace(pathPos, oldLine.size(), newLine);
+  writeFile(metadataPath, metadataText);
+  CHECK(loadTextureAsset(artifactPath, metadataPath).isOk());
+
+  // ...but an asset_id that is not the key of the recorded asset_guid is an
+  // internal contradiction the artifact-vs-metadata check alone cannot see.
+  const std::string guidPrefix = "asset_guid: ";
+  const auto guidPos = metadataText.find(guidPrefix);
+  REQUIRE(guidPos != std::string::npos);
+  metadataText.replace(guidPos + guidPrefix.size(), 36, "fedcba98-7654-4321-8fed-cba987654321");
   writeFile(metadataPath, metadataText);
 
   const auto result = loadTextureAsset(artifactPath, metadataPath);
@@ -169,6 +196,7 @@ TEST_CASE("loadTextureAsset returns a BC7 mip chain with its count", "[asset_sys
   const fs::path artifactPath = dir.path / "chain.atex";
   const fs::path metadataPath = dir.path / "chain.atex.meta.txt";
   REQUIRE(cookTextureBc7(chain.data(), chain.size(), 8, 8, 4, TextureColorSpace::Srgb, "textures/chain.dds",
+                         testAssetGuid("textures/chain.dds"),
                          artifactPath, metadataPath)
               .isOk());
 
@@ -192,6 +220,7 @@ TEST_CASE("loadTextureAsset rejects a metadata mip_count that disagrees with the
   const fs::path artifactPath = dir.path / "chain.atex";
   const fs::path metadataPath = dir.path / "chain.atex.meta.txt";
   REQUIRE(cookTextureBc7(chain.data(), chain.size(), 8, 8, 4, TextureColorSpace::Unorm, "textures/chain.dds",
+                         testAssetGuid("textures/chain.dds"),
                          artifactPath, metadataPath)
               .isOk());
 

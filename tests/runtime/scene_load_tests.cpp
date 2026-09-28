@@ -18,6 +18,19 @@
 #include <string>
 #include <vector>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 using namespace atlantis::runtime;
 using atlantis::asset_system::AssetId;
 using atlantis::asset_system::computeAssetId;
@@ -88,7 +101,7 @@ struct CookedMeshFixture {
   writeFile(sourcePath, std::string(kValidTriangleSource));
   const fs::path artifactPath = dir / (logicalPath + ".amesh");
   const fs::path metadataPath = dir / (logicalPath + ".amesh.meta.txt");
-  REQUIRE(cookStaticMesh(sourcePath.string(), logicalPath, artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookStaticMesh(sourcePath.string(), logicalPath, testAssetGuid(logicalPath), artifactPath.string(), metadataPath.string()).isOk());
   return CookedMeshFixture{artifactPath, metadataPath};
 }
 
@@ -115,7 +128,7 @@ struct CookedSceneFixture {
   writeFile(sourcePath, source);
   const fs::path artifactPath = dir / "scene.ascene";
   const fs::path metadataPath = dir / "scene.ascene.meta.txt";
-  REQUIRE(cookScene(sourcePath.string(), artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string()).isOk());
   return CookedSceneFixture{artifactPath, metadataPath};
 }
 
@@ -139,7 +152,7 @@ struct CookedSceneFixture {
   writeFile(sourcePath, source);
   const fs::path artifactPath = dir / "scene_with_material.ascene";
   const fs::path metadataPath = dir / "scene_with_material.ascene.meta.txt";
-  REQUIRE(cookScene(sourcePath.string(), artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string()).isOk());
   return CookedSceneFixture{artifactPath, metadataPath};
 }
 
@@ -153,7 +166,7 @@ struct CookedTextureFixture {
   const std::vector<std::uint8_t> pixelBytes(static_cast<std::size_t>(kExtent) * kExtent * 4, 0x7F);
   const fs::path artifactPath = dir / (logicalPath + ".atex");
   const fs::path metadataPath = dir / (logicalPath + ".atex.meta.txt");
-  REQUIRE(cookTexture(pixelBytes.data(), kExtent, kExtent, 4, TextureColorSpace::Unorm, logicalPath, artifactPath,
+  REQUIRE(cookTexture(pixelBytes.data(), kExtent, kExtent, 4, TextureColorSpace::Unorm, logicalPath, testAssetGuid(logicalPath), artifactPath,
                        metadataPath)
               .isOk());
   return CookedTextureFixture{artifactPath, metadataPath};
@@ -179,7 +192,7 @@ struct CookedMaterialFixture {
                         "address_mode: repeat\n");
   const fs::path artifactPath = dir / (logicalPath + ".amaterial");
   const fs::path metadataPath = dir / (logicalPath + ".amaterial.meta.txt");
-  REQUIRE(cookMaterial(sourcePath.string(), logicalPath, artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookMaterial(sourcePath.string(), logicalPath, testAssetGuid(logicalPath), artifactPath.string(), metadataPath.string()).isOk());
   return CookedMaterialFixture{artifactPath, metadataPath};
 }
 
@@ -280,7 +293,7 @@ TEST_CASE("loadAndInstantiateScene: a scene with no Renderable references succee
             "node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
   const fs::path artifactPath = dir.path / "plain.ascene";
   const fs::path metadataPath = dir.path / "plain.ascene.meta.txt";
-  REQUIRE(cookScene(sourcePath.string(), artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string()).isOk());
   writeFile(dir.path / "empty.manifest.txt", "");
   const BootstrapConfig config = makeConfig(artifactPath, metadataPath, dir.path / "empty.manifest.txt");
 

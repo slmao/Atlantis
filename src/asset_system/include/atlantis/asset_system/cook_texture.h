@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/errors.h>
 #include <atlantis/asset_system/texture_types.h>
 #include <atlantis/result.h>
@@ -34,9 +35,14 @@ namespace atlantis::asset_system {
 // the exact gap this correction closes). The normalized path, not the
 // caller-supplied one, is what computeAssetId() and the metadata
 // sidecar's own sourceLogicalPath both use from here on.
+// Plan 0047 P7 (ADR-0097 D1/D2): assetGuid is the asset's persistent
+// identity, resolved by the caller (the cooker, from the catalog source or
+// a cook-manifest --guid=); it must not be nil. The Asset ID written into
+// the artifact and sidecar is assetKey(assetGuid); logicalPathInput is
+// normalized and recorded as provenance only.
 [[nodiscard]] atlantis::Result<std::monostate, TextureCookError> cookTexture(
     const std::uint8_t* pixelBytes, std::uint32_t width, std::uint32_t height, std::int32_t channelsInFile,
-    TextureColorSpace colorSpace, const std::string& logicalPathInput,
+    TextureColorSpace colorSpace, const std::string& logicalPathInput, const AssetGuid& assetGuid,
     const std::filesystem::path& artifactOutputPath, const std::filesystem::path& metadataOutputPath);
 
 // Spec 0038: the BC7 sibling of cookTexture() above -- takes VERBATIM
@@ -54,6 +60,7 @@ namespace atlantis::asset_system {
 [[nodiscard]] atlantis::Result<std::monostate, TextureCookError> cookTextureBc7(
     const std::uint8_t* blockBytes, std::size_t blockByteCount, std::uint32_t width, std::uint32_t height,
     std::uint32_t mipCount, TextureColorSpace colorSpace, const std::string& logicalPathInput,
-    const std::filesystem::path& artifactOutputPath, const std::filesystem::path& metadataOutputPath);
+    const AssetGuid& assetGuid, const std::filesystem::path& artifactOutputPath,
+    const std::filesystem::path& metadataOutputPath);
 
 }  // namespace atlantis::asset_system

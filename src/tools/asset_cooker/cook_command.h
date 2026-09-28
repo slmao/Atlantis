@@ -87,8 +87,14 @@ struct CookCommandRequest {
 // mode's per-line cooks so a manifest line means exactly what the same
 // command line would. Returns false (after writing a diagnostic to err) on
 // an unrecognized argument or a missing required flag.
+// Plan 0047 P7: where an argument vector came from. A per-asset cook on
+// the command line needs --catalog-source= and may not carry --guid=; on a
+// cook-manifest line it needs --guid= (supplied by the importer) instead.
+enum class CookArgumentSource { CommandLine, CookManifestLine };
+
 [[nodiscard]] bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest& request,
-                                      std::ostream& err);
+                                      std::ostream& err,
+                                      CookArgumentSource source = CookArgumentSource::CommandLine);
 
 // Returns the process exit code (0 success, non-zero failure). Kept
 // separate from main() so tests can invoke it directly with a

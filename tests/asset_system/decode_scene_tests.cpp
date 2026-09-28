@@ -20,6 +20,19 @@
 #include <string>
 #include <vector>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 using namespace atlantis::asset_system;
 
 namespace {
@@ -91,7 +104,7 @@ TEST_CASE("decodeScene reproduces every field cookScene() encoded (V8)", "[asset
   const fs::path metadataPath = dir.path / "scene.ascene.meta.txt";
   writeFile(sourcePath, std::string(kValidTwoNodeTextSource));
 
-  REQUIRE(cookScene(sourcePath.string(), artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string()).isOk());
 
   const auto result = decodeScene(artifactPath.string(), metadataPath.string());
   REQUIRE(result.isOk());
@@ -275,7 +288,8 @@ TEST_CASE("decodeSceneArtifact rejects a non-finite camera value", "[asset_syste
 TEST_CASE("decodeScene rejects an unreadable artifact file", "[asset_system][scene]") {
   TempDirGuard dir("artifact_unreadable");
   writeFile(dir.path / "scene.ascene.meta.txt",
-            "atlantis_scene_metadata_version: 1\nschema_version: 1\nnode_count: 1\n");
+            "atlantis_scene_metadata_version: 2\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
+            "schema_version: 1\nnode_count: 1\n");
   const auto result =
       decodeScene((dir.path / "does_not_exist.ascene").string(), (dir.path / "scene.ascene.meta.txt").string());
   REQUIRE(result.isErr());
@@ -301,7 +315,7 @@ TEST_CASE("decodeScene rejects a malformed metadata file", "[asset_system][scene
   const fs::path artifactPath = dir.path / "scene.ascene";
   const fs::path metadataPath = dir.path / "scene.ascene.meta.txt";
   writeFile(sourcePath, std::string(kValidTwoNodeTextSource));
-  REQUIRE(cookScene(sourcePath.string(), artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string()).isOk());
 
   writeFile(metadataPath, "not valid metadata\n");
   const auto result = decodeScene(artifactPath.string(), metadataPath.string());
@@ -315,9 +329,11 @@ TEST_CASE("decodeScene rejects a metadata/artifact node_count mismatch", "[asset
   const fs::path artifactPath = dir.path / "scene.ascene";
   const fs::path metadataPath = dir.path / "scene.ascene.meta.txt";
   writeFile(sourcePath, std::string(kValidTwoNodeTextSource));
-  REQUIRE(cookScene(sourcePath.string(), artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string()).isOk());
 
-  writeFile(metadataPath, "atlantis_scene_metadata_version: 1\nschema_version: 1\nnode_count: 99\n");
+  writeFile(metadataPath,
+            "atlantis_scene_metadata_version: 2\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
+            "schema_version: 1\nnode_count: 99\n");
   const auto result = decodeScene(artifactPath.string(), metadataPath.string());
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneArtifactDecodeError::MetadataArtifactMismatch);

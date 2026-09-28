@@ -61,8 +61,10 @@ namespace {
 
 atlantis::Result<std::monostate, EnvironmentCookError> cookEnvironment(
     const float* rgbaPixels, std::uint32_t width, std::uint32_t height, const std::string& logicalPathInput,
-    const std::filesystem::path& artifactOutputPath, const std::filesystem::path& metadataOutputPath) {
+    const AssetGuid& assetGuid, const std::filesystem::path& artifactOutputPath,
+    const std::filesystem::path& metadataOutputPath) {
   using ResultT = atlantis::Result<std::monostate, EnvironmentCookError>;
+  ATLANTIS_CHECK_MSG(assetGuid != AssetGuid{}, "cookEnvironment(): the asset GUID must not be nil");
   const auto normalizedResult = normalizeLogicalPath(logicalPathInput);
   if (normalizedResult.isErr()) return ResultT::Err(EnvironmentCookError::LogicalPathInvalid);
   if (width == 0 || height == 0 || static_cast<std::uint64_t>(height) * 2ULL != width) {
@@ -87,9 +89,9 @@ atlantis::Result<std::monostate, EnvironmentCookError> cookEnvironment(
   if (!outputIsFinite(data)) return ResultT::Err(EnvironmentCookError::OutputValueOverflow);
 
   const std::string& logicalPath = normalizedResult.value();
-  const AssetId assetId = computeAssetId(logicalPath);
+  const AssetId assetId = assetKey(assetGuid);
   const std::vector<std::byte> artifact = encodeEnvironmentArtifact(assetId, data);
-  const EnvironmentMetadata metadata{assetId, logicalPath, data.faceSize, data.mipCount, data.dfgWidth,
+  const EnvironmentMetadata metadata{assetGuid, assetId, logicalPath, data.faceSize, data.mipCount, data.dfgWidth,
                                      data.dfgHeight};
   const std::string metadataText = serializeEnvironmentMetadata(metadata);
   if (!writeBytesAtomically(artifactOutputPath, reinterpret_cast<const char*>(artifact.data()), artifact.size()) ||

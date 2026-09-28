@@ -9,7 +9,8 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_material_metadata_version: 8";
+constexpr std::string_view kVersionLine = "atlantis_material_metadata_version: 9";
+constexpr std::string_view kAssetGuidPrefix = "asset_guid: ";
 constexpr std::string_view kAssetIdPrefix = "asset_id: ";
 constexpr std::string_view kSourceLogicalPathPrefix = "source_logical_path: ";
 constexpr std::string_view kKindPrefix = "kind: ";
@@ -60,7 +61,7 @@ constexpr std::string_view kAlphaModeBlend = "blend";
 // -- emissive_factor, same unconditional-presence discipline. Plan 0042
 // Milestone 1: 18 (alpha_mode/alpha_cutoff). Plan 0046 Milestone 1: 19
 // (emissive_texture).
-constexpr std::size_t kExpectedLineCount = 19;
+constexpr std::size_t kExpectedLineCount = 20;
 
 constexpr std::string_view kKindUnlitTextured = "unlit_textured";
 constexpr std::string_view kKindPbrDirectLit = "pbr_direct_lit";
@@ -179,15 +180,21 @@ atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std
   MaterialMetadata metadata;
   std::string_view value;
 
-  if (!matchField(lines[1], kAssetIdPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  // Plan 0047 P8 (ADR-0097 D3): the asset's persistent identity, line 2.
+  if (!matchField(lines[1], kAssetGuidPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  const auto assetGuid = parseAssetGuid(value);
+  if (assetGuid.isErr()) return ResultT::Err(MetadataParseError::MalformedValue);
+  metadata.assetGuid = assetGuid.value();
+
+  if (!matchField(lines[2], kAssetIdPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseAssetIdHex(value, metadata.assetId)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[2], kSourceLogicalPathPrefix, value)) {
+  if (!matchField(lines[3], kSourceLogicalPathPrefix, value)) {
     return ResultT::Err(MetadataParseError::FieldNameMismatch);
   }
   metadata.sourceLogicalPath = std::string(value);
 
-  if (!matchField(lines[3], kKindPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[4], kKindPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (value == kKindUnlitTextured) {
     metadata.kind = MaterialKind::UnlitTextured;
   } else if (value == kKindLitTextured) {
@@ -204,10 +211,10 @@ atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std
     return ResultT::Err(MetadataParseError::MalformedValue);
   }
 
-  if (!matchField(lines[4], kTextureAssetPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[5], kTextureAssetPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseAssetIdHex(value, metadata.textureAsset)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[5], kBaseColorFactorPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[6], kBaseColorFactorPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   const std::vector<std::string_view> baseColorTokens = splitOnSpace(value);
   if (baseColorTokens.size() != 4) return ResultT::Err(MetadataParseError::MalformedValue);
   for (std::size_t i = 0; i < 4; ++i) {
@@ -216,26 +223,26 @@ atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std
     }
   }
 
-  if (!matchField(lines[6], kMetallicFactorPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[7], kMetallicFactorPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseFloatToken(value, metadata.metallicFactor)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[7], kRoughnessFactorPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[8], kRoughnessFactorPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseFloatToken(value, metadata.roughnessFactor)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[8], kNormalMapTexturePrefix, value)) {
+  if (!matchField(lines[9], kNormalMapTexturePrefix, value)) {
     return ResultT::Err(MetadataParseError::FieldNameMismatch);
   }
   if (!parseAssetIdHex(value, metadata.normalMapTexture)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[9], kClearcoatFactorPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[10], kClearcoatFactorPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseFloatToken(value, metadata.clearcoatFactor)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[10], kClearcoatRoughnessPrefix, value)) {
+  if (!matchField(lines[11], kClearcoatRoughnessPrefix, value)) {
     return ResultT::Err(MetadataParseError::FieldNameMismatch);
   }
   if (!parseFloatToken(value, metadata.clearcoatRoughness)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[11], kSheenColorPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[12], kSheenColorPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   const std::vector<std::string_view> sheenColorTokens = splitOnSpace(value);
   if (sheenColorTokens.size() != 3) return ResultT::Err(MetadataParseError::MalformedValue);
   for (std::size_t i = 0; i < 3; ++i) {
@@ -244,20 +251,20 @@ atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std
     }
   }
 
-  if (!matchField(lines[12], kSheenRoughnessPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[13], kSheenRoughnessPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseFloatToken(value, metadata.sheenRoughness)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[13], kAnisotropyFactorPrefix, value)) {
+  if (!matchField(lines[14], kAnisotropyFactorPrefix, value)) {
     return ResultT::Err(MetadataParseError::FieldNameMismatch);
   }
   if (!parseFloatToken(value, metadata.anisotropyFactor)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[14], kAnisotropyRotationPrefix, value)) {
+  if (!matchField(lines[15], kAnisotropyRotationPrefix, value)) {
     return ResultT::Err(MetadataParseError::FieldNameMismatch);
   }
   if (!parseFloatToken(value, metadata.anisotropyRotation)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[15], kEmissiveFactorPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[16], kEmissiveFactorPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   const std::vector<std::string_view> emissiveTokens = splitOnSpace(value);
   if (emissiveTokens.size() != 3) return ResultT::Err(MetadataParseError::MalformedValue);
   for (std::size_t i = 0; i < 3; ++i) {
@@ -266,7 +273,7 @@ atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std
     }
   }
 
-  if (!matchField(lines[16], kAlphaModePrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[17], kAlphaModePrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (value == kAlphaModeOpaque) {
     metadata.alphaMode = MaterialAlphaMode::Opaque;
   } else if (value == kAlphaModeMask) {
@@ -277,10 +284,10 @@ atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std
     return ResultT::Err(MetadataParseError::MalformedValue);
   }
 
-  if (!matchField(lines[17], kAlphaCutoffPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[18], kAlphaCutoffPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseFloatToken(value, metadata.alphaCutoff)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[18], kEmissiveTexturePrefix, value)) {
+  if (!matchField(lines[19], kEmissiveTexturePrefix, value)) {
     return ResultT::Err(MetadataParseError::FieldNameMismatch);
   }
   if (!parseAssetIdHex(value, metadata.emissiveTexture)) return ResultT::Err(MetadataParseError::MalformedValue);
@@ -291,6 +298,9 @@ atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std
 std::string serializeMaterialMetadata(const MaterialMetadata& metadata) {
   std::string out;
   out += kVersionLine;
+  out += '\n';
+  out += kAssetGuidPrefix;
+  out += toString(metadata.assetGuid);
   out += '\n';
   out += kAssetIdPrefix;
   out += toHexString(metadata.assetId);

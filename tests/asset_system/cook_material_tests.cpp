@@ -13,6 +13,19 @@
 #include <sstream>
 #include <string>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 using namespace atlantis::asset_system;
 
 namespace {
@@ -80,6 +93,7 @@ TEST_CASE("cookMaterial writes a well-formed artifact/metadata pair", "[asset_sy
   const fs::path metadataPath = dir.path / "unlit_textured_quad.amaterial.meta.txt";
 
   const auto result = cookMaterial(sourcePath.string(), "materials/unlit_textured_quad.material.txt",
+                                    testAssetGuid("materials/unlit_textured_quad.material.txt"),
                                     artifactPath.string(), metadataPath.string());
   REQUIRE(result.isOk());
   REQUIRE(fs::exists(artifactPath));
@@ -100,7 +114,7 @@ TEST_CASE("cookMaterial writes a well-formed artifact/metadata pair", "[asset_sy
   const auto metadata = parseMaterialMetadata(readFile(metadataPath));
   REQUIRE(metadata.isOk());
   CHECK(metadata.value().sourceLogicalPath == "materials/unlit_textured_quad.material.txt");
-  CHECK(metadata.value().assetId == computeAssetId("materials/unlit_textured_quad.material.txt"));
+  CHECK(metadata.value().assetId == assetKey(testAssetGuid("materials/unlit_textured_quad.material.txt")));
   CHECK(metadata.value().kind == MaterialKind::UnlitTextured);
   CHECK(metadata.value().textureAsset == computeAssetId("textures/textured_quad_source_unorm.png"));
 }
@@ -108,6 +122,7 @@ TEST_CASE("cookMaterial writes a well-formed artifact/metadata pair", "[asset_sy
 TEST_CASE("cookMaterial reports SourceFileUnreadable for a missing source file", "[asset_system][material]") {
   TempDirGuard dir("source_unreadable");
   const auto result = cookMaterial((dir.path / "does_not_exist.material.txt").string(), "materials/foo.material.txt",
+                                    testAssetGuid("materials/foo.material.txt"),
                                     (dir.path / "a.amaterial").string(), (dir.path / "a.amaterial.meta.txt").string());
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialCookError::SourceFileUnreadable);
@@ -119,6 +134,7 @@ TEST_CASE("cookMaterial reports SourceParseFailed for a malformed source", "[ass
   writeFile(sourcePath, "not a valid material source\n");
 
   const auto result = cookMaterial(sourcePath.string(), "materials/bad.material.txt",
+                                    testAssetGuid("materials/bad.material.txt"),
                                     (dir.path / "a.amaterial").string(), (dir.path / "a.amaterial.meta.txt").string());
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialCookError::SourceParseFailed);
@@ -131,7 +147,7 @@ TEST_CASE("cookMaterial rejects every malformed logical path normalizeLogicalPat
   writeFile(sourcePath, std::string(kValidSource));
 
   const auto reject = [&](const std::string& malformedPath) {
-    const auto result = cookMaterial(sourcePath.string(), malformedPath, (dir.path / "a.amaterial").string(),
+    const auto result = cookMaterial(sourcePath.string(), malformedPath, testAssetGuid(malformedPath), (dir.path / "a.amaterial").string(),
                                       (dir.path / "a.amaterial.meta.txt").string());
     REQUIRE(result.isErr());
     CHECK(result.error() == MaterialCookError::LogicalPathInvalid);
@@ -156,6 +172,7 @@ TEST_CASE("cookMaterial rejects a source naming a texture with a malformed logic
             "address_mode: repeat\n");
 
   const auto result = cookMaterial(sourcePath.string(), "materials/bad_texture_ref.material.txt",
+                                    testAssetGuid("materials/bad_texture_ref.material.txt"),
                                     (dir.path / "a.amaterial").string(), (dir.path / "a.amaterial.meta.txt").string());
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialCookError::LogicalPathInvalid);
@@ -171,6 +188,7 @@ TEST_CASE("cookMaterial reports AtomicWriteFailed when the artifact output path 
   fs::create_directories(artifactPath);
 
   const auto result = cookMaterial(sourcePath.string(), "materials/unlit_textured_quad.material.txt",
+                                    testAssetGuid("materials/unlit_textured_quad.material.txt"),
                                     artifactPath.string(), (dir.path / "a.amaterial.meta.txt").string());
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialCookError::AtomicWriteFailed);
@@ -184,10 +202,12 @@ TEST_CASE("cookMaterial is deterministic -- cooking the same source twice produc
 
   const auto firstResult =
       cookMaterial(sourcePath.string(), "materials/unlit_textured_quad.material.txt",
+                   testAssetGuid("materials/unlit_textured_quad.material.txt"),
                    (dir.path / "first.amaterial").string(), (dir.path / "first.amaterial.meta.txt").string());
   REQUIRE(firstResult.isOk());
   const auto secondResult =
       cookMaterial(sourcePath.string(), "materials/unlit_textured_quad.material.txt",
+                   testAssetGuid("materials/unlit_textured_quad.material.txt"),
                    (dir.path / "second.amaterial").string(), (dir.path / "second.amaterial.meta.txt").string());
   REQUIRE(secondResult.isOk());
 
@@ -205,6 +225,7 @@ TEST_CASE("cookMaterial writes a well-formed PbrDirectLit artifact/metadata pair
   const fs::path metadataPath = dir.path / "pbr_dielectric_rough.amaterial.meta.txt";
 
   const auto result = cookMaterial(sourcePath.string(), "materials/pbr_dielectric_rough.material.txt",
+                                    testAssetGuid("materials/pbr_dielectric_rough.material.txt"),
                                     artifactPath.string(), metadataPath.string());
   REQUIRE(result.isOk());
 
@@ -246,6 +267,7 @@ TEST_CASE("cookMaterial reports BaseColorFactorOutOfRange for a baseColorFactor 
             "roughness_factor: 0.25\n");
 
   const auto result = cookMaterial(sourcePath.string(), "materials/bad.material.txt",
+                                    testAssetGuid("materials/bad.material.txt"),
                                     (dir.path / "a.amaterial").string(), (dir.path / "a.amaterial.meta.txt").string());
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialCookError::BaseColorFactorOutOfRange);
@@ -267,6 +289,7 @@ TEST_CASE("cookMaterial reports MaterialFactorOutOfRange for a negative metallic
             "roughness_factor: 0.25\n");
 
   const auto result = cookMaterial(sourcePath.string(), "materials/bad.material.txt",
+                                    testAssetGuid("materials/bad.material.txt"),
                                     (dir.path / "a.amaterial").string(), (dir.path / "a.amaterial.meta.txt").string());
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialCookError::MaterialFactorOutOfRange);
@@ -288,6 +311,7 @@ TEST_CASE("cookMaterial reports MaterialFactorOutOfRange for a roughness_factor 
             "roughness_factor: 1.1\n");
 
   const auto result = cookMaterial(sourcePath.string(), "materials/bad.material.txt",
+                                    testAssetGuid("materials/bad.material.txt"),
                                     (dir.path / "a.amaterial").string(), (dir.path / "a.amaterial.meta.txt").string());
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialCookError::MaterialFactorOutOfRange);
@@ -315,7 +339,7 @@ namespace {
             "roughness_factor: 0.5\n"
             "emissive_factor: " +
                 emissive + "\n");
-  return cookMaterial(sourcePath.string(), "materials/emissive.material.txt", (dir / "e.amaterial").string(),
+  return cookMaterial(sourcePath.string(), "materials/emissive.material.txt", testAssetGuid("materials/emissive.material.txt"), (dir / "e.amaterial").string(),
                       (dir / "e.amaterial.meta.txt").string());
 }
 
@@ -383,7 +407,7 @@ namespace {
             "metallic_factor: 0.0\n"
             "roughness_factor: 0.5\n" +
                 alphaLines);
-  return cookMaterial(sourcePath.string(), "materials/alpha.material.txt", (dir / "a.amaterial").string(),
+  return cookMaterial(sourcePath.string(), "materials/alpha.material.txt", testAssetGuid("materials/alpha.material.txt"), (dir / "a.amaterial").string(),
                       (dir / "a.amaterial.meta.txt").string());
 }
 

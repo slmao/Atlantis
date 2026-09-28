@@ -10,6 +10,7 @@ add_executable(atlantis_asset_cooker_command_tests
   guid_mint_tests.cpp
   lookup_command_tests.cpp
   migrate_0047_tests.cpp
+  catalog_cook_command_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_cooker_command_tests

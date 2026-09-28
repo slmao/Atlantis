@@ -48,13 +48,9 @@ namespace {
   }
 
   // Self-consistency, not just artifact-vs-metadata agreement: the
-  // metadata sidecar's own two fields (its recorded Asset ID and its
-  // recorded source path) must agree with each other too. Without this,
-  // a metadata file whose assetId happens to match the artifact's own
-  // header (checked above) but whose sourceLogicalPath does not
-  // actually hash to that assetId -- individually parseable, internally
-  // contradictory -- would be silently accepted.
-  return metadata.assetId == computeAssetId(metadata.sourceLogicalPath);
+  // sidecar's recorded Asset ID must be the key of its recorded GUID
+  // (Plan 0047 P8, ADR-0097 D2). The source path is provenance only.
+  return metadata.assetId == assetKey(metadata.assetGuid);
 }
 
 [[nodiscard]] std::uint32_t vertexCountOf(std::uint32_t vertexStrideBytes, std::size_t vertexByteCount) {

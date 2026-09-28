@@ -38,6 +38,19 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 // Regression coverage for a real, previously-undisclosed gap found during
 // this PR's own final centralized review: RuntimeApplication::runFrame()'s
 // wait-then-publish gate (Spec 0018 D8 step 5 / Plan 0018 Section P12) must
@@ -695,7 +708,7 @@ struct CookedMeshFixture {
   writeFile(sourcePath, std::string(kValidTriangleSource));
   const fs::path artifactPath = dir / (logicalPath + ".amesh");
   const fs::path metadataPath = dir / (logicalPath + ".amesh.meta.txt");
-  REQUIRE(cookStaticMesh(sourcePath.string(), logicalPath, artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookStaticMesh(sourcePath.string(), logicalPath, testAssetGuid(logicalPath), artifactPath.string(), metadataPath.string()).isOk());
   return CookedMeshFixture{artifactPath, metadataPath};
 }
 
@@ -710,7 +723,7 @@ struct CookedTextureFixture {
   const fs::path artifactPath = dir / (logicalPath + ".atex");
   const fs::path metadataPath = dir / (logicalPath + ".atex.meta.txt");
   REQUIRE(cookTexture(pixelBytes.data(), kTexExtent, kTexExtent, 4, atlantis::asset_system::TextureColorSpace::Unorm,
-                       logicalPath, artifactPath, metadataPath)
+                       logicalPath, testAssetGuid(logicalPath), artifactPath, metadataPath)
               .isOk());
   return CookedTextureFixture{artifactPath, metadataPath};
 }
@@ -730,7 +743,7 @@ struct CookedMaterialFixture {
                         "address_mode: repeat\n");
   const fs::path artifactPath = dir / (logicalPath + ".amaterial");
   const fs::path metadataPath = dir / (logicalPath + ".amaterial.meta.txt");
-  REQUIRE(cookMaterial(sourcePath.string(), logicalPath, artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookMaterial(sourcePath.string(), logicalPath, testAssetGuid(logicalPath), artifactPath.string(), metadataPath.string()).isOk());
   return CookedMaterialFixture{artifactPath, metadataPath};
 }
 
@@ -752,7 +765,7 @@ struct CookedMaterialFixture {
                         "roughness_factor: 0.5\n");
   const fs::path artifactPath = dir / (logicalPath + ".amaterial");
   const fs::path metadataPath = dir / (logicalPath + ".amaterial.meta.txt");
-  REQUIRE(cookMaterial(sourcePath.string(), logicalPath, artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookMaterial(sourcePath.string(), logicalPath, testAssetGuid(logicalPath), artifactPath.string(), metadataPath.string()).isOk());
   return CookedMaterialFixture{artifactPath, metadataPath};
 }
 
@@ -780,7 +793,7 @@ struct CookedSceneFixture {
   writeFile(sourcePath, source);
   const fs::path artifactPath = dir / "scene_with_material.ascene";
   const fs::path metadataPath = dir / "scene_with_material.ascene.meta.txt";
-  REQUIRE(cookScene(sourcePath.string(), artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string()).isOk());
   return CookedSceneFixture{artifactPath, metadataPath};
 }
 

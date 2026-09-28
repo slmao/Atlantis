@@ -88,6 +88,57 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
   return relative.generic_string();
 }
 
+[[nodiscard]] const char* catalogSourceParseErrorMessage(atlantis::asset_system::CatalogSourceParseError error);
+
+// Plan 0047 P7: the GUID a per-asset cook writes. On the command line it
+// comes from the catalog source, looked up as assets:<logical path>; on a
+// cook-manifest line the importer supplies it as --guid=. Reports and
+// returns nullopt on SourceNotInCatalog, CatalogTypeMismatch, an unreadable
+// or invalid catalog source, or a malformed --guid=.
+[[nodiscard]] std::optional<atlantis::asset_system::AssetGuid> resolveCookGuid(
+    const CookCommandRequest& request, atlantis::asset_system::CatalogAssetType expectedType) {
+  using atlantis::asset_system::CatalogRoot;
+
+  if (!request.guid.empty()) {
+    const auto guid = atlantis::asset_system::parseAssetGuid(request.guid);
+    if (guid.isErr()) {
+      std::cerr << "atlantis_asset_cooker: --guid is not a canonical, non-nil GUID: " << request.guid << "\n";
+      return std::nullopt;
+    }
+    return guid.value();
+  }
+
+  std::ifstream file(request.catalogSourcePath, std::ios::binary);
+  if (!file.is_open()) {
+    std::cerr << "atlantis_asset_cooker: cannot open catalog source: " << request.catalogSourcePath << "\n";
+    return std::nullopt;
+  }
+  const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+  const auto catalog = atlantis::asset_system::parseAssetCatalogSource(text);
+  if (catalog.isErr()) {
+    std::cerr << "atlantis_asset_cooker: invalid catalog source " << request.catalogSourcePath << ": "
+              << catalogSourceParseErrorMessage(catalog.error()) << "\n";
+    return std::nullopt;
+  }
+
+  const std::string relativePath = computeRelativePathString(request.sourcePath, request.assetRoot);
+  const auto logicalPath = normalizeLogicalPath(relativePath);
+  const atlantis::asset_system::CatalogSourceEntry* entry =
+      logicalPath.isOk() ? catalog.value().find(CatalogRoot::Assets, logicalPath.value()) : nullptr;
+  if (entry == nullptr) {
+    std::cerr << "atlantis_asset_cooker: SourceNotInCatalog: assets:" << relativePath << " has no entry in "
+              << request.catalogSourcePath << "\n";
+    return std::nullopt;
+  }
+  if (entry->type != expectedType) {
+    std::cerr << "atlantis_asset_cooker: CatalogTypeMismatch: assets:" << relativePath << " is cataloged as "
+              << atlantis::asset_system::toString(entry->type) << ", cooked as "
+              << atlantis::asset_system::toString(expectedType) << "\n";
+    return std::nullopt;
+  }
+  return entry->guid;
+}
+
 [[nodiscard]] std::string stripAuthoringExtension(const std::string& relativePath, std::string_view extension) {
   if (relativePath.size() > extension.size() &&
       relativePath.compare(relativePath.size() - extension.size(), extension.size(), extension) == 0) {
@@ -208,8 +259,10 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
   const fs::path artifactPath = fs::path(request.outputDir) / (base + ".amesh");
   const fs::path metadataPath = fs::path(request.outputDir) / (base + ".amesh.meta.txt");
 
+  const auto guid = resolveCookGuid(request, atlantis::asset_system::CatalogAssetType::Mesh);
+  if (!guid) return 1;
   const auto result =
-      cookStaticMesh(request.sourcePath, relativePath, artifactPath.string(), metadataPath.string());
+      cookStaticMesh(request.sourcePath, relativePath, *guid, artifactPath.string(), metadataPath.string());
   if (result.isErr()) {
     std::cerr << "atlantis_asset_cooker: cook failed: " << cookErrorMessage(result.error()) << "\n";
     return 1;
@@ -234,7 +287,9 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
   const fs::path artifactPath = fs::path(request.outputDir) / (base + ".ascene");
   const fs::path metadataPath = fs::path(request.outputDir) / (base + ".ascene.meta.txt");
 
-  const auto result = cookScene(request.sourcePath, artifactPath.string(), metadataPath.string());
+  const auto guid = resolveCookGuid(request, atlantis::asset_system::CatalogAssetType::Scene);
+  if (!guid) return 1;
+  const auto result = cookScene(request.sourcePath, *guid, artifactPath.string(), metadataPath.string());
   if (result.isErr()) {
     std::cerr << "atlantis_asset_cooker: cook failed: " << sceneCookErrorMessage(result.error()) << "\n";
     return 1;
@@ -318,11 +373,13 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
 
   // Spec 0045: the whole chain the DDS carries, passed through verbatim.
   const bool srgb = image.srgb || request.colorSpace == "srgb";
+  const auto guid = resolveCookGuid(request, atlantis::asset_system::CatalogAssetType::Texture);
+  if (!guid) return 1;
   const auto result = cookTextureBc7(image.blockBytes.data(), image.blockBytes.size(), image.width, image.height,
                                      image.mipCount,
                                      srgb ? atlantis::asset_system::TextureColorSpace::Srgb
                                           : atlantis::asset_system::TextureColorSpace::Unorm,
-                                     relativePath, artifactPath, metadataPath);
+                                     relativePath, *guid, artifactPath, metadataPath);
   if (result.isErr()) {
     std::cerr << "atlantis_asset_cooker: cook failed: " << textureCookErrorMessage(result.error()) << "\n";
     return 1;
@@ -376,8 +433,10 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
   const fs::path artifactPath = fs::path(request.outputDir) / (base + ".atex");
   const fs::path metadataPath = fs::path(request.outputDir) / (base + ".atex.meta.txt");
 
+  const auto guid = resolveCookGuid(request, atlantis::asset_system::CatalogAssetType::Texture);
+  if (!guid) return 1;
   const auto result = cookTexture(decoded, static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height),
-                                   channelsInFile, colorSpace, relativePath, artifactPath, metadataPath);
+                                   channelsInFile, colorSpace, relativePath, *guid, artifactPath, metadataPath);
   stbi_image_free(decoded);
   if (result.isErr()) {
     std::cerr << "atlantis_asset_cooker: cook failed: " << textureCookErrorMessage(result.error()) << "\n";
@@ -458,8 +517,10 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
   const std::string base = fs::path(request.stampPath).stem().string();
   const fs::path artifactPath = fs::path(request.outputDir) / (base + ".aenv");
   const fs::path metadataPath = fs::path(request.outputDir) / (base + ".aenv.meta.txt");
+  const auto guid = resolveCookGuid(request, atlantis::asset_system::CatalogAssetType::Environment);
+  if (!guid) return 1;
   const auto result = cookEnvironment(decoded, static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height),
-                                      relativePath, artifactPath, metadataPath);
+                                      relativePath, *guid, artifactPath, metadataPath);
   stbi_image_free(decoded);
   if (result.isErr()) {
     std::cerr << "atlantis_asset_cooker: cook failed: " << environmentCookErrorMessage(result.error()) << "\n";
@@ -479,7 +540,10 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
   const fs::path artifactPath = fs::path(request.outputDir) / (base + ".amaterial");
   const fs::path metadataPath = fs::path(request.outputDir) / (base + ".amaterial.meta.txt");
 
-  const auto result = cookMaterial(request.sourcePath, relativePath, artifactPath.string(), metadataPath.string());
+  const auto guid = resolveCookGuid(request, atlantis::asset_system::CatalogAssetType::Material);
+  if (!guid) return 1;
+  const auto result =
+      cookMaterial(request.sourcePath, relativePath, *guid, artifactPath.string(), metadataPath.string());
   if (result.isErr()) {
     std::cerr << "atlantis_asset_cooker: cook failed: " << materialCookErrorMessage(result.error()) << "\n";
     return 1;
@@ -589,7 +653,8 @@ struct ManifestEntry {
     std::istringstream tokens(line);
     for (std::string token; tokens >> token;) args.push_back(substitutePlaceholders(token, request));
     CookCommandRequest lineRequest;
-    if (!parseCookArguments(args, lineRequest, std::cerr) || lineRequest.isValidateSet ||
+    if (!parseCookArguments(args, lineRequest, std::cerr, CookArgumentSource::CookManifestLine) ||
+        lineRequest.isValidateSet ||
         lineRequest.kind == AssetKind::CookManifest || lineRequest.kind == AssetKind::Environment ||
         lineRequest.kind == AssetKind::MintGuid || lineRequest.kind == AssetKind::Lookup ||
         lineRequest.kind == AssetKind::Migrate0047) {
@@ -1081,7 +1146,8 @@ class Migration {
 
 }  // namespace
 
-bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest& request, std::ostream& err) {
+bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest& request, std::ostream& err,
+                        CookArgumentSource source) {
   bool sawSource = false, sawAssetRoot = false, sawOutputDir = false, sawAssetList = false;
   bool sawUnrecognized = false;
   const auto valueAfterEquals = [](std::string_view arg, std::string_view flag) -> std::optional<std::string> {
@@ -1093,8 +1159,8 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
     const std::string_view arg = argString;
     if (arg == "--validate-set") {
       request.isValidateSet = true;
-    } else if (auto source = valueAfterEquals(arg, "--source=")) {
-      request.sourcePath = *source;
+    } else if (auto sourcePath = valueAfterEquals(arg, "--source=")) {
+      request.sourcePath = *sourcePath;
       sawSource = true;
     } else if (auto assetRoot = valueAfterEquals(arg, "--asset-root=")) {
       request.assetRoot = *assetRoot;
@@ -1181,8 +1247,25 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
   } else {
     haveRequiredFlags = sawSource && sawAssetRoot && sawOutputDir;
   }
-  if (!request.guid.empty() && request.kind != AssetKind::Lookup) {
-    err << "atlantis_asset_cooker: --guid= is accepted only with --kind=lookup\n";
+  // Plan 0047 P7: a per-asset cook takes its GUID from --catalog-source= on
+  // the command line and from --guid= on a cook-manifest line, never the
+  // other way round, so a build script can never carry a GUID.
+  const bool isCookKind = !request.isValidateSet &&
+                          (request.kind == AssetKind::StaticMesh || request.kind == AssetKind::Scene ||
+                           request.kind == AssetKind::Texture || request.kind == AssetKind::Material ||
+                           request.kind == AssetKind::Environment);
+  if (!request.guid.empty() && request.kind != AssetKind::Lookup &&
+      !(isCookKind && source == CookArgumentSource::CookManifestLine)) {
+    err << "atlantis_asset_cooker: --guid= is accepted only with --kind=lookup or on a cook-manifest line\n";
+    return false;
+  }
+  if (isCookKind && source == CookArgumentSource::CommandLine && request.catalogSourcePath.empty()) {
+    err << "atlantis_asset_cooker: a cook needs --catalog-source=<path>\n";
+    return false;
+  }
+  if (isCookKind && source == CookArgumentSource::CookManifestLine &&
+      (request.guid.empty() || !request.catalogSourcePath.empty())) {
+    err << "atlantis_asset_cooker: a cook-manifest line needs --guid= and no --catalog-source=\n";
     return false;
   }
   return !sawUnrecognized && haveRequiredFlags;

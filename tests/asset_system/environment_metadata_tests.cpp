@@ -1,11 +1,14 @@
 #include <atlantis/asset_system/environment_metadata.h>
 
+#include <atlantis/asset_system/asset_guid.h>
+
 #include <catch2/catch_test_macros.hpp>
 
 using namespace atlantis::asset_system;
 
 TEST_CASE("environment metadata round-trips its exact fields", "[asset_system]") {
   EnvironmentMetadata original;
+  original.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   original.assetId = 0x0102030405060708ULL;
   original.sourceLogicalPath = "environments/studio.hdr";
   original.faceSize = 256;
@@ -24,15 +27,16 @@ TEST_CASE("environment metadata round-trips its exact fields", "[asset_system]")
 
 TEST_CASE("environment metadata parser is strict", "[asset_system]") {
   EnvironmentMetadata metadata;
+  metadata.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   metadata.sourceLogicalPath = "environment.hdr";
   const std::string valid = serializeEnvironmentMetadata(metadata);
   SECTION("wrong line count") {
-    CHECK(parseEnvironmentMetadata("atlantis_environment_metadata_version: 1\n").error() ==
+    CHECK(parseEnvironmentMetadata("atlantis_environment_metadata_version: 2\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n").error() ==
           MetadataParseError::WrongLineCount);
   }
   SECTION("unknown version") {
     std::string text = valid;
-    text.replace(text.find(": 1"), 3, ": 2");
+    text.replace(text.find("version: 2"), 10, "version: 3");
     CHECK(parseEnvironmentMetadata(text).error() == MetadataParseError::UnknownMetadataVersion);
   }
   SECTION("wrong field") {

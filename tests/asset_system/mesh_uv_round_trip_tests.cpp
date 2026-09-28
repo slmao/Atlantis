@@ -9,6 +9,19 @@
 #include <random>
 #include <string>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 // Plan 0017 Section D9/V9: a dedicated CPU round-trip test proving a UV
 // value written in a real authoring source reaches loadStaticMeshAsset()'s
 // own returned StaticMeshAssetData bit-for-bit -- through the real
@@ -77,7 +90,7 @@ TEST_CASE("A UV value written in a real authoring source reaches loadStaticMeshA
   const fs::path metadataPath = dir.path / "out" / "uv_bearing.amesh.meta.txt";
 
   const auto cookResult =
-      cookStaticMesh(sourcePath.string(), "meshes/uv_bearing.mesh.txt", artifactPath.string(), metadataPath.string());
+      cookStaticMesh(sourcePath.string(), "meshes/uv_bearing.mesh.txt", testAssetGuid("meshes/uv_bearing.mesh.txt"), artifactPath.string(), metadataPath.string());
   REQUIRE(cookResult.isOk());
 
   const auto loadResult = loadStaticMeshAsset(artifactPath.string(), metadataPath.string());

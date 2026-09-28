@@ -1,11 +1,14 @@
 #include <atlantis/asset_system/material_metadata.h>
 
+#include <atlantis/asset_system/asset_guid.h>
+
 #include <catch2/catch_test_macros.hpp>
 
 using namespace atlantis::asset_system;
 
 TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips exactly", "[asset_system][material]") {
   MaterialMetadata original;
+  original.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   original.assetId = 0x0102030405060708ULL;
   original.sourceLogicalPath = "materials/unlit_textured_quad.material.txt";
   original.kind = MaterialKind::UnlitTextured;
@@ -38,6 +41,7 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips exac
 TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a LitTextured kind exactly",
           "[asset_system][material][light]") {
   MaterialMetadata original;
+  original.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   original.assetId = 0x0102030405060708ULL;
   original.sourceLogicalPath = "materials/lit_textured_quad.material.txt";
   original.kind = MaterialKind::LitTextured;
@@ -60,6 +64,7 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a Pb
           "fields exactly",
           "[asset_system][material]") {
   MaterialMetadata original;
+  original.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   original.assetId = 0x0102030405060708ULL;
   original.sourceLogicalPath = "materials/pbr_dielectric_rough.material.txt";
   original.kind = MaterialKind::PbrDirectLit;
@@ -95,6 +100,7 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a me
           "std::to_string(float) would NOT preserve exactly",
           "[asset_system][material]") {
   MaterialMetadata original;
+  original.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   original.assetId = 0x0102030405060708ULL;
   original.sourceLogicalPath = "materials/pbr_precise.material.txt";
   original.kind = MaterialKind::PbrDirectLit;
@@ -110,7 +116,7 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a me
 }
 
 TEST_CASE("parseMaterialMetadata rejects a wrong line count", "[asset_system][material]") {
-  const auto result = parseMaterialMetadata("atlantis_material_metadata_version: 8\n");
+  const auto result = parseMaterialMetadata("atlantis_material_metadata_version: 9\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::WrongLineCount);
 }
@@ -123,7 +129,7 @@ TEST_CASE("parseMaterialMetadata rejects an unknown metadata version", "[asset_s
   // alpha_cutoff) so the version check -- which
   // runs only after the line-count check -- is actually reached.
   const std::string text =
-      "atlantis_material_metadata_version: 2\n"
+      "atlantis_material_metadata_version: 2\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -150,7 +156,7 @@ TEST_CASE("parseMaterialMetadata rejects an unknown metadata version", "[asset_s
 TEST_CASE("parseMaterialMetadata rejects the retired version 1 (wrong line count too, but version is checked first)",
           "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 1\n"
+      "atlantis_material_metadata_version: 1\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -162,7 +168,7 @@ TEST_CASE("parseMaterialMetadata rejects the retired version 1 (wrong line count
 
 TEST_CASE("parseMaterialMetadata rejects a field name mismatch", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 8\n"
+      "atlantis_material_metadata_version: 9\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 0000000000000001\n"
       "wrong_field: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -188,7 +194,7 @@ TEST_CASE("parseMaterialMetadata rejects a field name mismatch", "[asset_system]
 
 TEST_CASE("parseMaterialMetadata rejects a malformed kind value", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 8\n"
+      "atlantis_material_metadata_version: 9\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: pbr\n"
@@ -214,7 +220,7 @@ TEST_CASE("parseMaterialMetadata rejects a malformed kind value", "[asset_system
 
 TEST_CASE("parseMaterialMetadata rejects a malformed asset_id (uppercase hex)", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 8\n"
+      "atlantis_material_metadata_version: 9\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 00000000000000AB\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -240,7 +246,7 @@ TEST_CASE("parseMaterialMetadata rejects a malformed asset_id (uppercase hex)", 
 
 TEST_CASE("parseMaterialMetadata rejects a malformed texture_asset (uppercase hex)", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 8\n"
+      "atlantis_material_metadata_version: 9\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -266,7 +272,7 @@ TEST_CASE("parseMaterialMetadata rejects a malformed texture_asset (uppercase he
 
 TEST_CASE("parseMaterialMetadata rejects a malformed base_color_factor component", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 8\n"
+      "atlantis_material_metadata_version: 9\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -297,6 +303,7 @@ TEST_CASE("parseMaterialMetadata rejects a malformed base_color_factor component
 TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a real, non-zero normalMapTexture",
           "[asset_system][material]") {
   MaterialMetadata original;
+  original.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   original.assetId = 0x0102030405060708ULL;
   original.sourceLogicalPath = "materials/pbr_normal_mapped.material.txt";
   original.kind = MaterialKind::PbrDirectLit;
@@ -313,7 +320,7 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a re
 TEST_CASE("parseMaterialMetadata rejects a malformed normal_map_texture (uppercase hex)",
           "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 8\n"
+      "atlantis_material_metadata_version: 9\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -342,7 +349,7 @@ TEST_CASE("parseMaterialMetadata rejects a malformed normal_map_texture (upperca
 // every other field's own identical pattern in this file.
 TEST_CASE("parseMaterialMetadata rejects a malformed clearcoat_factor", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 8\n"
+      "atlantis_material_metadata_version: 9\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -368,7 +375,7 @@ TEST_CASE("parseMaterialMetadata rejects a malformed clearcoat_factor", "[asset_
 
 TEST_CASE("parseMaterialMetadata rejects a malformed clearcoat_roughness", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 8\n"
+      "atlantis_material_metadata_version: 9\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -396,6 +403,7 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a Pb
           "clearcoat fields exactly",
           "[asset_system][material]") {
   MaterialMetadata original;
+  original.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   original.assetId = 0x0102030405060708ULL;
   original.sourceLogicalPath = "materials/clearcoat_test.material.txt";
   original.kind = MaterialKind::PbrClearcoat;
@@ -417,7 +425,7 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a Pb
 // clearcoat_factor/clearcoat_roughness's own identical pattern above.
 TEST_CASE("parseMaterialMetadata rejects a malformed sheen_color component", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 8\n"
+      "atlantis_material_metadata_version: 9\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -443,7 +451,7 @@ TEST_CASE("parseMaterialMetadata rejects a malformed sheen_color component", "[a
 
 TEST_CASE("parseMaterialMetadata rejects a malformed sheen_roughness", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 8\n"
+      "atlantis_material_metadata_version: 9\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -471,6 +479,7 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a Pb
           "fields exactly",
           "[asset_system][material]") {
   MaterialMetadata original;
+  original.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   original.assetId = 0x0102030405060708ULL;
   original.sourceLogicalPath = "materials/sheen_test.material.txt";
   original.kind = MaterialKind::PbrSheen;
@@ -497,7 +506,7 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a Pb
 // own identical pattern above.
 TEST_CASE("parseMaterialMetadata rejects a malformed anisotropy_factor", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 8\n"
+      "atlantis_material_metadata_version: 9\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -523,7 +532,7 @@ TEST_CASE("parseMaterialMetadata rejects a malformed anisotropy_factor", "[asset
 
 TEST_CASE("parseMaterialMetadata rejects a malformed anisotropy_rotation", "[asset_system][material]") {
   const std::string text =
-      "atlantis_material_metadata_version: 8\n"
+      "atlantis_material_metadata_version: 9\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -551,6 +560,7 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a Pb
           "anisotropy fields exactly",
           "[asset_system][material]") {
   MaterialMetadata original;
+  original.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   original.assetId = 0x0102030405060708ULL;
   original.sourceLogicalPath = "materials/anisotropic_test.material.txt";
   original.kind = MaterialKind::PbrAnisotropic;
@@ -575,6 +585,7 @@ TEST_CASE("serializeMaterialMetadata then parseMaterialMetadata round-trips a Pb
 TEST_CASE("serialize/parseMaterialMetadata round-trips emissive_factor, which is always written",
           "[asset_system][material][emissive]") {
   MaterialMetadata original;
+  original.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   original.assetId = 1;
   original.sourceLogicalPath = "materials/e.material.txt";
   original.kind = MaterialKind::PbrSheen;
@@ -588,13 +599,15 @@ TEST_CASE("serialize/parseMaterialMetadata round-trips emissive_factor, which is
   for (int i = 0; i < 3; ++i) CHECK(parsed.value().emissiveFactor[i] == original.emissiveFactor[i]);
 
   MaterialMetadata zero;
+
+  zero.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   zero.sourceLogicalPath = "materials/z.material.txt";
   CHECK(serializeMaterialMetadata(zero).find("emissive_factor: 0 0 0\n") != std::string::npos);
 }
 
 TEST_CASE("parseMaterialMetadata rejects the retired 15-line version-5 sidecar", "[asset_system][material][emissive]") {
   const std::string text =
-      "atlantis_material_metadata_version: 5\n"
+      "atlantis_material_metadata_version: 5\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -622,6 +635,7 @@ TEST_CASE("parseMaterialMetadata rejects the retired 15-line version-5 sidecar",
 TEST_CASE("serialize/parseMaterialMetadata round-trips alpha_mode and alpha_cutoff, which are always written",
           "[asset_system][material][transparency]") {
   MaterialMetadata original;
+  original.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   original.assetId = 1;
   original.sourceLogicalPath = "materials/a.material.txt";
   original.kind = MaterialKind::PbrDirectLit;
@@ -635,6 +649,8 @@ TEST_CASE("serialize/parseMaterialMetadata round-trips alpha_mode and alpha_cuto
   CHECK(parsed.value().alphaCutoff == original.alphaCutoff);
 
   MaterialMetadata blend;
+
+  blend.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   blend.sourceLogicalPath = "materials/b.material.txt";
   blend.alphaMode = MaterialAlphaMode::Blend;
   const auto blendParsed = parseMaterialMetadata(serializeMaterialMetadata(blend));
@@ -642,6 +658,8 @@ TEST_CASE("serialize/parseMaterialMetadata round-trips alpha_mode and alpha_cuto
   CHECK(blendParsed.value().alphaMode == MaterialAlphaMode::Blend);
 
   MaterialMetadata defaults;
+
+  defaults.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   defaults.sourceLogicalPath = "materials/z.material.txt";
   const std::string defaultText = serializeMaterialMetadata(defaults);
   CHECK(defaultText.find("alpha_mode: opaque\nalpha_cutoff: 0.5\n") != std::string::npos);
@@ -650,6 +668,7 @@ TEST_CASE("serialize/parseMaterialMetadata round-trips alpha_mode and alpha_cuto
 TEST_CASE("parseMaterialMetadata rejects an unknown alpha_mode value and a malformed alpha_cutoff",
           "[asset_system][material][transparency]") {
   MaterialMetadata original;
+  original.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   original.sourceLogicalPath = "materials/a.material.txt";
   const std::string text = serializeMaterialMetadata(original);
 
@@ -675,7 +694,7 @@ TEST_CASE("parseMaterialMetadata rejects an unknown alpha_mode value and a malfo
 TEST_CASE("parseMaterialMetadata rejects the retired 16-line version-6 sidecar",
           "[asset_system][material][transparency]") {
   const std::string text =
-      "atlantis_material_metadata_version: 6\n"
+      "atlantis_material_metadata_version: 6\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"
@@ -704,6 +723,7 @@ TEST_CASE("parseMaterialMetadata rejects the retired 16-line version-6 sidecar",
 TEST_CASE("serialize/parseMaterialMetadata round-trips emissive_texture, which is always written",
           "[asset_system][material][emissive]") {
   MaterialMetadata original;
+  original.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   original.assetId = 1;
   original.sourceLogicalPath = "materials/a.material.txt";
   original.kind = MaterialKind::PbrDirectLit;
@@ -715,6 +735,8 @@ TEST_CASE("serialize/parseMaterialMetadata round-trips emissive_texture, which i
   CHECK(parsed.value().emissiveTexture == 0x0123456789abcdefULL);
 
   MaterialMetadata none;
+
+  none.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   none.sourceLogicalPath = "materials/z.material.txt";
   CHECK(serializeMaterialMetadata(none).find("emissive_texture: 0000000000000000\n") != std::string::npos);
 
@@ -727,7 +749,7 @@ TEST_CASE("serialize/parseMaterialMetadata round-trips emissive_texture, which i
 
 TEST_CASE("parseMaterialMetadata rejects the retired 18-line version-7 sidecar", "[asset_system][material][emissive]") {
   const std::string text =
-      "atlantis_material_metadata_version: 7\n"
+      "atlantis_material_metadata_version: 7\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 0000000000000001\n"
       "source_logical_path: a.material.txt\n"
       "kind: unlit_textured\n"

@@ -12,6 +12,19 @@
 #include <sstream>
 #include <string>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 using namespace atlantis::asset_system;
 
 namespace {
@@ -60,6 +73,7 @@ TEST_CASE("cookTexture writes a well-formed artifact/metadata pair", "[asset_sys
   const fs::path metadataPath = dir.path / "checker.atex.meta.txt";
 
   const auto result = cookTexture(pixels.data(), 4, 4, 3, TextureColorSpace::Srgb, "textures/checker.png",
+                                   testAssetGuid("textures/checker.png"),
                                    artifactPath, metadataPath);
   REQUIRE(result.isOk());
   REQUIRE(fs::exists(artifactPath));
@@ -84,7 +98,7 @@ TEST_CASE("cookTexture writes a well-formed artifact/metadata pair", "[asset_sys
   CHECK(metadata.value().height == 4);
   CHECK(metadata.value().format == TextureColorSpace::Srgb);
   CHECK(metadata.value().channelsInFile == 3);
-  CHECK(metadata.value().assetId == computeAssetId("textures/checker.png"));
+  CHECK(metadata.value().assetId == assetKey(testAssetGuid("textures/checker.png")));
 }
 
 TEST_CASE("cookTexture rejects a zero width or height", "[asset_system]") {
@@ -93,6 +107,7 @@ TEST_CASE("cookTexture rejects a zero width or height", "[asset_system]") {
 
   SECTION("zero width") {
     const auto result = cookTexture(pixels.data(), 0, 1, 4, TextureColorSpace::Unorm, "a.png",
+                                     testAssetGuid("a.png"),
                                      dir.path / "a.atex", dir.path / "a.atex.meta.txt");
     REQUIRE(result.isErr());
     CHECK(result.error() == TextureCookError::ZeroDimension);
@@ -100,6 +115,7 @@ TEST_CASE("cookTexture rejects a zero width or height", "[asset_system]") {
 
   SECTION("zero height") {
     const auto result = cookTexture(pixels.data(), 1, 0, 4, TextureColorSpace::Unorm, "a.png",
+                                     testAssetGuid("a.png"),
                                      dir.path / "a.atex", dir.path / "a.atex.meta.txt");
     REQUIRE(result.isErr());
     CHECK(result.error() == TextureCookError::ZeroDimension);
@@ -110,6 +126,7 @@ TEST_CASE("cookTexture rejects a dimension exceeding kMaxTextureDimension", "[as
   TempDirGuard dir("dimension_exceeds_maximum");
   const auto pixels = makeRgbaBytes(1, 1);
   const auto result = cookTexture(pixels.data(), kMaxTextureDimension + 1, 1, 4, TextureColorSpace::Unorm, "a.png",
+                                   testAssetGuid("a.png"),
                                    dir.path / "a.atex", dir.path / "a.atex.meta.txt");
   REQUIRE(result.isErr());
   CHECK(result.error() == TextureCookError::DimensionExceedsMaximum);
@@ -121,7 +138,7 @@ TEST_CASE("cookTexture reports AtomicWriteFailed when the artifact output path i
   const fs::path artifactPath = dir.path / "a.atex";
   fs::create_directories(artifactPath);
 
-  const auto result = cookTexture(pixels.data(), 1, 1, 4, TextureColorSpace::Unorm, "a.png", artifactPath,
+  const auto result = cookTexture(pixels.data(), 1, 1, 4, TextureColorSpace::Unorm, "a.png", testAssetGuid("a.png"), artifactPath,
                                    dir.path / "a.atex.meta.txt");
   REQUIRE(result.isErr());
   CHECK(result.error() == TextureCookError::AtomicWriteFailed);
@@ -133,9 +150,11 @@ TEST_CASE("cookTexture is deterministic -- cooking the same decoded bytes twice 
   const auto pixels = makeRgbaBytes(8, 8);
 
   const auto firstResult = cookTexture(pixels.data(), 8, 8, 4, TextureColorSpace::Unorm, "a.png",
+                                        testAssetGuid("a.png"),
                                         dir.path / "first.atex", dir.path / "first.atex.meta.txt");
   REQUIRE(firstResult.isOk());
   const auto secondResult = cookTexture(pixels.data(), 8, 8, 4, TextureColorSpace::Unorm, "a.png",
+                                         testAssetGuid("a.png"),
                                          dir.path / "second.atex", dir.path / "second.atex.meta.txt");
   REQUIRE(secondResult.isOk());
 
@@ -158,6 +177,7 @@ TEST_CASE("cookTexture rejects every malformed logical path normalizeLogicalPath
 
   const auto reject = [&](const std::string& malformedPath) {
     const auto result = cookTexture(pixels.data(), 1, 1, 4, TextureColorSpace::Unorm, malformedPath,
+                                     testAssetGuid(malformedPath),
                                      dir.path / "a.atex", dir.path / "a.atex.meta.txt");
     REQUIRE(result.isErr());
     CHECK(result.error() == TextureCookError::LogicalPathInvalid);
@@ -179,19 +199,21 @@ TEST_CASE("cookTexture accepts a not-yet-normalized logical path, cooking under 
   // Mirrors cookStaticMesh()'s own established shape: normalization
   // happens inside cookTexture() itself, so a caller-supplied path that
   // merely needs backslash/redundant-separator cleanup still succeeds,
-  // and both the recorded AssetId and sourceLogicalPath reflect the
-  // normalized form, never the raw caller input.
+  // and the recorded sourceLogicalPath reflects the normalized form, never
+  // the raw caller input. The AssetId is the key of the GUID the caller
+  // passed (Plan 0047 P7), independent of the path.
   TempDirGuard dir("logical_path_normalized");
   const auto pixels = makeRgbaBytes(1, 1);
 
   const auto result = cookTexture(pixels.data(), 1, 1, 4, TextureColorSpace::Unorm, "textures\\a.png",
+                                   testAssetGuid("textures\\a.png"),
                                    dir.path / "a.atex", dir.path / "a.atex.meta.txt");
   REQUIRE(result.isOk());
 
   const auto metadata = parseTextureMetadata(readFile(dir.path / "a.atex.meta.txt"));
   REQUIRE(metadata.isOk());
   CHECK(metadata.value().sourceLogicalPath == "textures/a.png");
-  CHECK(metadata.value().assetId == computeAssetId("textures/a.png"));
+  CHECK(metadata.value().assetId == assetKey(testAssetGuid("textures\\a.png")));
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +229,7 @@ TEST_CASE("cookTextureBc7 writes a well-formed v3 artifact/metadata pair", "[ass
   for (std::size_t i = 0; i < blocks.size(); ++i) blocks[i] = static_cast<std::uint8_t>((i * 11 + 5) % 256);
 
   const auto result = cookTextureBc7(blocks.data(), blocks.size(), 8, 8, 1, TextureColorSpace::Srgb,
-                                     "textures/rust.dds", dir.path / "rust.atex", dir.path / "rust.atex.meta.txt");
+                                     "textures/rust.dds", testAssetGuid("textures/rust.dds"), dir.path / "rust.atex", dir.path / "rust.atex.meta.txt");
   REQUIRE(result.isOk());
 
   const std::string artifactText = readFile(dir.path / "rust.atex");
@@ -227,7 +249,7 @@ TEST_CASE("cookTextureBc7 writes a well-formed v3 artifact/metadata pair", "[ass
   REQUIRE(metadata.isOk());
   CHECK(metadata.value().layout == TextureDataLayout::Bc7);
   CHECK(metadata.value().channelsInFile == 4);  // BC7 is always RGBA
-  CHECK(metadata.value().assetId == computeAssetId("textures/rust.dds"));
+  CHECK(metadata.value().assetId == assetKey(testAssetGuid("textures/rust.dds")));
   CHECK(metadata.value().mipCount == 1);
   CHECK(decoded.value().mipCount == 1);
 }
@@ -238,6 +260,7 @@ TEST_CASE("cookTextureBc7 rejects non-4-aligned dimensions", "[asset_system]") {
 
   SECTION("width not a multiple of 4") {
     const auto result = cookTextureBc7(blocks.data(), blocks.size(), 6, 4, 1, TextureColorSpace::Unorm, "a.dds",
+                                       testAssetGuid("a.dds"),
                                        dir.path / "a.atex", dir.path / "a.atex.meta.txt");
     REQUIRE(result.isErr());
     CHECK(result.error() == TextureCookError::NonAlignedDimensions);
@@ -245,6 +268,7 @@ TEST_CASE("cookTextureBc7 rejects non-4-aligned dimensions", "[asset_system]") {
 
   SECTION("height not a multiple of 4") {
     const auto result = cookTextureBc7(blocks.data(), blocks.size(), 4, 5, 1, TextureColorSpace::Unorm, "a.dds",
+                                       testAssetGuid("a.dds"),
                                        dir.path / "a.atex", dir.path / "a.atex.meta.txt");
     REQUIRE(result.isErr());
     CHECK(result.error() == TextureCookError::NonAlignedDimensions);
@@ -256,6 +280,7 @@ TEST_CASE("cookTextureBc7 rejects a block byte count that does not match the dim
   std::vector<std::uint8_t> blocks(32);  // 8x8 needs 64, not 32
 
   const auto result = cookTextureBc7(blocks.data(), blocks.size(), 8, 8, 1, TextureColorSpace::Unorm, "a.dds",
+                                     testAssetGuid("a.dds"),
                                      dir.path / "a.atex", dir.path / "a.atex.meta.txt");
   REQUIRE(result.isErr());
   CHECK(result.error() == TextureCookError::BlockDataSizeMismatch);
@@ -267,7 +292,7 @@ TEST_CASE("cookTextureBc7 rejects a malformed logical path like cookTexture does
   std::vector<std::uint8_t> blocks(16);
 
   const auto result = cookTextureBc7(blocks.data(), blocks.size(), 4, 4, 1, TextureColorSpace::Unorm,
-                                     "../escape.dds", dir.path / "a.atex", dir.path / "a.atex.meta.txt");
+                                     "../escape.dds", testAssetGuid("../escape.dds"), dir.path / "a.atex", dir.path / "a.atex.meta.txt");
   REQUIRE(result.isErr());
   CHECK(result.error() == TextureCookError::LogicalPathInvalid);
 }
@@ -282,6 +307,7 @@ TEST_CASE("cookTextureBc7 writes a full mip chain verbatim, with its count in ar
   for (std::size_t i = 0; i < chain.size(); ++i) chain[i] = static_cast<std::uint8_t>((i * 5 + 1) % 256);
 
   const auto result = cookTextureBc7(chain.data(), chain.size(), 16, 8, 5, TextureColorSpace::Unorm, "t/chain.dds",
+                                     testAssetGuid("t/chain.dds"),
                                      dir.path / "chain.atex", dir.path / "chain.atex.meta.txt");
   REQUIRE(result.isOk());
   const std::string artifactText = readFile(dir.path / "chain.atex");
@@ -304,12 +330,14 @@ TEST_CASE("cookTextureBc7 rejects a mip count of 0 or beyond the full chain, and
   std::vector<std::uint8_t> chain(static_cast<std::size_t>(textureMipChainByteCount(8, 8, TextureDataLayout::Bc7, 4)));
   for (const std::uint32_t count : {0U, 5U}) {  // an 8x8 texture has 4 levels
     const auto result = cookTextureBc7(chain.data(), chain.size(), 8, 8, count, TextureColorSpace::Unorm, "a.dds",
+                                       testAssetGuid("a.dds"),
                                        dir.path / "a.atex", dir.path / "a.atex.meta.txt");
     REQUIRE(result.isErr());
     CHECK(result.error() == TextureCookError::InvalidMipCount);
   }
   // A 4-level payload declared as 3 levels.
   const auto result = cookTextureBc7(chain.data(), chain.size(), 8, 8, 3, TextureColorSpace::Unorm, "a.dds",
+                                     testAssetGuid("a.dds"),
                                      dir.path / "a.atex", dir.path / "a.atex.meta.txt");
   REQUIRE(result.isErr());
   CHECK(result.error() == TextureCookError::BlockDataSizeMismatch);
