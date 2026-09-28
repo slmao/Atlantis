@@ -109,6 +109,7 @@ function(atlantis_add_static_mesh_asset)
   add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
 
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS "${ARG_SOURCE}")
+  set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "mesh\tassets\t${ARG_SOURCE}")
 
   # Exposed to the caller (e.g. Step 6's fixture consumer) so it can
   # add_dependencies() on the artifact without hand-reconstructing this
@@ -230,6 +231,7 @@ function(atlantis_add_scene_asset)
   if(dependency_targets)
     add_dependencies(${ARG_NAME}_asset ${dependency_targets})
   endif()
+  set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "scene\tassets\t${ARG_SOURCE}")
 
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
@@ -279,6 +281,12 @@ function(atlantis_add_imported_scene)
     VERBATIM
   )
   add_custom_target(atlantis_${ARG_NAME}_scene ALL DEPENDS "${stamp}")
+  # Plan 0047 P7/P10: the import root declares itself as
+  # content:<content-root name>/<glTF file name>.
+  get_filename_component(content_root_name "${ARG_CONTENT_ROOT}" NAME)
+  get_filename_component(gltf_name "${ARG_GLTF}" NAME)
+  set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS
+    "gltf_import\tcontent\t${content_root_name}/${gltf_name}")
 
   set(ATLANTIS_${ARG_NAME}_scene_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_scene_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
@@ -347,6 +355,7 @@ function(atlantis_add_texture_asset)
   # DuplicateLogicalPath, caught by atlantis_finalize_asset_validation()'s
   # own --validate-set exactly like any other asset kind's duplicate.
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS "${ARG_SOURCE}")
+  set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "texture\tassets\t${ARG_SOURCE}")
 
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
@@ -393,6 +402,7 @@ function(atlantis_add_environment_asset)
   )
   add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS "${ARG_SOURCE}")
+  set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "environment\tassets\t${ARG_SOURCE}")
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
@@ -460,6 +470,7 @@ function(atlantis_add_material_asset)
   endif()
 
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS "${ARG_SOURCE}")
+  set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "material\tassets\t${ARG_SOURCE}")
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
@@ -477,6 +488,10 @@ endfunction()
 # the root CMakeLists.txt, after every add_subdirectory() that could
 # declare an asset.
 function(atlantis_finalize_asset_validation)
+  # Plan 0047 P10: deferred to the end of the top-level directory so that
+  # declarations made after this call (tests/) are included.
+  cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL _atlantis_write_asset_declarations)
+
   get_property(declared_paths GLOBAL PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS)
   set(list_path "${CMAKE_BINARY_DIR}/assets/declared_assets.txt")
   list(JOIN declared_paths "\n" declared_paths_text)
@@ -488,4 +503,14 @@ function(atlantis_finalize_asset_validation)
     COMMENT "Validating declared asset set for collisions"
     VERBATIM
   )
+endfunction()
+
+# Plan 0047 P10: every declaration as one "type<TAB>root<TAB>path" line, in
+# declaration order -- the migration's input (M3) and the catalog
+# assembly's declaration check (M4). Additive beside declared_assets.txt
+# until M4 retires that file.
+function(_atlantis_write_asset_declarations)
+  get_property(declarations GLOBAL PROPERTY ATLANTIS_ASSET_DECLARATIONS)
+  list(JOIN declarations "\n" declarations_text)
+  file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/assets/declarations.txt" CONTENT "${declarations_text}\n")
 endfunction()

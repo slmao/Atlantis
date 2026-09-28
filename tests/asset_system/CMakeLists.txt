@@ -5,6 +5,7 @@ add_executable(atlantis_asset_system_tests
   asset_id_tests.cpp
   asset_guid_tests.cpp
   asset_catalog_source_tests.cpp
+  asset_declarations_tests.cpp
   asset_set_validation_tests.cpp
   mesh_source_tests.cpp
   mesh_artifact_u32_tests.cpp
@@ -58,6 +59,11 @@ target_include_directories(atlantis_asset_system_tests PRIVATE
 # tests/image_regression/CMakeLists.txt.
 target_compile_definitions(atlantis_asset_system_tests PRIVATE
   ATLANTIS_ASSET_SYSTEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/asset_system"
+  # Plan 0047 M2 (P10): the generated declarations list, the list it sits
+  # beside until M4, and the Bistro content gate.
+  ATLANTIS_ASSET_DECLARATIONS_PATH="${CMAKE_BINARY_DIR}/assets/declarations.txt"
+  ATLANTIS_DECLARED_ASSETS_PATH="${CMAKE_BINARY_DIR}/assets/declared_assets.txt"
+  ATLANTIS_BISTRO_CONTENT_DIR="${ATLANTIS_BISTRO_CONTENT_DIR}"
 )
 
 # Plan 0029 Section P1: an absolute, configure-time path to the real
