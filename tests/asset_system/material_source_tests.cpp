@@ -380,7 +380,7 @@ TEST_CASE("parseMaterialSource rejects an empty texture logical path", "[asset_s
 
 // Plan 0029 Section P5/ADR-0074 Section 1: the 9-line form's own new
 // normal_map: line.
-TEST_CASE("parseMaterialSource parses the 9-line form's own normal_map: 8c5e369c-d4df-8a62-826a-0169f643864f for kind: pbr_direct_lit",
+TEST_CASE("parseMaterialSource parses the 9-line form's own normal_map: line for kind: pbr_direct_lit",
           "[asset_system][material]") {
   const auto result = parseMaterialSource(
       "atlantis_material_source_version: 10\n"
@@ -396,7 +396,7 @@ TEST_CASE("parseMaterialSource parses the 9-line form's own normal_map: 8c5e369c
   CHECK(result.value().normalMapAsset == testAssetGuid("textures/foo_normal.png"));
 }
 
-TEST_CASE("parseMaterialSource round-trips the 9-line form's own normal_map: 8c5e369c-d4df-8a62-826a-0169f643864f through serializeMaterialSource",
+TEST_CASE("parseMaterialSource round-trips the 9-line form's own normal_map: line through serializeMaterialSource",
           "[asset_system][material]") {
   const auto parsedResult = parseMaterialSource(
       "atlantis_material_source_version: 10\n"
@@ -416,7 +416,7 @@ TEST_CASE("parseMaterialSource round-trips the 9-line form's own normal_map: 8c5
   CHECK(reparsedResult.value().normalMapAsset == testAssetGuid("textures/foo_normal.png"));
 }
 
-TEST_CASE("serializeMaterialSource omits the normal_map: 8c5e369c-d4df-8a62-826a-0169f643864f when absent, round-tripping the 8-line form exactly",
+TEST_CASE("serializeMaterialSource omits the normal_map: line when absent, round-tripping the 8-line form exactly",
           "[asset_system][material]") {
   const auto parsedResult = parseMaterialSource(kValidPbrSource);
   REQUIRE(parsedResult.isOk());
@@ -428,7 +428,7 @@ TEST_CASE("serializeMaterialSource omits the normal_map: 8c5e369c-d4df-8a62-826a
   CHECK(reparsedResult.value().normalMapAsset == std::nullopt);
 }
 
-TEST_CASE("parseMaterialSource rejects normal_map: 5b0b5a9a-8737-8954-8516-4785b17cfe10 kind: unlit_textured with NormalMapNotSupportedForKind",
+TEST_CASE("parseMaterialSource rejects normal_map: for kind: unlit_textured with NormalMapNotSupportedForKind",
           "[asset_system][material]") {
   // ADR-0074 Section 1: a 9-line source is legal only for
   // kind: pbr_direct_lit -- neither unlit_textured.slang nor
@@ -451,7 +451,7 @@ TEST_CASE("parseMaterialSource rejects normal_map: 5b0b5a9a-8737-8954-8516-4785b
   CHECK(result.error() == MaterialSourceParseError::NormalMapNotSupportedForKind);
 }
 
-TEST_CASE("parseMaterialSource rejects normal_map: 5b0b5a9a-8737-8954-8516-4785b17cfe10 kind: lit_textured with NormalMapNotSupportedForKind",
+TEST_CASE("parseMaterialSource rejects normal_map: for kind: lit_textured with NormalMapNotSupportedForKind",
           "[asset_system][material]") {
   const auto result = parseMaterialSource(
       "atlantis_material_source_version: 10\n"
@@ -467,7 +467,7 @@ TEST_CASE("parseMaterialSource rejects normal_map: 5b0b5a9a-8737-8954-8516-4785b
   CHECK(result.error() == MaterialSourceParseError::NormalMapNotSupportedForKind);
 }
 
-TEST_CASE("parseMaterialSource rejects an empty normal_map: 4c21c449-515e-86e7-b870-06cb306d7762 with MissingField", "[asset_system][material]") {
+TEST_CASE("parseMaterialSource rejects an empty normal_map: value with MissingField", "[asset_system][material]") {
   // ADR-0074 Section 1: the same rule texture:'s own empty-value case
   // already uses -- an author who wants "no normal map" omits the line
   // entirely, exactly like every other optional field in this grammar.
