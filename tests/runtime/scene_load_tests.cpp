@@ -195,7 +195,7 @@ struct CookedMaterialFixture {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
   writeFile(sourcePath, "atlantis_material_source_version: 10\n"
                         "kind: unlit_textured\n"
-                        "texture: " + textureLogicalPath + "\n"
+                        "texture: " + atlantis::asset_system::toString(testAssetGuid(textureLogicalPath)) + "\n"
                         "filter: linear\n"
                         "address_mode: repeat\n");
   const fs::path artifactPath = dir / (logicalPath + ".amaterial");

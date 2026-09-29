@@ -746,7 +746,7 @@ struct CookedMaterialFixture {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
   writeFile(sourcePath, "atlantis_material_source_version: 10\n"
                         "kind: unlit_textured\n"
-                        "texture: " + textureLogicalPath + "\n"
+                        "texture: " + atlantis::asset_system::toString(testAssetGuid(textureLogicalPath)) + "\n"
                         "filter: linear\n"
                         "address_mode: repeat\n");
   const fs::path artifactPath = dir / (logicalPath + ".amaterial");
@@ -765,7 +765,7 @@ struct CookedMaterialFixture {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
   writeFile(sourcePath, "atlantis_material_source_version: 10\n"
                         "kind: pbr_direct_lit\n"
-                        "texture: " + textureLogicalPath + "\n"
+                        "texture: " + atlantis::asset_system::toString(testAssetGuid(textureLogicalPath)) + "\n"
                         "filter: linear\n"
                         "address_mode: repeat\n"
                         "base_color_factor: 1.0 1.0 1.0 1.0\n"
@@ -795,7 +795,8 @@ struct CookedSceneFixture {
   for (std::size_t i = 0; i < meshLogicalPaths.size(); ++i) {
     source += "node: node_id=" + std::to_string(i + 1) + testNodeGuidToken(static_cast<std::uint32_t>(i + 1)) +
               " parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=" +
-              meshLogicalPaths[i] + " material=" + materialLogicalPaths[i] + "\n";
+              atlantis::asset_system::toString(testAssetGuid(meshLogicalPaths[i])) + " material=" +
+              atlantis::asset_system::toString(testAssetGuid(materialLogicalPaths[i])) + "\n";
   }
   const fs::path sourcePath = dir / "scene_with_material.scene.txt";
   writeFile(sourcePath, source);
