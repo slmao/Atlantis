@@ -2,6 +2,7 @@
 #include "dds_parser.h"
 #include "guid_mint.h"
 
+#include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/asset_catalog_source.h>
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
@@ -12,7 +13,14 @@
 #include <atlantis/asset_system/cook_scene.h>
 #include <atlantis/asset_system/cook_texture.h>
 #include <atlantis/asset_system/asset_metadata.h>
+#include <atlantis/asset_system/environment_artifact.h>
+#include <atlantis/asset_system/material_artifact.h>
+#include <atlantis/asset_system/mesh_artifact.h>
+#include <atlantis/asset_system/scene_artifact.h>
+#include <atlantis/asset_system/texture_artifact.h>
 #include <atlantis/asset_system/logical_path.h>
+#include <atlantis/asset_system/material_source.h>
+#include <atlantis/asset_system/scene_source.h>
 #include <atlantis/asset_system/texture_types.h>
 
 #include <array>
@@ -256,6 +264,145 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
   return true;
 }
 
+// Temp-then-rename, so a reader never sees a half-written file.
+[[nodiscard]] bool writeFileReplacing(const fs::path& path, const std::string& text) {
+  const fs::path temp = path.string() + ".tmp";
+  {
+    std::error_code ec;
+    fs::create_directories(path.parent_path(), ec);
+    std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+    out << text;
+    out.flush();
+    if (!out.good()) return false;
+  }
+  std::error_code ec;
+  fs::rename(temp, path, ec);
+  return !ec;
+}
+
+[[nodiscard]] std::optional<std::string> readTextFile(const fs::path& path) {
+  std::ifstream file(path, std::ios::binary);
+  if (!file.is_open()) return std::nullopt;
+  std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+  if (file.bad()) return std::nullopt;
+  return text;
+}
+
+// Plan 0047 P12's source_schema table: the source grammar version a cook
+// reads. Textures, environments and imported meshes have none.
+constexpr std::uint32_t kMeshSourceSchema = 3;
+constexpr std::uint32_t kSceneSourceSchema = 7;
+constexpr std::uint32_t kMaterialSourceSchema = 10;
+
+// The mesh format is the one with two schemas (u16 and u32 indices), so a
+// mesh record reads its schema back from the artifact the cook wrote.
+[[nodiscard]] std::optional<std::uint32_t> meshArtifactSchema(const fs::path& artifactPath) {
+  const auto text = readTextFile(artifactPath);
+  if (!text) return std::nullopt;
+  const std::vector<std::byte> bytes(reinterpret_cast<const std::byte*>(text->data()),
+                                     reinterpret_cast<const std::byte*>(text->data()) + text->size());
+  const auto header = peekMeshArtifactHeader(bytes);
+  if (header.isErr()) return std::nullopt;
+  return header.value().schemaVersion;
+}
+
+[[nodiscard]] std::string absoluteLocation(const fs::path& path) {
+  return fs::absolute(path).lexically_normal().generic_string();
+}
+
+// Plan 0047 P12 / ADR-0098 D2: the one-record fragment every cook writes
+// beside its artifact, <artifact>.catalog.txt, with absolute locations.
+// dependencies are the GUIDs the cooked source references.
+[[nodiscard]] bool writeCookFragment(const CookCommandRequest& request, CatalogAssetType type, const AssetGuid& guid,
+                                     const fs::path& artifactPath, const fs::path& metadataPath,
+                                     std::uint32_t artifactSchema, std::optional<std::uint32_t> sourceSchema,
+                                     std::vector<AssetGuid> dependencies) {
+  AssetCatalogRecord record;
+  record.guid = guid;
+  record.assetId = assetKey(guid);
+  record.type = type;
+  if (!request.catalogId.empty()) {
+    const auto id = parseCatalogSourceId(request.catalogId);
+    if (!id) {
+      std::cerr << "atlantis_asset_cooker: --catalog-id is not <root>:<path>[#<sub-key>]: " << request.catalogId
+                << "\n";
+      return false;
+    }
+    record.source = *id;
+  } else {
+    const std::string relativePath = computeRelativePathString(request.sourcePath, request.assetRoot);
+    const auto logicalPath = normalizeLogicalPath(relativePath);
+    if (logicalPath.isErr()) {
+      std::cerr << "atlantis_asset_cooker: invalid logical path for the catalog fragment: " << relativePath << "\n";
+      return false;
+    }
+    record.source = CatalogSourceId{CatalogRoot::Assets, logicalPath.value(), ""};
+  }
+  record.artifact = absoluteLocation(artifactPath);
+  record.metadata = absoluteLocation(metadataPath);
+  record.artifactSchema = artifactSchema;
+  record.sourceSchema = sourceSchema;
+  record.tool = std::string(kImporterVersion);
+  record.dependencies = std::move(dependencies);
+  const fs::path fragmentPath = artifactPath.string() + ".catalog.txt";
+  if (!writeFileReplacing(fragmentPath, serializeAssetCatalog({record}))) {
+    std::cerr << "atlantis_asset_cooker: failed to write catalog fragment: " << fragmentPath.string() << "\n";
+    return false;
+  }
+  return true;
+}
+
+// The mesh and material GUIDs a scene source references.
+[[nodiscard]] std::optional<std::vector<AssetGuid>> sceneDependencies(const std::string& sourcePath) {
+  const auto text = readTextFile(sourcePath);
+  if (!text) return std::nullopt;
+  const auto parsed = parseSceneSource(*text);
+  if (parsed.isErr()) return std::nullopt;
+  std::vector<AssetGuid> dependencies;
+  for (const ParsedSceneNode& node : parsed.value().nodes) {
+    if (node.meshAsset) dependencies.push_back(*node.meshAsset);
+    if (node.materialAsset) dependencies.push_back(*node.materialAsset);
+  }
+  return dependencies;
+}
+
+// The texture GUIDs a material source references.
+[[nodiscard]] std::optional<std::vector<AssetGuid>> materialDependencies(const std::string& sourcePath) {
+  const auto text = readTextFile(sourcePath);
+  if (!text) return std::nullopt;
+  const auto parsed = parseMaterialSource(*text);
+  if (parsed.isErr()) return std::nullopt;
+  std::vector<AssetGuid> dependencies{parsed.value().textureAsset};
+  if (parsed.value().normalMapAsset) dependencies.push_back(*parsed.value().normalMapAsset);
+  if (parsed.value().emissiveTextureAsset) dependencies.push_back(*parsed.value().emissiveTextureAsset);
+  return dependencies;
+}
+
+// Where a per-asset cook writes its artifact -- the same names each cook
+// mode computes.
+[[nodiscard]] fs::path cookArtifactPath(const CookCommandRequest& request) {
+  const std::string relativePath = computeRelativePathString(request.sourcePath, request.assetRoot);
+  const fs::path outputDir(request.outputDir);
+  switch (request.kind) {
+    case AssetKind::StaticMesh:
+      return outputDir / (stripAuthoringExtension(relativePath, kAuthoringExtension) + ".amesh");
+    case AssetKind::Scene:
+      return outputDir / (stripAuthoringExtension(relativePath, kSceneAuthoringExtension) + ".ascene");
+    case AssetKind::Material:
+      return outputDir / (stripAuthoringExtension(relativePath, kMaterialAuthoringExtension) + ".amaterial");
+    case AssetKind::Texture:
+      return outputDir / (fs::path(request.stampPath).stem().string() + ".atex");
+    case AssetKind::Environment:
+      return outputDir / (fs::path(request.stampPath).stem().string() + ".aenv");
+    case AssetKind::CookManifest:
+    case AssetKind::MintGuid:
+    case AssetKind::Lookup:
+    case AssetKind::Migrate0047:
+      break;
+  }
+  return {};
+}
+
 [[nodiscard]] int runCookMeshMode(const CookCommandRequest& request) {
   const std::string relativePath = computeRelativePathString(request.sourcePath, request.assetRoot);
   const std::string base = stripAuthoringExtension(relativePath, kAuthoringExtension);
@@ -269,6 +416,15 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
       cookStaticMesh(request.sourcePath, relativePath, *guid, artifactPath.string(), metadataPath.string());
   if (result.isErr()) {
     std::cerr << "atlantis_asset_cooker: cook failed: " << cookErrorMessage(result.error()) << "\n";
+    return 1;
+  }
+  const auto meshSchema = meshArtifactSchema(artifactPath);
+  if (!meshSchema) {
+    std::cerr << "atlantis_asset_cooker: cannot read the cooked mesh's schema: " << artifactPath.string() << "\n";
+    return 1;
+  }
+  if (!writeCookFragment(request, CatalogAssetType::Mesh, *guid, artifactPath, metadataPath, *meshSchema,
+                         kMeshSourceSchema, {})) {
     return 1;
   }
 
@@ -296,6 +452,15 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
   const auto result = cookScene(request.sourcePath, *guid, artifactPath.string(), metadataPath.string());
   if (result.isErr()) {
     std::cerr << "atlantis_asset_cooker: cook failed: " << sceneCookErrorMessage(result.error()) << "\n";
+    return 1;
+  }
+  auto dependencies = sceneDependencies(request.sourcePath);
+  if (!dependencies) {
+    std::cerr << "atlantis_asset_cooker: cannot re-read the cooked scene source: " << request.sourcePath << "\n";
+    return 1;
+  }
+  if (!writeCookFragment(request, CatalogAssetType::Scene, *guid, artifactPath, metadataPath,
+                         kSceneArtifactSchemaVersion, kSceneSourceSchema, std::move(*dependencies))) {
     return 1;
   }
 
@@ -388,6 +553,10 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
     std::cerr << "atlantis_asset_cooker: cook failed: " << textureCookErrorMessage(result.error()) << "\n";
     return 1;
   }
+  if (!writeCookFragment(request, CatalogAssetType::Texture, *guid, artifactPath, metadataPath,
+                         kTextureArtifactSchemaVersion, std::nullopt, {})) {
+    return 1;
+  }
 
   if (!writeStamp(request.stampPath)) {
     std::cerr << "atlantis_asset_cooker: failed to write stamp file: " << request.stampPath << "\n";
@@ -444,6 +613,10 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
   stbi_image_free(decoded);
   if (result.isErr()) {
     std::cerr << "atlantis_asset_cooker: cook failed: " << textureCookErrorMessage(result.error()) << "\n";
+    return 1;
+  }
+  if (!writeCookFragment(request, CatalogAssetType::Texture, *guid, artifactPath, metadataPath,
+                         kTextureArtifactSchemaVersion, std::nullopt, {})) {
     return 1;
   }
 
@@ -530,6 +703,10 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
     std::cerr << "atlantis_asset_cooker: cook failed: " << environmentCookErrorMessage(result.error()) << "\n";
     return 1;
   }
+  if (!writeCookFragment(request, CatalogAssetType::Environment, *guid, artifactPath, metadataPath,
+                         kEnvironmentArtifactSchemaVersion, std::nullopt, {})) {
+    return 1;
+  }
   if (!writeStamp(request.stampPath)) {
     std::cerr << "atlantis_asset_cooker: failed to write stamp file: " << request.stampPath << "\n";
     return 1;
@@ -550,6 +727,15 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
       cookMaterial(request.sourcePath, relativePath, *guid, artifactPath.string(), metadataPath.string());
   if (result.isErr()) {
     std::cerr << "atlantis_asset_cooker: cook failed: " << materialCookErrorMessage(result.error()) << "\n";
+    return 1;
+  }
+  auto dependencies = materialDependencies(request.sourcePath);
+  if (!dependencies) {
+    std::cerr << "atlantis_asset_cooker: cannot re-read the cooked material source: " << request.sourcePath << "\n";
+    return 1;
+  }
+  if (!writeCookFragment(request, CatalogAssetType::Material, *guid, artifactPath, metadataPath,
+                         kMaterialArtifactSchemaVersion, kMaterialSourceSchema, std::move(*dependencies))) {
     return 1;
   }
 
@@ -645,6 +831,7 @@ struct ManifestEntry {
     return 1;
   }
   std::map<std::string, ManifestEntry> entries;  // normalized logical path -> artifact/metadata
+  std::vector<fs::path> fragmentPaths;
   std::string line;
   std::size_t lineNumber = 0;
   std::size_t cooked = 0;
@@ -671,6 +858,7 @@ struct ManifestEntry {
       return 1;
     }
     ++cooked;
+    fragmentPaths.push_back(cookArtifactPath(lineRequest).string() + ".catalog.txt");
 
     const std::string relativePath = computeRelativePathString(lineRequest.sourcePath, lineRequest.assetRoot);
     const auto logical = normalizedOrNull(relativePath);
@@ -694,8 +882,10 @@ struct ManifestEntry {
   // Meshes are written by the importer itself, never cooked: each artifact's
   // metadata names its own logical path.
   std::error_code ec;
+  std::vector<fs::path> meshFragmentPaths;
   for (const auto& file : fs::directory_iterator(importDir, ec)) {
     const std::string filename = file.path().filename().string();
+    if (filename.ends_with(".amesh.catalog.txt")) meshFragmentPaths.push_back(file.path());
     if (!filename.ends_with(".amesh.meta.txt")) continue;
     std::ifstream in(file.path(), std::ios::binary);
     const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -711,6 +901,46 @@ struct ManifestEntry {
   }
   if (ec) {
     std::cerr << "atlantis_asset_cooker: cannot list import directory: " << importDir.string() << "\n";
+    return 1;
+  }
+
+  // Plan 0047 P12: every record of this import -- each cook's fragment and
+  // the importer's mesh fragments, their {import_dir} resolved -- merged
+  // into <import dir>/import.catalog.txt, the import's one assembly input.
+  const std::string importDirLocation = absoluteLocation(importDir);
+  std::vector<AssetCatalogRecord> importRecords;
+  const auto addFragment = [&importRecords, &importDirLocation](const fs::path& path, bool resolveImportDir) {
+    auto text = readTextFile(path);
+    if (!text) {
+      std::cerr << "atlantis_asset_cooker: cannot read catalog fragment: " << path.string() << "\n";
+      return false;
+    }
+    if (resolveImportDir) {
+      constexpr std::string_view kPlaceholder = "{import_dir}";
+      for (std::size_t at = text->find(kPlaceholder); at != std::string::npos; at = text->find(kPlaceholder, at)) {
+        text->replace(at, kPlaceholder.size(), importDirLocation);
+        at += importDirLocation.size();
+      }
+    }
+    auto records = parseAssetCatalogRecords(*text);
+    if (records.isErr()) {
+      std::cerr << "atlantis_asset_cooker: malformed catalog fragment: " << path.string() << "\n";
+      return false;
+    }
+    for (AssetCatalogRecord& record : records.value()) importRecords.push_back(std::move(record));
+    return true;
+  };
+  for (const fs::path& path : fragmentPaths) {
+    if (!addFragment(path, false)) return 1;
+  }
+  for (const fs::path& path : meshFragmentPaths) {
+    if (!addFragment(path, true)) return 1;
+  }
+  const std::size_t importRecordCount = importRecords.size();
+  const fs::path importCatalogPath = importDir / "import.catalog.txt";
+  if (!writeFileReplacing(importCatalogPath, serializeAssetCatalog(std::move(importRecords)))) {
+    std::cerr << "atlantis_asset_cooker: failed to write import catalog fragment: " << importCatalogPath.string()
+              << "\n";
     return 1;
   }
 
@@ -751,7 +981,8 @@ struct ManifestEntry {
     return 1;
   }
   std::cout << "atlantis_asset_cooker: cook manifest: " << cooked << " cooks, " << listed
-            << " dependency-manifest entries -> " << request.manifestOutPath << "\n";
+            << " dependency-manifest entries -> " << request.manifestOutPath << ", " << importRecordCount
+            << " catalog records -> " << importCatalogPath.generic_string() << "\n";
   if (!writeStamp(request.stampPath)) {
     std::cerr << "atlantis_asset_cooker: failed to write stamp file: " << request.stampPath << "\n";
     return 1;
@@ -1220,6 +1451,8 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
       request.extraSceneSources.push_back(*sceneSource);
     } else if (auto guid = valueAfterEquals(arg, "--guid=")) {
       request.guid = *guid;
+    } else if (auto catalogId = valueAfterEquals(arg, "--catalog-id=")) {
+      request.catalogId = *catalogId;
     } else if (auto count = valueAfterEquals(arg, "--count=")) {
       std::uint32_t parsedCount = 0;
       const char* end = count->data() + count->size();
@@ -1270,6 +1503,16 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
   if (isCookKind && source == CookArgumentSource::CookManifestLine &&
       (request.guid.empty() || !request.catalogSourcePath.empty())) {
     err << "atlantis_asset_cooker: a cook-manifest line needs --guid= and no --catalog-source=\n";
+    return false;
+  }
+  // Plan 0047 P12: likewise the imported record's source.
+  if (!request.catalogId.empty() && !(isCookKind && source == CookArgumentSource::CookManifestLine)) {
+    err << "atlantis_asset_cooker: --catalog-id= is accepted only on a cook-manifest line\n";
+    return false;
+  }
+  if (isCookKind && source == CookArgumentSource::CookManifestLine &&
+      !parseCatalogSourceId(request.catalogId).has_value()) {
+    err << "atlantis_asset_cooker: a cook-manifest line needs --catalog-id=<root>:<path>[#<sub-key>]\n";
     return false;
   }
   return !sawUnrecognized && haveRequiredFlags;

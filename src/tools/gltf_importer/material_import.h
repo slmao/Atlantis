@@ -27,10 +27,12 @@ namespace atlantis::gltf_importer::detail {
 // cook_manifest.txt lines (textures first, then materials),
 // import_report.txt lines and the texture/material logical paths of the
 // declared asset set, and fills the summary's material fields.
+// importRootId is the root's catalog source id (content:<root path>); each
+// line's --catalog-id= appends #<sub-key> to it (Plan 0047 P12).
 [[nodiscard]] atlantis::Result<std::monostate, GltfImportError> writeMaterials(
     const cgltf_data& data, const std::filesystem::path& contentRoot, const std::filesystem::path& stagingDir,
-    const std::string& name, const atlantis::asset_system::AssetGuid& importRoot, GltfImportSummary& summary,
-    std::vector<std::string>& reportLines, std::vector<std::string>& manifestLines,
+    const std::string& name, const atlantis::asset_system::AssetGuid& importRoot, const std::string& importRootId,
+    GltfImportSummary& summary, std::vector<std::string>& reportLines, std::vector<std::string>& manifestLines,
     std::vector<std::string>& declaredAssets);
 
 // Logical path of material <index>, as the scene slice (Milestone 5) will

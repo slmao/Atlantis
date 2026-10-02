@@ -127,6 +127,11 @@ struct GltfImportSummary {
 // take GUIDs derived from it, and every imported scene node an EntityGuid
 // derived from the scene's. The output carries them: mesh sidecars, scene
 // v7 and material v10 text, and --guid= on each cook_manifest.txt line.
+// Plan 0047 P12: each mesh also gets its catalog fragment,
+// <name>_mesh_<i>_<j>.amesh.catalog.txt, located through {import_dir} so the
+// output stays independent of where it is written; and each
+// cook_manifest.txt line carries --catalog-id=content:<root path>#<sub-key>,
+// the source its cooked record names.
 [[nodiscard]] atlantis::Result<GltfImportSummary, GltfImportError> importGltf(
     const std::filesystem::path& inputPath, const std::filesystem::path& contentRoot,
     const std::filesystem::path& outputDir, const std::string& name,
@@ -153,6 +158,11 @@ namespace detail {
 // The tool string recorded in imported mesh sidecars (Plan 0047 P7: no
 // spaces, so it fits the catalog's tool token).
 inline constexpr std::string_view kImporterToolVersion = "atlantis-gltf-importer/1";
+
+// Plan 0047 P7: the import root's catalog-source path,
+// <content-root name>/<glTF file name>.
+[[nodiscard]] std::string importRootPath(const std::filesystem::path& inputPath,
+                                         const std::filesystem::path& contentRoot);
 
 }  // namespace detail
 

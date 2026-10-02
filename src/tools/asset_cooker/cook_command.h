@@ -74,6 +74,11 @@ struct CookCommandRequest {
   std::string catalogSourcePath;
   std::string guid;
 
+  // Plan 0047 P12: on a cook-manifest line, the importer's
+  // content:<root path>#<sub-key> -- the source the cooked record names.
+  // Rejected on the command line, where the source is assets:<logical path>.
+  std::string catalogId;
+
   // Plan 0047 P20 / ruling I5: --kind=migrate-0047's inputs, with
   // assetRoot. extraSceneSources are assets-relative scene sources that are
   // not declarations (the Bistro overlay).

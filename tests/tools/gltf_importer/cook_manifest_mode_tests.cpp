@@ -2,6 +2,8 @@
 #include "import_command.h"
 #include "material_import.h"
 
+#include <atlantis/asset_system/asset_catalog.h>
+#include <atlantis/asset_system/asset_catalog_source.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/scene_artifact.h>
 #include <atlantis/asset_system/logical_path.h>
@@ -10,6 +12,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -187,6 +190,60 @@ TEST_CASE("cook-manifest mode cooks every manifest line in one process and write
     srgbTextures += texture.value().colorSpace == as::TextureColorSpace::Srgb ? 1 : 0;
   }
   CHECK(srgbTextures == 2);
+}
+
+TEST_CASE("cook-manifest mode writes import.catalog.txt holding every record of the import, and it assembles",
+          "[asset_cooker][cook_manifest][catalog]") {
+  const ImportedFixture fixture = importFixture("cook_manifest_catalog");
+  REQUIRE(runCooker(cookManifestArguments(fixture, fixture.cookedDir / "q.ascene.manifest.txt")) == 0);
+
+  const fs::path importCatalog = fixture.importDir / "import.catalog.txt";
+  const auto records = as::parseAssetCatalogRecords(readText(importCatalog));
+  REQUIRE(records.isOk());
+  const std::string rootPath = atlantis::gltf_importer::detail::importRootPath(fixture.dir / "input.gltf", fixture.dir);
+  const auto guidOf = [](std::string_view subKey) { return as::deriveAssetGuid(testImportRoot(), subKey); };
+
+  std::set<std::string> subKeys;
+  for (const as::AssetCatalogRecord& record : records.value()) {
+    INFO(as::formatAssetCatalogRecord(record));
+    subKeys.insert(record.source.subKey);
+    CHECK(record.source.root == as::CatalogRoot::Content);
+    CHECK(record.source.path == rootPath);
+    CHECK(record.guid == guidOf(record.source.subKey));
+    CHECK(fs::path(record.artifact).is_absolute());
+    CHECK(fs::exists(record.artifact));
+    CHECK(fs::exists(record.metadata));
+    if (record.type == as::CatalogAssetType::Mesh) {
+      // Written by the importer itself: its {import_dir} is resolved.
+      CHECK(record.artifact.rfind(fs::absolute(fixture.importDir).lexically_normal().generic_string(), 0) == 0);
+      CHECK(record.tool == "atlantis-gltf-importer/1");
+      CHECK(record.artifactSchema == 5);
+    } else if (record.type == as::CatalogAssetType::Material) {
+      std::vector<as::AssetGuid> expected = {guidOf("texture/quad_diff.dds"), guidOf("texture/quad_em.dds")};
+      std::sort(expected.begin(), expected.end());
+      CHECK(record.dependencies == expected);
+    } else if (record.type == as::CatalogAssetType::Scene) {
+      std::vector<as::AssetGuid> expected = {guidOf("mesh/0/0"), guidOf("material/0")};
+      std::sort(expected.begin(), expected.end());
+      CHECK(record.dependencies == expected);
+    }
+  }
+  CHECK(subKeys == std::set<std::string>{"mesh/0/0", "texture/quad_diff.dds", "texture/quad_em.dds", "material/0",
+                                         "scene"});
+
+  // The import's one fragment assembles against a catalog source holding its
+  // root, every record located relative to the catalog.
+  const auto source = as::parseAssetCatalogSource(as::serializeAssetCatalogSource(
+      {{testImportRoot(), as::CatalogAssetType::GltfImport, as::CatalogRoot::Content, rootPath}}));
+  REQUIRE(source.isOk());
+  as::AssetCatalogAssemblyRequest request;
+  request.catalogSource = &source.value();
+  request.declarations = {{as::CatalogAssetType::GltfImport, as::CatalogRoot::Content, rootPath}};
+  request.fragmentPaths = {importCatalog.string()};
+  request.outPath = (fixture.dir.parent_path() / "cook_manifest_catalog.catalog.txt").string();
+  const auto assembled = as::assembleAssetCatalog(request);
+  REQUIRE(assembled.isOk());
+  CHECK(assembled.value().recordCount == 5);
 }
 
 TEST_CASE("cook-manifest mode fails the whole step on one failing line, and on a missing required flag",

@@ -172,7 +172,8 @@ TEST_CASE("A cook's GUID source depends on where its arguments came from", "[ass
   CHECK_FALSE(parses({guid}, CookArgumentSource::CommandLine));
   CHECK_FALSE(parses({"--catalog-source=c.txt", guid}, CookArgumentSource::CommandLine));
 
-  CHECK(parses({guid}, CookArgumentSource::CookManifestLine));
+  // Plan 0047 M4: a manifest line also names its record's source.
+  CHECK(parses({guid, "--catalog-id=content:street/input.gltf#mesh/0/0"}, CookArgumentSource::CookManifestLine));
   CHECK_FALSE(parses({}, CookArgumentSource::CookManifestLine));
   CHECK_FALSE(parses({"--catalog-source=c.txt"}, CookArgumentSource::CookManifestLine));
   CHECK_FALSE(parses({"--catalog-source=c.txt", guid}, CookArgumentSource::CookManifestLine));

@@ -213,7 +213,8 @@ TEST_CASE("Importing the same input twice produces byte-identical output", "[glt
   }
   std::sort(names.begin(), names.end());
   CHECK(names == std::vector<std::string>{"asset_list.txt", "cook_manifest.txt", "import_report.txt", "t/t.scene.txt",
-                                          "t_mesh_0_0.amesh", "t_mesh_0_0.amesh.meta.txt"});
+                                          "t_mesh_0_0.amesh", "t_mesh_0_0.amesh.catalog.txt",
+                                          "t_mesh_0_0.amesh.meta.txt"});
   for (const std::string& name : names) {
     INFO(name);
     CHECK(gltf_test::readBytes(dir / "a" / name) == gltf_test::readBytes(dir / "b" / name));

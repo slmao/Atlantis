@@ -7,9 +7,11 @@
 #include "import_command.h"
 #include "material_import.h"
 
+#include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_metadata.h>
 #include <atlantis/asset_system/material_source.h>
+#include <atlantis/asset_system/mesh_artifact.h>
 #include <atlantis/asset_system/scene_source.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -18,6 +20,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -118,6 +121,47 @@ TEST_CASE("Every import output carries the GUIDs derived from the import root", 
         std::string::npos);
   CHECK(manifest.find("--guid=" + as::toString(as::deriveAssetGuid(root(), "material/0"))) != std::string::npos);
   CHECK(manifest.find("--guid=" + as::toString(sceneGuid)) != std::string::npos);
+}
+
+TEST_CASE("The importer writes each mesh's catalog fragment and names every cook line's source",
+          "[gltf_importer][guid][catalog]") {
+  const fs::path dir = gltf_test::freshDirectory("import_identity_fragments");
+  const fs::path content = dir / "street";
+  const fs::path input = writeTexturedQuad(content);
+  const fs::path out = dir / "out";
+  REQUIRE(importGltf(input, content, out, "t", root()).isOk());
+
+  // Plan 0047 P12: located through {import_dir}, so the import output does
+  // not depend on where it was written.
+  std::string fragment = readText(out / "t_mesh_0_0.amesh.catalog.txt");
+  CHECK(fragment.find(" artifact={import_dir}/t_mesh_0_0.amesh ") != std::string::npos);
+  CHECK(fragment.find(" metadata={import_dir}/t_mesh_0_0.amesh.meta.txt ") != std::string::npos);
+  const auto records = as::parseAssetCatalogRecords(fragment);
+  REQUIRE(records.isOk());
+  REQUIRE(records.value().size() == 1);
+  const as::AssetCatalogRecord& mesh = records.value()[0];
+  CHECK(mesh.guid == as::deriveAssetGuid(root(), "mesh/0/0"));
+  CHECK(mesh.assetId == as::assetKey(mesh.guid));
+  CHECK(mesh.type == as::CatalogAssetType::Mesh);
+  CHECK(as::toString(mesh.source) == "content:street/input.gltf#mesh/0/0");
+  CHECK(mesh.artifactSchema == as::kMeshArtifactSchemaVersionU32);
+  CHECK_FALSE(mesh.sourceSchema.has_value());
+  CHECK(mesh.tool == "atlantis-gltf-importer/1");
+  CHECK(mesh.dependencies.empty());
+
+  const std::string manifest = readText(out / "cook_manifest.txt");
+  std::size_t cookLines = 0;
+  std::istringstream lines(manifest);
+  for (std::string line; std::getline(lines, line);) {
+    if (line.empty() || line[0] == '#') continue;
+    ++cookLines;
+    INFO(line);
+    CHECK(line.find(" --catalog-id=content:street/input.gltf#") != std::string::npos);
+  }
+  CHECK(cookLines == 3);
+  for (const char* id : {"#texture/quad_diff.dds", "#material/0", "#scene"}) {
+    CHECK(manifest.find(std::string("--catalog-id=content:street/input.gltf") + id) != std::string::npos);
+  }
 }
 
 TEST_CASE("Imported GUIDs do not depend on the content root's name or location", "[gltf_importer][guid]") {

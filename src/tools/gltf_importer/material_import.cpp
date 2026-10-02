@@ -307,6 +307,7 @@ atlantis::Result<std::monostate, GltfImportError> checkMaterials(const cgltf_dat
 atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_data& data, const fs::path& contentRoot,
                                                                  const fs::path& stagingDir, const std::string& name,
                                                                  const atlantis::asset_system::AssetGuid& importRoot,
+                                                                 const std::string& importRootId,
                                                                  GltfImportSummary& summary,
                                                                  std::vector<std::string>& reportLines,
                                                                  std::vector<std::string>& manifestLines,
@@ -334,13 +335,16 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
   // content root, without the root's own name -- so moving the content root
   // changes no GUID (Spec 0047 R14).
   const std::string rootPrefix = contentRootDirectory(contentRoot).filename().string() + "/";
+  const auto textureSubKey = [&](const std::string& logicalPath) -> std::optional<std::string> {
+    const auto normalized = atlantis::asset_system::normalizeLogicalPath(logicalPath);
+    if (normalized.isErr() || normalized.value().rfind(rootPrefix, 0) != 0) return std::nullopt;
+    return "texture/" + normalized.value().substr(rootPrefix.size());
+  };
   const auto textureGuid = [&](const std::string& logicalPath) {
     using GuidResult = atlantis::Result<atlantis::asset_system::AssetGuid, GltfImportError>;
-    const auto normalized = atlantis::asset_system::normalizeLogicalPath(logicalPath);
-    if (normalized.isErr() || normalized.value().rfind(rootPrefix, 0) != 0) {
-      return GuidResult::Err(GltfImportError::InvalidAssetSubKey);
-    }
-    return deriveImportAssetGuid(importRoot, "texture/" + normalized.value().substr(rootPrefix.size()));
+    const auto subKey = textureSubKey(logicalPath);
+    if (!subKey) return GuidResult::Err(GltfImportError::InvalidAssetSubKey);
+    return deriveImportAssetGuid(importRoot, *subKey);
   };
   std::size_t samplerDefaulted = 0;
 
@@ -523,7 +527,8 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
     declaredAssets.push_back(logical);
     materialManifest.push_back("--kind=material --source={import_dir}/" + logical +
                                " --asset-root={import_dir} --output-dir={cooked_dir} --guid=" +
-                               atlantis::asset_system::toString(materialGuid.value()));
+                               atlantis::asset_system::toString(materialGuid.value()) + " --catalog-id=" +
+                               importRootId + "#material/" + std::to_string(i));
     summary.materialCount += 1;
   }
 
@@ -567,6 +572,10 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
       line += " --color-space=srgb";  // Spec 0046 Q8: overrides a DXGI 99 tag
     }
     line += " --guid=" + atlantis::asset_system::toString(t.guid);  // Plan 0047 P7
+    // Plan 0047 P12: the sub-key the GUID was derived from (texture/<uri>
+    // was already checked when the GUID was derived).
+    line += " --catalog-id=" + importRootId + "#" +
+            (t.logicalPath == whiteLogical ? std::string("fallback/white") : *textureSubKey(t.logicalPath));
     manifestLines.push_back(line);
   }
   summary.texturesReferenced += static_cast<std::uint32_t>(textures.size());

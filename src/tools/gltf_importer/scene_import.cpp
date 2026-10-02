@@ -233,6 +233,7 @@ atlantis::Result<std::monostate, GltfImportError> checkScene(const cgltf_data& d
 atlantis::Result<std::monostate, GltfImportError> writeScene(const cgltf_data& data, const fs::path& stagingDir,
                                                              const std::string& name,
                                                              const atlantis::asset_system::AssetGuid& importRoot,
+                                                             const std::string& importRootId,
                                                              GltfImportSummary& summary,
                                                              std::vector<std::string>& reportLines,
                                                              std::vector<std::string>& manifestLines,
@@ -406,7 +407,8 @@ atlantis::Result<std::monostate, GltfImportError> writeScene(const cgltf_data& d
 
   manifestLines.push_back("--kind=scene --source={import_dir}/" + logical +
                           " --asset-root={import_dir} --output-dir={cooked_dir} --guid=" +
-                          atlantis::asset_system::toString(sceneGuid.value()));
+                          atlantis::asset_system::toString(sceneGuid.value()) + " --catalog-id=" + importRootId +
+                          "#scene");
   reportLines.push_back("scene: " + std::to_string(summary.sceneNodeLines) + " node lines (" +
                         std::to_string(summary.sceneMeshLines) + " mesh, " + std::to_string(summary.sceneLightLines) +
                         " light, " + std::to_string(summary.syntheticNodes) + " synthetic), max depth " +
