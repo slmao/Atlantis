@@ -174,9 +174,8 @@ TEST_CASE("runCookCommand cooking the same source PNG twice under two names/colo
   // kept as a regression test for cookTexture()'s own correct, narrower
   // behavior: NAME only disambiguates where the cooker writes its
   // output on disk (BYPRODUCTS collision avoidance); it was never an
-  // identity mechanism, and computeAssetId() is still, correctly, a
-  // pure function of the normalized SOURCE-derived logical path alone
-  // -- two cooks of the same real SOURCE necessarily still share one
+  // identity mechanism: both cooks of the same real SOURCE take its one
+  // catalog GUID (Plan 0047 P7), so they necessarily still share one
   // AssetId. The bug the Correction fixed was one layer up, in
   // atlantis_add_texture_asset()'s own now-removed collision-detector
   // bypass that let the CMake declaration layer register two named

@@ -33,8 +33,8 @@ namespace atlantis::asset_system {
 // trusted logicalPathInput to already be normalized; that trust is what
 // let two different cookTexture() callers silently share one AssetId,
 // the exact gap this correction closes). The normalized path, not the
-// caller-supplied one, is what computeAssetId() and the metadata
-// sidecar's own sourceLogicalPath both use from here on.
+// caller-supplied one, is what the metadata sidecar's own
+// sourceLogicalPath records.
 // Plan 0047 P7 (ADR-0097 D1/D2): assetGuid is the asset's persistent
 // identity, resolved by the caller (the cooker, from the catalog source or
 // a cook-manifest --guid=); it must not be nil. The Asset ID written into

@@ -24,11 +24,10 @@ namespace atlantis::asset_system {
 // Steps: read + parseMaterialSource() (-> SourceParseFailed); normalize
 // THIS material's own logicalPathInput via normalizeLogicalPath() (->
 // LogicalPathInvalid, matching cookStaticMesh()'s/cookTexture()'s own
-// precedent) and computeAssetId() on it for the metadata sidecar's own
-// assetId; separately normalize the parsed texture logical path (->
-// LogicalPathInvalid also) and computeAssetId() on it for the artifact's
-// own embedded texture_asset_id -- never an existence check on either
-// (ADR-0059 D6/D7); encode + atomic write (temp-then-rename()).
+// precedent), recorded as provenance; each parsed texture reference is a
+// GUID whose assetKey() is the artifact's embedded texture_asset_id --
+// never an existence check on it (ADR-0059 D6/D7); encode + atomic write
+// (temp-then-rename()).
 // Plan 0047 P7 (ADR-0097 D1/D2): assetGuid is the asset's persistent
 // identity, resolved by the caller (the cooker, from the catalog source or
 // a cook-manifest --guid=); it must not be nil. The Asset ID written into

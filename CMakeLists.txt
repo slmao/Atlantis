@@ -106,21 +106,13 @@ if(NOT ANDROID)
   # call site's own custom command invokes the atlantis_asset_cooker
   # target defined in the latter.
   add_subdirectory(assets)
-  # Plan 0012 Section D4: called exactly once, after every
-  # add_subdirectory() that could declare an asset (today, just assets/
-  # above) -- writes the accumulated declared-asset list and declares
-  # the set-level validation target. Moved inside this same
-  # if(NOT ANDROID) block (Plan 0034 Milestone 1 build-smoke-test
-  # finding): atlantis_finalize_asset_validation()'s own implementation
-  # (src/asset_system/CMakeLists.txt) unconditionally declares an ALL
-  # target that DEPENDS the host tool atlantis_asset_cooker and runs it
-  # at build time (Plan 0012 D4/ADR-0044) -- it is itself host-pipeline
-  # machinery, not merely "validates an empty set," so it cannot stay
-  # unconditional once atlantis_asset_cooker above is gated. On Android,
-  # assets/ above declares nothing, so there is no validation target to
-  # produce -- confirmed this function has exactly one call site in the
-  # whole repository, so nothing else depends on it running unconditionally.
-  atlantis_finalize_asset_validation()
+  # Plan 0047 P13: called exactly once -- declares the catalog assembly
+  # target (src/asset_system/CMakeLists.txt), deferred to the end of this
+  # directory so every declaration, including tests/ fixtures, is in it.
+  # Inside this if(NOT ANDROID) block (Plan 0034 Milestone 1 finding): the
+  # target runs the host tool atlantis_asset_cooker at build time, and on
+  # Android assets/ declares nothing.
+  atlantis_finalize_asset_catalog()
 endif()
 # Plan 0034 Milestone 1 (ADR-0078/ADR-0080): every production shader
 # pair below is compiled by atlantis_add_slang_shader_pair()

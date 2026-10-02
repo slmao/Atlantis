@@ -163,8 +163,8 @@ TEST_CASE("detail::checkForDuplicatesAndCollisions V15: rejects two distinct log
   // A genuine 64-bit FNV-1a collision is not feasible to brute-force
   // in a unit test -- this test exercises the same detection algorithm
   // loadSceneDependencyManifest() itself calls, with a fabricated
-  // shared AssetId, matching asset_set_validation_tests.cpp's own
-  // already-Accepted technique for AssetSetError::AssetIdCollision.
+  // shared AssetId -- the already-Accepted technique for injected AssetId
+  // collisions.
   constexpr atlantis::asset_system::AssetId kSharedId = 0x1122334455667788ULL;
   const std::vector<detail::ManifestEntryForCollisionCheck> entries{
       {kSharedId, "meshes/a.mesh.txt"},

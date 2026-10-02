@@ -205,7 +205,7 @@ TEST_CASE("A cook-manifest-line cook names the importer's --catalog-id as its so
   CHECK(record.source.subKey == "mesh/0/0");
 }
 
-TEST_CASE("--catalog-id= is accepted only on a cook-manifest line, where it is required",
+TEST_CASE("A cook accepts --catalog-id= only on a cook-manifest line, where it is required",
           "[asset_cooker][catalog]") {
   const std::vector<std::string> base = {"--kind=mesh", "--source=a.mesh.txt", "--asset-root=r", "--output-dir=o"};
   const auto parses = [&base](std::vector<std::string> extra, CookArgumentSource source) {

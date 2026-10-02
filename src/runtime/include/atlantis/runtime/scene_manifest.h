@@ -61,9 +61,7 @@ struct SceneDependencyResolver {
 // own "two distinct logical paths engineered to hash to the same
 // AssetId" test does not need a genuine brute-forced 64-bit FNV-1a
 // collision (computationally infeasible for a unit test) -- it can
-// instead supply two already-fabricated AssetId values directly,
-// exactly as asset_set_validation_tests.cpp's own already-Accepted
-// AssetSetError::AssetIdCollision test does for validateAssetSet().
+// instead supply two already-fabricated AssetId values directly.
 // Not part of this module's own public contract otherwise;
 // loadSceneDependencyManifest() is still the only intended entry
 // point for real manifest loading.

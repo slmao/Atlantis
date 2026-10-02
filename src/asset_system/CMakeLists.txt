@@ -9,7 +9,6 @@ add_library(atlantis_asset_system STATIC
   src/asset_guid.cpp
   src/asset_catalog_source.cpp
   src/asset_catalog.cpp
-  src/asset_set_validation.cpp
   src/mesh_source.cpp
   src/asset_metadata.cpp
   src/mesh_artifact.cpp
@@ -73,6 +72,35 @@ target_compile_options(atlantis_asset_system PRIVATE
 set(ATLANTIS_ASSET_CATALOG_SOURCE "${CMAKE_SOURCE_DIR}/assets/asset_catalog.txt" CACHE INTERNAL
   "The committed catalog source (Plan 0047 P6)")
 
+# Plan 0047 P12/P13: records one build step for the catalog assembly -- its
+# target (the assembly depends on it) and the catalog fragment it writes.
+function(_atlantis_register_catalog_fragment target fragment)
+  set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_TARGETS "${target}")
+  set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_CATALOG_FRAGMENTS "${fragment}")
+endfunction()
+
+# Plan 0047 P15: sets <out_var> to the GUID the committed catalog source
+# records for <ROOT>:<PATH>, read at configure time -- the catalog source is a
+# configure dependency, so editing it re-runs CMake. A missing entry fails
+# configuration.
+function(atlantis_catalog_guid out_var)
+  cmake_parse_arguments(ARG "" "ROOT;PATH" "" ${ARGN})
+  set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${ATLANTIS_ASSET_CATALOG_SOURCE}")
+  file(STRINGS "${ATLANTIS_ASSET_CATALOG_SOURCE}" entries REGEX "^asset: ")
+  foreach(entry IN LISTS entries)
+    string(REGEX REPLACE "\r$" "" entry "${entry}")
+    if(entry MATCHES "^asset: guid=([0-9a-f-]+) type=[a-z_]+ root=([a-z]+) path=(.+)$")
+      if(CMAKE_MATCH_2 STREQUAL ARG_ROOT AND CMAKE_MATCH_3 STREQUAL ARG_PATH)
+        set(${out_var} "${CMAKE_MATCH_1}" PARENT_SCOPE)
+        return()
+      endif()
+    endif()
+  endforeach()
+  message(FATAL_ERROR "atlantis_catalog_guid(): ${ARG_ROOT}:${ARG_PATH} has no entry in "
+    "${ATLANTIS_ASSET_CATALOG_SOURCE}")
+endfunction()
+
 # Plan 0012 Section D4/D9: declares one static mesh asset for
 # atlantis_asset_cooker to process at build time, mirroring
 # atlantis_add_slang_shader_pair()'s own stamp/BYPRODUCTS pattern
@@ -107,7 +135,7 @@ function(atlantis_add_static_mesh_asset)
 
   add_custom_command(
     OUTPUT "${stamp}"
-    BYPRODUCTS "${artifact_path}" "${metadata_path}"
+    BYPRODUCTS "${artifact_path}" "${metadata_path}" "${artifact_path}.catalog.txt"
     COMMAND atlantis_asset_cooker
       --source=${source_path} --asset-root=${asset_root}
       --output-dir=${output_dir} --stamp=${stamp} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE}
@@ -117,7 +145,7 @@ function(atlantis_add_static_mesh_asset)
   )
   add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
 
-  set_property(GLOBAL APPEND PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS "${ARG_SOURCE}")
+  _atlantis_register_catalog_fragment(${ARG_NAME}_asset "${artifact_path}.catalog.txt")
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "mesh\tassets\t${ARG_SOURCE}")
 
   # Exposed to the caller (e.g. Step 6's fixture consumer) so it can
@@ -219,7 +247,7 @@ function(atlantis_add_scene_asset)
 
   add_custom_command(
     OUTPUT "${stamp}"
-    BYPRODUCTS "${artifact_path}" "${metadata_path}"
+    BYPRODUCTS "${artifact_path}" "${metadata_path}" "${artifact_path}.catalog.txt"
     COMMAND atlantis_asset_cooker
       --kind=scene --source=${source_path} --asset-root=${asset_root}
       --output-dir=${output_dir} --stamp=${stamp} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE}
@@ -240,6 +268,7 @@ function(atlantis_add_scene_asset)
   if(dependency_targets)
     add_dependencies(${ARG_NAME}_asset ${dependency_targets})
   endif()
+  _atlantis_register_catalog_fragment(${ARG_NAME}_asset "${artifact_path}.catalog.txt")
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "scene\tassets\t${ARG_SOURCE}")
 
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
@@ -258,8 +287,8 @@ endfunction()
 # CONTENT_ROOT does not re-trigger it (the content is SHA-256 pinned).
 # Exports the same ATLANTIS_<NAME>_scene_{ARTIFACT,METADATA,MANIFEST}_PATH
 # and _TARGET variables atlantis_add_scene_asset() exports, so consumers
-# are unchanged. The import's asset set is validated by the cook-manifest
-# mode itself, never fed to atlantis_finalize_asset_validation().
+# are unchanged. Plan 0047 P12: the cook-manifest mode also writes
+# <import dir>/import.catalog.txt, the import's one catalog fragment.
 function(atlantis_add_imported_scene)
   set(oneValueArgs NAME GLTF CONTENT_ROOT OVERLAY)
   cmake_parse_arguments(ARG "" "${oneValueArgs}" "" ${ARGN})
@@ -275,7 +304,7 @@ function(atlantis_add_imported_scene)
 
   add_custom_command(
     OUTPUT "${stamp}"
-    BYPRODUCTS "${artifact_path}" "${metadata_path}" "${manifest_path}"
+    BYPRODUCTS "${artifact_path}" "${metadata_path}" "${manifest_path}" "${import_dir}/import.catalog.txt"
     # The importer refuses a non-empty output directory; the cooked
     # directory is rewritten in place.
     COMMAND ${CMAKE_COMMAND} -E rm -rf "${import_dir}"
@@ -291,6 +320,7 @@ function(atlantis_add_imported_scene)
     VERBATIM
   )
   add_custom_target(atlantis_${ARG_NAME}_scene ALL DEPENDS "${stamp}")
+  _atlantis_register_catalog_fragment(atlantis_${ARG_NAME}_scene "${import_dir}/import.catalog.txt")
   # Plan 0047 P7/P10: the import root declares itself as
   # content:<content-root name>/<glTF file name>.
   get_filename_component(content_root_name "${ARG_CONTENT_ROOT}" NAME)
@@ -302,8 +332,7 @@ function(atlantis_add_imported_scene)
   set(ATLANTIS_${ARG_NAME}_scene_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_scene_MANIFEST_PATH "${manifest_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_scene_TARGET "atlantis_${ARG_NAME}_scene" PARENT_SCOPE)
-  # Plan 0046 M3: the import directory, for the content-gated load test's
-  # --validate-set over the whole declared set.
+  # Plan 0046 M3: the import directory, for the content-gated load test.
   set(ATLANTIS_${ARG_NAME}_scene_IMPORT_DIR "${import_dir}" PARENT_SCOPE)
 endfunction()
 
@@ -349,7 +378,7 @@ function(atlantis_add_texture_asset)
 
   add_custom_command(
     OUTPUT "${stamp}"
-    BYPRODUCTS "${artifact_path}" "${metadata_path}"
+    BYPRODUCTS "${artifact_path}" "${metadata_path}" "${artifact_path}.catalog.txt"
     COMMAND atlantis_asset_cooker
       --kind=texture --source=${source_path} --asset-root=${asset_root}
       --output-dir=${output_dir} --stamp=${stamp} ${color_space_args} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE}
@@ -360,11 +389,10 @@ function(atlantis_add_texture_asset)
   add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
 
   # Unconditional registration, matching atlantis_add_static_mesh_asset()
-  # exactly -- no collision-detector bypass. A texture SOURCE declared
-  # twice (the original, corrected-away design) is now a genuine
-  # DuplicateLogicalPath, caught by atlantis_finalize_asset_validation()'s
-  # own --validate-set exactly like any other asset kind's duplicate.
-  set_property(GLOBAL APPEND PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS "${ARG_SOURCE}")
+  # exactly. A texture SOURCE declared twice (the original, corrected-away
+  # design) cooks twice under one catalog GUID, which the catalog assembly
+  # rejects as DuplicateGuid (Plan 0047 P13).
+  _atlantis_register_catalog_fragment(${ARG_NAME}_asset "${artifact_path}.catalog.txt")
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "texture\tassets\t${ARG_SOURCE}")
 
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
@@ -402,7 +430,7 @@ function(atlantis_add_environment_asset)
 
   add_custom_command(
     OUTPUT "${stamp}"
-    BYPRODUCTS "${artifact_path}" "${metadata_path}"
+    BYPRODUCTS "${artifact_path}" "${metadata_path}" "${artifact_path}.catalog.txt"
     COMMAND atlantis_asset_cooker
       --kind=environment --source=${source_path} --asset-root=${asset_root}
       --output-dir=${output_dir} --stamp=${stamp} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE}
@@ -411,7 +439,7 @@ function(atlantis_add_environment_asset)
     VERBATIM
   )
   add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
-  set_property(GLOBAL APPEND PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS "${ARG_SOURCE}")
+  _atlantis_register_catalog_fragment(${ARG_NAME}_asset "${artifact_path}.catalog.txt")
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "environment\tassets\t${ARG_SOURCE}")
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
@@ -458,7 +486,7 @@ function(atlantis_add_material_asset)
 
   add_custom_command(
     OUTPUT "${stamp}"
-    BYPRODUCTS "${artifact_path}" "${metadata_path}"
+    BYPRODUCTS "${artifact_path}" "${metadata_path}" "${artifact_path}.catalog.txt"
     COMMAND atlantis_asset_cooker
       --kind=material --source=${source_path} --asset-root=${asset_root}
       --output-dir=${output_dir} --stamp=${stamp} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE}
@@ -479,7 +507,7 @@ function(atlantis_add_material_asset)
     add_dependencies(${ARG_NAME}_asset ${ATLANTIS_${ARG_NORMAL_MAP}_TARGET})
   endif()
 
-  set_property(GLOBAL APPEND PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS "${ARG_SOURCE}")
+  _atlantis_register_catalog_fragment(${ARG_NAME}_asset "${artifact_path}.catalog.txt")
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "material\tassets\t${ARG_SOURCE}")
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
@@ -487,38 +515,44 @@ function(atlantis_add_material_asset)
   set(ATLANTIS_${ARG_NAME}_LOGICAL_PATH "${ARG_SOURCE}" PARENT_SCOPE)
 endfunction()
 
-# Plan 0012 Section D4: writes every declared asset's logical path
-# (accumulated via the global property above) to a single file at CMake
-# GENERATE time -- before any build-time custom command runs, so there
-# is no build-time race regardless of build parallelism -- and declares
-# one validation target that runs the cooker's --validate-set mode over
-# it, detecting an Asset ID collision, a case-only-differing logical
-# path, or an exact duplicate across exactly this declared set (never a
-# repository-global guarantee, per ADR-0044). Call exactly once, from
-# the root CMakeLists.txt, after every add_subdirectory() that could
-# declare an asset.
-function(atlantis_finalize_asset_validation)
-  # Plan 0047 P10: deferred to the end of the top-level directory so that
-  # declarations made after this call (tests/) are included.
+# Plan 0047 P13 (ADR-0098 D2), replacing atlantis_finalize_asset_validation():
+# one target assembles every catalog fragment of this build into
+# <build>/asset_catalog.txt and writes the integrated_showcase_demo closure,
+# <build>/integrated_showcase_demo.catalog.txt (the Android packaging set). It
+# depends on every asset target and on each imported scene. Declarations,
+# fragments and targets are gathered at the end of the top-level directory,
+# so tests/ fixtures declared after this call are included. Call exactly
+# once, from the root CMakeLists.txt.
+function(atlantis_finalize_asset_catalog)
   cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL _atlantis_write_asset_declarations)
+  cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL _atlantis_add_asset_catalog_target)
+endfunction()
 
-  get_property(declared_paths GLOBAL PROPERTY ATLANTIS_DECLARED_ASSET_LOGICAL_PATHS)
-  set(list_path "${CMAKE_BINARY_DIR}/assets/declared_assets.txt")
-  list(JOIN declared_paths "\n" declared_paths_text)
-  file(GENERATE OUTPUT "${list_path}" CONTENT "${declared_paths_text}\n")
+function(_atlantis_add_asset_catalog_target)
+  atlantis_catalog_guid(closure_scene ROOT assets PATH scenes/integrated_showcase_demo.scene.txt)
+  get_property(fragments GLOBAL PROPERTY ATLANTIS_ASSET_CATALOG_FRAGMENTS)
+  get_property(asset_targets GLOBAL PROPERTY ATLANTIS_ASSET_TARGETS)
+  set(fragment_list "${CMAKE_BINARY_DIR}/assets/catalog_fragments.txt")
+  list(JOIN fragments "\n" fragments_text)
+  file(GENERATE OUTPUT "${fragment_list}" CONTENT "${fragments_text}\n")
 
-  add_custom_target(atlantis_asset_validation ALL
-    COMMAND atlantis_asset_cooker --validate-set --asset-list=${list_path}
+  set(catalog "${CMAKE_BINARY_DIR}/asset_catalog.txt")
+  set(closure "${CMAKE_BINARY_DIR}/integrated_showcase_demo.catalog.txt")
+  add_custom_target(atlantis_asset_catalog ALL
+    COMMAND atlantis_asset_cooker --kind=assemble-catalog --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE}
+      --declarations=${CMAKE_BINARY_DIR}/assets/declarations.txt --fragment-list=${fragment_list}
+      --out=${catalog} --closure=${closure_scene}=${closure}
+    BYPRODUCTS "${catalog}" "${closure}"
     DEPENDS atlantis_asset_cooker
-    COMMENT "Validating declared asset set for collisions"
+    COMMENT "Assembling the asset catalog"
     VERBATIM
   )
+  add_dependencies(atlantis_asset_catalog ${asset_targets})
 endfunction()
 
 # Plan 0047 P10: every declaration as one "type<TAB>root<TAB>path" line, in
 # declaration order -- the migration's input (M3) and the catalog
-# assembly's declaration check (M4). Additive beside declared_assets.txt
-# until M4 retires that file.
+# assembly's declaration check (M4).
 function(_atlantis_write_asset_declarations)
   get_property(declarations GLOBAL PROPERTY ATLANTIS_ASSET_DECLARATIONS)
   list(JOIN declarations "\n" declarations_text)

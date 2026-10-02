@@ -89,13 +89,3 @@ TEST_CASE("The Bistro import root is declared exactly when its content is presen
       std::filesystem::exists(std::filesystem::path(ATLANTIS_BISTRO_CONTENT_DIR) / "bistro.gltf");
   CHECK(contains(readDeclarations(), {"gltf_import", "content", "bistro/bistro.gltf"}) == contentPresent);
 }
-
-TEST_CASE("Every path in declared_assets.txt is also a declaration", "[asset_declarations]") {
-  const std::vector<Declaration> declarations = readDeclarations();
-  for (const std::string& path : readLines(ATLANTIS_DECLARED_ASSETS_PATH)) {
-    bool found = false;
-    for (const Declaration& d : declarations) found = found || (d.root == "assets" && d.path == path);
-    INFO(path);
-    CHECK(found);
-  }
-}

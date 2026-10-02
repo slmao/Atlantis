@@ -2,22 +2,6 @@
 
 namespace atlantis::asset_system {
 
-namespace {
-
-constexpr AssetId kFnv64OffsetBasis = 0xcbf29ce484222325ULL;
-constexpr AssetId kFnv64Prime = 0x100000001b3ULL;
-
-}  // namespace
-
-AssetId computeAssetId(std::string_view normalizedLogicalPath) noexcept {
-  AssetId hash = kFnv64OffsetBasis;
-  for (char c : normalizedLogicalPath) {
-    hash ^= static_cast<AssetId>(static_cast<unsigned char>(c));
-    hash *= kFnv64Prime;
-  }
-  return hash;
-}
-
 std::string toHexString(AssetId id) {
   static constexpr char kHexDigits[] = "0123456789abcdef";
   std::string result(16, '0');

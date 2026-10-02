@@ -6,7 +6,6 @@
 #include <atlantis/asset_system/asset_catalog_source.h>
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
-#include <atlantis/asset_system/asset_set_validation.h>
 #include <atlantis/asset_system/cook.h>
 #include <atlantis/asset_system/cook_environment.h>
 #include <atlantis/asset_system/cook_material.h>
@@ -173,20 +172,6 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
       return "tangent handedness conflict";
   }
   return "unknown cook error";
-}
-
-[[nodiscard]] const char* assetSetErrorMessage(AssetSetError error) {
-  switch (error) {
-    case AssetSetError::AssetIdCollision:
-      return "asset ID collision";
-    case AssetSetError::CaseOnlyPathConflict:
-      return "case-only logical path conflict";
-    case AssetSetError::DuplicateLogicalPath:
-      return "duplicate logical path";
-    case AssetSetError::InvalidLogicalPath:
-      return "invalid (not already normalized) logical path";
-  }
-  return "unknown asset set error";
 }
 
 // Plan 0016 Section D9: mirrors cookErrorMessage()'s own role and shape
@@ -748,41 +733,9 @@ constexpr std::uint32_t kMaterialSourceSchema = 10;
   return 0;
 }
 
-[[nodiscard]] int runValidateSetMode(const CookCommandRequest& request) {
-  std::ifstream listFile(request.assetListPath);
-  if (!listFile.is_open()) {
-    std::cerr << "atlantis_asset_cooker: cannot open asset list: " << request.assetListPath << "\n";
-    return 1;
-  }
-
-  std::vector<DeclaredAsset> assets;
-  std::string line;
-  while (std::getline(listFile, line)) {
-    if (!line.empty() && line.back() == '\r') line.pop_back();
-    if (line.empty()) continue;
-
-    const auto normalizedResult = normalizeLogicalPath(line);
-    if (normalizedResult.isErr()) {
-      std::cerr << "atlantis_asset_cooker: invalid declared logical path: " << line << "\n";
-      return 1;
-    }
-    const std::string& normalizedPath = normalizedResult.value();
-    assets.push_back(DeclaredAsset{normalizedPath, computeAssetId(normalizedPath)});
-  }
-
-  const auto validationResult = validateAssetSet(assets);
-  if (validationResult.isErr()) {
-    std::cerr << "atlantis_asset_cooker: asset set validation failed: "
-               << assetSetErrorMessage(validationResult.error()) << "\n";
-    return 1;
-  }
-
-  return 0;
-}
-
 // Plan 0046 Milestone 2 (ADR-0094 Decision 2, Plan 0046 P8): the
-// cook-manifest mode. Validates the import's asset list, runs every line of
-// its cook_manifest.txt through the same per-kind modes a command line
+// cook-manifest mode. Runs every line of the import's cook_manifest.txt
+// through the same per-kind modes a command line
 // would (in-process, no std::system), then writes the Runtime dependency
 // manifest -- one "logicalPath\tartifactPath\tmetadataPath" line per asset
 // of the asset list, in its order: meshes at their artifacts in the import
@@ -820,11 +773,6 @@ struct ManifestEntry {
   const fs::path importDir(request.importDir);
   const fs::path cookedDir(request.cookedDir);
 
-  CookCommandRequest validate;
-  validate.isValidateSet = true;
-  validate.assetListPath = (importDir / "asset_list.txt").string();
-  if (runValidateSetMode(validate) != 0) return 1;
-
   std::ifstream manifestFile(importDir / "cook_manifest.txt");
   if (!manifestFile.is_open()) {
     std::cerr << "atlantis_asset_cooker: cannot open cook manifest: " << (importDir / "cook_manifest.txt").string()
@@ -846,7 +794,6 @@ struct ManifestEntry {
     for (std::string token; tokens >> token;) args.push_back(substitutePlaceholders(token, request));
     CookCommandRequest lineRequest;
     if (!parseCookArguments(args, lineRequest, std::cerr, CookArgumentSource::CookManifestLine) ||
-        lineRequest.isValidateSet ||
         lineRequest.kind == AssetKind::CookManifest || lineRequest.kind == AssetKind::Environment ||
         lineRequest.kind == AssetKind::MintGuid || lineRequest.kind == AssetKind::Lookup ||
         lineRequest.kind == AssetKind::Migrate0047 || lineRequest.kind == AssetKind::AssembleCatalog) {
@@ -945,7 +892,7 @@ struct ManifestEntry {
     return 1;
   }
 
-  std::ifstream listFile(validate.assetListPath);
+  std::ifstream listFile(importDir / "asset_list.txt");
   std::string manifestText;
   std::size_t listed = 0;
   while (std::getline(listFile, line)) {
@@ -1486,7 +1433,7 @@ class Migration {
 
 bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest& request, std::ostream& err,
                         CookArgumentSource source) {
-  bool sawSource = false, sawAssetRoot = false, sawOutputDir = false, sawAssetList = false;
+  bool sawSource = false, sawAssetRoot = false, sawOutputDir = false;
   bool sawUnrecognized = false;
   const auto valueAfterEquals = [](std::string_view arg, std::string_view flag) -> std::optional<std::string> {
     if (arg.substr(0, flag.size()) != flag) return std::nullopt;
@@ -1495,9 +1442,7 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
 
   for (const std::string& argString : args) {
     const std::string_view arg = argString;
-    if (arg == "--validate-set") {
-      request.isValidateSet = true;
-    } else if (auto sourcePath = valueAfterEquals(arg, "--source=")) {
+    if (auto sourcePath = valueAfterEquals(arg, "--source=")) {
       request.sourcePath = *sourcePath;
       sawSource = true;
     } else if (auto assetRoot = valueAfterEquals(arg, "--asset-root=")) {
@@ -1508,9 +1453,6 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
       sawOutputDir = true;
     } else if (auto stamp = valueAfterEquals(arg, "--stamp=")) {
       request.stampPath = *stamp;
-    } else if (auto assetList = valueAfterEquals(arg, "--asset-list=")) {
-      request.assetListPath = *assetList;
-      sawAssetList = true;
     } else if (auto importDir = valueAfterEquals(arg, "--import-dir=")) {
       request.importDir = *importDir;
     } else if (auto cookedDir = valueAfterEquals(arg, "--cooked-dir=")) {
@@ -1589,9 +1531,7 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
   }
 
   bool haveRequiredFlags = false;
-  if (request.isValidateSet) {
-    haveRequiredFlags = sawAssetList;
-  } else if (request.kind == AssetKind::MintGuid) {
+  if (request.kind == AssetKind::MintGuid) {
     haveRequiredFlags = true;
   } else if (request.kind == AssetKind::Migrate0047) {
     haveRequiredFlags = !request.declarationsPath.empty() && sawAssetRoot && !request.catalogSourceOutPath.empty();
@@ -1610,10 +1550,9 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
   // Plan 0047 P7: a per-asset cook takes its GUID from --catalog-source= on
   // the command line and from --guid= on a cook-manifest line, never the
   // other way round, so a build script can never carry a GUID.
-  const bool isCookKind = !request.isValidateSet &&
-                          (request.kind == AssetKind::StaticMesh || request.kind == AssetKind::Scene ||
-                           request.kind == AssetKind::Texture || request.kind == AssetKind::Material ||
-                           request.kind == AssetKind::Environment);
+  const bool isCookKind = request.kind == AssetKind::StaticMesh || request.kind == AssetKind::Scene ||
+                          request.kind == AssetKind::Texture || request.kind == AssetKind::Material ||
+                          request.kind == AssetKind::Environment;
   if (!request.guid.empty() && request.kind != AssetKind::Lookup &&
       !(isCookKind && source == CookArgumentSource::CookManifestLine)) {
     err << "atlantis_asset_cooker: --guid= is accepted only with --kind=lookup or on a cook-manifest line\n";
@@ -1646,7 +1585,6 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
 }
 
 int runCookCommand(const CookCommandRequest& request) {
-  if (request.isValidateSet) return runValidateSetMode(request);
   switch (request.kind) {
     case AssetKind::StaticMesh:
       return runCookMeshMode(request);

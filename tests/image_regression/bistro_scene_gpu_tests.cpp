@@ -97,13 +97,19 @@ TEST_CASE("The assembled Bistro scene validates, loads through the Runtime path,
   const fs::path importDir{ATLANTIS_BISTRO_SCENE_IMPORT_DIR};
   if (!fs::exists(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)) SKIP("Bistro build step has not run");
 
-  // 1. The whole declared set passes the cooker's own --validate-set, and
-  //    the dependency manifest lists each of the 1070 assets once.
+  // 1. The build's assembled catalog (Plan 0047 P13) holds every record of
+  //    the import -- the 1070 assets plus the scene -- and the dependency
+  //    manifest lists each of the 1070 assets once.
   const fs::path assetList = importDir / "asset_list.txt";
   CHECK(nonEmptyLines(assetList).size() == 551 + 254 + 265);
-  const std::string validate = "\"\"" + std::string(ATLANTIS_ASSET_COOKER_EXECUTABLE) + "\" --validate-set " +
-                               "\"--asset-list=" + assetList.generic_string() + "\"\"";
-  REQUIRE(std::system(validate.c_str()) == 0);
+  {
+    std::size_t importRecords = 0;
+    for (const std::string& line : nonEmptyLines(ATLANTIS_ASSET_CATALOG_PATH)) {
+      if (line.find(" source=content:bistro/bistro.gltf#") != std::string::npos) ++importRecords;
+    }
+    CHECK(importRecords == 551 + 254 + 265 + 1);
+    CHECK(nonEmptyLines(importDir / "import.catalog.txt").size() == 2 + importRecords);
+  }
   const std::vector<std::string> manifest = nonEmptyLines(ATLANTIS_BISTRO_SCENE_MANIFEST_PATH);
   CHECK(manifest.size() == 1070);
 

@@ -591,8 +591,11 @@ if(NOT ANDROID)
       ATLANTIS_BISTRO_SCENE_METADATA_PATH="${ATLANTIS_bistro_scene_METADATA_PATH}"
       ATLANTIS_BISTRO_SCENE_MANIFEST_PATH="${ATLANTIS_bistro_scene_MANIFEST_PATH}"
       ATLANTIS_BISTRO_SCENE_IMPORT_DIR="${ATLANTIS_bistro_scene_IMPORT_DIR}"
+      # Plan 0047 P13: the build's assembled catalog.
+      ATLANTIS_ASSET_CATALOG_PATH="${CMAKE_BINARY_DIR}/asset_catalog.txt"
     )
-    add_dependencies(atlantis_image_regression_content_gpu_tests ${ATLANTIS_bistro_scene_TARGET})
+    add_dependencies(atlantis_image_regression_content_gpu_tests ${ATLANTIS_bistro_scene_TARGET}
+      atlantis_asset_catalog)
   endif()
   add_dependencies(atlantis_image_regression_content_gpu_tests atlantis_asset_cooker
     ${ATLANTIS_pbr_normal_mapped_control_TARGET} textured_quad_shaders lit_textured_shaders pbr_direct_lit_shaders

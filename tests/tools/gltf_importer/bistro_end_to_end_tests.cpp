@@ -1,5 +1,7 @@
 #include "import_command.h"
 
+#include <atlantis/asset_system/asset_catalog.h>
+#include <atlantis/asset_system/asset_catalog_source.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/asset_metadata.h>
 #include <atlantis/asset_system/decode_scene.h>
@@ -24,7 +26,7 @@
 
 // Plan 0037 Milestone 6: the real Bistro chain end to end on a small sample
 // -- importer -> real atlantis_asset_cooker (a subprocess, the same binary a
-// human runs) -> --validate-set -> the public artifact decoders. The census
+// human runs) -> catalog assembly -> the public artifact decoders. The census
 // test and a one-off full sweep (reported in the PR) cover the full counts;
 // this standing test keeps the whole chain honest without re-asserting them.
 //
@@ -122,10 +124,7 @@ TEST_CASE("Real Bistro imports, validates and cooks end to end through the real 
   CHECK(imported.value().sceneNodeLines == 5908);
   CHECK(imported.value().declaredAssets == 551 + 254 + 265);
 
-  // 2. The whole declared asset set passes the cooker's own set validation
-  //    (AssetId collisions, case-only path conflicts).
-  REQUIRE(runCooker("--validate-set --asset-list=" + (importDir / "asset_list.txt").generic_string()) == 0);
-
+  // 2. The keys the scene's mesh and material references must resolve to.
   std::set<as::AssetId> meshIds;
   std::set<as::AssetId> materialIds;
   for (const std::string& path : lines(readText(importDir / "asset_list.txt"))) {
@@ -168,6 +167,25 @@ TEST_CASE("Real Bistro imports, validates and cooks end to end through the real 
     }
     CHECK(entries == 551 + 254 + 265);
     CHECK(logicalPaths.size() == entries);  // each declared asset exactly once
+  }
+
+  // Plan 0047 M4 (P12/P13): the import's one catalog fragment holds a record
+  // for every asset of it -- the 1070 plus the scene -- and assembles
+  // cleanly against the committed catalog source: no duplicate GUID or key,
+  // every reference resolving with the right type, every sidecar agreeing.
+  {
+    const auto source = as::parseAssetCatalogSource(readText(ATLANTIS_ASSET_CATALOG_SOURCE_PATH));
+    REQUIRE(source.isOk());
+    as::AssetCatalogAssemblyRequest assembly;
+    assembly.catalogSource = &source.value();
+    assembly.declarations = {{as::CatalogAssetType::GltfImport, as::CatalogRoot::Content, "bistro/bistro.gltf"}};
+    assembly.fragmentPaths = {(importDir / "import.catalog.txt").string()};
+    assembly.outPath = (work / "asset_catalog.txt").string();
+    const auto assembled = as::assembleAssetCatalog(assembly);
+    INFO((assembled.isErr() ? std::string(as::toString(assembled.error().error)) + ": " + assembled.error().subject
+                            : std::string("ok")));
+    REQUIRE(assembled.isOk());
+    CHECK(assembled.value().recordCount == 551 + 254 + 265 + 1);
   }
   std::vector<std::size_t> sampleMaterials = {0};
   for (std::size_t i = 1; i < 254 && sampleMaterials.size() < 2; ++i) {

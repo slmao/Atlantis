@@ -1,5 +1,7 @@
 #include <atlantis/asset_system/asset_guid.h>
 
+#include "fnv1a64.h"
+
 #include <algorithm>
 #include <cstdint>
 
@@ -148,8 +150,7 @@ EntityGuid deriveEntityGuid(const AssetGuid& scene, std::string_view subKey) noe
 }
 
 AssetId assetKey(const AssetGuid& guid) noexcept {
-  // Plan 0047 P2: reuses the existing FNV-1a-64 routine over the raw bytes.
-  return computeAssetId(std::string_view(reinterpret_cast<const char*>(guid.bytes.data()), guid.bytes.size()));
+  return detail::fnv1a64(guid.bytes);
 }
 
 }  // namespace atlantis::asset_system

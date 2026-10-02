@@ -70,11 +70,10 @@ set(ATLANTIS_world_scene_TARGET "${ATLANTIS_world_scene_TARGET}" PARENT_SCOPE)
 # atlantis_add_texture_asset() below. Declared here, unconditionally
 # (like minimal_cube/world_scene above), rather than inside the
 # ATLANTIS_BUILD_TESTS block tests/image_regression/fixture/ itself
-# lives in -- this call site must precede
-# atlantis_finalize_asset_validation()'s own call (below, this file's
-# caller), which reads the accumulated declared-asset-paths property at
-# CMake configure time, not build time; a declaration added only inside
-# the later ATLANTIS_BUILD_TESTS block would never be seen by that read.
+# lives in. (The original reason -- the set validation read the declared
+# paths at configure time -- is gone since Plan 0047 M4:
+# atlantis_finalize_asset_catalog() gathers declarations at the end of the
+# top-level directory.)
 atlantis_add_texture_asset(
   NAME textured_quad_unorm
   SOURCE textures/textured_quad_source_unorm.png
@@ -124,9 +123,8 @@ set(ATLANTIS_textured_quad_srgb_TARGET "${ATLANTIS_textured_quad_srgb_TARGET}" P
 # existing textured_quad golden for no benefit. Color is a deterministic
 # "1.0 1.0 1.0" placeholder -- textured_quad.slang has no color input
 # and never reads it. Declared here, unconditionally (like minimal_cube/
-# world_scene/the two textures above), for the same
-# atlantis_finalize_asset_validation() configure-time-visibility reason
-# documented on the texture declarations above.
+# world_scene/the two textures above), as documented on the texture
+# declarations above.
 atlantis_add_static_mesh_asset(
   NAME textured_quad_left
   SOURCE meshes/textured_quad_left.mesh.txt

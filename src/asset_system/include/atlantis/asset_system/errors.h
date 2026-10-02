@@ -15,13 +15,6 @@ enum class LogicalPathError {
   DisallowedCharacter,
 };
 
-enum class AssetSetError {
-  AssetIdCollision,
-  CaseOnlyPathConflict,
-  DuplicateLogicalPath,
-  InvalidLogicalPath,
-};
-
 enum class SourceParseError {
   UnknownSourceVersion,
   MissingField,

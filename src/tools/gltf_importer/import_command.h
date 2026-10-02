@@ -114,8 +114,8 @@ struct GltfImportSummary {
 // Output layout: <name>_mesh_<i>_<j>.amesh(.meta.txt) per primitive,
 // <name>/materials/<i>.material.txt per material, the Ruling 7 white
 // fallback texture when needed, <name>/<name>.scene.txt for the default
-// scene, import_report.txt, asset_list.txt (every declared logical path, for
-// atlantis_asset_cooker --validate-set), and cook_manifest.txt -- the
+// scene, import_report.txt, asset_list.txt (every declared logical path, the
+// dependency manifest's order), and cook_manifest.txt -- the
 // atlantis_asset_cooker invocations (textures, then materials, then the
 // scene) that turn the generated sources into artifacts.
 // Plan 0046 Milestone 2 (ADR-0094 Decision 3): overlayPath, when given,

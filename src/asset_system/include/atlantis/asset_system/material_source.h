@@ -166,10 +166,9 @@ enum class MaterialSourceParseError {
 // defaults apply) or exactly 8 lines (the same 5 plus, in this fixed
 // order, base_color_factor/metallic_factor/roughness_factor) -- no
 // partial subset of the three trailing lines. Version 1 is rejected
-// outright, no dual-version reader. Never validates that
-// textureLogicalPath resolves to anything -- that is exclusively
-// cookMaterial()'s own job (normalizeLogicalPath() + computeAssetId(),
-// value-level only, ADR-0059 D6/D7).
+// outright, no dual-version reader. Never validates that a texture
+// reference resolves to anything -- the catalog assembly checks that
+// (Plan 0047 P13); cookMaterial() only keys it (ADR-0059 D6/D7).
 [[nodiscard]] atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSource(
     std::string_view text);
 

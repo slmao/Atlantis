@@ -4,20 +4,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <string_view>
 
 namespace atlantis::asset_system {
 
-// Plan 0012 Section D9 / ADR-0044: a deterministic, path-derived Asset
-// ID -- not rename/move-durable (see ADR-0044's own Decision). Computed
-// via computeAssetId() over an already-normalized logical path (see
-// logical_path.h); this module never derives it any other way, so every
-// caller sees the same value for the same normalized path.
+// Plan 0047 (ADR-0097 D2): the 64-bit key of an asset's persistent
+// AssetGuid -- assetKey() (asset_guid.h), FNV-1a-64 over the GUID's 16
+// bytes. Logical paths no longer participate in identity; 0 is reserved
+// ("none").
 using AssetId = std::uint64_t;
-
-// 64-bit FNV-1a over the normalized logical path's own UTF-8/ASCII
-// bytes.
-[[nodiscard]] AssetId computeAssetId(std::string_view normalizedLogicalPath) noexcept;
 
 // Fixed-width, lowercase, 16-hex-digit form -- the exact text this
 // module's metadata sidecar records (ADR-0044).

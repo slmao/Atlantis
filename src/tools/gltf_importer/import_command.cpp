@@ -478,8 +478,8 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
   const std::string rootPath = detail::importRootPath(inputPath, contentRoot);
   const std::string importRootId = "content:" + rootPath;
   // Every logical path this import declares an AssetId for (meshes,
-  // materials, textures -- a scene has none): asset_list.txt, the input to
-  // atlantis_asset_cooker --validate-set.
+  // materials, textures -- a scene has none): asset_list.txt, the order the
+  // cook-manifest mode writes the dependency manifest in.
   std::vector<std::string> declaredAssets;
   reportLines.push_back("gltf_import: " + name);
 

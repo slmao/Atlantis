@@ -10,8 +10,7 @@ namespace atlantis::tools::asset_cooker {
 
 // Plan 0015 Section D7 / Plan 0016 Section D9 / Plan 0018 Section P4:
 // which cook-mode pipeline to run -- StaticMesh (the original, default
-// behavior, unchanged), Scene, Texture, Material, or Environment. Never affects
-// validate-set mode.
+// behavior, unchanged), Scene, Texture, Material, or Environment.
 // Plan 0046 Milestone 2 (ADR-0094 Decision 2, Plan 0046 P8): CookManifest
 // runs a glTF import's whole cook_manifest.txt in-process and writes the
 // Runtime dependency manifest -- not an asset kind of its own, but selected
@@ -42,20 +41,13 @@ enum class AssetKind {
   AssembleCatalog,
 };
 
-// Plan 0012 Section D4: two modes. Cook mode (isValidateSet == false)
-// cooks exactly one asset from sourcePath (relative to assetRoot) into
-// outputDir, writing a completion stamp at stampPath on success --
-// mirroring atlantis_shader_compiler's own stamp-based, all-or-nothing
-// CMake integration (ADR-0029). Validate-set mode (isValidateSet ==
-// true) reads assetListPath (one declared logical path per line),
-// computes each one's real Asset ID via
-// atlantis::asset_system::computeAssetId(), and runs
-// atlantis::asset_system::validateAssetSet() over the resulting
-// set -- scoped to exactly the declared paths in that one file, per
-// ADR-0044.
+// Plan 0012 Section D4: cook mode cooks exactly one asset from sourcePath
+// (relative to assetRoot) into outputDir, writing a completion stamp at
+// stampPath on success -- mirroring atlantis_shader_compiler's own
+// stamp-based, all-or-nothing CMake integration (ADR-0029). Plan 0047 M4:
+// the set-level check is the catalog assembly (AssembleCatalog), which
+// replaced validate-set mode.
 struct CookCommandRequest {
-  bool isValidateSet = false;
-
   // Cook mode.
   AssetKind kind = AssetKind::StaticMesh;
   std::string sourcePath;
@@ -71,9 +63,6 @@ struct CookCommandRequest {
   // field. runCookTextureMode() does the final string -> enum
   // conversion immediately before calling cookTexture().
   std::string colorSpace;
-
-  // Validate-set mode.
-  std::string assetListPath;
 
   // Plan 0046 Milestone 2 (Plan 0046 P8): --kind=cook-manifest's inputs.
   std::string importDir;
