@@ -29,8 +29,10 @@ int main(int argc, char** argv) {
                  "       atlantis_asset_cooker --kind=cook-manifest --import-dir=<dir> --cooked-dir=<dir> "
                  "--content-parent=<dir> --manifest-out=<path> [--stamp=<path>]\n"
                  "       atlantis_asset_cooker --kind=mint-guid [--count=<n>]\n"
-                 "       atlantis_asset_cooker --kind=lookup --catalog-source=<path> "
-                 "(--guid=<guid> | --source=<assets|content>:<path>)\n"
+                 "       atlantis_asset_cooker --kind=lookup (--catalog-source=<path> | --catalog=<path>) "
+                 "(--guid=<guid> | --source=<assets|content>:<path>[#<sub-key>])\n"
+                 "       atlantis_asset_cooker --kind=assemble-catalog --catalog-source=<path> --declarations=<path> "
+                 "--fragment-list=<path> --out=<path> [--closure=<scene guid>=<path>]...\n"
                  "       atlantis_asset_cooker --kind=migrate-0047 --declarations=<path> --asset-root=<dir> "
                  "--catalog-source-out=<path> [--scene-source=<assets-relative path>]...\n";
     return 1;

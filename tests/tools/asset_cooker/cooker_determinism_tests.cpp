@@ -1,4 +1,5 @@
 #include "test_catalog_source.h"
+#include "test_cooked_build.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -155,4 +156,32 @@ TEST_CASE("The real environment cooker produces byte-identical artifact and meta
   CHECK(readFileBytes(outputDirA / "studio.aenv") == readFileBytes(outputDirB / "studio.aenv"));
   CHECK(readFileBytes(outputDirA / "studio.aenv.meta.txt") ==
         readFileBytes(outputDirB / "studio.aenv.meta.txt"));
+}
+
+// Plan 0047 M4 (Spec 0047 determinism, measured): the real cooker assembles
+// the same fragments twice, into two catalogs (and closures) beside each
+// other, and both runs write the same bytes.
+TEST_CASE("The real atlantis_asset_cooker assembles byte-identical catalogs across two runs",
+          "[asset_cooker][assemble_catalog][tool]") {
+  TempDirGuard dir("assemble_determinism");
+  const atlantis::tools::asset_cooker::test::CookedBuild build = atlantis::tools::asset_cooker::test::cookSmallBuild(
+      dir.path, fs::path(ATLANTIS_ASSET_ROOT) / "textures" / "textured_quad_source_unorm.png");
+
+  const auto assemble = [&build](const std::string& tag) {
+    const std::string command =
+        quoted(ATLANTIS_ASSET_COOKER_EXECUTABLE) + " --kind=assemble-catalog --catalog-source=" +
+        quoted(build.catalogSource.string()) + " --declarations=" + quoted(build.declarations.string()) +
+        " --fragment-list=" + quoted(build.fragmentList.string()) + " --out=" +
+        quoted((build.outDir / ("catalog_" + tag + ".txt")).string()) + " --closure=" +
+        atlantis::asset_system::toString(build.scene) + "=" +
+        quoted((build.outDir / ("closure_" + tag + ".txt")).string());
+    return std::system(("\"" + command + "\"").c_str());
+  };
+  REQUIRE(assemble("a") == 0);
+  REQUIRE(assemble("b") == 0);
+
+  const std::vector<char> catalogA = readFileBytes(build.outDir / "catalog_a.txt");
+  CHECK(catalogA.size() > 100);
+  CHECK(catalogA == readFileBytes(build.outDir / "catalog_b.txt"));
+  CHECK(readFileBytes(build.outDir / "closure_a.txt") == readFileBytes(build.outDir / "closure_b.txt"));
 }

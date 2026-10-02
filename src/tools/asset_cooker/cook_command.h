@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace atlantis::tools::asset_cooker {
@@ -24,7 +25,22 @@ namespace atlantis::tools::asset_cooker {
 // Plan 0047 P20 (one-off, removed in M9): Migrate0047 writes the catalog
 // source from --declarations= and rewrites the committed scene and
 // material sources to GUID references in place.
-enum class AssetKind { StaticMesh, Scene, Texture, Material, Environment, CookManifest, MintGuid, Lookup, Migrate0047 };
+// Plan 0047 P13: AssembleCatalog merges the build's fragments into the
+// cooked catalog (--out=) and any --closure= catalogs; the build runs it
+// once, never from a cook manifest. Lookup also reads a cooked catalog
+// (--catalog=) in place of the catalog source.
+enum class AssetKind {
+  StaticMesh,
+  Scene,
+  Texture,
+  Material,
+  Environment,
+  CookManifest,
+  MintGuid,
+  Lookup,
+  Migrate0047,
+  AssembleCatalog,
+};
 
 // Plan 0012 Section D4: two modes. Cook mode (isValidateSet == false)
 // cooks exactly one asset from sourcePath (relative to assetRoot) into
@@ -85,6 +101,16 @@ struct CookCommandRequest {
   std::string declarationsPath;
   std::string catalogSourceOutPath;
   std::vector<std::string> extraSceneSources;
+
+  // Plan 0047 P13: --kind=assemble-catalog's inputs, with catalogSourcePath
+  // and declarationsPath. Each closure is a scene GUID and its output path,
+  // from --closure=<scene guid>=<out>.
+  std::string fragmentListPath;
+  std::string outPath;
+  std::vector<std::pair<std::string, std::string>> closures;
+
+  // Plan 0047 M4: --kind=lookup against a cooked catalog.
+  std::string catalogPath;
 };
 
 // Parses one cooker argument vector (argv without the program name) into
