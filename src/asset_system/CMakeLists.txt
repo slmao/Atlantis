@@ -8,6 +8,7 @@ add_library(atlantis_asset_system STATIC
   src/asset_id.cpp
   src/asset_guid.cpp
   src/asset_catalog_source.cpp
+  src/asset_catalog.cpp
   src/asset_set_validation.cpp
   src/mesh_source.cpp
   src/asset_metadata.cpp
