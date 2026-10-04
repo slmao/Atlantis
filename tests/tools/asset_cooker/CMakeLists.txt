@@ -43,6 +43,7 @@ catch_discover_tests(atlantis_asset_cooker_command_tests DISCOVERY_MODE PRE_TEST
 # "tool" label precedent (a distinct CTest label from "gpu").
 add_executable(atlantis_asset_cooker_determinism_tests
   cooker_determinism_tests.cpp
+  stable_identity_tests.cpp
 )
 
 target_compile_definitions(atlantis_asset_cooker_determinism_tests PRIVATE

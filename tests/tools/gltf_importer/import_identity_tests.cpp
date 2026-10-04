@@ -182,6 +182,58 @@ TEST_CASE("Imported GUIDs do not depend on the content root's name or location",
   CHECK(a.value().textureAsset == b.value().textureAsset);
 }
 
+// Plan 0047 M9 (R14): an import from a moved glTF and a renamed content root
+// yields the same GUIDs, because the root's identity lives in the catalog
+// source and moving the content costs exactly that one catalog line.
+TEST_CASE("Importing a glTF from a moved file and content root, with only its catalog line edited, yields the "
+          "same GUIDs and outputs",
+          "[gltf_importer][guid][stable_identity]") {
+  const fs::path dir = gltf_test::freshDirectory("import_identity_r14");
+  const fs::path contentA = dir / "street";
+  const fs::path inputA = writeTexturedQuad(contentA);
+  const fs::path catalogA = dir / "catalog_a.txt";
+  writeCatalog(catalogA,
+               std::string("asset: guid=") + kRootText + " type=gltf_import root=content path=street/input.gltf\n", 1);
+
+  const auto rootA = resolveImportRoot(catalogA, inputA, contentA);
+  REQUIRE(rootA.isOk());
+  REQUIRE(importGltf(inputA, contentA, dir / "out_a", "t", rootA.value()).isOk());
+
+  // Move: the content root is renamed and relocated, and the glTF renamed.
+  const fs::path contentB = dir / "elsewhere" / "renamed_street";
+  fs::create_directories(contentB.parent_path());
+  fs::rename(contentA, contentB);
+  fs::rename(contentB / "input.gltf", contentB / "renamed.gltf");
+  const fs::path inputB = contentB / "renamed.gltf";
+
+  // Without the catalog edit the moved import is not found.
+  const auto stale = resolveImportRoot(catalogA, inputB, contentB);
+  REQUIRE(stale.isErr());
+  CHECK(stale.error() == GltfImportError::SourceNotInCatalog);
+
+  // With its one line edited, the same GUID resolves and the import is the same.
+  const fs::path catalogB = dir / "catalog_b.txt";
+  writeCatalog(catalogB,
+               std::string("asset: guid=") + kRootText +
+                   " type=gltf_import root=content path=renamed_street/renamed.gltf\n",
+               1);
+  const auto rootB = resolveImportRoot(catalogB, inputB, contentB);
+  REQUIRE(rootB.isOk());
+  CHECK(rootB.value() == rootA.value());
+  REQUIRE(importGltf(inputB, contentB, dir / "out_b", "t", rootB.value()).isOk());
+
+  for (const char* file : {"t_mesh_0_0.amesh", "t_mesh_0_0.amesh.meta.txt", "t/t.scene.txt", "t/materials/0.material.txt"}) {
+    INFO(file);
+    CHECK(readText(dir / "out_a" / file) == readText(dir / "out_b" / file));
+  }
+  const auto metadataA = as::parseAssetMetadata(readText(dir / "out_a" / "t_mesh_0_0.amesh.meta.txt"));
+  const auto metadataB = as::parseAssetMetadata(readText(dir / "out_b" / "t_mesh_0_0.amesh.meta.txt"));
+  REQUIRE(metadataA.isOk());
+  REQUIRE(metadataB.isOk());
+  CHECK(metadataA.value().assetGuid == metadataB.value().assetGuid);
+  CHECK(metadataA.value().assetGuid == as::deriveAssetGuid(root(), "mesh/0/0"));
+}
+
 TEST_CASE("Import sub-keys must be non-empty ASCII (ruling I2)", "[gltf_importer][guid]") {
   using atlantis::gltf_importer::detail::deriveImportAssetGuid;
   using atlantis::gltf_importer::detail::deriveImportEntityGuid;
