@@ -4,6 +4,7 @@ add_executable(atlantis_asset_system_tests
   logical_path_tests.cpp
   asset_id_tests.cpp
   asset_guid_tests.cpp
+  entity_ref_tests.cpp
   asset_catalog_source_tests.cpp
   asset_catalog_tests.cpp
   asset_declarations_tests.cpp

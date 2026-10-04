@@ -12,6 +12,7 @@ add_library(atlantis_runtime_host STATIC
   src/platform_session.cpp
   src/scene_extraction.cpp
   src/scene_load.cpp
+  src/entity_ref_resolution.cpp
   src/material_realization.cpp
   src/environment_realization.cpp
   src/runtime_application.cpp

@@ -24,6 +24,7 @@ add_executable(atlantis_runtime_tests
   runtime_ownership_tests.cpp
   scene_extraction_tests.cpp
   scene_load_tests.cpp
+  entity_ref_resolution_tests.cpp
   pbr_reflection_cross_check_tests.cpp
   material_realization_tests.cpp
   cli_tests.cpp
