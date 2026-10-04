@@ -290,15 +290,16 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
   }
 
   // (f) Instantiate -- infallible.
-  atlantis::world::World world = atlantis::world::fromValidatedSceneData(scene);
+  atlantis::world::SceneInstance instance = atlantis::world::instantiateScene(scene);
 
   // (g) Publish -- the caller (RuntimeApplication::initializeSteps())
   //     performs the actual world_.emplace()/meshResourceMap_ = ...
   //     publish; this function's own return, by value, is itself
   //     already the transactional boundary -- nothing is written to
   //     any caller-owned state until this Ok() is actually consumed.
-  return ResultT::Ok(SceneLoadOutcome{std::move(world), std::move(meshResourceMap), std::move(materialDataMap),
-                                       std::move(textureDataMap)});
+  return ResultT::Ok(SceneLoadOutcome{std::move(instance.world), std::move(meshResourceMap),
+                                       std::move(materialDataMap), std::move(textureDataMap), config.sceneAsset,
+                                       std::move(instance.entities)});
 }
 
 }  // namespace atlantis::runtime

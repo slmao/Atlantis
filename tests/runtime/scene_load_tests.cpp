@@ -385,6 +385,33 @@ TEST_CASE("loadAndInstantiateScene: a scene with no Renderable references succee
   CHECK(result.value().world.renderableEntities().empty());
 }
 
+TEST_CASE("loadAndInstantiateScene: the outcome carries the scene's GUID and its EntityGuid -> EntityId map beside "
+          "the World (Plan 0047 P17)",
+          "[runtime][scene][entity_guid]") {
+  TempDirGuard dir("scene_identity");
+  const fs::path sourcePath = dir.path / "plain.scene.txt";
+  writeFile(sourcePath,
+            "atlantis_scene_source_version: 7\n"
+            "node_count: 1\n"
+            "active_camera: none\n"
+            "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 "
+            "rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
+  const fs::path artifactPath = dir.path / "plain.ascene";
+  const fs::path metadataPath = dir.path / "plain.ascene.meta.txt";
+  REQUIRE(cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string()).isOk());
+  const fs::path catalog =
+      CatalogBuilder(dir.path).addScene("scene", CookedSceneFixture{artifactPath, metadataPath}, {}).write();
+
+  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
+  REQUIRE(result.isOk());
+  CHECK(result.value().sceneGuid == testAssetGuid("scene"));
+  CHECK(result.value().entities.size() == 1);
+  const auto entity = result.value().entities.find(
+      atlantis::asset_system::parseEntityGuid("e68122c6-1bb2-8f1f-b185-358f58780b05").value());
+  REQUIRE(entity.has_value());
+  CHECK(result.value().world.isValid(*entity));
+}
+
 TEST_CASE("loadAndInstantiateScene V19: load order follows first-reference order, not AssetId-numeric order",
           "[runtime][scene]") {
   // firstReferencedLogicalPath's own artifact is deliberately missing;

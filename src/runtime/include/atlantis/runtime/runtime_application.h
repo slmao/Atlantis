@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/environment_types.h>
 #include <atlantis/asset_system/material_types.h>
@@ -26,6 +27,7 @@
 #include <atlantis/runtime/lifecycle_state.h>
 #include <atlantis/runtime/platform_session.h>
 #include <atlantis/world/entity_id.h>
+#include <atlantis/world/scene_instantiation.h>
 #include <atlantis/world/world.h>
 
 #include <array>
@@ -267,6 +269,11 @@ class RuntimeApplication {
   // initializeSteps() successfully reaches step (g); never reset by
   // shutdown() (it owns no GPU resource, matching today's behavior).
   std::optional<atlantis::world::World> world_;
+  // Plan 0047 P17: the loaded scene's GUID and its EntityGuid -> EntityId map,
+  // published with world_ and meaningful only beside it (an EntityId is a
+  // per-World-instance token). Read by the EntityRef resolver (ADR-0097 D6).
+  atlantis::asset_system::AssetGuid sceneGuid_;
+  atlantis::world::SceneEntityMap sceneEntities_;
   std::optional<atlantis::world::EntityId> activeCameraEntity_;  // cached for logging only; World itself is the source of truth
   RuntimeLifecycleTracker lifecycle_;
   RuntimeExitReason lastExitReason_ = RuntimeExitReason::Success;

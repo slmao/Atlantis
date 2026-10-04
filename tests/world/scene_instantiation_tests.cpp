@@ -14,6 +14,7 @@
 #include <random>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <atlantis/asset_system/asset_guid.h>
@@ -444,4 +445,121 @@ TEST_CASE("A camera with no bloom group instantiates with bloom off (Plan 0044)"
   REQUIRE(camera.isOk());
   CHECK(camera.value().bloom.strength == 0.0f);
   CHECK(camera.value().bloom.threshold == 1.0f);
+}
+
+// ---------------------------------------------------------------------------
+// Plan 0047 M6 (P17, ADR-0097 D5): instantiateScene() and SceneEntityMap.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] atlantis::asset_system::EntityGuid entityGuidOf(const char* text) {
+  return atlantis::asset_system::parseEntityGuid(text).value();
+}
+
+// The three node GUIDs kThreeNodeSceneSource names.
+const char* const kNodeGuidTexts[3] = {"e68122c6-1bb2-8f1f-b185-358f58780b05", "e68122c6-18b2-8f1f-b185-358f58780754",
+                                       "e68122c6-19b2-8f1f-b185-358f5878088f"};
+
+}  // namespace
+
+TEST_CASE("ValidatedSceneData::entityGuid() exposes each node's authored EntityGuid", "[world][scene][entity_guid]") {
+  const ValidatedSceneData scene = cookAndDecodeScene(kThreeNodeSceneSource);
+  REQUIRE(scene.nodeCount() == 3);
+  for (std::size_t i = 0; i < 3; ++i) {
+    INFO("node " << i);
+    CHECK(scene.entityGuid(i) == entityGuidOf(kNodeGuidTexts[i]));
+  }
+}
+
+TEST_CASE("instantiateScene(): the map holds one entry per node, each naming that node's own entity",
+          "[world][scene][entity_guid]") {
+  const ValidatedSceneData scene = cookAndDecodeScene(kThreeNodeSceneSource);
+  const atlantis::world::SceneInstance instance = atlantis::world::instantiateScene(scene);
+
+  CHECK(instance.entities.size() == scene.nodeCount());
+
+  const auto node0 = instance.entities.find(scene.entityGuid(0));
+  const auto node1 = instance.entities.find(scene.entityGuid(1));
+  const auto node2 = instance.entities.find(scene.entityGuid(2));
+  REQUIRE(node0.has_value());
+  REQUIRE(node1.has_value());
+  REQUIRE(node2.has_value());
+  CHECK(*node0 != *node1);
+  CHECK(*node1 != *node2);
+  CHECK(*node0 != *node2);
+  for (const EntityId id : {*node0, *node1, *node2}) CHECK(instance.world.isValid(id));
+
+  // Node 0: the first Renderable, no parent, local position (1, 2, 3).
+  const auto renderable0 = instance.world.getRenderable(*node0);
+  REQUIRE(renderable0.isOk());
+  CHECK(renderable0.value().meshAsset == meshAssetIdFor(kNode0MeshPath));
+  CHECK(instance.world.getParent(*node0).isErr());
+  CHECK(instance.world.getLocalTransform(*node0).value().localPosition.x == 1.0f);
+
+  // Node 1: the second Renderable, a child of node 0, scale 2.
+  const auto renderable1 = instance.world.getRenderable(*node1);
+  REQUIRE(renderable1.isOk());
+  CHECK(renderable1.value().meshAsset == meshAssetIdFor(kNode1MeshPath));
+  const auto parent1 = instance.world.getParent(*node1);
+  REQUIRE(parent1.isOk());
+  CHECK(parent1.value() == *node0);
+  CHECK(instance.world.getLocalTransform(*node1).value().localScale.x == 2.0f);
+
+  // Node 2: the active camera.
+  REQUIRE(instance.world.activeCamera().has_value());
+  CHECK(*instance.world.activeCamera() == *node2);
+  CHECK(instance.world.getCamera(*node2).isOk());
+}
+
+TEST_CASE("SceneEntityMap::find() returns nullopt for a GUID the scene does not contain, and an empty map finds "
+          "nothing",
+          "[world][scene][entity_guid]") {
+  const ValidatedSceneData scene = cookAndDecodeScene(kThreeNodeSceneSource);
+  const atlantis::world::SceneInstance instance = atlantis::world::instantiateScene(scene);
+  CHECK_FALSE(instance.entities.find(entityGuidOf("00000000-0000-8000-8000-000000000001")).has_value());
+
+  const atlantis::world::SceneEntityMap empty;
+  CHECK(empty.size() == 0);
+  CHECK_FALSE(empty.find(scene.entityGuid(0)).has_value());
+}
+
+TEST_CASE("fromValidatedSceneData() yields a World identical to instantiateScene().world",
+          "[world][scene][entity_guid]") {
+  const ValidatedSceneData scene = cookAndDecodeScene(kThreeNodeSceneSource);
+  const World wrapped = fromValidatedSceneData(scene);
+  const atlantis::world::SceneInstance instance = atlantis::world::instantiateScene(scene);
+
+  // An EntityId is a per-World-instance token, so the two Worlds are compared
+  // slot by slot (index, generation) and component by component, never by
+  // EntityId equality across instances.
+  const std::vector<EntityId> wrappedRenderables = wrapped.renderableEntities();
+  const std::vector<EntityId> instanceRenderables = instance.world.renderableEntities();
+  REQUIRE(wrappedRenderables.size() == 2);
+  REQUIRE(instanceRenderables.size() == 2);
+  REQUIRE(wrapped.activeCamera().has_value());
+  REQUIRE(instance.world.activeCamera().has_value());
+
+  std::vector<std::pair<EntityId, EntityId>> pairs;  // (wrapped, instance), one per node
+  for (std::size_t i = 0; i < 2; ++i) pairs.emplace_back(wrappedRenderables[i], instanceRenderables[i]);
+  pairs.emplace_back(*wrapped.activeCamera(), *instance.world.activeCamera());
+
+  for (std::size_t i = 0; i < pairs.size(); ++i) {
+    INFO("node " << i);
+    const auto& [lhsId, rhsId] = pairs[i];
+    CHECK(lhsId.index() == rhsId.index());
+    CHECK(lhsId.generation() == rhsId.generation());
+    CHECK(rhsId == *instance.entities.find(scene.entityGuid(i)));
+    const auto lhs = wrapped.getLocalTransform(lhsId);
+    const auto rhs = instance.world.getLocalTransform(rhsId);
+    REQUIRE(lhs.isOk());
+    REQUIRE(rhs.isOk());
+    CHECK(lhs.value().localPosition.x == rhs.value().localPosition.x);
+    CHECK(lhs.value().localPosition.y == rhs.value().localPosition.y);
+    CHECK(lhs.value().localPosition.z == rhs.value().localPosition.z);
+    CHECK(lhs.value().localScale.x == rhs.value().localScale.x);
+    CHECK(wrapped.getParent(lhsId).isOk() == instance.world.getParent(rhsId).isOk());
+  }
+  CHECK(wrapped.getRenderable(wrappedRenderables[1]).value().meshAsset ==
+        instance.world.getRenderable(instanceRenderables[1]).value().meshAsset);
 }
