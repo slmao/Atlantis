@@ -7,7 +7,8 @@
 #include <vector>
 
 // Plan 0014 V16 / ADR-0048: Atlantis::World depends on Atlantis::Core
-// and, narrowly, Atlantis::AssetSystem (for AssetId only) -- no RHI,
+// and, narrowly, Atlantis::AssetSystem (AssetId, and ValidatedSceneData/EntityGuid
+// in scene_instantiation.h alone, Plan 0047 M6) -- no RHI,
 // Renderer, RenderGraph, ShaderSystem, Platform, VulkanBackend, Runtime,
 // or Tools dependency. This test enumerates every .h/.cpp under
 // src/world/ at test-run time (not compile time), so it automatically

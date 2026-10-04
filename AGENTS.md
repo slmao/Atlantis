@@ -182,9 +182,12 @@ handle slot map (`EntityId`, stable per-`World`-instance identity token)
 owning `Transform`/optional `Camera`/optional `Renderable` component data
 and an atomic parent/child hierarchy, plus its own TRS/matrix math
 contract. It depends on Atlantis Core and, narrowly, Atlantis Asset
-System (for `AssetId` only) — no RHI, Renderer, RenderGraph, Shader
-System, Vulkan Backend, Platform, Runtime, or Tools dependency in either
-direction. `World` never returns a reference or pointer into its own
+System — `AssetId` in component data, and, in `scene_instantiation.h`
+alone, `ValidatedSceneData` and `EntityGuid` (the `SceneEntityMap` of
+[ADR-0097](docs/adr/0097-guid-keyed-asset-and-entity-identity.md) D5; no
+component type, `EntityId` or other World header names a GUID) — no RHI,
+Renderer, RenderGraph, Shader System, Vulkan Backend, Platform, Runtime, or
+Tools dependency in either direction. `World` never returns a reference or pointer into its own
 internal storage; every accessor is by value. See
 [ADR-0048](docs/adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](docs/adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md).
 
