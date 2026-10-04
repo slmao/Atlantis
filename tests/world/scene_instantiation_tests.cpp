@@ -494,7 +494,8 @@ TEST_CASE("instantiateScene(): the map holds one entry per node, each naming tha
   const auto renderable0 = instance.world.getRenderable(*node0);
   REQUIRE(renderable0.isOk());
   CHECK(renderable0.value().meshAsset == meshAssetIdFor(kNode0MeshPath));
-  CHECK(instance.world.getParent(*node0).isErr());
+  REQUIRE(instance.world.getParent(*node0).isOk());
+  CHECK(instance.world.getParent(*node0).value() == kInvalidEntityId);  // a root
   CHECK(instance.world.getLocalTransform(*node0).value().localPosition.x == 1.0f);
 
   // Node 1: the second Renderable, a child of node 0, scale 2.
