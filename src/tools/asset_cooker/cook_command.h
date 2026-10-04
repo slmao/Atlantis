@@ -21,9 +21,6 @@ namespace atlantis::tools::asset_cooker {
 // Plan 0047 M2: Lookup prints the catalog-source entry for --guid= or for
 // --source=<root>:<path> -- also an authoring command, also rejected on
 // cook manifest lines.
-// Plan 0047 P20 (one-off, removed in M9): Migrate0047 writes the catalog
-// source from --declarations= and rewrites the committed scene and
-// material sources to GUID references in place.
 // Plan 0047 P13: AssembleCatalog merges the build's fragments into the
 // cooked catalog (--out=) and any --closure= catalogs; the build runs it
 // once, never from a cook manifest. Lookup also reads a cooked catalog
@@ -37,7 +34,6 @@ enum class AssetKind {
   CookManifest,
   MintGuid,
   Lookup,
-  Migrate0047,
   AssembleCatalog,
 };
 
@@ -83,12 +79,9 @@ struct CookCommandRequest {
   // Rejected on the command line, where the source is assets:<logical path>.
   std::string catalogId;
 
-  // Plan 0047 P20 / ruling I5: --kind=migrate-0047's inputs, with
-  // assetRoot. extraSceneSources are assets-relative scene sources that are
-  // not declarations (the Bistro overlay).
+  // Plan 0047 P13: --kind=assemble-catalog's declarations list (one
+  // "type<TAB>root<TAB>path" line per declared asset).
   std::string declarationsPath;
-  std::string catalogSourceOutPath;
-  std::vector<std::string> extraSceneSources;
 
   // Plan 0047 P13: --kind=assemble-catalog's inputs, with catalogSourcePath
   // and declarationsPath. Each closure is a scene GUID and its output path,

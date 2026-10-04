@@ -433,8 +433,7 @@ function(_atlantis_add_asset_catalog_target)
 endfunction()
 
 # Plan 0047 P10: every declaration as one "type<TAB>root<TAB>path" line, in
-# declaration order -- the migration's input (M3) and the catalog
-# assembly's declaration check (M4).
+# declaration order -- the catalog assembly's declaration check.
 function(_atlantis_write_asset_declarations)
   get_property(declarations GLOBAL PROPERTY ATLANTIS_ASSET_DECLARATIONS)
   list(JOIN declarations "\n" declarations_text)

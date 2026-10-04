@@ -9,7 +9,6 @@ add_executable(atlantis_asset_cooker_command_tests
   dds_parser_tests.cpp
   guid_mint_tests.cpp
   lookup_command_tests.cpp
-  migrate_0047_tests.cpp
   catalog_cook_command_tests.cpp
   catalog_fragment_tests.cpp
   assemble_catalog_command_tests.cpp
