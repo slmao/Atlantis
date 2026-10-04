@@ -22,14 +22,20 @@ const char* toString(RuntimeInitError error) noexcept {
       return "AssetMetadataParseFailed";
     case RuntimeInitError::SceneConstructionFailed:
       return "SceneConstructionFailed";
-    case RuntimeInitError::SceneManifestLoadFailed:
-      return "SceneManifestLoadFailed";
+    case RuntimeInitError::AssetCatalogLoadFailed:
+      return "AssetCatalogLoadFailed";
+    case RuntimeInitError::SceneNotInCatalog:
+      return "SceneNotInCatalog";
     case RuntimeInitError::SceneArtifactLoadFailed:
       return "SceneArtifactLoadFailed";
     case RuntimeInitError::SceneDependencyUnresolved:
       return "SceneDependencyUnresolved";
     case RuntimeInitError::SceneDependencyLoadFailed:
       return "SceneDependencyLoadFailed";
+    case RuntimeInitError::DependencyTypeMismatch:
+      return "DependencyTypeMismatch";
+    case RuntimeInitError::UnsupportedArtifactSchema:
+      return "UnsupportedArtifactSchema";
     case RuntimeInitError::PbrBaseColorTextureNotSrgb:
       return "PbrBaseColorTextureNotSrgb";
     case RuntimeInitError::EnvironmentConfigInvalid:

@@ -1,3 +1,8 @@
+# Plan 0047 M5 (P15): every scene-loading test resolves its scene through the one assembled build catalog;
+# the per-scene ATLANTIS_*_GUID definitions below come from assets/asset_catalog.txt. The catalog target
+# is built by ALL, so it exists before any test runs.
+add_compile_definitions(ATLANTIS_ASSET_CATALOG_PATH="${ATLANTIS_ASSET_CATALOG_PATH}")
+
 # Plan 0013 Step 1: GPU-independent tests only -- no Device, no GPU, and
 # no real window required to run.
 # Plan 0032 M1: cli.cpp is atlantis_runtime's own private, executable-
@@ -18,7 +23,6 @@ add_executable(atlantis_runtime_tests
   init_error_tests.cpp
   runtime_ownership_tests.cpp
   scene_extraction_tests.cpp
-  scene_manifest_tests.cpp
   scene_load_tests.cpp
   pbr_reflection_cross_check_tests.cpp
   material_realization_tests.cpp
@@ -87,9 +91,7 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   # switches from world_scene to integrated_showcase_demo_scene, matching
   # atlantis_runtime's own default -- a separate, independent switch from
   # src/runtime/CMakeLists.txt's own (this target does not inherit it).
-  ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH="${ATLANTIS_integrated_showcase_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_RUNTIME_SCENE_METADATA_PATH="${ATLANTIS_integrated_showcase_demo_scene_METADATA_PATH}"
-  ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH="${ATLANTIS_integrated_showcase_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_RUNTIME_SCENE_GUID="${ATLANTIS_integrated_showcase_demo_scene_GUID}"
   # Plan 0018 Section P10: the second, MaterialKind::UnlitTextured
   # built-in shader pair -- mirrors ATLANTIS_RUNTIME_SHADER_DIR's own
   # sourcing exactly, now that shaders/textured_quad is unconditional.
@@ -143,9 +145,7 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   ATLANTIS_RUNTIME_BLOOM_UPSAMPLE_SHADER_DIR="${ATLANTIS_bloom_upsample_SHADER_OUTPUT_DIR}"
   ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR="${ATLANTIS_bloom_composite_SHADER_OUTPUT_DIR}"
   # Plan 0044 Milestone 2: the bloom smoke TEST_CASE's scene.
-  ATLANTIS_RUNTIME_BLOOM_SCENE_ARTIFACT_PATH="${ATLANTIS_bloom_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_RUNTIME_BLOOM_SCENE_METADATA_PATH="${ATLANTIS_bloom_demo_scene_METADATA_PATH}"
-  ATLANTIS_RUNTIME_BLOOM_SCENE_MANIFEST_PATH="${ATLANTIS_bloom_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_RUNTIME_BLOOM_SCENE_GUID="${ATLANTIS_bloom_demo_scene_GUID}"
 )
 
 add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders

@@ -1,6 +1,7 @@
 #include <atlantis/log.h>
 #include <atlantis/runtime/bootstrap_config.h>
 
+#include "../support/catalog_scene.h"
 #include "../fixture/pbr_sheen_demo_fixture.h"
 #include "../support/pixel_diff.h"
 #include "../support/png_codec.h"
@@ -101,13 +102,11 @@ void printProvenanceFieldIfDifferent(const char* fieldName, const std::string& o
 [[nodiscard]] BootstrapConfig buildConfig() {
   BootstrapConfig config;
 #ifdef ATLANTIS_SHEEN_NORMAL_MAP_GOLDEN_GENERATOR
-  config.sceneArtifactPath = ATLANTIS_pbr_sheen_normal_map_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_pbr_sheen_normal_map_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_pbr_sheen_normal_map_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_pbr_sheen_normal_map_demo_scene_GUID);
 #else
-  config.sceneArtifactPath = ATLANTIS_pbr_sheen_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_pbr_sheen_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_pbr_sheen_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_pbr_sheen_demo_scene_GUID);
 #endif
   const std::string unlit = ATLANTIS_PBR_SHEEN_DEMO_UNLIT_TEXTURED_SHADER_DIR;
   config.unlitTexturedVertexShaderSpirvPath = unlit + "/textured_quad.vert.spv";

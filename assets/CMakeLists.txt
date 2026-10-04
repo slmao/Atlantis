@@ -32,15 +32,6 @@ atlantis_add_static_mesh_asset(
 set(ATLANTIS_minimal_cube_ARTIFACT_PATH "${ATLANTIS_minimal_cube_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_minimal_cube_METADATA_PATH "${ATLANTIS_minimal_cube_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_minimal_cube_TARGET "${ATLANTIS_minimal_cube_TARGET}" PARENT_SCOPE)
-# Plan 0015 Section D7: same second-propagation requirement as the
-# three lines above, extended to the newly-exported LOGICAL_PATH
-# variable -- a MESH_DEPENDENCIES consumer of atlantis_add_scene_asset()
-# (Step 5's own test-only fixture in tests/asset_system/CMakeLists.txt,
-# and Step 9's own real world_scene declaration, both sibling
-# directories of this one) needs it visible at root scope to record
-# minimal_cube's own logical path into a scene's generated manifest.
-set(ATLANTIS_minimal_cube_LOGICAL_PATH "${ATLANTIS_minimal_cube_LOGICAL_PATH}" PARENT_SCOPE)
-
 # Plan 0015 Section D11: the one scene asset this Plan ships --
 # world_scene.scene.txt reproduces buildValidationScene()'s own former,
 # now-removed six-entity validation scene byte-for-byte (every
@@ -50,11 +41,10 @@ set(ATLANTIS_minimal_cube_LOGICAL_PATH "${ATLANTIS_minimal_cube_LOGICAL_PATH}" P
 atlantis_add_scene_asset(
   NAME world_scene
   SOURCE scenes/world_scene.scene.txt
-  MESH_DEPENDENCIES minimal_cube
 )
 set(ATLANTIS_world_scene_ARTIFACT_PATH "${ATLANTIS_world_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_world_scene_METADATA_PATH "${ATLANTIS_world_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_world_scene_MANIFEST_PATH "${ATLANTIS_world_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_world_scene_GUID "${ATLANTIS_world_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_world_scene_TARGET "${ATLANTIS_world_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0016 Section D8/D11, corrected by the Plan's own "Human Review
@@ -149,12 +139,10 @@ set(ATLANTIS_textured_quad_right_TARGET "${ATLANTIS_textured_quad_right_TARGET}"
 atlantis_add_material_asset(
   NAME unlit_textured_quad
   SOURCE materials/unlit_textured_quad.material.txt
-  TEXTURE textured_quad_unorm
 )
 set(ATLANTIS_unlit_textured_quad_ARTIFACT_PATH "${ATLANTIS_unlit_textured_quad_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_unlit_textured_quad_METADATA_PATH "${ATLANTIS_unlit_textured_quad_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_unlit_textured_quad_TARGET "${ATLANTIS_unlit_textured_quad_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_unlit_textured_quad_LOGICAL_PATH "${ATLANTIS_unlit_textured_quad_LOGICAL_PATH}" PARENT_SCOPE)
 
 # Plan 0018 Milestone 15 (Spec 0018 D12): the first real, end-to-end
 # scene->material->texture->UV-mesh scene -- two nodes reusing Spec
@@ -169,13 +157,10 @@ set(ATLANTIS_unlit_textured_quad_LOGICAL_PATH "${ATLANTIS_unlit_textured_quad_LO
 atlantis_add_scene_asset(
   NAME material_demo_scene
   SOURCE scenes/material_demo.scene.txt
-  MESH_DEPENDENCIES textured_quad_left textured_quad_right
-  MATERIAL_DEPENDENCIES unlit_textured_quad
-  TEXTURE_DEPENDENCIES textured_quad_unorm
 )
 set(ATLANTIS_material_demo_scene_ARTIFACT_PATH "${ATLANTIS_material_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_material_demo_scene_METADATA_PATH "${ATLANTIS_material_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_material_demo_scene_MANIFEST_PATH "${ATLANTIS_material_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_material_demo_scene_GUID "${ATLANTIS_material_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_material_demo_scene_TARGET "${ATLANTIS_material_demo_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0019 Section P10: the first real MaterialKind::LitTextured
@@ -189,12 +174,10 @@ set(ATLANTIS_material_demo_scene_TARGET "${ATLANTIS_material_demo_scene_TARGET}"
 atlantis_add_material_asset(
   NAME lit_textured_quad
   SOURCE materials/lit_textured_quad.material.txt
-  TEXTURE textured_quad_unorm
 )
 set(ATLANTIS_lit_textured_quad_ARTIFACT_PATH "${ATLANTIS_lit_textured_quad_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_lit_textured_quad_METADATA_PATH "${ATLANTIS_lit_textured_quad_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_lit_textured_quad_TARGET "${ATLANTIS_lit_textured_quad_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_lit_textured_quad_LOGICAL_PATH "${ATLANTIS_lit_textured_quad_LOGICAL_PATH}" PARENT_SCOPE)
 
 # Plan 0019 Section P10 (Spec 0019 D10): a new, independent verification
 # scene -- never a reuse of material_demo_scene/world_scene. Reuses
@@ -208,13 +191,10 @@ set(ATLANTIS_lit_textured_quad_LOGICAL_PATH "${ATLANTIS_lit_textured_quad_LOGICA
 atlantis_add_scene_asset(
   NAME lighting_demo_scene
   SOURCE scenes/lighting_demo.scene.txt
-  MESH_DEPENDENCIES minimal_cube
-  MATERIAL_DEPENDENCIES lit_textured_quad
-  TEXTURE_DEPENDENCIES textured_quad_unorm
 )
 set(ATLANTIS_lighting_demo_scene_ARTIFACT_PATH "${ATLANTIS_lighting_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_lighting_demo_scene_METADATA_PATH "${ATLANTIS_lighting_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_lighting_demo_scene_MANIFEST_PATH "${ATLANTIS_lighting_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_lighting_demo_scene_GUID "${ATLANTIS_lighting_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_lighting_demo_scene_TARGET "${ATLANTIS_lighting_demo_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0023 Milestone 6 (Spec 0023 D16): one non-shared-vertex UV-sphere
@@ -241,42 +221,34 @@ set(ATLANTIS_pbr_sphere_TARGET "${ATLANTIS_pbr_sphere_TARGET}" PARENT_SCOPE)
 atlantis_add_material_asset(
   NAME pbr_dielectric_rough
   SOURCE materials/pbr_dielectric_rough.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_pbr_dielectric_rough_ARTIFACT_PATH "${ATLANTIS_pbr_dielectric_rough_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_dielectric_rough_METADATA_PATH "${ATLANTIS_pbr_dielectric_rough_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_dielectric_rough_TARGET "${ATLANTIS_pbr_dielectric_rough_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_dielectric_rough_LOGICAL_PATH "${ATLANTIS_pbr_dielectric_rough_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME pbr_dielectric_smooth
   SOURCE materials/pbr_dielectric_smooth.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_pbr_dielectric_smooth_ARTIFACT_PATH "${ATLANTIS_pbr_dielectric_smooth_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_dielectric_smooth_METADATA_PATH "${ATLANTIS_pbr_dielectric_smooth_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_dielectric_smooth_TARGET "${ATLANTIS_pbr_dielectric_smooth_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_dielectric_smooth_LOGICAL_PATH "${ATLANTIS_pbr_dielectric_smooth_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME pbr_metallic_rough
   SOURCE materials/pbr_metallic_rough.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_pbr_metallic_rough_ARTIFACT_PATH "${ATLANTIS_pbr_metallic_rough_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_metallic_rough_METADATA_PATH "${ATLANTIS_pbr_metallic_rough_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_metallic_rough_TARGET "${ATLANTIS_pbr_metallic_rough_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_metallic_rough_LOGICAL_PATH "${ATLANTIS_pbr_metallic_rough_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME pbr_metallic_smooth
   SOURCE materials/pbr_metallic_smooth.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_pbr_metallic_smooth_ARTIFACT_PATH "${ATLANTIS_pbr_metallic_smooth_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_metallic_smooth_METADATA_PATH "${ATLANTIS_pbr_metallic_smooth_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_metallic_smooth_TARGET "${ATLANTIS_pbr_metallic_smooth_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_metallic_smooth_LOGICAL_PATH "${ATLANTIS_pbr_metallic_smooth_LOGICAL_PATH}" PARENT_SCOPE)
 
 # Plan 0023 Milestone 6 (Spec 0023 D17): a new, independent verification
 # scene -- four pbr_sphere nodes (one per material above, an asymmetric
@@ -290,13 +262,10 @@ set(ATLANTIS_pbr_metallic_smooth_LOGICAL_PATH "${ATLANTIS_pbr_metallic_smooth_LO
 atlantis_add_scene_asset(
   NAME pbr_material_demo_scene
   SOURCE scenes/pbr_material_demo.scene.txt
-  MESH_DEPENDENCIES pbr_sphere
-  MATERIAL_DEPENDENCIES pbr_dielectric_rough pbr_dielectric_smooth pbr_metallic_rough pbr_metallic_smooth
-  TEXTURE_DEPENDENCIES textured_quad_srgb
 )
 set(ATLANTIS_pbr_material_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_material_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_material_demo_scene_METADATA_PATH "${ATLANTIS_pbr_material_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_pbr_material_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_material_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_material_demo_scene_GUID "${ATLANTIS_pbr_material_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_pbr_material_demo_scene_TARGET "${ATLANTIS_pbr_material_demo_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0025/M9: the same four PBR material corners under environment-only
@@ -304,13 +273,10 @@ set(ATLANTIS_pbr_material_demo_scene_TARGET "${ATLANTIS_pbr_material_demo_scene_
 atlantis_add_scene_asset(
   NAME ibl_material_demo_scene
   SOURCE scenes/ibl_material_demo.scene.txt
-  MESH_DEPENDENCIES pbr_sphere
-  MATERIAL_DEPENDENCIES pbr_dielectric_rough pbr_dielectric_smooth pbr_metallic_rough pbr_metallic_smooth
-  TEXTURE_DEPENDENCIES textured_quad_srgb
 )
 set(ATLANTIS_ibl_material_demo_scene_ARTIFACT_PATH "${ATLANTIS_ibl_material_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_ibl_material_demo_scene_METADATA_PATH "${ATLANTIS_ibl_material_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_ibl_material_demo_scene_MANIFEST_PATH "${ATLANTIS_ibl_material_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_ibl_material_demo_scene_GUID "${ATLANTIS_ibl_material_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_ibl_material_demo_scene_TARGET "${ATLANTIS_ibl_material_demo_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0024 Milestone 10: a focused HDR roll-off baseline. One existing
@@ -320,13 +286,10 @@ set(ATLANTIS_ibl_material_demo_scene_TARGET "${ATLANTIS_ibl_material_demo_scene_
 atlantis_add_scene_asset(
   NAME hdr_roll_off_demo_scene
   SOURCE scenes/hdr_roll_off_demo.scene.txt
-  MESH_DEPENDENCIES pbr_sphere
-  MATERIAL_DEPENDENCIES pbr_dielectric_rough
-  TEXTURE_DEPENDENCIES textured_quad_srgb
 )
 set(ATLANTIS_hdr_roll_off_demo_scene_ARTIFACT_PATH "${ATLANTIS_hdr_roll_off_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_hdr_roll_off_demo_scene_METADATA_PATH "${ATLANTIS_hdr_roll_off_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_hdr_roll_off_demo_scene_MANIFEST_PATH "${ATLANTIS_hdr_roll_off_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_hdr_roll_off_demo_scene_GUID "${ATLANTIS_hdr_roll_off_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_hdr_roll_off_demo_scene_TARGET "${ATLANTIS_hdr_roll_off_demo_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0025 Milestone 2: repository-authored linear HDR studio environment.
@@ -337,7 +300,6 @@ atlantis_add_environment_asset(
 set(ATLANTIS_ibl_studio_ARTIFACT_PATH "${ATLANTIS_ibl_studio_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_ibl_studio_METADATA_PATH "${ATLANTIS_ibl_studio_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_ibl_studio_TARGET "${ATLANTIS_ibl_studio_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_ibl_studio_LOGICAL_PATH "${ATLANTIS_ibl_studio_LOGICAL_PATH}" PARENT_SCOPE)
 
 # Plan 0028 Milestone 1: a flat 10x10 ground plane -- the one real asset
 # gap Spec 0028 found (no cooked, World-loadable floor mesh existed).
@@ -357,13 +319,10 @@ set(ATLANTIS_ground_plane_TARGET "${ATLANTIS_ground_plane_TARGET}" PARENT_SCOPE)
 atlantis_add_scene_asset(
   NAME integrated_showcase_demo_scene
   SOURCE scenes/integrated_showcase_demo.scene.txt
-  MESH_DEPENDENCIES pbr_sphere ground_plane
-  MATERIAL_DEPENDENCIES pbr_dielectric_rough pbr_dielectric_smooth pbr_metallic_rough pbr_metallic_smooth
-  TEXTURE_DEPENDENCIES textured_quad_srgb
 )
 set(ATLANTIS_integrated_showcase_demo_scene_ARTIFACT_PATH "${ATLANTIS_integrated_showcase_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_integrated_showcase_demo_scene_METADATA_PATH "${ATLANTIS_integrated_showcase_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_integrated_showcase_demo_scene_MANIFEST_PATH "${ATLANTIS_integrated_showcase_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_integrated_showcase_demo_scene_GUID "${ATLANTIS_integrated_showcase_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_integrated_showcase_demo_scene_TARGET "${ATLANTIS_integrated_showcase_demo_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0040 Milestone 3 (Spec 0040 Req 7): the multi-light verification
@@ -378,13 +337,10 @@ set(ATLANTIS_integrated_showcase_demo_scene_TARGET "${ATLANTIS_integrated_showca
 atlantis_add_scene_asset(
   NAME multi_light_demo_scene
   SOURCE scenes/multi_light_demo.scene.txt
-  MESH_DEPENDENCIES ground_plane
-  MATERIAL_DEPENDENCIES lit_textured_quad
-  TEXTURE_DEPENDENCIES textured_quad_unorm
 )
 set(ATLANTIS_multi_light_demo_scene_ARTIFACT_PATH "${ATLANTIS_multi_light_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_multi_light_demo_scene_METADATA_PATH "${ATLANTIS_multi_light_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_multi_light_demo_scene_MANIFEST_PATH "${ATLANTIS_multi_light_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_multi_light_demo_scene_GUID "${ATLANTIS_multi_light_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_multi_light_demo_scene_TARGET "${ATLANTIS_multi_light_demo_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0029 Section P19 (ADR-0074): the fixed 4x4 RGB8 Unorm normal-map
@@ -402,51 +358,39 @@ set(ATLANTIS_normal_map_tilted_TARGET "${ATLANTIS_normal_map_tilted_TARGET}" PAR
 
 # Plan 0029 Section P19: the normal-map demo's own two PbrDirectLit
 # material assets -- pbr_normal_mapped declares the new normal_map:
-# line (NORMAL_MAP arg); pbr_normal_mapped_control is byte-identical
+# line; pbr_normal_mapped_control is byte-identical
 # minus that line, the discriminative test's own "B" twin, referenced
 # by zero scene nodes (see the scene declaration below).
 atlantis_add_material_asset(
   NAME pbr_normal_mapped
   SOURCE materials/pbr_normal_mapped.material.txt
-  TEXTURE textured_quad_srgb
-  NORMAL_MAP normal_map_tilted
 )
 set(ATLANTIS_pbr_normal_mapped_ARTIFACT_PATH "${ATLANTIS_pbr_normal_mapped_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_normal_mapped_METADATA_PATH "${ATLANTIS_pbr_normal_mapped_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_normal_mapped_TARGET "${ATLANTIS_pbr_normal_mapped_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_normal_mapped_LOGICAL_PATH "${ATLANTIS_pbr_normal_mapped_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME pbr_normal_mapped_control
   SOURCE materials/pbr_normal_mapped_control.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH "${ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_normal_mapped_control_METADATA_PATH "${ATLANTIS_pbr_normal_mapped_control_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_normal_mapped_control_TARGET "${ATLANTIS_pbr_normal_mapped_control_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_normal_mapped_control_LOGICAL_PATH "${ATLANTIS_pbr_normal_mapped_control_LOGICAL_PATH}" PARENT_SCOPE)
 
 # Plan 0029 Section P19: the normal-map demo scene -- one pbr_sphere
 # node bound to pbr_normal_mapped, one ground_plane shadow receiver
 # bound to the existing pbr_dielectric_rough, one Directional light,
-# one camera. Both materials/textures are declared under
-# MATERIAL_DEPENDENCIES/TEXTURE_DEPENDENCIES even though
-# pbr_normal_mapped_control is referenced by zero scene nodes -- the
-# same "declared but only transitively used" tolerance
-# MESH_DEPENDENCIES/TEXTURE_DEPENDENCIES already establish elsewhere in
-# this file; the fixture's own setup phase resolves and realizes the
-# control material independently (see
+# one camera. pbr_normal_mapped_control is referenced by zero scene nodes;
+# the fixture's own setup phase resolves and realizes the control material
+# independently (see
 # tests/image_regression/fixture/pbr_normal_map_demo_fixture.cpp).
 atlantis_add_scene_asset(
   NAME pbr_normal_map_demo_scene
   SOURCE scenes/pbr_normal_map_demo.scene.txt
-  MESH_DEPENDENCIES pbr_sphere ground_plane
-  MATERIAL_DEPENDENCIES pbr_normal_mapped pbr_normal_mapped_control pbr_dielectric_rough
-  TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
 )
 set(ATLANTIS_pbr_normal_map_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_normal_map_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_normal_map_demo_scene_METADATA_PATH "${ATLANTIS_pbr_normal_map_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_pbr_normal_map_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_normal_map_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_normal_map_demo_scene_GUID "${ATLANTIS_pbr_normal_map_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_pbr_normal_map_demo_scene_TARGET "${ATLANTIS_pbr_normal_map_demo_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0041 Milestone 3 (Spec 0041 R6): the emissive dark-scene golden --
@@ -462,47 +406,34 @@ set(ATLANTIS_pbr_normal_map_demo_scene_TARGET "${ATLANTIS_pbr_normal_map_demo_sc
 atlantis_add_material_asset(
   NAME emissive_demo_orange
   SOURCE materials/emissive_demo_orange.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_emissive_demo_orange_ARTIFACT_PATH "${ATLANTIS_emissive_demo_orange_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_orange_METADATA_PATH "${ATLANTIS_emissive_demo_orange_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_orange_TARGET "${ATLANTIS_emissive_demo_orange_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_emissive_demo_orange_LOGICAL_PATH "${ATLANTIS_emissive_demo_orange_LOGICAL_PATH}" PARENT_SCOPE)
 atlantis_add_material_asset(
   NAME emissive_demo_green
   SOURCE materials/emissive_demo_green.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_emissive_demo_green_ARTIFACT_PATH "${ATLANTIS_emissive_demo_green_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_green_METADATA_PATH "${ATLANTIS_emissive_demo_green_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_green_TARGET "${ATLANTIS_emissive_demo_green_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_emissive_demo_green_LOGICAL_PATH "${ATLANTIS_emissive_demo_green_LOGICAL_PATH}" PARENT_SCOPE)
 atlantis_add_material_asset(
   NAME emissive_demo_blue
   SOURCE materials/emissive_demo_blue.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_emissive_demo_blue_ARTIFACT_PATH "${ATLANTIS_emissive_demo_blue_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_blue_METADATA_PATH "${ATLANTIS_emissive_demo_blue_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_blue_TARGET "${ATLANTIS_emissive_demo_blue_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_emissive_demo_blue_LOGICAL_PATH "${ATLANTIS_emissive_demo_blue_LOGICAL_PATH}" PARENT_SCOPE)
 atlantis_add_material_asset(
   NAME emissive_demo_normal_mapped
   SOURCE materials/emissive_demo_normal_mapped.material.txt
-  TEXTURE textured_quad_srgb
-  NORMAL_MAP normal_map_tilted
 )
 set(ATLANTIS_emissive_demo_normal_mapped_ARTIFACT_PATH "${ATLANTIS_emissive_demo_normal_mapped_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_normal_mapped_METADATA_PATH "${ATLANTIS_emissive_demo_normal_mapped_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_normal_mapped_TARGET "${ATLANTIS_emissive_demo_normal_mapped_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_emissive_demo_normal_mapped_LOGICAL_PATH "${ATLANTIS_emissive_demo_normal_mapped_LOGICAL_PATH}" PARENT_SCOPE)
 atlantis_add_scene_asset(
   NAME emissive_demo_scene
   SOURCE scenes/emissive_demo.scene.txt
-  MESH_DEPENDENCIES pbr_sphere
-  MATERIAL_DEPENDENCIES emissive_demo_orange emissive_demo_green emissive_demo_blue emissive_demo_normal_mapped
-    pbr_normal_mapped_control
-  TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
 )
 
 # Plan 0044 Milestone 2: the bloom golden's scene. Same meshes and
@@ -510,14 +441,10 @@ atlantis_add_scene_asset(
 atlantis_add_scene_asset(
   NAME bloom_demo_scene
   SOURCE scenes/bloom_demo.scene.txt
-  MESH_DEPENDENCIES pbr_sphere
-  MATERIAL_DEPENDENCIES emissive_demo_orange emissive_demo_green emissive_demo_blue
-    emissive_demo_normal_mapped pbr_normal_mapped_control
-  TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
 )
 set(ATLANTIS_bloom_demo_scene_ARTIFACT_PATH "${ATLANTIS_bloom_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_bloom_demo_scene_METADATA_PATH "${ATLANTIS_bloom_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_bloom_demo_scene_MANIFEST_PATH "${ATLANTIS_bloom_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_bloom_demo_scene_GUID "${ATLANTIS_bloom_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_bloom_demo_scene_TARGET "${ATLANTIS_bloom_demo_scene_TARGET}" PARENT_SCOPE)
 # Plan 0044 P12: the fog + bloom golden's scene -- one emissive lamp and a
 # large backdrop wall (the control material, black without fog) in HDR fog
@@ -525,17 +452,14 @@ set(ATLANTIS_bloom_demo_scene_TARGET "${ATLANTIS_bloom_demo_scene_TARGET}" PAREN
 atlantis_add_scene_asset(
   NAME bloom_fog_demo_scene
   SOURCE scenes/bloom_fog_demo.scene.txt
-  MESH_DEPENDENCIES pbr_sphere ground_plane
-  MATERIAL_DEPENDENCIES emissive_demo_orange pbr_normal_mapped_control
-  TEXTURE_DEPENDENCIES textured_quad_srgb
 )
 set(ATLANTIS_bloom_fog_demo_scene_ARTIFACT_PATH "${ATLANTIS_bloom_fog_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_bloom_fog_demo_scene_METADATA_PATH "${ATLANTIS_bloom_fog_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_bloom_fog_demo_scene_MANIFEST_PATH "${ATLANTIS_bloom_fog_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_bloom_fog_demo_scene_GUID "${ATLANTIS_bloom_fog_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_bloom_fog_demo_scene_TARGET "${ATLANTIS_bloom_fog_demo_scene_TARGET}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_scene_ARTIFACT_PATH "${ATLANTIS_emissive_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_scene_METADATA_PATH "${ATLANTIS_emissive_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_emissive_demo_scene_MANIFEST_PATH "${ATLANTIS_emissive_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_emissive_demo_scene_GUID "${ATLANTIS_emissive_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_emissive_demo_scene_TARGET "${ATLANTIS_emissive_demo_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0042 Milestone 2 (Spec 0042 R6, Plan 0042 P5/Q4): the cutout golden --
@@ -555,22 +479,17 @@ set(ATLANTIS_cutout_disc_srgb_TARGET "${ATLANTIS_cutout_disc_srgb_TARGET}" PAREN
 atlantis_add_material_asset(
   NAME cutout_disc
   SOURCE materials/cutout_disc.material.txt
-  TEXTURE cutout_disc_srgb
 )
 set(ATLANTIS_cutout_disc_ARTIFACT_PATH "${ATLANTIS_cutout_disc_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_cutout_disc_METADATA_PATH "${ATLANTIS_cutout_disc_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_cutout_disc_TARGET "${ATLANTIS_cutout_disc_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_cutout_disc_LOGICAL_PATH "${ATLANTIS_cutout_disc_LOGICAL_PATH}" PARENT_SCOPE)
 atlantis_add_scene_asset(
   NAME cutout_demo_scene
   SOURCE scenes/cutout_demo.scene.txt
-  MESH_DEPENDENCIES ground_plane pbr_sphere
-  MATERIAL_DEPENDENCIES cutout_disc pbr_dielectric_rough
-  TEXTURE_DEPENDENCIES cutout_disc_srgb textured_quad_srgb
 )
 set(ATLANTIS_cutout_demo_scene_ARTIFACT_PATH "${ATLANTIS_cutout_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_cutout_demo_scene_METADATA_PATH "${ATLANTIS_cutout_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_cutout_demo_scene_MANIFEST_PATH "${ATLANTIS_cutout_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_cutout_demo_scene_GUID "${ATLANTIS_cutout_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_cutout_demo_scene_TARGET "${ATLANTIS_cutout_demo_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0042 Milestone 3 (Spec 0042 R7, ruling Q5): the transparency golden
@@ -582,42 +501,32 @@ set(ATLANTIS_cutout_demo_scene_TARGET "${ATLANTIS_cutout_demo_scene_TARGET}" PAR
 atlantis_add_material_asset(
   NAME transparency_green
   SOURCE materials/transparency_green.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_transparency_green_ARTIFACT_PATH "${ATLANTIS_transparency_green_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_transparency_green_METADATA_PATH "${ATLANTIS_transparency_green_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_transparency_green_TARGET "${ATLANTIS_transparency_green_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_transparency_green_LOGICAL_PATH "${ATLANTIS_transparency_green_LOGICAL_PATH}" PARENT_SCOPE)
 atlantis_add_material_asset(
   NAME transparency_blue
   SOURCE materials/transparency_blue.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_transparency_blue_ARTIFACT_PATH "${ATLANTIS_transparency_blue_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_transparency_blue_METADATA_PATH "${ATLANTIS_transparency_blue_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_transparency_blue_TARGET "${ATLANTIS_transparency_blue_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_transparency_blue_LOGICAL_PATH "${ATLANTIS_transparency_blue_LOGICAL_PATH}" PARENT_SCOPE)
 atlantis_add_scene_asset(
   NAME transparency_demo_scene
   SOURCE scenes/transparency_demo.scene.txt
-  MESH_DEPENDENCIES ground_plane pbr_sphere
-  MATERIAL_DEPENDENCIES pbr_dielectric_rough transparency_green transparency_blue
-  TEXTURE_DEPENDENCIES textured_quad_srgb
 )
 set(ATLANTIS_transparency_demo_scene_ARTIFACT_PATH "${ATLANTIS_transparency_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_transparency_demo_scene_METADATA_PATH "${ATLANTIS_transparency_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_transparency_demo_scene_MANIFEST_PATH "${ATLANTIS_transparency_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_transparency_demo_scene_GUID "${ATLANTIS_transparency_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_transparency_demo_scene_TARGET "${ATLANTIS_transparency_demo_scene_TARGET}" PARENT_SCOPE)
 atlantis_add_scene_asset(
   NAME transparency_demo_swapped_scene
   SOURCE scenes/transparency_demo_swapped.scene.txt
-  MESH_DEPENDENCIES ground_plane pbr_sphere
-  MATERIAL_DEPENDENCIES pbr_dielectric_rough transparency_green transparency_blue
-  TEXTURE_DEPENDENCIES textured_quad_srgb
 )
 set(ATLANTIS_transparency_demo_swapped_scene_ARTIFACT_PATH "${ATLANTIS_transparency_demo_swapped_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_transparency_demo_swapped_scene_METADATA_PATH "${ATLANTIS_transparency_demo_swapped_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_transparency_demo_swapped_scene_MANIFEST_PATH "${ATLANTIS_transparency_demo_swapped_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_transparency_demo_swapped_scene_GUID "${ATLANTIS_transparency_demo_swapped_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_transparency_demo_swapped_scene_TARGET "${ATLANTIS_transparency_demo_swapped_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0043 Milestone 2 (Spec 0043 R1-R3, P8/P9): the height-fog scenes.
@@ -632,47 +541,34 @@ set(ATLANTIS_transparency_demo_swapped_scene_TARGET "${ATLANTIS_transparency_dem
 atlantis_add_scene_asset(
   NAME fog_distance_demo_scene
   SOURCE scenes/fog_distance_demo.scene.txt
-  MESH_DEPENDENCIES ground_plane pbr_sphere
-  MATERIAL_DEPENDENCIES pbr_dielectric_rough pbr_dielectric_smooth
-  TEXTURE_DEPENDENCIES textured_quad_srgb
 )
 set(ATLANTIS_fog_distance_demo_scene_ARTIFACT_PATH "${ATLANTIS_fog_distance_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_fog_distance_demo_scene_METADATA_PATH "${ATLANTIS_fog_distance_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_fog_distance_demo_scene_MANIFEST_PATH "${ATLANTIS_fog_distance_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_fog_distance_demo_scene_GUID "${ATLANTIS_fog_distance_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_fog_distance_demo_scene_TARGET "${ATLANTIS_fog_distance_demo_scene_TARGET}" PARENT_SCOPE)
 atlantis_add_scene_asset(
   NAME fog_height_demo_scene
   SOURCE scenes/fog_height_demo.scene.txt
-  MESH_DEPENDENCIES ground_plane pbr_sphere
-  MATERIAL_DEPENDENCIES pbr_dielectric_rough pbr_dielectric_smooth
-  TEXTURE_DEPENDENCIES textured_quad_srgb
 )
 set(ATLANTIS_fog_height_demo_scene_ARTIFACT_PATH "${ATLANTIS_fog_height_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_fog_height_demo_scene_METADATA_PATH "${ATLANTIS_fog_height_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_fog_height_demo_scene_MANIFEST_PATH "${ATLANTIS_fog_height_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_fog_height_demo_scene_GUID "${ATLANTIS_fog_height_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_fog_height_demo_scene_TARGET "${ATLANTIS_fog_height_demo_scene_TARGET}" PARENT_SCOPE)
 atlantis_add_scene_asset(
   NAME fog_dark_demo_scene
   SOURCE scenes/fog_dark_demo.scene.txt
-  MESH_DEPENDENCIES pbr_sphere
-  MATERIAL_DEPENDENCIES emissive_demo_orange emissive_demo_green emissive_demo_blue emissive_demo_normal_mapped
-    pbr_normal_mapped_control
-  TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
 )
 set(ATLANTIS_fog_dark_demo_scene_ARTIFACT_PATH "${ATLANTIS_fog_dark_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_fog_dark_demo_scene_METADATA_PATH "${ATLANTIS_fog_dark_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_fog_dark_demo_scene_MANIFEST_PATH "${ATLANTIS_fog_dark_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_fog_dark_demo_scene_GUID "${ATLANTIS_fog_dark_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_fog_dark_demo_scene_TARGET "${ATLANTIS_fog_dark_demo_scene_TARGET}" PARENT_SCOPE)
 atlantis_add_scene_asset(
   NAME fog_zero_neutrality_scene
   SOURCE scenes/fog_zero_neutrality.scene.txt
-  MESH_DEPENDENCIES pbr_sphere
-  MATERIAL_DEPENDENCIES pbr_dielectric_rough pbr_dielectric_smooth pbr_metallic_rough pbr_metallic_smooth
-  TEXTURE_DEPENDENCIES textured_quad_srgb
 )
 set(ATLANTIS_fog_zero_neutrality_scene_ARTIFACT_PATH "${ATLANTIS_fog_zero_neutrality_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_fog_zero_neutrality_scene_METADATA_PATH "${ATLANTIS_fog_zero_neutrality_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_fog_zero_neutrality_scene_MANIFEST_PATH "${ATLANTIS_fog_zero_neutrality_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_fog_zero_neutrality_scene_GUID "${ATLANTIS_fog_zero_neutrality_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_fog_zero_neutrality_scene_TARGET "${ATLANTIS_fog_zero_neutrality_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0035 Milestone 1 (Spec 0035 Requirement 6): two new meshes for the
@@ -791,7 +687,6 @@ atlantis_add_environment_asset(
 set(ATLANTIS_warehouse_interior_ARTIFACT_PATH "${ATLANTIS_warehouse_interior_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_warehouse_interior_METADATA_PATH "${ATLANTIS_warehouse_interior_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_warehouse_interior_TARGET "${ATLANTIS_warehouse_interior_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_warehouse_interior_LOGICAL_PATH "${ATLANTIS_warehouse_interior_LOGICAL_PATH}" PARENT_SCOPE)
 
 # Plan 0035 Milestone 2 (Spec 0035 Requirement 4/Testing Plan): four
 # MaterialKind::PbrClearcoat material assets -- a clearcoat-roughness
@@ -804,43 +699,34 @@ set(ATLANTIS_warehouse_interior_LOGICAL_PATH "${ATLANTIS_warehouse_interior_LOGI
 atlantis_add_material_asset(
   NAME pbr_clearcoat_no_coat
   SOURCE materials/pbr_clearcoat_no_coat.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_pbr_clearcoat_no_coat_ARTIFACT_PATH "${ATLANTIS_pbr_clearcoat_no_coat_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_clearcoat_no_coat_METADATA_PATH "${ATLANTIS_pbr_clearcoat_no_coat_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_clearcoat_no_coat_TARGET "${ATLANTIS_pbr_clearcoat_no_coat_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_clearcoat_no_coat_LOGICAL_PATH "${ATLANTIS_pbr_clearcoat_no_coat_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME pbr_clearcoat_low_roughness
   SOURCE materials/pbr_clearcoat_low_roughness.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_pbr_clearcoat_low_roughness_ARTIFACT_PATH "${ATLANTIS_pbr_clearcoat_low_roughness_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_clearcoat_low_roughness_METADATA_PATH "${ATLANTIS_pbr_clearcoat_low_roughness_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_clearcoat_low_roughness_TARGET "${ATLANTIS_pbr_clearcoat_low_roughness_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_clearcoat_low_roughness_LOGICAL_PATH "${ATLANTIS_pbr_clearcoat_low_roughness_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME pbr_clearcoat_high_roughness
   SOURCE materials/pbr_clearcoat_high_roughness.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_pbr_clearcoat_high_roughness_ARTIFACT_PATH "${ATLANTIS_pbr_clearcoat_high_roughness_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_clearcoat_high_roughness_METADATA_PATH "${ATLANTIS_pbr_clearcoat_high_roughness_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_clearcoat_high_roughness_TARGET "${ATLANTIS_pbr_clearcoat_high_roughness_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_clearcoat_high_roughness_LOGICAL_PATH "${ATLANTIS_pbr_clearcoat_high_roughness_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME pbr_clearcoat_normal_mapped
   SOURCE materials/pbr_clearcoat_normal_mapped.material.txt
-  TEXTURE textured_quad_srgb
-  NORMAL_MAP normal_map_tilted
 )
 set(ATLANTIS_pbr_clearcoat_normal_mapped_ARTIFACT_PATH "${ATLANTIS_pbr_clearcoat_normal_mapped_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_clearcoat_normal_mapped_METADATA_PATH "${ATLANTIS_pbr_clearcoat_normal_mapped_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_clearcoat_normal_mapped_TARGET "${ATLANTIS_pbr_clearcoat_normal_mapped_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_clearcoat_normal_mapped_LOGICAL_PATH "${ATLANTIS_pbr_clearcoat_normal_mapped_LOGICAL_PATH}" PARENT_SCOPE)
 
 # Plan 0035 Milestone 2: the clearcoat parameter-sweep scene (no_coat/
 # low_roughness/high_roughness, clearcoat_factor sweep + clearcoat_
@@ -850,13 +736,10 @@ set(ATLANTIS_pbr_clearcoat_normal_mapped_LOGICAL_PATH "${ATLANTIS_pbr_clearcoat_
 atlantis_add_scene_asset(
   NAME pbr_clearcoat_demo_scene
   SOURCE scenes/pbr_clearcoat_demo.scene.txt
-  MESH_DEPENDENCIES pbr_sphere
-  MATERIAL_DEPENDENCIES pbr_clearcoat_no_coat pbr_clearcoat_low_roughness pbr_clearcoat_high_roughness
-  TEXTURE_DEPENDENCIES textured_quad_srgb
 )
 set(ATLANTIS_pbr_clearcoat_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_clearcoat_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_clearcoat_demo_scene_METADATA_PATH "${ATLANTIS_pbr_clearcoat_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_pbr_clearcoat_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_clearcoat_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_demo_scene_GUID "${ATLANTIS_pbr_clearcoat_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_pbr_clearcoat_demo_scene_TARGET "${ATLANTIS_pbr_clearcoat_demo_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0035 Milestone 2: the clearcoat normal-map variant's own
@@ -865,13 +748,10 @@ set(ATLANTIS_pbr_clearcoat_demo_scene_TARGET "${ATLANTIS_pbr_clearcoat_demo_scen
 atlantis_add_scene_asset(
   NAME pbr_clearcoat_normal_map_demo_scene
   SOURCE scenes/pbr_clearcoat_normal_map_demo.scene.txt
-  MESH_DEPENDENCIES pbr_sphere
-  MATERIAL_DEPENDENCIES pbr_clearcoat_normal_mapped
-  TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
 )
 set(ATLANTIS_pbr_clearcoat_normal_map_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_clearcoat_normal_map_demo_scene_METADATA_PATH "${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_pbr_clearcoat_normal_map_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_clearcoat_normal_map_demo_scene_GUID "${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_pbr_clearcoat_normal_map_demo_scene_TARGET "${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0035 Milestone 3: the sheen-roughness parameter-sweep scene's own
@@ -882,43 +762,34 @@ set(ATLANTIS_pbr_clearcoat_normal_map_demo_scene_TARGET "${ATLANTIS_pbr_clearcoa
 atlantis_add_material_asset(
   NAME pbr_sheen_low_roughness
   SOURCE materials/pbr_sheen_low_roughness.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_pbr_sheen_low_roughness_ARTIFACT_PATH "${ATLANTIS_pbr_sheen_low_roughness_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_sheen_low_roughness_METADATA_PATH "${ATLANTIS_pbr_sheen_low_roughness_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_sheen_low_roughness_TARGET "${ATLANTIS_pbr_sheen_low_roughness_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_sheen_low_roughness_LOGICAL_PATH "${ATLANTIS_pbr_sheen_low_roughness_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME pbr_sheen_mid_roughness
   SOURCE materials/pbr_sheen_mid_roughness.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_pbr_sheen_mid_roughness_ARTIFACT_PATH "${ATLANTIS_pbr_sheen_mid_roughness_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_sheen_mid_roughness_METADATA_PATH "${ATLANTIS_pbr_sheen_mid_roughness_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_sheen_mid_roughness_TARGET "${ATLANTIS_pbr_sheen_mid_roughness_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_sheen_mid_roughness_LOGICAL_PATH "${ATLANTIS_pbr_sheen_mid_roughness_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME pbr_sheen_high_roughness
   SOURCE materials/pbr_sheen_high_roughness.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_pbr_sheen_high_roughness_ARTIFACT_PATH "${ATLANTIS_pbr_sheen_high_roughness_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_sheen_high_roughness_METADATA_PATH "${ATLANTIS_pbr_sheen_high_roughness_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_sheen_high_roughness_TARGET "${ATLANTIS_pbr_sheen_high_roughness_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_sheen_high_roughness_LOGICAL_PATH "${ATLANTIS_pbr_sheen_high_roughness_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME pbr_sheen_normal_mapped
   SOURCE materials/pbr_sheen_normal_mapped.material.txt
-  TEXTURE textured_quad_srgb
-  NORMAL_MAP normal_map_tilted
 )
 set(ATLANTIS_pbr_sheen_normal_mapped_ARTIFACT_PATH "${ATLANTIS_pbr_sheen_normal_mapped_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_sheen_normal_mapped_METADATA_PATH "${ATLANTIS_pbr_sheen_normal_mapped_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_sheen_normal_mapped_TARGET "${ATLANTIS_pbr_sheen_normal_mapped_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_sheen_normal_mapped_LOGICAL_PATH "${ATLANTIS_pbr_sheen_normal_mapped_LOGICAL_PATH}" PARENT_SCOPE)
 
 # Plan 0035 Milestone 3: the sheen-roughness parameter-sweep scene
 # (low/mid/high sheen_roughness, same sheenColor) -- IBL-only, no Light
@@ -926,13 +797,10 @@ set(ATLANTIS_pbr_sheen_normal_mapped_LOGICAL_PATH "${ATLANTIS_pbr_sheen_normal_m
 atlantis_add_scene_asset(
   NAME pbr_sheen_demo_scene
   SOURCE scenes/pbr_sheen_demo.scene.txt
-  MESH_DEPENDENCIES pbr_sphere
-  MATERIAL_DEPENDENCIES pbr_sheen_low_roughness pbr_sheen_mid_roughness pbr_sheen_high_roughness
-  TEXTURE_DEPENDENCIES textured_quad_srgb
 )
 set(ATLANTIS_pbr_sheen_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_sheen_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_sheen_demo_scene_METADATA_PATH "${ATLANTIS_pbr_sheen_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_pbr_sheen_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_sheen_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_demo_scene_GUID "${ATLANTIS_pbr_sheen_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_pbr_sheen_demo_scene_TARGET "${ATLANTIS_pbr_sheen_demo_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0035 Milestone 3: the sheen normal-map variant's own dedicated
@@ -941,13 +809,10 @@ set(ATLANTIS_pbr_sheen_demo_scene_TARGET "${ATLANTIS_pbr_sheen_demo_scene_TARGET
 atlantis_add_scene_asset(
   NAME pbr_sheen_normal_map_demo_scene
   SOURCE scenes/pbr_sheen_normal_map_demo.scene.txt
-  MESH_DEPENDENCIES pbr_sphere
-  MATERIAL_DEPENDENCIES pbr_sheen_normal_mapped
-  TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
 )
 set(ATLANTIS_pbr_sheen_normal_map_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_sheen_normal_map_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_sheen_normal_map_demo_scene_METADATA_PATH "${ATLANTIS_pbr_sheen_normal_map_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_pbr_sheen_normal_map_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_sheen_normal_map_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_sheen_normal_map_demo_scene_GUID "${ATLANTIS_pbr_sheen_normal_map_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_pbr_sheen_normal_map_demo_scene_TARGET "${ATLANTIS_pbr_sheen_normal_map_demo_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0035 Milestone 4: the anisotropy-rotation parameter-sweep scene's
@@ -959,43 +824,34 @@ set(ATLANTIS_pbr_sheen_normal_map_demo_scene_TARGET "${ATLANTIS_pbr_sheen_normal
 atlantis_add_material_asset(
   NAME pbr_anisotropic_rotation_0
   SOURCE materials/pbr_anisotropic_rotation_0.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_pbr_anisotropic_rotation_0_ARTIFACT_PATH "${ATLANTIS_pbr_anisotropic_rotation_0_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_anisotropic_rotation_0_METADATA_PATH "${ATLANTIS_pbr_anisotropic_rotation_0_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_anisotropic_rotation_0_TARGET "${ATLANTIS_pbr_anisotropic_rotation_0_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_anisotropic_rotation_0_LOGICAL_PATH "${ATLANTIS_pbr_anisotropic_rotation_0_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME pbr_anisotropic_rotation_45
   SOURCE materials/pbr_anisotropic_rotation_45.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_pbr_anisotropic_rotation_45_ARTIFACT_PATH "${ATLANTIS_pbr_anisotropic_rotation_45_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_anisotropic_rotation_45_METADATA_PATH "${ATLANTIS_pbr_anisotropic_rotation_45_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_anisotropic_rotation_45_TARGET "${ATLANTIS_pbr_anisotropic_rotation_45_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_anisotropic_rotation_45_LOGICAL_PATH "${ATLANTIS_pbr_anisotropic_rotation_45_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME pbr_anisotropic_rotation_90
   SOURCE materials/pbr_anisotropic_rotation_90.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_pbr_anisotropic_rotation_90_ARTIFACT_PATH "${ATLANTIS_pbr_anisotropic_rotation_90_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_anisotropic_rotation_90_METADATA_PATH "${ATLANTIS_pbr_anisotropic_rotation_90_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_anisotropic_rotation_90_TARGET "${ATLANTIS_pbr_anisotropic_rotation_90_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_anisotropic_rotation_90_LOGICAL_PATH "${ATLANTIS_pbr_anisotropic_rotation_90_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME pbr_anisotropic_normal_mapped
   SOURCE materials/pbr_anisotropic_normal_mapped.material.txt
-  TEXTURE textured_quad_srgb
-  NORMAL_MAP normal_map_tilted
 )
 set(ATLANTIS_pbr_anisotropic_normal_mapped_ARTIFACT_PATH "${ATLANTIS_pbr_anisotropic_normal_mapped_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_anisotropic_normal_mapped_METADATA_PATH "${ATLANTIS_pbr_anisotropic_normal_mapped_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_anisotropic_normal_mapped_TARGET "${ATLANTIS_pbr_anisotropic_normal_mapped_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_pbr_anisotropic_normal_mapped_LOGICAL_PATH "${ATLANTIS_pbr_anisotropic_normal_mapped_LOGICAL_PATH}" PARENT_SCOPE)
 
 # Plan 0035 Milestone 4: the anisotropy-rotation parameter-sweep scene
 # (rotation 0/45/90 degrees, same anisotropy_factor) -- IBL-only, no
@@ -1003,13 +859,10 @@ set(ATLANTIS_pbr_anisotropic_normal_mapped_LOGICAL_PATH "${ATLANTIS_pbr_anisotro
 atlantis_add_scene_asset(
   NAME pbr_anisotropic_demo_scene
   SOURCE scenes/pbr_anisotropic_demo.scene.txt
-  MESH_DEPENDENCIES pbr_sphere
-  MATERIAL_DEPENDENCIES pbr_anisotropic_rotation_0 pbr_anisotropic_rotation_45 pbr_anisotropic_rotation_90
-  TEXTURE_DEPENDENCIES textured_quad_srgb
 )
 set(ATLANTIS_pbr_anisotropic_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_anisotropic_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_anisotropic_demo_scene_METADATA_PATH "${ATLANTIS_pbr_anisotropic_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_pbr_anisotropic_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_anisotropic_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_demo_scene_GUID "${ATLANTIS_pbr_anisotropic_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_pbr_anisotropic_demo_scene_TARGET "${ATLANTIS_pbr_anisotropic_demo_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0035 Milestone 4: the anisotropic normal-map variant's own
@@ -1018,13 +871,10 @@ set(ATLANTIS_pbr_anisotropic_demo_scene_TARGET "${ATLANTIS_pbr_anisotropic_demo_
 atlantis_add_scene_asset(
   NAME pbr_anisotropic_normal_map_demo_scene
   SOURCE scenes/pbr_anisotropic_normal_map_demo.scene.txt
-  MESH_DEPENDENCIES pbr_sphere
-  MATERIAL_DEPENDENCIES pbr_anisotropic_normal_mapped
-  TEXTURE_DEPENDENCIES textured_quad_srgb normal_map_tilted
 )
 set(ATLANTIS_pbr_anisotropic_normal_map_demo_scene_ARTIFACT_PATH "${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_anisotropic_normal_map_demo_scene_METADATA_PATH "${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_pbr_anisotropic_normal_map_demo_scene_MANIFEST_PATH "${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_anisotropic_normal_map_demo_scene_GUID "${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_pbr_anisotropic_normal_map_demo_scene_TARGET "${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0035 Milestone 5 (Spec 0035 Requirement 6): the showcase scene's
@@ -1041,303 +891,242 @@ set(ATLANTIS_pbr_anisotropic_normal_map_demo_scene_TARGET "${ATLANTIS_pbr_anisot
 atlantis_add_material_asset(
   NAME showcase_metal_polished
   SOURCE materials/showcase_metal_polished.material.txt
-  TEXTURE metal_rust_srgb
 )
 set(ATLANTIS_showcase_metal_polished_ARTIFACT_PATH "${ATLANTIS_showcase_metal_polished_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_metal_polished_METADATA_PATH "${ATLANTIS_showcase_metal_polished_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_metal_polished_TARGET "${ATLANTIS_showcase_metal_polished_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_metal_polished_LOGICAL_PATH "${ATLANTIS_showcase_metal_polished_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_metal_satin
   SOURCE materials/showcase_metal_satin.material.txt
-  TEXTURE metal_rust_srgb
 )
 set(ATLANTIS_showcase_metal_satin_ARTIFACT_PATH "${ATLANTIS_showcase_metal_satin_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_metal_satin_METADATA_PATH "${ATLANTIS_showcase_metal_satin_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_metal_satin_TARGET "${ATLANTIS_showcase_metal_satin_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_metal_satin_LOGICAL_PATH "${ATLANTIS_showcase_metal_satin_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_metal_semi_rough
   SOURCE materials/showcase_metal_semi_rough.material.txt
-  TEXTURE metal_rust_srgb
 )
 set(ATLANTIS_showcase_metal_semi_rough_ARTIFACT_PATH "${ATLANTIS_showcase_metal_semi_rough_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_metal_semi_rough_METADATA_PATH "${ATLANTIS_showcase_metal_semi_rough_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_metal_semi_rough_TARGET "${ATLANTIS_showcase_metal_semi_rough_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_metal_semi_rough_LOGICAL_PATH "${ATLANTIS_showcase_metal_semi_rough_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_metal_rough
   SOURCE materials/showcase_metal_rough.material.txt
-  TEXTURE metal_rust_srgb
 )
 set(ATLANTIS_showcase_metal_rough_ARTIFACT_PATH "${ATLANTIS_showcase_metal_rough_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_metal_rough_METADATA_PATH "${ATLANTIS_showcase_metal_rough_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_metal_rough_TARGET "${ATLANTIS_showcase_metal_rough_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_metal_rough_LOGICAL_PATH "${ATLANTIS_showcase_metal_rough_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_metal_matte
   SOURCE materials/showcase_metal_matte.material.txt
-  TEXTURE metal_rust_srgb
 )
 set(ATLANTIS_showcase_metal_matte_ARTIFACT_PATH "${ATLANTIS_showcase_metal_matte_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_metal_matte_METADATA_PATH "${ATLANTIS_showcase_metal_matte_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_metal_matte_TARGET "${ATLANTIS_showcase_metal_matte_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_metal_matte_LOGICAL_PATH "${ATLANTIS_showcase_metal_matte_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_metal_gold_tint
   SOURCE materials/showcase_metal_gold_tint.material.txt
-  TEXTURE metal_rust_srgb
 )
 set(ATLANTIS_showcase_metal_gold_tint_ARTIFACT_PATH "${ATLANTIS_showcase_metal_gold_tint_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_metal_gold_tint_METADATA_PATH "${ATLANTIS_showcase_metal_gold_tint_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_metal_gold_tint_TARGET "${ATLANTIS_showcase_metal_gold_tint_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_metal_gold_tint_LOGICAL_PATH "${ATLANTIS_showcase_metal_gold_tint_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_wood_glossy_varnish
   SOURCE materials/showcase_wood_glossy_varnish.material.txt
-  TEXTURE wood_dark_srgb
 )
 set(ATLANTIS_showcase_wood_glossy_varnish_ARTIFACT_PATH "${ATLANTIS_showcase_wood_glossy_varnish_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_wood_glossy_varnish_METADATA_PATH "${ATLANTIS_showcase_wood_glossy_varnish_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_wood_glossy_varnish_TARGET "${ATLANTIS_showcase_wood_glossy_varnish_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_wood_glossy_varnish_LOGICAL_PATH "${ATLANTIS_showcase_wood_glossy_varnish_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_wood_satin
   SOURCE materials/showcase_wood_satin.material.txt
-  TEXTURE wood_dark_srgb
 )
 set(ATLANTIS_showcase_wood_satin_ARTIFACT_PATH "${ATLANTIS_showcase_wood_satin_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_wood_satin_METADATA_PATH "${ATLANTIS_showcase_wood_satin_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_wood_satin_TARGET "${ATLANTIS_showcase_wood_satin_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_wood_satin_LOGICAL_PATH "${ATLANTIS_showcase_wood_satin_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_wood_natural
   SOURCE materials/showcase_wood_natural.material.txt
-  TEXTURE wood_dark_srgb
 )
 set(ATLANTIS_showcase_wood_natural_ARTIFACT_PATH "${ATLANTIS_showcase_wood_natural_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_wood_natural_METADATA_PATH "${ATLANTIS_showcase_wood_natural_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_wood_natural_TARGET "${ATLANTIS_showcase_wood_natural_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_wood_natural_LOGICAL_PATH "${ATLANTIS_showcase_wood_natural_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_wood_worn
   SOURCE materials/showcase_wood_worn.material.txt
-  TEXTURE wood_dark_srgb
 )
 set(ATLANTIS_showcase_wood_worn_ARTIFACT_PATH "${ATLANTIS_showcase_wood_worn_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_wood_worn_METADATA_PATH "${ATLANTIS_showcase_wood_worn_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_wood_worn_TARGET "${ATLANTIS_showcase_wood_worn_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_wood_worn_LOGICAL_PATH "${ATLANTIS_showcase_wood_worn_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_wood_reddish_stain
   SOURCE materials/showcase_wood_reddish_stain.material.txt
-  TEXTURE wood_dark_srgb
 )
 set(ATLANTIS_showcase_wood_reddish_stain_ARTIFACT_PATH "${ATLANTIS_showcase_wood_reddish_stain_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_wood_reddish_stain_METADATA_PATH "${ATLANTIS_showcase_wood_reddish_stain_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_wood_reddish_stain_TARGET "${ATLANTIS_showcase_wood_reddish_stain_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_wood_reddish_stain_LOGICAL_PATH "${ATLANTIS_showcase_wood_reddish_stain_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_wood_ash_tint
   SOURCE materials/showcase_wood_ash_tint.material.txt
-  TEXTURE wood_dark_srgb
 )
 set(ATLANTIS_showcase_wood_ash_tint_ARTIFACT_PATH "${ATLANTIS_showcase_wood_ash_tint_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_wood_ash_tint_METADATA_PATH "${ATLANTIS_showcase_wood_ash_tint_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_wood_ash_tint_TARGET "${ATLANTIS_showcase_wood_ash_tint_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_wood_ash_tint_LOGICAL_PATH "${ATLANTIS_showcase_wood_ash_tint_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_marble_polished
   SOURCE materials/showcase_marble_polished.material.txt
-  TEXTURE marble_srgb
 )
 set(ATLANTIS_showcase_marble_polished_ARTIFACT_PATH "${ATLANTIS_showcase_marble_polished_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_marble_polished_METADATA_PATH "${ATLANTIS_showcase_marble_polished_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_marble_polished_TARGET "${ATLANTIS_showcase_marble_polished_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_marble_polished_LOGICAL_PATH "${ATLANTIS_showcase_marble_polished_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_marble_satin
   SOURCE materials/showcase_marble_satin.material.txt
-  TEXTURE marble_srgb
 )
 set(ATLANTIS_showcase_marble_satin_ARTIFACT_PATH "${ATLANTIS_showcase_marble_satin_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_marble_satin_METADATA_PATH "${ATLANTIS_showcase_marble_satin_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_marble_satin_TARGET "${ATLANTIS_showcase_marble_satin_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_marble_satin_LOGICAL_PATH "${ATLANTIS_showcase_marble_satin_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_marble_honed
   SOURCE materials/showcase_marble_honed.material.txt
-  TEXTURE marble_srgb
 )
 set(ATLANTIS_showcase_marble_honed_ARTIFACT_PATH "${ATLANTIS_showcase_marble_honed_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_marble_honed_METADATA_PATH "${ATLANTIS_showcase_marble_honed_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_marble_honed_TARGET "${ATLANTIS_showcase_marble_honed_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_marble_honed_LOGICAL_PATH "${ATLANTIS_showcase_marble_honed_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_marble_rough
   SOURCE materials/showcase_marble_rough.material.txt
-  TEXTURE marble_srgb
 )
 set(ATLANTIS_showcase_marble_rough_ARTIFACT_PATH "${ATLANTIS_showcase_marble_rough_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_marble_rough_METADATA_PATH "${ATLANTIS_showcase_marble_rough_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_marble_rough_TARGET "${ATLANTIS_showcase_marble_rough_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_marble_rough_LOGICAL_PATH "${ATLANTIS_showcase_marble_rough_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_marble_charcoal_tint
   SOURCE materials/showcase_marble_charcoal_tint.material.txt
-  TEXTURE marble_srgb
 )
 set(ATLANTIS_showcase_marble_charcoal_tint_ARTIFACT_PATH "${ATLANTIS_showcase_marble_charcoal_tint_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_marble_charcoal_tint_METADATA_PATH "${ATLANTIS_showcase_marble_charcoal_tint_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_marble_charcoal_tint_TARGET "${ATLANTIS_showcase_marble_charcoal_tint_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_marble_charcoal_tint_LOGICAL_PATH "${ATLANTIS_showcase_marble_charcoal_tint_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_marble_rose_tint
   SOURCE materials/showcase_marble_rose_tint.material.txt
-  TEXTURE marble_srgb
 )
 set(ATLANTIS_showcase_marble_rose_tint_ARTIFACT_PATH "${ATLANTIS_showcase_marble_rose_tint_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_marble_rose_tint_METADATA_PATH "${ATLANTIS_showcase_marble_rose_tint_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_marble_rose_tint_TARGET "${ATLANTIS_showcase_marble_rose_tint_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_marble_rose_tint_LOGICAL_PATH "${ATLANTIS_showcase_marble_rose_tint_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_tile_glossy
   SOURCE materials/showcase_tile_glossy.material.txt
-  TEXTURE mosaic_tile_srgb
 )
 set(ATLANTIS_showcase_tile_glossy_ARTIFACT_PATH "${ATLANTIS_showcase_tile_glossy_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_tile_glossy_METADATA_PATH "${ATLANTIS_showcase_tile_glossy_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_tile_glossy_TARGET "${ATLANTIS_showcase_tile_glossy_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_tile_glossy_LOGICAL_PATH "${ATLANTIS_showcase_tile_glossy_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_tile_satin
   SOURCE materials/showcase_tile_satin.material.txt
-  TEXTURE mosaic_tile_srgb
 )
 set(ATLANTIS_showcase_tile_satin_ARTIFACT_PATH "${ATLANTIS_showcase_tile_satin_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_tile_satin_METADATA_PATH "${ATLANTIS_showcase_tile_satin_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_tile_satin_TARGET "${ATLANTIS_showcase_tile_satin_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_tile_satin_LOGICAL_PATH "${ATLANTIS_showcase_tile_satin_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_tile_matte
   SOURCE materials/showcase_tile_matte.material.txt
-  TEXTURE mosaic_tile_srgb
 )
 set(ATLANTIS_showcase_tile_matte_ARTIFACT_PATH "${ATLANTIS_showcase_tile_matte_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_tile_matte_METADATA_PATH "${ATLANTIS_showcase_tile_matte_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_tile_matte_TARGET "${ATLANTIS_showcase_tile_matte_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_tile_matte_LOGICAL_PATH "${ATLANTIS_showcase_tile_matte_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_tile_worn
   SOURCE materials/showcase_tile_worn.material.txt
-  TEXTURE mosaic_tile_srgb
 )
 set(ATLANTIS_showcase_tile_worn_ARTIFACT_PATH "${ATLANTIS_showcase_tile_worn_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_tile_worn_METADATA_PATH "${ATLANTIS_showcase_tile_worn_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_tile_worn_TARGET "${ATLANTIS_showcase_tile_worn_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_tile_worn_LOGICAL_PATH "${ATLANTIS_showcase_tile_worn_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_tile_teal_tint
   SOURCE materials/showcase_tile_teal_tint.material.txt
-  TEXTURE mosaic_tile_srgb
 )
 set(ATLANTIS_showcase_tile_teal_tint_ARTIFACT_PATH "${ATLANTIS_showcase_tile_teal_tint_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_tile_teal_tint_METADATA_PATH "${ATLANTIS_showcase_tile_teal_tint_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_tile_teal_tint_TARGET "${ATLANTIS_showcase_tile_teal_tint_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_tile_teal_tint_LOGICAL_PATH "${ATLANTIS_showcase_tile_teal_tint_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_tile_amber_tint
   SOURCE materials/showcase_tile_amber_tint.material.txt
-  TEXTURE mosaic_tile_srgb
 )
 set(ATLANTIS_showcase_tile_amber_tint_ARTIFACT_PATH "${ATLANTIS_showcase_tile_amber_tint_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_tile_amber_tint_METADATA_PATH "${ATLANTIS_showcase_tile_amber_tint_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_tile_amber_tint_TARGET "${ATLANTIS_showcase_tile_amber_tint_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_tile_amber_tint_LOGICAL_PATH "${ATLANTIS_showcase_tile_amber_tint_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_neutral_reference
   SOURCE materials/showcase_neutral_reference.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_showcase_neutral_reference_ARTIFACT_PATH "${ATLANTIS_showcase_neutral_reference_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_neutral_reference_METADATA_PATH "${ATLANTIS_showcase_neutral_reference_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_neutral_reference_TARGET "${ATLANTIS_showcase_neutral_reference_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_neutral_reference_LOGICAL_PATH "${ATLANTIS_showcase_neutral_reference_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_clearcoat_carbon
   SOURCE materials/showcase_clearcoat_carbon.material.txt
-  TEXTURE carbon_fiber_srgb
-  NORMAL_MAP carbon_fiber_normal_unorm
 )
 set(ATLANTIS_showcase_clearcoat_carbon_ARTIFACT_PATH "${ATLANTIS_showcase_clearcoat_carbon_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_clearcoat_carbon_METADATA_PATH "${ATLANTIS_showcase_clearcoat_carbon_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_clearcoat_carbon_TARGET "${ATLANTIS_showcase_clearcoat_carbon_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_clearcoat_carbon_LOGICAL_PATH "${ATLANTIS_showcase_clearcoat_carbon_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_sheen_fabric
   SOURCE materials/showcase_sheen_fabric.material.txt
-  TEXTURE textured_quad_srgb
 )
 set(ATLANTIS_showcase_sheen_fabric_ARTIFACT_PATH "${ATLANTIS_showcase_sheen_fabric_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_sheen_fabric_METADATA_PATH "${ATLANTIS_showcase_sheen_fabric_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_sheen_fabric_TARGET "${ATLANTIS_showcase_sheen_fabric_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_sheen_fabric_LOGICAL_PATH "${ATLANTIS_showcase_sheen_fabric_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_anisotropic_brushed
   SOURCE materials/showcase_anisotropic_brushed.material.txt
-  TEXTURE metal_rust_srgb
 )
 set(ATLANTIS_showcase_anisotropic_brushed_ARTIFACT_PATH "${ATLANTIS_showcase_anisotropic_brushed_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_anisotropic_brushed_METADATA_PATH "${ATLANTIS_showcase_anisotropic_brushed_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_anisotropic_brushed_TARGET "${ATLANTIS_showcase_anisotropic_brushed_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_anisotropic_brushed_LOGICAL_PATH "${ATLANTIS_showcase_anisotropic_brushed_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME worn_concrete_floor
   SOURCE materials/worn_concrete_floor.material.txt
-  TEXTURE ground_concrete_srgb
 )
 set(ATLANTIS_worn_concrete_floor_ARTIFACT_PATH "${ATLANTIS_worn_concrete_floor_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_worn_concrete_floor_METADATA_PATH "${ATLANTIS_worn_concrete_floor_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_worn_concrete_floor_TARGET "${ATLANTIS_worn_concrete_floor_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_worn_concrete_floor_LOGICAL_PATH "${ATLANTIS_worn_concrete_floor_LOGICAL_PATH}" PARENT_SCOPE)
 
 atlantis_add_material_asset(
   NAME showcase_pedestal
   SOURCE materials/showcase_pedestal.material.txt
-  TEXTURE ground_concrete_srgb
 )
 set(ATLANTIS_showcase_pedestal_ARTIFACT_PATH "${ATLANTIS_showcase_pedestal_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_pedestal_METADATA_PATH "${ATLANTIS_showcase_pedestal_METADATA_PATH}" PARENT_SCOPE)
 set(ATLANTIS_showcase_pedestal_TARGET "${ATLANTIS_showcase_pedestal_TARGET}" PARENT_SCOPE)
-set(ATLANTIS_showcase_pedestal_LOGICAL_PATH "${ATLANTIS_showcase_pedestal_LOGICAL_PATH}" PARENT_SCOPE)
 
 # Plan 0035 Milestone 5 (Spec 0035 Requirement 6): the showcase scene
 # itself -- 28 spheres (25 PbrDirectLit + 1 each PbrClearcoat/PbrSheen/
@@ -1347,17 +1136,10 @@ set(ATLANTIS_showcase_pedestal_LOGICAL_PATH "${ATLANTIS_showcase_pedestal_LOGICA
 atlantis_add_scene_asset(
   NAME pbr_materials_showcase_scene
   SOURCE scenes/pbr_materials_showcase.scene.txt
-  MESH_DEPENDENCIES pbr_dimpled_sphere pbr_pedestal ground_plane
-  MATERIAL_DEPENDENCIES showcase_metal_polished showcase_metal_satin showcase_metal_semi_rough showcase_metal_rough showcase_metal_matte showcase_metal_gold_tint
-    showcase_wood_glossy_varnish showcase_wood_satin showcase_wood_natural showcase_wood_worn showcase_wood_reddish_stain showcase_wood_ash_tint
-    showcase_marble_polished showcase_marble_satin showcase_marble_honed showcase_marble_rough showcase_marble_charcoal_tint showcase_marble_rose_tint
-    showcase_tile_glossy showcase_tile_satin showcase_tile_matte showcase_tile_worn showcase_tile_teal_tint showcase_tile_amber_tint
-    showcase_neutral_reference showcase_clearcoat_carbon showcase_sheen_fabric showcase_anisotropic_brushed worn_concrete_floor showcase_pedestal
-  TEXTURE_DEPENDENCIES carbon_fiber_normal_unorm carbon_fiber_srgb ground_concrete_srgb marble_srgb metal_rust_srgb mosaic_tile_srgb textured_quad_srgb wood_dark_srgb
 )
 set(ATLANTIS_pbr_materials_showcase_scene_ARTIFACT_PATH "${ATLANTIS_pbr_materials_showcase_scene_ARTIFACT_PATH}" PARENT_SCOPE)
 set(ATLANTIS_pbr_materials_showcase_scene_METADATA_PATH "${ATLANTIS_pbr_materials_showcase_scene_METADATA_PATH}" PARENT_SCOPE)
-set(ATLANTIS_pbr_materials_showcase_scene_MANIFEST_PATH "${ATLANTIS_pbr_materials_showcase_scene_MANIFEST_PATH}" PARENT_SCOPE)
+set(ATLANTIS_pbr_materials_showcase_scene_GUID "${ATLANTIS_pbr_materials_showcase_scene_GUID}" PARENT_SCOPE)
 set(ATLANTIS_pbr_materials_showcase_scene_TARGET "${ATLANTIS_pbr_materials_showcase_scene_TARGET}" PARENT_SCOPE)
 
 # Plan 0046 Milestone 3 (Spec 0046 Q1/Q7, ADR-0094, Plan 0046 P9): the
@@ -1376,7 +1158,7 @@ if(EXISTS "${ATLANTIS_BISTRO_CONTENT_DIR}/bistro.gltf")
     CONTENT_ROOT "${ATLANTIS_BISTRO_CONTENT_DIR}"
     OVERLAY "${CMAKE_CURRENT_SOURCE_DIR}/bistro/bistro_overlay.scene.txt"
   )
-  foreach(suffix ARTIFACT_PATH METADATA_PATH MANIFEST_PATH TARGET IMPORT_DIR)
+  foreach(suffix ARTIFACT_PATH METADATA_PATH IMPORT_GUID TARGET IMPORT_DIR)
     set(ATLANTIS_bistro_scene_${suffix} "${ATLANTIS_bistro_scene_${suffix}}" PARENT_SCOPE)
   endforeach()
   message(STATUS "Bistro content found at ${ATLANTIS_BISTRO_CONTENT_DIR}: declaring the bistro scene build step")

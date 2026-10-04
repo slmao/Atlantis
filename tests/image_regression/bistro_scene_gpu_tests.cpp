@@ -31,7 +31,7 @@
 #endif
 
 // Plan 0046 Milestone 3 (Spec 0046 R1/R3, Plan 0046 M3 step 4): the assembled
-// Bistro scene -- the build step's own cooked set, dependency manifest and
+// Bistro scene -- the build step's own cooked set, catalog records and
 // overlay -- loads through the Runtime's scene path, resolves every
 // renderable, and renders a frame, with no environment (ruling O1) and the
 // overlay camera's own fog and bloom. Content-gated: SKIPs when the Bistro
@@ -81,6 +81,10 @@ PeakMemory processPeakMemory() {
   return peak;
 }
 
+#if defined(ATLANTIS_BISTRO_IMPORT_GUID)
+fs::path importDirOfBuild() { return fs::path(ATLANTIS_BISTRO_SCENE_IMPORT_DIR); }
+#endif
+
 double secondsSince(std::chrono::steady_clock::time_point start) {
   return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 }
@@ -90,18 +94,15 @@ double secondsSince(std::chrono::steady_clock::time_point start) {
 TEST_CASE("The assembled Bistro scene validates, loads through the Runtime path, resolves every renderable and "
           "renders a frame lit by its own overlay, with no environment",
           "[bistro]") {
-#if !defined(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)
+#if !defined(ATLANTIS_BISTRO_IMPORT_GUID)
   SKIP("No Bistro build step: content/bistro was absent at configure time -- run tools/content/fetch_bistro.ps1 "
        "and re-configure");
 #else
-  const fs::path importDir{ATLANTIS_BISTRO_SCENE_IMPORT_DIR};
-  if (!fs::exists(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)) SKIP("Bistro build step has not run");
+  const fs::path importDir = importDirOfBuild();
+  if (!fs::exists(importDir / "import.catalog.txt")) SKIP("Bistro build step has not run");
 
   // 1. The build's assembled catalog (Plan 0047 P13) holds every record of
-  //    the import -- the 1070 assets plus the scene -- and the dependency
-  //    manifest lists each of the 1070 assets once.
-  const fs::path assetList = importDir / "asset_list.txt";
-  CHECK(nonEmptyLines(assetList).size() == 551 + 254 + 265);
+  //    the import -- the 1070 assets plus the scene.
   {
     std::size_t importRecords = 0;
     for (const std::string& line : nonEmptyLines(ATLANTIS_ASSET_CATALOG_PATH)) {
@@ -110,12 +111,10 @@ TEST_CASE("The assembled Bistro scene validates, loads through the Runtime path,
     CHECK(importRecords == 551 + 254 + 265 + 1);
     CHECK(nonEmptyLines(importDir / "import.catalog.txt").size() == 2 + importRecords);
   }
-  const std::vector<std::string> manifest = nonEmptyLines(ATLANTIS_BISTRO_SCENE_MANIFEST_PATH);
-  CHECK(manifest.size() == 1070);
 
   // 2. Load (Phase 1: every mesh, material and texture read from disk).
-  const BloomTestSceneFiles scene{ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH, ATLANTIS_BISTRO_SCENE_METADATA_PATH,
-                                  ATLANTIS_BISTRO_SCENE_MANIFEST_PATH};
+  const std::string sceneGuidText = atlantis::image_regression::derivedSceneGuidText(ATLANTIS_BISTRO_IMPORT_GUID);
+  const BloomTestSceneFiles scene{sceneGuidText.c_str()};
   auto config = buildDarkEmissiveConfig(scene);  // no environment (ruling O1)
   addBloomShaderPaths(config);
   const auto loadStart = std::chrono::steady_clock::now();
@@ -204,10 +203,10 @@ constexpr const char* kBistroGoldenSlug = "bistro_demo_512x512_rgba8unorm";
 
 enum class BistroVariant { Golden, FogOff, BloomOff, PointLightsOff };
 
-#if defined(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)
+#if defined(ATLANTIS_BISTRO_IMPORT_GUID)
 [[nodiscard]] atlantis::image_regression::ComparisonReport renderBistroAndCompare(BistroVariant variant) {
-  const BloomTestSceneFiles scene{ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH, ATLANTIS_BISTRO_SCENE_METADATA_PATH,
-                                  ATLANTIS_BISTRO_SCENE_MANIFEST_PATH};
+  const std::string sceneGuidText = atlantis::image_regression::derivedSceneGuidText(ATLANTIS_BISTRO_IMPORT_GUID);
+  const BloomTestSceneFiles scene{sceneGuidText.c_str()};
   auto config = buildDarkEmissiveConfig(scene);
   addBloomShaderPaths(config);
   auto fixtureResult = atlantis::image_regression::setUpEmissiveDemoFixture(
@@ -264,10 +263,10 @@ enum class BistroVariant { Golden, FogOff, BloomOff, PointLightsOff };
 TEST_CASE("Full capture-compare cycle against the committed bistro_demo golden passes, and its sidecar's content "
           "pin matches the fetch script (ADR-0095)",
           "[bistro]") {
-#if !defined(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)
+#if !defined(ATLANTIS_BISTRO_IMPORT_GUID)
   SKIP("No Bistro build step: content/bistro was absent at configure time");
 #else
-  if (!fs::exists(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)) SKIP("Bistro build step has not run");
+  if (!fs::exists(importDirOfBuild() / "import.catalog.txt")) SKIP("Bistro build step has not run");
   const fs::path outputDir = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
   fs::remove(outputDir / (std::string(kBistroGoldenSlug) + "_actual.png"));
   fs::remove(outputDir / (std::string(kBistroGoldenSlug) + "_diff.png"));
@@ -287,29 +286,29 @@ TEST_CASE("Full capture-compare cycle against the committed bistro_demo golden p
 }
 
 TEST_CASE("The bistro_demo frame with fog off fails comparison against the real bistro_demo golden", "[bistro]") {
-#if !defined(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)
+#if !defined(ATLANTIS_BISTRO_IMPORT_GUID)
   SKIP("No Bistro build step: content/bistro was absent at configure time");
 #else
-  if (!fs::exists(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)) SKIP("Bistro build step has not run");
+  if (!fs::exists(importDirOfBuild() / "import.catalog.txt")) SKIP("Bistro build step has not run");
   CHECK_FALSE(renderBistroAndCompare(BistroVariant::FogOff).passed);
 #endif
 }
 
 TEST_CASE("The bistro_demo frame with bloom off fails comparison against the real bistro_demo golden", "[bistro]") {
-#if !defined(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)
+#if !defined(ATLANTIS_BISTRO_IMPORT_GUID)
   SKIP("No Bistro build step: content/bistro was absent at configure time");
 #else
-  if (!fs::exists(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)) SKIP("Bistro build step has not run");
+  if (!fs::exists(importDirOfBuild() / "import.catalog.txt")) SKIP("Bistro build step has not run");
   CHECK_FALSE(renderBistroAndCompare(BistroVariant::BloomOff).passed);
 #endif
 }
 
 TEST_CASE("The bistro_demo frame with every point light off fails comparison against the real bistro_demo golden",
           "[bistro]") {
-#if !defined(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)
+#if !defined(ATLANTIS_BISTRO_IMPORT_GUID)
   SKIP("No Bistro build step: content/bistro was absent at configure time");
 #else
-  if (!fs::exists(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)) SKIP("Bistro build step has not run");
+  if (!fs::exists(importDirOfBuild() / "import.catalog.txt")) SKIP("Bistro build step has not run");
   CHECK_FALSE(renderBistroAndCompare(BistroVariant::PointLightsOff).passed);
 #endif
 }

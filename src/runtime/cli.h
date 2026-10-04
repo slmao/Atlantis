@@ -9,6 +9,8 @@
 // Requirement 1) -- a shared source file across two executable
 // targets, not a library, not a new CMake target.
 
+#include <atlantis/asset_system/asset_guid.h>
+
 #include <optional>
 #include <span>
 #include <string>
@@ -16,26 +18,25 @@
 
 namespace atlantis::runtime::cli {
 
-// Owned copy of exactly the three BootstrapConfig fields this Spec's
-// own CLI surface varies (Spec 0032 Requirement 5). Every other
-// BootstrapConfig field (all shader-pair paths, environment paths,
-// enableValidationLayers, applicationName) is untouched by this type
-// or by parseCommandLine() below -- a structural guarantee, not
+// The BootstrapConfig input this Spec's own CLI surface varies (Spec
+// 0032 Requirement 5): which catalog scene to load (Plan 0047 P14 -- the
+// scene's GUID, resolved through the one build catalog). Every other
+// BootstrapConfig field (all shader-pair paths, environment paths, the
+// catalog path, enableValidationLayers, applicationName) is untouched by
+// this type or by parseCommandLine() below -- a structural guarantee, not
 // something a test needs to separately assert.
-struct SceneBootstrapPaths {
-  std::string sceneArtifactPath;
-  std::string sceneMetadataPath;
-  std::string sceneDependencyManifestPath;
+struct SceneSelection {
+  atlantis::asset_system::AssetGuid sceneAsset;
   // Plan 0046 Milestone 3 (ruling O1, Plan 0046 P10): the entry renders
   // without the global environment (no IBL, no sky) -- lit by its own
-  // lights only. Travels with the selected paths so main() can act on it.
+  // lights only. Travels with the selected scene so main() can act on it.
   bool disableEnvironmentLight = false;
 };
 
 // One whitelist entry. `name` is a non-owning view: every real caller
 // (main.cpp) constructs entries from string literals (the three fixed
 // scene names have static storage duration), so `name` trivially
-// outlives any parseCommandLine() call; `paths` is owned by the entry.
+// outlives any parseCommandLine() call; `selection` is owned by the entry.
 // Borrowed access never implies ownership transfer (AGENTS.md
 // Ownership rules) -- the `whitelist` span parseCommandLine() takes
 // below is valid only for the duration of that one call; every string
@@ -43,7 +44,7 @@ struct SceneBootstrapPaths {
 // argv or whitelist.
 struct SceneWhitelistEntry {
   std::string_view name;
-  SceneBootstrapPaths paths;
+  SceneSelection selection;
 };
 
 // The name selected when --scene is omitted -- matches today's
@@ -67,7 +68,7 @@ enum class CommandLineOutcome {
 struct CommandLineResult {
   CommandLineOutcome outcome;
   std::string message;                              // empty when outcome == RunScene
-  std::optional<SceneBootstrapPaths> selectedScene;  // populated only when outcome == RunScene
+  std::optional<SceneSelection> selectedScene;  // populated only when outcome == RunScene
 };
 
 // Pure function: no I/O, no std::exit, no read of any CMake macro,

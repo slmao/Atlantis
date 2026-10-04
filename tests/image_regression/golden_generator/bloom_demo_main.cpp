@@ -1,6 +1,7 @@
 #include <atlantis/log.h>
 #include <atlantis/runtime/bootstrap_config.h>
 
+#include "../support/catalog_scene.h"
 #include "../fixture/pbr_normal_map_demo_fixture.h"
 #include "../support/pixel_diff.h"
 #include "../support/png_codec.h"
@@ -97,12 +98,9 @@ void printProvenanceFieldIfDifferent(const char* fieldName, const std::string& o
 
 [[nodiscard]] BootstrapConfig buildConfig(bool fogScene) {
   BootstrapConfig config;
-  config.sceneArtifactPath =
-      fogScene ? ATLANTIS_bloom_fog_demo_scene_ARTIFACT_PATH : ATLANTIS_bloom_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath =
-      fogScene ? ATLANTIS_bloom_fog_demo_scene_METADATA_PATH : ATLANTIS_bloom_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath =
-      fogScene ? ATLANTIS_bloom_fog_demo_scene_MANIFEST_PATH : ATLANTIS_bloom_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(
+      fogScene ? ATLANTIS_bloom_fog_demo_scene_GUID : ATLANTIS_bloom_demo_scene_GUID);
   // Plan 0044 Milestone 2: the three bloom shader pairs -- the fixture
   // creates the bloom Pipelines/bundle only when these paths are set, and
   // this generator drives the bloom passes through the camera node's

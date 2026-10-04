@@ -70,7 +70,7 @@ struct WorldSceneLoadedFixture {
 enum class WorldSceneLoadedFixtureSetupError {
   DeviceCreationFailed,
   ShaderLoadFailed,
-  ManifestLoadFailed,
+  CatalogLoadFailed,
   SceneArtifactLoadFailed,
   SceneDependencyUnresolved,
   SceneDependencyLoadFailed,
@@ -80,12 +80,10 @@ enum class WorldSceneLoadedFixtureSetupError {
 // Must be called with the process's current working directory set to a
 // location where "shaders/minimal_mesh.{vert,frag}.spv" resolves,
 // matching every other fixture/tool in this directory's own
-// established convention. sceneArtifactPath/sceneMetadataPath/
-// sceneManifestPath are the real, build-tree world_scene paths
-// atlantis_add_scene_asset() produces (Section D7).
+// established convention. assetCatalogPath is the assembled build catalog
+// and sceneGuidText the world_scene's catalog GUID (Plan 0047 P15).
 [[nodiscard]] atlantis::Result<WorldSceneLoadedFixture, WorldSceneLoadedFixtureSetupError>
-setUpWorldSceneLoadedFixture(const char* sceneArtifactPath, const char* sceneMetadataPath,
-                              const char* sceneManifestPath);
+setUpWorldSceneLoadedFixture(const char* assetCatalogPath, const char* sceneGuidText);
 
 enum class WorldSceneLoadedFixtureRenderError {
   AcquireFailed,

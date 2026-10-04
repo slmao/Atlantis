@@ -122,53 +122,43 @@ TEST_CASE("Real Bistro imports, validates and cooks end to end through the real 
   // the 11 textured-emissive materials now map.
   CHECK(imported.value().texturesReferenced == 265);
   CHECK(imported.value().sceneNodeLines == 5908);
-  CHECK(imported.value().declaredAssets == 551 + 254 + 265);
 
-  // 2. The keys the scene's mesh and material references must resolve to.
+  // 2. The keys the scene's mesh and material references must resolve to:
+  //    meshes bistro_mesh_<i>_<j>.amesh and bistro/materials/<i>.material.txt
+  //    carry the indices their GUIDs derive from (Plan 0047 P5).
   std::set<as::AssetId> meshIds;
   std::set<as::AssetId> materialIds;
-  for (const std::string& path : lines(readText(importDir / "asset_list.txt"))) {
-    // meshes/bistro/mesh_<i>_<j> and bistro/materials/<i>.material.txt carry
-    // the indices their GUIDs derive from (Plan 0047 P5).
-    if (path.rfind("meshes/bistro/mesh_", 0) == 0) {
-      const std::string indices = path.substr(std::string("meshes/bistro/mesh_").size());
-      const std::size_t underscore = indices.find('_');
-      meshIds.insert(keyOf(root, "mesh/" + indices.substr(0, underscore) + "/" + indices.substr(underscore + 1)));
-    }
-    if (path.rfind("bistro/materials/", 0) == 0) {
-      const std::string index = path.substr(std::string("bistro/materials/").size());
-      materialIds.insert(keyOf(root, "material/" + index.substr(0, index.find('.'))));
-    }
+  for (const auto& file : fs::directory_iterator(importDir)) {
+    const std::string name = file.path().filename().string();
+    constexpr std::string_view kMeshPrefix = "bistro_mesh_";
+    constexpr std::string_view kMeshSuffix = ".amesh";
+    if (name.rfind(kMeshPrefix, 0) != 0 || !name.ends_with(kMeshSuffix)) continue;
+    const std::string indices = name.substr(kMeshPrefix.size(), name.size() - kMeshPrefix.size() - kMeshSuffix.size());
+    const std::size_t underscore = indices.find('_');
+    meshIds.insert(keyOf(root, "mesh/" + indices.substr(0, underscore) + "/" + indices.substr(underscore + 1)));
   }
+  for (const auto& file : fs::directory_iterator(importDir / "bistro/materials")) {
+    const std::string name = file.path().filename().string();
+    if (!name.ends_with(".material.txt")) continue;
+    materialIds.insert(keyOf(root, "material/" + name.substr(0, name.find('.'))));
+  }
+  CHECK(meshIds.size() == 551);
+  CHECK(materialIds.size() == 254);
 
   // 3. The whole set -- every texture, material and the scene -- cooked in
   //    one process by the cooker's cook-manifest mode (Plan 0046 Milestone 2,
-  //    ADR-0094 Decision 2), which also writes the dependency manifest; the
+  //    ADR-0094 Decision 2); the
   //    wall-clock time is the build-time measurement Plan 0046's M2 gate
   //    reports. Then samples are decoded: material 0 (Ruling 2 fallback with
   //    a normal map), the first material using the white fallback texture
   //    (Ruling 7), their textures, and the scene.
-  const fs::path dependencyManifest = cookedDir / "bistro.ascene.manifest.txt";
   const auto cookStart = std::chrono::steady_clock::now();
   REQUIRE(runCooker("--kind=cook-manifest --import-dir=" + importDir.generic_string() +
                     " --cooked-dir=" + cookedDir.generic_string() +
-                    " --content-parent=" + content.parent_path().generic_string() +
-                    " --manifest-out=" + dependencyManifest.generic_string()) == 0);
+                    " --content-parent=" + content.parent_path().generic_string()) == 0);
   const double cookSeconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - cookStart).count();
   WARN("full Bistro cook through --kind=cook-manifest: " << cookSeconds << " s");
-  {
-    std::size_t entries = 0;
-    std::set<std::string> logicalPaths;
-    for (const std::string& line : lines(readText(dependencyManifest))) {
-      if (line.empty()) continue;
-      ++entries;
-      logicalPaths.insert(line.substr(0, line.find('\t')));
-    }
-    CHECK(entries == 551 + 254 + 265);
-    CHECK(logicalPaths.size() == entries);  // each declared asset exactly once
-  }
-
   // Plan 0047 M4 (P12/P13): the import's one catalog fragment holds a record
   // for every asset of it -- the 1070 plus the scene -- and assembles
   // cleanly against the committed catalog source: no duplicate GUID or key,

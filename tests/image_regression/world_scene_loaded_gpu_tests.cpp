@@ -43,9 +43,7 @@ TEST_CASE("Full capture-compare cycle for the real, loaded world_scene asset aga
   std::filesystem::remove(actualArtifact);
   std::filesystem::remove(diffArtifact);
 
-  auto fixtureResult = setUpWorldSceneLoadedFixture(ATLANTIS_WORLD_SCENE_ARTIFACT_PATH,
-                                                      ATLANTIS_WORLD_SCENE_METADATA_PATH,
-                                                      ATLANTIS_WORLD_SCENE_MANIFEST_PATH);
+  auto fixtureResult = setUpWorldSceneLoadedFixture(ATLANTIS_ASSET_CATALOG_PATH, ATLANTIS_WORLD_SCENE_GUID);
   REQUIRE(fixtureResult.isOk());
   WorldSceneLoadedFixture fixture = std::move(fixtureResult.value());
 

@@ -147,7 +147,7 @@ enum class PbrAnisotropicDemoSetupError {
   ResourceCreationFailed,
 };
 
-// config's sceneArtifactPath/sceneMetadataPath/sceneDependencyManifestPath
+// config's assetCatalogPath/sceneAsset
 // must name pbr_anisotropic_demo_scene's (or
 // pbr_anisotropic_normal_map_demo_scene's) own cooked artifacts; config
 // must also configure a real environment (environmentArtifactPath/

@@ -1,3 +1,4 @@
+#include "support/catalog_scene.h"
 #include "fixture/ibl_material_demo_fixture.h"
 #include "support/fog_differential.h"
 #include "support/emissive_differential.h"
@@ -20,9 +21,8 @@ namespace {
 
 atlantis::runtime::BootstrapConfig buildIblConfig() {
   atlantis::runtime::BootstrapConfig config;
-  config.sceneArtifactPath = ATLANTIS_ibl_material_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_ibl_material_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_ibl_material_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_ibl_material_demo_scene_GUID);
   const std::string unlit = ATLANTIS_IBL_DEMO_UNLIT_TEXTURED_SHADER_DIR;
   config.unlitTexturedVertexShaderSpirvPath = unlit + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath = unlit + "/textured_quad.vert.refl.json";

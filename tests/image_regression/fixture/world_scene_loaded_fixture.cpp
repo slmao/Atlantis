@@ -2,6 +2,8 @@
 
 #include "minimal_cube_fixture.h"
 
+#include <atlantis/asset_system/asset_catalog.h>
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/decode_scene.h>
 #include <atlantis/asset_system/load.h>
@@ -36,12 +38,10 @@
 // extraction logic independently too, matching this directory's own
 // already-established "duplicated, not shared" precedent
 // (world_scene_fixture.cpp's own identical top-of-file comment). The
-// manifest reader here is deliberately minimal (not a re-implementation
-// of SceneManifestError's own full duplicate/collision/mismatch
-// validation graph, already exhaustively tested by
-// tests/runtime/scene_manifest_tests.cpp) -- this fixture's own job is
-// producing a rendered frame from the real, already-cooked scene
-// asset, not re-verifying Plan 0015's own manifest contract.
+// Plan 0047 M5: the scene and its mesh dependencies resolve through the
+// assembled catalog (loadAssetCatalog(), whose own validation is tested in
+// tests/asset_system/) -- this fixture's own job is producing a rendered
+// frame from the real, already-cooked scene asset.
 
 namespace atlantis::image_regression {
 
@@ -211,91 +211,10 @@ struct V3 {
   return lookAt(eye.x, eye.y, eye.z, eye.x + forward.x, eye.y + forward.y, eye.z + forward.z);
 }
 
-struct ManifestEntry {
-  atlantis::asset_system::AssetId assetId = 0;
-  std::string artifactPath;
-  std::string metadataPath;
-};
-
-// Plan 0047 P11 (transitional until M5): an entry's AssetId is the
-// asset_id its own metadata sidecar records, no longer a hash of the
-// manifest's logical path. Any sidecar type -- only the asset_id line is
-// read.
-[[nodiscard]] std::optional<atlantis::asset_system::AssetId> readSidecarAssetId(const std::string& metadataPath) {
-  std::ifstream file(metadataPath, std::ios::binary);
-  if (!file.is_open()) return std::nullopt;
-  constexpr std::string_view kPrefix = "asset_id: ";
-  std::string line;
-  while (std::getline(file, line)) {
-    if (!line.empty() && line.back() == '\r') line.pop_back();
-    if (line.rfind(kPrefix, 0) != 0) continue;
-    const std::string_view hex = std::string_view(line).substr(kPrefix.size());
-    if (hex.size() != 16) return std::nullopt;
-    atlantis::asset_system::AssetId id = 0;
-    for (const char c : hex) {
-      id <<= 4;
-      if (c >= '0' && c <= '9') {
-        id |= static_cast<atlantis::asset_system::AssetId>(c - '0');
-      } else if (c >= 'a' && c <= 'f') {
-        id |= static_cast<atlantis::asset_system::AssetId>(c - 'a' + 10);
-      } else {
-        return std::nullopt;
-      }
-    }
-    return id;
-  }
-  return std::nullopt;
-}
-
-// Deliberately minimal -- see this file's own top-of-file comment.
-// Tolerates a trailing '\r' per line (CMake's own file(GENERATE)
-// writes this toolchain's native \r\n line ending on Windows,
-// empirically confirmed by Plan 0015 Step 5's own
-// scene_asset_cmake_declaration_tests.cpp).
-[[nodiscard]] std::optional<std::vector<ManifestEntry>> readManifest(const char* manifestPath) {
-  std::ifstream file(manifestPath, std::ios::binary);
-  if (!file.is_open()) return std::nullopt;
-  std::ostringstream buffer;
-  buffer << file.rdbuf();
-  std::string text = buffer.str();
-
-  std::vector<ManifestEntry> entries;
-  std::size_t start = 0;
-  while (start <= text.size()) {
-    const std::size_t newline = text.find('\n', start);
-    std::string_view line(text.data() + start, (newline == std::string::npos ? text.size() : newline) - start);
-    if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
-    if (!line.empty()) {
-      const std::size_t firstTab = line.find('\t');
-      const std::size_t secondTab = firstTab == std::string_view::npos ? std::string_view::npos
-                                                                        : line.find('\t', firstTab + 1);
-      if (firstTab == std::string_view::npos || secondTab == std::string_view::npos) return std::nullopt;
-      const std::string_view logicalPath = line.substr(0, firstTab);
-      const std::string_view artifactPath = line.substr(firstTab + 1, secondTab - firstTab - 1);
-      const std::string_view metadataPath = line.substr(secondTab + 1);
-      const auto normalizedResult = atlantis::asset_system::normalizeLogicalPath(logicalPath);
-      if (normalizedResult.isErr()) return std::nullopt;
-      const auto assetId = readSidecarAssetId(std::string(metadataPath));
-      if (!assetId.has_value()) return std::nullopt;
-      entries.push_back(ManifestEntry{*assetId, std::string(artifactPath), std::string(metadataPath)});
-    }
-    if (newline == std::string::npos) break;
-    start = newline + 1;
-  }
-  return entries;
-}
-
-[[nodiscard]] const ManifestEntry* findManifestEntry(const std::vector<ManifestEntry>& entries,
-                                                      atlantis::asset_system::AssetId id) {
-  const auto it = std::find_if(entries.begin(), entries.end(),
-                                [id](const ManifestEntry& entry) { return entry.assetId == id; });
-  return it == entries.end() ? nullptr : &*it;
-}
-
 }  // namespace
 
 atlantis::Result<WorldSceneLoadedFixture, WorldSceneLoadedFixtureSetupError> setUpWorldSceneLoadedFixture(
-    const char* sceneArtifactPath, const char* sceneMetadataPath, const char* sceneManifestPath) {
+    const char* assetCatalogPath, const char* sceneGuidText) {
   const auto vertexSpirv = loadSpirvFile("shaders/minimal_mesh.vert.spv");
   const auto fragmentSpirv = loadSpirvFile("shaders/minimal_mesh.frag.spv");
   if (!vertexSpirv.has_value() || !fragmentSpirv.has_value()) {
@@ -307,12 +226,17 @@ atlantis::Result<WorldSceneLoadedFixture, WorldSceneLoadedFixtureSetupError> set
   const auto vertexInputLayout = minimalMeshVertexLayout(vertexReflectionResult.value());
   if (!vertexInputLayout.has_value()) return ResultT::Err(WorldSceneLoadedFixtureSetupError::ShaderLoadFailed);
 
-  // (a) Manifest.
-  const auto manifestEntries = readManifest(sceneManifestPath);
-  if (!manifestEntries.has_value()) return ResultT::Err(WorldSceneLoadedFixtureSetupError::ManifestLoadFailed);
+  // (a) Catalog, and the scene's record in it.
+  const auto sceneGuid = atlantis::asset_system::parseAssetGuid(sceneGuidText);
+  if (sceneGuid.isErr()) return ResultT::Err(WorldSceneLoadedFixtureSetupError::CatalogLoadFailed);
+  const auto catalogResult = atlantis::asset_system::loadAssetCatalog(assetCatalogPath);
+  if (catalogResult.isErr()) return ResultT::Err(WorldSceneLoadedFixtureSetupError::CatalogLoadFailed);
+  const atlantis::asset_system::AssetCatalog& catalog = catalogResult.value();
+  const auto* sceneRecord = catalog.find(sceneGuid.value());
+  if (sceneRecord == nullptr) return ResultT::Err(WorldSceneLoadedFixtureSetupError::SceneArtifactLoadFailed);
 
   // (b) Decode the scene artifact.
-  auto sceneResult = atlantis::asset_system::decodeScene(sceneArtifactPath, sceneMetadataPath);
+  auto sceneResult = atlantis::asset_system::decodeScene(sceneRecord->artifact, sceneRecord->metadata);
   if (sceneResult.isErr()) return ResultT::Err(WorldSceneLoadedFixtureSetupError::SceneArtifactLoadFailed);
   const atlantis::asset_system::ValidatedSceneData& scene = sceneResult.value();
 
@@ -326,9 +250,9 @@ atlantis::Result<WorldSceneLoadedFixture, WorldSceneLoadedFixtureSetupError> set
   }
 
   // (d) Resolve.
-  std::vector<const ManifestEntry*> resolvedEntries;
+  std::vector<const atlantis::asset_system::AssetCatalogRecord*> resolvedEntries;
   for (const auto id : distinctIds) {
-    const auto* entry = findManifestEntry(*manifestEntries, id);
+    const auto* entry = catalog.find(id);
     if (!entry) return ResultT::Err(WorldSceneLoadedFixtureSetupError::SceneDependencyUnresolved);
     resolvedEntries.push_back(entry);
   }
@@ -343,7 +267,7 @@ atlantis::Result<WorldSceneLoadedFixture, WorldSceneLoadedFixtureSetupError> set
   // (e) Load, same order as (c)/(d).
   for (std::size_t i = 0; i < distinctIds.size(); ++i) {
     auto meshAssetResult =
-        atlantis::asset_system::loadStaticMeshAsset(resolvedEntries[i]->artifactPath, resolvedEntries[i]->metadataPath);
+        atlantis::asset_system::loadStaticMeshAsset(resolvedEntries[i]->artifact, resolvedEntries[i]->metadata);
     if (meshAssetResult.isErr()) return ResultT::Err(WorldSceneLoadedFixtureSetupError::SceneDependencyLoadFailed);
     const atlantis::asset_system::StaticMeshAssetData& meshData = meshAssetResult.value();
     auto meshResult = createMesh(*fixture.device, *vertexInputLayout, meshData.vertexBytes().data(),

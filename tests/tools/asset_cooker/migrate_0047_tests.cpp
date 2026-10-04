@@ -254,7 +254,6 @@ TEST_CASE("migrate-0047 needs its three inputs and never runs from a cook manife
   const fs::path dir = fs::temp_directory_path() / "atlantis_migrate_manifest_test";
   fs::remove_all(dir);
   fs::create_directories(dir);
-  std::ofstream(dir / "asset_list.txt") << "";
   std::ofstream(dir / "cook_manifest.txt") << "--kind=migrate-0047 --declarations=d --asset-root=a "
                                               "--catalog-source-out=c\n";
   CookCommandRequest request;
@@ -262,7 +261,6 @@ TEST_CASE("migrate-0047 needs its three inputs and never runs from a cook manife
   request.importDir = dir.string();
   request.cookedDir = (dir / "cooked").string();
   request.contentParent = dir.string();
-  request.manifestOutPath = (dir / "manifest.txt").string();
   CHECK(runCookCommand(request) != 0);
   fs::remove_all(dir);
 }

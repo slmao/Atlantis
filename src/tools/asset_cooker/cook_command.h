@@ -68,7 +68,6 @@ struct CookCommandRequest {
   std::string importDir;
   std::string cookedDir;
   std::string contentParent;
-  std::string manifestOutPath;
 
   // Plan 0047 P4: --kind=mint-guid's --count= (default 1, must be >= 1).
   std::uint32_t mintCount = 1;

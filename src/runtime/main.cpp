@@ -1,3 +1,5 @@
+#include <atlantis/assert.h>
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/log.h>
 #include <atlantis/runtime/bootstrap_config.h>
 #include <atlantis/runtime/exit_reason.h>
@@ -18,10 +20,10 @@
 // independent ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR/
 // ATLANTIS_minimal_cube_{ARTIFACT_PATH,METADATA_PATH} CMake variables --
 // never a working-directory-relative path.
-// Plan 0032 M2: ATLANTIS_RUNTIME_SCENE_{ARTIFACT,METADATA,MANIFEST}_PATH
-// (below) is left unrenamed -- it already is integrated_showcase_demo's
-// own triple, the default whitelist entry. ATLANTIS_RUNTIME_IBL_MATERIAL_DEMO_SCENE_*
-// / ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_* are new.
+// Plan 0047 P15: the scenes are selected by catalog GUID --
+// ATLANTIS_RUNTIME_ASSET_CATALOG_PATH names the one assembled build
+// catalog, and each whitelist scene has an ATLANTIS_RUNTIME_<SCENE>_GUID
+// generated from assets/asset_catalog.txt.
 
 using atlantis::runtime::BootstrapConfig;
 using atlantis::runtime::createRuntimeApplication;
@@ -31,8 +33,21 @@ using atlantis::runtime::toProcessExitCode;
 using atlantis::runtime::cli::CommandLineOutcome;
 using atlantis::runtime::cli::CommandLineResult;
 using atlantis::runtime::cli::parseCommandLine;
-using atlantis::runtime::cli::SceneBootstrapPaths;
+using atlantis::runtime::cli::SceneSelection;
 using atlantis::runtime::cli::SceneWhitelistEntry;
+
+namespace {
+
+// The ATLANTIS_RUNTIME_*_GUID definitions are generated from the committed
+// catalog source at configure time (Plan 0047 P15), so a malformed value is
+// a build-system defect, not user input.
+[[nodiscard]] atlantis::asset_system::AssetGuid guidFromDefinition(const char* text) {
+  auto parsed = atlantis::asset_system::parseAssetGuid(text);
+  ATLANTIS_CHECK_MSG(parsed.isOk(), "a generated ATLANTIS_RUNTIME_*_GUID compile definition is not a valid GUID");
+  return parsed.value();
+}
+
+}  // namespace
 
 int main(int argc, char** argv) {
   // Plan 0032 M2: fixed order matches Spec 0032 Requirement 2 exactly --
@@ -50,31 +65,24 @@ int main(int argc, char** argv) {
   // `bistro`, exists only when the Bistro build step was declared (the
   // content present at configure time), and renders without the global
   // environment -- a night street lit by its own lights, not a studio IBL.
-#if defined(ATLANTIS_RUNTIME_BISTRO_SCENE_ARTIFACT_PATH)
+#if defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID)
   constexpr std::size_t kWhitelistSize = 5;
 #else
   constexpr std::size_t kWhitelistSize = 4;
 #endif
   const std::array<SceneWhitelistEntry, kWhitelistSize> whitelist{{
-      {"integrated_showcase_demo",
-       SceneBootstrapPaths{ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH, ATLANTIS_RUNTIME_SCENE_METADATA_PATH,
-                            ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH}},
-      {"ibl_material_demo",
-       SceneBootstrapPaths{ATLANTIS_RUNTIME_IBL_MATERIAL_DEMO_SCENE_ARTIFACT_PATH,
-                            ATLANTIS_RUNTIME_IBL_MATERIAL_DEMO_SCENE_METADATA_PATH,
-                            ATLANTIS_RUNTIME_IBL_MATERIAL_DEMO_SCENE_MANIFEST_PATH}},
-      {"pbr_normal_map_demo",
-       SceneBootstrapPaths{ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_ARTIFACT_PATH,
-                            ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_METADATA_PATH,
-                            ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_MANIFEST_PATH}},
+      {"integrated_showcase_demo", SceneSelection{guidFromDefinition(ATLANTIS_RUNTIME_SCENE_GUID)}},
+      {"ibl_material_demo", SceneSelection{guidFromDefinition(ATLANTIS_RUNTIME_IBL_MATERIAL_DEMO_SCENE_GUID)}},
+      {"pbr_normal_map_demo", SceneSelection{guidFromDefinition(ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_GUID)}},
       {"pbr_materials_showcase",
-       SceneBootstrapPaths{ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_ARTIFACT_PATH,
-                            ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_METADATA_PATH,
-                            ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_MANIFEST_PATH}},
-#if defined(ATLANTIS_RUNTIME_BISTRO_SCENE_ARTIFACT_PATH)
+       SceneSelection{guidFromDefinition(ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_GUID)}},
+#if defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID)
+      // The import root's GUID is the catalog's; the scene derives from it
+      // (ADR-0097 D4, Plan 0047 P15).
       {"bistro",
-       SceneBootstrapPaths{ATLANTIS_RUNTIME_BISTRO_SCENE_ARTIFACT_PATH, ATLANTIS_RUNTIME_BISTRO_SCENE_METADATA_PATH,
-                            ATLANTIS_RUNTIME_BISTRO_SCENE_MANIFEST_PATH, /*disableEnvironmentLight=*/true}},
+       SceneSelection{atlantis::asset_system::deriveAssetGuid(guidFromDefinition(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID),
+                                                              "scene"),
+                      /*disableEnvironmentLight=*/true}},
 #endif
   }};
 
@@ -99,12 +107,10 @@ int main(int argc, char** argv) {
   config.fragmentShaderReflectionPath = std::string(ATLANTIS_RUNTIME_SHADER_DIR) + "/minimal_mesh.frag.refl.json";
   config.assetArtifactPath = ATLANTIS_RUNTIME_ASSET_ARTIFACT_PATH;
   config.assetMetadataPath = ATLANTIS_RUNTIME_ASSET_METADATA_PATH;
-  // Plan 0032 M2: the only three fields the CLI selection above
-  // varies -- every other assignment in this function is byte-for-byte
-  // unchanged from before this Milestone.
-  config.sceneArtifactPath = cliResult.selectedScene->sceneArtifactPath;
-  config.sceneMetadataPath = cliResult.selectedScene->sceneMetadataPath;
-  config.sceneDependencyManifestPath = cliResult.selectedScene->sceneDependencyManifestPath;
+  // Plan 0032 M2: the scene is the only field the CLI selection above
+  // varies -- every other assignment in this function is unchanged.
+  config.assetCatalogPath = ATLANTIS_RUNTIME_ASSET_CATALOG_PATH;
+  config.sceneAsset = cliResult.selectedScene->sceneAsset;
   config.unlitTexturedVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.refl.json";

@@ -1,3 +1,8 @@
+# Plan 0047 M5 (P15): every scene-loading test resolves its scene through the one assembled build catalog;
+# the per-scene ATLANTIS_*_GUID definitions below come from assets/asset_catalog.txt. The catalog target
+# is built by ALL, so it exists before any test runs.
+add_compile_definitions(ATLANTIS_ASSET_CATALOG_PATH="${ATLANTIS_ASSET_CATALOG_PATH}")
+
 # Plan 0046 Milestone 5 (ADR-0095 Decision 2): the Bistro content pin --
 # the fetch script's SHA-256, line endings normalized to LF so it does not
 # depend on core.autocrlf, recomputed whenever the script changes. The
@@ -118,9 +123,7 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_ASSET_ARTIFACT_DIR="${CMAKE_BINARY_DIR}/assets"
   # Plan 0015 Section D11/Step 9: world_scene_loaded_gpu_tests.cpp's own
   # real, cooked scene asset paths.
-  ATLANTIS_WORLD_SCENE_ARTIFACT_PATH="${ATLANTIS_world_scene_ARTIFACT_PATH}"
-  ATLANTIS_WORLD_SCENE_METADATA_PATH="${ATLANTIS_world_scene_METADATA_PATH}"
-  ATLANTIS_WORLD_SCENE_MANIFEST_PATH="${ATLANTIS_world_scene_MANIFEST_PATH}"
+  ATLANTIS_WORLD_SCENE_GUID="${ATLANTIS_world_scene_GUID}"
   # Plan 0016 Milestone 9: the textured fixture's own two cooked texture
   # artifact/metadata paths (Milestone 6/7).
   ATLANTIS_textured_quad_unorm_ARTIFACT_PATH="${ATLANTIS_textured_quad_unorm_ARTIFACT_PATH}"
@@ -142,9 +145,7 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   # Plan 0018 Milestone 16: the material_demo fixture's own real, cooked
   # scene artifact/metadata/manifest paths and the MaterialKind::UnlitTextured
   # built-in shader pair's own output directory.
-  ATLANTIS_material_demo_scene_ARTIFACT_PATH="${ATLANTIS_material_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_material_demo_scene_METADATA_PATH="${ATLANTIS_material_demo_scene_METADATA_PATH}"
-  ATLANTIS_material_demo_scene_MANIFEST_PATH="${ATLANTIS_material_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_material_demo_scene_GUID="${ATLANTIS_material_demo_scene_GUID}"
   ATLANTIS_MATERIAL_DEMO_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
   # Plan 0019 Section P6: MaterialDemoFixture's own widened
   # realizePendingMaterials() call requires a real litTextured* trio too
@@ -164,9 +165,7 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   # real, cooked scene artifact/metadata/manifest paths and both built-in
   # shader pairs' own output directories (LightingDemoFixture needs both,
   # mirroring MaterialDemoFixture's own identical need above).
-  ATLANTIS_lighting_demo_scene_ARTIFACT_PATH="${ATLANTIS_lighting_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_lighting_demo_scene_METADATA_PATH="${ATLANTIS_lighting_demo_scene_METADATA_PATH}"
-  ATLANTIS_lighting_demo_scene_MANIFEST_PATH="${ATLANTIS_lighting_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_lighting_demo_scene_GUID="${ATLANTIS_lighting_demo_scene_GUID}"
   ATLANTIS_LIGHTING_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
   ATLANTIS_LIGHTING_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   # Plan 0023 Milestone 5: LightingDemoFixture's own further-widened
@@ -179,16 +178,12 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_LIGHTING_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
   # Plan 0040 Milestone 3: multi_light_demo reuses LightingDemoFixture
   # unchanged (scene paths only; every shader dir is the ATLANTIS_LIGHTING_DEMO_* set).
-  ATLANTIS_multi_light_demo_scene_ARTIFACT_PATH="${ATLANTIS_multi_light_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_multi_light_demo_scene_METADATA_PATH="${ATLANTIS_multi_light_demo_scene_METADATA_PATH}"
-  ATLANTIS_multi_light_demo_scene_MANIFEST_PATH="${ATLANTIS_multi_light_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_multi_light_demo_scene_GUID="${ATLANTIS_multi_light_demo_scene_GUID}"
   # Plan 0023 Milestone 8: the pbr_material_demo fixture's own real,
   # cooked scene artifact/metadata/manifest paths and all three built-in
   # shader pairs' own output directories, mirroring
   # ATLANTIS_LIGHTING_DEMO_*'s own identical need above.
-  ATLANTIS_pbr_material_demo_scene_ARTIFACT_PATH="${ATLANTIS_pbr_material_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_pbr_material_demo_scene_METADATA_PATH="${ATLANTIS_pbr_material_demo_scene_METADATA_PATH}"
-  ATLANTIS_pbr_material_demo_scene_MANIFEST_PATH="${ATLANTIS_pbr_material_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_pbr_material_demo_scene_GUID="${ATLANTIS_pbr_material_demo_scene_GUID}"
   ATLANTIS_PBR_MATERIAL_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
   ATLANTIS_PBR_MATERIAL_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_PBR_MATERIAL_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
@@ -198,18 +193,14 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_PBR_MATERIAL_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
   # Plan 0024 Milestone 10: the HDR roll-off fixture deliberately
   # reuses the PBR fixture path with its own focused scene asset.
-  ATLANTIS_hdr_roll_off_demo_scene_ARTIFACT_PATH="${ATLANTIS_hdr_roll_off_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_hdr_roll_off_demo_scene_METADATA_PATH="${ATLANTIS_hdr_roll_off_demo_scene_METADATA_PATH}"
-  ATLANTIS_hdr_roll_off_demo_scene_MANIFEST_PATH="${ATLANTIS_hdr_roll_off_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_hdr_roll_off_demo_scene_GUID="${ATLANTIS_hdr_roll_off_demo_scene_GUID}"
   ATLANTIS_HDR_ROLL_OFF_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
   ATLANTIS_HDR_ROLL_OFF_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_HDR_ROLL_OFF_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_HDR_ROLL_OFF_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
   # Plan 0042 Milestone 2: the alpha-test cutout scene, rendered by the
   # same PbrMaterialDemoFixture path.
-  ATLANTIS_cutout_demo_scene_ARTIFACT_PATH="${ATLANTIS_cutout_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_cutout_demo_scene_METADATA_PATH="${ATLANTIS_cutout_demo_scene_METADATA_PATH}"
-  ATLANTIS_cutout_demo_scene_MANIFEST_PATH="${ATLANTIS_cutout_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_cutout_demo_scene_GUID="${ATLANTIS_cutout_demo_scene_GUID}"
   ATLANTIS_CUTOUT_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
   ATLANTIS_CUTOUT_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_CUTOUT_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
@@ -217,20 +208,14 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   ATLANTIS_CUTOUT_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
   # Plan 0042 Milestone 3: the transparency scene and its swap-order twin,
   # rendered by the same PbrMaterialDemoFixture path.
-  ATLANTIS_transparency_demo_scene_ARTIFACT_PATH="${ATLANTIS_transparency_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_transparency_demo_scene_METADATA_PATH="${ATLANTIS_transparency_demo_scene_METADATA_PATH}"
-  ATLANTIS_transparency_demo_scene_MANIFEST_PATH="${ATLANTIS_transparency_demo_scene_MANIFEST_PATH}"
-  ATLANTIS_transparency_demo_swapped_scene_ARTIFACT_PATH="${ATLANTIS_transparency_demo_swapped_scene_ARTIFACT_PATH}"
-  ATLANTIS_transparency_demo_swapped_scene_METADATA_PATH="${ATLANTIS_transparency_demo_swapped_scene_METADATA_PATH}"
-  ATLANTIS_transparency_demo_swapped_scene_MANIFEST_PATH="${ATLANTIS_transparency_demo_swapped_scene_MANIFEST_PATH}"
+  ATLANTIS_transparency_demo_scene_GUID="${ATLANTIS_transparency_demo_scene_GUID}"
+  ATLANTIS_transparency_demo_swapped_scene_GUID="${ATLANTIS_transparency_demo_swapped_scene_GUID}"
   ATLANTIS_TRANSPARENCY_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
   ATLANTIS_TRANSPARENCY_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_TRANSPARENCY_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_TRANSPARENCY_DEMO_OUTPUT_TRANSFORM_UNORM_SHADER_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}"
   ATLANTIS_TRANSPARENCY_DEMO_SHADOW_CAST_SHADER_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
-  ATLANTIS_ibl_material_demo_scene_ARTIFACT_PATH="${ATLANTIS_ibl_material_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_ibl_material_demo_scene_METADATA_PATH="${ATLANTIS_ibl_material_demo_scene_METADATA_PATH}"
-  ATLANTIS_ibl_material_demo_scene_MANIFEST_PATH="${ATLANTIS_ibl_material_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_ibl_material_demo_scene_GUID="${ATLANTIS_ibl_material_demo_scene_GUID}"
   ATLANTIS_IBL_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
   ATLANTIS_IBL_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_IBL_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
@@ -268,9 +253,7 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   # real, cooked scene artifact/metadata/manifest paths and every shader
   # pair's own output directory (this scene always configures an
   # environment, mirroring ATLANTIS_IBL_DEMO_*'s own identical need).
-  ATLANTIS_integrated_showcase_demo_scene_ARTIFACT_PATH="${ATLANTIS_integrated_showcase_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_integrated_showcase_demo_scene_METADATA_PATH="${ATLANTIS_integrated_showcase_demo_scene_METADATA_PATH}"
-  ATLANTIS_integrated_showcase_demo_scene_MANIFEST_PATH="${ATLANTIS_integrated_showcase_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_integrated_showcase_demo_scene_GUID="${ATLANTIS_integrated_showcase_demo_scene_GUID}"
   ATLANTIS_INTEGRATED_SHOWCASE_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
   ATLANTIS_INTEGRATED_SHOWCASE_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_INTEGRATED_SHOWCASE_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
@@ -291,41 +274,25 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   # own cooked artifact/metadata paths (referenced by zero scene nodes --
   # resolved directly by the fixture, never through the scene's own
   # dependency manifest).
-  ATLANTIS_pbr_normal_map_demo_scene_ARTIFACT_PATH="${ATLANTIS_pbr_normal_map_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_pbr_normal_map_demo_scene_METADATA_PATH="${ATLANTIS_pbr_normal_map_demo_scene_METADATA_PATH}"
-  ATLANTIS_pbr_normal_map_demo_scene_MANIFEST_PATH="${ATLANTIS_pbr_normal_map_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_pbr_normal_map_demo_scene_GUID="${ATLANTIS_pbr_normal_map_demo_scene_GUID}"
   # Plan 0041 Milestone 3: the emissive dark scene, rendered by
   # PbrNormalMapDemoFixture (ATLANTIS_PBR_NORMAL_MAP_DEMO_* shader dirs, above).
-  ATLANTIS_emissive_demo_scene_ARTIFACT_PATH="${ATLANTIS_emissive_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_emissive_demo_scene_METADATA_PATH="${ATLANTIS_emissive_demo_scene_METADATA_PATH}"
-  ATLANTIS_emissive_demo_scene_MANIFEST_PATH="${ATLANTIS_emissive_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_emissive_demo_scene_GUID="${ATLANTIS_emissive_demo_scene_GUID}"
   # Plan 0044 Milestone 1: the three bloom shader pairs' output directories.
   ATLANTIS_BLOOM_DOWNSAMPLE_SHADER_DIR="${ATLANTIS_bloom_downsample_SHADER_OUTPUT_DIR}"
   ATLANTIS_BLOOM_UPSAMPLE_SHADER_DIR="${ATLANTIS_bloom_upsample_SHADER_OUTPUT_DIR}"
   ATLANTIS_BLOOM_COMPOSITE_SHADER_DIR="${ATLANTIS_bloom_composite_SHADER_OUTPUT_DIR}"
   # Plan 0044 Milestone 2: the two bloom scenes (bloom_on_tests.cpp).
-  ATLANTIS_bloom_demo_scene_ARTIFACT_PATH="${ATLANTIS_bloom_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_bloom_demo_scene_METADATA_PATH="${ATLANTIS_bloom_demo_scene_METADATA_PATH}"
-  ATLANTIS_bloom_demo_scene_MANIFEST_PATH="${ATLANTIS_bloom_demo_scene_MANIFEST_PATH}"
-  ATLANTIS_bloom_fog_demo_scene_ARTIFACT_PATH="${ATLANTIS_bloom_fog_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_bloom_fog_demo_scene_METADATA_PATH="${ATLANTIS_bloom_fog_demo_scene_METADATA_PATH}"
-  ATLANTIS_bloom_fog_demo_scene_MANIFEST_PATH="${ATLANTIS_bloom_fog_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_bloom_demo_scene_GUID="${ATLANTIS_bloom_demo_scene_GUID}"
+  ATLANTIS_bloom_fog_demo_scene_GUID="${ATLANTIS_bloom_fog_demo_scene_GUID}"
   # Plan 0043 Milestone 2: the height-fog scenes -- the lit two and the
   # neutrality twin via PbrMaterialDemoFixture (ATLANTIS_PBR_MATERIAL_DEMO_*
   # shader dirs), the dark one via PbrNormalMapDemoFixture
   # (ATLANTIS_PBR_NORMAL_MAP_DEMO_* shader dirs).
-  ATLANTIS_fog_distance_demo_scene_ARTIFACT_PATH="${ATLANTIS_fog_distance_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_fog_distance_demo_scene_METADATA_PATH="${ATLANTIS_fog_distance_demo_scene_METADATA_PATH}"
-  ATLANTIS_fog_distance_demo_scene_MANIFEST_PATH="${ATLANTIS_fog_distance_demo_scene_MANIFEST_PATH}"
-  ATLANTIS_fog_height_demo_scene_ARTIFACT_PATH="${ATLANTIS_fog_height_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_fog_height_demo_scene_METADATA_PATH="${ATLANTIS_fog_height_demo_scene_METADATA_PATH}"
-  ATLANTIS_fog_height_demo_scene_MANIFEST_PATH="${ATLANTIS_fog_height_demo_scene_MANIFEST_PATH}"
-  ATLANTIS_fog_dark_demo_scene_ARTIFACT_PATH="${ATLANTIS_fog_dark_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_fog_dark_demo_scene_METADATA_PATH="${ATLANTIS_fog_dark_demo_scene_METADATA_PATH}"
-  ATLANTIS_fog_dark_demo_scene_MANIFEST_PATH="${ATLANTIS_fog_dark_demo_scene_MANIFEST_PATH}"
-  ATLANTIS_fog_zero_neutrality_scene_ARTIFACT_PATH="${ATLANTIS_fog_zero_neutrality_scene_ARTIFACT_PATH}"
-  ATLANTIS_fog_zero_neutrality_scene_METADATA_PATH="${ATLANTIS_fog_zero_neutrality_scene_METADATA_PATH}"
-  ATLANTIS_fog_zero_neutrality_scene_MANIFEST_PATH="${ATLANTIS_fog_zero_neutrality_scene_MANIFEST_PATH}"
+  ATLANTIS_fog_distance_demo_scene_GUID="${ATLANTIS_fog_distance_demo_scene_GUID}"
+  ATLANTIS_fog_height_demo_scene_GUID="${ATLANTIS_fog_height_demo_scene_GUID}"
+  ATLANTIS_fog_dark_demo_scene_GUID="${ATLANTIS_fog_dark_demo_scene_GUID}"
+  ATLANTIS_fog_zero_neutrality_scene_GUID="${ATLANTIS_fog_zero_neutrality_scene_GUID}"
   ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH="${ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH}"
   ATLANTIS_pbr_normal_mapped_control_METADATA_PATH="${ATLANTIS_pbr_normal_mapped_control_METADATA_PATH}"
   ATLANTIS_PBR_NORMAL_MAP_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
@@ -347,12 +314,8 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   # ATLANTIS_IBL_DEMO_*'s/ATLANTIS_PBR_NORMAL_MAP_DEMO_*'s own identical
   # need), and the shared ibl_studio environment reused by both (see
   # pbr_clearcoat_demo_gpu_tests.cpp's own buildClearcoatSharedConfig()).
-  ATLANTIS_pbr_clearcoat_demo_scene_ARTIFACT_PATH="${ATLANTIS_pbr_clearcoat_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_pbr_clearcoat_demo_scene_METADATA_PATH="${ATLANTIS_pbr_clearcoat_demo_scene_METADATA_PATH}"
-  ATLANTIS_pbr_clearcoat_demo_scene_MANIFEST_PATH="${ATLANTIS_pbr_clearcoat_demo_scene_MANIFEST_PATH}"
-  ATLANTIS_pbr_clearcoat_normal_map_demo_scene_ARTIFACT_PATH="${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_pbr_clearcoat_normal_map_demo_scene_METADATA_PATH="${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_METADATA_PATH}"
-  ATLANTIS_pbr_clearcoat_normal_map_demo_scene_MANIFEST_PATH="${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_pbr_clearcoat_demo_scene_GUID="${ATLANTIS_pbr_clearcoat_demo_scene_GUID}"
+  ATLANTIS_pbr_clearcoat_normal_map_demo_scene_GUID="${ATLANTIS_pbr_clearcoat_normal_map_demo_scene_GUID}"
   ATLANTIS_PBR_CLEARCOAT_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
   ATLANTIS_PBR_CLEARCOAT_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_PBR_CLEARCOAT_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
@@ -371,12 +334,8 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   # pbrSheenIbl*/pbrSheenIblNormalMap* pairs), and the shared ibl_studio
   # environment reused by both -- mirrors ATLANTIS_PBR_CLEARCOAT_DEMO_*'s
   # own identical need immediately above.
-  ATLANTIS_pbr_sheen_demo_scene_ARTIFACT_PATH="${ATLANTIS_pbr_sheen_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_pbr_sheen_demo_scene_METADATA_PATH="${ATLANTIS_pbr_sheen_demo_scene_METADATA_PATH}"
-  ATLANTIS_pbr_sheen_demo_scene_MANIFEST_PATH="${ATLANTIS_pbr_sheen_demo_scene_MANIFEST_PATH}"
-  ATLANTIS_pbr_sheen_normal_map_demo_scene_ARTIFACT_PATH="${ATLANTIS_pbr_sheen_normal_map_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_pbr_sheen_normal_map_demo_scene_METADATA_PATH="${ATLANTIS_pbr_sheen_normal_map_demo_scene_METADATA_PATH}"
-  ATLANTIS_pbr_sheen_normal_map_demo_scene_MANIFEST_PATH="${ATLANTIS_pbr_sheen_normal_map_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_pbr_sheen_demo_scene_GUID="${ATLANTIS_pbr_sheen_demo_scene_GUID}"
+  ATLANTIS_pbr_sheen_normal_map_demo_scene_GUID="${ATLANTIS_pbr_sheen_normal_map_demo_scene_GUID}"
   ATLANTIS_PBR_SHEEN_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
   ATLANTIS_PBR_SHEEN_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_PBR_SHEEN_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
@@ -395,12 +354,8 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   # pbrAnisotropicIbl*/pbrAnisotropicIblNormalMap* pairs), and the
   # shared ibl_studio environment reused by both -- mirrors
   # ATLANTIS_PBR_SHEEN_DEMO_*'s own identical need immediately above.
-  ATLANTIS_pbr_anisotropic_demo_scene_ARTIFACT_PATH="${ATLANTIS_pbr_anisotropic_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_pbr_anisotropic_demo_scene_METADATA_PATH="${ATLANTIS_pbr_anisotropic_demo_scene_METADATA_PATH}"
-  ATLANTIS_pbr_anisotropic_demo_scene_MANIFEST_PATH="${ATLANTIS_pbr_anisotropic_demo_scene_MANIFEST_PATH}"
-  ATLANTIS_pbr_anisotropic_normal_map_demo_scene_ARTIFACT_PATH="${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_pbr_anisotropic_normal_map_demo_scene_METADATA_PATH="${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_METADATA_PATH}"
-  ATLANTIS_pbr_anisotropic_normal_map_demo_scene_MANIFEST_PATH="${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_pbr_anisotropic_demo_scene_GUID="${ATLANTIS_pbr_anisotropic_demo_scene_GUID}"
+  ATLANTIS_pbr_anisotropic_normal_map_demo_scene_GUID="${ATLANTIS_pbr_anisotropic_normal_map_demo_scene_GUID}"
   ATLANTIS_PBR_ANISOTROPIC_DEMO_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
   ATLANTIS_PBR_ANISOTROPIC_DEMO_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_PBR_ANISOTROPIC_DEMO_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
@@ -420,9 +375,7 @@ target_compile_definitions(atlantis_image_regression_gpu_tests PRIVATE
   # no *NormalMap variant needed, this scene's three special spheres
   # are all non-normal-mapped), and its own dedicated warehouse_interior
   # environment (distinct from every sibling demo's own ibl_studio).
-  ATLANTIS_pbr_materials_showcase_scene_ARTIFACT_PATH="${ATLANTIS_pbr_materials_showcase_scene_ARTIFACT_PATH}"
-  ATLANTIS_pbr_materials_showcase_scene_METADATA_PATH="${ATLANTIS_pbr_materials_showcase_scene_METADATA_PATH}"
-  ATLANTIS_pbr_materials_showcase_scene_MANIFEST_PATH="${ATLANTIS_pbr_materials_showcase_scene_MANIFEST_PATH}"
+  ATLANTIS_pbr_materials_showcase_scene_GUID="${ATLANTIS_pbr_materials_showcase_scene_GUID}"
   ATLANTIS_PBR_MATERIALS_SHOWCASE_UNLIT_TEXTURED_SHADER_DIR="${ATLANTIS_textured_quad_SHADER_OUTPUT_DIR}"
   ATLANTIS_PBR_MATERIALS_SHOWCASE_LIT_TEXTURED_SHADER_DIR="${ATLANTIS_lit_textured_SHADER_OUTPUT_DIR}"
   ATLANTIS_PBR_MATERIALS_SHOWCASE_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
@@ -587,9 +540,7 @@ if(NOT ANDROID)
   # SKIPs otherwise.
   if(DEFINED ATLANTIS_bistro_scene_TARGET)
     target_compile_definitions(atlantis_image_regression_content_gpu_tests PRIVATE
-      ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH="${ATLANTIS_bistro_scene_ARTIFACT_PATH}"
-      ATLANTIS_BISTRO_SCENE_METADATA_PATH="${ATLANTIS_bistro_scene_METADATA_PATH}"
-      ATLANTIS_BISTRO_SCENE_MANIFEST_PATH="${ATLANTIS_bistro_scene_MANIFEST_PATH}"
+      ATLANTIS_BISTRO_IMPORT_GUID="${ATLANTIS_bistro_scene_IMPORT_GUID}"
       ATLANTIS_BISTRO_SCENE_IMPORT_DIR="${ATLANTIS_bistro_scene_IMPORT_DIR}"
       # Plan 0047 P13: the build's assembled catalog.
       ATLANTIS_ASSET_CATALOG_PATH="${CMAKE_BINARY_DIR}/asset_catalog.txt"

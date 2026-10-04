@@ -735,13 +735,9 @@ constexpr std::uint32_t kMaterialSourceSchema = 10;
 
 // Plan 0046 Milestone 2 (ADR-0094 Decision 2, Plan 0046 P8): the
 // cook-manifest mode. Runs every line of the import's cook_manifest.txt
-// through the same per-kind modes a command line
-// would (in-process, no std::system), then writes the Runtime dependency
-// manifest -- one "logicalPath\tartifactPath\tmetadataPath" line per asset
-// of the asset list, in its order: meshes at their artifacts in the import
-// directory (found through each .amesh.meta.txt's own source_logical_path),
-// textures and materials at their cooked artifacts. The scene is cooked
-// but, having no AssetId, is not a manifest entry. Any failing line fails
+// through the same per-kind modes a command line would (in-process, no
+// std::system), then merges the import's catalog fragments into
+// <import dir>/import.catalog.txt (Plan 0047 P12). Any failing line fails
 // the whole mode.
 [[nodiscard]] std::string substitutePlaceholders(std::string token, const CookCommandRequest& request) {
   const std::pair<std::string_view, const std::string*> placeholders[] = {
@@ -758,17 +754,6 @@ constexpr std::uint32_t kMaterialSourceSchema = 10;
   return token;
 }
 
-[[nodiscard]] std::optional<std::string> normalizedOrNull(const std::string& path) {
-  const auto normalized = normalizeLogicalPath(path);
-  if (normalized.isErr()) return std::nullopt;
-  return normalized.value();
-}
-
-struct ManifestEntry {
-  std::string artifactPath;
-  std::string metadataPath;
-};
-
 [[nodiscard]] int runCookManifestMode(const CookCommandRequest& request) {
   const fs::path importDir(request.importDir);
   const fs::path cookedDir(request.cookedDir);
@@ -779,7 +764,6 @@ struct ManifestEntry {
               << "\n";
     return 1;
   }
-  std::map<std::string, ManifestEntry> entries;  // normalized logical path -> artifact/metadata
   std::vector<fs::path> fragmentPaths;
   std::string line;
   std::size_t lineNumber = 0;
@@ -808,44 +792,14 @@ struct ManifestEntry {
     ++cooked;
     fragmentPaths.push_back(cookArtifactPath(lineRequest).string() + ".catalog.txt");
 
-    const std::string relativePath = computeRelativePathString(lineRequest.sourcePath, lineRequest.assetRoot);
-    const auto logical = normalizedOrNull(relativePath);
-    if (!logical) continue;
-    const fs::path outputDir(lineRequest.outputDir);
-    if (lineRequest.kind == AssetKind::Texture) {
-      const std::string base = fs::path(lineRequest.stampPath).stem().string();
-      entries[*logical] = {(outputDir / (base + ".atex")).generic_string(),
-                           (outputDir / (base + ".atex.meta.txt")).generic_string()};
-    } else if (lineRequest.kind == AssetKind::Material) {
-      const std::string base = stripAuthoringExtension(relativePath, kMaterialAuthoringExtension);
-      entries[*logical] = {(outputDir / (base + ".amaterial")).generic_string(),
-                           (outputDir / (base + ".amaterial.meta.txt")).generic_string()};
-    } else if (lineRequest.kind == AssetKind::StaticMesh) {
-      const std::string base = stripAuthoringExtension(relativePath, kAuthoringExtension);
-      entries[*logical] = {(outputDir / (base + ".amesh")).generic_string(),
-                           (outputDir / (base + ".amesh.meta.txt")).generic_string()};
-    }
   }
 
-  // Meshes are written by the importer itself, never cooked: each artifact's
-  // metadata names its own logical path.
+  // Meshes are written by the importer itself, never cooked: each carries
+  // its own catalog fragment.
   std::error_code ec;
   std::vector<fs::path> meshFragmentPaths;
   for (const auto& file : fs::directory_iterator(importDir, ec)) {
-    const std::string filename = file.path().filename().string();
-    if (filename.ends_with(".amesh.catalog.txt")) meshFragmentPaths.push_back(file.path());
-    if (!filename.ends_with(".amesh.meta.txt")) continue;
-    std::ifstream in(file.path(), std::ios::binary);
-    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    const auto metadata = parseAssetMetadata(text);
-    if (metadata.isErr()) {
-      std::cerr << "atlantis_asset_cooker: unreadable mesh metadata: " << file.path().string() << "\n";
-      return 1;
-    }
-    const auto logical = normalizedOrNull(metadata.value().sourceLogicalPath);
-    if (!logical) continue;
-    const std::string stem = filename.substr(0, filename.size() - std::string_view(".meta.txt").size());
-    entries[*logical] = {(importDir / stem).generic_string(), file.path().generic_string()};
+    if (file.path().filename().string().ends_with(".amesh.catalog.txt")) meshFragmentPaths.push_back(file.path());
   }
   if (ec) {
     std::cerr << "atlantis_asset_cooker: cannot list import directory: " << importDir.string() << "\n";
@@ -892,44 +846,7 @@ struct ManifestEntry {
     return 1;
   }
 
-  std::ifstream listFile(importDir / "asset_list.txt");
-  std::string manifestText;
-  std::size_t listed = 0;
-  while (std::getline(listFile, line)) {
-    if (!line.empty() && line.back() == '\r') line.pop_back();
-    if (line.empty()) continue;
-    const auto logical = normalizedOrNull(line);
-    const auto entry = logical ? entries.find(*logical) : entries.end();
-    if (entry == entries.end()) {
-      std::cerr << "atlantis_asset_cooker: declared asset has no cooked or imported artifact: " << line << "\n";
-      return 1;
-    }
-    manifestText += line + "\t" + entry->second.artifactPath + "\t" + entry->second.metadataPath + "\n";
-    ++listed;
-  }
-  // Temp-then-rename, so a consumer never reads a half-written manifest.
-  const fs::path manifestOut(request.manifestOutPath);
-  const fs::path manifestTemp = manifestOut.string() + ".tmp";
-  bool manifestWritten = false;
-  {
-    std::error_code dirEc;
-    fs::create_directories(manifestOut.parent_path(), dirEc);
-    std::ofstream out(manifestTemp, std::ios::binary | std::ios::trunc);
-    out << manifestText;
-    out.flush();
-    manifestWritten = out.good();
-  }
-  if (manifestWritten) {
-    std::error_code renameEc;
-    fs::rename(manifestTemp, manifestOut, renameEc);
-    manifestWritten = !renameEc;
-  }
-  if (!manifestWritten) {
-    std::cerr << "atlantis_asset_cooker: failed to write dependency manifest: " << request.manifestOutPath << "\n";
-    return 1;
-  }
-  std::cout << "atlantis_asset_cooker: cook manifest: " << cooked << " cooks, " << listed
-            << " dependency-manifest entries -> " << request.manifestOutPath << ", " << importRecordCount
+  std::cout << "atlantis_asset_cooker: cook manifest: " << cooked << " cooks, " << importRecordCount
             << " catalog records -> " << importCatalogPath.generic_string() << "\n";
   if (!writeStamp(request.stampPath)) {
     std::cerr << "atlantis_asset_cooker: failed to write stamp file: " << request.stampPath << "\n";
@@ -1459,8 +1376,6 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
       request.cookedDir = *cookedDir;
     } else if (auto contentParent = valueAfterEquals(arg, "--content-parent=")) {
       request.contentParent = *contentParent;
-    } else if (auto manifestOut = valueAfterEquals(arg, "--manifest-out=")) {
-      request.manifestOutPath = *manifestOut;
     } else if (auto kind = valueAfterEquals(arg, "--kind=")) {
       if (*kind == "mesh") {
         request.kind = AssetKind::StaticMesh;
@@ -1542,8 +1457,7 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
     haveRequiredFlags = !request.catalogSourcePath.empty() && !request.declarationsPath.empty() &&
                         !request.fragmentListPath.empty() && !request.outPath.empty();
   } else if (request.kind == AssetKind::CookManifest) {
-    haveRequiredFlags = !request.importDir.empty() && !request.cookedDir.empty() && !request.contentParent.empty() &&
-                        !request.manifestOutPath.empty();
+    haveRequiredFlags = !request.importDir.empty() && !request.cookedDir.empty() && !request.contentParent.empty();
   } else {
     haveRequiredFlags = sawSource && sawAssetRoot && sawOutputDir;
   }

@@ -145,8 +145,8 @@ enum class PbrMaterialDemoSetupError {
   ResourceCreationFailed,
 };
 
-// config's sceneArtifactPath/sceneMetadataPath/sceneDependencyManifestPath
-// must name pbr_material_demo_scene's own cooked artifacts, and the
+// config's assetCatalogPath/sceneAsset
+// must name pbr_material_demo_scene's own catalog record, and the
 // unlitTextured*/litTextured*/pbrDirectLit* shader path fields must name
 // their own respective compiled shader pairs' outputs -- reusing
 // atlantis::runtime::BootstrapConfig directly, mirroring

@@ -147,9 +147,11 @@ Entirely GPU-independent — no test in this executable carries the CTest
 logical-path normalization's legal/illegal boundary forms
 (`logical_path_tests.cpp`); Asset ID computation against independently-
 computed FNV-1a reference vectors and little-endian serialization
-(`asset_id_tests.cpp`); declared-set collision/case-conflict/duplicate
-detection via hand-injected `AssetId` pairs, not a discovered real hash
-collision (`asset_set_validation_tests.cpp`); strict parse/serialize
+(`asset_id_tests.cpp`); GUID codecs and derivation (`asset_guid_tests.cpp`);
+the catalog source, cooked-catalog grammar, assembly (every failure mode,
+key collisions via hand-injected `AssetId` pairs, not a discovered real hash
+collision) and the Runtime's `AssetCatalog` read side
+(`asset_catalog_source_tests.cpp`, `asset_catalog_tests.cpp`); strict parse/serialize
 round-trips and every malformed/truncated/version/overflow/non-finite
 case for all three formats, including a fixed expected-byte-vector case
 pinning the little-endian contract specifically
@@ -166,9 +168,8 @@ per the same Spec/Plan 0012 references, built as two executables:
 - `atlantis_asset_cooker_command_tests` — GPU-independent, carries no
   CTest `gpu` label. Exercises `runCookCommand()` in-process (no
   subprocess) across cook mode (success, unreadable/malformed source, an
-  escaping logical path) and validate-set mode (a valid declared set, a
-  duplicate, a case-only conflict, an unnormalized path, a missing list
-  file).
+  escaping logical path), the catalog modes (`lookup`, `assemble-catalog`,
+  `mint-guid`) and the cook-manifest mode.
 - `atlantis_asset_cooker_determinism_tests` — carries the CTest label
   `tool` (needs the real, just-built cooker executable at test-run time,
   no GPU/Vulkan device), matching the `tool` label

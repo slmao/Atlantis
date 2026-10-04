@@ -1,8 +1,11 @@
+#include "support/catalog_scene.h"
 #include "fixture/lighting_demo_fixture.h"
 #include "support/golden_validity.h"
 #include "support/pixel_diff.h"
 #include "support/tone_mapping_reference.h"
 
+#include <atlantis/asset_system/asset_catalog.h>
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/cook_scene.h>
 #include <atlantis/asset_system/material_types.h>
@@ -29,18 +32,6 @@
 #include <string_view>
 #include <vector>
 
-#include <atlantis/asset_system/asset_guid.h>
-
-namespace {
-
-// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
-// a test's cross-references (scene -> mesh, material -> texture) agree.
-[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
-  return atlantis::asset_system::deriveAssetGuid(
-      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
-}
-
-}  // namespace
 // Plan 0019 Section P10/Milestone 10 (Spec 0019 D10, this Plan's own
 // Milestone 9 requirements, delivered here since they need the real
 // lighting_demo fixture -- see this Plan's own "Milestones / Task
@@ -95,9 +86,8 @@ static_assert(kLightingByteOffset + sizeof(atlantis::runtime::FrameLightingData)
 
 [[nodiscard]] BootstrapConfig buildTestConfig() {
   BootstrapConfig config;
-  config.sceneArtifactPath = ATLANTIS_lighting_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_lighting_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_lighting_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_lighting_demo_scene_GUID);
   config.unlitTexturedVertexShaderSpirvPath =
       std::string(ATLANTIS_LIGHTING_DEMO_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath =
@@ -1155,29 +1145,65 @@ constexpr std::string_view kLightingDemoSourceTemplate =
 }
 
 // Cooks a deliberately-mutated variant of lighting_demo.scene.txt's own
-// content into a temp directory, reusing the REAL, already-cooked mesh/
-// material/texture dependencies verbatim -- their own build-tree
-// artifact paths never change, only the scene's own light values do, so
-// the real, already-generated manifest (config.sceneDependencyManifestPath)
-// is copied unchanged rather than rebuilt.
+// content into a temp directory and points a catalog there (Plan 0047 M5): the
+// real scene's dependency closure (mesh/material/texture artifacts and
+// sidecars, unchanged) is copied beside it, and the scene's own record --
+// under the real scene GUID -- names the mutated artifact. Catalog locations
+// are relative to the catalog's directory, so the copy keeps them contained.
 [[nodiscard]] BootstrapConfig buildMutatedTestConfig(const fs::path& dir, const std::string& mutatedSourceText) {
+  using namespace atlantis::asset_system;
+  const auto sceneGuid = parseAssetGuid(ATLANTIS_lighting_demo_scene_GUID);
+  REQUIRE(sceneGuid.isOk());
+
   const fs::path sourcePath = dir / "lighting_demo_mutated.scene.txt";
   writeFile(sourcePath, mutatedSourceText);
   const fs::path artifactPath = dir / "lighting_demo_mutated.ascene";
   const fs::path metadataPath = dir / "lighting_demo_mutated.ascene.meta.txt";
-  REQUIRE(
-      atlantis::asset_system::cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookScene(sourcePath.string(), sceneGuid.value(), artifactPath.string(), metadataPath.string()).isOk());
 
-  const fs::path manifestPath = dir / "manifest.txt";
-  std::ifstream realManifest(std::string(ATLANTIS_lighting_demo_scene_MANIFEST_PATH), std::ios::binary);
-  std::ostringstream manifestBuffer;
-  manifestBuffer << realManifest.rdbuf();
-  writeFile(manifestPath, manifestBuffer.str());
+  const auto realCatalog = loadAssetCatalog(ATLANTIS_ASSET_CATALOG_PATH);
+  REQUIRE(realCatalog.isOk());
+  const AssetCatalogRecord* realScene = realCatalog.value().find(sceneGuid.value());
+  REQUIRE(realScene != nullptr);
+
+  const fs::path realCatalogDir = fs::path(ATLANTIS_ASSET_CATALOG_PATH).parent_path();
+  std::vector<AssetCatalogRecord> records;
+  const auto copyIntoDir = [&](const std::string& location) {
+    const std::string relative = fs::relative(location, realCatalogDir).generic_string();
+    fs::create_directories((dir / relative).parent_path());
+    fs::copy_file(location, dir / relative, fs::copy_options::overwrite_existing);
+    return relative;
+  };
+  for (const AssetGuid& dependency : realScene->dependencies) {
+    const AssetCatalogRecord* mesh = realCatalog.value().find(dependency);
+    REQUIRE(mesh != nullptr);
+    std::vector<const AssetCatalogRecord*> members{mesh};
+    for (const AssetGuid& texture : mesh->dependencies) {
+      const AssetCatalogRecord* textureRecord = realCatalog.value().find(texture);
+      REQUIRE(textureRecord != nullptr);
+      members.push_back(textureRecord);
+    }
+    for (const AssetCatalogRecord* member : members) {
+      AssetCatalogRecord copy = *member;
+      copy.artifact = copyIntoDir(member->artifact);
+      copy.metadata = copyIntoDir(member->metadata);
+      records.push_back(std::move(copy));
+    }
+  }
+  AssetCatalogRecord mutated = *realScene;
+  mutated.artifact = "lighting_demo_mutated.ascene";
+  mutated.metadata = "lighting_demo_mutated.ascene.meta.txt";
+  records.push_back(std::move(mutated));
+  // Duplicates (a texture shared by two materials) collapse to one record.
+  std::sort(records.begin(), records.end(),
+            [](const AssetCatalogRecord& l, const AssetCatalogRecord& r) { return l.guid < r.guid; });
+  records.erase(std::unique(records.begin(), records.end(),
+                            [](const AssetCatalogRecord& l, const AssetCatalogRecord& r) { return l.guid == r.guid; }),
+                records.end());
+  writeFile(dir / "catalog.txt", serializeAssetCatalog(std::move(records)));
 
   BootstrapConfig config = buildTestConfig();
-  config.sceneArtifactPath = artifactPath.string();
-  config.sceneMetadataPath = metadataPath.string();
-  config.sceneDependencyManifestPath = manifestPath.string();
+  config.assetCatalogPath = (dir / "catalog.txt").string();
   return config;
 }
 

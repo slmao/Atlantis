@@ -1,3 +1,4 @@
+#include "support/catalog_scene.h"
 #include "fixture/pbr_materials_showcase_fixture.h"
 #include "support/golden_validity.h"
 
@@ -86,9 +87,8 @@ atlantis::runtime::BootstrapConfig buildShowcaseConfig() {
   config.pbrAnisotropicIblFragmentShaderReflectionPath = anisotropic + "/pbr_anisotropic_ibl.frag.refl.json";
   config.environmentArtifactPath = ATLANTIS_PBR_MATERIALS_SHOWCASE_ENVIRONMENT_ARTIFACT_PATH;
   config.environmentMetadataPath = ATLANTIS_PBR_MATERIALS_SHOWCASE_ENVIRONMENT_METADATA_PATH;
-  config.sceneArtifactPath = ATLANTIS_pbr_materials_showcase_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_pbr_materials_showcase_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_pbr_materials_showcase_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_pbr_materials_showcase_scene_GUID);
   return config;
 }
 

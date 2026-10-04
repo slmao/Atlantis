@@ -60,15 +60,9 @@ using atlantis::renderer::BloomInput;
 
 namespace {
 
-constexpr BloomTestSceneFiles kEmissiveDemoScene{ATLANTIS_emissive_demo_scene_ARTIFACT_PATH,
-                                                 ATLANTIS_emissive_demo_scene_METADATA_PATH,
-                                                 ATLANTIS_emissive_demo_scene_MANIFEST_PATH};
-constexpr BloomTestSceneFiles kBloomDemoScene{ATLANTIS_bloom_demo_scene_ARTIFACT_PATH,
-                                              ATLANTIS_bloom_demo_scene_METADATA_PATH,
-                                              ATLANTIS_bloom_demo_scene_MANIFEST_PATH};
-constexpr BloomTestSceneFiles kBloomFogDemoScene{ATLANTIS_bloom_fog_demo_scene_ARTIFACT_PATH,
-                                                 ATLANTIS_bloom_fog_demo_scene_METADATA_PATH,
-                                                 ATLANTIS_bloom_fog_demo_scene_MANIFEST_PATH};
+constexpr BloomTestSceneFiles kEmissiveDemoScene{ATLANTIS_emissive_demo_scene_GUID};
+constexpr BloomTestSceneFiles kBloomDemoScene{ATLANTIS_bloom_demo_scene_GUID};
+constexpr BloomTestSceneFiles kBloomFogDemoScene{ATLANTIS_bloom_fog_demo_scene_GUID};
 
 constexpr const char* kOrange = "materials/emissive_demo_orange.material.txt";
 constexpr const char* kGreen = "materials/emissive_demo_green.material.txt";

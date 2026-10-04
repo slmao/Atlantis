@@ -1,10 +1,17 @@
 #include <atlantis/runtime/scene_load.h>
 
+#include "catalog_test_support.h"
+
+#include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/cook.h>
 #include <atlantis/asset_system/cook_material.h>
 #include <atlantis/asset_system/cook_scene.h>
 #include <atlantis/asset_system/cook_texture.h>
+#include <atlantis/asset_system/material_artifact.h>
+#include <atlantis/asset_system/mesh_artifact.h>
+#include <atlantis/asset_system/scene_artifact.h>
+#include <atlantis/asset_system/texture_artifact.h>
 #include <atlantis/asset_system/texture_types.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -56,8 +63,7 @@ using atlantis::rhi::VertexInputLayout;
 // see its own header comment). This is what makes V17/V19/V20's own
 // manifest/artifact/dependency-unresolved/dependency-load-failure
 // paths testable without a real Platform session or GPU Device at
-// all, completing the deferral tests/runtime/scene_manifest_tests.cpp
-// (Step 7) disclosed for both V17 and V19.
+// all.
 
 namespace {
 
@@ -204,85 +210,152 @@ struct CookedMaterialFixture {
   return CookedMaterialFixture{artifactPath, metadataPath};
 }
 
-void writeManifestLine(std::string& manifest, const std::string& logicalPath, const fs::path& artifactPath,
-                        const fs::path& metadataPath) {
-  manifest += logicalPath + "\t" + artifactPath.string() + "\t" + metadataPath.string() + "\n";
-}
+using atlantis::asset_system::CatalogAssetType;
+using atlantis::runtime::test_support::CatalogBuilder;
 
-[[nodiscard]] BootstrapConfig makeConfig(const fs::path& sceneArtifactPath, const fs::path& sceneMetadataPath,
-                                          const fs::path& manifestPath) {
+[[nodiscard]] BootstrapConfig makeConfig(const fs::path& catalogPath, const std::string& sceneLogicalPath = "scene") {
   BootstrapConfig config;
-  config.sceneArtifactPath = sceneArtifactPath.string();
-  config.sceneMetadataPath = sceneMetadataPath.string();
-  config.sceneDependencyManifestPath = manifestPath.string();
+  config.assetCatalogPath = catalogPath.string();
+  config.sceneAsset = testAssetGuid(sceneLogicalPath);
   return config;
 }
 
 }  // namespace
 
-TEST_CASE("loadAndInstantiateScene V20: rejects an unreadable manifest, no device access", "[runtime][scene]") {
-  // Manifest loading (step (a)) is checked before the scene artifact is
-  // ever opened (step (b)) -- the scene path below need not resolve to
-  // anything real for this test.
-  TempDirGuard dir("bad_manifest");
-  const BootstrapConfig config = makeConfig(dir.path / "irrelevant.ascene", dir.path / "irrelevant.ascene.meta.txt",
-                                             dir.path / "does_not_exist.manifest.txt");
+
+TEST_CASE("loadAndInstantiateScene: an unreadable catalog fails with AssetCatalogLoadFailed, no device access",
+          "[runtime][scene]") {
+  TempDirGuard dir("bad_catalog");
+  const BootstrapConfig config = makeConfig(dir.path / "does_not_exist.catalog.txt");
 
   const auto result = loadAndInstantiateScene(config, /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
-  CHECK(result.error() == RuntimeInitError::SceneManifestLoadFailed);
+  CHECK(result.error() == RuntimeInitError::AssetCatalogLoadFailed);
+}
+
+TEST_CASE("loadAndInstantiateScene: a malformed catalog fails with AssetCatalogLoadFailed", "[runtime][scene]") {
+  TempDirGuard dir("malformed_catalog");
+  writeFile(dir.path / "catalog.txt", "not a catalog\n");
+
+  const auto result = loadAndInstantiateScene(makeConfig(dir.path / "catalog.txt"), nullptr, VertexInputLayout{});
+  REQUIRE(result.isErr());
+  CHECK(result.error() == RuntimeInitError::AssetCatalogLoadFailed);
+}
+
+TEST_CASE("loadAndInstantiateScene: a scene GUID with no catalog record fails with SceneNotInCatalog",
+          "[runtime][scene]") {
+  TempDirGuard dir("scene_not_in_catalog");
+  const CookedMeshFixture mesh = cookFixtureMesh(dir.path, "meshes/a.mesh.txt");
+  const fs::path catalog =
+      CatalogBuilder(dir.path).addMesh("meshes/a.mesh.txt", mesh.artifactPath, mesh.metadataPath).write();
+
+  const auto result = loadAndInstantiateScene(makeConfig(catalog), nullptr, VertexInputLayout{});
+  REQUIRE(result.isErr());
+  CHECK(result.error() == RuntimeInitError::SceneNotInCatalog);
+}
+
+TEST_CASE("loadAndInstantiateScene: a scene GUID whose record is not a scene fails with SceneNotInCatalog",
+          "[runtime][scene]") {
+  TempDirGuard dir("scene_is_a_mesh");
+  const CookedMeshFixture mesh = cookFixtureMesh(dir.path, "scene");
+  const fs::path catalog = CatalogBuilder(dir.path).addMesh("scene", mesh.artifactPath, mesh.metadataPath).write();
+
+  const auto result = loadAndInstantiateScene(makeConfig(catalog), nullptr, VertexInputLayout{});
+  REQUIRE(result.isErr());
+  CHECK(result.error() == RuntimeInitError::SceneNotInCatalog);
+}
+
+TEST_CASE("loadAndInstantiateScene: a scene record with an unsupported artifact schema fails with "
+          "UnsupportedArtifactSchema",
+          "[runtime][scene]") {
+  TempDirGuard dir("scene_schema");
+  const CookedSceneFixture scene = cookFixtureScene(dir.path, {"meshes/a.mesh.txt"});
+  const fs::path catalog =
+      CatalogBuilder(dir.path).add(CatalogAssetType::Scene, "scene", scene.artifactPath, scene.metadataPath, 6).write();
+
+  const auto result = loadAndInstantiateScene(makeConfig(catalog), nullptr, VertexInputLayout{});
+  REQUIRE(result.isErr());
+  CHECK(result.error() == RuntimeInitError::UnsupportedArtifactSchema);
 }
 
 TEST_CASE("loadAndInstantiateScene V20: rejects an unreadable scene artifact, no device access", "[runtime][scene]") {
   TempDirGuard dir("bad_scene_artifact");
-  writeFile(dir.path / "empty.manifest.txt", "");
-  BootstrapConfig config;
-  config.sceneArtifactPath = (dir.path / "does_not_exist.ascene").string();
-  config.sceneMetadataPath = (dir.path / "does_not_exist.ascene.meta.txt").string();
-  config.sceneDependencyManifestPath = (dir.path / "empty.manifest.txt").string();
+  const fs::path catalog =
+      CatalogBuilder(dir.path)
+          .addScene("scene",
+                    CookedSceneFixture{dir.path / "does_not_exist.ascene", dir.path / "does_not_exist.ascene.meta.txt"},
+                    {})
+          .write();
 
-  const auto result = loadAndInstantiateScene(config, /*device=*/nullptr, VertexInputLayout{});
+  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneArtifactLoadFailed);
 }
 
-TEST_CASE("loadAndInstantiateScene V17: a referenced AssetId with no manifest entry fails with "
+TEST_CASE("loadAndInstantiateScene V17: a referenced AssetId with no catalog record fails with "
           "SceneDependencyUnresolved, before any Entity could exist",
           "[runtime][scene]") {
   TempDirGuard dir("unresolved_dependency");
   const CookedSceneFixture scene = cookFixtureScene(dir.path, {"meshes/never_declared.mesh.txt"});
-  // Empty manifest -- the scene's own one reference has no entry at all.
-  writeFile(dir.path / "empty.manifest.txt", "");
-  const BootstrapConfig config = makeConfig(scene.artifactPath, scene.metadataPath, dir.path / "empty.manifest.txt");
+  // The scene's own one mesh reference has no record at all.
+  const fs::path catalog = CatalogBuilder(dir.path).addScene("scene", scene, {}).write();
 
   // device = nullptr proves this path never reaches step (e)'s own
   // device dereference, let alone step (f)'s fromValidatedSceneData()
   // call -- there is no World, and therefore no Entity, anywhere on
-  // this Result's own Err path; the function returns before either
-  // could ever be constructed.
-  const auto result = loadAndInstantiateScene(config, /*device=*/nullptr, VertexInputLayout{});
+  // this Result's own Err path.
+  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneDependencyUnresolved);
+}
+
+TEST_CASE("loadAndInstantiateScene: a mesh reference whose record is another asset type fails with "
+          "DependencyTypeMismatch",
+          "[runtime][scene]") {
+  TempDirGuard dir("dependency_type_mismatch");
+  const CookedSceneFixture scene = cookFixtureScene(dir.path, {"meshes/a.mesh.txt"});
+  const CookedMeshFixture mesh = cookFixtureMesh(dir.path, "meshes/a.mesh.txt");
+  // The record under the mesh GUID claims to be a texture.
+  const fs::path catalog = CatalogBuilder(dir.path)
+                               .addScene("scene", scene, {testAssetGuid("meshes/a.mesh.txt")})
+                               .add(CatalogAssetType::Texture, "meshes/a.mesh.txt", mesh.artifactPath,
+                                    mesh.metadataPath, atlantis::asset_system::kTextureArtifactSchemaVersion)
+                               .write();
+
+  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
+  REQUIRE(result.isErr());
+  CHECK(result.error() == RuntimeInitError::DependencyTypeMismatch);
+}
+
+TEST_CASE("loadAndInstantiateScene: a mesh record with an unsupported artifact schema fails with "
+          "UnsupportedArtifactSchema",
+          "[runtime][scene]") {
+  TempDirGuard dir("mesh_schema");
+  const CookedSceneFixture scene = cookFixtureScene(dir.path, {"meshes/a.mesh.txt"});
+  const CookedMeshFixture mesh = cookFixtureMesh(dir.path, "meshes/a.mesh.txt");
+  const fs::path catalog = CatalogBuilder(dir.path)
+                               .addScene("scene", scene, {testAssetGuid("meshes/a.mesh.txt")})
+                               .addMesh("meshes/a.mesh.txt", mesh.artifactPath, mesh.metadataPath, 3)
+                               .write();
+
+  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
+  REQUIRE(result.isErr());
+  CHECK(result.error() == RuntimeInitError::UnsupportedArtifactSchema);
 }
 
 TEST_CASE("loadAndInstantiateScene V20: a dependency whose own artifact fails to load fails with "
           "SceneDependencyLoadFailed",
           "[runtime][scene]") {
-  // loadSceneDependencyManifest() itself (step (a)) already validates
-  // every entry's own metadata sidecar (D8 step 5) -- a manifest entry
-  // must carry a REAL, valid metadata path to pass manifest loading at
-  // all. To reach step (e)'s own loadStaticMeshAsset() failure, only
-  // the ARTIFACT path (never read during manifest validation) may be
-  // missing.
   TempDirGuard dir("dependency_load_failed");
   const CookedSceneFixture scene = cookFixtureScene(dir.path, {"meshes/a.mesh.txt"});
   const CookedMeshFixture mesh = cookFixtureMesh(dir.path, "meshes/a.mesh.txt");
-  std::string manifest;
-  writeManifestLine(manifest, "meshes/a.mesh.txt", dir.path / "does_not_exist.amesh", mesh.metadataPath);
-  writeFile(dir.path / "bad.manifest.txt", manifest);
-  const BootstrapConfig config = makeConfig(scene.artifactPath, scene.metadataPath, dir.path / "bad.manifest.txt");
+  // The mesh record names an artifact that does not exist.
+  const fs::path catalog = CatalogBuilder(dir.path)
+                               .addScene("scene", scene, {testAssetGuid("meshes/a.mesh.txt")})
+                               .addMesh("meshes/a.mesh.txt", dir.path / "does_not_exist.amesh", mesh.metadataPath)
+                               .write();
 
-  const auto result = loadAndInstantiateScene(config, /*device=*/nullptr, VertexInputLayout{});
+  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneDependencyLoadFailed);
 }
@@ -298,14 +371,15 @@ TEST_CASE("loadAndInstantiateScene: a scene with no Renderable references succee
             "atlantis_scene_source_version: 7\n"
             "node_count: 1\n"
             "active_camera: none\n"
-            "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
+            "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=0.0 0.0 0.0 "
+            "rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n");
   const fs::path artifactPath = dir.path / "plain.ascene";
   const fs::path metadataPath = dir.path / "plain.ascene.meta.txt";
   REQUIRE(cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string()).isOk());
-  writeFile(dir.path / "empty.manifest.txt", "");
-  const BootstrapConfig config = makeConfig(artifactPath, metadataPath, dir.path / "empty.manifest.txt");
+  const fs::path catalog =
+      CatalogBuilder(dir.path).addScene("scene", CookedSceneFixture{artifactPath, metadataPath}, {}).write();
 
-  const auto result = loadAndInstantiateScene(config, /*device=*/nullptr, VertexInputLayout{});
+  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isOk());
   CHECK(result.value().meshResourceMap.empty());
   CHECK(result.value().world.renderableEntities().empty());
@@ -336,32 +410,28 @@ TEST_CASE("loadAndInstantiateScene V19: load order follows first-reference order
   const std::string secondReferenced = idA > idB ? kCandidateB : kCandidateA;  // the numerically SMALLER one
 
   const CookedSceneFixture scene = cookFixtureScene(dir.path, {firstReferenced, secondReferenced});
-  // Both cooked for real metadata (loadSceneDependencyManifest() itself
-  // validates every entry's own metadata sidecar, D8 step 5) -- only
-  // the FIRST entry's own manifest line then substitutes a missing
-  // artifact path, since that field is never read during manifest
-  // validation, only later, at step (e).
   const CookedMeshFixture validFirstMesh = cookFixtureMesh(dir.path, firstReferenced);
   const CookedMeshFixture validSecondMesh = cookFixtureMesh(dir.path, secondReferenced);
 
-  std::string manifest;
-  writeManifestLine(manifest, firstReferenced, dir.path / "does_not_exist.amesh", validFirstMesh.metadataPath);
-  writeManifestLine(manifest, secondReferenced, validSecondMesh.artifactPath, validSecondMesh.metadataPath);
-  writeFile(dir.path / "order.manifest.txt", manifest);
-  const BootstrapConfig config = makeConfig(scene.artifactPath, scene.metadataPath, dir.path / "order.manifest.txt");
+  // Only the FIRST record substitutes a missing artifact path.
+  const fs::path catalog =
+      CatalogBuilder(dir.path)
+          .addScene("scene", scene, {testAssetGuid(firstReferenced), testAssetGuid(secondReferenced)})
+          .addMesh(firstReferenced, dir.path / "does_not_exist.amesh", validFirstMesh.metadataPath)
+          .addMesh(secondReferenced, validSecondMesh.artifactPath, validSecondMesh.metadataPath)
+          .write();
 
-  const auto result = loadAndInstantiateScene(config, /*device=*/nullptr, VertexInputLayout{});
+  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneDependencyLoadFailed);
 }
 
-// Plan 0018 Milestone 11 regression coverage (PR #88 final review round --
-// this exact case was in the Approved Plan's own Milestone 11 test list
-// but was never actually added). Material resolution (step (d)) runs
-// entirely before any mesh or material is ever LOADED (step (e)) -- a
-// material AssetId with no manifest entry is therefore caught before
-// device is ever dereferenced, even though this scene's own mesh
-// reference IS resolvable (only resolved, never loaded, on this path).
+// Plan 0018 Milestone 11 regression coverage (PR #88 final review round).
+// Material resolution (step (d)) runs entirely before any mesh or material
+// is ever LOADED (step (e)) -- a material AssetId with no catalog record is
+// therefore caught before device is ever dereferenced, even though this
+// scene's own mesh reference IS resolvable (only resolved, never loaded, on
+// this path).
 TEST_CASE("loadAndInstantiateScene: an unresolvable material AssetId fails scene load fatally with "
           "SceneDependencyUnresolved (Spec 0018 D4 case 2), before any Entity could exist, no device access",
           "[runtime][scene][material]") {
@@ -369,13 +439,46 @@ TEST_CASE("loadAndInstantiateScene: an unresolvable material AssetId fails scene
   const CookedMeshFixture mesh = cookFixtureMesh(dir.path, "meshes/a.mesh.txt");
   const CookedSceneFixture scene = cookFixtureSceneWithMaterials(dir.path, {"meshes/a.mesh.txt"},
                                                                   {"materials/never_declared.material.txt"});
-  std::string manifest;
-  writeManifestLine(manifest, "meshes/a.mesh.txt", mesh.artifactPath, mesh.metadataPath);
-  // No manifest entry for materials/never_declared.material.txt at all.
-  writeFile(dir.path / "manifest.txt", manifest);
-  const BootstrapConfig config = makeConfig(scene.artifactPath, scene.metadataPath, dir.path / "manifest.txt");
+  // No record for materials/never_declared.material.txt at all.
+  const fs::path catalog = CatalogBuilder(dir.path)
+                               .addScene("scene", scene, {testAssetGuid("meshes/a.mesh.txt")})
+                               .addMesh("meshes/a.mesh.txt", mesh.artifactPath, mesh.metadataPath)
+                               .write();
 
-  const auto result = loadAndInstantiateScene(config, /*device=*/nullptr, VertexInputLayout{});
+  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneDependencyUnresolved);
+}
+
+TEST_CASE("AssetCatalog: two scenes sharing a mesh resolve it to one record", "[runtime][scene][catalog]") {
+  TempDirGuard dir("shared_mesh");
+  const CookedMeshFixture mesh = cookFixtureMesh(dir.path, "meshes/shared.mesh.txt");
+  const CookedSceneFixture sceneA = cookFixtureScene(dir.path, {"meshes/shared.mesh.txt"});
+  // cookFixtureScene() writes one fixed filename; move scene A aside first.
+  fs::rename(sceneA.artifactPath, dir.path / "a.ascene");
+  fs::rename(sceneA.metadataPath, dir.path / "a.ascene.meta.txt");
+  const CookedSceneFixture sceneB = cookFixtureScene(dir.path, {"meshes/shared.mesh.txt"});
+  const auto sharedGuid = testAssetGuid("meshes/shared.mesh.txt");
+  // Two distinct scene records (distinct logical paths, hence GUIDs), one
+  // shared mesh record.
+  const fs::path catalogPath =
+      CatalogBuilder(dir.path)
+          .addMesh("meshes/shared.mesh.txt", mesh.artifactPath, mesh.metadataPath)
+          .addScene("scene_a", CookedSceneFixture{dir.path / "a.ascene", dir.path / "a.ascene.meta.txt"}, {sharedGuid})
+          .addScene("scene_b", sceneB, {sharedGuid})
+          .write();
+
+  const auto catalog = atlantis::asset_system::loadAssetCatalog(catalogPath.string());
+  REQUIRE(catalog.isOk());
+  REQUIRE(catalog.value().size() == 3);
+  const auto* viaGuid = catalog.value().find(sharedGuid);
+  const auto* viaId = catalog.value().find(atlantis::asset_system::assetKey(sharedGuid));
+  REQUIRE(viaGuid != nullptr);
+  CHECK(viaGuid == viaId);
+  for (const char* sceneName : {"scene_a", "scene_b"}) {
+    const auto* scene = catalog.value().find(testAssetGuid(sceneName));
+    REQUIRE(scene != nullptr);
+    REQUIRE(scene->dependencies.size() == 1);
+    CHECK(catalog.value().find(scene->dependencies[0]) == viaGuid);
+  }
 }

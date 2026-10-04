@@ -25,7 +25,7 @@ int main(int argc, char** argv) {
                  "--asset-root=<dir> "
                  "--output-dir=<dir> [--stamp=<path>] [--color-space=unorm|srgb]\n"
                  "       atlantis_asset_cooker --kind=cook-manifest --import-dir=<dir> --cooked-dir=<dir> "
-                 "--content-parent=<dir> --manifest-out=<path> [--stamp=<path>]\n"
+                 "--content-parent=<dir> [--stamp=<path>]\n"
                  "       atlantis_asset_cooker --kind=mint-guid [--count=<n>]\n"
                  "       atlantis_asset_cooker --kind=lookup (--catalog-source=<path> | --catalog=<path>) "
                  "(--guid=<guid> | --source=<assets|content>:<path>[#<sub-key>])\n"

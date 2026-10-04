@@ -1,3 +1,4 @@
+#include "support/catalog_scene.h"
 #include "fixture/pbr_sheen_demo_fixture.h"
 #include "support/fog_differential.h"
 #include "support/emissive_differential.h"
@@ -85,17 +86,15 @@ atlantis::runtime::BootstrapConfig buildSheenSharedConfig() {
 
 atlantis::runtime::BootstrapConfig buildSheenConfig() {
   atlantis::runtime::BootstrapConfig config = buildSheenSharedConfig();
-  config.sceneArtifactPath = ATLANTIS_pbr_sheen_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_pbr_sheen_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_pbr_sheen_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_pbr_sheen_demo_scene_GUID);
   return config;
 }
 
 atlantis::runtime::BootstrapConfig buildSheenNormalMapConfig() {
   atlantis::runtime::BootstrapConfig config = buildSheenSharedConfig();
-  config.sceneArtifactPath = ATLANTIS_pbr_sheen_normal_map_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_pbr_sheen_normal_map_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_pbr_sheen_normal_map_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_pbr_sheen_normal_map_demo_scene_GUID);
   return config;
 }
 

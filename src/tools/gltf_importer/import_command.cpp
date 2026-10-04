@@ -477,10 +477,6 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
   std::vector<std::string> reportLines;
   const std::string rootPath = detail::importRootPath(inputPath, contentRoot);
   const std::string importRootId = "content:" + rootPath;
-  // Every logical path this import declares an AssetId for (meshes,
-  // materials, textures -- a scene has none): asset_list.txt, the order the
-  // cook-manifest mode writes the dependency manifest in.
-  std::vector<std::string> declaredAssets;
   reportLines.push_back("gltf_import: " + name);
 
   for (cgltf_size meshIndex = 0; meshIndex < guard.data->meshes_count; ++meshIndex) {
@@ -503,7 +499,6 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
       const auto meshGuid = detail::deriveImportAssetGuid(importRoot, meshSubKey);
       if (meshGuid.isErr()) return ResultT::Err(meshGuid.error());
       const atlantis::asset_system::AssetId assetId = atlantis::asset_system::assetKey(meshGuid.value());
-      declaredAssets.push_back(normalized);
 
       if (accessors.tangent != nullptr) reportLines.push_back(base + ": upstream TANGENT discarded (D8)");
 
@@ -644,7 +639,7 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
   std::vector<std::string> manifestLines;
   const auto materials =
       detail::writeMaterials(*guard.data, contentRoot, staging.path, name, importRoot, importRootId, summary,
-                             reportLines, manifestLines, declaredAssets);
+                             reportLines, manifestLines);
   if (materials.isErr()) return ResultT::Err(materials.error());
   const auto scene =
       detail::writeScene(*guard.data, staging.path, name, importRoot, importRootId, summary, reportLines,
@@ -660,13 +655,6 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
   if (!writeBytes(staging.path / "cook_manifest.txt", manifest.data(), manifest.size())) {
     return ResultT::Err(GltfImportError::OutputWriteFailed);
   }
-
-  std::string assetList;
-  for (const std::string& path : declaredAssets) assetList += path + "\n";
-  if (!writeBytes(staging.path / "asset_list.txt", assetList.data(), assetList.size())) {
-    return ResultT::Err(GltfImportError::OutputWriteFailed);
-  }
-  summary.declaredAssets = static_cast<std::uint32_t>(declaredAssets.size());
 
   std::string report;
   for (const std::string& line : reportLines) report += line + "\n";

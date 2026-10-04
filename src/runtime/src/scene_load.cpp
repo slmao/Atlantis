@@ -1,21 +1,76 @@
 #include <atlantis/runtime/scene_load.h>
 
 #include <atlantis/assert.h>
+#include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/decode_scene.h>
 #include <atlantis/asset_system/load.h>
 #include <atlantis/asset_system/load_material.h>
 #include <atlantis/asset_system/load_texture.h>
+#include <atlantis/asset_system/material_artifact.h>
+#include <atlantis/asset_system/mesh_artifact.h>
+#include <atlantis/asset_system/scene_artifact.h>
+#include <atlantis/asset_system/texture_artifact.h>
 #include <atlantis/log.h>
 #include <atlantis/renderer/mesh.h>
-#include <atlantis/runtime/scene_manifest.h>
 #include <atlantis/world/scene_instantiation.h>
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <utility>
 #include <vector>
 
 namespace atlantis::runtime {
+
+namespace {
+
+using atlantis::asset_system::AssetCatalog;
+using atlantis::asset_system::AssetCatalogRecord;
+using atlantis::asset_system::CatalogAssetType;
+
+// The artifact schemas this Runtime's loaders accept, per asset type (Plan
+// 0047 P14): the catalog records each artifact's schema so a mismatch is
+// reported before any artifact file is opened.
+[[nodiscard]] bool isSupportedArtifactSchema(CatalogAssetType type, std::uint32_t schema) noexcept {
+  switch (type) {
+    case CatalogAssetType::Mesh:
+      return schema == atlantis::asset_system::kMeshArtifactSchemaVersion ||
+             schema == atlantis::asset_system::kMeshArtifactSchemaVersionU32;
+    case CatalogAssetType::Texture:
+      return schema == atlantis::asset_system::kTextureArtifactSchemaVersion;
+    case CatalogAssetType::Material:
+      return schema == atlantis::asset_system::kMaterialArtifactSchemaVersion;
+    case CatalogAssetType::Scene:
+      return schema == atlantis::asset_system::kSceneArtifactSchemaVersion;
+    case CatalogAssetType::Environment:
+    case CatalogAssetType::GltfImport:
+      return false;
+  }
+  return false;
+}
+
+// Resolves `id` to its catalog record and checks it is `expected` with a
+// supported artifact schema. Pure lookup, no I/O.
+[[nodiscard]] atlantis::Result<const AssetCatalogRecord*, RuntimeInitError> resolveDependency(
+    const AssetCatalog& catalog, atlantis::asset_system::AssetId id, CatalogAssetType expected) {
+  using ResultT = atlantis::Result<const AssetCatalogRecord*, RuntimeInitError>;
+  const AssetCatalogRecord* record = catalog.find(id);
+  if (record == nullptr) {
+    ATLANTIS_LOG_ERROR("scene references an AssetId with no catalog record");
+    return ResultT::Err(RuntimeInitError::SceneDependencyUnresolved);
+  }
+  if (record->type != expected) {
+    ATLANTIS_LOG_ERROR("a catalog record is not the asset type its referrer needs");
+    return ResultT::Err(RuntimeInitError::DependencyTypeMismatch);
+  }
+  if (!isSupportedArtifactSchema(record->type, record->artifactSchema)) {
+    ATLANTIS_LOG_ERROR("a catalog record's artifact schema is not supported by this Runtime");
+    return ResultT::Err(RuntimeInitError::UnsupportedArtifactSchema);
+  }
+  return ResultT::Ok(record);
+}
+
+}  // namespace
 
 atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
     const BootstrapConfig& config, atlantis::rhi::Device* device,
@@ -23,16 +78,27 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
   using ResultT = atlantis::Result<SceneLoadOutcome, RuntimeInitError>;
   using atlantis::renderer::createMesh;
 
-  // (a) Read and validate the dependency manifest -- local, immutable resolver.
-  auto manifestResult = loadSceneDependencyManifest(config.sceneDependencyManifestPath);
-  if (manifestResult.isErr()) {
-    ATLANTIS_LOG_ERROR("loadSceneDependencyManifest() failed: {}", toString(manifestResult.error()));
-    return ResultT::Err(RuntimeInitError::SceneManifestLoadFailed);
+  // (a) Load and validate the asset catalog -- local, immutable resolver
+  // (Plan 0047 P14, ADR-0098 D3).
+  auto catalogResult = atlantis::asset_system::loadAssetCatalog(config.assetCatalogPath);
+  if (catalogResult.isErr()) {
+    ATLANTIS_LOG_ERROR("loadAssetCatalog() failed: {}", toString(catalogResult.error()));
+    return ResultT::Err(RuntimeInitError::AssetCatalogLoadFailed);
   }
-  const SceneDependencyResolver resolver = std::move(manifestResult.value());
+  const AssetCatalog catalog = std::move(catalogResult.value());
 
-  // (b) Decode the scene artifact -- fully validated ValidatedSceneData.
-  auto sceneResult = atlantis::asset_system::decodeScene(config.sceneArtifactPath, config.sceneMetadataPath);
+  // (b) Resolve the configured scene, then decode its artifact -- fully
+  // validated ValidatedSceneData.
+  const AssetCatalogRecord* sceneRecord = catalog.find(config.sceneAsset);
+  if (sceneRecord == nullptr || sceneRecord->type != CatalogAssetType::Scene) {
+    ATLANTIS_LOG_ERROR("the configured scene GUID is not a scene record in the catalog");
+    return ResultT::Err(RuntimeInitError::SceneNotInCatalog);
+  }
+  if (!isSupportedArtifactSchema(sceneRecord->type, sceneRecord->artifactSchema)) {
+    ATLANTIS_LOG_ERROR("the scene record's artifact schema is not supported by this Runtime");
+    return ResultT::Err(RuntimeInitError::UnsupportedArtifactSchema);
+  }
+  auto sceneResult = atlantis::asset_system::decodeScene(sceneRecord->artifact, sceneRecord->metadata);
   if (sceneResult.isErr()) {
     ATLANTIS_LOG_ERROR("decodeScene() failed");
     return ResultT::Err(RuntimeInitError::SceneArtifactLoadFailed);
@@ -72,23 +138,17 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
   // yet, same order as (c). An unresolved material id fails the whole
   // scene load exactly like an unresolved mesh id already does (Spec
   // 0018 D4 case 2 -- never a silent fallback to the built-in Material).
-  std::vector<const SceneDependencyResolver::Entry*> resolvedMeshEntries;
+  std::vector<const AssetCatalogRecord*> resolvedMeshEntries;
   for (atlantis::asset_system::AssetId id : distinctMeshIds) {
-    const auto* entry = resolver.find(id);
-    if (!entry) {
-      ATLANTIS_LOG_ERROR("scene references AssetId with no manifest entry");
-      return ResultT::Err(RuntimeInitError::SceneDependencyUnresolved);
-    }
-    resolvedMeshEntries.push_back(entry);
+    auto resolved = resolveDependency(catalog, id, CatalogAssetType::Mesh);
+    if (resolved.isErr()) return ResultT::Err(resolved.error());
+    resolvedMeshEntries.push_back(resolved.value());
   }
-  std::vector<const SceneDependencyResolver::Entry*> resolvedMaterialEntries;
+  std::vector<const AssetCatalogRecord*> resolvedMaterialEntries;
   for (atlantis::asset_system::AssetId id : distinctMaterialIds) {
-    const auto* entry = resolver.find(id);
-    if (!entry) {
-      ATLANTIS_LOG_ERROR("scene references AssetId with no manifest entry");
-      return ResultT::Err(RuntimeInitError::SceneDependencyUnresolved);
-    }
-    resolvedMaterialEntries.push_back(entry);
+    auto resolved = resolveDependency(catalog, id, CatalogAssetType::Material);
+    if (resolved.isErr()) return ResultT::Err(resolved.error());
+    resolvedMaterialEntries.push_back(resolved.value());
   }
 
   // (e) Phase 2: load, same order as (c)/(d) -- distinctMeshIds' own
@@ -99,8 +159,8 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
   // header comment on why a test may pass nullptr otherwise.
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap;
   for (std::size_t i = 0; i < distinctMeshIds.size(); ++i) {
-    auto meshAssetResult = atlantis::asset_system::loadStaticMeshAsset(resolvedMeshEntries[i]->artifactPath,
-                                                                        resolvedMeshEntries[i]->metadataPath);
+    auto meshAssetResult = atlantis::asset_system::loadStaticMeshAsset(resolvedMeshEntries[i]->artifact,
+                                                                        resolvedMeshEntries[i]->metadata);
     if (meshAssetResult.isErr()) {
       ATLANTIS_LOG_ERROR("loadStaticMeshAsset() failed for a scene dependency");
       return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
@@ -141,8 +201,8 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> materialDataMap;
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap;
   for (std::size_t i = 0; i < distinctMaterialIds.size(); ++i) {
-    auto materialAssetResult = atlantis::asset_system::loadMaterialAsset(resolvedMaterialEntries[i]->artifactPath,
-                                                                          resolvedMaterialEntries[i]->metadataPath);
+    auto materialAssetResult = atlantis::asset_system::loadMaterialAsset(resolvedMaterialEntries[i]->artifact,
+                                                                          resolvedMaterialEntries[i]->metadata);
     if (materialAssetResult.isErr()) {
       ATLANTIS_LOG_ERROR("loadMaterialAsset() failed for a scene dependency");
       return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
@@ -150,13 +210,11 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
     const atlantis::asset_system::MaterialAssetData& materialAssetData = materialAssetResult.value();
 
     if (!textureDataMap.contains(materialAssetData.textureAsset)) {
-      const auto* textureEntry = resolver.find(materialAssetData.textureAsset);
-      if (!textureEntry) {
-        ATLANTIS_LOG_ERROR("a material's own referenced texture AssetId has no manifest entry");
-        return ResultT::Err(RuntimeInitError::SceneDependencyUnresolved);
-      }
+      auto textureResolved = resolveDependency(catalog, materialAssetData.textureAsset, CatalogAssetType::Texture);
+      if (textureResolved.isErr()) return ResultT::Err(textureResolved.error());
+      const AssetCatalogRecord* textureEntry = textureResolved.value();
       auto textureAssetResult =
-          atlantis::asset_system::loadTextureAsset(textureEntry->artifactPath, textureEntry->metadataPath);
+          atlantis::asset_system::loadTextureAsset(textureEntry->artifact, textureEntry->metadata);
       if (textureAssetResult.isErr()) {
         ATLANTIS_LOG_ERROR("loadTextureAsset() failed for a material's own referenced texture");
         return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
@@ -190,13 +248,12 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
     // with no normal map (normalMapTexture == 0) is completely
     // unaffected.
     if (materialAssetData.normalMapTexture != 0 && !textureDataMap.contains(materialAssetData.normalMapTexture)) {
-      const auto* normalMapEntry = resolver.find(materialAssetData.normalMapTexture);
-      if (!normalMapEntry) {
-        ATLANTIS_LOG_ERROR("a material's own referenced normal-map texture AssetId has no manifest entry");
-        return ResultT::Err(RuntimeInitError::SceneDependencyUnresolved);
-      }
+      auto normalMapResolved =
+          resolveDependency(catalog, materialAssetData.normalMapTexture, CatalogAssetType::Texture);
+      if (normalMapResolved.isErr()) return ResultT::Err(normalMapResolved.error());
+      const AssetCatalogRecord* normalMapEntry = normalMapResolved.value();
       auto normalMapResult =
-          atlantis::asset_system::loadTextureAsset(normalMapEntry->artifactPath, normalMapEntry->metadataPath);
+          atlantis::asset_system::loadTextureAsset(normalMapEntry->artifact, normalMapEntry->metadata);
       if (normalMapResult.isErr()) {
         ATLANTIS_LOG_ERROR("loadTextureAsset() failed for a material's own referenced normal-map texture");
         return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
@@ -216,13 +273,12 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
     // colour-space requirement: glTF's emissive is sRGB colour, and a
     // Unorm mask samples just as well.
     if (materialAssetData.emissiveTexture != 0 && !textureDataMap.contains(materialAssetData.emissiveTexture)) {
-      const auto* emissiveEntry = resolver.find(materialAssetData.emissiveTexture);
-      if (!emissiveEntry) {
-        ATLANTIS_LOG_ERROR("a material's own referenced emissive texture AssetId has no manifest entry");
-        return ResultT::Err(RuntimeInitError::SceneDependencyUnresolved);
-      }
+      auto emissiveResolved =
+          resolveDependency(catalog, materialAssetData.emissiveTexture, CatalogAssetType::Texture);
+      if (emissiveResolved.isErr()) return ResultT::Err(emissiveResolved.error());
+      const AssetCatalogRecord* emissiveEntry = emissiveResolved.value();
       auto emissiveResult =
-          atlantis::asset_system::loadTextureAsset(emissiveEntry->artifactPath, emissiveEntry->metadataPath);
+          atlantis::asset_system::loadTextureAsset(emissiveEntry->artifact, emissiveEntry->metadata);
       if (emissiveResult.isErr()) {
         ATLANTIS_LOG_ERROR("loadTextureAsset() failed for a material's own referenced emissive texture");
         return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);

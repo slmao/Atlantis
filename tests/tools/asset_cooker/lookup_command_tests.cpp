@@ -126,7 +126,6 @@ TEST_CASE("A cook manifest line cannot run a lookup", "[lookup]") {
   std::filesystem::remove_all(dir);
   std::filesystem::create_directories(dir);
   const TempCatalogSource catalog(validSource());
-  std::ofstream(dir / "asset_list.txt") << "";
   std::ofstream(dir / "cook_manifest.txt")
       << "--kind=lookup --catalog-source=" << catalog.path() << " --guid=01234567-89ab-4def-8123-456789abcdef\n";
 
@@ -135,7 +134,6 @@ TEST_CASE("A cook manifest line cannot run a lookup", "[lookup]") {
   request.importDir = dir.string();
   request.cookedDir = (dir / "cooked").string();
   request.contentParent = dir.string();
-  request.manifestOutPath = (dir / "manifest.txt").string();
   CHECK(runCookCommand(request) != 0);
 
   std::filesystem::remove_all(dir);

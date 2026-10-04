@@ -76,7 +76,6 @@ TEST_CASE("A cook manifest line cannot mint", "[guid_mint]") {
   const std::filesystem::path dir = std::filesystem::temp_directory_path() / "atlantis_guid_mint_manifest_test";
   std::filesystem::remove_all(dir);
   std::filesystem::create_directories(dir);
-  std::ofstream(dir / "asset_list.txt") << "";
   std::ofstream(dir / "cook_manifest.txt") << "--kind=mint-guid --count=2\n";
 
   CookCommandRequest request;
@@ -84,9 +83,8 @@ TEST_CASE("A cook manifest line cannot mint", "[guid_mint]") {
   request.importDir = dir.string();
   request.cookedDir = (dir / "cooked").string();
   request.contentParent = dir.string();
-  request.manifestOutPath = (dir / "manifest.txt").string();
   CHECK(runCookCommand(request) != 0);
-  CHECK_FALSE(std::filesystem::exists(dir / "manifest.txt"));
+  CHECK_FALSE(std::filesystem::exists(dir / "import.catalog.txt"));
 
   std::filesystem::remove_all(dir);
 }

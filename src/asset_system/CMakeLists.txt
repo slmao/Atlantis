@@ -101,6 +101,11 @@ function(atlantis_catalog_guid out_var)
     "${ATLANTIS_ASSET_CATALOG_SOURCE}")
 endfunction()
 
+# Plan 0047 P15: where this build assembles its catalog (the Runtime's
+# ATLANTIS_RUNTIME_ASSET_CATALOG_PATH and every test's ATLANTIS_ASSET_CATALOG_PATH).
+set(ATLANTIS_ASSET_CATALOG_PATH "${CMAKE_BINARY_DIR}/asset_catalog.txt" CACHE INTERNAL
+  "The assembled catalog (Plan 0047 P13)")
+
 # Plan 0012 Section D4/D9: declares one static mesh asset for
 # atlantis_asset_cooker to process at build time, mirroring
 # atlantis_add_slang_shader_pair()'s own stamp/BYPRODUCTS pattern
@@ -154,41 +159,18 @@ function(atlantis_add_static_mesh_asset)
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
-  # Plan 0015 Section D7: exposes the exact string cookStaticMesh() was
-  # already given as its own logicalPathInput -- no behavior change to
-  # any existing caller; existing callers simply gain one more
-  # unused-by-them exported variable. atlantis_add_scene_asset() below
-  # is this variable's own first real consumer, recording a
-  # MESH_DEPENDENCIES entry's logical path into the manifest.
-  set(ATLANTIS_${ARG_NAME}_LOGICAL_PATH "${ARG_SOURCE}" PARENT_SCOPE)
 endfunction()
 
-# Plan 0015 Section D7: declares one scene asset -- mirrors
-# atlantis_add_static_mesh_asset()'s own stamp/BYPRODUCTS pattern, with
-# two additions: a MESH_DEPENDENCIES list (each entry must already be
-# declared via atlantis_add_static_mesh_asset() above) and a generated,
-# build-tree-private manifest recording each dependency's own logical
-# path, artifact path, and metadata path as a tab-separated triple
-# (Section D8) -- Runtime's own sole way to resolve a scene's mesh
-# references to real on-disk artifacts, never a portable part of the
-# artifact itself. Must be defined before any add_subdirectory() that
-# calls it, matching atlantis_add_static_mesh_asset()'s own ordering
-# convention exactly.
+# Plan 0015 Section D7, Plan 0047 M5: declares one scene asset -- mirrors
+# atlantis_add_static_mesh_asset()'s own stamp/BYPRODUCTS pattern. The scene's
+# dependencies are no longer declared here: the assembled catalog records them
+# from the cooked content (ADR-0098 D2), and the Runtime resolves them through
+# it. Exports ATLANTIS_<NAME>_GUID, the scene's catalog GUID, read from the
+# committed catalog source at configure time (P15). Must be defined before any
+# add_subdirectory() that calls it.
 function(atlantis_add_scene_asset)
-  set(options "")
   set(oneValueArgs NAME SOURCE)
-  # Plan 0018 Section P9: MATERIAL_DEPENDENCIES/TEXTURE_DEPENDENCIES
-  # extend the same manifest MESH_DEPENDENCIES already populates -- still
-  # one flat, unchanged, 3-column (logicalPath/artifactPath/metadataPath)
-  # file, never a new column or a new file. TEXTURE_DEPENDENCIES exists
-  # so a material's own transitively-referenced texture resolves through
-  # the SAME manifest a scene's mesh references already use (ADR-0060 D5)
-  # -- required even when the scene itself never directly names that
-  # texture, an explicitly-permitted "declared but only transitively
-  # used" entry, matching MESH_DEPENDENCIES' own existing tolerance for
-  # an unreferenced declared dependency.
-  set(multiValueArgs MESH_DEPENDENCIES MATERIAL_DEPENDENCIES TEXTURE_DEPENDENCIES)
-  cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+  cmake_parse_arguments(ARG "" "${oneValueArgs}" "" ${ARGN})
 
   set(asset_root "${CMAKE_SOURCE_DIR}/assets")
   set(source_path "${asset_root}/${ARG_SOURCE}")
@@ -197,53 +179,7 @@ function(atlantis_add_scene_asset)
   string(REGEX REPLACE "\\.scene\\.txt$" "" base "${ARG_SOURCE}")
   set(artifact_path "${output_dir}/${base}.ascene")
   set(metadata_path "${output_dir}/${base}.ascene.meta.txt")
-  set(manifest_path "${output_dir}/${base}.ascene.manifest.txt")
   set(stamp "${output_dir}/${base}.stamp")
-
-  set(dependency_targets "")
-  set(manifest_lines "")
-  foreach(dep_name ${ARG_MESH_DEPENDENCIES})
-    if(NOT DEFINED ATLANTIS_${dep_name}_ARTIFACT_PATH)
-      message(FATAL_ERROR
-        "atlantis_add_scene_asset(${ARG_NAME}): MESH_DEPENDENCIES entry "
-        "'${dep_name}' is not a previously declared asset -- declare it "
-        "via atlantis_add_static_mesh_asset() first.")
-    endif()
-    list(APPEND dependency_targets "${ATLANTIS_${dep_name}_TARGET}")
-    string(APPEND manifest_lines
-      "${ATLANTIS_${dep_name}_LOGICAL_PATH}\t${ATLANTIS_${dep_name}_ARTIFACT_PATH}\t${ATLANTIS_${dep_name}_METADATA_PATH}\n")
-  endforeach()
-  foreach(dep_name ${ARG_MATERIAL_DEPENDENCIES})
-    if(NOT DEFINED ATLANTIS_${dep_name}_ARTIFACT_PATH)
-      message(FATAL_ERROR
-        "atlantis_add_scene_asset(${ARG_NAME}): MATERIAL_DEPENDENCIES entry "
-        "'${dep_name}' is not a previously declared asset -- declare it "
-        "via atlantis_add_material_asset() first.")
-    endif()
-    list(APPEND dependency_targets "${ATLANTIS_${dep_name}_TARGET}")
-    string(APPEND manifest_lines
-      "${ATLANTIS_${dep_name}_LOGICAL_PATH}\t${ATLANTIS_${dep_name}_ARTIFACT_PATH}\t${ATLANTIS_${dep_name}_METADATA_PATH}\n")
-  endforeach()
-  foreach(dep_name ${ARG_TEXTURE_DEPENDENCIES})
-    if(NOT DEFINED ATLANTIS_${dep_name}_ARTIFACT_PATH)
-      message(FATAL_ERROR
-        "atlantis_add_scene_asset(${ARG_NAME}): TEXTURE_DEPENDENCIES entry "
-        "'${dep_name}' is not a previously declared asset -- declare it "
-        "via atlantis_add_texture_asset() first.")
-    endif()
-    list(APPEND dependency_targets "${ATLANTIS_${dep_name}_TARGET}")
-    string(APPEND manifest_lines
-      "${ATLANTIS_${dep_name}_LOGICAL_PATH}\t${ATLANTIS_${dep_name}_ARTIFACT_PATH}\t${ATLANTIS_${dep_name}_METADATA_PATH}\n")
-  endforeach()
-
-  # file(GENERATE) runs at CMake generate time, independent of which
-  # config a multi-config (Visual Studio) generator later builds --
-  # this manifest's own content (paths, not compiled binaries) does not
-  # vary by config, matching atlantis_add_static_mesh_asset()'s own
-  # ARTIFACT_PATH/METADATA_PATH (also config-independent, both already
-  # proven working under this project's own real Visual Studio
-  # generator). No $<CONFIG> generator expression is needed or used.
-  file(GENERATE OUTPUT "${manifest_path}" CONTENT "${manifest_lines}")
 
   add_custom_command(
     OUTPUT "${stamp}"
@@ -256,24 +192,13 @@ function(atlantis_add_scene_asset)
     VERBATIM
   )
   add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
-  # Ordering only, deliberately NOT added to the custom command's own
-  # DEPENDS above: a MESH_DEPENDENCIES mesh's own content edit must not
-  # re-trigger this scene's own cook step -- the scene artifact only
-  # ever stores that mesh's AssetId (a hash of its logical path, known
-  # already at CMake-declare time and unaffected by the mesh's content),
-  # so the scene's own output bytes provably cannot change from a mesh
-  # content edit. This add_dependencies() edge exists only so the full
-  # build graph is consistent (the mesh builds as part of the same ALL
-  # pass) -- it does not, by itself, mark this scene's own stamp stale.
-  if(dependency_targets)
-    add_dependencies(${ARG_NAME}_asset ${dependency_targets})
-  endif()
   _atlantis_register_catalog_fragment(${ARG_NAME}_asset "${artifact_path}.catalog.txt")
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "scene\tassets\t${ARG_SOURCE}")
 
+  atlantis_catalog_guid(scene_guid ROOT assets PATH ${ARG_SOURCE})
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
-  set(ATLANTIS_${ARG_NAME}_MANIFEST_PATH "${manifest_path}" PARENT_SCOPE)
+  set(ATLANTIS_${ARG_NAME}_GUID "${scene_guid}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
 endfunction()
 
@@ -281,13 +206,11 @@ endfunction()
 # for one imported glTF scene -- one custom command, one stamp. It runs
 # atlantis_gltf_importer (with the authored OVERLAY merged, ADR-0094
 # Decision 3) into <build>/<NAME>/import, then atlantis_asset_cooker
-# --kind=cook-manifest over that import into <build>/<NAME>/cooked, which
-# also writes the dependency manifest. Its only inputs are the glTF, the
+# --kind=cook-manifest over that import into <build>/<NAME>/cooked. Its only inputs are the glTF, the
 # overlay and the two tools -- a changed texture or buffer file under
 # CONTENT_ROOT does not re-trigger it (the content is SHA-256 pinned).
-# Exports the same ATLANTIS_<NAME>_scene_{ARTIFACT,METADATA,MANIFEST}_PATH
-# and _TARGET variables atlantis_add_scene_asset() exports, so consumers
-# are unchanged. Plan 0047 P12: the cook-manifest mode also writes
+# Exports ATLANTIS_<NAME>_scene_{ARTIFACT,METADATA}_PATH, _TARGET and
+# _IMPORT_GUID (the import root's catalog GUID). Plan 0047 P12: the cook-manifest mode also writes
 # <import dir>/import.catalog.txt, the import's one catalog fragment.
 function(atlantis_add_imported_scene)
   set(oneValueArgs NAME GLTF CONTENT_ROOT OVERLAY)
@@ -298,13 +221,12 @@ function(atlantis_add_imported_scene)
   set(cooked_dir "${work_dir}/cooked")
   set(artifact_path "${cooked_dir}/${ARG_NAME}/${ARG_NAME}.ascene")
   set(metadata_path "${cooked_dir}/${ARG_NAME}/${ARG_NAME}.ascene.meta.txt")
-  set(manifest_path "${cooked_dir}/${ARG_NAME}.ascene.manifest.txt")
   set(stamp "${work_dir}/${ARG_NAME}.stamp")
   get_filename_component(content_parent "${ARG_CONTENT_ROOT}" DIRECTORY)
 
   add_custom_command(
     OUTPUT "${stamp}"
-    BYPRODUCTS "${artifact_path}" "${metadata_path}" "${manifest_path}" "${import_dir}/import.catalog.txt"
+    BYPRODUCTS "${artifact_path}" "${metadata_path}" "${import_dir}/import.catalog.txt"
     # The importer refuses a non-empty output directory; the cooked
     # directory is rewritten in place.
     COMMAND ${CMAKE_COMMAND} -E rm -rf "${import_dir}"
@@ -313,7 +235,7 @@ function(atlantis_add_imported_scene)
       --output-dir=${import_dir} --name=${ARG_NAME} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE}
     COMMAND atlantis_asset_cooker
       --kind=cook-manifest --import-dir=${import_dir} --cooked-dir=${cooked_dir}
-      --content-parent=${content_parent} --manifest-out=${manifest_path} --stamp=${stamp}
+      --content-parent=${content_parent} --stamp=${stamp}
     DEPENDS "${ARG_GLTF}" "${ARG_OVERLAY}" "${ATLANTIS_ASSET_CATALOG_SOURCE}" atlantis_gltf_importer
             atlantis_asset_cooker
     COMMENT "Importing and cooking imported scene: ${ARG_NAME}"
@@ -330,7 +252,10 @@ function(atlantis_add_imported_scene)
 
   set(ATLANTIS_${ARG_NAME}_scene_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_scene_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
-  set(ATLANTIS_${ARG_NAME}_scene_MANIFEST_PATH "${manifest_path}" PARENT_SCOPE)
+  # Plan 0047 P15: the import root's catalog GUID (the Runtime derives the
+  # scene's GUID from it).
+  atlantis_catalog_guid(import_guid ROOT content PATH ${content_root_name}/${gltf_name})
+  set(ATLANTIS_${ARG_NAME}_scene_IMPORT_GUID "${import_guid}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_scene_TARGET "atlantis_${ARG_NAME}_scene" PARENT_SCOPE)
   # Plan 0046 M3: the import directory, for the content-gated load test.
   set(ATLANTIS_${ARG_NAME}_scene_IMPORT_DIR "${import_dir}" PARENT_SCOPE)
@@ -398,18 +323,6 @@ function(atlantis_add_texture_asset)
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
-  # Plan 0018 Section P5 (Plan Review item 1): exposes the exact string
-  # cookTexture() was already given as its own logicalPathInput --
-  # additive only, no behavior change to any existing caller (every
-  # existing caller simply gains one more unused-by-them exported
-  # variable), matching atlantis_add_static_mesh_asset()'s own
-  # ATLANTIS_<NAME>_LOGICAL_PATH precedent exactly.
-  # atlantis_add_material_asset() below is this variable's own first
-  # real consumer -- a scene's own TEXTURE_DEPENDENCIES entry needs it
-  # to record a texture's manifest line, the same way
-  # atlantis_add_scene_asset()'s existing MESH_DEPENDENCIES already uses
-  # atlantis_add_static_mesh_asset()'s own _LOGICAL_PATH.
-  set(ATLANTIS_${ARG_NAME}_LOGICAL_PATH "${ARG_SOURCE}" PARENT_SCOPE)
 endfunction()
 
 # Plan 0025 Milestone 2: declares one offline-cooked HDR environment.
@@ -444,21 +357,15 @@ function(atlantis_add_environment_asset)
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
-  set(ATLANTIS_${ARG_NAME}_LOGICAL_PATH "${ARG_SOURCE}" PARENT_SCOPE)
 endfunction()
 
-# Plan 0018 Section P5: declares one material asset for
-# atlantis_asset_cooker to process at build time -- mirrors
-# atlantis_add_scene_asset()'s own shape (a single named dependency
-# instead of a list, since a Material references exactly one texture,
-# ADR-0059's own closed DTO shape) more closely than
-# atlantis_add_static_mesh_asset()'s own no-dependency shape. TEXTURE
-# must already be declared via atlantis_add_texture_asset() above.
+# Plan 0018 Section P5, Plan 0047 M5: declares one material asset for
+# atlantis_asset_cooker to process at build time. Its texture references are
+# GUIDs in the material source and are recorded as catalog dependencies from
+# the cooked content, so no TEXTURE/NORMAL_MAP argument exists (Plan 0047 P16).
 function(atlantis_add_material_asset)
   set(options "")
-  # NORMAL_MAP (Plan 0029 Section P9/ADR-0074 Section 1) is optional --
-  # every existing call site omits it and is unaffected.
-  set(oneValueArgs NAME SOURCE TEXTURE NORMAL_MAP)
+  set(oneValueArgs NAME SOURCE)
   set(multiValueArgs "")
   cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
@@ -471,19 +378,6 @@ function(atlantis_add_material_asset)
   set(metadata_path "${output_dir}/${base}.amaterial.meta.txt")
   set(stamp "${output_dir}/${base}.stamp")
 
-  if(NOT DEFINED ATLANTIS_${ARG_TEXTURE}_ARTIFACT_PATH)
-    message(FATAL_ERROR
-      "atlantis_add_material_asset(${ARG_NAME}): TEXTURE '${ARG_TEXTURE}' is not a "
-      "previously declared texture asset -- declare it via atlantis_add_texture_asset() first.")
-  endif()
-  if(ARG_NORMAL_MAP)
-    if(NOT DEFINED ATLANTIS_${ARG_NORMAL_MAP}_ARTIFACT_PATH)
-      message(FATAL_ERROR
-        "atlantis_add_material_asset(${ARG_NAME}): NORMAL_MAP '${ARG_NORMAL_MAP}' is not a "
-        "previously declared texture asset -- declare it via atlantis_add_texture_asset() first.")
-    endif()
-  endif()
-
   add_custom_command(
     OUTPUT "${stamp}"
     BYPRODUCTS "${artifact_path}" "${metadata_path}" "${artifact_path}.catalog.txt"
@@ -495,24 +389,11 @@ function(atlantis_add_material_asset)
     VERBATIM
   )
   add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
-  # Ordering only, matching atlantis_add_scene_asset()'s own
-  # MESH_DEPENDENCIES rationale exactly: the texture's own content does
-  # not affect this material's own cooked bytes (only its AssetId,
-  # resolved from the source file's own texture= logical-path string,
-  # already known at configure time) -- this add_dependencies() exists
-  # so the full build graph is consistent, not to mark this material's
-  # stamp stale on a texture content edit.
-  add_dependencies(${ARG_NAME}_asset ${ATLANTIS_${ARG_TEXTURE}_TARGET})
-  if(ARG_NORMAL_MAP)
-    add_dependencies(${ARG_NAME}_asset ${ATLANTIS_${ARG_NORMAL_MAP}_TARGET})
-  endif()
-
   _atlantis_register_catalog_fragment(${ARG_NAME}_asset "${artifact_path}.catalog.txt")
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "material\tassets\t${ARG_SOURCE}")
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
-  set(ATLANTIS_${ARG_NAME}_LOGICAL_PATH "${ARG_SOURCE}" PARENT_SCOPE)
 endfunction()
 
 # Plan 0047 P13 (ADR-0098 D2), replacing atlantis_finalize_asset_validation():

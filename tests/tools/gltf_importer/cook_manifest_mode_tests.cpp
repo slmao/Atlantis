@@ -4,6 +4,7 @@
 
 #include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/asset_catalog_source.h>
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/scene_artifact.h>
 #include <atlantis/asset_system/logical_path.h>
@@ -77,17 +78,6 @@ int runCooker(const std::vector<std::string>& arguments) {
   return std::system(("\"" + command + "\"").c_str());
 }
 
-// Plan 0047 P8: an asset's key, as its own sidecar records it (every
-// sidecar kind carries an asset_id: line).
-as::AssetId idOfSidecar(const fs::path& metadataPath) {
-  std::ifstream in(metadataPath, std::ios::binary);
-  for (std::string line; std::getline(in, line);) {
-    if (line.rfind("asset_id: ", 0) == 0) return std::stoull(line.substr(10, 16), nullptr, 16);
-  }
-  FAIL("no asset_id line in " << metadataPath.string());
-  return 0;
-}
-
 struct ImportedFixture {
   fs::path dir;        // the content root: the glTF and its DDS files
   fs::path importDir;  // the importer's output
@@ -126,76 +116,59 @@ ImportedFixture importFixture(const std::string& testName) {
   return fixture;
 }
 
-std::vector<std::string> cookManifestArguments(const ImportedFixture& fixture, const fs::path& manifestOut) {
+std::vector<std::string> cookManifestArguments(const ImportedFixture& fixture) {
   return {"--kind=cook-manifest", "--import-dir=" + fixture.importDir.generic_string(),
           "--cooked-dir=" + fixture.cookedDir.generic_string(),
           "--content-parent=" + fixture.dir.parent_path().generic_string(),
-          "--manifest-out=" + manifestOut.generic_string(),
           "--stamp=" + (fixture.cookedDir / "q.stamp").generic_string()};
 }
 
 }  // namespace
 
-TEST_CASE("cook-manifest mode cooks every manifest line in one process and writes a dependency manifest listing "
-          "each declared asset once, at its artifact",
+TEST_CASE("cook-manifest mode cooks every manifest line in one process, and every record of the import points at "
+          "an existing artifact and sidecar",
           "[asset_cooker][cook_manifest]") {
   const ImportedFixture fixture = importFixture("cook_manifest_mode");
-  const fs::path manifestOut = fixture.cookedDir / "q.ascene.manifest.txt";
-  REQUIRE(runCooker(cookManifestArguments(fixture, manifestOut)) == 0);
+  REQUIRE(runCooker(cookManifestArguments(fixture)) == 0);
   CHECK(fs::exists(fixture.cookedDir / "q.stamp"));
 
-  // The scene is cooked (no AssetId, so no manifest entry).
   const auto scene = as::decodeSceneArtifact(readBytes(fixture.cookedDir / "q/q.ascene"));
   CHECK(scene.isOk());
 
-  const std::vector<std::string> declared = lines(readText(fixture.importDir / "asset_list.txt"));
-  const std::vector<std::string> entries = lines(readText(manifestOut));
-  REQUIRE(declared.size() == 4);  // 1 mesh, 1 material, 2 textures
-  REQUIRE(entries.size() == declared.size());
-  std::set<std::string> seen;
-  for (std::size_t i = 0; i < entries.size(); ++i) {
-    INFO(entries[i]);
-    const std::size_t tab1 = entries[i].find('\t');
-    const std::size_t tab2 = entries[i].find('\t', tab1 + 1);
-    REQUIRE(tab2 != std::string::npos);
-    const std::string logical = entries[i].substr(0, tab1);
-    const fs::path artifact = entries[i].substr(tab1 + 1, tab2 - tab1 - 1);
-    const fs::path metadata = entries[i].substr(tab2 + 1);
-    CHECK(logical == declared[i]);  // the asset list's own order
-    CHECK(seen.insert(logical).second);
-    CHECK(fs::exists(artifact));
-    CHECK(fs::exists(metadata));
+  const auto records = as::parseAssetCatalogRecords(readText(fixture.importDir / "import.catalog.txt"));
+  REQUIRE(records.isOk());
+  REQUIRE(records.value().size() == 5);  // 1 mesh, 1 material, 2 textures, the scene
+  std::set<as::AssetId> listedIds;
+  std::size_t srgbTextures = 0;
+  for (const as::AssetCatalogRecord& record : records.value()) {
+    INFO(as::toString(record.guid));
+    CHECK(fs::exists(record.artifact));
+    CHECK(fs::exists(record.metadata));
+    CHECK(listedIds.insert(record.assetId).second);
     // Meshes stay where the importer wrote them; everything else is cooked.
-    const fs::path expectedRoot = logical.rfind("meshes/", 0) == 0 ? fixture.importDir : fixture.cookedDir;
-    CHECK(artifact.generic_string().rfind(expectedRoot.generic_string(), 0) == 0);
+    const fs::path expectedRoot = record.type == as::CatalogAssetType::Mesh ? fixture.importDir : fixture.cookedDir;
+    CHECK(fs::path(record.artifact).generic_string().rfind(expectedRoot.generic_string(), 0) == 0);
+    // Spec 0046 Q8: both colour-used DXGI 99 textures cooked as sRGB.
+    if (record.type == as::CatalogAssetType::Texture) {
+      const auto texture = as::decodeTextureArtifact(readBytes(record.artifact));
+      REQUIRE(texture.isOk());
+      srgbTextures += texture.value().colorSpace == as::TextureColorSpace::Srgb ? 1 : 0;
+    }
   }
+  CHECK(srgbTextures == 2);
 
-  // The material names both textures, and both resolve through the manifest.
+  // The material names both textures, and both have records.
   const auto material = as::decodeMaterialArtifact(readBytes(fixture.cookedDir / "q/materials/0.amaterial"));
   REQUIRE(material.isOk());
-  std::set<as::AssetId> listedIds;
-  for (const std::string& entry : entries) listedIds.insert(idOfSidecar(entry.substr(entry.rfind('\t') + 1)));
   CHECK(listedIds.count(material.value().textureAsset) == 1);
   CHECK(material.value().emissiveTexture != 0);
   CHECK(listedIds.count(material.value().emissiveTexture) == 1);
-
-  // Spec 0046 Q8: both colour-used DXGI 99 textures cooked as sRGB.
-  std::size_t srgbTextures = 0;
-  for (const std::string& entry : entries) {
-    const std::size_t tab1 = entry.find('\t');
-    const std::string artifact = entry.substr(tab1 + 1, entry.find('\t', tab1 + 1) - tab1 - 1);
-    if (!artifact.ends_with(".atex")) continue;
-    const auto texture = as::decodeTextureArtifact(readBytes(artifact));
-    REQUIRE(texture.isOk());
-    srgbTextures += texture.value().colorSpace == as::TextureColorSpace::Srgb ? 1 : 0;
-  }
-  CHECK(srgbTextures == 2);
 }
 
 TEST_CASE("cook-manifest mode writes import.catalog.txt holding every record of the import, and it assembles",
           "[asset_cooker][cook_manifest][catalog]") {
   const ImportedFixture fixture = importFixture("cook_manifest_catalog");
-  REQUIRE(runCooker(cookManifestArguments(fixture, fixture.cookedDir / "q.ascene.manifest.txt")) == 0);
+  REQUIRE(runCooker(cookManifestArguments(fixture)) == 0);
 
   const fs::path importCatalog = fixture.importDir / "import.catalog.txt";
   const auto records = as::parseAssetCatalogRecords(readText(importCatalog));
@@ -249,16 +222,115 @@ TEST_CASE("cook-manifest mode writes import.catalog.txt holding every record of 
 TEST_CASE("cook-manifest mode fails the whole step on one failing line, and on a missing required flag",
           "[asset_cooker][cook_manifest]") {
   const ImportedFixture fixture = importFixture("cook_manifest_mode_failure");
-  const fs::path manifestOut = fixture.cookedDir / "q.ascene.manifest.txt";
 
   // A texture source that no longer exists fails its line, so the mode.
   fs::remove(fixture.dir / "quad_em.dds");
-  CHECK(runCooker(cookManifestArguments(fixture, manifestOut)) != 0);
-  CHECK_FALSE(fs::exists(manifestOut));
+  CHECK(runCooker(cookManifestArguments(fixture)) != 0);
+  CHECK_FALSE(fs::exists(fixture.importDir / "import.catalog.txt"));
   CHECK_FALSE(fs::exists(fixture.cookedDir / "q.stamp"));
 
   // The mode's own inputs are all required.
-  std::vector<std::string> missingContentParent = cookManifestArguments(fixture, manifestOut);
+  std::vector<std::string> missingContentParent = cookManifestArguments(fixture);
   missingContentParent.erase(missingContentParent.begin() + 3);
   CHECK(runCooker(missingContentParent) != 0);
+}
+
+// Plan 0047 M5 (step 5): hand-authored scenes reference a mesh and a material
+// of a builder-generated import. One assembled catalog resolves both scenes'
+// references -- across the two roots -- to the import's single records.
+TEST_CASE("Two hand-authored scenes referencing one import's mesh and material resolve to its single records "
+          "through one assembled catalog",
+          "[asset_cooker][cook_manifest][catalog]") {
+  const ImportedFixture fixture = importFixture("cross_scene_catalog");
+  REQUIRE(runCooker(cookManifestArguments(fixture)) == 0);
+
+  const fs::path parent = fixture.dir.parent_path();
+  const fs::path assetRoot = parent / "cross_scene_assets";
+  const fs::path cookedScenes = parent / "cross_scene_cooked";
+  fs::remove_all(assetRoot);
+  fs::remove_all(cookedScenes);
+  fs::create_directories(assetRoot / "scenes");
+
+  const auto importGuid = [](std::string_view subKey) { return as::deriveAssetGuid(testImportRoot(), subKey); };
+  const as::AssetGuid meshGuid = importGuid("mesh/0/0");
+  const as::AssetGuid materialGuid = importGuid("material/0");
+  const std::string rootPath = atlantis::gltf_importer::detail::importRootPath(fixture.dir / "input.gltf", fixture.dir);
+
+  std::vector<as::CatalogSourceEntry> sourceEntries = {
+      {testImportRoot(), as::CatalogAssetType::GltfImport, as::CatalogRoot::Content, rootPath}};
+  std::vector<as::AssetGuid> sceneGuids;
+  std::vector<std::string> fragmentPaths = {(fixture.importDir / "import.catalog.txt").string()};
+  as::AssetCatalogAssemblyRequest request;
+  request.declarations = {{as::CatalogAssetType::GltfImport, as::CatalogRoot::Content, rootPath}};
+  for (const char* name : {"a", "b"}) {
+    const as::AssetGuid sceneGuid =
+        as::parseAssetGuid(std::string("0047eeee-0000-4000-8000-00000000000") + (name[0] == 'a' ? "a" : "b")).value();
+    sceneGuids.push_back(sceneGuid);
+    const std::string logical = std::string("scenes/") + name + ".scene.txt";
+    sourceEntries.push_back({sceneGuid, as::CatalogAssetType::Scene, as::CatalogRoot::Assets, logical});
+    request.declarations.push_back({as::CatalogAssetType::Scene, as::CatalogRoot::Assets, logical});
+    std::ofstream(assetRoot / logical, std::ios::binary)
+        << "atlantis_scene_source_version: 7\n"
+           "node_count: 1\n"
+           "active_camera: none\n"
+           "node: node_id=1 guid=" << as::toString(as::deriveEntityGuid(sceneGuid, "node/1"))
+        << " parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=" << as::toString(meshGuid)
+        << " material=" << as::toString(materialGuid) << "\n";
+  }
+  const fs::path catalogSourcePath = parent / "cross_scene.catalog_source.txt";
+  std::ofstream(catalogSourcePath, std::ios::binary) << as::serializeAssetCatalogSource(sourceEntries);
+  for (const char* name : {"a", "b"}) {
+    REQUIRE(runCooker({"--kind=scene", "--source=" + (assetRoot / "scenes" / (std::string(name) + ".scene.txt")).generic_string(),
+                       "--asset-root=" + assetRoot.generic_string(), "--output-dir=" + cookedScenes.generic_string(),
+                       "--stamp=" + (cookedScenes / (std::string(name) + ".stamp")).generic_string(),
+                       "--catalog-source=" + catalogSourcePath.generic_string()}) == 0);
+    fragmentPaths.push_back((cookedScenes / "scenes" / (std::string(name) + ".ascene.catalog.txt")).string());
+  }
+
+  const auto source = as::parseAssetCatalogSource(readText(catalogSourcePath));
+  REQUIRE(source.isOk());
+  request.catalogSource = &source.value();
+  request.fragmentPaths = fragmentPaths;
+  request.outPath = (parent / "cross_scene.catalog.txt").string();
+  request.closures = {{sceneGuids[0], (parent / "cross_scene.a_closure.catalog.txt").string()}};
+  const auto assembled = as::assembleAssetCatalog(request);
+  INFO((assembled.isErr() ? std::string(as::toString(assembled.error().error)) + ": " + assembled.error().subject
+                          : std::string("ok")));
+  REQUIRE(assembled.isOk());
+  CHECK(assembled.value().recordCount == 5 + 2);  // the import's five records plus the two scenes
+  {
+    std::ofstream(request.outPath, std::ios::binary) << assembled.value().catalogText;
+  }
+
+  const auto loaded = as::loadAssetCatalog(request.outPath);
+  REQUIRE(loaded.isOk());
+  const as::AssetCatalog& catalog = loaded.value();
+  const as::AssetCatalogRecord* mesh = catalog.find(meshGuid);
+  const as::AssetCatalogRecord* material = catalog.find(materialGuid);
+  REQUIRE(mesh != nullptr);
+  REQUIRE(material != nullptr);
+  CHECK(mesh->type == as::CatalogAssetType::Mesh);
+  CHECK(material->type == as::CatalogAssetType::Material);
+  CHECK(mesh == catalog.find(mesh->assetId));  // one record, reachable by key and by GUID
+
+  std::vector<as::AssetGuid> expectedDependencies = {meshGuid, materialGuid};
+  std::sort(expectedDependencies.begin(), expectedDependencies.end());
+  for (const as::AssetGuid& sceneGuid : sceneGuids) {
+    const as::AssetCatalogRecord* scene = catalog.find(sceneGuid);
+    REQUIRE(scene != nullptr);
+    CHECK(scene->type == as::CatalogAssetType::Scene);
+    CHECK(scene->source.root == as::CatalogRoot::Assets);
+    CHECK(scene->dependencies == expectedDependencies);
+    for (const as::AssetGuid& dependency : scene->dependencies) {
+      // Both scenes' references land on the import's own records.
+      CHECK(catalog.find(dependency) == (dependency == meshGuid ? mesh : material));
+    }
+  }
+
+  // The closure of scene a spans both roots: the scene, the import's mesh and
+  // material, and the material's two textures.
+  REQUIRE(assembled.value().closureTexts.size() == 1);
+  const auto closure = as::parseAssetCatalogRecords(assembled.value().closureTexts[0]);
+  REQUIRE(closure.isOk());
+  CHECK(closure.value().size() == 5);
 }
