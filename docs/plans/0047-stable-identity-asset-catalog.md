@@ -720,6 +720,25 @@ requirement or ADR decision.
   - The overlay is rewritten to v7 with a minted `guid=` on each node and
     gets no catalog entry, since it is not an asset.
 
+### Rulings raised in M3–M4 (slmao, chat; recorded before M5)
+
+- **I6 — cook-manifest rows carry the catalog id, not a GUID.** Each
+  `cook_manifest.txt` row carries `--catalog-id=content:<root>#<sub-key>`
+  (required on manifest rows, rejected on the command line). This replaces
+  P7's `--guid=` pass-through on manifest lines.
+  - GUID derivation stays inside the cooker/library.
+  - Fragments use an `{import_dir}` placeholder for locations.
+- **I7 — `atlantis_catalog_guid()` lands in M4.** The CMake function moves
+  forward from P15 to M4 (function only). The compile definitions that use
+  it remain M5.
+- **M4 interpretations accepted on review:**
+  - an unreadable sidecar reuses `SidecarGuidMismatch`;
+  - a fragment's relative location problem is `MalformedFragment`;
+  - a duplicate GUID inside one fragment is reported as `DuplicateGuid`;
+  - mesh sidecars are read back under both schemas.
+- **Stale documentation:** the outdated descriptions in `src/README.md` and
+  `tests/README.md` are updated at the end of M5.
+
 ## Rollback Plan
 
 Revert the implementation PR as a whole. M3 changes every committed source,
