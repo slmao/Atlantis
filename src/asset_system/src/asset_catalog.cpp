@@ -421,6 +421,100 @@ atlantis::Result<std::monostate, AssetCatalogAssemblyFailure> checkAssetKeys(std
 
 }  // namespace detail
 
+std::string_view toString(AssetCatalogError error) noexcept {
+  switch (error) {
+    case AssetCatalogError::Unreadable:
+      return "Unreadable";
+    case AssetCatalogError::Unparseable:
+      return "Unparseable";
+    case AssetCatalogError::LocationNotRelative:
+      return "LocationNotRelative";
+    case AssetCatalogError::DuplicateGuid:
+      return "DuplicateGuid";
+    case AssetCatalogError::DuplicateAssetId:
+      return "DuplicateAssetId";
+    case AssetCatalogError::ZeroAssetId:
+      return "ZeroAssetId";
+    case AssetCatalogError::AssetIdMismatch:
+      return "AssetIdMismatch";
+  }
+  return "(unrecognized AssetCatalogError)";
+}
+
+const AssetCatalogRecord* AssetCatalog::find(AssetId id) const noexcept {
+  const auto it = std::lower_bound(records_.begin(), records_.end(), id,
+                                   [](const AssetCatalogRecord& record, AssetId key) { return record.assetId < key; });
+  return it != records_.end() && it->assetId == id ? &*it : nullptr;
+}
+
+const AssetCatalogRecord* AssetCatalog::find(const AssetGuid& guid) const noexcept {
+  const auto it = std::lower_bound(guidOrder_.begin(), guidOrder_.end(), guid,
+                                   [this](std::size_t index, const AssetGuid& key) { return records_[index].guid < key; });
+  return it != guidOrder_.end() && records_[*it].guid == guid ? &records_[*it] : nullptr;
+}
+
+atlantis::Result<AssetCatalog, AssetCatalogError> parseAssetCatalog(std::string_view text,
+                                                                    const std::string& directory) {
+  using ResultT = atlantis::Result<AssetCatalog, AssetCatalogError>;
+  auto parsed = parseAssetCatalogRecords(text);
+  if (parsed.isErr()) return ResultT::Err(AssetCatalogError::Unparseable);
+  std::vector<AssetCatalogRecord> records = std::move(parsed.value());
+
+  // parseAssetCatalogRecords() proves GUID order, so a duplicate is adjacent.
+  for (std::size_t i = 1; i < records.size(); ++i) {
+    if (records[i].guid == records[i - 1].guid) return ResultT::Err(AssetCatalogError::DuplicateGuid);
+  }
+  std::vector<detail::AssetKeyEntry> keys;
+  keys.reserve(records.size());
+  for (const AssetCatalogRecord& record : records) {
+    if (record.assetId != assetKey(record.guid)) return ResultT::Err(AssetCatalogError::AssetIdMismatch);
+    keys.push_back(detail::AssetKeyEntry{record.assetId, toString(record.guid)});
+  }
+  if (const auto keyCheck = detail::checkAssetKeys(keys); keyCheck.isErr()) {
+    return ResultT::Err(keyCheck.error().error == AssetCatalogAssemblyError::ZeroAssetId
+                            ? AssetCatalogError::ZeroAssetId
+                            : AssetCatalogError::DuplicateAssetId);
+  }
+
+  const fs::path base = fs::path(directory);
+  const auto resolve = [&base](const std::string& location) -> std::optional<std::string> {
+    const fs::path relative = fs::path(location);
+    if (relative.empty() || relative.is_absolute() || relative.has_root_name() || relative.has_root_directory()) {
+      return std::nullopt;
+    }
+    for (const fs::path& part : relative.lexically_normal()) {
+      if (part == "..") return std::nullopt;
+    }
+    return (base / relative).lexically_normal().generic_string();
+  };
+  for (AssetCatalogRecord& record : records) {
+    auto artifact = resolve(record.artifact);
+    auto metadata = resolve(record.metadata);
+    if (!artifact || !metadata) return ResultT::Err(AssetCatalogError::LocationNotRelative);
+    record.artifact = std::move(*artifact);
+    record.metadata = std::move(*metadata);
+  }
+
+  AssetCatalog catalog;
+  catalog.records_ = std::move(records);
+  catalog.guidOrder_.resize(catalog.records_.size());
+  for (std::size_t i = 0; i < catalog.guidOrder_.size(); ++i) catalog.guidOrder_[i] = i;  // GUID order (file order)
+  std::sort(catalog.records_.begin(), catalog.records_.end(),
+            [](const AssetCatalogRecord& lhs, const AssetCatalogRecord& rhs) { return lhs.assetId < rhs.assetId; });
+  // Re-derive the GUID index after the AssetId sort.
+  std::sort(catalog.guidOrder_.begin(), catalog.guidOrder_.end(), [&catalog](std::size_t a, std::size_t b) {
+    return catalog.records_[a].guid < catalog.records_[b].guid;
+  });
+  return ResultT::Ok(std::move(catalog));
+}
+
+atlantis::Result<AssetCatalog, AssetCatalogError> loadAssetCatalog(const std::string& path) {
+  using ResultT = atlantis::Result<AssetCatalog, AssetCatalogError>;
+  const auto text = readFile(path);
+  if (!text) return ResultT::Err(AssetCatalogError::Unreadable);
+  return parseAssetCatalog(*text, fs::path(path).parent_path().generic_string());
+}
+
 AssemblyResult assembleAssetCatalog(const AssetCatalogAssemblyRequest& request) {
   ATLANTIS_CHECK_MSG(request.catalogSource != nullptr, "assembleAssetCatalog(): catalogSource is required");
 

@@ -135,6 +135,48 @@ struct AssembledAssetCatalog {
 [[nodiscard]] atlantis::Result<AssembledAssetCatalog, AssetCatalogAssemblyFailure> assembleAssetCatalog(
     const AssetCatalogAssemblyRequest& request);
 
+// Plan 0047 P14 / ADR-0098 D3: the Runtime's read side of an assembled (or
+// closure) catalog.
+enum class AssetCatalogError {
+  Unreadable,
+  Unparseable,
+  // A record's artifact or metadata location is absolute or leaves the
+  // catalog's directory.
+  LocationNotRelative,
+  DuplicateGuid,
+  DuplicateAssetId,
+  ZeroAssetId,
+  AssetIdMismatch,
+};
+
+[[nodiscard]] std::string_view toString(AssetCatalogError error) noexcept;
+
+// Immutable once built; safe for concurrent reads. Records are held sorted by
+// AssetId; their artifact and metadata locations are already resolved against
+// the catalog's own directory ('/'-separated).
+class AssetCatalog {
+ public:
+  [[nodiscard]] const AssetCatalogRecord* find(AssetId id) const noexcept;
+  [[nodiscard]] const AssetCatalogRecord* find(const AssetGuid& guid) const noexcept;
+  [[nodiscard]] std::size_t size() const noexcept { return records_.size(); }
+  [[nodiscard]] std::span<const AssetCatalogRecord> records() const noexcept { return records_; }
+
+ private:
+  friend atlantis::Result<AssetCatalog, AssetCatalogError> parseAssetCatalog(std::string_view text,
+                                                                              const std::string& directory);
+  std::vector<AssetCatalogRecord> records_;     // sorted by assetId
+  std::vector<std::size_t> guidOrder_;          // indices into records_, sorted by guid
+};
+
+// Parses the catalog text and validates it (each key is assetKey(guid), none
+// zero, none shared; no duplicate GUID; locations relative and contained);
+// `directory` is the catalog file's own directory.
+[[nodiscard]] atlantis::Result<AssetCatalog, AssetCatalogError> parseAssetCatalog(std::string_view text,
+                                                                                  const std::string& directory);
+
+// Reads and parses the catalog file at `path`.
+[[nodiscard]] atlantis::Result<AssetCatalog, AssetCatalogError> loadAssetCatalog(const std::string& path);
+
 namespace detail {
 
 // The key checks, separable so tests can inject keys: assembly first proves

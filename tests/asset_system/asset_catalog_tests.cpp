@@ -510,3 +510,112 @@ TEST_CASE("Assembly fails with UnknownClosureScene for a closure GUID that is no
   requireFailure(build.assemble(source, {AssetCatalogClosureRequest{build.byKey("mat").guid, out}}),
                  AssetCatalogAssemblyError::UnknownClosureScene);
 }
+
+// ---------------------------------------------------------------------------
+// Plan 0047 M5 (P14): the Runtime's read side -- AssetCatalog / loadAssetCatalog.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] fs::path writeAssembledCatalog(Build& build) {
+  const auto result = build.assemble();
+  REQUIRE(result.isOk());
+  const fs::path path = build.dir / "asset_catalog.txt";
+  writeText(path, result.value().catalogText);
+  return path;
+}
+
+[[nodiscard]] std::string catalogTextOf(std::vector<AssetCatalogRecord> records) {
+  return serializeAssetCatalog(std::move(records));
+}
+
+[[nodiscard]] AssetCatalogRecord relativeRecord(const std::string& key, CatalogAssetType type = CatalogAssetType::Mesh) {
+  AssetCatalogRecord record;
+  record.guid = guidOf(key);
+  record.assetId = assetKey(record.guid);
+  record.type = type;
+  record.source = CatalogSourceId{CatalogRoot::Assets, key, ""};
+  record.artifact = key + ".bin";
+  record.metadata = key + ".meta.txt";
+  record.artifactSchema = 4;
+  record.tool = "test/1";
+  return record;
+}
+
+void requireCatalogError(const atlantis::Result<AssetCatalog, AssetCatalogError>& result, AssetCatalogError expected) {
+  REQUIRE(result.isErr());
+  CHECK(toString(result.error()) == toString(expected));
+}
+
+}  // namespace
+
+TEST_CASE("loadAssetCatalog reads an assembled catalog: records are found by key and by GUID with locations resolved",
+          "[asset_system][asset_catalog][runtime_read]") {
+  TempDirGuard dir("load_assembled");
+  Build build(dir.path);
+  const fs::path path = writeAssembledCatalog(build);
+
+  const auto loaded = loadAssetCatalog(path.string());
+  REQUIRE(loaded.isOk());
+  const AssetCatalog& catalog = loaded.value();
+  CHECK(catalog.size() == 4);
+  for (const AssetCatalogRecord& original : build.records) {
+    const AssetCatalogRecord* byGuid = catalog.find(original.guid);
+    const AssetCatalogRecord* byId = catalog.find(original.assetId);
+    REQUIRE(byGuid != nullptr);
+    CHECK(byGuid == byId);
+    CHECK(byGuid->type == original.type);
+    std::vector<AssetGuid> sortedDependencies = original.dependencies;  // a catalog stores them sorted
+    std::sort(sortedDependencies.begin(), sortedDependencies.end());
+    CHECK(byGuid->dependencies == sortedDependencies);
+    // The catalog stores locations relative to its directory; the loaded
+    // record carries them resolved against it.
+    CHECK(fs::path(byGuid->artifact) == fs::path(original.artifact).lexically_normal());
+    CHECK(fs::path(byGuid->metadata) == fs::path(original.metadata).lexically_normal());
+  }
+  CHECK(catalog.find(guidOf("not-in-the-catalog")) == nullptr);
+  CHECK(catalog.find(assetKey(guidOf("not-in-the-catalog"))) == nullptr);
+
+  // Records are held in AssetId order.
+  const auto records = catalog.records();
+  CHECK(std::is_sorted(records.begin(), records.end(),
+                       [](const AssetCatalogRecord& l, const AssetCatalogRecord& r) { return l.assetId < r.assetId; }));
+}
+
+TEST_CASE("loadAssetCatalog fails with Unreadable for a missing file", "[asset_system][asset_catalog][runtime_read]") {
+  TempDirGuard dir("load_unreadable");
+  requireCatalogError(loadAssetCatalog((dir.path / "missing.txt").string()), AssetCatalogError::Unreadable);
+}
+
+TEST_CASE("parseAssetCatalog fails with Unparseable for text that is not a catalog",
+          "[asset_system][asset_catalog][runtime_read]") {
+  requireCatalogError(parseAssetCatalog("not a catalog\n", "dir"), AssetCatalogError::Unparseable);
+  requireCatalogError(parseAssetCatalog("atlantis_asset_catalog_version: 1\nrecord_count: 2\n", "dir"),
+                      AssetCatalogError::Unparseable);
+}
+
+TEST_CASE("parseAssetCatalog fails with LocationNotRelative for an absolute or escaping location",
+          "[asset_system][asset_catalog][runtime_read]") {
+  AssetCatalogRecord absolute = relativeRecord("a");
+  absolute.artifact = (fs::temp_directory_path() / "a.bin").generic_string();
+  requireCatalogError(parseAssetCatalog(catalogTextOf({absolute}), "dir"), AssetCatalogError::LocationNotRelative);
+
+  AssetCatalogRecord escaping = relativeRecord("b");
+  escaping.metadata = "../b.meta.txt";
+  requireCatalogError(parseAssetCatalog(catalogTextOf({escaping}), "dir"), AssetCatalogError::LocationNotRelative);
+}
+
+TEST_CASE("parseAssetCatalog fails with DuplicateGuid for two records of one GUID",
+          "[asset_system][asset_catalog][runtime_read]") {
+  AssetCatalogRecord first = relativeRecord("a");
+  AssetCatalogRecord second = relativeRecord("a");
+  second.artifact = "other.bin";
+  requireCatalogError(parseAssetCatalog(catalogTextOf({first, second}), "dir"), AssetCatalogError::DuplicateGuid);
+}
+
+TEST_CASE("parseAssetCatalog fails with AssetIdMismatch when asset_id is not the GUID's key",
+          "[asset_system][asset_catalog][runtime_read]") {
+  AssetCatalogRecord record = relativeRecord("a");
+  record.assetId ^= 1;
+  requireCatalogError(parseAssetCatalog(catalogTextOf({record}), "dir"), AssetCatalogError::AssetIdMismatch);
+}
