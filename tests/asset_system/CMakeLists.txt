@@ -45,6 +45,7 @@ add_executable(atlantis_asset_system_tests
   mesh_tangent_generation_tests.cpp
   asset_system_schema_tests.cpp
   scene_semantic_types_tests.cpp
+  authoring_scene_mapping_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_system_tests
@@ -70,6 +71,8 @@ target_compile_definitions(atlantis_asset_system_tests PRIVATE
   ATLANTIS_BISTRO_CONTENT_DIR="${ATLANTIS_BISTRO_CONTENT_DIR}"
   # Plan 0047 M3: the committed catalog source the cooked fixtures' GUIDs come from.
   ATLANTIS_ASSET_CATALOG_SOURCE_PATH="${CMAKE_SOURCE_DIR}/assets/asset_catalog.txt"
+  # Plan 0049 P10: the committed scene-source corpus, enumerated at run time.
+  ATLANTIS_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
 )
 
 # Plan 0029 Section P1: an absolute, configure-time path to the real
