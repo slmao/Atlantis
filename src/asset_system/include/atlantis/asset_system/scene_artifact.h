@@ -35,6 +35,10 @@ namespace atlantis::asset_system {
 // record offset 152. Versions 1-6 are all rejected outright, no
 // dual-version reader.
 inline constexpr std::uint32_t kSceneArtifactSchemaVersion = 7;
+// Plan 0049 P5 (Spec 0049 R5/R6, ruling Q2): the scene semantic version this
+// artifact format projects -- see scene::kSemanticVersion. Independent of
+// the format version above: a layout-only change leaves it alone.
+inline constexpr std::uint32_t kSceneArtifactSemanticVersion = 1;
 inline constexpr std::size_t kSceneArtifactHeaderSizeBytes = 24;
 // position(12) + rotation(12) + scale(12) + has_camera(4) +
 // fov_y/near_z/far_z(12) + exposure_compensation_ev(4) +
