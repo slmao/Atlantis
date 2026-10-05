@@ -6,7 +6,7 @@
   [ADR-0100](../adr/0100-scene-semantic-schema-layering-model-and-versioning.md)
   (`Accepted`); builds on Spec 0048 / [ADR-0099](../adr/0099-engine-schema-core-and-descriptor-vocabulary.md)
   and Plan 0048's binding rulings J1–J7.
-- **Status:** In Review
+- **Status:** In Review ([PR #203](https://github.com/slmao/Atlantis/pull/203))
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Joint Human Review:** pending. Implementation is not authorized until a
   reviewer has read this Plan and Spec 0049 together, ruled J1–J10 below, and
