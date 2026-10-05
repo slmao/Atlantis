@@ -3,9 +3,10 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by ZCode at explicit human direction)
 - **Created:** 2026-10-05
-- **Related Plan(s):** none yet — Plan 0048 drafting is authorized by the
-  Approval below. **Implementation still awaits its own, separate Joint Human
-  Review** of Spec + Plan together, per AGENTS.md's own workflow.
+- **Related Plan(s):** [Plan 0048](../plans/0048-schema-reflection-foundation.md)
+  (`Approved`; Joint Human Review 2026-10-05,
+  [PR #199](https://github.com/slmao/Atlantis/pull/199)) — implemented, merged
+  [PR #200](https://github.com/slmao/Atlantis/pull/200).
 - **Approval:** slmao, 2026-10-05 (review of this Spec's own branch PR,
   [PR #198](https://github.com/slmao/Atlantis/pull/198): "同意") — authorizes
   drafting Plan 0048; Implementation itself still awaits its own, separate
