@@ -5,7 +5,7 @@
   rulings Q1–Q4 binding) —
   [ADR-0099](../adr/0099-engine-schema-core-and-descriptor-vocabulary.md)
   (`Accepted`)
-- **Status:** In Review
+- **Status:** In Review ([PR #199](https://github.com/slmao/Atlantis/pull/199))
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Joint Human Review:** pending — Implementation is not authorized until a
   reviewer has read this Plan and Spec 0048 together, ruled J1–J7 below, and
