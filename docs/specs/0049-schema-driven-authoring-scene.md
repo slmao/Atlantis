@@ -3,9 +3,10 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-05
-- **Related Plan(s):** none yet — Plan 0049 drafting is authorized by the
-  Approval below. **Implementation still awaits its own, separate Joint Human
-  Review** of Spec + Plan together, per AGENTS.md's own workflow.
+- **Related Plan(s):** [Plan 0049](../plans/0049-schema-driven-authoring-scene.md)
+  (`Approved`; Joint Human Review 2026-10-05,
+  [PR #203](https://github.com/slmao/Atlantis/pull/203)) — implemented, merged
+  [PR #204](https://github.com/slmao/Atlantis/pull/204).
 - **Approval:** slmao, 2026-10-05 (review of this Spec's own branch PR,
   [PR #202](https://github.com/slmao/Atlantis/pull/202)) — authorizes drafting Plan 0049; Implementation itself
   still awaits its own, separate Joint Human Review of Spec + Plan together.
