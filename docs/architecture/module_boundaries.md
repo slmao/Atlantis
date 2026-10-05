@@ -670,7 +670,8 @@ narrow consumption point of it).
 **Status: Approved, implemented** (Spec 0013, ADR-0046/ADR-0047, all
 `Accepted`; extended by Spec 0014, ADR-0048–ADR-0051, all `Accepted`) —
 this section states the real, built boundary for the Windows windowed
-path; Android/iOS remain architectural, not implemented (see Extension
+path; Android is implemented (Spec 0034) and was verified with the Bistro
+scene (Spec 0046), while iOS remains future, not implemented (see Extension
 points). **Further extended by Spec 0015 (`Approved`), ADR-0052–
 ADR-0054 (all `Accepted`) — implemented and merged via
 [PR #74](https://github.com/slmao/Atlantis/pull/74) (2026-08-23); the
