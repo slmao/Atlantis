@@ -80,11 +80,11 @@ function(_atlantis_register_catalog_fragment target fragment)
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_CATALOG_FRAGMENTS "${fragment}")
 endfunction()
 
-# Plan 0047 P15: sets <out_var> to the GUID the committed catalog source
-# records for <ROOT>:<PATH>, read at configure time -- the catalog source is a
+# Plan 0047 P15 / ruling I8: sets <out_var> to the one catalog-source entry
+# line for <ROOT>:<PATH>, read at configure time -- the catalog source is a
 # configure dependency, so editing it re-runs CMake. A missing entry fails
 # configuration.
-function(atlantis_catalog_guid out_var)
+function(_atlantis_catalog_entry_line out_var)
   cmake_parse_arguments(ARG "" "ROOT;PATH" "" ${ARGN})
   set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${ATLANTIS_ASSET_CATALOG_SOURCE}")
@@ -93,13 +93,21 @@ function(atlantis_catalog_guid out_var)
     string(REGEX REPLACE "\r$" "" entry "${entry}")
     if(entry MATCHES "^asset: guid=([0-9a-f-]+) type=[a-z_]+ root=([a-z]+) path=(.+)$")
       if(CMAKE_MATCH_2 STREQUAL ARG_ROOT AND CMAKE_MATCH_3 STREQUAL ARG_PATH)
-        set(${out_var} "${CMAKE_MATCH_1}" PARENT_SCOPE)
+        set(${out_var} "${entry}" PARENT_SCOPE)
         return()
       endif()
     endif()
   endforeach()
-  message(FATAL_ERROR "atlantis_catalog_guid(): ${ARG_ROOT}:${ARG_PATH} has no entry in "
-    "${ATLANTIS_ASSET_CATALOG_SOURCE}")
+  message(FATAL_ERROR "${ARG_ROOT}:${ARG_PATH} has no entry in ${ATLANTIS_ASSET_CATALOG_SOURCE}")
+endfunction()
+
+# Plan 0047 P15: sets <out_var> to the GUID the committed catalog source
+# records for <ROOT>:<PATH>.
+function(atlantis_catalog_guid out_var)
+  cmake_parse_arguments(ARG "" "ROOT;PATH" "" ${ARGN})
+  _atlantis_catalog_entry_line(entry ROOT "${ARG_ROOT}" PATH "${ARG_PATH}")
+  string(REGEX MATCH "guid=([0-9a-f-]+)" matched "${entry}")
+  set(${out_var} "${CMAKE_MATCH_1}" PARENT_SCOPE)
 endfunction()
 
 # Plan 0047 P15: where this build assembles its catalog (the Runtime's
@@ -224,6 +232,18 @@ function(atlantis_add_imported_scene)
   set(metadata_path "${cooked_dir}/${ARG_NAME}/${ARG_NAME}.ascene.meta.txt")
   set(stamp "${work_dir}/${ARG_NAME}.stamp")
   get_filename_component(content_parent "${ARG_CONTENT_ROOT}" DIRECTORY)
+  get_filename_component(content_root_name "${ARG_CONTENT_ROOT}" NAME)
+  get_filename_component(gltf_name "${ARG_GLTF}" NAME)
+
+  # Plan 0047 ruling I8 (O4): the import depends on its own catalog-source
+  # line, not the whole file. The line is written at configure time with
+  # file(CONFIGURE), which leaves the file's timestamp alone when the content
+  # is unchanged -- an edit to any other entry re-runs CMake but not the
+  # (minutes-long) import, while an edit to this entry's line does. (The
+  # hand-authored cooks keep depending on the whole catalog source, O4.)
+  _atlantis_catalog_entry_line(import_entry ROOT content PATH ${content_root_name}/${gltf_name})
+  set(import_entry_file "${work_dir}/catalog_entry.txt")
+  file(CONFIGURE OUTPUT "${import_entry_file}" CONTENT "${import_entry}\n" @ONLY NEWLINE_STYLE UNIX)
 
   add_custom_command(
     OUTPUT "${stamp}"
@@ -237,7 +257,7 @@ function(atlantis_add_imported_scene)
     COMMAND atlantis_asset_cooker
       --kind=cook-manifest --import-dir=${import_dir} --cooked-dir=${cooked_dir}
       --content-parent=${content_parent} --stamp=${stamp}
-    DEPENDS "${ARG_GLTF}" "${ARG_OVERLAY}" "${ATLANTIS_ASSET_CATALOG_SOURCE}" atlantis_gltf_importer
+    DEPENDS "${ARG_GLTF}" "${ARG_OVERLAY}" "${import_entry_file}" atlantis_gltf_importer
             atlantis_asset_cooker
     COMMENT "Importing and cooking imported scene: ${ARG_NAME}"
     VERBATIM
@@ -246,8 +266,6 @@ function(atlantis_add_imported_scene)
   _atlantis_register_catalog_fragment(atlantis_${ARG_NAME}_scene "${import_dir}/import.catalog.txt")
   # Plan 0047 P7/P10: the import root declares itself as
   # content:<content-root name>/<glTF file name>.
-  get_filename_component(content_root_name "${ARG_CONTENT_ROOT}" NAME)
-  get_filename_component(gltf_name "${ARG_GLTF}" NAME)
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS
     "gltf_import\tcontent\t${content_root_name}/${gltf_name}")
 
