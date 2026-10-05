@@ -1,6 +1,6 @@
 # Spec: Schema-driven Authoring Scene
 
-- **Status:** In Review
+- **Status:** In Review ([PR #202](https://github.com/slmao/Atlantis/pull/202))
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-05
 - **Related Plan(s):** none yet — drafting a Plan is authorized only after this
