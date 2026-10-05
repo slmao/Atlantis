@@ -28,7 +28,10 @@ be built against once each gets its own approved spec.
 **Responsibilities:** math (vectors, matrices, quaternions), containers,
 memory allocators, logging, assertions, non-graphics/non-windowing
 platform-independent utilities (e.g. time, minimal file I/O abstractions
-where they don't require OS-specific windowing/lifecycle knowledge).
+where they don't require OS-specific windowing/lifecycle knowledge), and the
+descriptive schema vocabulary `atlantis::schema` (`TypeId`/`FieldId`,
+type/field/enum descriptors; [ADR-0099](../adr/0099-engine-schema-core-and-descriptor-vocabulary.md)),
+whose descriptor tables the owning modules author.
 
 **Depends on:** nothing in Atlantis. Standard library and, where an
 approved spec calls for it, a small number of foundation-level
