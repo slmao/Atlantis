@@ -173,10 +173,16 @@ constexpr FieldFlags kAssetRef = FieldFlags::Serializable | FieldFlags::AssetRef
 }  // namespace
 
 TEST_CASE("asset system schema: listing order and table check", "[asset_system][schema]") {
-  constexpr std::array<std::string_view, 6> kExpected{
+  constexpr std::array<std::string_view, 13> kExpected{
       "asset_system::MaterialAssetData",     "asset_system::MaterialKind",
       "asset_system::MaterialAlphaMode",     "asset_system::MaterialSamplerFilter",
       "asset_system::MaterialSamplerAddressMode", "asset_system::EntityRef",
+      // Plan 0049 M1 (expected pin change 6 -> 13): the authoring scene's
+      // semantic types, appended in Spec 0049 ruling Q6's order.
+      "asset_system::scene::Transform",          "asset_system::scene::Camera",
+      "asset_system::scene::CameraFog",          "asset_system::scene::CameraBloom",
+      "asset_system::scene::Renderable",         "asset_system::scene::Light",
+      "asset_system::scene::LightKind",
   };
   const auto schema = assetSystemSchema();
   REQUIRE(schema.size() == kExpected.size());

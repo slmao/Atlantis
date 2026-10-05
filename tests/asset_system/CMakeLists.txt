@@ -44,6 +44,7 @@ add_executable(atlantis_asset_system_tests
   material_asset_cmake_declaration_tests.cpp
   mesh_tangent_generation_tests.cpp
   asset_system_schema_tests.cpp
+  scene_semantic_types_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_system_tests

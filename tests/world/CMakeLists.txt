@@ -11,6 +11,7 @@ add_executable(atlantis_world_tests
   scene_instantiation_tests.cpp
   world_schema_tests.cpp
   schema_uniqueness_tests.cpp
+  scene_world_alignment_tests.cpp
 )
 
 target_link_libraries(atlantis_world_tests
