@@ -731,6 +731,11 @@ requirement or ADR decision.
 - **I7 — `atlantis_catalog_guid()` lands in M4.** The CMake function moves
   forward from P15 to M4 (function only). The compile definitions that use
   it remain M5.
+- **I8 — importer stamp input narrowed to its own catalog line (O4 ruling,
+  2026-10-05, chat).** `atlantis_add_imported_scene()` depends on the import's
+  own catalog-source entry, written at configure time, instead of the whole
+  catalog source. This removes the full re-import an unrelated catalog edit
+  caused. The hand-authored cooks still depend on the whole file (O4 unchanged).
 - **M4 interpretations accepted on review:**
   - an unreadable sidecar reuses `SidecarGuidMismatch`;
   - a fragment's relative location problem is `MalformedFragment`;
