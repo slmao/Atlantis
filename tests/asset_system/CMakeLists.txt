@@ -48,6 +48,7 @@ add_executable(atlantis_asset_system_tests
   authoring_scene_mapping_tests.cpp
   scene_semantic_schema_tests.cpp
   scene_property_address_tests.cpp
+  scene_conformance_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_system_tests
@@ -75,7 +76,17 @@ target_compile_definitions(atlantis_asset_system_tests PRIVATE
   ATLANTIS_ASSET_CATALOG_SOURCE_PATH="${CMAKE_SOURCE_DIR}/assets/asset_catalog.txt"
   # Plan 0049 P10: the committed scene-source corpus, enumerated at run time.
   ATLANTIS_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
+  ATLANTIS_COOKED_SCENES_DIR="${CMAKE_BINARY_DIR}/assets/scenes"
 )
+
+# Plan 0049 P10: the imported Bistro scene joins the conformance corpus when
+# its content-gated build step exists (the Plan 0046 M3 pattern).
+if(DEFINED ATLANTIS_bistro_scene_TARGET)
+  target_compile_definitions(atlantis_asset_system_tests PRIVATE
+    ATLANTIS_BISTRO_SCENE_IMPORT_DIR="${ATLANTIS_bistro_scene_IMPORT_DIR}"
+    ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH="${ATLANTIS_bistro_scene_ARTIFACT_PATH}"
+  )
+endif()
 
 # Plan 0029 Section P1: an absolute, configure-time path to the real
 # authoring-source mesh directory -- mesh_tangent_generation_tests.cpp
