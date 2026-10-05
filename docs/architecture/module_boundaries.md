@@ -687,8 +687,8 @@ own code.**
 the object model, initialization sequence, per-frame orchestration, and
 shutdown; a thin `atlantis_runtime` Windows executable contains only the
 `main()` entry point that constructs and drives it. Owns a Platform
-session for the OS being built (Windows Platform; Android Platform not
-implemented), creates the RHI `Device` and (on the first `SurfaceCreated`
+session for the OS being built (Windows Platform or Android Platform; iOS
+not implemented), creates the RHI `Device` and (on the first `SurfaceCreated`
 event) `Presentation` via the Vulkan Backend, loads both the
 `minimal_mesh` and (Spec 0018) the `MaterialKind::UnlitTextured`
 built-in Shader-System-compiled shader pairs, and (since Spec 0047) loads
@@ -786,9 +786,8 @@ to that frame — see [resource_lifetime.md](resource_lifetime.md).
 **Public/private boundary:** `atlantis_runtime_host` is a private
 composition library — not a public dependency surface any other module
 may consume, despite being a real, linkable CMake target (see Depended
-on by, above). `atlantis_runtime`'s own `main()` (Windows; Android
-`android_main`/`ANativeActivity_onCreate` or equivalent remains
-unimplemented) contains no composition logic of its own beyond building
+on by, above). `atlantis_runtime`'s own `main()` (Windows; on Android,
+`android_main` in `atlantis_runtime_android`) contains no composition logic of its own beyond building
 a fixed configuration from build-tree paths and driving
 `atlantis_runtime_host`'s own already-public API.
 
