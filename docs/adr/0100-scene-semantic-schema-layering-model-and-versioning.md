@@ -1,12 +1,12 @@
 # ADR 0100: Scene Semantic Schema — Layering, Authoring Model, and Semantic Versioning
 
-- **Status:** Proposed
-- **Date:** 2026-10-05
+- **Status:** Accepted
+- **Date:** 2026-10-05 (accepted 2026-10-05)
 - **Deciders:** slmao
-- **Acceptance:** pending. To be `Accepted` before or during the review of
-  [Spec 0049](../specs/0049-schema-driven-authoring-scene.md),
-  with D2, D5, D6 and D7 as ruled there (Spec Q1–Q7).
-- **Related Spec:** [Spec 0049: Schema-driven Authoring Scene](../specs/0049-schema-driven-authoring-scene.md)
+- **Acceptance:** slmao, 2026-10-05 (review of this branch's own PR,
+  [PR #202](https://github.com/slmao/Atlantis/pull/202); accepted together with Spec 0049's Approval, its seven open
+  questions ruled as recommended)
+- **Related Spec:** [Spec 0049: Schema-driven Authoring Scene](../specs/0049-schema-driven-authoring-scene.md) (`Approved`)
 - **Related ADR(s):** builds on
   [ADR-0099](0099-engine-schema-core-and-descriptor-vocabulary.md) (vocabulary
   and module-owned tables; extended in use, not amended),
@@ -68,8 +68,8 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      for them.
 2. **Home and model.**
    - The semantic layer lives in Atlantis Asset System, the scene asset's
-     owner (ADR-0052). Its proposed namespace is
-     `atlantis::asset_system::scene` (Spec Q6).
+     owner (ADR-0052). Its namespace is `atlantis::asset_system::scene`
+     (Spec 0049 ruling Q6).
    - It consists of:
      - standard-layout semantic component value types, described by Spec 0048
        descriptors in `assetSystemSchema()`;
@@ -79,7 +79,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
        constraints as data.
    - The semantic model is **independent of the codec DTOs** (`Decoded*`,
      `ValidatedSceneData`). Those stay undescribed serializer-layer shapes;
-     this answers Spec 0048 Q1's deferral (Spec 0049 Q1).
+     this answers Spec 0048 Q1's deferral (Spec 0049 ruling Q1).
 3. **Identity and references.**
    - A node's identity is its EntityGuid, non-nil and unique per document.
    - Every reference from one node of a document to another (parent, active
@@ -103,7 +103,8 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      ADR-0045 as needed) in the same change.
    - A format-only change leaves the semantic version alone.
    - Catalog schema numbers (ADR-0098) stay format-scoped.
-   - This extends Spec 0048 R8's descriptor-level decoupling to the document.
+   - This extends Spec 0048 R8's descriptor-level decoupling to the document
+     (Spec 0049 ruling Q2).
 6. **Contract plus conformance, not codec rewrite (for now).**
    - The scene schema is normative, and the existing codecs are held to it by
      schema-driven conformance tests: per-field round trips, one negative case
@@ -111,7 +112,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - Source ⇄ semantic is lossless at the semantic level. Semantic → artifact
      is a declared projection.
    - Codecs become schema-driven, and `Decoded*` is retired, in the spec that
-     introduces the next serializer (Spec 0049 Q3).
+     introduces the next serializer (Spec 0049 ruling Q3).
 7. **Reserved property address.**
    - A property inside a scene document is addressed by (node EntityGuid,
      component `TypeId`, `FieldId`). Components are keyed per node by
@@ -119,10 +120,10 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - Cross-document entity references use `EntityRef` (ADR-0097 D6).
    - Document-level fields are kept separate from the node model.
    - These are the only Prefab and Editor reservations. Nothing for either is
-     implemented (Spec 0049 Q4).
+     implemented (Spec 0049 ruling Q4).
 8. **Domains and constraints are scene-local data** in Asset System. No Core
    vocabulary is added. Promotion to `atlantis::schema` needs a second
-   consumer and its own ADR (Spec 0049 Q7).
+   consumer and its own ADR (Spec 0049 ruling Q7).
 
 ## Consequences
 
