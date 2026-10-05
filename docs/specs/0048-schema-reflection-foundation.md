@@ -1,6 +1,6 @@
 # Spec: Schema & Reflection Foundation
 
-- **Status:** In Review
+- **Status:** In Review ([PR #198](https://github.com/slmao/Atlantis/pull/198))
 - **Author:** slmao (drafted by ZCode at explicit human direction)
 - **Created:** 2026-10-05
 - **Related Plan(s):** none yet — drafting a Plan is authorized only after this
