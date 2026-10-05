@@ -1,18 +1,23 @@
 # Spec: Schema & Reflection Foundation
 
-- **Status:** In Review ([PR #198](https://github.com/slmao/Atlantis/pull/198))
+- **Status:** Approved
 - **Author:** slmao (drafted by ZCode at explicit human direction)
 - **Created:** 2026-10-05
-- **Related Plan(s):** none yet — drafting a Plan is authorized only after this
-  Spec's Approval.
-- **Approval:** pending — scope and sequencing (this spec ahead of the
-  Tool/Editor Connection Protocol candidate) fixed by the maintainer,
-  2026-10-05 (chat).
+- **Related Plan(s):** none yet — Plan 0048 drafting is authorized by the
+  Approval below. **Implementation still awaits its own, separate Joint Human
+  Review** of Spec + Plan together, per AGENTS.md's own workflow.
+- **Approval:** slmao, 2026-10-05 (review of this Spec's own branch PR,
+  [PR #198](https://github.com/slmao/Atlantis/pull/198): "同意") — authorizes
+  drafting Plan 0048; Implementation itself still awaits its own, separate
+  Joint Human Review of Spec + Plan together. Scope and sequencing (this spec
+  ahead of the Tool/Editor Connection Protocol candidate) were fixed by the
+  maintainer before drafting (2026-10-05, chat); the same review ruled all
+  four open questions. See Risks & Open Questions below.
 - **Related ADR(s):**
   [ADR-0099](../adr/0099-engine-schema-core-and-descriptor-vocabulary.md)
-  (`Proposed`, drafted alongside this spec) — where the vocabulary lives, who
-  owns the descriptor tables, how IDs are derived, and the descriptive-only
-  scope of the first version.
+  (`Accepted` 2026-10-05, alongside this Spec's own Approval) — where the
+  vocabulary lives, who owns the descriptor tables, how IDs are derived, and
+  the descriptive-only scope of the first version.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
@@ -128,8 +133,8 @@ this spec precedes Candidate 2.
 - No rewiring of Asset System cook/load or World to be schema-driven.
 - Not the Editor Connection Protocol itself: Candidate 2 remains a
   candidate; this spec only precedes it.
-- The scene-source `Decoded*` DTO mirrors are not described in v1 (see
-  Open Questions).
+- The scene-source `Decoded*` DTO mirrors are not described in v1 (ruling
+  Q1).
 
 ## Requirements
 
@@ -139,8 +144,8 @@ this spec precedes Candidate 2.
   and `FieldId`; `TypeKind {Primitive, Struct, Enum}`; `PrimitiveKind`;
   bit-wise combinable `FieldFlags {Serializable, Editable, AssetReference,
   EntityReference, Optional}` (the two reference flags are mutually
-  exclusive); and a `SchemaVersion` (an unsigned 32-bit per-descriptor
-  value).
+  exclusive; `Optional` ships in v1, ruling Q3); and a `SchemaVersion` (an
+  unsigned 32-bit per-descriptor value).
 - **R2 — Descriptors.** A `FieldDescriptor` carries its `FieldId`, name,
   field type (primitive kind, or the referenced type's `TypeId` for
   struct/enum fields), flags, and a byte offset within the described type.
@@ -180,14 +185,16 @@ this spec precedes Candidate 2.
   | `asset_system::EntityRef` | Asset System | struct | `scene` (AssetGuid + `AssetReference`), `entity` (EntityGuid + `EntityReference`) |
 
   `PrimitiveKind` v1 ships exactly what this set exercises: `UInt64`,
-  `Float32`, `Vec3Float32`, `Vec4Float32`, `AssetGuid`, `EntityGuid`.
+  `Float32`, `Vec3Float32`, `Vec4Float32`, `AssetGuid`, `EntityGuid` —
+  vectors are primitive kinds, not structs of `Float32` fields (ruling Q2).
   Additional kinds or flag bits are additive vocabulary changes; changed
   flag/kind semantics are not.
 - **R6 — Per-module enumeration.** World and Asset System each expose one
   function returning `std::span<const TypeDescriptor>` over static
-  immutable storage (working names `worldSchema()`, `assetSystemSchema()`;
-  naming ruled with the Plan). No global registry, no runtime registration,
-  no mutation.
+  immutable storage: `atlantis::world::worldSchema()` and
+  `atlantis::asset_system::assetSystemSchema()` (ruling Q4; the Plan places
+  them in each module's schema header). No global registry, no runtime
+  registration, no mutation.
 - **R7 — Thread-safety documented at the API**: immutable static data, safe
   for concurrent reads (one documented line, per AGENTS.md threading rules).
 - **R8 — Version rule.** Each `TypeDescriptor`'s `SchemaVersion` starts at 1
@@ -263,8 +270,8 @@ top-level module; module-owned constexpr tables with per-module enumeration
 and no registry; name-derived FNV-1a-64 identity; descriptive-only scope
 with offsets as data but no accessor API; flag semantics; the decoupled
 per-descriptor version counter) are recorded in
-[ADR-0099](../adr/0099-engine-schema-core-and-descriptor-vocabulary.md),
-drafted alongside this spec. No dependency, threading-model, memory-ownership,
+[ADR-0099](../adr/0099-engine-schema-core-and-descriptor-vocabulary.md)
+(`Accepted` 2026-10-05). No dependency, threading-model, memory-ownership,
 or backend change.
 
 ## Alternatives Considered
@@ -337,20 +344,26 @@ Risks:
   both exist; v1 describes the World side only, so the mirror pair stays
   convention-synced. Unifying them is out of scope here.
 
-Open questions (ruled at review):
+Open questions — all four ruled by Human Review (slmao, 2026-10-05, review
+of [PR #198](https://github.com/slmao/Atlantis/pull/198): "同意"): Q1–Q3 as
+their recommendations; Q4, whose recommendation deferred naming to the Plan,
+is closed here by adopting the names this Spec proposed, leaving only their
+placement to the Plan:
 
-- **Q1:** Describe the scene-source `Decoded*` DTOs in v1 as well, or defer?
-  Recommendation: defer — the World set covers live editing; pull the DTOs
-  in when the scene-authoring tool spec exists.
-- **Q2:** Vector granularity — `Vec3Float32`/`Vec4Float32` as primitives
-  (proposed) or as structs of `Float32` fields? Recommendation: primitives;
-  it matches how the math is consumed and keeps descriptors flat.
-- **Q3:** `FieldFlags::Optional` in v1 (proposed; `Renderable.materialAsset`
-  and `MaterialAssetData`'s optional references need it) or defer until a
-  consumer distinguishes absent? Recommendation: include now; it is
-  load-bearing for any generic accessor.
-- **Q4:** Enumeration entry-point names (`worldSchema()`/`assetSystemSchema()`
-  proposed). Recommendation: rule with the Plan.
+- **Q1 — Scene-source `Decoded*` DTOs in v1.** **Ruled (2026-10-05):**
+  defer. The World set covers live editing; the DTOs are pulled in when the
+  scene-authoring tool spec exists (Non-Goals; Out of Scope).
+- **Q2 — Vector granularity.** **Ruled (2026-10-05):** `Vec3Float32` and
+  `Vec4Float32` are `PrimitiveKind`s, not structs of `Float32` fields — it
+  matches how the math is consumed and keeps descriptors flat (R5).
+- **Q3 — `FieldFlags::Optional` in v1.** **Ruled (2026-10-05):** included
+  now; `Renderable.materialAsset` and `MaterialAssetData`'s optional
+  references need it, and it is load-bearing for any generic accessor (R1,
+  R4).
+- **Q4 — Enumeration entry-point names.** **Ruled (2026-10-05):**
+  `atlantis::world::worldSchema()` and
+  `atlantis::asset_system::assetSystemSchema()`, as proposed (R6). The Plan
+  fixes the header each lives in; a different name needs its own ruling.
 
 ## Out of Scope / Future Work
 

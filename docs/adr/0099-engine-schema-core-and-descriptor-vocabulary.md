@@ -1,11 +1,12 @@
 # ADR 0099: Engine Schema Core — Descriptor Vocabulary Location, Ownership, and Identity
 
-- **Status:** Proposed
-- **Date:** 2026-10-05
+- **Status:** Accepted
+- **Date:** 2026-10-05 (accepted 2026-10-05)
 - **Deciders:** slmao
-- **Acceptance:** pending — to be `Accepted` before or during the joint
-  Spec+Plan review of [Spec 0048](../specs/0048-schema-reflection-foundation.md).
-- **Related Spec:** [Spec 0048: Schema & Reflection Foundation](../specs/0048-schema-reflection-foundation.md)
+- **Acceptance:** slmao, 2026-10-05 (review of this branch's own PR,
+  [PR #198](https://github.com/slmao/Atlantis/pull/198): "同意"; alongside
+  Spec 0048's Approval)
+- **Related Spec:** [Spec 0048: Schema & Reflection Foundation](../specs/0048-schema-reflection-foundation.md) (`Approved`)
 
 Record one decision and its rationale. Follow the
 [ADR lifecycle](README.md); keep approval discussion and execution evidence in
@@ -43,9 +44,11 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    Asset System or World headers.
 2. **Modules author their own descriptor tables**, beside the types they
    describe, as immutable static (constexpr-where-practical) data, and each
-   exposes one enumeration function returning a span. No global registry,
-   no runtime registration, no mutation — consistent with the no-global-
-   mutable-singletons rule.
+   exposes one enumeration function returning a span
+   (`atlantis::world::worldSchema()`,
+   `atlantis::asset_system::assetSystemSchema()`; Spec 0048 ruling Q4).
+   No global registry, no runtime registration, no mutation — consistent
+   with the no-global-mutable-singletons rule.
 3. **Identity is name-derived.** `TypeId` and `FieldId` are distinct strong
    types over `uint64`, computed as FNV-1a-64 of the qualified type name
    and of `qualifiedType.fieldName`. Deterministic across builds,
@@ -66,8 +69,10 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    belongs to the consuming spec (e.g. the editor protocol).
 6. **Flags describe meaning, kinds describe shape.** `FieldFlags`:
    `Serializable`, `Editable`, `AssetReference`, `EntityReference`
-   (mutually exclusive with each other), `Optional`. `PrimitiveKind` v1
-   ships exactly what the v1 type set exercises; more kinds/flag bits are
+   (mutually exclusive with each other), `Optional` (in v1, Spec 0048
+   ruling Q3). `PrimitiveKind` v1 ships exactly what the v1 type set
+   exercises, with `Vec3Float32`/`Vec4Float32` as primitive kinds rather
+   than structs of `Float32` fields (ruling Q2); more kinds/flag bits are
    additive, changed semantics are not.
 7. **Per-descriptor `SchemaVersion`, decoupled from file formats.** It
    starts at 1 and bumps on described-type shape change. It is a separate
