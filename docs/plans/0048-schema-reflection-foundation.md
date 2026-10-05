@@ -2,15 +2,17 @@
 
 - **Spec:** [Spec 0048: Schema & Reflection Foundation](../specs/0048-schema-reflection-foundation.md)
   (`Approved`, 2026-10-05, [PR #198](https://github.com/slmao/Atlantis/pull/198);
-  rulings Q1–Q4 binding) —
+  rulings Q1–Q4 binding; corrected 2026-10-05 per rulings J1/J2 below) —
   [ADR-0099](../adr/0099-engine-schema-core-and-descriptor-vocabulary.md)
   (`Accepted`)
-- **Status:** In Review ([PR #199](https://github.com/slmao/Atlantis/pull/199))
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending — Implementation is not authorized until a
-  reviewer has read this Plan and Spec 0048 together, ruled J1–J7 below, and
-  explicitly authorized it. **J1 blocks M3** (it needs a reviewed Spec
-  erratum or an equivalent ruling first).
+- **Joint Human Review:** slmao, 2026-10-05 — reviewed this Plan and
+  [Spec 0048](../specs/0048-schema-reflection-foundation.md) together in
+  [PR #199](https://github.com/slmao/Atlantis/pull/199) and explicitly
+  authorized Implementation from Milestone 1 (chat confirmation). J1 ruled
+  (a), carried as the Spec's 2026-10-05 Correction; J2–J7 ruled as
+  recommended. See Joint Review decisions below.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -47,7 +49,8 @@ Read at `origin/main` `a936c5d` (PR #198 merged).
    `normalMapTexture`, `emissiveTexture`) are plain `AssetId` with `0` = none,
    not `std::optional`. Two of its fields have enum types that are **not** in
    R5's v1 set: `MaterialSamplerFilter filter` and
-   `MaterialSamplerAddressMode addressMode` (`:12-20`). See J1.
+   `MaterialSamplerAddressMode addressMode` (`:12-20`). Ruling J1 added both
+   to R5 by Spec correction.
 4. **`EntityRef`** (`entity_ref.h`) is `{AssetGuid scene; EntityGuid entity;}`.
    Each GUID is a struct over `std::array<std::byte, 16>` (`asset_guid.h:24-34`).
    No scene grammar stores an `EntityRef` yet; it has text and binary codecs.
@@ -262,11 +265,12 @@ before the next begins.
 standard-layout and offset `static_assert`s under libc++, including
 `Renderable`'s `std::optional`).
 
-### M3 — Asset System tables (R4, R5 Asset System rows, R6, R8) — **after J1**
+### M3 — Asset System tables (R4, R5 Asset System rows, R6, R8)
 
 1. `asset_system_schema.h/.cpp` holds descriptors for `MaterialAssetData`
-   (18 fields, reading item 3), `MaterialKind`, `MaterialAlphaMode`, the
-   enums J1 rules in, and `EntityRef`.
+   (18 fields, reading item 3), `MaterialKind`, `MaterialAlphaMode`,
+   `MaterialSamplerFilter`, `MaterialSamplerAddressMode` (R5 as corrected,
+   ruling J1), and `EntityRef`.
 2. `tests/asset_system/asset_system_schema_tests.cpp`: the P9 sync checks,
    and the enumeration order and count.
 3. The existing Asset System boundary scan covers the new files unchanged:
@@ -332,9 +336,8 @@ against this Plan.
 
 ## Sequencing & Dependencies
 
-M1 → M2 (the World tables use the vocabulary and its validator) → M3 (same,
-and blocked on J1) → M4 (needs both tables). M2 and M3 are independent of
-each other: if J1 is still open after M2, M2 may proceed and M3 waits.
+M1 → M2 (the World tables use the vocabulary and its validator) → M3 (same)
+→ M4 (needs both tables). M2 and M3 are independent of each other.
 
 A post-merge docs pass (registry row, CLAUDE.md "Current repository state"
 if it is still current, per the PR #197 precedent) follows the implementation
@@ -369,58 +372,52 @@ This maps to Spec 0048's Testing & Verification Plan.
   obligation, since no GPU path is touched (Spec Testing plan). The existing
   suites run as part of the byte-behavior guard.
 
-## Joint Review decisions (to be ruled)
+## Joint Review decisions — ruled (Joint Human Review, slmao, 2026-10-05, PR #199)
 
-- **J1 — Sampler enums missing from R5 (blocks M3).** `MaterialAssetData.filter`
-  and `.addressMode` are `MaterialSamplerFilter` and
-  `MaterialSamplerAddressMode`, which R5's "exact" set does not list. An enum
-  field must reference an enum descriptor (R2). Under the approved Spec,
-  `MaterialAssetData` therefore cannot be described completely.
-  - Options:
-    - **(a)** a one-line Spec 0048 erratum adding both enums to R5, reviewed
-      on its own (or as a separate commit in this PR if the reviewer
-      directs). This is additive and of the same nature as `MaterialKind`.
-    - **(b)** describe `MaterialAssetData` without those two fields. This
-      contradicts R5's "fields as the headers state them" and defeats P9's
-      arity check.
-    - **(c)** misdescribe them as primitives. This is wrong by R2.
-  - **Recommendation: (a).** The Plan is drafted assuming (a) and does not
-    edit the Spec itself.
-- **J2 — `Optional` on `0`-sentinel references.** Q3's rationale mentions
-  "`MaterialAssetData`'s optional references", but those fields are plain
-  `AssetId` with `0` = none. R4 defines `Optional` as `std::optional` in the
-  C++ type.
-  - **Recommendation:** follow R4, so `Optional` applies only to
-    `Renderable.materialAsset` (P6). Q3's ruling, `Optional` in v1, still
-    holds through that field.
-- **J3 — `Serializable`/`Editable` meaning.** The Spec names the flags
-  without defining them.
-  - **Recommendation:** P6's rules. `Serializable` means the value
-    round-trips through a committed format or codec. `Editable` means it is
-    on the live World editing surface, so World component fields only in
-    v1.
-- **J4 — A test-only macro in the sync tests.** ADR-0099 D4 rules out macros
-  for *authoring descriptors*. P9 uses one stringizing macro, confined to the
-  sync-test translation units, to tie each name string to its member token.
-  Without it, names are checked only against a second hand-written literal.
-  - **Recommendation:** allow it in tests only. Never in headers or tables.
-- **J5 — Global Definition of Done item.** The Spec's Risks section says
-  "the Definition of Done adds" the same-PR update/bump obligation. The
-  obligation binds future PRs, so this Plan reads it as an item in
-  `docs/process/definition-of-done.md`, not as a Plan-only delta.
-  - **Recommendation:** add it in M4.
-- **J6 — Small Core API beyond the vocabulary nouns.** `primitiveSize`/
-  `primitiveAlignment`, `isWellFormed` and two `toString`s. They exist to
-  make the tables compile-time-verified (non-functional requirement) and to
-  give ADR-0099 D1's `.cpp` a purpose.
-  - **Recommendation:** accept. The alternative is header-only Core with
-    the checks duplicated per module.
-- **J7 — Enumerator completeness is not mechanical.** C++20 cannot list an
-  enum's members, and MSVC's switch-coverage warnings (C4061/C4062) are off
-  under `/W4`.
-  - **Recommendation:** accept. The protection for added enumerators is the
-    J5 Definition of Done item plus review. Every *listed* enumerator's name
-    and value stays checked.
+J1 was ruled (a). J2–J7 were each ruled as recommended. None of them changes
+an ADR-0099 decision.
+
+- **J1 — Sampler enums missing from R5.** **Ruled (2026-10-05): (a).**
+  - `MaterialAssetData.filter` and `.addressMode` have enum types that the
+    approved R5 set did not list. Without them the struct cannot be
+    described completely (R2; P9 arity).
+  - Spec 0048 carries a post-Approval Correction adding
+    `MaterialSamplerFilter` and `MaterialSamplerAddressMode` to R5. It is a
+    separate commit in this PR. M3 describes both.
+  - Rejected: (b) omitting the two fields, which contradicts R5 and P9;
+    (c) describing them as primitives, which is wrong by R2.
+- **J2 — `Optional` on `0`-sentinel references.** **Ruled (2026-10-05): as
+  recommended.**
+  - Per R4, `Optional` marks only `std::optional` members, so only
+    `Renderable.materialAsset` (P6).
+  - The material texture references are not `Optional`; their `0` = none
+    convention stays a value-domain fact owned by the validators.
+  - The same Spec Correction fixes Q3's rationale, which had claimed
+    `std::optional` references in `MaterialAssetData`.
+- **J3 — `Serializable`/`Editable` meaning.** **Ruled (2026-10-05): as
+  recommended.** P6 is binding:
+  - `Serializable`: the value round-trips through a committed format or
+    codec.
+  - `Editable`: the field is on the live World editing surface, so World
+    component fields only in v1.
+- **J4 — A test-only macro in the sync tests.** **Ruled (2026-10-05): as
+  recommended.**
+  - One stringizing macro is allowed in the sync-test translation units
+    only, to tie each name string to its member token (P9).
+  - Never in headers or tables: ADR-0099 D4 still governs descriptor
+    authoring.
+- **J5 — Global Definition of Done item.** **Ruled (2026-10-05): as
+  recommended.** M4 adds the same-PR "update the table and bump
+  `SchemaVersion`" obligation as one item in
+  `docs/process/definition-of-done.md`.
+- **J6 — Small Core API beyond the vocabulary nouns.** **Ruled (2026-10-05):
+  as recommended.** Core ships `primitiveSize`/`primitiveAlignment`,
+  `isWellFormed`, and the two `toString`s in `schema.cpp` (P2, P7).
+- **J7 — Enumerator completeness is not mechanical.** **Ruled (2026-10-05):
+  as recommended.**
+  - Accepted as a residual risk. An added enumerator is caught by the J5
+    Definition of Done item and by review.
+  - Every listed enumerator's name and value is still checked (P9).
 
 ## Rollback Plan
 
