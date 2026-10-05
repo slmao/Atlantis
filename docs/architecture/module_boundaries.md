@@ -286,7 +286,12 @@ boundary, not a placeholder. **Extended by Spec 0015 (Scene Asset &
 Serialization Foundation, `Approved`), ADR-0052–ADR-0054 (all
 `Accepted`) — implemented and merged via
 [PR #74](https://github.com/slmao/Atlantis/pull/74) (2026-08-23); the
-paragraphs below already describe the extended boundary.**
+paragraphs below already describe the extended boundary. Extended again by
+Spec 0047 (`Approved`), [ADR-0097](../adr/0097-guid-keyed-asset-and-entity-identity.md)/
+[ADR-0098](../adr/0098-asset-catalog-and-catalog-based-resolution.md) (both
+`Accepted`) — implemented and merged via
+[PR #196](https://github.com/slmao/Atlantis/pull/196) (persistent identity and
+the asset catalog; see the Responsibilities paragraph below).**
 
 **Responsibilities:** turns checked-in, human-authored authoring source
 into a deterministic, versioned runtime artifact plus a metadata
@@ -298,6 +303,16 @@ Transform/Camera/Renderable-shaped DTOs that never name a
 `atlantis::world::` type, ADR-0053; Spec 0015). Never constructs a GPU
 resource itself.
 
+Since Spec 0047 it also owns the persistent identity and catalog surface:
+`AssetGuid`/`EntityGuid` (128-bit, with their text and binary codecs and the
+deterministic derivation ADR-0097 defines), `AssetId` as the GUID's 64-bit key
+(`assetKey()`), the committed catalog source (`assets/asset_catalog.txt`), the
+build-assembled, GUID-keyed cooked catalog (per-cook fragments merged by
+assembly) and its closure catalogs, `AssetCatalog`/`loadAssetCatalog()` — the
+Runtime's read side — and the `EntityRef` value type and codecs. These are pure
+CPU-side types and files; minting a GUID exists only in the cooker (Tools), and
+this module still depends on Core only.
+
 **Depends on:** Core only. No RHI, Renderer, RenderGraph, Shader System,
 Vulkan Backend, Platform, Tools, or World dependency — verified by an
 include-scanning test (`tests/asset_system/module_boundary_tests.cpp`),
@@ -308,10 +323,12 @@ and, outside this module, any composition root that loads an asset and
 then itself constructs GPU resources from the CPU data returned —
 `tests/image_regression/fixture/` and Atlantis Runtime (which loads a
 real scene asset, not a single hardcoded mesh — see the Atlantis
-Runtime section below) and `atlantis::world::fromValidatedSceneData()`
-(Atlantis World, for the CPU-side scene graph only — World still
-depends on Asset System only narrowly, for `AssetId`, per
-ADR-0048/ADR-0053, never the reverse). Asset System itself is never
+Runtime section below) and `atlantis::world::instantiateScene()`/
+`fromValidatedSceneData()` (Atlantis World, for the CPU-side scene graph
+only — World still depends on Asset System only narrowly, per
+ADR-0048/ADR-0053/ADR-0097 D5: `AssetId` in its component data and, in
+`scene_instantiation.h` alone, `ValidatedSceneData` and `EntityGuid`; never
+the reverse). Asset System itself is never
 depended on by Renderer, RHI, RenderGraph, or Vulkan Backend, and gains
 no dependency from any of them in the other direction either.
 
@@ -397,7 +414,10 @@ The per-scene manifest (Spec 0015) gained `MATERIAL_DEPENDENCIES`/
 `TEXTURE_DEPENDENCIES` CMake arguments, still the same, unwidened
 three-column, build-tree-private, scene-scoped file — never a fourth
 "kind" column, since Runtime already knows which Asset ID is which kind
-from the scene's own decoded structure. `World::Renderable` widened the
+from the scene's own decoded structure. (Retired by Spec 0047: the
+per-scene manifest and these CMake arguments are replaced by the assembled
+catalog, which records each dependency from the cooked content —
+[ADR-0098](../adr/0098-asset-catalog-and-catalog-based-resolution.md).) `World::Renderable` widened the
 same way, in kind, as `DecodedRenderable` — one more plain, optional
 `AssetId` field, no change to `World`'s own dependency closure or
 construction of zero Renderer/RHI types.
@@ -563,13 +583,13 @@ hard-clip-only output contract is unchanged), image-based lighting,
 shadows, and normal mapping/tangent-space input; none of them exist
 anywhere in this codebase as a result of this work.
 
-**Extension points:** a rename-stable GUID identity scheme and a real
-derived-data cache are each named, explicitly out-of-scope future work
-in Spec 0012/Spec 0015 — not designed or scaffolded here. A
-distributable, cross-session Asset Catalog/Registry is likewise
-explicitly deferred (Spec 0015's own Non-Goals) — the scene dependency
-manifest Spec 0015 adds is build-tree-private, never a portable part of
-any artifact.
+**Extension points:** a real derived-data cache is named, explicitly
+out-of-scope future work in Spec 0012/Spec 0015 — not designed or
+scaffolded here. The rename-stable GUID identity scheme and the
+cross-session Asset Catalog that Spec 0012/Spec 0015 deferred were delivered
+by Spec 0047 ([ADR-0097](../adr/0097-guid-keyed-asset-and-entity-identity.md),
+[ADR-0098](../adr/0098-asset-catalog-and-catalog-based-resolution.md)); the
+catalog is still a build output, not an asset database.
 
 ---
 
@@ -590,9 +610,14 @@ producing each entity's own world matrix via a fully iterative
 (non-recursive) traversal. `World` never mutates itself automatically;
 every state change is caller-driven.
 
-**Depends on:** Core, and, narrowly, Asset System (for the `AssetId`
-type only, named in `Renderable`'s own two public fields — a mandatory
-`meshAsset` and, since Spec 0018, an *optional* `materialAsset`). No
+**Depends on:** Core, and, narrowly, Asset System: the `AssetId` type
+named in `Renderable`'s own two public fields (a mandatory `meshAsset` and,
+since Spec 0018, an *optional* `materialAsset`), and — in
+`scene_instantiation.h` alone, since Spec 0047 — `ValidatedSceneData` and
+`EntityGuid` (the `SceneEntityMap` of
+[ADR-0097](../adr/0097-guid-keyed-asset-and-entity-identity.md) D5; no
+component type, `EntityId` or other World header names a GUID, checked by
+`tests/world/module_boundary_tests.cpp`). No
 RHI, Renderer, RenderGraph, Shader System, Vulkan Backend, Platform,
 Runtime, or Tools dependency in either direction — verified by an
 include-scanning test (`tests/world/module_boundary_tests.cpp`), not
@@ -623,7 +648,11 @@ and, since Spec 0015, `fromValidatedSceneData()`
 (`scene_instantiation.h`, deliberately not a `World` member function) —
 two-pass, deterministic, genuinely infallible instantiation from Asset
 System's own `ValidatedSceneData`, never persisting a scene-local node
-index as `EntityId`. The slot map's own internal representation
+index as `EntityId`. Since Spec 0047 the same header also declares
+`instantiateScene()` — which returns the `World` together with an immutable
+`SceneEntityMap` (`EntityGuid → EntityId`, a snapshot owned by the caller) —
+and `fromValidatedSceneData()` is its `.world`, so the two cannot diverge.
+`World`, `EntityId` and the components store no GUID; liveness stays World's. The slot map's own internal representation
 (`Slot`, the opaque identity-token type) is private to `world.cpp`,
 never declared in any public header.
 
@@ -661,8 +690,10 @@ session for the OS being built (Windows Platform; Android Platform not
 implemented), creates the RHI `Device` and (on the first `SurfaceCreated`
 event) `Presentation` via the Vulkan Backend, loads both the
 `minimal_mesh` and (Spec 0018) the `MaterialKind::UnlitTextured`
-built-in Shader-System-compiled shader pairs, and reads a real scene
-asset's own dependency manifest, decodes its `ValidatedSceneData`,
+built-in Shader-System-compiled shader pairs, and (since Spec 0047) loads
+the assembled asset catalog, resolves the configured scene's GUID through it
+(`BootstrapConfig::assetCatalogPath` and `sceneAsset`; type and
+artifact-schema checks on every record), decodes its `ValidatedSceneData`,
 resolves and loads every distinct mesh it references (in ascending
 first-reference order, never `AssetId`-sorted order — a keyed
 `meshResourceMap_`, not a single hardcoded asset) — since Spec 0018,
@@ -670,9 +701,12 @@ also resolves and loads every distinct material an entity's
 `Renderable` names (and each material's own referenced texture,
 deduplicated by texture `AssetId`) into two further CPU-only maps, all
 published atomically together — and instantiates the one real `World`
-instance via `atlantis::world::fromValidatedSceneData()` — replacing
-the former fixed, hardcoded six-entity validation scene Spec 0014
-shipped. Each frame: calls `World::updateTransforms()`, extracts the
+instance via `atlantis::world::instantiateScene()` (since Spec 0047; keeping
+the loaded scene's GUID and its `SceneEntityMap` beside the `World`, which a
+Runtime-private `resolveEntityRef()` uses to resolve a persisted `EntityRef` —
+unknown scene, unknown entity or dead entity is an explicit error, ADR-0097
+D6) — replacing the former fixed, hardcoded six-entity validation scene Spec
+0014 shipped. Each frame: calls `World::updateTransforms()`, extracts the
 active camera's view/projection matrices, computes which referenced
 materials are not yet GPU-realized and realizes them (Spec 0018 — a
 new, independently-testable `material_realization.h`/`.cpp` module;
