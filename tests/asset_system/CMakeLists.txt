@@ -43,6 +43,7 @@ add_executable(atlantis_asset_system_tests
   load_material_tests.cpp
   material_asset_cmake_declaration_tests.cpp
   mesh_tangent_generation_tests.cpp
+  asset_system_schema_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_system_tests
@@ -146,6 +147,13 @@ target_compile_definitions(atlantis_asset_system_tests PRIVATE
   ATLANTIS_CMAKE_DECLARATION_TEST_SCENE_METADATA_PATH="${ATLANTIS_cmake_declaration_test_scene_METADATA_PATH}"
   ATLANTIS_CMAKE_DECLARATION_TEST_SCENE_GUID="${ATLANTIS_cmake_declaration_test_scene_GUID}"
   ATLANTIS_ASSET_CATALOG_PATH="${ATLANTIS_ASSET_CATALOG_PATH}"
+)
+
+# Plan 0048 M3: asset_system_schema_tests.cpp's no-default enumerator canary
+# switches need MSVC's C4062, off by default even at /W4 -- the same
+# target-scoped option tests/world/CMakeLists.txt already uses.
+target_compile_options(atlantis_asset_system_tests PRIVATE
+  $<$<CXX_COMPILER_ID:MSVC>:/w14062>
 )
 
 catch_discover_tests(atlantis_asset_system_tests DISCOVERY_MODE PRE_TEST)
