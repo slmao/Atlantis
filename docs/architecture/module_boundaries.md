@@ -316,6 +316,13 @@ Runtime's read side — and the `EntityRef` value type and codecs. These are pur
 CPU-side types and files; minting a GUID exists only in the cooker (Tools), and
 this module still depends on Core only.
 
+Since Spec 0049 it also owns the scene's semantic layer
+(`atlantis::asset_system::scene`, [ADR-0100](../adr/0100-scene-semantic-schema-layering-model-and-versioning.md)):
+the semantic component types, the authoring scene document, `sceneSchema()`
+with its semantic version and fingerprint, and the property address. The scene
+source and artifact codecs are serializers below it, mapped to it on their side
+and held to it by conformance tests.
+
 **Depends on:** Core only. No RHI, Renderer, RenderGraph, Shader System,
 Vulkan Backend, Platform, Tools, or World dependency — verified by an
 include-scanning test (`tests/asset_system/module_boundary_tests.cpp`),

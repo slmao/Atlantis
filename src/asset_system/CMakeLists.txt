@@ -36,6 +36,9 @@ add_library(atlantis_asset_system STATIC
   src/cook_material.cpp
   src/load_material.cpp
   src/asset_system_schema.cpp
+  src/authoring_scene_mapping.cpp
+  src/scene_semantic_schema.cpp
+  src/scene_property_address.cpp
 )
 add_library(Atlantis::AssetSystem ALIAS atlantis_asset_system)
 

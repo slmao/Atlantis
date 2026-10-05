@@ -19,7 +19,7 @@ TEST_CASE("schema: TypeIds, FieldIds and type names are unique across modules", 
   std::vector<atlantis::schema::TypeDescriptor> combined;
   for (const auto& type : atlantis::world::worldSchema()) combined.push_back(type);
   for (const auto& type : atlantis::asset_system::assetSystemSchema()) combined.push_back(type);
-  REQUIRE(combined.size() == 13);
+  REQUIRE(combined.size() == 20);  // Plan 0049 M1: 13 -> 20, the seven scene types
 
   std::set<std::uint64_t> typeIds;
   std::set<std::uint64_t> fieldIds;

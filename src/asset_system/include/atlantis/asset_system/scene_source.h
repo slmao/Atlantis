@@ -87,6 +87,12 @@ enum class SceneSourceParseError {
 // token parses successfully here.
 [[nodiscard]] atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std::string_view text);
 
+// Plan 0049 P5 (Spec 0049 R5/R6, ruling Q2): the scene semantic version this
+// serializer (source v7) encodes -- see scene::kSemanticVersion in
+// scene_semantic_schema.h. A semantic bump fails the conformance build until
+// this declaration (and the format, per ADR-0045) follows.
+inline constexpr std::uint32_t kSceneSourceSemanticVersion = 1;
+
 // Serializes back to the exact grammar parseSceneSource() accepts --
 // exists for round-trip testing (V1), matching serializeMeshSource()'s
 // own established role exactly.
