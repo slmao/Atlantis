@@ -13,6 +13,11 @@
   ahead of the Tool/Editor Connection Protocol candidate) were fixed by the
   maintainer before drafting (2026-10-05, chat); the same review ruled all
   four open questions. See Risks & Open Questions below.
+  **Correction (2026-10-05, post-Approval, Plan 0048 Joint Human Review,
+  [PR #199](https://github.com/slmao/Atlantis/pull/199)):** R5 gains the two
+  sampler enums `MaterialAssetData` already names (ruling J1); Q3's rationale
+  no longer claims `MaterialAssetData` has `std::optional` references (ruling
+  J2). No other requirement changes.
 - **Related ADR(s):**
   [ADR-0099](../adr/0099-engine-schema-core-and-descriptor-vocabulary.md)
   (`Accepted` 2026-10-05, alongside this Spec's own Approval) — where the
@@ -182,6 +187,7 @@ this spec precedes Candidate 2.
   | `asset_system::MaterialAssetData` | Asset System | struct | per `material_types.h` as of this spec; the Plan enumerates fields and flags from the current header |
   | `asset_system::MaterialKind` | Asset System | enum | per `material_types.h:44` |
   | `asset_system::MaterialAlphaMode` | Asset System | enum | per `material_types.h:58` |
+  | `asset_system::MaterialSamplerFilter`, `asset_system::MaterialSamplerAddressMode` | Asset System | enum (×2) | per `material_types.h:13`, `:18` — the types of `MaterialAssetData.filter`/`.addressMode` (Correction 2026-10-05, Plan 0048 ruling J1) |
   | `asset_system::EntityRef` | Asset System | struct | `scene` (AssetGuid + `AssetReference`), `entity` (EntityGuid + `EntityReference`) |
 
   `PrimitiveKind` v1 ships exactly what this set exercises: `UInt64`,
@@ -357,9 +363,10 @@ placement to the Plan:
   `Vec4Float32` are `PrimitiveKind`s, not structs of `Float32` fields — it
   matches how the math is consumed and keeps descriptors flat (R5).
 - **Q3 — `FieldFlags::Optional` in v1.** **Ruled (2026-10-05):** included
-  now; `Renderable.materialAsset` and `MaterialAssetData`'s optional
-  references need it, and it is load-bearing for any generic accessor (R1,
-  R4).
+  now; `Renderable.materialAsset` (`std::optional`) needs it, and it is
+  load-bearing for any generic accessor (R1, R4). `MaterialAssetData`'s
+  texture references are plain `AssetId` with `0` = none and are not
+  `Optional` (Correction 2026-10-05, Plan 0048 ruling J2).
 - **Q4 — Enumeration entry-point names.** **Ruled (2026-10-05):**
   `atlantis::world::worldSchema()` and
   `atlantis::asset_system::assetSystemSchema()`, as proposed (R6). The Plan
