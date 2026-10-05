@@ -2,15 +2,17 @@
 
 - **Spec:** [Spec 0049: Schema-driven Authoring Scene](../specs/0049-schema-driven-authoring-scene.md)
   (`Approved`, 2026-10-05, [PR #202](https://github.com/slmao/Atlantis/pull/202);
-  rulings Q1–Q7 binding) —
+  rulings Q1–Q7 binding; corrected 2026-10-05 per ruling J3 below) —
   [ADR-0100](../adr/0100-scene-semantic-schema-layering-model-and-versioning.md)
   (`Accepted`); builds on Spec 0048 / [ADR-0099](../adr/0099-engine-schema-core-and-descriptor-vocabulary.md)
   and Plan 0048's binding rulings J1–J7.
-- **Status:** In Review ([PR #203](https://github.com/slmao/Atlantis/pull/203))
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending. Implementation is not authorized until a
-  reviewer has read this Plan and Spec 0049 together, ruled J1–J10 below, and
-  explicitly authorized it.
+- **Joint Human Review:** slmao, 2026-10-05 — reviewed this Plan and
+  [Spec 0049](../specs/0049-schema-driven-authoring-scene.md) together in
+  [PR #203](https://github.com/slmao/Atlantis/pull/203) and explicitly authorized Implementation, starting with M0
+  (baseline) and M1. J1–J10 were ruled as recommended. J3 is carried into the
+  Spec as its 2026-10-05 Correction. See Joint Review decisions below.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -493,60 +495,45 @@ Maps to Spec 0049's Testing & Verification Plan.
   obligation, since no GPU path is touched. The existing suites run as part of
   the full-suite gate.
 
-## Joint Review decisions (to be ruled)
+## Joint Review decisions — ruled (Joint Human Review, slmao, 2026-10-05, PR #203)
 
-- **J1 — Decode-side gaps F1 (exclusivity) and F3 (key 0).**
-  - **Recommendation:** record both as `KnownGap` markers in the conformance
-    registry and leave the decoder unchanged. Tightening the decoder changes
-    codec behaviour, which ruling Q3 excludes; it belongs to a follow-up spec.
-  - Alternative: tighten the decoder here. That is a codec change outside
-    Spec 0049.
-- **J2 — The node-count bound (F4).**
-  - **Recommendation:** classify it as an artifact-format capacity, not a
-    v1 semantic rule. It is listed as a projection precondition and stays out
-    of the semantic schema and fingerprint.
-  - Alternative: make it a semantic constraint. That would put a serializer
-    limit into the meaning.
-- **J3 — Where "lossless" is checked (F5).**
-  - **Recommendation:** exactly at the `ParsedSceneSource` ⇄ semantic
-    mapping and by corpus projection (P9). Text emission through
-    `serializeSceneSource()` is tested only within its exact domain, and its
-    lossiness is recorded as a serializer limitation. The serializer cannot
-    change without changing the Bistro scene's bytes.
-- **J4 — Off-group fog/bloom values.**
-  - **Recommendation:** v1 keeps them as ordinary fields, with no
-    "don't-care while off" equivalence. The parser, the cooker and the
-    artifact all preserve them (`fog_zero_neutrality` cooks its fog height
-    into the artifact). An inert-field equivalence would be new semantics, a
-    candidate for v2.
-- **J5 — The transform's cardinality.**
-  - **Reading:** R2 makes the transform mandatory, and R3's "0..1" applies to
-    the optional components. The metamodel marks Transform `Required` and the
-    others `Optional`, consistent with ruling Q4's "at most one".
-  - **Recommendation:** confirm.
-- **J6 — `Editable` on the scene types.**
-  - **Recommendation:** `Serializable` only, following Plan 0048 J3's
-    binding definition ("the live World editing surface").
-  - Alternative: mark authoring fields `Editable`. That revisits J3's meaning
-    and needs its own ruling.
-- **J7 — Vectors as `std::array<float, 3>`.**
-  - **Recommendation:** accept. This avoids an eighth type beyond ruling Q6,
-    and `std::array` maps onto `Vec3Float32`.
-- **J8 — Nested-field addressing.**
-  - **Recommendation:** the leaf `FieldId` under the node component's
-    `TypeId`, valid only while that leaf is reachable through exactly one
-    field chain, as all v1 types are. A path form waits for a type that
-    repeats a struct.
-- **J9 — The importer's writer (F7).**
-  - **Recommendation:** no declaration and no change, since the Spec
-    excludes importer changes. Its output is held to the schema by the parse
-    and projection conformance over the content-gated Bistro scene and the
-    existing importer tests.
-- **J10 — The address's canonical text.**
-  - **Recommendation:** GUID and two 16-hex IDs. IDs are the identity;
-    names are resolvable through the schema.
-  - Alternative: names in the text, which are readable but must be resolved
-    on parse.
+All ten were ruled as recommended. None changes an ADR-0100 decision. J3 also
+corrects Spec 0049 (R5 and the Testing plan's R5 bullet).
+
+- **J1 — Decode-side gaps F1 (exclusivity) and F3 (key 0).** **Ruled
+  (2026-10-05):** recorded as `KnownGap` markers in the M5 constraint
+  registry. The decoder is unchanged (ruling Q3); tightening it is a
+  follow-up spec's.
+- **J2 — The node-count bound (F4).** **Ruled (2026-10-05):** it is an
+  artifact-format capacity, not v1 semantics. It is listed as a projection
+  precondition and stays out of the scene schema and the fingerprint (P6, P7).
+- **J3 — Where "lossless" is checked (F5).** **Ruled (2026-10-05):**
+  - Exactly at the `ParsedSceneSource` ⇄ semantic mapping, and by corpus
+    projection (P9).
+  - Text round trips through `serializeSceneSource()` are tested only within
+    the values it represents exactly.
+  - Its lossiness is known defect F5. Fixing it belongs to the next
+    serializer's spec, because it is the Bistro overlay's writer.
+  - Spec 0049 carries the matching Correction.
+- **J4 — Off-group fog/bloom values.** **Ruled (2026-10-05):** ordinary fields
+  in v1, with no "don't-care while off" equivalence. An inert-field rule is a
+  v2 candidate.
+- **J5 — The transform's cardinality.** **Ruled (2026-10-05):** Transform is
+  `Required`, and Camera, Renderable and Light are `Optional` (0..1) in one
+  exclusivity group (P6).
+- **J6 — `Editable` on the scene types.** **Ruled (2026-10-05):**
+  `Serializable` only, per Plan 0048 J3's definition (P2).
+- **J7 — Vectors.** **Ruled (2026-10-05):** `std::array<float, 3>`; no type
+  beyond ruling Q6's seven (P2).
+- **J8 — Nested-field addressing.** **Ruled (2026-10-05):** the component's
+  `TypeId` plus the leaf `FieldId`, valid while the leaf is reachable through
+  exactly one field chain (P8). A path form waits for a type that repeats a
+  struct.
+- **J9 — The importer's writer (F7).** **Ruled (2026-10-05):** no declaration
+  and no change. It is covered by the parse and projection conformance over
+  the content-gated Bistro scene and the existing importer tests (P9, P10).
+- **J10 — The address's canonical text.** **Ruled (2026-10-05):** the entity
+  GUID and two 16-lowercase-hex IDs, `<guid>/<TypeId>/<FieldId>` (P8).
 
 ## Rollback Plan
 
