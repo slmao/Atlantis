@@ -47,6 +47,7 @@ add_executable(atlantis_asset_system_tests
   scene_semantic_types_tests.cpp
   authoring_scene_mapping_tests.cpp
   scene_semantic_schema_tests.cpp
+  scene_property_address_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_system_tests
