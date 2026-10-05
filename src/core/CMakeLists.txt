@@ -1,6 +1,7 @@
 add_library(atlantis_core STATIC
   src/log.cpp
   src/assert.cpp
+  src/schema.cpp
 )
 add_library(Atlantis::Core ALIAS atlantis_core)
 
