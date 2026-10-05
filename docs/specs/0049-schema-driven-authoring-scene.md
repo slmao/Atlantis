@@ -14,6 +14,16 @@
   fixed by the maintainer before drafting (2026-10-05, chat) and are recorded
   under Goals / Non-Goals. The same review ruled all seven open questions,
   each as its recommendation. See Risks & Open Questions below.
+  **Correction (2026-10-05, post-Approval, Plan 0049 Joint Human Review,
+  [PR #203](https://github.com/slmao/Atlantis/pull/203), ruling J3):** R5's "lossless" holds at the parse ⇄
+  semantic mapping layer (`ParsedSceneSource` ⇄ authoring scene). A text
+  round trip through `serializeSceneSource()` is tested only within the
+  values that serializer represents exactly. Its lossiness (fixed six
+  decimals; fog/bloom values dropped while the group is off) is the known
+  defect F5 of Plan 0049. Fixing it belongs to the next serializer's spec,
+  since it is also the Bistro overlay's writer and a fix would change bytes.
+  The Testing plan's R5 round trip is narrowed accordingly. No other
+  requirement changes.
 - **Related ADR(s):**
   [ADR-0100](../adr/0100-scene-semantic-schema-layering-model-and-versioning.md)
   (`Accepted` 2026-10-05, alongside this Spec's own Approval). It records the layering, the
@@ -235,9 +245,13 @@ Also out of scope:
 - **R5 — Serializers declare and conform.** The scene source codec and the
   scene artifact codec each declare, beside their unchanged format version,
   the scene semantic version they encode (v1 for both).
-  - **Source ⇄ semantic** is lossless at the semantic level. `node_id` is
-    syntax: a parsed source maps to an authoring scene and back to an equal
-    one, though not necessarily to identical text.
+  - **Source ⇄ semantic** is lossless at the semantic level, at the parse ⇄
+    semantic mapping layer: a parsed source maps to an authoring scene and
+    back to an equal one, though not necessarily to identical text. `node_id`
+    is syntax. Text emission through `serializeSceneSource()` is lossy
+    outside the values it represents exactly (known defect F5, Plan 0049),
+    and is tested only within them (Correction 2026-10-05, Plan 0049
+    ruling J3).
   - **Semantic → artifact** is a declared **projection**: asset GUIDs become
     keys (`assetKey()`), node references become indices, and `node_id` is not
     carried. The projection is checked against `cookScene()` →
@@ -417,8 +431,11 @@ the byte-behaviour guard. Mapping to requirements:
   returns. Traceability of each constraint to its enforcing site is recorded
   in the Plan.
 - **R5:**
-  - round trip parse → authoring → serialize → parse → equal, over every
-    committed scene source, the Bistro overlay and the test fixtures;
+  - mapping round trip parse → authoring → parsed form → authoring →
+    equal, over every committed scene source, the Bistro overlay and the test
+    fixtures; text round trips through `serializeSceneSource()` only within
+    its exactly-representable values (Correction 2026-10-05, Plan 0049
+    ruling J3);
   - authoring → cook → decode equals the declared projection;
   - each codec's declared semantic version equals the scene schema's.
 - **R6:** fingerprint pin and version. A demonstration (not committed) shows
