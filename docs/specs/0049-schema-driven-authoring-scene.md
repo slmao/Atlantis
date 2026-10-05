@@ -1,17 +1,22 @@
 # Spec: Schema-driven Authoring Scene
 
-- **Status:** In Review ([PR #202](https://github.com/slmao/Atlantis/pull/202))
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-05
-- **Related Plan(s):** none yet — drafting a Plan is authorized only after this
-  Spec's Approval.
-- **Approval:** pending. The direction and boundaries (semantic schema, not
-  syntax; no grammar or artifact-byte change; the layering; future consumers
-  named, not built) were fixed by the maintainer before drafting (2026-10-05,
-  chat). They are recorded under Goals / Non-Goals and are not open questions.
+- **Related Plan(s):** none yet — Plan 0049 drafting is authorized by the
+  Approval below. **Implementation still awaits its own, separate Joint Human
+  Review** of Spec + Plan together, per AGENTS.md's own workflow.
+- **Approval:** slmao, 2026-10-05 (review of this Spec's own branch PR,
+  [PR #202](https://github.com/slmao/Atlantis/pull/202)) — authorizes drafting Plan 0049; Implementation itself
+  still awaits its own, separate Joint Human Review of Spec + Plan together.
+  The direction and boundaries (semantic schema, not syntax; no grammar or
+  artifact-byte change; the layering; future consumers named, not built) were
+  fixed by the maintainer before drafting (2026-10-05, chat) and are recorded
+  under Goals / Non-Goals. The same review ruled all seven open questions,
+  each as its recommendation. See Risks & Open Questions below.
 - **Related ADR(s):**
   [ADR-0100](../adr/0100-scene-semantic-schema-layering-model-and-versioning.md)
-  (`Proposed`, drafted alongside this spec). It records the layering, the
+  (`Accepted` 2026-10-05, alongside this Spec's own Approval). It records the layering, the
   authoring-scene semantic model's home and identity rules, the semantic
   version, and the contract-plus-conformance relationship to the serializers.
 
@@ -81,7 +86,7 @@ across:
 Spec 0048 described World's runtime components and deferred the scene-source
 `Decoded*` DTOs "when the scene-authoring tool spec exists" (Spec 0048 ruling
 Q1). This is that spec. It must decide what the authoring layer describes;
-see Q1 below and *Relation to Spec 0048* under Proposed Design.
+see ruling Q1 below and *Relation to Spec 0048* under Proposed Design.
 
 ### Why now
 
@@ -135,7 +140,7 @@ Goals of this spec within those boundaries:
   cooker and the artifact codec to the semantic schema.
 - The **address form** future consumers will use for a property (node,
   component, field) and the identity rules Prefab needs, fixed now so neither
-  needs a breaking change later (Q4).
+  needs a breaking change later (ruling Q4).
 
 ## Non-Goals
 
@@ -159,7 +164,7 @@ Also out of scope:
   change.
 - No change to World, `ValidatedSceneData`, `instantiateScene()`, Runtime, the
   glTF importer or its overlay format.
-- No schema-driven parser or encoder (ruling Q3 may revisit).
+- No schema-driven parser or encoder (ruling Q3).
 - No value accessor or mutation API through descriptors. ADR-0099 D5's
   descriptive-only scope stands.
 - No description of the cooked runtime projection (`ValidatedSceneData`,
@@ -182,7 +187,9 @@ Also out of scope:
   - The renderable's references are **AssetGuids** (`AssetReference`), the
     authoring identity (ADR-0097), not `AssetId` keys. The material reference
     is `Optional`.
-  - Naming and namespace: Q6.
+  - Namespace `atlantis::asset_system::scene`; the seven types are
+    `Transform`, `Camera`, `CameraFog`, `CameraBloom`, `Renderable`, `Light`
+    and `LightKind` (ruling Q6).
 - **R2 — Authoring scene document.** Asset System provides the in-memory
   semantic instance: an authoring scene, an **ordered** sequence of nodes plus
   an optional active-camera reference. Each node carries:
@@ -193,7 +200,8 @@ Also out of scope:
 
   Node order is semantic: it is today's instantiation order and the
   artifact's index order. Parent and active-camera references are
-  **EntityGuid-valued**. Its public surface (Q5) is plain values; it is not an
+  **EntityGuid-valued**. It is public in Asset System as plain values (ruling
+  Q5); it is not an
   editing API.
 - **R3 — Scene semantic schema (the metamodel).** Asset System provides one
   immutable, enumerable scene schema. It states, as data:
@@ -207,7 +215,8 @@ Also out of scope:
   - the document-level constraints: non-empty; at most one directional light;
     at most `kMaxPointLightsPerScene` point lights.
 
-  The exact C++ shape is the Plan's. This requirement fixes the information,
+  Domains and constraints are scene-local data in Asset System; no Core
+  vocabulary is added (ruling Q7). The exact C++ shape is the Plan's. This requirement fixes the information,
   in the manner of Spec 0048 R2.
 - **R4 — The v1 constraint inventory is today's, exactly.** The value domains
   and constraints in R3 are those the v7 parser, cooker and artifact decoder
@@ -234,8 +243,9 @@ Also out of scope:
     carried. The projection is checked against `cookScene()` →
     `decodeScene()`.
   - Mapping functions between the parsed source and the authoring scene
-    exist in Asset System (Q5).
-- **R6 — Scene semantic version.**
+    are public, pure functions in Asset System (ruling Q5). The existing
+    codecs are not rewritten (ruling Q3).
+- **R6 — Scene semantic version** (ruling Q2).
   - It is one unsigned integer, starting at **1** for exactly today's
     semantics.
   - It is accompanied by a **semantic fingerprint**: a deterministic
@@ -257,8 +267,8 @@ Also out of scope:
   inside a scene document is the triple (node EntityGuid, component `TypeId`,
   `FieldId`). It is defined as a value type with equality and canonical text.
   No consumer is implemented. This is the form that Editor transactions,
-  agent patches and prefab overrides will address (Q4).
-- **R8 — Conformance tests are schema-driven.** The tests enumerate the scene
+  agent patches and prefab overrides will address (ruling Q4).
+- **R8 — Conformance tests are schema-driven** (ruling Q3). The tests enumerate the scene
   schema and require coverage per element:
   - every semantic field survives source and artifact round trips under a
     perturbation case;
@@ -318,7 +328,7 @@ is stated as data in the R3 schema.
 ### Relation to Spec 0048 (its ruling Q1)
 
 - Spec 0048 deferred describing the `Decoded*` DTOs to this spec. This spec
-  proposes **not** describing them (Q1).
+  does **not** describe them (ruling Q1).
 - They are codec DTOs that sit in the Serializer layer:
   - flat `colorR/G/B` fields;
   - shared by the cooked runtime projection;
@@ -361,7 +371,7 @@ drafted alongside:
 
 No new module, dependency, threading or ownership change. ADR-0099 is
 extended in use (new descriptors in an existing table), not amended. No new
-Core vocabulary is proposed (Q7).
+Core vocabulary is added (ruling Q7).
 
 ## Alternatives Considered
 
@@ -369,8 +379,7 @@ Core vocabulary is proposed (Q7).
    layer** (Q1, option A). This adds no new types. It freezes codec naming and
    flat fields into persistent IDs. The documents (vectors, a private-member
    class) are outside Spec 0048's standard-layout vocabulary. The cooked side
-   holds keys, not authoring identity. Rejected as the recommendation; kept
-   open as Q1.
+   holds keys, not authoring identity. Rejected by ruling Q1.
 2. **Make World's components the scene semantics.** Asset System may not
    depend on World (ADR-0053), and the Serializer must sit under Scene.
    Authoring references (GUIDs) differ from runtime ones (keys). Rejected.
@@ -378,7 +387,7 @@ Core vocabulary is proposed (Q7).
    proves the schema by construction, but it is a large refactor of two
    codecs at once, against a fixed byte-identity requirement, with no second
    serializer yet to justify the generality. Deferred to the first new
-   serializer spec. Kept open as Q3.
+   serializer spec by ruling Q3.
 4. **Layout-free semantic descriptors** (no C++ types). This needs a Spec
    0048 vocabulary change, because descriptors carry byte offsets, and it loses
    the sync tests. Rejected.
@@ -439,70 +448,58 @@ Risks:
 - **Over-reservation for Prefab.** Q4 is limited to identity and address
   rules. Anything more would be scaffolding the maintainer excluded.
 
-Open questions (to be ruled at review):
+Open questions — all seven ruled by Human Review (slmao, 2026-10-05, review
+of [PR #202](https://github.com/slmao/Atlantis/pull/202)), each as its recommendation:
 
-- **Q1 — What the semantic layer describes.**
-  - (A) The existing `Decoded*` DTOs and `ValidatedSceneData`.
-  - (B) An independent authoring-scene semantic model (R1–R3), with
-    `Decoded*` left as undescribed codec DTOs.
-  - **Recommendation: (B).** Persistent IDs come from names, and the codec
-    shapes are serializer artefacts (Relation to Spec 0048). This answers
-    Spec 0048 ruling Q1's deferral.
-- **Q2 — Semantic version vs the v7 constants.**
-  - (A) One aggregate scene semantic version plus a pinned fingerprint;
-    serializers declare the version they encode; format versions stay
-    ADR-0045-scoped (R6).
-  - (B) Per-descriptor `SchemaVersion`s only, no aggregate.
-  - (C) Reuse the source format version as the semantic version.
-  - **Recommendation: (A).** It extends Spec 0048 R8's decoupling to the
-    document level and makes the bump mechanical. (B) gives a consumer no
-    single number to negotiate. (C) is today's conflation.
-- **Q3 — Codec relationship.**
-  - (A) Refactor the parser and encoder to be schema-driven now.
-  - (B) Schema as contract, existing codecs unchanged, held by schema-driven
-    conformance tests (R5, R8).
-  - **Recommendation: (B)** for this spec. Codecs move onto the semantic
-    types, and `Decoded*` is retired, in the spec that introduces the next
-    serializer (JSON5 or binary), when a second implementation justifies the
-    generality.
-- **Q4 — What Prefab needs reserved.**
-  - **Recommendation:** rules only, nothing built:
-    1. node identity and every intra-document node reference are EntityGuids,
-       never indices or `node_id`s (R2);
-    2. a cross-document entity reference is ADR-0097 D6's `EntityRef`, already
-       in the tree;
-    3. per node, components are keyed by component `TypeId` with cardinality
-       0..1 (R3), so an override can add or remove a component by type;
-    4. a property is addressed by R7's triple, so an override, a transaction
-       and an agent patch share one address form;
-    5. document-level fields (active camera) are separate from the node
-       model, so a future prefab document reuses nodes and components
-       without them.
-  - Not reserved: instance GUID derivation (ADR-0097's derived-GUID scheme is
-    the expected source, decided by the Prefab spec), override storage,
-    nesting and variants.
-  - Alternatives: also reserve a prefab-instance component now (rejected:
-    scaffolding); reserve nothing (risks index- or `node_id`-based references
-    creeping into consumers).
+- **Q1 — What the semantic layer describes.** **Ruled (2026-10-05): (B).**
+  - An independent authoring-scene semantic model (R1–R3).
+  - `Decoded*` and `ValidatedSceneData` stay undescribed codec-layer types
+    (Relation to Spec 0048).
+  - This closes Spec 0048 ruling Q1's deferral.
+  - Rejected: (A), describing the existing DTOs, because persistent IDs come
+    from names and the codec shapes are serializer artefacts.
+- **Q2 — Semantic version vs the v7 constants.** **Ruled (2026-10-05): (A)**
+  (R6).
+  - One aggregate scene semantic version, starting at v1, with a fingerprint
+    pinned by a test.
+  - The two serializers each declare the semantic version they encode (R5).
+  - Format versions stay under ADR-0045.
+  - Rejected: (B) per-descriptor versions only; (C) reusing the source format
+    version.
+- **Q3 — Codec relationship.** **Ruled (2026-10-05): (B)** (R5, R8).
+  - The schema is the contract, held by schema-driven conformance tests.
+  - The codecs are not rewritten in this spec.
+  - Moving the codecs onto the semantic types and retiring `Decoded*` belongs
+    to the spec that introduces the next serializer.
+- **Q4 — What Prefab needs reserved.** **Ruled (2026-10-05): the five rules,
+  rules only, nothing built:**
+  1. node identity and every intra-document node reference are EntityGuids,
+     never indices or `node_id`s (R2);
+  2. a cross-document entity reference reuses ADR-0097 D6's `EntityRef`;
+  3. per node, components are keyed by component `TypeId`, at most one per
+     type (R3);
+  4. a property is addressed by the (EntityGuid, `TypeId`, `FieldId`) triple
+     (R7);
+  5. document-level fields (active camera) are separate from the node model
+     (R2, R3).
+  - Not reserved, and left to the Prefab spec: instance GUID derivation,
+    override storage, nesting, variants.
 - **Q5 — Public surface of the authoring document and the mappings.**
-  - (A) Public in Asset System, as plain value types and pure functions.
-  - (B) Test-only.
-  - **Recommendation: (A).** The semantic instance is what every named
-    consumer will read. Test-only would make the contract unusable outside
-    tests and invite a second definition later.
-- **Q6 — Namespace and type names.** Names become persistent `TypeId`s
-  (Spec 0048 R3), so they are ruled here, not in the Plan.
-  - **Recommendation:** C++ namespace `atlantis::asset_system::scene`, giving
-    descriptor names `asset_system::scene::Transform`, `::Camera`,
-    `::CameraFog`, `::CameraBloom`, `::Renderable`, `::Light`, `::LightKind`.
-  - Alternative: prefixed names in `asset_system`
-    (`asset_system::SceneCamera`).
-- **Q7 — Home of value domains and constraint vocabulary.**
-  - (A) Scene-local data in Asset System (R3).
-  - (B) An additive Core vocabulary extension (field domains in
-    `atlantis::schema`), which needs an ADR-0099 follow-up.
-  - **Recommendation: (A).** One consumer today. Promote to Core when Prefab
-    or the Editor needs the same domains, with its own ADR.
+  **Ruled (2026-10-05): (A)** (R2, R5). Public in Asset System, as plain value
+  types and pure functions.
+- **Q6 — Namespace and type names.** **Ruled (2026-10-05):**
+  - Namespace `atlantis::asset_system::scene`.
+  - The seven described types are `Transform`, `Camera`, `CameraFog`,
+    `CameraBloom`, `Renderable`, `Light` and `LightKind`. Their descriptor
+    names are `asset_system::scene::<Type>`.
+  - Their field names align with World's counterparts (R1).
+  - The authoring document and node types (R2) are not Spec 0048-described,
+    so their names never become `TypeId`s; the Plan names them.
+- **Q7 — Home of value domains and constraint vocabulary.** **Ruled
+  (2026-10-05): (A)** (R3).
+  - Scene-local data in Asset System. Core's `atlantis::schema` vocabulary is
+    unchanged.
+  - Promoting it to Core needs a second consumer and its own ADR.
 
 ## Out of Scope / Future Work
 
