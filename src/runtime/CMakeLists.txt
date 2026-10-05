@@ -11,8 +11,8 @@ add_library(atlantis_runtime_host STATIC
   src/error_classification.cpp
   src/platform_session.cpp
   src/scene_extraction.cpp
-  src/scene_manifest.cpp
   src/scene_load.cpp
+  src/entity_ref_resolution.cpp
   src/material_realization.cpp
   src/environment_realization.cpp
   src/runtime_application.cpp
@@ -99,11 +99,13 @@ target_compile_definitions(atlantis_runtime PRIVATE
   ATLANTIS_RUNTIME_SHADER_DIR="${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}"
   ATLANTIS_RUNTIME_ASSET_ARTIFACT_PATH="${ATLANTIS_minimal_cube_ARTIFACT_PATH}"
   ATLANTIS_RUNTIME_ASSET_METADATA_PATH="${ATLANTIS_minimal_cube_METADATA_PATH}"
-  # Plan 0028 Milestone 2: atlantis_runtime's own default scene switches
-  # from world_scene to integrated_showcase_demo_scene.
-  ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH="${ATLANTIS_integrated_showcase_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_RUNTIME_SCENE_METADATA_PATH="${ATLANTIS_integrated_showcase_demo_scene_METADATA_PATH}"
-  ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH="${ATLANTIS_integrated_showcase_demo_scene_MANIFEST_PATH}"
+  # Plan 0047 P15 (ADR-0098 D3): scenes are selected through the one
+  # assembled build catalog; each ATLANTIS_RUNTIME_*_GUID below is generated
+  # from assets/asset_catalog.txt at configure time (atlantis_catalog_guid()),
+  # not a second authored copy. Plan 0028 Milestone 2: the default scene is
+  # integrated_showcase_demo.
+  ATLANTIS_RUNTIME_ASSET_CATALOG_PATH="${ATLANTIS_ASSET_CATALOG_PATH}"
+  ATLANTIS_RUNTIME_SCENE_GUID="${ATLANTIS_integrated_showcase_demo_scene_GUID}"
   # Plan 0018 Section P10: the second, MaterialKind::UnlitTextured
   # built-in shader pair's own output directory -- reuses the already-
   # exported ATLANTIS_textured_quad_SHADER_OUTPUT_DIR
@@ -188,18 +190,12 @@ target_compile_definitions(atlantis_runtime PRIVATE
   # above, unrenamed). Same real, already-exported CMake variables
   # atlantis_add_scene_asset() (assets/CMakeLists.txt) produces --
   # mirrors ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH's own sourcing exactly.
-  ATLANTIS_RUNTIME_IBL_MATERIAL_DEMO_SCENE_ARTIFACT_PATH="${ATLANTIS_ibl_material_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_RUNTIME_IBL_MATERIAL_DEMO_SCENE_METADATA_PATH="${ATLANTIS_ibl_material_demo_scene_METADATA_PATH}"
-  ATLANTIS_RUNTIME_IBL_MATERIAL_DEMO_SCENE_MANIFEST_PATH="${ATLANTIS_ibl_material_demo_scene_MANIFEST_PATH}"
-  ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_ARTIFACT_PATH="${ATLANTIS_pbr_normal_map_demo_scene_ARTIFACT_PATH}"
-  ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_METADATA_PATH="${ATLANTIS_pbr_normal_map_demo_scene_METADATA_PATH}"
-  ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_MANIFEST_PATH="${ATLANTIS_pbr_normal_map_demo_scene_MANIFEST_PATH}"
+  ATLANTIS_RUNTIME_IBL_MATERIAL_DEMO_SCENE_GUID="${ATLANTIS_ibl_material_demo_scene_GUID}"
+  ATLANTIS_RUNTIME_PBR_NORMAL_MAP_DEMO_SCENE_GUID="${ATLANTIS_pbr_normal_map_demo_scene_GUID}"
   # Plan 0035 Milestone 5 (Spec 0035 Requirement 7): the 4th --scene
   # whitelist entry's own three path macros, same sourcing shape as the
   # three above.
-  ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_ARTIFACT_PATH="${ATLANTIS_pbr_materials_showcase_scene_ARTIFACT_PATH}"
-  ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_METADATA_PATH="${ATLANTIS_pbr_materials_showcase_scene_METADATA_PATH}"
-  ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_MANIFEST_PATH="${ATLANTIS_pbr_materials_showcase_scene_MANIFEST_PATH}"
+  ATLANTIS_RUNTIME_PBR_MATERIALS_SHOWCASE_SCENE_GUID="${ATLANTIS_pbr_materials_showcase_scene_GUID}"
 )
 
 # Guarantees the shader-compile and asset-cook targets have already run
@@ -240,18 +236,19 @@ add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit
   # every other scene's identical pattern -- a pre-existing Spec 0032
   # constraint, not a gap this Milestone's own Requirement 7 scope
   # extends to fixing.)
-  ${ATLANTIS_pbr_materials_showcase_scene_TARGET})
+  ${ATLANTIS_pbr_materials_showcase_scene_TARGET}
+  # Plan 0047 M5: the one catalog every whitelist scene resolves through.
+  atlantis_asset_catalog)
 
 # Plan 0046 Milestone 3 (Spec 0046 Q7, Plan 0046 P10): the fifth --scene
 # entry, `bistro`, compiled in only when assets/ declared the Bistro build
-# step -- i.e. the fetched content was present at configure time. Its
-# three paths come from atlantis_add_imported_scene(), and the build step
-# runs before this executable, like every other whitelisted scene.
+# step -- i.e. the fetched content was present at configure time. Plan 0047
+# P15: it passes the import root's catalog GUID; main.cpp derives the scene
+# GUID from it. The build step runs before this executable, like every other
+# whitelisted scene.
 if(DEFINED ATLANTIS_bistro_scene_TARGET)
   target_compile_definitions(atlantis_runtime PRIVATE
-    ATLANTIS_RUNTIME_BISTRO_SCENE_ARTIFACT_PATH="${ATLANTIS_bistro_scene_ARTIFACT_PATH}"
-    ATLANTIS_RUNTIME_BISTRO_SCENE_METADATA_PATH="${ATLANTIS_bistro_scene_METADATA_PATH}"
-    ATLANTIS_RUNTIME_BISTRO_SCENE_MANIFEST_PATH="${ATLANTIS_bistro_scene_MANIFEST_PATH}"
+    ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID="${ATLANTIS_bistro_scene_IMPORT_GUID}"
   )
   add_dependencies(atlantis_runtime ${ATLANTIS_bistro_scene_TARGET})
 endif()
@@ -289,6 +286,12 @@ if(ANDROID)
   # object in atlantis_android_native_app_glue's archive into the final
   # .so regardless of whether anything references it, exactly the
   # dlsym-found-not-statically-referenced case this target needs.
+  # Plan 0047 P19: the packaged default scene's catalog GUID, read from the
+  # committed catalog source at configure time (the same definition name
+  # atlantis_runtime uses on Windows).
+  atlantis_catalog_guid(android_scene_guid ROOT assets PATH scenes/integrated_showcase_demo.scene.txt)
+  target_compile_definitions(atlantis_runtime_android PRIVATE ATLANTIS_RUNTIME_SCENE_GUID="${android_scene_guid}")
+
   target_link_libraries(atlantis_runtime_android
     PRIVATE
       Atlantis::RuntimeHost

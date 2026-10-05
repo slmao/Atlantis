@@ -11,14 +11,15 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_environment_metadata_version: 1";
+constexpr std::string_view kVersionLine = "atlantis_environment_metadata_version: 2";
+constexpr std::string_view kAssetGuidPrefix = "asset_guid: ";
 constexpr std::string_view kAssetIdPrefix = "asset_id: ";
 constexpr std::string_view kSourceLogicalPathPrefix = "source_logical_path: ";
 constexpr std::string_view kFaceSizePrefix = "face_size: ";
 constexpr std::string_view kMipCountPrefix = "mip_count: ";
 constexpr std::string_view kDfgWidthPrefix = "dfg_width: ";
 constexpr std::string_view kDfgHeightPrefix = "dfg_height: ";
-constexpr std::size_t kExpectedLineCount = 7;
+constexpr std::size_t kExpectedLineCount = 8;
 
 [[nodiscard]] std::vector<std::string_view> splitLines(std::string_view text) {
   if (text.empty()) return {};
@@ -67,19 +68,25 @@ atlantis::Result<EnvironmentMetadata, MetadataParseError> parseEnvironmentMetada
 
   EnvironmentMetadata metadata;
   std::string_view value;
-  if (!matchField(lines[1], kAssetIdPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+
+  // Plan 0047 P8 (ADR-0097 D3): the asset's persistent identity, line 2.
+  if (!matchField(lines[1], kAssetGuidPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  const auto assetGuid = parseAssetGuid(value);
+  if (assetGuid.isErr()) return ResultT::Err(MetadataParseError::MalformedValue);
+  metadata.assetGuid = assetGuid.value();
+  if (!matchField(lines[2], kAssetIdPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseAssetId(value, metadata.assetId)) return ResultT::Err(MetadataParseError::MalformedValue);
-  if (!matchField(lines[2], kSourceLogicalPathPrefix, value)) {
+  if (!matchField(lines[3], kSourceLogicalPathPrefix, value)) {
     return ResultT::Err(MetadataParseError::FieldNameMismatch);
   }
   metadata.sourceLogicalPath = std::string(value);
-  if (!matchField(lines[3], kFaceSizePrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[4], kFaceSizePrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseU32(value, metadata.faceSize)) return ResultT::Err(MetadataParseError::MalformedValue);
-  if (!matchField(lines[4], kMipCountPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[5], kMipCountPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseU32(value, metadata.mipCount)) return ResultT::Err(MetadataParseError::MalformedValue);
-  if (!matchField(lines[5], kDfgWidthPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[6], kDfgWidthPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseU32(value, metadata.dfgWidth)) return ResultT::Err(MetadataParseError::MalformedValue);
-  if (!matchField(lines[6], kDfgHeightPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[7], kDfgHeightPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseU32(value, metadata.dfgHeight)) return ResultT::Err(MetadataParseError::MalformedValue);
   return ResultT::Ok(std::move(metadata));
 }
@@ -87,6 +94,9 @@ atlantis::Result<EnvironmentMetadata, MetadataParseError> parseEnvironmentMetada
 std::string serializeEnvironmentMetadata(const EnvironmentMetadata& metadata) {
   std::string out;
   out += kVersionLine;
+  out += '\n';
+  out += kAssetGuidPrefix;
+  out += toString(metadata.assetGuid);
   out += '\n';
   out += kAssetIdPrefix;
   out += toHexString(metadata.assetId);

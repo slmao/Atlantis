@@ -430,10 +430,13 @@ merged via [PR #96](https://github.com/slmao/Atlantis/pull/96).
 `atlantis_add_texture_asset()` (defined in
 `src/asset_system/CMakeLists.txt`, mirroring
 `atlantis_add_slang_shader_pair()`'s own stamp/`BYPRODUCTS` pattern) to
-cook one declared asset, and by `atlantis_finalize_asset_validation()`
-to run its own `--validate-set` mode over every declared asset's logical
-path — kind-agnostic, so it already covers texture logical paths
-exactly as it covers mesh/scene ones. A thin CLI split into a testable
+cook one declared asset, and by `atlantis_finalize_asset_catalog()`
+to run its `--kind=assemble-catalog` mode, which merges every cook's and
+import's catalog fragment into the build's one `asset_catalog.txt` (plus
+the default scene's closure catalog) per
+[Spec 0047](../docs/specs/0047-stable-identity-asset-catalog.md) and
+[ADR-0098](../docs/adr/0098-asset-catalog-and-catalog-based-resolution.md).
+A thin CLI split into a testable
 library (`atlantis_asset_cooker_lib`) and a small `main.cpp` doing
 `--flag=value` argv parsing — publicly links `Atlantis::AssetSystem` and
 `Atlantis::Core`; privately links `Stb::Stb` for its own `--kind=texture`
@@ -472,8 +475,8 @@ member (destroyed last by reverse-declaration-order destruction, making
 window-outlives-GPU-resources compiler-enforced rather than
 hand-sequenced), a five-step initialization sequence (Platform session,
 shader load, `Device`, camera `Buffer`, then a real scene asset's own
-manifest-driven load: read the scene's dependency manifest, decode its
-`ValidatedSceneData`, resolve and load every distinct mesh it
+catalog-driven load: load the asset catalog, resolve the configured scene
+GUID through it, decode its `ValidatedSceneData`, resolve and load every distinct mesh it
 references in ascending first-reference order into a keyed
 `meshResourceMap_`, and instantiate the one real `World` instance via
 `atlantis::world::fromValidatedSceneData()` — replacing the project's
@@ -525,7 +528,8 @@ the `World`-driven scene and extraction adapter extended per
 [plans/0014-world-scene-foundation.md](../docs/plans/0014-world-scene-foundation.md),
 and
 [ADR-0051](../docs/adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md);
-the manifest-driven real scene asset load implemented per
+the real scene asset load (catalog-driven since
+[Plan 0047](../docs/plans/0047-stable-identity-asset-catalog.md); originally manifest-driven) implemented per
 [specs/0015-scene-asset-serialization-foundation.md](../docs/specs/0015-scene-asset-serialization-foundation.md),
 [plans/0015-scene-asset-serialization-foundation.md](../docs/plans/0015-scene-asset-serialization-foundation.md),
 and

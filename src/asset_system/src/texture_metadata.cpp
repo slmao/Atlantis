@@ -9,14 +9,15 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_texture_metadata_version: 3";
+constexpr std::string_view kVersionLine = "atlantis_texture_metadata_version: 4";
+constexpr std::string_view kAssetGuidPrefix = "asset_guid: ";
 constexpr std::string_view kAssetIdPrefix = "asset_id: ";
 constexpr std::string_view kSourceLogicalPathPrefix = "source_logical_path: ";
 constexpr std::string_view kWidthPrefix = "width: ";
 constexpr std::string_view kHeightPrefix = "height: ";
 constexpr std::string_view kFormatPrefix = "format: ";
 constexpr std::string_view kChannelsInFilePrefix = "channels_in_file: ";
-constexpr std::size_t kExpectedLineCount = 9;
+constexpr std::size_t kExpectedLineCount = 10;
 
 constexpr std::string_view kDataLayoutPrefix = "data_layout: ";
 constexpr std::string_view kLayoutRgba8 = "rgba8";
@@ -91,21 +92,27 @@ atlantis::Result<TextureMetadata, MetadataParseError> parseTextureMetadata(std::
   TextureMetadata metadata;
   std::string_view value;
 
-  if (!matchField(lines[1], kAssetIdPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  // Plan 0047 P8 (ADR-0097 D3): the asset's persistent identity, line 2.
+  if (!matchField(lines[1], kAssetGuidPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  const auto assetGuid = parseAssetGuid(value);
+  if (assetGuid.isErr()) return ResultT::Err(MetadataParseError::MalformedValue);
+  metadata.assetGuid = assetGuid.value();
+
+  if (!matchField(lines[2], kAssetIdPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseAssetIdHex(value, metadata.assetId)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[2], kSourceLogicalPathPrefix, value)) {
+  if (!matchField(lines[3], kSourceLogicalPathPrefix, value)) {
     return ResultT::Err(MetadataParseError::FieldNameMismatch);
   }
   metadata.sourceLogicalPath = std::string(value);
 
-  if (!matchField(lines[3], kWidthPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[4], kWidthPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseUnsigned(value, metadata.width)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[4], kHeightPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[5], kHeightPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseUnsigned(value, metadata.height)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[5], kFormatPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[6], kFormatPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (value == kFormatUnorm) {
     metadata.format = TextureColorSpace::Unorm;
   } else if (value == kFormatSrgb) {
@@ -114,7 +121,7 @@ atlantis::Result<TextureMetadata, MetadataParseError> parseTextureMetadata(std::
     return ResultT::Err(MetadataParseError::MalformedValue);
   }
 
-  if (!matchField(lines[6], kDataLayoutPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[7], kDataLayoutPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (value == kLayoutRgba8) {
     metadata.layout = TextureDataLayout::Rgba8;
   } else if (value == kLayoutBc7) {
@@ -123,10 +130,10 @@ atlantis::Result<TextureMetadata, MetadataParseError> parseTextureMetadata(std::
     return ResultT::Err(MetadataParseError::MalformedValue);
   }
 
-  if (!matchField(lines[7], kMipCountPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[8], kMipCountPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseUnsigned(value, metadata.mipCount)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[8], kChannelsInFilePrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[9], kChannelsInFilePrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseSigned(value, metadata.channelsInFile)) return ResultT::Err(MetadataParseError::MalformedValue);
 
   return ResultT::Ok(std::move(metadata));
@@ -135,6 +142,9 @@ atlantis::Result<TextureMetadata, MetadataParseError> parseTextureMetadata(std::
 std::string serializeTextureMetadata(const TextureMetadata& metadata) {
   std::string out;
   out += kVersionLine;
+  out += '\n';
+  out += kAssetGuidPrefix;
+  out += toString(metadata.assetGuid);
   out += '\n';
   out += kAssetIdPrefix;
   out += toHexString(metadata.assetId);

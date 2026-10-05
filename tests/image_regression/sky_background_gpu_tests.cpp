@@ -16,6 +16,7 @@
 // sequence exactly; no CommandList call is ever issued outside a
 // compiled RenderGraph pass callback.
 
+#include "support/catalog_scene.h"
 #include "fixture/ibl_material_demo_fixture.h"
 
 #include <atlantis/renderer/draw_item.h>
@@ -73,9 +74,8 @@ using atlantis::shader_system::rhi_integration::toVertexInputLayout;
 // its small fixture config" precedent.
 atlantis::runtime::BootstrapConfig buildIblConfig() {
   atlantis::runtime::BootstrapConfig config;
-  config.sceneArtifactPath = ATLANTIS_ibl_material_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_ibl_material_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_ibl_material_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_ibl_material_demo_scene_GUID);
   const std::string unlit = ATLANTIS_IBL_DEMO_UNLIT_TEXTURED_SHADER_DIR;
   config.unlitTexturedVertexShaderSpirvPath = unlit + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath = unlit + "/textured_quad.vert.refl.json";

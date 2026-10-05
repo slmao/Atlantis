@@ -146,7 +146,7 @@ enum class PbrMaterialsShowcaseSetupError {
   ResourceCreationFailed,
 };
 
-// config's sceneArtifactPath/sceneMetadataPath/sceneDependencyManifestPath
+// config's assetCatalogPath/sceneAsset
 // must name pbr_materials_showcase_scene's own cooked artifacts; config
 // must also configure a real environment (environmentArtifactPath/
 // environmentMetadataPath -- the warehouse_interior HDRI, Spec 0035

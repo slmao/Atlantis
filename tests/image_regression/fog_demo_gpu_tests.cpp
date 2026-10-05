@@ -13,6 +13,7 @@
 // The per-variant saturating-fog differentials (P9) live in each variant's
 // own test file, beside the config that realizes it.
 
+#include "support/catalog_scene.h"
 #include "fixture/fog_demo_fixture.h"
 #include "support/fog_differential.h"
 #include "support/fog_reference.h"
@@ -35,6 +36,7 @@
 #include <string>
 #include <utility>
 
+#include "catalog_asset_id.h"
 using atlantis::image_regression::activeCameraFog;
 using atlantis::image_regression::applyFog;
 using atlantis::image_regression::encodeFogRgb;
@@ -60,16 +62,13 @@ using atlantis::runtime::BootstrapConfig;
 namespace {
 
 struct SceneFiles {
-  const char* artifact;
-  const char* metadata;
-  const char* manifest;
+  const char* guid;  // the scene's catalog GUID text (an ATLANTIS_*_GUID definition)
 };
 
 [[nodiscard]] BootstrapConfig buildLitConfig(const SceneFiles& scene) {
   BootstrapConfig config;
-  config.sceneArtifactPath = scene.artifact;
-  config.sceneMetadataPath = scene.metadata;
-  config.sceneDependencyManifestPath = scene.manifest;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(scene.guid);
   config.unlitTexturedVertexShaderSpirvPath =
       std::string(ATLANTIS_PBR_MATERIAL_DEMO_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath =
@@ -119,9 +118,8 @@ struct SceneFiles {
 
 [[nodiscard]] BootstrapConfig buildDarkConfig() {
   BootstrapConfig config;
-  config.sceneArtifactPath = ATLANTIS_fog_dark_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_fog_dark_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_fog_dark_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_fog_dark_demo_scene_GUID);
   config.unlitTexturedVertexShaderSpirvPath =
       std::string(ATLANTIS_PBR_NORMAL_MAP_DEMO_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath =
@@ -204,18 +202,10 @@ struct SceneFiles {
   return config;
 }
 
-constexpr SceneFiles kFogDistanceScene{ATLANTIS_fog_distance_demo_scene_ARTIFACT_PATH,
-                                       ATLANTIS_fog_distance_demo_scene_METADATA_PATH,
-                                       ATLANTIS_fog_distance_demo_scene_MANIFEST_PATH};
-constexpr SceneFiles kFogHeightScene{ATLANTIS_fog_height_demo_scene_ARTIFACT_PATH,
-                                     ATLANTIS_fog_height_demo_scene_METADATA_PATH,
-                                     ATLANTIS_fog_height_demo_scene_MANIFEST_PATH};
-constexpr SceneFiles kFogZeroNeutralityScene{ATLANTIS_fog_zero_neutrality_scene_ARTIFACT_PATH,
-                                             ATLANTIS_fog_zero_neutrality_scene_METADATA_PATH,
-                                             ATLANTIS_fog_zero_neutrality_scene_MANIFEST_PATH};
-constexpr SceneFiles kPbrMaterialDemoScene{ATLANTIS_pbr_material_demo_scene_ARTIFACT_PATH,
-                                           ATLANTIS_pbr_material_demo_scene_METADATA_PATH,
-                                           ATLANTIS_pbr_material_demo_scene_MANIFEST_PATH};
+constexpr SceneFiles kFogDistanceScene{ATLANTIS_fog_distance_demo_scene_GUID};
+constexpr SceneFiles kFogHeightScene{ATLANTIS_fog_height_demo_scene_GUID};
+constexpr SceneFiles kFogZeroNeutralityScene{ATLANTIS_fog_zero_neutrality_scene_GUID};
+constexpr SceneFiles kPbrMaterialDemoScene{ATLANTIS_pbr_material_demo_scene_GUID};
 
 [[nodiscard]] FogDarkDemoFixture setUpDark() {
   auto fixtureResult = setUpFogDarkDemoFixture(buildDarkConfig(), ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH,
@@ -256,7 +246,7 @@ struct DarkSceneComparison {
   DarkSceneComparison result;
   for (const char* materialPath : kDarkSphereMaterials) {
     INFO("sphere: " << materialPath);
-    const auto asset = atlantis::asset_system::computeAssetId(materialPath);
+    const auto asset = atlantis::image_regression::catalogAssetId(materialPath);
     const auto material = fixture.materialDataMap.find(asset);
     REQUIRE(material != fixture.materialDataMap.end());
     const FogVec3 emissive{material->second.emissiveFactor[0], material->second.emissiveFactor[1],
@@ -338,7 +328,7 @@ TEST_CASE("fog_dark_demo: a 3 x 3 density x height-falloff sweep matches the fog
       const DarkSceneComparison comparison = compareDarkSceneToReference(fixture, frameResult.value());
       // The control sphere's centre (C * f alone) doubles as a readable
       // record of the fog factor each cell produced.
-      const auto controlAsset = atlantis::asset_system::computeAssetId(kDarkSphereMaterials[4]);
+      const auto controlAsset = atlantis::image_regression::catalogAssetId(kDarkSphereMaterials[4]);
       const auto control = projectMaterialSphere(fixture, controlAsset, 1.0f, frameResult.value().width);
       REQUIRE(control.has_value());
       const auto cx = static_cast<std::uint32_t>(control->centerX);
@@ -406,7 +396,7 @@ TEST_CASE("Height fog neutrality: density 0 skips the fog term even when evaluat
 TEST_CASE("fog_distance_demo and fog_height_demo: fog is on, and switching it off changes only PBR surfaces",
           "[image_regression][gpu][fog]") {
   for (const SceneFiles* scene : {&kFogDistanceScene, &kFogHeightScene}) {
-    INFO("scene: " << scene->artifact);
+    INFO("scene: " << scene->guid);
     FogLitDemoFixture fixture = setUpLit(*scene);
     const auto authored = activeCameraFog(fixture);
     REQUIRE(authored.density > 0.0f);

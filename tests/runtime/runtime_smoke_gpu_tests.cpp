@@ -1,3 +1,4 @@
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/runtime/bootstrap_config.h>
 #include <atlantis/runtime/exit_reason.h>
 #include <atlantis/runtime/runtime_application.h>
@@ -135,6 +136,14 @@ struct RuntimeSmokeTestAccess {
 
 namespace {
 
+// The ATLANTIS_RUNTIME_*_GUID definitions are generated from the committed
+// catalog source at configure time (Plan 0047 P15).
+[[nodiscard]] atlantis::asset_system::AssetGuid sceneGuidFromDefinition(const char* text) {
+  auto parsed = atlantis::asset_system::parseAssetGuid(text);
+  REQUIRE(parsed.isOk());
+  return parsed.value();
+}
+
 // The windowed smoke config, as main.cpp populates it. Plan 0044 M2
 // follow-up: shared by the bloom smoke TEST_CASE below, which swaps only
 // the scene paths.
@@ -149,9 +158,8 @@ namespace {
   config.assetMetadataPath = ATLANTIS_RUNTIME_ASSET_METADATA_PATH;
   // Plan 0015 Section D11: the real, loaded scene path -- replaces the
   // former hardcoded six-entity validation scene.
-  config.sceneArtifactPath = ATLANTIS_RUNTIME_SCENE_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_RUNTIME_SCENE_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_RUNTIME_SCENE_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = sceneGuidFromDefinition(ATLANTIS_RUNTIME_SCENE_GUID);
   // Plan 0018 Section P10: mirrors main.cpp's own identical population
   // of the second, MaterialKind::UnlitTextured built-in shader pair.
   config.unlitTexturedVertexShaderSpirvPath =
@@ -435,9 +443,8 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
 TEST_CASE("Runtime renders real windowed frames with bloom on when the scene's camera turns it on",
           "[runtime][gpu][bloom]") {
   BootstrapConfig config = buildSmokeConfig();
-  config.sceneArtifactPath = ATLANTIS_RUNTIME_BLOOM_SCENE_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_RUNTIME_BLOOM_SCENE_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_RUNTIME_BLOOM_SCENE_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = sceneGuidFromDefinition(ATLANTIS_RUNTIME_BLOOM_SCENE_GUID);
 
   auto appResult = createRuntimeApplication(config);
   REQUIRE(appResult.isOk());

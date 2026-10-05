@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/errors.h>
 #include <atlantis/result.h>
 
@@ -23,7 +24,10 @@ inline constexpr std::string_view kSceneCookerVersion = "atlantis-scene-cooker/1
 // never leaves a partial file and never touches a pre-existing valid
 // one. No separate "logical path for self" parameter -- a scene has
 // no AssetId of its own, only its Renderable references do (D2).
+// Plan 0047 P8: assetGuid is the scene's own persistent identity,
+// recorded in its sidecar; it must not be nil.
 [[nodiscard]] atlantis::Result<std::monostate, SceneCookError> cookScene(const std::string& sourceFilePath,
+                                                                          const AssetGuid& assetGuid,
                                                                           const std::string& artifactOutputPath,
                                                                           const std::string& metadataOutputPath);
 

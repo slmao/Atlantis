@@ -1,9 +1,9 @@
-atlantis_scene_source_version: 6
+atlantis_scene_source_version: 7
 node_count: 6
 active_camera: 6
-node: node_id=1 parent=none position=-4.4 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/emissive_demo_orange.material.txt
-node: node_id=2 parent=none position=-2.2 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/emissive_demo_green.material.txt
-node: node_id=3 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/emissive_demo_blue.material.txt
-node: node_id=4 parent=none position=2.2 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/emissive_demo_normal_mapped.material.txt
-node: node_id=5 parent=none position=4.4 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/pbr_normal_mapped_control.material.txt
-node: node_id=6 parent=none position=0.0 0.0 10.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0
+node: node_id=1 guid=4212ffad-ebb0-48b8-a406-94896199afd0 parent=none position=-4.4 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=da09198f-d590-44f3-9049-ba5b43fe76cd material=331272d0-c6bb-448f-a791-45cf53c1461f
+node: node_id=2 guid=936760f9-366a-4cac-9924-4b3d1d4056b6 parent=none position=-2.2 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=da09198f-d590-44f3-9049-ba5b43fe76cd material=8b0632d7-f787-49b9-a5ee-2423e4df1e36
+node: node_id=3 guid=c042f790-5514-49f7-85a4-2c9ae9257007 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=da09198f-d590-44f3-9049-ba5b43fe76cd material=0c18ffa6-4446-4120-b6f9-841e8c09c070
+node: node_id=4 guid=5ebe8ac0-612b-4cf3-90ea-b6c63d4f2a93 parent=none position=2.2 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=da09198f-d590-44f3-9049-ba5b43fe76cd material=6b96cae9-c804-4860-b0db-8cd7883fec77
+node: node_id=5 guid=a2649ea9-a290-4ed1-b04e-690fb6e8cc7a parent=none position=4.4 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=da09198f-d590-44f3-9049-ba5b43fe76cd material=8982378b-627d-413b-a95b-5cceabc469f6
+node: node_id=6 guid=8e6e809e-ae43-48c7-8699-fd3274418142 parent=none position=0.0 0.0 10.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0

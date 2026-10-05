@@ -1,3 +1,5 @@
+#include <atlantis/asset_system/asset_catalog_source.h>
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/load_texture.h>
 #include <atlantis/asset_system/logical_path.h>
@@ -6,6 +8,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <string_view>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -37,6 +43,20 @@ namespace fs = std::filesystem;
   return buffer.str();
 }
 
+
+// Plan 0047: the committed catalog source is the only home of an asset's
+// GUID; a cooked sidecar must record exactly that GUID.
+[[nodiscard]] AssetGuid catalogGuid(std::string_view logicalPath) {
+  std::ifstream input(ATLANTIS_ASSET_CATALOG_SOURCE_PATH, std::ios::binary);
+  REQUIRE(input.is_open());
+  const std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  const auto catalog = parseAssetCatalogSource(text);
+  REQUIRE(catalog.isOk());
+  const CatalogSourceEntry* entry = catalog.value().find(CatalogRoot::Assets, logicalPath);
+  REQUIRE(entry != nullptr);
+  return entry->guid;
+}
+
 }  // namespace
 
 TEST_CASE("The textured fixture's two checked-in source PNGs are byte-identical", "[asset_system][texture_fixture]") {
@@ -48,7 +68,7 @@ TEST_CASE("The textured fixture's two checked-in source PNGs are byte-identical"
   CHECK(unormBytes == srgbBytes);
 }
 
-TEST_CASE("The textured fixture's two cooked texture artifacts have distinct AssetIds derived from their own "
+TEST_CASE("The textured fixture's two cooked texture artifacts have distinct catalog identities and "
           "distinct normalized logical paths",
           "[asset_system][texture_fixture]") {
   const auto unormMetadata =
@@ -64,8 +84,10 @@ TEST_CASE("The textured fixture's two cooked texture artifacts have distinct Ass
 
   CHECK(unormMetadata.value().sourceLogicalPath == expectedUnormPath.value());
   CHECK(srgbMetadata.value().sourceLogicalPath == expectedSrgbPath.value());
-  CHECK(unormMetadata.value().assetId == computeAssetId(expectedUnormPath.value()));
-  CHECK(srgbMetadata.value().assetId == computeAssetId(expectedSrgbPath.value()));
+  CHECK(unormMetadata.value().assetGuid == catalogGuid(expectedUnormPath.value()));
+  CHECK(srgbMetadata.value().assetGuid == catalogGuid(expectedSrgbPath.value()));
+  CHECK(unormMetadata.value().assetId == assetKey(unormMetadata.value().assetGuid));
+  CHECK(srgbMetadata.value().assetId == assetKey(srgbMetadata.value().assetGuid));
 
   // The real fix this Correction restores: two genuinely different
   // artifacts (different color-space metadata) no longer share one

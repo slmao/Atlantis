@@ -10,6 +10,9 @@ add_executable(atlantis_gltf_importer_tests
   bistro_end_to_end_tests.cpp
   # Plan 0046 Milestone 2: the cooker's cook-manifest mode over a synthetic import.
   cook_manifest_mode_tests.cpp
+  # Plan 0047 M3: derived identity, the import-root lookup, and the real
+  # importer run twice.
+  import_identity_tests.cpp
   module_boundary_tests.cpp
 )
 
@@ -37,8 +40,12 @@ target_compile_definitions(atlantis_gltf_importer_tests PRIVATE
   # The end-to-end [bistro] test runs the real cooker binary on a sample of
   # the import's cook_manifest.txt.
   ATLANTIS_ASSET_COOKER_EXECUTABLE="$<TARGET_FILE:atlantis_asset_cooker>"
+  # Plan 0047 P7: the committed catalog source, for the content-gated Bistro import root.
+  ATLANTIS_ASSET_CATALOG_SOURCE_PATH="${CMAKE_SOURCE_DIR}/assets/asset_catalog.txt"
+  # Plan 0047 M3: the import-twice determinism test runs the real importer.
+  ATLANTIS_GLTF_IMPORTER_EXECUTABLE="$<TARGET_FILE:atlantis_gltf_importer>"
 )
-add_dependencies(atlantis_gltf_importer_tests atlantis_asset_cooker)
+add_dependencies(atlantis_gltf_importer_tests atlantis_asset_cooker atlantis_gltf_importer)
 
 catch_discover_tests(atlantis_gltf_importer_tests
   TEST_SPEC "~[bistro]"

@@ -19,27 +19,17 @@ namespace atlantis::runtime::android_detail {
 [[nodiscard]] std::string extractAsset(AAssetManager* mgr, const std::string& internalDataPath,
                                         const std::string& relativePath);
 
-// ADR-0080's own asset-delivery decision, extended by one necessary
-// wrinkle found while implementing it (Plan 0034 Milestone 5): a
-// scene's own dependency manifest (scene_manifest.h's tab-separated
-// <logical path>\t<artifact path>\t<metadata path> format) is generated
-// at Windows-build time with absolute Windows build-tree paths baked
-// into its artifact/metadata columns -- meaningless on Android.
-// Gradle's own packaging task (android/app/build.gradle) already
-// rewrites those two columns to paths relative to the packaged assets
-// root before copying the manifest into the APK; this function performs
-// the second half of that rewrite, the half only runtime code can do
-// (it needs the real, per-device internalDataPath Gradle cannot know
-// ahead of time): extracts every dependency file the manifest's
-// now-relative columns reference (via extractAsset() above), rewrites
-// those same columns to each extraction's own real absolute path, and
-// writes the result to <internalDataPath>/<relativePath> --
-// regenerated unconditionally on every call (this file is a few KB of
-// text, not one of the bulky binary assets extractAsset()'s own
-// skip-if-unchanged check exists for, so always rewriting it costs
-// nothing worth special-casing). Returns the destination's absolute
-// path on success, or an empty string on any failure.
-[[nodiscard]] std::string extractSceneManifest(AAssetManager* mgr, const std::string& internalDataPath,
-                                                const std::string& relativePath);
+// Plan 0047 P19 (ADR-0098 D3): extracts the packaged closure catalog
+// (relativePath, e.g. "integrated_showcase_demo.catalog.txt") and every
+// artifact and metadata file it lists, each at its catalog-relative location
+// under <internalDataPath>, so the catalog's own relative locations resolve
+// unchanged on the device -- no path rewriting. Parses the catalog with the
+// Asset System's own parser (parseAssetCatalogRecords()); the catalog file
+// itself is rewritten on every call (it is a few KB of text), the listed
+// files follow extractAsset()'s skip-if-unchanged rule. Returns the
+// extracted catalog's absolute path on success, or an empty string on any
+// failure (logged at the point of failure).
+[[nodiscard]] std::string extractCatalogClosure(AAssetManager* mgr, const std::string& internalDataPath,
+                                                 const std::string& relativePath);
 
 }  // namespace atlantis::runtime::android_detail

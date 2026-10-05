@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/result.h>
 #include <atlantis/runtime/init_error.h>
 
@@ -24,13 +25,12 @@ struct BootstrapConfig {
   std::string fragmentShaderReflectionPath;
   std::string assetArtifactPath;
   std::string assetMetadataPath;
-  // Plan 0015 Section D2/D11: the scene asset atlantis_add_scene_asset()
-  // (assets/CMakeLists.txt) declares -- sourced from new CMake compile
-  // definitions, matching assetArtifactPath/assetMetadataPath's own
-  // established sourcing exactly.
-  std::string sceneArtifactPath;
-  std::string sceneMetadataPath;
-  std::string sceneDependencyManifestPath;
+  // Plan 0047 P14 (ADR-0098 D3): the assembled (or closure) asset catalog
+  // and the scene to load from it. The Runtime resolves the scene and every
+  // dependency through the catalog; sourced from CMake compile definitions
+  // (P15) on Windows and from the packaged closure catalog on Android.
+  std::string assetCatalogPath;
+  atlantis::asset_system::AssetGuid sceneAsset;
   // Plan 0018 Section P10: the second, MaterialKind::UnlitTextured
   // built-in shader pair -- mirrors vertexShaderSpirvPath/
   // vertexShaderReflectionPath/fragmentShaderSpirvPath/

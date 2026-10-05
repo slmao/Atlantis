@@ -7,6 +7,8 @@
 // reads the atlantis_image_regression_gpu_tests compile definitions, so it
 // is included only from that executable's sources.
 
+#include "support/catalog_scene.h"
+
 #include <atlantis/runtime/bootstrap_config.h>
 
 #include <string>
@@ -14,16 +16,13 @@
 namespace atlantis::image_regression {
 
 struct BloomTestSceneFiles {
-  const char* artifact;
-  const char* metadata;
-  const char* manifest;
+  const char* guid;  // the scene's catalog GUID text (an ATLANTIS_*_GUID definition)
 };
 
 [[nodiscard]] inline atlantis::runtime::BootstrapConfig buildDarkEmissiveConfig(const BloomTestSceneFiles& scene) {
   atlantis::runtime::BootstrapConfig config;
-  config.sceneArtifactPath = scene.artifact;
-  config.sceneMetadataPath = scene.metadata;
-  config.sceneDependencyManifestPath = scene.manifest;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(scene.guid);
   config.unlitTexturedVertexShaderSpirvPath =
       std::string(ATLANTIS_PBR_NORMAL_MAP_DEMO_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath =

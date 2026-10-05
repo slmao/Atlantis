@@ -1,3 +1,5 @@
+#include "catalog_test_support.h"
+
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/cook.h>
 #include <atlantis/asset_system/cook_material.h>
@@ -38,6 +40,27 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+// Plan 0047 P9: the guid= a generated node line carries -- the same
+// derivation the literal node lines use, keyed by node_id.
+[[nodiscard]] std::string testNodeGuidToken(std::uint32_t nodeId) {
+  return " guid=" + atlantis::asset_system::toString(atlantis::asset_system::deriveEntityGuid(
+                        atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(),
+                        "node/" + std::to_string(nodeId)));
+}
+
+}  // namespace
 // Regression coverage for a real, previously-undisclosed gap found during
 // this PR's own final centralized review: RuntimeApplication::runFrame()'s
 // wait-then-publish gate (Spec 0018 D8 step 5 / Plan 0018 Section P12) must
@@ -671,10 +694,6 @@ void writeFile(const fs::path& path, const std::string& content) {
   out << content;
 }
 
-void writeManifestLine(std::string& manifest, const std::string& logicalPath, const fs::path& artifactPath,
-                        const fs::path& metadataPath) {
-  manifest += logicalPath + "\t" + artifactPath.string() + "\t" + metadataPath.string() + "\n";
-}
 
 constexpr std::string_view kValidTriangleSource =
     "atlantis_static_mesh_source_version: 3\n"
@@ -695,7 +714,7 @@ struct CookedMeshFixture {
   writeFile(sourcePath, std::string(kValidTriangleSource));
   const fs::path artifactPath = dir / (logicalPath + ".amesh");
   const fs::path metadataPath = dir / (logicalPath + ".amesh.meta.txt");
-  REQUIRE(cookStaticMesh(sourcePath.string(), logicalPath, artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookStaticMesh(sourcePath.string(), logicalPath, testAssetGuid(logicalPath), artifactPath.string(), metadataPath.string()).isOk());
   return CookedMeshFixture{artifactPath, metadataPath};
 }
 
@@ -710,7 +729,7 @@ struct CookedTextureFixture {
   const fs::path artifactPath = dir / (logicalPath + ".atex");
   const fs::path metadataPath = dir / (logicalPath + ".atex.meta.txt");
   REQUIRE(cookTexture(pixelBytes.data(), kTexExtent, kTexExtent, 4, atlantis::asset_system::TextureColorSpace::Unorm,
-                       logicalPath, artifactPath, metadataPath)
+                       logicalPath, testAssetGuid(logicalPath), artifactPath, metadataPath)
               .isOk());
   return CookedTextureFixture{artifactPath, metadataPath};
 }
@@ -723,14 +742,14 @@ struct CookedMaterialFixture {
 [[nodiscard]] CookedMaterialFixture cookFixtureMaterial(const fs::path& dir, const std::string& logicalPath,
                                                           const std::string& textureLogicalPath) {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 9\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 10\n"
                         "kind: unlit_textured\n"
-                        "texture: " + textureLogicalPath + "\n"
+                        "texture: " + atlantis::asset_system::toString(testAssetGuid(textureLogicalPath)) + "\n"
                         "filter: linear\n"
                         "address_mode: repeat\n");
   const fs::path artifactPath = dir / (logicalPath + ".amaterial");
   const fs::path metadataPath = dir / (logicalPath + ".amaterial.meta.txt");
-  REQUIRE(cookMaterial(sourcePath.string(), logicalPath, artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookMaterial(sourcePath.string(), logicalPath, testAssetGuid(logicalPath), artifactPath.string(), metadataPath.string()).isOk());
   return CookedMaterialFixture{artifactPath, metadataPath};
 }
 
@@ -742,9 +761,9 @@ struct CookedMaterialFixture {
 [[nodiscard]] CookedMaterialFixture cookFixturePbrMaterial(const fs::path& dir, const std::string& logicalPath,
                                                             const std::string& textureLogicalPath) {
   const fs::path sourcePath = dir / "material_source" / (logicalPath + ".txt");
-  writeFile(sourcePath, "atlantis_material_source_version: 9\n"
+  writeFile(sourcePath, "atlantis_material_source_version: 10\n"
                         "kind: pbr_direct_lit\n"
-                        "texture: " + textureLogicalPath + "\n"
+                        "texture: " + atlantis::asset_system::toString(testAssetGuid(textureLogicalPath)) + "\n"
                         "filter: linear\n"
                         "address_mode: repeat\n"
                         "base_color_factor: 1.0 1.0 1.0 1.0\n"
@@ -752,7 +771,7 @@ struct CookedMaterialFixture {
                         "roughness_factor: 0.5\n");
   const fs::path artifactPath = dir / (logicalPath + ".amaterial");
   const fs::path metadataPath = dir / (logicalPath + ".amaterial.meta.txt");
-  REQUIRE(cookMaterial(sourcePath.string(), logicalPath, artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookMaterial(sourcePath.string(), logicalPath, testAssetGuid(logicalPath), artifactPath.string(), metadataPath.string()).isOk());
   return CookedMaterialFixture{artifactPath, metadataPath};
 }
 
@@ -768,28 +787,27 @@ struct CookedSceneFixture {
     const fs::path& dir, const std::vector<std::string>& meshLogicalPaths,
     const std::vector<std::string>& materialLogicalPaths) {
   REQUIRE(meshLogicalPaths.size() == materialLogicalPaths.size());
-  std::string source = "atlantis_scene_source_version: 6\n";
+  std::string source = "atlantis_scene_source_version: 7\n";
   source += "node_count: " + std::to_string(meshLogicalPaths.size()) + "\n";
   source += "active_camera: none\n";
   for (std::size_t i = 0; i < meshLogicalPaths.size(); ++i) {
-    source += "node: node_id=" + std::to_string(i + 1) +
+    source += "node: node_id=" + std::to_string(i + 1) + testNodeGuidToken(static_cast<std::uint32_t>(i + 1)) +
               " parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=" +
-              meshLogicalPaths[i] + " material=" + materialLogicalPaths[i] + "\n";
+              atlantis::asset_system::toString(testAssetGuid(meshLogicalPaths[i])) + " material=" +
+              atlantis::asset_system::toString(testAssetGuid(materialLogicalPaths[i])) + "\n";
   }
   const fs::path sourcePath = dir / "scene_with_material.scene.txt";
   writeFile(sourcePath, source);
   const fs::path artifactPath = dir / "scene_with_material.ascene";
   const fs::path metadataPath = dir / "scene_with_material.ascene.meta.txt";
-  REQUIRE(cookScene(sourcePath.string(), artifactPath.string(), metadataPath.string()).isOk());
+  REQUIRE(cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string()).isOk());
   return CookedSceneFixture{artifactPath, metadataPath};
 }
 
-[[nodiscard]] BootstrapConfig makeSceneConfig(const fs::path& sceneArtifactPath, const fs::path& sceneMetadataPath,
-                                               const fs::path& manifestPath) {
+[[nodiscard]] BootstrapConfig makeSceneConfig(const fs::path& catalogPath) {
   BootstrapConfig config;
-  config.sceneArtifactPath = sceneArtifactPath.string();
-  config.sceneMetadataPath = sceneMetadataPath.string();
-  config.sceneDependencyManifestPath = manifestPath.string();
+  config.assetCatalogPath = catalogPath.string();
+  config.sceneAsset = testAssetGuid("scene");
   return config;
 }
 
@@ -808,18 +826,18 @@ TEST_CASE("loadAndInstantiateScene: a material that resolves and loads but whose
   const CookedMeshFixture mesh = cookFixtureMesh(dir.path, "meshes/a.mesh.txt");
   // cookMaterial() never validates its own texture= reference existence
   // (ADR-0059 D6/D7) -- this material cooks and loads perfectly fine even
-  // though "textures/never_declared.png" is never cooked or manifested.
+  // though "textures/never_declared.png" is never cooked or declared in the catalog.
   const CookedMaterialFixture material =
       cookFixtureMaterial(dir.path, "materials/a.material.txt", "textures/never_declared.png");
   const CookedSceneFixture scene =
       cookFixtureSceneWithMaterials(dir.path, {"meshes/a.mesh.txt"}, {"materials/a.material.txt"});
 
-  std::string manifest;
-  writeManifestLine(manifest, "meshes/a.mesh.txt", mesh.artifactPath, mesh.metadataPath);
-  writeManifestLine(manifest, "materials/a.material.txt", material.artifactPath, material.metadataPath);
-  // No manifest entry for textures/never_declared.png at all.
-  writeFile(dir.path / "manifest.txt", manifest);
-  const BootstrapConfig config = makeSceneConfig(scene.artifactPath, scene.metadataPath, dir.path / "manifest.txt");
+  atlantis::runtime::test_support::CatalogBuilder catalogBuilder(dir.path);
+  catalogBuilder.addMesh("meshes/a.mesh.txt", mesh.artifactPath, mesh.metadataPath);
+  catalogBuilder.addMaterial("materials/a.material.txt", material.artifactPath, material.metadataPath);
+  // No catalog record for textures/never_declared.png at all.
+  catalogBuilder.addScene("scene", scene, {});
+  const BootstrapConfig config = makeSceneConfig(catalogBuilder.write());
 
   const auto result = loadAndInstantiateScene(config, device.get(), meshArtifactPositionLayout());
   REQUIRE(result.isErr());
@@ -841,16 +859,14 @@ TEST_CASE("loadAndInstantiateScene: a resolvable but unloadable material with a 
   const CookedSceneFixture scene =
       cookFixtureSceneWithMaterials(dir.path, {"meshes/a.mesh.txt"}, {"materials/a.material.txt"});
 
-  std::string manifest;
-  writeManifestLine(manifest, "meshes/a.mesh.txt", mesh.artifactPath, mesh.metadataPath);
-  // Real metadata (loadSceneDependencyManifest() itself validates every
-  // entry own sidecar) but a missing ARTIFACT path -- never read during
-  // manifest validation, only later, at loadMaterialAsset() itself.
-  writeManifestLine(manifest, "materials/a.material.txt", dir.path / "does_not_exist.amaterial",
-                     material.metadataPath);
-  writeManifestLine(manifest, "textures/a.png", texture.artifactPath, texture.metadataPath);
-  writeFile(dir.path / "manifest.txt", manifest);
-  const BootstrapConfig config = makeSceneConfig(scene.artifactPath, scene.metadataPath, dir.path / "manifest.txt");
+  atlantis::runtime::test_support::CatalogBuilder catalogBuilder(dir.path);
+  catalogBuilder.addMesh("meshes/a.mesh.txt", mesh.artifactPath, mesh.metadataPath);
+  // Real metadata but a missing ARTIFACT path -- only read later, at
+  // loadMaterialAsset() itself.
+  catalogBuilder.addMaterial("materials/a.material.txt", dir.path / "does_not_exist.amaterial", material.metadataPath);
+  catalogBuilder.addTexture("textures/a.png", texture.artifactPath, texture.metadataPath);
+  catalogBuilder.addScene("scene", scene, {});
+  const BootstrapConfig config = makeSceneConfig(catalogBuilder.write());
 
   const auto result = loadAndInstantiateScene(config, device.get(), meshArtifactPositionLayout());
   REQUIRE(result.isErr());
@@ -874,13 +890,13 @@ TEST_CASE("loadAndInstantiateScene: two entities referencing the same material A
       dir.path, {"meshes/a.mesh.txt", "meshes/b.mesh.txt"},
       {"materials/a.material.txt", "materials/a.material.txt"});  // both nodes reference the SAME material AssetId
 
-  std::string manifest;
-  writeManifestLine(manifest, "meshes/a.mesh.txt", meshA.artifactPath, meshA.metadataPath);
-  writeManifestLine(manifest, "meshes/b.mesh.txt", meshB.artifactPath, meshB.metadataPath);
-  writeManifestLine(manifest, "materials/a.material.txt", material.artifactPath, material.metadataPath);
-  writeManifestLine(manifest, "textures/a.png", texture.artifactPath, texture.metadataPath);
-  writeFile(dir.path / "manifest.txt", manifest);
-  const BootstrapConfig config = makeSceneConfig(scene.artifactPath, scene.metadataPath, dir.path / "manifest.txt");
+  atlantis::runtime::test_support::CatalogBuilder catalogBuilder(dir.path);
+  catalogBuilder.addMesh("meshes/a.mesh.txt", meshA.artifactPath, meshA.metadataPath);
+  catalogBuilder.addMesh("meshes/b.mesh.txt", meshB.artifactPath, meshB.metadataPath);
+  catalogBuilder.addMaterial("materials/a.material.txt", material.artifactPath, material.metadataPath);
+  catalogBuilder.addTexture("textures/a.png", texture.artifactPath, texture.metadataPath);
+  catalogBuilder.addScene("scene", scene, {});
+  const BootstrapConfig config = makeSceneConfig(catalogBuilder.write());
 
   const auto result = loadAndInstantiateScene(config, device.get(), meshArtifactPositionLayout());
   REQUIRE(result.isOk());
@@ -910,12 +926,12 @@ TEST_CASE("loadAndInstantiateScene: a PbrDirectLit material whose own resolved b
   const CookedSceneFixture scene =
       cookFixtureSceneWithMaterials(dir.path, {"meshes/a.mesh.txt"}, {"materials/a.material.txt"});
 
-  std::string manifest;
-  writeManifestLine(manifest, "meshes/a.mesh.txt", mesh.artifactPath, mesh.metadataPath);
-  writeManifestLine(manifest, "materials/a.material.txt", material.artifactPath, material.metadataPath);
-  writeManifestLine(manifest, "textures/a.png", texture.artifactPath, texture.metadataPath);
-  writeFile(dir.path / "manifest.txt", manifest);
-  const BootstrapConfig config = makeSceneConfig(scene.artifactPath, scene.metadataPath, dir.path / "manifest.txt");
+  atlantis::runtime::test_support::CatalogBuilder catalogBuilder(dir.path);
+  catalogBuilder.addMesh("meshes/a.mesh.txt", mesh.artifactPath, mesh.metadataPath);
+  catalogBuilder.addMaterial("materials/a.material.txt", material.artifactPath, material.metadataPath);
+  catalogBuilder.addTexture("textures/a.png", texture.artifactPath, texture.metadataPath);
+  catalogBuilder.addScene("scene", scene, {});
+  const BootstrapConfig config = makeSceneConfig(catalogBuilder.write());
 
   const auto result = loadAndInstantiateScene(config, device.get(), meshArtifactPositionLayout());
   REQUIRE(result.isErr());

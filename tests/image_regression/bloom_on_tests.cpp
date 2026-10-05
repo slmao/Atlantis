@@ -24,6 +24,7 @@
 #include <utility>
 #include <vector>
 
+#include "catalog_asset_id.h"
 // Plan 0044 Milestone 2 (Spec 0044 R1-R3, R7; ADR-0092): bloom switched
 // on, on the dark emissive fixture (PbrNormalMapDemoFixture, ruling O4):
 // - neutrality: a knee above every channel renders bloom-on byte-
@@ -59,15 +60,9 @@ using atlantis::renderer::BloomInput;
 
 namespace {
 
-constexpr BloomTestSceneFiles kEmissiveDemoScene{ATLANTIS_emissive_demo_scene_ARTIFACT_PATH,
-                                                 ATLANTIS_emissive_demo_scene_METADATA_PATH,
-                                                 ATLANTIS_emissive_demo_scene_MANIFEST_PATH};
-constexpr BloomTestSceneFiles kBloomDemoScene{ATLANTIS_bloom_demo_scene_ARTIFACT_PATH,
-                                              ATLANTIS_bloom_demo_scene_METADATA_PATH,
-                                              ATLANTIS_bloom_demo_scene_MANIFEST_PATH};
-constexpr BloomTestSceneFiles kBloomFogDemoScene{ATLANTIS_bloom_fog_demo_scene_ARTIFACT_PATH,
-                                                 ATLANTIS_bloom_fog_demo_scene_METADATA_PATH,
-                                                 ATLANTIS_bloom_fog_demo_scene_MANIFEST_PATH};
+constexpr BloomTestSceneFiles kEmissiveDemoScene{ATLANTIS_emissive_demo_scene_GUID};
+constexpr BloomTestSceneFiles kBloomDemoScene{ATLANTIS_bloom_demo_scene_GUID};
+constexpr BloomTestSceneFiles kBloomFogDemoScene{ATLANTIS_bloom_fog_demo_scene_GUID};
 
 constexpr const char* kOrange = "materials/emissive_demo_orange.material.txt";
 constexpr const char* kGreen = "materials/emissive_demo_green.material.txt";
@@ -99,7 +94,7 @@ constexpr const char* kBlue = "materials/emissive_demo_blue.material.txt";
 // which realizes the materials.
 void keepOnlyEmissive(EmissiveDemoFixture& fixture, const char* keptMaterialPath) {
   const std::optional<atlantis::asset_system::AssetId> kept =
-      keptMaterialPath != nullptr ? std::optional(atlantis::asset_system::computeAssetId(keptMaterialPath))
+      keptMaterialPath != nullptr ? std::optional(atlantis::image_regression::catalogAssetId(keptMaterialPath))
                                   : std::nullopt;
   for (auto& [id, material] : fixture.materialDataMap) {
     if (kept.has_value() && id == *kept) continue;
@@ -182,7 +177,7 @@ struct IsolatedSphereResult {
   result.changedPixels = countChanged(on, off, 0, on.width, 0, on.height);
   if (keptMaterialPath != nullptr) {
     const auto circle =
-        projectMaterialSphere(fixture, atlantis::asset_system::computeAssetId(keptMaterialPath), 1.0f, on.width);
+        projectMaterialSphere(fixture, atlantis::image_regression::catalogAssetId(keptMaterialPath), 1.0f, on.width);
     REQUIRE(circle.has_value());
     const auto x = static_cast<std::uint32_t>(circle->centerX);
     const auto y = static_cast<std::uint32_t>(circle->centerY - circle->radius - 8.0f);
@@ -249,7 +244,7 @@ TEST_CASE("Bloom halo shape: an isolated source's halo falls off monotonically a
   const BloomInput half = makeBloomInput(fixture, 0.4f, 1.0f);
   const PixelBuffer halfOn = render(fixture, &half);
 
-  const auto circle = projectMaterialSphere(fixture, atlantis::asset_system::computeAssetId(kOrange), 1.0f, on.width);
+  const auto circle = projectMaterialSphere(fixture, atlantis::image_regression::catalogAssetId(kOrange), 1.0f, on.width);
   REQUIRE(circle.has_value());
   // Straight up from the orange sphere's top edge: nothing else is there.
   const auto x = static_cast<std::uint32_t>(circle->centerX);

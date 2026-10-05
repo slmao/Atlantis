@@ -1,3 +1,5 @@
+#include <atlantis/asset_system/asset_catalog_source.h>
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/load.h>
 #include <atlantis/asset_system/logical_path.h>
@@ -6,6 +8,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
+#include <string>
 #include <vector>
 
 // Plan 0017 Milestone 2: proves the two independent quad mesh assets
@@ -175,10 +180,15 @@ TEST_CASE("textured_quad_left and textured_quad_right have distinct AssetIds der
   REQUIRE(leftResult.isOk());
   REQUIRE(rightResult.isOk());
 
-  const auto expectedLeftPath = normalizeLogicalPath("meshes/textured_quad_left.mesh.txt");
-  const auto expectedRightPath = normalizeLogicalPath("meshes/textured_quad_right.mesh.txt");
-  REQUIRE(expectedLeftPath.isOk());
-  REQUIRE(expectedRightPath.isOk());
-  CHECK(expectedLeftPath.value() != expectedRightPath.value());
-  CHECK(computeAssetId(expectedLeftPath.value()) != computeAssetId(expectedRightPath.value()));
+  // Plan 0047 M4: each quad's identity is its catalog-source GUID.
+  std::ifstream catalogFile(ATLANTIS_ASSET_CATALOG_SOURCE_PATH, std::ios::binary);
+  const std::string catalogText((std::istreambuf_iterator<char>(catalogFile)), std::istreambuf_iterator<char>());
+  const auto catalog = parseAssetCatalogSource(catalogText);
+  REQUIRE(catalog.isOk());
+  const CatalogSourceEntry* left = catalog.value().find(CatalogRoot::Assets, "meshes/textured_quad_left.mesh.txt");
+  const CatalogSourceEntry* right = catalog.value().find(CatalogRoot::Assets, "meshes/textured_quad_right.mesh.txt");
+  REQUIRE(left != nullptr);
+  REQUIRE(right != nullptr);
+  CHECK(left->guid != right->guid);
+  CHECK(assetKey(left->guid) != assetKey(right->guid));
 }

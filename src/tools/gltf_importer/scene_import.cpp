@@ -80,10 +80,11 @@ struct LightLine {
 
 struct SceneLine {
   std::uint32_t id = 0;
+  atlantis::asset_system::EntityGuid guid;
   std::optional<std::uint32_t> parent;
   DecomposedTransform transform;
-  std::optional<std::string> mesh;
-  std::optional<std::string> material;
+  std::optional<atlantis::asset_system::AssetGuid> mesh;
+  std::optional<atlantis::asset_system::AssetGuid> material;
   std::optional<LightLine> light;
 };
 
@@ -107,16 +108,17 @@ struct SceneLine {
 // camera becomes the active one.
 [[nodiscard]] std::string serialize(const std::vector<SceneLine>& lines, const std::vector<std::string>& overlayLines,
                                     std::optional<std::uint32_t> activeCamera) {
-  std::string out = "atlantis_scene_source_version: 6\nnode_count: " +
+  std::string out = "atlantis_scene_source_version: 7\nnode_count: " +
                     std::to_string(lines.size() + overlayLines.size()) + "\nactive_camera: " +
                     (activeCamera ? std::to_string(*activeCamera) : std::string("none")) + "\n";
   for (const SceneLine& l : lines) {
-    out += "node: node_id=" + std::to_string(l.id) + " parent=" + (l.parent ? std::to_string(*l.parent) : "none") +
+    out += "node: node_id=" + std::to_string(l.id) + " guid=" + atlantis::asset_system::toString(l.guid) +
+           " parent=" + (l.parent ? std::to_string(*l.parent) : "none") +
            " position=" + formatTriple(l.transform.translation) + " rotation=" + formatTriple(l.transform.eulerRadians) +
            " scale=" + formatTriple(l.transform.scale);
     if (l.mesh) {
-      out += " mesh=" + *l.mesh;
-      if (l.material) out += " material=" + *l.material;
+      out += " mesh=" + atlantis::asset_system::toString(*l.mesh);
+      if (l.material) out += " material=" + atlantis::asset_system::toString(*l.material);
     } else if (l.light) {
       out += std::string(" light=") + (l.light->directional ? "directional" : "point") + " color=" +
              formatFloat(l.light->color[0]) + ' ' + formatFloat(l.light->color[1]) + ' ' +
@@ -187,7 +189,7 @@ atlantis::Result<std::monostate, GltfImportError> checkScene(const cgltf_data& d
     for (const auto& node : overlay->nodes) overlayIds.insert(node.nodeId);
     std::size_t cameras = 0;
     for (const auto& node : overlay->nodes) {
-      if (node.meshLogicalPath) return CheckResult::Err(GltfImportError::OverlayRenderableNode);
+      if (node.meshAsset) return CheckResult::Err(GltfImportError::OverlayRenderableNode);
       if (node.parentNodeId && !overlayIds.contains(*node.parentNodeId)) {
         return CheckResult::Err(GltfImportError::OverlayParentOutsideOverlay);
       }
@@ -229,7 +231,10 @@ atlantis::Result<std::monostate, GltfImportError> checkScene(const cgltf_data& d
 }
 
 atlantis::Result<std::monostate, GltfImportError> writeScene(const cgltf_data& data, const fs::path& stagingDir,
-                                                             const std::string& name, GltfImportSummary& summary,
+                                                             const std::string& name,
+                                                             const atlantis::asset_system::AssetGuid& importRoot,
+                                                             const std::string& importRootId,
+                                                             GltfImportSummary& summary,
                                                              std::vector<std::string>& reportLines,
                                                              std::vector<std::string>& manifestLines,
                                                              const atlantis::asset_system::ParsedSceneSource* overlay) {
@@ -240,6 +245,8 @@ atlantis::Result<std::monostate, GltfImportError> writeScene(const cgltf_data& d
     return CheckResult::Ok(std::monostate{});
   }
 
+  const auto sceneGuid = deriveImportAssetGuid(importRoot, "scene");
+  if (sceneGuid.isErr()) return CheckResult::Err(sceneGuid.error());
   std::vector<SceneLine> lines;
   // node_id = glTF node index + 1; synthetic children (a second primitive,
   // or a light on a node that already carries a mesh -- the grammar allows
@@ -266,15 +273,24 @@ atlantis::Result<std::monostate, GltfImportError> writeScene(const cgltf_data& d
 
     SceneLine line;
     line.id = id;
+    const std::string nodeKey = "node/" + std::to_string(nodeIndex);
+    const auto nodeGuid = deriveImportEntityGuid(sceneGuid.value(), nodeKey);
+    if (nodeGuid.isErr()) return CheckResult::Err(nodeGuid.error());
+    line.guid = nodeGuid.value();
     line.parent = frame.parent;
     line.transform = localTransform(node).value();  // checked by checkScene()
     const auto& s = line.transform.scale;
     if (s[0] != s[1] || s[1] != s[2]) summary.nonUniformScaleNodes += 1;
 
     std::vector<SceneLine> synthetic;
-    auto syntheticChild = [&]() {
+    // Returns nullopt only when the sub-key is invalid (never, for these
+    // ASCII keys; checked all the same, ruling I2).
+    auto syntheticChild = [&](const std::string& subKey) -> std::optional<SceneLine> {
+      const auto childGuid = deriveImportEntityGuid(sceneGuid.value(), nodeKey + "/" + subKey);
+      if (childGuid.isErr()) return std::nullopt;
       SceneLine child;
       child.id = nextSyntheticId++;
+      child.guid = childGuid.value();
       child.parent = id;
       summary.syntheticNodes += 1;
       return child;
@@ -284,21 +300,27 @@ atlantis::Result<std::monostate, GltfImportError> writeScene(const cgltf_data& d
       meshInstances[mesh] += 1;
       const std::size_t meshIndex = static_cast<std::size_t>(mesh - data.meshes);
       for (cgltf_size p = 0; p < mesh->primitives_count; ++p) {
-        std::optional<std::string> material;
+        std::optional<atlantis::asset_system::AssetGuid> material;
         if (const cgltf_material* m = mesh->primitives[p].material) {
-          material = materialLogicalPath(name, static_cast<std::size_t>(m - data.materials));
+          const auto materialGuid = deriveImportAssetGuid(
+              importRoot, "material/" + std::to_string(static_cast<std::size_t>(m - data.materials)));
+          if (materialGuid.isErr()) return CheckResult::Err(materialGuid.error());
+          material = materialGuid.value();
         } else {
           summary.primitivesWithoutMaterial += 1;
         }
-        const std::string path = meshLogicalPath(name, meshIndex, p);
+        const auto meshGuid =
+            deriveImportAssetGuid(importRoot, "mesh/" + std::to_string(meshIndex) + "/" + std::to_string(p));
+        if (meshGuid.isErr()) return CheckResult::Err(meshGuid.error());
         if (mesh->primitives_count == 1) {
-          line.mesh = path;
+          line.mesh = meshGuid.value();
           line.material = material;
         } else {
-          SceneLine child = syntheticChild();
-          child.mesh = path;
-          child.material = material;
-          synthetic.push_back(std::move(child));
+          auto child = syntheticChild("primitive/" + std::to_string(p));
+          if (!child) return CheckResult::Err(GltfImportError::InvalidAssetSubKey);
+          child->mesh = meshGuid.value();
+          child->material = material;
+          synthetic.push_back(std::move(*child));
         }
         summary.sceneMeshLines += 1;
       }
@@ -324,9 +346,10 @@ atlantis::Result<std::monostate, GltfImportError> writeScene(const cgltf_data& d
                               "workflow 2)");
       }
       if (line.mesh) {
-        SceneLine child = syntheticChild();
-        child.light = l;
-        synthetic.push_back(std::move(child));
+        auto child = syntheticChild("light");
+        if (!child) return CheckResult::Err(GltfImportError::InvalidAssetSubKey);
+        child->light = l;
+        synthetic.push_back(std::move(*child));
       } else {
         line.light = l;
       }
@@ -383,7 +406,9 @@ atlantis::Result<std::monostate, GltfImportError> writeScene(const cgltf_data& d
   if (!out.good()) return CheckResult::Err(GltfImportError::OutputWriteFailed);
 
   manifestLines.push_back("--kind=scene --source={import_dir}/" + logical +
-                          " --asset-root={import_dir} --output-dir={cooked_dir}");
+                          " --asset-root={import_dir} --output-dir={cooked_dir} --guid=" +
+                          atlantis::asset_system::toString(sceneGuid.value()) + " --catalog-id=" + importRootId +
+                          "#scene");
   reportLines.push_back("scene: " + std::to_string(summary.sceneNodeLines) + " node lines (" +
                         std::to_string(summary.sceneMeshLines) + " mesh, " + std::to_string(summary.sceneLightLines) +
                         " light, " + std::to_string(summary.syntheticNodes) + " synthetic), max depth " +

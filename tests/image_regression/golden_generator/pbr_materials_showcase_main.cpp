@@ -1,6 +1,7 @@
 #include <atlantis/log.h>
 #include <atlantis/runtime/bootstrap_config.h>
 
+#include "../support/catalog_scene.h"
 #include "../fixture/pbr_materials_showcase_fixture.h"
 #include "../support/pixel_diff.h"
 #include "../support/png_codec.h"
@@ -91,9 +92,8 @@ void printProvenanceFieldIfDifferent(const char* fieldName, const std::string& o
 // anisotropic) and the warehouse_interior environment.
 [[nodiscard]] BootstrapConfig buildConfig() {
   BootstrapConfig config;
-  config.sceneArtifactPath = ATLANTIS_pbr_materials_showcase_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_pbr_materials_showcase_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_pbr_materials_showcase_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_pbr_materials_showcase_scene_GUID);
   const std::string unlit = ATLANTIS_PBR_MATERIALS_SHOWCASE_UNLIT_TEXTURED_SHADER_DIR;
   config.unlitTexturedVertexShaderSpirvPath = unlit + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath = unlit + "/textured_quad.vert.refl.json";

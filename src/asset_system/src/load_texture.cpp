@@ -63,10 +63,9 @@ atlantis::Result<TextureAssetData, TextureLoadError> loadTextureAsset(const std:
   }
 
   // Self-consistency, not just artifact-vs-metadata agreement: the
-  // metadata sidecar's own two fields (its recorded Asset ID and its
-  // recorded source path) must agree with each other too -- mirrors
-  // loadStaticMeshAsset()'s own identical check.
-  if (metadata.assetId != computeAssetId(metadata.sourceLogicalPath)) {
+  // sidecar's Asset ID must be the key of its GUID (Plan 0047 P8) --
+  // mirrors loadStaticMeshAsset()'s own identical check.
+  if (metadata.assetId != assetKey(metadata.assetGuid)) {
     return ResultT::Err(TextureLoadError::MetadataArtifactMismatch);
   }
 

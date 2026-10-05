@@ -23,8 +23,11 @@ TEST_CASE("toString(RuntimeInitError) returns a distinct, non-empty string for e
       RuntimeInitError::MeshCreateFailed,             RuntimeInitError::CameraBufferCreateFailed,
       RuntimeInitError::AssetMetadataParseFailed,     RuntimeInitError::SceneConstructionFailed,
       // Plan 0015 Section D2.
-      RuntimeInitError::SceneManifestLoadFailed,      RuntimeInitError::SceneArtifactLoadFailed,
+      RuntimeInitError::AssetCatalogLoadFailed,       RuntimeInitError::SceneArtifactLoadFailed,
       RuntimeInitError::SceneDependencyUnresolved,    RuntimeInitError::SceneDependencyLoadFailed,
+      // Plan 0047 P14.
+      RuntimeInitError::SceneNotInCatalog,            RuntimeInitError::DependencyTypeMismatch,
+      RuntimeInitError::UnsupportedArtifactSchema,
       // Plan 0023 Milestone 5 (ADR-0066 item 6).
       RuntimeInitError::PbrBaseColorTextureNotSrgb,
       RuntimeInitError::EnvironmentConfigInvalid, RuntimeInitError::EnvironmentLoadFailed,

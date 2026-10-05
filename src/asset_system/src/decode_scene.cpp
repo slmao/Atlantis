@@ -75,7 +75,7 @@ atlantis::Result<ValidatedSceneData, SceneArtifactDecodeError> decodeScene(const
   // constructor -- the only call site in the entire codebase permitted
   // to do so, reachable only now that every check above has passed.
   return ResultT::Ok(ValidatedSceneData(std::move(decodedArtifact.nodes), std::move(decodedArtifact.parents),
-                                         decodedArtifact.activeCameraIndex));
+                                         decodedArtifact.activeCameraIndex, std::move(decodedArtifact.entityGuids)));
 }
 
 }  // namespace atlantis::asset_system

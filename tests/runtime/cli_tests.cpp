@@ -1,6 +1,7 @@
 #include "../../src/runtime/cli.h"
 
 #include <atlantis/assert.h>
+#include <atlantis/asset_system/asset_guid.h>
 
 #include <array>
 #include <string>
@@ -13,7 +14,7 @@ using atlantis::runtime::cli::CommandLineOutcome;
 using atlantis::runtime::cli::CommandLineResult;
 using atlantis::runtime::cli::kDefaultSceneName;
 using atlantis::runtime::cli::parseCommandLine;
-using atlantis::runtime::cli::SceneBootstrapPaths;
+using atlantis::runtime::cli::SceneSelection;
 using atlantis::runtime::cli::SceneWhitelistEntry;
 
 namespace {
@@ -37,25 +38,24 @@ struct FakeArgv {
   [[nodiscard]] char** argv() { return pointers.data(); }
 };
 
-// Four fixture entries, fake/distinguishable paths only -- never real
-// build paths (Spec 0032 Requirement 5). `suffix` lets a test build
-// several independently-distinguishable whitelists. Plan 0035 Milestone
-// 5 (Spec 0035 Requirement 7): the 4th entry is purely additive -- the
-// existing three entries' own fake paths are unchanged.
+// A fake, deterministic, non-nil scene GUID per (key, suffix) -- never a real
+// catalog GUID (Spec 0032 Requirement 5). `suffix` lets a test build several
+// independently-distinguishable whitelists.
+[[nodiscard]] atlantis::asset_system::AssetGuid fakeSceneGuid(std::string_view key, std::string_view suffix) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00320032-0032-4032-8032-003200320032").value(),
+      std::string(key).append(suffix));
+}
+
+// Four fixture entries. Plan 0035 Milestone 5 (Spec 0035 Requirement 7): the
+// 4th entry is purely additive -- the existing three entries' own fake GUIDs
+// are unchanged.
 [[nodiscard]] std::array<SceneWhitelistEntry, 4> makeFixtureWhitelist(std::string_view suffix = "") {
   return {{
-      {"integrated_showcase_demo", SceneBootstrapPaths{std::string("/fake/a/artifact").append(suffix),
-                                                         std::string("/fake/a/metadata").append(suffix),
-                                                         std::string("/fake/a/manifest").append(suffix)}},
-      {"ibl_material_demo", SceneBootstrapPaths{std::string("/fake/b/artifact").append(suffix),
-                                                 std::string("/fake/b/metadata").append(suffix),
-                                                 std::string("/fake/b/manifest").append(suffix)}},
-      {"pbr_normal_map_demo", SceneBootstrapPaths{std::string("/fake/c/artifact").append(suffix),
-                                                   std::string("/fake/c/metadata").append(suffix),
-                                                   std::string("/fake/c/manifest").append(suffix)}},
-      {"pbr_materials_showcase", SceneBootstrapPaths{std::string("/fake/d/artifact").append(suffix),
-                                                       std::string("/fake/d/metadata").append(suffix),
-                                                       std::string("/fake/d/manifest").append(suffix)}},
+      {"integrated_showcase_demo", SceneSelection{fakeSceneGuid("a", suffix)}},
+      {"ibl_material_demo", SceneSelection{fakeSceneGuid("b", suffix)}},
+      {"pbr_normal_map_demo", SceneSelection{fakeSceneGuid("c", suffix)}},
+      {"pbr_materials_showcase", SceneSelection{fakeSceneGuid("d", suffix)}},
   }};
 }
 
@@ -74,9 +74,7 @@ void requireRunScene(const CommandLineResult& result, const std::array<SceneWhit
   REQUIRE(result.message.empty());
   REQUIRE(result.selectedScene.has_value());
   const SceneWhitelistEntry& expected = findFixtureEntry(whitelist, expectedName);
-  REQUIRE(result.selectedScene->sceneArtifactPath == expected.paths.sceneArtifactPath);
-  REQUIRE(result.selectedScene->sceneMetadataPath == expected.paths.sceneMetadataPath);
-  REQUIRE(result.selectedScene->sceneDependencyManifestPath == expected.paths.sceneDependencyManifestPath);
+  REQUIRE(result.selectedScene->sceneAsset == expected.selection.sceneAsset);
 }
 
 void requireUsage(const CommandLineResult& result, std::string_view expectedMessageSubstring) {
@@ -323,13 +321,13 @@ TEST_CASE("parseCommandLine(): three independently-constructed whitelists each s
 
   // The three whitelists must actually be distinguishable, or the loop
   // above would pass even with real cross-contamination.
-  REQUIRE(findFixtureEntry(whitelistOne, "ibl_material_demo").paths.sceneArtifactPath !=
-          findFixtureEntry(whitelistTwo, "ibl_material_demo").paths.sceneArtifactPath);
-  REQUIRE(findFixtureEntry(whitelistTwo, "ibl_material_demo").paths.sceneArtifactPath !=
-          findFixtureEntry(whitelistThree, "ibl_material_demo").paths.sceneArtifactPath);
+  REQUIRE(findFixtureEntry(whitelistOne, "ibl_material_demo").selection.sceneAsset !=
+          findFixtureEntry(whitelistTwo, "ibl_material_demo").selection.sceneAsset);
+  REQUIRE(findFixtureEntry(whitelistTwo, "ibl_material_demo").selection.sceneAsset !=
+          findFixtureEntry(whitelistThree, "ibl_material_demo").selection.sceneAsset);
 }
 
-TEST_CASE("parseCommandLine(): no-argument and explicit default --scene select byte-identical paths",
+TEST_CASE("parseCommandLine(): no-argument and explicit default --scene select the identical scene",
           "[runtime][cli]") {
   const auto whitelist = makeFixtureWhitelist();
 
@@ -341,10 +339,7 @@ TEST_CASE("parseCommandLine(): no-argument and explicit default --scene select b
 
   REQUIRE(defaultResult.outcome == CommandLineOutcome::RunScene);
   REQUIRE(explicitResult.outcome == CommandLineOutcome::RunScene);
-  REQUIRE(defaultResult.selectedScene->sceneArtifactPath == explicitResult.selectedScene->sceneArtifactPath);
-  REQUIRE(defaultResult.selectedScene->sceneMetadataPath == explicitResult.selectedScene->sceneMetadataPath);
-  REQUIRE(defaultResult.selectedScene->sceneDependencyManifestPath ==
-          explicitResult.selectedScene->sceneDependencyManifestPath);
+  REQUIRE(defaultResult.selectedScene->sceneAsset == explicitResult.selectedScene->sceneAsset);
 }
 
 // Verified via the same replaceable atlantis::assertions::setFailureHandler()
@@ -355,8 +350,8 @@ TEST_CASE("parseCommandLine(): a whitelist missing the default scene entry fails
           "then returns its defensive PrintErrorAndExit fallback",
           "[runtime][cli]") {
   const std::array<SceneWhitelistEntry, 2> whitelistWithoutDefault{{
-      {"ibl_material_demo", SceneBootstrapPaths{"/fake/b/artifact", "/fake/b/metadata", "/fake/b/manifest"}},
-      {"pbr_normal_map_demo", SceneBootstrapPaths{"/fake/c/artifact", "/fake/c/metadata", "/fake/c/manifest"}},
+      {"ibl_material_demo", SceneSelection{fakeSceneGuid("b", "")}},
+      {"pbr_normal_map_demo", SceneSelection{fakeSceneGuid("c", "")}},
   }};
 
   int failureCount = 0;

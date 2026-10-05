@@ -1,6 +1,6 @@
-atlantis_material_source_version: 9
+atlantis_material_source_version: 10
 kind: pbr_anisotropic
-texture: textures/metal_rust_source_srgb.png
+texture: 5ff6a088-6700-4fde-911c-986a1b4d3e0b
 filter: linear
 address_mode: repeat
 base_color_factor: 0.9 0.9 0.92 1.0

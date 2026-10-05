@@ -13,6 +13,19 @@
 #include <sstream>
 #include <string>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 using namespace atlantis::asset_system;
 
 namespace {
@@ -46,9 +59,9 @@ void writeFile(const fs::path& path, const std::string& content) {
 }
 
 constexpr std::string_view kValidSource =
-    "atlantis_material_source_version: 9\n"
+    "atlantis_material_source_version: 10\n"
     "kind: unlit_textured\n"
-    "texture: textures/textured_quad_source_unorm.png\n"
+    "texture: 2b1e4c4d-54ac-814e-bbd5-68707192b012\n"
     "filter: linear\n"
     "address_mode: repeat\n";
 
@@ -59,6 +72,7 @@ constexpr std::string_view kValidSource =
   const fs::path artifactPath = dir / "unlit_textured_quad.amaterial";
   const fs::path metadataPath = dir / "unlit_textured_quad.amaterial.meta.txt";
   const auto result = cookMaterial(sourcePath.string(), "materials/unlit_textured_quad.material.txt",
+                                    testAssetGuid("materials/unlit_textured_quad.material.txt"),
                                     artifactPath.string(), metadataPath.string());
   REQUIRE(result.isOk());
   return {artifactPath, metadataPath};
@@ -73,7 +87,7 @@ TEST_CASE("loadMaterialAsset loads a well-formed artifact/metadata pair", "[asse
   const auto result = loadMaterialAsset(artifactPath, metadataPath);
   REQUIRE(result.isOk());
   CHECK(result.value().kind == MaterialKind::UnlitTextured);
-  CHECK(result.value().textureAsset == computeAssetId("textures/textured_quad_source_unorm.png"));
+  CHECK(result.value().textureAsset == assetKey(testAssetGuid("textures/textured_quad_source_unorm.png")));
   CHECK(result.value().filter == MaterialSamplerFilter::Linear);
   CHECK(result.value().addressMode == MaterialSamplerAddressMode::Repeat);
   CHECK(result.value().baseColorFactor[0] == 1.0f);
@@ -86,9 +100,9 @@ TEST_CASE("loadMaterialAsset loads a well-formed PbrDirectLit material with its 
   TempDirGuard dir("pbr_success");
   const fs::path sourcePath = dir.path / "pbr_dielectric_rough.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 9\n"
+            "atlantis_material_source_version: 10\n"
             "kind: pbr_direct_lit\n"
-            "texture: textures/textured_quad_source_srgb.png\n"
+            "texture: 9e3d77dd-44f3-8b46-94ba-8c4670ff345f\n"
             "filter: linear\n"
             "address_mode: repeat\n"
             "base_color_factor: 0.8 0.2 0.1 1.0\n"
@@ -97,6 +111,7 @@ TEST_CASE("loadMaterialAsset loads a well-formed PbrDirectLit material with its 
   const fs::path artifactPath = dir.path / "pbr_dielectric_rough.amaterial";
   const fs::path metadataPath = dir.path / "pbr_dielectric_rough.amaterial.meta.txt";
   const auto cookResult = cookMaterial(sourcePath.string(), "materials/pbr_dielectric_rough.material.txt",
+                                        testAssetGuid("materials/pbr_dielectric_rough.material.txt"),
                                         artifactPath.string(), metadataPath.string());
   REQUIRE(cookResult.isOk());
 
@@ -128,9 +143,9 @@ TEST_CASE("loadMaterialAsset round-trips a metallic_factor value that std::to_st
   TempDirGuard dir("pbr_precise_float_roundtrip");
   const fs::path sourcePath = dir.path / "pbr_precise.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 9\n"
+            "atlantis_material_source_version: 10\n"
             "kind: pbr_direct_lit\n"
-            "texture: textures/textured_quad_source_srgb.png\n"
+            "texture: 9e3d77dd-44f3-8b46-94ba-8c4670ff345f\n"
             "filter: linear\n"
             "address_mode: repeat\n"
             "base_color_factor: 1.0 1.0 1.0 1.0\n"
@@ -139,6 +154,7 @@ TEST_CASE("loadMaterialAsset round-trips a metallic_factor value that std::to_st
   const fs::path artifactPath = dir.path / "pbr_precise.amaterial";
   const fs::path metadataPath = dir.path / "pbr_precise.amaterial.meta.txt";
   const auto cookResult = cookMaterial(sourcePath.string(), "materials/pbr_precise.material.txt",
+                                        testAssetGuid("materials/pbr_precise.material.txt"),
                                         artifactPath.string(), metadataPath.string());
   REQUIRE(cookResult.isOk());
 
@@ -162,9 +178,9 @@ TEST_CASE("loadMaterialAsset detects a metadata/artifact mismatch scoped to meta
   TempDirGuard dir("metallic_mismatch");
   const fs::path sourcePath = dir.path / "pbr.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 9\n"
+            "atlantis_material_source_version: 10\n"
             "kind: pbr_direct_lit\n"
-            "texture: textures/textured_quad_source_srgb.png\n"
+            "texture: 9e3d77dd-44f3-8b46-94ba-8c4670ff345f\n"
             "filter: linear\n"
             "address_mode: repeat\n"
             "base_color_factor: 1.0 1.0 1.0 1.0\n"
@@ -172,7 +188,7 @@ TEST_CASE("loadMaterialAsset detects a metadata/artifact mismatch scoped to meta
             "roughness_factor: 0.25\n");
   const fs::path artifactPath = dir.path / "pbr.amaterial";
   const fs::path metadataPath = dir.path / "pbr.amaterial.meta.txt";
-  const auto cookResult = cookMaterial(sourcePath.string(), "materials/pbr.material.txt", artifactPath.string(),
+  const auto cookResult = cookMaterial(sourcePath.string(), "materials/pbr.material.txt", testAssetGuid("materials/pbr.material.txt"), artifactPath.string(),
                                         metadataPath.string());
   REQUIRE(cookResult.isOk());
 
@@ -248,14 +264,15 @@ TEST_CASE("loadMaterialAsset detects a deliberate artifact/metadata mismatch", "
   // now disagrees with the artifact's own decoded texture_asset_id.
   const fs::path otherSourcePath = dir.path / "other.material.txt";
   writeFile(otherSourcePath,
-            "atlantis_material_source_version: 9\n"
+            "atlantis_material_source_version: 10\n"
             "kind: unlit_textured\n"
-            "texture: textures/other.png\n"
+            "texture: 82f7d17f-a20c-8482-afc8-08a46da4c0b1\n"
             "filter: linear\n"
             "address_mode: repeat\n");
   const fs::path otherArtifactPath = dir.path / "other.amaterial";
   const fs::path otherMetadataPath = dir.path / "other.amaterial.meta.txt";
   const auto otherResult = cookMaterial(otherSourcePath.string(), "materials/other.material.txt",
+                                         testAssetGuid("materials/other.material.txt"),
                                          otherArtifactPath.string(), otherMetadataPath.string());
   REQUIRE(otherResult.isOk());
 
@@ -267,8 +284,8 @@ TEST_CASE("loadMaterialAsset detects a deliberate artifact/metadata mismatch", "
 }
 
 TEST_CASE(
-    "loadMaterialAsset detects a metadata file whose own recorded asset_id and source_logical_path disagree with "
-    "each other, even when kind/texture_asset still match the artifact",
+    "loadMaterialAsset detects a metadata file whose asset_id is not the key of its asset_guid, even when "
+    "kind/texture_asset still match the artifact",
     "[asset_system][material]") {
   TempDirGuard dir("self_inconsistent_metadata");
   const auto [artifactPath, metadataPath] = cookValidMaterial(dir.path);
@@ -280,11 +297,23 @@ TEST_CASE(
     buffer << in.rdbuf();
     metadataText = buffer.str();
   }
+
+  // Plan 0047 P8 (ADR-0097 D2/D3): the source path is provenance only, so a
+  // different one still loads...
   const std::string oldLine = "source_logical_path: materials/unlit_textured_quad.material.txt";
   const std::string newLine = "source_logical_path: materials/some_other_material.material.txt";
-  const auto pos = metadataText.find(oldLine);
-  REQUIRE(pos != std::string::npos);
-  metadataText.replace(pos, oldLine.size(), newLine);
+  const auto pathPos = metadataText.find(oldLine);
+  REQUIRE(pathPos != std::string::npos);
+  metadataText.replace(pathPos, oldLine.size(), newLine);
+  writeFile(metadataPath, metadataText);
+  CHECK(loadMaterialAsset(artifactPath, metadataPath).isOk());
+
+  // ...but an asset_id that is not the key of the recorded asset_guid is an
+  // internal contradiction the artifact-vs-metadata check alone cannot see.
+  const std::string guidPrefix = "asset_guid: ";
+  const auto guidPos = metadataText.find(guidPrefix);
+  REQUIRE(guidPos != std::string::npos);
+  metadataText.replace(guidPos + guidPrefix.size(), 36, "fedcba98-7654-4321-8fed-cba987654321");
   writeFile(metadataPath, metadataText);
 
   const auto result = loadMaterialAsset(artifactPath, metadataPath);
@@ -302,9 +331,9 @@ namespace {
 [[nodiscard]] std::pair<fs::path, fs::path> cookEmissiveMaterial(const fs::path& dir) {
   const fs::path sourcePath = dir / "emissive.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 9\n"
+            "atlantis_material_source_version: 10\n"
             "kind: pbr_direct_lit\n"
-            "texture: textures/textured_quad_source_srgb.png\n"
+            "texture: 9e3d77dd-44f3-8b46-94ba-8c4670ff345f\n"
             "filter: linear\n"
             "address_mode: repeat\n"
             "base_color_factor: 1.0 1.0 1.0 1.0\n"
@@ -313,7 +342,7 @@ namespace {
             "emissive_factor: 8 0.13 0.13\n");
   const fs::path artifactPath = dir / "emissive.amaterial";
   const fs::path metadataPath = dir / "emissive.amaterial.meta.txt";
-  REQUIRE(cookMaterial(sourcePath.string(), "materials/emissive.material.txt", artifactPath.string(),
+  REQUIRE(cookMaterial(sourcePath.string(), "materials/emissive.material.txt", testAssetGuid("materials/emissive.material.txt"), artifactPath.string(),
                        metadataPath.string())
               .isOk());
   return {artifactPath, metadataPath};
@@ -363,9 +392,9 @@ namespace {
 [[nodiscard]] std::pair<fs::path, fs::path> cookMaskedMaterial(const fs::path& dir) {
   const fs::path sourcePath = dir / "masked.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 9\n"
+            "atlantis_material_source_version: 10\n"
             "kind: pbr_direct_lit\n"
-            "texture: textures/textured_quad_source_srgb.png\n"
+            "texture: 9e3d77dd-44f3-8b46-94ba-8c4670ff345f\n"
             "filter: linear\n"
             "address_mode: repeat\n"
             "base_color_factor: 1.0 1.0 1.0 1.0\n"
@@ -375,7 +404,7 @@ namespace {
             "alpha_cutoff: 0.25\n");
   const fs::path artifactPath = dir / "masked.amaterial";
   const fs::path metadataPath = dir / "masked.amaterial.meta.txt";
-  REQUIRE(cookMaterial(sourcePath.string(), "materials/masked.material.txt", artifactPath.string(),
+  REQUIRE(cookMaterial(sourcePath.string(), "materials/masked.material.txt", testAssetGuid("materials/masked.material.txt"), artifactPath.string(),
                        metadataPath.string())
               .isOk());
   return {artifactPath, metadataPath};
@@ -437,19 +466,19 @@ namespace {
 [[nodiscard]] std::pair<fs::path, fs::path> cookEmissiveTexturedMaterial(const fs::path& dir) {
   const fs::path sourcePath = dir / "glow.material.txt";
   writeFile(sourcePath,
-            "atlantis_material_source_version: 9\n"
+            "atlantis_material_source_version: 10\n"
             "kind: pbr_direct_lit\n"
-            "texture: textures/textured_quad_source_srgb.png\n"
+            "texture: 9e3d77dd-44f3-8b46-94ba-8c4670ff345f\n"
             "filter: linear\n"
             "address_mode: repeat\n"
             "base_color_factor: 1.0 1.0 1.0 1.0\n"
             "metallic_factor: 0.0\n"
             "roughness_factor: 0.5\n"
             "emissive_factor: 100 100 100\n"
-            "emissive_texture: textures/glow.dds\n");
+            "emissive_texture: 09233e04-fe3c-8d67-bee7-46e2e823b0cc\n");
   const fs::path artifactPath = dir / "glow.amaterial";
   const fs::path metadataPath = dir / "glow.amaterial.meta.txt";
-  REQUIRE(cookMaterial(sourcePath.string(), "materials/glow.material.txt", artifactPath.string(),
+  REQUIRE(cookMaterial(sourcePath.string(), "materials/glow.material.txt", testAssetGuid("materials/glow.material.txt"), artifactPath.string(),
                        metadataPath.string())
               .isOk());
   return {artifactPath, metadataPath};
@@ -462,7 +491,7 @@ TEST_CASE("loadMaterialAsset carries emissive_texture into MaterialAssetData", "
   const auto [artifactPath, metadataPath] = cookEmissiveTexturedMaterial(dir.path);
   const auto result = loadMaterialAsset(artifactPath, metadataPath);
   REQUIRE(result.isOk());
-  CHECK(result.value().emissiveTexture == computeAssetId("textures/glow.dds"));
+  CHECK(result.value().emissiveTexture == assetKey(testAssetGuid("textures/glow.dds")));
   CHECK(result.value().emissiveFactor[0] == 100.0f);
 }
 
@@ -473,7 +502,7 @@ TEST_CASE("loadMaterialAsset detects a metadata/artifact mismatch scoped to emis
   const std::string idHex = [] {
     static const char* digits = "0123456789abcdef";
     std::string hex(16, '0');
-    AssetId id = computeAssetId("textures/glow.dds");
+    AssetId id = assetKey(testAssetGuid("textures/glow.dds"));
     for (int i = 15; i >= 0; --i) {
       hex[static_cast<std::size_t>(i)] = digits[id & 0xF];
       id >>= 4;

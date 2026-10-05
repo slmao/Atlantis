@@ -135,7 +135,7 @@ enum class PbrClearcoatDemoSetupError {
   ResourceCreationFailed,
 };
 
-// config's sceneArtifactPath/sceneMetadataPath/sceneDependencyManifestPath
+// config's assetCatalogPath/sceneAsset
 // must name pbr_clearcoat_demo_scene's (or pbr_clearcoat_normal_map_demo_
 // scene's) own cooked artifacts; config must also configure a real
 // environment (environmentArtifactPath/environmentMetadataPath) and every

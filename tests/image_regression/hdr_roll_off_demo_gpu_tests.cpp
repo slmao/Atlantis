@@ -1,3 +1,4 @@
+#include "support/catalog_scene.h"
 #include "fixture/hdr_roll_off_demo_fixture.h"
 #include "support/golden_validity.h"
 #include "support/tone_mapping_reference.h"
@@ -30,9 +31,8 @@ namespace {
 
 [[nodiscard]] BootstrapConfig buildTestConfig() {
   BootstrapConfig config;
-  config.sceneArtifactPath = ATLANTIS_hdr_roll_off_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_hdr_roll_off_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_hdr_roll_off_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_hdr_roll_off_demo_scene_GUID);
   config.unlitTexturedVertexShaderSpirvPath =
       std::string(ATLANTIS_HDR_ROLL_OFF_DEMO_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath =

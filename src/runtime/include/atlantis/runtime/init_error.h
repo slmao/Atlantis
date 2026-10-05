@@ -20,23 +20,27 @@ enum class RuntimeInitError {
   AssetMetadataParseFailed,
   SceneConstructionFailed,
   // Plan 0015 Section D2/D10: each wraps the underlying
-  // SceneManifestError/SceneArtifactDecodeError/etc. only for a logged
+  // AssetCatalogError/SceneArtifactDecodeError/etc. only for a logged
   // diagnostic string -- the enumerator itself is Runtime's own
   // classification, per ADR-0054's own explicit "never
   // WorldError/SceneCookError/SceneArtifactDecodeError/AssetLoadError
   // directly" requirement.
-  SceneManifestLoadFailed,    // manifest missing, malformed, or fails its own validation (D8)
+  // Plan 0047 P14 (ADR-0098 D3): scene and dependency resolution go through
+  // the asset catalog.
+  AssetCatalogLoadFailed,     // catalog missing, malformed, or fails its own validation
+  SceneNotInCatalog,          // BootstrapConfig::sceneAsset has no record, or its record is not a scene
   SceneArtifactLoadFailed,    // decodeScene() returned Err
   // Plan 0018 Section P9: widened in kind, not in enumerator count, to
   // cover material/texture dependency resolution/load too -- the real
-  // call sites (SceneDependencyResolver::find() returning nullptr; a
-  // load call failing) are already identical regardless of which asset
-  // kind's AssetId triggered them, confirmed directly against
-  // scene_manifest.h's own kind-agnostic resolver. A dedicated
+  // call sites (AssetCatalog::find() returning nullptr; a load call
+  // failing) are already identical regardless of which asset kind's
+  // AssetId triggered them. A dedicated
   // Material-named pair would be a new enumerator for a failure mode
   // that already has one, which Spec 0018 D6's own discipline directs
   // against.
-  SceneDependencyUnresolved,  // a referenced AssetId (mesh, material, or texture) has no resolver entry
+  SceneDependencyUnresolved,  // a referenced AssetId (mesh, material, or texture) has no catalog record
+  DependencyTypeMismatch,     // a catalog record is not the asset type its referrer needs
+  UnsupportedArtifactSchema,  // a catalog record's artifact_schema is not one this Runtime loads
   SceneDependencyLoadFailed,  // a resolved AssetId's own mesh, material, or texture load failed
   // Plan 0023 Milestone 5 (ADR-0066 item 6): PbrDirectLit-only --
   // cookMaterial() can never run this check (it never resolves its own

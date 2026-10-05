@@ -1,10 +1,16 @@
 #include <atlantis/asset_system/load_material.h>
 
+#include <atlantis/asset_system/asset_catalog_source.h>
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <string_view>
 
 // Plan 0018 Milestone 5: tests/asset_system/CMakeLists.txt declares a
 // test-only material asset via the real atlantis_add_material_asset()
@@ -28,6 +34,25 @@
 
 namespace fs = std::filesystem;
 
+namespace {
+
+using namespace atlantis::asset_system;
+
+// Plan 0047: the committed catalog source is the only home of an asset's
+// GUID; a cooked sidecar must record exactly that GUID.
+[[nodiscard]] AssetGuid catalogGuid(std::string_view logicalPath) {
+  std::ifstream input(ATLANTIS_ASSET_CATALOG_SOURCE_PATH, std::ios::binary);
+  REQUIRE(input.is_open());
+  const std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  const auto catalog = parseAssetCatalogSource(text);
+  REQUIRE(catalog.isOk());
+  const CatalogSourceEntry* entry = catalog.value().find(CatalogRoot::Assets, logicalPath);
+  REQUIRE(entry != nullptr);
+  return entry->guid;
+}
+
+}  // namespace
+
 TEST_CASE("atlantis_add_material_asset() produces an artifact and metadata sidecar",
           "[asset_system][material][cmake]") {
   CHECK(fs::exists(ATLANTIS_CMAKE_DECLARATION_TEST_MATERIAL_ARTIFACT_PATH));
@@ -43,5 +68,5 @@ TEST_CASE("atlantis_add_material_asset()'s cooked output loads through loadMater
   CHECK(result.value().filter == atlantis::asset_system::MaterialSamplerFilter::Linear);
   CHECK(result.value().addressMode == atlantis::asset_system::MaterialSamplerAddressMode::Repeat);
   CHECK(result.value().textureAsset ==
-        atlantis::asset_system::computeAssetId("textures/textured_quad_source_unorm.png"));
+        atlantis::asset_system::assetKey(catalogGuid("textures/textured_quad_source_unorm.png")));
 }

@@ -13,6 +13,19 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 using atlantis::asset_system::ValidatedSceneData;
 
 // V11: ValidatedSceneData has no public default constructor of any
@@ -76,12 +89,12 @@ std::atomic<int> gScratchCounter{0};
   const fs::path metadataPath = dir / "scene.ascene.meta.txt";
   {
     std::ofstream out(sourcePath, std::ios::binary | std::ios::trunc);
-    out << "atlantis_scene_source_version: 6\n"
+    out << "atlantis_scene_source_version: 7\n"
            "node_count: 1\n"
            "active_camera: none\n"
-           "node: node_id=1 parent=none position=1.0 2.0 3.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";
+           "node: node_id=1 guid=e68122c6-1bb2-8f1f-b185-358f58780b05 parent=none position=1.0 2.0 3.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0\n";
   }
-  auto cookResult = atlantis::asset_system::cookScene(sourcePath.string(), artifactPath.string(), metadataPath.string());
+  auto cookResult = atlantis::asset_system::cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string());
   REQUIRE(cookResult.isOk());
   auto decodeResult = atlantis::asset_system::decodeScene(artifactPath.string(), metadataPath.string());
   REQUIRE(decodeResult.isOk());

@@ -1,6 +1,6 @@
-atlantis_material_source_version: 9
+atlantis_material_source_version: 10
 kind: pbr_direct_lit
-texture: textures/wood_dark_source_srgb.png
+texture: 09ca23a0-6c51-4370-a08d-8c35b82b7c23
 filter: linear
 address_mode: repeat
 base_color_factor: 1.00 0.55 0.45 1.00

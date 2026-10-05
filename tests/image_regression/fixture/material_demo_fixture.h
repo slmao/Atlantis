@@ -141,8 +141,8 @@ enum class MaterialDemoSetupError {
   ResourceCreationFailed,
 };
 
-// config's sceneArtifactPath/sceneMetadataPath/sceneDependencyManifestPath
-// must name material_demo_scene's own cooked artifacts,
+// config's assetCatalogPath/sceneAsset
+// must name material_demo_scene's own catalog record,
 // unlitTexturedVertexShader{SpirvPath,ReflectionPath}/
 // unlitTexturedFragmentShader{SpirvPath,ReflectionPath} must name
 // textured_quad_shaders' own compiled outputs, and (Plan 0019 Section

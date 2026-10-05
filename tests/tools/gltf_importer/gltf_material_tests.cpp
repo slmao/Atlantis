@@ -19,6 +19,29 @@
 #include <string>
 #include <vector>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+
+namespace {
+
+// Plan 0047 P7: the GUID a test import's root takes in place of a catalog
+// lookup.
+[[nodiscard]] atlantis::asset_system::AssetGuid testImportRoot() {
+  return atlantis::asset_system::parseAssetGuid("0047eeee-0000-4000-8000-000000000001").value();
+}
+
+}  // namespace
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 // Plan 0037 Milestone 4: the material/texture slice. Fixtures are tiny glTF
 // files built in memory; textures they reference are small DDS files each
 // test writes next to its .gltf.
@@ -52,7 +75,7 @@ MaterialRun runMaterialImport(const std::string& testName, gltf_test::PrimitiveS
   }
   const fs::path input = gltf_test::writeGltf(dir, spec);
   const fs::path outputDir = dir / "out";
-  return MaterialRun{dir, outputDir, importGltf(input, dir, outputDir, "t")};
+  return MaterialRun{dir, outputDir, importGltf(input, dir, outputDir, "t", testImportRoot())};
 }
 
 std::string readText(const fs::path& path) {
@@ -139,8 +162,8 @@ TEST_CASE("A factor-only spec-gloss material converts via D3 and gets the white 
   CHECK(material.metallicFactor == Catch::Approx(0.489417862f).margin(1e-6));
   CHECK(material.roughnessFactor == Catch::Approx(0.75f));
   CHECK(material.baseColorFactor[3] == Catch::Approx(0.8f));
-  CHECK(material.textureLogicalPath == "t/_importer/white_4x4_bc7.dds");
-  CHECK(material.normalMapLogicalPath.empty());
+  CHECK(material.textureAsset == atlantis::asset_system::deriveAssetGuid(testImportRoot(), "fallback/white"));
+  CHECK(material.normalMapAsset == std::nullopt);
 
   // The fallback texture is written, parses as a 4x4 BC7 DDS through the
   // cooker's own parser, and is the one texture line of the manifest.
@@ -182,7 +205,7 @@ TEST_CASE("A spec-gloss material with a specularGlossinessTexture takes the Ruli
   CHECK(material.baseColorFactor[2] == Catch::Approx(0.7f));
   // Texture logical path = <content-root dir name>/<uri>; sampler absent ->
   // glTF default, linear/repeat.
-  CHECK(material.textureLogicalPath == "material_sg_texture_fallback/brick_diff.dds");
+  CHECK(material.textureAsset == atlantis::asset_system::deriveAssetGuid(testImportRoot(), "texture/brick_diff.dds"));
   CHECK(material.filter == atlantis::asset_system::MaterialSamplerFilter::Linear);
   CHECK(material.addressMode == atlantis::asset_system::MaterialSamplerAddressMode::Repeat);
 
@@ -255,6 +278,7 @@ TEST_CASE("A transmission material imports as BLEND at alpha x (1 - transmission
     const std::string n = std::to_string(index);
     CHECK(atlantis::asset_system::cookMaterial(
               (run.outputDir / ("t/materials/" + n + ".material.txt")).string(), "t/materials/" + n + ".material.txt",
+              testAssetGuid("t/materials/" + n + ".material.txt"),
               (run.dir / ("cooked/" + n + ".amaterial")).string(),
               (run.dir / ("cooked/" + n + ".amaterial.meta.txt")).string())
               .isOk());
@@ -284,10 +308,11 @@ TEST_CASE("Generated .material.txt round-trips through parseMaterialSource and c
   CHECK(material.baseColorFactor[2] == 0.75f);
   CHECK(material.metallicFactor == 0.125f);
   CHECK(material.roughnessFactor == 0.625f);
-  CHECK(material.textureLogicalPath == "material_round_trip/wall_diff.dds");
-  CHECK(material.normalMapLogicalPath == "material_round_trip/wall_ddna.dds");
+  CHECK(material.textureAsset == atlantis::asset_system::deriveAssetGuid(testImportRoot(), "texture/wall_diff.dds"));
+  CHECK(material.normalMapAsset == atlantis::asset_system::deriveAssetGuid(testImportRoot(), "texture/wall_ddna.dds"));
 
   const auto cooked = atlantis::asset_system::cookMaterial(sourcePath.string(), "t/materials/0.material.txt",
+                                                           testAssetGuid("t/materials/0.material.txt"),
                                                            (run.dir / "cooked/0.amaterial").string(),
                                                            (run.dir / "cooked/0.amaterial.meta.txt").string());
   CHECK(cooked.isOk());
@@ -359,14 +384,15 @@ TEST_CASE("Emissive factors are mapped with or without a texture, a zero-factor 
   CHECK(mapped.emissiveFactor[2] == 0.0f);
   CHECK(reportContains(summary, "material_0: emissiveFactor=(20,0.8,0) mapped (Spec 0041 R8)"));
 
-  CHECK(mapped.emissiveTextureLogicalPath.empty());
+  CHECK(mapped.emissiveTextureAsset == std::nullopt);
 
   // Factor + texture (ADR-0096): both mapped, the texture declared for cooking.
   const auto withTexture = parsedMaterial(1);
   CHECK(withTexture.emissiveFactor[0] == 0.5f);
   CHECK(withTexture.emissiveFactor[1] == 1.0f);
   CHECK(withTexture.emissiveFactor[2] == 0.5f);
-  CHECK(withTexture.emissiveTextureLogicalPath == "material_emissive/sign_em.dds");
+  CHECK(withTexture.emissiveTextureAsset ==
+        atlantis::asset_system::deriveAssetGuid(testImportRoot(), "texture/sign_em.dds"));
   CHECK(reportContains(summary, "material_1: emissiveFactor=(0.5,1,0.5) mapped with emissiveTexture "
                                 "material_emissive/sign_em.dds (ADR-0096)"));
   CHECK(readText(run.outputDir / "cook_manifest.txt").find("material_emissive/sign_em.dds") != std::string::npos);
@@ -375,7 +401,7 @@ TEST_CASE("Emissive factors are mapped with or without a texture, a zero-factor 
   // Texture with a zero factor: inert, not mapped.
   const auto textureOnly = parsedMaterial(2);
   CHECK(textureOnly.emissiveFactor[0] == 0.0f);
-  CHECK(textureOnly.emissiveTextureLogicalPath.empty());
+  CHECK(textureOnly.emissiveTextureAsset == std::nullopt);
   CHECK(reportContains(summary, "material_2: emissiveTexture inert (emissiveFactor 0), not mapped (ADR-0096)"));
   CHECK_FALSE(reportContains(summary, "material_2: emissiveFactor"));
 
@@ -384,7 +410,7 @@ TEST_CASE("Emissive factors are mapped with or without a texture, a zero-factor 
   // as 7e+04.
   const auto outOfRange = parsedMaterial(3);
   CHECK(outOfRange.emissiveFactor[0] == 0.0f);
-  CHECK(outOfRange.emissiveTextureLogicalPath.empty());
+  CHECK(outOfRange.emissiveTextureAsset == std::nullopt);
   CHECK(reportContains(summary, "material_3: emissiveFactor=(7e+04,1,1) dropped with its emissiveTexture, outside "
                                 "the emissive range [0, 65504]"));
 
@@ -396,6 +422,7 @@ TEST_CASE("Emissive factors are mapped with or without a texture, a zero-factor 
     const std::string n = std::to_string(index);
     const auto cookResult = atlantis::asset_system::cookMaterial(
         (run.outputDir / ("t/materials/" + n + ".material.txt")).string(), "t/materials/" + n + ".material.txt",
+        testAssetGuid("t/materials/" + n + ".material.txt"),
         (run.dir / ("cooked/" + n + ".amaterial")).string(), (run.dir / ("cooked/" + n + ".amaterial.meta.txt")).string());
     CHECK(cookResult.isOk());
   }
@@ -454,6 +481,7 @@ TEST_CASE("alphaMode MASK and BLEND map to the material alpha fields", "[gltf_im
     const std::string name = std::to_string(index);
     const auto cookResult = atlantis::asset_system::cookMaterial(
         (run.outputDir / ("t/materials/" + name + ".material.txt")).string(), "t/materials/" + name + ".material.txt",
+        testAssetGuid("t/materials/" + name + ".material.txt"),
         (run.dir / ("cooked/" + name + ".amaterial")).string(),
         (run.dir / ("cooked/" + name + ".amaterial.meta.txt")).string());
     CHECK(cookResult.isOk());

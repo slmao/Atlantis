@@ -306,10 +306,11 @@ atlantis::Result<std::monostate, GltfImportError> checkMaterials(const cgltf_dat
 
 atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_data& data, const fs::path& contentRoot,
                                                                  const fs::path& stagingDir, const std::string& name,
+                                                                 const atlantis::asset_system::AssetGuid& importRoot,
+                                                                 const std::string& importRootId,
                                                                  GltfImportSummary& summary,
                                                                  std::vector<std::string>& reportLines,
-                                                                 std::vector<std::string>& manifestLines,
-                                                                 std::vector<std::string>& declaredAssets) {
+                                                                 std::vector<std::string>& manifestLines) {
   // Textures in first-reference order, deduplicated by logical path.
   struct TextureEntry {
     std::string logicalPath;
@@ -317,6 +318,7 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
     std::string assetRoot;  // manifest --asset-root placeholder
     bool isDds = false;
     TextureUsage usage = TextureUsage::Color;
+    atlantis::asset_system::AssetGuid guid;  // Plan 0047 P5: texture/<uri> or fallback/white
   };
   std::vector<TextureEntry> textures;
   std::map<std::string, std::size_t> textureIndex;
@@ -326,6 +328,23 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
 
   std::vector<std::string> materialManifest;
   const std::string whiteLogical = name + "/" + std::string(kWhiteFallbackRelative);
+  const auto whiteGuid = deriveImportAssetGuid(importRoot, "fallback/white");
+  if (whiteGuid.isErr()) return CheckResult::Err(whiteGuid.error());
+  // Plan 0047 P5: a texture's sub-key is its URI as normalized under the
+  // content root, without the root's own name -- so moving the content root
+  // changes no GUID (Spec 0047 R14).
+  const std::string rootPrefix = contentRootDirectory(contentRoot).filename().string() + "/";
+  const auto textureSubKey = [&](const std::string& logicalPath) -> std::optional<std::string> {
+    const auto normalized = atlantis::asset_system::normalizeLogicalPath(logicalPath);
+    if (normalized.isErr() || normalized.value().rfind(rootPrefix, 0) != 0) return std::nullopt;
+    return "texture/" + normalized.value().substr(rootPrefix.size());
+  };
+  const auto textureGuid = [&](const std::string& logicalPath) {
+    using GuidResult = atlantis::Result<atlantis::asset_system::AssetGuid, GltfImportError>;
+    const auto subKey = textureSubKey(logicalPath);
+    if (!subKey) return GuidResult::Err(GltfImportError::InvalidAssetSubKey);
+    return deriveImportAssetGuid(importRoot, *subKey);
+  };
   std::size_t samplerDefaulted = 0;
 
   for (cgltf_size i = 0; i < data.materials_count; ++i) {
@@ -335,6 +354,8 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
 
     ParsedMaterialSource source;
     source.kind = MaterialKind::PbrDirectLit;
+    const auto materialGuid = deriveImportAssetGuid(importRoot, "material/" + std::to_string(i));
+    if (materialGuid.isErr()) return CheckResult::Err(materialGuid.error());
     std::vector<std::string> dropped;
 
     if (m.has_pbr_specular_glossiness) {
@@ -396,22 +417,29 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
     const cgltf_sampler* sampler = nullptr;
     if (used.baseColor != nullptr) {
       const ResolvedTexture resolved = *resolveTexture(data, *used.baseColor->texture);
-      source.textureLogicalPath = textureLogicalPath(contentRoot, resolved.uri);
+      const std::string logical = textureLogicalPath(contentRoot, resolved.uri);
+      const auto guid = textureGuid(logical);
+      if (guid.isErr()) return CheckResult::Err(guid.error());
+      source.textureAsset = guid.value();
       sampler = resolved.sampler;
-      addTexture({source.textureLogicalPath, "{content_parent}/" + source.textureLogicalPath, "{content_parent}",
-                  resolved.isDds, TextureUsage::Color});
+      addTexture({logical, "{content_parent}/" + logical, "{content_parent}", resolved.isDds, TextureUsage::Color,
+                  guid.value()});
     } else {
-      source.textureLogicalPath = whiteLogical;
+      source.textureAsset = whiteGuid.value();
       summary.materialsWhiteFallback += 1;
       reportLines.push_back(label + ": no base-color texture; white 4x4 BC7 fallback (Ruling 7)");
-      addTexture({whiteLogical, "{import_dir}/" + whiteLogical, "{import_dir}", true, TextureUsage::Color});
+      addTexture({whiteLogical, "{import_dir}/" + whiteLogical, "{import_dir}", true, TextureUsage::Color,
+                  whiteGuid.value()});
     }
     if (used.normal != nullptr) {
       const ResolvedTexture resolved = *resolveTexture(data, *used.normal->texture);
-      source.normalMapLogicalPath = textureLogicalPath(contentRoot, resolved.uri);
+      const std::string logical = textureLogicalPath(contentRoot, resolved.uri);
+      const auto guid = textureGuid(logical);
+      if (guid.isErr()) return CheckResult::Err(guid.error());
+      source.normalMapAsset = guid.value();
       if (sampler == nullptr) sampler = resolved.sampler;
-      addTexture({source.normalMapLogicalPath, "{content_parent}/" + source.normalMapLogicalPath, "{content_parent}",
-                  resolved.isDds, TextureUsage::Data});
+      addTexture({logical, "{content_parent}/" + logical, "{content_parent}", resolved.isDds, TextureUsage::Data,
+                  guid.value()});
       if (m.normal_texture.scale != 1.0f) dropped.push_back("normalTexture.scale=" + formatFloat(m.normal_texture.scale));
     }
     if (sampler == nullptr) samplerDefaulted += 1;
@@ -438,11 +466,13 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
         for (int c = 0; c < 3; ++c) source.emissiveFactor[c] = m.emissive_factor[c];
         if (used.emissive != nullptr) {
           const ResolvedTexture resolved = *resolveTexture(data, *used.emissive->texture);
-          source.emissiveTextureLogicalPath = textureLogicalPath(contentRoot, resolved.uri);
-          addTexture({source.emissiveTextureLogicalPath, "{content_parent}/" + source.emissiveTextureLogicalPath,
-                      "{content_parent}", resolved.isDds, TextureUsage::Color});
-          reportLines.push_back(label + ": " + factorText + " mapped with emissiveTexture " +
-                                source.emissiveTextureLogicalPath + " (ADR-0096)");
+          const std::string logical = textureLogicalPath(contentRoot, resolved.uri);
+          const auto guid = textureGuid(logical);
+          if (guid.isErr()) return CheckResult::Err(guid.error());
+          source.emissiveTextureAsset = guid.value();
+          addTexture({logical, "{content_parent}/" + logical, "{content_parent}", resolved.isDds,
+                      TextureUsage::Color, guid.value()});
+          reportLines.push_back(label + ": " + factorText + " mapped with emissiveTexture " + logical + " (ADR-0096)");
         } else {
           reportLines.push_back(label + ": " + factorText + " mapped (Spec 0041 R8)");
         }
@@ -493,9 +523,10 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
     if (!writeFile(stagingDir / logical, text.data(), text.size())) {
       return CheckResult::Err(GltfImportError::OutputWriteFailed);
     }
-    declaredAssets.push_back(logical);
     materialManifest.push_back("--kind=material --source={import_dir}/" + logical +
-                               " --asset-root={import_dir} --output-dir={cooked_dir}");
+                               " --asset-root={import_dir} --output-dir={cooked_dir} --guid=" +
+                               atlantis::asset_system::toString(materialGuid.value()) + " --catalog-id=" +
+                               importRootId + "#material/" + std::to_string(i));
     summary.materialCount += 1;
   }
 
@@ -530,7 +561,6 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
 
   for (std::size_t i = 0; i < textures.size(); ++i) {
     const TextureEntry& t = textures[i];
-    declaredAssets.push_back(t.logicalPath);
     std::string line = "--kind=texture --source=" + t.source + " --asset-root=" + t.assetRoot +
                        " --output-dir={cooked_dir} --stamp={cooked_dir}/" + stampStem(i, t.logicalPath) + ".stamp";
     if (!t.isDds) {
@@ -538,6 +568,11 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
     } else if (t.usage == TextureUsage::Color) {
       line += " --color-space=srgb";  // Spec 0046 Q8: overrides a DXGI 99 tag
     }
+    line += " --guid=" + atlantis::asset_system::toString(t.guid);  // Plan 0047 P7
+    // Plan 0047 P12: the sub-key the GUID was derived from (texture/<uri>
+    // was already checked when the GUID was derived).
+    line += " --catalog-id=" + importRootId + "#" +
+            (t.logicalPath == whiteLogical ? std::string("fallback/white") : *textureSubKey(t.logicalPath));
     manifestLines.push_back(line);
   }
   summary.texturesReferenced += static_cast<std::uint32_t>(textures.size());

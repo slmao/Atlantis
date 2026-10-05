@@ -1,3 +1,4 @@
+#include "support/catalog_scene.h"
 #include "fixture/lighting_demo_fixture.h"
 #include "support/golden_validity.h"
 #include "support/pixel_diff.h"
@@ -53,9 +54,8 @@ namespace {
 
 [[nodiscard]] BootstrapConfig buildTestConfig() {
   BootstrapConfig config;
-  config.sceneArtifactPath = ATLANTIS_multi_light_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_multi_light_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_multi_light_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_multi_light_demo_scene_GUID);
   config.unlitTexturedVertexShaderSpirvPath =
       std::string(ATLANTIS_LIGHTING_DEMO_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath =

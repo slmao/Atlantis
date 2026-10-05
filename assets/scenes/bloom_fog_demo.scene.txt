@@ -1,6 +1,6 @@
-atlantis_scene_source_version: 6
+atlantis_scene_source_version: 7
 node_count: 3
 active_camera: 3
-node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/emissive_demo_orange.material.txt
-node: node_id=2 parent=none position=0.0 0.0 -8.0 rotation=1.5707963 0.0 0.0 scale=3.0 3.0 3.0 mesh=meshes/ground_plane.mesh.txt material=materials/pbr_normal_mapped_control.material.txt
-node: node_id=3 parent=none position=0.0 0.0 10.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0 fog=0.05 0.0 0.0 0.9 fog_color=3.0 2.4 1.5 bloom=0.8 1.0
+node: node_id=1 guid=fad7b32c-9642-4eb8-84cb-ec71f5c839d9 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=da09198f-d590-44f3-9049-ba5b43fe76cd material=331272d0-c6bb-448f-a791-45cf53c1461f
+node: node_id=2 guid=76d190d5-ceca-4fe5-acb5-cac96249d0c1 parent=none position=0.0 0.0 -8.0 rotation=1.5707963 0.0 0.0 scale=3.0 3.0 3.0 mesh=caa7dc9c-6c16-4f93-bdec-53ac93791e16 material=8982378b-627d-413b-a95b-5cceabc469f6
+node: node_id=3 guid=21ee8b98-5839-46c0-b1ce-938257d6306a parent=none position=0.0 0.0 10.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0 fog=0.05 0.0 0.0 0.9 fog_color=3.0 2.4 1.5 bloom=0.8 1.0

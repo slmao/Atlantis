@@ -118,6 +118,10 @@ static_assert(
     std::is_nothrow_move_assignable_v<decltype(std::declval<SceneLoadOutcome>().textureDataMap)>,
     "textureDataMap_ = std::move(outcome.textureDataMap) in initializeSteps() requires this move-assignment to "
     "be noexcept for the scene-load publish step to be genuinely atomic");
+// Plan 0047 P17: the scene's persistent-identity map joins the same publish.
+static_assert(std::is_nothrow_move_assignable_v<atlantis::world::SceneEntityMap>,
+              "sceneEntities_ = std::move(outcome.entities) in initializeSteps() requires this move-assignment to be "
+              "noexcept for the scene-load publish step to be genuinely atomic");
 
 [[nodiscard]] std::optional<std::vector<std::uint32_t>> loadSpirvFile(const std::string& path) {
   std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -1090,6 +1094,8 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   meshResourceMap_ = std::move(outcome.meshResourceMap);
   materialDataMap_ = std::move(outcome.materialDataMap);
   textureDataMap_ = std::move(outcome.textureDataMap);
+  sceneGuid_ = outcome.sceneGuid;
+  sceneEntities_ = std::move(outcome.entities);
   environmentData_ = std::move(loadedEnvironment);
 
   // Plan 0044 P9 (ruling O2): a scene whose active camera turns bloom on

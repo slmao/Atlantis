@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/result.h>
 
 #include <cstddef>
@@ -7,6 +8,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace atlantis::gltf_importer {
@@ -55,6 +57,12 @@ enum class GltfImportError {
   OverlayRenderableNode,        // an overlay node names a mesh
   OverlayParentOutsideOverlay,  // an overlay node parents to a node the overlay does not declare
   OverlaySecondCamera,          // the overlay declares more than one camera
+  // Plan 0047 P7 / ruling I2: identity.
+  CatalogSourceUnreadable,  // --catalog-source cannot be read
+  CatalogSourceInvalid,     // the catalog source does not parse
+  SourceNotInCatalog,       // no entry for content:<content-root name>/<glTF file name>
+  CatalogTypeMismatch,      // that entry is not a gltf_import
+  InvalidAssetSubKey,       // a derivation sub-key is empty or not ASCII after normalization
 };
 
 struct GltfImportSummary {
@@ -93,7 +101,6 @@ struct GltfImportSummary {
   std::uint32_t primitivesWithoutMaterial = 0;
   std::uint32_t camerasDropped = 0;
   std::uint32_t overlayNodeLines = 0;  // Plan 0046 Milestone 2: appended by --overlay
-  std::uint32_t declaredAssets = 0;  // lines of asset_list.txt
   std::vector<std::string> reportLines;  // import_report.txt body
 };
 
@@ -106,18 +113,56 @@ struct GltfImportSummary {
 // Output layout: <name>_mesh_<i>_<j>.amesh(.meta.txt) per primitive,
 // <name>/materials/<i>.material.txt per material, the Ruling 7 white
 // fallback texture when needed, <name>/<name>.scene.txt for the default
-// scene, import_report.txt, asset_list.txt (every declared logical path, for
-// atlantis_asset_cooker --validate-set), and cook_manifest.txt -- the
+// scene, import_report.txt, and cook_manifest.txt -- the
 // atlantis_asset_cooker invocations (textures, then materials, then the
 // scene) that turn the generated sources into artifacts.
 // Plan 0046 Milestone 2 (ADR-0094 Decision 3): overlayPath, when given,
 // names a scene-v6 source of non-renderable nodes (camera, lights) merged
 // into the imported scene -- appended after every imported id, its camera
 // made active.
+// Plan 0047 P5/P7 (ADR-0097 D4): importRoot is the glTF's own catalog-source
+// GUID (resolveImportRoot()); every mesh, material, texture and the scene
+// take GUIDs derived from it, and every imported scene node an EntityGuid
+// derived from the scene's. The output carries them: mesh sidecars, scene
+// v7 and material v10 text, and --guid= on each cook_manifest.txt line.
+// Plan 0047 P12: each mesh also gets its catalog fragment,
+// <name>_mesh_<i>_<j>.amesh.catalog.txt, located through {import_dir} so the
+// output stays independent of where it is written; and each
+// cook_manifest.txt line carries --catalog-id=content:<root path>#<sub-key>,
+// the source its cooked record names.
 [[nodiscard]] atlantis::Result<GltfImportSummary, GltfImportError> importGltf(
     const std::filesystem::path& inputPath, const std::filesystem::path& contentRoot,
     const std::filesystem::path& outputDir, const std::string& name,
+    const atlantis::asset_system::AssetGuid& importRoot,
     const std::optional<std::filesystem::path>& overlayPath = std::nullopt);
+
+// Plan 0047 P7: the import root's GUID, looked up in the catalog source as
+// content:<content-root name>/<glTF file name>, which must be a gltf_import
+// entry.
+[[nodiscard]] atlantis::Result<atlantis::asset_system::AssetGuid, GltfImportError> resolveImportRoot(
+    const std::filesystem::path& catalogSourcePath, const std::filesystem::path& inputPath,
+    const std::filesystem::path& contentRoot);
+
+namespace detail {
+
+// Plan 0047 P5 / ruling I2: derivation for the importer's own sub-keys,
+// which must be non-empty and ASCII -- otherwise InvalidAssetSubKey,
+// never a silent hash.
+[[nodiscard]] atlantis::Result<atlantis::asset_system::AssetGuid, GltfImportError> deriveImportAssetGuid(
+    const atlantis::asset_system::AssetGuid& owner, std::string_view subKey);
+[[nodiscard]] atlantis::Result<atlantis::asset_system::EntityGuid, GltfImportError> deriveImportEntityGuid(
+    const atlantis::asset_system::AssetGuid& scene, std::string_view subKey);
+
+// The tool string recorded in imported mesh sidecars (Plan 0047 P7: no
+// spaces, so it fits the catalog's tool token).
+inline constexpr std::string_view kImporterToolVersion = "atlantis-gltf-importer/1";
+
+// Plan 0047 P7: the import root's catalog-source path,
+// <content-root name>/<glTF file name>.
+[[nodiscard]] std::string importRootPath(const std::filesystem::path& inputPath,
+                                         const std::filesystem::path& contentRoot);
+
+}  // namespace detail
 
 [[nodiscard]] const char* gltfImportErrorMessage(GltfImportError error) noexcept;
 

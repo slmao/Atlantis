@@ -7,6 +7,11 @@ add_executable(atlantis_asset_cooker_command_tests
   texture_cook_command_tests.cpp
   environment_cook_command_tests.cpp
   dds_parser_tests.cpp
+  guid_mint_tests.cpp
+  lookup_command_tests.cpp
+  catalog_cook_command_tests.cpp
+  catalog_fragment_tests.cpp
+  assemble_catalog_command_tests.cpp
 )
 
 target_link_libraries(atlantis_asset_cooker_command_tests
@@ -37,6 +42,7 @@ catch_discover_tests(atlantis_asset_cooker_command_tests DISCOVERY_MODE PRE_TEST
 # "tool" label precedent (a distinct CTest label from "gpu").
 add_executable(atlantis_asset_cooker_determinism_tests
   cooker_determinism_tests.cpp
+  stable_identity_tests.cpp
 )
 
 target_compile_definitions(atlantis_asset_cooker_determinism_tests PRIVATE

@@ -28,11 +28,21 @@ int main(int argc, char** argv) {
   std::string outputDir;
   std::string name;
   std::string contentRoot;
+  std::string catalogSource;
   if (!parseArgumentValue(argc, argv, "input", input) || !parseArgumentValue(argc, argv, "output-dir", outputDir) ||
-      !parseArgumentValue(argc, argv, "name", name) || !parseArgumentValue(argc, argv, "content-root", contentRoot)) {
+      !parseArgumentValue(argc, argv, "name", name) || !parseArgumentValue(argc, argv, "content-root", contentRoot) ||
+      !parseArgumentValue(argc, argv, "catalog-source", catalogSource)) {
     std::cerr << "usage: atlantis_gltf_importer --input=<file.gltf> --output-dir=<dir> --name=<slug>"
-                 " --content-root=<dir> [--overlay=<file.scene.txt>]\n";
+                 " --content-root=<dir> --catalog-source=<asset_catalog.txt> [--overlay=<file.scene.txt>]\n";
     return 2;
+  }
+  // Plan 0047 P7: the glTF's own GUID, from its catalog-source entry.
+  const auto importRoot =
+      atlantis::gltf_importer::resolveImportRoot(fs::path(catalogSource), fs::path(input), fs::path(contentRoot));
+  if (importRoot.isErr()) {
+    std::cerr << "atlantis_gltf_importer: " << atlantis::gltf_importer::gltfImportErrorMessage(importRoot.error())
+              << "\n";
+    return 1;
   }
   // Plan 0046 Milestone 2 (ADR-0094 Decision 3): optional.
   std::string overlay;
@@ -40,7 +50,8 @@ int main(int argc, char** argv) {
   if (parseArgumentValue(argc, argv, "overlay", overlay)) overlayPath = fs::path(overlay);
 
   const auto result = atlantis::gltf_importer::importGltf(fs::path(input), fs::path(contentRoot),
-                                                                fs::path(outputDir), name, overlayPath);
+                                                                fs::path(outputDir), name, importRoot.value(),
+                                                                overlayPath);
   if (result.isErr()) {
     std::cerr << "atlantis_gltf_importer: " << atlantis::gltf_importer::gltfImportErrorMessage(result.error())
               << "\n";

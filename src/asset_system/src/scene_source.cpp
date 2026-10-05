@@ -15,7 +15,9 @@ namespace {
 // optional camera bloom group (kBloomPrefix, below). Versions 1-5 are all
 // rejected outright by the version-line check immediately below -- no
 // dual-version reader.
-constexpr std::string_view kVersionLine = "atlantis_scene_source_version: 6";
+// Plan 0047 P9: version 7 adds guid=<entity guid> after node_id= and makes
+// mesh=/material= AssetGuids.
+constexpr std::string_view kVersionLine = "atlantis_scene_source_version: 7";
 constexpr std::string_view kNodeCountPrefix = "node_count: ";
 constexpr std::string_view kActiveCameraPrefix = "active_camera: ";
 constexpr std::string_view kNodePrefix = "node: ";
@@ -33,6 +35,7 @@ constexpr std::string_view kNoneToken = "none";
 // single-prefix-then-bare-values style; camera_fov_y/near_z/far_z are
 // each individually prefixed, per D3's own example.
 constexpr std::string_view kNodeIdPrefix = "node_id=";
+constexpr std::string_view kGuidPrefix = "guid=";
 constexpr std::string_view kParentPrefix = "parent=";
 constexpr std::string_view kPositionPrefix = "position=";
 constexpr std::string_view kRotationPrefix = "rotation=";
@@ -188,6 +191,23 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
     }
     auto tokens = splitOnSpace(line.substr(kNodePrefix.size()));
 
+    // Plan 0047 P9: guid= is the second token. It is taken out here so the
+    // v6 token positions below are unchanged. A nil value is syntactically
+    // fine; cookScene() reports NilEntityGuid.
+    EntityGuid entityGuid;
+    if (tokens.size() < 2 || tokens[1].substr(0, kGuidPrefix.size()) != kGuidPrefix) {
+      return ResultT::Err(SceneSourceParseError::FieldOrderMismatch);
+    }
+    {
+      const auto parsedGuid = parseEntityGuid(tokens[1].substr(kGuidPrefix.size()));
+      if (parsedGuid.isOk()) {
+        entityGuid = parsedGuid.value();
+      } else if (parsedGuid.error() != GuidParseError::NilGuid) {
+        return ResultT::Err(SceneSourceParseError::MalformedGuid);
+      }
+    }
+    tokens.erase(tokens.begin() + 1);
+
     // Plan 0043 P1 / Plan 0044 P1: the trailing-group pre-pass. The base
     // 11 tokens are never scanned, so their own prefix errors keep their
     // v4 precedence. From the first fog= or bloom= token, the fog group
@@ -229,6 +249,7 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
     }
 
     ParsedSceneNode node;
+    node.entityGuid = entityGuid;
 
     if (tokens[0].substr(0, kNodeIdPrefix.size()) != kNodeIdPrefix) {
       return ResultT::Err(SceneSourceParseError::FieldOrderMismatch);
@@ -283,15 +304,21 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
       if (tokens[11].substr(0, kMeshPrefix.size()) != kMeshPrefix) {
         return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
       }
-      node.meshLogicalPath = std::string(tokens[11].substr(kMeshPrefix.size()));
-      if (node.meshLogicalPath->empty()) return ResultT::Err(SceneSourceParseError::MissingField);
+      const std::string_view meshValue = tokens[11].substr(kMeshPrefix.size());
+      if (meshValue.empty()) return ResultT::Err(SceneSourceParseError::MissingField);
+      const auto meshGuid = parseAssetGuid(meshValue);
+      if (meshGuid.isErr()) return ResultT::Err(SceneSourceParseError::MalformedGuid);
+      node.meshAsset = meshGuid.value();
 
       if (tokens.size() == 13) {
         if (tokens[12].substr(0, kMaterialPrefix.size()) != kMaterialPrefix) {
           return ResultT::Err(SceneSourceParseError::InvalidComponentGroup);
         }
-        node.materialLogicalPath = std::string(tokens[12].substr(kMaterialPrefix.size()));
-        if (node.materialLogicalPath->empty()) return ResultT::Err(SceneSourceParseError::MissingField);
+        const std::string_view materialValue = tokens[12].substr(kMaterialPrefix.size());
+        if (materialValue.empty()) return ResultT::Err(SceneSourceParseError::MissingField);
+        const auto materialGuid = parseAssetGuid(materialValue);
+        if (materialGuid.isErr()) return ResultT::Err(SceneSourceParseError::MalformedGuid);
+        node.materialAsset = materialGuid.value();
       }
     } else if (tokens.size() == 14 || tokens.size() == 15) {
       DecodedCamera camera;
@@ -460,6 +487,8 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
     out += kNodePrefix;
     out += std::string(kNodeIdPrefix) + std::to_string(node.nodeId);
     out += ' ';
+    out += std::string(kGuidPrefix) + toString(node.entityGuid);
+    out += ' ';
     out += std::string(kParentPrefix) +
            (node.parentNodeId.has_value() ? std::to_string(*node.parentNodeId) : std::string(kNoneToken));
     out += ' ';
@@ -472,12 +501,12 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
     out += std::string(kScalePrefix) + std::to_string(node.transform.scaleX) + ' ' +
            std::to_string(node.transform.scaleY) + ' ' + std::to_string(node.transform.scaleZ);
 
-    if (node.meshLogicalPath.has_value()) {
+    if (node.meshAsset.has_value()) {
       out += ' ';
-      out += std::string(kMeshPrefix) + *node.meshLogicalPath;
-      if (node.materialLogicalPath.has_value()) {
+      out += std::string(kMeshPrefix) + toString(*node.meshAsset);
+      if (node.materialAsset.has_value()) {
         out += ' ';
-        out += std::string(kMaterialPrefix) + *node.materialLogicalPath;
+        out += std::string(kMaterialPrefix) + toString(*node.materialAsset);
       }
     } else if (node.camera.has_value()) {
       out += ' ';

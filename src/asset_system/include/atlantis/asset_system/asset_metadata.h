@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atlantis/asset_system/asset_id.h>
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/errors.h>
 #include <atlantis/result.h>
 
@@ -17,6 +18,7 @@ namespace atlantis::asset_system {
 // shared implementation with,
 // tests/image_regression/support/provenance.*.
 struct AssetMetadata {
+  AssetGuid assetGuid;  // Plan 0047 P8: line 2 of the sidecar
   AssetId assetId = 0;
   std::string sourceLogicalPath;
   std::string importerVersion;

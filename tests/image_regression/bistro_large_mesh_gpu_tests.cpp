@@ -64,7 +64,7 @@ TEST_CASE("The largest real imported Bistro mesh renders through the uint32 inde
   fs::create_directories(work);
   const fs::path importDir = work / "import";
 
-  const auto imported = atlantis::gltf_importer::importGltf(content / "bistro.gltf", content, importDir, "bistro");
+  const auto imported = atlantis::gltf_importer::importGltf(content / "bistro.gltf", content, importDir, "bistro", atlantis::gltf_importer::resolveImportRoot(ATLANTIS_ASSET_CATALOG_SOURCE_PATH, content / "bistro.gltf", content).value());
   REQUIRE(imported.isOk());
   CHECK(imported.value().meshCount == 551);
 

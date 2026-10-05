@@ -1,6 +1,7 @@
 #include <atlantis/log.h>
 #include <atlantis/runtime/bootstrap_config.h>
 
+#include "../support/catalog_scene.h"
 #include "../fixture/fog_demo_fixture.h"
 #include "../support/pixel_diff.h"
 #include "../support/png_codec.h"
@@ -83,22 +84,15 @@ void printProvenanceFieldIfDifferent(const char* fieldName, const std::string& o
 }
 
 struct SceneFiles {
-  const char* artifact;
-  const char* metadata;
-  const char* manifest;
+  const char* guid;  // the scene's catalog GUID text (an ATLANTIS_*_GUID definition)
 };
 
-constexpr SceneFiles kFogDistanceScene{ATLANTIS_fog_distance_demo_scene_ARTIFACT_PATH,
-                                       ATLANTIS_fog_distance_demo_scene_METADATA_PATH,
-                                       ATLANTIS_fog_distance_demo_scene_MANIFEST_PATH};
-constexpr SceneFiles kFogHeightScene{ATLANTIS_fog_height_demo_scene_ARTIFACT_PATH,
-                                     ATLANTIS_fog_height_demo_scene_METADATA_PATH,
-                                     ATLANTIS_fog_height_demo_scene_MANIFEST_PATH};
+constexpr SceneFiles kFogDistanceScene{ATLANTIS_fog_distance_demo_scene_GUID};
+constexpr SceneFiles kFogHeightScene{ATLANTIS_fog_height_demo_scene_GUID};
 [[nodiscard]] BootstrapConfig buildLitConfig(const SceneFiles& scene) {
   BootstrapConfig config;
-  config.sceneArtifactPath = scene.artifact;
-  config.sceneMetadataPath = scene.metadata;
-  config.sceneDependencyManifestPath = scene.manifest;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(scene.guid);
   config.unlitTexturedVertexShaderSpirvPath =
       std::string(ATLANTIS_PBR_MATERIAL_DEMO_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath =
@@ -148,9 +142,8 @@ constexpr SceneFiles kFogHeightScene{ATLANTIS_fog_height_demo_scene_ARTIFACT_PAT
 
 [[nodiscard]] BootstrapConfig buildDarkConfig() {
   BootstrapConfig config;
-  config.sceneArtifactPath = ATLANTIS_fog_dark_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_fog_dark_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_fog_dark_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_fog_dark_demo_scene_GUID);
   config.unlitTexturedVertexShaderSpirvPath =
       std::string(ATLANTIS_PBR_NORMAL_MAP_DEMO_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath =

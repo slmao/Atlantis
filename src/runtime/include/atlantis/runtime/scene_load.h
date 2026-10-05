@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/material_types.h>
 #include <atlantis/asset_system/texture_types.h>
@@ -9,6 +10,7 @@
 #include <atlantis/rhi/types.h>
 #include <atlantis/runtime/bootstrap_config.h>
 #include <atlantis/runtime/init_error.h>
+#include <atlantis/world/scene_instantiation.h>
 #include <atlantis/world/world.h>
 
 #include <unordered_map>
@@ -27,6 +29,11 @@ struct SceneLoadOutcome {
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap;
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> materialDataMap;
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap;
+  // Plan 0047 P17: the loaded scene's persistent identity, kept beside its
+  // World -- sceneGuid names the scene, entities maps each node's EntityGuid
+  // to that World's EntityId (the EntityRef resolver's input, ADR-0097 D6).
+  atlantis::asset_system::AssetGuid sceneGuid;
+  atlantis::world::SceneEntityMap entities;
 };
 
 // Plan 0015 Section D10, steps (a)-(g) -- factored out of

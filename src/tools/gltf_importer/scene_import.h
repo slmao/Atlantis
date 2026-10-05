@@ -36,9 +36,16 @@ inline constexpr float kImportedPointLightRangePlaceholder = 10000.0f;
 // Writes <stagingDir>/<name>/<name>.scene.txt (the default scene, else
 // scenes[0]), appends its cook_manifest.txt line and import_report.txt
 // lines, and fills the summary's scene fields.
+// Plan 0047 P5 (ADR-0097 D4): the scene is importRoot's "scene" sub-asset;
+// each node's guid= derives from the scene's GUID -- node/<glTF index>, or
+// node/<i>/primitive/<j> and node/<i>/light for synthetic children -- and
+// mesh=/material= name the derived mesh/<i>/<j> and material/<i> GUIDs.
+// Overlay nodes keep their authored guid=. The cook line's --catalog-id= is
+// importRootId#scene (Plan 0047 P12).
 [[nodiscard]] atlantis::Result<std::monostate, GltfImportError> writeScene(
     const cgltf_data& data, const std::filesystem::path& stagingDir, const std::string& name,
-    GltfImportSummary& summary, std::vector<std::string>& reportLines, std::vector<std::string>& manifestLines,
+    const atlantis::asset_system::AssetGuid& importRoot, const std::string& importRootId, GltfImportSummary& summary,
+    std::vector<std::string>& reportLines, std::vector<std::string>& manifestLines,
     const atlantis::asset_system::ParsedSceneSource* overlay);
 
 // Logical path of mesh primitive (meshIndex, primitiveIndex) -- the one

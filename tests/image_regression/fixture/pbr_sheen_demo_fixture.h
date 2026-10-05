@@ -139,7 +139,7 @@ enum class PbrSheenDemoSetupError {
   ResourceCreationFailed,
 };
 
-// config's sceneArtifactPath/sceneMetadataPath/sceneDependencyManifestPath
+// config's assetCatalogPath/sceneAsset
 // must name pbr_sheen_demo_scene's (or pbr_sheen_normal_map_demo_scene's)
 // own cooked artifacts; config must also configure a real environment
 // (environmentArtifactPath/environmentMetadataPath) and every shader

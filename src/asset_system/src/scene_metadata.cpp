@@ -9,10 +9,11 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_scene_metadata_version: 1";
+constexpr std::string_view kVersionLine = "atlantis_scene_metadata_version: 2";
+constexpr std::string_view kAssetGuidPrefix = "asset_guid: ";
 constexpr std::string_view kSchemaVersionPrefix = "schema_version: ";
 constexpr std::string_view kNodeCountPrefix = "node_count: ";
-constexpr std::size_t kExpectedLineCount = 3;
+constexpr std::size_t kExpectedLineCount = 4;
 
 // Duplicated from asset_metadata.cpp's own identical helpers rather
 // than shared, matching that file's own already-established
@@ -61,10 +62,16 @@ atlantis::Result<SceneMetadata, MetadataParseError> parseSceneMetadata(std::stri
   SceneMetadata metadata;
   std::string_view value;
 
-  if (!matchField(lines[1], kSchemaVersionPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  // Plan 0047 P8 (ADR-0097 D3): the asset's persistent identity, line 2.
+  if (!matchField(lines[1], kAssetGuidPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  const auto assetGuid = parseAssetGuid(value);
+  if (assetGuid.isErr()) return ResultT::Err(MetadataParseError::MalformedValue);
+  metadata.assetGuid = assetGuid.value();
+
+  if (!matchField(lines[2], kSchemaVersionPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseUnsigned(value, metadata.schemaVersion)) return ResultT::Err(MetadataParseError::MalformedValue);
 
-  if (!matchField(lines[2], kNodeCountPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
+  if (!matchField(lines[3], kNodeCountPrefix, value)) return ResultT::Err(MetadataParseError::FieldNameMismatch);
   if (!parseUnsigned(value, metadata.nodeCount)) return ResultT::Err(MetadataParseError::MalformedValue);
 
   return ResultT::Ok(std::move(metadata));
@@ -73,6 +80,9 @@ atlantis::Result<SceneMetadata, MetadataParseError> parseSceneMetadata(std::stri
 std::string serializeSceneMetadata(const SceneMetadata& metadata) {
   std::string out;
   out += kVersionLine;
+  out += '\n';
+  out += kAssetGuidPrefix;
+  out += toString(metadata.assetGuid);
   out += '\n';
   out += kSchemaVersionPrefix;
   out += std::to_string(metadata.schemaVersion);

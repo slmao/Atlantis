@@ -1,11 +1,11 @@
-atlantis_scene_source_version: 6
+atlantis_scene_source_version: 7
 node_count: 8
 active_camera: 8
-node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/ground_plane.mesh.txt material=materials/pbr_dielectric_rough.material.txt
-node: node_id=2 parent=none position=-1.3 1.0 1.3 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/pbr_dielectric_rough.material.txt
-node: node_id=3 parent=none position=1.3 1.0 1.3 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/pbr_dielectric_smooth.material.txt
-node: node_id=4 parent=none position=-1.3 1.0 -1.3 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/pbr_metallic_rough.material.txt
-node: node_id=5 parent=none position=1.3 1.0 -1.3 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/pbr_metallic_smooth.material.txt
-node: node_id=6 parent=none position=0.0 1.0 -3.2 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/pbr_metallic_smooth.material.txt
-node: node_id=7 parent=none position=0.0 0.0 0.0 rotation=-0.6435011 2.4980915 0.0 scale=1.0 1.0 1.0 light=directional color=1.0 1.0 1.0 intensity=3.0
-node: node_id=8 parent=none position=0.0 6.0 10.0 rotation=-0.4636476 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0
+node: node_id=1 guid=627b2d92-1854-4e38-9e92-537136c50c88 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=caa7dc9c-6c16-4f93-bdec-53ac93791e16 material=1542b95d-74b5-48ba-82be-eddbe2843129
+node: node_id=2 guid=05a37f62-c177-43db-a171-5a974592ae42 parent=none position=-1.3 1.0 1.3 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=da09198f-d590-44f3-9049-ba5b43fe76cd material=1542b95d-74b5-48ba-82be-eddbe2843129
+node: node_id=3 guid=d4727d10-a3f2-4a31-a7c1-1038edfcda2a parent=none position=1.3 1.0 1.3 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=da09198f-d590-44f3-9049-ba5b43fe76cd material=4b69d224-35f5-4738-ba11-b811709d6b31
+node: node_id=4 guid=844a8520-eb3b-421b-bc90-59c35315b8b3 parent=none position=-1.3 1.0 -1.3 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=da09198f-d590-44f3-9049-ba5b43fe76cd material=4d157d09-ccc0-49f5-920c-d591acc1667d
+node: node_id=5 guid=19979950-9982-4da7-897a-3b2e43c13cfd parent=none position=1.3 1.0 -1.3 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=da09198f-d590-44f3-9049-ba5b43fe76cd material=08cc72f8-bfe9-48c7-bbee-e23d835e60d6
+node: node_id=6 guid=874649ec-0eec-48b3-aeba-5bea7494b7db parent=none position=0.0 1.0 -3.2 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=da09198f-d590-44f3-9049-ba5b43fe76cd material=08cc72f8-bfe9-48c7-bbee-e23d835e60d6
+node: node_id=7 guid=0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea parent=none position=0.0 0.0 0.0 rotation=-0.6435011 2.4980915 0.0 scale=1.0 1.0 1.0 light=directional color=1.0 1.0 1.0 intensity=3.0
+node: node_id=8 guid=49cb0605-ee2a-4a3b-a0e7-2e1139d11828 parent=none position=0.0 6.0 10.0 rotation=-0.4636476 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0

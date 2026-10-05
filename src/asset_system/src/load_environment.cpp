@@ -55,7 +55,7 @@ atlantis::Result<EnvironmentAssetData, EnvironmentLoadError> loadEnvironmentAsse
 
   DecodedEnvironmentArtifact& artifact = artifactResult.value();
   const EnvironmentMetadata& metadata = metadataResult.value();
-  if (artifact.assetId != metadata.assetId || metadata.assetId != computeAssetId(metadata.sourceLogicalPath) ||
+  if (artifact.assetId != metadata.assetId || metadata.assetId != assetKey(metadata.assetGuid) ||
       artifact.data.faceSize != metadata.faceSize || artifact.data.mipCount != metadata.mipCount ||
       artifact.data.dfgWidth != metadata.dfgWidth || artifact.data.dfgHeight != metadata.dfgHeight) {
     return ResultT::Err(EnvironmentLoadError::MetadataArtifactMismatch);

@@ -10,7 +10,9 @@ namespace atlantis::asset_system {
 
 namespace {
 
-constexpr std::string_view kVersionLine = "atlantis_material_source_version: 9";
+// Plan 0047 P9: version 10 makes texture:, normal_map: and
+// emissive_texture: AssetGuid references.
+constexpr std::string_view kVersionLine = "atlantis_material_source_version: 10";
 constexpr std::string_view kKindPrefix = "kind: ";
 constexpr std::string_view kTexturePrefix = "texture: ";
 constexpr std::string_view kFilterPrefix = "filter: ";
@@ -142,7 +144,7 @@ struct OptionalLineValues {
   float emissiveFactor[3] = {0.0f, 0.0f, 0.0f};
   MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
   float alphaCutoff = 0.5f;
-  std::string_view emissiveTexture;
+  std::optional<AssetGuid> emissiveTexture;
 };
 
 using OptionalLineParser = std::optional<MaterialSourceParseError> (*)(std::string_view, OptionalLineValues&);
@@ -180,7 +182,9 @@ using OptionalLineParser = std::optional<MaterialSourceParseError> (*)(std::stri
 [[nodiscard]] std::optional<MaterialSourceParseError> parseEmissiveTextureLine(std::string_view value,
                                                                              OptionalLineValues& out) {
   if (value.empty()) return MaterialSourceParseError::MissingField;
-  out.emissiveTexture = value;
+  const auto guid = parseAssetGuid(value);
+  if (guid.isErr()) return MaterialSourceParseError::MalformedGuid;
+  out.emissiveTexture = guid.value();
   return std::nullopt;
 }
 
@@ -374,7 +378,11 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
 
   if (!matchField(lines[2], kTexturePrefix, value)) return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
   if (value.empty()) return ResultT::Err(MaterialSourceParseError::MissingField);
-  parsed.textureLogicalPath = std::string(value);
+  {
+    const auto guid = parseAssetGuid(value);
+    if (guid.isErr()) return ResultT::Err(MaterialSourceParseError::MalformedGuid);
+    parsed.textureAsset = guid.value();
+  }
 
   if (!matchField(lines[3], kFilterPrefix, value)) return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
   if (value == kFilterNearest) {
@@ -496,13 +504,15 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
       return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
     }
     if (value.empty()) return ResultT::Err(MaterialSourceParseError::MissingField);
-    parsed.normalMapLogicalPath = std::string(value);
+    const auto guid = parseAssetGuid(value);
+    if (guid.isErr()) return ResultT::Err(MaterialSourceParseError::MalformedGuid);
+    parsed.normalMapAsset = guid.value();
   }
 
   for (std::size_t i = 0; i < 3; ++i) parsed.emissiveFactor[i] = optionalValues.emissiveFactor[i];
   parsed.alphaMode = optionalValues.alphaMode;
   parsed.alphaCutoff = optionalValues.alphaCutoff;
-  parsed.emissiveTextureLogicalPath = std::string(optionalValues.emissiveTexture);
+  parsed.emissiveTextureAsset = optionalValues.emissiveTexture;
   return ResultT::Ok(std::move(parsed));
 }
 
@@ -529,7 +539,7 @@ std::string serializeMaterialSource(const ParsedMaterialSource& source) {
   }
   out += '\n';
   out += kTexturePrefix;
-  out += source.textureLogicalPath;
+  out += toString(source.textureAsset);
   out += '\n';
   out += kFilterPrefix;
   out += (source.filter == MaterialSamplerFilter::Nearest ? kFilterNearest : kFilterLinear);
@@ -608,17 +618,17 @@ std::string serializeMaterialSource(const ParsedMaterialSource& source) {
     out += '\n';
   }
   // Plan 0046 Milestone 1 (ADR-0096): the same only-when-present rule.
-  if (!source.emissiveTextureLogicalPath.empty()) {
+  if (source.emissiveTextureAsset.has_value()) {
     out += kEmissiveTexturePrefix;
-    out += source.emissiveTextureLogicalPath;
+    out += toString(*source.emissiveTextureAsset);
     out += '\n';
   }
   // Plan 0029 Section P5/ADR-0074 Section 1: the trailing normal_map
   // line is emitted only when a normal map is present -- symmetric with
   // parseMaterialSource()'s own optional-line acceptance.
-  if (!source.normalMapLogicalPath.empty()) {
+  if (source.normalMapAsset.has_value()) {
     out += kNormalMapPrefix;
-    out += source.normalMapLogicalPath;
+    out += toString(*source.normalMapAsset);
     out += '\n';
   }
   return out;

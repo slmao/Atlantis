@@ -1,5 +1,7 @@
 #include <atlantis/asset_system/asset_metadata.h>
 
+#include <atlantis/asset_system/asset_guid.h>
+
 #include <catch2/catch_test_macros.hpp>
 
 using namespace atlantis::asset_system;
@@ -7,7 +9,7 @@ using namespace atlantis::asset_system;
 namespace {
 
 constexpr std::string_view kValidMetadata =
-    "atlantis_asset_metadata_version: 1\n"
+    "atlantis_asset_metadata_version: 2\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
     "asset_id: 78c473ee2218581d\n"
     "source_logical_path: meshes/minimal_cube.mesh.txt\n"
     "importer_version: atlantis-asset-cooker/1\n"
@@ -33,6 +35,7 @@ TEST_CASE("parseAssetMetadata parses a well-formed sidecar", "[asset_system]") {
 
 TEST_CASE("serializeAssetMetadata then parseAssetMetadata round-trips exactly", "[asset_system]") {
   AssetMetadata metadata;
+  metadata.assetGuid = parseAssetGuid("01234567-89ab-4def-8123-456789abcdef").value();
   metadata.assetId = 0x78c473ee2218581dULL;
   metadata.sourceLogicalPath = "meshes/minimal_cube.mesh.txt";
   metadata.importerVersion = "atlantis-asset-cooker/1";
@@ -56,14 +59,14 @@ TEST_CASE("serializeAssetMetadata then parseAssetMetadata round-trips exactly", 
 }
 
 TEST_CASE("parseAssetMetadata rejects the wrong line count", "[asset_system]") {
-  const auto result = parseAssetMetadata("atlantis_asset_metadata_version: 1\nasset_id: 0000000000000000\n");
+  const auto result = parseAssetMetadata("atlantis_asset_metadata_version: 2\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\nasset_id: 0000000000000000\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::WrongLineCount);
 }
 
 TEST_CASE("parseAssetMetadata rejects an unrecognized schema version", "[asset_system]") {
   std::string text(kValidMetadata);
-  text.replace(text.find("version: 1"), std::string_view("version: 1").size(), "version: 2");
+  text.replace(text.find("version: 2"), std::string_view("version: 2").size(), "version: 3");
   const auto result = parseAssetMetadata(text);
   REQUIRE(result.isErr());
   CHECK(result.error() == MetadataParseError::UnknownMetadataVersion);
@@ -71,7 +74,7 @@ TEST_CASE("parseAssetMetadata rejects an unrecognized schema version", "[asset_s
 
 TEST_CASE("parseAssetMetadata rejects a field-name mismatch", "[asset_system]") {
   const std::string_view wrongFieldName =
-      "atlantis_asset_metadata_version: 1\n"
+      "atlantis_asset_metadata_version: 2\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "wrong_field: 78c473ee2218581d\n"
       "source_logical_path: meshes/minimal_cube.mesh.txt\n"
       "importer_version: atlantis-asset-cooker/1\n"
@@ -86,7 +89,7 @@ TEST_CASE("parseAssetMetadata rejects a field-name mismatch", "[asset_system]") 
 
 TEST_CASE("parseAssetMetadata rejects an uppercase-hex asset_id", "[asset_system]") {
   const std::string_view uppercaseHex =
-      "atlantis_asset_metadata_version: 1\n"
+      "atlantis_asset_metadata_version: 2\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 78C473EE2218581D\n"
       "source_logical_path: meshes/minimal_cube.mesh.txt\n"
       "importer_version: atlantis-asset-cooker/1\n"
@@ -101,7 +104,7 @@ TEST_CASE("parseAssetMetadata rejects an uppercase-hex asset_id", "[asset_system
 
 TEST_CASE("parseAssetMetadata rejects a malformed unsigned field", "[asset_system]") {
   const std::string_view malformedCount =
-      "atlantis_asset_metadata_version: 1\n"
+      "atlantis_asset_metadata_version: 2\nasset_guid: 01234567-89ab-4def-8123-456789abcdef\n"
       "asset_id: 78c473ee2218581d\n"
       "source_logical_path: meshes/minimal_cube.mesh.txt\n"
       "importer_version: atlantis-asset-cooker/1\n"

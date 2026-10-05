@@ -1,3 +1,4 @@
+#include "support/catalog_scene.h"
 #include "fixture/emissive_demo_fixture.h"
 #include "support/golden_validity.h"
 #include "support/emissive_differential.h"
@@ -17,6 +18,7 @@
 #include <filesystem>
 #include <string>
 
+#include "catalog_asset_id.h"
 // Plan 0041 Milestone 3 (Spec 0041 R6, rulings Q1/Q4): the emissive dark
 // scene, assets/scenes/emissive_demo.scene.txt -- five pbr_sphere nodes
 // (orange, green and blue emissive PbrDirectLit spheres, the orange one
@@ -37,9 +39,8 @@ namespace {
 
 [[nodiscard]] BootstrapConfig buildConfig() {
   BootstrapConfig config;
-  config.sceneArtifactPath = ATLANTIS_emissive_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_emissive_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_emissive_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_emissive_demo_scene_GUID);
   config.unlitTexturedVertexShaderSpirvPath =
       std::string(ATLANTIS_PBR_NORMAL_MAP_DEMO_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath =
@@ -161,7 +162,7 @@ TEST_CASE("emissive_demo: each sphere is exactly tonemap(emissiveFactor) with no
 
   for (const EmissiveSphere& sphere : kSpheres) {
     INFO("sphere: " << sphere.materialPath);
-    const auto circle = projectMaterialSphere(fixture, atlantis::asset_system::computeAssetId(sphere.materialPath),
+    const auto circle = projectMaterialSphere(fixture, atlantis::image_regression::catalogAssetId(sphere.materialPath),
                                               1.0f, frame.width);
     REQUIRE(circle.has_value());
     // The centre and four points half a radius away -- the whole disc is

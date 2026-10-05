@@ -12,8 +12,8 @@ namespace atlantis::asset_system {
 // artifactPath and its metadata sidecar at metadataPath, decodes/parses
 // both, cross-checks that they agree (kind, texture_asset_id --
 // MetadataArtifactMismatch if not), independently re-derives the
-// metadata's own self-consistency (asset_id vs. source_logical_path via
-// computeAssetId(), mirroring loadTextureAsset()'s own precedent), and
+// metadata's own self-consistency (asset_id vs. assetKey(asset_guid),
+// Plan 0047 P8, mirroring loadTextureAsset()'s own precedent), and
 // returns CPU-side MaterialAssetData. Names no RHI type anywhere in this
 // file. A composition root outside Asset System is responsible for
 // resolving textureAsset (via loadTextureAsset()) and constructing any

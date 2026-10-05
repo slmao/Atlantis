@@ -1,5 +1,6 @@
 #include <atlantis/asset_system/cook_material.h>
 
+#include <atlantis/assert.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/logical_path.h>
 #include <atlantis/asset_system/material_artifact.h>
@@ -82,9 +83,11 @@ constexpr float kMaxEmissiveComponent = 65504.0f;
 
 atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::string& sourceFilePath,
                                                                    const std::string& logicalPathInput,
+                                                                   const AssetGuid& assetGuid,
                                                                    const std::string& artifactOutputPath,
                                                                    const std::string& metadataOutputPath) {
   using ResultT = atlantis::Result<std::monostate, MaterialCookError>;
+  ATLANTIS_CHECK_MSG(assetGuid != AssetGuid{}, "cookMaterial(): the asset GUID must not be nil");
 
   // Step 1: read + parse.
   std::ifstream sourceFile(sourceFilePath, std::ios::binary);
@@ -102,34 +105,16 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   const auto normalizedSelfResult = normalizeLogicalPath(logicalPathInput);
   if (normalizedSelfResult.isErr()) return ResultT::Err(MaterialCookError::LogicalPathInvalid);
   const std::string& normalizedSelfPath = normalizedSelfResult.value();
-  const AssetId selfAssetId = computeAssetId(normalizedSelfPath);
+  const AssetId selfAssetId = assetKey(assetGuid);
 
-  // Step 3: the referenced texture's own identity -- value-level only,
-  // never an existence check (ADR-0059 D6/D7).
-  const auto normalizedTextureResult = normalizeLogicalPath(parsed.textureLogicalPath);
-  if (normalizedTextureResult.isErr()) return ResultT::Err(MaterialCookError::LogicalPathInvalid);
-  const AssetId textureAssetId = computeAssetId(normalizedTextureResult.value());
-
-  // Step 3.4 (Plan 0029 Section P6/ADR-0074 Section 1): the optional
-  // normal-map texture's own identity -- identical value-level-only
-  // normalization, `0` when absent (the material grammar's own kind
-  // restriction already guarantees this is empty for anything but
-  // PbrDirectLit).
-  AssetId normalMapTextureAssetId = 0;
-  if (!parsed.normalMapLogicalPath.empty()) {
-    const auto normalizedNormalMapResult = normalizeLogicalPath(parsed.normalMapLogicalPath);
-    if (normalizedNormalMapResult.isErr()) return ResultT::Err(MaterialCookError::LogicalPathInvalid);
-    normalMapTextureAssetId = computeAssetId(normalizedNormalMapResult.value());
-  }
-
-  // Step 3.4b (Plan 0046 Milestone 1, ADR-0096): the optional emissive
-  // texture's identity, the normal map's discipline exactly.
-  AssetId emissiveTextureAssetId = 0;
-  if (!parsed.emissiveTextureLogicalPath.empty()) {
-    const auto normalizedEmissiveResult = normalizeLogicalPath(parsed.emissiveTextureLogicalPath);
-    if (normalizedEmissiveResult.isErr()) return ResultT::Err(MaterialCookError::LogicalPathInvalid);
-    emissiveTextureAssetId = computeAssetId(normalizedEmissiveResult.value());
-  }
+  // Step 3: the referenced textures' keys (Plan 0047 P9, ADR-0097 D2/D3)
+  // -- value-level only, never an existence check (ADR-0059 D6/D7). The
+  // optional normal map (Plan 0029 P6) and emissive texture (Plan 0046
+  // M1) are `0` when absent.
+  const AssetId textureAssetId = assetKey(parsed.textureAsset);
+  const AssetId normalMapTextureAssetId = parsed.normalMapAsset.has_value() ? assetKey(*parsed.normalMapAsset) : 0;
+  const AssetId emissiveTextureAssetId =
+      parsed.emissiveTextureAsset.has_value() ? assetKey(*parsed.emissiveTextureAsset) : 0;
 
   // Step 3.5 (Plan 0023 Milestone 1, ADR-0066 item 5; Plan 0035
   // Milestone 2/ADR-0081 widening): value-range validation, both
@@ -188,6 +173,7 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
       parsed.emissiveFactor, parsed.alphaMode, parsed.alphaCutoff, emissiveTextureAssetId);
 
   MaterialMetadata metadata;
+  metadata.assetGuid = assetGuid;
   metadata.assetId = selfAssetId;
   metadata.sourceLogicalPath = normalizedSelfPath;
   metadata.kind = parsed.kind;

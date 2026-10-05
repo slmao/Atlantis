@@ -54,9 +54,8 @@ struct ParsedMeshSource {
 
 // Plan 0020 Section P7: an internal seam, exposed for direct unit
 // testing only -- not part of this module's own public contract.
-// Mirrors atlantis::runtime::detail::checkForDuplicatesAndCollisions()'s
-// own already-established precedent exactly (scene_manifest.h): a
-// small piece of logic factored out specifically so a test can exercise
+// Mirrors atlantis::asset_system::detail::checkAssetKeys()'s own
+// precedent (asset_catalog.h): a small piece of logic factored out specifically so a test can exercise
 // it directly, without becoming part of parseMeshSource()'s/
 // decodeMeshArtifact()'s own stable public contract. Both
 // parseMeshSource() (this translation unit) and decodeMeshArtifact()

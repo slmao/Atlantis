@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/errors.h>
 #include <atlantis/asset_system/validated_scene_data.h>
 #include <atlantis/result.h>
@@ -29,9 +30,11 @@ namespace atlantis::asset_system {
 // Plan 0044 P4: schema version 6 inserts the 8-byte camera bloom slot
 // (bloom_strength f32, bloom_threshold f32) immediately after the fog
 // slot, before has_renderable; a camera-less node writes the
-// DecodedCameraBloom defaults. Versions 1-5 are all rejected outright,
-// no dual-version reader.
-inline constexpr std::uint32_t kSceneArtifactSchemaVersion = 6;
+// DecodedCameraBloom defaults. Plan 0047 P9 (ADR-0097 D3/D5): schema
+// version 7 appends the node's 16-byte entity_guid (text byte order) at
+// record offset 152. Versions 1-6 are all rejected outright, no
+// dual-version reader.
+inline constexpr std::uint32_t kSceneArtifactSchemaVersion = 7;
 inline constexpr std::size_t kSceneArtifactHeaderSizeBytes = 24;
 // position(12) + rotation(12) + scale(12) + has_camera(4) +
 // fov_y/near_z/far_z(12) + exposure_compensation_ev(4) +
@@ -41,8 +44,8 @@ inline constexpr std::size_t kSceneArtifactHeaderSizeBytes = 24;
 // has_renderable(4) + mesh_asset_id(8) + has_material(4) +
 // material_asset_id(8) + has_light(4) + light_kind(4) +
 // color_r/g/b(12) + intensity(4) + range(4) + has_parent(4) +
-// parent_index(4) = 152 bytes.
-inline constexpr std::size_t kSceneArtifactNodeRecordSizeBytes = 152;
+// parent_index(4) + entity_guid(16) = 168 bytes.
+inline constexpr std::size_t kSceneArtifactNodeRecordSizeBytes = 168;
 // "Implausibly large" upper bound (D6 step 4) -- this format is hand-
 // authored text at import time, never a high-poly runtime asset;
 // mirrors kMaxVertexCount's own order of magnitude and role exactly
@@ -59,14 +62,17 @@ inline constexpr std::uint32_t kMaxSceneArtifactNodeCount = 65536;
 // index) -- an invariant only this module's own two callers
 // (cookScene(), decodeSceneArtifact() below) need to uphold, not a
 // public contract.
+// entityGuids.size() must equal nodes.size() too (Plan 0047 P9).
 [[nodiscard]] std::vector<std::byte> encodeSceneArtifact(const std::vector<ValidatedSceneNode>& nodes,
                                                            const std::vector<std::optional<std::size_t>>& parents,
-                                                           std::optional<std::size_t> activeCameraIndex);
+                                                           std::optional<std::size_t> activeCameraIndex,
+                                                           const std::vector<EntityGuid>& entityGuids);
 
 struct DecodedSceneArtifact {
   std::vector<ValidatedSceneNode> nodes;
   std::vector<std::optional<std::size_t>> parents;
   std::optional<std::size_t> activeCameraIndex;
+  std::vector<EntityGuid> entityGuids;  // Plan 0047 P9: one per node, non-nil and unique
 };
 
 // Plan 0015 Section D6, steps 2-7: header decode, EmptyScene and

@@ -66,8 +66,10 @@ Re-walked at `origin/main` `dab6f4a` (PR #194 merged).
    per-scene manifests from `MESH_/MATERIAL_/TEXTURE_DEPENDENCIES`
    (`:137-236`); material `TEXTURE`/`NORMAL_MAP` arguments used only for
    ordering (`:407-465`); `atlantis_add_imported_scene()` (`:250-288`).
-   109 declarations in `assets/CMakeLists.txt`, plus 2 in
-   `tests/asset_system/CMakeLists.txt:118-150` (the `_test_fixtures` pair).
+   108 declarations: 106 in `assets/CMakeLists.txt` plus 2 in
+   `tests/asset_system/CMakeLists.txt:118-150` (the `_test_fixtures` pair) —
+   7 mesh, 13 texture, 58 material, 27 scene, 2 environment, 1 gltf_import,
+   as the generated `declarations.txt` (P10) lists them.
 5. **Runtime.** `BootstrapConfig::scene{Artifact,Metadata,DependencyManifest}Path`
    (`bootstrap_config.h:31-33`); whitelist from compile definitions
    (`main.cpp:54-77`, `src/runtime/CMakeLists.txt:104-106`, `:191-202`,
@@ -140,7 +142,10 @@ or ADR decision.
   `NotLowercaseHex` and `NilGuid`.
 - `toString()` produces the canonical text.
 - `assetKey(AssetGuid) -> AssetId` is FNV-1a-64 over the 16 bytes (ADR-0097
-  D2), reusing the existing FNV-1a-64 routine.
+  D2), reusing the existing FNV-1a-64 routine — the algorithm, not the
+  path-hashing public entry point (ruling I1).
+- Binary codec: `assetGuidFromBytes()` / `entityGuidFromBytes()`, rejecting
+  only nil; the byte array is a public member (ruling I3).
 
 **P3 — Derivation (ADR-0097 D4).**
 - FNV-1a-128: offset basis `6c62272e07bb014262b821756295c58d`, prime
@@ -151,6 +156,8 @@ or ADR decision.
 - `deriveAssetGuid(AssetGuid, std::string_view)` and
   `deriveEntityGuid(AssetGuid scene, std::string_view)` are public: the
   importer and the Runtime's Bistro whitelist entry (P15) both call them.
+  They hash the sub-key byte for byte; validating sub-keys is the caller's
+  job (ruling I2).
 
 **P4 — Minting.**
 - `atlantis_asset_cooker --kind=mint-guid [--count=N]` prints N version-4
@@ -373,6 +380,9 @@ record: guid=<g> asset_id=<16 hex> type=<type> source=<root>:<path>[#<sub-key>] 
   - rewrites every committed scene source (and the overlay) v6 → v7, adding
     minted `guid=` and replacing path references with catalog GUIDs;
   - rewrites every material source v9 → v10 the same way.
+- Scene sources that are not declarations are named explicitly with a
+  repeatable `--scene-source=<assets-relative path>` (ruling I5); the
+  one-time run passes the Bistro overlay this way.
 - It works on text tokens and does not depend on the v7/v10 parsers.
 - It fails on any reference it cannot map.
 - It is removed in M9.
@@ -451,8 +461,10 @@ never re-baseline.
 3. `atlantis_finalize_asset_catalog()` replaces
    `atlantis_finalize_asset_validation()`. Deleted: `--validate-set`,
    `validateAssetSet()` / `asset_set_validation.*`, `declared_assets.txt`
-   and `computeAssetId()` — which has no callers left once the
-   transitional loader moves to sidecar GUIDs in M3.
+   and the public `computeAssetId(path)` entry point — which has no callers
+   left once the transitional loader moves to sidecar GUIDs in M3. Its
+   byte-wise FNV-1a-64 core becomes an internal helper, and `assetKey()`
+   switches to it (ruling I1).
 4. Tests: every P13 error triggered alone (key collisions and zero keys by
    injected values, as `validateAssetSet` tests do today); closure
    contents; content-gated entries counted, not failed; a real-subprocess
@@ -669,6 +681,68 @@ Maps to Spec 0047's Testing & Verification Plan.
   - If the measured cost is too high, narrowing the importer step's stamp
     input to its own catalog-source line is an implementation detail, not a
     Plan change.
+
+## Implementation rulings (slmao, 2026-09-29, chat)
+
+Clarifications raised while implementing M1 (I1–I4) and M2 (I5). None changes a Spec
+requirement or ADR decision.
+
+- **I1 — `assetKey()` and `computeAssetId()`.** P2's "reusing the existing
+  FNV-1a-64 routine" means reusing the algorithm's implementation, not the
+  path-hashing public entry point.
+  - M1's direct call to `computeAssetId()` stays as it is; it is not
+    reworked now.
+  - M4 step 3 deletes the public `computeAssetId(path)`, extracts its
+    byte-wise core into an internal helper, and points `assetKey()` at that
+    helper.
+- **I2 — Sub-key validation.** The derivation functions stay byte-pure,
+  under the caller contract their header already states. M3's importer
+  validates its own sub-keys:
+  - a URI that still contains non-ASCII bytes after normalization is a
+    named import error;
+  - so is an empty sub-key;
+  - neither is ever hashed silently.
+- **I3 — Binary codec shape.** M1's `assetGuidFromBytes()` /
+  `entityGuidFromBytes()` are P2's binary codec as intended. They reject
+  only nil and reuse `GuidParseError::NilGuid`. The 16 bytes are a public
+  member, and a default-constructed value is nil and documented as not to be
+  relied on.
+- **I4 — Details accepted on review:**
+  - `--count` only requires a value ≥ 1, with no upper bound;
+  - `fnv1a128()` is exposed publicly.
+- **I5 — How the migration reaches the overlay** (raised in M2). P20's
+  inputs were only the declarations list, and the overlay is an importer
+  input, not a declaration — the only undeclared scene or material source
+  in `assets/`.
+  - `migrate-0047` gains a repeatable `--scene-source=<assets-relative
+    path>` for scene sources that are not declarations.
+  - The one-time M3 run passes `bistro/bistro_overlay.scene.txt`.
+  - The overlay is rewritten to v7 with a minted `guid=` on each node and
+    gets no catalog entry, since it is not an asset.
+
+### Rulings raised in M3–M4 (slmao, chat; recorded before M5)
+
+- **I6 — cook-manifest rows carry the catalog id, not a GUID.** Each
+  `cook_manifest.txt` row carries `--catalog-id=content:<root>#<sub-key>`
+  (required on manifest rows, rejected on the command line). This replaces
+  P7's `--guid=` pass-through on manifest lines.
+  - GUID derivation stays inside the cooker/library.
+  - Fragments use an `{import_dir}` placeholder for locations.
+- **I7 — `atlantis_catalog_guid()` lands in M4.** The CMake function moves
+  forward from P15 to M4 (function only). The compile definitions that use
+  it remain M5.
+- **I8 — importer stamp input narrowed to its own catalog line (O4 ruling,
+  2026-10-05, chat).** `atlantis_add_imported_scene()` depends on the import's
+  own catalog-source entry, written at configure time, instead of the whole
+  catalog source. This removes the full re-import an unrelated catalog edit
+  caused. The hand-authored cooks still depend on the whole file (O4 unchanged).
+- **M4 interpretations accepted on review:**
+  - an unreadable sidecar reuses `SidecarGuidMismatch`;
+  - a fragment's relative location problem is `MalformedFragment`;
+  - a duplicate GUID inside one fragment is reported as `DuplicateGuid`;
+  - mesh sidecars are read back under both schemas.
+- **Stale documentation:** the outdated descriptions in `src/README.md` and
+  `tests/README.md` are updated at the end of M5.
 
 ## Rollback Plan
 

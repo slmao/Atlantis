@@ -1,5 +1,6 @@
 #include <atlantis/asset_system/load_environment.h>
 
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/environment_artifact.h>
 #include <atlantis/asset_system/environment_metadata.h>
@@ -60,11 +61,12 @@ struct Pair {
 
 [[nodiscard]] Pair writeValidPair(const fs::path& directory) {
   const std::string logicalPath = "environments/studio.hdr";
-  const AssetId assetId = computeAssetId(logicalPath);
+  const AssetGuid assetGuid = parseAssetGuid("0047e000-0000-4000-8000-000000000001").value();
+  const AssetId assetId = assetKey(assetGuid);
   const EnvironmentAssetData data = makeData();
   Pair pair{directory / "studio.aenv", directory / "studio.aenv.meta.txt"};
   writeBytes(pair.artifact, encodeEnvironmentArtifact(assetId, data));
-  EnvironmentMetadata metadata{assetId, logicalPath, data.faceSize, data.mipCount, data.dfgWidth, data.dfgHeight};
+  EnvironmentMetadata metadata{assetGuid, assetId, logicalPath, data.faceSize, data.mipCount, data.dfgWidth, data.dfgHeight};
   writeText(pair.metadata, serializeEnvironmentMetadata(metadata));
   return pair;
 }
@@ -92,11 +94,12 @@ TEST_CASE("loadEnvironmentAsset reports I/O and parse domains", "[asset_system]"
   CHECK(loadEnvironmentAsset(pair.artifact, pair.metadata).error() == EnvironmentLoadError::MetadataParseFailed);
 }
 
-TEST_CASE("loadEnvironmentAsset enforces embedded metadata and path-derived identity agreement", "[asset_system]") {
+TEST_CASE("loadEnvironmentAsset enforces embedded metadata and GUID-derived identity agreement", "[asset_system]") {
   TempDir directory;
   const Pair pair = writeValidPair(directory.path);
   EnvironmentMetadata metadata;
-  metadata.assetId = computeAssetId("environments/other.hdr");
+  metadata.assetGuid = parseAssetGuid("0047e000-0000-4000-8000-000000000002").value();
+  metadata.assetId = assetKey(parseAssetGuid("0047e000-0000-4000-8000-000000000003").value());
   metadata.sourceLogicalPath = "environments/studio.hdr";
   metadata.faceSize = 1;
   metadata.mipCount = 1;

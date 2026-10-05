@@ -1,6 +1,6 @@
-atlantis_scene_source_version: 6
+atlantis_scene_source_version: 7
 node_count: 3
 active_camera: 2
-node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/pbr_sphere.mesh.txt material=materials/pbr_dielectric_rough.material.txt
-node: node_id=2 parent=none position=0.0 0.0 4.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0
-node: node_id=3 parent=none position=0.0 0.0 0.0 rotation=0.5 -0.6 0.0 scale=1.0 1.0 1.0 light=directional color=1.0 0.8 0.6 intensity=32.0
+node: node_id=1 guid=1e34423c-e8cf-4bf1-9fd9-36edc7fb948a parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=da09198f-d590-44f3-9049-ba5b43fe76cd material=1542b95d-74b5-48ba-82be-eddbe2843129
+node: node_id=2 guid=2512cb79-f66a-4af3-a9e8-7db740dd4840 parent=none position=0.0 0.0 4.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0
+node: node_id=3 guid=08daa70f-d4d0-4dd3-bfd2-84dac7694cf3 parent=none position=0.0 0.0 0.0 rotation=0.5 -0.6 0.0 scale=1.0 1.0 1.0 light=directional color=1.0 0.8 0.6 intensity=32.0

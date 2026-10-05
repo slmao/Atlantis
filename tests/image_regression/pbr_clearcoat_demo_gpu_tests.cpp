@@ -1,3 +1,4 @@
+#include "support/catalog_scene.h"
 #include "fixture/pbr_clearcoat_demo_fixture.h"
 #include "support/fog_differential.h"
 #include "support/emissive_differential.h"
@@ -88,17 +89,15 @@ atlantis::runtime::BootstrapConfig buildClearcoatSharedConfig() {
 
 atlantis::runtime::BootstrapConfig buildClearcoatConfig() {
   atlantis::runtime::BootstrapConfig config = buildClearcoatSharedConfig();
-  config.sceneArtifactPath = ATLANTIS_pbr_clearcoat_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_pbr_clearcoat_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_pbr_clearcoat_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_pbr_clearcoat_demo_scene_GUID);
   return config;
 }
 
 atlantis::runtime::BootstrapConfig buildClearcoatNormalMapConfig() {
   atlantis::runtime::BootstrapConfig config = buildClearcoatSharedConfig();
-  config.sceneArtifactPath = ATLANTIS_pbr_clearcoat_normal_map_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_pbr_clearcoat_normal_map_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_pbr_clearcoat_normal_map_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_pbr_clearcoat_normal_map_demo_scene_GUID);
   return config;
 }
 

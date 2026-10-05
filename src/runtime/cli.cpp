@@ -107,7 +107,7 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
 
   CommandLineResult result;
   result.outcome = CommandLineOutcome::RunScene;
-  result.selectedScene = matched->paths;
+  result.selectedScene = matched->selection;
   return result;
 }
 

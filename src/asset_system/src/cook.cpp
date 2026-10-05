@@ -1,5 +1,6 @@
 #include <atlantis/asset_system/cook.h>
 
+#include <atlantis/assert.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/asset_metadata.h>
 #include <atlantis/asset_system/logical_path.h>
@@ -82,9 +83,11 @@ namespace fs = std::filesystem;
 
 atlantis::Result<std::monostate, CookError> cookStaticMesh(const std::string& sourceFilePath,
                                                              const std::string& logicalPathInput,
+                                                             const AssetGuid& assetGuid,
                                                              const std::string& artifactOutputPath,
                                                              const std::string& metadataOutputPath) {
   using ResultT = atlantis::Result<std::monostate, CookError>;
+  ATLANTIS_CHECK_MSG(assetGuid != AssetGuid{}, "cookStaticMesh(): the asset GUID must not be nil");
 
   const auto normalizedResult = normalizeLogicalPath(logicalPathInput);
   if (normalizedResult.isErr()) return ResultT::Err(CookError::LogicalPathInvalid);
@@ -104,10 +107,11 @@ atlantis::Result<std::monostate, CookError> cookStaticMesh(const std::string& so
   const auto tangentsResult = generateTangents(parsed);
   if (tangentsResult.isErr()) return ResultT::Err(tangentsResult.error());
 
-  const AssetId assetId = computeAssetId(normalizedLogicalPath);
+  const AssetId assetId = assetKey(assetGuid);
   const std::vector<std::byte> artifactBytes = encodeMeshArtifact(assetId, parsed, tangentsResult.value());
 
   AssetMetadata metadata;
+  metadata.assetGuid = assetGuid;
   metadata.assetId = assetId;
   metadata.sourceLogicalPath = normalizedLogicalPath;
   metadata.importerVersion = std::string(kImporterVersion);

@@ -21,6 +21,19 @@
 #include <utility>
 #include <vector>
 
+#include <atlantis/asset_system/asset_guid.h>
+#include <string_view>
+
+namespace {
+
+// Plan 0047 M3: a deterministic, non-nil test identity per logical path, so
+// a test's cross-references (scene -> mesh, material -> texture) agree.
+[[nodiscard]] atlantis::asset_system::AssetGuid testAssetGuid(std::string_view key) {
+  return atlantis::asset_system::deriveAssetGuid(
+      atlantis::asset_system::parseAssetGuid("00470047-0047-4047-8047-004700470047").value(), key);
+}
+
+}  // namespace
 using namespace atlantis::asset_system;
 
 namespace {
@@ -67,7 +80,7 @@ constexpr std::string_view kValidTriangleSource =
   const fs::path artifactPath = dir / "triangle.amesh";
   const fs::path metadataPath = dir / "triangle.amesh.meta.txt";
   const auto result =
-      cookStaticMesh(sourcePath.string(), "triangle.mesh.txt", artifactPath.string(), metadataPath.string());
+      cookStaticMesh(sourcePath.string(), "triangle.mesh.txt", testAssetGuid("triangle.mesh.txt"), artifactPath.string(), metadataPath.string());
   REQUIRE(result.isOk());
   return {artifactPath.string(), metadataPath.string()};
 }
@@ -92,11 +105,13 @@ void writeFile(const fs::path& path, const std::string& content) {
 
   const auto logicalPath = normalizeLogicalPath("triangle_v5.mesh.txt");
   REQUIRE(logicalPath.isOk());
-  const AssetId assetId = computeAssetId(logicalPath.value());
+  const AssetGuid assetGuid = testAssetGuid(logicalPath.value());
+  const AssetId assetId = assetKey(assetGuid);
 
   const std::vector<std::byte> artifactBytes = encodeMeshArtifactU32(assetId, parsed.value(), tangents.value());
 
   AssetMetadata metadata;
+  metadata.assetGuid = assetGuid;
   metadata.assetId = assetId;
   metadata.sourceLogicalPath = logicalPath.value();
   metadata.importerVersion = "test";
@@ -223,7 +238,7 @@ TEST_CASE("loadStaticMeshAsset detects a deliberate artifact/metadata mismatch",
             "index: 2 3 0\n");
   const fs::path otherArtifactPath = dir.path / "other.amesh";
   const fs::path otherMetadataPath = dir.path / "other.amesh.meta.txt";
-  const auto otherResult = cookStaticMesh(otherSourcePath.string(), "other.mesh.txt", otherArtifactPath.string(),
+  const auto otherResult = cookStaticMesh(otherSourcePath.string(), "other.mesh.txt", testAssetGuid("other.mesh.txt"), otherArtifactPath.string(),
                                            otherMetadataPath.string());
   REQUIRE(otherResult.isOk());
 
@@ -235,17 +250,12 @@ TEST_CASE("loadStaticMeshAsset detects a deliberate artifact/metadata mismatch",
 }
 
 TEST_CASE(
-    "loadStaticMeshAsset detects a metadata file whose own recorded asset_id and source_logical_path disagree "
-    "with each other, even when asset_id still matches the artifact",
+    "loadStaticMeshAsset detects a metadata file whose asset_id is not the key of its asset_guid, even when "
+    "asset_id still matches the artifact",
     "[asset_system]") {
   TempDirGuard dir("self_inconsistent_metadata");
   const auto [artifactPath, metadataPath] = cookValidTriangle(dir.path);
 
-  // Individually well-formed and passes the artifact-vs-metadata check
-  // above (asset_id/counts still agree with the artifact's own header)
-  // -- but source_logical_path no longer hashes to that same asset_id,
-  // an internal contradiction within the metadata file itself that the
-  // artifact-vs-metadata check alone cannot see.
   std::string metadataText;
   {
     std::ifstream in(metadataPath, std::ios::binary);
@@ -253,11 +263,23 @@ TEST_CASE(
     buffer << in.rdbuf();
     metadataText = buffer.str();
   }
+
+  // Plan 0047 P8 (ADR-0097 D2/D3): the source path is provenance only, so a
+  // different one still loads...
   const std::string oldLine = "source_logical_path: triangle.mesh.txt";
   const std::string newLine = "source_logical_path: some/other/path.mesh.txt";
-  const auto pos = metadataText.find(oldLine);
-  REQUIRE(pos != std::string::npos);
-  metadataText.replace(pos, oldLine.size(), newLine);
+  const auto pathPos = metadataText.find(oldLine);
+  REQUIRE(pathPos != std::string::npos);
+  metadataText.replace(pathPos, oldLine.size(), newLine);
+  writeFile(metadataPath, metadataText);
+  CHECK(loadStaticMeshAsset(artifactPath, metadataPath).isOk());
+
+  // ...but an asset_id that is not the key of the recorded asset_guid is an
+  // internal contradiction the artifact-vs-metadata check alone cannot see.
+  const std::string guidPrefix = "asset_guid: ";
+  const auto guidPos = metadataText.find(guidPrefix);
+  REQUIRE(guidPos != std::string::npos);
+  metadataText.replace(guidPos + guidPrefix.size(), 36, "fedcba98-7654-4321-8fed-cba987654321");
   writeFile(metadataPath, metadataText);
 
   const auto result = loadStaticMeshAsset(artifactPath, metadataPath);

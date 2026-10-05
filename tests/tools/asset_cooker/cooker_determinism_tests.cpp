@@ -1,3 +1,6 @@
+#include "test_catalog_source.h"
+#include "test_cooked_build.h"
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
@@ -18,6 +21,8 @@
 // executable at test-run time, matching
 // tests/tools/shader_compiler/toolchain_integration_tests.cpp's own
 // "tool" label precedent -- no GPU/Vulkan device is needed.
+
+using atlantis::tools::asset_cooker::test::writeCatalogSourceCovering;
 
 namespace {
 
@@ -60,9 +65,11 @@ struct TempDirGuard {
 // std::system() deliberately, for its own simplicity, rather than
 // duplicating Shader System's private CreateProcessW wrapper).
 [[nodiscard]] int runCooker(const std::string& cookerExecutable, const std::string& sourcePath,
-                             const std::string& assetRoot, const std::string& outputDir) {
+                             const std::string& assetRoot, const std::string& outputDir,
+                             const std::string& catalogSource) {
   const std::string command = quoted(cookerExecutable) + " --source=" + quoted(sourcePath) +
-                               " --asset-root=" + quoted(assetRoot) + " --output-dir=" + quoted(outputDir);
+                               " --asset-root=" + quoted(assetRoot) + " --output-dir=" + quoted(outputDir) +
+                               " --catalog-source=" + quoted(catalogSource);
   const std::string wrapped = "\"" + command + "\"";
   return std::system(wrapped.c_str());
 }
@@ -70,9 +77,11 @@ struct TempDirGuard {
 [[nodiscard]] int runEnvironmentCooker(const std::string& cookerExecutable, const std::string& sourcePath,
                                         const std::string& assetRoot, const std::string& outputDir) {
   const fs::path stampPath = fs::path(outputDir) / "studio.stamp";
+  // Plan 0047 P7: the committed catalog source under the real asset root.
+  const std::string catalogSource = (fs::path(assetRoot) / "asset_catalog.txt").string();
   const std::string command = quoted(cookerExecutable) + " --kind=environment --source=" + quoted(sourcePath) +
                               " --asset-root=" + quoted(assetRoot) + " --output-dir=" + quoted(outputDir) +
-                              " --stamp=" + quoted(stampPath.string());
+                              " --stamp=" + quoted(stampPath.string()) + " --catalog-source=" + quoted(catalogSource);
   return std::system(("\"" + command + "\"").c_str());
 }
 
@@ -111,9 +120,13 @@ TEST_CASE("The real atlantis_asset_cooker executable produces byte-identical out
   const fs::path outputDirB = dir.path / "out_b";
 
   const std::string cookerExecutable = ATLANTIS_ASSET_COOKER_EXECUTABLE;
+  const std::string catalogSource =
+      writeCatalogSourceCovering(assetRoot, dir.path / "asset_catalog.txt").string();
 
-  REQUIRE(runCooker(cookerExecutable, sourcePath.string(), assetRoot.string(), outputDirA.string()) == 0);
-  REQUIRE(runCooker(cookerExecutable, sourcePath.string(), assetRoot.string(), outputDirB.string()) == 0);
+  REQUIRE(runCooker(cookerExecutable, sourcePath.string(), assetRoot.string(), outputDirA.string(), catalogSource) ==
+          0);
+  REQUIRE(runCooker(cookerExecutable, sourcePath.string(), assetRoot.string(), outputDirB.string(), catalogSource) ==
+          0);
 
   const fs::path artifactA = outputDirA / "meshes" / "triangle.amesh";
   const fs::path artifactB = outputDirB / "meshes" / "triangle.amesh";
@@ -143,4 +156,32 @@ TEST_CASE("The real environment cooker produces byte-identical artifact and meta
   CHECK(readFileBytes(outputDirA / "studio.aenv") == readFileBytes(outputDirB / "studio.aenv"));
   CHECK(readFileBytes(outputDirA / "studio.aenv.meta.txt") ==
         readFileBytes(outputDirB / "studio.aenv.meta.txt"));
+}
+
+// Plan 0047 M4 (Spec 0047 determinism, measured): the real cooker assembles
+// the same fragments twice, into two catalogs (and closures) beside each
+// other, and both runs write the same bytes.
+TEST_CASE("The real atlantis_asset_cooker assembles byte-identical catalogs across two runs",
+          "[asset_cooker][assemble_catalog][tool]") {
+  TempDirGuard dir("assemble_determinism");
+  const atlantis::tools::asset_cooker::test::CookedBuild build = atlantis::tools::asset_cooker::test::cookSmallBuild(
+      dir.path, fs::path(ATLANTIS_ASSET_ROOT) / "textures" / "textured_quad_source_unorm.png");
+
+  const auto assemble = [&build](const std::string& tag) {
+    const std::string command =
+        quoted(ATLANTIS_ASSET_COOKER_EXECUTABLE) + " --kind=assemble-catalog --catalog-source=" +
+        quoted(build.catalogSource.string()) + " --declarations=" + quoted(build.declarations.string()) +
+        " --fragment-list=" + quoted(build.fragmentList.string()) + " --out=" +
+        quoted((build.outDir / ("catalog_" + tag + ".txt")).string()) + " --closure=" +
+        atlantis::asset_system::toString(build.scene) + "=" +
+        quoted((build.outDir / ("closure_" + tag + ".txt")).string());
+    return std::system(("\"" + command + "\"").c_str());
+  };
+  REQUIRE(assemble("a") == 0);
+  REQUIRE(assemble("b") == 0);
+
+  const std::vector<char> catalogA = readFileBytes(build.outDir / "catalog_a.txt");
+  CHECK(catalogA.size() > 100);
+  CHECK(catalogA == readFileBytes(build.outDir / "catalog_b.txt"));
+  CHECK(readFileBytes(build.outDir / "closure_a.txt") == readFileBytes(build.outDir / "closure_b.txt"));
 }

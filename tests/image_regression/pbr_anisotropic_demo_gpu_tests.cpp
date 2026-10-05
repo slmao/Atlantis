@@ -1,3 +1,4 @@
+#include "support/catalog_scene.h"
 #include "fixture/pbr_anisotropic_demo_fixture.h"
 #include "support/fog_differential.h"
 #include "support/emissive_differential.h"
@@ -87,17 +88,15 @@ atlantis::runtime::BootstrapConfig buildAnisotropicSharedConfig() {
 
 atlantis::runtime::BootstrapConfig buildAnisotropicConfig() {
   atlantis::runtime::BootstrapConfig config = buildAnisotropicSharedConfig();
-  config.sceneArtifactPath = ATLANTIS_pbr_anisotropic_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_pbr_anisotropic_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_pbr_anisotropic_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_pbr_anisotropic_demo_scene_GUID);
   return config;
 }
 
 atlantis::runtime::BootstrapConfig buildAnisotropicNormalMapConfig() {
   atlantis::runtime::BootstrapConfig config = buildAnisotropicSharedConfig();
-  config.sceneArtifactPath = ATLANTIS_pbr_anisotropic_normal_map_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_pbr_anisotropic_normal_map_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_pbr_anisotropic_normal_map_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_pbr_anisotropic_normal_map_demo_scene_GUID);
   return config;
 }
 

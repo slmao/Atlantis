@@ -1,6 +1,6 @@
-atlantis_scene_source_version: 6
+atlantis_scene_source_version: 7
 node_count: 3
 active_camera: 3
-node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/textured_quad_left.mesh.txt material=materials/unlit_textured_quad.material.txt
-node: node_id=2 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/textured_quad_right.mesh.txt material=materials/unlit_textured_quad.material.txt
-node: node_id=3 parent=none position=0.0 0.0 5.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0
+node: node_id=1 guid=abfe85fe-7657-4f6f-86c0-755d7416194f parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=58e57a64-ad60-4925-b6d6-6561540e8476 material=c7d07982-6005-4106-8c04-9aa5d48b40b4
+node: node_id=2 guid=1f7d35be-a597-4298-a80d-7255a8cad9f1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 mesh=b25302d6-8057-4024-b379-b5b69123e57a material=c7d07982-6005-4106-8c04-9aa5d48b40b4
+node: node_id=3 guid=dba75c3d-6fbf-4518-a803-428d87f1f94c parent=none position=0.0 0.0 5.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0

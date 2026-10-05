@@ -8,6 +8,7 @@
 #include <atlantis/log.h>
 #include <atlantis/runtime/bootstrap_config.h>
 
+#include "../support/catalog_scene.h"
 #include "../fixture/pbr_normal_map_demo_fixture.h"
 #include "../support/pixel_diff.h"
 #include "../support/png_codec.h"
@@ -90,9 +91,9 @@ void printProvenanceFieldIfDifferent(const char* fieldName, const std::string& o
 
 [[nodiscard]] BootstrapConfig buildConfig() {
   BootstrapConfig config;
-  config.sceneArtifactPath = ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_BISTRO_SCENE_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_BISTRO_SCENE_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(
+      atlantis::image_regression::derivedSceneGuidText(ATLANTIS_BISTRO_IMPORT_GUID).c_str());
   // The three bloom shader pairs -- the fixture creates the bloom
   // Pipelines/bundle only when these paths are set; the overlay camera's
   // bloom= group drives them.
@@ -219,8 +220,8 @@ int main(int argc, char** argv) {
     ATLANTIS_LOG_ERROR("golden name must start with bistro_demo/");
     return 2;
   }
-  if (!std::filesystem::exists(ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH)) {
-    ATLANTIS_LOG_ERROR("the Bistro build step has not run: {} is missing", ATLANTIS_BISTRO_SCENE_ARTIFACT_PATH);
+  if (!std::filesystem::exists(ATLANTIS_ASSET_CATALOG_PATH)) {
+    ATLANTIS_LOG_ERROR("the Bistro build step has not run: {} is missing", ATLANTIS_ASSET_CATALOG_PATH);
     return 1;
   }
 

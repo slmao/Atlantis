@@ -10,6 +10,7 @@
 // for android_app_injection.h -- see that header's own top comment for
 // why this cross-module include needs a dedicated CMake extension
 // point rather than an ordinary target_include_directories(PUBLIC ...).
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/log.h>
 #include <atlantis/runtime/bootstrap_config.h>
 #include <atlantis/runtime/exit_reason.h>
@@ -33,17 +34,19 @@ using atlantis::runtime::RuntimeApplication;
 using atlantis::runtime::RuntimeExitReason;
 using atlantis::runtime::android_detail::AndroidLogSink;
 using atlantis::runtime::android_detail::extractAsset;
-using atlantis::runtime::android_detail::extractSceneManifest;
+using atlantis::runtime::android_detail::extractCatalogClosure;
 
 namespace {
 
 // The one, fixed sample scene this Milestone targets -- no
 // scene-selection UI or command-line equivalent on Android (Plan 0034
 // Milestone 5), matching atlantis_runtime's own default whitelist entry
-// (main.cpp, Spec 0032 Requirement 2's own first/default row).
-constexpr const char* kSceneRelativeArtifactPath = "assets/scenes/integrated_showcase_demo.ascene";
-constexpr const char* kSceneRelativeMetadataPath = "assets/scenes/integrated_showcase_demo.ascene.meta.txt";
-constexpr const char* kSceneRelativeManifestPath = "assets/scenes/integrated_showcase_demo.ascene.manifest.txt";
+// (main.cpp, Spec 0032 Requirement 2's own first/default row). Plan 0047
+// P19: the scene is the closure catalog's integrated_showcase_demo record;
+// ATLANTIS_RUNTIME_SCENE_GUID is generated from assets/asset_catalog.txt at
+// configure time (src/runtime/CMakeLists.txt), and the closure catalog is
+// packaged by android/app/build.gradle.
+constexpr const char* kSceneCatalogRelativePath = "integrated_showcase_demo.catalog.txt";
 
 }  // namespace
 
@@ -83,12 +86,16 @@ void android_main(struct android_app* app) {
   config.assetArtifactPath = extractAsset(assetManager, internalDataPath, "assets/meshes/minimal_cube.amesh");
   config.assetMetadataPath =
       extractAsset(assetManager, internalDataPath, "assets/meshes/minimal_cube.amesh.meta.txt");
-  config.sceneArtifactPath = extractAsset(assetManager, internalDataPath, kSceneRelativeArtifactPath);
-  config.sceneMetadataPath = extractAsset(assetManager, internalDataPath, kSceneRelativeMetadataPath);
-  // extractSceneManifest(), not extractAsset(): this one file's
-  // artifact/metadata columns need runtime rewriting, not a verbatim
-  // byte copy -- see asset_extraction.h's own contract.
-  config.sceneDependencyManifestPath = extractSceneManifest(assetManager, internalDataPath, kSceneRelativeManifestPath);
+  // extractCatalogClosure(), not extractAsset(): the catalog's listed
+  // artifacts and sidecars are extracted with it, at their catalog-relative
+  // locations.
+  config.assetCatalogPath = extractCatalogClosure(assetManager, internalDataPath, kSceneCatalogRelativePath);
+  const auto sceneGuid = atlantis::asset_system::parseAssetGuid(ATLANTIS_RUNTIME_SCENE_GUID);
+  if (sceneGuid.isErr()) {
+    ATLANTIS_LOG_ERROR("the generated ATLANTIS_RUNTIME_SCENE_GUID is not a valid GUID");
+    return;
+  }
+  config.sceneAsset = sceneGuid.value();
   config.unlitTexturedVertexShaderSpirvPath =
       extractAsset(assetManager, internalDataPath, "shaders/textured_quad/textured_quad.vert.spv");
   config.unlitTexturedVertexShaderReflectionPath =

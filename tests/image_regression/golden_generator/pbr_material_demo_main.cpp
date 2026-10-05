@@ -1,6 +1,7 @@
 #include <atlantis/log.h>
 #include <atlantis/runtime/bootstrap_config.h>
 
+#include "../support/catalog_scene.h"
 #include "../fixture/pbr_material_demo_fixture.h"
 #include "../fixture/ibl_material_demo_fixture.h"
 #include "../support/pixel_diff.h"
@@ -121,9 +122,8 @@ void printProvenanceFieldIfDifferent(const char* fieldName, const std::string& o
 [[nodiscard]] BootstrapConfig buildConfig() {
   BootstrapConfig config;
 #ifdef ATLANTIS_IBL_GOLDEN_GENERATOR
-  config.sceneArtifactPath = ATLANTIS_ibl_material_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_ibl_material_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_ibl_material_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_ibl_material_demo_scene_GUID);
   const std::string unlit = ATLANTIS_IBL_DEMO_UNLIT_TEXTURED_SHADER_DIR;
   config.unlitTexturedVertexShaderSpirvPath = unlit + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath = unlit + "/textured_quad.vert.refl.json";
@@ -173,9 +173,8 @@ void printProvenanceFieldIfDifferent(const char* fieldName, const std::string& o
   config.shadowCastFragmentShaderSpirvPath = shadowCast + "/shadow_cast.frag.spv";
   config.shadowCastFragmentShaderReflectionPath = shadowCast + "/shadow_cast.frag.refl.json";
 #else
-  config.sceneArtifactPath = ATLANTIS_pbr_material_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = ATLANTIS_pbr_material_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = ATLANTIS_pbr_material_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(ATLANTIS_pbr_material_demo_scene_GUID);
   config.unlitTexturedVertexShaderSpirvPath =
       std::string(ATLANTIS_PBR_MATERIAL_DEMO_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath =

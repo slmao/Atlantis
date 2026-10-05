@@ -31,8 +31,7 @@ using atlantis::runtime::BootstrapConfig;
 namespace {
 
 [[nodiscard]] BootstrapConfig buildEmissiveConfig() {
-  return buildDarkEmissiveConfig({ATLANTIS_emissive_demo_scene_ARTIFACT_PATH, ATLANTIS_emissive_demo_scene_METADATA_PATH,
-                                  ATLANTIS_emissive_demo_scene_MANIFEST_PATH});
+  return buildDarkEmissiveConfig({ATLANTIS_emissive_demo_scene_GUID});
 }
 
 // The same config plus all twelve bloom shader paths.

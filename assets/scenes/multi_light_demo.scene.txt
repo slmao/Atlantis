@@ -1,13 +1,13 @@
-atlantis_scene_source_version: 6
+atlantis_scene_source_version: 7
 node_count: 10
 active_camera: 2
-node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=1.5707963 0.0 0.0 scale=1.0 1.0 1.0 mesh=meshes/ground_plane.mesh.txt material=materials/lit_textured_quad.material.txt
-node: node_id=2 parent=none position=0.0 0.0 9.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0
-node: node_id=3 parent=1 position=-3.75 0.3 -1.25 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=1.0 0.0 0.0 intensity=1.0 range=1.2
-node: node_id=4 parent=1 position=-3.75 0.3 3.75 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=0.0 1.0 0.0 intensity=1.0 range=1.2
-node: node_id=5 parent=1 position=-1.25 0.3 -3.75 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=0.0 0.0 1.0 intensity=1.0 range=1.2
-node: node_id=6 parent=1 position=-1.25 0.3 1.25 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=1.0 1.0 0.0 intensity=1.0 range=1.2
-node: node_id=7 parent=1 position=1.25 0.3 -1.25 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=0.0 1.0 1.0 intensity=1.0 range=1.2
-node: node_id=8 parent=1 position=1.25 0.3 3.75 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=1.0 0.0 1.0 intensity=1.0 range=1.2
-node: node_id=9 parent=1 position=3.75 0.3 -3.75 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=1.0 1.0 1.0 intensity=1.0 range=1.2
-node: node_id=10 parent=1 position=3.75 0.3 1.25 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=1.0 0.4 0.0 intensity=1.0 range=1.2
+node: node_id=1 guid=ccbca563-71b2-4254-ac40-0c618b4dc76f parent=none position=0.0 0.0 0.0 rotation=1.5707963 0.0 0.0 scale=1.0 1.0 1.0 mesh=caa7dc9c-6c16-4f93-bdec-53ac93791e16 material=240f8179-88aa-4b20-bd32-2a0c116abc30
+node: node_id=2 guid=e92ab0a2-c6f9-4556-8848-5dca51482106 parent=none position=0.0 0.0 9.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=100.0
+node: node_id=3 guid=847c181a-81a5-49b0-a1ef-9c2b17a1015e parent=1 position=-3.75 0.3 -1.25 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=1.0 0.0 0.0 intensity=1.0 range=1.2
+node: node_id=4 guid=2b2bbd34-d8f9-46bf-8a1f-66dfe65f2b1f parent=1 position=-3.75 0.3 3.75 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=0.0 1.0 0.0 intensity=1.0 range=1.2
+node: node_id=5 guid=f10a3e72-6e2b-43e5-b382-4d8413c7c8e6 parent=1 position=-1.25 0.3 -3.75 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=0.0 0.0 1.0 intensity=1.0 range=1.2
+node: node_id=6 guid=473d9ee5-cbe3-4568-9a4d-be24be4828c4 parent=1 position=-1.25 0.3 1.25 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=1.0 1.0 0.0 intensity=1.0 range=1.2
+node: node_id=7 guid=292856f3-7b35-484c-9446-34285a239dc1 parent=1 position=1.25 0.3 -1.25 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=0.0 1.0 1.0 intensity=1.0 range=1.2
+node: node_id=8 guid=a17c0e77-7cf4-4ad8-beca-6399aa139dc3 parent=1 position=1.25 0.3 3.75 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=1.0 0.0 1.0 intensity=1.0 range=1.2
+node: node_id=9 guid=e0d3256b-7b5f-4936-8380-474343448efc parent=1 position=3.75 0.3 -3.75 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=1.0 1.0 1.0 intensity=1.0 range=1.2
+node: node_id=10 guid=ad628484-5349-4422-9768-b9a35bf201bd parent=1 position=3.75 0.3 1.25 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0 light=point color=1.0 0.4 0.0 intensity=1.0 range=1.2

@@ -27,6 +27,7 @@
 #include <utility>
 #include <vector>
 
+#include "catalog_asset_id.h"
 // Plan 0029 Section P19: same resource-creation skeleton as
 // integrated_showcase_demo_fixture.cpp -- calls Atlantis::RuntimeHost's
 // real loadAndInstantiateScene()/computePendingMaterialIds()/
@@ -539,7 +540,7 @@ atlantis::Result<PbrNormalMapDemoFixture, PbrNormalMapDemoSetupError> setUpPbrNo
   if (controlMaterialResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::SceneLoadFailed);
   fixture.controlMaterialData.emplace(controlMaterialResult.value());
   fixture.controlMaterialAssetId =
-      atlantis::asset_system::computeAssetId("materials/pbr_normal_mapped_control.material.txt");
+      atlantis::image_regression::catalogAssetId("materials/pbr_normal_mapped_control.material.txt");
 
   return ResultT::Ok(std::move(fixture));
 }

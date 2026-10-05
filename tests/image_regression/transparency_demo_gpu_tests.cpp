@@ -5,6 +5,7 @@
 // transparency_demo_swapped declares the same two nodes in the opposite
 // order; everything else is identical.
 
+#include "support/catalog_scene.h"
 #include "fixture/transparency_demo_fixture.h"
 #include "support/golden_validity.h"
 #include "support/pixel_diff.h"
@@ -31,12 +32,9 @@ namespace {
 
 [[nodiscard]] BootstrapConfig buildTestConfig(bool swapped = false) {
   BootstrapConfig config;
-  config.sceneArtifactPath = swapped ? ATLANTIS_transparency_demo_swapped_scene_ARTIFACT_PATH
-                                     : ATLANTIS_transparency_demo_scene_ARTIFACT_PATH;
-  config.sceneMetadataPath = swapped ? ATLANTIS_transparency_demo_swapped_scene_METADATA_PATH
-                                     : ATLANTIS_transparency_demo_scene_METADATA_PATH;
-  config.sceneDependencyManifestPath = swapped ? ATLANTIS_transparency_demo_swapped_scene_MANIFEST_PATH
-                                               : ATLANTIS_transparency_demo_scene_MANIFEST_PATH;
+  config.assetCatalogPath = ATLANTIS_ASSET_CATALOG_PATH;
+  config.sceneAsset = atlantis::image_regression::sceneGuidFromDefinition(
+      swapped ? ATLANTIS_transparency_demo_swapped_scene_GUID : ATLANTIS_transparency_demo_scene_GUID);
   config.unlitTexturedVertexShaderSpirvPath =
       std::string(ATLANTIS_TRANSPARENCY_DEMO_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath =

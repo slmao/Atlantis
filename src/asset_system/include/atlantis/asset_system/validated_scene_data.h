@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/errors.h>
 #include <atlantis/asset_system/scene_types.h>
 #include <atlantis/result.h>
@@ -57,6 +58,9 @@ class ValidatedSceneData {
   [[nodiscard]] const ValidatedSceneNode& node(std::size_t index) const noexcept { return nodes_[index]; }
   [[nodiscard]] std::optional<std::size_t> parentOf(std::size_t index) const noexcept { return parents_[index]; }
   [[nodiscard]] std::optional<std::size_t> activeCameraIndex() const noexcept { return activeCameraIndex_; }
+  // Plan 0047 P17 (ADR-0097 D5): the node's persistent identity. Decoding
+  // guarantees one per node, non-nil and unique within the scene.
+  [[nodiscard]] const EntityGuid& entityGuid(std::size_t index) const noexcept { return entityGuids_[index]; }
 
   // Copy/move: defaulted -- nothing on the public surface can mutate an
   // instance, so a copy or a moved-from/to pair are each independently
@@ -71,12 +75,16 @@ class ValidatedSceneData {
                                                                                       const std::string&);
 
   ValidatedSceneData(std::vector<ValidatedSceneNode> nodes, std::vector<std::optional<std::size_t>> parents,
-                      std::optional<std::size_t> activeCameraIndex)
-      : nodes_(std::move(nodes)), parents_(std::move(parents)), activeCameraIndex_(activeCameraIndex) {}
+                      std::optional<std::size_t> activeCameraIndex, std::vector<EntityGuid> entityGuids)
+      : nodes_(std::move(nodes)),
+        parents_(std::move(parents)),
+        activeCameraIndex_(activeCameraIndex),
+        entityGuids_(std::move(entityGuids)) {}
 
   std::vector<ValidatedSceneNode> nodes_;
   std::vector<std::optional<std::size_t>> parents_;
   std::optional<std::size_t> activeCameraIndex_;
+  std::vector<EntityGuid> entityGuids_;
 };
 
 }  // namespace atlantis::asset_system

@@ -1,5 +1,6 @@
 #include "asset_extraction.h"
 
+#include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/log.h>
 
 #include <android/asset_manager.h>
@@ -90,11 +91,11 @@ std::string extractAsset(AAssetManager* mgr, const std::string& internalDataPath
   return destination;
 }
 
-std::string extractSceneManifest(AAssetManager* mgr, const std::string& internalDataPath,
-                                  const std::string& relativePath) {
+std::string extractCatalogClosure(AAssetManager* mgr, const std::string& internalDataPath,
+                                   const std::string& relativePath) {
   AAsset* asset = AAssetManager_open(mgr, relativePath.c_str(), AASSET_MODE_STREAMING);
   if (asset == nullptr) {
-    ATLANTIS_LOG_ERROR("extractSceneManifest(): failed to open packaged manifest {}", relativePath);
+    ATLANTIS_LOG_ERROR("extractCatalogClosure(): failed to open packaged catalog {}", relativePath);
     return {};
   }
   const off64_t length = AAsset_getLength64(asset);
@@ -109,44 +110,28 @@ std::string extractSceneManifest(AAssetManager* mgr, const std::string& internal
   }
   AAsset_close(asset);
   if (totalRead != content.size()) {
-    ATLANTIS_LOG_ERROR("extractSceneManifest(): short read for packaged manifest {}", relativePath);
+    ATLANTIS_LOG_ERROR("extractCatalogClosure(): short read for packaged catalog {}", relativePath);
     return {};
   }
 
-  // scene_manifest.h's own documented format: one tab-separated
-  // <logical path>\t<artifact path>\t<metadata path> triple per line.
-  // Gradle's own packaging task (android/app/build.gradle) already
-  // rewrote the latter two columns from absolute Windows build-tree
-  // paths to paths relative to the packaged assets root -- this loop
-  // extracts the file each of those now-relative columns names, then
-  // rewrites the column to that extraction's own real, per-device
-  // absolute path.
-  std::ostringstream rewritten;
-  std::istringstream lines(content);
-  std::string line;
-  bool ok = true;
-  while (std::getline(lines, line)) {
-    if (line.empty()) {
-      continue;
-    }
-    const std::size_t firstTab = line.find('\t');
-    const std::size_t secondTab = firstTab == std::string::npos ? std::string::npos : line.find('\t', firstTab + 1);
-    if (firstTab == std::string::npos || secondTab == std::string::npos) {
-      ATLANTIS_LOG_ERROR("extractSceneManifest(): malformed manifest line: {}", line);
-      ok = false;
-      continue;
-    }
-    const std::string logicalPath = line.substr(0, firstTab);
-    const std::string artifactRelPath = line.substr(firstTab + 1, secondTab - firstTab - 1);
-    const std::string metadataRelPath = line.substr(secondTab + 1);
+  const auto records = atlantis::asset_system::parseAssetCatalogRecords(content);
+  if (records.isErr()) {
+    ATLANTIS_LOG_ERROR("extractCatalogClosure(): packaged catalog {} does not parse", relativePath);
+    return {};
+  }
 
-    const std::string extractedArtifactPath = extractAsset(mgr, internalDataPath, artifactRelPath);
-    const std::string extractedMetadataPath = extractAsset(mgr, internalDataPath, metadataRelPath);
-    if (extractedArtifactPath.empty() || extractedMetadataPath.empty()) {
-      ok = false;
-      continue;
+  // The catalog's locations are relative to the catalog's own directory;
+  // the packaged catalog sits at the assets root, so each location is also
+  // the packaged asset's own relative path.
+  const std::size_t slash = relativePath.rfind('/');
+  const std::string catalogDirectory = slash == std::string::npos ? std::string() : relativePath.substr(0, slash + 1);
+  bool ok = true;
+  for (const atlantis::asset_system::AssetCatalogRecord& record : records.value()) {
+    for (const std::string& location : {record.artifact, record.metadata}) {
+      if (extractAsset(mgr, internalDataPath, catalogDirectory + location).empty()) {
+        ok = false;
+      }
     }
-    rewritten << logicalPath << '\t' << extractedArtifactPath << '\t' << extractedMetadataPath << '\n';
   }
   if (!ok) {
     return {};
@@ -156,12 +141,12 @@ std::string extractSceneManifest(AAssetManager* mgr, const std::string& internal
   makeDirectoriesFor(destination);
   std::ofstream out(destination, std::ios::binary | std::ios::trunc);
   if (!out.is_open()) {
-    ATLANTIS_LOG_ERROR("extractSceneManifest(): failed to open destination file {}", destination);
+    ATLANTIS_LOG_ERROR("extractCatalogClosure(): failed to open destination file {}", destination);
     return {};
   }
-  out << rewritten.str();
+  out << content;
   if (!out) {
-    ATLANTIS_LOG_ERROR("extractSceneManifest(): failed to write destination file {}", destination);
+    ATLANTIS_LOG_ERROR("extractCatalogClosure(): failed to write destination file {}", destination);
     return {};
   }
   return destination;
