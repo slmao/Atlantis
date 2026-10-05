@@ -21,6 +21,11 @@ absence of relevance must be obvious, not assumed.
       no new coupling that the spec didn't call for
 - [ ] No dead code, no commented-out code, no unresolved `TODO` without a
       tracked follow-up (issue or spec reference)
+- [ ] A change to a type described by a schema table (World's
+      `worldSchema()`, Asset System's `assetSystemSchema()`), an added
+      enumerator included, updates that descriptor table in the same PR and
+      bumps its `SchemaVersion` per
+      [Spec 0048](../specs/0048-schema-reflection-foundation.md) R8
 
 ## Testing
 

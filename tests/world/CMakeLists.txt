@@ -9,6 +9,8 @@ add_executable(atlantis_world_tests
   traversal_determinism_tests.cpp
   module_boundary_tests.cpp
   scene_instantiation_tests.cpp
+  world_schema_tests.cpp
+  schema_uniqueness_tests.cpp
 )
 
 target_link_libraries(atlantis_world_tests

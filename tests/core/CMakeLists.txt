@@ -11,6 +11,8 @@ add_executable(atlantis_core_tests
   result_tests.cpp
   log_tests.cpp
   assert_tests.cpp
+  schema_tests.cpp
+  module_boundary_tests.cpp
 )
 
 target_link_libraries(atlantis_core_tests
@@ -18,6 +20,12 @@ target_link_libraries(atlantis_core_tests
     Atlantis::Core
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
+)
+
+# Plan 0048 M1: an absolute, configure-time path for the Core include scan,
+# matching tests/asset_system/CMakeLists.txt's ATLANTIS_ASSET_SYSTEM_SOURCE_DIR.
+target_compile_definitions(atlantis_core_tests PRIVATE
+  ATLANTIS_CORE_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/core"
 )
 
 # PRE_TEST (not the default POST_BUILD): with a multi-config generator
