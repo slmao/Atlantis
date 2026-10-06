@@ -5,7 +5,8 @@
 - **Created:** 2026-10-07
 - **Related Plan(s):** none yet. Drafting a Plan is authorized only after this
   Spec's Approval.
-- **Approval:** pending. The maintainer fixed this Spec's scope and
+- **Approval:** pending, under review in
+  [PR #218](https://github.com/slmao/Atlantis/pull/218). The maintainer fixed this Spec's scope and
   boundaries before drafting (2026-10-07, chat). They are recorded under
   Goals / Non-Goals and are not open questions:
   - v1 is atomic commit / rollback of a group of commands only;
