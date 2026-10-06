@@ -337,8 +337,8 @@ Runtime section below) and `atlantis::world::instantiateScene()`/
 `fromValidatedSceneData()` (Atlantis World, for the CPU-side scene graph
 only — World still depends on Asset System only narrowly, per
 ADR-0048/ADR-0053/ADR-0097 D5: `AssetId` in its component data and, in
-`scene_instantiation.h` alone, `ValidatedSceneData` and `EntityGuid`; never
-the reverse). Asset System itself is never
+`scene_instantiation.h` and `ecs/entity_guid_map.h` alone, `ValidatedSceneData`
+and `EntityGuid`; never the reverse). Asset System itself is never
 depended on by Renderer, RHI, RenderGraph, or Vulkan Backend, and gains
 no dependency from any of them in the other direction either.
 
@@ -623,10 +623,11 @@ every state change is caller-driven.
 **Depends on:** Core, and, narrowly, Asset System: the `AssetId` type
 named in `Renderable`'s own two public fields (a mandatory `meshAsset` and,
 since Spec 0018, an *optional* `materialAsset`), and — in
-`scene_instantiation.h` alone, since Spec 0047 — `ValidatedSceneData` and
-`EntityGuid` (the `SceneEntityMap` of
-[ADR-0097](../adr/0097-guid-keyed-asset-and-entity-identity.md) D5; no
-component type, `EntityId` or other World header names a GUID, checked by
+`scene_instantiation.h` alone, since Spec 0047, and in `ecs/entity_guid_map.h`,
+since Spec 0050 — `ValidatedSceneData` and `EntityGuid` (the `SceneEntityMap`
+of [ADR-0097](../adr/0097-guid-keyed-asset-and-entity-identity.md) D5 and the
+ECS's creation-time `EntityGuidMap`; no component type, `EntityId`,
+`ecs::EntityId` or other World header names a GUID, checked by
 `tests/world/module_boundary_tests.cpp`). No
 RHI, Renderer, RenderGraph, Shader System, Vulkan Backend, Platform,
 Runtime, or Tools dependency in either direction — verified by an

@@ -12,6 +12,13 @@ add_executable(atlantis_world_tests
   world_schema_tests.cpp
   schema_uniqueness_tests.cpp
   scene_world_alignment_tests.cpp
+  ecs_component_type_tests.cpp
+  ecs_entity_tests.cpp
+  ecs_storage_tests.cpp
+  ecs_query_tests.cpp
+  ecs_command_buffer_tests.cpp
+  ecs_entity_guid_tests.cpp
+  ecs_north_star_tests.cpp
 )
 
 target_link_libraries(atlantis_world_tests
