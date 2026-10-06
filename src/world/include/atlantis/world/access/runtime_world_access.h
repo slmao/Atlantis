@@ -142,7 +142,7 @@ struct ApplyReport {
 //   - applied together on the frame thread: the owner calls applyPending()
 //     once per frame (Runtime: the first statement of runFrame(), J6);
 //   - no pointers out: queries, events and failures are values.
-// Only the ecs::CommandBuffer type is not used: a field write must read the
+// Only the ECS's CommandBuffer type is not used: a field write must read the
 // component as it is at apply time, and the GUID index changes in lockstep
 // with each command.
 //
