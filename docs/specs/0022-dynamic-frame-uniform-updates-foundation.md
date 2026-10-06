@@ -26,6 +26,34 @@
   preserved verbatim in this repository's git history per that section's
   own note) — no further editorial compaction was applied beyond this
   line.
+- **Correction (2026-10-06, post-Approval, Spec 0051 Human Review,
+  [PR #210](https://github.com/slmao/Atlantis/pull/210), ruling Q2):**
+  - **What is superseded, in part.** The Goal below says every `World`
+    mutation affecting the Lighting payload becomes visible at the next
+    frame. Its clause naming local-`Transform` and parent-hierarchy edits is
+    superseded, in part, by
+    [ADR-0102](../adr/0102-authoring-runtime-world-separation-and-scene-bake.md)
+    and [Spec 0051](0051-authoring-scene-runtime-world-bake.md).
+    - Runtime's frame reads a baked ECS world whose hierarchy is resolved at
+      bake.
+    - An edit to a local `Transform` or to the parent hierarchy therefore no
+      longer reaches the next frame. Such edits belong to the authoring stage
+      and reach the frame by re-baking.
+  - **What remains live.** For the baked Runtime World, the rest of the Goal
+    stands. Each of these still becomes visible at the next successful
+    frame's extraction:
+    - a Light component-value change;
+    - a world-matrix change;
+    - Light entity creation and removal.
+
+    Camera still updates every frame.
+  - **Test coverage.** It is kept: under Plan 0051,
+    `runtime_smoke_gpu_tests`' live-edit cases are rewritten as edits of the
+    ECS world.
+  - **Timing.** The correction takes effect when Spec 0051's implementation
+    merges. Until then, the code behaves as originally stated.
+
+  No other Goal, requirement or ruling changes.
 
 ## Correction — 2026-08-30 (found during Plan 0022 pre-drafting investigation)
 
@@ -445,7 +473,9 @@ unreviewed" abstraction AGENTS.md's Golden Rule exists to prevent.
   parent-hierarchy `Transform`, Light entity creation/removal) — becomes
   visible on the GPU at an explicit, testable boundary: the next
   successful frame's own extraction, immediately after
-  `acquireNextTarget()` returns a non-null target.
+  `acquireNextTarget()` returns a non-null target. (The local-`Transform` and
+  parent-hierarchy clause is partially superseded; see the header's
+  Correction 2026-10-06.)
 - Camera continues to update correctly every frame — unchanged behavior,
   only reconfirmed safe by this Spec's own corrected investigation.
 - No multi-threaded frame orchestration is introduced; single-threaded at
