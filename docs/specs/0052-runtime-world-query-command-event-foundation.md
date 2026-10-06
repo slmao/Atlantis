@@ -14,6 +14,33 @@
   named-only list before drafting (2026-10-06, chat). They are recorded under
   Goals / Non-Goals. The same review ruled all nine open questions, each as
   its recommendation. See Risks & Open Questions below.
+  **Correction (2026-10-06, post-Approval, Plan 0052 Joint Human Review,
+  [PR #215](https://github.com/slmao/Atlantis/pull/215), rulings J1–J3):** three crash paths a client could reach,
+  found while drafting Plan 0052.
+  - **J1 — light-guard counting.** The light limits count entities holding
+    both `Light` and `WorldMatrix`, exactly the set `collectLights()` hands
+    to extraction. They are checked on `AddComponent(Light)`,
+    `AddComponent(WorldMatrix)` and `SetProperty(Light.kind)`.
+    - The ruled text counted every entity holding a `Light`.
+    - Because `Light{}` defaults to `Directional`, that rule would have
+      refused every `AddComponent(Light)` in a scene with a Directional
+      light.
+  - **J2 — an unloaded material id.**
+    - Runtime's frame excludes a referenced material id that the scene load
+      did not load from material realization, and skips the entity for that
+      frame. This is Spec 0018 D4 case 3, the existing "present but
+      unresolvable → skip" semantics.
+    - Before this, `realizePendingMaterials()`'s fatal check aborted on such
+      an id.
+    - Spec 0051's frame code therefore changes in two places: the apply
+      step, and this skip. Behaviour is unchanged for every loaded scene.
+  - **J3 — active-camera protection.** `DestroyEntity` of the active camera
+    entity, and `RemoveComponent` of its `Camera` or `WorldMatrix`, are
+    refused with `ActiveCameraProtected`.
+    - Without this, `collectActiveCamera()`'s check aborts, or `runFrame()`
+      fails the Runtime.
+
+  No other requirement or ruling changes.
 - **Related ADR(s):**
   [ADR-0103](../adr/0103-runtime-world-operation-boundary.md) (`Accepted`
   2026-10-06, alongside this Spec's own Approval). It records the operation
@@ -161,7 +188,8 @@ Goals of this Spec within those boundaries:
   `worldSchema()`: field membership, kind and editability come from the
   descriptor, not from a hand-written per-component path (Q2).
 - **No behavioural change.** The frame, the bake and every golden are
-  unchanged.
+  unchanged. Runtime's frame code changes only by the apply step and J2's
+  unloaded-material skip, with no effect on any loaded scene (Correction 2026-10-06, Plan 0052 ruling J2).
 
 ## Non-Goals
 
@@ -239,13 +267,18 @@ Also out of scope:
   - a value of the wrong kind;
   - a field not flagged `Editable`;
   - plus the further checks Q6 rules.
+
+  `DestroyEntity` and `RemoveComponent` likewise refuse to remove the active
+  camera or its `Camera`/`WorldMatrix` (Correction 2026-10-06, Plan 0052 ruling J3).
 - **R9 — Placement, ownership and frame integration** (Q3, Q5).
   - The boundary lives in Atlantis World.
   - Runtime remains the sole owner of the Runtime World (ADR-0033) and
     decides when commands apply.
   - Clients reach the world only through this boundary.
 - **R10 — No behaviour change.** Runtime's frame output is unchanged and
-  every golden stays byte-identical. Scene, artifact and catalog formats are
+  every golden stays byte-identical. The frame's only code changes are the
+  apply step and J2's skip of a material id the scene did not load
+  (Correction 2026-10-06, Plan 0052 ruling J2). Scene, artifact and catalog formats are
   unchanged.
 
 ### Non-functional
@@ -314,6 +347,7 @@ The error set is fixed by the Plan from R3–R8. The error kinds needed are:
 - kind mismatch;
 - non-finite value;
 - constraint violation (Q6);
+- active camera protected (Correction 2026-10-06, Plan 0052 ruling J3);
 - structural change refused during a query (the ECS's J1 refusal, surfaced).
 
 ## Architectural Impact
@@ -489,7 +523,8 @@ drafting.
     `RuntimeWorldAccess`.
   - It borrows the Runtime-owned `BakedScene` and owns the GUID index and
     the event queue.
-  - Runtime remains the owner, and Spec 0051's frame code is unchanged.
+  - Runtime remains the owner, and Spec 0051's frame code is unchanged
+    apart from the apply step and J2's unloaded-material skip (Correction 2026-10-06, Plan 0052 ruling J2).
   - Rejected: N2/N3 names; W-a (owning) and W-c (free functions).
 - **Q4 — Event delivery.** **Ruled (2026-10-06): E-b** (R5).
   - An ordered event queue that the client drains by value.
@@ -519,12 +554,18 @@ drafting.
   - the two light-count limits: at most one Directional, at most 64 Point.
 
   The light limits are checked where the command is applied, on
-  `SetProperty(Light.kind)` and `AddComponent(Light)`, counting every entity
-  that holds a `Light`. They guard against `scene_extraction`'s fatal
-  assertion and are not value domains. The limit is the scene schema's
+  `AddComponent(Light)`, `AddComponent(WorldMatrix)` and
+  `SetProperty(Light.kind)`. They count every entity that holds both `Light`
+  and `WorldMatrix`, the set extraction sees (Correction 2026-10-06, Plan 0052 ruling J1; the ruled text
+  counted every `Light` holder). They guard against `scene_extraction`'s
+  fatal assertion and are not value domains. The limit is the scene schema's
   `MaxPointLights`, equal to Asset System's `kMaxPointLightsPerScene`, to
   which Runtime's `kMaxPointLights` is tied by `static_assert`. World cannot
   name the Runtime header.
+
+  A third crash guard of the same kind refuses removing the active camera
+  or its `Camera`/`WorldMatrix` (Correction 2026-10-06, Plan 0052 ruling J3). An unloaded material id is
+  handled on the Runtime side (Correction 2026-10-06, Plan 0052 ruling J2).
 
   Spec 0049's value domains are named, not enforced.
 - **Q7 — Address space and the address type.** **Ruled (2026-10-06): S-a**
