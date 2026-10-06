@@ -12,8 +12,10 @@
   the one its Correction 2026-10-06 states.
 - **Status:** Draft
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending. Implementation needs a reviewer, a date and
-  a PR naming this Plan and Spec 0051, explicitly authorizing implementation.
+- **Joint Human Review:** pending, in
+  [PR #211](https://github.com/slmao/Atlantis/pull/211). Implementation needs a
+  reviewer, a date and that PR's explicit authorization of Spec 0051 + this
+  Plan together.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
