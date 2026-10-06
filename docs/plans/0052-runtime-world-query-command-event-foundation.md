@@ -9,14 +9,14 @@
   D5's accessor layer, and keeps
   [ADR-0097](../adr/0097-guid-keyed-asset-and-entity-identity.md) D5/D6 and
   [ADR-0101](../adr/0101-runtime-ecs-core-storage-identity-and-placement.md) D4.
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending, in
-  [PR #215](https://github.com/slmao/Atlantis/pull/215). Implementation needs a
-  reviewer, a date and that PR's explicit authorization of Spec 0052 + this
-  Plan together.
-  **J1–J3 propose Spec Corrections**: three crash paths found while drafting.
-  See Joint Review decisions.
+- **Joint Human Review:** slmao, 2026-10-06 — reviewed this Plan and
+  [Spec 0052](../specs/0052-runtime-world-query-command-event-foundation.md) together in
+  [PR #215](https://github.com/slmao/Atlantis/pull/215) and explicitly authorized Implementation from Milestone 1.
+  J1–J9 were ruled as recommended. J1–J3's Spec Corrections are recorded in
+  Spec 0052's header (Correction 2026-10-06). See Joint Review decisions
+  below.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -493,82 +493,57 @@ Maps to Spec 0052's Testing & Verification Plan.
 - [ ] **Android:** `assembleDebug` at every gate (it also compiles P3's
   `static_assert`); the emulator run at M5 (J9).
 
-## Joint Review decisions (to be ruled)
+## Joint Review decisions — ruled (Joint Human Review, slmao, 2026-10-06, PR #215)
 
-- **J1 — Spec Correction: the light-guard counting rule** (Spec 0052 ruling
-  Q6 text).
-  - **The problem.** The Spec counts "every entity that holds a `Light`".
-    `AddComponent(Light)` adds `Light{}`, whose `kind` defaults to
-    `Directional`. In any scene that already has a Directional light, every
-    `AddComponent(Light)` would be refused. No Point light could ever be
-    added through the boundary, and the smoke test's Spec 0022 case could not
-    migrate.
-  - **Recommended.** Count entities with `Light` **and** `WorldMatrix`, which
-    is exactly the set `collectLights()` gives extraction, so the crash
-    guard is unchanged. Check on `AddComponent(Light)`,
-    `AddComponent(WorldMatrix)` and `SetProperty(Light.kind)`. Record it as a
-    dated Correction in Spec 0052 (the Plan 0048 J1 precedent).
-  - **Alternative.** An initial value on `AddComponent`, which changes a
-    command's shape.
-- **J2 — Spec Correction: an unloaded material id aborts Runtime.**
-  - **The problem.** `SetProperty(Renderable.materialAsset = id)` for an id
-    the scene load never loaded reaches `realizePendingMaterials()`'s fatal
-    `ATLANTIS_CHECK_MSG`. Spec ruling Q6 guards lights only.
-  - **Recommended.** Runtime's frame excludes unloaded ids from
-    `pendingMaterialIds`, and their entities are skipped as unresolvable.
-    That is Spec 0018 D4 case 3, already the semantics for a present but
-    unrealized material.
-    - This changes `runFrame()` beyond the apply step, behaviour-preserving
-      for every loaded scene (goldens unaffected).
-    - It amends Spec 0052's "0051 frame code unchanged" wording, recorded as
-      a dated Correction.
-  - **Alternatives:**
-    - refuse writes to `AssetReference` fields in v1, which loses material
-      and mesh edits;
-    - an owner-supplied validation hook in the World layer, a new mechanism.
-- **J3 — Spec Correction: protect the active camera.**
-  - **The problem.** `RemoveComponent(Camera|WorldMatrix)` on
-    `BakedScene::activeCamera` aborts in `collectActiveCamera()`'s check, and
-    `DestroyEntity` on it ends the Runtime through `markFailed()`.
-  - **Recommended.** Refuse both with `ActiveCameraProtected`. This is a
-    crash guard of the same kind as ruling Q6's, and is World-local because
-    the boundary borrows the `BakedScene`. Record it as a Correction to
-    ruling Q6's guard list.
-  - **Alternative.** Make `collectActiveCamera()` tolerant. The Runtime would
-    still end on a missing camera.
-- **J4 — The failure channel.**
-  - **Recommended.** `submit()` returns a `CommandTicket` (submission
-    sequence number). Failures are retained as `{ticket, AccessError}` for
-    `drainFailures()`, and `applyPending()` also returns them to the owner.
-    This is part of Command, not a fourth concept; the five events are
-    unchanged.
-  - **Alternative.** Failures returned to the owner only, which leaves
-    clients blind.
-- **J5 — Lowering: direct `ecs::World` operations, not `CommandBuffer`.**
-  - The maintainer's wording was "ECS/CommandBuffer".
-  - A field write needs the component's state at apply time, and the GUID
-    index must change in lockstep with each command. `CommandBuffer` copies
-    whole components at record time and reports only after the fact.
-  - **Recommended:** direct operations, validated per command (P4).
-- **J6 — The application point.**
-  - **Recommended.** The first statement of `runFrame()` after the
-    `shouldContinue()` check, so every `runFrame()` call applies, even one
-    that draws nothing (minimized, no target), and a client's
-    submit → `runFrame()` → drain always completes.
-  - **Alternative.** Immediately before collection, which skips application
-    on non-drawing frames.
-- **J7 — No address text form in v1.** No v1 consumer needs one. The wire
-  format belongs to 0054.
-  - **Recommended:** none.
-  - **Alternative:** Spec 0049's 70-character form over world ids.
-- **J8 — Docs in the implementation.**
-  - **Recommended.** M2 changes only the allowlist sentences (`AGENTS.md`,
-    `module_boundaries.md:340`). The World/Runtime status narratives and the
-    blueprint go to the post-merge docs PR (the Plan 0050/0051 J7 precedent).
-- **J9 — Acceptance runs.**
-  - **Recommended.** A Windows whitelist run and an Android emulator run at
-    M5, as for Spec 0051, because the frame path changes.
-  - **Alternative.** Gates only.
+All nine were ruled as recommended. J1–J3 correct Spec 0052, recorded as one
+dated Correction in its header with in-place markers. No ADR-0103 decision
+text is changed.
+
+- **J1 — Light-guard counting.** **Ruled (2026-10-06):** the light limits
+  count only entities holding both `Light` and `WorldMatrix`, the set
+  extraction actually sees. They are checked on `AddComponent(Light)`,
+  `AddComponent(WorldMatrix)` and `SetProperty(Light.kind)` (P5, P8; M3).
+  `AddComponent(Light)` with its default `Directional` is therefore accepted
+  on an entity that has no `WorldMatrix` yet (P10).
+- **J2 — An unloaded material id.** **Ruled (2026-10-06):** Runtime's frame
+  skips an entity whose material id the scene load did not load, following
+  the existing semantics of Spec 0018 D4 case 3, instead of aborting (P9;
+  M4).
+  - The id is excluded from `pendingMaterialIds`, and the entity is skipped
+    for that frame.
+  - Spec 0052's "0051 frame code unchanged" wording is corrected.
+- **J3 — Active-camera protection.** **Ruled (2026-10-06):**
+  `RemoveComponent(Camera|WorldMatrix)` on the active camera entity and
+  `DestroyEntity` of it are refused with `ActiveCameraProtected` (P5; M3).
+- **J4 — The failure channel.** **Ruled (2026-10-06):** `submit()` returns a
+  `CommandTicket`, the submission sequence number. Failures are recorded as
+  `{ticket, AccessError}` and taken by `drainFailures()`; `applyPending()`
+  also returns them to the owner (P4, P6; M3).
+- **J5 — Lowering.** **Ruled (2026-10-06):** each command is validated and
+  then executed with direct `ecs::World` operations; `ecs::CommandBuffer` is
+  not used (P4).
+  - **Every intent of the maintainer's "ECS/CommandBuffer" boundary is
+    kept:**
+    - commands are deferred: recorded on `submit()`, applied later;
+    - each is validated;
+    - all apply together on the frame thread at one point
+      (`applyPending()`);
+    - no caller outside the boundary holds a pointer or reference.
+  - Only that specific type is not used: it copies whole components at
+    record time, and the GUID index must change in lockstep with each
+    command.
+- **J6 — The application point.** **Ruled (2026-10-06):** `applyPending()` is
+  the first statement of `runFrame()` after the `shouldContinue()` check
+  (P9; M4).
+- **J7 — Address text form.** **Ruled (2026-10-06):** none in v1; it is left
+  to 0054 (P2).
+- **J8 — Docs in the implementation.** **Ruled (2026-10-06):** M2 changes
+  only the allowlist sentences (`AGENTS.md:185-186`,
+  `module_boundaries.md:340`). The `module_boundaries.md` and blueprint
+  status narratives go to the post-merge docs PR.
+- **J9 — Acceptance runs.** **Ruled (2026-10-06):** M5 runs the four Windows
+  whitelist scenes and the Android emulator (default scene: install,
+  screencap, logcat; the Plan 0047 M8 pattern).
 
 ## Rollback Plan
 
@@ -588,5 +563,4 @@ Deltas:
 - [ ] The path guard holds; the existing files changed are only those listed.
 - [ ] Both toolchains compile P3's `static_assert` (`assembleDebug` at every
       gate).
-- [ ] The J1–J3 Spec Corrections are recorded, if ruled.
 - [ ] The post-merge docs items (J8) are queued.
