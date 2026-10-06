@@ -1,12 +1,12 @@
 # ADR 0101: Runtime ECS Core — Relationship to World, Placement, Identity, Storage and Access
 
-- **Status:** Proposed
-- **Date:** 2026-10-06
+- **Status:** Accepted
+- **Date:** 2026-10-06 (accepted 2026-10-06)
 - **Deciders:** slmao
-- **Acceptance:** pending. To be `Accepted` before or during the review of
-  [Spec 0050](../specs/0050-runtime-ecs-foundation.md), with D1–D7 as ruled
-  there (Spec Q1–Q8).
-- **Related Spec:** [Spec 0050: Runtime ECS Foundation](../specs/0050-runtime-ecs-foundation.md)
+- **Acceptance:** slmao, 2026-10-06 (review of this branch's own PR,
+  [PR #206](https://github.com/slmao/Atlantis/pull/206); accepted together with Spec 0050's Approval, its eight open
+  questions ruled as recommended)
+- **Related Spec:** [Spec 0050: Runtime ECS Foundation](../specs/0050-runtime-ecs-foundation.md) (`Approved`)
 - **Related ADR(s):**
   - Extends [ADR-0048](0048-world-scene-module-boundary-and-ownership.md):
     World gains an ECS core and its boundary is otherwise unchanged.
@@ -58,13 +58,13 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - `world::World`, its slot map, hierarchy, scene instantiation and
      Runtime extraction are unchanged.
    - Choosing between evolving World in place and re-implementing it over
-     the core is the Runtime-migration Spec's decision (Spec 0050 Q1).
+     the core is the Runtime-migration Spec's decision (Spec 0050 ruling Q1).
 2. **Placement.** The core lives in Atlantis World, namespace
    `atlantis::world::ecs`, with headers under `atlantis/world/ecs/`.
    - AGENTS.md's module list is unchanged.
    - The generic core names no World component type.
    - Promotion to a top-level module needs a non-World consumer and a
-     superseding ADR (Spec 0050 Q2).
+     superseding ADR (Spec 0050 ruling Q2).
 3. **Component identity.** `ComponentTypeId` is `schema::TypeId`, mapped from
    a C++ type by an explicit, non-intrusive `ComponentType<T>` specialization
    naming the type's schema name.
@@ -72,7 +72,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      under that `TypeId`, checked by test.
    - It must be trivially copyable, trivially destructible and
      standard-layout, checked at compile time.
-   - The ECS never reads descriptors at runtime (Spec 0050 Q3, Q7).
+   - The ECS never reads descriptors at runtime (Spec 0050 rulings Q3, Q7).
 4. **Entity identity.** The ECS has its own `ecs::EntityId`, which adopts
    ADR-0049's rules unchanged:
    - index plus 64-bit generation;
@@ -84,7 +84,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 
    EntityGuid is bound only at creation: a batch creation taking EntityGuids
    returns a caller-owned, immutable `EntityGuid → EntityId` snapshot. The
-   ECS stores no GUID, so ADR-0097 D5 is unchanged (Spec 0050 Q4).
+   ECS stores no GUID, so ADR-0097 D5 is unchanged (Spec 0050 ruling Q4).
 5. **Storage.**
    - An archetype is the sorted set of an entity's `ComponentTypeId`s, with at
      most one component per type.
@@ -102,11 +102,11 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - Point access (`get`/`set`) is by value.
    - ADR-0049's by-value rule continues to govern `world::World`. ADR-0033's
      Client-boundary rule is not engaged, because the core is not
-     Runtime-owned in v1 and offers no Client surface (Spec 0050 Q6).
+     Runtime-owned in v1 and offers no Client surface (Spec 0050 ruling Q6).
 7. **Single-threaded, not adopted.**
    - Every type is documented not thread-safe (ADR-0004), with no global
      state.
-   - Runtime neither owns nor reads an ECS world in v1 (Spec 0050 Q5).
+   - Runtime neither owns nor reads an ECS world in v1 (Spec 0050 ruling Q5).
    - The maintainer-excluded features are not designed or scaffolded.
 
 ## Consequences
@@ -133,7 +133,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 - **A second World header names `EntityGuid`** (the creation-time binding).
   The World boundary test's allowlist and AGENTS.md's sentence each gain one
   entry, unless the binding is declared in `scene_instantiation.h`
-  (Spec 0050 Q4).
+  (Spec 0050 ruling Q4).
 - **Callback-scoped references** need care: a reference must not be kept past
   its invocation. The API makes retention impossible only by convention and
   documentation, plus the structural-change assertion.
