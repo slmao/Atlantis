@@ -1,23 +1,21 @@
 # ADR 0103: Runtime World Operation Boundary — Query, Command, Event
 
-- **Status:** Proposed
-- **Date:** 2026-10-06
+- **Status:** Accepted
+- **Date:** 2026-10-06 (accepted 2026-10-06)
 - **Deciders:** slmao
-- **Acceptance:** pending. To be `Accepted` before or during the review of
-  [Spec 0052](../specs/0052-runtime-world-query-command-event-foundation.md),
-  with D3–D9 as ruled there (Spec Q1–Q9).
-- **Related Spec:** [Spec 0052: Runtime World Query / Command / Event Foundation](../specs/0052-runtime-world-query-command-event-foundation.md)
+- **Acceptance:** slmao, 2026-10-06 (review of this branch's own PR,
+  [PR #214](https://github.com/slmao/Atlantis/pull/214); accepted together with Spec 0052's Approval, its nine open
+  questions ruled as recommended)
+- **Related Spec:** [Spec 0052: Runtime World Query / Command / Event Foundation](../specs/0052-runtime-world-query-command-event-foundation.md) (`Approved`)
 - **Related ADR(s):**
   - Applies [ADR-0033](0033-runtime-authority-and-client-boundary.md): the
     first concrete Query/Command/Event shape under its authority rule.
   - Supplies the accessor layer
     [ADR-0099](0099-engine-schema-core-and-descriptor-vocabulary.md) D5
     deferred.
-  - Keeps, under the recommended Q1 option:
+  - Keeps unchanged, under Spec 0052 ruling Q1 (a):
     - [ADR-0097](0097-guid-keyed-asset-and-entity-identity.md) D5/D6;
     - [ADR-0101](0101-runtime-ecs-core-storage-identity-and-placement.md) D4.
-
-    Q1 option (b) would supersede both D5 and D4 in part.
   - Builds on [ADR-0102](0102-authoring-runtime-world-separation-and-scene-bake.md)
     (the Runtime World it addresses) and
     [ADR-0004](0004-phase1-threading-baseline.md) (single thread).
@@ -83,34 +81,37 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      reference crosses the boundary.
    - Per-component verbs are forbidden.
    - The address space is the Runtime World's schema, not the authoring
-     scene's (Spec 0052 Q7).
-3. **Runtime identity** (Spec 0052 Q1). Recommended:
+     scene's (Spec 0052 ruling Q7).
+3. **Runtime identity** (Spec 0052 ruling Q1):
    - the boundary owns a mutable `EntityGuid → EntityId` index, seeded from
      the bake's `EntityGuidMap` through a read-only enumeration added to that
-     snapshot;
+     snapshot, the one additive ECS-module change;
    - `CreateEntity` takes a caller-supplied, non-nil, unique GUID;
    - the ECS core stores no GUID;
    - `EntityRef` resolution (ADR-0097 D6) stays on the bake snapshot.
-4. **Values and the accessor** (Spec 0052 Q2). Recommended:
+4. **Values and the accessor** (Spec 0052 ruling Q2):
    - a `PropertyValue` variant over the six `PrimitiveKind`s, plus an enum's
      `int64`, plus `Absent` for an `Optional` field;
    - fields are resolved through the descriptors and read or written by
      their summed `byteOffset`;
-   - described enums have `std::int32_t` storage, a schema-tested
-     convention;
-   - `Optional` fields use a typed accessor list tested against their
-     descriptors.
-5. **Placement and ownership** (Spec 0052 Q3). Recommended:
+   - the one described enum (`Light.kind`) has `std::int32_t` storage, a
+     convention held by `static_assert`s compiled by both toolchains (MSVC
+     and the Android NDK's Clang);
+   - the one `Optional` field (`Renderable.materialAsset`) uses a typed
+     accessor tested against its descriptor;
+   - a schema-vocabulary increment (an enum's storage width, an `Optional`
+     shape) is recorded as a future candidate only.
+5. **Placement and ownership** (Spec 0052 ruling Q3):
    - Atlantis World, namespace `atlantis::world::access`, object
      `RuntimeWorldAccess`;
    - the object borrows the Runtime-owned `BakedScene` and owns the GUID
      index and event queue;
    - Runtime stays the owner and reads its `BakedScene` directly for its own
      frame.
-6. **Event delivery** (Spec 0052 Q4). Recommended: an ordered queue,
+6. **Event delivery** (Spec 0052 ruling Q4): an ordered queue,
    drained by value. One event per successful command, in application order;
    none for failures; none for direct ECS edits.
-7. **Frame integration and authority** (Spec 0052 Q5). Recommended:
+7. **Frame integration and authority** (Spec 0052 ruling Q5):
    - clients submit between frames on the frame thread;
    - Runtime applies the pending list once, at the start of `runFrame()`,
      before collection;
@@ -119,15 +120,17 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 
    ADR-0033 applies as stated: clients use only the boundary, and the
    owner's frame code is internal.
-8. **Validation** (Spec 0052 Q6, Q8). Recommended:
+8. **Validation** (Spec 0052 rulings Q6, Q8):
    - type correctness (entity, type, field, kind, `Editable`);
    - finite floats;
-   - the two light-count limits whose violation would abort extraction.
+   - the two light-count limits whose violation would abort extraction,
+     checked where the command is applied. These are crash guards, not
+     value domains.
 
    Scene value domains are not enforced in v1. `Transform` writes are
    accepted but inert for rendering (`WorldMatrix` is authoritative,
    ADR-0102 D4), and this is documented.
-9. **Batch semantics** (Spec 0052 Q9). Recommended: ordered, per-command
+9. **Batch semantics** (Spec 0052 ruling Q9): ordered, per-command
    apply-or-fail. Each failure is reported with its index; a failed command
    has no effect. Atomicity is Transaction's (0053).
 
