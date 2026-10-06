@@ -5,7 +5,8 @@
 - **Created:** 2026-10-06
 - **Related Plan(s):** none yet. Drafting a Plan is authorized only after this
   Spec's Approval.
-- **Approval:** pending. The maintainer fixed the one-sentence goal, the
+- **Approval:** pending, under review in
+  [PR #214](https://github.com/slmao/Atlantis/pull/214). The maintainer fixed the one-sentence goal, the
   concept inventory, the command and event sets, the addressing rule, the
   query coverage and the named-only list before drafting (2026-10-06, chat).
   They are recorded under Goals / Non-Goals and are not open questions.
