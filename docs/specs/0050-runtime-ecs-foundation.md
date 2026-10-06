@@ -1,18 +1,22 @@
 # Spec: Runtime ECS Foundation
 
-- **Status:** In Review ([PR #206](https://github.com/slmao/Atlantis/pull/206))
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-06
-- **Related Plan(s):** none yet. Drafting a Plan is authorized only after this
-  Spec's Approval.
-- **Approval:** pending. The maintainer fixed this Spec's positioning and
-  boundaries before drafting (2026-10-06, chat): the v1 inventory, the
-  excluded list, single-threading, the acceptance north star, and
-  additive-only. They are recorded under Goals / Non-Goals and are not open
-  questions.
+- **Related Plan(s):** none yet — Plan 0050 drafting is authorized by the
+  Approval below. **Implementation still awaits its own, separate Joint Human
+  Review** of Spec + Plan together, per AGENTS.md's own workflow.
+- **Approval:** slmao, 2026-10-06 (review of this Spec's own branch PR,
+  [PR #206](https://github.com/slmao/Atlantis/pull/206)) — authorizes drafting Plan 0050; Implementation itself
+  still awaits its own, separate Joint Human Review of Spec + Plan together.
+  The maintainer fixed this Spec's positioning and boundaries before drafting
+  (2026-10-06, chat): the v1 inventory, the excluded list, single-threading,
+  the acceptance north star, and additive-only. They are recorded under
+  Goals / Non-Goals. The same review ruled all eight open questions, each as
+  its recommendation. See Risks & Open Questions below.
 - **Related ADR(s):**
   [ADR-0101](../adr/0101-runtime-ecs-core-storage-identity-and-placement.md)
-  (`Proposed`, drafted alongside this Spec). It records the ECS core's
+  (`Accepted` 2026-10-06, alongside this Spec's own Approval). It records the ECS core's
   relationship to `world::World`, its module placement, component identity,
   entity identity, the storage model and the access rules.
 
@@ -151,7 +155,7 @@ Also out of scope, because "nothing else" is in v1:
 - **No scene instantiation into the ECS**, and no extraction from it.
   `instantiateScene()` and Runtime's `scene_extraction` are unchanged.
 - **No change to `world::World`, its API, its slot map, or its tests.**
-- **No Runtime adoption** (ruling Q5 expected): Runtime neither constructs nor
+- **No Runtime adoption** (ruling Q5): Runtime neither constructs nor
   reads an ECS world in v1.
 - **No serialization, persistence or cross-process use** of ECS state or
   handles.
@@ -164,7 +168,7 @@ Also out of scope, because "nothing else" is in v1:
 
 ### Functional
 
-- **R1 — `EntityId`** (Q4).
+- **R1 — `EntityId`** (ruling Q4: a new `ecs::EntityId`).
   - An ECS handle with ADR-0049's rules: index plus 64-bit generation,
     permanent slot retirement at the maximum generation, an invalid sentinel,
     and a per-instance identity token (so a handle from another ECS world
@@ -172,14 +176,14 @@ Also out of scope, because "nothing else" is in v1:
   - It is never serialized, persisted or used across a process boundary.
   - A stale or foreign handle yields an explicit error result, never
     undefined behaviour (ADR-0049's runtime-state classification).
-- **R2 — `EntityGuid`** (Q4).
+- **R2 — `EntityGuid`** (ruling Q4: G1, header placement P-a).
   - The ECS stores no GUID (ADR-0097 D5 unchanged).
   - EntityGuids bind to EntityIds only at creation time: a batch creation
     that takes EntityGuids returns a caller-owned, immutable snapshot map
     `EntityGuid → EntityId`, in the manner of `SceneEntityMap`.
   - Nil or duplicate GUIDs in a batch are an explicit error. Liveness stays
     the ECS world's.
-- **R3 — `ComponentTypeId`** (Q3, Q7).
+- **R3 — `ComponentTypeId`** (rulings Q3: I-a, T-a, D-a; Q7).
   - It is `schema::TypeId`, obtained from a C++ component type through an
     explicit, non-intrusive mapping.
   - A component type must be **described**: its owning module's Spec 0048
@@ -217,7 +221,7 @@ Also out of scope, because "nothing else" is in v1:
   - Iteration order is deterministic: archetype creation order, then chunk
     order, then row order.
   - References are valid only for the duration of one callback invocation
-    (Q6).
+    (ruling Q6).
   - A structural change to the same world during a query is a programmer
     error and fails an assertion. Deferred changes go through R8.
 - **R8 — `CommandBuffer`.**
@@ -263,7 +267,7 @@ Also out of scope, because "nothing else" is in v1:
 
 ## Proposed Design
 
-### Relationship to `world::World` (Q1)
+### Relationship to `world::World` (ruling Q1: B)
 
 | Option | What it is | Slot map / ADR-0049 | Hierarchy (ADR-0050) | Scene instantiation (ADR-0097 D5) | Runtime extraction (ADR-0051) | Frame-path risk |
 |---|---|---|---|---|---|---|
@@ -271,7 +275,7 @@ Also out of scope, because "nothing else" is in v1:
 | **B — additive parallel core** (recommended) | A new ECS world type beside `world::World`; nothing existing changes | Untouched; the ECS adopts ADR-0049's rules for its own handle | Untouched (not in ECS v1) | Untouched; ECS binds GUIDs by snapshot (R2) | Untouched | None |
 | **C — World over archetype storage** | `world::World`'s public API kept and re-implemented on the ECS core | Internal storage replaced; ADR-0049 superseded in part | Re-implemented over components | Re-implemented | API kept | Medium–high: same API, new internals; traversal-order and determinism tests are at stake |
 
-**Recommendation: B.**
+**Ruled (2026-10-06): B.**
 - It is the only option compatible with "additive, no frame-path change".
 - It keeps ADR-0048–0051 exactly as accepted.
 - It lets Runtime migration, where A or C is decided against real
@@ -279,16 +283,16 @@ Also out of scope, because "nothing else" is in v1:
 - Its cost, two entity stores in one codebase for a while, is explicit and
   temporary.
 
-### Placement and names (Q2, Q8)
+### Placement and names (rulings Q2: M1, Q8)
 
-- **Recommended:** inside Atlantis World, namespace `atlantis::world::ecs`
+- **Ruled:** inside Atlantis World, namespace `atlantis::world::ecs`
   (`ecs::World`, `ecs::EntityId`, `ecs::CommandBuffer`), in its own headers
   under `src/world/include/atlantis/world/ecs/`.
 - This needs no module-list change (AGENTS.md's eleven modules stand). The
   generic core names no World component, so a later option C can layer World
   over it inside the same module.
 
-### Component identity (Q3)
+### Component identity (ruling Q3)
 
 ```cpp
 // Explicit, non-intrusive: specialized beside the component's module.
@@ -319,14 +323,14 @@ ecs::World ── entity table: index → {generation, archetype, chunk, row}
   (trivially copyable, R3) and swap-removes the source row. The moved entity's
   table entry is updated.
 
-### Access rules (Q6)
+### Access rules (ruling Q6)
 
 - A query hands the callback references into chunk columns. They are valid
   only during that invocation and never returned or stored by the API.
 - ADR-0049's by-value rule governs `world::World` and is unchanged.
 - ADR-0033's rule against returning or accepting references to Runtime-owned
   objects across a Client boundary is not engaged:
-  - v1 is not Runtime-owned (Q5);
+  - v1 is not Runtime-owned (ruling Q5);
   - Client access stays query/command-shaped through Candidate 2.
 
 ## Architectural Impact
@@ -350,17 +354,18 @@ What does not change:
 
 - **Dependencies:** none added.
 - **Threading:** unchanged (ADR-0004).
-- **Module list:** unchanged, under the recommended Q2.
+- **Module list:** unchanged (ruling Q2: M1).
 
 Two consequences need explicit review:
 
-- **The GUID binding header (R2).** It would be a second World header naming
+- **The GUID binding header (R2).** It is a second World header naming
   `EntityGuid`. Today `tests/world/module_boundary_tests.cpp` and AGENTS.md
   allow it in `scene_instantiation.h` alone. That is a placement rule from
   Plan 0047, not ADR-0097 D5's substance (D5 forbids *storing* a GUID).
-- **The allowlist update.** That test's allowlist and AGENTS.md's sentence
-  would change, unless the binding lives in `scene_instantiation.h` itself
-  (Q4).
+- **The allowlist update.** By ruling Q4 (P-a) the binding lives in its own
+  `ecs/` header, so the implementation adds one entry each to that test's
+  allowlist and to AGENTS.md's "`scene_instantiation.h` alone" sentence. This
+  is a planned change named by this Spec, not a deviation.
 
 ## Alternatives Considered
 
@@ -373,10 +378,10 @@ Two consequences need explicit review:
    Rejected.
 3. **Runtime-assigned dense component ids.** These are not stable across
    processes or builds, and they diverge from schema, scene and protocol keys.
-   Rejected (Q3).
+   Rejected (ruling Q3).
 4. **Compiler-derived type names** (`__PRETTY_FUNCTION__` parsing). This is
-   non-portable and compiler-specific (AGENTS.md). Rejected (Q3).
-5. **World options A and C.** See Q1.
+   non-portable and compiler-specific (AGENTS.md). Rejected (ruling Q3).
+5. **World options A and C.** Rejected by ruling Q1.
 
 ## Testing & Verification Plan
 
@@ -400,7 +405,7 @@ Byte guard:
 - `git diff origin/main` shows no change under `assets/`, the goldens,
   `shaders/`, `src/runtime/` or `src/tools/`;
 - existing World sources and tests unchanged, except the one boundary-test
-  allowlist line if Q4's placement requires it;
+  allowlist entry ruling Q4 (P-a) requires;
 - Android `assembleDebug` succeeds.
 
 ## Risks & Open Questions
@@ -418,91 +423,46 @@ Risks:
 - **Identity drift.** A component's ECS name could disagree with its schema
   name. This is mitigated by R3's test against the schema tables.
 
-Open questions (to be ruled at review):
+Open questions — all eight ruled by Human Review (slmao, 2026-10-06, review
+of [PR #206](https://github.com/slmao/Atlantis/pull/206)), each as its recommendation:
 
-- **Q1 — Relationship to `world::World`.**
-  - (A) Evolve in place.
-  - (B) An additive parallel core.
-  - (C) World re-implemented over archetype storage.
-
-  See the table under Proposed Design. **Recommendation: (B)**, with A or C
-  decided by the Runtime-migration Spec against real usage.
-- **Q2 — Module placement.** AGENTS.md's module list is a reviewed decision.
-  - (M1) Inside Atlantis World, namespace `atlantis::world::ecs`. The module
-    list is unchanged.
-  - (M2) A new top-level module "Atlantis ECS" below World. The module list
-    changes, AGENTS.md and module_boundaries.md change, and it gets its own
-    boundary test. It would not need World's GUID allowlist change.
-  - (M3) Atlantis Core. Rejected: Core holds utilities and vocabulary, not
-    runtime world state (ADR-0099 D1's scope).
-
-  **Recommendation: (M1).** It is the smallest reviewed change, and the
-  module already owns "Atlantis's in-memory multi-entity scene". Promote to
-  M2 by a superseding ADR if a non-World consumer of the generic core
-  appears.
-- **Q3 — `ComponentTypeId` source and mapping.**
-  - Identity:
-    - (I-a) `schema::TypeId` (recommended);
-    - (I-b) runtime-dense ids.
-  - T → TypeId mapping:
-    - (T-a) an explicit, non-intrusive `ComponentType<T>` specialization
-      beside the component's module (recommended);
-    - (T-b) an intrusive static member in each component struct, which edits
-      existing World headers;
-    - (T-c) compiler-derived names (rejected, non-portable).
-  - Meaning of "must be described":
-    - (D-a) strict: the mapped `TypeId` is in the owning module's schema
-      table, checked by test (recommended);
-    - (D-b) the name only, with no table check;
-    - (D-c) a runtime descriptor lookup at registration, which would make
-      the ECS read schema at runtime against Spec 0048's descriptive scope.
-- **Q4 — EntityId and EntityGuid without silently changing ADR-0049 or
-  ADR-0097 D5.**
-  - EntityId:
-    - (a) a new `ecs::EntityId` adopting ADR-0049's rules by reference
-      (recommended);
-    - (b) reuse `world::EntityId`, which changes its friend/constructor
-      rules in an existing header.
-  - EntityGuid:
-    - (G1) bind at creation and return a snapshot map, storing nothing
-      (recommended, D5 unchanged);
-    - (G2) an `EntityGuid` component, which supersedes D5 in part via a new
-      ADR (it is the likely ask of a future Editor protocol that looks
-      entities up by GUID, and is not decided here);
-    - (G3) no EntityGuid in v1, which contradicts the maintainer's
-      inventory.
-  - Placement of G1's header:
-    - (P-a) a dedicated `ecs/` header, extending the World boundary test's
-      allowlist and AGENTS.md's "scene_instantiation.h alone" sentence by one
-      entry (recommended; a planned change named here, not a deviation);
-    - (P-b) declared in `scene_instantiation.h`, which needs no allowlist
-      change but mixes concerns.
-- **Q5 — Runtime adoption in v1.**
-  - (R-a) No: the core plus tests prove the API (recommended).
-  - (R-b) Runtime dual-writes World and ECS, which changes the frame path.
-  - (R-c) Runtime switches to the ECS.
-
-  **Recommendation: (R-a).** Migration is a later Spec.
-- **Q6 — Callback-scoped references.** Does handing `T&` into a query
-  callback conflict with ADR-0049's by-value rule or ADR-0033's
-  no-reference rule?
-  - **Recommendation:** no. References are scoped to one invocation and
-    never returned or retained. Structural change during iteration is
-    asserted against. ADR-0049's rule stays `world::World`'s, and ADR-0033
-    governs Client access, which v1 does not offer.
-- **Q7 — Component requirements.** Should v1 require trivially copyable,
-  trivially destructible and standard-layout components?
-  - **Recommendation:** yes. Row moves become plain copies, no destructor
-    bookkeeping exists, and the requirement matches Spec 0048's description
-    constraint. All current World components qualify.
-  - Alternative: allow non-trivial types with per-type move and destroy
-    hooks (more machinery, no v1 consumer).
-- **Q8 — Public names.**
-  - **Recommendation:** `atlantis::world::ecs::World`, `EntityId`,
-    `CommandBuffer`, `ComponentType<T>` (and the snapshot map's name, which
-    is the Plan's).
-  - Alternatives: `ecs::Registry`/`ecs::EntityWorld` for the store, to keep
-    the bare word "World" for `world::World`.
+- **Q1 — Relationship to `world::World`.** **Ruled (2026-10-06): (B)**, an
+  additive parallel core beside `world::World` (Proposed Design; Non-Goals).
+  Evolving World in place (A) or re-implementing it over the core (C) is the
+  Runtime-migration Spec's decision.
+- **Q2 — Module placement.** **Ruled (2026-10-06): (M1)**, inside Atlantis
+  World, namespace `atlantis::world::ecs`. AGENTS.md's module list is
+  unchanged. Promotion to a top-level module needs a non-World consumer and a
+  superseding ADR.
+- **Q3 — `ComponentTypeId` source and mapping.** **Ruled (2026-10-06): I-a,
+  T-a, D-a** (R3).
+  - `ComponentTypeId` is `schema::TypeId`.
+  - A C++ type maps to it through an explicit, non-intrusive
+    `ComponentType<T>` specialization.
+  - The mapped `TypeId` must be present in the owning module's schema table,
+    checked by test.
+- **Q4 — EntityId and EntityGuid.** **Ruled (2026-10-06): (a), (G1), (P-a)**
+  (R1, R2). ADR-0049 and ADR-0097 D5 are unchanged.
+  - A new `ecs::EntityId` adopts ADR-0049's rules.
+  - EntityGuid binds only at creation and returns a caller-owned snapshot
+    map. The ECS stores no GUID.
+  - The binding lives in its own `ecs/` header. The World boundary test's
+    allowlist and AGENTS.md's "`scene_instantiation.h` alone" sentence each
+    gain one entry in the implementation. That is a planned change named by
+    this Spec.
+- **Q5 — Runtime adoption in v1.** **Ruled (2026-10-06): (R-a)**, not adopted
+  (Non-Goals). The core plus tests prove the API; migration is a later Spec.
+- **Q6 — Callback-scoped references.** **Ruled (2026-10-06): no conflict**
+  (R7). References are valid only within one callback invocation, and a
+  structural change during iteration fails an assertion. ADR-0049's by-value
+  rule stays `world::World`'s; ADR-0033 governs Client access, which v1 does
+  not offer.
+- **Q7 — Component requirements.** **Ruled (2026-10-06): yes** (R3).
+  Components must be trivially copyable, trivially destructible and
+  standard-layout.
+- **Q8 — Public names.** **Ruled (2026-10-06):**
+  `atlantis::world::ecs::World`, `EntityId`, `CommandBuffer` and
+  `ComponentType<T>`. The snapshot map's name is the Plan's.
 
 ## Out of Scope / Future Work
 
