@@ -10,12 +10,14 @@
   boundary as merged in [PR #216](https://github.com/slmao/Atlantis/pull/216),
   following [Plan 0052](0052-runtime-world-query-command-event-foundation.md)'s
   test layout and gates.
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending, in
-  [PR #219](https://github.com/slmao/Atlantis/pull/219). Implementation needs the Joint Human Review
-  of this Plan together with Spec 0053, explicitly authorizing it (J1–J9
-  below).
+- **Joint Human Review:** slmao, 2026-10-07 — reviewed this Plan and
+  [Spec 0053](../specs/0053-runtime-world-transaction.md) together in
+  [PR #219](https://github.com/slmao/Atlantis/pull/219) and explicitly authorized Implementation from Milestone 1.
+  J1–J9 were ruled as recommended. J1's Spec Correction is recorded in
+  Spec 0053's header (Correction 2026-10-07). See Joint Review decisions
+  below.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -102,7 +104,8 @@ Read at `origin/main` `4bb1640` (PR #218 merged).
 ## Plan-stage decisions
 
 These are details Spec 0053 leaves to the Plan. None changes a Spec
-requirement or an ADR-0104 decision, except as J1 proposes.
+requirement or an ADR-0104 decision. J1 corrects only ruling Q2's wording
+(Spec 0053 Correction 2026-10-07).
 
 **P1 — Files.** All under the World module.
 
@@ -490,70 +493,72 @@ Plan-level:
 - **The refactor touches Spec 0052's live path** (M2). M1's precedence pins
   and the unmodified 0052 suites gate it.
 
-## Joint Review decisions (recommendation first)
+## Joint Review decisions — ruled (Joint Human Review, slmao, 2026-10-07, PR #219)
 
-- **J1 — R6 versus ruling Q2's "byte-for-byte" sentence (Spec Correction).**
-  - **The conflict.** Spec 0053 ruling Q2 says that "Spec 0052's path stays
-    byte-for-byte the code it is today (R6)". Ruling Q7 refactors that
-    path's validation into `checkCommand`, so the code cannot stay
-    byte-for-byte.
-  - **Recommended:** read R6 as behavioural, as R6 itself and ADR-0104's
-    Consequences ("a change to Spec 0052's internal implementation, not its
-    contract") state. Record a dated Correction on ruling Q2's sentence:
-    the path "behaves exactly as today (R6); its validation code is
-    refactored by ruling Q7".
-  - **The proof** is the unmodified Spec 0052 suites plus M1.
-  - **Alternative:** leave the single path's code as is and duplicate the
-    rules for the projection. That is ruling Q7's rejected V2.
-- **J2 — State-view shape.**
-  - **Recommended:** a C++20 concept with `checkCommand` as a template,
-    keyed by GUID (P3). It has no virtual dispatch, and the rule text is
-    written once.
-  - **Alternative:** an abstract `WorldStateView` base class with virtual
-    methods.
-- **J3 — The execution-phase CHECK.**
-  - **Recommended:** before each executed command, re-run
-    `checkCommand(real, c)` and `ATLANTIS_CHECK_MSG` that it passes.
-    - This is the exact backstop ADR-0104 D2 names.
-    - Each extra light pass is O(1), bounded by 1 + 64 holders (reading
-      item 3). The Spec's "O(*n* log *n*) plus one pass over the lights"
-      therefore still holds asymptotically, so no Spec Correction is
-      proposed.
-  - **Alternative:** CHECK only the ECS calls' results. That is cheaper,
-    but it would not catch light-count drift.
-- **J4 — Seeding the shadow state.**
-  - **Recommended:** entities seeded lazily on first touch; light counts
-    taken in one pass when each non-empty transaction's projection starts
-    (P4).
-  - **Alternative:** take the counts lazily on the first light-relevant
-    command. This is equivalent, because the world is unchanged during
-    projection, and saves a pass for light-free transactions.
-- **J5 — `TransactionTicket`.** `{CommandTicket first; std::uint64_t
-  count}` plus `contains()`. An empty transaction returns
-  `{CommandTicket{}, 0}` (value 0 is never issued) and takes no ticket
-  (P2). The parameter is `std::vector<Command>` by value, as Spec 0053
-  ruling Q2 writes it.
-- **J6 — A precedence-pinning milestone.** M1 adds a new test file before
-  the refactor, rather than editing Spec 0052's test files, which stay
-  untouched as R6's evidence.
-- **J7 — Equivalence generator.** An in-test `splitmix64`, a fixed seed
-  list, random plus oracle-built sequences, and a near-limit variant (M4).
-  The sequence count and lengths are set in code, sized so the suite adds
-  well under a second per configuration.
-- **J8 — Docs.** No docs change in the implementation PR. A post-merge docs
-  PR updates:
+All nine were ruled as recommended. J1 corrects Spec 0053, recorded as a
+dated Correction in its header with an in-place marker on ruling Q2.
+ADR-0104 is unchanged.
+
+- **J1 — R6 versus ruling Q2's "byte-for-byte" sentence.** **Ruled
+  (2026-10-07): R6 is behavioural** (M1, M2).
+  - **The conflict.** Ruling Q2 said "Spec 0052's path stays byte-for-byte
+    the code it is today (R6)". Ruling Q7 refactors that path's validation
+    into `checkCommand`, so the code cannot stay byte-for-byte.
+  - **The Correction.** Spec 0053 Correction 2026-10-07: the path behaves
+    exactly as today (R6). Its validation code is refactored by ruling Q7,
+    an internal change and not a contract change, matching ADR-0104's
+    Consequences.
+  - **R6's proof:** every existing Spec 0052 test, plus M1's new precedence
+    tests, passes unmodified after M2.
+  - **Rejected:** keeping the single path's code and duplicating the rules
+    for the projection, which is ruling Q7's V2.
+- **J2 — State-view shape.** **Ruled (2026-10-07):** a C++20 concept, with
+  `checkCommand` as a template function, keyed by GUID (P3). The rule code
+  names no ECS type, has no virtual dispatch, and is written once.
+  Rejected: an abstract base class with virtual methods.
+- **J3 — The execution-phase CHECK.** **Ruled (2026-10-07):** once the
+  projection passes, each command is re-checked against the real view
+  before it executes. A refusal is `ATLANTIS_CHECK_MSG` (P5), the backstop
+  ADR-0104 D2 names.
+  - Each extra light pass is O(1), bounded by 1 + 64 holders (reading item
+    3), so the Spec's cost requirement holds asymptotically. No Spec
+    Correction is needed.
+  - Rejected: checking only the ECS calls' results.
+- **J4 — Seeding the shadow state.** **Ruled (2026-10-07)** (P4):
+  - entities are seeded lazily, per GUID, on first touch;
+  - light counts are taken in one pass when each non-empty transaction's
+    projection starts, then adjusted by the touched entity's before/after
+    difference in what is counted.
+
+  Rejected: taking the counts lazily on the first light-relevant command.
+- **J5 — `TransactionTicket`.** **Ruled (2026-10-07):**
+  `{CommandTicket first; std::uint64_t count}` plus `contains()` (P2).
+  - An empty transaction returns `{CommandTicket{}, 0}`. Ticket value 0 is
+    never issued, and the empty transaction takes no ticket.
+  - The parameter is `std::vector<Command>` by value, as ruling Q2 writes
+    it.
+- **J6 — A precedence-pinning milestone.** **Ruled (2026-10-07):** M1 first
+  pins today's check precedence with multi-fault inputs, in a new test
+  file. It changes neither `src/` nor Spec 0052's tests, which stay
+  untouched as R6's evidence. M2's refactor follows.
+- **J7 — The equivalence generator.** **Ruled (2026-10-07)** (M4):
+  - an in-test `splitmix64` and a fixed seed list;
+  - two kinds of sequence: purely random, and oracle-built (only commands
+    a scratch world accepts are kept);
+  - a light-limit saturation group on top.
+- **J8 — Docs.** **Ruled (2026-10-07):** the implementation PR changes no
+  docs. A post-merge docs PR follows, on the precedent of Plan 0052 J8:
   - the registry's Implementation column;
-  - `module_boundaries.md`'s operation-boundary bullet (transactions);
-  - the blueprint's ECS/World note.
+  - `module_boundaries.md`'s operation-boundary bullet;
+  - the blueprint's ECS/World note;
+  - Spec 0053's Related Plan(s).
+- **J9 — Acceptance runs.** **Ruled (2026-10-07):** M6 repeats Plan 0052
+  J9:
+  - Windows: the four whitelist scenes, Debug and Release, VVL on;
+  - Android emulator: the default scene (install, screencap, logcat).
 
-  This follows the precedent of Plan 0052 J8.
-- **J9 — Acceptance runs.**
-  - **Recommended:** repeat Plan 0052 J9.
-    - Windows: the four whitelist scenes, Debug and Release, VVL on.
-    - Android emulator: the default scene (install, screencap, logcat).
-    - The reason: the World code `runFrame()` calls each frame changes (M2).
-  - **Alternative:** no runs. Runtime is unchanged, and the fatal-VVL smoke
-    test plus goldens cover the frame path.
+  The reason is that the World code `runFrame()` calls every frame changes
+  in M2. Rejected: no runs.
 
 ## Rollback Plan
 
@@ -574,5 +579,5 @@ Deltas:
 - [ ] Path guard holds. `src/runtime/` is unchanged, and the existing files
       changed are only those listed.
 - [ ] Every Spec 0052 test passes unmodified (R6).
-- [ ] J1's Spec Correction recorded at the Joint Review, if ruled.
+- [x] J1's Spec Correction recorded (Spec 0053 Correction 2026-10-07).
 - [ ] The post-merge docs items (J8) are queued.
