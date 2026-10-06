@@ -9,6 +9,7 @@ add_executable(atlantis_world_tests
   traversal_determinism_tests.cpp
   module_boundary_tests.cpp
   scene_instantiation_tests.cpp
+  scene_bake_tests.cpp
   world_schema_tests.cpp
   schema_uniqueness_tests.cpp
   scene_world_alignment_tests.cpp
