@@ -11,8 +11,10 @@
   [ADR-0101](../adr/0101-runtime-ecs-core-storage-identity-and-placement.md) D4.
 - **Status:** Draft
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending. Implementation needs a reviewer, a date and
-  a PR naming this Plan and Spec 0052, explicitly authorizing implementation.
+- **Joint Human Review:** pending, in
+  [PR #215](https://github.com/slmao/Atlantis/pull/215). Implementation needs a
+  reviewer, a date and that PR's explicit authorization of Spec 0052 + this
+  Plan together.
   **J1–J3 propose Spec Corrections**: three crash paths found while drafting.
   See Joint Review decisions.
 
