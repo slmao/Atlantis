@@ -1,9 +1,12 @@
 #include <atlantis/runtime/scene_extraction.h>
 
 #include <atlantis/assert.h>
+#include <atlantis/world/ecs/world_components.h>
+#include <atlantis/world/world_matrix.h>
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace atlantis::runtime {
 
@@ -497,6 +500,64 @@ Vec3 computePbrDirectLighting(const Vec3& worldPosition, const Vec3& worldNormal
   }
 
   return accumulated;
+}
+
+namespace {
+
+// Node order (Plan 0051 P3): a fresh baked world's index() is node order, and
+// an entity created later sorts after every scene entity.
+template <typename Input>
+[[nodiscard]] std::vector<Input> inNodeOrder(std::vector<std::pair<atlantis::world::ecs::EntityId, Input>> collected) {
+  std::stable_sort(collected.begin(), collected.end(),
+                   [](const auto& lhs, const auto& rhs) { return lhs.first.index() < rhs.first.index(); });
+  std::vector<Input> ordered;
+  ordered.reserve(collected.size());
+  for (auto& [entity, input] : collected) ordered.push_back(std::move(input));
+  return ordered;
+}
+
+}  // namespace
+
+std::optional<ActiveCameraInput> collectActiveCamera(const atlantis::world::BakedScene& scene) {
+  if (!scene.activeCamera.has_value() || !scene.world.isValid(*scene.activeCamera)) return std::nullopt;
+  const auto camera = scene.world.get<atlantis::world::Camera>(*scene.activeCamera);
+  const auto worldMatrix = scene.world.get<atlantis::world::WorldMatrix>(*scene.activeCamera);
+  ATLANTIS_CHECK_MSG(camera.isOk() && worldMatrix.isOk(),
+                      "collectActiveCamera(): the active camera entity has no Camera or WorldMatrix");
+  return ActiveCameraInput{camera.value(), atlantis::world::toColumnMajor(worldMatrix.value())};
+}
+
+std::vector<LightExtractionInput> collectLights(atlantis::world::BakedScene& scene) {
+  std::vector<std::pair<atlantis::world::ecs::EntityId, LightExtractionInput>> collected;
+  scene.world.query<const atlantis::world::Light, const atlantis::world::WorldMatrix>(
+      [&collected](atlantis::world::ecs::EntityId id, const atlantis::world::Light& light,
+                   const atlantis::world::WorldMatrix& worldMatrix) {
+        collected.push_back({id, LightExtractionInput{light, atlantis::world::toColumnMajor(worldMatrix)}});
+      });
+  return inNodeOrder(std::move(collected));
+}
+
+std::vector<RenderableExtractionInput> collectRenderables(atlantis::world::BakedScene& scene) {
+  std::vector<std::pair<atlantis::world::ecs::EntityId, RenderableExtractionInput>> collected;
+  scene.world.query<const atlantis::world::Renderable, const atlantis::world::WorldMatrix>(
+      [&collected](atlantis::world::ecs::EntityId id, const atlantis::world::Renderable& renderable,
+                   const atlantis::world::WorldMatrix& worldMatrix) {
+        collected.push_back({id, RenderableExtractionInput{renderable, atlantis::world::toColumnMajor(worldMatrix)}});
+      });
+  return inNodeOrder(std::move(collected));
+}
+
+std::vector<atlantis::asset_system::AssetId> collectReferencedMaterialIds(
+    std::span<const RenderableExtractionInput> renderables) {
+  std::vector<atlantis::asset_system::AssetId> referenced;
+  for (const RenderableExtractionInput& input : renderables) {
+    if (const auto& materialAsset = input.renderable.materialAsset; materialAsset.has_value()) {
+      if (std::find(referenced.begin(), referenced.end(), *materialAsset) == referenced.end()) {
+        referenced.push_back(*materialAsset);
+      }
+    }
+  }
+  return referenced;
 }
 
 }  // namespace atlantis::runtime
