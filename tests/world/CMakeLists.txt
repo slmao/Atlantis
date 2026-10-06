@@ -15,6 +15,7 @@ add_executable(atlantis_world_tests
   ecs_component_type_tests.cpp
   ecs_entity_tests.cpp
   ecs_storage_tests.cpp
+  ecs_query_tests.cpp
 )
 
 target_link_libraries(atlantis_world_tests
