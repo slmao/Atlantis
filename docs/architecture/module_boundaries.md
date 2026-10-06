@@ -638,9 +638,15 @@ neither replaces nor wraps `World`.
 - **Identity.** `ecs::EntityId` follows ADR-0049's handle rules. `EntityGuid`
   binds only at creation (`createEntities()` → `EntityGuidMap`,
   `ecs/entity_guid_map.h`), so the ECS stores no GUID (ADR-0097 D5).
-- **Not yet done.** Runtime does not use it yet. Runtime migration, a
-  hierarchy over ECS components, a system scheduler, job-system integration
-  and Spec 0050's other exclusions are future Specs.
+- **Runtime World.** Since Spec 0051
+  ([ADR-0102](../adr/0102-authoring-runtime-world-separation-and-scene-bake.md))
+  Runtime reads a baked ECS world: `bakeScene()` (`scene_instantiation.h`)
+  turns a validated scene into a `BakedScene` — one entity per node, created
+  in node order, with its authored components and a bake-resolved
+  `WorldMatrix`, and no hierarchy. `world::World` remains the authoring-stage
+  world and the bake's hierarchy solver.
+- **Not yet done.** A hierarchy over ECS components, a system scheduler,
+  job-system integration and Spec 0050's other exclusions are future Specs.
 
 **Depends on:** Core, and, narrowly, Asset System: the `AssetId` type
 named in `Renderable`'s own two public fields (a mandatory `meshAsset` and,
@@ -734,13 +740,16 @@ first-reference order, never `AssetId`-sorted order — a keyed
 also resolves and loads every distinct material an entity's
 `Renderable` names (and each material's own referenced texture,
 deduplicated by texture `AssetId`) into two further CPU-only maps, all
-published atomically together — and instantiates the one real `World`
-instance via `atlantis::world::instantiateScene()` (since Spec 0047; keeping
-the loaded scene's GUID and its `SceneEntityMap` beside the `World`, which a
-Runtime-private `resolveEntityRef()` uses to resolve a persisted `EntityRef` —
-unknown scene, unknown entity or dead entity is an explicit error, ADR-0097
-D6) — replacing the former fixed, hardcoded six-entity validation scene Spec
-0014 shipped. Each frame: calls `World::updateTransforms()`, extracts the
+published atomically together — and, since Spec 0051, bakes it into the
+Runtime World via `atlantis::world::bakeScene()` (a `BakedScene`: an ECS
+world, its `EntityGuidMap` and the active camera; the loaded scene's GUID is
+kept beside it, and a Runtime-private `resolveEntityRef()` resolves a
+persisted `EntityRef` through that map — unknown scene, unknown entity or dead
+entity is an explicit error, ADR-0097 D6) — replacing the former fixed,
+hardcoded six-entity validation scene Spec 0014 shipped. Each frame: collects
+the active camera, lights and renderables from the baked world through the
+shared `collect*()` functions in `scene_extraction.h` (node order; no
+transform pass — the hierarchy was resolved at bake time), extracts the
 active camera's view/projection matrices, computes which referenced
 materials are not yet GPU-realized and realizes them (Spec 0018 — a
 new, independently-testable `material_realization.h`/`.cpp` module;
