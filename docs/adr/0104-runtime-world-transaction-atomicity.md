@@ -1,15 +1,16 @@
 # ADR 0104: Runtime World Transaction — Atomicity by Projected Pre-validation
 
-- **Status:** Proposed
-- **Date:** 2026-10-07
+- **Status:** Accepted
+- **Date:** 2026-10-07 (accepted 2026-10-07)
 - **Deciders:** slmao
-- **Acceptance:** pending. To be `Accepted` before or during the review of
-  [Spec 0053](../specs/0053-runtime-world-transaction.md), with D2–D6 as ruled
-  there (Spec Q1–Q7).
-- **Related Spec:** [Spec 0053: Runtime World Transaction](../specs/0053-runtime-world-transaction.md)
+- **Acceptance:** slmao, 2026-10-07 (review of this branch's own PR,
+  [PR #218](https://github.com/slmao/Atlantis/pull/218); accepted together with Spec 0053's Approval, its seven open
+  questions ruled as recommended)
+- **Related Spec:** [Spec 0053: Runtime World Transaction](../specs/0053-runtime-world-transaction.md) (`Approved`)
 - **Related ADR(s):**
   - Extends [ADR-0103](0103-runtime-world-operation-boundary.md) D9
-    ("atomicity is Transaction's"). No ADR-0103 decision changes.
+    ("atomicity is Transaction's"). It changes no ADR-0103 decision, and
+    ADR-0103 is not amended.
   - Rejects, with reasons, the undo-log alternative over
     [ADR-0049](0049-entity-identity-and-handle-invalidation.md)'s generation
     rules, which [ADR-0101](0101-runtime-ecs-core-storage-identity-and-placement.md)
@@ -56,7 +57,8 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      the first refused command.
    - No verb, event or validation rule is added. Spec 0052's single-command
      path and contracts are unchanged.
-2. **The atomicity mechanism is projected pre-validation** (Spec 0053 Q1).
+2. **The atomicity mechanism is projected pre-validation** (Spec 0053
+   ruling Q1).
    - The whole transaction is validated against a projection of the state
      Spec 0052's validation reads, as each command would leave it. It is
      executed only if every command passes.
@@ -78,12 +80,12 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
        a clone API. It costs O(world) per transaction. A clone has a new
        per-instance identity token, so every outside `EntityId` would be
        foreign to the swapped-in world.
-3. **One source of validation rules** (Spec 0053 Q7). Spec 0052's
+3. **One source of validation rules** (Spec 0053 ruling Q7). Spec 0052's
    per-command checks become one routine over a state view, implemented
    twice: real (the index plus the ECS) and projected. Projection and
    execution run the same rule code; only state bookkeeping differs, and a
    sequential-equivalence test pins it.
-4. **Entry point and failure reporting** (Spec 0053 Q2, Q5). Recommended:
+4. **Entry point and failure reporting** (Spec 0053 rulings Q2, Q5):
    - `submit(Command)` is kept;
    - `submitTransaction(...)` on `RuntimeWorldAccess` returns a
      `TransactionTicket` covering consecutive command tickets;
@@ -91,22 +93,23 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      whose position is derivable from its ticket.
 
    There is no new failure type, error kind or queue.
-5. **Events** (Spec 0053 Q3): a committed transaction emits its commands'
+5. **Events** (Spec 0053 ruling Q3): a committed transaction emits its commands'
    events in order; an aborted one emits none. There is no transaction-level
    event.
-6. **Special cases** (Spec 0053 Q4). Recommended:
+6. **Special cases** (Spec 0053 ruling Q4):
    - every rule is evaluated per command, as in Spec 0052;
    - commands after a projected destroy see the GUID as unknown;
    - destroy then re-create of the same GUID is allowed;
    - an active-camera refusal anywhere aborts the transaction;
    - there are no end-state or deferred checks;
-   - an empty transaction is a no-op.
-7. **Placement and consumers** (Spec 0053 Q5, Q6).
+   - an empty transaction is a no-op: no event, no failure, no command
+     ticket.
+7. **Placement and consumers** (Spec 0053 rulings Q5, Q6).
    - The transaction lives in `atlantis::world::access`.
    - Runtime needs no change: `runFrame()` already calls `applyPending()`
      first.
-   - v1 is proven by World tests and, recommended, by the smoke test's
-     creation group run as one transaction.
+   - v1 is proven by World tests and by the smoke test's nine-command
+     Point-light creation group run as one transaction under fatal VVL.
 
 ## Consequences
 
