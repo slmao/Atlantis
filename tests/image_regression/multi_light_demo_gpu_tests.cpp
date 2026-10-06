@@ -1,3 +1,4 @@
+#include "support/baked_scene_edits.h"
 #include "support/catalog_scene.h"
 #include "fixture/lighting_demo_fixture.h"
 #include "support/golden_validity.h"
@@ -5,7 +6,7 @@
 
 #include <atlantis/runtime/bootstrap_config.h>
 #include <atlantis/runtime/scene_extraction.h>
-#include <atlantis/world/entity_id.h>
+#include <atlantis/world/ecs/entity_id.h>
 #include <atlantis/world/light.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -48,7 +49,7 @@ using atlantis::image_regression::writeFailureArtifacts;
 using atlantis::runtime::BootstrapConfig;
 using atlantis::runtime::FrameLightingData;
 using atlantis::runtime::kCameraUniformLightingOffsetBytes;
-using atlantis::world::EntityId;
+using EntityId = atlantis::world::ecs::EntityId;
 
 namespace {
 
@@ -189,7 +190,7 @@ TEST_CASE("multi_light_demo: all eight Point lights reach the frame as eight dis
   auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
   REQUIRE(fixtureResult.isOk());
   LightingDemoFixture& fixture = fixtureResult.value();
-  REQUIRE(fixture.world->lightEntities().size() == kPools.size());
+  REQUIRE(atlantis::image_regression::lightEntities(*fixture.scene).size() == kPools.size());
 
   auto renderResult = renderLightingDemoFrame(fixture);
   REQUIRE(renderResult.isOk());
@@ -237,9 +238,9 @@ TEST_CASE("multi_light_demo: destroying the lights in slots 5-8 darkens exactly 
   REQUIRE(beforeResult.isOk());
   const PixelBuffer before = beforeResult.value();
 
-  const std::vector<EntityId> lights = fixture.world->lightEntities();
+  const std::vector<EntityId> lights = atlantis::image_regression::lightEntities(*fixture.scene);
   REQUIRE(lights.size() == 8);
-  for (std::size_t slot = 4; slot < 8; ++slot) REQUIRE(fixture.world->destroyEntity(lights[slot]).isOk());
+  for (std::size_t slot = 4; slot < 8; ++slot) REQUIRE(fixture.scene->world.destroyEntity(lights[slot]).isOk());
 
   auto afterResult = renderLightingDemoFrame(fixture);
   REQUIRE(afterResult.isOk());
@@ -317,9 +318,9 @@ TEST_CASE("The multi_light_demo frame cut back to the former four-light cap fail
   auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
   REQUIRE(fixtureResult.isOk());
   LightingDemoFixture& fixture = fixtureResult.value();
-  const std::vector<EntityId> lights = fixture.world->lightEntities();
+  const std::vector<EntityId> lights = atlantis::image_regression::lightEntities(*fixture.scene);
   REQUIRE(lights.size() == 8);
-  for (std::size_t slot = 4; slot < 8; ++slot) REQUIRE(fixture.world->destroyEntity(lights[slot]).isOk());
+  for (std::size_t slot = 4; slot < 8; ++slot) REQUIRE(fixture.scene->world.destroyEntity(lights[slot]).isOk());
 
   auto renderResult = renderLightingDemoFrame(fixture);
   REQUIRE(renderResult.isOk());

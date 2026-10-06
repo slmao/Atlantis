@@ -1,5 +1,6 @@
 #pragma once
 
+#include "baked_scene_edits.h"
 #include "emissive_differential.h"
 #include "fog_reference.h"
 #include "pixel_diff.h"
@@ -8,7 +9,7 @@
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/runtime/scene_extraction.h>
 #include <atlantis/world/camera.h>
-#include <atlantis/world/world.h>
+#include <atlantis/world/scene_instantiation.h>
 
 #include <array>
 #include <cmath>
@@ -69,25 +70,21 @@ using FogRgb = std::array<int, 3>;
 
 template <typename Fixture>
 [[nodiscard]] atlantis::world::CameraFog activeCameraFog(Fixture& fixture) {
-  auto& world = *fixture.world;
-  const auto activeCamera = world.activeCamera();
+  const auto activeCamera = atlantis::runtime::collectActiveCamera(*fixture.scene);
   REQUIRE(activeCamera.has_value());
-  const auto camera = world.getCamera(*activeCamera);
-  REQUIRE(camera.isOk());
-  return camera.value().fog;
+  return activeCamera->camera.fog;
 }
 
 // Replaces the active camera's fog; takes effect from the next render.
 template <typename Fixture>
 void setActiveCameraFog(Fixture& fixture, const atlantis::world::CameraFog& fog) {
-  auto& world = *fixture.world;
-  const auto activeCamera = world.activeCamera();
-  REQUIRE(activeCamera.has_value());
-  const auto camera = world.getCamera(*activeCamera);
+  auto& scene = *fixture.scene;
+  REQUIRE(scene.activeCamera.has_value());
+  const auto camera = scene.world.get<atlantis::world::Camera>(*scene.activeCamera);
   REQUIRE(camera.isOk());
   atlantis::world::Camera updated = camera.value();
   updated.fog = fog;
-  REQUIRE(world.setCamera(*activeCamera, updated).isOk());
+  REQUIRE(scene.world.set(*scene.activeCamera, updated).isOk());
 }
 
 // Dense enough that 1 - e^-tau is exactly 1 in float at any visible
@@ -184,14 +181,14 @@ template <typename Fixture>
                                                         float worldRadius, std::uint32_t x, std::uint32_t y,
                                                         std::uint32_t extentPixels) {
   using atlantis::runtime::Mat4;
-  auto& world = *fixture.world;
-  const auto activeCamera = world.activeCamera();
+  // Plan 0051 M5: the active camera and the renderables through Runtime's
+  // collection functions over the baked scene.
+  const auto activeCamera = atlantis::runtime::collectActiveCamera(*fixture.scene);
   if (!activeCamera.has_value()) return std::nullopt;
-  const auto cameraWorld = world.getWorldMatrix(*activeCamera);
-  const auto camera = world.getCamera(*activeCamera);
-  if (cameraWorld.isErr() || camera.isErr()) return std::nullopt;
-  const auto matrices = atlantis::runtime::extractCameraMatrices(cameraWorld.value(), camera.value().fovYRadians,
-                                                                 camera.value().nearZ, camera.value().farZ, 1.0f);
+  const Mat4& cameraWorld = activeCamera->worldMatrix;
+  const atlantis::world::Camera& camera = activeCamera->camera;
+  const auto matrices = atlantis::runtime::extractCameraMatrices(cameraWorld, camera.fovYRadians, camera.nearZ,
+                                                                 camera.farZ, 1.0f);
   if (matrices.isErr()) return std::nullopt;
   const Mat4& v = matrices.value().view;
   const Mat4& p = matrices.value().projection;
@@ -202,13 +199,10 @@ template <typename Fixture>
   }
 
   std::optional<Mat4> objectToWorld;
-  for (const auto entity : world.renderableEntities()) {
-    const auto renderable = world.getRenderable(entity);
-    if (renderable.isErr() || !renderable.value().materialAsset.has_value()) continue;
-    if (*renderable.value().materialAsset != materialAsset) continue;
-    const auto worldMatrix = world.getWorldMatrix(entity);
-    if (worldMatrix.isErr()) return std::nullopt;
-    objectToWorld = worldMatrix.value();
+  for (const auto& input : atlantis::runtime::collectRenderables(*fixture.scene)) {
+    if (!input.renderable.materialAsset.has_value()) continue;
+    if (*input.renderable.materialAsset != materialAsset) continue;
+    objectToWorld = input.worldMatrix;
     break;
   }
   if (!objectToWorld.has_value()) return std::nullopt;
@@ -227,7 +221,7 @@ template <typename Fixture>
   const float dirLength = std::sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
   for (float& component : dir) component /= dirLength;
 
-  const Mat4& cam = cameraWorld.value();
+  const Mat4& cam = cameraWorld;
   const FogVec3 eye{cam[12], cam[13], cam[14]};
   const Mat4& m = *objectToWorld;
   const float radius = worldRadius * std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);

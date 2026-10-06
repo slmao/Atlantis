@@ -39,12 +39,17 @@ using atlantis::rhi::Extent2D;
 using atlantis::rhi::VertexInputLayout;
 using atlantis::runtime::computePendingMaterialIds;
 using atlantis::runtime::extractCameraMatrices;
-using atlantis::runtime::loadAndInstantiateScene;
+using atlantis::runtime::collectActiveCamera;
+using atlantis::runtime::collectLights;
+using atlantis::runtime::collectReferencedMaterialIds;
+using atlantis::runtime::collectRenderables;
+using atlantis::runtime::loadAndBakeScene;
+using atlantis::runtime::RenderableExtractionInput;
 using atlantis::runtime::realizePendingMaterials;
 using atlantis::runtime::RealizedMaterialCandidate;
 using atlantis::runtime::resolveMeshAsset;
 using atlantis::runtime::resolveMaterialAsset;
-using atlantis::runtime::InstantiatedSceneLoadOutcome;  // Plan 0051 J2: transitional, M4 -> M5
+using atlantis::runtime::SceneLoadOutcome;
 using atlantis::shader_system::loadReflectionMetadata;
 using atlantis::shader_system::ReflectionMetadata;
 using atlantis::shader_system::rhi_integration::MeshVertexAttributeSchema;
@@ -247,10 +252,10 @@ atlantis::Result<MaterialDemoFixture, MaterialDemoSetupError> setUpMaterialDemoF
   // mesh artifact -- so passing it here (rather than loading a second,
   // unused minimal_mesh shader pair just to build a fallback layout this
   // scene never references) is correct, not a shortcut.
-  auto sceneLoadResult = loadAndInstantiateScene(config, fixture.device.get(), *vertexInputLayout);
+  auto sceneLoadResult = loadAndBakeScene(config, fixture.device.get(), *vertexInputLayout);
   if (sceneLoadResult.isErr()) return ResultT::Err(MaterialDemoSetupError::SceneLoadFailed);
-  InstantiatedSceneLoadOutcome outcome = std::move(sceneLoadResult.value());
-  fixture.world.emplace(std::move(outcome.world));
+  SceneLoadOutcome outcome = std::move(sceneLoadResult.value());
+  fixture.scene.emplace(std::move(outcome.scene));
   fixture.meshResourceMap = std::move(outcome.meshResourceMap);
   fixture.materialDataMap = std::move(outcome.materialDataMap);
   fixture.textureDataMap = std::move(outcome.textureDataMap);
@@ -370,17 +375,13 @@ atlantis::Result<PixelBuffer, MaterialDemoRenderError> renderMaterialDemoFrame(M
   if (acquireResult.isErr()) return ResultT::Err(MaterialDemoRenderError::AcquireFailed);
   std::unique_ptr<rhi::RenderTarget> target = std::move(acquireResult.value());
 
-  fixture.world->updateTransforms();
-
-  const auto activeCamera = fixture.world->activeCamera();
+  // Plan 0051 M5 (Spec 0051 ruling Q7 V3): Runtime's own collection functions
+  // over the baked scene -- the code runFrame() runs.
+  const auto activeCamera = collectActiveCamera(*fixture.scene);
   if (!activeCamera.has_value()) return ResultT::Err(MaterialDemoRenderError::NoActiveCamera);
-  const auto cameraWorldMatrixResult = fixture.world->getWorldMatrix(*activeCamera);
-  const auto cameraComponentResult = fixture.world->getCamera(*activeCamera);
-  if (cameraWorldMatrixResult.isErr() || cameraComponentResult.isErr()) {
-    return ResultT::Err(MaterialDemoRenderError::ExtractionFailed);
-  }
-  const atlantis::world::Camera cameraComponent = cameraComponentResult.value();
-  const auto extractionResult = extractCameraMatrices(cameraWorldMatrixResult.value(), cameraComponent.fovYRadians,
+  const atlantis::runtime::Mat4& cameraWorldMatrix = activeCamera->worldMatrix;
+  const atlantis::world::Camera cameraComponent = activeCamera->camera;
+  const auto extractionResult = extractCameraMatrices(cameraWorldMatrix, cameraComponent.fovYRadians,
                                                         cameraComponent.nearZ, cameraComponent.farZ, 1.0f);
   if (extractionResult.isErr()) return ResultT::Err(MaterialDemoRenderError::ExtractionFailed);
 
@@ -392,17 +393,9 @@ atlantis::Result<PixelBuffer, MaterialDemoRenderError> renderMaterialDemoFrame(M
   // requirement): referencedMaterialIds is collected from World's own
   // already-deterministic renderableEntities() iteration, exactly mirroring
   // runFrame()'s own identical collection loop.
-  std::vector<atlantis::asset_system::AssetId> referencedMaterialIds;
-  for (const auto& id : fixture.world->renderableEntities()) {
-    const auto renderableResult = fixture.world->getRenderable(id);
-    if (renderableResult.isErr()) continue;
-    if (const auto& materialAsset = renderableResult.value().materialAsset; materialAsset.has_value()) {
-      if (std::find(referencedMaterialIds.begin(), referencedMaterialIds.end(), *materialAsset) ==
-          referencedMaterialIds.end()) {
-        referencedMaterialIds.push_back(*materialAsset);
-      }
-    }
-  }
+  const std::vector<RenderableExtractionInput> renderables = collectRenderables(*fixture.scene);
+  const std::vector<atlantis::asset_system::AssetId> referencedMaterialIds =
+      collectReferencedMaterialIds(renderables);
   std::vector<atlantis::asset_system::AssetId> alreadyRealizedMaterialIds;
   alreadyRealizedMaterialIds.reserve(fixture.materialResourceMap.size());
   for (const auto& [assetId, material] : fixture.materialResourceMap) alreadyRealizedMaterialIds.push_back(assetId);
@@ -443,19 +436,15 @@ atlantis::Result<PixelBuffer, MaterialDemoRenderError> renderMaterialDemoFrame(M
   for (const auto& [assetId, mesh] : fixture.meshResourceMap) knownMeshAssetIds.push_back(assetId);
 
   std::vector<DrawItem> drawItems;
-  for (const auto& id : fixture.world->renderableEntities()) {
-    const auto renderableResult = fixture.world->getRenderable(id);
-    if (renderableResult.isErr()) continue;
-    if (resolveMeshAsset(renderableResult.value().meshAsset, knownMeshAssetIds).isErr()) continue;
-    const auto worldMatrixResult = fixture.world->getWorldMatrix(id);
-    if (worldMatrixResult.isErr()) continue;
+  for (const RenderableExtractionInput& renderable : renderables) {
+    if (resolveMeshAsset(renderable.renderable.meshAsset, knownMeshAssetIds).isErr()) continue;
 
     // Spec 0018 D4 case 3: present-but-unresolvable is skipped for this
     // entity, never silently drawn with a fallback -- this scene declares
     // no absent-material entity at all (material_demo.scene.txt, both
     // nodes reference the same real material), so there is no fallback
     // Material anywhere in this fixture.
-    const auto& materialAsset = renderableResult.value().materialAsset;
+    const auto& materialAsset = renderable.renderable.materialAsset;
     if (!materialAsset.has_value()) continue;
     if (resolveMaterialAsset(*materialAsset, knownMaterialIds).isErr()) continue;
 
@@ -469,9 +458,9 @@ atlantis::Result<PixelBuffer, MaterialDemoRenderError> renderMaterialDemoFrame(M
     if (!resolvedMaterial) continue;
 
     DrawItem item;
-    item.mesh = &fixture.meshResourceMap.at(renderableResult.value().meshAsset);
+    item.mesh = &fixture.meshResourceMap.at(renderable.renderable.meshAsset);
     item.material = resolvedMaterial;
-    item.objectToWorld = worldMatrixResult.value();
+    item.objectToWorld = renderable.worldMatrix;
     drawItems.push_back(item);
   }
 

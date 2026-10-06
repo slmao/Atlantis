@@ -1,3 +1,4 @@
+#include "support/baked_scene_edits.h"
 #include "support/catalog_scene.h"
 #include "fixture/pbr_clearcoat_demo_fixture.h"
 #include "support/fog_differential.h"
@@ -133,7 +134,7 @@ TEST_CASE("PBR clearcoat demo renders a clearcoat-roughness sweep of three IBL-l
   auto fixtureResult = atlantis::image_regression::setUpPbrClearcoatDemoFixture(buildClearcoatConfig());
   REQUIRE(fixtureResult.isOk());
   auto& fixture = fixtureResult.value();
-  CHECK(fixture.world->lightEntities().empty());
+  CHECK(atlantis::image_regression::lightEntities(*fixture.scene).empty());
 
   auto first = atlantis::image_regression::renderPbrClearcoatDemoFrame(fixture);
   REQUIRE(first.isOk());
@@ -188,7 +189,7 @@ TEST_CASE("PBR clearcoat normal map demo renders a single normal-mapped, IBL-lit
   auto fixtureResult = atlantis::image_regression::setUpPbrClearcoatDemoFixture(buildClearcoatNormalMapConfig());
   REQUIRE(fixtureResult.isOk());
   auto& fixture = fixtureResult.value();
-  CHECK(fixture.world->lightEntities().empty());
+  CHECK(atlantis::image_regression::lightEntities(*fixture.scene).empty());
 
   auto first = atlantis::image_regression::renderPbrClearcoatDemoFrame(fixture);
   REQUIRE(first.isOk());

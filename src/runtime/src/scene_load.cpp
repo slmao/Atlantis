@@ -70,8 +70,7 @@ using atlantis::asset_system::CatalogAssetType;
   return ResultT::Ok(record);
 }
 
-// Plan 0051 P5: steps (a)-(e), shared by loadAndBakeScene() and the
-// transitional loadAndInstantiateScene() -- the decoded scene and its loaded
+// Plan 0051 P5: steps (a)-(e) -- the decoded scene and its loaded
 // dependencies, before any World exists.
 struct LoadedScene {
   atlantis::asset_system::ValidatedSceneData scene;
@@ -174,7 +173,7 @@ struct LoadedScene {
       return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
     }
     const atlantis::asset_system::StaticMeshAssetData& meshAssetData = meshAssetResult.value();
-    ATLANTIS_CHECK_MSG(device != nullptr, "loadAndInstantiateScene(): a real Device is required once a scene has "
+    ATLANTIS_CHECK_MSG(device != nullptr, "loadAndBakeScene(): a real Device is required once a scene has "
                                            "at least one distinct mesh dependency to load");
     // Spec 0039 Requirement 6 / ADR-0087: the composition-root
     // translation between the Asset System's own MeshIndexType and the
@@ -322,20 +321,6 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndBakeScene(
   return ResultT::Ok(SceneLoadOutcome{std::move(baked), std::move(parts.meshResourceMap),
                                        std::move(parts.materialDataMap), std::move(parts.textureDataMap),
                                        config.sceneAsset});
-}
-
-atlantis::Result<InstantiatedSceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
-    const BootstrapConfig& config, atlantis::rhi::Device* device,
-    const atlantis::rhi::VertexInputLayout& vertexInputLayout) {
-  using ResultT = atlantis::Result<InstantiatedSceneLoadOutcome, RuntimeInitError>;
-  auto loaded = loadSceneAndDependencies(config, device, vertexInputLayout);
-  if (loaded.isErr()) return ResultT::Err(loaded.error());
-  LoadedScene& parts = loaded.value();
-  atlantis::world::SceneInstance instance = atlantis::world::instantiateScene(parts.scene);
-  return ResultT::Ok(InstantiatedSceneLoadOutcome{std::move(instance.world), std::move(parts.meshResourceMap),
-                                                   std::move(parts.materialDataMap),
-                                                   std::move(parts.textureDataMap), config.sceneAsset,
-                                                   std::move(instance.entities)});
 }
 
 }  // namespace atlantis::runtime

@@ -1,3 +1,4 @@
+#include "support/baked_scene_edits.h"
 #include "support/catalog_scene.h"
 #include "fixture/pbr_sheen_demo_fixture.h"
 #include "support/fog_differential.h"
@@ -131,7 +132,7 @@ TEST_CASE("PBR sheen demo renders a sheen-roughness sweep of three IBL-lit spher
   auto fixtureResult = atlantis::image_regression::setUpPbrSheenDemoFixture(buildSheenConfig());
   REQUIRE(fixtureResult.isOk());
   auto& fixture = fixtureResult.value();
-  CHECK(fixture.world->lightEntities().empty());
+  CHECK(atlantis::image_regression::lightEntities(*fixture.scene).empty());
 
   auto first = atlantis::image_regression::renderPbrSheenDemoFrame(fixture);
   REQUIRE(first.isOk());
@@ -187,7 +188,7 @@ TEST_CASE("PBR sheen normal map demo renders a single normal-mapped, IBL-lit she
   auto fixtureResult = atlantis::image_regression::setUpPbrSheenDemoFixture(buildSheenNormalMapConfig());
   REQUIRE(fixtureResult.isOk());
   auto& fixture = fixtureResult.value();
-  CHECK(fixture.world->lightEntities().empty());
+  CHECK(atlantis::image_regression::lightEntities(*fixture.scene).empty());
 
   auto first = atlantis::image_regression::renderPbrSheenDemoFrame(fixture);
   REQUIRE(first.isOk());

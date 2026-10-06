@@ -1,3 +1,4 @@
+#include "support/baked_scene_edits.h"
 #include "support/catalog_scene.h"
 #include "fixture/pbr_anisotropic_demo_fixture.h"
 #include "support/fog_differential.h"
@@ -133,7 +134,7 @@ TEST_CASE("PBR anisotropic demo renders a rotation sweep of three IBL-lit sphere
   auto fixtureResult = atlantis::image_regression::setUpPbrAnisotropicDemoFixture(buildAnisotropicConfig());
   REQUIRE(fixtureResult.isOk());
   auto& fixture = fixtureResult.value();
-  CHECK(fixture.world->lightEntities().empty());
+  CHECK(atlantis::image_regression::lightEntities(*fixture.scene).empty());
 
   auto first = atlantis::image_regression::renderPbrAnisotropicDemoFrame(fixture);
   REQUIRE(first.isOk());
@@ -194,7 +195,7 @@ TEST_CASE("PBR anisotropic normal map demo renders a single normal-mapped, IBL-l
       atlantis::image_regression::setUpPbrAnisotropicDemoFixture(buildAnisotropicNormalMapConfig());
   REQUIRE(fixtureResult.isOk());
   auto& fixture = fixtureResult.value();
-  CHECK(fixture.world->lightEntities().empty());
+  CHECK(atlantis::image_regression::lightEntities(*fixture.scene).empty());
 
   auto first = atlantis::image_regression::renderPbrAnisotropicDemoFrame(fixture);
   REQUIRE(first.isOk());

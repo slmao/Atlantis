@@ -10,6 +10,7 @@
 #include <atlantis/renderer/bloom.h>
 #include <atlantis/runtime/bootstrap_config.h>
 #include <atlantis/world/camera.h>
+#include <atlantis/world/ecs/world_components.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -103,14 +104,13 @@ void keepOnlyEmissive(EmissiveDemoFixture& fixture, const char* keptMaterialPath
 }
 
 void setActiveCameraBloomStrength(EmissiveDemoFixture& fixture, float strength) {
-  auto& world = *fixture.world;
-  const auto activeCamera = world.activeCamera();
-  REQUIRE(activeCamera.has_value());
-  auto camera = world.getCamera(*activeCamera);
+  auto& scene = *fixture.scene;  // Plan 0051 M5: the baked scene's camera component
+  REQUIRE(scene.activeCamera.has_value());
+  auto camera = scene.world.get<atlantis::world::Camera>(*scene.activeCamera);
   REQUIRE(camera.isOk());
   atlantis::world::Camera updated = camera.value();
   updated.bloom.strength = strength;
-  REQUIRE(world.setCamera(*activeCamera, updated).isOk());
+  REQUIRE(scene.world.set(*scene.activeCamera, updated).isOk());
 }
 
 [[nodiscard]] bool framesIdentical(const PixelBuffer& a, const PixelBuffer& b) {

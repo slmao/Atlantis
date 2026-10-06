@@ -54,22 +54,4 @@ struct SceneLoadOutcome {
     const BootstrapConfig& config, atlantis::rhi::Device* device,
     const atlantis::rhi::VertexInputLayout& vertexInputLayout);
 
-// TRANSITIONAL (Plan 0051 J2, Milestone 4 -> 5 only): the pre-Spec-0051 load,
-// identical to loadAndBakeScene() but ending in instantiateScene(), kept only
-// for the image-regression fixtures until Milestone 5 moves them to
-// loadAndBakeScene(). Milestone 5 deletes it and this outcome type. Runtime
-// itself never calls it.
-struct InstantiatedSceneLoadOutcome {
-  atlantis::world::World world;
-  std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap;
-  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> materialDataMap;
-  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap;
-  atlantis::asset_system::AssetGuid sceneGuid;
-  atlantis::world::SceneEntityMap entities;
-};
-
-[[nodiscard]] atlantis::Result<InstantiatedSceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
-    const BootstrapConfig& config, atlantis::rhi::Device* device,
-    const atlantis::rhi::VertexInputLayout& vertexInputLayout);
-
 }  // namespace atlantis::runtime
