@@ -768,15 +768,23 @@ milestone being listed does not authorize starting it — see Section 1.
   state. Since [Spec 0050](specs/0050-runtime-ecs-foundation.md) (merged
   [PR #208](https://github.com/slmao/Atlantis/pull/208)), a general,
   single-threaded archetype/chunk ECS core exists: `atlantis::world::ecs`,
-  beside `World` and not yet used by Runtime
+  beside `World`
   ([ADR-0101](adr/0101-runtime-ecs-core-storage-identity-and-placement.md)).
-  These each remain a future Spec's work:
+  Since [Spec 0051](specs/0051-authoring-scene-runtime-world-bake.md) (merged
+  [PR #212](https://github.com/slmao/Atlantis/pull/212);
+  [ADR-0102](adr/0102-authoring-runtime-world-separation-and-scene-bake.md)),
+  Runtime runs on it: a validated scene is baked (`bakeScene()` →
+  `BakedScene`) into an ECS world with one entity per node, its authored
+  components and a bake-resolved `WorldMatrix`, and no hierarchy; Runtime's
+  frame reads only that baked world, with no per-frame transform pass.
+  `World` remains the authoring-stage world and the bake's hierarchy
+  solver. These each remain a future Spec's work:
   - a system scheduler;
   - job-system integration and multi-threading;
   - change tracking, replication and reactive queries;
   - chunk streaming;
   - prefab, networking and C# bindings;
-  - Runtime's migration onto the ECS.
+  - a runtime hierarchy over ECS components (Spec 0051 ruling Q2).
 
 ### Milestone 12 — Scene Asset & Serialization Foundation
 

@@ -3,9 +3,10 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-06
-- **Related Plan(s):** none yet — Plan 0051 drafting is authorized by the
-  Approval below. **Implementation still awaits its own, separate Joint Human
-  Review** of Spec + Plan together, per AGENTS.md's own workflow.
+- **Related Plan(s):** [Plan 0051](../plans/0051-authoring-scene-runtime-world-bake.md)
+  (`Approved`; Joint Human Review 2026-10-06,
+  [PR #211](https://github.com/slmao/Atlantis/pull/211)) — implemented, merged
+  [PR #212](https://github.com/slmao/Atlantis/pull/212).
 - **Approval:** slmao, 2026-10-06 (review of this Spec's own branch PR,
   [PR #210](https://github.com/slmao/Atlantis/pull/210)) — authorizes drafting Plan 0051; Implementation itself
   still awaits its own, separate Joint Human Review of Spec + Plan together.
@@ -29,9 +30,13 @@
     - `lighting_demo_gpu_tests`: including the one `setParent` reparent case,
       which Plan 0051 ruling J5 deletes as testing the superseded clause;
     - `multi_light_demo_gpu_tests`: `destroyEntity`.
-  - **Change scope.** Besides the nine fixture units, 13 GPU test files and 2
+  - **Change scope.** Besides the nine fixture units, 12 GPU test files and 2
     support headers read or edit the fixtures' World. They change with
-    `SceneLoadOutcome`.
+    `SceneLoadOutcome`. (Count corrected from 13 on 2026-10-06, post-merge,
+    Plan 0051 implementation [PR #212](https://github.com/slmao/Atlantis/pull/212):
+    `fog_demo_gpu_tests` reaches the camera only through
+    `support/fog_differential.h`, one of the two support headers, and needed no
+    change of its own.)
 
   Motivation, Q2's evidence, Testing and Risks are corrected accordingly. No
   requirement, ruling or ADR decision changes.
@@ -463,8 +468,9 @@ goldens are the end-to-end confirmation.
   - the nine `loadAndInstantiateScene` fixtures move to the bake output and to
     Runtime's shared collection functions per Q7, so the goldens run
     Runtime's new extraction code. Their goldens stay byte-identical.
-  - the 13 GPU test files and 2 support headers that read or edit those
-    fixtures' World follow them (Correction 2026-10-06, Plan 0051 ruling J6).
+  - the 12 GPU test files and 2 support headers that read or edit those
+    fixtures' World follow them (Correction 2026-10-06, Plan 0051 ruling J6;
+    count corrected 2026-10-06 post-merge, PR #212).
 
   A golden that moves stops the work and is reported.
 - **Platforms and gates:**
@@ -485,8 +491,9 @@ Risks:
   only inside the bake. Peak memory roughly doubles scene state at load and
   is freed before the first frame.
 - **Fixture migration scope.** Nine fixture units change with
-  `SceneLoadOutcome` (Q7). So do the 13 GPU test files and 2 support headers
-  that use those fixtures' World (Correction 2026-10-06, Plan 0051 ruling J6).
+  `SceneLoadOutcome` (Q7). So do the 12 GPU test files and 2 support headers
+  that use those fixtures' World (Correction 2026-10-06, Plan 0051 ruling J6;
+  count corrected 2026-10-06 post-merge, PR #212).
   The hand-built and self-loading fixtures do not change.
 
 Open questions — all seven ruled by Human Review (slmao, 2026-10-06, review
