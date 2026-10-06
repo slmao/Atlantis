@@ -1,4 +1,5 @@
 #include <atlantis/runtime/scene_load.h>
+#include <atlantis/runtime/scene_extraction.h>
 
 #include "catalog_test_support.h"
 
@@ -56,7 +57,7 @@ using atlantis::asset_system::TextureColorSpace;
 using atlantis::rhi::VertexInputLayout;
 
 // Plan 0015 Section D10 (V17, V19, V20). Every test here calls
-// loadAndInstantiateScene() (scene_load.h) directly, with device =
+// loadAndBakeScene() (scene_load.h) directly, with device =
 // nullptr -- safe as long as no test exercises a scene with a mesh
 // dependency whose loadStaticMeshAsset() call actually SUCCEEDS (that
 // is the one and only point this function ever dereferences device;
@@ -223,49 +224,49 @@ using atlantis::runtime::test_support::CatalogBuilder;
 }  // namespace
 
 
-TEST_CASE("loadAndInstantiateScene: an unreadable catalog fails with AssetCatalogLoadFailed, no device access",
+TEST_CASE("loadAndBakeScene: an unreadable catalog fails with AssetCatalogLoadFailed, no device access",
           "[runtime][scene]") {
   TempDirGuard dir("bad_catalog");
   const BootstrapConfig config = makeConfig(dir.path / "does_not_exist.catalog.txt");
 
-  const auto result = loadAndInstantiateScene(config, /*device=*/nullptr, VertexInputLayout{});
+  const auto result = loadAndBakeScene(config, /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::AssetCatalogLoadFailed);
 }
 
-TEST_CASE("loadAndInstantiateScene: a malformed catalog fails with AssetCatalogLoadFailed", "[runtime][scene]") {
+TEST_CASE("loadAndBakeScene: a malformed catalog fails with AssetCatalogLoadFailed", "[runtime][scene]") {
   TempDirGuard dir("malformed_catalog");
   writeFile(dir.path / "catalog.txt", "not a catalog\n");
 
-  const auto result = loadAndInstantiateScene(makeConfig(dir.path / "catalog.txt"), nullptr, VertexInputLayout{});
+  const auto result = loadAndBakeScene(makeConfig(dir.path / "catalog.txt"), nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::AssetCatalogLoadFailed);
 }
 
-TEST_CASE("loadAndInstantiateScene: a scene GUID with no catalog record fails with SceneNotInCatalog",
+TEST_CASE("loadAndBakeScene: a scene GUID with no catalog record fails with SceneNotInCatalog",
           "[runtime][scene]") {
   TempDirGuard dir("scene_not_in_catalog");
   const CookedMeshFixture mesh = cookFixtureMesh(dir.path, "meshes/a.mesh.txt");
   const fs::path catalog =
       CatalogBuilder(dir.path).addMesh("meshes/a.mesh.txt", mesh.artifactPath, mesh.metadataPath).write();
 
-  const auto result = loadAndInstantiateScene(makeConfig(catalog), nullptr, VertexInputLayout{});
+  const auto result = loadAndBakeScene(makeConfig(catalog), nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneNotInCatalog);
 }
 
-TEST_CASE("loadAndInstantiateScene: a scene GUID whose record is not a scene fails with SceneNotInCatalog",
+TEST_CASE("loadAndBakeScene: a scene GUID whose record is not a scene fails with SceneNotInCatalog",
           "[runtime][scene]") {
   TempDirGuard dir("scene_is_a_mesh");
   const CookedMeshFixture mesh = cookFixtureMesh(dir.path, "scene");
   const fs::path catalog = CatalogBuilder(dir.path).addMesh("scene", mesh.artifactPath, mesh.metadataPath).write();
 
-  const auto result = loadAndInstantiateScene(makeConfig(catalog), nullptr, VertexInputLayout{});
+  const auto result = loadAndBakeScene(makeConfig(catalog), nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneNotInCatalog);
 }
 
-TEST_CASE("loadAndInstantiateScene: a scene record with an unsupported artifact schema fails with "
+TEST_CASE("loadAndBakeScene: a scene record with an unsupported artifact schema fails with "
           "UnsupportedArtifactSchema",
           "[runtime][scene]") {
   TempDirGuard dir("scene_schema");
@@ -273,12 +274,12 @@ TEST_CASE("loadAndInstantiateScene: a scene record with an unsupported artifact 
   const fs::path catalog =
       CatalogBuilder(dir.path).add(CatalogAssetType::Scene, "scene", scene.artifactPath, scene.metadataPath, 6).write();
 
-  const auto result = loadAndInstantiateScene(makeConfig(catalog), nullptr, VertexInputLayout{});
+  const auto result = loadAndBakeScene(makeConfig(catalog), nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::UnsupportedArtifactSchema);
 }
 
-TEST_CASE("loadAndInstantiateScene V20: rejects an unreadable scene artifact, no device access", "[runtime][scene]") {
+TEST_CASE("loadAndBakeScene V20: rejects an unreadable scene artifact, no device access", "[runtime][scene]") {
   TempDirGuard dir("bad_scene_artifact");
   const fs::path catalog =
       CatalogBuilder(dir.path)
@@ -287,12 +288,12 @@ TEST_CASE("loadAndInstantiateScene V20: rejects an unreadable scene artifact, no
                     {})
           .write();
 
-  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
+  const auto result = loadAndBakeScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneArtifactLoadFailed);
 }
 
-TEST_CASE("loadAndInstantiateScene V17: a referenced AssetId with no catalog record fails with "
+TEST_CASE("loadAndBakeScene V17: a referenced AssetId with no catalog record fails with "
           "SceneDependencyUnresolved, before any Entity could exist",
           "[runtime][scene]") {
   TempDirGuard dir("unresolved_dependency");
@@ -304,12 +305,12 @@ TEST_CASE("loadAndInstantiateScene V17: a referenced AssetId with no catalog rec
   // device dereference, let alone step (f)'s fromValidatedSceneData()
   // call -- there is no World, and therefore no Entity, anywhere on
   // this Result's own Err path.
-  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
+  const auto result = loadAndBakeScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneDependencyUnresolved);
 }
 
-TEST_CASE("loadAndInstantiateScene: a mesh reference whose record is another asset type fails with "
+TEST_CASE("loadAndBakeScene: a mesh reference whose record is another asset type fails with "
           "DependencyTypeMismatch",
           "[runtime][scene]") {
   TempDirGuard dir("dependency_type_mismatch");
@@ -322,12 +323,12 @@ TEST_CASE("loadAndInstantiateScene: a mesh reference whose record is another ass
                                     mesh.metadataPath, atlantis::asset_system::kTextureArtifactSchemaVersion)
                                .write();
 
-  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
+  const auto result = loadAndBakeScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::DependencyTypeMismatch);
 }
 
-TEST_CASE("loadAndInstantiateScene: a mesh record with an unsupported artifact schema fails with "
+TEST_CASE("loadAndBakeScene: a mesh record with an unsupported artifact schema fails with "
           "UnsupportedArtifactSchema",
           "[runtime][scene]") {
   TempDirGuard dir("mesh_schema");
@@ -338,12 +339,12 @@ TEST_CASE("loadAndInstantiateScene: a mesh record with an unsupported artifact s
                                .addMesh("meshes/a.mesh.txt", mesh.artifactPath, mesh.metadataPath, 3)
                                .write();
 
-  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
+  const auto result = loadAndBakeScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::UnsupportedArtifactSchema);
 }
 
-TEST_CASE("loadAndInstantiateScene V20: a dependency whose own artifact fails to load fails with "
+TEST_CASE("loadAndBakeScene V20: a dependency whose own artifact fails to load fails with "
           "SceneDependencyLoadFailed",
           "[runtime][scene]") {
   TempDirGuard dir("dependency_load_failed");
@@ -355,12 +356,12 @@ TEST_CASE("loadAndInstantiateScene V20: a dependency whose own artifact fails to
                                .addMesh("meshes/a.mesh.txt", dir.path / "does_not_exist.amesh", mesh.metadataPath)
                                .write();
 
-  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
+  const auto result = loadAndBakeScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneDependencyLoadFailed);
 }
 
-TEST_CASE("loadAndInstantiateScene: a scene with no Renderable references succeeds with an empty "
+TEST_CASE("loadAndBakeScene: a scene with no Renderable references succeeds with an empty "
           "meshResourceMap and never touches device",
           "[runtime][scene]") {
   TempDirGuard dir("no_renderables");
@@ -379,14 +380,14 @@ TEST_CASE("loadAndInstantiateScene: a scene with no Renderable references succee
   const fs::path catalog =
       CatalogBuilder(dir.path).addScene("scene", CookedSceneFixture{artifactPath, metadataPath}, {}).write();
 
-  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
+  auto result = loadAndBakeScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isOk());
   CHECK(result.value().meshResourceMap.empty());
-  CHECK(result.value().world.renderableEntities().empty());
+  CHECK(atlantis::runtime::collectRenderables(result.value().scene).empty());
 }
 
-TEST_CASE("loadAndInstantiateScene: the outcome carries the scene's GUID and its EntityGuid -> EntityId map beside "
-          "the World (Plan 0047 P17)",
+TEST_CASE("loadAndBakeScene: the outcome carries the scene's GUID and its EntityGuid -> EntityId map beside "
+          "the baked World (Plan 0047 P17, Spec 0051 R7)",
           "[runtime][scene][entity_guid]") {
   TempDirGuard dir("scene_identity");
   const fs::path sourcePath = dir.path / "plain.scene.txt";
@@ -402,17 +403,17 @@ TEST_CASE("loadAndInstantiateScene: the outcome carries the scene's GUID and its
   const fs::path catalog =
       CatalogBuilder(dir.path).addScene("scene", CookedSceneFixture{artifactPath, metadataPath}, {}).write();
 
-  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
+  const auto result = loadAndBakeScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isOk());
   CHECK(result.value().sceneGuid == testAssetGuid("scene"));
-  CHECK(result.value().entities.size() == 1);
-  const auto entity = result.value().entities.find(
+  CHECK(result.value().scene.entities.size() == 1);
+  const auto entity = result.value().scene.entities.find(
       atlantis::asset_system::parseEntityGuid("e68122c6-1bb2-8f1f-b185-358f58780b05").value());
   REQUIRE(entity.has_value());
-  CHECK(result.value().world.isValid(*entity));
+  CHECK(result.value().scene.world.isValid(*entity));
 }
 
-TEST_CASE("loadAndInstantiateScene V19: load order follows first-reference order, not AssetId-numeric order",
+TEST_CASE("loadAndBakeScene V19: load order follows first-reference order, not AssetId-numeric order",
           "[runtime][scene]") {
   // firstReferencedLogicalPath's own artifact is deliberately missing;
   // secondReferencedLogicalPath's own artifact is real and valid, and
@@ -448,7 +449,7 @@ TEST_CASE("loadAndInstantiateScene V19: load order follows first-reference order
           .addMesh(secondReferenced, validSecondMesh.artifactPath, validSecondMesh.metadataPath)
           .write();
 
-  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
+  const auto result = loadAndBakeScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneDependencyLoadFailed);
 }
@@ -459,7 +460,7 @@ TEST_CASE("loadAndInstantiateScene V19: load order follows first-reference order
 // therefore caught before device is ever dereferenced, even though this
 // scene's own mesh reference IS resolvable (only resolved, never loaded, on
 // this path).
-TEST_CASE("loadAndInstantiateScene: an unresolvable material AssetId fails scene load fatally with "
+TEST_CASE("loadAndBakeScene: an unresolvable material AssetId fails scene load fatally with "
           "SceneDependencyUnresolved (Spec 0018 D4 case 2), before any Entity could exist, no device access",
           "[runtime][scene][material]") {
   TempDirGuard dir("unresolved_material");
@@ -472,7 +473,7 @@ TEST_CASE("loadAndInstantiateScene: an unresolvable material AssetId fails scene
                                .addMesh("meshes/a.mesh.txt", mesh.artifactPath, mesh.metadataPath)
                                .write();
 
-  const auto result = loadAndInstantiateScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
+  const auto result = loadAndBakeScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneDependencyUnresolved);
 }

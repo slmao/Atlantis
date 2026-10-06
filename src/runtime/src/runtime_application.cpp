@@ -77,30 +77,32 @@ static_assert(offsetof(Vertex, tangent) == atlantis::asset_system::kMeshArtifact
 static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrideBytes);
 
 // Plan 0015 Section D10 step (g) / final review round (2026-08-24):
-// the two-step publish in initializeSteps() below (world_.emplace(),
+// the two-step publish in initializeSteps() below (scene_.emplace(),
 // then meshResourceMap_'s own move-assignment) is genuinely atomic in
 // effect, not merely "unlikely to fail" -- both operations are
 // unconditionally noexcept, locked down here as a compile-time-
 // enforced invariant rather than argued in prose or guarded with a
-// catch/rollback. World's own move constructor is noexcept by its own
-// declaration (world.h); std::unordered_map<AssetId, Mesh>'s own
+// catch/rollback. BakedScene's move constructor is noexcept (Plan 0051
+// P4: ecs::World's is, by its own declaration); std::unordered_map<AssetId, Mesh>'s own
 // move-assignment operator is noexcept per the standard's own
 // [unord.map] clause whenever its Allocator/Hash/KeyEqual satisfy that
 // clause's own noexcept condition, which the default
 // std::allocator/std::hash<AssetId>/std::equal_to<AssetId> this map
 // instantiates with all do. Given both hold, the first publish step
-// cannot throw if it runs at all; and since world_ starts
+// cannot throw if it runs at all; and since scene_ starts
 // std::nullopt and is written exactly once over RuntimeApplication's
 // own lifetime (initializeSteps() runs once, from createRuntimeApplication()),
 // there is no prior engaged state for emplace() to destroy first
-// either. There is therefore no reachable state where world_ is
+// either. There is therefore no reachable state where scene_ is
 // populated but meshResourceMap_ is not, or vice versa -- if either of
 // these static_asserts were ever to start failing (e.g. a future
 // change to Mesh's own type altering Hash/KeyEqual), that would be a
 // compile error here, not a latent runtime risk discovered later.
-static_assert(std::is_nothrow_move_constructible_v<atlantis::world::World>,
-              "world_.emplace(std::move(world)) in initializeSteps() requires World's own move constructor to be "
-              "noexcept for the scene-load publish step to be genuinely atomic");
+// Plan 0051 P4: the published scene is now the bake output (Spec 0051);
+// ecs::World's move constructor is noexcept by its own declaration.
+static_assert(std::is_nothrow_move_constructible_v<atlantis::world::BakedScene>,
+              "scene_.emplace(std::move(outcome.scene)) in initializeSteps() requires BakedScene's move constructor "
+              "to be noexcept for the scene-load publish step to be genuinely atomic");
 static_assert(
     std::is_nothrow_move_assignable_v<decltype(std::declval<SceneLoadOutcome>().meshResourceMap)>,
     "meshResourceMap_ = std::move(outcome.meshResourceMap) in initializeSteps() requires this move-assignment to "
@@ -118,10 +120,6 @@ static_assert(
     std::is_nothrow_move_assignable_v<decltype(std::declval<SceneLoadOutcome>().textureDataMap)>,
     "textureDataMap_ = std::move(outcome.textureDataMap) in initializeSteps() requires this move-assignment to "
     "be noexcept for the scene-load publish step to be genuinely atomic");
-// Plan 0047 P17: the scene's persistent-identity map joins the same publish.
-static_assert(std::is_nothrow_move_assignable_v<atlantis::world::SceneEntityMap>,
-              "sceneEntities_ = std::move(outcome.entities) in initializeSteps() requires this move-assignment to be "
-              "noexcept for the scene-load publish step to be genuinely atomic");
 
 [[nodiscard]] std::optional<std::vector<std::uint32_t>> loadSpirvFile(const std::string& path) {
   std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -1054,14 +1052,14 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // Section D9) and its own single-asset load/Mesh-create steps: mesh
   // resolution and loading are now driven entirely by the scene's own
   // declared Renderable references and dependency manifest, not a
-  // single hardcoded AssetId. Every early-return happens before world_/
+  // single hardcoded AssetId. Every early-return happens before scene_/
   // meshResourceMap_ are ever touched -- both remain in their own
   // default, harmless states (std::nullopt / empty) on any failure
   // path, so RuntimeApplication never reaches Running with a partially-
   // published scene.
-  auto sceneLoadResult = loadAndInstantiateScene(config, device_.get(), vertexInputLayout_);
+  auto sceneLoadResult = loadAndBakeScene(config, device_.get(), vertexInputLayout_);
   if (sceneLoadResult.isErr()) {
-    ATLANTIS_LOG_ERROR("loadAndInstantiateScene() failed");
+    ATLANTIS_LOG_ERROR("loadAndBakeScene() failed");
     lifecycle_.markFailed();
     return atlantis::Result<std::monostate, RuntimeInitError>::Err(sceneLoadResult.error());
   }
@@ -1079,9 +1077,9 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
     loadedEnvironment = std::move(environmentResult.value());
   }
 
-  // Publish -- only now, both fully built (D10 step (g)). World is
-  // move-constructible but NOT move-assignable (ADR-0049/Spec 0014,
-  // unchanged) -- world_ is std::optional<World> and this is emplace(),
+  // Publish -- only now, both fully built (D10 step (g)). BakedScene is
+  // move-constructible but NOT move-assignable (its ecs::World is not,
+  // Spec 0050) -- scene_ is std::optional<BakedScene> and this is emplace(),
   // i.e. in-place move-CONSTRUCTION, never assignment. meshResourceMap_
   // is a plain std::unordered_map, whose own move-assignment is not
   // deleted, so plain assignment is correct there. Both steps are
@@ -1090,20 +1088,18 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // genuinely atomic in effect (if the first step runs, it cannot
   // throw, and the second cannot throw either), not merely assumed
   // safe; no catch/rollback exists here because none is needed.
-  world_.emplace(std::move(outcome.world));
+  scene_.emplace(std::move(outcome.scene));
   meshResourceMap_ = std::move(outcome.meshResourceMap);
   materialDataMap_ = std::move(outcome.materialDataMap);
   textureDataMap_ = std::move(outcome.textureDataMap);
   sceneGuid_ = outcome.sceneGuid;
-  sceneEntities_ = std::move(outcome.entities);
   environmentData_ = std::move(loadedEnvironment);
 
   // Plan 0044 P9 (ruling O2): a scene whose active camera turns bloom on
   // needs the bloom Pipelines; without them, fail by name rather than
   // silently rendering the scene without its bloom.
-  if (const auto activeCamera = world_->activeCamera(); activeCamera.has_value()) {
-    const auto camera = world_->getCamera(*activeCamera);
-    sceneWantsBloom_ = camera.isOk() && camera.value().bloom.strength > 0.0f;
+  if (const auto activeCamera = collectActiveCamera(*scene_); activeCamera.has_value()) {
+    sceneWantsBloom_ = activeCamera->camera.bloom.strength > 0.0f;
   }
   if (sceneWantsBloom_ && !bloomPipelines_[0]) {
     ATLANTIS_LOG_ERROR("The scene's camera turns bloom on, but no bloom shader paths are configured");
@@ -1370,16 +1366,16 @@ void RuntimeApplication::runFrame() {
     return;  // nothing valid to draw yet -- target dropped via RAII, no leaked GPU state
   }
 
-  // Plan 0014 Section D8: World-driven extraction replaces the prior
+  // Plan 0014 Section D8: scene-driven extraction replaces the prior
   // fixed single-cube camera write + DrawItem build. Plan 0015 Section
-  // D10: world_ is std::optional<World>, guaranteed populated here --
-  // runFrame() is only ever called once RuntimeApplication has reached
-  // Running, which only happens after initializeSteps() step (g) has
-  // already published it (see world_'s own declaration comment,
-  // runtime_application.h).
-  world_->updateTransforms();
-
-  const std::optional<atlantis::world::EntityId> activeCamera = world_->activeCamera();
+  // D10: scene_ is guaranteed populated here -- runFrame() is only ever
+  // called once RuntimeApplication has reached Running, which only
+  // happens after initializeSteps() step (g) has already published it.
+  // Spec 0051 (ADR-0102 D6, Plan 0051 P4): the frame reads only the baked
+  // scene, through the collect*() functions the image-regression fixtures
+  // share (ruling Q7 V3). There is no transform pass: the hierarchy was
+  // resolved at bake time (ruling Q2 H1).
+  const std::optional<ActiveCameraInput> activeCamera = collectActiveCamera(*scene_);
   if (!activeCamera.has_value()) {
     // Every scene this Plan's own decodeScene()/ValidatedSceneData
     // pipeline accepts either has no active camera declared at all (an
@@ -1390,24 +1386,19 @@ void RuntimeApplication::runFrame() {
     // construction bug, the same "should never happen in correct
     // operation" category Spec 0013 already established for a second
     // SurfaceCreated/an unexpected SurfaceDestroyed.
-    ATLANTIS_LOG_ERROR("runFrame(): World has no active camera");
+    ATLANTIS_LOG_ERROR("runFrame(): the baked scene has no active camera");
     lifecycle_.markFailed();
     return;
   }
-  activeCameraEntity_ = activeCamera;  // cached for logging only; World itself is the source of truth
+  activeCameraEntity_ = scene_->activeCamera;  // cached for logging only; scene_ is the source of truth
 
-  const auto cameraWorldMatrixResult = world_->getWorldMatrix(*activeCamera);
-  ATLANTIS_CHECK_MSG(cameraWorldMatrixResult.isOk(),
-                      "runFrame(): getWorldMatrix() failed for the handle activeCamera() just returned");
-  const auto cameraComponentResult = world_->getCamera(*activeCamera);
-  ATLANTIS_CHECK_MSG(cameraComponentResult.isOk(),
-                      "runFrame(): getCamera() failed for the handle activeCamera() just returned");
-  const atlantis::world::Camera cameraComponent = cameraComponentResult.value();
+  const Mat4& cameraWorldMatrix = activeCamera->worldMatrix;
+  const atlantis::world::Camera cameraComponent = activeCamera->camera;
 
   const float aspect =
       currentExtent.height != 0 ? static_cast<float>(currentExtent.width) / static_cast<float>(currentExtent.height)
                                  : 1.0f;
-  const auto extractionResult = extractCameraMatrices(cameraWorldMatrixResult.value(), cameraComponent.fovYRadians,
+  const auto extractionResult = extractCameraMatrices(cameraWorldMatrix, cameraComponent.fovYRadians,
                                                         cameraComponent.nearZ, cameraComponent.farZ, aspect);
   if (extractionResult.isErr()) {
     // This Plan's own fixed camera Transform/Camera values (D9) are
@@ -1430,23 +1421,14 @@ void RuntimeApplication::runFrame() {
   // primitive because it is the same, already-safe write point the
   // Camera write immediately above already occupies, downstream of
   // VulkanPresentation::acquireNextTarget()'s own pre-existing Step 0
-  // drain (vulkan_presentation.cpp) and world_->updateTransforms()
-  // (above) -- see Spec 0022's own "Corrected Motivation"/"Corrected
-  // Design" sections for the full evidence. World::setLight()/
-  // setLocalTransform()/setParent()/createEntity()/destroyEntity()
-  // calls made against World are all reflected here on the next
-  // successful frame reaching this point -- lightEntities()/getLight()
-  // are live, uncached reads, and updateTransforms() above already
-  // refreshes every entity's own cachedWorldMatrix unconditionally,
-  // every frame, before this block runs.
-  std::vector<LightExtractionInput> lightInputs;
-  for (const atlantis::world::EntityId& id : world_->lightEntities()) {
-    const auto lightResult = world_->getLight(id);
-    const auto lightWorldMatrixResult = world_->getWorldMatrix(id);
-    ATLANTIS_CHECK_MSG(lightResult.isOk() && lightWorldMatrixResult.isOk(),
-                        "runFrame(): getLight()/getWorldMatrix() failed for a handle lightEntities() just returned");
-    lightInputs.push_back({lightResult.value(), lightWorldMatrixResult.value()});
-  }
+  // drain (vulkan_presentation.cpp) -- see Spec 0022's own "Corrected Motivation"/"Corrected
+  // Design" sections for the full evidence. Spec 0051 (Spec 0022's
+  // Correction 2026-10-06): Light and WorldMatrix component edits and Light
+  // entity creation/removal on the baked scene are reflected here on the
+  // next successful frame reaching this point -- collectLights() is a live,
+  // uncached query; local-Transform and parent edits are not (the baked
+  // world has no hierarchy).
+  const std::vector<LightExtractionInput> lightInputs = collectLights(*scene_);
   const auto lightingResult = extractFrameLightingData(lightInputs);
   if (lightingResult.isErr()) {
     // extractFrameLightingData()'s own two real failure modes are not
@@ -1495,7 +1477,7 @@ void RuntimeApplication::runFrame() {
   // extractCameraMatrices(), independently, via extractCameraWorldPosition().
   auto* cameraWorldPositionData =
       reinterpret_cast<CameraWorldPositionData*>(cameraData + kCameraUniformWorldPositionOffsetBytes / sizeof(float));
-  *cameraWorldPositionData = extractCameraWorldPosition(cameraWorldMatrixResult.value());
+  *cameraWorldPositionData = extractCameraWorldPosition(cameraWorldMatrix);
   // Plan 0042 Milestone 3 (Spec 0042 R7): the same position, for
   // drawFrame()'s back-to-front ordering of blended draws.
   const std::array<float, 3> cameraWorldPosition{cameraWorldPositionData->x, cameraWorldPositionData->y,
@@ -1563,22 +1545,15 @@ void RuntimeApplication::runFrame() {
 
   // Plan 0018 Section P12 (Spec 0018 D8 step 1): the pending set is a
   // pure function of current state, recomputed every frame. referencedMaterialIds
-  // is collected from World's own already-deterministic
-  // renderableEntities() iteration -- never an unordered_map -- so
+  // is collected from the baked scene's node-ordered renderables
+  // (collectRenderables()) -- never an unordered_map -- so
   // realizePendingMaterials()'s own upload-pass recording order stays
   // reproducible frame-to-frame (Human Review Approval item 3).
-  std::vector<atlantis::asset_system::AssetId> referencedMaterialIds;
-  for (const atlantis::world::EntityId& id : world_->renderableEntities()) {
-    const auto renderableResult = world_->getRenderable(id);
-    ATLANTIS_CHECK_MSG(renderableResult.isOk(),
-                        "runFrame(): getRenderable() failed for a handle renderableEntities() just returned");
-    if (const auto& materialAsset = renderableResult.value().materialAsset; materialAsset.has_value()) {
-      if (std::find(referencedMaterialIds.begin(), referencedMaterialIds.end(), *materialAsset) ==
-          referencedMaterialIds.end()) {
-        referencedMaterialIds.push_back(*materialAsset);
-      }
-    }
-  }
+  // Spec 0051 (Plan 0051 P3): one collection per frame feeds both the
+  // referenced-material list and the DrawItem walk below.
+  const std::vector<RenderableExtractionInput> renderables = collectRenderables(*scene_);
+  const std::vector<atlantis::asset_system::AssetId> referencedMaterialIds =
+      collectReferencedMaterialIds(renderables);
   std::vector<atlantis::asset_system::AssetId> alreadyRealizedMaterialIds;
   alreadyRealizedMaterialIds.reserve(materialResourceMap_.size());
   for (const auto& [assetId, material] : materialResourceMap_) alreadyRealizedMaterialIds.push_back(assetId);
@@ -1683,11 +1658,8 @@ void RuntimeApplication::runFrame() {
   for (const auto& [assetId, candidate] : realizedCandidates) knownMaterialIds.push_back(assetId);
 
   std::vector<DrawItem> drawItems;
-  for (const atlantis::world::EntityId& id : world_->renderableEntities()) {
-    const auto renderableResult = world_->getRenderable(id);
-    ATLANTIS_CHECK_MSG(renderableResult.isOk(),
-                        "runFrame(): getRenderable() failed for a handle renderableEntities() just returned");
-    const auto resolveResult = resolveMeshAsset(renderableResult.value().meshAsset, knownMeshAssetIds);
+  for (const RenderableExtractionInput& renderable : renderables) {
+    const auto resolveResult = resolveMeshAsset(renderable.renderable.meshAsset, knownMeshAssetIds);
     if (resolveResult.isErr()) {
       // Recoverable, per-entity: a single bad reference should not
       // halt an otherwise-valid scene, matching the general "keep
@@ -1696,9 +1668,6 @@ void RuntimeApplication::runFrame() {
       ATLANTIS_LOG_ERROR("runFrame(): resolveMeshAsset() could not resolve a Renderable entity's own AssetId");
       continue;
     }
-    const auto worldMatrixResult = world_->getWorldMatrix(id);
-    ATLANTIS_CHECK_MSG(worldMatrixResult.isOk(),
-                        "runFrame(): getWorldMatrix() failed for a handle renderableEntities() just returned");
 
     // Plan 0018 Section P14 (Spec 0018 D4's three-state semantics):
     // absent -> fallbackMaterial_ (always valid once Running, Plan 0024
@@ -1709,7 +1678,7 @@ void RuntimeApplication::runFrame() {
     // -> skip this entity for this frame only (never the fallback --
     // D4 case 3, distinct from case 1 by construction).
     const atlantis::renderer::Material* resolvedMaterial = fallbackMaterial_.get();
-    if (const auto& materialAsset = renderableResult.value().materialAsset; materialAsset.has_value()) {
+    if (const auto& materialAsset = renderable.renderable.materialAsset; materialAsset.has_value()) {
       const auto materialResolveResult = resolveMaterialAsset(*materialAsset, knownMaterialIds);
       if (materialResolveResult.isErr()) {
         ATLANTIS_LOG_ERROR(
@@ -1742,7 +1711,7 @@ void RuntimeApplication::runFrame() {
                           "in materialDataMap_ (Phase 1 load)");
       if (materialDataIt->second.kind == atlantis::asset_system::MaterialKind::LitTextured ||
           materialDataIt->second.kind == atlantis::asset_system::MaterialKind::PbrDirectLit) {
-        const auto conformalResult = checkConformalTransform(worldMatrixResult.value());
+        const auto conformalResult = checkConformalTransform(renderable.worldMatrix);
         if (conformalResult.isErr()) {
           // Recoverable, per-entity, per-frame -- never scene-load-
           // fatal, matching this loop's own established "keep going,
@@ -1768,9 +1737,9 @@ void RuntimeApplication::runFrame() {
     }
 
     DrawItem item;
-    item.mesh = &meshResourceMap_.at(renderableResult.value().meshAsset);
+    item.mesh = &meshResourceMap_.at(renderable.renderable.meshAsset);
     item.material = resolvedMaterial;
-    item.objectToWorld = worldMatrixResult.value();
+    item.objectToWorld = renderable.worldMatrix;
     drawItems.push_back(item);
   }
 

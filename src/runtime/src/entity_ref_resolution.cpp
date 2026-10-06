@@ -17,13 +17,13 @@ const char* toString(EntityRefError error) noexcept {
   return "(unrecognized EntityRefError)";
 }
 
-atlantis::Result<atlantis::world::EntityId, EntityRefError> resolveEntityRef(
+atlantis::Result<atlantis::world::ecs::EntityId, EntityRefError> resolveEntityRef(
     const LoadedSceneView& loaded, const atlantis::asset_system::EntityRef& ref) {
-  using ResultT = atlantis::Result<atlantis::world::EntityId, EntityRefError>;
+  using ResultT = atlantis::Result<atlantis::world::ecs::EntityId, EntityRefError>;
   if (ref.scene != loaded.sceneGuid) return ResultT::Err(EntityRefError::UnknownScene);
-  const auto entity = loaded.entities.find(ref.entity);
+  const auto entity = loaded.scene.entities.find(ref.entity);
   if (!entity.has_value()) return ResultT::Err(EntityRefError::UnknownEntity);
-  if (!loaded.world.isValid(*entity)) return ResultT::Err(EntityRefError::DeadEntity);
+  if (!loaded.scene.world.isValid(*entity)) return ResultT::Err(EntityRefError::DeadEntity);
   return ResultT::Ok(*entity);
 }
 

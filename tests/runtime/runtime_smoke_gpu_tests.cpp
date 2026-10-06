@@ -4,8 +4,10 @@
 #include <atlantis/runtime/runtime_application.h>
 #include <atlantis/runtime/scene_extraction.h>
 #include <atlantis/world/light.h>
+#include <atlantis/world/ecs/world_components.h>
+#include <atlantis/world/scene_instantiation.h>
 #include <atlantis/world/transform.h>
-#include <atlantis/world/world.h>
+#include <atlantis/world/world_matrix.h>
 
 #include <array>
 #include <cstddef>
@@ -35,11 +37,12 @@ using atlantis::runtime::createRuntimeApplication;
 using atlantis::runtime::FrameLightingData;
 using atlantis::runtime::RuntimeApplication;
 using atlantis::runtime::RuntimeExitReason;
-using atlantis::world::EntityId;
+using atlantis::world::BakedScene;
 using atlantis::world::Light;
 using atlantis::world::LightKind;
 using atlantis::world::Transform;
-using atlantis::world::World;
+using atlantis::world::WorldMatrix;
+namespace ecs = atlantis::world::ecs;
 
 // Plan 0014 Section D-Step 6: the one narrowly-scoped friend
 // RuntimeApplication declares for this test only (see
@@ -53,13 +56,12 @@ using atlantis::world::World;
 // never a new friend declaration, never a new public API on
 // RuntimeApplication itself (runtime_application.h's own `friend struct
 // RuntimeSmokeTestAccess;` is already generic; granting this struct one
-// more static method needs no header change at all). `world()` exposes
-// the same `world_` member `renderableEntityCount()` already reads, by
-// mutable reference, so a test can call World's own already-public
-// createEntity()/setLight()/setLocalTransform()/setParent() directly
-// against the real, running app's own live World -- never a second,
-// test-private World instance, and never a duplicated scene-load or
-// frame-loop path. `lightingPayloadBytes()` reads the real
+// more static method needs no header change at all). `scene()` exposes
+// the baked scene (Spec 0051) `renderableEntityCount()` already reads, by
+// mutable reference, so a test can edit the real, running app's own live
+// Runtime World through the ECS's public createEntity()/add()/set()/
+// destroyEntity() -- never a second, test-private instance, and never a
+// duplicated scene-load or frame-loop path. `lightingPayloadBytes()` reads the real
 // `cameraBuffer_`'s own mapped bytes directly -- a host-visible,
 // host-coherent read the app's own real frame writes into every frame
 // (Spec 0022's own confirmed HOST_COHERENT contract) -- so this is a
@@ -101,8 +103,8 @@ static_assert(kCameraWorldPositionByteOffset == 2224);
 static_assert(kCameraWorldPositionByteOffset + sizeof(CameraWorldPositionData) == 2240);
 
 struct RuntimeSmokeTestAccess {
-  static std::size_t renderableEntityCount(const RuntimeApplication& app) {
-    return app.world_->renderableEntities().size();
+  static std::size_t renderableEntityCount(RuntimeApplication& app) {
+    return collectRenderables(*app.scene_).size();
   }
 
   // Plan 0028 Milestone 2: one GPU Mesh/Material resource per distinct
@@ -111,7 +113,7 @@ struct RuntimeSmokeTestAccess {
   static std::size_t meshResourceMapSize(const RuntimeApplication& app) { return app.meshResourceMap_.size(); }
   static std::size_t materialResourceMapSize(const RuntimeApplication& app) { return app.materialResourceMap_.size(); }
 
-  [[nodiscard]] static World& world(RuntimeApplication& app) { return *app.world_; }
+  [[nodiscard]] static BakedScene& scene(RuntimeApplication& app) { return *app.scene_; }
 
   // Plan 0044 Milestone 1: the three bloom Pipelines, built at startup when
   // the bloom shader paths are set; sceneWantsBloom_ from the active camera.
@@ -342,10 +344,10 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   // Test-safety note (Human Review's own explicit requirement): this
   // extension never writes into cameraBuffer_'s own mapped bytes
   // directly, and never calls any new or unapproved synchronization API.
-  // It only calls World's own already-public
-  // createEntity()/setLight()/setLocalTransform() against the real,
-  // running app's own live World between ordinary app.runFrame() calls
-  // -- the identical thing World::setLight() is for -- and only ever
+  // It only edits the real, running app's own baked Runtime World through
+  // the ECS's public createEntity()/add()/set()/destroyEntity() between
+  // ordinary app.runFrame() calls (Plan 0051 P9: Spec 0022's surviving
+  // contract, its Correction 2026-10-06) -- and only ever
   // *reads* cameraBuffer_'s own bytes (via lightingPayloadBytes()), never
   // writes them.
   //
@@ -379,25 +381,27 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   REQUIRE(beforeAnyLight.directionalLightCount == 1);
   REQUIRE(beforeAnyLight.pointLightCount == 0);
 
-  // World::createEntity()/setLight() against the real, running app's own
-  // live World -- the exact same public World API World::setLight()'s
-  // own existing GPU test coverage already exercises, called here
-  // against Runtime's own real instance instead of a fixture's.
-  World& world = RuntimeSmokeTestAccess::world(app);
-  const EntityId newLight = world.createEntity();
+  // Plan 0051 P9 (Spec 0022's surviving contract, Correction 2026-10-06):
+  // a Light entity created on the running app's own baked Runtime World --
+  // the ECS's public createEntity()/add() -- with its world matrix given
+  // directly, since the baked world has no hierarchy to resolve one.
+  BakedScene& scene = RuntimeSmokeTestAccess::scene(app);
+  const ecs::EntityId newLight = scene.world.createEntity();
   Light point;
   point.kind = LightKind::Point;
   point.color = {0.2f, 0.4f, 0.9f};
   point.intensity = 2.5f;
   point.range = 5.0f;
-  REQUIRE(world.setLight(newLight, point).isOk());
+  REQUIRE(scene.world.add(newLight, point).isOk());
   Transform lightTransform;
   lightTransform.localPosition = {1.0f, 1.0f, 1.0f};
-  REQUIRE(world.setLocalTransform(newLight, lightTransform).isOk());
+  REQUIRE(scene.world.add(newLight, lightTransform).isOk());
+  WorldMatrix lightWorld;  // identity rotation and scale: a translation alone
+  lightWorld.column3 = {1.0f, 1.0f, 1.0f, 1.0f};
+  REQUIRE(scene.world.add(newLight, lightWorld).isOk());
 
-  // The next real windowed frame -- a real acquire/Step 0/
-  // updateTransforms()/submit()/present() cycle, identical in shape to
-  // the 3 frames above -- publishes the mutation above.
+  // The next real windowed frame -- a real acquire/Step 0/submit/present
+  // cycle, identical in shape to the 3 frames above -- publishes it.
   app.runFrame();
   REQUIRE(app.shouldContinue());
   const FrameLightingData afterLightAdded = RuntimeSmokeTestAccess::lightingPayloadBytes(app);
@@ -411,14 +415,11 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   CHECK(afterLightAdded.pointLights[0].color[2] == 0.9f);
   CHECK(afterLightAdded.pointLights[0].intensity == 2.5f);
 
-  // setLocalTransform() alone, on the same entity -- proves
-  // World::updateTransforms()'s own hierarchy/leaf recompute (already
-  // unconditional, every frame, before Lighting extraction -- Plan
-  // 0022's own Milestone 1) is what makes this observable, not a
-  // special-cased "light just changed" path.
-  Transform movedTransform;
-  movedTransform.localPosition = {-2.0f, 3.0f, 0.5f};
-  REQUIRE(world.setLocalTransform(newLight, movedTransform).isOk());
+  // A world-matrix edit alone, on the same entity, is seen by the next
+  // frame's collection -- a live, uncached query.
+  WorldMatrix moved;
+  moved.column3 = {-2.0f, 3.0f, 0.5f, 1.0f};
+  REQUIRE(scene.world.set(newLight, moved).isOk());
 
   app.runFrame();
   REQUIRE(app.shouldContinue());
@@ -427,6 +428,16 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   CHECK(afterTransformMoved.pointLights[0].position[0] == -2.0f);
   CHECK(afterTransformMoved.pointLights[0].position[1] == 3.0f);
   CHECK(afterTransformMoved.pointLights[0].position[2] == 0.5f);
+
+  // Plan 0051 P9 (new): Light entity removal is seen by the next frame, and
+  // the freed slot is zeroed.
+  REQUIRE(scene.world.destroyEntity(newLight).isOk());
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const FrameLightingData afterLightRemoved = RuntimeSmokeTestAccess::lightingPayloadBytes(app);
+  CHECK(afterLightRemoved.directionalLightCount == 1);
+  CHECK(afterLightRemoved.pointLightCount == 0);
+  CHECK(afterLightRemoved.pointLights[0].intensity == 0.0f);
 
   const RuntimeExitReason reason = app.shutdown();
   REQUIRE(reason == RuntimeExitReason::Success);

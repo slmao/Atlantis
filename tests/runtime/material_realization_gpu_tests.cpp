@@ -18,6 +18,7 @@
 #include <atlantis/runtime/init_error.h>
 #include <atlantis/runtime/material_realization.h>
 #include <atlantis/runtime/scene_load.h>
+#include <atlantis/runtime/scene_extraction.h>
 #include <atlantis/shader_system/reflection_loader.h>
 #include <atlantis/shader_system/rhi_integration/vertex_input_mapping.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
@@ -622,7 +623,7 @@ TEST_CASE("A PbrDirectLit material with a normal map uploads base color and norm
 }
 
 // Plan 0042 Milestone 3 (Plan 0042 Q2, option A, human-ruled 2026-09-24):
-// createMesh() -- reached here through loadAndInstantiateScene()'s mesh
+// createMesh() -- reached here through loadAndBakeScene()'s mesh
 // loop -- now reads a layout's stride and location-0 position offset once,
 // to compute the Mesh's bounds centre, and an empty layout is a checked
 // programmer error. The meshes these tests load are cooked mesh
@@ -639,7 +640,7 @@ namespace {
 
 // ---------------------------------------------------------------------
 // Plan 0018 Milestone 11 regression coverage (PR #88 final review round):
-// the three loadAndInstantiateScene() material-loop cases the Approved
+// the three loadAndBakeScene() material-loop cases the Approved
 // Plan Milestone 11 promised (a material that resolves and loads but
 // whose own embedded textureAsset reference does not resolve also fails
 // scene load fatally; a scene with a resolvable but unloadable material
@@ -665,7 +666,7 @@ using atlantis::asset_system::cookScene;
 using atlantis::asset_system::cookStaticMesh;
 using atlantis::asset_system::cookTexture;
 using atlantis::runtime::BootstrapConfig;
-using atlantis::runtime::loadAndInstantiateScene;
+using atlantis::runtime::loadAndBakeScene;
 using atlantis::runtime::RuntimeInitError;
 
 // Per-process tag: catch_discover_tests runs each TEST_CASE in its own
@@ -813,7 +814,7 @@ struct CookedSceneFixture {
 
 }  // namespace
 
-TEST_CASE("loadAndInstantiateScene: a material that resolves and loads but whose own embedded texture reference "
+TEST_CASE("loadAndBakeScene: a material that resolves and loads but whose own embedded texture reference "
           "does not resolve fails scene load fatally with SceneDependencyUnresolved, a distinct code path from an "
           "unresolvable material AssetId itself",
           "[runtime][gpu][scene][material]") {
@@ -839,12 +840,12 @@ TEST_CASE("loadAndInstantiateScene: a material that resolves and loads but whose
   catalogBuilder.addScene("scene", scene, {});
   const BootstrapConfig config = makeSceneConfig(catalogBuilder.write());
 
-  const auto result = loadAndInstantiateScene(config, device.get(), meshArtifactPositionLayout());
+  const auto result = loadAndBakeScene(config, device.get(), meshArtifactPositionLayout());
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneDependencyUnresolved);
 }
 
-TEST_CASE("loadAndInstantiateScene: a resolvable but unloadable material with a missing artifact fails scene load "
+TEST_CASE("loadAndBakeScene: a resolvable but unloadable material with a missing artifact fails scene load "
           "fatally with SceneDependencyLoadFailed",
           "[runtime][gpu][scene][material]") {
   auto deviceResult = atlantis::vulkan_backend::createDevice(
@@ -868,12 +869,12 @@ TEST_CASE("loadAndInstantiateScene: a resolvable but unloadable material with a 
   catalogBuilder.addScene("scene", scene, {});
   const BootstrapConfig config = makeSceneConfig(catalogBuilder.write());
 
-  const auto result = loadAndInstantiateScene(config, device.get(), meshArtifactPositionLayout());
+  const auto result = loadAndBakeScene(config, device.get(), meshArtifactPositionLayout());
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::SceneDependencyLoadFailed);
 }
 
-TEST_CASE("loadAndInstantiateScene: two entities referencing the same material AssetId produce exactly one "
+TEST_CASE("loadAndBakeScene: two entities referencing the same material AssetId produce exactly one "
           "materialDataMap and textureDataMap entry each, the D10 CPU-load dedup contract",
           "[runtime][gpu][scene][material]") {
   auto deviceResult = atlantis::vulkan_backend::createDevice(
@@ -898,15 +899,15 @@ TEST_CASE("loadAndInstantiateScene: two entities referencing the same material A
   catalogBuilder.addScene("scene", scene, {});
   const BootstrapConfig config = makeSceneConfig(catalogBuilder.write());
 
-  const auto result = loadAndInstantiateScene(config, device.get(), meshArtifactPositionLayout());
+  auto result = loadAndBakeScene(config, device.get(), meshArtifactPositionLayout());
   REQUIRE(result.isOk());
   CHECK(result.value().meshResourceMap.size() == 2);   // two distinct meshes, not deduped
   CHECK(result.value().materialDataMap.size() == 1);   // one distinct material, deduped
   CHECK(result.value().textureDataMap.size() == 1);    // one distinct texture, deduped
-  CHECK(result.value().world.renderableEntities().size() == 2);
+  CHECK(atlantis::runtime::collectRenderables(result.value().scene).size() == 2);
 }
 
-TEST_CASE("loadAndInstantiateScene: a PbrDirectLit material whose own resolved base-color texture is Unorm, not "
+TEST_CASE("loadAndBakeScene: a PbrDirectLit material whose own resolved base-color texture is Unorm, not "
           "Srgb, fails scene load fatally with PbrBaseColorTextureNotSrgb (ADR-0066 item 6)",
           "[runtime][gpu][scene][material][pbr]") {
   auto deviceResult = atlantis::vulkan_backend::createDevice(
@@ -933,7 +934,7 @@ TEST_CASE("loadAndInstantiateScene: a PbrDirectLit material whose own resolved b
   catalogBuilder.addScene("scene", scene, {});
   const BootstrapConfig config = makeSceneConfig(catalogBuilder.write());
 
-  const auto result = loadAndInstantiateScene(config, device.get(), meshArtifactPositionLayout());
+  const auto result = loadAndBakeScene(config, device.get(), meshArtifactPositionLayout());
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::PbrBaseColorTextureNotSrgb);
 }

@@ -62,7 +62,7 @@ using atlantis::runtime::realizePendingMaterials;
 using atlantis::runtime::RealizedMaterialCandidate;
 using atlantis::runtime::resolveMeshAsset;
 using atlantis::runtime::resolveMaterialAsset;
-using atlantis::runtime::SceneLoadOutcome;
+using atlantis::runtime::InstantiatedSceneLoadOutcome;  // Plan 0051 J2: transitional, M4 -> M5
 using atlantis::runtime::Vec3;
 using atlantis::shader_system::loadReflectionMetadata;
 using atlantis::shader_system::ReflectionMetadata;
@@ -277,7 +277,7 @@ setUpIntegratedShowcaseDemoFixture(const atlantis::runtime::BootstrapConfig& con
 
   auto sceneLoadResult = loadAndInstantiateScene(config, fixture.device.get(), *vertexInputLayout);
   if (sceneLoadResult.isErr()) return ResultT::Err(IntegratedShowcaseDemoSetupError::SceneLoadFailed);
-  SceneLoadOutcome outcome = std::move(sceneLoadResult.value());
+  InstantiatedSceneLoadOutcome outcome = std::move(sceneLoadResult.value());
   fixture.world.emplace(std::move(outcome.world));
   fixture.meshResourceMap = std::move(outcome.meshResourceMap);
   fixture.materialDataMap = std::move(outcome.materialDataMap);

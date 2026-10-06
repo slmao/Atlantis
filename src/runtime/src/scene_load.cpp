@@ -70,12 +70,20 @@ using atlantis::asset_system::CatalogAssetType;
   return ResultT::Ok(record);
 }
 
-}  // namespace
+// Plan 0051 P5: steps (a)-(e), shared by loadAndBakeScene() and the
+// transitional loadAndInstantiateScene() -- the decoded scene and its loaded
+// dependencies, before any World exists.
+struct LoadedScene {
+  atlantis::asset_system::ValidatedSceneData scene;
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap;
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> materialDataMap;
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap;
+};
 
-atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
+[[nodiscard]] atlantis::Result<LoadedScene, RuntimeInitError> loadSceneAndDependencies(
     const BootstrapConfig& config, atlantis::rhi::Device* device,
     const atlantis::rhi::VertexInputLayout& vertexInputLayout) {
-  using ResultT = atlantis::Result<SceneLoadOutcome, RuntimeInitError>;
+  using ResultT = atlantis::Result<LoadedScene, RuntimeInitError>;
   using atlantis::renderer::createMesh;
 
   // (a) Load and validate the asset catalog -- local, immutable resolver
@@ -103,7 +111,7 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
     ATLANTIS_LOG_ERROR("decodeScene() failed");
     return ResultT::Err(RuntimeInitError::SceneArtifactLoadFailed);
   }
-  const atlantis::asset_system::ValidatedSceneData scene = std::move(sceneResult.value());
+  atlantis::asset_system::ValidatedSceneData scene = std::move(sceneResult.value());
 
   // (c) Collect distinct mesh AND material AssetIds, each in its own
   // ascending FIRST-REFERENCE order -- the sole source of this Plan's
@@ -289,17 +297,45 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
     materialDataMap.emplace(distinctMaterialIds[i], materialAssetData);
   }
 
-  // (f) Instantiate -- infallible.
-  atlantis::world::SceneInstance instance = atlantis::world::instantiateScene(scene);
+  return ResultT::Ok(LoadedScene{std::move(scene), std::move(meshResourceMap), std::move(materialDataMap),
+                                  std::move(textureDataMap)});
+}
+
+}  // namespace
+
+atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndBakeScene(
+    const BootstrapConfig& config, atlantis::rhi::Device* device,
+    const atlantis::rhi::VertexInputLayout& vertexInputLayout) {
+  using ResultT = atlantis::Result<SceneLoadOutcome, RuntimeInitError>;
+  auto loaded = loadSceneAndDependencies(config, device, vertexInputLayout);
+  if (loaded.isErr()) return ResultT::Err(loaded.error());
+  LoadedScene& parts = loaded.value();
+
+  // (f) Bake -- infallible (Spec 0051 ruling Q5 E1): the Runtime World.
+  atlantis::world::BakedScene baked = atlantis::world::bakeScene(parts.scene);
 
   // (g) Publish -- the caller (RuntimeApplication::initializeSteps())
-  //     performs the actual world_.emplace()/meshResourceMap_ = ...
+  //     performs the actual scene_.emplace()/meshResourceMap_ = ...
   //     publish; this function's own return, by value, is itself
   //     already the transactional boundary -- nothing is written to
   //     any caller-owned state until this Ok() is actually consumed.
-  return ResultT::Ok(SceneLoadOutcome{std::move(instance.world), std::move(meshResourceMap),
-                                       std::move(materialDataMap), std::move(textureDataMap), config.sceneAsset,
-                                       std::move(instance.entities)});
+  return ResultT::Ok(SceneLoadOutcome{std::move(baked), std::move(parts.meshResourceMap),
+                                       std::move(parts.materialDataMap), std::move(parts.textureDataMap),
+                                       config.sceneAsset});
+}
+
+atlantis::Result<InstantiatedSceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
+    const BootstrapConfig& config, atlantis::rhi::Device* device,
+    const atlantis::rhi::VertexInputLayout& vertexInputLayout) {
+  using ResultT = atlantis::Result<InstantiatedSceneLoadOutcome, RuntimeInitError>;
+  auto loaded = loadSceneAndDependencies(config, device, vertexInputLayout);
+  if (loaded.isErr()) return ResultT::Err(loaded.error());
+  LoadedScene& parts = loaded.value();
+  atlantis::world::SceneInstance instance = atlantis::world::instantiateScene(parts.scene);
+  return ResultT::Ok(InstantiatedSceneLoadOutcome{std::move(instance.world), std::move(parts.meshResourceMap),
+                                                   std::move(parts.materialDataMap),
+                                                   std::move(parts.textureDataMap), config.sceneAsset,
+                                                   std::move(instance.entities)});
 }
 
 }  // namespace atlantis::runtime

@@ -19,28 +19,27 @@ namespace atlantis::runtime {
 
 // Plan 0018 Section P11: materialDataMap/textureDataMap are CPU-only --
 // no SampledTexture, Sampler, Pipeline, or Material is ever constructed
-// by loadAndInstantiateScene() (Spec 0018 D8 Phase 1's own hard
-// constraint: no RenderTarget exists yet at this point in
-// initializeSteps()). materialDataMap is keyed by material AssetId;
-// textureDataMap is keyed by texture AssetId (D10's own free
-// deduplication -- two materials naming the same texture load it once).
+// by the scene load (Spec 0018 D8 Phase 1's own hard constraint: no
+// RenderTarget exists yet at this point in initializeSteps()).
+// materialDataMap is keyed by material AssetId; textureDataMap is keyed by
+// texture AssetId (D10's own free deduplication -- two materials naming the
+// same texture load it once).
+//
+// Spec 0051 R7 / ADR-0102 D6 (Plan 0051 P5): the scene is the bake output --
+// the Runtime World Runtime's frame reads -- not an authoring world::World.
+// Its EntityGuid -> EntityId map (scene.entities) is the EntityRef
+// resolver's input (ADR-0097 D6).
 struct SceneLoadOutcome {
-  atlantis::world::World world;
+  atlantis::world::BakedScene scene;
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap;
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> materialDataMap;
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap;
-  // Plan 0047 P17: the loaded scene's persistent identity, kept beside its
-  // World -- sceneGuid names the scene, entities maps each node's EntityGuid
-  // to that World's EntityId (the EntityRef resolver's input, ADR-0097 D6).
+  // Plan 0047 P17: the loaded scene's persistent identity.
   atlantis::asset_system::AssetGuid sceneGuid;
-  atlantis::world::SceneEntityMap entities;
 };
 
 // Plan 0015 Section D10, steps (a)-(g) -- factored out of
-// RuntimeApplication::initializeSteps() into its own free function,
-// matching scene_extraction.h's own already-established precedent
-// ("Factored out of runtime_application.cpp's own anonymous namespace
-// so this pure ... logic is unit-testable"). Here specifically so
+// RuntimeApplication::initializeSteps() into its own free function so
 // V20's own manifest-load, scene-decode, and dependency-unresolved
 // failure paths are directly testable without a real Platform session
 // or GPU Device: each of those three conditions is detected at steps
@@ -49,8 +48,27 @@ struct SceneLoadOutcome {
 // distinctIds is non-empty) -- a test exercising only those three
 // conditions, or a scene with no Renderable references at all, may
 // safely pass nullptr. RuntimeApplication::initializeSteps() itself
-// always passes a real, already-constructed Device.
-[[nodiscard]] atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
+// always passes a real, already-constructed Device. Spec 0051 (ruling
+// Q1 B2): catalog -> decode -> dependency load -> bakeScene().
+[[nodiscard]] atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndBakeScene(
+    const BootstrapConfig& config, atlantis::rhi::Device* device,
+    const atlantis::rhi::VertexInputLayout& vertexInputLayout);
+
+// TRANSITIONAL (Plan 0051 J2, Milestone 4 -> 5 only): the pre-Spec-0051 load,
+// identical to loadAndBakeScene() but ending in instantiateScene(), kept only
+// for the image-regression fixtures until Milestone 5 moves them to
+// loadAndBakeScene(). Milestone 5 deletes it and this outcome type. Runtime
+// itself never calls it.
+struct InstantiatedSceneLoadOutcome {
+  atlantis::world::World world;
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap;
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> materialDataMap;
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap;
+  atlantis::asset_system::AssetGuid sceneGuid;
+  atlantis::world::SceneEntityMap entities;
+};
+
+[[nodiscard]] atlantis::Result<InstantiatedSceneLoadOutcome, RuntimeInitError> loadAndInstantiateScene(
     const BootstrapConfig& config, atlantis::rhi::Device* device,
     const atlantis::rhi::VertexInputLayout& vertexInputLayout);
 
