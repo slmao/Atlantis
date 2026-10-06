@@ -4,10 +4,14 @@
 #include <atlantis/result.h>
 #include <atlantis/world/camera.h>
 #include <atlantis/world/light.h>
+#include <atlantis/world/renderable.h>
+#include <atlantis/world/scene_instantiation.h>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <span>
 #include <type_traits>
 #include <variant>
 #include <vector>
@@ -36,7 +40,8 @@ struct Vec3 {
 // namespace, nothing here is consumed by any other module. Factored out
 // of runtime_application.cpp's own anonymous namespace so this pure,
 // GPU-independent logic is unit-testable (no Device, no GPU, no World
-// instance required).
+// instance required -- except the collect*() functions at the end of this
+// header, which read a baked scene).
 enum class SceneExtractionError {
   NoActiveCamera,
   DegenerateCameraForward,  // column 2's own world-space image has near-zero length
@@ -373,5 +378,42 @@ inline constexpr float kMinDot = 1e-4f;
 // newly-realized candidates, collected by the caller).
 [[nodiscard]] atlantis::Result<std::monostate, SceneExtractionError> resolveMaterialAsset(
     atlantis::asset_system::AssetId requested, const std::vector<atlantis::asset_system::AssetId>& knownIds);
+
+// Spec 0051 R6/R9 (rulings Q3 D3, Q6 C1, Q7 V3; Plan 0051 P3): the frame's
+// scene collection over the bake output -- the one copy that
+// RuntimeApplication::runFrame() and the image-regression fixtures both call,
+// so the goldens render through Runtime's own collection code. Re-run every
+// frame; each sequence is node order: gathered by an ECS query, then
+// stable-sorted by ecs::EntityId::index(), which a fresh baked world assigns in
+// node order -- whatever the archetype layout. Lights and renderables take the
+// scene by non-const reference only because ecs::World::query() is non-const
+// (Plan 0051 J1); none of these functions modifies it. Not thread-safe (the
+// ECS is not, ADR-0004).
+struct ActiveCameraInput {
+  atlantis::world::Camera camera;  // the active camera's component
+  Mat4 worldMatrix;                // its world matrix
+};
+
+struct RenderableExtractionInput {
+  atlantis::world::Renderable renderable;  // the entity's Renderable component
+  Mat4 worldMatrix;                        // its world matrix (a DrawItem's objectToWorld)
+};
+
+// The active camera, or nullopt when the scene has none or its entity has
+// been destroyed.
+[[nodiscard]] std::optional<ActiveCameraInput> collectActiveCamera(const atlantis::world::BakedScene& scene);
+
+// Every entity with a Light, in node order -- extractFrameLightingData()'s input.
+[[nodiscard]] std::vector<LightExtractionInput> collectLights(atlantis::world::BakedScene& scene);
+
+// Every entity with a Renderable, in node order. One call per frame feeds both
+// the referenced-material list and the DrawItem walk.
+[[nodiscard]] std::vector<RenderableExtractionInput> collectRenderables(atlantis::world::BakedScene& scene);
+
+// The distinct material AssetIds `renderables` name, in first-reference order
+// (Spec 0018 D8's reproducible realization order); an absent material is
+// skipped.
+[[nodiscard]] std::vector<atlantis::asset_system::AssetId> collectReferencedMaterialIds(
+    std::span<const RenderableExtractionInput> renderables);
 
 }  // namespace atlantis::runtime

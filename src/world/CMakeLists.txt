@@ -7,6 +7,7 @@ add_library(atlantis_world STATIC
   src/world.cpp
   src/scene_instantiation.cpp
   src/world_schema.cpp
+  src/scene_bake.cpp
   src/ecs/world.cpp
   src/ecs/command_buffer.cpp
   src/ecs/entity_guid_map.cpp

@@ -1,3 +1,4 @@
+#include "support/baked_scene_edits.h"
 #include "support/catalog_scene.h"
 #include "fixture/pbr_materials_showcase_fixture.h"
 #include "support/golden_validity.h"
@@ -99,7 +100,7 @@ TEST_CASE("PBR materials showcase renders a ~28-sphere fan/arc under warehouse_i
   auto fixtureResult = atlantis::image_regression::setUpPbrMaterialsShowcaseFixture(buildShowcaseConfig());
   REQUIRE(fixtureResult.isOk());
   auto& fixture = fixtureResult.value();
-  CHECK(fixture.world->lightEntities().empty());
+  CHECK(atlantis::image_regression::lightEntities(*fixture.scene).empty());
 
   auto first = atlantis::image_regression::renderPbrMaterialsShowcaseFrame(fixture);
   REQUIRE(first.isOk());

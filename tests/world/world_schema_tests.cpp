@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <string_view>
 #include <type_traits>
@@ -14,6 +15,7 @@
 #include <atlantis/world/renderable.h>
 #include <atlantis/world/transform.h>
 #include <atlantis/world/vec3.h>
+#include <atlantis/world/world_matrix.h>
 
 // Plan 0048 M2 / P9 (Spec 0048 Testing plan): World's descriptor tables
 // against the C++ types they describe. A member added, removed or renamed
@@ -64,6 +66,8 @@ constexpr std::optional<PrimitiveKind> primitiveKindOf() {
     return PrimitiveKind::Float32;
   } else if constexpr (std::is_same_v<T, Vec3>) {
     return PrimitiveKind::Vec3Float32;
+  } else if constexpr (std::is_same_v<T, std::array<float, 4>>) {  // Plan 0051 M1: WorldMatrix's columns
+    return PrimitiveKind::Vec4Float32;
   } else {
     return std::nullopt;
   }
@@ -150,9 +154,10 @@ void expectEnum(const TypeDescriptor& type, ProbeFn probeOf) {
 }  // namespace
 
 TEST_CASE("world schema: listing order and table check", "[world][schema]") {
-  constexpr std::array<std::string_view, 7> kExpected{
+  // Plan 0051 M1: 7 -> 8, WorldMatrix appended.
+  constexpr std::array<std::string_view, 8> kExpected{
       "world::Transform", "world::CameraFog", "world::CameraBloom", "world::Camera",
-      "world::Light",     "world::LightKind", "world::Renderable",
+      "world::Light",     "world::LightKind", "world::Renderable",  "world::WorldMatrix",
   };
   const auto schema = worldSchema();
   REQUIRE(schema.size() == kExpected.size());
@@ -222,4 +227,32 @@ TEST_CASE("world schema: Renderable", "[world][schema]") {
   expectField(type, ATLANTIS_SCHEMA_PROBE(Renderable, meshAsset), kComponent | FieldFlags::AssetReference);
   expectField(type, ATLANTIS_SCHEMA_PROBE(Renderable, materialAsset),
               kComponent | FieldFlags::AssetReference | FieldFlags::Optional);
+}
+
+// Plan 0051 M1 (P1, ruling J3): four Vec4Float32 columns, Editable only -- no
+// committed format carries a world matrix.
+TEST_CASE("world schema: WorldMatrix", "[world][schema]") {
+  const TypeDescriptor& type = requireType("world::WorldMatrix");
+  CHECK(type.kind == TypeKind::Struct);
+  CHECK(type.fields.size() == 4);
+  expectField(type, ATLANTIS_SCHEMA_PROBE(WorldMatrix, column0), FieldFlags::Editable);
+  expectField(type, ATLANTIS_SCHEMA_PROBE(WorldMatrix, column1), FieldFlags::Editable);
+  expectField(type, ATLANTIS_SCHEMA_PROBE(WorldMatrix, column2), FieldFlags::Editable);
+  expectField(type, ATLANTIS_SCHEMA_PROBE(WorldMatrix, column3), FieldFlags::Editable);
+}
+
+// Plan 0051 M1: the conversions to and from getWorldMatrix()'s array are a
+// byte copy, so a baked matrix is the authoring stage's matrix bit for bit.
+TEST_CASE("world matrix: column-major conversions round-trip bit-exactly", "[world][schema]") {
+  std::array<float, 16> source{};
+  for (std::size_t i = 0; i < source.size(); ++i) source[i] = 0.1f * static_cast<float>(i) - 0.7f;
+  source[5] = -0.0f;
+  const WorldMatrix m = toWorldMatrix(source);
+  CHECK(m.column0[0] == source[0]);
+  CHECK(m.column3[0] == source[12]);  // translation x
+  CHECK(m.column3[2] == source[14]);  // translation z
+  const std::array<float, 16> back = toColumnMajor(m);
+  CHECK(std::memcmp(back.data(), source.data(), sizeof(source)) == 0);
+  const WorldMatrix identity{};
+  CHECK(toColumnMajor(identity) == std::array<float, 16>{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1});
 }

@@ -26,9 +26,8 @@
 #include <atlantis/runtime/init_error.h>
 #include <atlantis/runtime/lifecycle_state.h>
 #include <atlantis/runtime/platform_session.h>
-#include <atlantis/world/entity_id.h>
+#include <atlantis/world/ecs/entity_id.h>
 #include <atlantis/world/scene_instantiation.h>
-#include <atlantis/world/world.h>
 
 #include <array>
 #include <cstdint>
@@ -256,25 +255,20 @@ class RuntimeApplication {
   std::optional<atlantis::asset_system::EnvironmentAssetData> environmentData_;
 
   atlantis::renderer::Renderer renderer_;  // stateless, default-constructed
-  // Plan 0014 Section D8: World owns no GPU resource and has no ordering
-  // relationship to Device/Presentation/Mesh -- placed here, outside the
-  // fixed reverse-destruction-order GPU-resource block above, not
-  // because its own position is unconstrained in general, just because
-  // no ordering constraint applies to it. Plan 0015 Section D2/D10:
-  // retyped to std::optional -- World is move-constructible but NOT
-  // move-assignable (ADR-0049/Spec 0014, unchanged), so publishing a
-  // freshly-instantiated World requires in-place move-construction
-  // (world_.emplace(std::move(world)), D10 step (g)), which a bare
-  // World member cannot support. Empty (std::nullopt) until
-  // initializeSteps() successfully reaches step (g); never reset by
-  // shutdown() (it owns no GPU resource, matching today's behavior).
-  std::optional<atlantis::world::World> world_;
-  // Plan 0047 P17: the loaded scene's GUID and its EntityGuid -> EntityId map,
-  // published with world_ and meaningful only beside it (an EntityId is a
-  // per-World-instance token). Read by the EntityRef resolver (ADR-0097 D6).
+  // Spec 0051 / ADR-0102 (Plan 0051 P4): the loaded scene's bake output --
+  // the Runtime World the frame reads, its EntityGuid -> EntityId map (the
+  // EntityRef resolver's input, ADR-0097 D6) and its active camera. It owns
+  // no GPU resource and has no ordering relationship to
+  // Device/Presentation/Mesh (Plan 0014 Section D8), so it sits outside the
+  // reverse-destruction-order GPU-resource block above. std::optional
+  // because ecs::World is move-constructible but not move-assignable: the
+  // publish is in-place move-construction (scene_.emplace(...), Plan 0015
+  // D10 step (g)). Empty until initializeSteps() reaches step (g); never
+  // reset by shutdown().
+  std::optional<atlantis::world::BakedScene> scene_;
+  // Plan 0047 P17: the loaded scene's GUID, published with scene_.
   atlantis::asset_system::AssetGuid sceneGuid_;
-  atlantis::world::SceneEntityMap sceneEntities_;
-  std::optional<atlantis::world::EntityId> activeCameraEntity_;  // cached for logging only; World itself is the source of truth
+  std::optional<atlantis::world::ecs::EntityId> activeCameraEntity_;  // cached for logging only; scene_ is the source of truth
   RuntimeLifecycleTracker lifecycle_;
   RuntimeExitReason lastExitReason_ = RuntimeExitReason::Success;
   bool closeRequested_ = false;

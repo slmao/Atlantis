@@ -1,3 +1,4 @@
+#include "support/baked_scene_edits.h"
 #include "support/catalog_scene.h"
 #include "fixture/ibl_material_demo_fixture.h"
 #include "support/fog_differential.h"
@@ -90,7 +91,7 @@ TEST_CASE("IBL material demo renders four environment-lit PBR spheres without di
   auto fixtureResult = atlantis::image_regression::setUpIblMaterialDemoFixture(buildIblConfig());
   REQUIRE(fixtureResult.isOk());
   auto& fixture = fixtureResult.value();
-  CHECK(fixture.world->lightEntities().empty());
+  CHECK(atlantis::image_regression::lightEntities(*fixture.scene).empty());
 
   auto first = atlantis::image_regression::renderIblMaterialDemoFrame(fixture);
   REQUIRE(first.isOk());

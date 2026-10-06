@@ -25,6 +25,8 @@ add_executable(atlantis_runtime_tests
   scene_extraction_tests.cpp
   scene_load_tests.cpp
   entity_ref_resolution_tests.cpp
+  frame_input_equivalence_tests.cpp
+  scene_collection_tests.cpp
   pbr_reflection_cross_check_tests.cpp
   material_realization_tests.cpp
   cli_tests.cpp
@@ -57,6 +59,24 @@ target_compile_definitions(atlantis_runtime_tests PRIVATE
   ATLANTIS_SHADER_SOURCE_ROOT="${CMAKE_SOURCE_DIR}/shaders"
 )
 add_dependencies(atlantis_runtime_tests pbr_direct_lit_shaders pbr_ibl_shaders)
+
+# Plan 0051 P7 (Spec 0051 ruling Q7 V2, J4): the frame-input equivalence test
+# decodes every scene of the assembled build catalog, and checks the four
+# Runtime whitelist scenes are among them; Bistro joins when its content build
+# step exists (content-gated, as atlantis_runtime is).
+target_compile_definitions(atlantis_runtime_tests PRIVATE
+  ATLANTIS_WHITELIST_INTEGRATED_SHOWCASE_SCENE_GUID="${ATLANTIS_integrated_showcase_demo_scene_GUID}"
+  ATLANTIS_WHITELIST_IBL_MATERIAL_DEMO_SCENE_GUID="${ATLANTIS_ibl_material_demo_scene_GUID}"
+  ATLANTIS_WHITELIST_PBR_NORMAL_MAP_DEMO_SCENE_GUID="${ATLANTIS_pbr_normal_map_demo_scene_GUID}"
+  ATLANTIS_WHITELIST_PBR_MATERIALS_SHOWCASE_SCENE_GUID="${ATLANTIS_pbr_materials_showcase_scene_GUID}"
+)
+add_dependencies(atlantis_runtime_tests atlantis_asset_catalog)
+if(DEFINED ATLANTIS_bistro_scene_TARGET)
+  target_compile_definitions(atlantis_runtime_tests PRIVATE
+    ATLANTIS_BISTRO_IMPORT_GUID="${ATLANTIS_bistro_scene_IMPORT_GUID}"
+  )
+  add_dependencies(atlantis_runtime_tests ${ATLANTIS_bistro_scene_TARGET})
+endif()
 
 catch_discover_tests(atlantis_runtime_tests DISCOVERY_MODE PRE_TEST)
 

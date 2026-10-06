@@ -7,6 +7,8 @@
 
 #include "support/catalog_scene.h"
 #include "fixture/transparency_demo_fixture.h"
+
+#include <atlantis/runtime/scene_extraction.h>
 #include "support/golden_validity.h"
 #include "support/pixel_diff.h"
 
@@ -85,14 +87,13 @@ namespace {
 }
 
 // The base-colour alpha of every blended material, in the order the
-// fixture builds its draw list (World::renderableEntities() -- the caller
+// fixture builds its draw list (collectRenderables(), Plan 0051 -- the caller
 // order drawFrame() receives).
-[[nodiscard]] std::vector<float> blendedAlphasInCallerOrder(const TransparencyDemoFixture& fixture) {
+[[nodiscard]] std::vector<float> blendedAlphasInCallerOrder(TransparencyDemoFixture& fixture) {
   std::vector<float> alphas;
-  for (const auto& id : fixture.world->renderableEntities()) {
-    const auto renderable = fixture.world->getRenderable(id);
-    if (renderable.isErr() || !renderable.value().materialAsset.has_value()) continue;
-    const auto& data = fixture.materialDataMap.at(*renderable.value().materialAsset);
+  for (const auto& input : atlantis::runtime::collectRenderables(*fixture.scene)) {
+    if (!input.renderable.materialAsset.has_value()) continue;
+    const auto& data = fixture.materialDataMap.at(*input.renderable.materialAsset);
     if (data.alphaMode == atlantis::asset_system::MaterialAlphaMode::Blend) alphas.push_back(data.baseColorFactor[3]);
   }
   return alphas;

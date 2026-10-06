@@ -1,5 +1,6 @@
 #include "support/catalog_scene.h"
 #include "fixture/lighting_demo_fixture.h"
+#include "support/baked_scene_edits.h"
 #include "support/golden_validity.h"
 #include "support/pixel_diff.h"
 #include "support/tone_mapping_reference.h"
@@ -13,7 +14,9 @@
 #include <atlantis/runtime/scene_extraction.h>
 #include <atlantis/world/light.h>
 #include <atlantis/world/transform.h>
-#include <atlantis/world/world.h>
+#include <atlantis/world/ecs/world_components.h>
+#include <atlantis/world/scene_instantiation.h>
+#include <atlantis/world/world_matrix.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -60,7 +63,7 @@ using atlantis::runtime::FrameLightingData;
 using atlantis::runtime::LightExtractionInput;
 using atlantis::runtime::Mat4;
 using atlantis::runtime::Vec3;
-using atlantis::world::EntityId;
+using EntityId = atlantis::world::ecs::EntityId;
 using atlantis::world::Light;
 using atlantis::world::LightKind;
 using atlantis::world::Transform;
@@ -218,14 +221,11 @@ struct SamplePoint {
 // these tests' own subject) rather than reimplementing it a second time.
 [[nodiscard]] std::optional<std::pair<std::uint32_t, std::uint32_t>> screenPixelFor(LightingDemoFixture& fixture,
                                                                                      const Vec3& worldPosition) {
-  const auto activeCamera = fixture.world->activeCamera();
+  const auto activeCamera = atlantis::runtime::collectActiveCamera(*fixture.scene);
   if (!activeCamera.has_value()) return std::nullopt;
-  const auto cameraWorldMatrixResult = fixture.world->getWorldMatrix(*activeCamera);
-  const auto cameraComponentResult = fixture.world->getCamera(*activeCamera);
-  if (cameraWorldMatrixResult.isErr() || cameraComponentResult.isErr()) return std::nullopt;
   const auto cameraMatricesResult =
-      extractCameraMatrices(cameraWorldMatrixResult.value(), cameraComponentResult.value().fovYRadians,
-                             cameraComponentResult.value().nearZ, cameraComponentResult.value().farZ, 1.0f);
+      extractCameraMatrices(activeCamera->worldMatrix, activeCamera->camera.fovYRadians, activeCamera->camera.nearZ,
+                             activeCamera->camera.farZ, 1.0f);
   if (cameraMatricesResult.isErr()) return std::nullopt;
 
   const Vec4 viewPos = transformPoint(cameraMatricesResult.value().view, worldPosition);
@@ -258,11 +258,7 @@ struct SamplePoint {
 // ever stops declaring exactly one of each kind (REQUIRE()d by every
 // caller below, never silently tolerated).
 [[nodiscard]] std::optional<EntityId> findLightByKind(LightingDemoFixture& fixture, LightKind kind) {
-  for (const EntityId& id : fixture.world->lightEntities()) {
-    const auto lightResult = fixture.world->getLight(id);
-    if (lightResult.isOk() && lightResult.value().kind == kind) return id;
-  }
-  return std::nullopt;
+  return atlantis::image_regression::findLightByKind(*fixture.scene, kind);
 }
 
 // The real scene's own authored Point light position, (0.8, 0.3, 0.5)
@@ -285,7 +281,9 @@ void repositionPointLightNearSample(LightingDemoFixture& fixture, const EntityId
                                      const SamplePoint& sample) {
   Transform closeToSample;
   closeToSample.localPosition = {sample.worldPosition.x, sample.worldPosition.y, sample.worldPosition.z + 0.3f};
-  REQUIRE(fixture.world->setLocalTransform(pointLight, closeToSample).isOk());
+  // Plan 0051 P9: the baked scene has no hierarchy -- the light (a root
+  // node) gets the world matrix the authoring stage would solve.
+  atlantis::image_regression::setRootTransform(*fixture.scene, pointLight, closeToSample);
 }
 
 }  // namespace
@@ -329,10 +327,10 @@ TEST_CASE("LightingDemoFixture: World::setLight() before a second render call ch
   std::array<std::byte, sizeof(FrameLightingData)> bytesAfterFirstRender{};
   std::memcpy(bytesAfterFirstRender.data(), cameraBytes + kLightingByteOffset, bytesAfterFirstRender.size());
 
-  const std::vector<EntityId> lights = fixture.world->lightEntities();
+  const std::vector<EntityId> lights = atlantis::image_regression::lightEntities(*fixture.scene);
   REQUIRE_FALSE(lights.empty());
   const EntityId targetLight = lights.front();
-  const auto originalLightResult = fixture.world->getLight(targetLight);
+  const auto originalLightResult = fixture.scene->world.get<Light>(targetLight);
   REQUIRE(originalLightResult.isOk());
 
   // A drastic, unmistakable mutation -- never anything close to the
@@ -340,10 +338,10 @@ TEST_CASE("LightingDemoFixture: World::setLight() before a second render call ch
   Light mutated = originalLightResult.value();
   mutated.color = {0.0f, 0.0f, 0.0f};
   mutated.intensity = 999.0f;
-  REQUIRE(fixture.world->setLight(targetLight, mutated).isOk());
+  REQUIRE(fixture.scene->world.set(targetLight, mutated).isOk());
 
   // CPU/World state genuinely changed...
-  const auto changedLightResult = fixture.world->getLight(targetLight);
+  const auto changedLightResult = fixture.scene->world.get<Light>(targetLight);
   REQUIRE(changedLightResult.isOk());
   CHECK(changedLightResult.value().intensity == 999.0f);
 
@@ -384,20 +382,20 @@ TEST_CASE("LightingDemoFixture: a LitTextured-bound entity given a deliberately 
   auto baselineResult = renderLightingDemoFrame(baselineFixture);
   REQUIRE(baselineResult.isOk());
   REQUIRE(coverageFraction(baselineResult.value()) > 0.01);
-  REQUIRE(baselineFixture.world->renderableEntities().size() == 1);
+  REQUIRE(atlantis::image_regression::renderableEntities(*baselineFixture.scene).size() == 1);
 
   auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
   REQUIRE(fixtureResult.isOk());
   LightingDemoFixture& fixture = fixtureResult.value();
 
-  const std::vector<EntityId> renderables = fixture.world->renderableEntities();
+  const std::vector<EntityId> renderables = atlantis::image_regression::renderableEntities(*fixture.scene);
   REQUIRE(renderables.size() == 1);
   const EntityId litEntity = renderables.front();
-  auto transformResult = fixture.world->getLocalTransform(litEntity);
+  auto transformResult = fixture.scene->world.get<Transform>(litEntity);
   REQUIRE(transformResult.isOk());
   Transform nonConformal = transformResult.value();
   nonConformal.localScale = {2.0f, 1.0f, 1.0f};  // non-uniform scale -- D7's own rejected case
-  REQUIRE(fixture.world->setLocalTransform(litEntity, nonConformal).isOk());
+  atlantis::image_regression::setRootTransform(*fixture.scene, litEntity, nonConformal);
 
   auto renderResult = renderLightingDemoFrame(fixture);
   REQUIRE(renderResult.isOk());  // never scene-load/frame-fatal -- a recoverable, per-entity skip
@@ -476,19 +474,15 @@ TEST_CASE("LightingDemoFixture: a captured pixel at a known cube vertex matches 
   const Vec3 worldNormal{(0.577350269f - 0.577350269f - 0.577350269f) / 3.0f,
                           (-0.577350269f - 0.577350269f + 0.577350269f) / 3.0f, 0.577350269f};
 
-  const auto activeCamera = fixture.world->activeCamera();
+  const auto activeCamera = atlantis::runtime::collectActiveCamera(*fixture.scene);
   REQUIRE(activeCamera.has_value());
-  const auto cameraWorldMatrixResult = fixture.world->getWorldMatrix(*activeCamera);
-  const auto cameraComponentResult = fixture.world->getCamera(*activeCamera);
-  REQUIRE(cameraWorldMatrixResult.isOk());
-  REQUIRE(cameraComponentResult.isOk());
   // The real, shared extractCameraMatrices() -- camera projection math
   // is not this Plan's own cross-validation subject (ADR-0051/Plan
   // 0014 already establish it); calling it here is legitimate reuse,
   // not a shortcut around the lighting-math cross-check below.
   const auto cameraMatricesResult =
-      extractCameraMatrices(cameraWorldMatrixResult.value(), cameraComponentResult.value().fovYRadians,
-                             cameraComponentResult.value().nearZ, cameraComponentResult.value().farZ, 1.0f);
+      extractCameraMatrices(activeCamera->worldMatrix, activeCamera->camera.fovYRadians, activeCamera->camera.nearZ,
+                             activeCamera->camera.farZ, 1.0f);
   REQUIRE(cameraMatricesResult.isOk());
 
   const Vec4 viewPos = transformPoint(cameraMatricesResult.value().view, worldPosition);
@@ -507,14 +501,7 @@ TEST_CASE("LightingDemoFixture: a captured pixel at a known cube vertex matches 
   // extractFrameLightingData() -- called here (never reimplemented) to
   // build the expected FrameLightingData this pixel's own lighting is
   // computed from.
-  std::vector<LightExtractionInput> lightInputs;
-  for (const auto& id : fixture.world->lightEntities()) {
-    const auto lightResult = fixture.world->getLight(id);
-    const auto lightWorldMatrixResult = fixture.world->getWorldMatrix(id);
-    REQUIRE(lightResult.isOk());
-    REQUIRE(lightWorldMatrixResult.isOk());
-    lightInputs.push_back({lightResult.value(), lightWorldMatrixResult.value()});
-  }
+  const std::vector<LightExtractionInput> lightInputs = atlantis::runtime::collectLights(*fixture.scene);
   const auto lightingResult = extractFrameLightingData(lightInputs);
   REQUIRE(lightingResult.isOk());
 
@@ -621,7 +608,7 @@ TEST_CASE("LightingDemoFixture: rotating the Directional light to face away from
 
   const auto directionalLight = findLightByKind(fixture, LightKind::Directional);
   REQUIRE(directionalLight.has_value());
-  const auto originalTransformResult = fixture.world->getLocalTransform(*directionalLight);
+  const auto originalTransformResult = fixture.scene->world.get<Transform>(*directionalLight);
   REQUIRE(originalTransformResult.isOk());
 
   // yaw + pi negates the extracted direction vector exactly (Spec 0019
@@ -636,7 +623,7 @@ TEST_CASE("LightingDemoFixture: rotating the Directional light to face away from
   // -- so the total contribution at this sample point can only drop.
   Transform rotated = originalTransformResult.value();
   rotated.localEulerAnglesRadians.y += 3.14159265f;
-  REQUIRE(fixture.world->setLocalTransform(*directionalLight, rotated).isOk());
+  atlantis::image_regression::setRootTransform(*fixture.scene, *directionalLight, rotated);
 
   auto secondResult = renderLightingDemoFrame(fixture);
   REQUIRE(secondResult.isOk());
@@ -672,7 +659,7 @@ TEST_CASE("LightingDemoFixture: shifting the Directional light's own color towar
 
   const auto directionalLight = findLightByKind(fixture, LightKind::Directional);
   REQUIRE(directionalLight.has_value());
-  const auto originalLightResult = fixture.world->getLight(*directionalLight);
+  const auto originalLightResult = fixture.scene->world.get<Light>(*directionalLight);
   REQUIRE(originalLightResult.isOk());
 
   // Pure red -- intensity and direction untouched (isolating this test to
@@ -683,7 +670,7 @@ TEST_CASE("LightingDemoFixture: shifting the Directional light's own color towar
   // red-leaning -- true at any fixed intensity, not only a boosted one.
   Light red = originalLightResult.value();
   red.color = {1.0f, 0.0f, 0.0f};
-  REQUIRE(fixture.world->setLight(*directionalLight, red).isOk());
+  REQUIRE(fixture.scene->world.set(*directionalLight, red).isOk());
 
   auto secondResult = renderLightingDemoFrame(fixture);
   REQUIRE(secondResult.isOk());
@@ -719,12 +706,12 @@ TEST_CASE("LightingDemoFixture: increasing the Directional light's own intensity
 
   const auto directionalLight = findLightByKind(fixture, LightKind::Directional);
   REQUIRE(directionalLight.has_value());
-  const auto originalLightResult = fixture.world->getLight(*directionalLight);
+  const auto originalLightResult = fixture.scene->world.get<Light>(*directionalLight);
   REQUIRE(originalLightResult.isOk());
 
   Light brighter = originalLightResult.value();
   brighter.intensity *= 4.0f;  // a large, unmistakable increase
-  REQUIRE(fixture.world->setLight(*directionalLight, brighter).isOk());
+  REQUIRE(fixture.scene->world.set(*directionalLight, brighter).isOk());
 
   auto secondResult = renderLightingDemoFrame(fixture);
   REQUIRE(secondResult.isOk());
@@ -770,7 +757,7 @@ TEST_CASE("LightingDemoFixture: moving the Point light far from the sample point
   // contribution to exactly zero.
   Transform farAway;
   farAway.localPosition = {100.0f, 100.0f, 100.0f};
-  REQUIRE(fixture.world->setLocalTransform(*pointLight, farAway).isOk());
+  atlantis::image_regression::setRootTransform(*fixture.scene, *pointLight, farAway);
 
   auto secondResult = renderLightingDemoFrame(fixture);
   REQUIRE(secondResult.isOk());
@@ -810,7 +797,7 @@ TEST_CASE("LightingDemoFixture: shifting the Point light's own color toward pure
   const float greenShareBefore =
       static_cast<float>(pixelBefore[1]) / static_cast<float>(std::max(1, channelSum(pixelBefore)));
 
-  const auto originalLightResult = fixture.world->getLight(*pointLight);
+  const auto originalLightResult = fixture.scene->world.get<Light>(*pointLight);
   REQUIRE(originalLightResult.isOk());
 
   // Pure green -- intensity and position untouched (isolating this test
@@ -819,7 +806,7 @@ TEST_CASE("LightingDemoFixture: shifting the Point light's own color toward pure
   // only grow, true at any fixed intensity/position.
   Light green = originalLightResult.value();
   green.color = {0.0f, 1.0f, 0.0f};
-  REQUIRE(fixture.world->setLight(*pointLight, green).isOk());
+  REQUIRE(fixture.scene->world.set(*pointLight, green).isOk());
 
   auto secondResult = renderLightingDemoFrame(fixture);
   REQUIRE(secondResult.isOk());
@@ -848,11 +835,11 @@ TEST_CASE("LightingDemoFixture: increasing the Point light's own intensity stric
   // further increase to ever register as "brighter" (255 clamped stays
   // 255 regardless of how much more intensity is added). A dim starting
   // point leaves that headroom.
-  const auto dimLightResult = fixture.world->getLight(*pointLight);
+  const auto dimLightResult = fixture.scene->world.get<Light>(*pointLight);
   REQUIRE(dimLightResult.isOk());
   Light dim = dimLightResult.value();
   dim.intensity = 0.4f;
-  REQUIRE(fixture.world->setLight(*pointLight, dim).isOk());
+  REQUIRE(fixture.scene->world.set(*pointLight, dim).isOk());
 
   // screenPixelFor() must run after the first renderLightingDemoFrame()
   // call, not before: the active Camera's own cachedWorldMatrix is only
@@ -873,7 +860,7 @@ TEST_CASE("LightingDemoFixture: increasing the Point light's own intensity stric
 
   Light brighter = dim;
   brighter.intensity = 5.0f;
-  REQUIRE(fixture.world->setLight(*pointLight, brighter).isOk());
+  REQUIRE(fixture.scene->world.set(*pointLight, brighter).isOk());
 
   auto secondResult = renderLightingDemoFrame(fixture);
   REQUIRE(secondResult.isOk());
@@ -883,66 +870,11 @@ TEST_CASE("LightingDemoFixture: increasing the Point light's own intensity stric
   CHECK(brightnessAfter > brightnessBefore);
 }
 
-TEST_CASE("LightingDemoFixture: reparenting the Point light under a new entity and moving that parent far "
-          "away darkens the sample pixel on the next render cycle -- covers both 'parent transform change' "
-          "and 'setParent() hierarchy change'",
-          "[image_regression][gpu][lighting][dynamic]") {
-  auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
-  REQUIRE(fixtureResult.isOk());
-  LightingDemoFixture& fixture = fixtureResult.value();
-
-  const SamplePoint sample = knownCubeSamplePoint();
-  const auto pointLight = findLightByKind(fixture, LightKind::Point);
-  REQUIRE(pointLight.has_value());
-  repositionPointLightNearSample(fixture, *pointLight, sample);
-
-  // screenPixelFor() must run after the first renderLightingDemoFrame()
-  // call, not before: the active Camera's own cachedWorldMatrix is only
-  // valid once World::updateTransforms() has run at least once (it
-  // defaults to identity otherwise, per World's own documented
-  // contract), and updateTransforms() only ever runs inside
-  // renderLightingDemoFrame() itself -- never during
-  // setUpLightingDemoFixture(). The repositioning above happens before
-  // this first call, so this "before" snapshot already reflects the
-  // repositioned light's own real contribution -- and, critically, its
-  // own local position is now *relative to a still-absent parent* (root),
-  // which the reparent step below preserves unless the parent itself
-  // moves.
-  auto firstResult = renderLightingDemoFrame(fixture);
-  REQUIRE(firstResult.isOk());
-  const auto pixelCoord = screenPixelFor(fixture, sample.worldPosition);
-  REQUIRE(pixelCoord.has_value());
-  const int brightnessBefore =
-      channelSum(pixelAt(firstResult.value(), pixelCoord->first, pixelCoord->second));
-
-  // A brand-new parent entity, at the world origin (identity Transform)
-  // -- setParent() alone changes nothing observable yet, since an
-  // identity parent transform composes to the same world matrix the
-  // light already had as a root entity.
-  const EntityId parent = fixture.world->createEntity();
-  REQUIRE(fixture.world->setParent(*pointLight, parent).isOk());
-
-  auto afterReparentOnlyResult = renderLightingDemoFrame(fixture);
-  REQUIRE(afterReparentOnlyResult.isOk());
-  const int brightnessAfterReparentOnly =
-      channelSum(pixelAt(afterReparentOnlyResult.value(), pixelCoord->first, pixelCoord->second));
-  CHECK(brightnessAfterReparentOnly == brightnessBefore);
-
-  // Now move the PARENT far away -- the Point light's own local
-  // Transform is untouched; its world position changes only because its
-  // new parent's own world position did (World::updateTransforms()'s own
-  // hierarchy composition, not a leaf-entity change).
-  Transform parentFarAway;
-  parentFarAway.localPosition = {100.0f, 100.0f, 100.0f};
-  REQUIRE(fixture.world->setLocalTransform(parent, parentFarAway).isOk());
-
-  auto secondResult = renderLightingDemoFrame(fixture);
-  REQUIRE(secondResult.isOk());
-  const int brightnessAfter =
-      channelSum(pixelAt(secondResult.value(), pixelCoord->first, pixelCoord->second));
-
-  CHECK(brightnessAfter < brightnessAfterReparentOnly);
-}
+// Plan 0051 ruling J5: the former "reparenting the Point light under a new
+// entity" case is deleted -- it exercised local-Transform/parent edits of the
+// live World reaching the next frame, the Spec 0022 clause ADR-0102 / Spec
+// 0051 supersede (Spec 0022 Correction 2026-10-06). "moving the Point light
+// far from the sample point" above keeps covering a world-matrix change.
 
 TEST_CASE("LightingDemoFixture: creating a new Point light near the sample point brightens it on the next "
           "render cycle, and the CPU-visible pointLightCount increases",
@@ -971,16 +903,19 @@ TEST_CASE("LightingDemoFixture: creating a new Point light near the sample point
   std::memcpy(&lightingBefore, cameraBytesBefore + kLightingByteOffset, sizeof(FrameLightingData));
   REQUIRE(lightingBefore.pointLightCount == 1);
 
-  const EntityId newLight = fixture.world->createEntity();
+  // Plan 0051 P9: a new entity on the baked Runtime World, its components
+  // added (the ECS's add(), not World's set*() on an implicit record).
+  const EntityId newLight = fixture.scene->world.createEntity();
   Transform closeToSample;
   closeToSample.localPosition = {sample.worldPosition.x, sample.worldPosition.y, sample.worldPosition.z + 0.3f};
-  REQUIRE(fixture.world->setLocalTransform(newLight, closeToSample).isOk());
+  REQUIRE(fixture.scene->world.add(newLight, closeToSample).isOk());
+  REQUIRE(fixture.scene->world.add(newLight, atlantis::image_regression::solveWorldMatrix(closeToSample)).isOk());
   Light brightPointLight;
   brightPointLight.kind = LightKind::Point;
   brightPointLight.color = {1.0f, 1.0f, 1.0f};
   brightPointLight.intensity = 5.0f;
   brightPointLight.range = 3.0f;
-  REQUIRE(fixture.world->setLight(newLight, brightPointLight).isOk());
+  REQUIRE(fixture.scene->world.add(newLight, brightPointLight).isOk());
 
   auto secondResult = renderLightingDemoFrame(fixture);
   REQUIRE(secondResult.isOk());
@@ -1022,7 +957,7 @@ TEST_CASE("LightingDemoFixture: destroying the scene's own Point light entity da
   const int brightnessBefore =
       channelSum(pixelAt(firstResult.value(), pixelCoord->first, pixelCoord->second));
 
-  REQUIRE(fixture.world->destroyEntity(*pointLight).isOk());
+  REQUIRE(fixture.scene->world.destroyEntity(*pointLight).isOk());
 
   auto secondResult = renderLightingDemoFrame(fixture);
   REQUIRE(secondResult.isOk());
@@ -1057,15 +992,15 @@ TEST_CASE("LightingDemoFixture: two setLight() calls against the same entity bef
 
   const auto directionalLight = findLightByKind(fixture, LightKind::Directional);
   REQUIRE(directionalLight.has_value());
-  const auto originalLightResult = fixture.world->getLight(*directionalLight);
+  const auto originalLightResult = fixture.scene->world.get<Light>(*directionalLight);
   REQUIRE(originalLightResult.isOk());
 
   Light intermediate = originalLightResult.value();
   intermediate.intensity = 111.0f;
-  REQUIRE(fixture.world->setLight(*directionalLight, intermediate).isOk());
+  REQUIRE(fixture.scene->world.set(*directionalLight, intermediate).isOk());
   Light final_ = originalLightResult.value();
   final_.intensity = 222.0f;
-  REQUIRE(fixture.world->setLight(*directionalLight, final_).isOk());
+  REQUIRE(fixture.scene->world.set(*directionalLight, final_).isOk());
 
   auto secondResult = renderLightingDemoFrame(fixture);
   REQUIRE(secondResult.isOk());

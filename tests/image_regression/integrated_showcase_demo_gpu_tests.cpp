@@ -1,3 +1,4 @@
+#include "support/baked_scene_edits.h"
 #include "support/catalog_scene.h"
 #include "fixture/integrated_showcase_demo_fixture.h"
 #include "support/golden_validity.h"
@@ -141,7 +142,7 @@ TEST_CASE("Integrated showcase demo fixture realizes exactly 6 renderables, 2 GP
   REQUIRE(frame.width == kIntegratedShowcaseDemoExtentPixels);
   REQUIRE(frame.height == kIntegratedShowcaseDemoExtentPixels);
 
-  CHECK(fixture.world->renderableEntities().size() == 6);
+  CHECK(atlantis::image_regression::renderableEntities(*fixture.scene).size() == 6);
   CHECK(fixture.meshResourceMap.size() == 2);
   CHECK(fixture.materialResourceMap.size() == 4);
   CHECK(fixture.lastDrawItemCount == 6);

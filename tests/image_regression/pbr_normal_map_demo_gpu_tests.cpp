@@ -1,3 +1,4 @@
+#include "support/baked_scene_edits.h"
 #include "support/catalog_scene.h"
 #include "fixture/pbr_normal_map_demo_fixture.h"
 #include "support/fog_differential.h"
@@ -174,7 +175,7 @@ TEST_CASE("PBR normal-map demo fixture renders a non-degenerate frame with the r
   REQUIRE(frame.width == kPbrNormalMapDemoExtentPixels);
   REQUIRE(frame.height == kPbrNormalMapDemoExtentPixels);
 
-  CHECK(fixture.world->renderableEntities().size() == 2);
+  CHECK(atlantis::image_regression::renderableEntities(*fixture.scene).size() == 2);
   CHECK(fixture.meshResourceMap.size() == 2);
   CHECK(fixture.materialResourceMap.size() == 2);
   CHECK(fixture.lastDrawItemCount == 2);

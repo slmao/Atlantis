@@ -63,7 +63,12 @@ using atlantis::runtime::extractFrameLightingData;
 using atlantis::runtime::FrameLightingData;
 using atlantis::runtime::identityMatrix;
 using atlantis::runtime::LightExtractionInput;
-using atlantis::runtime::loadAndInstantiateScene;
+using atlantis::runtime::collectActiveCamera;
+using atlantis::runtime::collectLights;
+using atlantis::runtime::collectReferencedMaterialIds;
+using atlantis::runtime::collectRenderables;
+using atlantis::runtime::loadAndBakeScene;
+using atlantis::runtime::RenderableExtractionInput;
 using atlantis::runtime::Mat4;
 using atlantis::runtime::realizeOneMaterialCandidate;
 using atlantis::runtime::realizePendingMaterials;
@@ -371,10 +376,10 @@ atlantis::Result<PbrNormalMapDemoFixture, PbrNormalMapDemoSetupError> setUpPbrNo
   fixture.outputTransformUnormVertexSpirv = std::move(*outputTransformVertexSpirv);
   fixture.outputTransformUnormFragmentSpirv = std::move(*outputTransformFragmentSpirv);
 
-  auto sceneLoadResult = loadAndInstantiateScene(config, fixture.device.get(), *vertexInputLayout);
+  auto sceneLoadResult = loadAndBakeScene(config, fixture.device.get(), *vertexInputLayout);
   if (sceneLoadResult.isErr()) return ResultT::Err(PbrNormalMapDemoSetupError::SceneLoadFailed);
   SceneLoadOutcome outcome = std::move(sceneLoadResult.value());
-  fixture.world.emplace(std::move(outcome.world));
+  fixture.scene.emplace(std::move(outcome.scene));
   fixture.meshResourceMap = std::move(outcome.meshResourceMap);
   fixture.materialDataMap = std::move(outcome.materialDataMap);
   fixture.textureDataMap = std::move(outcome.textureDataMap);
@@ -563,17 +568,13 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   if (acquireResult.isErr()) return ResultT::Err(PbrNormalMapDemoRenderError::AcquireFailed);
   std::unique_ptr<rhi::RenderTarget> target = std::move(acquireResult.value());
 
-  fixture.world->updateTransforms();
-
-  const auto activeCamera = fixture.world->activeCamera();
+  // Plan 0051 M5 (Spec 0051 ruling Q7 V3): Runtime's own collection functions
+  // over the baked scene -- the code runFrame() runs.
+  const auto activeCamera = collectActiveCamera(*fixture.scene);
   if (!activeCamera.has_value()) return ResultT::Err(PbrNormalMapDemoRenderError::NoActiveCamera);
-  const auto cameraWorldMatrixResult = fixture.world->getWorldMatrix(*activeCamera);
-  const auto cameraComponentResult = fixture.world->getCamera(*activeCamera);
-  if (cameraWorldMatrixResult.isErr() || cameraComponentResult.isErr()) {
-    return ResultT::Err(PbrNormalMapDemoRenderError::ExtractionFailed);
-  }
-  const atlantis::world::Camera cameraComponent = cameraComponentResult.value();
-  const auto extractionResult = extractCameraMatrices(cameraWorldMatrixResult.value(), cameraComponent.fovYRadians,
+  const atlantis::runtime::Mat4& cameraWorldMatrix = activeCamera->worldMatrix;
+  const atlantis::world::Camera cameraComponent = activeCamera->camera;
+  const auto extractionResult = extractCameraMatrices(cameraWorldMatrix, cameraComponent.fovYRadians,
                                                         cameraComponent.nearZ, cameraComponent.farZ, 1.0f);
   if (extractionResult.isErr()) return ResultT::Err(PbrNormalMapDemoRenderError::ExtractionFailed);
 
@@ -581,15 +582,7 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   for (std::size_t i = 0; i < 16; ++i) cameraData[i] = extractionResult.value().view[i];
   for (std::size_t i = 0; i < 16; ++i) cameraData[16 + i] = extractionResult.value().projection[i];
 
-  std::vector<LightExtractionInput> lightInputs;
-  for (const atlantis::world::EntityId& id : fixture.world->lightEntities()) {
-    const auto lightResult = fixture.world->getLight(id);
-    const auto lightWorldMatrixResult = fixture.world->getWorldMatrix(id);
-    if (lightResult.isErr() || lightWorldMatrixResult.isErr()) {
-      return ResultT::Err(PbrNormalMapDemoRenderError::LightExtractionFailed);
-    }
-    lightInputs.push_back({lightResult.value(), lightWorldMatrixResult.value()});
-  }
+  const std::vector<LightExtractionInput> lightInputs = collectLights(*fixture.scene);
   const auto lightingResult = extractFrameLightingData(lightInputs);
   if (lightingResult.isErr()) return ResultT::Err(PbrNormalMapDemoRenderError::LightExtractionFailed);
   auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
@@ -597,7 +590,7 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
 
   auto* cameraWorldPositionData = reinterpret_cast<CameraWorldPositionData*>(
       cameraData + atlantis::runtime::kCameraUniformWorldPositionOffsetBytes / sizeof(float));
-  *cameraWorldPositionData = extractCameraWorldPosition(cameraWorldMatrixResult.value());
+  *cameraWorldPositionData = extractCameraWorldPosition(cameraWorldMatrix);
   const std::array<float, 36>* irradianceShSource = nullptr;
   if (fixture.environmentData.has_value()) {
     irradianceShSource = &fixture.environmentData->irradianceSh;
@@ -632,17 +625,9 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
                                                                    sizeof(float)) =
       atlantis::runtime::extractFogData(cameraComponent.fog);
 
-  std::vector<atlantis::asset_system::AssetId> referencedMaterialIds;
-  for (const auto& id : fixture.world->renderableEntities()) {
-    const auto renderableResult = fixture.world->getRenderable(id);
-    if (renderableResult.isErr()) continue;
-    if (const auto& materialAsset = renderableResult.value().materialAsset; materialAsset.has_value()) {
-      if (std::find(referencedMaterialIds.begin(), referencedMaterialIds.end(), *materialAsset) ==
-          referencedMaterialIds.end()) {
-        referencedMaterialIds.push_back(*materialAsset);
-      }
-    }
-  }
+  const std::vector<RenderableExtractionInput> renderables = collectRenderables(*fixture.scene);
+  const std::vector<atlantis::asset_system::AssetId> referencedMaterialIds =
+      collectReferencedMaterialIds(renderables);
   std::vector<atlantis::asset_system::AssetId> alreadyRealizedMaterialIds;
   alreadyRealizedMaterialIds.reserve(fixture.materialResourceMap.size());
   for (const auto& [assetId, material] : fixture.materialResourceMap) alreadyRealizedMaterialIds.push_back(assetId);
@@ -784,14 +769,10 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   // own Fixture A/B mechanism) can swap exactly that one entry's own
   // `.material` pointer, never guessing by position.
   std::optional<std::size_t> normalMappedDrawItemIndex;
-  for (const auto& id : fixture.world->renderableEntities()) {
-    const auto renderableResult = fixture.world->getRenderable(id);
-    if (renderableResult.isErr()) continue;
-    if (resolveMeshAsset(renderableResult.value().meshAsset, knownMeshAssetIds).isErr()) continue;
-    const auto worldMatrixResult = fixture.world->getWorldMatrix(id);
-    if (worldMatrixResult.isErr()) continue;
+  for (const RenderableExtractionInput& renderable : renderables) {
+    if (resolveMeshAsset(renderable.renderable.meshAsset, knownMeshAssetIds).isErr()) continue;
 
-    const auto& materialAsset = renderableResult.value().materialAsset;
+    const auto& materialAsset = renderable.renderable.materialAsset;
     if (!materialAsset.has_value()) continue;
     if (resolveMaterialAsset(*materialAsset, knownMaterialIds).isErr()) continue;
 
@@ -799,7 +780,7 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
     if (materialDataIt == fixture.materialDataMap.end()) continue;  // resolveMaterialAsset() already confirmed membership; defensive only
     if (materialDataIt->second.kind == atlantis::asset_system::MaterialKind::LitTextured ||
         materialDataIt->second.kind == atlantis::asset_system::MaterialKind::PbrDirectLit) {
-      if (checkConformalTransform(worldMatrixResult.value()).isErr()) continue;  // skip this entity for this frame only
+      if (checkConformalTransform(renderable.worldMatrix).isErr()) continue;  // skip this entity for this frame only
     }
 
     const atlantis::renderer::Material* resolvedMaterial = nullptr;
@@ -812,9 +793,9 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
     if (!resolvedMaterial) continue;
 
     DrawItem item;
-    item.mesh = &fixture.meshResourceMap.at(renderableResult.value().meshAsset);
+    item.mesh = &fixture.meshResourceMap.at(renderable.renderable.meshAsset);
     item.material = resolvedMaterial;
-    item.objectToWorld = worldMatrixResult.value();
+    item.objectToWorld = renderable.worldMatrix;
     if (materialDataIt->second.normalMapTexture != 0) normalMappedDrawItemIndex = drawItems.size();
     drawItems.push_back(item);
   }

@@ -10,7 +10,8 @@
 #include <atlantis/runtime/bootstrap_config.h>
 #include <atlantis/world/camera.h>
 #include <atlantis/world/light.h>
-#include <atlantis/world/world.h>
+#include <atlantis/world/ecs/world_components.h>
+#include <atlantis/world/scene_instantiation.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -125,10 +126,10 @@ TEST_CASE("The assembled Bistro scene validates, loads through the Runtime path,
   const double loadSeconds = secondsSince(loadStart);
 
   // The overlay's camera is active, with its fog and bloom.
-  REQUIRE(fixture.world.has_value());
-  const auto activeCamera = fixture.world->activeCamera();
+  REQUIRE(fixture.scene.has_value());
+  const auto activeCamera = fixture.scene->activeCamera;
   REQUIRE(activeCamera.has_value());
-  const auto camera = fixture.world->getCamera(*activeCamera);
+  const auto camera = fixture.scene->world.get<atlantis::world::Camera>(*activeCamera);
   REQUIRE(camera.isOk());
   CHECK(camera.value().fog.density > 0.0f);
   CHECK(camera.value().bloom.strength > 0.0f);
@@ -213,22 +214,20 @@ enum class BistroVariant { Golden, FogOff, BloomOff, PointLightsOff };
       config, ATLANTIS_pbr_normal_mapped_control_ARTIFACT_PATH, ATLANTIS_pbr_normal_mapped_control_METADATA_PATH);
   REQUIRE(fixtureResult.isOk());
   EmissiveDemoFixture fixture = std::move(fixtureResult.value());
-  atlantis::world::World& world = *fixture.world;
-  const auto cameraId = world.activeCamera();
+  atlantis::world::BakedScene& baked = *fixture.scene;  // Plan 0051 M5
+  const auto cameraId = baked.activeCamera;
   REQUIRE(cameraId.has_value());
-  atlantis::world::Camera camera = world.getCamera(*cameraId).value();
+  atlantis::world::Camera camera = baked.world.get<atlantis::world::Camera>(*cameraId).value();
   if (variant == BistroVariant::FogOff) camera.fog.density = 0.0f;
   if (variant == BistroVariant::BloomOff) camera.bloom.strength = 0.0f;
-  REQUIRE(world.setCamera(*cameraId, camera).isOk());
+  REQUIRE(baked.world.set(*cameraId, camera).isOk());
   if (variant == BistroVariant::PointLightsOff) {
     std::size_t pointLights = 0;
-    for (const auto& id : world.lightEntities()) {
-      atlantis::world::Light light = world.getLight(id).value();
-      if (light.kind != atlantis::world::LightKind::Point) continue;
+    baked.world.query<atlantis::world::Light>([&](atlantis::world::ecs::EntityId, atlantis::world::Light& light) {
+      if (light.kind != atlantis::world::LightKind::Point) return;
       light.intensity = 0.0f;
-      REQUIRE(world.setLight(id, light).isOk());
       ++pointLights;
-    }
+    });
     REQUIRE(pointLights == 59);
   }
 

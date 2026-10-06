@@ -19,7 +19,7 @@
 #include <atlantis/rhi/types.h>
 #include <atlantis/runtime/bootstrap_config.h>
 #include <atlantis/runtime/environment_realization.h>
-#include <atlantis/world/world.h>
+#include <atlantis/world/scene_instantiation.h>
 
 #include "../support/pixel_diff.h"
 
@@ -102,7 +102,8 @@ struct IntegratedShowcaseDemoFixture {
   std::unique_ptr<atlantis::rhi::Pipeline> shadowCastPipeline;
   std::unique_ptr<atlantis::rhi::Buffer> shadowLightSpaceBuffer;
 
-  std::optional<atlantis::world::World> world;
+  // Plan 0051 M5 (Spec 0051 ruling Q7 V3): the bake output, as Runtime holds it.
+  std::optional<atlantis::world::BakedScene> scene;
 
   // Plan 0028 Milestone 3 (FR4): the most recent
   // renderIntegratedShowcaseDemoFrame() call's own DrawItem count --

@@ -17,8 +17,9 @@ namespace as = atlantis::asset_system;
 namespace fs = std::filesystem;
 
 // Plan 0047 M7 (P18, ADR-0097 D6): resolving an EntityRef through a loaded
-// scene -- its SceneEntityMap and World liveness. A real cooked-and-decoded
-// scene, instantiated through the real instantiateScene().
+// scene -- its EntityGuid map and liveness in the baked World (Spec 0051 R7,
+// Plan 0051 P6). A real cooked-and-decoded scene, baked through the real
+// bakeScene().
 
 namespace {
 
@@ -63,21 +64,21 @@ std::atomic<int> gScratchCounter{0};
 TEST_CASE("resolveEntityRef: a reference to a live entity of the loaded scene resolves to that entity",
           "[runtime][entity_ref]") {
   const as::ValidatedSceneData scene = cookAndDecodeTwoNodeScene();
-  atlantis::world::SceneInstance instance = atlantis::world::instantiateScene(scene);
-  const LoadedSceneView loaded{sceneGuid(), instance.entities, instance.world};
+  atlantis::world::BakedScene baked = atlantis::world::bakeScene(scene);
+  const LoadedSceneView loaded{sceneGuid(), baked};
 
   for (std::size_t i = 0; i < 2; ++i) {
     INFO("node " << i);
     const auto resolved = resolveEntityRef(loaded, refTo(kEntityTexts[i]));
     REQUIRE(resolved.isOk());
-    CHECK(resolved.value() == *instance.entities.find(scene.entityGuid(i)));
+    CHECK(resolved.value() == *baked.entities.find(scene.entityGuid(i)));
   }
 }
 
 TEST_CASE("resolveEntityRef: a reference naming another scene is UnknownScene", "[runtime][entity_ref]") {
   const as::ValidatedSceneData scene = cookAndDecodeTwoNodeScene();
-  atlantis::world::SceneInstance instance = atlantis::world::instantiateScene(scene);
-  const LoadedSceneView loaded{sceneGuid(), instance.entities, instance.world};
+  atlantis::world::BakedScene baked = atlantis::world::bakeScene(scene);
+  const LoadedSceneView loaded{sceneGuid(), baked};
 
   as::EntityRef ref = refTo(kEntityTexts[0]);  // an entity the loaded scene does contain...
   ref.scene = as::parseAssetGuid("0047aaaa-0000-4000-8000-000000000002").value();  // ...under another scene
@@ -88,22 +89,22 @@ TEST_CASE("resolveEntityRef: a reference naming another scene is UnknownScene", 
 
 TEST_CASE("resolveEntityRef: a GUID the loaded scene lacks is UnknownEntity", "[runtime][entity_ref]") {
   const as::ValidatedSceneData scene = cookAndDecodeTwoNodeScene();
-  atlantis::world::SceneInstance instance = atlantis::world::instantiateScene(scene);
-  const LoadedSceneView loaded{sceneGuid(), instance.entities, instance.world};
+  atlantis::world::BakedScene baked = atlantis::world::bakeScene(scene);
+  const LoadedSceneView loaded{sceneGuid(), baked};
 
   const auto resolved = resolveEntityRef(loaded, refTo("e68122c6-1bb2-8f1f-b185-358f5878ffff"));
   REQUIRE(resolved.isErr());
   CHECK(resolved.error() == EntityRefError::UnknownEntity);
 }
 
-TEST_CASE("resolveEntityRef: an entity destroyed in the World is DeadEntity, never a stale id",
+TEST_CASE("resolveEntityRef: an entity destroyed in the baked World is DeadEntity, never a stale id",
           "[runtime][entity_ref]") {
   const as::ValidatedSceneData scene = cookAndDecodeTwoNodeScene();
-  atlantis::world::SceneInstance instance = atlantis::world::instantiateScene(scene);
-  const LoadedSceneView loaded{sceneGuid(), instance.entities, instance.world};
+  atlantis::world::BakedScene baked = atlantis::world::bakeScene(scene);
+  const LoadedSceneView loaded{sceneGuid(), baked};
 
-  const atlantis::world::EntityId victim = *instance.entities.find(scene.entityGuid(1));
-  REQUIRE(instance.world.destroyEntity(victim).isOk());
+  const atlantis::world::ecs::EntityId victim = *baked.entities.find(scene.entityGuid(1));
+  REQUIRE(baked.world.destroyEntity(victim).isOk());
 
   const auto dead = resolveEntityRef(loaded, refTo(kEntityTexts[1]));
   REQUIRE(dead.isErr());
@@ -111,7 +112,7 @@ TEST_CASE("resolveEntityRef: an entity destroyed in the World is DeadEntity, nev
 
   // Its sibling is unaffected; the map still names the dead entity.
   CHECK(resolveEntityRef(loaded, refTo(kEntityTexts[0])).isOk());
-  CHECK(instance.entities.find(scene.entityGuid(1)).has_value());
+  CHECK(baked.entities.find(scene.entityGuid(1)).has_value());
 }
 
 TEST_CASE("toString(EntityRefError) names every enumerator", "[runtime][entity_ref]") {

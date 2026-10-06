@@ -17,7 +17,7 @@
 #include <atlantis/rhi/texture.h>
 #include <atlantis/rhi/types.h>
 #include <atlantis/runtime/bootstrap_config.h>
-#include <atlantis/world/world.h>
+#include <atlantis/world/scene_instantiation.h>
 
 #include "../support/pixel_diff.h"
 
@@ -128,7 +128,8 @@ struct MaterialDemoFixture {
   // std::optional, not a bare World: World is move-constructible but not
   // move-assignable (ADR-0049/Spec 0014) -- matches
   // WorldSceneLoadedFixture's own identical field exactly.
-  std::optional<atlantis::world::World> world;
+  // Plan 0051 M5 (Spec 0051 ruling Q7 V3): the bake output, as Runtime holds it.
+  std::optional<atlantis::world::BakedScene> scene;
 };
 
 inline constexpr std::uint32_t kMaterialDemoExtentPixels = 512;

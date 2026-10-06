@@ -198,10 +198,11 @@ Atlantis Runtime (Spec 0013, `Approved`; extended by Spec 0014,
 `atlantis_runtime_host` static library plus a thin `atlantis_runtime`
 Windows executable, composing Platform, RHI, Vulkan Backend, Renderer,
 Shader System, Asset System, and World into one fixed startup → windowed
-frame loop → shutdown lifecycle. Runtime owns the one real `World`
-instance and is the sole place a `World`-driven scene is turned into
-`atlantis::renderer::DrawItem`s, via a Runtime-private extraction adapter
-(`scene_extraction.h`/`.cpp`) — not a public API, not shared with any
+frame loop → shutdown lifecycle. Runtime owns the loaded scene's bake
+output (`world::BakedScene`, Spec 0051) and is the sole place a
+`World`-driven scene is turned into `atlantis::renderer::DrawItem`s, via a
+Runtime-private extraction adapter (`scene_extraction.h`/`.cpp`) — not a
+public API, not shared with any
 other module. `atlantis_runtime_host` exists solely for testability (its
 own GPU-independent lifecycle/error-classification tests) and is not a
 dependency any other top-level module may take. See

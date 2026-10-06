@@ -2,6 +2,9 @@
 
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/validated_scene_data.h>
+#include <atlantis/world/ecs/entity_guid_map.h>
+#include <atlantis/world/ecs/entity_id.h>
+#include <atlantis/world/ecs/world.h>
 #include <atlantis/world/entity_id.h>
 #include <atlantis/world/world.h>
 
@@ -60,5 +63,28 @@ struct SceneInstance {
 // instantiateScene(scene).world, so the two cannot diverge. Genuinely
 // infallible, like fromValidatedSceneData().
 [[nodiscard]] SceneInstance instantiateScene(const atlantis::asset_system::ValidatedSceneData& scene);
+
+// Spec 0051 / ADR-0102 (rulings Q1 B2, Q2 H1, Q5 E1; Plan 0051 P2): the
+// Runtime World baked from a validated scene. One ecs::World entity per scene
+// node, created in node order (so in this fresh world an entity's index() is
+// its node index, ruling Q3), each carrying its authored Transform, its
+// Camera / Light / Renderable as authored, and its world matrix resolved at
+// bake time (WorldMatrix) -- the baked world has no hierarchy. `entities` maps
+// each node's EntityGuid to its entity (Spec 0050's creation-time binding);
+// `activeCamera` is the active camera node's entity, if the scene has one.
+// Move-only: ecs::World is neither copyable nor move-assignable, so hold one
+// in a std::optional and emplace(). Not thread-safe (ADR-0004).
+struct BakedScene {
+  ecs::World world;
+  ecs::EntityGuidMap entities;
+  std::optional<ecs::EntityId> activeCamera;
+};
+
+// The bake: instantiateScene() and one updateTransforms() form the authoring
+// stage -- so every world matrix is bit-identical to the one that solver
+// computes -- then each node becomes an entity and the authoring world is
+// discarded. Infallible, like instantiateScene(): ValidatedSceneData rules out
+// every failure, so an impossible state is an ATLANTIS_CHECK (ruling Q5 E1).
+[[nodiscard]] BakedScene bakeScene(const atlantis::asset_system::ValidatedSceneData& scene);
 
 }  // namespace atlantis::world
