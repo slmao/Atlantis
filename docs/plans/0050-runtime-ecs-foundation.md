@@ -8,11 +8,12 @@
   [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s handle
   rules and keeps [ADR-0097](../adr/0097-guid-keyed-asset-and-entity-identity.md)
   D5.
-- **Status:** In Review ([PR #207](https://github.com/slmao/Atlantis/pull/207))
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending. Implementation is not authorized until a
-  reviewer has read this Plan and Spec 0050 together, ruled J1–J8 below, and
-  explicitly authorized it.
+- **Joint Human Review:** slmao, 2026-10-06 — reviewed this Plan and
+  [Spec 0050](../specs/0050-runtime-ecs-foundation.md) together in
+  [PR #207](https://github.com/slmao/Atlantis/pull/207) and explicitly authorized Implementation from Milestone 1.
+  J1–J8 were ruled as recommended. See Joint Review decisions below.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -440,53 +441,42 @@ Maps to Spec 0050's Testing & Verification Plan.
   regression or Validation-Layer obligation and no golden captured. The
   existing suites run as part of the full-suite gate.
 
-## Joint Review decisions (to be ruled)
+## Joint Review decisions — ruled (Joint Human Review, slmao, 2026-10-06, PR #207)
 
-- **J1 — Structural change during a query.**
-  - **Recommendation:** `ATLANTIS_ASSERT_MSG` (Debug) as R7 requires, and in
-    every build the operation is also refused with
-    `StructuralChangeDuringQuery`, leaving the world unchanged. Release
-    therefore has defined behaviour instead of corrupting the iteration.
-  - Alternative: `ATLANTIS_CHECK` (fatal in every build).
-- **J2 — Archetype and Chunk are internal types in v1.** They are not public
-  API. Tests observe archetype count, chunk count and capacity through the
-  `EcsTestAccess` friend (precedent: `EntityLifecycleTestAccess`).
-  - **Recommendation:** accept. The Spec fixes them as storage concepts
-    (R4/R5), not as public types, and a public archetype API would invite
-    the excluded features.
-- **J3 — `CommandBuffer::apply` failure semantics.**
-  - **Recommendation:** continue past a failed command and report every
-    failure with its command index. The buffer is cleared after `apply`.
-  - Alternatives: stop at the first failure; all-or-nothing (needs a
-    rollback that v1 does not otherwise need).
-- **J4 — How R3's table check finds every `ComponentType<T>`.** C++20 cannot
-  enumerate specializations.
-  - **Recommendation:** each module that maps components declares its list
-    beside the specializations (`WorldComponentTypes`), and the test iterates
-    the list. A specialization added outside the list is not caught
-    mechanically; review and the 0048 Definition of Done item cover it.
-- **J5 — Chunk budget and capacity rule** (P5).
-  - **Recommendation:** 16 KiB, the largest fitting `n ≥ 1`, with an oversize
-    row getting capacity 1.
-- **J6 — `add` and `set` semantics** (P4).
-  - **Recommendation:** `add` on a present component is
-    `ComponentAlreadyPresent` (no overwrite), and `set` on a missing one is
-    `ComponentMissing` (no implicit add).
-  - Alternative: an "add-or-set" upsert.
-- **J7 — Where the "ECS undecided" lines and the allowlist wording are
-  updated.**
-  - **Recommendation:** AGENTS.md's sentence goes with the test change in M5
-    (ruled by Q4 P-a). The same wording in `module_boundaries.md:340/:626`
-    goes in M6.
+All eight were ruled as recommended. None changes a Spec 0050 requirement or
+an ADR-0101 decision.
+
+- **J1 — Structural change during a query.** **Ruled (2026-10-06):**
+  `ATLANTIS_ASSERT_MSG` in Debug (R7). In every configuration the operation is
+  also refused with `StructuralChangeDuringQuery`, and the world is unchanged
+  (P4, P7, P8). Tested in M3 (and for `apply`/`createEntities` in M4/M5).
+- **J2 — Archetype and Chunk are internal types in v1.** **Ruled
+  (2026-10-06):** they are not public API. Tests observe archetype count, chunk
+  count and capacity through the `EcsTestAccess` friend (P1, P3; M2).
+- **J3 — `CommandBuffer::apply` failure semantics.** **Ruled (2026-10-06):**
+  - `apply` continues past a failed command.
+  - Every failure is reported with its command index and `EcsError`.
+  - The buffer is cleared after `apply` (P7; M4).
+- **J4 — How R3's table check finds every `ComponentType<T>`.** **Ruled
+  (2026-10-06):** the check iterates the declared `WorldComponentTypes` list
+  (P2; M1). A specialization added outside the list is covered by review and
+  the Definition of Done item from Plan 0048, not mechanically.
+- **J5 — Chunk budget and capacity rule.** **Ruled (2026-10-06):** 16 KiB per
+  chunk, capacity the largest fitting `n ≥ 1`, and a row larger than the
+  budget gets capacity 1 (P5; M2).
+- **J6 — `add` and `set` semantics.** **Ruled (2026-10-06):**
+  - `add` on a present component returns `ComponentAlreadyPresent` and does
+    not overwrite.
+  - `set` on a missing component returns `ComponentMissing` and does not add
+    it (P4; M2).
+- **J7 — Where the wording is updated.** **Ruled (2026-10-06):**
+  - AGENTS.md's sentence goes with the boundary-test change in M5.
+  - `docs/architecture/module_boundaries.md:340/:626` go in M6.
   - The two "ECS not implemented" lines (`module_boundaries.md:617`,
-    `project-blueprint.md:766`) are left to the post-merge docs PR, as the
-    maintainer directed when the Spec was drafted. The Definition of Done's
-    "docs/architecture updated" item is thereby satisfied in two steps,
-    stated in the implementation PR.
-- **J8 — Read access during a query.**
-  - **Recommendation:** `get`/`set`/`has` stay allowed inside a callback,
-    including on other entities, because they never move rows. Only the
-    structural operations in P8 are refused.
+    `project-blueprint.md:766`) are left to the post-merge docs PR.
+- **J8 — Read access during a query.** **Ruled (2026-10-06):** `get`, `set` and
+  `has` stay allowed inside a query callback, on any entity. Only the
+  structural operations listed in P8 are refused (M3).
 
 ## Rollback Plan
 
