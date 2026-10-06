@@ -10,12 +10,13 @@
   [ADR-0088](../adr/0088-frame-lighting-data-successor-structure-and-binding-strategy.md)'s
   `FrameLightingData` unchanged. Spec 0022's surviving live-edit contract is
   the one its Correction 2026-10-06 states.
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending, in
-  [PR #211](https://github.com/slmao/Atlantis/pull/211). Implementation needs a
-  reviewer, a date and that PR's explicit authorization of Spec 0051 + this
-  Plan together.
+- **Joint Human Review:** slmao, 2026-10-06 — reviewed this Plan and
+  [Spec 0051](../specs/0051-authoring-scene-runtime-world-bake.md) together in
+  [PR #211](https://github.com/slmao/Atlantis/pull/211) and explicitly authorized Implementation from Milestone 1.
+  J1–J7 were ruled as recommended. J6's two Spec Corrections are recorded in
+  Spec 0051's and Spec 0022's headers. See Joint Review decisions below.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -585,59 +586,50 @@ Maps to Spec 0051's Testing & Verification Plan.
   `src/renderer/`, `src/render_graph/`, `src/rhi/`, `src/vulkan_backend/`,
   `src/platform/`, `src/shader_system/`, `src/core/` or `src/tools/`.
 
-## Joint Review decisions — pending
+## Joint Review decisions — ruled (Joint Human Review, slmao, 2026-10-06, PR #211)
 
-- **J1 — Collection functions take a mutable `BakedScene&`** (P3).
-  - `ecs::World::query` is non-const (reading item 5).
-  - **Recommended:** `collectLights`/`collectRenderables` take
-    `world::BakedScene&`, and `collectActiveCamera` takes `const&`.
-  - **Rejected:** a `const` query overload on `ecs::World`. That changes Spec
-    0050's ECS API, outside Spec 0051's Non-Goals ("No ECS feature beyond
-    Spec 0050's").
-- **J2 — Rename and transition** (P5).
-  - **Recommended:**
-    - `loadAndInstantiateScene` → `loadAndBakeScene`, since the old name would
-      misstate the pipeline;
-    - the old function kept, transitional, from M4 to M5 only, so the Runtime
-      switch and the fixture migration are separately reviewable milestones.
-  - **Alternative:** keep the name, and switch Runtime and the fixtures in one
-    milestone.
-- **J3 — `WorldMatrix` field flags** (P1).
-  - **Recommended:** `Editable` only. It is on the live Runtime World's
-    editing surface (the surviving Spec 0022 contract), but no committed
-    format or codec carries it, so it is not `Serializable`.
-  - **Alternative:** `Serializable | Editable`, uniform with Plan 0048 J3's
-    authored components.
-- **J4 — V2 scope** (P7).
-  - **Recommended:** every committed catalog scene. This is a superset of the
-    four whitelist scenes the Spec names, and costs no Device.
-  - **Alternative:** the whitelist four only.
-  - Bistro is content-gated either way.
-- **J5 — The reparenting test** (P9).
-  - **Recommended:** remove `lighting_demo_gpu_tests.cpp:886-945`. It tests
-    exactly the clause Spec 0022's Correction 2026-10-06 superseded, and
-    "move the Point light far away" already covers a world-matrix change.
-  - **Alternative:** rewrite it as a second world-matrix move, a near
-    duplicate.
-- **J6 — Spec text corrections, no requirement change.**
-  - **Spec 0051** says Spec 0022's live-edit contract is "exercised only by
-    `runtime_smoke_gpu_tests`" (Motivation; Q2 Evidence). In fact it is also
-    exercised by `lighting_demo_gpu_tests` (including `setParent`) and
-    `multi_light_demo_gpu_tests` (reading item 8).
-  - **Spec 0051's Testing plan** names the nine fixtures but not the 13
-    consumer test files and 2 support headers that change with them.
-  - **Spec 0022's Correction** names only the smoke test under "Test
-    coverage".
-  - **Recommended:** dated Correction lines on both Specs, recorded with this
-    joint review (the Plan 0048 J1 / Plan 0049 J3 precedent). No requirement,
-    ruling or ADR decision changes.
-- **J7 — Where the docs are updated.**
-  - **Recommended:** in M6, `AGENTS.md:201` and `module_boundaries.md`'s ECS
-    "Not yet done" bullet and Runtime per-frame passage. Both become false at
-    merge.
+All seven were ruled as recommended. None changes a Spec 0051 requirement or
+an ADR-0102 decision. J6 corrects Spec text only.
+
+- **J1 — Collection functions take a mutable `BakedScene&`.** **Ruled
+  (2026-10-06).**
+  - `collectLights`/`collectRenderables` take `world::BakedScene&`, because
+    `ecs::World::query` is non-const. `collectActiveCamera` takes `const&`
+    (P3; M3).
+  - A `const` query overload is not added: it would change Spec 0050's ECS
+    API, outside Spec 0051's Non-Goals. It is recorded only, as a candidate
+    for a future ECS refinement.
+- **J2 — Rename and transition.** **Ruled (2026-10-06).**
+  `loadAndInstantiateScene` becomes `loadAndBakeScene`. The old function is
+  kept, transitional, from M4 to M5 only, and M5 deletes it (P5; M4, M5).
+- **J3 — `WorldMatrix` field flags.** **Ruled (2026-10-06):** `Editable`
+  only, not `Serializable`, because no committed format or codec carries it
+  (P1; M1).
+- **J4 — V2 scope.** **Ruled (2026-10-06):** every committed scene of the
+  assembled build catalog, a superset of the four whitelist scenes. Bistro
+  stays content-gated (P7; M3).
+- **J5 — The reparenting test.** **Ruled (2026-10-06):**
+  `lighting_demo_gpu_tests.cpp:886-945` is deleted. It tests the clause Spec
+  0022's Correction 2026-10-06 superseded. The "move the Point light far
+  away" case keeps covering a world-matrix change (P9; M5).
+- **J6 — Spec text corrections.** **Ruled (2026-10-06):** two dated
+  Corrections were recorded with this review (the Plan 0048 J1 / Plan 0049 J3
+  precedent). No requirement, ruling or ADR decision changes.
+  1. **Spec 0051.** Spec 0022's live-edit contract is exercised by
+     `runtime_smoke_gpu_tests`, `lighting_demo_gpu_tests` (including the
+     `setParent` case J5 deletes) and `multi_light_demo_gpu_tests`.
+     - Besides the nine fixtures, 13 GPU test files and 2 support headers
+       change with `SceneLoadOutcome` (reading items 7–8).
+     - Motivation, Q2's evidence, Testing and Risks are corrected in place.
+  2. **Spec 0022.** Its Correction 2026-10-06's "Test coverage" item now names
+     all three files: `multi_light_demo` is rewritten as ECS edits, and the
+     `lighting_demo` reparent case is deleted.
+- **J7 — Where the docs are updated.** **Ruled (2026-10-06).**
+  - M6 updates `AGENTS.md:201` and `docs/architecture/module_boundaries.md`'s
+    ECS "Not yet done" bullet and Runtime per-frame passage.
   - `project-blueprint.md` and the historical Spec 0019/0022 narrative
-    paragraphs (`module_boundaries.md:475`, `:547`) are left to the
-    post-merge docs PR (the Plan 0050 J7 precedent).
+    paragraphs are left to the post-merge docs PR (the Plan 0050 J7
+    precedent).
 
 ## Rollback Plan
 
@@ -662,5 +654,4 @@ Deltas:
 - [ ] Android `assembleDebug` passes at the final gate; the emulator run is
       recorded (screencap and logcat); the VVL gap is noted.
 - [ ] The Windows whitelist run is recorded.
-- [ ] The J6 Spec Corrections are recorded, if ruled.
 - [ ] The post-merge docs items (J7) are queued.
