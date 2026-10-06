@@ -3,9 +3,10 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-06
-- **Related Plan(s):** none yet — Plan 0051 drafting is authorized by the
-  Approval below. **Implementation still awaits its own, separate Joint Human
-  Review** of Spec + Plan together, per AGENTS.md's own workflow.
+- **Related Plan(s):** [Plan 0051](../plans/0051-authoring-scene-runtime-world-bake.md)
+  (`Approved`; Joint Human Review 2026-10-06,
+  [PR #211](https://github.com/slmao/Atlantis/pull/211)) — implemented, merged
+  [PR #212](https://github.com/slmao/Atlantis/pull/212).
 - **Approval:** slmao, 2026-10-06 (review of this Spec's own branch PR,
   [PR #210](https://github.com/slmao/Atlantis/pull/210)) — authorizes drafting Plan 0051; Implementation itself
   still awaits its own, separate Joint Human Review of Spec + Plan together.
