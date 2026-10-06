@@ -3,9 +3,10 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-06
-- **Related Plan(s):** none yet — Plan 0050 drafting is authorized by the
-  Approval below. **Implementation still awaits its own, separate Joint Human
-  Review** of Spec + Plan together, per AGENTS.md's own workflow.
+- **Related Plan(s):** [Plan 0050](../plans/0050-runtime-ecs-foundation.md)
+  (`Approved`; Joint Human Review 2026-10-06,
+  [PR #207](https://github.com/slmao/Atlantis/pull/207)) — implemented, merged
+  [PR #208](https://github.com/slmao/Atlantis/pull/208).
 - **Approval:** slmao, 2026-10-06 (review of this Spec's own branch PR,
   [PR #206](https://github.com/slmao/Atlantis/pull/206)) — authorizes drafting Plan 0050; Implementation itself
   still awaits its own, separate Joint Human Review of Spec + Plan together.

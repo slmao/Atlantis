@@ -606,19 +606,41 @@ catalog is still a build output, not an asset database.
 ## Atlantis World
 
 **Status: Approved, implemented** (Spec 0014, ADR-0048–ADR-0051, all
-`Accepted`) — this section states the real, built boundary.
+`Accepted`; extended by Spec 0050,
+[ADR-0101](../adr/0101-runtime-ecs-core-storage-identity-and-placement.md)
+`Accepted`, merged [PR #208](https://github.com/slmao/Atlantis/pull/208)) —
+this section states the real, built boundary.
 
 **Responsibilities:** Atlantis's in-memory, multi-entity scene. `World`
 is a slot map: entity lifecycle (`createEntity()`/`destroyEntity()`, an
 index+generation `EntityId` handle formally overflow-safe via permanent
 slot retirement at the generation counter's maximum value), a
 mandatory `Transform` plus two optional components (`Camera`,
-`Renderable`) directly on each entity's own record — not a generic,
-type-erased ECS registry — an atomic parent/child hierarchy with cycle
+`Renderable`) directly on each entity's own record — `World` itself is
+not a type-erased ECS registry — an atomic parent/child hierarchy with cycle
 prevention and cascading destroy, and an explicit `updateTransforms()`
 producing each entity's own world matrix via a fully iterative
 (non-recursive) traversal. `World` never mutates itself automatically;
 every state change is caller-driven.
+
+Since Spec 0050 the module also holds `atlantis::world::ecs`
+([ADR-0101](../adr/0101-runtime-ecs-core-storage-identity-and-placement.md)),
+a single-threaded archetype/chunk entity-component store beside `World`. It
+neither replaces nor wraps `World`.
+- **Components.** `ecs::World` keys components by `schema::TypeId` through
+  explicit `ComponentType<T>` mappings. A component must be trivially
+  copyable, trivially destructible and standard-layout, and must be described
+  in its module's schema table.
+- **Storage and access.** Rows live in 16 KiB chunks per archetype. Point
+  access (`get`/`set`) is by value. `query<Ts...>()` hands a callback
+  references that are valid for one call; structural changes are refused
+  while a query runs and are deferred through a `CommandBuffer`.
+- **Identity.** `ecs::EntityId` follows ADR-0049's handle rules. `EntityGuid`
+  binds only at creation (`createEntities()` → `EntityGuidMap`,
+  `ecs/entity_guid_map.h`), so the ECS stores no GUID (ADR-0097 D5).
+- **Not yet done.** Runtime does not use it yet. Runtime migration, a
+  hierarchy over ECS components, a system scheduler, job-system integration
+  and Spec 0050's other exclusions are future Specs.
 
 **Depends on:** Core, and, narrowly, Asset System: the `AssetId` type
 named in `Renderable`'s own two public fields (a mandatory `meshAsset` and,
