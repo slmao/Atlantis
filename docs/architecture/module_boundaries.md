@@ -658,6 +658,31 @@ neither replaces nor wraps `World`.
   in node order, with its authored components and a bake-resolved
   `WorldMatrix`, and no hierarchy. `world::World` remains the authoring-stage
   world and the bake's hierarchy solver.
+- **Operation boundary.** Since Spec 0052
+  ([ADR-0103](../adr/0103-runtime-world-operation-boundary.md)),
+  `atlantis::world::access::RuntimeWorldAccess` is the Runtime World's public
+  operation boundary, the first concrete client boundary of
+  [ADR-0033](../adr/0033-runtime-authority-and-client-boundary.md).
+  - **Concepts.** It has exactly three: Query (`findEntity`,
+    `listComponents`, `getProperty`), Command (`CreateEntity`,
+    `DestroyEntity`, `AddComponent`, `RemoveComponent`, `SetProperty`) and
+    Event (`EntityCreated`, `EntityDestroyed`, `ComponentAdded`,
+    `ComponentRemoved`, `PropertyChanged`).
+  - **Addressing.** Entities and properties are addressed by `EntityGuid` and
+    `(EntityGuid, TypeId, FieldId)` against `worldSchema()`; values are a
+    `PropertyValue` variant. No ECS handle, archetype or component C++ type
+    crosses it.
+  - **Ownership.** It borrows the owner's `BakedScene` and keeps its own
+    `EntityGuid → EntityId` index, seeded from `EntityGuidMap::entries()`, so
+    the ECS still stores no GUID.
+  - **Field access.** Reads and writes go through the descriptors
+    (`byteOffset`), the accessor layer ADR-0099 D5 deferred.
+  - **Commands** are submitted, then applied by the owner one by one; a
+    refused command has no effect and is reported by ticket. Validation
+    covers type, finiteness and three crash guards: the light-count limits,
+    and the active camera and its `Camera`/`WorldMatrix`.
+  - **Events** come one per successful command, drained by value. This is
+    not a reactive ECS.
 - **Not yet done.** A hierarchy over ECS components, a system scheduler,
   job-system integration and Spec 0050's other exclusions are future Specs.
 
@@ -759,12 +784,19 @@ world, its `EntityGuidMap` and the active camera; the loaded scene's GUID is
 kept beside it, and a Runtime-private `resolveEntityRef()` resolves a
 persisted `EntityRef` through that map — unknown scene, unknown entity or dead
 entity is an explicit error, ADR-0097 D6) — replacing the former fixed,
-hardcoded six-entity validation scene Spec 0014 shipped. Each frame: collects
+hardcoded six-entity validation scene Spec 0014 shipped. It owns the
+`BakedScene` (on the heap, so its address survives the application's own
+move) and, since Spec 0052, the `RuntimeWorldAccess` boundary over it, the
+only way a client reaches the Runtime World. Each frame: first applies the
+commands clients submitted since the previous frame
+(`RuntimeWorldAccess::applyPending()`), then collects
 the active camera, lights and renderables from the baked world through the
 shared `collect*()` functions in `scene_extraction.h` (node order; no
 transform pass — the hierarchy was resolved at bake time), extracts the
 active camera's view/projection matrices, computes which referenced
-materials are not yet GPU-realized and realizes them (Spec 0018 — a
+materials are not yet GPU-realized and realizes them (only materials the
+scene load loaded; since Spec 0052 an entity naming any other material is
+skipped as unresolvable rather than aborting the frame. Spec 0018 — a
 new, independently-testable `material_realization.h`/`.cpp` module;
 each realized material's own texture-upload RenderGraph pass is
 recorded into the same `CommandList` the draw graph below also uses,
