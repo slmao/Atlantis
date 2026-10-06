@@ -499,7 +499,12 @@ Material" assumption, never revisited when Plan 0018 introduced
 arbitrary-N-materials support — a real, currently-supported two-
 distinct-material color-format change exceeded it, reproduced by a real
 GPU regression test. **Fixed by Descriptor Pool Capacity Foundation,
-immediately below.**
+immediately below.** *(Since Spec 0051 /
+[ADR-0102](../adr/0102-authoring-runtime-world-separation-and-scene-bake.md):
+Runtime no longer runs `World::updateTransforms()`; each Light's world
+matrix is resolved when the scene is baked, and its `FrameLightingData` is
+extracted every frame from the baked Runtime World — see Atlantis World
+and Atlantis Runtime below.)*
 
 **Descriptor Pool Capacity Foundation (Spec 0021, implemented and
 merged via [PR #100](https://github.com/slmao/Atlantis/pull/100)):**
@@ -554,7 +559,14 @@ change; zero new synchronization primitive.
 [ADR-0065](../adr/0065-explicit-pre-write-submission-drain-for-frame-uniform-safety.md),
 which would have recorded the originally-proposed new RHI method, is
 `Rejected` — its own Decision was never implemented and must not be read
-as a current architectural decision.
+as a current architectural decision. *(Since Spec 0051 /
+[ADR-0102](../adr/0102-authoring-runtime-world-separation-and-scene-bake.md),
+recorded as Spec 0022's Correction 2026-10-06: Runtime's frame reads the
+baked Runtime World, which has no hierarchy and no per-frame transform pass.
+Light component values, world-matrix edits, and Light entity
+creation/removal on that world still reach the next frame; a Light's local or
+parent `Transform` edit no longer does — hierarchy edits belong to the
+authoring stage.)*
 
 **PBR Material Foundation (Direct Lighting) (Spec 0023, implemented and
 merged via [PR #111](https://github.com/slmao/Atlantis/pull/111)):**
