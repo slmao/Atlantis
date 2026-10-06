@@ -98,11 +98,16 @@ static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrid
 // these static_asserts were ever to start failing (e.g. a future
 // change to Mesh's own type altering Hash/KeyEqual), that would be a
 // compile error here, not a latent runtime risk discovered later.
-// Plan 0051 P4: the published scene is now the bake output (Spec 0051);
-// ecs::World's move constructor is noexcept by its own declaration.
-static_assert(std::is_nothrow_move_constructible_v<atlantis::world::BakedScene>,
-              "scene_.emplace(std::move(outcome.scene)) in initializeSteps() requires BakedScene's move constructor "
-              "to be noexcept for the scene-load publish step to be genuinely atomic");
+// Plan 0051 P4 / Plan 0052 P9: the published scene is the bake output
+// (Spec 0051), held by unique_ptr for a stable address, and its operation
+// boundary (Spec 0052) -- both built before the publish, which then only
+// moves them.
+static_assert(std::is_nothrow_move_assignable_v<std::unique_ptr<atlantis::world::BakedScene>>,
+              "scene_ = std::move(bakedScene) in initializeSteps() must be noexcept for the scene-load publish step "
+              "to be genuinely atomic");
+static_assert(std::is_nothrow_move_constructible_v<atlantis::world::access::RuntimeWorldAccess>,
+              "worldAccess_.emplace(std::move(access)) in initializeSteps() must be noexcept for the scene-load "
+              "publish step to be genuinely atomic");
 static_assert(
     std::is_nothrow_move_assignable_v<decltype(std::declval<SceneLoadOutcome>().meshResourceMap)>,
     "meshResourceMap_ = std::move(outcome.meshResourceMap) in initializeSteps() requires this move-assignment to "
@@ -1077,10 +1082,15 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
     loadedEnvironment = std::move(environmentResult.value());
   }
 
-  // Publish -- only now, both fully built (D10 step (g)). BakedScene is
-  // move-constructible but NOT move-assignable (its ecs::World is not,
-  // Spec 0050) -- scene_ is std::optional<BakedScene> and this is emplace(),
-  // i.e. in-place move-CONSTRUCTION, never assignment. meshResourceMap_
+  // Plan 0052 P9: the scene moves to the heap -- its address must survive
+  // this RuntimeApplication's own move, since the operation boundary
+  // borrows it -- and the boundary is built over it, both before the
+  // publish, so the publish itself allocates nothing.
+  auto bakedScene = std::make_unique<atlantis::world::BakedScene>(std::move(outcome.scene));
+  atlantis::world::access::RuntimeWorldAccess access(*bakedScene);
+
+  // Publish -- only now, both fully built (D10 step (g)). scene_ and
+  // worldAccess_ take what was built above by noexcept moves. meshResourceMap_
   // is a plain std::unordered_map, whose own move-assignment is not
   // deleted, so plain assignment is correct there. Both steps are
   // proven noexcept at compile time by the two static_asserts above
@@ -1088,7 +1098,8 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // genuinely atomic in effect (if the first step runs, it cannot
   // throw, and the second cannot throw either), not merely assumed
   // safe; no catch/rollback exists here because none is needed.
-  scene_.emplace(std::move(outcome.scene));
+  scene_ = std::move(bakedScene);
+  worldAccess_.emplace(std::move(access));  // Plan 0052 P9: the client boundary over scene_
   meshResourceMap_ = std::move(outcome.meshResourceMap);
   materialDataMap_ = std::move(outcome.materialDataMap);
   textureDataMap_ = std::move(outcome.textureDataMap);
@@ -1109,6 +1120,17 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
 
   lifecycle_.markRunning();
   return atlantis::Result<std::monostate, RuntimeInitError>::Ok(std::monostate{});
+}
+
+std::vector<atlantis::asset_system::AssetId> loadedMaterialIdsOnly(
+    const std::vector<atlantis::asset_system::AssetId>& referenced,
+    const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData>& loaded) {
+  std::vector<atlantis::asset_system::AssetId> realizable;
+  realizable.reserve(referenced.size());
+  for (const atlantis::asset_system::AssetId id : referenced) {
+    if (loaded.contains(id)) realizable.push_back(id);
+  }
+  return realizable;
 }
 
 atlantis::Result<RuntimeApplication, RuntimeInitError> createRuntimeApplication(const BootstrapConfig& config) {
@@ -1137,6 +1159,13 @@ bool RuntimeApplication::shouldContinue() const noexcept {
 
 void RuntimeApplication::runFrame() {
   ATLANTIS_CHECK_MSG(shouldContinue(), "runFrame() called while !shouldContinue()");
+
+  // Spec 0052 / ADR-0103 D7 (Plan 0052 P9, J6): commands clients submitted
+  // between frames apply here, first -- on the frame thread, before anything
+  // reads the world -- so this frame and every later one see them. Nothing
+  // pending, nothing changes. Refusals stay queued for the client's
+  // drainFailures().
+  if (worldAccess_.has_value()) (void)worldAccess_->applyPending();
 
   for (const auto& event : platform::processEvents()) {
     if (const auto* created = std::get_if<platform::SurfaceCreated>(&event)) {
@@ -1557,8 +1586,11 @@ void RuntimeApplication::runFrame() {
   std::vector<atlantis::asset_system::AssetId> alreadyRealizedMaterialIds;
   alreadyRealizedMaterialIds.reserve(materialResourceMap_.size());
   for (const auto& [assetId, material] : materialResourceMap_) alreadyRealizedMaterialIds.push_back(assetId);
-  const std::vector<atlantis::asset_system::AssetId> pendingMaterialIds =
-      computePendingMaterialIds(referencedMaterialIds, alreadyRealizedMaterialIds);
+  // Plan 0052 J2: only materials the scene load loaded can be realized; an
+  // entity naming another (a client's SetProperty can) is skipped by the
+  // DrawItem walk below as unresolvable, never fatal.
+  const std::vector<atlantis::asset_system::AssetId> pendingMaterialIds = computePendingMaterialIds(
+      loadedMaterialIdsOnly(referencedMaterialIds, materialDataMap_), alreadyRealizedMaterialIds);
 
   auto commandListResult = device_->createCommandList();
   if (commandListResult.isErr()) {

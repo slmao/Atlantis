@@ -3,6 +3,8 @@
 #include <atlantis/runtime/exit_reason.h>
 #include <atlantis/runtime/runtime_application.h>
 #include <atlantis/runtime/scene_extraction.h>
+#include <atlantis/schema.h>
+#include <atlantis/world/access/runtime_world_access.h>
 #include <atlantis/world/light.h>
 #include <atlantis/world/ecs/world_components.h>
 #include <atlantis/world/scene_instantiation.h>
@@ -13,7 +15,9 @@
 #include <cstddef>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <variant>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -56,12 +60,13 @@ namespace ecs = atlantis::world::ecs;
 // never a new friend declaration, never a new public API on
 // RuntimeApplication itself (runtime_application.h's own `friend struct
 // RuntimeSmokeTestAccess;` is already generic; granting this struct one
-// more static method needs no header change at all). `scene()` exposes
-// the baked scene (Spec 0051) `renderableEntityCount()` already reads, by
-// mutable reference, so a test can edit the real, running app's own live
-// Runtime World through the ECS's public createEntity()/add()/set()/
-// destroyEntity() -- never a second, test-private instance, and never a
-// duplicated scene-load or frame-loop path. `lightingPayloadBytes()` reads the real
+// more static method needs no header change at all). `worldAccess()`
+// exposes the running app's Runtime World operation boundary (Spec 0052,
+// Plan 0052 P9/P10), so the test edits the live Runtime World exactly as a
+// client does -- commands submitted between frames, applied by runFrame(),
+// observed as events -- never through the scene's ECS directly, never a
+// second, test-private instance, and never a duplicated scene-load or
+// frame-loop path. `lightingPayloadBytes()` reads the real
 // `cameraBuffer_`'s own mapped bytes directly -- a host-visible,
 // host-coherent read the app's own real frame writes into every frame
 // (Spec 0022's own confirmed HOST_COHERENT contract) -- so this is a
@@ -113,7 +118,9 @@ struct RuntimeSmokeTestAccess {
   static std::size_t meshResourceMapSize(const RuntimeApplication& app) { return app.meshResourceMap_.size(); }
   static std::size_t materialResourceMapSize(const RuntimeApplication& app) { return app.materialResourceMap_.size(); }
 
-  [[nodiscard]] static BakedScene& scene(RuntimeApplication& app) { return *app.scene_; }
+  [[nodiscard]] static atlantis::world::access::RuntimeWorldAccess& worldAccess(RuntimeApplication& app) {
+    return *app.worldAccess_;
+  }
 
   // Plan 0044 Milestone 1: the three bloom Pipelines, built at startup when
   // the bloom shader paths are set; sceneWantsBloom_ from the active camera.
@@ -381,29 +388,44 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   REQUIRE(beforeAnyLight.directionalLightCount == 1);
   REQUIRE(beforeAnyLight.pointLightCount == 0);
 
-  // Plan 0051 P9 (Spec 0022's surviving contract, Correction 2026-10-06):
-  // a Light entity created on the running app's own baked Runtime World --
-  // the ECS's public createEntity()/add() -- with its world matrix given
-  // directly, since the baked world has no hierarchy to resolve one.
-  BakedScene& scene = RuntimeSmokeTestAccess::scene(app);
-  const ecs::EntityId newLight = scene.world.createEntity();
-  Light point;
-  point.kind = LightKind::Point;
-  point.color = {0.2f, 0.4f, 0.9f};
-  point.intensity = 2.5f;
-  point.range = 5.0f;
-  REQUIRE(scene.world.add(newLight, point).isOk());
-  Transform lightTransform;
-  lightTransform.localPosition = {1.0f, 1.0f, 1.0f};
-  REQUIRE(scene.world.add(newLight, lightTransform).isOk());
-  WorldMatrix lightWorld;  // identity rotation and scale: a translation alone
-  lightWorld.column3 = {1.0f, 1.0f, 1.0f, 1.0f};
-  REQUIRE(scene.world.add(newLight, lightWorld).isOk());
+  // Plan 0052 P10 (Spec 0052 ruling Q5 H-a; Spec 0022's surviving contract,
+  // Correction 2026-10-06): the live edits go through the Runtime World's
+  // operation boundary, as any client's would -- submitted between frames,
+  // applied by the next runFrame()'s first statement, observed as events.
+  // The new light gets its Light before its WorldMatrix (Correction J1:
+  // Light{} is Directional, and only a Light + WorldMatrix holder counts
+  // toward the light limits).
+  namespace access = atlantis::world::access;
+  access::RuntimeWorldAccess& boundary = RuntimeSmokeTestAccess::worldAccess(app);
+  const auto lightType = ecs::componentTypeId<Light>();
+  const auto matrixType = ecs::componentTypeId<WorldMatrix>();
+  const auto lightField = [](std::string_view name) { return atlantis::schema::fieldId("world::Light", name); };
+  const auto column3 = atlantis::schema::fieldId("world::WorldMatrix", "column3");
+  const auto newLight = atlantis::asset_system::parseEntityGuid("52005200-0000-4000-8000-000000000001").value();
+  boundary.submit(access::CreateEntity{newLight});
+  boundary.submit(access::AddComponent{newLight, lightType});
+  boundary.submit(access::SetProperty{{newLight, lightType, lightField("kind")}, access::EnumValue{1}});  // Point
+  boundary.submit(
+      access::SetProperty{{newLight, lightType, lightField("color")}, std::array<float, 3>{0.2f, 0.4f, 0.9f}});
+  boundary.submit(access::SetProperty{{newLight, lightType, lightField("intensity")}, 2.5f});
+  boundary.submit(access::SetProperty{{newLight, lightType, lightField("range")}, 5.0f});
+  boundary.submit(access::AddComponent{newLight, ecs::componentTypeId<Transform>()});
+  boundary.submit(access::AddComponent{newLight, matrixType});
+  boundary.submit(
+      access::SetProperty{{newLight, matrixType, column3}, std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}});
 
   // The next real windowed frame -- a real acquire/Step 0/submit/present
-  // cycle, identical in shape to the 3 frames above -- publishes it.
+  // cycle, identical in shape to the 3 frames above -- applies and
+  // publishes them.
   app.runFrame();
   REQUIRE(app.shouldContinue());
+  CHECK(boundary.drainFailures().empty());
+  const std::vector<access::Event> addedEvents = boundary.drainEvents();
+  REQUIRE(addedEvents.size() == 9);  // one per command, in order
+  CHECK(addedEvents.front() == access::Event{access::EntityCreated{newLight}});
+  CHECK(addedEvents.back() ==
+        access::Event{access::PropertyChanged{{newLight, matrixType, column3},
+                                              std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}}});
   const FrameLightingData afterLightAdded = RuntimeSmokeTestAccess::lightingPayloadBytes(app);
   CHECK(afterLightAdded.directionalLightCount == 1);
   CHECK(afterLightAdded.pointLightCount == 1);
@@ -415,25 +437,25 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   CHECK(afterLightAdded.pointLights[0].color[2] == 0.9f);
   CHECK(afterLightAdded.pointLights[0].intensity == 2.5f);
 
-  // A world-matrix edit alone, on the same entity, is seen by the next
-  // frame's collection -- a live, uncached query.
-  WorldMatrix moved;
-  moved.column3 = {-2.0f, 3.0f, 0.5f, 1.0f};
-  REQUIRE(scene.world.set(newLight, moved).isOk());
-
+  // A world-matrix edit alone is seen by the next frame's collection.
+  boundary.submit(
+      access::SetProperty{{newLight, matrixType, column3}, std::array<float, 4>{-2.0f, 3.0f, 0.5f, 1.0f}});
   app.runFrame();
   REQUIRE(app.shouldContinue());
+  CHECK(boundary.drainEvents().size() == 1);
   const FrameLightingData afterTransformMoved = RuntimeSmokeTestAccess::lightingPayloadBytes(app);
   CHECK(afterTransformMoved.pointLightCount == 1);
   CHECK(afterTransformMoved.pointLights[0].position[0] == -2.0f);
   CHECK(afterTransformMoved.pointLights[0].position[1] == 3.0f);
   CHECK(afterTransformMoved.pointLights[0].position[2] == 0.5f);
 
-  // Plan 0051 P9 (new): Light entity removal is seen by the next frame, and
-  // the freed slot is zeroed.
-  REQUIRE(scene.world.destroyEntity(newLight).isOk());
+  // Light entity removal is seen by the next frame, and the freed slot is
+  // zeroed.
+  boundary.submit(access::DestroyEntity{newLight});
   app.runFrame();
   REQUIRE(app.shouldContinue());
+  CHECK(boundary.drainEvents() == std::vector<access::Event>{access::EntityDestroyed{newLight}});
+  CHECK(boundary.drainFailures().empty());
   const FrameLightingData afterLightRemoved = RuntimeSmokeTestAccess::lightingPayloadBytes(app);
   CHECK(afterLightRemoved.directionalLightCount == 1);
   CHECK(afterLightRemoved.pointLightCount == 0);
