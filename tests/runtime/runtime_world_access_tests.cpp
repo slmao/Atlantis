@@ -175,4 +175,3 @@ TEST_CASE("runtime world access: J2 -- a material id the scene load did not load
   CHECK(std::find(realizable.begin(), realizable.end(), kUnloaded) == realizable.end());
   for (const AssetId id : realizable) CHECK(loaded.contains(id));
 }
-
