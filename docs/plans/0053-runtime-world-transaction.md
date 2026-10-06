@@ -12,7 +12,8 @@
   test layout and gates.
 - **Status:** Draft
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending. Implementation needs the Joint Human Review
+- **Joint Human Review:** pending, in
+  [PR #219](https://github.com/slmao/Atlantis/pull/219). Implementation needs the Joint Human Review
   of this Plan together with Spec 0053, explicitly authorizing it (J1–J9
   below).
 
