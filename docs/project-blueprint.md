@@ -778,13 +778,25 @@ milestone being listed does not authorize starting it — see Section 1.
   components and a bake-resolved `WorldMatrix`, and no hierarchy; Runtime's
   frame reads only that baked world, with no per-frame transform pass.
   `World` remains the authoring-stage world and the bake's hierarchy
-  solver. These each remain a future Spec's work:
+  solver. Since [Spec 0052](specs/0052-runtime-world-query-command-event-foundation.md)
+  (merged [PR #216](https://github.com/slmao/Atlantis/pull/216);
+  [ADR-0103](adr/0103-runtime-world-operation-boundary.md)), clients reach
+  that world only through a public operation boundary in World,
+  `atlantis::world::access`:
+  - Query, Command (five) and Event (five);
+  - addressed by `EntityGuid` + schema `TypeId`/`FieldId`;
+  - values only, no ECS layout exposed.
+
+  Runtime applies pending commands at the start of every frame. These each
+  remain a future Spec's work:
   - a system scheduler;
   - job-system integration and multi-threading;
   - change tracking, replication and reactive queries;
   - chunk streaming;
   - prefab, networking and C# bindings;
-  - a runtime hierarchy over ECS components (Spec 0051 ruling Q2).
+  - a runtime hierarchy over ECS components (Spec 0051 ruling Q2);
+  - transactions and undo (0053), a client transport (0054), and an
+    entity-listing query.
 
 ### Milestone 12 — Scene Asset & Serialization Foundation
 

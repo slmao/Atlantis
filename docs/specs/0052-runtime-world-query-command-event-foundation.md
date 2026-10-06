@@ -3,9 +3,10 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-06
-- **Related Plan(s):** none yet — Plan 0052 drafting is authorized by the
-  Approval below. **Implementation still awaits its own, separate Joint Human
-  Review** of Spec + Plan together, per AGENTS.md's own workflow.
+- **Related Plan(s):** [Plan 0052](../plans/0052-runtime-world-query-command-event-foundation.md)
+  (`Approved`; Joint Human Review 2026-10-06,
+  [PR #215](https://github.com/slmao/Atlantis/pull/215)) — implemented, merged
+  [PR #216](https://github.com/slmao/Atlantis/pull/216).
 - **Approval:** slmao, 2026-10-06 (review of this Spec's own branch PR,
   [PR #214](https://github.com/slmao/Atlantis/pull/214)) — authorizes drafting Plan 0052; Implementation itself
   still awaits its own, separate Joint Human Review of Spec + Plan together.
