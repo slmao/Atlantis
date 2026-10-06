@@ -765,7 +765,18 @@ milestone being listed does not authorize starting it — see Section 1.
   scene serialization or a scene file format, a scene-asset cooker, a
   general/data-driven/multi-threaded ECS, keyframe or time-driven
   mutation, and any Client/Editor/second-process consumer of `World`
-  state.
+  state. Since [Spec 0050](specs/0050-runtime-ecs-foundation.md) (merged
+  [PR #208](https://github.com/slmao/Atlantis/pull/208)), a general,
+  single-threaded archetype/chunk ECS core exists: `atlantis::world::ecs`,
+  beside `World` and not yet used by Runtime
+  ([ADR-0101](adr/0101-runtime-ecs-core-storage-identity-and-placement.md)).
+  These each remain a future Spec's work:
+  - a system scheduler;
+  - job-system integration and multi-threading;
+  - change tracking, replication and reactive queries;
+  - chunk streaming;
+  - prefab, networking and C# bindings;
+  - Runtime's migration onto the ECS.
 
 ### Milestone 12 — Scene Asset & Serialization Foundation
 
