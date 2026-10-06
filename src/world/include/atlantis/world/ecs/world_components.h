@@ -15,7 +15,8 @@ namespace atlantis::world::ecs {
 // Plan 0050 P2 (Spec 0050 R3): World's four component types as ECS
 // components, each named by its worldSchema() descriptor's qualified name.
 // CameraFog, CameraBloom and LightKind are fields of components, not
-// components, and are not mapped.
+// components, and are not mapped. Compile-time declarations only; no shared
+// state.
 template <>
 struct ComponentType<Transform> {
   static constexpr std::string_view kName = "world::Transform";

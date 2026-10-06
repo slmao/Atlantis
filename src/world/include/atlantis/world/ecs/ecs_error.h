@@ -5,6 +5,7 @@
 namespace atlantis::world::ecs {
 
 // Plan 0050 P4 (Spec 0050 R1, R2, R6-R8): every recoverable ECS failure.
+// A plain value and a pure function; safe for concurrent use.
 enum class EcsError {
   InvalidEntity,                // stale, retired, foreign-instance, or the sentinel
   ComponentMissing,             // get/set/remove of a component the entity lacks
