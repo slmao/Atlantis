@@ -5,7 +5,8 @@
 - **Created:** 2026-10-06
 - **Related Plan(s):** none yet. Drafting a Plan is authorized only after this
   Spec's Approval.
-- **Approval:** pending. The maintainer fixed the principle, the pipeline and
+- **Approval:** pending, under review in
+  [PR #210](https://github.com/slmao/Atlantis/pull/210). The maintainer fixed the principle, the pipeline and
   the boundaries before drafting (2026-10-06, chat):
   - the bake product is the ECS world;
   - Runtime switches to it within this Spec;
