@@ -55,9 +55,10 @@ static_assert(ecs::Component<atlantis::world::Transform>);
 static_assert(ecs::Component<atlantis::world::Camera>);
 static_assert(ecs::Component<atlantis::world::Light>);
 static_assert(ecs::Component<atlantis::world::Renderable>);
+static_assert(ecs::Component<atlantis::world::WorldMatrix>);  // Plan 0051 M1
 static_assert(!ecs::Component<atlantis::world::CameraFog>);  // a field of Camera, not a component
 static_assert(!ecs::Component<Unmapped>);                    // no ComponentType specialization
-static_assert(std::tuple_size_v<ecs::WorldComponentTypes> == 4);
+static_assert(std::tuple_size_v<ecs::WorldComponentTypes> == 5);  // Plan 0051 M1: 4 -> 5, WorldMatrix
 
 TEST_CASE("ecs component types: every mapped World component is in worldSchema()", "[world][ecs]") {
   expectAll<ecs::WorldComponentTypes>(std::make_index_sequence<std::tuple_size_v<ecs::WorldComponentTypes>>{});

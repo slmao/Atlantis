@@ -10,6 +10,7 @@
 #include <atlantis/world/light.h>
 #include <atlantis/world/renderable.h>
 #include <atlantis/world/transform.h>
+#include <atlantis/world/world_matrix.h>
 
 namespace atlantis::world {
 
@@ -30,10 +31,14 @@ static_assert(std::is_standard_layout_v<CameraBloom>);
 static_assert(std::is_standard_layout_v<Camera>);
 static_assert(std::is_standard_layout_v<Light>);
 static_assert(std::is_standard_layout_v<Renderable>);
+static_assert(std::is_standard_layout_v<WorldMatrix>);
 
 // Plan 0048 P6 (ruling J3): every World component field is Serializable and
 // Editable.
 constexpr FieldFlags kComponent = FieldFlags::Serializable | FieldFlags::Editable;
+// Plan 0051 J3: WorldMatrix is editable on the baked Runtime World but no
+// committed format or codec carries it, so it is not Serializable.
+constexpr FieldFlags kDerivedComponent = FieldFlags::Editable;
 
 constexpr FieldDescriptor primitive(std::string_view owner, std::string_view name, PrimitiveKind kind,
                                     FieldFlags flags, std::size_t offset) {
@@ -62,6 +67,7 @@ constexpr std::string_view kCamera = "world::Camera";
 constexpr std::string_view kLight = "world::Light";
 constexpr std::string_view kLightKind = "world::LightKind";
 constexpr std::string_view kRenderable = "world::Renderable";
+constexpr std::string_view kWorldMatrix = "world::WorldMatrix";
 
 constexpr std::array kTransformFields{
     primitive(kTransform, "localPosition", PrimitiveKind::Vec3Float32, kComponent,
@@ -114,11 +120,20 @@ constexpr std::array kRenderableFields{
               kComponent | FieldFlags::AssetReference | FieldFlags::Optional, offsetof(Renderable, materialAsset)),
 };
 
+// Plan 0051 P1: four column fields, Vec4Float32 each (no Core vocabulary
+// change, Spec 0051 ruling Q2).
+constexpr std::array kWorldMatrixFields{
+    primitive(kWorldMatrix, "column0", PrimitiveKind::Vec4Float32, kDerivedComponent, offsetof(WorldMatrix, column0)),
+    primitive(kWorldMatrix, "column1", PrimitiveKind::Vec4Float32, kDerivedComponent, offsetof(WorldMatrix, column1)),
+    primitive(kWorldMatrix, "column2", PrimitiveKind::Vec4Float32, kDerivedComponent, offsetof(WorldMatrix, column2)),
+    primitive(kWorldMatrix, "column3", PrimitiveKind::Vec4Float32, kDerivedComponent, offsetof(WorldMatrix, column3)),
+};
+
 constexpr std::array kWorldSchema{
     structType(kTransform, kTransformFields),   structType(kCameraFog, kCameraFogFields),
     structType(kCameraBloom, kCameraBloomFields), structType(kCamera, kCameraFields),
     structType(kLight, kLightFields),           enumType(kLightKind, kLightKindConstants),
-    structType(kRenderable, kRenderableFields),
+    structType(kRenderable, kRenderableFields), structType(kWorldMatrix, kWorldMatrixFields),
 };
 
 static_assert(schema::isWellFormed(kWorldSchema));
