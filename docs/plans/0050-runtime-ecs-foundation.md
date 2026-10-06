@@ -8,7 +8,7 @@
   [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s handle
   rules and keeps [ADR-0097](../adr/0097-guid-keyed-asset-and-entity-identity.md)
   D5.
-- **Status:** In Review
+- **Status:** In Review ([PR #207](https://github.com/slmao/Atlantis/pull/207))
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Joint Human Review:** pending. Implementation is not authorized until a
   reviewer has read this Plan and Spec 0050 together, ruled J1–J8 below, and
