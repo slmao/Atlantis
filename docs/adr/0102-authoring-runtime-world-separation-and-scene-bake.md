@@ -1,12 +1,12 @@
 # ADR 0102: Authoring/Runtime World Separation and the Scene Bake
 
-- **Status:** Proposed
-- **Date:** 2026-10-06
+- **Status:** Accepted
+- **Date:** 2026-10-06 (accepted 2026-10-06)
 - **Deciders:** slmao
-- **Acceptance:** pending. To be `Accepted` before or during the review of
-  [Spec 0051](../specs/0051-authoring-scene-runtime-world-bake.md), with D2–D7
-  as ruled there (Spec Q1–Q7).
-- **Related Spec:** [Spec 0051: Authoring Scene → Runtime World Bake](../specs/0051-authoring-scene-runtime-world-bake.md)
+- **Acceptance:** slmao, 2026-10-06 (review of this branch's own PR,
+  [PR #210](https://github.com/slmao/Atlantis/pull/210); accepted together with Spec 0051's Approval, its seven open
+  questions ruled as recommended)
+- **Related Spec:** [Spec 0051: Authoring Scene → Runtime World Bake](../specs/0051-authoring-scene-runtime-world-bake.md) (`Approved`)
 - **Related ADR(s):**
   - Records the representation choice
     [ADR-0035](0035-authoring-runtime-data-separation-as-a-long-term-principle.md)
@@ -15,7 +15,12 @@
     - [ADR-0051](0051-world-to-renderer-extraction-and-asset-resolution-boundary.md):
       its per-frame steps 1–2, the extraction's data source;
     - [ADR-0048](0048-world-scene-module-boundary-and-ownership.md): Runtime
-      owning and driving one `world::World`.
+      owning and driving one `world::World`;
+    - [Spec 0022](../specs/0022-dynamic-frame-uniform-updates-foundation.md)'s
+      Goal clause on live local-`Transform` and parent-hierarchy edits
+      (Spec 0051 ruling Q2, H1). Spec 0022's header records this as its
+      Correction 2026-10-06. Its component-value and entity-lifetime
+      live-edit guarantees remain.
   - Fulfils [ADR-0101](0101-runtime-ecs-core-storage-identity-and-placement.md)
     D1's deferred Runtime-migration decision.
   - Keeps unchanged:
@@ -72,39 +77,43 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - It is declared beside `instantiateScene()` in `scene_instantiation.h`
      (already allowed to name `ValidatedSceneData`/`EntityGuid`).
    - Asset System is unaware of it.
-   - There is no source-text bake in the Runtime path (Spec 0051 Q1).
+   - There is no source-text bake in the Runtime path (Spec 0051 ruling Q1).
 3. **The product is `BakedScene`**: an `ecs::World`, an `EntityGuidMap` (one
    entity per node, created in node order through `createEntities()`), and
    the active camera's `EntityId`.
    - The bake is infallible on validated input: impossible states are
      `ATLANTIS_CHECK`s, as in `instantiateScene()`.
    - The authoring `world::World` is discarded before the bake returns
-     (Spec 0051 Q5).
+     (Spec 0051 ruling Q5).
 4. **Hierarchy is resolved at bake.**
    - Each entity carries its authored components and a described
      `world::WorldMatrix` (four `Vec4Float32` columns), added to
      `worldSchema()` and mapped for the ECS.
    - The baked world has no hierarchy and the frame runs no transform pass.
    - Live component and entity edits of the Runtime World still reach the
-     next frame. Local-`Transform` and parent edits no longer do: this
-     supersedes, in part, Spec 0022's Goal for the Runtime World. Hierarchy
-     edits belong to the authoring stage and re-bake.
-   - A runtime hierarchy is a future gameplay Spec's decision (Spec 0051 Q2).
+     next frame, and their test coverage is kept as ECS edits.
+     Local-`Transform` and parent edits no longer do: this supersedes, in
+     part, Spec 0022's Goal for the Runtime World (its Correction
+     2026-10-06). Hierarchy edits belong to the authoring stage and re-bake.
+   - The local `Transform` stays in the baked world as authored data.
+   - A runtime hierarchy is a future gameplay Spec's decision (Spec 0051 ruling Q2).
 5. **Order is preserved by construction.** In the fresh baked world,
    `EntityId::index()` equals node order. Extraction stable-sorts every
    collected sequence (lights, renderables, referenced materials) by it, so
    the sequences equal today's slot-order walks regardless of archetype
-   layout (Spec 0051 Q3).
+   layout. When runtime entity creation or destruction actually arrives, the
+   order source falls back to a described `BakeOrder` index component; that
+   Spec owns the switch (Spec 0051 ruling Q3).
 6. **Extraction becomes shared, per-frame queries.**
    - The camera, light, material and draw collection moves into
      GPU-independent Runtime functions over the bake output
      (`scene_extraction.h`). `runFrame()` and the scene-loading
      image-regression fixtures call them.
    - The pure extraction math and `FrameLightingData`'s layout are unchanged.
-   - Data is re-extracted every frame (Spec 0051 Q6, Q7).
-7. **`world::World` stays a supported library type,** off the frame path: the
-   authoring-stage world, the bake's hierarchy solver, and the hand-built
-   fixtures' scene type (Spec 0051 Q4).
+   - Data is re-extracted every frame (Spec 0051 rulings Q6, Q7).
+7. **`world::World` stays a supported library type,** off the frame path and
+   not deprecated: the authoring-stage world, the bake's hierarchy solver,
+   and the hand-built fixtures' scene type (Spec 0051 ruling Q4).
 8. **Verification is constructive.**
    - A GPU-independent test compares, byte for byte and for every committed
      scene (and Bistro when present), the frame inputs from today's
@@ -137,7 +146,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
   authoritative for rendering.
 - **The order guarantee relies on a fresh world's index allocation.** Runtime
   creation or destruction of entities would need an explicit order component
-  (Spec 0051 Q3 D2).
+  (Spec 0051 ruling Q3's stated D2 fallback).
 - **Load-time memory peaks** while the authoring `world::World` and the baked
   ECS coexist inside the bake.
 - **Nine fixtures and three Runtime test files change** with the load
