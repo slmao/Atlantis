@@ -8,6 +8,8 @@ add_library(atlantis_world STATIC
   src/scene_instantiation.cpp
   src/world_schema.cpp
   src/scene_bake.cpp
+  src/access/property_access.cpp
+  src/access/runtime_world_access.cpp
   src/ecs/world.cpp
   src/ecs/command_buffer.cpp
   src/ecs/entity_guid_map.cpp
