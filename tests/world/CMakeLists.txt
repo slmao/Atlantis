@@ -22,6 +22,8 @@ add_executable(atlantis_world_tests
   ecs_north_star_tests.cpp
   world_access_property_tests.cpp
   world_access_query_tests.cpp
+  world_access_command_tests.cpp
+  world_access_validation_tests.cpp
 )
 
 target_link_libraries(atlantis_world_tests
