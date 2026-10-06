@@ -1,24 +1,28 @@
 # Spec: Runtime World Transaction
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-07
-- **Related Plan(s):** none yet. Drafting a Plan is authorized only after this
-  Spec's Approval.
-- **Approval:** pending, under review in
-  [PR #218](https://github.com/slmao/Atlantis/pull/218). The maintainer fixed this Spec's scope and
-  boundaries before drafting (2026-10-07, chat). They are recorded under
-  Goals / Non-Goals and are not open questions:
+- **Related Plan(s):** none yet. Plan 0053 drafting is authorized by the
+  Approval.
+- **Approval:** slmao, 2026-10-07 (review of this Spec's own branch PR,
+  [PR #218](https://github.com/slmao/Atlantis/pull/218)) — authorizes drafting Plan 0053; Implementation itself
+  still awaits its own, separate Joint Human Review of Spec + Plan together.
+  The maintainer fixed this Spec's scope and boundaries before drafting
+  (2026-10-07, chat). They are recorded under Goals / Non-Goals:
   - v1 is atomic commit / rollback of a group of commands only;
   - no new verbs;
   - Spec 0052's contracts are unchanged;
   - Undo/Redo and the rest are named only.
+
+  The same review ruled all seven open questions, each as its
+  recommendation. See Risks & Open Questions below.
 - **Related ADR(s):**
-  [ADR-0104](../adr/0104-runtime-world-transaction-atomicity.md) (`Proposed`,
-  drafted alongside this Spec). It records the atomicity mechanism and why the
-  undo-log and snapshot alternatives were not chosen. It extends
-  [ADR-0103](../adr/0103-runtime-world-operation-boundary.md) D9, which named
-  atomicity as this Spec's, and changes no ADR-0103 decision.
+  [ADR-0104](../adr/0104-runtime-world-transaction-atomicity.md) (`Accepted`
+  2026-10-07, alongside this Spec's own Approval). It records the atomicity
+  mechanism and why the undo-log and snapshot alternatives were not chosen.
+  It extends [ADR-0103](../adr/0103-runtime-world-operation-boundary.md) D9,
+  which named atomicity as this Spec's, and changes no ADR-0103 decision.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
@@ -41,7 +45,7 @@ are untouched:
 - the `applyPending()` application point;
 - the validation and crash-guard set.
 
-The recommended mechanism is **projected pre-validation**. The whole group
+The mechanism is **projected pre-validation** (ruling Q1). The whole group
 is validated against a projection of the world as each command would leave
 it, and executed only if every command passes. An aborted transaction never
 touched the world, so nothing needs undoing.
@@ -94,7 +98,7 @@ invariants:
   stateless.
 
 That state can be projected command by command without touching the ECS
-(Q1).
+(ruling Q1).
 
 ## Goals
 
@@ -147,7 +151,7 @@ Also out of scope:
   calls.** A transaction is submitted whole.
 - **Partial commit or savepoints.**
 - **Any change** to the ECS core, Runtime's frame, assets, shaders or goldens
-  (Q6).
+  (ruling Q6).
 
 ## Requirements
 
@@ -221,16 +225,16 @@ touches an entity. The light counts are taken once at the start (one query,
 as `countLights` does today).
 
 **Execution after a successful projection** runs Spec 0052's per-command
-application. Because projection and execution apply the same rules (Q7) to
-the same starting state and order, execution cannot be refused. A refusal
-there is a programming error (`ATLANTIS_CHECK`), never a client-reachable
-partial commit.
+application. Because projection and execution apply the same rules (ruling
+Q7) to the same starting state and order, execution cannot be refused. A
+refusal there is a programming error (`ATLANTIS_CHECK`), never a
+client-reachable partial commit.
 
 ## Architectural Impact
 
 Yes. Recorded in
-[ADR-0104](../adr/0104-runtime-world-transaction-atomicity.md), drafted
-alongside:
+[ADR-0104](../adr/0104-runtime-world-transaction-atomicity.md) (`Accepted`
+with this Spec's Approval):
 
 - the transaction as all-or-nothing grouping over ADR-0103's five commands;
 - the projected pre-validation mechanism, and why an undo log and an ECS
@@ -244,20 +248,22 @@ changes, and Spec 0052's contracts are unchanged (Goals).
 Expected code impact, for the Plan:
 
 - `atlantis::world::access` (`runtime_world_access.h/.cpp`): the
-  transaction entry and its projection. The validation code becomes one
-  routine over "real" and "projected" state (Q7).
+  `submitTransaction()` / `TransactionTicket` (ruling Q2) and the
+  projection. The validation code becomes one routine over "real" and
+  "projected" state (ruling Q7).
 - New World tests.
 - **No change** to:
   - the ECS core;
   - Runtime: `RuntimeApplication` already calls `applyPending()` first in
-    `runFrame()`, and that call drains transactions too (Q6);
+    `runFrame()`, and that call drains transactions too (ruling Q6);
   - formats, shaders, goldens.
-- **Possibly** `runtime_smoke_gpu_tests.cpp` (Q6).
+- `runtime_smoke_gpu_tests.cpp`: its Point-light creation group becomes one
+  transaction (ruling Q6, C2), a test-only change.
 
 ## Alternatives Considered
 
-See Q1 for the full comparison of the three atomicity mechanisms. Also
-rejected:
+See ruling Q1 for the full comparison of the three atomicity mechanisms.
+Also rejected:
 
 - **New transaction verbs** (`Begin`/`Commit`/`Abort` commands interleaved
   in the command stream). Forbidden as surface creep, and they make a
@@ -291,174 +297,177 @@ rejected:
 - **Unchanged single path (R6):** every Spec 0052 test passes unchanged.
 - **Ordering (R1):** single commands and transactions interleaved apply in
   submission order.
-- **Same rules (R7, Q7):** for generated command sequences, the transaction
-  verdict (commit, or the first refused index) equals the sequential Spec
-  0052 verdict on an identical baked world. The "first refusal" of
-  sequential application must coincide with projection's.
-- **Runtime (Q6):**
+- **Same rules (R7, ruling Q7):** for generated command sequences, the
+  transaction verdict (commit, or the first refused index) equals the
+  sequential Spec 0052 verdict on an identical baked world. The "first
+  refusal" of sequential application must coincide with projection's.
+- **Runtime (ruling Q6):**
   - full Debug + Release suites with every golden byte-identical;
   - Validation Layers clean;
   - Android `assembleDebug`;
-  - per Q6, the smoke test's creation group as one transaction under fatal
-    VVL.
+  - the smoke test's nine-command Point-light creation group as one
+    transaction under fatal VVL (C2).
 
 ## Risks & Open Questions
 
 Risks:
 
 - **Projection drift.** If projected and real validation ever diverged, a
-  committed transaction could hit a refusal mid-execution. Q7's single
-  source of rules and the sequential-equivalence test guard against it, and
-  execution CHECKs it.
+  committed transaction could hit a refusal mid-execution. Ruling Q7's
+  single source of rules and the sequential-equivalence test guard against
+  it, and execution CHECKs it (`ATLANTIS_CHECK`).
 - **Long transactions.** A very large transaction is validated in full
   before any effect: O(*n*) work and memory, by design. There is no size
   limit in v1.
 - **No undo.** A committed transaction cannot be reverted except by further
   commands; Undo/Redo is named only.
 
-Open questions (to be ruled at review):
+Open questions — all seven ruled by Human Review (slmao, 2026-10-07, review
+of [PR #218](https://github.com/slmao/Atlantis/pull/218)), each as its
+recommendation. Q1–Q6 were posed by the maintainer; Q7 surfaced while
+drafting.
 
-- **Q1 — The atomicity mechanism** (the central question).
-  - **(a) Projected pre-validation.**
-    - **How it works.** Validate the whole transaction against projected
-      state, then execute only if all pass. Rollback is "never started".
-    - **What it builds on.** Spec 0052's invariant that every check precedes
-      any ECS call, and that a refused command has no effect. Its validation
-      reads only the small state listed in the Motivation.
-    - **Cost.** O(touched entities) shadow state, and no ECS change.
-    - **Risk.** Projection must equal real validation (Q7).
-    - **Identities.** None are disturbed: an aborted transaction never
-      called the ECS, so no `EntityId` was created or destroyed.
-  - **(b) Undo log.** Apply each command for real while recording its
-    inverse, and replay the inverses on refusal.
-    - **The inverse of `DestroyEntity` is the problem.** Under
-      [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s
-      rules (which ADR-0101 D4 adopts for `ecs::EntityId`), destroying an
-      entity increments its slot's generation and frees its index. Undo can
-      only `createEntity()` a new one: a different index, or the same index
-      at a higher generation. A generation never goes back, and a retired
-      slot never returns.
-    - **Every handle to the original then dangles:**
-      - the bake's immutable `EntityGuidMap` snapshot, through which
-        `resolveEntityRef()` resolves persisted references (ADR-0097 D6,
-        Spec 0052 ruling Q1), so an "undone" authored entity would resolve
-        as `DeadEntity` forever;
-      - `BakedScene::activeCamera`;
-      - Runtime's cached `activeCameraEntity_`.
-    - **The other way out** is resurrecting the old `EntityId`, by
-      restoring the generation. That would break ADR-0049's guarantee that a
-      stale handle never aliases a new entity, and needs a new ECS API.
-    - **It also replays all component values,** and an aborted transaction
-      still churns archetypes and chunks (row moves) before reverting them.
-  - **(c) ECS snapshot / copy.**
-    - Copy the world, apply to the copy, and swap on success.
-    - `ecs::World` is non-copyable (`world.h:69`), so this needs a clone
-      API in the ECS core.
-    - The cost is O(world) per transaction, even for one command.
-    - A clone carries a new per-instance identity token (ADR-0049
-      Amendment / ADR-0101 D4). Every `EntityId` held outside the world (the
-      `EntityGuidMap`, `activeCamera`, the boundary's index) would be
-      foreign to the swapped-in world, unless identity tokens become
-      transferable, a further ADR-0049 change.
-  - **Recommendation: (a).** It is the only option that needs no ECS change,
-    leaves every identity untouched on abort, and costs in proportion to the
-    transaction. Its one risk, drift, is closed by Q7. (b) collides with
-    ADR-0049 at `DestroyEntity` and is the natural basis for Undo/Redo, so
-    it belongs to that future Spec, where a durable inverse log is the
-    feature. (c) is the heaviest option and needs identity changes.
+- **Q1 — The atomicity mechanism** (the central question). **Ruled
+  (2026-10-07): (a) projected pre-validation** (R2, R3; Proposed Design;
+  ADR-0104 D2).
+  - **How it works.** The whole transaction is played, in order, against
+    the API layer's shadow state:
+    - entity existence and the GUID index;
+    - component presence;
+    - the guard counts and the active camera.
+
+    Only if every command passes is it executed for real. Execution then
+    cannot be refused; a refusal there is a programming error
+    (`ATLANTIS_CHECK`). Rollback is "never started".
+  - **What it builds on.** Spec 0052's invariant that every check precedes
+    any ECS call, and that a refused command has no effect. Its validation
+    reads only the small state listed in the Motivation.
+  - **Cost.** O(touched entities) shadow state, and no ECS change.
+  - **Identities.** None are disturbed: an aborted transaction never called
+    the ECS, so no `EntityId` was created or destroyed.
+  - **Risk.** Projection must equal real validation, closed by ruling Q7.
+  - **Rejected, reasons kept as in ADR-0104 D2:**
+    - **(b) Undo log.** Apply each command for real while recording its
+      inverse, and replay the inverses on refusal.
+      - **The inverse of `DestroyEntity` is the problem.** Under
+        [ADR-0049](../adr/0049-entity-identity-and-handle-invalidation.md)'s
+        rules (which ADR-0101 D4 adopts for `ecs::EntityId`), destroying an
+        entity increments its slot's generation and frees its index. Undo
+        can only `createEntity()` a new one: a different index, or the same
+        index at a higher generation. A generation never goes back, and a
+        retired slot never returns.
+      - **Every handle to the original then dangles:**
+        - the bake's immutable `EntityGuidMap` snapshot, through which
+          `resolveEntityRef()` resolves persisted references (ADR-0097 D6,
+          Spec 0052 ruling Q1), so an "undone" authored entity would
+          resolve as `DeadEntity` forever;
+        - `BakedScene::activeCamera`;
+        - Runtime's cached `activeCameraEntity_`.
+      - **The other way out** is resurrecting the old `EntityId`, by
+        restoring the generation. That would break ADR-0049's guarantee
+        that a stale handle never aliases a new entity, and needs a new ECS
+        API.
+      - **It also replays all component values,** and an aborted
+        transaction still churns archetypes and chunks (row moves) before
+        reverting them.
+      - An inverse log is the natural basis of Undo/Redo and belongs to
+        that future Spec, where a durable inverse log is the feature.
+    - **(c) ECS snapshot / copy.**
+      - Copy the world, apply to the copy, and swap on success.
+      - `ecs::World` is non-copyable (`world.h:69`), so this needs a clone
+        API in the ECS core.
+      - The cost is O(world) per transaction, even for one command.
+      - A clone carries a new per-instance identity token (ADR-0049
+        Amendment / ADR-0101 D4). Every `EntityId` held outside the world
+        (the `EntityGuidMap`, `activeCamera`, the boundary's index) would be
+        foreign to the swapped-in world, unless identity tokens become
+        transferable, a further ADR-0049 change.
 - **Q2 — Relation to the single-command path, and failure reporting.**
-  - **Entry point:**
-    - (E1) `submit(Command)` is kept exactly. A new
-      `submitTransaction(std::vector<Command>)` returns a `TransactionTicket`
-      (`{ first CommandTicket, count }`); the transaction's commands take
-      consecutive command tickets.
-    - (E2) Internally, every `submit()` becomes a one-command transaction.
-      This is observably identical, since a single command is already
-      all-or-nothing, but it changes the implementation of the Spec 0052
-      path.
-  - **Failure reporting:**
-    - (F1) An abort appends one `CommandFailure` for the first refused
-      command: its own ticket and error. Its position is `ticket −
-      first`. No new failure type or error kind.
-    - (F2) A new `TransactionFailure { TransactionTicket, index, error }`
-      on a separate drain.
-  - **Recommendation: E1 + F1.**
-    - Spec 0052's path stays byte-for-byte the code it is today (R6).
+  **Ruled (2026-10-07): E1 + F1** (R1, R4, R6; ADR-0104 D4).
+  - **Entry point.** `submit(Command)` is kept exactly. A new
+    `submitTransaction(std::vector<Command>)` returns a `TransactionTicket`
+    (`{ first CommandTicket, count }`); the transaction's commands take
+    consecutive command tickets.
+  - **Failure reporting.** An abort appends one `CommandFailure` for the
+    first refused command: its own ticket and error. Its position in the
+    transaction is `ticket − first`.
+    - There is no new failure type, error kind or queue.
     - Clients keep one failure queue. A failure whose ticket falls in a
       transaction's range means that transaction aborted. Its other
       commands report nothing, because they were not refused.
-    - E2 may still be how the Plan shares code, provided R6 holds.
-- **Q3 — Event semantics.**
+  - Spec 0052's path stays byte-for-byte the code it is today (R6). The
+    Plan may still share code internally in E2's shape, provided R6 holds.
+  - **Rejected:**
+    - (E2) every `submit()` becoming a one-command transaction, as the
+      model of the single path;
+    - (F2) a new `TransactionFailure { TransactionTicket, index, error }`
+      on a separate drain.
+- **Q3 — Event semantics.** **Ruled (2026-10-07): as stated** (R5;
+  ADR-0104 D5).
   - **Committed transaction:** its commands' events, one per command, in
     order, identical to Spec 0052's.
   - **Aborted transaction:** none.
   - No transaction-level event: Spec 0052's event set is fixed.
-  - **Recommendation:** as stated; this is offered for confirmation. Its
-    alternative, "commit/abort marker events", would add event kinds, which
-    is forbidden by the Goals.
-- **Q4 — Special cases within a transaction:**
+  - Rejected: commit/abort marker events, which would add event kinds,
+    forbidden by the Goals.
+- **Q4 — Special cases within a transaction.** **Ruled (2026-10-07): 4a,
+  4b (i), 4c, 4d (i)** (R8; ADR-0104 D6). Every rule is evaluated per
+  command, as in Spec 0052.
   - **(4a) Commands after a projected `DestroyEntity(g)`.** They see `g` as
     unknown, exactly as sequential application would. A later command on
     `g` is refused (`UnknownEntity`), which aborts the transaction.
-  - **(4b) Destroy then `CreateEntity(g)` with the same GUID.**
-    - Options:
-      - (i) allowed, as in Spec 0052, where a destroyed GUID may be reused;
-        `g` then names the new entity for the rest of the transaction;
-      - (ii) refused within one transaction.
-    - **Recommendation: (i).** It is what the same commands do one by one
-      (R2, R7). Refusing it would make a transaction's rules differ from
-      Spec 0052's.
+  - **(4b) Destroy then `CreateEntity(g)` with the same GUID: allowed (i).**
+    `g` then names the new entity for the rest of the transaction. This is
+    what the same commands do one by one (R2, R7), and Spec 0052 lets a
+    destroyed GUID be reused. Rejected: (ii) refusing it within one
+    transaction, which would make a transaction's rules differ from Spec
+    0052's.
   - **(4c) The active-camera guard mid-transaction.** A command refused by
     the guard aborts the whole transaction, wherever it appears.
     - Nothing later in the same transaction could restore the active
       camera: `BakedScene::activeCamera` is fixed by the bake, and no
       command re-designates it. So there is no "temporarily violated"
       state to allow.
-    - **Recommendation:** the guard is evaluated per command, as in Spec
-      0052. No end-of-transaction validation and no deferred guards. Guards
-      that would compare the transaction's end state, rather than each
+    - There is no end-of-transaction validation and no deferred guard.
+      Guards that compared the transaction's end state, rather than each
       step, would be new validation (Goals).
-  - **(4d) An empty transaction.**
-    - Options:
-      - (i) accepted as a no-op: no event, no failure, and it consumes no
-        command ticket;
-      - (ii) refused.
-    - **Recommendation: (i).** It is the natural identity, and refusing it
-      would need a new error kind.
-- **Q5 — Module and ADR.**
-  - The transaction stays in `atlantis::world::access`, as a grouping
-    extension of ADR-0103's boundary (`RuntimeWorldAccess`).
-  - [ADR-0104](../adr/0104-runtime-world-transaction-atomicity.md) records
-    the mechanism and the three-way trade-off.
-  - Alternative: a separate `TransactionBuilder` type. It would hold no
-    state the boundary does not already have.
-  - **Recommendation:** a method pair on `RuntimeWorldAccess` (Q2's E1), and
-    ADR-0104.
-- **Q6 — The v1 consumer, and Runtime.**
-  - **Verified:** `RuntimeApplication` already calls
-    `worldAccess_->applyPending()` as the first statement of `runFrame()`
-    (Spec 0052 J6). Transactions enter the same pending queue, so
-    **Runtime needs no code change**.
-  - **Consumer options:**
-    - (C1) World tests only;
-    - (C2) also move `runtime_smoke_gpu_tests`' Point-light creation group
-      (nine commands) into one transaction. This proves the atomic path on
-      Runtime's real frame under fatal VVL, the Spec 0052 H-a precedent.
-  - **Recommendation: C2.** It is a test-only change, and it is the case
-    the Motivation names.
+  - **(4d) An empty transaction: a no-op (i).** No event, no failure, and
+    it consumes no command ticket. Rejected: (ii) refusing it, which would
+    need a new error kind.
+- **Q5 — Module and ADR.** **Ruled (2026-10-07): a method pair on
+  `atlantis::world::access::RuntimeWorldAccess`** (Q2's E1), and
+  [ADR-0104](../adr/0104-runtime-world-transaction-atomicity.md), which
+  records the mechanism and the three-way trade-off (ADR-0104 D7). The
+  transaction stays in `atlantis::world::access`, as a grouping extension
+  of ADR-0103's boundary. Rejected: a separate `TransactionBuilder` type,
+  which would hold no state the boundary does not already have.
+- **Q6 — The v1 consumer, and Runtime.** **Ruled (2026-10-07): C2**
+  (Architectural Impact; Testing; ADR-0104 D7).
+  - **Runtime needs no code change** (verified). `RuntimeApplication`
+    already calls `worldAccess_->applyPending()` as the first statement of
+    `runFrame()` (Spec 0052 J6), and transactions enter the same pending
+    queue.
+  - **Consumers.** World tests, and `runtime_smoke_gpu_tests`' Point-light
+    creation group (nine commands) moved into one transaction. This proves
+    atomic commit on Runtime's real frame under fatal VVL, the Spec 0052
+    H-a precedent. It is a test-only change, and the case the Motivation
+    names.
+  - Rejected: (C1) World tests only.
 - **Q7 — One source of validation rules** (surfaced while drafting; it
-  closes Q1's risk).
-  - (V1) Spec 0052's per-command validation is factored into one routine
-    over a state view. Two implementations exist:
+  closes Q1's risk). **Ruled (2026-10-07): V1** (R7; Proposed Design;
+  ADR-0104 D3).
+  - Spec 0052's per-command validation is refactored into one routine over
+    a state view, with two implementations:
     - real: the GUID index plus the ECS;
     - projected: the shadow state.
 
-    Projection and execution use the same code.
-  - (V2) The projection reimplements the checks, with execution's CHECK as
-    the backstop.
-  - **Recommendation: V1.** Drift becomes a compile-time impossibility for
-    the rules themselves; only state bookkeeping can differ, and the
-    sequential-equivalence test covers that. V2 duplicates every rule and
+    Projection and execution run the same rule code. Drift becomes a
+    compile-time impossibility for the rules themselves; only state
+    bookkeeping can differ.
+  - A sequential-equivalence test (transaction verdict = one-by-one
+    verdict; Testing) is the backstop for that bookkeeping.
+  - Rejected: (V2) the projection reimplementing the checks, with
+    execution's CHECK as the only backstop; it duplicates every rule and
     every future rule.
 
 ## Out of Scope / Future Work
