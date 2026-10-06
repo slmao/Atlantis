@@ -47,9 +47,18 @@
     - Light entity creation and removal.
 
     Camera still updates every frame.
-  - **Test coverage.** It is kept: under Plan 0051,
-    `runtime_smoke_gpu_tests`' live-edit cases are rewritten as edits of the
-    ECS world.
+  - **Test coverage.** It is kept: under Plan 0051, the live-edit cases are
+    rewritten as edits of the ECS world in all three files that exercise this
+    contract:
+    - `runtime_smoke_gpu_tests`;
+    - `lighting_demo_gpu_tests`, whose `setParent` reparent case is deleted as
+      testing the superseded clause (Plan 0051 ruling J5);
+    - `multi_light_demo_gpu_tests`, whose light-entity destruction becomes ECS
+      `destroyEntity`.
+
+    The original wording named only `runtime_smoke_gpu_tests` (corrected
+    2026-10-06, Plan 0051 Joint Human Review,
+    [PR #211](https://github.com/slmao/Atlantis/pull/211), ruling J6).
   - **Timing.** The correction takes effect when Spec 0051's implementation
     merges. Until then, the code behaves as originally stated.
 

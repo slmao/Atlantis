@@ -20,6 +20,21 @@
   They are recorded under Goals / Non-Goals. The same review ruled all seven
   open questions, each as its recommendation, and directed a dated Correction
   to Spec 0022 for ruling Q2. See Risks & Open Questions below.
+  **Correction (2026-10-06, post-Approval, Plan 0051 Joint Human Review,
+  [PR #211](https://github.com/slmao/Atlantis/pull/211), ruling J6):**
+  - **Live-edit coverage.** Spec 0022's live-edit contract is exercised by
+    three test files, not only `runtime_smoke_gpu_tests`:
+    - `runtime_smoke_gpu_tests`: `createEntity`, `setLight`,
+      `setLocalTransform` (it does not call `setParent`);
+    - `lighting_demo_gpu_tests`: including the one `setParent` reparent case,
+      which Plan 0051 ruling J5 deletes as testing the superseded clause;
+    - `multi_light_demo_gpu_tests`: `destroyEntity`.
+  - **Change scope.** Besides the nine fixture units, 13 GPU test files and 2
+    support headers read or edit the fixtures' World. They change with
+    `SceneLoadOutcome`.
+
+  Motivation, Q2's evidence, Testing and Risks are corrected accordingly. No
+  requirement, ruling or ADR decision changes.
 - **Related ADR(s):**
   [ADR-0102](../adr/0102-authoring-runtime-world-separation-and-scene-bake.md)
   (`Accepted` 2026-10-06, alongside this Spec's own Approval). It records the
@@ -112,11 +127,15 @@ includes:
 - a parent-hierarchy `Transform`;
 - Light entity creation or removal.
 
-`runtime_smoke_gpu_tests.cpp` exercises this through a test-access hook
-(`RuntimeSmokeTestAccess::world()`). It calls `createEntity`, `setLight`,
-`setLocalTransform` and `setParent` on the running app's live `World`
-between frames, and the comment at `runtime_application.cpp:1427-1440`
-restates it. So `updateTransforms()` per frame is load-bearing for that
+Three test files exercise it (Correction 2026-10-06, Plan 0051 ruling J6):
+- `runtime_smoke_gpu_tests.cpp`, through a test-access hook
+  (`RuntimeSmokeTestAccess::world()`), calls `createEntity`, `setLight` and
+  `setLocalTransform` on the running app's live `World` between frames;
+- `lighting_demo_gpu_tests.cpp` does the same against its fixture's `World`,
+  including one `setParent` reparent case;
+- `multi_light_demo_gpu_tests.cpp` destroys light entities.
+
+The comment at `runtime_application.cpp:1427-1440` restates the contract. So `updateTransforms()` per frame is load-bearing for that
 contract, though for no production path (Q2).
 
 ### Order is observable in pixels
@@ -432,6 +451,9 @@ goldens are the end-to-end confirmation.
   - `scene_load`, `entity_ref_resolution` and `material_realization_gpu`,
     updated for the new outcome type as named in the Plan;
   - `runtime_smoke_gpu`, whose live-edit cases move to the ECS per Q2;
+  - `lighting_demo_gpu` and `multi_light_demo_gpu`, whose live-edit cases move
+    to the ECS likewise. The `setParent` reparent case is deleted (Correction
+    2026-10-06, Plan 0051 rulings J5, J6);
   - `runtime_ownership`, unchanged.
   - Spec 0022's surviving contract keeps its test: a Light component edit,
     a world-matrix edit, and Light entity creation and removal each reach
@@ -441,6 +463,8 @@ goldens are the end-to-end confirmation.
   - the nine `loadAndInstantiateScene` fixtures move to the bake output and to
     Runtime's shared collection functions per Q7, so the goldens run
     Runtime's new extraction code. Their goldens stay byte-identical.
+  - the 13 GPU test files and 2 support headers that read or edit those
+    fixtures' World follow them (Correction 2026-10-06, Plan 0051 ruling J6).
 
   A golden that moves stops the work and is reported.
 - **Platforms and gates:**
@@ -461,7 +485,9 @@ Risks:
   only inside the bake. Peak memory roughly doubles scene state at load and
   is freed before the first frame.
 - **Fixture migration scope.** Nine fixture units change with
-  `SceneLoadOutcome` (Q7); the hand-built and self-loading fixtures do not.
+  `SceneLoadOutcome` (Q7). So do the 13 GPU test files and 2 support headers
+  that use those fixtures' World (Correction 2026-10-06, Plan 0051 ruling J6).
+  The hand-built and self-loading fixtures do not change.
 
 Open questions — all seven ruled by Human Review (slmao, 2026-10-06, review
 of [PR #210](https://github.com/slmao/Atlantis/pull/210)), each as its recommendation:
@@ -483,8 +509,9 @@ of [PR #210](https://github.com/slmao/Atlantis/pull/210)), each as its recommend
   - **Evidence:**
     - No production code moves an entity after load. `updateTransforms()`
       recomputes identical matrices every frame for three read sites.
-    - Spec 0022's approved contract, exercised only by
-      `runtime_smoke_gpu_tests` through a test hook, required live Light,
+    - Spec 0022's approved contract, exercised by `runtime_smoke_gpu_tests`,
+      `lighting_demo_gpu_tests` and `multi_light_demo_gpu_tests` (Correction
+      2026-10-06, Plan 0051 ruling J6), required live Light,
       local-`Transform` and parent-hierarchy edits to reach the next frame
       (Motivation).
   - **The baked world has no hierarchy, and the frame runs no transform
