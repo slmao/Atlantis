@@ -9,6 +9,7 @@ add_library(atlantis_world STATIC
   src/world_schema.cpp
   src/ecs/world.cpp
   src/ecs/command_buffer.cpp
+  src/ecs/entity_guid_map.cpp
 )
 add_library(Atlantis::World ALIAS atlantis_world)
 

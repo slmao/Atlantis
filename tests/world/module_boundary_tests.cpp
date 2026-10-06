@@ -69,13 +69,17 @@ TEST_CASE(
 
 // Plan 0047 M6 (P17, ADR-0097 D5): EntityGuid is the Asset System's identity
 // type; it reaches Atlantis::World only through SceneEntityMap, declared in
-// scene_instantiation.h. No other World header names it, so World's component
-// types and EntityId stay free of it.
-TEST_CASE("EntityGuid appears in World headers only in scene_instantiation.h", "[world][module_boundary]") {
+// scene_instantiation.h, and (Spec 0050 ruling Q4 (P-a), Plan 0050 M5) the
+// ECS's creation-time EntityGuidMap, declared in ecs/entity_guid_map.h. No
+// other World header names it, so World's component types, EntityId and
+// ecs::EntityId stay free of it.
+TEST_CASE("EntityGuid appears in World headers only in scene_instantiation.h and ecs/entity_guid_map.h",
+          "[world][module_boundary]") {
   const std::filesystem::path root{ATLANTIS_WORLD_SOURCE_DIR};
   REQUIRE(std::filesystem::exists(root));
 
   bool sceneInstantiationNamesIt = false;
+  bool entityGuidMapNamesIt = false;
   std::vector<std::string> violations;
   for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
     if (!entry.is_regular_file() || entry.path().extension() != ".h") continue;
@@ -84,6 +88,8 @@ TEST_CASE("EntityGuid appears in World headers only in scene_instantiation.h", "
     const bool names = text.find("EntityGuid") != std::string::npos;
     if (entry.path().filename() == "scene_instantiation.h") {
       sceneInstantiationNamesIt = names;
+    } else if (entry.path().filename() == "entity_guid_map.h") {
+      entityGuidMapNamesIt = names;
     } else if (names) {
       violations.push_back(entry.path().string());
     }
@@ -94,4 +100,5 @@ TEST_CASE("EntityGuid appears in World headers only in scene_instantiation.h", "
   INFO(violationsText);
   CHECK(violations.empty());
   CHECK(sceneInstantiationNamesIt);  // the scan is not vacuous
+  CHECK(entityGuidMapNamesIt);
 }
