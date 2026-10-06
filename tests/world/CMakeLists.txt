@@ -20,6 +20,10 @@ add_executable(atlantis_world_tests
   ecs_command_buffer_tests.cpp
   ecs_entity_guid_tests.cpp
   ecs_north_star_tests.cpp
+  world_access_property_tests.cpp
+  world_access_query_tests.cpp
+  world_access_command_tests.cpp
+  world_access_validation_tests.cpp
 )
 
 target_link_libraries(atlantis_world_tests
@@ -36,6 +40,10 @@ target_link_libraries(atlantis_world_tests
 target_compile_definitions(atlantis_world_tests PRIVATE
   ATLANTIS_WORLD_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/world"
 )
+
+# Plan 0052 P3: the access-layer coverage tests read the private accessor
+# tables (src/world/src/access/property_access.h).
+target_include_directories(atlantis_world_tests PRIVATE ${CMAKE_SOURCE_DIR}/src/world/src)
 
 # Plan 0014 V28 (2026-08-23 Human Review Correction): real, compile-time
 # WorldError enum-exhaustiveness protection for renderable_tests.cpp's

@@ -337,7 +337,8 @@ Runtime section below) and `atlantis::world::instantiateScene()`/
 `fromValidatedSceneData()` (Atlantis World, for the CPU-side scene graph
 only — World still depends on Asset System only narrowly, per
 ADR-0048/ADR-0053/ADR-0097 D5: `AssetId` in its component data and, in
-`scene_instantiation.h` and `ecs/entity_guid_map.h` alone, `ValidatedSceneData`
+`scene_instantiation.h`, `ecs/entity_guid_map.h` and
+`access/runtime_world_access.h` (Spec 0052) alone, `ValidatedSceneData`
 and `EntityGuid`; never the reverse). Asset System itself is never
 depended on by Renderer, RHI, RenderGraph, or Vulkan Backend, and gains
 no dependency from any of them in the other direction either.

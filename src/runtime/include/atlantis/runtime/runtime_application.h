@@ -26,6 +26,7 @@
 #include <atlantis/runtime/init_error.h>
 #include <atlantis/runtime/lifecycle_state.h>
 #include <atlantis/runtime/platform_session.h>
+#include <atlantis/world/access/runtime_world_access.h>
 #include <atlantis/world/ecs/entity_id.h>
 #include <atlantis/world/scene_instantiation.h>
 
@@ -260,12 +261,18 @@ class RuntimeApplication {
   // EntityRef resolver's input, ADR-0097 D6) and its active camera. It owns
   // no GPU resource and has no ordering relationship to
   // Device/Presentation/Mesh (Plan 0014 Section D8), so it sits outside the
-  // reverse-destruction-order GPU-resource block above. std::optional
-  // because ecs::World is move-constructible but not move-assignable: the
-  // publish is in-place move-construction (scene_.emplace(...), Plan 0015
-  // D10 step (g)). Empty until initializeSteps() reaches step (g); never
-  // reset by shutdown().
-  std::optional<atlantis::world::BakedScene> scene_;
+  // reverse-destruction-order GPU-resource block above. Plan 0052 P9: held
+  // on the heap so its address survives RuntimeApplication's own move
+  // (createRuntimeApplication() returns the application by value) --
+  // worldAccess_ borrows it by address. Null until initializeSteps() reaches
+  // step (g); never reset by shutdown().
+  std::unique_ptr<atlantis::world::BakedScene> scene_;
+  // Spec 0052 / ADR-0103 (Plan 0052 P9): the Runtime World's operation
+  // boundary over scene_ -- the only way a client reaches it (ADR-0033).
+  // Declared after scene_ so it is destroyed first: it borrows scene_.
+  // Emplaced with scene_; its pending commands apply at the start of every
+  // runFrame() (J6).
+  std::optional<atlantis::world::access::RuntimeWorldAccess> worldAccess_;
   // Plan 0047 P17: the loaded scene's GUID, published with scene_.
   atlantis::asset_system::AssetGuid sceneGuid_;
   std::optional<atlantis::world::ecs::EntityId> activeCameraEntity_;  // cached for logging only; scene_ is the source of truth
@@ -368,6 +375,16 @@ class RuntimeApplication {
   std::vector<std::uint32_t> outputTransformSrgbVertexSpirv_;
   std::vector<std::uint32_t> outputTransformSrgbFragmentSpirv_;
 };
+
+// Plan 0052 J2 (Spec 0052 Correction 2026-10-06): of the referenced
+// material AssetIds, those the scene load actually loaded (keys of
+// `loaded`), in referenced order. runFrame() realizes only these; an entity
+// naming any other material is skipped by the DrawItem walk as unresolvable
+// (Spec 0018 D4 case 3) instead of reaching realizePendingMaterials()'s
+// fatal check. For every loaded scene this is the identity.
+[[nodiscard]] std::vector<atlantis::asset_system::AssetId> loadedMaterialIdsOnly(
+    const std::vector<atlantis::asset_system::AssetId>& referenced,
+    const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData>& loaded);
 
 [[nodiscard]] atlantis::Result<RuntimeApplication, RuntimeInitError> createRuntimeApplication(
     const BootstrapConfig& config);

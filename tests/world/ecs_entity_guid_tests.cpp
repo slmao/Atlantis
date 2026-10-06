@@ -101,3 +101,20 @@ TEST_CASE("ecs guid binding: refused during a query (J1)", "[world][ecs][guid]")
 #endif
   CHECK(ecs::createEntities(world, guids).isOk());
 }
+
+// Plan 0052 P7 (Spec 0052 ruling Q1): the read-only enumeration the Runtime
+// World's operation boundary seeds its index from -- every binding, sorted by
+// GUID, each equal to find().
+TEST_CASE("ecs guid binding: entries() lists every binding, sorted by GUID", "[world][ecs][guid]") {
+  ecs::World world;
+  const std::array<EntityGuid, 3> guids{guid(9), guid(2), guid(5)};
+  const auto map = ecs::createEntities(world, guids);
+  REQUIRE(map.isOk());
+  const auto entries = map.value().entries();
+  REQUIRE(entries.size() == guids.size());
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    INFO("entry " << i);
+    if (i > 0) CHECK(entries[i - 1].first < entries[i].first);
+    CHECK(map.value().find(entries[i].first) == entries[i].second);
+  }
+}

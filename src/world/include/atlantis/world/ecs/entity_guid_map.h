@@ -29,6 +29,12 @@ class EntityGuidMap {
  public:
   [[nodiscard]] std::optional<EntityId> find(const atlantis::asset_system::EntityGuid& guid) const;
   [[nodiscard]] std::size_t size() const noexcept { return entries_.size(); }
+  // Plan 0052 P7 (Spec 0052 ruling Q1): every binding, sorted by GUID --
+  // read-only, so the Runtime World's operation boundary can seed its own
+  // index. The map stays an immutable snapshot; the ECS stores no GUID.
+  [[nodiscard]] std::span<const std::pair<atlantis::asset_system::EntityGuid, EntityId>> entries() const noexcept {
+    return entries_;
+  }
 
  private:
   friend struct detail::GuidBinding;
