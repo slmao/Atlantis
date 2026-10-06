@@ -17,6 +17,20 @@
 
   The same review ruled all seven open questions, each as its
   recommendation. See Risks & Open Questions below.
+  **Correction (2026-10-07, post-Approval, Plan 0053 Joint Human Review,
+  [PR #219](https://github.com/slmao/Atlantis/pull/219), ruling J1):** ruling Q2's sentence on the single-command path
+  is read as behavioural.
+  - **The ruled text** said "Spec 0052's path stays byte-for-byte the code
+    it is today (R6)". Ruling Q7 refactors that path's validation into one
+    routine over a state view, so its code cannot stay byte-for-byte.
+  - **Corrected:** the path *behaves* exactly as today (R6: per-command
+    semantics, events and failures). Its validation code is refactored by
+    ruling Q7, a change to Spec 0052's internal implementation, not its
+    contract, as ADR-0104's Consequences state.
+  - **R6's proof** is that every existing Spec 0052 test, plus Plan 0053
+    M1's new check-precedence tests, passes unmodified after the refactor.
+
+  No other requirement or ruling changes. ADR-0104 is unchanged.
 - **Related ADR(s):**
   [ADR-0104](../adr/0104-runtime-world-transaction-atomicity.md) (`Accepted`
   2026-10-07, alongside this Spec's own Approval). It records the atomicity
@@ -395,8 +409,12 @@ drafting.
     - Clients keep one failure queue. A failure whose ticket falls in a
       transaction's range means that transaction aborted. Its other
       commands report nothing, because they were not refused.
-  - Spec 0052's path stays byte-for-byte the code it is today (R6). The
-    Plan may still share code internally in E2's shape, provided R6 holds.
+  - Spec 0052's path behaves exactly as it does today (R6); its validation
+    code is refactored by ruling Q7, and R6 is proven by every existing
+    Spec 0052 test plus Plan 0053 M1's precedence tests passing unmodified
+    (Correction 2026-10-07, Plan 0053 ruling J1; the ruled text said the
+    path "stays byte-for-byte the code it is today"). The Plan may still
+    share code internally in E2's shape, provided R6 holds.
   - **Rejected:**
     - (E2) every `submit()` becoming a one-command transaction, as the
       model of the single path;
