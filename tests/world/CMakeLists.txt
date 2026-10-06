@@ -13,6 +13,8 @@ add_executable(atlantis_world_tests
   schema_uniqueness_tests.cpp
   scene_world_alignment_tests.cpp
   ecs_component_type_tests.cpp
+  ecs_entity_tests.cpp
+  ecs_storage_tests.cpp
 )
 
 target_link_libraries(atlantis_world_tests

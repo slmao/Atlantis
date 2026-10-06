@@ -7,6 +7,7 @@ add_library(atlantis_world STATIC
   src/world.cpp
   src/scene_instantiation.cpp
   src/world_schema.cpp
+  src/ecs/world.cpp
 )
 add_library(Atlantis::World ALIAS atlantis_world)
 
