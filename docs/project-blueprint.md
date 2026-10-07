@@ -799,7 +799,18 @@ milestone being listed does not authorize starting it — see Section 1.
     with its InProcess endpoint owned by Runtime and the address/value text
     forms; and a six-command CLI client (Atlantis CLI) hosted by
     `atlantis_runtime --exec`, which sets a light's intensity on the
-    running scene and sees it rendered on the next frame.
+    running scene and sees it rendered on the next frame;
+  - since [Spec 0055](specs/0055-agent-runtime-cli.md) (merged
+    [PR #228](https://github.com/slmao/Atlantis/pull/228);
+    [ADR-0106](adr/0106-attachable-runtime-transport-and-control.md)), the
+    Tooling Foundation's first step: an attachable Runtime
+    (`atlantis_runtime --listen`, Atlantis Remote carrying exactly
+    `RuntimeConnection` and `RuntimeControl` calls, drained after each
+    frame), and a standalone `atlantis` executable whose every command
+    speaks `--json` (with `--diagnostics=json` and exit codes) and which runs
+    the completion definition's eight steps end to end — discover, query,
+    find, modify, step, capture, read diagnostics, verify — against a
+    Runtime that keeps rendering.
 
   Runtime applies pending commands at the start of every frame. These each
   remain a future Spec's work:
@@ -811,8 +822,10 @@ milestone being listed does not authorize starting it — see Section 1.
   - a runtime hierarchy over ECS components (Spec 0051 ruling Q2);
   - Undo/Redo, nested transactions and transactions spanning frames
     (named only in Spec 0053);
-  - IPC, a standalone attachable CLI and an interactive REPL (0055), and a
-    filtered entity listing (0056) — named only in Spec 0054.
+  - a Minimal Editor (0056), and the rest of Spec 0055's named-only list —
+    named only, not designed or scaffolded;
+  - attaching to an Android Runtime and server-side filtered listing
+    (Spec 0055 Out of Scope).
 
 ### Milestone 12 — Scene Asset & Serialization Foundation
 
