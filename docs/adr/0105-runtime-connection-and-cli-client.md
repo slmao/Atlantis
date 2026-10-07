@@ -1,19 +1,19 @@
 # ADR 0105: RuntimeConnection — a Transport-Independent Client Connection, and the CLI as an Ordinary Client
 
-- **Status:** Proposed
-- **Date:** 2026-10-07
+- **Status:** Accepted
+- **Date:** 2026-10-07 (accepted 2026-10-07)
 - **Deciders:** slmao
-- **Acceptance:** pending. To be `Accepted` before or during the review of
-  [Spec 0054](../specs/0054-runtime-connection-minimal-cli.md), with D2–D8 as
-  ruled there (Spec Q1–Q8).
-- **Related Spec:** [Spec 0054: RuntimeConnection and a Minimal CLI Client](../specs/0054-runtime-connection-minimal-cli.md)
+- **Acceptance:** slmao, 2026-10-07 (review of this branch's own PR,
+  [PR #222](https://github.com/slmao/Atlantis/pull/222); accepted together with Spec 0054's Approval, its eight open
+  questions ruled as recommended)
+- **Related Spec:** [Spec 0054: RuntimeConnection and a Minimal CLI Client](../specs/0054-runtime-connection-minimal-cli.md) (`Approved`)
 - **Related ADR(s):**
   - Applies [ADR-0033](0033-runtime-authority-and-client-boundary.md). It
     gives that ADR's in-process/out-of-process question its first, in-process
     answer, and leaves the transport open.
   - Extends [ADR-0103](0103-runtime-world-operation-boundary.md) D1's Query
-    set by one Query (D1: "Additions are later Specs"). No ADR-0103 decision
-    changes.
+    set by one Query (D1: "Additions are later Specs"), under Spec 0054
+    ruling Q1. It supersedes nothing, and no ADR-0103 decision changes.
   - Keeps [ADR-0104](0104-runtime-world-transaction-atomicity.md) and
     [ADR-0004](0004-phase1-threading-baseline.md) unchanged; no thread is
     added.
@@ -67,7 +67,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      - event content.
    - It never returns a pointer or reference into Runtime-owned state.
    - A transport (0055) implements this interface; it does not shape it.
-2. **InProcess first and only** (Spec 0054 Q7, recommended R-a).
+2. **InProcess first and only** (Spec 0054 ruling Q7, R-a).
    - **Ownership.** `RuntimeApplication` owns the InProcess endpoint over
      its `RuntimeWorldAccess`. It is declared after `worldAccess_` and
      destroyed first.
@@ -76,7 +76,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - **Threads.** None is added.
    - **The frame.** `runFrame()` is unchanged; with no connection open,
      Runtime behaves exactly as before.
-3. **Placement** (Q4, Q6; recommended M-b, B-a).
+3. **Placement** (Spec 0054 rulings Q4, Q6: M-b, B-a).
    - **Atlantis Connection** (`src/connection/`, `atlantis::connection`):
      - **Contents:** the interface, the endpoint and the text forms;
      - **Depends on:** Core and World's public access headers;
@@ -88,13 +88,13 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
        `world/ecs/*`, Platform, RHI or the Renderer, enforced by a test.
    - **The host.** The executable `atlantis_runtime` is the only v1 host of
      the CLI library.
-4. **The listing query** (Q1, recommended L1).
+4. **The listing query** (Spec 0054 ruling Q1, L1).
    - **Shape.** `RuntimeWorldAccess::listEntities()` returns the GUID of
      every live entity in the boundary's index, sorted by GUID value.
    - **Scope.** Exactly what the boundary can address.
    - This is one Query added under ADR-0103 D1, and it is exposed through
      the connection.
-5. **Text forms** (Q2, recommended T2 + F1 + J-i):
+5. **Text forms** (Spec 0054 ruling Q2, T2 + F1 + J-i):
    - an entity is its canonical RFC 9562 GUID text;
    - a property is `<Type>.<field>[.<field>…]`:
      - the type by its short World schema name, with the qualified name
@@ -107,7 +107,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 
    The text is client text, not a wire protocol. Its encoding over a
    transport is 0055's.
-6. **Per-connection, pull-only events** (Q5, recommended S-b).
+6. **Per-connection, pull-only events** (Spec 0054 ruling Q5, S-b).
    - **Subscribing.** `subscribe(EventFilter{kinds, optional entity,
      optional component})`, then `drainEvents(subscription)` and
      `unsubscribe`.
@@ -117,7 +117,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - **Mechanism.** The endpoint is the boundary's only drainer and fans
      out on demand.
    - There are no callbacks; this is not reactive.
-7. **The host** (Q3, recommended H-a). `atlantis_runtime --exec <file|->`.
+7. **The host** (Spec 0054 ruling Q3, H-a). `atlantis_runtime --exec <file|->`.
    - **Loading.** The script is read whole at startup.
    - **Pacing.** One line runs after each `runFrame()`, on the frame thread.
      A `set` applies at the next frame's start.
@@ -125,7 +125,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 
    An interactive REPL, which needs a thread or non-blocking console I/O,
    is not chosen and is named for 0055.
-8. **The schema through the connection** (Q8, recommended K1). A Query
+8. **The schema through the connection** (Spec 0054 ruling Q8, K1). A Query
    returns Core's schema descriptors, valid for the connection's lifetime.
    The CLI never calls `worldSchema()` itself.
 
