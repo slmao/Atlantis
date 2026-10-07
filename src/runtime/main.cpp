@@ -10,9 +10,11 @@
 
 #include <atlantis/cli/script_runner.h>
 #include <atlantis/connection/runtime_connection.h>
+#include <atlantis/remote/remote_server.h>
 
 #include <array>
 #include <cstddef>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -319,11 +321,43 @@ int main(int argc, char** argv) {
     runner.emplace(*connection, atlantis::cli::splitLines(*execScript), std::cout);
   }
 
+  // Spec 0055 R1/R2 (Plan 0055 P3, P4, P11; ADR-0106 D1): with --listen, a
+  // RemoteServer on 127.0.0.1 is polled once after each frame, on this thread;
+  // each attached client gets its own connection to this application. The
+  // session file tells clients the port and token. Without --listen no socket
+  // exists. Declared after `app` so it is destroyed before it.
+  std::unique_ptr<atlantis::remote::RemoteServer> server;
+  std::filesystem::path sessionPath;
+  if (cliResult.listenPort.has_value()) {
+    auto listening = atlantis::remote::RemoteServer::listen(*cliResult.listenPort, atlantis::remote::generateToken(),
+                                                            config.sceneAsset, [&app] { return app.openConnection(); });
+    if (listening.isErr()) {
+      ATLANTIS_LOG_ERROR("--listen {}: {}", *cliResult.listenPort, atlantis::remote::toString(listening.error()));
+      (void)app.shutdown();
+      return toProcessExitCode(RuntimeExitReason::InitializationFailed);
+    }
+    server = std::move(listening.value());
+    sessionPath = cliResult.sessionFile.has_value() ? std::filesystem::path(*cliResult.sessionFile)
+                                                    : atlantis::remote::defaultSessionPath();
+    const atlantis::remote::SessionInfo session = server->session();
+    if (atlantis::remote::writeSessionFile(sessionPath, session).isErr()) {
+      ATLANTIS_LOG_ERROR("cannot write the session file {}", sessionPath.string());
+      (void)app.shutdown();
+      return toProcessExitCode(RuntimeExitReason::InitializationFailed);
+    }
+    ATLANTIS_LOG_INFO("Listening on 127.0.0.1:{} (session file {})", session.port, sessionPath.string());
+  }
+
   while (app.shouldContinue()) {
     app.runFrame();
+    if (server) server->poll();
     if (runner) runner->step();
   }
 
+  if (server) {
+    server.reset();  // closes every client connection before the application shuts down
+    atlantis::remote::removeSessionFile(sessionPath);
+  }
   const RuntimeExitReason reason = app.shutdown();
   ATLANTIS_LOG_INFO("Atlantis Runtime finished");
   return toProcessExitCode(reason);

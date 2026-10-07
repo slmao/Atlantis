@@ -421,3 +421,58 @@ TEST_CASE("parseCommandLine(): --help shows --exec", "[runtime][cli]") {
   requireUsage(parseCommandLine(args.argc(), args.argv(), whitelist),
                "usage: atlantis_runtime [--scene <name>] [--exec <script|->]");
 }
+
+// Plan 0055 M2 (Spec 0055 R1, R10; P3, P4): --listen <port> serves attachable
+// clients; --session-file <path> (only with --listen) places the session
+// file. Without --listen there is no port, so no socket is ever opened.
+TEST_CASE("parseCommandLine(): no --listen leaves listenPort and sessionFile empty", "[runtime][cli]") {
+  auto whitelist = makeFixtureWhitelist();
+  FakeArgv args{"--exec", "-"};
+  const CommandLineResult result = parseCommandLine(args.argc(), args.argv(), whitelist);
+  requireRunScene(result, whitelist, "integrated_showcase_demo");
+  REQUIRE_FALSE(result.listenPort.has_value());
+  REQUIRE_FALSE(result.sessionFile.has_value());
+}
+
+TEST_CASE("parseCommandLine(): --listen <port> and --session-file <path> combine with --scene and --exec",
+          "[runtime][cli]") {
+  auto whitelist = makeFixtureWhitelist();
+  FakeArgv ephemeral{"--listen", "0"};
+  const CommandLineResult zero = parseCommandLine(ephemeral.argc(), ephemeral.argv(), whitelist);
+  requireRunScene(zero, whitelist, "integrated_showcase_demo");
+  REQUIRE(zero.listenPort == std::optional<std::uint16_t>{std::uint16_t{0}});
+  REQUIRE_FALSE(zero.sessionFile.has_value());
+
+  FakeArgv all{"--session-file", "s.json", "--scene", "ibl_material_demo", "--listen", "65535", "--exec", "-"};
+  const CommandLineResult combined = parseCommandLine(all.argc(), all.argv(), whitelist);
+  requireRunScene(combined, whitelist, "ibl_material_demo");
+  REQUIRE(combined.listenPort == std::optional<std::uint16_t>{std::uint16_t{65535}});
+  REQUIRE(combined.sessionFile == std::optional<std::string>{"s.json"});
+  REQUIRE(combined.execScript == std::optional<std::string>{"-"});
+}
+
+TEST_CASE("parseCommandLine(): --listen and --session-file errors", "[runtime][cli]") {
+  auto whitelist = makeFixtureWhitelist();
+  FakeArgv missing{"--listen"};
+  requireError(parseCommandLine(missing.argc(), missing.argv(), whitelist), "--listen requires a value");
+  for (const std::string_view bad : {"65536", "-1", "abc", "1e3", "", "123456"}) {
+    INFO(bad);
+    FakeArgv args{"--listen", bad};
+    requireError(parseCommandLine(args.argc(), args.argv(), whitelist), "invalid --listen port");
+  }
+  FakeArgv twice{"--listen", "1", "--listen", "2"};
+  requireError(parseCommandLine(twice.argc(), twice.argv(), whitelist), "--listen supplied more than once");
+  FakeArgv alone{"--session-file", "s.json"};
+  requireError(parseCommandLine(alone.argc(), alone.argv(), whitelist), "--session-file requires --listen");
+  FakeArgv noValue{"--listen", "0", "--session-file"};
+  requireError(parseCommandLine(noValue.argc(), noValue.argv(), whitelist), "--session-file requires a value");
+  FakeArgv withHelp{"--listen", "0", "--help"};
+  requireError(parseCommandLine(withHelp.argc(), withHelp.argv(), whitelist),
+               "--listen runs a scene; it may not be combined with --help or --list-scenes");
+}
+
+TEST_CASE("parseCommandLine(): --help shows --listen and --session-file", "[runtime][cli]") {
+  auto whitelist = makeFixtureWhitelist();
+  FakeArgv args{"--help"};
+  requireUsage(parseCommandLine(args.argc(), args.argv(), whitelist), "[--listen <port> [--session-file <path>]]");
+}

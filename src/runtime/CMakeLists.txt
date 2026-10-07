@@ -89,6 +89,10 @@ target_link_libraries(atlantis_runtime
     # Plan 0054 P7 (ADR-0105 D3, D7): the executable hosts the CLI client
     # (`--exec`); Atlantis::RuntimeHost does not depend on it.
     Atlantis::Cli
+    # Plan 0055 P1/P11 (ADR-0106 D7): the executable serves attachable clients
+    # (`--listen`) with the server half of Atlantis Remote only;
+    # Atlantis::RuntimeHost does not depend on Remote.
+    Atlantis::RemoteServer
     atlantis_compiler_warnings
 )
 

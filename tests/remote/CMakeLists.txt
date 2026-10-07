@@ -1,4 +1,4 @@
-# Plan 0055 M1: Atlantis Remote -- the shared JSON (Connection), the wire codec
+# Plan 0055 M1/M2: Atlantis Remote -- the shared JSON (Connection), the wire codec
 # (private: tests include src/remote/src directly), the session file, and the
 # module's boundary scan (no OS type in public headers; OS code only in
 # src/os/; nothing of Runtime, the ECS or the GPU stack).
@@ -7,6 +7,8 @@ add_executable(atlantis_remote_tests
   remote_codec_tests.cpp
   remote_session_file_tests.cpp
   remote_boundary_tests.cpp
+  remote_connection_tests.cpp
+  remote_protocol_tests.cpp
 )
 
 target_include_directories(atlantis_remote_tests PRIVATE ${CMAKE_SOURCE_DIR}/src/remote/src)
