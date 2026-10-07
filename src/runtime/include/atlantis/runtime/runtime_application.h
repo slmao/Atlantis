@@ -37,6 +37,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -112,6 +113,15 @@ class RuntimeApplication {
   // the host exists only when atlantis_runtime serves clients (`--listen`).
   // Frame thread only, between frames.
   void setCommandsHeld(bool held) noexcept { commandsHeld_ = held; }
+
+  // Spec 0055 R3/R8 (Plan 0055 P8; ADR-0106 D5, ruling Q2 C2): between
+  // frames, an image of the world as the last frame drew it -- rendered once
+  // more offscreen at the presentation's extent and format, read back, and
+  // written to `path` as PNG. Waits for the GPU to be idle. NotRendering
+  // until a frame has drawn; CaptureFailed if the render, readback or write
+  // fails. Frame thread only.
+  [[nodiscard]] atlantis::Result<atlantis::connection::CapturedImage, atlantis::connection::ControlError>
+  captureImage(const std::string& path);
 
   // The loaded scene's catalog GUID (Plan 0047 P17).
   [[nodiscard]] const atlantis::asset_system::AssetGuid& sceneGuid() const noexcept { return sceneGuid_; }

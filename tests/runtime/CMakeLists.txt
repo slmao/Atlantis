@@ -104,6 +104,8 @@ target_link_libraries(atlantis_runtime_gpu_tests
     # Plan 0054 M5: the north-star test drives the CLI client over a
     # connection to the running application.
     Atlantis::Cli
+    # Plan 0055 M5: the capture tests decode the PNGs a capture writes.
+    Atlantis::ImageRegressionSupport
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )

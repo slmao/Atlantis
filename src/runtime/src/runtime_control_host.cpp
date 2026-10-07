@@ -42,10 +42,7 @@ RuntimeControlHost::Target RuntimeControlHost::forApplication(RuntimeApplication
   Target target;
   target.setCommandsHeld = [&application](bool held) { application.setCommandsHeld(held); };
   target.frameData = [&application] { return application.captureFrameData(); };
-  target.captureImage = [](const std::string&) {
-    return atlantis::Result<connection::CapturedImage, connection::ControlError>::Err(
-        connection::ControlError::CaptureFailed);
-  };
+  target.captureImage = [&application](const std::string& path) { return application.captureImage(path); };
   target.scene = application.sceneGuid();
   return target;
 }

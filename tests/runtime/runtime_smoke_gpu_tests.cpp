@@ -16,6 +16,10 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <random>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -23,6 +27,8 @@
 #include <variant>
 
 #include <catch2/catch_test_macros.hpp>
+
+#include "png_codec.h"
 
 // Plan 0013 Section D10: links Atlantis::RuntimeHost directly (never
 // atlantis_runtime, which this test does not invoke as a subprocess) and
@@ -687,4 +693,83 @@ TEST_CASE("Runtime: pause holds command application; step n applies exactly n fr
   set(7.0f);
   frame();
   CHECK(intensity() == 7.0f);
+}
+
+// Plan 0055 M5 (Spec 0055 R3, R8; P8, ruling Q2 C2): a captured image is the
+// world the last frame drew, rendered once more offscreen at the
+// presentation's extent -- deterministic (two captures of an unchanged world
+// are byte-identical), sensitive (an intensity edit changes it), a decodable
+// RGBA PNG, and what a step with an image path reports -- under fatal
+// Validation Layers.
+TEST_CASE("Runtime: a capture is a deterministic, edit-sensitive PNG of the frame at the presentation extent",
+          "[runtime][gpu][control][capture]") {
+  namespace fs = std::filesystem;
+  const fs::path dir = fs::temp_directory_path() / "atlantis_capture_tests" / std::to_string(std::random_device{}());
+  fs::create_directories(dir);
+  const auto bytes = [](const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  };
+
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  CHECK(app.captureImage((dir / "none.png").string()).error() == atlantis::connection::ControlError::NotRendering);
+
+  app.runFrame();
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const auto first = app.captureImage((dir / "a.png").string());
+  REQUIRE(first.isOk());
+  const auto second = app.captureImage((dir / "b.png").string());
+  REQUIRE(second.isOk());
+  CHECK(first.value().width > 0);
+  CHECK(first.value().height > 0);
+  CHECK(second.value() == atlantis::connection::CapturedImage{(dir / "b.png").string(), first.value().width,
+                                                              first.value().height});
+  const std::string a = bytes(dir / "a.png");
+  REQUIRE(a.size() > 8);
+  CHECK(a == bytes(dir / "b.png"));  // determinism
+  const auto decoded = atlantis::image_regression::decodePng(dir / "a.png");
+  REQUIRE(decoded.isOk());
+  CHECK(decoded.value().pixels.width == first.value().width);
+  CHECK(decoded.value().pixels.height == first.value().height);
+
+  // The frame loop goes on after a capture.
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+
+  {
+    const auto connection = app.openConnection();
+    const auto light = atlantis::asset_system::parseEntityGuid("0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea").value();
+    connection->submit(atlantis::world::access::SetProperty{
+        {light, atlantis::world::ecs::componentTypeId<atlantis::world::Light>(),
+         atlantis::schema::fieldId("world::Light", "intensity")},
+        6.0f});
+    atlantis::runtime::RuntimeControlHost::Options options;
+    options.recordDiagnostics = false;
+    atlantis::runtime::RuntimeControlHost control(atlantis::runtime::RuntimeControlHost::forApplication(app),
+                                                  options);
+    std::optional<atlantis::Result<atlantis::connection::FrameReport, atlantis::connection::ControlError>> report;
+    control.step(atlantis::connection::StepRequest{1, (dir / "c.png").string()},
+                 [&](atlantis::Result<atlantis::connection::FrameReport, atlantis::connection::ControlError> r) {
+                   report = std::move(r);
+                 });
+    control.beforeFrame();
+    app.runFrame();
+    control.afterFrame();
+    REQUIRE(app.shouldContinue());
+    REQUIRE(report.has_value());
+    REQUIRE(report->isOk());
+    CHECK(report->value().data.directionalLights[0].intensity == 6.0f);
+    REQUIRE(report->value().image.has_value());
+    CHECK(report->value().image->path == (dir / "c.png").string());
+    CHECK(bytes(dir / "c.png") != a);  // sensitivity
+  }
+
+  const RuntimeExitReason reason = app.shutdown();
+  REQUIRE(reason == RuntimeExitReason::Success);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
 }

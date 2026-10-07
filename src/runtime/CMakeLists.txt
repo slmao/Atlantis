@@ -52,6 +52,10 @@ target_link_libraries(atlantis_runtime_host
     Atlantis::Connection
   PRIVATE
     atlantis_compiler_warnings
+    # Plan 0055 P1/P8 (ADR-0106 D5): PNG encoding for captures -- the existing
+    # header-only Stb::Stb (ADR-0006/ADR-0041), its write implementation
+    # compiled static in frame_capture.cpp alone.
+    Stb::Stb
 )
 
 # Plan 0013 Section D1/D3 (2026-08-21 amendment): real, compile-time
