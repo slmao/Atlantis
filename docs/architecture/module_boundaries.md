@@ -664,7 +664,8 @@ neither replaces nor wraps `World`.
   operation boundary, the first concrete client boundary of
   [ADR-0033](../adr/0033-runtime-authority-and-client-boundary.md).
   - **Concepts.** It has exactly three: Query (`findEntity`,
-    `listComponents`, `getProperty`), Command (`CreateEntity`,
+    `listComponents`, `getProperty`, and since Spec 0054 `listEntities()`,
+    every addressable entity in GUID order), Command (`CreateEntity`,
     `DestroyEntity`, `AddComponent`, `RemoveComponent`, `SetProperty`) and
     Event (`EntityCreated`, `EntityDestroyed`, `ComponentAdded`,
     `ComponentRemoved`, `PropertyChanged`).
@@ -696,6 +697,9 @@ neither replaces nor wraps `World`.
       call: no event, and one failure at its first refused command.
     - No command, event or error kind is added, and Runtime's frame is
       unchanged.
+  - **Clients.** Since Spec 0054 a client reaches the boundary through
+    Atlantis Connection's `RuntimeConnection`, whose InProcess endpoint is
+    the boundary's only drainer (see Atlantis Connection below).
 - **Not yet done.** A hierarchy over ECS components, a system scheduler,
   job-system integration and Spec 0050's other exclusions are future Specs.
 
@@ -841,7 +845,10 @@ entity is an explicit error, ADR-0097 D6) — replacing the former fixed,
 hardcoded six-entity validation scene Spec 0014 shipped. It owns the
 `BakedScene` (on the heap, so its address survives the application's own
 move) and, since Spec 0052, the `RuntimeWorldAccess` boundary over it, the
-only way a client reaches the Runtime World. Each frame: first applies the
+only way a client reaches the Runtime World; since Spec 0054 clients connect
+through `openConnection()` (Atlantis Connection's InProcess endpoint over that
+boundary, created at the first call), and `atlantis_runtime --exec` runs an
+Atlantis CLI script one line after each frame. Each frame: first applies the
 commands clients submitted since the previous frame
 (`RuntimeWorldAccess::applyPending()`), then collects
 the active camera, lights and renderables from the baked world through the
