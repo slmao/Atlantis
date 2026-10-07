@@ -3,8 +3,10 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-07
-- **Related Plan(s):** none yet. Plan 0053 drafting is authorized by the
-  Approval.
+- **Related Plan(s):** [Plan 0053](../plans/0053-runtime-world-transaction.md)
+  (`Approved`; Joint Human Review 2026-10-07,
+  [PR #219](https://github.com/slmao/Atlantis/pull/219)) — implemented, merged
+  [PR #220](https://github.com/slmao/Atlantis/pull/220).
 - **Approval:** slmao, 2026-10-07 (review of this Spec's own branch PR,
   [PR #218](https://github.com/slmao/Atlantis/pull/218)) — authorizes drafting Plan 0053; Implementation itself
   still awaits its own, separate Joint Human Review of Spec + Plan together.

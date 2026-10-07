@@ -785,7 +785,12 @@ milestone being listed does not authorize starting it — see Section 1.
   `atlantis::world::access`:
   - Query, Command (five) and Event (five);
   - addressed by `EntityGuid` + schema `TypeId`/`FieldId`;
-  - values only, no ECS layout exposed.
+  - values only, no ECS layout exposed;
+  - since [Spec 0053](specs/0053-runtime-world-transaction.md) (merged
+    [PR #220](https://github.com/slmao/Atlantis/pull/220);
+    [ADR-0104](adr/0104-runtime-world-transaction-atomicity.md)),
+    transactions: all-or-nothing groups of those commands, by projected
+    pre-validation.
 
   Runtime applies pending commands at the start of every frame. These each
   remain a future Spec's work:
@@ -795,7 +800,8 @@ milestone being listed does not authorize starting it — see Section 1.
   - chunk streaming;
   - prefab, networking and C# bindings;
   - a runtime hierarchy over ECS components (Spec 0051 ruling Q2);
-  - transactions and undo (0053), a client transport (0054), and an
+  - Undo/Redo, nested transactions and transactions spanning frames
+    (named only in Spec 0053), a client transport (0054), and an
     entity-listing query.
 
 ### Milestone 12 — Scene Asset & Serialization Foundation
