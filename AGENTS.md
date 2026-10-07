@@ -164,7 +164,7 @@ none should ever need to contradict these:
 Top-level modules: **Atlantis Core, Atlantis Platform, Atlantis RHI,
 Atlantis Vulkan Backend, Atlantis RenderGraph, Atlantis Renderer, Atlantis
 Shader System, Atlantis Asset System, Atlantis World, Atlantis Connection,
-Atlantis CLI, Atlantis Runtime, Atlantis Tools.**
+Atlantis Remote, Atlantis CLI, Atlantis Runtime, Atlantis Tools.**
 Atlantis Asset System (Spec 0012, `Approved`; extended by Spec 0015,
 `Approved`, with a second asset type, scene graphs) depends on Atlantis
 Core only — no RHI, Renderer, Shader System, or Atlantis World
@@ -207,6 +207,22 @@ and includes no Runtime, ECS, Platform, RHI or Renderer header (checked by
 the endpoint and its executable hosts the CLI. See
 [ADR-0105](docs/adr/0105-runtime-connection-and-cli-client.md).
 
+Atlantis Remote (Spec 0055, `Approved`) makes a running Runtime attachable: a
+loopback-TCP, JSON-lines RPC whose payload is exactly Atlantis Connection's
+`RuntimeConnection` and `RuntimeControl` calls — it adds no semantics. It
+depends on Atlantis Connection only, and includes no Runtime, ECS, Platform,
+RHI or Renderer header. Its client half (`atlantis_remote_client`) is linked by
+the `atlantis` executable (`atlantis_cli_app`, built in `src/cli/` beside the
+Atlantis CLI library, whose own link list stays Atlantis Connection only); its
+server half (`atlantis_remote_server`) by the `atlantis_runtime` executable
+only, never by `atlantis_runtime_host`. Like the Vulkan Backend's private WSI
+code, its OS socket code is private to the module: one private header with
+one translation unit per OS under `src/remote/src/os/`, and no OS type in any
+public header (checked by `tests/remote/remote_boundary_tests.cpp`).
+Platform's charter and the rule that only Runtime depends on Platform are
+unchanged. See
+[ADR-0106](docs/adr/0106-attachable-runtime-transport-and-control.md).
+
 Atlantis Runtime (Spec 0013, `Approved`; extended by Spec 0014,
 `Approved`, and Spec 0015, `Approved`) is the actual composition root — a private
 `atlantis_runtime_host` static library plus a thin `atlantis_runtime`
@@ -214,7 +230,12 @@ Windows executable, composing Platform, RHI, Vulkan Backend, Renderer,
 Shader System, Asset System, and World into one fixed startup → windowed
 frame loop → shutdown lifecycle. It also owns the InProcess endpoint of Atlantis
 Connection (Spec 0054), and the `atlantis_runtime` executable hosts Atlantis
-CLI (`--exec`). Runtime owns the loaded scene's bake
+CLI (`--exec`). Since Spec 0055 it implements `RuntimeControl`
+(`RuntimeControlHost`; pause holds command application in the one named line
+of `runFrame()`, ADR-0106 D4), captures frames (offscreen re-render and
+readback, PNG through the existing `Stb::Stb`), and the `atlantis_runtime`
+executable serves Atlantis Remote clients with `--listen` (no socket without
+it). Runtime owns the loaded scene's bake
 output (`world::BakedScene`, Spec 0051) and is the sole place a
 `World`-driven scene is turned into `atlantis::renderer::DrawItem`s, via a
 Runtime-private extraction adapter (`scene_extraction.h`/`.cpp`) — not a

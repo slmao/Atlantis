@@ -106,6 +106,10 @@ target_link_libraries(atlantis_runtime_gpu_tests
     Atlantis::Cli
     # Plan 0055 M5: the capture tests decode the PNGs a capture writes.
     Atlantis::ImageRegressionSupport
+    # Plan 0055 M7 (ruling Q7, A-a): the in-process north star attaches over a
+    # real loopback socket, both halves in this one process.
+    Atlantis::RemoteClient
+    Atlantis::RemoteServer
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )
@@ -193,3 +197,12 @@ catch_discover_tests(atlantis_runtime_gpu_tests
   PROPERTIES LABELS "gpu"
   WORKING_DIRECTORY "$<TARGET_FILE_DIR:atlantis_runtime_gpu_tests>"
 )
+
+# Plan 0055 M7 (Spec 0055 R8): the Bistro north star is content-gated, as
+# atlantis_runtime's `bistro` entry is.
+if(DEFINED ATLANTIS_bistro_scene_TARGET)
+  target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
+    ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID="${ATLANTIS_bistro_scene_IMPORT_GUID}"
+  )
+  add_dependencies(atlantis_runtime_gpu_tests ${ATLANTIS_bistro_scene_TARGET})
+endif()

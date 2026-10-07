@@ -27,3 +27,23 @@ target_compile_definitions(atlantis_cli_tests PRIVATE
 add_dependencies(atlantis_cli_tests atlantis_asset_catalog)
 
 catch_discover_tests(atlantis_cli_tests DISCOVERY_MODE PRE_TEST)
+
+# Plan 0055 M7 (Spec 0055 R9; rulings Q7 A-b + L-a; J9): the completion loop
+# across two processes -- atlantis_runtime --listen and the `atlantis`
+# executable -- with a test-only Windows process helper. Needs a GPU and a
+# window, like the Runtime's GPU suites.
+if(WIN32)
+  add_executable(atlantis_cli_e2e_tests cli_e2e_tests.cpp)
+  target_link_libraries(atlantis_cli_e2e_tests
+    PRIVATE
+      Atlantis::Connection
+      Catch2::Catch2WithMain
+      atlantis_compiler_warnings
+  )
+  target_compile_definitions(atlantis_cli_e2e_tests PRIVATE
+    ATLANTIS_CLI_EXE="$<TARGET_FILE:atlantis_cli_app>"
+    ATLANTIS_RUNTIME_EXE="$<TARGET_FILE:atlantis_runtime>"
+  )
+  add_dependencies(atlantis_cli_e2e_tests atlantis_cli_app atlantis_runtime)
+  catch_discover_tests(atlantis_cli_e2e_tests DISCOVERY_MODE PRE_TEST)
+endif()

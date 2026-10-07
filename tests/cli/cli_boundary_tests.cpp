@@ -74,7 +74,11 @@ const std::vector<std::string_view> kClientValueHeaders = {
 }  // namespace
 
 TEST_CASE("Atlantis CLI includes nothing of Runtime, the ECS or the GPU stack", "[cli][module_boundary]") {
-  const std::vector<Include> includes = includesUnder(ATLANTIS_CLI_SOURCE_DIR);
+  std::vector<Include> includes = includesUnder(ATLANTIS_CLI_SOURCE_DIR);
+  // Plan 0055 P10: src/cli/app/ is the `atlantis` executable, not the library;
+  // it also includes Atlantis Remote's client header, and is held to its own
+  // rule below.
+  std::erase_if(includes, [](const Include& include) { return fs::path(include.file).parent_path().filename() == "app"; });
   REQUIRE(includes.size() >= 10);  // the scan is not vacuous
   std::vector<std::string_view> allowed = kClientValueHeaders;
   allowed.push_back("atlantis/cli/");
@@ -118,4 +122,34 @@ TEST_CASE("Atlantis Connection includes only World's access value types, the sch
   for (const auto& v : bad) text += v + '\n';
   INFO(text);
   CHECK(bad.empty());
+}
+
+// Plan 0055 P10 (Spec 0055 ruling Q6, X-a): the `atlantis` executable is the
+// library plus Atlantis Remote's client half -- never its server half, and
+// nothing of Runtime, the ECS or the GPU stack.
+TEST_CASE("the atlantis executable includes the CLI, Connection and Remote's client half only",
+          "[cli][module_boundary]") {
+  std::vector<Include> includes = includesUnder(fs::path(ATLANTIS_CLI_SOURCE_DIR) / "app");
+  REQUIRE(includes.size() >= 5);
+  std::vector<std::string_view> allowed = kClientValueHeaders;
+  allowed.push_back("atlantis/cli/");
+  allowed.push_back("atlantis/remote/remote_client.h");
+  const std::vector<std::string> bad = violations(includes, allowed);
+  std::string text;
+  for (const auto& v : bad) text += v + '\n';
+  INFO(text);
+  CHECK(bad.empty());
+  CHECK(violations({{"x", "atlantis/remote/remote_server.h"}}, allowed).size() == 1);
+
+  const std::string cmake = readFile(fs::path(ATLANTIS_CLI_SOURCE_DIR) / "CMakeLists.txt");
+  const auto start = cmake.find("target_link_libraries(atlantis_cli_app");
+  REQUIRE(start != std::string::npos);
+  std::string block = cmake.substr(start, cmake.find(')', start) - start);
+  for (const std::string_view word : {"target_link_libraries(atlantis_cli_app", "PRIVATE", "Atlantis::Cli",
+                                      "Atlantis::RemoteClient", "atlantis_compiler_warnings"}) {
+    const auto at = block.find(word);
+    REQUIRE(at != std::string::npos);
+    block.erase(at, word.size());
+  }
+  CHECK(block.find_first_not_of(" \t\r\n") == std::string::npos);
 }
