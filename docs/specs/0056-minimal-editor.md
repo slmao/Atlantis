@@ -4,7 +4,7 @@
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-08
 - **Related Plan(s):** none yet. Plan drafting awaits this Spec's Approval.
-- **Approval:** pending. The maintainer fixed this Spec's position, the four
+- **Approval:** pending, in [PR #230](https://github.com/slmao/Atlantis/pull/230). The maintainer fixed this Spec's position, the four
   v1 features, the layout, the schema-generated Inspector, the Gizmo chain,
   the "ordinary client" rule and the named-only list before drafting
   (2026-10-08, chat). They are recorded under Goals / Non-Goals and are not
