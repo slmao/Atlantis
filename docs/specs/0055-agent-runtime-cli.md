@@ -1,19 +1,23 @@
 # Spec: Agent / Runtime CLI
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-07
-- **Related Plan(s):** none yet. Drafting a Plan is authorized only after this
-  Spec's Approval.
-- **Approval:** pending, under review in
-  [PR #226](https://github.com/slmao/Atlantis/pull/226). The maintainer fixed this Spec's position, command
-  tree, output contract, north star, completion definition and named-only
-  list before drafting (2026-10-07, chat). They are recorded under Goals /
-  Non-Goals and are not open questions.
+- **Related Plan(s):** none yet. Plan 0055 drafting is authorized by the
+  Approval.
+- **Approval:** slmao, 2026-10-07 (review of this Spec's own branch PR,
+  [PR #226](https://github.com/slmao/Atlantis/pull/226)) — authorizes drafting Plan 0055; Implementation itself
+  still awaits its own, separate Joint Human Review of Spec + Plan together.
+  The maintainer fixed this Spec's position, command tree, output contract,
+  north star, completion definition and named-only list before drafting
+  (2026-10-07, chat). They are recorded under Goals / Non-Goals.
+
+  The same review ruled all eight open questions, each as its
+  recommendation. See Risks & Open Questions below.
 - **Related ADR(s):**
   [ADR-0106](../adr/0106-attachable-runtime-transport-and-control.md)
-  (`Proposed`, drafted alongside this Spec). It records the decisions this
-  Spec's open questions settle:
+  (`Accepted` 2026-10-07, alongside this Spec's own Approval). It records the
+  decisions this Spec's open questions settle:
   - the transport, with its RPC shape and frame-boundary drain;
   - the Runtime control interface and the pause semantics it needs;
   - capture;
@@ -96,7 +100,10 @@ frame → read diagnostics → verify the result.
 - **Platform and OS code.** Only Runtime may depend on Atlantis Platform
   (module_boundaries.md, Atlantis Runtime). OS-specific code outside
   Platform has a precedent in Tools (`src/tools/shader_compiler/process_launch.cpp`,
-  `CreateProcessW`).
+  `CreateProcessW`). So does the Vulkan Backend's private WSI code
+  (`src/vulkan_backend/src/wsi/`, module_boundaries.md, Atlantis Vulkan
+  Backend), which needs no Platform dependency; ruling Q6 adopts that
+  precedent for the socket layer.
 
 ### Code evidence that constrains capture
 
@@ -270,7 +277,7 @@ Also out of scope:
 
 ## Proposed Design
 
-Under the recommendations below:
+Under the rulings below:
 
 ```
 agent ── atlantis <cmd> --json ── atlantis::cli Commands ── RemoteConnection + RemoteControl ─┐
@@ -307,7 +314,7 @@ alongside:
 - capture by offscreen re-render and readback, not swapchain readback (Q2);
 - the JSON and diagnostics contract (Q3).
 
-**Expected code impact**, for the Plan, under the recommendations:
+**Expected code impact**, for the Plan, under the rulings:
 
 - **New:**
   - transport code (client and server) with its tests;
@@ -398,10 +405,18 @@ Risks:
   they cost one frame of latency but O(entities) messages.
 - **The JSON contract is long-lived.** It is versioned from day one.
 
-Open questions (to be ruled at review). Q1–Q7 were posed by the maintainer;
-Q8 surfaced while drafting.
+Open questions — all eight ruled by Human Review (slmao, 2026-10-07, review
+of [PR #226](https://github.com/slmao/Atlantis/pull/226)), each as its
+recommendation. Q1–Q7 were posed by the maintainer; Q8 surfaced while
+drafting. The options are kept as the record of what was weighed.
 
 - **Q1 — Host and transport** (the heaviest).
+  - **Ruled (2026-10-07): (a) with (a1): IPC and the standalone `atlantis`
+    executable in this Spec, loopback TCP, JSON-lines RPC** (R1, R2; ADR-0106
+    D1; opt-in `--listen`, 127.0.0.1 only, a per-run session token, no thread,
+    drained after each `runFrame()` without blocking, an InProcess connection
+    per client; (b) and (c) kept as rejected with their costs), as
+    recommended.
   - **The evidence** (Motivation):
     - external input can enter only at a frame boundary, drained without
       blocking on the frame thread, exactly as `--exec` is;
@@ -430,8 +445,8 @@ Q8 surfaced while drafting.
         - an RPC codec for every `RuntimeConnection` and control call;
         - a server that parks frame-dependent requests;
         - session discovery (a session file holding the port and a token);
-        - socket code outside Platform (the Tools precedent) or a Platform
-          API change, to be ruled in ADR-0106;
+        - socket code outside Platform (ruling Q6: the Vulkan Backend's
+          private WSI precedent) rather than a Platform API change;
         - two-process tests.
     - **(b) Hosted first.** Grow `--exec` with the new tree and JSON. IPC and
       attach become a second phase or a separate Spec.
@@ -451,7 +466,7 @@ Q8 surfaced while drafting.
         - Windows needs a non-blocking pipe peek (`PeekNamedPipe`) on
           stdin, the Spec 0054 Q3 H-c concern;
         - not usable with a console stdin.
-  - **Recommendation: (a) with (a1),** loopback TCP and JSON-lines RPC,
+  - **Why (a) with (a1),** loopback TCP and JSON-lines RPC,
     drained after each `runFrame()`.
     - **Why (a).** It is the only option that meets the completion
       definition with a real read-act loop from a separate process, and
@@ -468,6 +483,11 @@ Q8 surfaced while drafting.
       pressure test this Spec is for.
 - **Q2 — The Runtime control plane.** Pause, resume, step, capture and
   diagnostics are lifecycle verbs, not World operations.
+  - **Ruled (2026-10-07): K-a + V-a + P-a + C1, with C2 on request; C3
+    rejected** (R3, R8; ADR-0106 D3-D5; RuntimeControl beside
+    RuntimeConnection; no new verbs; pause holds command application; frame
+    data always, an offscreen-rendered PNG on request; Bistro-gated with a
+    default-scene twin), as recommended.
   - **Shape:**
     - **(K-a)** a parallel `RuntimeControl` interface beside
       `RuntimeConnection`:
@@ -526,10 +546,14 @@ Q8 surfaced while drafting.
   - **FIFO and vsync.** A step completes after N presented frames, so its
     response latency is at least N frames. Holding costs nothing extra:
     frames keep presenting at the vsync rate.
-  - **Recommendation: K-a + V-a + P-a + C1 always, with C2 on request**
+  - **Why K-a + V-a + P-a + C1 always, with C2 on request**
     (PNG via `Stb::Stb`, already vetted under ADR-0006). C3 is rejected for
     v1.
 - **Q3 — The `--json` output schema.**
+  - **Ruled (2026-10-07): the envelope, error shape, exit codes, value
+    encoding and per-command fields below, with N-a** (R5, R6; ADR-0106 D6; an
+    entity is its GUID and components, found by client-side
+    `--with`/`--where`), as recommended.
   - **Envelope** (one per invocation, on stdout):
 
     ```
@@ -587,12 +611,16 @@ Q8 surfaced while drafting.
     - **(N-b)** also a derived, read-only `summary`. For example a Light
       gives `"Light(Point, intensity 12)"`, and an entity with a Renderable
       gives its mesh asset id.
-  - **Recommendation: the envelope, error shape, values and fields above,
+  - **Why the envelope, error shape, values and fields above,
     with N-a.** A summary invents a naming convention the schema does not
     have; `entity list --with/--where` filters make finding things
     possible without names. Human text output is derived from the same
     data.
 - **Q4 — Making writes transactional.**
+  - **Ruled (2026-10-07): T-a + T-c** (R7; ADR-0106 D8; one ticketed
+    submission per write invocation, `atlantis tx <file|->` as one
+    transaction, `entity create` keeps an optional `--component`), as
+    recommended.
   - **Options:**
     - **(T-a)** each write invocation is one submission (one ticket), as
       Spec 0052's single path;
@@ -602,25 +630,35 @@ Q8 surfaced while drafting.
     - **(T-c)** an explicit `atlantis tx <file|->`: a list of write
       commands submitted as one `submitTransaction()`, with the result
       `{applied | refused-at <n>}`.
-  - **Recommendation: T-a by default, plus T-c.**
+  - **Why T-a by default, plus T-c:**
     - A single write is already all-or-nothing.
     - Grouping is explicit, so its atomicity is visible.
     - T-b's compound flags multiply the syntax. `entity create` keeps only
       an optional `--component <Type>…` (still one transaction, of the
       create plus adds).
 - **Q5 — A REPL in v1.**
+  - **Ruled (2026-10-07): R-a** (R1; ADR-0106 D8; under attach the CLI process
+    blocks, the Runtime keeps rendering; one-shot stays primary), as
+    recommended.
   - **The 0054 objection is gone under attach:** the CLI process blocks on
     its own stdin while the Runtime keeps rendering in its own process.
   - **Options:**
     - **(R-a)** v1 includes `atlantis repl`: one connection and one
       control session, each line a command, `--json` per line;
     - **(R-b)** one-shot invocations only.
-  - **Recommendation: R-a.**
+  - **Why R-a:**
     - It is a small loop over the same command layer.
     - It keeps subscriptions across commands, and an agent harness with a
       persistent shell can use it.
     - One-shot stays primary and fully specified.
 - **Q6 — How `atlantis::cli` grows, and the executable.**
+  - **Ruled (2026-10-07): G-a + X-a + M-a** (R4, R10; ADR-0106 D7; the 0054
+    names stay as aliases and `north_star.txt` keeps working; `atlantis` built
+    in `src/cli/`; a new Atlantis Remote module whose OS socket layer is
+    private to it, following the Vulkan Backend's private WSI boundary (the
+    ruling names this precedent; the draft had cited the Tools
+    `CreateProcessW` precedent); Runtime links only the server half), as
+    recommended.
   - **The command layer:**
     - **(G-a)** grow the Spec 0054 `Commands` into the new tree. The 0054
       command names (`world entities`, `entity get/set`) stay as aliases
@@ -635,17 +673,23 @@ Q8 surfaced while drafting.
   - **Transport placement:**
     - **(M-a)** a new module **Atlantis Remote** (`src/remote/`): client
       `RemoteConnection` and `RemoteControl`, the server, and the codec,
-      with its own minimal OS socket layer under the Tools precedent;
+      with its own minimal OS socket layer, private to the module like the
+      Vulkan Backend's WSI code (ruling Q6);
     - **(M-b)** inside Atlantis Connection, which would then carry OS code;
     - **(M-c)** in Platform, which only Runtime may use, so the client
       could not use it.
-  - **Recommendation: G-a + X-a + M-a.**
+  - **Why G-a + X-a + M-a:**
     - Aliases keep 0054's verified script working.
     - Keeping the executable next to the library it is a shell for keeps
       the R8 boundary scan in one place.
     - A Remote module keeps OS code out of Connection and CLI, and lets
       Runtime link the server half without Platform.
 - **Q7 — The verification surface.**
+  - **Ruled (2026-10-07): A-c + J-a + L-a** (R8, R9; an in-process loopback
+    test with exact frame data (Bistro-gated, plus the default-scene twin) and
+    a two-process ctest against `atlantis_runtime --listen`; expected JSON per
+    command, no JSON Schema dependency; one assertion per
+    completion-definition step), as recommended.
   - **North star, automated:**
     - **(A-a)** an in-process test: a windowed `RuntimeApplication`, the
       server, and a `RemoteConnection` over real loopback in one process,
@@ -664,11 +708,15 @@ Q8 surfaced while drafting.
     - **(L-a)** one end-to-end case per completion-definition step, in the
       two-process form;
     - **(L-b)** a human-run script only.
-  - **Recommendation: A-c + J-a + L-a.**
+  - **Why A-c + J-a + L-a:**
     - A-a gives the exact, debuggable assertions.
     - A-b and L-a prove the real external shape.
     - J-a needs no new dependency.
 - **Q8 — Where the command engine runs** (surfaced).
+  - **Ruled (2026-10-07): E-a** (R2; ADR-0106 D2; the engine runs in the
+    client process, and the wire carries `RuntimeConnection` and control calls
+    -- the transport implements the interface and does not shape it), as
+    recommended.
   - **Options:**
     - **(E-a)** in the client process, over a `RemoteConnection`. The wire
       carries `RuntimeConnection` and control calls.
@@ -678,7 +726,7 @@ Q8 surfaced while drafting.
       the wire a CLI protocol: the transport would then shape the API,
       against ADR-0105 D1, and every future client (Editor, SDK) would
       speak CLI text.
-  - **Recommendation: E-a.** Filters stay client-side compositions and are
+  - **Why E-a:** Filters stay client-side compositions and are
     pipelined, so their cost is one frame plus O(entities) messages.
 
 ## Out of Scope / Future Work
