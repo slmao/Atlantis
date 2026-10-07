@@ -10,6 +10,10 @@
 #include <atlantis/world/scene_instantiation.h>
 
 #include <algorithm>
+#include <array>
+#include <bitset>
+#include <cstddef>
+#include <functional>
 #include <concepts>
 #include <cstdint>
 #include <map>
@@ -172,6 +176,137 @@ template <WorldStateView V>
   return std::visit([&](const auto& c) { return checkCommand(view, c); }, command);
 }
 
+// Plan 0053 P4 (Spec 0053 R2, R3; ruling Q1, ADR-0104 D2): a transaction's
+// projected state -- the state the checks above read, as the transaction's
+// commands so far would leave it -- so the whole transaction is checked
+// before any of it is applied. Nothing here touches the world.
+
+constexpr std::size_t kWorldComponentCount = std::tuple_size_v<ecs::WorldComponentTypes>;
+
+// The position of a World component type in ecs::WorldComponentTypes, or
+// nullopt for any other TypeId.
+[[nodiscard]] std::optional<std::size_t> worldComponentIndex(schema::TypeId component) {
+  std::optional<std::size_t> found;
+  [&]<typename... Ts>(std::tuple<Ts...>*) {
+    std::size_t position = 0;
+    ((!found && ecs::componentTypeId<Ts>() == component ? void(found = position) : void(), ++position), ...);
+  }(static_cast<ecs::WorldComponentTypes*>(nullptr));
+  return found;
+}
+
+// One entity as the checks see it.
+struct ShadowEntity {
+  bool live = false;
+  std::bitset<kWorldComponentCount> components;
+  LightKind lightKind = LightKind::Directional;  // when it holds a Light
+  bool activeCamera = false;
+};
+
+// Light + WorldMatrix holders by LightKind (Directional, Point).
+using LightCounts = std::array<std::uint32_t, 2>;
+
+[[nodiscard]] std::size_t lightSlot(LightKind kind) { return static_cast<std::size_t>(kind); }
+
+// `entity` as `view` sees it now.
+template <WorldStateView V>
+[[nodiscard]] ShadowEntity seedShadowEntity(const V& view, const EntityGuid& entity) {
+  ShadowEntity shadow;
+  shadow.live = view.exists(entity);
+  shadow.activeCamera = view.isActiveCamera(entity);
+  if (!shadow.live) return shadow;
+  [&]<typename... Ts>(std::tuple<Ts...>*) {
+    std::size_t position = 0;
+    ((shadow.components[position++] = view.has(entity, ecs::componentTypeId<Ts>())), ...);
+  }(static_cast<ecs::WorldComponentTypes*>(nullptr));
+  if (view.has(entity, kLightType)) shadow.lightKind = view.lightKind(entity);
+  return shadow;
+}
+
+// The kind under which `shadow` counts toward the light limits, if it does:
+// a live entity holding both Light and WorldMatrix (Spec 0052 Correction J1).
+[[nodiscard]] std::optional<LightKind> countedAs(const ShadowEntity& shadow) {
+  static const std::size_t light = *worldComponentIndex(kLightType);
+  static const std::size_t matrix = *worldComponentIndex(kWorldMatrixType);
+  if (!shadow.live || !shadow.components[light] || !shadow.components[matrix]) return std::nullopt;
+  return shadow.lightKind;
+}
+
+// Models WorldStateView. Entities are seeded lazily, on first touch, from the
+// real world, which does not change while a transaction is projected; the
+// light counts are the real ones when projection starts, then kept by the
+// difference each projected command makes to what it touches (Plan 0053 J4).
+class ProjectedWorldState {
+ public:
+  using Seed = std::function<ShadowEntity(const EntityGuid&)>;
+
+  ProjectedWorldState(Seed seed, LightCounts lightCounts) : seed_(std::move(seed)), lightCounts_(lightCounts) {}
+
+  [[nodiscard]] bool exists(const EntityGuid& guid) const { return entity(guid).live; }
+  [[nodiscard]] bool has(const EntityGuid& guid, schema::TypeId component) const {
+    const auto position = worldComponentIndex(component);
+    ATLANTIS_CHECK_MSG(position.has_value(), "ProjectedWorldState::has(): not a World component type");
+    return entity(guid).components[*position];
+  }
+  [[nodiscard]] LightKind lightKind(const EntityGuid& guid) const { return entity(guid).lightKind; }
+  [[nodiscard]] bool isActiveCamera(const EntityGuid& guid) const { return entity(guid).activeCamera; }
+  [[nodiscard]] std::uint32_t lightCount(LightKind kind, const EntityGuid& guid) const {
+    const std::uint32_t self = countedAs(entity(guid)) == kind ? 1u : 0u;
+    return lightCounts_[lightSlot(kind)] - self;
+  }
+
+  // Applies `command` to the projection. Requires checkCommand(*this,
+  // command) to have passed.
+  void project(const Command& command) {
+    const EntityGuid& guid = std::visit(
+        [](const auto& c) -> const EntityGuid& {
+          if constexpr (std::is_same_v<std::decay_t<decltype(c)>, SetProperty>) {
+            return c.address.entity;
+          } else {
+            return c.entity;
+          }
+        },
+        command);
+    ShadowEntity& shadow = entity(guid);
+    const std::optional<LightKind> before = countedAs(shadow);
+    std::visit(
+        [&](const auto& c) {
+          using C = std::decay_t<decltype(c)>;
+          if constexpr (std::is_same_v<C, CreateEntity>) {
+            shadow = ShadowEntity{};  // a new entity: no components, never the bake's active camera
+            shadow.live = true;
+          } else if constexpr (std::is_same_v<C, DestroyEntity>) {
+            shadow = ShadowEntity{};
+          } else if constexpr (std::is_same_v<C, AddComponent>) {
+            shadow.components[*worldComponentIndex(c.component)] = true;
+            if (c.component == kLightType) shadow.lightKind = Light{}.kind;
+          } else if constexpr (std::is_same_v<C, RemoveComponent>) {
+            shadow.components[*worldComponentIndex(c.component)] = false;
+          } else {
+            // Of all field values, only Light.kind is read by the checks.
+            if (c.address.component == kLightType && c.address.field == kLightKindField) {
+              shadow.lightKind = static_cast<LightKind>(std::get<EnumValue>(c.value).value);
+            }
+          }
+        },
+        command);
+    const std::optional<LightKind> after = countedAs(shadow);
+    if (before) --lightCounts_[lightSlot(*before)];
+    if (after) ++lightCounts_[lightSlot(*after)];
+  }
+
+ private:
+  [[nodiscard]] ShadowEntity& entity(const EntityGuid& guid) const {
+    auto found = entities_.find(guid);
+    if (found == entities_.end()) found = entities_.emplace(guid, seed_(guid)).first;
+    return found->second;
+  }
+
+  Seed seed_;
+  LightCounts lightCounts_;
+  mutable std::map<EntityGuid, ShadowEntity> entities_;
+};
+static_assert(WorldStateView<ProjectedWorldState>);
+
 }  // namespace detail
 
 struct RuntimeWorldAccess::Impl {
@@ -181,7 +316,13 @@ struct RuntimeWorldAccess::Impl {
 
   BakedScene* scene;
   std::map<EntityGuid, ecs::EntityId> index;  // Spec 0052 ruling Q1 (a)
-  std::vector<std::pair<CommandTicket, Command>> pending;
+  // A single command, or a transaction's commands (Plan 0053 P5); `first` is
+  // the (first) command's ticket.
+  struct PendingEntry {
+    CommandTicket first;
+    std::variant<Command, std::vector<Command>> body;
+  };
+  std::vector<PendingEntry> pending;
   std::uint64_t lastTicket = 0;
   std::vector<Event> events;
   std::vector<CommandFailure> failures;
@@ -302,6 +443,41 @@ struct RuntimeWorldAccess::Impl {
     return PropertyChanged{address, command.value};
   }
 
+  // The Light + WorldMatrix holders of each kind, in one pass.
+  [[nodiscard]] detail::LightCounts countAllLights() const {
+    detail::LightCounts counts{};
+    world().query<const Light, const WorldMatrix>([&](ecs::EntityId, const Light& light, const WorldMatrix&) {
+      ++counts[static_cast<std::size_t>(light.kind)];
+    });
+    return counts;
+  }
+
+  // Spec 0053 (Plan 0053 P5; ADR-0104 D2): the whole transaction is checked
+  // against its projection first, and nothing is applied unless every
+  // command passes -- so an abort never touched the world. Then each command
+  // is applied, re-checked against the real world first (J3): a refusal
+  // there would mean the projection drifted from the rules, a programming
+  // error, never a partial commit.
+  [[nodiscard]] std::optional<CommandFailure> applyTransaction(CommandTicket first,
+                                                               const std::vector<Command>& commands) {
+    const RealWorldState realState = real();
+    detail::ProjectedWorldState projected(
+        [&realState](const EntityGuid& guid) { return detail::seedShadowEntity(realState, guid); },
+        countAllLights());
+    for (std::size_t i = 0; i < commands.size(); ++i) {
+      if (const auto refused = detail::checkCommand(projected, commands[i])) {
+        return CommandFailure{CommandTicket{first.value + i}, *refused};
+      }
+      projected.project(commands[i]);
+    }
+    for (const Command& command : commands) {
+      ATLANTIS_CHECK_MSG(!detail::checkCommand(real(), command).has_value(),
+                         "RuntimeWorldAccess: a transaction's command, accepted by its projection, was refused");
+      events.push_back(std::visit([&](const auto& c) { return execute(c); }, command));
+    }
+    return std::nullopt;
+  }
+
   // Spec 0052's single-command path (ruling Q9; Spec 0053 R6): checked
   // against the world as it is now, then applied, or refused with no effect.
   [[nodiscard]] std::optional<AccessError> applyOne(const Command& command) {
@@ -354,20 +530,40 @@ atlantis::Result<PropertyValue, AccessError> RuntimeWorldAccess::getProperty(con
 
 CommandTicket RuntimeWorldAccess::submit(Command command) {
   const CommandTicket ticket{++impl_->lastTicket};
-  impl_->pending.emplace_back(ticket, std::move(command));
+  impl_->pending.push_back({ticket, std::variant<Command, std::vector<Command>>(std::in_place_index<0>, std::move(command))});
+  return ticket;
+}
+
+TransactionTicket RuntimeWorldAccess::submitTransaction(std::vector<Command> commands) {
+  if (commands.empty()) return TransactionTicket{};  // ruling Q4 (4d): nothing queued, no ticket
+  const TransactionTicket ticket{CommandTicket{impl_->lastTicket + 1}, commands.size()};
+  impl_->lastTicket += commands.size();
+  impl_->pending.push_back(
+      {ticket.first, std::variant<Command, std::vector<Command>>(std::in_place_index<1>, std::move(commands))});
   return ticket;
 }
 
 ApplyReport RuntimeWorldAccess::applyPending() {
   ApplyReport report;
   auto pending = std::exchange(impl_->pending, {});
-  for (const auto& [ticket, command] : pending) {
-    if (const auto refused = impl_->applyOne(command)) {
-      const CommandFailure failure{ticket, *refused};
-      impl_->failures.push_back(failure);
-      report.failures.push_back(failure);
+  const auto refuse = [&](const CommandFailure& failure) {
+    impl_->failures.push_back(failure);
+    report.failures.push_back(failure);
+  };
+  for (const auto& entry : pending) {
+    if (const Command* command = std::get_if<Command>(&entry.body)) {
+      if (const auto refused = impl_->applyOne(*command)) {
+        refuse(CommandFailure{entry.first, *refused});
+      } else {
+        ++report.applied;
+      }
     } else {
-      ++report.applied;
+      const auto& commands = std::get<std::vector<Command>>(entry.body);
+      if (const auto failure = impl_->applyTransaction(entry.first, commands)) {
+        refuse(*failure);
+      } else {
+        report.applied += commands.size();
+      }
     }
   }
   return report;

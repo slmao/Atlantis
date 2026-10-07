@@ -25,6 +25,7 @@ add_executable(atlantis_world_tests
   world_access_command_tests.cpp
   world_access_validation_tests.cpp
   world_access_precedence_tests.cpp
+  world_access_transaction_tests.cpp
 )
 
 target_link_libraries(atlantis_world_tests
