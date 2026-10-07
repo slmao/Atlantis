@@ -402,17 +402,21 @@ TEST_CASE("Runtime constructs a window and completes real windowed acquire/draw/
   const auto lightField = [](std::string_view name) { return atlantis::schema::fieldId("world::Light", name); };
   const auto column3 = atlantis::schema::fieldId("world::WorldMatrix", "column3");
   const auto newLight = atlantis::asset_system::parseEntityGuid("52005200-0000-4000-8000-000000000001").value();
-  boundary.submit(access::CreateEntity{newLight});
-  boundary.submit(access::AddComponent{newLight, lightType});
-  boundary.submit(access::SetProperty{{newLight, lightType, lightField("kind")}, access::EnumValue{1}});  // Point
-  boundary.submit(
-      access::SetProperty{{newLight, lightType, lightField("color")}, std::array<float, 3>{0.2f, 0.4f, 0.9f}});
-  boundary.submit(access::SetProperty{{newLight, lightType, lightField("intensity")}, 2.5f});
-  boundary.submit(access::SetProperty{{newLight, lightType, lightField("range")}, 5.0f});
-  boundary.submit(access::AddComponent{newLight, ecs::componentTypeId<Transform>()});
-  boundary.submit(access::AddComponent{newLight, matrixType});
-  boundary.submit(
-      access::SetProperty{{newLight, matrixType, column3}, std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}});
+  // Plan 0053 M5 (Spec 0053 ruling Q6, C2): the nine commands that build the
+  // light are one transaction, applied all or nothing by the same first
+  // statement of runFrame(); committed, they emit the same nine events.
+  const access::TransactionTicket creation = boundary.submitTransaction({
+      access::CreateEntity{newLight},
+      access::AddComponent{newLight, lightType},
+      access::SetProperty{{newLight, lightType, lightField("kind")}, access::EnumValue{1}},  // Point
+      access::SetProperty{{newLight, lightType, lightField("color")}, std::array<float, 3>{0.2f, 0.4f, 0.9f}},
+      access::SetProperty{{newLight, lightType, lightField("intensity")}, 2.5f},
+      access::SetProperty{{newLight, lightType, lightField("range")}, 5.0f},
+      access::AddComponent{newLight, ecs::componentTypeId<Transform>()},
+      access::AddComponent{newLight, matrixType},
+      access::SetProperty{{newLight, matrixType, column3}, std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}},
+  });
+  REQUIRE(creation.count == 9);
 
   // The next real windowed frame -- a real acquire/Step 0/submit/present
   // cycle, identical in shape to the 3 frames above -- applies and

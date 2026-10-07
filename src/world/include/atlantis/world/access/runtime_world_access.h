@@ -115,6 +115,21 @@ struct CommandTicket {
   friend auto operator<=>(const CommandTicket&, const CommandTicket&) = default;
 };
 
+// A submitted transaction's commands' tickets (Spec 0053 ruling Q2; Plan 0053
+// J5): consecutive, from `first`. An empty transaction has none and returns
+// {CommandTicket{}, 0} -- ticket value 0 is never issued.
+struct TransactionTicket {
+  CommandTicket first;
+  std::uint64_t count = 0;
+  // Whether `ticket` is one of this transaction's commands. A failure whose
+  // ticket it contains means the transaction was aborted at that command, at
+  // position ticket.value - first.value.
+  [[nodiscard]] constexpr bool contains(CommandTicket ticket) const noexcept {
+    return count != 0 && first.value <= ticket.value && ticket.value - first.value < count;
+  }
+  friend bool operator==(const TransactionTicket&, const TransactionTicket&) = default;
+};
+
 struct CommandFailure {
   CommandTicket ticket;
   AccessError error = AccessError::UnknownEntity;
@@ -123,7 +138,7 @@ struct CommandFailure {
 
 struct ApplyReport {
   std::size_t applied = 0;               // commands that took effect
-  std::vector<CommandFailure> failures;  // in submission order
+  std::vector<CommandFailure> failures;  // in submission order; one per aborted transaction
 };
 
 // The boundary over one Runtime World (rulings Q3, Q5; ADR-0103 D5, D7).
@@ -138,7 +153,8 @@ struct ApplyReport {
 // (Plan 0052 J5), with each of its four properties kept:
 //   - deferred: submit() only records; nothing changes until applyPending();
 //   - validated: each command is checked in full against the world as it is
-//     when it applies, and a refused command has no effect (ruling Q9);
+//     when it applies, and a refused command has no effect (ruling Q9); a
+//     transaction is checked whole before any of it applies (Spec 0053);
 //   - applied together on the frame thread: the owner calls applyPending()
 //     once per frame (Runtime: the first statement of runFrame(), J6);
 //   - no pointers out: queries, events and failures are values.
@@ -172,9 +188,19 @@ class RuntimeWorldAccess {
   // Command (R4): recorded now, applied by the owner's next applyPending().
   CommandTicket submit(Command command);
 
-  // Owner only: applies every pending command in submission order, each
-  // independently (ruling Q9); queues one event per success and one failure
-  // per refusal.
+  // Transaction (Spec 0053; ADR-0104): `commands`, recorded now and applied
+  // all or nothing at their place in submission order. If each would be
+  // accepted against the world as the earlier ones leave it, all are
+  // applied, each with its usual event; otherwise none is, no event is
+  // emitted, and one CommandFailure names the first refused command. There
+  // is no transaction event. An empty transaction does nothing and takes no
+  // ticket (ruling Q4).
+  TransactionTicket submitTransaction(std::vector<Command> commands);
+
+  // Owner only: applies every pending command and transaction in submission
+  // order -- a single command on its own (ruling Q9), a transaction all or
+  // nothing (Spec 0053); queues one event per applied command and one
+  // failure per refused command or aborted transaction.
   ApplyReport applyPending();
 
   // Event (R5) and command outcomes (J4): taken by value; each call empties
