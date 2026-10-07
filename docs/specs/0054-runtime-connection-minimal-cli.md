@@ -18,6 +18,28 @@
 
   The same review ruled all eight open questions, each as its
   recommendation. See Risks & Open Questions below.
+  **Correction (2026-10-07, post-Approval, Plan 0054 Joint Human Review,
+  [PR #223](https://github.com/slmao/Atlantis/pull/223), ruling J1):** when the InProcess endpoint is created.
+  - **The ruled text** (Q7, R-a) said the endpoint is held in a
+    `std::optional` member and "emplaced with it in `initializeSteps()`".
+  - **Why that cannot hold:**
+    - `createRuntimeApplication()` runs `initializeSteps()` and returns the
+      application by value, and `main.cpp` moves it again
+      (`RuntimeApplication(RuntimeApplication&&) noexcept = default`);
+    - `worldAccess_` is an inline `std::optional`, so its address changes
+      with every move;
+    - an endpoint emplaced there would borrow a moved-from object. That is
+      the same failure as Plan 0052 deviation 3.
+  - **Corrected:**
+    - the endpoint is created at the first `openConnection()`, when the
+      application is already in its final place;
+    - it is heap-held behind a move guard, so moving the application after
+      that is an `ATLANTIS_CHECK` failure.
+  - **Unchanged:** ownership by `RuntimeApplication`, declaration after
+    `worldAccess_` (destroyed first), `openConnection()`, and `runFrame()`
+    line for line. ADR-0105 D2 is unchanged.
+
+  No other requirement or ruling changes.
 - **Related ADR(s):**
   [ADR-0105](../adr/0105-runtime-connection-and-cli-client.md) (`Accepted`
   2026-10-07, alongside this Spec's own Approval). It records:
@@ -627,9 +649,13 @@ drafting. The options are kept as the record of what was weighed.
     R10; ADR-0105 D2), as recommended.
   - **Options:**
     - **(R-a) `RuntimeApplication` owns the endpoint.**
-      - **Member:** `std::optional<connection::InProcessEndpoint>`, declared
+      - **Member:** the endpoint, heap-held behind a move guard, declared
         after `worldAccess_` so it is destroyed first; it borrows it.
-      - **Creation:** emplaced with it in `initializeSteps()`.
+      - **Creation:** at the first `openConnection()`, when the application
+        is in its final place (Correction 2026-10-07, Plan 0054 ruling J1;
+        the ruled text said "a `std::optional` member … emplaced with it in
+        `initializeSteps()`", which `RuntimeApplication`'s by-value return
+        and later move would leave borrowing a moved-from `worldAccess_`).
       - **API:** a public `openConnection()` →
         `std::unique_ptr<connection::RuntimeConnection>`. A connection must
         not outlive the application; the endpoint CHECKs this on
